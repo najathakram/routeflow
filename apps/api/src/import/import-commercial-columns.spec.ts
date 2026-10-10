@@ -320,7 +320,9 @@ describe("ImportService — commercial columns (B858/B859)", () => {
 
       await service.importContacts(Buffer.from(csv), "user-1");
 
-      const call = prisma.customer.findFirst.mock.calls[0]?.[0];
+      const call = prisma.customer.findFirst.mock.calls.find(
+        ([a]: any[]) => a?.where?.zohoContactId,
+      )?.[0];
       expect(call?.where).toMatchObject({ zohoContactId: "ZC-1", deletedAt: null });
     });
 

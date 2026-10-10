@@ -493,6 +493,21 @@ describe("returnPillFor", () => {
     expect(returnPillFor("WEIRD")).toEqual({ variant: "gray", label: "WEIRD" });
   });
 
+  it("row 182: a store-credit REFUNDED return reads 'Store credit', mirroring the web panel", () => {
+    expect(returnPillFor("REFUNDED", { refundMethod: "CREDIT_NOTE" }).label).toBe("Store credit");
+    expect(returnPillFor("REFUNDED", { creditNoteId: "cn-1" }).label).toBe("Store credit");
+    expect(returnPillFor("REFUNDED", { refundMethod: "CREDIT_NOTE" }).variant).toBe("green");
+  });
+
+  it("row 182: a cash/card/check refund, or no resolution info, or another status keeps its label", () => {
+    expect(
+      returnPillFor("REFUNDED", { refundMethod: "EXTERNAL_REFUND", creditNoteId: "x" }).label,
+    ).toBe("Refunded");
+    expect(returnPillFor("REFUNDED").label).toBe("Refunded");
+    expect(returnPillFor("REFUNDED", {}).label).toBe("Refunded");
+    expect(returnPillFor("APPROVED", { refundMethod: "CREDIT_NOTE" }).label).toBe("Approved");
+  });
+
   it("REG-B348: PROCESSED (retired, no writer) degrades to the same default as any unrecognised status", () => {
     expect(returnPillFor("PROCESSED")).toEqual({ variant: "gray", label: "PROCESSED" });
   });

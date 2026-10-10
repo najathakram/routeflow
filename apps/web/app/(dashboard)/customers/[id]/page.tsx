@@ -1,12 +1,14 @@
 "use client";
 
 import * as React from "react";
+import { AccountStatusControls, type CustomerStatus } from "../_components/walk-in-protection";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import * as Tabs from "@radix-ui/react-tabs";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
+import { contactPersonPayload } from "@/lib/contact-person-payload";
 import {
   ArrowLeft,
   Star,
@@ -19,7 +21,6 @@ import {
   Clock,
   Pencil,
   Trash2,
-  Zap,
   TrendingDown,
   CheckCircle2,
   DollarSign,
@@ -129,9 +130,13 @@ import {
   type CustomerComment,
 } from "@/lib/api/customers";
 import { useUndo } from "@/lib/undo";
-import { useProducts } from "@/lib/api/products";
+import { useProduct } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
+import { CustomerPriceProductSearch } from "./customer-price-product-search";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { MSRP_ADDON, SALES_AGENTS_ADDON, useRoutesAccess } from "@/lib/api/addons";
+import { MSRP_ADDON, SALES_AGENTS_ADDON, useFleetAccess, useRoutesAccess } from "@/lib/api/addons";
+import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { AssignedRoutesCard } from "./_components/AssignedRoutesCard";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
 import {
   useCustomerCurrentAgent,
@@ -152,6 +157,8 @@ import {
 import { StandingOrderModal } from "./StandingOrderModal";
 import { CustomerStatementCard } from "./customer-statement-card";
 import { CreditLimitPanel } from "./credit-limit-panel";
+import { GenerateOrderNowButton } from "./generate-order-button";
+import { CustomerOversellOverride } from "./customer-oversell-override";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
@@ -187,7 +194,12 @@ const orderColumns: ColumnDef<ApiOrder, unknown>[] = [
     accessorKey: "status",
     header: "Status",
     enableSorting: false,
-    cell: ({ row }) => <Badge status={row.original.status as BadgeStatus} />,
+    cell: ({ row }) => (
+      <OrderStatusBadge
+        status={row.original.status as BadgeStatus}
+        fulfillPath={row.original.fulfillPath as string | undefined}
+      />
+    ),
   },
   {
     accessorKey: "createdAt",
@@ -816,23 +828,21 @@ function ContactPersonModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.firstName.trim()) return;
-    const payload = {
-      customerId,
-      salutation: form.salutation || undefined,
-      firstName: form.firstName.trim(),
-      lastName: form.lastName.trim() || undefined,
-      email: form.email.trim() || undefined,
-      phone: form.phone.trim() || undefined,
-      mobile: form.mobile.trim() || undefined,
-      isPrimary: form.isPrimary,
-    };
+    // #3206 follow-up: on edit an emptied optional field that was stored is an explicit null.
     if (editingContact) {
       updateContact.mutate(
-        { ...payload, contactId: editingContact.id },
+        {
+          customerId,
+          ...contactPersonPayload(form, editingContact),
+          contactId: editingContact.id,
+        },
         { onSuccess: () => onClose(), onError: focusRefusedContactField },
       );
     } else {
-      addContact.mutate(payload, { onSuccess: () => onClose(), onError: focusRefusedContactField });
+      addContact.mutate(
+        { customerId, ...contactPersonPayload(form, null) },
+        { onSuccess: () => onClose(), onError: focusRefusedContactField },
+      );
     }
   };
 
@@ -959,8 +969,6 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   // Their price vs cost now — the Price Memory margin column (pos-cost-roles §1).
   const { data: marginConfig } = useMarginConfig();
   const marginFloor = marginConfig?.defaultMarginFloor ?? 0.15;
-  const { data: productsData } = useProducts({ isActive: true, limit: 200 });
-  const allProducts: any[] = productsData?.data ?? [];
 
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [editingPrice, setEditingPrice] = React.useState<CustomerPrice | null>(null);
@@ -972,16 +980,14 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const [selectedTier, setSelectedTier] = React.useState<number | null>(null);
   const [msrpInput, setMsrpInput] = React.useState("");
   const [notes, setNotes] = React.useState("");
-  const [productDropdownOpen, setProductDropdownOpen] = React.useState(false);
-
-  const filteredProducts = allProducts.filter(
-    (p: any) =>
-      p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-      (p.sku ?? "").toLowerCase().includes(productSearch.toLowerCase()),
-  );
+  // The product picked from the server-side search (its tier ladder feeds the price preview);
+  // an EDITED row has no pick yet, so its product is fetched by id.
+  const [pickedProduct, setPickedProduct] = React.useState<any>(null);
+  const { data: fetchedProduct } = useProduct(selectedProductId);
 
   // Get selected product for price preview
-  const selectedProduct = allProducts.find((p: any) => p.id === selectedProductId);
+  const selectedProduct: any =
+    pickedProduct?.id === selectedProductId ? pickedProduct : fetchedProduct;
 
   // An unset tier column (0/null) inherits the list price at checkout — label it.
   const tierUnset = (product: any, tier: number) =>
@@ -990,6 +996,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const openAdd = () => {
     setEditingPrice(null);
     setSelectedProductId("");
+    setPickedProduct(null);
     setProductSearch("");
     setSelectedTier(null);
     setMsrpInput("");
@@ -1000,7 +1007,8 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const openEdit = (cp: CustomerPrice) => {
     setEditingPrice(cp);
     setSelectedProductId(cp.productId);
-    setProductSearch(cp.product?.name ?? "");
+    setPickedProduct(null);
+    setProductSearch(cp.product ? displayProductName(cp.product) : "");
     setSelectedTier(cp.pricingTier ?? null);
     setMsrpInput(cp.msrp != null ? String(cp.msrp) : "");
     setNotes(cp.notes ?? "");
@@ -1368,40 +1376,15 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
         <div className="space-y-4">
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">Product</label>
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Search by name or SKU…"
-                value={productSearch}
-                onChange={(e) => {
-                  setProductSearch(e.target.value);
-                  setProductDropdownOpen(true);
-                }}
-                onFocus={() => setProductDropdownOpen(true)}
-                className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-              {productDropdownOpen && productSearch.length > 0 && filteredProducts.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
-                  <ul className="max-h-40 overflow-y-auto">
-                    {filteredProducts.slice(0, 20).map((p: any) => (
-                      <li key={p.id}>
-                        <button
-                          className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
-                          onClick={() => {
-                            setSelectedProductId(p.id);
-                            setProductSearch(p.name);
-                            setProductDropdownOpen(false);
-                          }}
-                        >
-                          <span className="text-sm font-medium text-navy">{p.name}</span>
-                          {p.sku && <span className="font-mono text-xs text-navy/70">{p.sku}</span>}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
+            <CustomerPriceProductSearch
+              value={productSearch}
+              onValueChange={setProductSearch}
+              onPick={(p) => {
+                setSelectedProductId(p.id);
+                setPickedProduct(p);
+                setProductSearch(displayProductName(p));
+              }}
+            />
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">
@@ -1917,9 +1900,6 @@ function DocumentsTab({ customerId }: { customerId: string }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-const STATUS_CYCLE = ["ACTIVE", "INACTIVE", "SUSPENDED"] as const;
-type CustomerStatus = (typeof STATUS_CYCLE)[number];
-
 /** "Outstanding" spans four statuses, but ListInvoicesDto validates `status` as a
  *  single enum value (a comma-list 400s) — so it's filtered client-side. */
 const OUTSTANDING_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
@@ -1936,6 +1916,8 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   // /routes 403s without a dispatch addon, so hide the entry point and keep the
   // modal's query off (this page is not behind the shell's RouteGuard).
   const { enabled: routesAccess } = useRoutesAccess();
+  const { fleet } = useFleetAccess(); // no fleet module: no route assignment surfaces
+  const statusLabel = useOrderStatusLabel();
   const currentAgent = useCustomerCurrentAgent(id, { enabled: hasSalesAgents });
   const [agentModalOpen, setAgentModalOpen] = React.useState(false);
   const closeAssignment = useCloseAssignment();
@@ -1961,7 +1943,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   const { data: customer, isLoading } = useCustomer(id);
   const { data: tierLabels } = useTierLabels();
   const { data: ordersResult, isError: ordersError } = useCustomerOrders<ApiOrder>(id);
-  const { data: customerRoutes } = useCustomerRoutes(id);
+  const { data: customerRoutes } = useCustomerRoutes(id, { enabled: fleet });
   const { data: orderTemplates } = useOrderTemplates(id);
   const updateStatus = useUpdateCustomerStatus();
   const updateCustomer = useUpdateCustomer();
@@ -2625,6 +2607,8 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     )}
                   </div>
 
+                  <CustomerOversellOverride customerId={id} />
+
                   {/* Credit limit (D6/B462 + B576): from the statement, the same figure the
                       server's hard block is checked against. */}
                   <CreditLimitPanel
@@ -2935,47 +2919,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   </div>
                 </Card>
 
-                <Card title="Assigned Routes">
-                  <div className="space-y-3">
-                    {(customerRoutes ?? []).length === 0 ? (
-                      <p className="text-sm text-navy/70">Not assigned to any routes yet.</p>
-                    ) : (
-                      <ul className="-mx-6 divide-y divide-surface-border">
-                        {(customerRoutes as any[]).map((r) => (
-                          <li key={r.id} className="flex items-center gap-3 px-6 py-3">
-                            <Route className="h-4 w-4 shrink-0 text-navy/70" />
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium text-navy">{r.name}</p>
-                              {r.driverName && (
-                                <p className="text-xs text-navy/70">Driver: {r.driverName}</p>
-                              )}
-                            </div>
-                            <span
-                              className={cn(
-                                "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
-                                r.isActive
-                                  ? "bg-success-bg text-success"
-                                  : "bg-surface-raised text-navy/70",
-                              )}
-                            >
-                              {r.isActive ? "Active" : "Inactive"}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {routesAccess && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        leftIcon={<Plus className="h-4 w-4" />}
-                        onClick={() => setIsAssignRouteOpen(true)}
-                      >
-                        Assign to Route
-                      </Button>
-                    )}
-                  </div>
-                </Card>
+                {fleet && (
+                  <AssignedRoutesCard
+                    routes={customerRoutes ?? []}
+                    canAssign={routesAccess}
+                    onAssign={() => setIsAssignRouteOpen(true)}
+                  />
+                )}
               </div>
 
               <div className="space-y-5">
@@ -3059,50 +3009,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                       </Button>
                     </div>
                   ) : (
-                    <div className="flex flex-col gap-4">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm text-navy/70">Current status</p>
-                        <Badge status={currentStatus} />
-                      </div>
-                      <div className="space-y-2">
-                        {STATUS_CYCLE.map((s) => (
-                          <button
-                            key={s}
-                            onClick={() => handleStatusChange(s)}
-                            disabled={updateStatus.isPending}
-                            className={cn(
-                              "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
-                              currentStatus === s
-                                ? "border-brand-500 bg-brand-50 text-brand-700"
-                                : "border-surface-border text-navy/70 hover:border-navy/30 hover:text-navy",
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                "h-2 w-2 rounded-full",
-                                s === "ACTIVE"
-                                  ? "bg-success"
-                                  : s === "INACTIVE"
-                                    ? "bg-navy/30"
-                                    : "bg-danger",
-                              )}
-                            />
-                            {s.charAt(0) + s.slice(1).toLowerCase()}
-                          </button>
-                        ))}
-                      </div>
-                      {currentStatus === "SUSPENDED" && (
-                        <div className="border-t border-surface-border pt-4">
-                          <button
-                            onClick={() => setIsDeleteOpen(true)}
-                            className="flex w-full items-center gap-2 rounded-lg border border-danger/30 px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger/5"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            Remove customer
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                    <AccountStatusControls
+                      isWalkIn={customer.isWalkIn}
+                      currentStatus={currentStatus}
+                      pending={updateStatus.isPending}
+                      onChange={handleStatusChange}
+                      onRemove={() => setIsDeleteOpen(true)}
+                    />
                   )}
                 </Card>
 
@@ -3303,7 +3216,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     { value: "", label: "All Statuses" },
                     { value: "PENDING", label: "Pending" },
                     { value: "CONFIRMED", label: "Confirmed" },
-                    { value: "OUT_FOR_DELIVERY", label: "Out for Delivery" },
+                    {
+                      value: "OUT_FOR_DELIVERY",
+                      label: statusLabel("OUT_FOR_DELIVERY", "Out for Delivery"),
+                    },
                     { value: "COMPLETED", label: "Completed" },
                     { value: "CANCELLED", label: "Cancelled" },
                   ]}
@@ -3587,20 +3503,14 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                             {tmpl.isActive ? "\u23f8" : "\u25b6"}
                           </span>
                         </button>
-                        <button
-                          title="Generate order now"
-                          className={cn(
-                            TAP_TARGET,
-                            "rounded p-1.5 text-navy/70 transition-colors hover:bg-brand-50 hover:text-brand-600",
-                          )}
-                          onClick={() =>
+                        <GenerateOrderNowButton
+                          pending={generateOrder.isPending}
+                          onGenerate={() =>
                             generateOrder.mutate(tmpl.id, {
                               onSuccess: () => window.alert(`Order generated for "${tmpl.name}"!`),
                             })
                           }
-                        >
-                          <Zap className="h-4 w-4" />
-                        </button>
+                        />
                         <button
                           title="Edit template"
                           className={cn(

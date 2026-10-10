@@ -262,7 +262,7 @@ describe("UsersService", () => {
         deletedAt: null,
       } as any);
 
-      await service.resetPassword("u1");
+      await service.resetPassword("u1", "OPERATOR" as any);
 
       expect(email.sendSetPasswordEmail).toHaveBeenCalledWith(
         expect.objectContaining({ to: "op@acme.example", username: "acme_op" }),
@@ -278,7 +278,7 @@ describe("UsersService", () => {
         deletedAt: null,
       } as any);
 
-      const result = await service.resetPassword("u1");
+      const result = await service.resetPassword("u1", "OPERATOR" as any);
 
       expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
       expect(result.tempPassword).toBeDefined(); // the reset itself still happens
@@ -293,7 +293,7 @@ describe("UsersService", () => {
         deletedAt: new Date("2026-01-01"),
       } as any);
 
-      await service.resetPassword("u1");
+      await service.resetPassword("u1", "OPERATOR" as any);
 
       expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
     });
@@ -307,7 +307,7 @@ describe("UsersService", () => {
         deletedAt: null,
       } as any);
 
-      const result = await service.resetPassword("u1");
+      const result = await service.resetPassword("u1", "OPERATOR" as any);
 
       expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
       expect(result.tempPassword).toBeDefined();
@@ -332,7 +332,12 @@ describe("UsersService", () => {
         canActAsDriver: false,
       } as any);
 
-      await service.updateUser("u1", { email: "new@acme.example" } as any);
+      await service.updateUser(
+        "u1",
+        { email: "new@acme.example" } as any,
+        undefined,
+        "OPERATOR" as any,
+      );
 
       expect(email.sendEmailChangedNotice).toHaveBeenCalledWith(
         expect.objectContaining({ to: "old@acme.example", newEmail: "new@acme.example" }),
@@ -356,7 +361,12 @@ describe("UsersService", () => {
         role: "OPERATOR",
       } as any);
 
-      await service.updateUser("u1", { email: "same@acme.example", username: "renamed" } as any);
+      await service.updateUser(
+        "u1",
+        { email: "same@acme.example", username: "renamed" } as any,
+        undefined,
+        "OPERATOR" as any,
+      );
 
       expect(email.sendEmailChangedNotice).not.toHaveBeenCalled();
       expect(email.sendEmailChangeConfirmation).not.toHaveBeenCalled();
@@ -377,7 +387,12 @@ describe("UsersService", () => {
       } as any);
       email.sendEmailChangedNotice.mockRejectedValue(new Error("smtp down"));
 
-      const result = await service.updateUser("u1", { email: "new@acme.example" } as any);
+      const result = await service.updateUser(
+        "u1",
+        { email: "new@acme.example" } as any,
+        undefined,
+        "OPERATOR" as any,
+      );
 
       expect(result.email).toBe("new@acme.example");
     });
@@ -397,7 +412,12 @@ describe("UsersService", () => {
         forcePasswordChange: false,
       } as any);
 
-      await service.updateUser("u1", { email: "corrected@acme.example" } as any);
+      await service.updateUser(
+        "u1",
+        { email: "corrected@acme.example" } as any,
+        undefined,
+        "OPERATOR" as any,
+      );
 
       expect(prisma.passwordResetToken.updateMany).toHaveBeenCalledWith({
         where: { userId: "u1", usedAt: null },
@@ -420,7 +440,12 @@ describe("UsersService", () => {
         forcePasswordChange: true, // never completed the invite flow
       } as any);
 
-      await service.updateUser("u1", { email: "corrected@acme.example" } as any);
+      await service.updateUser(
+        "u1",
+        { email: "corrected@acme.example" } as any,
+        undefined,
+        "OPERATOR" as any,
+      );
 
       expect(email.sendSetPasswordEmail).toHaveBeenCalledWith(
         expect.objectContaining({ to: "corrected@acme.example", username: "acme_op" }),
@@ -442,7 +467,12 @@ describe("UsersService", () => {
         forcePasswordChange: false, // already set their own password
       } as any);
 
-      await service.updateUser("u1", { email: "new@acme.example" } as any);
+      await service.updateUser(
+        "u1",
+        { email: "new@acme.example" } as any,
+        undefined,
+        "OPERATOR" as any,
+      );
 
       expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
     });
@@ -466,7 +496,12 @@ describe("UsersService", () => {
         canActAsDriver: true,
       } as any);
 
-      await service.updateUser("u1", { role: "OPERATOR" } as any, "acme_tenant_admin");
+      await service.updateUser(
+        "u1",
+        { role: "OPERATOR" } as any,
+        "acme_tenant_admin",
+        "OPERATOR" as any,
+      );
 
       expect(email.sendRoleChangedNotice).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -492,7 +527,7 @@ describe("UsersService", () => {
         role: "OPERATOR",
       } as any);
 
-      await service.updateUser("u1", { role: "OPERATOR" } as any);
+      await service.updateUser("u1", { role: "OPERATOR" } as any, undefined, "OPERATOR" as any);
 
       expect(email.sendRoleChangedNotice).toHaveBeenCalledWith(
         expect.objectContaining({ changedBy: "an administrator" }),
@@ -513,7 +548,12 @@ describe("UsersService", () => {
         role: "OPERATOR",
       } as any);
 
-      await service.updateUser("u1", { role: "OPERATOR", username: "renamed" } as any);
+      await service.updateUser(
+        "u1",
+        { role: "OPERATOR", username: "renamed" } as any,
+        undefined,
+        "OPERATOR" as any,
+      );
 
       expect(email.sendRoleChangedNotice).not.toHaveBeenCalled();
     });

@@ -22,6 +22,7 @@ import {
   attachPaymentCreditNotes,
   ORDER_CREDIT_PAYMENT_SELECT,
 } from "./order-payment-credit-notes";
+import { attachInvoicesNeedReview } from "./order-invoices-review";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
@@ -47,16 +48,30 @@ import {
   type PromotionRule,
 } from "@routeflow/pricing";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
-import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
+import { retryCreditTx, retryOnTxConflict, txConflictState } from "../common/tx-retry";
+import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import {
   atStopConflict,
   CHANGE_WINDOW_ORDER_STATUS,
   CHANGE_WINDOW_RUN_NOT_ACTIVE,
 } from "./at-stop-conflicts";
-import { sourceLineFor, type SourceLines } from "./source-line";
+import { sourceLineFor } from "./source-line";
+import type { CreateOrderOptions } from "./order-create-options";
+import {
+  oldestFirst,
+  resolveSaleDelivery,
+  saleCreateOptions,
+  type SaleOptions,
+} from "./sale-options";
+import { notifyPickupHandover, pickupOutForDeliveryPush } from "./order-pickup-wording";
 import { decideTierOverride } from "./staff-override";
 import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
+import {
+  deleteLoserGuarded,
+  lockAndRecheckMergeInputs,
+  readMergeGroup,
+} from "./merge-lock-recheck";
 import {
   OrderStatus,
   UserRole,
@@ -75,13 +90,26 @@ import {
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
+import { resolveFulfilPath } from "./fulfil-path-resolver";
+import {
+  assertNoBackdatedMerge,
+  findActiveOrderImpl,
+  sameFulfilPathAsWinner,
+  unshipped,
+  type MergeSearchOpts,
+} from "./merge-candidates";
 import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
 import { ORDER_STATUS_TRANSITIONS, assertOrderStatusTransition } from "./order-status-transitions";
+import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
+import { assertSaleReplayable } from "./sale-replay-guard";
+import { assertReplaySameCart, isIdempotencyKeyViolation } from "./replay-same-cart";
+import { savedCreditsPending, withCreditsPendingHint } from "./create-credit-tail";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
+  otherOrderConflict,
   IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
   shouldSkipInPlaceResync,
   findOrderIdByKeyCheckingReturn as findOrderIdByKey,
@@ -91,7 +119,13 @@ import {
   type IdempotencyLookupDeps,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
-import { cancelBlockedMessage, cancelImpact, lockOrderForCancel } from "./order-cancel-impact";
+import {
+  cancelBlockedMessage,
+  cancelImpact,
+  lockedOrderStatus,
+  lockOrderForCancel,
+} from "./order-cancel-impact";
+import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
 import {
   applyBuyerMergeHeaderImpl,
@@ -119,6 +153,7 @@ import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
+import { orderFor, ordersFor } from "../common/staff-only-fields";
 import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -127,13 +162,14 @@ import {
   decrementStockForSale,
   restoreStockForReopen,
   settleStockForEdit,
-  STOCK_LINE_UNIT_SELECT,
+  STOCK_SALE_LINE_SELECT,
   STOCK_SETTLE_SELECT,
   type StockArgs,
   type StockLine,
   type StockLineUnits,
 } from "./order-stock";
 import { linePieceQty } from "./line-piece-qty";
+import { dateAndShipmentFilters } from "./list-filters";
 import { resolveOversellAllowed } from "./oversell-policy";
 import { PolicyOversellReader } from "./policy-oversell-reader";
 import {
@@ -142,6 +178,7 @@ import {
   rescaleBogoFreeUnits,
   resolveBuyerLinePrice,
 } from "./buyer-merge-pricing";
+import { captureMarkerCarry } from "./backorder-marker-writes";
 import { buildMergeLineWrites, type MergeLine, type MergeWarning } from "./merge-line-writes";
 import { assertReplaceAllPackMatchesLive } from "./replace-all-pack-resolution";
 import { decideAddedLinePrice, decideEditedLinePrice, isOverride } from "./staff-line-price";
@@ -183,26 +220,27 @@ import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
+import type { OrderCancelBlockedField } from "@routeflow/types";
+import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
+import { shippedPushCopy } from "./shipped-push-copy";
+import { attachInvoiceStages } from "./order-invoice-stage";
+import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
+import * as carrierGuard from "./order-carrier-guard";
+import {
+  throwIfWithCarrier,
+  invoicesAtShipment,
+  settleOrderInvoice,
+  settledAtShipment,
+} from "./order-status-invoicing";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
+import { orderConfirmedVars } from "../messaging/order-confirmed-copy";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
+import { tenantSafeParentView } from "../products/product-parent";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
-
-/**
- * B215: the statuses whose linked invoice(s) are re-synced IN PLACE after an item edit
- * (`postDeliveryEdit`) instead of reconciled as an open pending-mirror draft. Read by
- * `updateOrderItems` AND by `replayMergeReconcile`, so a replayed merge routes the
- * convergent reconcile exactly as the fold that landed did — the list may not drift
- * between the two callers.
- */
-const POST_DELIVERY_EDIT_STATUSES: string[] = [
-  OrderStatus.OUT_FOR_DELIVERY,
-  OrderStatus.PARTIALLY_DELIVERED,
-  OrderStatus.DELIVERED,
-];
 
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
@@ -224,7 +262,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // provider must be a DI error, not a silent bypass of a jurisdiction ban.
     private readonly sellingRestrictions: SellingRestrictionsService,
     private readonly promotionsService: PromotionsService,
-    private readonly messaging: MessagingService,
+    readonly messaging: MessagingService, // not `private`: shipment-notifications.ts / order-lifecycle.ts read it off `self`
     readonly creditNotes: CreditNotesService,
     readonly commissionEngine: CommissionEngineService,
     readonly entitlements: EntitlementsService,
@@ -245,7 +283,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // #2094: optional so unrelated specs build; `inlineReturn` without it fails closed.
     @Optional() private readonly inlineReturns?: InlineReturnsService,
     // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work at all).
-    @Optional() private readonly featureConfig?: FeatureConfigService,
+    @Optional() readonly featureConfig?: FeatureConfigService,
   ) {}
 
   /**
@@ -354,8 +392,6 @@ export class OrdersService implements OnApplicationBootstrap {
       urgent,
       page = 1,
       limit = 20,
-      deliveryDateFrom,
-      deliveryDateTo,
       fulfillPath,
     } = query;
     const skip = (page - 1) * limit;
@@ -399,12 +435,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // Ad-hoc trips + fulfillment mode: filter by ROUTE/SHIP. Omitted ⇒ no where
     // key at all (every existing order stays visible either way).
     if (fulfillPath) where.fulfillPath = fulfillPath;
-    if (deliveryDateFrom || deliveryDateTo) {
-      where.requestedDeliveryDate = {
-        ...(deliveryDateFrom ? { gte: new Date(deliveryDateFrom) } : {}),
-        ...(deliveryDateTo ? { lte: new Date(deliveryDateTo) } : {}),
-      };
-    }
+    Object.assign(where, dateAndShipmentFilters(query));
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().order.findMany({
@@ -412,9 +443,8 @@ export class OrdersService implements OnApplicationBootstrap {
         include: {
           customer: { select: { id: true, businessName: true } },
           lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
-          // P5-11: pending change-request count for the orders-list badge.
-          // Filtered relation count — additive; clients that don't know
-          // `_count` ignore it.
+          // P5-11: pending change-request count for the orders-list badge. Filtered relation count
+          // — additive; clients that don't know `_count` ignore it.
           _count: {
             select: {
               changeRequests: { where: { status: ChangeRequestStatus.PENDING } },
@@ -428,7 +458,8 @@ export class OrdersService implements OnApplicationBootstrap {
       this.prisma.forTenant().order.count({ where }),
     ]);
 
-    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    const rows = ordersFor(user, data); // customer-facing fields only for the customer
+    return { data: rows, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async findOne(id: string, user: JwtPayload) {
@@ -443,12 +474,12 @@ export class OrdersService implements OnApplicationBootstrap {
             phone: true,
             mobile: true,
             email: true,
+            isWalkIn: true,
           },
         },
-        // Include `unitsPerBox` + `pricePerUnit` so the mobile/web edit UIs
-        // can render the boxes/pieces split for boxed products and recompute
-        // line subtotals locally without a second roundtrip. `averageCost` +
-        // `category` feed the live cost/margin hint + floor in the edit builder
+        // Include `unitsPerBox` + `pricePerUnit` so the mobile/web edit UIs can render the boxes/pieces
+        // split for boxed products and recompute line subtotals locally without a second roundtrip.
+        // `averageCost` + `category` feed the live cost/margin hint + floor in the edit builder
         // (pos-cost-roles-spec §1).
         lineItems: {
           include: {
@@ -474,7 +505,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 unitSku: true,
                 variantName: true,
                 parentProductId: true,
-                parent: { select: { name: true } },
+                // tenantId only for the tenant check below (B1211); it is stripped before the response.
+                parent: { select: { name: true, tenantId: true } },
               },
             },
           },
@@ -491,6 +523,7 @@ export class OrdersService implements OnApplicationBootstrap {
             invoiceNumber: true,
             status: true,
             total: true,
+            deliveryBatchId: true, // the invoice stage (pdfVariant) keys on it
             // Applied credit-note payments, so clients can show per-credit dollars
             // actually applied without a second roundtrip.
             // Classification pending: whether this credit-note-application read
@@ -525,7 +558,7 @@ export class OrdersService implements OnApplicationBootstrap {
           },
         },
         // P5-08: version history + the run state that governs the edit window.
-        revisions: { orderBy: { revisionNumber: "asc" } },
+        revisions: EDIT_REVISIONS, // ship-state markers are not edits ("Edited N×")
         // P5-09: post-dispatch change requests, newest first.
         changeRequests: { orderBy: { createdAt: "desc" } },
         // `driverId` feeds the F2-005 driver-ownership gate below.
@@ -533,6 +566,18 @@ export class OrdersService implements OnApplicationBootstrap {
       },
     });
     if (!order) throw new NotFoundException("Order not found");
+
+    // B1211: a product's parent that belongs to another tenant is never shown (name or otherwise).
+    // The buyer order reads reach this same method, so they get the check too.
+    for (const line of order.lineItems ?? []) {
+      const product = line.product as { parent?: { tenantId?: string | null } | null } | null;
+      if (product && "parent" in product) {
+        product.parent = tenantSafeParentView(
+          product.parent,
+          order.tenantId ?? this.prisma.getTenantId(),
+        );
+      }
+    }
 
     if (user.role === UserRole.CUSTOMER) {
       // REG-B131: `deletedAt: null` here — a removal deactivates the user but an access token
@@ -560,11 +605,17 @@ export class OrdersService implements OnApplicationBootstrap {
     // `editableUntil` (the soft cutoff countdown) stays null until the per-weekday
     // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
     (order as any).editWindow = computeEditWindow(order, user.role);
+    // B1083: the web disables Cancel from this (one server predicate, never re-derived client-side).
+    Object.assign(order, {
+      cancelBlockedReason: await carrierGuard.carrierBlocked(this, order),
+    } satisfies OrderCancelBlockedField);
+    await attachInvoiceStages(this.featureConfig, order); // fold 4: each invoice's pdfVariant
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
+    await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
 
-    return order;
+    return orderFor(user, order); // customer-facing fields only for the customer
   }
 
   /**
@@ -621,31 +672,19 @@ export class OrdersService implements OnApplicationBootstrap {
     );
   }
 
-  /**
-   * Find the most recent active (DRAFT/PENDING) order for a customer.
-   * Used by the buyer portal to merge new items into an existing order.
-   */
-  async findActiveOrder(customerId: string, opts: { forMerge?: boolean } = {}) {
-    // Orders flagged skipAutoMerge are intentionally kept separate by an operator —
-    // do NOT propose them as a merge target. The next operator-initiated create for
-    // the same customer should still see no "active" order to merge into.
-    return this.prisma.forTenant().order.findFirst({
-      where: {
-        customerId,
-        status: { in: [OrderStatus.DRAFT, OrderStatus.PENDING] },
-        skipAutoMerge: false,
-        // units_v1: a unit-aware order is never a MERGE target; display reads keep it visible.
-        ...(opts.forMerge ? unitAware.ORDER_HAS_NO_UNIT_AWARE_LINE : {}),
-      },
-      include: {
-        lineItems: {
-          where: { status: { not: ItemStatus.CANCELLED } },
-          include: { product: { select: { id: true, name: true, unit: true } } },
-        },
-        customer: { select: { id: true, businessName: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+  private fulfilDeps() {
+    return {
+      featureConfig: this.featureConfig,
+      tenantId: this.prisma.getTenantId(),
+      logger: this.logger,
+    };
+  }
+
+  /** The most recent active (DRAFT/PENDING) order for a customer: see `merge-candidates.ts`. */
+  async findActiveOrder(customerId: string, opts: MergeSearchOpts = {}) {
+    // units_v1: a unit-aware order is never a MERGE target; display reads keep it visible.
+    const guard = opts.forMerge ? unitAware.ORDER_HAS_NO_UNIT_AWARE_LINE : {};
+    return findActiveOrderImpl(this.prisma, customerId, opts, guard, this.fulfilDeps());
   }
 
   /**
@@ -693,7 +732,7 @@ export class OrdersService implements OnApplicationBootstrap {
    */
   async mergeAllPendingForCustomer(
     customerId: string,
-    options: { buyerInitiated?: boolean } = {},
+    options: { buyerInitiated?: boolean; focusOrderId?: string } = {},
     opts?: {
       lockMode?: LockMode;
       onPackMismatch?: (warnings: MergeWarning[]) => void;
@@ -712,29 +751,13 @@ export class OrdersService implements OnApplicationBootstrap {
           waitMs: 20_000,
         },
         async () => {
-          const pendingOrders = await this.prisma.forTenant().order.findMany({
-            where: {
-              customerId,
-              status: OrderStatus.PENDING,
-              routeRunId: null,
-              routeRunStopId: null,
-              transaction: { is: null },
-              invoices: { none: {} },
-              returns: { none: {} },
-              skipAutoMerge: false,
-            },
-            include: {
-              lineItems: {
-                where: { status: { not: ItemStatus.CANCELLED } },
-                // SA-124e(6): the fold/write-plan pick "the FIRST winner line in display
-                // order" as the primary (SA-103/104's rule) — without an explicit orderBy
-                // that "first" is whatever order Postgres happens to return, not a real
-                // display order.
-                orderBy: { position: "asc" },
-              },
-            },
-            orderBy: { updatedAt: "desc" },
-          });
+          // B1053: the ONE shared predicate (merge-lock-recheck.ts); the tx re-reads it under lock.
+          const { group: pendingOrders } = await readMergeGroup(
+            this.prisma.forTenant(),
+            customerId,
+            "auto",
+            options.focusOrderId,
+          );
 
           if (pendingOrders.length <= 1) {
             return pendingOrders[0] ?? null;
@@ -804,6 +827,12 @@ export class OrdersService implements OnApplicationBootstrap {
           reportPackWarnings(this.logger, "merge", winner.id, packWarnings, opts);
 
           await this.prisma.tenantTransaction(async (tx) => {
+            await lockAndRecheckMergeInputs(tx, {
+              customerId,
+              kind: "auto",
+              focusOrderId: options.focusOrderId,
+              pre: pendingOrders,
+            });
             // 1/2. Apply every pack-group write: an UPDATE onto the winner's own existing line
             // for its own pack group, a CREATE for every other group (SA-101(1)(b)/(c)).
             for (const write of mergeWrites) {
@@ -835,6 +864,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     categoryTaxType: write.data.categoryTaxType,
                     categoryTaxRate: write.data.categoryTaxRate,
                     categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
+                    backorderedPieces: write.data.backorderedPieces ?? 0, // SA-716: carried
                     ...compositionStampOf(write.data),
                   },
                 });
@@ -894,8 +924,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 where: { orderId: loser.id },
                 data: { orderId: winner.id },
               });
-              await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
-              await tx.order.delete({ where: { id: loser.id } });
+              await deleteLoserGuarded(tx, loser.id, "auto"); // items + the guarded order delete
             }
 
             // 4. Recompute winner totals.
@@ -980,18 +1009,11 @@ export class OrdersService implements OnApplicationBootstrap {
       const result = await withAdvisoryLock(
         { family: "order-merge", key: customerId, mode: "wait", waitMs: 20_000 },
         async () => {
-          const orders = await this.prisma.forTenant().order.findMany({
-            where: { customerId, status: OrderStatus.PENDING },
-            include: {
-              lineItems: {
-                where: { status: { not: ItemStatus.CANCELLED } },
-                // SA-124e(6): see mergeAllPendingForCustomer's identical note — "first winner
-                // line in display order" needs a real order, not whatever Postgres returns.
-                orderBy: { position: "asc" },
-              },
-            },
-            orderBy: { updatedAt: "desc" },
-          });
+          const { group: orders } = await readMergeGroup(
+            this.prisma.forTenant(),
+            customerId,
+            "force",
+          );
           if (orders.length <= 1) return orders[0] ?? null;
           unitAware.assertNoUnitAwareLines(
             orders.flatMap((o) => o.lineItems),
@@ -1061,6 +1083,7 @@ export class OrdersService implements OnApplicationBootstrap {
           const counts = reportPackWarnings(this.logger, "consolidate", winner.id, packWarnings);
 
           await withAfterCommit(this.prisma, async (tx, after) => {
+            await lockAndRecheckMergeInputs(tx, { customerId, kind: "force", pre: orders });
             for (const write of mergeWrites) {
               if (write.kind === "update") {
                 await tx.orderItem.update({ where: { id: write.lineId }, data: write.data });
@@ -1090,6 +1113,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     categoryTaxType: write.data.categoryTaxType,
                     categoryTaxRate: write.data.categoryTaxRate,
                     categoryPriceIncludesTax: write.data.categoryPriceIncludesTax,
+                    backorderedPieces: write.data.backorderedPieces ?? 0, // SA-716: carried
                     ...compositionStampOf(write.data),
                   },
                 });
@@ -1115,10 +1139,10 @@ export class OrdersService implements OnApplicationBootstrap {
               });
             }
             for (const loser of losers) {
-              // Remove a loser's pending mirror draft (and its items) before deleting
-              // the order so the Invoice→Order FK doesn't block. A SENT invoice on a
-              // loser is a real bill — leave it, so order.delete FK-fails rather than
-              // silently dropping a billed order (preserves prior safety).
+              // Remove a loser's pending mirror draft (and its items) before deleting the order. The
+              // Invoice→Order FK is ON DELETE SET NULL, so it would NOT block: a loser with a billed
+              // Invoice or a Transaction never reaches here (mergeEligibleWhere("force") skips it, and
+              // deleteLoserGuarded re-checks the same predicate on the delete itself).
               const loserDraft = await this.invoicesService.findOpenOrderDraft(loser.id, tx);
               if (loserDraft) {
                 // B214 (REG-B214): a DRAFT mirror can source a credit note; refuse before the FK
@@ -1134,8 +1158,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 where: { orderId: loser.id },
                 data: { orderId: winner.id },
               });
-              await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
-              await tx.order.delete({ where: { id: loser.id } });
+              await deleteLoserGuarded(tx, loser.id, "force"); // items + the guarded order delete
             }
             await this.syncCompositions(tx, winner.id);
             const activeItems = await tx.orderItem.findMany({
@@ -1353,10 +1376,18 @@ export class OrdersService implements OnApplicationBootstrap {
   async findOrderIdByIdempotencyKey(
     idempotencyKey: string,
     customerId: string,
-    requestHash?: string,
-    inlineReturn?: { returnKey?: string; items?: any[]; reason?: string | null }, // #2424
+    requestHash: string | undefined,
+    inlineReturn: { returnKey?: string; items?: any[]; reason?: string | null } | undefined, // #2424
+    cart: { items?: ReadonlyArray<unknown> | null; status?: string | null }, // BUG-A
   ): Promise<{ orderId: string; verified: boolean } | null> {
-    return findOrderIdByKey(this.idemDeps(), idempotencyKey, customerId, requestHash, inlineReturn);
+    return findOrderIdByKey(
+      this.idemDeps(),
+      idempotencyKey,
+      customerId,
+      requestHash,
+      inlineReturn,
+      cart,
+    );
   }
 
   /** B215/F30: replay-key lookup + stamping live in merge-idempotency.ts (size ratchet). */
@@ -1384,7 +1415,7 @@ export class OrdersService implements OnApplicationBootstrap {
     dto: CreateOrderDto,
     user: JwtPayload,
     // `sourceLines`: INTERNAL only, never a DTO field (source-line.ts).
-    options: { skipAutoMerge?: boolean; allowArchived?: boolean; sourceLines?: SourceLines } = {},
+    options: CreateOrderOptions = {},
   ) {
     // F30/R8: Idempotency-Key replay. `idempotencyKey` isn't on CreateOrderDto
     // (the controller threads it in from the `Idempotency-Key` header, never
@@ -1531,34 +1562,13 @@ export class OrdersService implements OnApplicationBootstrap {
       const existing = await this.findReplayCandidateByKey(idempotencyKey, customerId);
       if (existing) {
         if (existing.customerId !== customerId) {
-          throw new ConflictException("Idempotency-Key already used for a different order");
+          throw otherOrderConflict();
         }
-        // R4 (close-out): a replay must be a replay OF THE SAME CART. A client
-        // that edited its cart after a timed-out-but-committed submit and
-        // reused the key would otherwise get the STALE order back as if the
-        // edit had been saved. Compare the incoming line multiset against the
-        // stored order; a mismatch is a client bug surfaced loudly, never a
-        // silent wrong-cart acknowledgment.
-        {
-          const norm = (rows: never[], stored: boolean) =>
-            rows
-              .map((r) => unitLines.replayLineKey(r, stored))
-              .sort()
-              .join("|");
-          const incomingNorm = norm((dto.items ?? []) as never[], false);
-          const storedNorm = norm(
-            (existing.lineItems ?? []).filter(
-              (li: { status?: string }) => li.status !== "CANCELLED",
-            ) as never[],
-            true,
-          );
-          if (incomingNorm !== storedNorm) {
-            throw new ConflictException(
-              "Idempotency-Key reused with a different cart — submit the edited cart as a new order (new key), or retry the original unchanged",
-            );
-          }
-        }
-        return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+        // R4 + BUG-A: a replay must be of the SAME cart and kind (replay-same-cart.ts).
+        assertReplaySameCart(existing, dto);
+        options.onReplay?.(existing);
+        const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+        return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
       }
     }
 
@@ -1566,12 +1576,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // date stays authoritative, so a supplied orderDate would be silently dropped.
     // Refuse instead — the operator can re-submit as a separate order.
     if (orderDate && !options.skipAutoMerge) {
-      const mergeTarget = await this.findActiveOrder(customerId, { forMerge: true });
-      if (mergeTarget) {
-        throw new BadRequestException(
-          "This customer has an open order. Enter a backdated order as a separate order.",
-        );
-      }
+      await assertNoBackdatedMerge(this, customerId, dto.fulfillPath);
     }
 
     // Credit-note selections: validate up-front (bad/expired/cross-customer/VOID
@@ -1602,7 +1607,15 @@ export class OrdersService implements OnApplicationBootstrap {
     // Ad-hoc trips + fulfillment mode: an explicit dto value always wins, else
     // fall back to the customer's own default, else ROUTE (byte-identical to
     // today for every existing order/customer, which default to ROUTE too).
-    const fulfillPath = dto.fulfillPath ?? customerRecord?.fulfillPath ?? FulfillPath.ROUTE;
+    // Counter sale (#3211): an INTERNAL `options.fulfillPath` (PICKUP) wins; every other caller goes
+    // through the ONE resolver (#3210).
+    const fulfillPath =
+      options.fulfillPath ??
+      (await resolveFulfilPath(this.fulfilDeps(), {
+        explicit: dto.fulfillPath,
+        stored: customerRecord?.fulfillPath,
+        audience: user.role === UserRole.CUSTOMER ? "buyer" : "staff",
+      }));
 
     // Unlisted (ad-hoc) lines have no productId — only fetch catalog rows for the
     // lines that reference a real product.
@@ -1611,7 +1624,7 @@ export class OrdersService implements OnApplicationBootstrap {
       catalogIds.length > 0
         ? await this.prisma.forTenant().product.findMany(portalGateArgs(catalogIds))
         : [];
-    assertBuyerLines(user.role, products, { skip: options.allowArchived }); // buyer 409 before the staff FAMILY 400
+    assertBuyerLines(user, products, { skip: options.allowArchived }); // buyer 409 before the staff FAMILY 400
 
     const productMap = new Map(products.map((p) => [p.id, p]));
     assertSellableLines(products); // WS8: a FAMILY is never a line
@@ -1837,6 +1850,13 @@ export class OrdersService implements OnApplicationBootstrap {
           ? decideTierOverride(product, tierForProduct, Number(overridePrice), item.overrideReason)
           : null;
       if (staff?.overridden) {
+        // POS-5: counter callers pass `priceEditAllowed`; judged vs the SERVER tier price, before any lock or write.
+        if (options.priceEditAllowed === false) {
+          throw new ForbiddenException({
+            code: API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED,
+            message: "You can't change prices. Ask your account admin.",
+          });
+        }
         ({ unitPrice, originalPrice } = staff);
         priceType = PriceType[staff.priceType];
         staffOverride = {
@@ -1971,6 +1991,7 @@ export class OrdersService implements OnApplicationBootstrap {
       shipping: orderShippingFee,
       total,
     });
+    if (!isDraft) await options.beforeWrite?.({ total }); // B1209: a refusal here has written nothing
 
     // W6: license guard — a real (non-draft) sale of a license-required category to
     // a customer without a VERIFIED authorization (or active §8 override) throws a
@@ -2012,6 +2033,10 @@ export class OrdersService implements OnApplicationBootstrap {
     const unitOrder = lineItemsData.some((li) => "unitLabel" in li); // units_v1: never auto-merged
     let order: any;
     let inlineMinted: any = null;
+    // B1186: this reserve is a NON-transactional numbering write that runs before the retry loop. A
+    // request that then loses the same-key race (the P2002 exit below, now replayed) has burned its
+    // number: a GAP in the return / credit-note series, never a duplicate. Gaps are accepted for these
+    // documents (lead ruling 2026-10-06) - do not "fix" this by moving the reserve into the tx.
     const twin = await reserveReturnNo(inlineRet, customerId, user, idempotencyKey, this as any);
     if (twin) return twin;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -2041,11 +2066,14 @@ export class OrdersService implements OnApplicationBootstrap {
               // DRAFT→PENDING promotion is the SAME "becomes a real sale" moment
               // as a non-draft create(), so it calls the identical helper (no
               // second implementation of the lock/oversell-check/decrement).
-              await this.decrementStockForSale(tx, stockLines, allowOversell, {
+              const markers = await this.decrementStockForSale(tx, stockLines, allowOversell, {
                 orderId,
                 notes: "CREATE",
                 performedById: user.sub,
+                customerFacing: user.role === UserRole.CUSTOMER,
               });
+              for (const li of stockLines)
+                Object.assign(li, { backorderedPieces: markers?.get(li) ?? 0 });
             }
 
             const created = await tx.order.create({
@@ -2082,6 +2110,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 // customer/agent default). Validated by parseCommissionRatePct above.
                 commissionRatePct,
                 fulfillPath,
+                // SA-672e: only the counter-sale POST passes this; every other order keeps the column default.
+                ...(options.counterSale ? { counterSale: true } : {}),
                 lineItems: { create: lineItemsData },
               },
               include: {
@@ -2113,14 +2143,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // return the order IT just created instead of retrying (retrying
           // would mint a fresh order number and create a genuine duplicate,
           // exactly what the key exists to prevent).
-          const target = e?.meta?.target;
-          const hitIdempotencyConstraint =
-            idempotencyKey != null &&
-            (Array.isArray(target)
-              ? target.some((t: unknown) => String(t).toLowerCase().includes("idempotencykey"))
-              : String(target ?? "")
-                  .toLowerCase()
-                  .includes("idempotencykey"));
+          const hitIdempotencyConstraint = idempotencyKey != null && isIdempotencyKeyViolation(e);
           if (hitIdempotencyConstraint) {
             // B215: same table-then-column lookup as the pre-check above, so the row that won
             // the race is found whether it was stamped on the column or written to the table.
@@ -2128,9 +2151,14 @@ export class OrdersService implements OnApplicationBootstrap {
             // Same ownership gate as the pre-check above: the row that won the
             // race is only OUR replay if it belongs to this caller.
             if (existing && existing.customerId !== customerId) {
-              throw new ConflictException("Idempotency-Key already used for a different order");
+              throw otherOrderConflict();
             }
-            if (existing) return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+            if (existing) {
+              assertReplaySameCart(existing, dto); // BUG-A: the race exit compares too
+              options.onReplay?.(existing);
+              const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+              return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
+            }
           }
           // Retry only on orderNumber unique-constraint violations (RF-014);
           // propagate all other errors immediately (including ConflictException
@@ -2186,24 +2214,9 @@ export class OrdersService implements OnApplicationBootstrap {
       }
     }
 
-    // Credit-note intents: store the operator's selection against the FINAL order
-    // id, then settle (a harmless no-op until an invoice exists — settle bails
-    // early when the order has no invoices yet). Short, dedicated Serializable tx
-    // — NOT inside the stock/create transaction above.
-    if (appliedCreditNotes !== undefined) {
-      await this.prisma.tenantTransaction(
-        async (tx) => {
-          await this.creditNotes.syncOrderCreditSelections(
-            tx,
-            order.id,
-            customerId,
-            appliedCreditNotes,
-          );
-          await this.creditNotes.settleOrderCreditsInTx(tx, order.id);
-        },
-        { isolationLevel: "Serializable" },
-      );
-    }
+    // Credit-note intents: store the selection against the FINAL order id, then settle (a no-op
+    // until an invoice exists). Short Serializable tx - NOT inside the create transaction above.
+    await this.syncCreateCredits(order.id, customerId, appliedCreditNotes);
 
     return order;
   }
@@ -2222,46 +2235,17 @@ export class OrdersService implements OnApplicationBootstrap {
    * The order is always created in isolation (skipAutoMerge) so a discrete sale never folds into an
    * existing open order.
    */
-  async createSale(dto: CreateSaleDto, user: JwtPayload) {
+  async createSale(dto: CreateSaleDto, user: JwtPayload, sale: SaleOptions = {}) {
     // #2493: refuse a due date that names no real day (the DTO's @IsDateString passes
     // `2026-02-31`) BEFORE the order is created and stock decremented; the invoice step would
     // otherwise 400 and leave a DELIVERED order with no invoice.
     dueStamp(dto.dueDate, "dueDate");
-    const orderDate = parseOrderDate(dto.orderDate, user.role);
+    const { deliveredNow, deliveredAt, requestedDeliveryDate } = resolveSaleDelivery(dto, user);
 
-    // Delivery-date picker (owner 2026-08-25): `deliveredOn` REPLACES
-    // `deliveredNow`'s binary when present — past/today is a (back)dated
-    // delivered sale, a future date is a scheduled deliver-later order carrying
-    // that requested date. `deliveredNow` is still honoured on its own for older
-    // clients; when both are sent, `deliveredOn` wins.
-    let deliveredNow = dto.deliveredNow;
-    let deliveredAt = orderDate;
-    let requestedDeliveryDate = dto.requestedDeliveryDate;
-    if (dto.deliveredOn != null) {
-      const parsed = new Date(dto.deliveredOn);
-      if (Number.isNaN(parsed.getTime())) throw new BadRequestException("Invalid delivery date");
-      const now = new Date();
-      const endOfToday = Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
-        23,
-        59,
-        59,
-        999,
-      );
-      if (parsed.getTime() > endOfToday) {
-        deliveredNow = false;
-        requestedDeliveryDate = dto.deliveredOn;
-      } else {
-        // Past/today: the sale happened on that day, so it goes through the same
-        // staff-only gate and 2-year floor backdating has always had.
-        deliveredNow = true;
-        deliveredAt = parseOrderDate(dto.deliveredOn, user.role);
-      }
-    }
-
-    // 1. Create the backing order (reuses pricing tiers/overrides + stock lock/decrement).
+    // 1. Create the backing order (reuses pricing tiers/overrides + stock lock/decrement). With an
+    //    Idempotency-Key (counter sale only) a replay hands back the ORIGINAL order and `replay` is
+    //    set, so steps 2-4 RESUME wherever the first attempt stopped instead of starting over.
+    let replay = false as boolean;
     const order = await this.create(
       {
         customerId: dto.customerId,
@@ -2276,15 +2260,19 @@ export class OrdersService implements OnApplicationBootstrap {
         // Sales agents & commissions: threaded through so a "bill now" sale
         // honors the same per-order override as a plain order create.
         commissionRatePct: dto.commissionRatePct,
+        ...(dto.idempotencyKey ? { idempotencyKey: dto.idempotencyKey } : {}),
       },
       user,
-      { skipAutoMerge: true },
+      saleCreateOptions(sale, dto.idempotencyKey, () => (replay = true)),
     );
+    // A replayed sale that was voided or cancelled must never be resumed (no invoice, send, charge or status write).
+    if (replay) await assertSaleReplayable(this.prisma.forTenant(), order);
 
     // 2. Van sale: mark the order DELIVERED *directly*. We intentionally bypass changeStatus()
     //    here — changeStatus fires a fire-and-forget DRAFT invoice on DELIVERED, which would
     //    double-invoice this sale. (It also sidesteps the PENDING->DELIVERED transition guard.)
-    if (deliveredNow) {
+    //    No deliveredQty stamp (B1050): a correction goes through a return/credit until that lands.
+    if (deliveredNow && !(replay && order.status === OrderStatus.DELIVERED)) {
       await this.prisma.forTenant().order.update({
         where: { id: order.id },
         data: { status: OrderStatus.DELIVERED, deliveredAt: deliveredAt ?? new Date() },
@@ -2293,7 +2281,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
     // 3. Generate the invoice from the order — sets Invoice.orderId and increments
     //    OrderItem.invoicedQty (so a later delivery of a not-yet-delivered sale won't
-    //    create a second invoice).
+    //    create a second invoice; on a replay it returns the existing invoices instead).
     // W4: may return >1 sibling invoice for a mixed regulated order (standard + category).
     // Thread the operator's chosen due date / terms through so the invoice matches what
     // was shown on the "New sale" screen instead of silently falling back to the
@@ -2317,10 +2305,15 @@ export class OrdersService implements OnApplicationBootstrap {
     //    at delivery, after which staff review & send it. (dto.send is ignored
     //    for deliver-later; sending before delivery is blocked server-side.)
     if (deliveredNow) {
-      // Issue every sibling; return the primary (standard/first) invoice.
+      // Issue every sibling; return the primary (standard/first) invoice. A replay sends only what
+      // is still a DRAFT, with the OLDEST invoice as the primary.
+      const sendOpts = sale.suppressInvoiceNotify ? [{ suppressNotify: true }] : [];
       let primary: any = null;
-      for (const inv of invoices) {
-        const sent = await this.invoicesService.send(inv.id);
+      for (const inv of replay ? oldestFirst(invoices) : invoices) {
+        const sent =
+          replay && inv.status && inv.status !== InvoiceStatus.DRAFT
+            ? inv
+            : await this.invoicesService.send(inv.id, ...sendOpts);
         if (primary === null) primary = sent;
       }
       return primary;
@@ -2438,22 +2431,19 @@ export class OrdersService implements OnApplicationBootstrap {
       await this.creditGate({ ...p, excludeOrderId: id, action: "delivery", principal: user });
     }
 
-    // Refuse the cancel BEFORE writing the status — a rejection must leave the
-    // order exactly as it was, not cancelled-but-not-unwound.
+    // Refuse the cancel BEFORE writing the status — a rejection must leave the order exactly as it
+    // was. A DRAFT demotion is refused the same way (#3207 D1): it credits all the stock back and a
+    // DRAFT can then be cancelled or deleted, with the goods still out.
+    const demote = dto.status === OrderStatus.CANCELLED || dto.status === OrderStatus.DRAFT;
+    const carrier = demote ? await carrierGuard.carrierEditGuard(this, order) : null; // + S5 re-check
+    // L6: a parcel with the carrier returns, it is not cancelled (ship-billing businesses only)
+    if (carrier?.withCarrier) throwIfWithCarrier("WITH_CARRIER");
     if (dto.status === OrderStatus.CANCELLED) await this.assertCancellableOrThrow(id);
 
-    const statusUpdateData = {
-      status: dto.status,
-      // A backdated order was delivered on its business date, not on the day
-      // staff got around to marking it.
-      ...(dto.status === OrderStatus.DELIVERED
-        ? { deliveredAt: order.deliveredAt ?? order.orderDate ?? new Date() }
-        : {}),
-      // A reopened order is no longer delivered — a stale deliveredAt would
-      // keep it in delivered-on-date reports and reconcile passes.
-      ...(isDeliveredDemotion ? { deliveredAt: null } : {}),
-      ...(noteAppend ? { notes: (order.notes ?? "") + noteAppend } : {}),
-    };
+    const statusUpdateData = buildStatusUpdateData(order, dto.status, {
+      isDeliveredDemotion,
+      noteAppend,
+    });
 
     const isDraftToPendingPromotion =
       order.status === OrderStatus.DRAFT && dto.status === OrderStatus.PENDING;
@@ -2504,7 +2494,7 @@ export class OrdersService implements OnApplicationBootstrap {
             const activeItems: Array<StockLineUnits & { productId: string | null; qty: any }> =
               await tx.orderItem.findMany({
                 where: { orderId: id, status: { not: "CANCELLED" } },
-                select: { productId: true, qty: true, ...STOCK_LINE_UNIT_SELECT },
+                select: STOCK_SALE_LINE_SELECT,
               });
             // The Lane R check ran outside this tx: a product added since (a concurrent draft
             // edit) was never judged — roll back (the claim above included) and promote again.
@@ -2518,6 +2508,7 @@ export class OrdersService implements OnApplicationBootstrap {
               orderId: id,
               notes: "PROMOTE",
               performedById: user.sub,
+              customerFacing: user.role === UserRole.CUSTOMER,
             });
             return tx.order.findUniqueOrThrow({ where: { id } });
           },
@@ -2578,11 +2569,10 @@ export class OrdersService implements OnApplicationBootstrap {
           this.prisma.tenantTransaction(
             async (tx) => {
               await lockOrderForCancel(tx, id);
+              await assertNoCashRefundOnOrder(tx, id); // 409 on a cash refund, before any write
               // #2472 (2): decided from the status UNDER the lock, never the unlocked pre-read.
-              const lockedStatus = (await tx.order.findUnique({
-                where: { id },
-                select: { status: true },
-              }))!.status;
+              const lockedStatus = await lockedOrderStatus(tx, id);
+              carrierGuard.throwIfInTransitUnderLock(carrier, lockedStatus); // #3219 S5
               const cancelReturnsStock = lockedStatus !== OrderStatus.DRAFT;
               const lockedOrder = { ...order, status: lockedStatus };
               // SA-404f F2: compare-and-set on the cancellable set the pre-check used — a retry after
@@ -2643,7 +2633,9 @@ export class OrdersService implements OnApplicationBootstrap {
       // SA-434: the DRIVER's PENDING → CONFIRMED is a locked, re-derived compare-and-set.
       if (user.role === UserRole.DRIVER)
         return driverAccess.confirmPendingAsDriver(this.prisma, id, user, statusUpdateData);
-      return this.prisma.forTenant().order.update({ where: { id }, data: statusUpdateData });
+      // B1095: CAS on the status validated against (a cancel committed since the pre-read = 409), in the
+      // SAME tx as the ship-state marker when there is one (SA-689): order-ship-state.ts.
+      return updateStatusWithShipMarker(this, order, dto, user, statusUpdateData);
     })();
 
     this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {
@@ -2659,55 +2651,21 @@ export class OrdersService implements OnApplicationBootstrap {
     // happened and the customer must still hear about it.
     let invoiceFailure: ConflictException | undefined;
 
-    // Settle the order's invoice on a manual status change.
+    // Settle the order's invoice on a manual status change: at DELIVERED, and (carrier orders of a
+    // shipping tenant) at SHIPPED. Same body for both: order-status-invoicing.ts.
+    if (
+      await invoicesAtShipment(this.featureConfig, this.prisma.getTenantId(), order, dto.status)
+    ) {
+      invoiceFailure = await settleOrderInvoice(this, id, this.logger, "shipped");
+    }
     if (dto.status === OrderStatus.DELIVERED) {
-      // Manual "mark delivered" = fully delivered. If the order has a pending
-      // mirror draft, reconcile it to the order and leave it DRAFT for staff to
-      // review & send (awaited so it runs inside the tenant context). Otherwise
-      // keep the old behaviour: fire-and-forget auto-create (explicit tenantId).
-      const draft = await this.invoicesService.findOpenOrderDraft(id);
-      if (draft) {
-        await this.invoicesService.reconcileOrderDraftInvoice(id, { basis: "order" });
-      } else {
-        // B105 (REG-B105): genuinely awaited, with up to 3 attempts retrying
-        // ONLY a ConflictException (the order-number race
-        // createInvoiceFromOrderWithTenant regenerates internally on the next
-        // attempt). The old `.catch()` fired the request and never inspected
-        // the outcome — a failed auto-create silently left the order
-        // DELIVERED with nothing billed and no one told. A non-Conflict error
-        // breaks the loop immediately and surfaces through the same throw
-        // below. The status write above is NOT reverted: the order stays
-        // DELIVERED and staff retries invoicing from the order page.
-        const capturedTenantId = this.prisma.getTenantId();
-        const MAX_INVOICE_ATTEMPTS = 3;
-        let lastErr: any;
-        let attemptsMade = 0;
-        for (let attempt = 0; attempt < MAX_INVOICE_ATTEMPTS; attempt++) {
-          attemptsMade = attempt + 1;
-          try {
-            await this.invoicesService.createInvoiceFromOrderWithTenant(id, capturedTenantId);
-            lastErr = undefined;
-            break;
-          } catch (err: any) {
-            lastErr = err;
-            if (!(err instanceof ConflictException)) break;
-          }
-        }
-        if (lastErr) {
-          this.logger.error(
-            `Failed to auto-create invoice for order ${id} after ${attemptsMade} attempt(s): ${lastErr?.message ?? lastErr}`,
-          );
-          // Raised AFTER the notification block below, not here: the goods
-          // physically arrived, so the customer's "Order Delivered" push and
-          // messaging event must still fire. Throwing inline would make an
-          // invoicing failure silently suppress the delivery notification.
-          invoiceFailure = new ConflictException(
-            `The order was marked delivered, but its invoice could not be created ` +
-              `(${lastErr?.message ?? "unknown error"}). Use "Generate Invoice (full order)" on ` +
-              `the order page to retry — the order stays delivered and nothing has been billed yet.`,
-          );
-        }
-      }
+      invoiceFailure = await settleOrderInvoice(
+        this,
+        id,
+        this.logger,
+        "delivered",
+        await settledAtShipment(this.featureConfig, this.prisma.getTenantId(), order),
+      );
 
       // B108 (REG-B108): retry transient contention (serializable-isolation
       // write conflicts) up to 3 times with a short backoff before giving up.
@@ -2747,7 +2705,7 @@ export class OrdersService implements OnApplicationBootstrap {
         title: "Order Confirmed ✓",
         body: `Your order #${order.orderNumber} has been confirmed.`,
       },
-      [OrderStatus.OUT_FOR_DELIVERY]: {
+      [OrderStatus.OUT_FOR_DELIVERY]: pickupOutForDeliveryPush(order) ?? {
         title: "Out for Delivery 🚚",
         body: `Your order #${order.orderNumber} is on its way!`,
       },
@@ -2764,7 +2722,14 @@ export class OrdersService implements OnApplicationBootstrap {
         body: `Your order #${order.orderNumber} has been cancelled.`,
       },
     };
-    const notif = notifMap[dto.status];
+    // SHIP orders say "shipped", not "Out for Delivery" (PICKUP wording: #3211, not touched here).
+    const notif =
+      dto.status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP
+        ? // told once, like the email: an unmark + re-mark keeps shippedAt and sends nothing
+          isFirstShipment(order)
+          ? shippedPushCopy(order)
+          : undefined
+        : notifMap[dto.status];
     if (notif) {
       this.notifications
         .sendToCustomer(order.customerId, notif.title, notif.body, { orderId: id })
@@ -2782,8 +2747,17 @@ export class OrdersService implements OnApplicationBootstrap {
       // the (now real, via EmailChannelProvider) EMAIL/PORTAL/WA/SMS channels.
       [OrderStatus.CANCELLED]: NotificationEvent.CANCELLED,
     };
-    const messagingEvent = messagingEventMap[dto.status];
-    if (messagingEvent) {
+    // A PICKUP handover fires READY_FOR_PICKUP instead of the driver-named template (order-pickup-wording.ts).
+    const pickupHandled = notifyPickupHandover(this.messaging, order, dto.status, user.sub || null);
+    const messagingEvent = pickupHandled ? undefined : messagingEventMap[dto.status];
+    if (
+      messagingEvent === NotificationEvent.OUT_FOR_DELIVERY &&
+      order.fulfillPath === FulfillPath.SHIP
+    ) {
+      // Carrier-shipped: ORDER_SHIPPED, not "out for delivery today" (customised wording kept per channel).
+      // E-c: an unmark + re-ship keeps shippedAt, so the customer is told once.
+      if (isFirstShipment(order)) void notifyOrderShipped(this, order, user.sub || null);
+    } else if (messagingEvent) {
       let driverName = "your driver";
       if (messagingEvent === NotificationEvent.OUT_FOR_DELIVERY && order.routeRunId) {
         const run = await this.prisma.forTenant().routeRun.findFirst({
@@ -2791,21 +2765,11 @@ export class OrdersService implements OnApplicationBootstrap {
           select: { driver: { select: { contactName: true } } },
         });
         driverName = run?.driver?.contactName ?? "your driver";
-      } else if (
-        messagingEvent === NotificationEvent.OUT_FOR_DELIVERY &&
-        order.fulfillPath === FulfillPath.SHIP
-      ) {
-        // Ad-hoc trips + fulfillment mode: a SHIP order has no route run, so the
-        // "Out for Delivery" notification names the carrier instead of a driver.
-        driverName = order.shippingCarrier ?? "the carrier";
       }
       const vars: Record<string, string> = {
         orderNumber: order.orderNumber ?? "",
         ...(messagingEvent === NotificationEvent.ORDER_CONFIRMED
-          ? {
-              deliveryDate: formatDate(order.requestedDeliveryDate),
-              orderTotal: formatMoney(updated.total),
-            }
+          ? orderConfirmedVars(order, updated.total) // B1127: SHIP wording, no dangling date
           : {}),
         ...(messagingEvent === NotificationEvent.OUT_FOR_DELIVERY ? { driverName } : {}),
         ...(messagingEvent === NotificationEvent.DELIVERED
@@ -2895,7 +2859,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // re-decrements nothing — era consistency, not a regression).
         const cancelledLines = await tx.orderItem.findMany({
           where: { orderId: id, status: ItemStatus.CANCELLED },
-          select: { productId: true, qty: true, deliveredQty: true, ...STOCK_LINE_UNIT_SELECT },
+          select: STOCK_SALE_LINE_SELECT,
         });
 
         // Revert cancelled line items back to PENDING
@@ -2932,9 +2896,9 @@ export class OrdersService implements OnApplicationBootstrap {
     orderId: string,
     dto: UpdateOrderItemsDto,
     user?: JwtPayload,
-    // B215/B465: set ONLY by the staff create-merge branch (OrdersController.create). Not
-    // reachable from a request body — the PATCH routes and the buyer merge call with three
-    // arguments. isCreateMerge: this replace-all IS the create path's own auto-merge, so a
+    // B215/B465: `isCreateMerge` is set ONLY by the staff create-merge branch (OrdersController.create),
+    // never reachable from a request body (the PATCH routes call with three arguments). B1094: the
+    // buyer merge adds a fourth argument carrying ONLY `idempotency`. isCreateMerge: this replace-all IS the create path's own auto-merge, so a
     // line NEW to the order (no existing counterpart) skips the reason-required guard below,
     // matching separate create's own unchecked behavior — never inferred from the DTO/order
     // state, only ever set here by the one call site that means it.
@@ -3024,9 +2988,7 @@ export class OrdersService implements OnApplicationBootstrap {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
       if (!owner || order.customerId !== owner.id) throw new ForbiddenException();
-      throw new ForbiddenException(
-        "This order is already out for delivery. Send a change request instead.",
-      );
+      throw new ForbiddenException(await carrierGuard.buyerEditClosedMessage(this, order)); // B1135
     }
 
     // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice
@@ -3061,10 +3023,12 @@ export class OrdersService implements OnApplicationBootstrap {
     // a SENT pending-mirror flips to DRAFT so the reconcile below re-syncs into it, and
     // a paid one throws cleanly before any mutation so money never detaches from a sent
     // document. No-op when there's no such invoice.
-    const postDeliveryEdit = POST_DELIVERY_EDIT_STATUSES.includes(order.status);
+    // B1083 (D2): with the carrier, the shipment invoice is the bill: re-synced in place, never reverted
+    const carrier = await carrierGuard.carrierEditGuard(this, order);
+    const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrier); // B215 + D2
     await inlineReturn.preflightInlineReturn(inlineRet, order, user, !postDeliveryEdit); // #2178
-    if (!postDeliveryEdit) {
-      await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId);
+    if (!postDeliveryEdit && !carrier.billsShip) {
+      await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId); // ship-billing: under the lock (S2)
     }
 
     // W6: license guard on edits. A regulated line added on edit (or via a buyer
@@ -3154,6 +3118,16 @@ export class OrdersService implements OnApplicationBootstrap {
         // orderItem write below, so it is the true pre-edit state.
         await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+        let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
+        let markerCarry: Map<string, number> | undefined; // SA-716 M2: the create-merge fold only
+        const carrierLocked = await carrierGuard.carrierRevertUnderLock(
+          tx,
+          orderId,
+          carrier,
+          postDeliveryEdit,
+          () =>
+            this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId, tx, { lockRows: true }),
+        );
         const heldItems = await tx.orderItem.findMany({
           where: { orderId },
           // B709: plus every column the diff branch reads off an existing line (see heldOrSnapshot).
@@ -3195,10 +3169,11 @@ export class OrdersService implements OnApplicationBootstrap {
           unitEdit.assertNoPackRedenomination(li, item, unitRows.get(item)); // SA-474
         }
 
-        // Customer/Driver path: replace items by productId. A4: a DRIVER diff
-        // payload skips this branch entirely — it merges below like an operator
-        // edit (with prices already stripped), so untouched lines survive.
+        // Customer/Driver path: replace items by productId. A4: a DRIVER diff payload skips this branch
+        // entirely (merges below, prices stripped). Only the DRIVER half recreates unlisted rows' ids.
         // SA-407: a buyer's per-line diff (a unit line's count / a removal) merges like staff's too.
+        // SA-696a (decided, fail closed): this path recreates every line (new ids), so a carrier order with an
+        // unlisted line reads as a removal and is refused NO_REDUCE even when nothing changed; nothing written.
         if (
           (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) &&
           !isDiffPayload
@@ -3215,7 +3190,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // Customers send items as { productId, qty } — replace all line items
           const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
           const products = await tx.product.findMany(portalGateArgs(productIds));
-          assertBuyerLines(user.role, products, { held: heldItems }); // the LOCKED held lines (n1)
+          assertBuyerLines(user, products, { held: heldItems }); // the LOCKED held lines (n1)
           const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
           assertSellableLines(products); // WS8
           // B297 (SA-098a): this pack-line create() is disconnected from `uctx.categoryMap`
@@ -3267,6 +3242,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // buyer path. Drivers keep today's authoring behavior.
           // SA-422 (1): a buyer save never deletes the seller's CANCELLED rows (F07 reopen marks).
           const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items); // #2717 SA-591(b)
+          lineIdentity = "recreated";
           await tx.orderItem.deleteMany({
             where: {
               orderId,
@@ -3493,9 +3469,9 @@ export class OrdersService implements OnApplicationBootstrap {
           };
 
           if (replaceAll) {
-            // Replace-all: client sends the full item list. Delete existing items then
-            // re-create, honoring any per-line price override and any boxes/pieces
-            // split (boxed products use BOX-price proration).
+            // SA-696a (decided, fail closed): recreates every line (new ids), so a carrier order with an unlisted
+            // line is refused NO_REDUCE even when nothing changed. Replace-all: the client sends the full list;
+            // delete then re-create, honoring per-line price overrides and boxes/pieces splits (BOX proration).
             const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
             const products = await tx.product.findMany({ where: { id: { in: productIds } } });
             const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
@@ -3549,6 +3525,8 @@ export class OrdersService implements OnApplicationBootstrap {
 
             // #2717 SA-591(b): a surviving FIXED line keeps its stamp + components (I11).
             const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items);
+            if (opts?.isCreateMerge) markerCarry = await captureMarkerCarry(tx, orderId);
+            lineIdentity = "recreated";
             await tx.orderItem.deleteMany({ where: { orderId } });
             // R2: full replace — stamp position from the client's array order.
             let pos = 0;
@@ -3627,7 +3605,7 @@ export class OrdersService implements OnApplicationBootstrap {
               addProductIds.length > 0
                 ? await tx.product.findMany(portalGateArgs(addProductIds))
                 : [];
-            assertBuyerLines(user?.role, addProducts);
+            assertBuyerLines(user, addProducts);
             const addProductMap = new Map<string, any>(addProducts.map((p: any) => [p.id, p]));
             assertSellableLines(addProducts); // WS8
             // B297 (SA-098a): `uctx.categoryMap` only covers unit-aware `unitCtx.products` —
@@ -4245,6 +4223,9 @@ export class OrdersService implements OnApplicationBootstrap {
         if (order.status !== "DRAFT") {
           await this.settleStockForEdit(tx, order, heldItems, activeItems, user, undefined, {
             allowOversell,
+            blockCredits: carrierLocked,
+            lineIdentity,
+            markerCarry,
           });
           creditGate = () =>
             assertWithinCreditLimit(
@@ -4428,20 +4409,31 @@ export class OrdersService implements OnApplicationBootstrap {
     // Credit-note intents: sync operator selection changes, then settle (shrink or
     // top-up) against the order's current invoices. Runs even when line-resync was
     // skipped for partial billing — the credits are payment-level, not line-level.
-    // SA-269: the WHOLE tx re-runs on a 40001/40P01 conflict (bounded); every step is idempotent.
-    await retryOnTxConflict(`credit sync order=${orderId}`, () =>
+    await this.syncAndSettleOrderCredits(orderId, customerId, appliedCreditNotes);
+  }
+
+  private async syncCreateCredits(id: string, cId: string, n?: AppliedCreditNoteDto[]) {
+    if (n === undefined) return;
+    await savedCreditsPending(id, () => this.syncAndSettleOrderCredits(id, cId, n));
+  }
+
+  /**
+   * The credit tx shared by create() and reconcileOrderAfterEdit (SA-706 MUST 2): the Order row
+   * FIRST (SA-218 house order; tenant-less sessions lock by id), so the sync's OrderCreditNote insert
+   * (FK KEY SHARE on the Order and the note) never upgrades against a second create applying the same
+   * note. SA-269: the WHOLE tx re-runs on a 40001/40P01 conflict (bounded); every step is idempotent.
+   * `undefined` skips the sync (an unverified replay must not re-point credits); settle still runs.
+   */
+  private async syncAndSettleOrderCredits(
+    orderId: string,
+    customerId: string,
+    appliedCreditNotes: AppliedCreditNoteDto[] | undefined,
+  ): Promise<void> {
+    const tenantId = this.prisma.getTenantId();
+    await retryCreditTx(`credit sync order=${orderId}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
-          // SA-218 (house lock order: advisory → Return → Order → Invoice): the Order row FIRST,
-          // before the sync/settle below write any Invoice, so the sync's OrderCreditNote insert (an
-          // FK KEY SHARE on this Order) is a no-wait on a row this tx holds, never Invoice → Order.
-          // No caller still holds the Order when this opens (updateOrderItems' fold tx committed;
-          // replayMergeReconcile has none — SA-093 trap (i)). A tenant-less (SUPER_ADMIN) session
-          // is unscoped anyway, so it locks by id rather than silently locking nothing.
-          const tenantId = this.prisma.getTenantId();
-          await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${orderId} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
-          // EXPLICIT skip: `undefined` means "never touch the stored selection" (see the doc
-          // comment) — an unverified replay lands here and must not re-point this order's credits.
+          await lockOrderRow(tx, tenantId, orderId);
           if (appliedCreditNotes !== undefined) {
             await this.creditNotes.syncOrderCreditSelections(
               tx,
@@ -4491,6 +4483,7 @@ export class OrdersService implements OnApplicationBootstrap {
       where: { id: orderId, customerId },
       select: {
         status: true,
+        ...{ id: true, tenantId: true, fulfillPath: true, shippedAt: true }, // #3219 S4: carrier routing
         lineItems: { select: { qty: true, invoicedQty: true } },
       },
     });
@@ -4498,10 +4491,11 @@ export class OrdersService implements OnApplicationBootstrap {
       this.logger.warn(`replay reconcile skipped: order not found order=${orderId}`);
       return;
     }
-    // Derived from the CURRENT status, which is provably the same routing the fold used: the
-    // only status the fold itself changes is CONFIRMED -> PENDING, and both are outside
-    // POST_DELIVERY_EDIT_STATUSES.
-    const postDeliveryEdit = POST_DELIVERY_EDIT_STATUSES.includes(order.status);
+    // Routed by the SAME rule as the fold (`resyncsInPlace`, order-carrier-guard.ts), on the order's
+    // CURRENT state. That matches the fold's routing unless the state moved in between (a ship /
+    // unmark after the fold committed changes `withCarrier`); then the current state decides.
+    const carrierNow = await carrierGuard.carrierEditGuard(this, order); // #3219 S4: as the fold routed
+    const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrierNow);
     let skipInPlaceResync = false;
     if (postDeliveryEdit) {
       // Same BILLABLE filter the predicate itself applies (`shouldSkipInPlaceResync`,
@@ -4739,6 +4733,7 @@ export class OrdersService implements OnApplicationBootstrap {
         : {};
     // WP3: hoisted for the same reason — the credit guard below runs inside the tx.
     const creditCheckEnabled = await this.isCreditLimitCheckEnabled();
+    const carrier = await carrierGuard.carrierEditGuard(this, order); // SA-696, read off the tx's connection
 
     const { subtotal, tax, total, shippingFee } = await this.prisma.tenantTransaction(
       async (tx: any) => {
@@ -5142,7 +5137,10 @@ export class OrdersService implements OnApplicationBootstrap {
         // is always PENDING/CONFIRMED/OUT_FOR_DELIVERY here — see the
         // CHANGE_WINDOW_CLOSED guard above — so settleStockForEdit's internal
         // DRAFT no-op never triggers on this call site).
-        await this.settleStockForEdit(tx, order, heldItems, activeItems, resolver);
+        const blockCredits = await carrierGuard.blockCreditsUnderLock(tx, order.id, carrier); // SA-696
+        await this.settleStockForEdit(tx, order, heldItems, activeItems, resolver, undefined, {
+          blockCredits,
+        });
         await assertWithinCreditLimit(tx, order.customerId, order.id, total, creditCheckEnabled);
 
         // NO status revert here — post-dispatch orders must NOT flip to PENDING
@@ -5254,6 +5252,8 @@ export class OrdersService implements OnApplicationBootstrap {
       include: { invoices: { select: { id: true } }, transaction: { select: { id: true } } },
     });
     if (!order) throw new NotFoundException("Order not found");
+    // B1082: a parcel with the carrier is returned, not deleted (credits its stock back otherwise).
+    throwIfWithCarrier(await carrierGuard.carrierBlocked(this, order));
 
     const isStaff =
       user == null || user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
@@ -5299,9 +5299,9 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     await this.prisma.tenantTransaction(async (tx) => {
-      // B214 (REG-B214): this loop hard-deletes invoices WITHOUT going through
-      // InvoicesService.deleteInvoice (ledger-reversal duplication, see below), so it must refuse
-      // on its own — same shared guard, before any write (L-072, L-081).
+      await assertNoCashRefundOnOrder(tx, id); // 409 on a cash refund, before any write
+      // B214 (REG-B214): this loop deletes invoices WITHOUT InvoicesService.deleteInvoice (ledger
+      // reversal duplicated below), so it refuses on its own, before any write (L-072, L-081).
       await assertNoUnspentSourcedCredits(
         tx,
         order.invoices.map((inv) => inv.id),

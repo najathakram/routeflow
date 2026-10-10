@@ -22,19 +22,23 @@ import { CreateOperatorDto } from "./dto/create-operator.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { ChangeUserStatusDto } from "./dto/change-user-status.dto";
 import { PreferencesBodyPipe } from "./dto/update-preferences.dto";
+import { OperatorPermissionsService } from "../auth/permissions/operator-permissions.service";
 
 @ApiTags("users")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller("users")
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly permissions: OperatorPermissionsService,
+  ) {}
 
   @Get()
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
-  findAll(@Query() query: ListUsersDto) {
-    return this.usersService.findAll(query);
+  findAll(@Query() query: ListUsersDto, @CurrentUser() user: JwtPayload) {
+    return this.usersService.findAll(query, user.role);
   }
 
   @Post("operator")
@@ -47,6 +51,12 @@ export class UsersController {
   @Get("me")
   getMe(@CurrentUser() user: JwtPayload) {
     return this.usersService.findById(user.sub);
+  }
+
+  /** The caller's feature groups (any authenticated staff role). Declared before `:id` so it is not shadowed. */
+  @Get("me/permissions")
+  getMyPermissions(@CurrentUser() user: JwtPayload) {
+    return this.permissions.mine(user);
   }
 
   @Get("me/preferences")
@@ -85,21 +95,25 @@ export class UsersController {
     }
     const isPrivileged = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
     const safeDto: UpdateUserDto = isPrivileged ? dto : { ...dto, role: undefined };
-    return this.usersService.updateUser(id, safeDto, user.username);
+    return this.usersService.updateUser(id, safeDto, user.username, user.role);
   }
 
   @Patch(":id/status")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  changeStatus(@Param("id") id: string, @Body() dto: ChangeUserStatusDto) {
-    return this.usersService.changeStatus(id, dto);
+  changeStatus(
+    @Param("id") id: string,
+    @Body() dto: ChangeUserStatusDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.usersService.changeStatus(id, dto, user.role);
   }
 
   @Post(":id/reset-password")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  resetPassword(@Param("id") id: string) {
-    return this.usersService.resetPassword(id);
+  resetPassword(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.usersService.resetPassword(id, user.role);
   }
 
   /** Clear a login lockout early (10 failed attempts → 15-min lock) so the
@@ -107,8 +121,8 @@ export class UsersController {
   @Post(":id/unlock")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
-  unlock(@Param("id") id: string) {
-    return this.usersService.unlockUser(id);
+  unlock(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.usersService.unlockUser(id, user.role);
   }
 
   @Patch(":id/admin")
@@ -122,7 +136,7 @@ export class UsersController {
   @Patch(":id/driver-permit")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  toggleDriverPermit(@Param("id") id: string) {
-    return this.usersService.toggleDriverPermit(id);
+  toggleDriverPermit(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.usersService.toggleDriverPermit(id, user.role);
   }
 }

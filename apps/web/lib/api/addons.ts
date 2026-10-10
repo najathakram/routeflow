@@ -4,6 +4,7 @@ import {
   RECURRING_ROUTES_ADDON,
 } from "@routeflow/types";
 import { useTenantAddons } from "./tobacco";
+import { isUnsetCapabilities, useFulfilmentCaps } from "../fulfilment-caps";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 //
@@ -80,9 +81,26 @@ export function useDeliveryAccess(): { enabled: boolean; resolved: boolean } {
   return { enabled: od.enabled, resolved: od.resolved };
 }
 
-export function useRoutesAccess(): { enabled: boolean; resolved: boolean } {
+/** `pending` is true only while the addons read is in flight (not after it errored), so a layout
+ *  reservation (dashboard CLS) can never outlive the read. */
+export function useRoutesAccess(): { enabled: boolean; resolved: boolean; pending: boolean } {
   const rr = useRecurringRoutes();
-  return { enabled: rr.enabled, resolved: rr.resolved };
+  return { enabled: rr.enabled, resolved: rr.resolved, pending: rr.isLoading };
+}
+
+// ─── Fleet (any dispatch feature at all) ──────────────────────────────────────
+//
+// A tenant is FLEET-OFF only when its fulfilment model was explicitly SET and the server says it holds
+// neither recurring_routes nor order_delivery (`capabilities.fulfilment.fleet`): it ships by carrier only,
+// so the route / driver / delivery-run surfaces are noise (fleet-off clean UI). Every other tenant sees
+// exactly the UI it always did: an UNSET tenant (no fulfilment mode) keeps every surface whatever its
+// module state, and so does an inconsistent one (`consistent === false`), a loading or errored answer,
+// and an older API without the block (all of which read as the UNSET capability). Display-only: never a
+// server gate.
+export function useFleetAccess(): { fleet: boolean; loading: boolean } {
+  const caps = useFulfilmentCaps();
+  if (isUnsetCapabilities(caps)) return { fleet: true, loading: false };
+  return { fleet: caps.fleet, loading: false };
 }
 
 // ─── MSRP on invoices (display-only suggested retail price) ───────────────────

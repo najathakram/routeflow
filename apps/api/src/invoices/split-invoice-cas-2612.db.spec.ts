@@ -3,12 +3,15 @@
  * (`createInvoiceFromOrder` → `createSplitInvoices`) racing for the same order line.
  *
  * T2 (a raw pg connection) holds the OrderItem row FOR UPDATE. Two creations both read
- * `remaining = 96` before their transaction, create their invoice(s) inside it, and then block on the
- * invoicedQty bump: two waiters via `pg_blocking_pids` (stats snapshot cleared per poll). T2
- * commits; the bumps then run one after the other:
+ * `remaining = 96` before their transaction. Since SA-706 each takes the ORDER row lock first, so the
+ * second never reaches the bump: A takes the Order, creates its invoice(s) and blocks on T2 at the
+ * invoicedQty bump, and B is blocked BY A on the Order row (one pair "A blocked by T2, B blocked by A"
+ * via `pg_blocking_pids`, stats snapshot cleared per poll; without the Order lock both wait on T2 and
+ * the pair does not exist). T2 commits; A finishes, B runs on its own stale read:
  *   - fixed code (a CAS on the read invoicedQty/qty/status): one creation succeeds, the other is a
  *     409; invoicedQty = 96; the order has ONE invoice;
- *   - pre-fix code (an unconditional increment): both succeed; invoicedQty = 192; two invoices.
+ *   - with the CAS replaced by an unconditional increment: both succeed; invoicedQty = 192; two
+ *     invoices (the outcome cases go red; the direct CAS pin lives in partial-invoice-cas-2070).
  * Second case: a full-order creation racing a PARTIAL for the same 96 pieces (#2070's path):
  * exactly one of them bills the line.
  * No spy and no symbol from partial-invoice-cas.ts.
@@ -225,12 +228,14 @@ describeDb(
       return { tenantId: tenant.id, orderId: order.id, orderItemId: item.id };
     }
 
-    /** T2 holds the OrderItem row; `starts` run and must block (`waiters` of them); `during(t2)`; T2 commits. */
-    async function holdLine(
-      orderItemId: string,
-      starts: Array<() => Promise<unknown>>,
-      during: (t2: Client) => Promise<void> = async () => undefined,
-    ) {
+    /**
+     * SA-706 Order-first serialization: a T2 on the OrderItem row; the two creations do NOT both reach the bump. The
+     * first takes the Order row, creates its invoice and blocks on T2 (the OrderItem bump); the second is
+     * blocked BY THE FIRST on the Order row. Waits for exactly that chain (bounded 3 s, inside the 5 s tx
+     * timeout, never a silent poll timeout) and reports it: `chain` = pairs (A blocked by T2, B blocked by A),
+     * `waiting` = backends blocked by T2 (1 when the lock-first order holds; 2 and chain 0 without it).
+     */
+    async function holdLineChain(orderItemId: string, starts: Array<() => Promise<unknown>>) {
       const t2 = new Client({ connectionString: process.env.DATABASE_URL });
       await t2.connect();
       try {
@@ -243,19 +248,25 @@ describeDb(
             (e) => ({ ok: false as const, e }),
           ),
         );
-        let waiting = 0;
-        for (let i = 0; i < 400 && waiting < starts.length; i++) {
+        let chain = 0;
+        for (let i = 0; i < 120 && chain < 1; i++) {
           const q = await t2.query(
-            `SELECT pg_stat_clear_snapshot(), (SELECT count(*)::int FROM pg_stat_activity
-             WHERE $1 = ANY(pg_blocking_pids(pid))) AS n`,
+            `SELECT pg_stat_clear_snapshot(), (SELECT count(*)::int FROM pg_stat_activity b
+               JOIN pg_stat_activity a ON a.pid = ANY(pg_blocking_pids(b.pid))
+               WHERE $1 = ANY(pg_blocking_pids(a.pid))) AS n`,
             [pid],
           );
-          waiting = q.rows[0].n;
-          if (waiting < starts.length) await new Promise((x) => setTimeout(x, 25));
+          chain = q.rows[0].n;
+          if (chain < 1) await new Promise((x) => setTimeout(x, 25));
         }
-        await during(t2);
+        const waiting = (
+          await t2.query(
+            `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+            [pid],
+          )
+        ).rows[0].n;
         await t2.query("COMMIT");
-        return { waiting, results: await Promise.all(results) };
+        return { waiting, chain, results: await Promise.all(results) };
       } finally {
         await t2.end().catch(() => undefined);
       }
@@ -273,29 +284,45 @@ describeDb(
 
     const expectOneWinner = async (
       s: { orderId: string; orderItemId: string },
-      waiting: number,
+      chain: number,
       results: Array<{ ok: boolean; e?: any }>,
     ) => {
-      expect(waiting).toBe(2); // both really reached the bump before either committed
+      expect(chain).toBe(1); // the scenario really ran: A on T2, B behind A on the Order row
       expect(results.filter((r) => r.ok)).toHaveLength(1);
       const refused = results.filter((r) => !r.ok);
       expect(refused).toHaveLength(1);
       expect(refused[0].e).toBeInstanceOf(ConflictException);
       const line = await prisma.orderItem.findUniqueOrThrow({ where: { id: s.orderItemId } });
-      expect(Number(line.invoicedQty)).toBe(96); // pre-fix: 192
-      expect(await prisma.invoice.count({ where: { orderId: s.orderId } })).toBe(1); // pre-fix: 2
+      expect(Number(line.invoicedQty)).toBe(96); // CAS replaced by an increment: 192
+      expect(await prisma.invoice.count({ where: { orderId: s.orderId } })).toBe(1); // ... 2
     };
+
+    it.each([
+      ["two full-order creations", (s: any) => [full(s), full(s)]],
+      ["a full-order creation and a partial", (s: any) => [full(s), partial(s)]],
+    ])(
+      "SA-706 Order-first serialization: %s - the second is blocked BY THE FIRST on the Order row, not by T2",
+      async (_label, starts) => {
+        const s = await seedLine();
+        const { waiting, chain, results } = await holdLineChain(s.orderItemId, starts(s));
+        expect(chain).toBe(1); // without the Order lock: waiting 2, chain 0
+        expect(waiting).toBe(1); // only the first reached the bump
+        for (const r of results as Array<{ ok: boolean; e?: any }>) {
+          if (!r.ok) expect(String(r.e?.message)).not.toMatch(/40P01|deadlock detected/i);
+        }
+      },
+    );
 
     it("two full-order creations for the same 96 pieces: one succeeds, one 409; invoicedQty 96; one invoice", async () => {
       const s = await seedLine();
-      const { waiting, results } = await holdLine(s.orderItemId, [full(s), full(s)]);
-      await expectOneWinner(s, waiting, results as any);
+      const { chain, results } = await holdLineChain(s.orderItemId, [full(s), full(s)]);
+      await expectOneWinner(s, chain, results as any);
     });
 
     it("a full-order creation racing a partial for the same 96 pieces: exactly one bills the line", async () => {
       const s = await seedLine();
-      const { waiting, results } = await holdLine(s.orderItemId, [full(s), partial(s)]);
-      await expectOneWinner(s, waiting, results as any);
+      const { chain, results } = await holdLineChain(s.orderItemId, [full(s), partial(s)]);
+      await expectOneWinner(s, chain, results as any);
     });
   },
 );

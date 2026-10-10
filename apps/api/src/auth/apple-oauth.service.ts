@@ -27,6 +27,12 @@ import { casLinkProviderId, resolveBySubThenEmail } from "./oauth-account-link";
 // GoogleAuthResult is reused verbatim (SA-418 §1) — Apple sign-in returns the same
 // discriminated union so downstream consumers (mobile, tests) don't branch on provider.
 import type { GoogleAuthResult } from "./google-oauth.service";
+import {
+  BUYER_ACCESS_AUDIENCE,
+  BUYER_REFRESH_AUDIENCE,
+  STAFF_ACCESS_AUDIENCE,
+  STAFF_REFRESH_AUDIENCE,
+} from "./session-token";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -737,6 +743,13 @@ export class AppleOAuthService {
     tenantSlug: string | null,
     deviceInfo?: DeviceInfo,
   ): Promise<TokenPair> {
+    // #2159 S1: an Apple sign-in is an interactive sign-in too — stamp lastLoginAt exactly as
+    // AuthService.login() and the Google path do (best-effort; a failed stamp never blocks it).
+    try {
+      await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    } catch (err) {
+      this.logger.warn(`lastLoginAt stamp failed for user ${user.id}: ${(err as Error).message}`);
+    }
     const jwtConfig = this.configService.get<{
       secret: string;
       refreshSecret: string;
@@ -763,11 +776,16 @@ export class AppleOAuthService {
     if (claims) Object.assign(payload, claims);
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
     const refreshToken = this.jwtService.sign(
       { sub: user.id, type: "staff" },
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: STAFF_REFRESH_AUDIENCE,
+      },
     );
     await this.storeUserRefreshToken(user.id, refreshToken, deviceInfo);
     return { accessToken, refreshToken };
@@ -794,11 +812,16 @@ export class AppleOAuthService {
     };
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: BUYER_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
     const refreshToken = this.jwtService.sign(
       { sub: buyerAccountId, type: "buyer" },
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: BUYER_REFRESH_AUDIENCE,
+      },
     );
     const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
     const decoded = this.jwtService.decode(refreshToken);

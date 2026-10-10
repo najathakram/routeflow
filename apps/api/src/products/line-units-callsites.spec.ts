@@ -116,6 +116,14 @@ const NON_WRITERS = new Set([
   // B948: reads the live pack ONLY as the LAST fallback to express an inline return's PIECES on a legacy
   // line's own qty axis (the same fallback order the inline pricing uses); writes no line, snapshots nothing.
   "credit-notes/line-credit-headroom.ts",
+  // Price-history popover (step 2A): read-only. Reads the live pack ONLY as salePackOf's GATE for a
+  // no-snapshot line (is the product boxed today?), exactly as product-insights does; every row's unit
+  // and pack come from the line's own snapshot. Writes no line.
+  "customers/customer-price-history.service.ts",
+  // "Usually buys" / "Order again" (staff New Order): read-only. Passes the product's CURRENT catalog columns
+  // (incl. unitsPerBox) through to the order builder, which prices every added line through its own add-line
+  // path; a past line's own snapshot (unitsPerBox/unitLabel) is returned as ordered. Writes no line.
+  "customers/customer-order-suggestions.service.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

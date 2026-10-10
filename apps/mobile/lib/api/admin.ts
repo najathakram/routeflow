@@ -6,7 +6,14 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type { LineComponentView, TripEligibilityRow, TripOrigin } from "@routeflow/types";
+import type {
+  InventorySettings,
+  LineComponentView,
+  OrderCancelBlockedReason,
+  UpdateInventorySettingsRequest,
+  TripEligibilityRow,
+  TripOrigin,
+} from "@routeflow/types";
 export type { TripEligibilityRow, TripIneligibleReason, TripOrigin } from "@routeflow/types";
 
 export interface PaginationMeta {
@@ -134,6 +141,8 @@ export interface AdminOrder {
    * order has one — not optional, just like the API's `@default(ROUTE)`.
    */
   fulfillPath: "ROUTE" | "SHIP";
+  /** `GET /orders/:id` only: why the server will not cancel the order (the parcel is with the carrier). */
+  cancelBlockedReason?: OrderCancelBlockedReason | null;
   createdAt: string;
   customer?: {
     id: string;
@@ -377,6 +386,11 @@ export interface AdminInvoice {
    *  edit/send (lib/invoices-logic.ts isPendingOrderMirror). Raw scalar,
    *  previously untyped — same situation as orderId. */
   deliveryBatchId?: string | null;
+  /** The server's one answer to "is this a pending order mirror" (invoice detail only). Wins over
+   *  the client derivation: only the server knows a shipped carrier order's invoice is unlocked. */
+  pendingMirror?: boolean;
+  /** The server's default PDF stage (invoice detail only): a shipment invoice is "final" before delivery. */
+  pdfVariant?: "draft" | "final";
   /** Invoice-level fields the mobile builders can now WRITE — all raw scalars
    *  the API already returned, previously untyped (needed to hydrate the edit
    *  screen and render Reference/Subject on the detail). */
@@ -795,6 +809,9 @@ export interface AdminReturn {
   status: string;
   reason: string;
   notes?: string;
+  /** How a REFUNDED return was resolved (the list returns the whole row): drives the "Store credit" pill. */
+  refundMethod?: string | null;
+  creditNoteId?: string | null;
   createdAt: string;
   order?: { orderNumber: string };
   customer?: { businessName: string };
@@ -1188,6 +1205,22 @@ export function useUpdateBusinessSettings() {
   return useMutation<BusinessSettings, Error, BusinessSettings>({
     mutationFn: (data) => apiClient.patch("/settings", data).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
+  });
+}
+
+/** GET/PATCH /settings/inventory — the business-wide out-of-stock ordering setting. */
+export function useInventorySettings() {
+  return useQuery<InventorySettings>({
+    queryKey: ["inventory-settings"],
+    queryFn: () => apiClient.get("/settings/inventory").then((r) => r.data),
+  });
+}
+
+export function useUpdateInventorySettings() {
+  const qc = useQueryClient();
+  return useMutation<InventorySettings, Error, UpdateInventorySettingsRequest>({
+    mutationFn: (data) => apiClient.patch("/settings/inventory", data).then((r) => r.data),
+    onSuccess: (saved) => qc.setQueryData(["inventory-settings"], saved),
   });
 }
 

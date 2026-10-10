@@ -45,6 +45,9 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-09-29-early.md](api/landing-2026-09-29-early.md) | Landing 2026-09-29 early: scanning package, component price, paying predicate, run/stop lock order, Jest cache, buyer types, order credits |
 | [api/landing-2026-09-29-midday.md](api/landing-2026-09-29-midday.md) | Landing 2026-09-29 midday: unitLineCount tripwire, lint:migrations SET LOCAL, plane deploy ids, shared PaymentMethod |
 | [api/landing-2026-09-29-late.md](api/landing-2026-09-29-late.md) | Landing 2026-09-29 late: staff price-override rule, driver mode 1a, push-guard, lint-migrations exemptions |
+| [api/landing-2026-10-06-w4-w10.md](api/landing-2026-10-06-w4-w10.md) | Landing 2026-10-06 (windows 4 to 10): merge-by-path predicate, one fulfil-path resolver, partial-invoice guard, comp add-ons, order suggestions |
+| [api/landing-2026-10-05-w6.md](api/landing-2026-10-05-w6.md) | Landing 2026-10-05 (window 6): tenant guard for unique lookups, bulk price adjustment preflight, business profiles, multi-key advisory locks |
+| [api/landing-2026-10-04-w1.md](api/landing-2026-10-04-w1.md) | Landing 2026-10-04 (window 1): self-service allowlist, template lines, admin protection, fulfilment capability, price history, invoice totals guard |
 | [api/landing-2026-10-01-w12-w27.md](api/landing-2026-10-01-w12-w27.md) | Landing 2026-10-01 (w12-w27): credit-note reissue, bill locks, sign-in handoff, Apple sign-in, scan lookup, movements CSV |
 | [api/landing-2026-09-30-w9-w11.md](api/landing-2026-09-30-w9-w11.md) | Landing 2026-09-30 (windows 9+11): CSV import columns, M3 mixed-pack documents, CSV export, messaging triggers, PO receive pack |
 | [api/landing-2026-09-30-drift-c38f2b0.md](api/landing-2026-09-30-drift-c38f2b0.md) | Landing 2026-09-30 (earlier drift): M2 recipes, db-lane selector, lint wrap rule, linear return credits, Google sub-first sign-in |
