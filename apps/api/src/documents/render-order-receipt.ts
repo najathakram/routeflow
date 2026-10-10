@@ -1,3 +1,4 @@
+import { taxRowLabel } from "@routeflow/pricing";
 import type { ReceiptModel } from "@routeflow/types";
 import { escapeHtml } from "../common/html-escape";
 import { renderBrandedEmail, tenantHeaderHtml } from "../email/email.service";
@@ -42,7 +43,8 @@ function totalRow(label: string, value: string, strong = false): string {
 function totalsOf(m: ReceiptModel): Array<[string, string, boolean]> {
   const rows: Array<[string, string, boolean]> = [["Subtotal", money(m.subtotal), false]];
   if (m.discounts > 0) rows.push(["Discounts", `-${money(m.discounts)}`, false]);
-  if (m.adjustment !== 0) rows.push(["Tax and adjustments", money(m.adjustment), false]);
+  if (m.tax !== 0) rows.push([taxRowLabel(m.taxRatePercent), money(m.tax), false]);
+  if (m.adjustments !== 0) rows.push(["Adjustments", money(m.adjustments), false]);
   rows.push(["Total", money(m.total), true]);
   if (m.methodLabel) rows.push(["Payment method", m.methodLabel, false]);
   if (m.showPaid) rows.push(["Paid", money(m.paid), false]);
@@ -67,11 +69,13 @@ function bodyHtmlOf(m: ReceiptModel): string {
   const account = m.onAccount
     ? `<p style="margin:16px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700;color:#1D2A3D;">On account: ${escapeHtml(money(m.balanceDue))} balance due on account</p>`
     : "";
+  // the customer line is a named customer's only (null for a walk-in), as in the print header
+  const customer = m.customerName ? `<br>Customer: ${escapeHtml(m.customerName)}` : "";
   const footer = m.footer
-    ? `<p style="margin:24px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#536579;">${escapeHtml(m.footer)}</p>`
+    ? `<p style="margin:24px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#536579;white-space:pre-line;">${escapeHtml(m.footer)}</p>`
     : "";
   return `${address ? `<p style="margin:0 0 16px;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#536579;">${address}</p>` : ""}
-          <p style="margin:0 0 16px;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#536579;">Order ${escapeHtml(m.orderNumber)} · Invoice ${escapeHtml(m.invoiceNumber)}<br>${escapeHtml(m.dateLabel)}</p>
+          <p style="margin:0 0 16px;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#536579;">Order ${escapeHtml(m.orderNumber)} · Invoice ${escapeHtml(m.invoiceNumber)}<br>${escapeHtml(m.dateLabel)}${customer}</p>
           <table width="100%" cellpadding="0" cellspacing="0" role="presentation">${lineRows}</table>
           <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-top:12px;">
             ${totalsOf(m)
@@ -90,7 +94,7 @@ function bodyTextOf(m: ReceiptModel): string[] {
   ];
   const parts = [
     ...(head.length ? [head.join("\n")] : []),
-    `Order ${m.orderNumber} · Invoice ${m.invoiceNumber}\n${m.dateLabel}`,
+    `Order ${m.orderNumber} · Invoice ${m.invoiceNumber}\n${m.dateLabel}${m.customerName ? `\nCustomer: ${m.customerName}` : ""}`,
     m.lines.map((l) => `${l.name}\n  ${l.detail}  ${money(l.total)}`).join("\n"),
     totalsOf(m)
       .map(([label, value]) => `${label}: ${value}`)

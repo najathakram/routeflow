@@ -1,5 +1,11 @@
 import { InvoiceStatus } from "@prisma/client";
-import { computeLineSubtotal, roundMoney, sumConfirmed } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  explainedTaxRatePercent,
+  roundMoney,
+  storedTaxRatePercent,
+  sumConfirmed,
+} from "@routeflow/pricing";
 import type { ReceiptLine, ReceiptModel } from "@routeflow/types";
 import { todaysMethodOf } from "../orders/counter-sale/counter-sale-today";
 
@@ -7,6 +13,10 @@ import { todaysMethodOf } from "../orders/counter-sale/counter-sale-today";
  * The pure half of the order receipt (SA-751r): stored rows in, the shared `ReceiptModel` out. It mirrors the web's
  * `receiptModelFromOrder` (the print view's reprint), line for line, so the email and the print can never print different
  * figures for the same sale. Money goes through @routeflow/pricing; nothing here reads a clock, a database or a request.
+ *
+ * ONE money model (SA-762r): Tax is the order's tax, Adjustments whatever remains after it, and the tax rate is named only
+ * when `explainedTaxRatePercent` says the stored line rate reproduces the tax. The same helper names the rate on the counter
+ * receipt and the reprint; nothing here derives it differently.
  */
 
 /** An order line as the receipt select returns it (Decimals arrive as strings or Decimal objects: always `Number()`ed). */
@@ -36,6 +46,8 @@ export interface ReceiptOrderInput {
   createdAt: Date;
   orderDate: Date | null;
   counterSale: boolean;
+  /** cash handed over (`Order.counterCashTendered`); null on a legacy or non-cash sale: no Tendered / Change */
+  counterCashTendered?: unknown;
   /** only the name and the walk-in flag: the customer's email is never read (the address is the cashier's to type) */
   customer: { businessName: string | null; isWalkIn: boolean | null } | null;
   lineItems: ReceiptLineInput[];
@@ -45,6 +57,10 @@ export interface ReceiptInvoiceInput {
   id: string;
   invoiceNumber: string | null;
   status: string;
+  /** the stored invoice header and lines the tax rate is read from; absent = no rate can be named */
+  subtotal?: unknown;
+  taxAmount?: unknown;
+  items?: ReadonlyArray<{ taxRate?: unknown; categoryTaxAmount?: unknown }>;
 }
 
 export interface ReceiptPaymentInput {
@@ -182,18 +198,29 @@ export function buildReceiptModel(
   );
   const balanceDue = Math.max(0, roundMoney(total - paid));
 
-  const methods = METHOD_ORDER.flatMap((method) => {
-    const amount = roundMoney(
+  const appliedBy = (method: (typeof METHOD_ORDER)[number]) =>
+    roundMoney(
       sumConfirmed(
         livePayments
           .filter((p) => todaysMethodOf(p.method) === method)
           .map((p) => ({ amount: p.amount, status: p.status })),
       ),
     );
-    return amount > 0 ? [method] : [];
-  });
+  const methods = METHOD_ORDER.filter((method) => appliedBy(method) > 0);
   const hasTender = methods.length > 0;
   const onAccount = !hasTender && balanceDue > 0;
+  const tax = roundMoney(num(order.tax));
+  const adjustments = roundMoney(total - subtotal - tax) || 0; // never -0
+  const taxRatePercent = explainedTaxRatePercent({
+    base: subtotal,
+    tax,
+    ratePercent: storedTaxRatePercent(
+      live.map((i) => ({ subtotal: i.subtotal, taxAmount: i.taxAmount, lines: i.items ?? [] })),
+    ),
+  });
+  // same rule as the reprint: Tendered is what was handed over, Change what is due on the cash the sale took
+  const tendered =
+    order.counterCashTendered == null ? null : roundMoney(num(order.counterCashTendered));
   const footer = clean(branding.footer).slice(0, RECEIPT_FOOTER_MAX);
   const walkIn = !order.customer || !!order.customer.isWalkIn;
   const customerName = walkIn ? "" : clean(order.customer?.businessName);
@@ -208,12 +235,13 @@ export function buildReceiptModel(
     dateLabel: formatSaleTime(soldAt, zone),
     lines,
     cashier: null,
-    ...(customerName ? { customerName } : {}),
+    customerName: customerName || null,
     subtotal,
     discounts: 0,
-    adjustment: roundMoney(total - subtotal),
-    tax: roundMoney(num(order.tax)),
-    ...(footer ? { footer } : {}),
+    tax,
+    adjustments,
+    taxRatePercent,
+    footer: footer || null,
     total,
     paid,
     balanceDue,
@@ -222,9 +250,9 @@ export function buildReceiptModel(
     showPaid: hasTender,
     showBalance: onAccount || balanceDue > 0,
     methodLabel: hasTender ? methods.map((m) => METHOD_LABEL[m]).join(" + ") : null,
-    tendered: null,
+    tendered,
     tenderedAsEntered: false,
-    change: null,
+    change: tendered == null ? null : Math.max(0, roundMoney(tendered - appliedBy("CASH"))),
     changeAsEntered: false,
   };
 }

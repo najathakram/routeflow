@@ -42,8 +42,10 @@ export interface ReceiptLine {
  * The receipt as a pure view model. Line money goes through `computeLineSubtotal` (a boxed line is prorated, never
  * `qty * unitPrice`); the sale's own figures (total / paid / balance / change) are the server's, passed through.
  *
- * The optional fields are the Day-0 receipt fields (SA-762 r-note): a builder that has them sets them, a builder that does
- * not leaves them out, and neither renderer prints a row it was not given.
+ * ONE money model (SA-762r): Subtotal - Discounts + Tax + Adjustments = Total. `tax` is the order's tax; `adjustments` is
+ * whatever remains (a re-price, a credit, regulated tax). `taxRatePercent` is set only when `explainedTaxRatePercent`
+ * (@routeflow/pricing) says one stored rate reproduces `tax`. Every renderer (80 mm print, email) prints these fields and
+ * derives nothing of its own.
  */
 export interface ReceiptModel {
   header: { name: string | null; addressLines: string[]; phone: string | null };
@@ -53,22 +55,14 @@ export interface ReceiptModel {
   dateLabel: string;
   lines: ReceiptLine[];
   cashier: string | null;
-  /** omitted for a walk-in */
-  customerName?: string;
-  /** the lines at their system prices: net lines plus `discounts`, so Subtotal - Discounts + adjustment = Total */
+  /** the lines at their system prices: net lines plus `discounts`, so Subtotal - Discounts + Tax + Adjustments = Total */
   subtotal: number;
   /** POS-5: the sum of the edited lines' discounts (0 = no `Discounts` row) */
   discounts: number;
-  /** server total minus the client subtotal (tax, a re-price, a credit): 0 = hide the row */
-  adjustment: number;
-  /** `order.tax`, where the builder has it (informational: the printed row is still `adjustment`) */
-  tax?: number;
-  /** the live receipt only, until SA-761 snapshots the order rate */
-  taxRatePercent?: number;
-  /** SystemConfig `receiptFooter`, at most 200 characters; tenant text, so the email template HTML-escapes it */
-  footer?: string;
-  /** `Order.counterCashTendered`, where the sale stored it */
-  cashTendered?: number;
+  /** the order's tax (live: the settings rate when it explains the whole difference): 0 = hide the Tax row */
+  tax: number;
+  /** server total minus the net subtotal minus `tax` (a re-price, a credit, regulated tax): 0 = hide the Adjustments row */
+  adjustments: number;
   total: number;
   paid: number;
   balanceDue: number;
@@ -81,4 +75,10 @@ export interface ReceiptModel {
   tenderedAsEntered: boolean;
   change: number | null;
   changeAsEntered: boolean;
+  /** the sale's single stored tax rate in percent (8.25 = 8.25%), only when it explains `tax`; else null */
+  taxRatePercent: number | null;
+  /** SA-762r: the customer's name, only for a named customer (null for a walk-in) */
+  customerName: string | null;
+  /** SA-762r: the business's receipt footer, trimmed, or null. Tenant text: the email template HTML-escapes it, print renders a React text node. */
+  footer: string | null;
 }

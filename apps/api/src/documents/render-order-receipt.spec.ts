@@ -27,15 +27,16 @@ describe("buildReceiptModel (stored rows -> the shared ReceiptModel)", () => {
     ]);
   });
 
-  it("carries the server's figures: subtotal, the tax-and-adjustment row, total, paid, balance", () => {
+  it("carries ONE money model: Subtotal - Discounts + Tax + Adjustments = Total, with the stored 8% named", () => {
     expect(model).toMatchObject({
       subtotal: 26.5,
       discounts: 0,
-      adjustment: 2.12,
+      tax: 2.12,
+      adjustments: 0,
+      taxRatePercent: 8,
       total: 28.62,
       paid: 28.62,
       balanceDue: 0,
-      tax: 2.12,
       orderNumber: "ORD-1001",
       invoiceNumber: "INV-2001",
       invoiceId: "inv-1",
@@ -75,7 +76,7 @@ describe("buildReceiptModel (stored rows -> the shared ReceiptModel)", () => {
       BRANDING,
       ZONE,
     );
-    expect(walkIn.customerName).toBeUndefined();
+    expect(walkIn.customerName).toBeNull();
   });
 
   it("an unpaid named-customer sale is on account with the balance owing; nothing paid shows no Paid row", () => {
@@ -169,6 +170,110 @@ describe("buildReceiptModel (stored rows -> the shared ReceiptModel)", () => {
     expect(m.lines.map((l) => l.name)).toEqual(["Vape 50K - Strawberry", "Item"]);
   });
 
+  it("a model with no footer, no customer line to print and no cash handed over is null-safe (never undefined)", () => {
+    const bare = buildReceiptModel(
+      orderFixture({ customer: null }),
+      [INVOICE],
+      paymentsFixture(),
+      { ...BRANDING, footer: undefined },
+      ZONE,
+    );
+    expect(bare.footer).toBeNull();
+    expect(bare.customerName).toBeNull();
+    expect(bare.tendered).toBeNull();
+    expect(bare.change).toBeNull();
+  });
+
+  it("splits what is left after tax into Adjustments (a re-price, a credit, regulated tax), never into Tax", () => {
+    const m = buildReceiptModel(
+      orderFixture({ total: "29.62" }),
+      [INVOICE],
+      paymentsFixture(),
+      BRANDING,
+      ZONE,
+    );
+    expect(m).toMatchObject({ tax: 2.12, adjustments: 1, taxRatePercent: 8, total: 29.62 });
+    const neg = buildReceiptModel(
+      orderFixture({ total: "27.62" }),
+      [INVOICE],
+      paymentsFixture(),
+      BRANDING,
+      ZONE,
+    );
+    expect(neg.adjustments).toBe(-1);
+  });
+
+  it("names the rate only when the stored rate reproduces the stored tax to the cent (the shared explainedTaxRatePercent rule)", () => {
+    const wrong = buildReceiptModel(
+      orderFixture({ tax: "2.50", total: "29.00" }),
+      [INVOICE],
+      paymentsFixture(),
+      BRANDING,
+      ZONE,
+    );
+    expect(wrong.taxRatePercent).toBeNull();
+    expect(wrong.tax).toBe(2.5);
+    const mixed = buildReceiptModel(
+      orderFixture(),
+      [{ ...INVOICE, items: [{ taxRate: "0.0800" }, { taxRate: "0.0700" }] }],
+      paymentsFixture(),
+      BRANDING,
+      ZONE,
+    );
+    expect(mixed.taxRatePercent).toBeNull();
+    const noRows = buildReceiptModel(
+      orderFixture(),
+      [{ id: "inv-1", invoiceNumber: "INV-2001", status: "PAID" }],
+      paymentsFixture(),
+      BRANDING,
+      ZONE,
+    );
+    expect(noRows.taxRatePercent).toBeNull();
+  });
+
+  it("a legacy invoice whose lines all store a 0 rate falls back to the flat rate its header tax implies", () => {
+    const legacy = buildReceiptModel(
+      orderFixture(),
+      [{ ...INVOICE, items: [{ taxRate: "0" }, { taxRate: "0" }, { taxRate: "0" }] }],
+      paymentsFixture(),
+      BRANDING,
+      ZONE,
+    );
+    expect(legacy.taxRatePercent).toBe(8);
+  });
+
+  it("no tax at all: Tax 0 (row hidden) and no rate", () => {
+    const m = buildReceiptModel(
+      orderFixture({ tax: "0.00", total: "26.50" }),
+      [INVOICE],
+      paymentsFixture([{ invoiceId: "inv-1", method: "CASH", amount: "26.50", status: "PAID" }]),
+      BRANDING,
+      ZONE,
+    );
+    expect(m).toMatchObject({ tax: 0, adjustments: 0, taxRatePercent: null });
+  });
+
+  it("cash handed over (Order.counterCashTendered) shows Tendered and the Change due on the cash applied; none stored shows neither", () => {
+    const m = buildReceiptModel(
+      orderFixture({ counterCashTendered: "50.00" }),
+      [INVOICE],
+      paymentsFixture(),
+      BRANDING,
+      ZONE,
+    );
+    expect(m.tendered).toBe(50);
+    expect(m.change).toBe(30); // 20.00 of the sale was cash
+    expect(m.tenderedAsEntered).toBe(false);
+    const exact = buildReceiptModel(
+      orderFixture({ counterCashTendered: "20.00" }),
+      [INVOICE],
+      paymentsFixture(),
+      BRANDING,
+      ZONE,
+    );
+    expect(exact.change).toBe(0);
+  });
+
   it("caps the footer at 200 characters", () => {
     const m = buildReceiptModel(
       orderFixture(),
@@ -191,7 +296,7 @@ describe("renderOrderReceipt (email)", () => {
     expect(out.text.length).toBeGreaterThan(0);
   });
 
-  it("prints the same lines as the print view: numbers, every line and its detail, subtotal, tax and adjustments, total, tender, paid", () => {
+  it("prints the same lines as the print view: numbers, every line and its detail, subtotal, Tax (rate), total, tender, paid", () => {
     for (const body of [out.html, out.text]) {
       expect(body).toContain("ORD-1001");
       expect(body).toContain("INV-2001");
@@ -201,8 +306,10 @@ describe("renderOrderReceipt (email)", () => {
       expect(body).toContain("$15.00");
       expect(body).toContain("Subtotal");
       expect(body).toContain("$26.50");
-      expect(body).toContain("Tax and adjustments");
+      expect(body).toContain("Tax (8%)");
       expect(body).toContain("$2.12");
+      expect(body).not.toContain("Adjustments");
+      expect(body).not.toContain("Tax and adjustments");
       expect(body).toContain("Total");
       expect(body).toContain("$28.62");
       expect(body).toContain("Payment method");
@@ -211,6 +318,37 @@ describe("renderOrderReceipt (email)", () => {
       expect(body).not.toContain("Cancelled item");
       expect(body).not.toContain("99.00");
     }
+  });
+
+  it("prints an Adjustments row only when something remains after tax, and plain Tax when no rate is named", () => {
+    const adj = render(orderFixture({ total: "29.62", tax: "2.50" }), [INVOICE], paymentsFixture());
+    for (const body of [adj.html, adj.text]) {
+      expect(body).toContain("Adjustments");
+      expect(body).toContain("$0.62");
+      expect(body).toMatch(/Tax(?! \()/);
+      expect(body).not.toContain("Tax (");
+    }
+  });
+
+  it("prints the customer line for a named customer only, and Tendered / Change when cash was handed over", () => {
+    for (const body of [out.html, out.text]) expect(body).toContain("Customer: Acme Test Customer");
+    const walkIn = render(
+      orderFixture({
+        customer: { businessName: "Walk-in customer", isWalkIn: true },
+        counterCashTendered: "50.00",
+      }),
+    );
+    for (const body of [walkIn.html, walkIn.text]) {
+      expect(body).not.toContain("Customer:");
+      expect(body).toContain("Tendered");
+      expect(body).toContain("$50.00");
+      expect(body).toContain("Change");
+      expect(body).toContain("$30.00");
+    }
+    const named = render(
+      orderFixture({ customer: { businessName: "Acme <b>Test</b>", isWalkIn: false } }),
+    );
+    expect(named.html).toContain("Customer: Acme &lt;b&gt;Test&lt;/b&gt;");
   });
 
   it("prints zeros as $0.00, never a dash or an empty cell, and never NaN", () => {
@@ -288,7 +426,7 @@ describe("renderOrderReceipt (email)", () => {
 
 /**
  * G4, snapshot-free: for a spread of carts the money the email prints is the money the model holds, and the model's lines
- * add up to the order's total once the adjustment row is counted. A deterministic generator (no Math.random) so a red run
+ * add up to the order's total once the Tax and Adjustments rows are counted. A deterministic generator (no Math.random) so a red run
  * reproduces.
  */
 describe("print/email parity: the totals are the model's totals (property)", () => {
@@ -357,9 +495,9 @@ describe("print/email parity: the totals are the model's totals (property)", () 
     );
 
     expect(roundMoney(r.model.lines.reduce((s, l) => s + l.total, 0))).toBe(net);
-    expect(roundMoney(r.model.subtotal - r.model.discounts + r.model.adjustment)).toBe(
-      r.model.total,
-    );
+    expect(
+      roundMoney(r.model.subtotal - r.model.discounts + r.model.tax + r.model.adjustments),
+    ).toBe(r.model.total);
     expect(r.model.total).toBe(total);
     for (const body of [r.html, r.text]) {
       expect(body).toContain(money(r.model.subtotal));

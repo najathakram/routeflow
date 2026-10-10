@@ -8,7 +8,7 @@ import {
   RECEIPT_EMAIL_PER_TENANT_PER_DAY_DEFAULT,
   RECEIPT_EMAIL_PER_TENANT_PER_DAY_KEY,
 } from "./receipt-limits";
-import { orderFixture, paymentsFixture } from "./receipt.fixtures";
+import { INVOICE, orderFixture, paymentsFixture } from "./receipt.fixtures";
 import { createMockPrisma, type MockPrisma } from "../testing/prisma-mock";
 
 const T = "test-tenant";
@@ -22,9 +22,7 @@ function storedOrder(over: Record<string, unknown> = {}) {
     lineItems,
     invoices: [
       {
-        id: "inv-1",
-        invoiceNumber: "INV-2001",
-        status: "PAID",
+        ...INVOICE,
         payments: paymentsFixture().map(({ invoiceId: _ignored, ...p }) => p),
       },
     ],
@@ -230,6 +228,50 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
         sentToday: RECEIPT_EMAIL_PER_TENANT_PER_DAY_DEFAULT,
       });
       expect((await codeOf(send())).code.code).toBe("RECEIPT_EMAIL_ORDER_LIMIT");
+    });
+  });
+
+  describe("what the receipt is built from (SA-762r money model)", () => {
+    it("reads the stored tax rate lines, the cash handed over and the order's tax, scoped through the tenant order read", async () => {
+      const { prisma, send } = setup({});
+      await send();
+      const select = prisma.order.findFirst.mock.calls[0][0].select;
+      expect(select.tax).toBe(true);
+      expect(select.counterCashTendered).toBe(true);
+      expect(select.invoices.select.items.select).toMatchObject({
+        taxRate: true,
+        categoryTaxAmount: true,
+      });
+      expect(select.invoices.select).toMatchObject({ subtotal: true, taxAmount: true });
+    });
+
+    it("emails the split money rows: Tax (8%) from the stored line rate, no Adjustments when nothing remains", async () => {
+      const { email, send } = setup({});
+      await send();
+      const { html, text } = email.send.mock.calls[0][0];
+      for (const body of [html, text]) {
+        expect(body).toContain("Tax (8%)");
+        expect(body).toContain("$2.12");
+        expect(body).not.toContain("Adjustments");
+      }
+    });
+
+    it("prints the business's receipt footer (settings.receiptFooter), HTML-escaped", async () => {
+      const { email, send } = setup({
+        settings: { "settings.receiptFooter": "Thanks <b>&</b> come again" },
+      });
+      await send();
+      const { html, text } = email.send.mock.calls[0][0];
+      expect(html).toContain("Thanks &lt;b&gt;&amp;&lt;/b&gt; come again");
+      expect(html).not.toContain("<b>&</b>");
+      expect(text).toContain("Thanks <b>&</b> come again");
+    });
+
+    it("prints the cash handed over when the sale stored it", async () => {
+      const { email, send } = setup({ order: storedOrder({ counterCashTendered: "50.00" }) });
+      await send();
+      expect(email.send.mock.calls[0][0].text).toContain("Tendered: $50.00");
+      expect(email.send.mock.calls[0][0].text).toContain("Change: $30.00");
     });
   });
 

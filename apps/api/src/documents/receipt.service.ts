@@ -42,6 +42,7 @@ const SETTING_KEYS = [
   "settings.state",
   "settings.zip",
   "settings.phone",
+  "settings.receiptFooter",
 ];
 
 /** The tenant's zone, or UTC when it has none or an unknown one (the same fallback the calendar helpers use). */
@@ -99,6 +100,7 @@ export class ReceiptService {
         createdAt: true,
         orderDate: true,
         counterSale: true,
+        counterCashTendered: true,
         // the name and the walk-in flag only: the customer's email is never read, a typed address is never kept
         customer: { select: { businessName: true, isWalkIn: true } },
         lineItems: {
@@ -128,6 +130,10 @@ export class ReceiptService {
             id: true,
             invoiceNumber: true,
             status: true,
+            // the stored header and line rates the receipt names its tax rate from (pricing's explainedTaxRatePercent)
+            subtotal: true,
+            taxAmount: true,
+            items: { select: { taxRate: true, categoryTaxAmount: true } },
             payments: { select: { method: true, amount: true, status: true } },
           },
         },
@@ -135,11 +141,16 @@ export class ReceiptService {
     });
     if (!order) throw new NotFoundException("Order not found");
 
-    const invoices = order.invoices.map(({ id, invoiceNumber, status }) => ({
-      id,
-      invoiceNumber,
-      status,
-    }));
+    const invoices = order.invoices.map(
+      ({ id, invoiceNumber, status, subtotal, taxAmount, items }) => ({
+        id,
+        invoiceNumber,
+        status,
+        subtotal,
+        taxAmount,
+        items,
+      }),
+    );
     if (order.status === "CANCELLED" || !invoices.some(isLiveInvoice)) {
       throw new ConflictException({
         code: API_ERROR_CODES.RECEIPT_NOT_AVAILABLE,
@@ -242,6 +253,7 @@ export class ReceiptService {
       state: config?.state ?? settings["settings.state"],
       zip: config?.zip ?? settings["settings.zip"],
       phone: config?.phone ?? settings["settings.phone"],
+      footer: settings["settings.receiptFooter"],
     };
     const { subject, html, text } = renderOrderReceipt(order, invoices, payments, branding, zone);
 

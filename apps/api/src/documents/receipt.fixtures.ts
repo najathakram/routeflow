@@ -27,6 +27,7 @@ export function orderFixture(over: Partial<ReceiptOrderInput> = {}): ReceiptOrde
     createdAt: new Date("2026-10-07T15:15:00.000Z"),
     orderDate: null,
     counterSale: true,
+    counterCashTendered: null,
     customer: { businessName: "Acme Test Customer", isWalkIn: false },
     lineItems: [
       {
@@ -78,10 +79,18 @@ export function orderFixture(over: Partial<ReceiptOrderInput> = {}): ReceiptOrde
   };
 }
 
+/** The stored invoice: every line carries the 8% rate that reproduces the order's $2.12 over the $26.50 lines. */
 export const INVOICE: ReceiptInvoiceInput = {
   id: "inv-1",
   invoiceNumber: "INV-2001",
   status: "PAID",
+  subtotal: "26.50",
+  taxAmount: "2.12",
+  items: [
+    { taxRate: "0.0800", categoryTaxAmount: "0.00" },
+    { taxRate: "0.0800", categoryTaxAmount: "0.00" },
+    { taxRate: "0.0800", categoryTaxAmount: "0.00" },
+  ],
 };
 
 export function paymentsFixture(over: ReceiptPaymentInput[] = []): ReceiptPaymentInput[] {

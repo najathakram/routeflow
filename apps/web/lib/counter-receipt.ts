@@ -1,7 +1,14 @@
-import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  explainedTaxRatePercent,
+  roundMoney,
+  taxRowLabel,
+} from "@routeflow/pricing";
 import type {
   CounterSalePaymentMethod,
   CounterSaleResponse,
+  ReceiptLine,
+  ReceiptModel,
   TodaysSaleMethod,
 } from "@routeflow/types";
 import { displayProductName } from "@/lib/product-display";
@@ -44,65 +51,19 @@ export interface ReceiptBusinessProfile {
   receiptFooter?: string | null;
 }
 
-export interface CounterReceiptLine {
-  key: string;
-  name: string;
-  /** "3 × $2.50" or "1 box + 3 pcs × $12.00 per box" */
-  detail: string;
-  /** trimmed per-line note, or null */
-  note: string | null;
-  total: number;
-  /**
-   * POS-5: the line total at the system price, only for a LOWERED line (struck on the receipt); else null. A raised or
-   * unchanged price prints plain: the customer never sees a system price below what they were charged.
-   */
-  original: number | null;
-  /** POS-5: money taken off a lowered line (0 for every other line) */
-  discount: number;
-}
-
-export interface CounterReceiptModel {
-  header: { name: string | null; addressLines: string[]; phone: string | null };
-  orderNumber: string;
-  invoiceNumber: string;
-  invoiceId: string;
-  dateLabel: string;
-  lines: CounterReceiptLine[];
-  cashier: string | null;
-  /** the lines at their system prices: net lines plus `discounts`, so Subtotal - Discounts + adjustment = Total */
-  subtotal: number;
-  /** POS-5: the sum of the edited lines' discounts (0 = no `Discounts` row) */
-  discounts: number;
-  /** the order's tax (live: the settings rate when it explains the whole difference): 0 = hide the Tax row */
-  tax: number;
-  /** server total minus the net subtotal minus `tax` (a re-price, a credit, regulated tax): 0 = hide the Adjustments row */
-  adjustments: number;
-  total: number;
-  paid: number;
-  balanceDue: number;
-  onAccount: boolean;
-  paymentNotRecorded: boolean;
-  showPaid: boolean;
-  showBalance: boolean;
-  methodLabel: string | null;
-  tendered: number | null;
-  tenderedAsEntered: boolean;
-  change: number | null;
-  changeAsEntered: boolean;
-  /** the sale's single stored tax rate in percent (8.25 = 8.25%), only when it explains `tax`; else null */
-  taxRatePercent: number | null;
-  /** SA-762r: the customer's name, only for a named customer (null for a walk-in): printed in the receipt's header block */
-  customerName: string | null;
-  /** SA-762r: the business's receipt footer, trimmed, or null. Plain text: the view renders it as a React text node. */
-  footer: string | null;
-}
+/**
+ * The receipt line and model are the SHARED ones (`packages/types/api/receipt.ts`, SA-751r): the print view and the email
+ * renderer (`apps/api/src/documents`) render the same type, so a figure can never be in one and not the other. The tax split and
+ * the rule for naming a rate are `@routeflow/pricing`'s (`explainedTaxRatePercent`), shared with the emailed receipt.
+ */
+export type CounterReceiptLine = ReceiptLine;
+export type CounterReceiptModel = ReceiptModel;
 
 /**
  * The ONE formatter of the Tax row's label, live and reprint alike: "Tax (8.25%)" when one rate explains the tax, else
  * plain "Tax" (a reprint whose rate is unknown, or a rate that does not account for the stored tax).
  */
-export const adjustmentLabel = (taxRatePercent: number | null | undefined): string =>
-  taxRatePercent == null ? "Tax" : `Tax (${Number(taxRatePercent.toFixed(3))}%)`;
+export const adjustmentLabel = taxRowLabel;
 
 /** Sign first: a downward reprice reads "-$1.00", never "$-1.00". */
 export const formatReceiptMoney = (n: number): string =>
@@ -223,9 +184,12 @@ export function buildCounterReceipt(input: {
   // The response carries no tax figure, so the live receipt names the settings rate only when it explains the WHOLE
   // difference between the server total and the lines (Tax (8.25%)); anything else prints as Adjustments, never as tax.
   const difference = roundMoney(receipt.total - netSubtotal) || 0; // never -0
-  const rate = profile?.taxRate ?? 0;
-  const rateExplains =
-    rate > 0 && difference !== 0 && difference === roundMoney((netSubtotal * rate) / 100);
+  const namedRate = explainedTaxRatePercent({
+    base: netSubtotal,
+    tax: difference,
+    ratePercent: profile?.taxRate,
+  });
+  const rateExplains = namedRate != null;
 
   return {
     header: receiptHeader(profile),
@@ -251,7 +215,7 @@ export function buildCounterReceipt(input: {
     tenderedAsEntered,
     change,
     changeAsEntered,
-    taxRatePercent: rateExplains ? rate : null,
+    taxRatePercent: namedRate,
     customerName: clean(input.customerName) || null,
     footer: receiptFooterOf(profile),
   };
@@ -380,10 +344,12 @@ export function receiptModelFromOrder(input: {
   const orderTotal = num(order.total);
   const tax = roundMoney(num(order.tax));
   const adjustments = roundMoney(orderTotal - subtotal - tax) || 0; // never -0
-  const rate = sale.taxRatePercent;
   // Name the rate only when it accounts for the stored tax (a re-price or credit must not read as tax); else plain "Tax".
-  const taxRatePercent =
-    rate != null && tax !== 0 && tax === roundMoney((subtotal * rate) / 100) ? rate : null;
+  const taxRatePercent = explainedTaxRatePercent({
+    base: subtotal,
+    tax,
+    ratePercent: sale.taxRatePercent,
+  });
   const cashApplied = roundMoney(
     sale.methods.filter((m) => m.method === "CASH").reduce((sum, m) => sum + m.amount, 0),
   );
