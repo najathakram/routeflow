@@ -50,6 +50,7 @@ import {
 } from "../../../../lib/credit-limit-error";
 import { parseSellingRestricted } from "../../../../lib/selling-restricted";
 import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
+import { lineBackorderPieces } from "@routeflow/types/order-line-backorder";
 import { useOfflineQueue } from "../../../../store/offlineQueue";
 import { alertInfo, confirm } from "../../../../lib/confirm";
 import { invoiceLineQtyText } from "@routeflow/pricing";
@@ -66,6 +67,7 @@ import {
   sharePdf,
 } from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
+import { shipmentForDisplay } from "../../../../lib/shipment-display";
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
 import { canDeleteOrder, demotionRequiresReason } from "../../../../lib/order-status-flow";
@@ -745,6 +747,11 @@ export default function OrderDetailScreen() {
                             <Text style={styles.customTagText}>Custom</Text>
                           </View>
                         ) : null}
+                        {lineBackorderPieces(li, order.status) > 0 ? (
+                          <View style={styles.customTag} testID="line-backorder-tag">
+                            <Text style={styles.customTagText}>Backorder</Text>
+                          </View>
+                        ) : null}
                       </View>
                       <Text style={styles.itemSub}>
                         {qtyLine} · {formatCurrency(li.unitPrice)}
@@ -888,7 +895,10 @@ export default function OrderDetailScreen() {
           {/* Carrier shipment — only for carrier-shipped orders, or rows that
               already carry tracking data recorded before this gate existed. */}
           {order.fulfillPath === "SHIP" || order.shippingCarrier || order.shippingTrackingNumber ? (
-            <ShipmentSection shipment={order} onEdit={() => setShipmentModal(true)} />
+            <ShipmentSection
+              shipment={shipmentForDisplay(order, order.status)}
+              onEdit={() => setShipmentModal(true)}
+            />
           ) : null}
 
           {/* Status transitions */}

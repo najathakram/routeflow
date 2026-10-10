@@ -537,3 +537,23 @@ export type HandoffRealm = (typeof HANDOFF_REALM_VALUES)[number];
 // reserved for M3b.
 export const COMPOSITION_MODE_VALUES = ["SINGLE", "FIXED", "FLEX"] as const;
 export type CompositionMode = (typeof COMPOSITION_MODE_VALUES)[number];
+
+// SA-650 (counter sales): how an order is fulfilled (Prisma `FulfillPath`). PICKUP = counter sale /
+// in-store pickup; the API refuses it on every write DTO until the counter-sale API lands.
+export const FULFILL_PATH_VALUES = ["ROUTE", "SHIP", "PICKUP"] as const;
+export type FulfillPath = (typeof FULFILL_PATH_VALUES)[number];
+
+// Per-operator feature groups (Prisma `OperatorPermissionGroup`, `User.deniedPermissionGroups`). The
+// order here is the display order of the switches (see `PERMISSION_GROUPS` in ./permissions).
+export const OPERATOR_PERMISSION_GROUP_VALUES = [
+  "ORDERS",
+  "DISPATCH",
+  "CUSTOMERS",
+  "CATALOG",
+  "PRICING",
+  "REGULATED",
+  "FINANCE",
+  "NOTIFICATIONS",
+  "REPORTS",
+] as const;
+export type OperatorPermissionGroup = (typeof OPERATOR_PERMISSION_GROUP_VALUES)[number];

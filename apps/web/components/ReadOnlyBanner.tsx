@@ -3,6 +3,7 @@
 import * as React from "react";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
+import { guardCounterLeave } from "@/lib/counter-cart-signal";
 
 // ─── ReadOnlyBanner (RO-1) ───────────────────────────────────────────────────
 // Shared read-only-workspace notice — the billing page's full-width card version and the
@@ -40,7 +41,13 @@ export function ReadOnlyBanner({ status, readOnlyReason, compact = false }: Read
       <AlertTriangle className="h-4 w-4 shrink-0" />
       <span>
         <strong>Your workspace is read-only.</strong> {body}{" "}
-        <a href="/choose-plan" className="font-medium underline underline-offset-2">
+        <a
+          href="/choose-plan"
+          onClick={(e) => {
+            if (guardCounterLeave(() => window.location.assign("/choose-plan"))) e.preventDefault(); // POS-7: not mid-sale
+          }}
+          className="font-medium underline underline-offset-2"
+        >
           Choose a plan
         </a>
       </span>

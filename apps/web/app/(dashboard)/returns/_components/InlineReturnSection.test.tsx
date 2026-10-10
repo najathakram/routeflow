@@ -60,6 +60,11 @@ function quoteResponse(chunks: InlineReturnQuoteChunk[]): InlineReturnQuoteRespo
     categoryTax: chunks.reduce((s, c) => s + c.categoryTax, 0),
     total: chunks.reduce((s, c) => s + c.subtotal + c.taxAmount + c.categoryTax, 0),
     productBreakdown: {},
+    canRefund: false,
+    paidInFull: false,
+    paidMethods: [],
+    paidWithStoreCredit: false,
+    customerIsWalkIn: false,
   };
 }
 

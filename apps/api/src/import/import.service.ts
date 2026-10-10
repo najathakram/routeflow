@@ -10,6 +10,7 @@ import { calendarStampFromInput } from "../common/calendar-date";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { customerNameViolation } from "../customers/customer-name-guard";
+import { excludeWalkIn } from "../customers/walk-in-protected";
 import {
   addressViolation,
   licenseViolation,
@@ -561,6 +562,10 @@ export class ImportService {
     // earlier row just created, while the preview — which wrote nothing — planned two creates).
     const claimedZohoIds = new Map<string, number>();
     const claimedNames = new Map<string, { row: number; zohoContactId: string | null }>();
+    // The walk-in customer's name and Customer ID are reserved: a row carrying either is skipped.
+    const walkIn = await this.prisma
+      .forTenant()
+      .customer.findFirst({ where: { isWalkIn: true, deletedAt: null } });
     const claimedCustomerIds = new Map<string, number>();
     let rowNumber = 0;
 
@@ -624,6 +629,14 @@ export class ImportService {
         skipContact(`duplicate of row ${claimedZohoIds.get(zohoContactId)}`);
         continue;
       }
+      if (
+        walkIn?.isWalkIn === true &&
+        ((zohoContactId && zohoContactId === walkIn.zohoContactId) ||
+          normalizeNameKey(name) === normalizeNameKey(walkIn.businessName))
+      ) {
+        skipContact(`Row ${rowNumber} skipped: this name is reserved for walk-in sales.`);
+        continue;
+      }
 
       // Extract all fields from CSV
       const displayName = (row["Display Name"] || "").trim() || null;
@@ -683,12 +696,13 @@ export class ImportService {
       // Find existing customer: prefer Zoho ID match, then fall back to
       // case-insensitive businessName match for customers imported before
       // zohoContactId tracking was wired up.
+      // Both lookups also skip the walk-in customer, so a row naming it is handled like an unmatched row.
       // I2: both lookups exclude soft-deleted customers — a deleted match would otherwise run
       // the raw identity/address writes below, THEN throw "Restore the customer first" out of
       // `applyCustomerCommercialFields`, leaving a partial row (identity written, commercial not).
       let existing = zohoContactId
         ? await this.prisma.forTenant().customer.findFirst({
-            where: { zohoContactId, deletedAt: null },
+            where: excludeWalkIn({ zohoContactId, deletedAt: null }),
             include: { addresses: true, contactPersons: true },
           })
         : null;
@@ -725,7 +739,10 @@ export class ImportService {
         // I2: ambiguity must be decided BEFORE any write — `findMany(take 2)` + skip, the same
         // rule and "same normalization" (case-insensitive exact) as the product name match.
         const byName = await this.prisma.forTenant().customer.findMany({
-          where: { businessName: { equals: name, mode: "insensitive" }, deletedAt: null },
+          where: excludeWalkIn({
+            businessName: { equals: name, mode: "insensitive" as const },
+            deletedAt: null,
+          }),
           include: { addresses: true, contactPersons: true },
           take: 2,
         });
@@ -1192,6 +1209,7 @@ export class ImportService {
 
     // Group by Invoice ID
     const groups: Record<string, any[]> = {};
+    const groupFirstRow = new Map<any[], number>();
     let rowIndex = 0;
     for (const row of rows) {
       rowIndex++;
@@ -1217,7 +1235,10 @@ export class ImportService {
         errors.push(`Row ${rowIndex}: missing invoice id`);
         continue;
       }
-      if (!groups[id]) groups[id] = [];
+      if (!groups[id]) {
+        groups[id] = [];
+        groupFirstRow.set(groups[id], rowIndex);
+      }
       groups[id].push(row);
     }
 
@@ -1234,11 +1255,24 @@ export class ImportService {
       ...groupEntries.filter(([, rows]) => !hasSourceNumber(rows)),
     ];
 
+    // The walk-in customer's name is reserved: an invoice naming it is skipped, never attached to it.
+    const walkInRow = await this.prisma
+      .forTenant()
+      .customer.findFirst({ where: { isWalkIn: true, deletedAt: null } });
+    const walkInName = walkInRow?.isWalkIn === true ? walkInRow.businessName : null;
+
     for (const [, invoiceRows] of orderedGroups) {
       const first = invoiceRows[0];
       const customerName = (first["Customer Name"] || first["Company Name"] || "").trim();
       if (!customerName) {
         skipped++;
+        continue;
+      }
+      if (walkInName && normalizeNameKey(customerName) === normalizeNameKey(walkInName)) {
+        skipped++;
+        errors.push(
+          `Row ${groupFirstRow.get(invoiceRows)} skipped: this name is reserved for walk-in sales.`,
+        );
         continue;
       }
 
@@ -1255,7 +1289,9 @@ export class ImportService {
 
       // Try to find existing customer
       let customer = await this.prisma.forTenant().customer.findFirst({
-        where: { businessName: { contains: customerName, mode: "insensitive" } },
+        where: excludeWalkIn({
+          businessName: { contains: customerName, mode: "insensitive" as const },
+        }),
       });
 
       // Auto-create customer if not found

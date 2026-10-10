@@ -17,7 +17,14 @@ import { AppConfig } from "../config/configuration";
 import { JwtPayload } from "./jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { escapeHtml } from "../common/html-escape";
+import {
+  DERIVED_JWT_AUDIENCES,
+  DERIVED_JWT_LABELS,
+  derivedJwtKey,
+} from "../common/derived-jwt-key";
 import { isLoginEligible, isSignInBlocked } from "./login-eligibility";
+import { mayUseVerificationLink, VERIFICATION_REFUSED } from "./verification-link-eligibility";
+import { hasForeignAudience, STAFF_ACCESS_AUDIENCE, STAFF_REFRESH_AUDIENCE } from "./session-token";
 
 export interface DeviceInfo {
   userAgent?: string;
@@ -28,6 +35,7 @@ export interface DeviceInfo {
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly emailVerifyKey: Buffer;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -36,7 +44,13 @@ export class AuthService {
     private readonly configService: ConfigService<AppConfig>,
     private readonly emailService: EmailService,
     private readonly entitlements: EntitlementsService,
-  ) {}
+  ) {
+    // Fails the boot on a missing or short secret (see derived-jwt-key.ts).
+    this.emailVerifyKey = derivedJwtKey(
+      DERIVED_JWT_LABELS.emailVerify,
+      configService.get<AppConfig["jwt"]>("jwt")?.secret ?? "",
+    );
+  }
 
   /**
    * Validate username + password.
@@ -198,6 +212,7 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
 
@@ -205,7 +220,11 @@ export class AuthService {
       // F5-003: tag staff refresh tokens with a realm discriminator so a
       // buyer refresh token can never be replayed on the staff refresh path.
       { sub: user.id, type: "staff" },
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: STAFF_REFRESH_AUDIENCE,
+      },
     );
 
     // RF-228: new-device login notification (minimum viable security measure).
@@ -263,7 +282,7 @@ export class AuthService {
   async refresh(incomingToken: string, deviceInfo?: DeviceInfo) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
-    let payload: { sub: string; type?: string };
+    let payload: { sub: string; type?: string; aud?: unknown };
     try {
       payload = this.jwtService.verify(incomingToken, {
         secret: jwtConfig.refreshSecret,
@@ -278,6 +297,14 @@ export class AuthService {
     // (grace) so live sessions are never force-logged-out. Defense-in-depth on
     // top of the per-table hash lookup below.
     if (payload.type && payload.type !== "staff") {
+      throw new UnauthorizedException("Invalid or expired refresh token");
+    }
+    // A refresh token that names an audience must name this realm's; one with no `aud`
+    // (minted before audiences existed) is still accepted.
+    // Remove in PR-4a; strict refresh is safe only 30 days after deploy.
+    // The staff refresh path re-derives role and tenant from the database row; the audience
+    // does not separate platform-admin from tenant sessions.
+    if (hasForeignAudience(payload, STAFF_REFRESH_AUDIENCE)) {
       throw new UnauthorizedException("Invalid or expired refresh token");
     }
 
@@ -324,6 +351,7 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(newPayload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
 
@@ -337,7 +365,11 @@ export class AuthService {
       // (merging the two sessions); the compare-and-swap below would instead raise P2002
       // and 500 the refresh, which every client treats as a dead session.
       { sub: user.id, type: "staff", jti: crypto.randomUUID() },
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: STAFF_REFRESH_AUDIENCE,
+      },
     );
 
     // B155: rotate IN PLACE. The old code deleted the row and upserted a NEW one
@@ -443,13 +475,24 @@ export class AuthService {
   async verifyEmailAndLogin(token: string, deviceInfo?: DeviceInfo) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
-    let payload: { sub: string; type: string; tenantId: string };
+    let payload: { sub: string; type: string; tenantId: string; aud?: unknown };
     try {
-      payload = this.jwtService.verify(token, { secret: jwtConfig.secret });
+      payload = this.jwtService.verify(token, {
+        secret: this.emailVerifyKey,
+        audience: DERIVED_JWT_AUDIENCES.emailVerify,
+      });
     } catch {
-      throw new BadRequestException(
-        "Verification link is invalid or has expired. Please sign up again or request a new link.",
-      );
+      // Links issued before per-purpose keys were signed with the session secret and carry no
+      // audience; they stay valid for their own 24h and nothing else is accepted that way.
+      // remove in PR-4a (token audience required), added 2026-10-07
+      try {
+        payload = this.jwtService.verify(token, { secret: jwtConfig.secret });
+        if (payload.aud !== undefined) throw new Error("audience on a legacy-key token");
+      } catch {
+        throw new BadRequestException(
+          "Verification link is invalid or has expired. Please sign up again or request a new link.",
+        );
+      }
     }
 
     if (payload.type !== "email_verify") {
@@ -461,25 +504,35 @@ export class AuthService {
       throw new BadRequestException("Account not found.");
     }
 
-    // Already verified — still issue tokens so clicking the link twice works smoothly.
-    // X2 fix: only INACTIVE (the legitimate self-signup-pending-verification
-    // state) may transition to ACTIVE here. This token is a 24h-lived JWT
-    // signed at signup time — if an admin SUSPENDS the account within that
-    // window (e.g. for abuse, before the owner ever verified), the still-valid
-    // link must not silently un-suspend it. Any other non-ACTIVE status is a
-    // deliberate administrative decision this token was never meant to override.
-    if (user.status !== "ACTIVE" && user.status !== "INACTIVE") {
-      throw new BadRequestException(
-        "This account is not available. Contact support if you believe this is an error.",
-      );
+    // Only a signup admin that has never signed in may be activated by this link; every other
+    // account is refused with one coded, reason-free answer (see verification-link-eligibility).
+    if (!(await mayUseVerificationLink(this.prisma, user))) {
+      throw new BadRequestException({ ...VERIFICATION_REFUSED });
     }
-    const activeUser =
-      user.status === "ACTIVE"
-        ? user
-        : await this.prisma.user.update({
-            where: { id: user.id },
-            data: { status: "ACTIVE" },
-          });
+    // Claim the activation atomically (a second concurrent use loses) and record it in the same
+    // transaction, so a failed audit write rolls the activation back.
+    const claimed = await this.prisma.tenantTransaction(async (tx) => {
+      const res = await tx.user.updateMany({
+        where: { id: user.id, status: "INACTIVE", lastLoginAt: null },
+        data: { status: "ACTIVE" },
+      });
+      if (res.count !== 1) return false;
+      await tx.auditLog.create({
+        data: {
+          tenantId: user.tenantId ?? null,
+          userId: user.id,
+          action: "user.activate",
+          entityType: "User",
+          entityId: user.id,
+          meta: { reason: "email_verify" },
+        },
+      });
+      return true;
+    });
+    if (!claimed) {
+      throw new BadRequestException({ ...VERIFICATION_REFUSED });
+    }
+    const activeUser = { ...user, status: "ACTIVE" as const };
 
     const { password: _pw, ...safeUser } = activeUser;
     return this.login(safeUser, deviceInfo);
@@ -726,12 +779,17 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
 
     const refreshToken = this.jwtService.sign(
       { sub: user.id, type: "staff" }, // F5-003: realm discriminator (force-refresh)
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: STAFF_REFRESH_AUDIENCE,
+      },
     );
 
     await this.storeRefreshToken(user.id, refreshToken, deviceInfo);

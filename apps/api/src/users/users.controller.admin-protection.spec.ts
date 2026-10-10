@@ -10,7 +10,7 @@ describe("UsersController: admin account protection wiring", () => {
     unlockUser: jest.fn().mockResolvedValue({ id: "t1" }),
     toggleDriverPermit: jest.fn().mockResolvedValue({ id: "t1" }),
   };
-  const controller = new UsersController(service as any);
+  const controller = new UsersController(service as any, {} as any);
   const operator = { sub: "op1", username: "op", role: UserRole.OPERATOR } as any;
   const admin = { sub: "ad1", username: "ad", role: UserRole.TENANT_ADMIN } as any;
   beforeEach(() => jest.clearAllMocks());

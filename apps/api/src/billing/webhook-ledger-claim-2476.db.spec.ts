@@ -402,6 +402,10 @@ describeDb("#2476 webhook ledger exclusive claim on redelivery (real Postgres, S
       {} as any,
       { notifyCancelled: async () => undefined, notifySuspended: async () => undefined } as any,
       planTransition as any,
+      {
+        checkoutAddonLines: async () => ({ lineItems: [], skus: [] }),
+        adoptCheckoutAddons: async () => undefined,
+      } as any, // mutations (SA-690)
     );
     const eventId = `evt_2476_pf_${run}`;
     billingIds.push(eventId);

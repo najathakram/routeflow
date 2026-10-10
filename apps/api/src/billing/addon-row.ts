@@ -1,3 +1,4 @@
+import { TenantStatus } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
 
@@ -50,4 +51,34 @@ export function findAddonRow(db: AddonReader, tenantId: string, sku: string) {
     where: addonRowWhere(tenantId, sku),
     orderBy: [{ active: "desc" }, { createdAt: "asc" }],
   });
+}
+
+/**
+ * SA-693: the ONE predicate for "a row the platform bills (or is owed a bill for)". A comp row
+ * (`isComp`) is a platform grant: never billed, never booked as revenue, never blocking a checkout.
+ * Every reader that asks "is this add-on billable / unbilled / revenue?" spreads this into its
+ * `where` (the checkout gate, MRR) — Option A's line items and adoption reuse it too — instead of
+ * re-spelling `isComp: false`.
+ */
+export function billableAddonWhere(
+  where: Prisma.TenantAddonWhereInput = {},
+): Prisma.TenantAddonWhereInput {
+  return { ...where, isComp: false };
+}
+
+/**
+ * SA-690 (MUST-1): a trial keeps its self-serve add-ons across the plan pick — and so does a LAPSED one,
+ * a tenant that is READ_ONLY because its trial expired or was cancelled (its rows are still the unbilled
+ * trial rows the card checkout is meant to bill). Any other READ_ONLY reason (a cancelled paid
+ * subscription) is not a trial. It decides two things: what subscribe() drops (`wasTrial` keeps its other
+ * meanings: the TRIAL_CONVERTED event, `trialConvertedAt`), and whether a MANUAL activation prices the
+ * tenant's unbilled add-ons (manual-activation-addons.ts). It lives in this leaf module so neither of those
+ * imports the other's service.
+ */
+export function keepsTrialAddons(t: { status: string; readOnlyReason?: string | null }): boolean {
+  return (
+    t.status === TenantStatus.TRIAL ||
+    (t.status === TenantStatus.READ_ONLY &&
+      (t.readOnlyReason === "trial_expired" || t.readOnlyReason === "trial_cancelled"))
+  );
 }

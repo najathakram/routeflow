@@ -5,6 +5,8 @@ import { PageHeader } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useSuppliers } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
+import { sellableOnly } from "@/lib/product-search-groups";
 import { PurchaseOrdersTab } from "../inventory/_components/PurchaseOrdersTab";
 import { ScanPoButton } from "./ScanPoButton";
 import type { Supplier } from "../inventory/_components/purchase-orders-shared";
@@ -19,9 +21,10 @@ export default function PurchaseOrdersPage() {
   const [highlightId, setHighlightId] = React.useState<string | null>(null);
   const { data: suppliers = [] } = useSuppliers();
   const { data: productsData } = useProducts({ isActive: true, limit: 0 });
-  const products = (productsData?.data ?? []).map((p: any) => ({
+  // A FAMILY is a container, never a purchasable line (B1215 C7); a variant reads "<Parent> - <Variant>".
+  const products = sellableOnly<any>(productsData?.data ?? []).map((p: any) => ({
     id: p.id,
-    name: p.name,
+    name: displayProductName(p),
     sku: p.sku,
     unitsPerBox: p.unitsPerBox ?? null,
   }));

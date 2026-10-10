@@ -1146,11 +1146,14 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
           lifecycle: "ga",
           settings: [],
         },
-        pickup: { label: "In store only", available: true, lifecycle: "ga", settings: [] },
+        // SA-671 M1 lifted (pickup mode API): PICKUP orders can be written (counter sale, order-ahead
+        // pickup), so a tenant may now be SET to an in-store mode. A STORED mode that the registry
+        // marks UNAVAILABLE would derive as unset (deriveFulfilmentCapability, SA-666a/b).
+        pickup: { label: "In store only", available: true, lifecycle: "proposed", settings: [] },
         pickup_ship: {
           label: "In store + shipping",
           available: true,
-          lifecycle: "ga",
+          lifecycle: "proposed",
           settings: [],
         },
       },

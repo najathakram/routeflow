@@ -72,6 +72,11 @@ export interface CaptureInlineReturnItem {
   alreadyReturnedReason?: string;
 }
 
+/** SA-727: how a captured return is resolved. STORE_CREDIT (the default when omitted) mints the credit note right after
+ *  the capture, exactly as before; REFUND restocks and records the return WITHOUT a credit note so
+ *  `POST /returns/inline/:id/refund` can resolve it (office roles only; every source invoice must be paid in full). */
+export type InlineReturnResolution = "STORE_CREDIT" | "REFUND";
+
 export interface CaptureInlineReturnRequest {
   customerId: string;
   /** The order that CARRIES the credit — never necessarily the order(s) the goods were
@@ -89,6 +94,8 @@ export interface CaptureInlineReturnRequest {
    * capture would return, not a distinguishable shape.
    */
   returnKey: string;
+  /** SA-727: omitted = STORE_CREDIT (today's behaviour, byte for byte). Standalone capture only. */
+  resolution?: InlineReturnResolution;
   /** Capture-level fallback reason — required by the UI (per-item reason is optional). */
   reason?: ReturnReason;
   notes?: string;
@@ -103,7 +110,10 @@ export interface CaptureInlineReturnRequest {
 // `InlineReturnLinesDto` (apps/api/src/returns/dto/capture-inline-return.dto.ts) field-for-
 // field. Web's create/update order payload types (`useCreateOrder`/`useUpdateOrderItems` in
 // apps/web/lib/api/orders.ts) reference this rather than redeclaring it.
-export type InlineReturnLinesRequest = Omit<CaptureInlineReturnRequest, "customerId" | "orderId">;
+export type InlineReturnLinesRequest = Omit<
+  CaptureInlineReturnRequest,
+  "customerId" | "orderId" | "resolution"
+>;
 
 // ─── Request: POST /returns/inline/:id/approve (PR 2 — typed here for completeness) ────
 
@@ -112,6 +122,25 @@ export interface ApproveInlineReturnRequest {
   amount?: number;
   /** B961: REQUIRED to approve a hold the capture marked "already returned or credited" (400
    *  `INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED` otherwise); trimmed, <= 200 characters. */
+  reason?: string;
+}
+
+// ─── Request: POST /returns/inline/:id/refund (SA-727) ──────────────────────────────
+//
+// A cash/card/check REFUND is a resolution of the captured return (never a negative payment): the invoice stays PAID.
+// The tender is recorded in the audit trail only; a card refund is recorded, no processor is called. Mirrors
+// apps/api/src/returns/dto/refund-inline-return.dto.ts. Pinned set-equal to the API's list by
+// inline-returns-quote-response-parity.spec.ts.
+
+export const INLINE_REFUND_TENDER_VALUES = ["CASH", "CARD", "CHECK"] as const;
+export type InlineRefundTender = (typeof INLINE_REFUND_TENDER_VALUES)[number];
+
+export interface RefundInlineReturnRequest {
+  tender: InlineRefundTender;
+  /** The refund amount the quote/capture showed, in dollars (two decimals). The server computes the amount itself and
+   *  answers 409 `REFUND_AMOUNT_CHANGED` (carrying the real `amount`) when this differs: never a free-typed amount. */
+  expectedAmount: number;
+  /** Optional note for the audit trail, <= 200 characters. */
   reason?: string;
 }
 
@@ -154,9 +183,32 @@ export interface InlineReturnQuoteBreakdown {
   total: number;
 }
 
-/** The exact shape `POST /returns/inline/quote` resolves to (`quote()`'s
- *  `Promise<QuoteBreakdown & { productBreakdown: Record<string, QuoteBreakdown> }>`). */
-export interface InlineReturnQuoteResponse extends InlineReturnQuoteBreakdown {
+/** SA-727: the refund eligibility the quote adds to its pricing. `canRefund` is ALWAYS set explicitly (a paid walk-in
+ *  sale -> true; an unpaid one, or a caller without the refund gate -> false). The API always sends all five; a client
+ *  that may talk to an older API reads it as `Partial<InlineReturnRefundEligibility>`. */
+export interface InlineReturnRefundEligibility {
+  /** The caller passes the refund gate (office roles), every source invoice is paid in full, none of it was paid with store
+   *  credit (`paidWithStoreCredit`) AND the return is worth more than $0.00. A hint: the refund endpoint re-checks under its
+   *  locks. */
+  canRefund: boolean;
+  /** Every returned line is on a source invoice that is non-VOID, not written off, with balance 0. False when a line is
+   *  on no invoice at all. */
+  paidInFull: boolean;
+  /** The payment methods (`PaymentMethod` values, sorted) of the confirmed payments on those invoices, for
+   *  preselecting the refund tender (CASH -> CASH, CREDIT_CARD -> CARD, CHECK -> CHECK). */
+  paidMethods: string[];
+  /** F4: any part of those invoices was paid with store credit (a confirmed CREDIT_NOTE or ADVANCE payment). Store credit is
+   *  never turned into cash, so `canRefund` is false and the return goes back as store credit ("Paid with store credit, so it
+   *  goes back as store credit"). */
+  paidWithStoreCredit: boolean;
+  /** The customer is the tenant's system walk-in customer (a counter sale to an anonymous buyer). */
+  customerIsWalkIn: boolean;
+}
+
+/** The exact shape `POST /returns/inline/quote` resolves to: `quote()`'s `QuoteBreakdown & { productBreakdown, ...the five
+ *  InlineReturnRefundEligibility fields }`. */
+export interface InlineReturnQuoteResponse
+  extends InlineReturnQuoteBreakdown, InlineReturnRefundEligibility {
   /** Per-productId sub-breakdown — same shape as the top-level totals, scoped to one
    *  requested item. */
   productBreakdown: Record<string, InlineReturnQuoteBreakdown>;
@@ -234,10 +286,20 @@ export interface InlineReturnRecord {
    *  guard could not safely reverse a legacy/unknown box-axis SALE row). `null` = checked and clean; ABSENT =
    *  not checked (the post-commit read failed, or no tenant context) — never assume clean. */
   parkedReversals?: InlineReturnParkedReversals | null;
+  /** SA-727: on a capture made with `resolution: "REFUND"`: true while the refund is not recorded yet (RECEIVED, no
+   *  credit note), so a saved-but-unrefunded return shows a marker; false on the refund response. ABSENT on every other
+   *  response (a STORE_CREDIT capture is unchanged). The order-detail/list reads do not carry it yet. */
+  refundPending?: boolean;
   creditSubtotal?: number | null;
   creditTax?: number | null;
   creditCategoryTax?: number | null;
   items: InlineReturnRecordItem[];
   createdAt: string;
   updatedAt: string;
+}
+
+/** SA-727: what `POST /returns/inline/:id/refund` answers with: the final return state (status REFUNDED, `refundMethod`
+ *  "EXTERNAL_REFUND", `refundAmount`) plus the tender it was recorded with (not a column: read from the audit row). */
+export interface InlineReturnRefundResponse extends InlineReturnRecord {
+  refundTender: InlineRefundTender;
 }

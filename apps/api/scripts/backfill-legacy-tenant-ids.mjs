@@ -112,6 +112,8 @@
 import { createRequire } from "node:module";
 import readline from "node:readline";
 import { resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
+import guard from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
 import {
   assertTestTenantTargets,
   buildOrphanUserUpdates,
@@ -287,6 +289,15 @@ try {
   console.error(`backfill-legacy-tenant-ids: ${e.message}`);
   process.exit(1);
 }
+
+const { protectedTenantIds } = guard;
+const { loadProtectedSlugs } = protectedSlugsLib;
+
+// Row 195: a row is never given a PROTECTED tenant (paying | stripe-linked | PROTECTED_TENANT_SLUGS).
+// The decision layer in lib/legacy-tenant-backfill.mjs is pure (no database), and this CLI's
+// confirmAndApply is the ONLY write path for both tasks, so the guard sits here: a proposed tenant
+// in the protected set turns the row into a refusal BEFORE it can reach buildUpdates / the cascade.
+const VERDICT_PROTECTED = "refuse: protected tenant";
 
 // host + database only — never the URL, which carries the password.
 const target = (() => {
@@ -575,7 +586,7 @@ async function confirmAndApply(updates, phrase, applied, rollbackReason) {
   return 0;
 }
 
-async function runTenantBackfill() {
+async function runTenantBackfill(protectedIds) {
   say(`\n=== LEGACY NULL-tenantId BACKFILL — ${mode} — ${target} ===`);
   say("    session is READ ONLY; ids and verdicts only, no business data\n");
 
@@ -603,7 +614,13 @@ async function runTenantBackfill() {
     const { rows } = await client.query(spec.sql);
     let ok = 0;
     for (const row of rows) {
-      const { verdict, tenantId, reason } = spec.classify(row, ctx);
+      let { verdict, tenantId, reason } = spec.classify(row, ctx);
+      if (verdict === VERDICT_OK && protectedIds.has(tenantId)) {
+        verdict = VERDICT_PROTECTED;
+        tenantId = null;
+        reason =
+          "the tenant this row would receive is protected (paying, Stripe-linked or env-listed)";
+      }
       if (verdict === VERDICT_OK) spec.onOk?.(row, tenantId, ctx);
       const note = spec.noteFor?.(row, verdict, ctx) ?? null;
       const tenantSlug = await slugFor(tenantId);
@@ -846,6 +863,11 @@ async function runOrphanUsers() {
 }
 
 async function main() {
+  // The tenant task is the only one that assigns a tenant, so only it needs the protected list.
+  // The orphan-user task writes NULL-tenant User rows (no tenant at all; its UPDATE pins
+  // "tenantId" IS NULL), so no protected tenant can be reached through it. Loaded ONCE, against
+  // the URL this script dials, before connecting.
+  const slugs = task === "orphan-users" ? null : loadProtectedSlugs(process.env, databaseUrl);
   client = connect(databaseUrl);
   await client.connect();
 
@@ -854,7 +876,9 @@ async function main() {
   await client.query("SET default_transaction_read_only = on");
   await client.query("SET statement_timeout = '60s'");
 
-  return task === "orphan-users" ? runOrphanUsers() : runTenantBackfill();
+  if (task === "orphan-users") return runOrphanUsers();
+  const protectedIds = new Set(await protectedTenantIds(client, slugs));
+  return runTenantBackfill(protectedIds);
 }
 
 main()

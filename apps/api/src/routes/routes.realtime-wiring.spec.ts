@@ -18,6 +18,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { StorageService } from "../storage/storage.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { mockRouteRefsInTenant } from "../testing/route-refs-mock";
 
 jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
 
@@ -80,6 +81,7 @@ describe("RoutesService → RouteRealtime wiring (#2095)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    mockRouteRefsInTenant(prisma, { a1: "c-a1" });
     events = [];
     invoicesService = {
       recordDeliveryPaymentInTx: jest

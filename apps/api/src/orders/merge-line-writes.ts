@@ -38,6 +38,8 @@ export interface MergeLine extends PackCandidate {
   compositionMode?: string | null;
   recipeId?: string | null;
   recipeVersion?: number | null;
+  /** SA-716: the line's backorder marker (PIECES); a merge CARRIES it, never recomputes it. */
+  backorderedPieces?: unknown;
 }
 
 export interface MergeLineWriteData {
@@ -65,12 +67,14 @@ export interface MergeLineWriteData {
   compositionMode?: string;
   recipeId?: string | null;
   recipeVersion?: number | null;
+  /** SA-716: Σ of the folded losing lines' markers; absent (= 0) when none carried one. */
+  backorderedPieces?: number;
 }
 
 type MergeLineUpdateData = Pick<
   MergeLineWriteData,
   "qty" | "boxes" | "pieces" | "unitsPerBox" | "subtotal"
-> & { promoFreeUnits?: number | null };
+> & { promoFreeUnits?: number | null; backorderedPieces?: number };
 
 export type MergeLineWrite =
   | { kind: "update"; lineId: string; data: MergeLineUpdateData }
@@ -96,6 +100,10 @@ export interface BuildMergeLineWritesOptions {
 /** Fold key: lines of one product fold only at the same composition (FIXED version, or plain). */
 const versionKey = (li: MergeLine): string =>
   li.compositionMode === "FIXED" ? `FIXED:${li.recipeVersion ?? ""}` : "";
+
+/** SA-716: the markers of `lines` summed at the column's 3 decimals; the carried value. */
+const markerSum = (lines: readonly MergeLine[]): number =>
+  Math.round(lines.reduce((sum, li) => sum + (Number(li.backorderedPieces) || 0), 0) * 1000) / 1000;
 
 /** `unitsPerBox` a NON-boxed line ends up written with — matches computeLineSubtotal's own
  * "boxed only when boxes != null" contract: a group whose resolved pack is <= 1 never boxes. */
@@ -200,6 +208,7 @@ export function buildMergeLineWrites(
               categoryPriceIncludesTax: c.categoryPriceIncludesTax,
             }),
             ...compositionStampOf(c),
+            ...(markerSum([c]) > 0 ? { backorderedPieces: markerSum([c]) } : {}),
           },
         });
         continue;
@@ -245,6 +254,10 @@ export function buildMergeLineWrites(
             ...(merged.freeUnits > 0 || merged.storedFreeUnits > 0
               ? { promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null }
               : {}),
+            // SA-716: the winner line keeps its own marker and takes the folded losers' on top.
+            ...(markerSum(losersInGroup) > 0
+              ? { backorderedPieces: markerSum([group.winnerInGroup!, ...losersInGroup]) }
+              : {}),
           },
         });
       } else {
@@ -271,6 +284,9 @@ export function buildMergeLineWrites(
               categoryPriceIncludesTax: primary.categoryPriceIncludesTax,
             }),
             ...compositionStampOf(primary),
+            ...(markerSum(losersInGroup) > 0
+              ? { backorderedPieces: markerSum(losersInGroup) }
+              : {}),
           },
         });
       }

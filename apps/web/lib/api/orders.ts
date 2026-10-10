@@ -1,13 +1,20 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest, ChangeRequestResolveAction } from "@/lib/change-requests";
+import { fetchPdfBlob } from "../fetch-pdf-blob";
 import type {
   ActiveOrderSummary,
+  BatchShipRequest,
+  BatchShipResult,
+  PackingSlipsRequest,
+  PackingSlipsResult,
   CancelImpact,
   CustomerPriceHistory,
   InlineReturnLinesRequest,
   LineComponentView,
+  OrderInvoicesNeedReview,
   PriceType,
+  OrderCancelBlockedReason,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
@@ -33,10 +40,12 @@ export interface Order {
     phone?: string | null;
     mobile?: string | null;
     email?: string | null;
+    /** a walk-in customer cannot be charged on account (the pickup hand-over's tender rules) */
+    isWalkIn?: boolean | null;
   };
   status: "DRAFT" | "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
-  /** ROUTE = dispatched on a delivery route (default); SHIP = supplier/carrier-shipped, excluded from trip/route dispatch. */
-  fulfillPath: "ROUTE" | "SHIP";
+  /** ROUTE = dispatched on a delivery route (default); SHIP = supplier/carrier-shipped, excluded from trip/route dispatch; PICKUP = order ahead, picked up at the store. */
+  fulfillPath: "ROUTE" | "SHIP" | "PICKUP";
   urgent: boolean;
   subtotal: number;
   tax: number;
@@ -57,6 +66,8 @@ export interface Order {
     invoiceNumber: string;
     status: string;
     total: number;
+    /** The server's default PDF stage for this invoice: "final" once issued or settled at shipment. */
+    pdfVariant?: "draft" | "final";
     /** CREDIT_NOTE payments only (server-scoped include), listed by the order's
      *  "Applied credits" panel (#2404). `creditNote` is attached by the order read
      *  (InvoicePayment has no relation); `autoApplied` is SA-436 PR-1's column. */
@@ -99,12 +110,16 @@ export interface Order {
   shippedAt?: string | null;
   /** P5-08: append-only edit history (one row per pre-dispatch edit). */
   revisions?: OrderRevision[];
+  /** B1083: the server says this order cannot be cancelled ("WITH_CARRIER": the parcel is out). */
+  cancelBlockedReason?: OrderCancelBlockedReason | null;
   /** P5-08: whether the order can still be edited directly (closes on dispatch). */
   editWindow?: {
     editable: boolean;
     editableUntil: string | null;
     closedReason: "DISPATCHED" | "STATUS" | null;
   };
+  /** B1116: STAFF-ONLY — whether the order's invoices need review (absent on buyer/driver reads and older API). */
+  invoicesNeedReview?: OrderInvoicesNeedReview;
   /** P5-09: post-dispatch change requests, newest first (absent on older API). */
   changeRequests?: ChangeRequest[];
   /** P5-11: filtered relation counts from the LIST endpoint — `changeRequests`
@@ -172,6 +187,8 @@ export interface OrderItem {
    *  boxed line). Any local re-pricing MUST subtract it — otherwise the line
    *  previews at full price while the server bills the reduced subtotal. */
   promoFreeUnits?: number | null;
+  /** SA-714: pieces sold past stock (staff-only, display only). The API serialises a Decimal, so a string. */
+  backorderedPieces?: number | string | null;
   /** Server-stored line subtotal (the agreed money). Prefer this over recomputing. */
   subtotal?: number;
   /**
@@ -209,6 +226,10 @@ export function useOrders(
     limit?: number;
     deliveryDateFrom?: string;
     deliveryDateTo?: string;
+    /** Shipped on/after this date (`shippedAt`): the "Shipped this week" card + its list. */
+    shippedFrom?: string;
+    /** `false` = only orders with no tracking number yet ("Shipped, no tracking"). */
+    hasTracking?: boolean;
     /**
      * B144: composes with `customerId` and role scope (never swallowed by
      * either) — matches against order number OR the customer's business
@@ -397,10 +418,15 @@ export function useUninvoicedOrders(customerId: string | null | undefined) {
  * Look up the most recent DRAFT/PENDING order for a customer (operator only).
  * Used by the create-order modal to ask the operator whether to merge or keep separate.
  */
-export function useActiveOrderForCustomer(customerId: string | null | undefined) {
+export function useActiveOrderForCustomer(
+  customerId: string | null | undefined,
+  /** The path the order being built is on: the merge preview must look for the same target create would. */
+  fulfillPath?: "ROUTE" | "SHIP",
+) {
   return useQuery<ActiveOrderSummary | null>({
-    queryKey: ["orders", "active", customerId],
-    queryFn: () => apiClient.get("/orders/active", { params: { customerId } }).then((r) => r.data),
+    queryKey: ["orders", "active", customerId, fulfillPath],
+    queryFn: () =>
+      apiClient.get("/orders/active", { params: { customerId, fulfillPath } }).then((r) => r.data),
     enabled: !!customerId,
   });
 }
@@ -625,5 +651,31 @@ export function usePatchOrderFulfillPath(options?: LocalErrorToastOption) {
     mutationFn: ({ id, fulfillPath }) =>
       apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath }).then((r) => r.data),
     onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["orders", vars.id] }),
+  });
+}
+
+// ─── Batch ship + packing slips (#3168) ───────────────────────────────────────
+
+/** Mark several carrier orders shipped in one request. Always 200 with a per-order outcome. */
+export function useBatchShipOrders() {
+  const qc = useQueryClient();
+  return useMutation<BatchShipResult, Error, BatchShipRequest>({
+    mutationFn: (req) => apiClient.post("/orders/batch-ship", req).then((r) => r.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["orders"] }),
+  });
+}
+
+/** One PDF, a packing slip page per carrier order. Resolves the signed URL and its bytes (printable). */
+export function usePackingSlips() {
+  return useMutation<PackingSlipsResult & { blob: Blob | null }, Error, string[]>({
+    mutationFn: async (orderIds) => {
+      const res = await apiClient
+        .post<PackingSlipsResult>("/orders/packing-slips", {
+          orderIds,
+        } satisfies PackingSlipsRequest)
+        .then((r) => r.data);
+      const blob = res.url ? await fetchPdfBlob(res.url, apiClient) : null;
+      return { ...res, blob };
+    },
   });
 }
