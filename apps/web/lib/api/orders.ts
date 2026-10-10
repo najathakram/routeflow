@@ -493,7 +493,7 @@ export interface ItemUpdate {
   overrideReason?: string; // optional note explaining the override
 }
 
-export function useUpdateOrderItems() {
+export function useUpdateOrderItems(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     Order,
@@ -516,6 +516,7 @@ export function useUpdateOrderItems() {
       inlineReturn?: InlineReturnLinesRequest;
     }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({
       id,
       items,

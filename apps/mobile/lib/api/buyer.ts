@@ -79,6 +79,8 @@ export type {
 export interface BuyerInvoice {
   id: string;
   invoiceNumber: string;
+  revisedAt?: string | null;
+  overpaidBy?: number | null;
   status: string;
   issueDate?: string;
   dueDate?: string;

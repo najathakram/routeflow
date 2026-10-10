@@ -73,6 +73,7 @@ import {
   useOrderInlineReturnSave,
 } from "../_components/use-order-inline-return-save";
 import { OrderReturnsPanel } from "./_components/OrderReturnsPanel";
+import { useOrderOverpayGuard } from "./_components/OrderOverpayNotice";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -1908,7 +1909,6 @@ export default function OrderDetailPage() {
   const updateStatus = useUpdateOrderStatus();
   // The cancel flow renders its own error (every other status change keeps the global toast), so it has its own instance.
   const cancelOrder = useUpdateOrderStatus({ localErrorToast: true });
-  const updateItems = useUpdateOrderItems();
   const reopenOrder = useReopenOrder();
   const deleteOrder = useDeleteOrder({ localErrorToast: true });
   const updateShipment = useUpdateOrderShipment();
@@ -1955,6 +1955,7 @@ export default function OrderDetailPage() {
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
   const guardError = (retry: () => void) => (err: unknown) => {
+    if (overpay.capture(err)) return;
     const restricted = parseSellingRestricted(err);
     if (restricted) {
       setRestrictedBlock(restricted);
@@ -1976,6 +1977,8 @@ export default function OrderDetailPage() {
 
   // Item editing
   const [isEditing, setIsEditing] = React.useState(false);
+  const overpay = useOrderOverpayGuard(order, isEditing);
+  const updateItems = useUpdateOrderItems({ localErrorToast: overpay.ownsToast });
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
   const [pendingDeletes, setPendingDeletes] = React.useState<string[]>([]);
   const [draftAutoEntered, setDraftAutoEntered] = React.useState(false);
@@ -2928,6 +2931,7 @@ export default function OrderDetailPage() {
                   {canEdit && " Change a line's price or apply a per-item discount."} Changes are
                   applied when you save.
                 </p>
+                {overpay.node}
                 <EditableLineItems
                   items={editItems}
                   onChange={setEditItems}

@@ -128,6 +128,10 @@ export interface InvoicePayment {
 export interface Invoice {
   id: string;
   invoiceNumber: string;
+  /** P-4: derived by the API; absent = never revised (no badge). */
+  revisedAt?: string | null;
+  /** P-4: > 0 only when overpaid; absent = nothing shown. */
+  overpaidBy?: number | null;
   customerId: string;
   customer?: {
     id: string;
