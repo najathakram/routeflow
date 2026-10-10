@@ -289,6 +289,14 @@ export function posBalanceDue(
   return roundMoney(sum);
 }
 
+/**
+ * "Hand over, no payment" is offered only when the customer is KNOWN to be named (`isWalkIn === false`,
+ * read from the customer record: GET /orders/:id does not carry it). Unknown / loading is not known-named.
+ */
+export function posMayHandOverUnpaid(isWalkIn: boolean | null | undefined): boolean {
+  return isWalkIn === false;
+}
+
 export type PosTenderPlan =
   | { ok: true; body: PickupCompleteRequest }
   | { ok: false; problem: "AMOUNT" | "CHECK_NUMBER" | "TENDER_REQUIRED" };
@@ -299,7 +307,8 @@ export type PosTenderPlan =
  * amount means the exact balance; a check needs its number.
  */
 export function planPosTender(input: {
-  isWalkIn: boolean;
+  /** true / null / undefined (unknown or loading) all require a tender; only a known `false` may skip. */
+  isWalkIn: boolean | null | undefined;
   skip: boolean;
   method: PosTenderMethod;
   amountRaw: string;
@@ -307,7 +316,9 @@ export function planPosTender(input: {
   balanceDue: number;
 }): PosTenderPlan {
   if (input.skip) {
-    return input.isWalkIn ? { ok: false, problem: "TENDER_REQUIRED" } : { ok: true, body: {} };
+    return posMayHandOverUnpaid(input.isWalkIn)
+      ? { ok: true, body: {} }
+      : { ok: false, problem: "TENDER_REQUIRED" };
   }
   const raw = input.amountRaw.trim();
   const amount = raw === "" ? input.balanceDue : Number(raw);

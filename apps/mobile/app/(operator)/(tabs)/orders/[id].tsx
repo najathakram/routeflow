@@ -88,6 +88,7 @@ import {
   type PosAction,
 } from "../../../../lib/pos-mode";
 import { PosHandOverSheet } from "../../../../components/PosHandOverSheet";
+import { useCustomer } from "../../../../lib/api/customers";
 import { usePickupComplete, useSwitchOrderToDelivery } from "../../../../lib/api/pos-orders";
 import { statusActions, type StatusAction } from "../../../../lib/order-actions";
 import { useRecordReturn } from "../../../../hooks/useRecordReturn";
@@ -140,6 +141,8 @@ export default function OrderDetailScreen() {
   const shipmentMut = useUpdateOrderShipment();
   const createInvoiceMut = useCreateInvoiceFromOrder();
   const pickupMut = usePickupComplete(id ?? "");
+  // GET /orders/:id does not carry customer.isWalkIn: read it from the customer record (same as web).
+  const { data: walkInCustomer } = useCustomer(order?.customer?.id ?? order?.customerId ?? "");
   const switchToDeliveryMut = useSwitchOrderToDelivery();
   const sendMut = useSendInvoice();
   const pdfMut = useInvoicePdf();
@@ -1224,7 +1227,7 @@ export default function OrderDetailScreen() {
 
       <PosHandOverSheet
         visible={handOverOpen}
-        isWalkIn={!!order.customer?.isWalkIn}
+        isWalkIn={walkInCustomer?.isWalkIn}
         balanceDue={posBalanceDue(Number(order.total), order.invoices)}
         submitting={pickupMut.isPending}
         error={handOverError}

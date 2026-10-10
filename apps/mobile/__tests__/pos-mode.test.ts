@@ -7,6 +7,7 @@ import {
   POS_MODE_PREF_KEY,
   pickupCompleteErrorCopy,
   planPosTender,
+  posMayHandOverUnpaid,
   posBalanceDue,
   posCanSwitchToDelivery,
   posCartSaveLabel,
@@ -202,5 +203,35 @@ describe("hand-over tender and fixed error copy", () => {
     expect(posCartSaveLabel(true, false)).toBe("Confirm & invoice");
     expect(posCartSaveLabel(false, false)).toBe("Save order");
     expect(posCartSaveLabel(true, true)).toBe("Saving…");
+  });
+});
+
+describe("no-payment hand-over needs a known-named customer", () => {
+  it("only isWalkIn === false may hand over unpaid (true / null / undefined may not)", () => {
+    expect(posMayHandOverUnpaid(false)).toBe(true);
+    expect(posMayHandOverUnpaid(true)).toBe(false);
+    expect(posMayHandOverUnpaid(null)).toBe(false);
+    expect(posMayHandOverUnpaid(undefined)).toBe(false);
+  });
+  it("planPosTender refuses skip while the customer is unknown", () => {
+    const base = {
+      skip: true,
+      method: "CASH" as const,
+      amountRaw: "",
+      reference: "",
+      balanceDue: 5,
+    };
+    expect(planPosTender({ ...base, isWalkIn: undefined })).toEqual({
+      ok: false,
+      problem: "TENDER_REQUIRED",
+    });
+    expect(planPosTender({ ...base, isWalkIn: false })).toEqual({ ok: true, body: {} });
+  });
+  it("maps a 400 WALK_IN_NO_ACCOUNT to fixed copy", () => {
+    expect(
+      pickupCompleteErrorCopy({
+        response: { status: 400, data: { code: "WALK_IN_NO_ACCOUNT", message: "x" } },
+      }),
+    ).toMatch(/can't be charged on account/);
   });
 });

@@ -16,6 +16,7 @@ import {
   POS_TENDER_METHODS,
   POS_TENDER_PROBLEM_COPY,
   planPosTender,
+  posMayHandOverUnpaid,
   type PosTenderMethod,
 } from "../lib/pos-mode";
 
@@ -33,7 +34,8 @@ export function PosHandOverSheet({
   onSubmit,
 }: {
   visible: boolean;
-  isWalkIn: boolean;
+  /** Unknown / loading counts as not known-named: a tender is required. */
+  isWalkIn: boolean | null | undefined;
   balanceDue: number;
   submitting?: boolean;
   /** Fixed copy for the last failed attempt (never a server message). */
@@ -82,9 +84,9 @@ export function PosHandOverSheet({
         <View style={styles.sheet}>
           <Text style={styles.title}>{POS_COPY.handOver}</Text>
           <Text style={styles.hint}>
-            {isWalkIn
-              ? "A walk-in customer pays to take the order."
-              : "Take payment now, or hand over and leave the invoice open."}
+            {posMayHandOverUnpaid(isWalkIn)
+              ? "Take payment now, or hand over and leave the invoice open."
+              : "Take payment to hand the order over."}
           </Text>
           <View style={styles.chips}>
             {POS_TENDER_METHODS.map((m) => (
@@ -132,7 +134,7 @@ export function PosHandOverSheet({
               {submitting ? "Saving…" : `${POS_COPY.handOver} and take payment`}
             </Text>
           </Pressable>
-          {isWalkIn ? null : (
+          {posMayHandOverUnpaid(isWalkIn) ? (
             <Pressable
               style={styles.secondary}
               disabled={submitting}
@@ -141,7 +143,7 @@ export function PosHandOverSheet({
             >
               <Text style={styles.secondaryText}>{POS_COPY.handOver}, no payment</Text>
             </Pressable>
-          )}
+          ) : null}
           <Pressable style={styles.secondary} onPress={onCancel} accessibilityRole="button">
             <Text style={styles.secondaryText}>Cancel</Text>
           </Pressable>
