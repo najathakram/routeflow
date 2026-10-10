@@ -38,10 +38,14 @@ export const toSaleItem = (l: SaleLine): CounterSaleItem => {
     unitsPerBox: l.unitsPerBox,
   });
   const note = l.note?.trim();
+  // POS-5: ONLY an edited line carries a price. `unitPrice` is the already-rounded NET price; every other line is
+  // byte-identical to what the till always sent (the server prices it).
+  const reason = l.override?.reason?.trim();
   return {
     ...(n.boxes === null || n.pieces === null
       ? { productId: l.productId, qty: n.qty }
       : { productId: l.productId, boxes: n.boxes, pieces: n.pieces, qty: n.qty }),
+    ...(l.override ? { unitPrice: l.unitPrice, ...(reason ? { priceReason: reason } : {}) } : {}),
     ...(note ? { note } : {}),
   };
 };

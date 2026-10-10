@@ -58,6 +58,7 @@ import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { classifyTenantSlug } from "../tenant/tenant-class";
+import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
 import { CreateTenantAdminDto } from "./dto/create-tenant-admin.dto";
 import { IRS_SYSTEM_CATEGORIES } from "../bookkeeping/irs-categories.constant";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
@@ -438,6 +439,11 @@ export class PlatformAdminService {
       loginUrl,
       payUrl,
       welcomeEmail,
+      // Row 195: a test-pattern slug is allowed here (super-admin intent) but is flagged, because the
+      // tenant is classed TEST and every test-only script treats it as disposable.
+      ...(isApprovedTestTenantSlug(slug.toLowerCase())
+        ? { notice: "This will be a TEST tenant: its slug matches a test-tenant pattern." }
+        : {}),
     };
   }
 

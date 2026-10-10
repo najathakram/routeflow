@@ -1,6 +1,7 @@
 import { uniqueViolationConstraints } from "../common/prisma-unique";
 import { ConflictException } from "@nestjs/common";
 import { BarcodeOrigin, PackagingLevel, Prisma } from "@prisma/client";
+import { gtinEquivalents } from "@routeflow/scanning";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { mirrorableImageKeys, parseFocalFromKey, planBarcodeRows } from "./product-barcode-rules";
 
@@ -26,13 +27,27 @@ function throwBarcodeTaken(code: string, holderProductId: string): never {
   });
 }
 
-/** Non-blank, deduped, SORTED codes — the exact order SA-572b/c requires the locks taken in. */
+/**
+ * B1214: every string that denotes the SAME physical label as `code` — the code itself plus its GTIN identity forms
+ * (a 12-digit UPC-A and its 0+12 EAN-13 form, UPC-E expansions, GTIN-14), the one equivalence scan lookup shares
+ * (`gtinEquivalents`, @routeflow/scanning). The claim check (`assertBarcodeAvailable`, `findCodeHolders`) and the
+ * advisory-lock keys (`lockBarcodeCodes`) all use it, so two products can never hold the two spellings of one label.
+ */
+export function barcodeEquivalents(code: string): string[] {
+  return gtinEquivalents(code);
+}
+
+/**
+ * Non-blank, deduped, SORTED lock keys — the exact order SA-572b/c requires the locks taken in. Each code expands to
+ * its equivalence class (B1214), so a UPC-A claimant and an EAN-13 claimant of the same label take the SAME keys; the
+ * expansion is a pure per-code function, so a later call with a subset of the codes takes a subset of these keys.
+ */
 function normalizeCodes(codes: Array<string | null | undefined>): string[] {
   const set = new Set<string>();
   for (const code of codes) {
     if (typeof code !== "string") continue;
     if (code.trim().length === 0) continue;
-    set.add(code);
+    for (const key of barcodeEquivalents(code)) set.add(key);
   }
   return Array.from(set).sort();
 }
@@ -113,11 +128,13 @@ export async function assertBarcodeAvailable(
   input: { tenantId: string; productId: string | null; code: string },
 ): Promise<void> {
   const { tenantId, productId, code } = input;
+  // B1214: any equivalent spelling of the same label is a holder (see `barcodeEquivalents`).
+  const spellings = barcodeEquivalents(code);
 
   const rowHolder = await tx.productBarcode.findFirst({
     where: {
       tenantId,
-      code,
+      code: { in: spellings },
       ...(productId ? { productId: { not: productId } } : {}),
     },
     select: { productId: true },
@@ -127,7 +144,7 @@ export async function assertBarcodeAvailable(
   const legacyHolder = await tx.product.findFirst({
     where: {
       tenantId,
-      barcode: code,
+      barcode: { in: spellings },
       ...(productId ? { id: { not: productId } } : {}),
     },
     select: { id: true },

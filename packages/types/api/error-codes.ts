@@ -173,7 +173,8 @@
 //                    COUNTER_SALES_DISABLED (the tenant's fulfilment capability has no counter); 409 WALK_IN_OPEN_CREDIT (the walk-in
 //                    customer holds open credit that send would auto-apply); 400 WALK_IN_NO_ACCOUNT (a walk-in cannot buy on account),
 //                    WALK_IN_WITH_CUSTOMER (customerId and walkIn together), COUNTER_CHECK_NUMBER_REQUIRED (a check needs its number),
-//                    IDEMPOTENCY_KEY_REQUIRED (the Idempotency-Key header is missing or blank: the till must send one per sale).
+//                    IDEMPOTENCY_KEY_REQUIRED (the Idempotency-Key header is missing or blank: the till must send one per sale);
+//                    403 PRICE_EDIT_NOT_PERMITTED (a line carries a real price change from a caller who may not edit prices).
 //                    COUNTER_TENDER_SHORT (a zero tender), COUNTER_PAYMENT_EXCEEDS_TOTAL (card or check above the balance) and
 //                    COUNTER_PAYMENT_NOT_RECORDED are NOT HTTP errors: the balance is server-computed, so these are the
 //                    `paymentErrorCode` of a 201 whose sale committed but whose payment did not (`paymentRecorded: false`, the invoice
@@ -202,8 +203,18 @@ export const API_ERROR_CODES = {
   NAME_TAKEN: "NAME_TAKEN",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
+  /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */
+  FAMILY_NOT_PRICEABLE: "FAMILY_NOT_PRICEABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",
   FAMILY_NOT_FOUND: "FAMILY_NOT_FOUND",
+  /** 409 from DELETE /products/bulk and /products/clear-all: a unique violation while deleting; nothing was deleted, reload and retry. */
+  PRODUCT_DELETE_CONFLICT: "PRODUCT_DELETE_CONFLICT",
+  /** 409 from PATCH/DELETE /products/:id: a family still has ACTIVE variants; body carries `variantCount`. Resend with `confirmCascade: true` to deactivate them with it. */
+  FAMILY_HAS_ACTIVE_VARIANTS: "FAMILY_HAS_ACTIVE_VARIANTS",
+  /** 409 from PATCH /products/:id: a variant cannot be reactivated while its parent family is inactive; reactivate the family first. */
+  VARIANT_PARENT_INACTIVE: "VARIANT_PARENT_INACTIVE",
+  /** `skipped[].code` of DELETE /products/bulk and /products/clear-all: the product has active (undelivered) order items, so it was not deleted. */
+  PRODUCT_HAS_ACTIVE_ORDER_ITEMS: "PRODUCT_HAS_ACTIVE_ORDER_ITEMS",
   CODES_CHANGED: "CODES_CHANGED",
   CATALOG_TOO_LARGE_FOR_CLEAR_ALL: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",
@@ -277,6 +288,9 @@ export const API_ERROR_CODES = {
   PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
   BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
   INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
+  INVOICE_HAS_CASH_REFUND: "INVOICE_HAS_CASH_REFUND",
+  // Order cancel refused: part of the order was refunded in cash (the invoice void keeps INVOICE_HAS_CASH_REFUND).
+  ORDER_HAS_CASH_REFUND: "ORDER_HAS_CASH_REFUND",
   HANDOFF_CODE_INVALID: "HANDOFF_CODE_INVALID",
   CHANGE_REQUEST_ALREADY_RESOLVED: "CHANGE_REQUEST_ALREADY_RESOLVED",
   CHANGE_REQUEST_PACK_CHANGED: "CHANGE_REQUEST_PACK_CHANGED",
@@ -401,6 +415,12 @@ export const API_ERROR_CODES = {
    * counter POST refuses it before any write; use a fresh key.
    */
   COUNTER_SALE_KEY_CONFLICT: "COUNTER_SALE_KEY_CONFLICT",
+  /**
+   * 403 from the counter-sale POST (POS-5): a line carries a real price change (a price off the server's own price
+   * for this customer) from a caller who may not edit prices (`canEditPrices`: account admins only today). Raised
+   * before anything is written; the Idempotency-Key is not consumed. A typed price equal to the server's is no change.
+   */
+  PRICE_EDIT_NOT_PERMITTED: "PRICE_EDIT_NOT_PERMITTED",
   /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
   WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
   /**
@@ -506,6 +526,10 @@ export const API_ERROR_CODES = {
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
   /** Back office: a manual activation whose prepaid window already ended is refused. 409. */
   ACTIVATION_PERIOD_ALREADY_ENDED: "ACTIVATION_PERIOD_ALREADY_ENDED",
+  /** 403 `code` when an operator holds none of the feature groups an endpoint needs; `groups` lists them. */
+  PERMISSION_DENIED: "PERMISSION_DENIED",
+  /** 409 from PUT /users/:id/permissions: `expectedVersion` is stale (reload and retry). */
+  PERMISSIONS_VERSION_CONFLICT: "PERMISSIONS_VERSION_CONFLICT",
   /** A product's parent cannot be used (400); `reason` names the rule. See the header list. */
   PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
 } as const;

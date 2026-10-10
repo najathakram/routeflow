@@ -1,6 +1,6 @@
 /**
  * F-10b (#2078): Settings → Email → "Connect your email" (MailboxCard) in a real browser, on the
- * real web build, signed in as the seeded operator. THE PROVIDER IS ALWAYS STUBBED:
+ * real web build, signed in as the seeded tenant admin. THE PROVIDER IS ALWAYS STUBBED:
  *   - every mailbox endpoint (`/settings/email/mailbox`, `…/google/start`, `…/microsoft/start`,
  *     `…/confirm/:token/preview`, `…/confirm`, `…/confirm/cancel`) is answered by `page.route`,
  *     so no mailbox call ever reaches the API. The stubs hold the server's #2115 rules: preview
@@ -20,7 +20,7 @@
  * dialog (captured at 1440/768/390) that binds only on Confirm; Cancel burns the grant; the same
  * link opened in ANOTHER tab (no connect secret there) is refused without ever being previewed.
  *
- * Role: OPERATOR (pre-authenticated storageState). Tenant: the approved e2e-routeflow seed.
+ * Role: TENANT_ADMIN (pre-authenticated storageState; the email tab is admin-only). Tenant: the approved e2e-routeflow seed.
  * Needs the full stack for the signed-in shell, so it runs where a compose slot exists or
  * against a deployed target, never on a host without one. Not in the local:e2e gate yet
  * (LOCAL-LANE.md): it joins after its first green run on a compose slot.

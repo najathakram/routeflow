@@ -3,6 +3,11 @@ import { roundMoney } from "@routeflow/pricing";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
 import { CounterSaleScreen, lineQtyLabel, toSaleItem } from "./CounterSaleScreen";
+import {
+  cancelCounterLeave,
+  confirmCounterLeave,
+  guardCounterLeave,
+} from "@/lib/counter-cart-signal";
 
 /**
  * Counter sale (walk-in pickup): the one screen. The API is mocked at the module boundary. Pins: Walk-in default, On account
@@ -109,6 +114,13 @@ describe("CounterSaleScreen", () => {
     expect(screen.getByLabelText("Scan or search items")).toHaveFocus();
   });
 
+  it("the screen root carries the marker the reprint print rule hides", () => {
+    renderWithProviders(<CounterSaleScreen />);
+    const root = screen.getByTestId("counter-sale-screen");
+    expect(root).toHaveAttribute("data-counter-screen");
+    expect(root).toContainElement(screen.getByLabelText("Scan or search items"));
+  });
+
   it("type a quantity, then scan, to multiply: 3 then a scan = 3 units and the running total", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("3");
@@ -140,6 +152,89 @@ describe("CounterSaleScreen", () => {
     expect(screen.getByTestId("change-due").className).toMatch(/text-3xl/);
     fireEvent.click(screen.getByRole("button", { name: "Exact" }));
     expect(screen.getByTestId("change-due")).toHaveTextContent("Change $0.00");
+  });
+
+  it("cash: the change line sits inside the sticky checkout bar, never under it (row 112)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    expect(screen.getByTestId("counter-checkout-bar")).toContainElement(
+      screen.getByTestId("change-due"),
+    );
+  });
+
+  it("cash: an underpayment reads 'Amount due', never 'Change $0.00' (row 188)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $2.50");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $1.50");
+    expect(screen.getByTestId("change-due")).not.toHaveTextContent("Change");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "3" } });
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Change $0.50");
+  });
+
+  it("cash: the 'less than the total' error clears the moment the tender is fixed (row 188)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("less than the total");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "5" } });
+    expect(screen.queryByText(/less than the total/)).toBeNull();
+  });
+
+  it("a repeat scan says so: the cue names the item and its new quantity (row 188)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    expect(screen.queryByTestId("counter-scan-cue")).toBeNull(); // a new line is its own signal
+    await scan("012345678905");
+    await waitFor(() =>
+      expect(screen.getByTestId("counter-scan-cue")).toHaveTextContent("Cola · now 2"),
+    );
+  });
+
+  it("Enter on a typed quantity hands focus back to the scan field (row 188)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    const qty = screen.getByLabelText("Set quantity of Cola");
+    qty.focus();
+    fireEvent.change(qty, { target: { value: "4" } });
+    fireEvent.keyDown(qty, { key: "Enter" });
+    await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
+    expect(screen.getByTestId("running-total")).toHaveTextContent("$10.00");
+  });
+
+  it("the repeat-scan cue still clears 2.5 s after it was SET, even when the line changes meanwhile", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("counter-scan-cue")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Add one Cola" })); // a line change inside the window
+    await waitFor(() => expect(screen.queryByTestId("counter-scan-cue")).toBeNull(), {
+      timeout: 4000,
+    });
+  }, 10000);
+
+  it("editing the tender keeps a server error on screen; only the underpaid copy clears (review nit)", async () => {
+    mutateAsync.mockRejectedValue({ response: { status: 409, data: { message: "RAW" } } });
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/changed/);
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "30" } });
+    fireEvent.click(screen.getByRole("button", { name: "$50" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/changed/);
+  });
+
+  it("the amount-due / change line is announced politely (review nit)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    expect(screen.getByTestId("change-due")).toHaveAttribute("role", "status");
   });
 
   it("Complete & show receipt posts a walk-in sale with the cash tendered, then shows the receipt with Print", async () => {
@@ -1779,5 +1874,239 @@ describe("CounterSaleScreen: held attempt hardening", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
     expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+  });
+});
+
+describe("CounterSaleScreen: the live cart survives a refresh (SA-748 section 1)", () => {
+  const LIVE_KEY = "rf.counterSale.liveCart:acme:u-a";
+  const HELD_KEY = "rf.counterSale.heldAttempt:acme:u-a";
+  // A refresh keeps the tab's sessionStorage, so the cart's writer id is this tab's id.
+  beforeEach(() =>
+    window.sessionStorage.setItem("rf.counterSale.tabId", "tab-from-before-the-refresh"),
+  );
+  const colaLine = {
+    tempId: "p-cola-0",
+    productId: "p-cola",
+    name: "Cola",
+    unitPrice: 2.5,
+    qty: 3,
+    listPrice: 2.5,
+    unit: "each",
+    priceType: "STANDARD",
+  };
+  const liveCart = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      v: 1,
+      owner: "tab-from-before-the-refresh",
+      lines: [colaLine],
+      customer: null,
+      method: "CASH",
+      tendered: "10",
+      reference: "",
+      ...over,
+    });
+
+  it("saves the cart (debounced) as the clerk rings it", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+    const saved = JSON.parse(window.localStorage.getItem(LIVE_KEY) as string);
+    expect(saved.lines).toHaveLength(1);
+    expect(saved.lines[0]).toMatchObject({ productId: "p-cola", qty: 1 });
+    expect(saved.method).toBe("CASH");
+  });
+
+  it("puts the cart back UNLOCKED with a banner after a refresh", async () => {
+    window.localStorage.setItem(LIVE_KEY, liveCart());
+    renderWithProviders(<CounterSaleScreen />);
+    expect(await screen.findByTestId("counter-cart-restored")).toBeInTheDocument();
+    expect(screen.getByTestId("running-total")).toHaveTextContent("$7.50");
+    // the cash is NOT restored: prices may have moved, so the clerk taps the amount against today's total
+    expect(screen.getByLabelText("Amount tendered")).toHaveValue("");
+    expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+    expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    expect(screen.queryByTestId("counter-cart-restored")).toBeNull();
+  });
+
+  it("a held attempt always wins: the live cart is not restored over it, and is dropped", async () => {
+    window.sessionStorage.setItem(
+      HELD_KEY,
+      JSON.stringify({
+        key: "k1",
+        dto: { walkIn: true, items: [], payment: { method: "CASH", amount: 5 } },
+        next: false,
+        estimate: { total: 2.5, change: 2.5 },
+        lines: [{ ...colaLine, qty: 1 }],
+        customer: null,
+        method: "CASH",
+        tendered: "5",
+        reference: "",
+      }),
+    );
+    window.localStorage.setItem(LIVE_KEY, liveCart());
+    renderWithProviders(<CounterSaleScreen />);
+    expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+    expect(screen.queryByTestId("counter-cart-restored")).toBeNull();
+    expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"); // the held cart, not the live one
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).toBeNull());
+  });
+
+  it("an unreadable stored cart is dropped and never locks the till", async () => {
+    window.localStorage.setItem(LIVE_KEY, "{not json");
+    renderWithProviders(<CounterSaleScreen />);
+    expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+    expect(screen.queryByTestId("counter-cart-restored")).toBeNull();
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).toBeNull());
+  });
+
+  it("a completed sale leaves nothing behind to restore", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).toBeNull());
+    await new Promise((r) => setTimeout(r, 600)); // past the save delay: still nothing
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull();
+  });
+
+  it("a cart cleared by the clerk clears the stored one", async () => {
+    window.localStorage.setItem(LIVE_KEY, liveCart());
+    renderWithProviders(<CounterSaleScreen />);
+    await screen.findByTestId("counter-cart-restored");
+    fireEvent.click(screen.getByRole("button", { name: "Remove Cola" }));
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).toBeNull());
+  });
+
+  it("a cart stored under an unknown schema version is dropped, not restored", async () => {
+    window.localStorage.setItem(LIVE_KEY, liveCart({ v: 99 }));
+    renderWithProviders(<CounterSaleScreen />);
+    expect(screen.getByLabelText("Scan or search items")).not.toBeDisabled();
+    expect(screen.queryByTestId("counter-cart-restored")).toBeNull();
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).toBeNull());
+  });
+
+  it("a refresh MID-SEND cannot write the cart back (pagehide flush stays quiet)", async () => {
+    mutateAsync.mockReturnValue(new Promise(() => undefined)); // the POST never answers
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull(); // cleared synchronously, before the POST can answer
+    window.dispatchEvent(new Event("pagehide"));
+    await new Promise((r) => setTimeout(r, 600));
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull();
+  });
+
+  it("an UNKNOWN outcome keeps the cart out of live storage (the held attempt owns it)", async () => {
+    mutateAsync.mockRejectedValue({ message: "Network Error" });
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByTestId("counter-outcome-unknown")).toBeInTheDocument();
+    window.dispatchEvent(new Event("pagehide"));
+    await new Promise((r) => setTimeout(r, 600));
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull();
+  });
+
+  it("a definitive refusal puts the cart back into storage (nothing was written)", async () => {
+    mutateAsync.mockRejectedValue({ response: { status: 400, data: { message: "RAW" } } });
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/as entered/);
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+  });
+
+  it("Discard on the leave dialog drops the stored cart too, so it is not restored next visit (SA-748 MEDIUM)", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+    const proceed = jest.fn();
+    expect(guardCounterLeave(proceed)).toBe(true); // the "Discard this sale?" dialog opens
+    expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull(); // Keep selling would still have it
+    confirmCounterLeave(); // Discard
+    expect(proceed).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull();
+    await new Promise((r) => setTimeout(r, 600));
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull();
+  });
+
+  it("Keep selling leaves the stored cart alone", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("012345678905");
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull());
+    expect(guardCounterLeave(jest.fn())).toBe(true);
+    cancelCounterLeave();
+    await new Promise((r) => setTimeout(r, 600));
+    expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull();
+  });
+
+  describe("two tabs", () => {
+    const original = Object.getOwnPropertyDescriptor(window.navigator, "locks");
+    const installLocks = (granted: boolean) => {
+      Object.defineProperty(window.navigator, "locks", {
+        configurable: true,
+        value: {
+          request: (_name: string, _opts: unknown, cb: (lock: unknown) => unknown) =>
+            Promise.resolve(cb(granted ? { name: "held" } : null)),
+        },
+      });
+    };
+    afterEach(() => {
+      if (original) Object.defineProperty(window.navigator, "locks", original);
+      else delete (window.navigator as unknown as Record<string, unknown>).locks;
+    });
+
+    it("a second live tab does NOT restore the cart, says so, and leaves the stored cart alone", async () => {
+      installLocks(false); // another tab holds the till's lock
+      window.localStorage.setItem(LIVE_KEY, liveCart());
+      renderWithProviders(<CounterSaleScreen />);
+      expect(await screen.findByTestId("counter-cart-other-tab")).toBeInTheDocument();
+      expect(screen.queryByTestId("counter-cart-restored")).toBeNull();
+      expect(screen.getByTestId("running-total")).toHaveTextContent("$0.00");
+      await new Promise((r) => setTimeout(r, 600));
+      expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull();
+      // and what this tab rings never overwrites the other tab's cart
+      await scan("012345678905");
+      await new Promise((r) => setTimeout(r, 600));
+      expect(JSON.parse(window.localStorage.getItem(LIVE_KEY) as string).lines[0].qty).toBe(3);
+    });
+
+    it("a non-owner tab ringing its own sale never deletes the owner tab's stored cart", async () => {
+      installLocks(false);
+      window.localStorage.setItem(LIVE_KEY, liveCart());
+      mutateAsync.mockReturnValue(new Promise(() => undefined));
+      renderWithProviders(<CounterSaleScreen />);
+      await screen.findByTestId("counter-cart-other-tab");
+      await scan("012345678905");
+      fireEvent.click(screen.getByRole("button", { name: "$20" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+      await new Promise((r) => setTimeout(r, 600));
+      expect(JSON.parse(window.localStorage.getItem(LIVE_KEY) as string).lines[0].qty).toBe(3);
+    });
+
+    it("the tab that wins the lock restores, even from a closed tab's cart", async () => {
+      installLocks(true);
+      window.localStorage.setItem(LIVE_KEY, liveCart());
+      renderWithProviders(<CounterSaleScreen />);
+      expect(await screen.findByTestId("counter-cart-restored")).toBeInTheDocument();
+      expect(screen.getByTestId("running-total")).toHaveTextContent("$7.50");
+    });
+
+    it("an untouched restored cart is dropped when another tab clears the stored one", async () => {
+      installLocks(true);
+      window.localStorage.setItem(LIVE_KEY, liveCart());
+      renderWithProviders(<CounterSaleScreen />);
+      await screen.findByTestId("counter-cart-restored");
+      window.localStorage.removeItem(LIVE_KEY);
+      fireEvent(window, new StorageEvent("storage", { key: LIVE_KEY, newValue: null }));
+      await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$0.00"));
+      expect(screen.getByTestId("counter-cart-cleared-elsewhere")).toBeInTheDocument();
+    });
   });
 });

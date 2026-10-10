@@ -9,6 +9,7 @@ import { UsersService } from "./users.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { OperatorPermissionsService } from "../auth/permissions/operator-permissions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { PREF, PREFERENCE_KEYS as SHARED_KEYS, type PreferenceKey } from "@routeflow/types";
 import { getMetadataStorage } from "class-validator";
@@ -39,6 +40,7 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
         UsersService,
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: {} },
+        { provide: OperatorPermissionsService, useValue: {} },
         { provide: ConfigService, useValue: { get: () => ({}) } },
       ],
     })

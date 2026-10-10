@@ -43,6 +43,11 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+import guardLib from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+
+const { assertWritableTenant, ProtectedTenantError } = guardLib;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 // ─── Connection (mirrors report-receiving-unit-drift.mjs) ────────────────────
 function resolveDbUrl() {
@@ -101,7 +106,22 @@ if (execute) {
   }
 }
 
-const pool = new Pool({ connectionString: resolveDbUrl() });
+const dbUrl = resolveDbUrl();
+
+// Row 195: a LIVE (non-test) tenant must not be protected (paying, Stripe-linked or env-listed).
+// The list is loaded ONCE, before connecting, from the URL this script dials; an approved test
+// tenant keeps its existing behaviour. There is no override: a protected tenant is refused.
+let protectedSlugs = null;
+if (!isTestTenant(tenantSlug)) {
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, dbUrl);
+  } catch (err) {
+    console.error(`\n${err.message} Nothing was written.\n`);
+    process.exit(1);
+  }
+}
+
+const pool = new Pool({ connectionString: dbUrl });
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
 const N = (x) => Number(x ?? 0);
@@ -111,11 +131,24 @@ const r4 = (x) => Math.round(x * 10000) / 10000;
 (async () => {
   const tenant = await prisma.tenant.findUnique({
     where: { slug: tenantSlug },
-    select: { id: true, slug: true, status: true },
+    select: { id: true, slug: true, status: true, class: true, deletedAt: true },
   });
   if (!tenant) {
     console.error(`Tenant "${tenantSlug}" not found. Nothing was written.`);
     process.exit(1);
+  }
+  if (protectedSlugs) {
+    const sub = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenant.id },
+      select: { planKey: true, stripeSubId: true },
+    });
+    try {
+      assertWritableTenant(tenant, sub, protectedSlugs);
+    } catch (err) {
+      if (!(err instanceof ProtectedTenantError)) throw err;
+      console.error(`\n${err.message} Nothing was written.\n`);
+      process.exit(1);
+    }
   }
 
   console.log(`\n===== RECEIVING-UNITS REPAIR (${execute ? "EXECUTE" : "DRY-RUN"}) =====`);

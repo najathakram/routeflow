@@ -1,18 +1,17 @@
 /**
  * The ONLY customer fields the customer themself may write (PATCH /customers/me). The same contact and
- * preference set as the buyer-portal profile body (buyer/dto/update-buyer-profile.dto.ts). The seller-controlled
- * commercial fields (tax status, price tier, credit limit, payment terms, deposit default, currency, tax id,
+ * preference set as the buyer-portal profile body (buyer/dto/update-buyer-profile.dto.ts). The account's
+ * names (`businessName`, `displayName`) are staff-edited: a customer does not rename their own account
+ * record from the portal (B1055). The seller-controlled commercial fields (tax status, price tier, credit limit, payment terms, deposit default, currency, tax id,
  * customer type, fulfilment path and the like) are deliberately absent, and so is everything not listed. Customer
  * `notes` are staff-internal and absent too. ONE list: it drives the buyer profile body type
  * (buyer/dto/update-buyer-profile.dto.ts derives from the staff DTO with it) AND pickSelfServiceFields.
  */
 export const SELF_SERVICE_FIELDS = [
-  "businessName",
   "contactName",
   "phone",
   "email",
   "mobile",
-  "displayName",
   "salutation",
   "firstName",
   "lastName",

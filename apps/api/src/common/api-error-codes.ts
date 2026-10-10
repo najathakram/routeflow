@@ -29,8 +29,18 @@ export const API_ERROR_CODES = {
   NAME_TAKEN: "NAME_TAKEN",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
+  /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */
+  FAMILY_NOT_PRICEABLE: "FAMILY_NOT_PRICEABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",
   FAMILY_NOT_FOUND: "FAMILY_NOT_FOUND",
+  /** 409 from DELETE /products/bulk and /products/clear-all: a unique violation while deleting; nothing was deleted, reload and retry. */
+  PRODUCT_DELETE_CONFLICT: "PRODUCT_DELETE_CONFLICT",
+  /** 409 from PATCH/DELETE /products/:id: a family still has ACTIVE variants; body carries `variantCount`. Resend with `confirmCascade: true` to deactivate them with it. */
+  FAMILY_HAS_ACTIVE_VARIANTS: "FAMILY_HAS_ACTIVE_VARIANTS",
+  /** 409 from PATCH /products/:id: a variant cannot be reactivated while its parent family is inactive; reactivate the family first. */
+  VARIANT_PARENT_INACTIVE: "VARIANT_PARENT_INACTIVE",
+  /** `skipped[].code` of DELETE /products/bulk and /products/clear-all: the product has active (undelivered) order items, so it was not deleted. */
+  PRODUCT_HAS_ACTIVE_ORDER_ITEMS: "PRODUCT_HAS_ACTIVE_ORDER_ITEMS",
   CODES_CHANGED: "CODES_CHANGED",
   CATALOG_TOO_LARGE_FOR_CLEAR_ALL: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",
@@ -104,6 +114,9 @@ export const API_ERROR_CODES = {
   PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
   BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
   INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
+  INVOICE_HAS_CASH_REFUND: "INVOICE_HAS_CASH_REFUND",
+  // Order cancel refused: part of the order was refunded in cash (the invoice void keeps INVOICE_HAS_CASH_REFUND).
+  ORDER_HAS_CASH_REFUND: "ORDER_HAS_CASH_REFUND",
   HANDOFF_CODE_INVALID: "HANDOFF_CODE_INVALID",
   CHANGE_REQUEST_ALREADY_RESOLVED: "CHANGE_REQUEST_ALREADY_RESOLVED",
   CHANGE_REQUEST_PACK_CHANGED: "CHANGE_REQUEST_PACK_CHANGED",
@@ -226,6 +239,12 @@ export const API_ERROR_CODES = {
    * counter POST refuses it before any write; use a fresh key.
    */
   COUNTER_SALE_KEY_CONFLICT: "COUNTER_SALE_KEY_CONFLICT",
+  /**
+   * 403 from the counter-sale POST (POS-5): a line carries a real price change (a price off the server's own price
+   * for this customer) from a caller who may not edit prices (`canEditPrices`: account admins only today). Raised
+   * before anything is written; the Idempotency-Key is not consumed. A typed price equal to the server's is no change.
+   */
+  PRICE_EDIT_NOT_PERMITTED: "PRICE_EDIT_NOT_PERMITTED",
   /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
   WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
   /**
@@ -338,6 +357,16 @@ export const API_ERROR_CODES = {
    * Nothing was written; activate for more days or record the newer invoices first.
    */
   ACTIVATION_PERIOD_ALREADY_ENDED: "ACTIVATION_PERIOD_ALREADY_ENDED",
+  /**
+   * 403 body `code` when an operator lacks every feature group the endpoint needs; `groups` lists the groups
+   * that would have opened it. Nothing was written.
+   */
+  PERMISSION_DENIED: "PERMISSION_DENIED",
+  /**
+   * 409 from PUT /users/:id/permissions: the operator's permissions changed since the caller loaded them
+   * (`expectedVersion` is stale). Nothing was written; reload and retry.
+   */
+  PERMISSIONS_VERSION_CONFLICT: "PERMISSIONS_VERSION_CONFLICT",
   /**
    * 400 from POST /products, PATCH /products/:id, the bulk group-as-variants action and the variant split: the
    * parent named for a product cannot be used. `reason`: NOT_FOUND (no such product in this tenant) | SELF |

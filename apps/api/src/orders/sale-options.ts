@@ -1,6 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import type { FulfillPath } from "@prisma/client";
-import type { CreateOrderOptions } from "./order-create-options";
+import type { CreateOrderOptions, ReplayedOrder } from "./order-create-options";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { CreateSaleDto } from "./dto/create-sale.dto";
 import { parseOrderDate } from "./order-parsers";
@@ -11,13 +11,15 @@ import { parseOrderDate } from "./order-parsers";
  *  - `fulfillPath`: handed to create() as an internal option (PICKUP is not a writable DTO value).
  *  - `counterSale` (SA-672e): stamp Order.counterSale (only the counter POST sets it).
  *  - `suppressInvoiceNotify`: send the invoice without the INVOICE_SENT message (the walk-in has no mailbox).
+ *  - `priceEditAllowed` (POS-5): create()'s option of the same name (counter sale only; absent for /sell).
  *  - `onReplay`: called when `dto.idempotencyKey` replayed an earlier sale; createSale then RESUMES it.
  */
 export interface SaleOptions {
   fulfillPath?: FulfillPath;
   counterSale?: boolean;
   suppressInvoiceNotify?: boolean;
-  onReplay?: (order: { id: string; status?: string; counterSale?: boolean }) => void;
+  priceEditAllowed?: boolean;
+  onReplay?: (order: ReplayedOrder) => void;
   /** B1209: create()'s `beforeWrite` (the server total, before anything is written). */
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;
 }
@@ -76,6 +78,7 @@ export function saleCreateOptions(
     skipAutoMerge: true,
     ...(sale.fulfillPath ? { fulfillPath: sale.fulfillPath } : {}),
     ...(sale.counterSale ? { counterSale: true } : {}),
+    ...(sale.priceEditAllowed !== undefined ? { priceEditAllowed: sale.priceEditAllowed } : {}),
     ...(sale.beforeWrite ? { beforeWrite: sale.beforeWrite } : {}),
     ...(idempotencyKey
       ? {

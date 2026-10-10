@@ -147,6 +147,21 @@ describe("B1210: Ship this order instead -> a parked ORDER draft", () => {
     expect(mutateAsync).not.toHaveBeenCalled(); // nothing was sold
   });
 
+  it("a successful hand-off leaves NO stored live cart behind, even when the screen unmounts at once (SA-748 HIGH)", async () => {
+    const LIVE_KEY = "rf.counterSale.liveCart:acme:u-a";
+    const view = renderWithProviders(<CounterSaleScreen />);
+    pickAcme();
+    await scan("COLA");
+    await waitFor(() => expect(window.localStorage.getItem(LIVE_KEY)).not.toBeNull()); // the cart is saved
+    // the router really leaves the counter: the screen unmounts the moment it navigates
+    push.mockImplementationOnce(() => view.unmount());
+    fireEvent.click(shipBtn());
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/orders?resumeDraft=d-1"));
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull();
+    await new Promise((r) => setTimeout(r, 600)); // past the save delay: still nothing to restore
+    expect(window.localStorage.getItem(LIVE_KEY)).toBeNull();
+  });
+
   it("the cart is cleared only AFTER the draft exists", async () => {
     const reply = deferred<{ id: string }>();
     createDraft.mockReturnValue(reply.promise);
@@ -306,7 +321,8 @@ describe("one cart is never BOTH rung up AND parked as a ship draft", () => {
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     fireEvent.click(shipBtn());
-    pickAcme(); // would let a pending hand-off run if one had been armed
+    // the customer pick that would let an armed hand-off run is itself frozen while the sale posts
+    expect(screen.queryByRole("button", { name: "Acme Co" })).toBeNull();
     await new Promise((r) => setTimeout(r, 30));
     expect(createDraft).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
