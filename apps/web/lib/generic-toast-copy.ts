@@ -6,6 +6,7 @@ import {
   noResponse,
 } from "./credit-note-error-copy";
 import { creditLimitSentence } from "./credit-limit-copy";
+import { COUNTER_VOID_ERROR_COPY } from "./counter-void-copy";
 import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
 import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
@@ -96,6 +97,15 @@ const CODE_COPY: Record<string, string> = {
     "Part of this invoice was refunded in cash. Issue a credit note for the rest instead of voiding.",
   [API_ERROR_CODES.ORDER_HAS_CASH_REFUND]:
     "Part of this order was refunded in cash. Issue a credit note instead of cancelling.",
+  // SA-762r: the counter-sale void's own refusals (the same sentences the void dialog shows).
+  [API_ERROR_CODES.COUNTER_SALE_VOID_HAS_RETURN]:
+    COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_HAS_RETURN],
+  [API_ERROR_CODES.COUNTER_SALE_VOID_FOREIGN_PAYMENT]:
+    COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_FOREIGN_PAYMENT],
+  [API_ERROR_CODES.COUNTER_SALE_VOID_NOT_TODAY]:
+    COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_NOT_TODAY],
+  [API_ERROR_CODES.COUNTER_SALE_VOID_BUSY]:
+    COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_BUSY],
   HANDOFF_CODE_INVALID: "This sign-in link is invalid or has expired. Sign in again.",
 };
 

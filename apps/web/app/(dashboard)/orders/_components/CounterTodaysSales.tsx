@@ -21,6 +21,7 @@ import {
 } from "@/lib/counter-receipt";
 import { CounterReceiptView } from "./CounterReceiptView";
 import { CounterReturnAction } from "./CounterReturnAction";
+import { CounterVoidSaleAction, CounterVoidSaleDialog } from "./CounterVoidSaleDialog";
 
 const METHOD_LABEL: Record<TodaysSaleMethod, string> = {
   CASH: "Cash",
@@ -190,6 +191,7 @@ function SaleRow({
   row,
   timezone,
   onReprint,
+  onVoid,
   onDone,
 }: {
   focusReprint: boolean;
@@ -197,6 +199,7 @@ function SaleRow({
   row: TodaysSaleRow;
   timezone: string;
   onReprint: () => void;
+  onVoid: () => void;
   onDone: () => void;
 }) {
   const reprintRef = React.useRef<HTMLButtonElement>(null);
@@ -245,6 +248,7 @@ function SaleRow({
               onDone={onDone}
               canReturn={row.returned.state !== "FULL"}
             />
+            <CounterVoidSaleAction orderNumber={row.orderNumber} onOpen={onVoid} />
           </>
         )}
         <Link
@@ -265,6 +269,10 @@ function SaleRow({
 export function CounterTodaysSales() {
   const [open, setOpen] = React.useState(false);
   const [reprint, setReprint] = React.useState<TodaysSaleRow | null>(null);
+  // SA-762r: the sale being voided. The dialog sits here (not on the row) so it outlives the row turning Voided.
+  const [voidRow, setVoidRow] = React.useState<{ orderId: string; orderNumber: string } | null>(
+    null,
+  );
   // the row whose Reprint button gets focus back after "Back to sales"
   const [refocusId, setRefocusId] = React.useState<string | null>(null);
   const clearRefocus = React.useCallback(() => setRefocusId(null), []);
@@ -351,6 +359,7 @@ export function CounterTodaysSales() {
                     focusReprint={refocusId === r.orderId}
                     onFocused={clearRefocus}
                     onReprint={() => setReprint(r)}
+                    onVoid={() => setVoidRow({ orderId: r.orderId, orderNumber: r.orderNumber })}
                     onDone={refetchList}
                   />
                 ))}
@@ -369,6 +378,15 @@ export function CounterTodaysSales() {
           </div>
         )}
       </Modal>
+      {voidRow ? (
+        <CounterVoidSaleDialog
+          open
+          orderId={voidRow.orderId}
+          orderNumber={voidRow.orderNumber}
+          onClose={() => setVoidRow(null)}
+          onVoided={refetchList}
+        />
+      ) : null}
     </>
   );
 }
