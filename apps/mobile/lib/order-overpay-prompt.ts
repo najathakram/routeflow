@@ -24,6 +24,7 @@ export function handleOrderOverpay(
   const route = order.canRecordReturn === true ? orderOverpayReturnRoute(order) : null;
   if (!route) showToast(copy);
   else
+    // scan-ok: confirm-navigate — the 409 refused the edit (nothing to record); accepting only opens the return flow
     confirm(ORDER_OVERPAY_TITLE, copy, () => router.push(route as never), {
       confirmText: "Record a return",
     });
