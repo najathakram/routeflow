@@ -28,6 +28,8 @@ import {
   overdueInvoiceIds,
 } from "./invoice-balance-sql";
 import { Prisma } from "@prisma/client";
+import { overdueCutoff } from "../common/calendar-date";
+import { markOverdueForTenant } from "./overdue-sweep.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -117,6 +119,7 @@ describeDb("balanceDueSql — SQL <-> TS parity (SA-770), real Postgres", () => 
   async function cleanup(tenantId: string): Promise<void> {
     await prisma.invoicePayment.deleteMany({ where: { tenantId } });
     await prisma.invoice.deleteMany({ where: { tenantId } });
+    await prisma.tenantConfig.deleteMany({ where: { tenantId } });
     await prisma.customer.deleteMany({ where: { tenantId } });
     await prisma.user.deleteMany({ where: { tenantId } });
     await prisma.tenant.delete({ where: { id: tenantId } });
@@ -155,6 +158,7 @@ describeDb("balanceDueSql — SQL <-> TS parity (SA-770), real Postgres", () => 
     opts: {
       status?: "SENT" | "VIEWED" | "PARTIAL" | "OVERDUE" | "PAID" | "DRAFT";
       dueDate?: Date | null;
+      updatedAt?: Date;
     } = {},
   ) {
     const inv = await prisma.invoice.create({
@@ -166,6 +170,7 @@ describeDb("balanceDueSql — SQL <-> TS parity (SA-770), real Postgres", () => 
         subtotal: f.total,
         total: f.total,
         dueDate: opts.dueDate === undefined ? new Date("2026-09-01T00:00:00.000Z") : opts.dueDate,
+        ...(opts.updatedAt ? { updatedAt: opts.updatedAt } : {}),
       },
     });
     for (const p of f.payments)
@@ -256,40 +261,97 @@ describeDb("balanceDueSql — SQL <-> TS parity (SA-770), real Postgres", () => 
     expect(ids).not.toContain(theirs);
   });
 
-  it("markInvoicesOverdue flips only the unpaid past-due SENT/VIEWED, never a paid or overpaid one", async () => {
+  it("markInvoicesOverdue flips only the unpaid past-due SENT/VIEWED, never a paid or overpaid one, and stamps updatedAt on the flipped rows only", async () => {
     const s = await seedTenant("sweep");
-    const owes = await seedInvoice(s, { label: "sweep-owes", total: 100, payments: [] });
+    const OLD = new Date("2026-01-01T00:00:00.000Z");
+    const owes = await seedInvoice(
+      s,
+      { label: "sweep-owes", total: 100, payments: [] },
+      { updatedAt: OLD },
+    );
     const viewed = await seedInvoice(
       s,
       { label: "sweep-viewed", total: 100, payments: [] },
-      { status: "VIEWED" },
+      { status: "VIEWED", updatedAt: OLD },
     );
-    const exact = await seedInvoice(s, {
-      label: "sweep-exact",
-      total: 100,
-      payments: [{ amount: 100 }],
-    });
-    const over = await seedInvoice(s, {
-      label: "sweep-over",
-      total: 100,
-      payments: [{ amount: 150 }],
-    });
+    const exact = await seedInvoice(
+      s,
+      { label: "sweep-exact", total: 100, payments: [{ amount: 100 }] },
+      { updatedAt: OLD },
+    );
+    const over = await seedInvoice(
+      s,
+      { label: "sweep-over", total: 100, payments: [{ amount: 150 }] },
+      { updatedAt: OLD },
+    );
     const partial = await seedInvoice(
       s,
       { label: "sweep-partial", total: 100, payments: [{ amount: 10 }] },
-      { status: "PARTIAL" },
+      { status: "PARTIAL", updatedAt: OLD },
     );
     const cutoff = new Date("2026-10-02T00:00:00.000Z");
 
     const n = await markInvoicesOverdue(prisma, s.tenantId, cutoff, ["SENT", "VIEWED"]);
     expect(n).toBe(2); // owes + viewed
 
+    const row = (id: string) =>
+      prisma.invoice.findUniqueOrThrow({
+        where: { id },
+        select: { status: true, updatedAt: true },
+      });
+    for (const id of [owes, viewed]) {
+      const r = await row(id);
+      expect(r.status).toBe("OVERDUE");
+      expect(r.updatedAt.getTime()).toBeGreaterThan(OLD.getTime()); // a raw UPDATE must stamp it itself
+    }
+    for (const [id, status] of [
+      [exact, "SENT"],
+      [over, "SENT"],
+      [partial, "PARTIAL"],
+    ] as const) {
+      const r = await row(id);
+      expect(r.status).toBe(status);
+      expect(r.updatedAt.getTime()).toBe(OLD.getTime()); // untouched, not even re-stamped
+    }
+  });
+
+  it("cutoff boundary in an off-UTC tenant zone: due == cutoff is still grace, cutoff - 1 ms is overdue (pins the ::timestamp cast)", async () => {
+    const s = await seedTenant("boundary");
+    await prisma.tenantConfig.create({
+      data: { tenantId: s.tenantId, timezone: "America/Chicago" },
+    });
+    // 04:30Z on Oct 2 is 23:30 on Oct 1 in Chicago: the tenant's today is Oct 1, so the cutoff is the
+    // UTC-midnight stamp of Oct 1 and an invoice due Oct 1 is still inside its grace day.
+    const now = new Date("2026-10-02T04:30:00.000Z");
+    const cutoff = overdueCutoff(now, "America/Chicago");
+    expect(cutoff.toISOString()).toBe("2026-10-01T00:00:00.000Z");
+    const atCutoff = await seedInvoice(
+      s,
+      { label: "edge-at", total: 100, payments: [] },
+      { dueDate: cutoff },
+    );
+    const justBefore = await seedInvoice(
+      s,
+      { label: "edge-before", total: 100, payments: [] },
+      { dueDate: new Date(cutoff.getTime() - 1) },
+    );
+    const justAfter = await seedInvoice(
+      s,
+      { label: "edge-after", total: 100, payments: [] },
+      { dueDate: new Date(cutoff.getTime() + 1) },
+    );
+    const statuses = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"] as const;
+
+    // the readers agree on the boundary...
+    expect(await overdueInvoiceIds(prisma, s.tenantId, cutoff, { statuses })).toEqual([justBefore]);
+    expect(await overdueInvoiceCount(prisma, s.tenantId, cutoff, { statuses })).toBe(1);
+    // ...and so does the sweep, end to end through the tenant's zone
+    expect(await markOverdueForTenant(prisma, s.tenantId, now, { dryRun: true })).toBe(1);
+    expect(await markOverdueForTenant(prisma, s.tenantId, now)).toBe(1);
     const status = async (id: string) =>
       (await prisma.invoice.findUniqueOrThrow({ where: { id }, select: { status: true } })).status;
-    expect(await status(owes)).toBe("OVERDUE");
-    expect(await status(viewed)).toBe("OVERDUE");
-    expect(await status(exact)).toBe("SENT");
-    expect(await status(over)).toBe("SENT");
-    expect(await status(partial)).toBe("PARTIAL");
+    expect(await status(justBefore)).toBe("OVERDUE");
+    expect(await status(atCutoff)).toBe("SENT");
+    expect(await status(justAfter)).toBe("SENT");
   });
 });

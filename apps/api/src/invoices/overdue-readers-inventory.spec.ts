@@ -35,10 +35,32 @@ const OTHER_READERS: Record<string, string> = {
   "invoices/invoice-balance-sql.ts": "the predicate itself",
 };
 
+/**
+ * Reviewed-known TS readers that still net a gross figure or classify by status + date. NOT changed in
+ * SA-770 (the buyer ones need an SA ruling on gross vs balance). Each one is a follow-up that must land
+ * with P-3: clamp with max(0, ...) or move onto one shared overdue rule.
+ */
+const FOLLOW_UP_READERS: Record<string, string> = {
+  "customers/customers.service.ts":
+    "statement overdueAmount (~:456/:1203) sums total - paid per row, so an overpaid row goes negative; also the advance-apply status write (balance-aware)",
+  "bookkeeping/bookkeeping.service.ts":
+    "per-customer aging `overdue += bal` (~:1735-1738) can go negative for an overpaid row (the summary count above it IS on the shared predicate)",
+  "buyer/buyer.controller.ts":
+    "getAnalytics (~:1196) classifies overdue by status/date and sums total, not balance; needs the gross-vs-balance SA ruling",
+  "buyer/buyer-dashboard.service.ts":
+    "dashboard unpaid strip (~:176) mirrors getAnalytics (gross total over the open statuses); same ruling",
+  "import/import-payment-status.ts":
+    "Zoho import status rule: OVERDUE only when nothing is confirmed-paid, paid >= total is PAID (already balance-aware)",
+};
+
 const CUTOFF_READER = [
   /\boverdueCutoff\s*\(/,
   /\bdueDate["']?\s*[:=]\s*\{\s*lte?\b/,
   /["']dueDate["']\s*<=?\s/,
+  // The TS readers: a due date compared in JS, and an overdue figure accumulated per row.
+  /\bdueDate\s*<=?\s/,
+  /new Date\([^)]*dueDate[^)]*\)\s*<=?\s/,
+  /\boverdue\s*\+=/,
 ];
 
 function stripComments(src: string): string {
@@ -74,10 +96,21 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
   });
 
   it("no overdue-cutoff reader is outside the two lists", () => {
-    const known = new Set([...Object.keys(USES_SQL_PREDICATE), ...Object.keys(OTHER_READERS)]);
+    const known = new Set([
+      ...Object.keys(USES_SQL_PREDICATE),
+      ...Object.keys(OTHER_READERS),
+      ...Object.keys(FOLLOW_UP_READERS),
+    ]);
     const unknown = readers.filter((f) => !known.has(f));
     expect(unknown).toEqual([]); // route it through invoice-balance-sql.ts, or list it with a reason
   });
+
+  it.each(Object.keys({ ...OTHER_READERS, ...FOLLOW_UP_READERS }))(
+    "%s (listed with a reason) still exists",
+    (rel) => {
+      expect(fs.existsSync(path.join(SRC_ROOT, rel))).toBe(true);
+    },
+  );
 
   it.each(Object.keys(USES_SQL_PREDICATE))("%s imports the shared SQL predicate", (rel) => {
     const src = stripComments(fs.readFileSync(path.join(SRC_ROOT, rel), "utf8"));
