@@ -141,8 +141,11 @@ describe("applyScheduledPriceChange (ScheduledPriceChangeService.apply)", () => 
         },
       },
     ]);
-    expect(opts.idempotencyKey).toBe(
-      `sub_1:scheduled-price:${at(48).toISOString()}:v7:STARTER:34900-5900:-`,
+    // ends in a per-apply() nonce (a key that repeats across requests replays a cached 5xx for 24 h)
+    expect(opts.idempotencyKey).toMatch(
+      new RegExp(
+        `^sub_1:scheduled-price:${at(48).toISOString()}:v7:STARTER:34900-5900:-:[0-9a-f-]{36}$`,
+      ),
     );
     expect(stripe.amountOf("si_base")).toBe(5900);
   });
@@ -391,6 +394,40 @@ describe("one attempt = one idempotency key, computed before the call and reused
     bad.stripe.updateSubscription.mockRejectedValue(new Error("down"));
     await expect(bad.svc.apply("t1", NOW)).rejects.toMatchObject({ status: 503 });
     expect(bad.stripe.updateSubscription).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+    error.mockRestore();
+  });
+});
+
+describe("a failed push is never replayed by the NEXT request (per-apply nonce)", () => {
+  it("Stripe caches a failed key for 24 h: two separate apply() calls after a failure go out under DIFFERENT keys, and the second applies", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    const { svc, stripe } = make();
+    const apply = stripe.updateSubscription.getMockImplementation()!;
+    const failedKeys = new Set<string>();
+    let outage = true;
+    stripe.updateSubscription.mockImplementation(async (id: any, params: any, opts: any) => {
+      // Stripe idempotency: a key whose first result was a 5xx replays that 5xx for 24 h
+      if (failedKeys.has(opts.idempotencyKey)) throw new Error("cached 500 for this key");
+      if (outage) {
+        failedKeys.add(opts.idempotencyKey);
+        throw new Error("500 api_error");
+      }
+      return (apply as any)(id, params, opts);
+    });
+
+    await expect(svc.apply("t1", NOW)).rejects.toMatchObject({ status: 503 });
+    const first = stripe.updateSubscription.mock.calls.map((c: any[]) => c[2].idempotencyKey);
+    expect(first).toHaveLength(2);
+    expect(first[1]).toBe(first[0]); // the in-attempt retry still reuses its key
+
+    outage = false; // Stripe is back; the hourly sweep / a second webhook calls apply() again
+    const out = await svc.apply("t1", NOW);
+    const second = stripe.updateSubscription.mock.calls.at(-1)![2].idempotencyKey;
+    expect(second).not.toBe(first[0]);
+    expect(out).toMatchObject({ applied: true, amountCents: 5900 });
+    expect(stripe.amountOf("si_base")).toBe(5900); // not the old price at renewal
     warn.mockRestore();
     error.mockRestore();
   });

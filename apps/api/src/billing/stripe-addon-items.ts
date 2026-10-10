@@ -40,6 +40,31 @@ export function checkoutAddonLineItem(a: {
   };
 }
 
+/**
+ * ONE rule for "which of a subscription's items are add-ons" (L-167): the items a tenant add-on row owns
+ * (`stripeItemId`) PLUS the checkout-made add-on lines the completion has not adopted onto a row yet. Every
+ * reader that must find the BASE item (the scheduled price push, the pre-flip check, the post-flip verify)
+ * calls this - a second copy that forgets the checkout lines picks an add-on as the base.
+ */
+export async function stripeAddonItemIds(
+  prisma: {
+    tenantAddon: {
+      findMany(args: any): Promise<unknown>;
+    };
+  },
+  tenantId: string,
+  stripeSub: unknown,
+): Promise<Set<string>> {
+  const owned = (await prisma.tenantAddon.findMany({
+    where: { tenantId, stripeItemId: { not: null } },
+    select: { stripeItemId: true },
+  })) as { stripeItemId: string | null }[];
+  return new Set<string>([
+    ...owned.map((r) => r.stripeItemId as string),
+    ...checkoutAddonItems(stripeSub).map((i) => i.itemId),
+  ]);
+}
+
 /** A subscription item Stripe made from a checkout add-on line. */
 export interface CheckoutAddonItem {
   itemId: string;
