@@ -39,11 +39,11 @@ export function counterMethodOf(
  * - Without it (by-key): the method is DERIVED from storage (first stored tender; none = ON_ACCOUNT, since no
  *   marker separates "left on account" from "tender failed" and nothing new is persisted), a stored tender
  *   that leaves balance owing is NOT recorded (it may be an interrupted allocation), and there is no `change`
- *   (cash tendered is not stored).
+ *   (the response-only `change` needs this call's tender; the stored `cashTendered` is returned instead).
  */
 export function buildCounterSaleResponse(input: {
   payment?: CounterSaleDto["payment"];
-  order: { id: string; orderNumber: string | null } | null;
+  order: { id: string; orderNumber: string | null; counterCashTendered?: unknown } | null;
   invoices: InvoiceRow[];
   replayed: boolean;
   planError?: string;
@@ -101,6 +101,9 @@ export function buildCounterSaleResponse(input: {
     paymentRecorded: settled,
     ...(!settled
       ? { paymentErrorCode: error ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED }
+      : {}),
+    ...(order.counterCashTendered != null
+      ? { cashTendered: roundMoney(Number(order.counterCashTendered)) }
       : {}),
     ...(replayed ? { replayed: true } : {}),
   };

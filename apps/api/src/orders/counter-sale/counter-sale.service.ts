@@ -204,7 +204,7 @@ export class CounterSaleService {
       try {
         const locked = await withAdvisoryLock(
           { family: "counter-tender", key: orderId, mode: "wait" },
-          () => this.tender(dto, orderId),
+          () => this.tender(dto, orderId, replayed),
         );
         if (!locked.acquired) throw new LockTimeoutError("counter-tender", orderId, 0);
         ({ invoices, planError } = locked.value);
@@ -287,6 +287,7 @@ export class CounterSaleService {
   private async tender(
     dto: CounterSaleDto,
     orderId: string,
+    replayed: boolean,
   ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
@@ -334,6 +335,18 @@ export class CounterSaleService {
           `counter sale ${orderId}: payment not recorded (${(e as Error)?.message ?? e})`,
         );
         planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+      }
+      // SA-764: a NEW sale's CASH handed over, once (the NULL filter keeps any later write idempotent).
+      if (!planError && !replayed && method === "CASH") {
+        await this.prisma
+          .forTenant()
+          .order.updateMany({
+            where: { id: orderId, counterCashTendered: null },
+            data: { counterCashTendered: roundMoney(plan.tendered) },
+          })
+          .catch((e: Error) =>
+            this.logger.warn(`counter sale ${orderId}: cash tendered not stored (${e?.message})`),
+          );
       }
       invoices = await this.readInvoices(orderId);
     }

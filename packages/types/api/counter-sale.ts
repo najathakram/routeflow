@@ -63,6 +63,8 @@ export interface CounterSaleResponse {
    */
   paymentRecorded: boolean;
   paymentErrorCode?: string;
+  /** GET .../by-key/:key only: the cash handed over, as stored on the order (absent = card / check / on account / legacy). */
+  cashTendered?: number;
   /** true when this response is a replay of an earlier request carrying the same Idempotency-Key. */
   replayed?: boolean;
 }
@@ -138,6 +140,13 @@ export interface TodaysSaleRow {
   balanceDue: number;
   methods: Array<{ method: TodaysSaleMethod; amount: number }>;
   paymentState: TodaysSalePaymentState;
+  /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
+  cashTendered: number | null;
+  /**
+   * The sale's single stored tax rate as a percent (0.0825 -> 8.25, 3 dp): the one distinct non-zero line rate on its live
+   * invoices; null when the lines carry several rates or none.
+   */
+  taxRatePercent: number | null;
   returned: {
     amount: number;
     state: TodaysSaleReturnState;
