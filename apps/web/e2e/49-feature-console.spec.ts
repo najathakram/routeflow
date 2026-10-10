@@ -428,12 +428,12 @@ for (const vp of VIEWPORTS) {
       await gotoFeatureConsole(page);
 
       await page.getByLabel("Tier").selectOption("STARTER");
-      await page.getByRole("button", { name: "Preview tier change" }).click();
-      await expect(page.getByRole("heading", { name: "Preview tier change" })).toBeVisible();
+      await page.getByRole("button", { name: "Preview plan change" }).click();
+      await expect(page.getByRole("heading", { name: "Preview plan change" })).toBeVisible();
       await expect(page.getByTestId("preview-diff")).toContainText("Recurring routes");
       // Confirm calls the page's existing plan-change action — no separate write endpoint here.
       await page.getByRole("button", { name: "Confirm" }).click();
-      await expect(page.getByRole("heading", { name: "Preview tier change" })).not.toBeVisible();
+      await expect(page.getByRole("heading", { name: "Preview plan change" })).not.toBeVisible();
     });
 
     test(`${vp.label}px — registry fetch failure shows the error alert, never a blank tab`, async ({
