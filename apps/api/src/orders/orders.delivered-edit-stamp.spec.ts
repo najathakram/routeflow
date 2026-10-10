@@ -22,6 +22,7 @@ const PRODUCT = {
   unit: "each",
   pricePerUnit: 5,
   unitsPerBox: null,
+  currentStock: 100,
   category: null,
   trackedCategoryId: null,
   trackedSubcategoryId: null,
@@ -116,10 +117,28 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
     expect(d("li-A")).toBe(12); // red on base: 10
   });
 
-  it("+2 on a legacy unstamped line (d 0): d is the edit's own increase, 2", async () => {
+  it("a legacy unstamped line (d 0) is normalised on its first edit: 10 -> 12 gives d 12, then a cut to 5 restocks 0", async () => {
     seed([lineA({ deliveredQty: 0 })]);
     await edit([{ id: "li-A", productId: "prod-A", qty: 12 }]);
-    expect(d("li-A")).toBe(2); // red on base: 0
+    expect(d("li-A")).toBe(12); // red on base: 0 (then 2 under the old per-edit-increase rule)
+    h.prisma.product.update.mockClear();
+    await edit([{ id: "li-A", productId: "prod-A", qty: 5 }]);
+    expect(d("li-A")).toBe(12);
+    expect(h.prisma.product.update).not.toHaveBeenCalled(); // the 12 that left stay booked: nothing restocks
+  });
+
+  it("12, cut to 10, raise to 11: d stays 12 and stock moves 0; raise to 14: d is 14 and stock moves 2", async () => {
+    seed([lineA({ qty: 12, deliveredQty: 12 })]);
+    await edit([{ id: "li-A", productId: "prod-A", qty: 10 }]);
+    await edit([{ id: "li-A", productId: "prod-A", qty: 11 }]);
+    expect(d("li-A")).toBe(12); // red under the old rule: 13 (d += the raise of 1)
+    expect(h.prisma.product.update).not.toHaveBeenCalled();
+    await edit([{ id: "li-A", productId: "prod-A", qty: 14 }]);
+    expect(d("li-A")).toBe(14);
+    expect(h.prisma.product.update).toHaveBeenCalledWith({
+      where: { id: "prod-A" },
+      data: { currentStock: { decrement: 2 } },
+    });
   });
 
   it("a cut books nothing (d stays, the goods are gone)", async () => {
@@ -151,12 +170,28 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
     expect(Number(store[0].deliveredQty)).toBe(10); // red on base: 0
   });
 
-  it("replace-all of a product whose line had route evidence keeps the carried value, not qty", async () => {
+  it("replace-all of an order with route evidence is REFUSED 409 ORDER_EDIT_NEEDS_LINE_IDS, nothing written", async () => {
     seed(
-      [lineA({ deliveredQty: 6 })],
-      [{ orderItemId: "li-A", type: "PARTIAL", quantityDelivered: 6 }],
+      [lineA({ deliveredQty: 8 })],
+      [{ orderItemId: "li-A", type: "PARTIAL", quantityDelivered: 8 }],
     );
-    await edit([{ productId: "prod-A", qty: 12 }], true);
-    expect(Number(store[0].deliveredQty)).toBe(6); // red on base: 0
+    await expect(edit([{ productId: "prod-A", qty: 12 }], true)).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "ORDER_EDIT_NEEDS_LINE_IDS" }),
+    }); // red on base: the replace-all went through and orphaned the evidence
+    expect(h.prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+    expect(h.prisma.orderItem.create).not.toHaveBeenCalled();
+    expect(store.map((l) => l.id)).toEqual(["li-A"]);
+    expect(d("li-A")).toBe(8);
+  });
+
+  it("the same order edited with stable line ids succeeds and the evidence line is untouched", async () => {
+    seed(
+      [lineA({ deliveredQty: 8 })],
+      [{ orderItemId: "li-A", type: "PARTIAL", quantityDelivered: 8 }],
+    );
+    await edit([{ id: "li-A", productId: "prod-A", qty: 12 }]);
+    expect(store.map((l) => l.id)).toEqual(["li-A"]);
+    expect(d("li-A")).toBe(8);
   });
 });

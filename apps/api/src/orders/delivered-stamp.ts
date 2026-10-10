@@ -22,7 +22,9 @@
  * Demotion (DELIVERED -> CONFIRMED / PARTIALLY_DELIVERED) clears only `deliveredAt`: the stamp stays, the
  * goods left, so cancel-impact keeps refusing a cancel (use a Return).
  */
+import { ConflictException } from "@nestjs/common";
 import { OrderStatus, type Prisma } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { deliveredBasisByLine, type DeliveredBasis } from "../invoices/delivered-basis-by-line";
 import type { PrismaService } from "../prisma/prisma.service";
 
@@ -46,25 +48,28 @@ export type HeldLine = {
   deliveredQty?: unknown;
 };
 
-/** What a replace-all ("recreated") edit must remember from BEFORE its deleteMany. */
+/**
+ * What a replace-all ("recreated") edit must remember from BEFORE its deleteMany. Only an order with NO evidence
+ * row gets here (`captureRecreatedCarry` refuses the rest), so every held line is a no-evidence line.
+ */
 export type RecreatedCarry = {
   held: Array<{ id: string; key: string; deliveredQty: number }>;
-  /** Products (or UNLISTED) whose pre-edit lines had a qualifying DeliveryMutation row. */
-  evidenceKeys: ReadonlySet<string>;
 };
 
 const keyOf = (productId: string | null | undefined) => productId ?? UNLISTED;
 
 /**
+ * INVARIANT: on a no-evidence line of a DELIVERED, non-route order, `deliveredQty` is the booked floor (the units
+ * that physically left); stock already books max(qty, deliveredQty).
  * Modes (SA-763r M2):
  *  - "entry" = any write of DELIVERED: `deliveredQty := max(deliveredQty, qty)` on no-evidence lines.
- *  - "edit" = a stable-id (diff / merge) edit of a DELIVERED order: `deliveredQty += max(0, newQty - oldQty)`
- *    per no-evidence line, `held` being the pre-edit lines; only that edit's own increase is booked.
- *  - "recreated" = a replace-all edit of a DELIVERED order (new row ids): each recreated row first carries
- *    the delivered quantity its product had before the edit (the per-product sum of the deleted rows'
- *    deliveredQty, captured by `captureRecreatedCarry` BEFORE the delete), then the entry rule applies,
- *    but only for a product whose pre-edit lines had no evidence rows; a product with evidence keeps its
- *    carried value.
+ *  - "edit" = a stable-id (diff / merge) edit of a DELIVERED order: on every no-evidence line
+ *    `deliveredQty := max(deliveredQty, oldQty, newQty)`, `held` being the pre-edit lines. A cut never lowers it;
+ *    a raise lifts it to the new qty (items added after hand-over count as handed over); the first edit of a
+ *    legacy line (d 0, never stamped) normalises it to its old qty first.
+ *  - "recreated" = a replace-all edit of a DELIVERED order WITHOUT evidence rows (new row ids): each recreated
+ *    row first carries the delivered quantity its product had before the edit (the per-product sum of the
+ *    deleted rows' deliveredQty, captured by `captureRecreatedCarry` BEFORE the delete), then the entry rule.
  * "edit" and "recreated" act only while the order (read under the caller's lock) is DELIVERED.
  *
  * Returns how many lines were raised.
@@ -113,8 +118,10 @@ export async function stampDeliveredInFull(
   } else if (mode === "edit") {
     const heldQty = new Map((arg as HeldLine[]).map((h) => [h.id, Number(h.qty)]));
     for (const li of active) {
-      const rise = Math.max(0, Number(li.qty) - (heldQty.get(li.id) ?? 0));
-      if (rise > EPS) targets.set(li.id, r3(Number(li.deliveredQty) + rise));
+      targets.set(
+        li.id,
+        Math.max(Number(li.deliveredQty), heldQty.get(li.id) ?? 0, Number(li.qty)),
+      );
     }
   } else {
     recreatedTargets(arg as RecreatedCarry, lines, active, targets);
@@ -151,19 +158,16 @@ function recreatedTargets(
     // Spread the carried sum over the product's rows in order, each up to its qty; the last takes the rest.
     const take = lastOfKey.get(key) === li.id ? left : Math.min(left, Number(li.qty));
     carried.set(key, r3(left - take));
-    const afterCarry = Math.max(Number(li.deliveredQty), r3(take));
-    targets.set(
-      li.id,
-      carry.evidenceKeys.has(key) ? afterCarry : Math.max(afterCarry, Number(li.qty)),
-    );
+    targets.set(li.id, Math.max(Number(li.deliveredQty), r3(take), Number(li.qty)));
   }
 }
 
 /**
- * Called BEFORE a replace-all edit deletes the order's lines (inside the edit tx, after the Order lock):
- * remembers each held line's delivered quantity and which products had evidence rows (the delete orphans
- * the rows, so this is the last moment they can be attributed). Null when the order is not a DELIVERED,
- * non-route order: there is nothing to carry.
+ * Called BEFORE a replace-all edit deletes the order's lines (inside the edit tx, after the Order lock).
+ * A DELIVERED order with ANY qualifying DeliveryMutation row is REFUSED (409 ORDER_EDIT_NEEDS_LINE_IDS, before
+ * any line is touched): the delete would orphan the evidence rows (their orderItemId is set null), and the
+ * stable-id edit is the one model that keeps them attached. Otherwise it remembers each held line's delivered
+ * quantity for the carry. Null when the order is not DELIVERED, or rode a route stop: nothing to carry.
  */
 export async function captureRecreatedCarry(
   tx: Prisma.TransactionClient,
@@ -174,17 +178,22 @@ export async function captureRecreatedCarry(
     where: { id: orderId },
     select: { status: true, routeRunStopId: true },
   });
-  if (!head || head.routeRunStopId || head.status !== OrderStatus.DELIVERED) return null;
+  if (!head || head.status !== OrderStatus.DELIVERED) return null;
   const basis = await deliveredBasisByLine(tx, orderId);
+  if (basis.hasMutations) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.ORDER_EDIT_NEEDS_LINE_IDS,
+      message:
+        "This order was delivered with delivery records. Edit its lines one by one (keep each line's id) instead of replacing all of them.",
+    });
+  }
+  if (head.routeRunStopId) return null;
   return {
     held: held.map((h) => ({
       id: h.id,
       key: keyOf(h.productId),
       deliveredQty: Number(h.deliveredQty ?? 0),
     })),
-    evidenceKeys: new Set(
-      held.filter((h) => hasDeliveryEvidence(basis, h.id)).map((h) => keyOf(h.productId)),
-    ),
   };
 }
 

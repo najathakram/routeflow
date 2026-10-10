@@ -236,7 +236,7 @@ describe("stampDeliveredInFull — edit (per-line increase of a DELIVERED order)
       ),
     );
 
-  it("raises d by exactly the edit's own increase (+2)", async () => {
+  it("a raise lifts d to the new qty (+2 on a stamped line: 10 -> 12)", async () => {
     const db = makeStampDb({
       status: "DELIVERED",
       lines: [{ id: "a", qty: 12, deliveredQty: 10 }],
@@ -245,21 +245,39 @@ describe("stampDeliveredInFull — edit (per-line increase of a DELIVERED order)
     expect(db.line("a").deliveredQty).toBe(12);
   });
 
-  it("a cut or an unchanged qty books nothing", async () => {
+  it("a cut never lowers d, and a raise inside the booked floor does not move it (12, cut to 10, raise to 11)", async () => {
+    const db = makeStampDb({
+      status: "DELIVERED",
+      lines: [{ id: "a", qty: 10, deliveredQty: 12 }],
+    });
+    await edit(db, [{ id: "a", qty: 12 }]); // the cut: held 12 -> now 10
+    expect(db.line("a").deliveredQty).toBe(12);
+    db.line("a").qty = 11;
+    await edit(db, [{ id: "a", qty: 10 }]); // the raise: held 10 -> now 11
+    expect(db.line("a").deliveredQty).toBe(12); // stays at the floor: no stock moves
+    db.line("a").qty = 14;
+    await edit(db, [{ id: "a", qty: 11 }]); // raise beyond the floor
+    expect(db.line("a").deliveredQty).toBe(14);
+  });
+
+  it("a legacy line (d 0, never stamped) is normalised to max(oldQty, newQty) on its first edit", async () => {
     const db = makeStampDb({
       status: "DELIVERED",
       lines: [
-        { id: "a", qty: 8, deliveredQty: 10 },
-        { id: "b", qty: 5, deliveredQty: 5 },
+        { id: "a", qty: 12, deliveredQty: 0 },
+        { id: "b", qty: 5, deliveredQty: 0 }, // an untouched legacy line is normalised too
       ],
     });
-    expect(
-      await edit(db, [
-        { id: "a", qty: 10 },
-        { id: "b", qty: 5 },
-      ]),
-    ).toBe(0);
-    expect(db.line("a").deliveredQty).toBe(10);
+    await edit(db, [
+      { id: "a", qty: 10 },
+      { id: "b", qty: 5 },
+    ]);
+    expect(db.line("a").deliveredQty).toBe(12);
+    expect(db.line("b").deliveredQty).toBe(5);
+    // then a cut to 5 restocks nothing: the booked floor is the 12 that left
+    db.line("a").qty = 5;
+    await edit(db, [{ id: "a", qty: 12 }]);
+    expect(db.line("a").deliveredQty).toBe(12);
   });
 
   it("an added line (not held) is delivered in full", async () => {
@@ -334,25 +352,39 @@ describe("stampDeliveredInFull — recreated (replace-all, M2)", () => {
     expect(db.line("n1").deliveredQty).toBe(10);
   });
 
-  it("a product whose old lines had evidence keeps its carried value and is not raised to qty", async () => {
+  it("REFUSES a replace-all of a DELIVERED order that has any evidence row: 409 before anything is deleted", async () => {
     const db = makeStampDb({
       status: "DELIVERED",
       lines: [{ id: "n1", productId: "p1", qty: 10, deliveredQty: 0 }],
     });
-    await recreate(db, held([["old1", "p1", 10, 6]]), ["old1"]);
-    expect(db.line("n1").deliveredQty).toBe(6);
+    await expect(recreate(db, held([["old1", "p1", 10, 6]]), ["old1"])).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "ORDER_EDIT_NEEDS_LINE_IDS" }),
+    });
+  });
+
+  it("refuses even when the evidence row sits on an order that rode a route stop", async () => {
+    const db = makeStampDb({
+      status: "DELIVERED",
+      routeRunStopId: "stop-1",
+      lines: [{ id: "n1", productId: "p1", qty: 10, deliveredQty: 0 }],
+    });
+    await expect(recreate(db, held([["old1", "p1", 10, 8]]), ["old1"])).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "ORDER_EDIT_NEEDS_LINE_IDS" }),
+    });
   });
 
   it("splits the carried sum over a product's recreated rows, in order, losing none of it", async () => {
     const db = makeStampDb({
       status: "DELIVERED",
       lines: [
-        { id: "n1", productId: "p1", qty: 4, deliveredQty: 0 },
-        { id: "n2", productId: "p1", qty: 4, deliveredQty: 0 },
+        { id: "n1", productId: "p1", qty: 3, deliveredQty: 0 },
+        { id: "n2", productId: "p1", qty: 3, deliveredQty: 0 },
       ],
     });
-    await recreate(db, held([["old1", "p1", 8, 8]]), ["old1"]);
-    expect(db.line("n1").deliveredQty + db.line("n2").deliveredQty).toBe(8);
+    await recreate(db, held([["old1", "p1", 8, 8]]));
+    expect(db.line("n1").deliveredQty).toBe(3);
+    expect(db.line("n2").deliveredQty).toBe(5); // the last row takes the rest: 3 + 5 = 8 carried
   });
 
   it("a product that is new in the edit is delivered in full; an unlisted line too", async () => {
