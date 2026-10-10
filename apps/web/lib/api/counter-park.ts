@@ -41,11 +41,20 @@ function useRefreshList() {
 const heldParks = new WeakMap<QueryClient, { id: string; sig: string }>();
 const heldResumes = new WeakMap<QueryClient, { id: string; attemptId: string }>();
 
-/** A definitive refusal (the server read the request and said no): a 4xx other than "slow down / timed out". */
+/**
+ * A definitive refusal (the handler ran and said no): a 4xx other than "timed out", "slow down" and the auth gate. A 401 or
+ * 403 comes from a guard before the handler, so nothing was decided about the id: the held id is kept for the retry.
+ */
 function isDefinitive(err: unknown): boolean {
   const status = (err as { response?: { status?: number } } | null)?.response?.status;
   return (
-    typeof status === "number" && status >= 400 && status < 500 && status !== 408 && status !== 429
+    typeof status === "number" &&
+    status >= 400 &&
+    status < 500 &&
+    status !== 401 &&
+    status !== 403 &&
+    status !== 408 &&
+    status !== 429
   );
 }
 

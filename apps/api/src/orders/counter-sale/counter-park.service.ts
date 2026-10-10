@@ -288,13 +288,16 @@ export class CounterParkService {
     // clerk got nothing back.
     return this.prisma.tenantTransaction(async (tx: unknown): Promise<ResumeParkedCartResponse> => {
       const db = tx as TxRaw;
-      // The compare-and-set: the row changes state only if it is still open, in this tenant, and unexpired.
+      // The compare-and-set: the row changes state only if it is still open, in this tenant, and unexpired. A stored payload
+      // that is not a JSON object cannot carry `_resume` (jsonb_set on it would be a 500): it matches no row here, so the
+      // retry read below finds nothing and the answer is the intended 404 PARK_TAKEN.
       let rows = await db.$queryRaw<ParkedRow[]>`
         UPDATE "CounterParkedCart"
            SET "resumedAt" = ${now}, "resumedById" = ${actor},
                "payload" = jsonb_set("payload", '{_resume}', jsonb_build_object('attemptId', ${attemptId}::text))
          WHERE "id" = ${id} AND "tenantId" = ${tenantId}
            AND "resumedAt" IS NULL AND "expiresAt" > ${now}
+           AND jsonb_typeof("payload") = 'object'
         RETURNING "id", "label", "createdAt", "payload"`;
 
       if (rows.length === 0) {

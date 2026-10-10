@@ -496,6 +496,8 @@ describe("CounterParkService.resume", () => {
       `SET "resumedAt" = ?, "resumedById" = ?, "payload" = jsonb_set("payload", '{_resume}'`,
     );
     expect(upd.sql).toContain("jsonb_build_object('attemptId', ?::text)");
+    // a non-object stored payload matches no row (0 rows -> retry read -> 404), it never reaches jsonb_set
+    expect(upd.sql).toContain(`AND jsonb_typeof("payload") = 'object'`);
     expect(upd.sql).toContain(
       'WHERE "id" = ? AND "tenantId" = ? AND "resumedAt" IS NULL AND "expiresAt" > ?',
     );

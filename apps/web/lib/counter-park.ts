@@ -21,6 +21,8 @@ export const PARK_TAKEN_COPY = "That parked sale was already taken back or has e
 export const PARK_TOO_BIG_COPY =
   "This sale is too large to park. Complete it or remove some items.";
 export const PARK_TOO_MANY_LINES_COPY = "This sale has too many items to park.";
+export const PARK_ID_CONFLICT_COPY =
+  "This sale was already parked and has been taken back at another till. Check before you park or complete it.";
 export const PARK_FAILED_COPY = "Couldn't park this sale. Nothing was changed. Try again.";
 export const PARK_INVALID_COPY =
   "This sale can't be parked as it is. Check the items and try again.";
@@ -52,8 +54,9 @@ export function parkErrorCopy(err: unknown): string {
       ? PARK_TENANT_LIMIT_COPY
       : PARK_LIMIT_COPY;
   }
-  // PARK_ID_CONFLICT: the id names a row this park may not replay. Nothing was saved; the next try mints a new id.
-  if (status === 409 && code === API_ERROR_CODES.PARK_ID_CONFLICT) return PARK_FAILED_COPY;
+  // PARK_ID_CONFLICT: the id names a row this park may not replay (it may be live at another till). Nothing was saved, and
+  // "try again" would invite a second copy of a cart that is already out, so the line says to check first.
+  if (status === 409 && code === API_ERROR_CODES.PARK_ID_CONFLICT) return PARK_ID_CONFLICT_COPY;
   if (status === 413) return PARK_TOO_BIG_COPY;
   if (status === 400) return PARK_INVALID_COPY;
   return PARK_FAILED_COPY;

@@ -2,6 +2,7 @@ import { COUNTER_PARK_MAX_LINES, COUNTER_PARK_STALE_HOURS } from "@routeflow/pri
 import { validCustomer, validLine } from "./counter-sale";
 import {
   PARK_FAILED_COPY,
+  PARK_ID_CONFLICT_COPY,
   PARK_LIMIT_COPY,
   PARK_TENANT_LIMIT_COPY,
   PARK_TAKEN_COPY,
@@ -81,8 +82,12 @@ describe("buildParkPayload (the whitelist the server also applies)", () => {
 });
 
 describe("fixed copy, never the server message", () => {
-  it("PARK_ID_CONFLICT (409) is the fixed 'park it again' line, never the server message", () => {
-    expect(parkErrorCopy(err(409, "PARK_ID_CONFLICT"))).toBe(PARK_FAILED_COPY);
+  it("PARK_ID_CONFLICT (409) says to check first (the cart may be live at another till), never 'try again' or the server message", () => {
+    const copy = parkErrorCopy(err(409, "PARK_ID_CONFLICT"));
+    expect(copy).toBe(PARK_ID_CONFLICT_COPY);
+    expect(copy).not.toBe(PARK_FAILED_COPY);
+    expect(copy).not.toMatch(/try again/i);
+    expect(copy).not.toContain("SERVER SECRET");
   });
   it("PARK_LIMIT (409) names the cap", () => {
     expect(parkErrorCopy(err(409, "PARK_LIMIT"))).toBe(PARK_LIMIT_COPY);

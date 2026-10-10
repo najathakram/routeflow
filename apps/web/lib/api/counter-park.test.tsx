@@ -96,14 +96,17 @@ describe("usePark", () => {
     expect(api.post.mock.calls[1][1].id).not.toBe(api.post.mock.calls[0][1].id);
   });
 
-  it("a 5xx or a network error keeps the held id; 408 and 429 keep it too", async () => {
+  it("a 5xx or a network error keeps the held id; 401, 403, 408 and 429 keep it too (the handler never decided)", async () => {
     api.post
       .mockRejectedValueOnce({ response: { status: 503 } })
       .mockRejectedValueOnce({})
       .mockRejectedValueOnce({ response: { status: 429 } })
+      .mockRejectedValueOnce({ response: { status: 401 } })
+      .mockRejectedValueOnce({ response: { status: 403 } })
+      .mockRejectedValueOnce({ response: { status: 408 } })
       .mockResolvedValue({ data: { id: "x" } });
     const { result } = setup(() => usePark());
-    for (let i = 0; i < 4; i++)
+    for (let i = 0; i < 7; i++)
       await act(async () => {
         await result.current.mutateAsync(payload()).catch(() => undefined);
       });
