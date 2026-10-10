@@ -32,6 +32,10 @@ export interface InvoiceFacts {
   nextPaymentAttempt: number | null;
   attemptCount: number;
   subscriptionId: string | null;
+  /** What is still owed, in cents (`amount_remaining`); absent on a fixture that predates SA-733r7 PR-B3. */
+  amountRemaining?: number;
+  /** Stripe's hosted payment page for the invoice; the 409 PAYMENT_OVERDUE body carries it. */
+  hostedInvoiceUrl?: string | null;
 }
 
 /** An invoice is settled when Stripe says paid. */

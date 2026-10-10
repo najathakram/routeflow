@@ -241,6 +241,7 @@ const PACKAGE_ALLOWLIST_TOTAL = 6;
 const READ_ONLY_STATUS_FILES = [
   "apps/api/src/billing/billing-cron.service.ts",
   "apps/api/src/billing/billing.service.ts",
+  "apps/api/src/billing/dunning-config.ts", // SA-733r7: READ_ONLY_STATUS, the one spelling the dunning modules share
   "apps/api/src/billing/mrr.service.ts",
   "apps/api/src/billing/subscription-mutation.service.ts",
   "apps/api/src/tenant/tenant-status.guard.ts",

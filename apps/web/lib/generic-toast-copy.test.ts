@@ -111,6 +111,17 @@ describe("genericToastCopy: codes users rely on", () => {
     ).toMatch(/invoiced directly/);
   });
 
+  it("SA-733r7: the dunning refusals show fixed copy, never the server message", () => {
+    for (const code of [API_ERROR_CODES.PAYMENT_OVERDUE, API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]) {
+      const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
+      expect(copy).not.toContain("raw server text");
+      expect(copy).not.toBe(NEUTRAL_409);
+    }
+    expect(genericToastCopy(err(409, { code: API_ERROR_CODES.PAYMENT_OVERDUE }))).toMatch(
+      /overdue/,
+    );
+  });
+
   it("ORDER_LINE_CHANGED is mapped through the shared constant", () => {
     expect(genericToastCopy(err(409, { code: API_ERROR_CODES.ORDER_LINE_CHANGED }))).toMatch(
       /changed while it was being billed/,

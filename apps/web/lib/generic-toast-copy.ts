@@ -105,6 +105,11 @@ const CODE_COPY: Record<string, string> = {
     "A card checkout is open for this account (October catch-up), so this change isn't available yet. Wait for it to complete or expire, then try again.",
   [API_ERROR_CODES.CATCHUP_PENDING]:
     "This account's card payment is being confirmed (October catch-up). This change is available once it clears.",
+  // SA-733r7 PR-B3 (dunning): a plan change is refused while an invoice is overdue; paying it restores everything.
+  [API_ERROR_CODES.PAYMENT_OVERDUE]:
+    "An invoice on this account is overdue. Pay it to continue; plan changes are available again right after.",
+  [API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]:
+    "We couldn't confirm your open invoice just now. Please try again in a moment.",
 };
 
 /** Exact server sentences (already product text) for refusals with no `code`; matched whole, never partially. */

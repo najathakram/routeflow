@@ -263,6 +263,8 @@ export class StripeService implements OnModuleInit {
         typeof inv?.next_payment_attempt === "number" ? inv.next_payment_attempt : null,
       attemptCount: Number.isFinite(inv?.attempt_count) ? inv.attempt_count : 0,
       subscriptionId: stripeInvoiceSubscriptionId(inv),
+      amountRemaining: Number.isFinite(inv?.amount_remaining) ? inv.amount_remaining : undefined,
+      hostedInvoiceUrl: typeof inv?.hosted_invoice_url === "string" ? inv.hosted_invoice_url : null,
     };
   }
 
@@ -276,6 +278,16 @@ export class StripeService implements OnModuleInit {
   async listSubscriptionInvoices(subId: string, limit = 5): Promise<any[]> {
     const page = await this.client.invoices.list({ subscription: subId, limit });
     return Array.isArray(page?.data) ? page.data : [];
+  }
+
+  /**
+   * A subscription's OPEN invoices, oldest first (SA-733r M2): the dunning resume asks whether anything else is
+   * still owed, and moves the clock to the oldest one when it is. `created` ascending, at most `limit`.
+   */
+  async listOpenSubscriptionInvoices(subId: string, limit = 20): Promise<any[]> {
+    const page = await this.client.invoices.list({ subscription: subId, status: "open", limit });
+    const rows: any[] = Array.isArray(page?.data) ? page.data : [];
+    return [...rows].sort((a, b) => (a?.created ?? 0) - (b?.created ?? 0));
   }
 
   /** Deletes a DRAFT invoice (only a draft can be deleted; an open one is voided). */
