@@ -26,6 +26,7 @@ import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
 import { RemittanceConfigDto } from "./dto/remittance-config.dto";
 import { PricingTierLabelsDto } from "./dto/pricing-tier-labels.dto";
 import { ClearFinancialDataDto } from "./dto/clear-financial-data.dto";
+import { sanitizeReceiptFooter } from "./receipt-footer";
 
 // RF-213: serve under both /settings and /tenant/settings so the frontend
 // calling the latter doesn't get a 404 while the operator app uses /settings.
@@ -117,6 +118,8 @@ export class SettingsController {
       zip,
       taxRate: all["settings.taxRate"] != null ? parseFloat(all["settings.taxRate"]) : 0,
       logoUrl: all["settings.logoUrl"] ?? null,
+      // SA-762r F6: the counter receipt's footer line ("" when the tenant has not set one).
+      receiptFooter: all["settings.receiptFooter"] ?? "",
       invoiceNotes,
       invoiceTerms,
       timezone,
@@ -147,6 +150,18 @@ export class SettingsController {
       }
     }
 
+    // SA-762r F6: receiptFooter is checked (and stripped) BEFORE any write, like taxRate above, and only ever
+    // lands in the CALLER'S tenant: with no tenant context SystemConfigService.set would write an unscoped row.
+    let receiptFooter: string | undefined;
+    if (dto.receiptFooter !== undefined) {
+      if (!this.prisma.getTenantId()) {
+        throw new ForbiddenException(
+          "receiptFooter is saved per business; no business is selected",
+        );
+      }
+      receiptFooter = sanitizeReceiptFooter(dto.receiptFooter);
+    }
+
     // businessName and email are NOT editable by tenant admin (set by super admin).
     // taxRate and logoUrl stay in SystemConfig (no dedicated TenantConfig column for them yet).
     const allowed = ["taxRate", "logoUrl"];
@@ -155,6 +170,7 @@ export class SettingsController {
         .filter((k) => dto[k] !== undefined)
         .map((k) => this.svc.set(`settings.${k}`, String(dto[k]))),
     );
+    if (receiptFooter !== undefined) await this.svc.set("settings.receiptFooter", receiptFooter);
 
     // ownerName, customerEmail, and address fields are stored in TenantConfig
     const tenantId = this.prisma.getTenantId();

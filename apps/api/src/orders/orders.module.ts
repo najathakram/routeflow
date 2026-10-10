@@ -37,6 +37,8 @@ import { BuyerBackorderViewResolver } from "./buyer-backorder-view";
 import { CounterSaleController } from "./counter-sale/counter-sale.controller";
 import { CounterSaleService } from "./counter-sale/counter-sale.service";
 import { CounterSaleTodayService } from "./counter-sale/counter-sale-today.service";
+import { CounterSaleVoidController } from "./counter-sale/counter-sale-void.controller";
+import { CounterSaleVoidService } from "./counter-sale/counter-sale-void.service";
 import { CustomersModule } from "../customers/customers.module";
 import { BillingModule } from "../billing/billing.module";
 import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
@@ -77,7 +79,12 @@ import { StorageModule } from "../storage/storage.module";
     BillingModule,
     StorageModule,
   ],
-  controllers: [OrdersController, CounterSaleController, PickupCompleteController],
+  controllers: [
+    OrdersController,
+    CounterSaleController,
+    CounterSaleVoidController,
+    PickupCompleteController,
+  ],
   providers: [
     OrdersService,
     ChangeRequestsService,
@@ -85,6 +92,7 @@ import { StorageModule } from "../storage/storage.module";
     BuyerBackorderViewResolver,
     CounterSaleService,
     CounterSaleTodayService,
+    CounterSaleVoidService,
     PickupCompleteService,
     WalkInCustomerService,
     { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },

@@ -91,8 +91,11 @@ describe("SettingsHub regroup", () => {
     const hrefs = screen.getAllByRole("link").map((l) => l.getAttribute("href"));
     expect(hrefs).toContain("/settings?tab=profile");
     const row = SETTINGS_REGISTRY.find((r) => r.key === "settings.receiptFooter");
-    expect(row).toMatchObject({ status: "pending SA-762r API" });
-    expect(row?.plannedSurface).toMatch(/Business profile/);
+    expect(row).toMatchObject({
+      key: "settings.receiptFooter",
+      status: "live",
+      screen: "/settings?tab=profile",
+    });
   });
 
   it("search 'restrictions' finds it in both groups", () => {
