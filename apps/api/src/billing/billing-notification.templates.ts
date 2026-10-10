@@ -418,3 +418,62 @@ export function rfInvoiceEmail(
   const replyTo = process.env.PLATFORM_BILLING_REPLY_TO?.trim();
   return { subject, html, text, ...(replyTo ? { replyTo } : {}) };
 }
+
+// SA-733r7 PR-B3: the dunning emails (d0 / d3 / d6, the final read-only notice, and the paused notice). The copy is
+// truthful for each BILLING_PAUSE_MODE: `d6` names no date (it is what `dark` sends); `final` and `paused` exist only
+// in `enforced`. Wording is fixed - no ids, no amounts - and the pay link is the invoice's Stripe-hosted page.
+export type DunningEmailKind = "d0" | "d3" | "d6" | "final" | "paused";
+
+export function dunningTemplate(params: {
+  kind: DunningEmailKind;
+  businessName: string;
+  adminName: string;
+  /** Stripe's hosted invoice page; absent -> the billing settings page. */
+  payUrl: string | null;
+  /** `final` only: the tenant-local date the workspace becomes read-only. */
+  readOnlyOn?: string;
+}): BillingEmailTemplate {
+  const link = params.payUrl || billingSettingsUrl();
+  const biz = params.businessName;
+  const copy: Record<DunningEmailKind, { subject: string; tagline: string; body: string }> = {
+    d0: {
+      subject: `Payment failed — ${biz}`,
+      tagline: "Payment failed",
+      body: `We couldn't process your subscription payment for ${biz}. We'll try again automatically; paying the open invoice now avoids any interruption.`,
+    },
+    d3: {
+      subject: `Your payment is still overdue — ${biz}`,
+      tagline: "Payment overdue",
+      body: `The subscription invoice for ${biz} is still unpaid. Please pay it or update your payment method to avoid an interruption to your service.`,
+    },
+    d6: {
+      subject: `Action needed: overdue payment — ${biz}`,
+      tagline: "Payment overdue",
+      body: `The subscription invoice for ${biz} is still unpaid. Please pay it today to avoid an interruption to your service.`,
+    },
+    final: {
+      subject: `Your workspace becomes read-only tomorrow — ${biz}`,
+      tagline: "Final notice",
+      body: `The subscription invoice for ${biz} is still unpaid. Unless it is paid, your workspace becomes read-only${
+        params.readOnlyOn ? ` on ${params.readOnlyOn}` : " tomorrow"
+      }. Your data stays safe, and paying restores full access right away.`,
+    },
+    paused: {
+      subject: `Your workspace is now read-only — ${biz}`,
+      tagline: "Workspace read-only",
+      body: `Because the subscription invoice for ${biz} is unpaid, your workspace is now read-only. Your data is safe and exports still work. Pay the open invoice and full access returns right away.`,
+    },
+  };
+  const c = copy[params.kind];
+  const label = params.kind === "paused" ? "Pay the open invoice" : "Pay now";
+  const html = baseLayout({
+    tagline: c.tagline,
+    bodyHtml: `
+      <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
+      <p style="margin:0 0 16px;font-size:15px;color:#374151;">${escapeHtml(c.body)}</p>
+      ${ctaButtonHtml(link, label)}
+    `,
+  });
+  const text = `Hi ${params.adminName},\n\n${c.body}\n\n${label}: ${link}`;
+  return { subject: c.subject, html, text };
+}

@@ -10,6 +10,8 @@ import {
   suspendedTemplate,
   checkoutPlanNotAppliedTemplate,
   rfInvoiceEmail,
+  dunningTemplate,
+  DunningEmailKind,
   TrialEndingMilestone,
   BillingEmailTemplate,
   RfInvoiceEmailInput,
@@ -324,6 +326,39 @@ export class BillingNotificationService {
     await this.sendIfClaimed(tenantId, "SUSPENDED", key, (admin, businessName) =>
       suspendedTemplate({ businessName, adminName: admin.name, reason }),
     );
+  }
+
+  /**
+   * SA-733r7 PR-B3: one dunning email to the tenant's admins, claimed per (tenant, milestone, invoiceId) so an
+   * hourly sweep (or a redelivered webhook) sends each milestone once per invoice. `skipped` = already claimed;
+   * a send nobody accepted releases the claim so the next sweep retries. Never throws.
+   */
+  async notifyDunning(
+    tenantId: string,
+    milestone: string,
+    invoiceId: string,
+    kind: DunningEmailKind,
+    extra: { payUrl: string | null; readOnlyOn?: string },
+  ): Promise<RfInvoiceSendResult> {
+    return this.sendIfClaimed(tenantId, milestone, invoiceId, (admin, businessName) =>
+      dunningTemplate({
+        kind,
+        businessName,
+        adminName: admin.name,
+        payUrl: extra.payUrl,
+        readOnlyOn: extra.readOnlyOn,
+      }),
+    );
+  }
+
+  /** The claim alone (no email): records that a milestone's notice went out inside another milestone's email. */
+  recordDunningMilestone(tenantId: string, milestone: string, invoiceId: string): Promise<boolean> {
+    return this.claim(tenantId, milestone, invoiceId);
+  }
+
+  /** The tenant-local date (and zone label) for a notice's calendar date. */
+  async localDateLabel(tenantId: string, at: Date): Promise<string> {
+    return this.formatDate(at, await this.tenantTimezone(tenantId));
   }
 
   /**
