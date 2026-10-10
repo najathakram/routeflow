@@ -1010,3 +1010,74 @@ describe("effective-features carries the applied fulfilment mode (B1132)", () =>
     expect(res.effective.length).toBe(FEATURE_REGISTRY.length);
   });
 });
+
+describe("ROW (c): the BUSINESS_PROFILE_BILLING_FAILED body says, per add-on, what happened", () => {
+  const apply = async (t: ReturnType<typeof fakeTenant>) => {
+    const err = await t.controller
+      .applyBusinessProfile(T, { profile: "shipping_wholesaler" }, admin)
+      .catch((e) => e);
+    expect(err.getStatus()).toBe(503);
+    return err.getResponse();
+  };
+
+  it("a comp row switched off, then a later step fails: wasComp true, switched off, billing never stopped", async () => {
+    const t = fakeTenant({
+      comped: ["recurring_routes"],
+      modes: { fulfilment_model: "delivery" },
+      setFails: "fulfilment_model",
+    });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "recurring_routes", wasComp: true, billingStopped: false, switchedOff: true },
+    ]);
+    // additive: the older top-level fields still ride along
+    expect(body.alreadyDisabled).toEqual(["recurring_routes"]);
+    expect(body.failedStep).toEqual({ step: "mode", key: "fulfilment_model" });
+  });
+
+  it("a paid row stopped, then a later add-on's switch-off failed: the failed one comes first", async () => {
+    const t = fakeTenant({
+      addons: ["driver_payments", "order_delivery"],
+      modes: { fulfilment_model: "delivery" },
+      disableFails: "order_delivery",
+    });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "order_delivery", wasComp: false, billingStopped: false, switchedOff: false },
+      { key: "driver_payments", wasComp: false, billingStopped: true, switchedOff: true },
+    ]);
+  });
+
+  it("a paid row whose stop failed (nothing done before): one entry, still on", async () => {
+    const t = fakeTenant({ addons: ["recurring_routes"], disableFails: "recurring_routes" });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "recurring_routes", wasComp: false, billingStopped: false, switchedOff: false },
+    ]);
+    expect(body.alreadyDisabled).toEqual([]);
+  });
+
+  it("a comp row whose switch-off failed: wasComp true, not switched off", async () => {
+    const t = fakeTenant({ comped: ["driver_payments"], disableFails: "driver_payments" });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "driver_payments", wasComp: true, billingStopped: false, switchedOff: false },
+    ]);
+  });
+
+  it("mixed: paid stopped + comp switched off + a comp that failed, in failed-first then disable order", async () => {
+    const t = fakeTenant({
+      addons: ["driver_payments"],
+      comped: ["order_delivery", "recurring_routes"],
+      modes: { fulfilment_model: "delivery" },
+      disableFails: "recurring_routes",
+    });
+    const body = await apply(t);
+    expect(body.addons).toEqual([
+      { key: "recurring_routes", wasComp: true, billingStopped: false, switchedOff: false },
+      { key: "driver_payments", wasComp: false, billingStopped: true, switchedOff: true },
+      { key: "order_delivery", wasComp: true, billingStopped: false, switchedOff: true },
+    ]);
+    expect(JSON.stringify(body)).not.toContain("connection terminated");
+  });
+});
