@@ -250,6 +250,7 @@ check(
 {
   const dir = mkTmp();
   const seen = {};
+  const tokenBefore = process.env.RF_HEAVY_SLOT_TOKEN;
   const out = await withHeavySlot(
     { label: "basic", branch: "b", dir, env: {}, ...FAST },
     async (c) => {
@@ -272,9 +273,9 @@ check(
       h[0]?.label,
       h[0]?.exit,
       h[0]?.waitSec >= 0 && h[0]?.heldSec >= 0,
-      process.env.RF_HEAVY_SLOT_TOKEN,
+      process.env.RF_HEAVY_SLOT_TOKEN === tokenBefore,
     ],
-    ["value", true, true, false, [], 1, "basic", 0, true, undefined],
+    ["value", true, true, false, [], 1, "basic", 0, true, true],
   );
 }
 {
