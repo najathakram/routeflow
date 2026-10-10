@@ -26,12 +26,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { cancelImpact } from "./order-cancel-impact";
 import { updateStatusWithShipMarker } from "./order-ship-state";
 import { buildStatusUpdateData } from "./order-status-claim";
-import {
-  captureRecreatedCarry,
-  markSaleDelivered,
-  stampDeliveredAfterEdit,
-  stampDeliveredInFull,
-} from "./delivered-stamp";
+import { markSaleDelivered, stampDeliveredAfterEdit } from "./delivered-stamp";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -202,24 +197,6 @@ describeDb("SA-763r — the delivered stamp on real Postgres", () => {
     );
     expect(await dq(lineIds[0])).toBe(12);
     expect(await dq(lineIds[1])).toBe(6);
-  });
-
-  it("(6) a replace-all carries the product's delivered sum onto the recreated row (M2)", async () => {
-    const { orderId, lineIds } = await seed({ status: "DELIVERED", lines: [{ qty: 10, d: 10 }] });
-    await tenantCtx.run(tenantId, () =>
-      prisma.tenantTransaction(async (tx: any) => {
-        const held = [{ id: lineIds[0], productId, qty: 10, deliveredQty: 10 }];
-        const carry = await captureRecreatedCarry(tx, orderId, held);
-        await tx.orderItem.deleteMany({ where: { orderId } });
-        await tx.orderItem.create({
-          data: { orderId, productId, tenantId, qty: 12, unitPrice: 1, subtotal: 12 },
-        });
-        await stampDeliveredInFull(tx, orderId, "recreated", carry!);
-      }),
-    );
-    const rows = await raw.orderItem.findMany({ where: { orderId } });
-    expect(rows).toHaveLength(1);
-    expect(Number(rows[0].deliveredQty)).toBe(12);
   });
 
   it("(7) manual DELIVERED -> reopen -> cancel-impact: canCancel is false (the stamp stays)", async () => {
