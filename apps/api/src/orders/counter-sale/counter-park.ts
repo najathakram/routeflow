@@ -1,6 +1,6 @@
 import { COUNTER_PARK_LABEL_MAX } from "@routeflow/pricing";
 
-/** Advisory-lock family of the parked-cart cap: the key is `${tenantId}:${registerKey}` (see counter-park.service.ts). */
+/** Advisory-lock family of the parked-cart cap: keyed on the tenant id (one lock covers the per-register and tenant-wide caps). */
 export const COUNTER_PARK_LOCK_FAMILY = "counter-park";
 
 /** Rows the hourly sweep deletes per statement. */

@@ -68,8 +68,8 @@ const conflictError = () =>
  * the same function `POST /orders/counter-sale` uses) and is tenant-scoped by an EXPLICIT `"tenantId"` clause in every
  * statement (the raw SQL bypasses the tenant extension, so nothing here relies on it).
  *
- *  - park:   one transaction. `pg_advisory_xact_lock(counter-park, tenantId:registerKey)` serialises every park of one
- *            register, then: replay check (same id + tenant + register returns the stored row, it does not count against
+ *  - park:   one transaction. `pg_advisory_xact_lock(counter-park, tenantId)` serialises every park of one tenant
+ *            (all registers), then: replay check (same id + tenant + register returns the stored row, it does not count against
  *            the cap), cap check (open rows >= 10 -> 409 PARK_LIMIT), `INSERT ... ON CONFLICT (id) DO NOTHING`.
  *  - resume: ONE compare-and-set `UPDATE ... WHERE id AND tenantId AND resumedAt IS NULL AND expiresAt > now RETURNING`.
  *            Exactly one concurrent caller gets the row. No delete (the sweep removes it later); the same actor may
@@ -142,7 +142,7 @@ export class CounterParkService {
     const typed = dto.label?.replace(/\u0000/g, "").trim();
     const label =
       typed ||
-      defaultParkLabel(customerName, localHm(now, await tenantTimeZone(this.prisma, tenantId)));
+      defaultParkLabel(customerName, localHm(now, await tenantTimeZone(this.prisma, { tenantId })));
     const expiresAt = new Date(now.getTime() + COUNTER_PARK_TTL_HOURS * 3_600_000);
     const lineCount = lineCountOf(payload);
 

@@ -16,6 +16,7 @@ import {
 import type { FulfilmentCapability } from "@routeflow/types";
 import { deriveFulfilmentCapability } from "../../billing/fulfilment-capability";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { LOCK_FAMILIES } from "../../common/db-locks";
 import { createMockPrisma, type MockPrisma } from "../../testing/prisma-mock";
 import { CounterParkService } from "./counter-park.service";
 import { FakeParkDb } from "./counter-park.fixtures";
@@ -164,6 +165,9 @@ describe("CounterParkService.park", () => {
     expect((await t.park({ id: id(2) })).registerKey).toBe("main");
     // an invalid key never reaches the service (the DTO refuses it), but if it did it is the default, not stored raw
     expect((await t.park({ id: id(3), registerKey: "bad key!" })).registerKey).toBe("main");
+    // the shared union pattern: a ':' is fine inside a key, never first
+    expect((await t.park({ id: id(4), registerKey: "Front:1" })).registerKey).toBe("Front:1");
+    expect((await t.park({ id: id(5), registerKey: ":front" })).registerKey).toBe("main");
   });
 
   describe("size caps", () => {
@@ -337,6 +341,12 @@ describe("CounterParkService.park", () => {
       expect(sqls[2]).toContain("count(*)");
       expect(sqls[3]).toContain('ON CONFLICT ("id") DO NOTHING');
       expect(t.prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+    });
+    it("its advisory-lock family is registered in db-locks LOCK_FAMILIES (one list of every family)", async () => {
+      const t = setup();
+      await t.park({ registerKey: "front-2" });
+      const family = t.db.statements[0].values[0] as string;
+      expect(LOCK_FAMILIES as readonly string[]).toContain(family);
     });
     it("runs the whole transaction again on a write conflict (one shared predicate), not on a business error", async () => {
       const t = setup();
