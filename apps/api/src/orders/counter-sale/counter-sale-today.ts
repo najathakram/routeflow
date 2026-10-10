@@ -182,7 +182,10 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           id: true,
           invoiceNumber: true,
           status: true,
-          payments: { select: { method: true, amount: true, status: true } },
+          payments: {
+            orderBy: { createdAt: "asc" },
+            select: { method: true, amount: true, status: true },
+          },
           items: { select: { taxRate: true } },
         },
       },

@@ -288,6 +288,13 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
     expect(r.change).toBe(k.change);
   });
 
+  it("readInvoices reads the payments oldest first so the first stored tender is deterministic", async () => {
+    await ring({ method: "CASH", amount: 41.27 });
+    const args = prisma.invoice.findMany.mock.calls.map(([a]: [any]) => a);
+    expect(args.length).toBeGreaterThan(0);
+    for (const a of args) expect(a.include.payments).toEqual({ orderBy: { createdAt: "asc" } });
+  });
+
   it("(f) a sale with no stored tendered (card / legacy) reads back without the field", async () => {
     findReplayCandidateByKey.mockResolvedValue({
       id: "ord-1",

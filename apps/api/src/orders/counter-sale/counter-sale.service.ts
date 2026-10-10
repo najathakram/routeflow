@@ -468,7 +468,7 @@ export class CounterSaleService {
       // A VOID / WRITTEN_OFF invoice is not part of the sale (recordPayment refuses both): reading it
       // back would put its id, total and balance into the response and the tender plan.
       where: { orderId, status: { notIn: ["VOID", "WRITTEN_OFF"] } },
-      include: { payments: true },
+      include: { payments: { orderBy: { createdAt: "asc" } } },
       orderBy: { createdAt: "asc" },
     });
   }
