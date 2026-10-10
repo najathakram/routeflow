@@ -2738,7 +2738,13 @@ export default function OrderDetailPage() {
               onHandOver={() => setPickupOpen(true)}
               onReadyForPickup={handleMarkShipped}
               readyPending={updateStatus.isPending}
-              onSwitchToDelivery={() => setPendingPath("ROUTE")}
+              onSwitchToDelivery={() =>
+                setPendingPath(
+                  access.fulfillmentPath && !fulfillPathLocked
+                    ? staffFulfilment.formDefault
+                    : "ROUTE",
+                )
+              }
             />
           )}
 
