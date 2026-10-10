@@ -88,6 +88,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
   }
 
   beforeEach(() => jest.clearAllMocks());
+  afterEach(() => jest.useRealTimers());
 
   it("CONNECTED + valid cached token: sends via Graph sendMail with a base64 MIME body and text/plain Content-Type, never calls the token endpoint", async () => {
     const encryption = realEncryption();
@@ -263,6 +264,19 @@ describe("MailboxSendService — Microsoft/Graph", () => {
     });
     const { service } = buildService({ prisma });
 
+    // L-165: pin ONLY the Date clock (timers stay real) so the delta is exact, not a wall-clock window.
+    jest.useFakeTimers({
+      now: Date.now(), // pinned at the real "now" so token-expiry fixtures stay valid
+      doNotFake: [
+        "nextTick",
+        "setImmediate",
+        "setTimeout",
+        "setInterval",
+        "clearTimeout",
+        "clearInterval",
+        "queueMicrotask",
+      ],
+    });
     const before = Date.now();
     const res = await service.trySend("tenant-a", {
       to: "x@y.com",
@@ -284,8 +298,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
     const throttledUntil: Date = (prisma.mailboxConnection.updateMany as jest.Mock).mock.calls[0][0]
       .data.throttledUntil;
     const deltaMs = throttledUntil.getTime() - before;
-    expect(deltaMs).toBeGreaterThan(85_000);
-    expect(deltaMs).toBeLessThan(95_000);
+    expect(deltaMs).toBe(90_000);
   });
 
   // ── resolver fallthrough on 401 ─────────────────────────────────────────────
