@@ -3,6 +3,7 @@
 import * as React from "react";
 import { ChevronDown, Search, X, Check } from "lucide-react";
 import { cn, mergeRefs } from "@routeflow/ui/web";
+import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useProducts } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import { AnchoredList, isInsideAnchoredList } from "./AnchoredList";
@@ -111,7 +112,6 @@ export function SearchableProductPicker({
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
-  const [highlight, setHighlight] = React.useState(0);
   const containerRef = React.useRef<HTMLDivElement>(null);
   const listId = React.useId();
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -192,10 +192,17 @@ export function SearchableProductPicker({
     return () => document.removeEventListener("mousedown", onClick);
   }, [open]);
 
-  // Reset highlight when filtered list changes
-  React.useEffect(() => {
-    setHighlight(0);
-  }, [search, open]);
+  const nav = useListboxNav<PickerProduct>({
+    items: visibleProducts,
+    open,
+    onPick: (p) => handleSelect(p),
+    onClose: () => setOpen(false),
+    resetKey: search,
+    initial: 0,
+    idPrefix: "product-picker",
+  });
+  const highlight = nav.highlight;
+  const setHighlight = nav.setHighlight;
 
   // Floating preview panel position, recomputed whenever the open/highlighted
   // option changes. `position: fixed` so it escapes the `overflow-y-auto`
@@ -236,19 +243,7 @@ export function SearchableProductPicker({
       setOpen(true);
       return;
     }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setHighlight((h) => Math.min(h + 1, visibleProducts.length - 1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setHighlight((h) => Math.max(h - 1, 0));
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      const pick = visibleProducts[highlight];
-      if (pick) handleSelect(pick);
-    } else if (e.key === "Escape") {
-      setOpen(false);
-    }
+    if (!nav.onKeyDown(e) && e.key === "Enter") e.preventDefault(); // Enter never submits an enclosing form
   };
 
   return (
