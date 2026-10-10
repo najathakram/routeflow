@@ -9,7 +9,12 @@ import { Button, Modal, cn } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 import { useOrder } from "@/lib/api/orders";
 import type { TodaysSaleMethod, TodaysSaleRow, TodaysSalesSummary } from "@routeflow/types";
-import { COUNTER_SALE_TODAY_KEY, useCounterSaleToday } from "@/lib/api/counter-sale-today";
+import {
+  COUNTER_SALE_TODAY_KEY,
+  useCounterSaleToday,
+  useCounterSaleWeek,
+} from "@/lib/api/counter-sale-today";
+import { lastDays, sumWeek, weekCsv } from "@/lib/counter-week";
 import { useTenant } from "@/components/tenant-provider";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { guardCounterLeave } from "@/lib/counter-cart-signal";
@@ -59,7 +64,22 @@ function Stat({ label, value, testId }: { label: string; value: string; testId?:
 }
 
 /** Server numbers only: nothing here adds, subtracts or derives a figure. */
-function Summary({ s }: { s: TodaysSalesSummary }) {
+function Summary({
+  s,
+  label = "Today's summary",
+  testId = "today-summary",
+  prefix = "today",
+  cashExpectedSuffix = "",
+}: {
+  s: TodaysSalesSummary;
+  /** the region's accessible name */
+  label?: string;
+  testId?: string;
+  /** test-id prefix of the stats (`${prefix}-in-cash`) */
+  prefix?: string;
+  /** appended to the cash-expected label (the week total says it is a sum of the days) */
+  cashExpectedSuffix?: string;
+}) {
   const r = s.refunds;
   // SA-740r2: a window can hold refunds with a recorded method AND refunds without one (the tender is optional on STANDARD
   // refunds until the mobile minimum moves): then the breakdown shows and the labels say which figure lacks a method. A
@@ -67,26 +87,26 @@ function Summary({ s }: { s: TodaysSalesSummary }) {
   const someTenderRecorded = !r.tenderKnown && (r.cash > 0 || r.card > 0 || r.check > 0);
   return (
     <section
-      aria-label="Today's summary"
+      aria-label={label}
       className="rounded border bg-navy/5 p-3 text-sm"
-      data-testid="today-summary"
+      data-testid={testId}
     >
       <p className="flex justify-between font-semibold">
         <span>{s.sales.count === 1 ? "1 sale" : `${s.sales.count} sales`}</span>
         <span className="tabular-nums">{money(s.sales.total)}</span>
       </p>
       <dl className="mt-2 space-y-1">
-        <Stat label="Cash in" value={money(s.moneyIn.cash)} testId="today-in-cash" />
-        <Stat label="Card in" value={money(s.moneyIn.card)} testId="today-in-card" />
-        <Stat label="Check in" value={money(s.moneyIn.check)} testId="today-in-check" />
-        <Stat label="Other in" value={money(s.moneyIn.other)} testId="today-in-other" />
-        <Stat label="Money in" value={money(s.moneyIn.total)} testId="today-in-total" />
+        <Stat label="Cash in" value={money(s.moneyIn.cash)} testId={`${prefix}-in-cash`} />
+        <Stat label="Card in" value={money(s.moneyIn.card)} testId={`${prefix}-in-card`} />
+        <Stat label="Check in" value={money(s.moneyIn.check)} testId={`${prefix}-in-check`} />
+        <Stat label="Other in" value={money(s.moneyIn.other)} testId={`${prefix}-in-other`} />
+        <Stat label="Money in" value={money(s.moneyIn.total)} testId={`${prefix}-in-total`} />
         <Stat
           label="Store credit used"
           value={money(s.storeCreditUsed)}
-          testId="today-store-credit-used"
+          testId={`${prefix}-store-credit-used`}
         />
-        <Stat label="On account" value={money(s.onAccount)} testId="today-on-account" />
+        <Stat label="On account" value={money(s.onAccount)} testId={`${prefix}-on-account`} />
         <Stat
           label={
             r.tenderKnown
@@ -96,32 +116,36 @@ function Summary({ s }: { s: TodaysSalesSummary }) {
                 : "Refunds (method not recorded)"
           }
           value={money(r.total)}
-          testId="today-refunds"
+          testId={`${prefix}-refunds`}
         />
         {r.tenderKnown || someTenderRecorded ? (
           <>
-            <Stat label="Cash refunds" value={money(r.cash)} testId="today-refunds-cash" />
-            <Stat label="Card refunds" value={money(r.card)} testId="today-refunds-card" />
-            <Stat label="Check refunds" value={money(r.check)} testId="today-refunds-check" />
-            <Stat label="Other refunds" value={money(r.other)} testId="today-refunds-other" />
+            <Stat label="Cash refunds" value={money(r.cash)} testId={`${prefix}-refunds-cash`} />
+            <Stat label="Card refunds" value={money(r.card)} testId={`${prefix}-refunds-card`} />
+            <Stat label="Check refunds" value={money(r.check)} testId={`${prefix}-refunds-check`} />
+            <Stat label="Other refunds" value={money(r.other)} testId={`${prefix}-refunds-other`} />
           </>
         ) : null}
         <Stat
           label="Store credit issued"
           value={money(s.storeCreditIssued.amount)}
-          testId="today-store-credit-issued"
+          testId={`${prefix}-store-credit-issued`}
         />
-        <Stat label="Net collected" value={money(s.netCollected)} testId="today-net-collected" />
         <Stat
-          label={
+          label="Net collected"
+          value={money(s.netCollected)}
+          testId={`${prefix}-net-collected`}
+        />
+        <Stat
+          label={`${
             r.tenderKnown
               ? "Cash expected in drawer"
               : someTenderRecorded
                 ? "Cash expected, before refunds with no method recorded"
                 : "Cash expected, before refunds"
-          }
+          }${cashExpectedSuffix}`}
           value={money(s.cashExpectedInDrawer)}
-          testId="today-cash-expected"
+          testId={`${prefix}-cash-expected`}
         />
       </dl>
     </section>
@@ -198,6 +222,96 @@ function Reprint({
           Loading receipt
         </p>
       )}
+    </div>
+  );
+}
+
+const dayLabel = (day: string) =>
+  new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${day}T00:00:00Z`));
+
+/**
+ * "Last 7 days": the tenant's last seven calendar days, one server summary per day (the same endpoint with `?day=`), a week
+ * total (the sum of those daily figures, in cents) and the same labelled block for each day. Print and CSV. While it is
+ * open the page prints ONLY this report (the counter screen is hidden for the print, like a reprint).
+ */
+function WeekReport({ today }: { today: string }) {
+  React.useEffect(() => {
+    document.body.classList.add("counter-reprint-open");
+    return () => document.body.classList.remove("counter-reprint-open");
+  }, []);
+  const days = React.useMemo(() => lastDays(today), [today]);
+  const results = useCounterSaleWeek(days);
+  const failed = results.some((r) => r.isError);
+  const summaries = results.map((r) => r.data?.summary ?? null);
+  const ready = summaries.every((x) => x !== null);
+  if (failed) {
+    return (
+      <div role="alert" className="space-y-2 text-sm">
+        <p>Could not load the last 7 days.</p>
+        <Button
+          className="min-h-11"
+          variant="secondary"
+          onClick={() => results.forEach((r) => r.isError && void r.refetch())}
+        >
+          Retry
+        </Button>
+      </div>
+    );
+  }
+  if (!ready) {
+    return (
+      <p role="status" className="text-sm text-navy/70">
+        Loading the last 7 days
+      </p>
+    );
+  }
+  const rows = days.map((day, i) => ({ day, summary: summaries[i] as TodaysSalesSummary }));
+  const total = sumWeek(rows.map((r) => r.summary));
+  const oldest = days[days.length - 1];
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([weekCsv(rows)], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `counter-sales-${oldest}-to-${days[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2 print:hidden">
+        <Button className="min-h-11" onClick={() => window.print()}>
+          Print
+        </Button>
+        <Button className="min-h-11" variant="secondary" onClick={download}>
+          Download CSV
+        </Button>
+      </div>
+      <p className="text-xs text-navy/70">
+        {dayLabel(oldest as string)} to {dayLabel(days[0] as string)}
+      </p>
+      <Summary
+        s={total}
+        label="Last 7 days total"
+        testId="week-total"
+        prefix="week-total"
+        cashExpectedSuffix=" (sum of days)"
+      />
+      {rows.map((r) => (
+        <div key={r.day} className="space-y-1 break-inside-avoid">
+          <h3 className="text-sm font-semibold">{dayLabel(r.day)}</h3>
+          <Summary
+            s={r.summary}
+            label={`${dayLabel(r.day)} summary`}
+            testId={`week-day-${r.day}`}
+            prefix={`week-day-${r.day}`}
+          />
+        </div>
+      ))}
     </div>
   );
 }
@@ -292,6 +406,8 @@ export function CounterTodaysSales() {
   const [voidRow, setVoidRow] = React.useState<{ orderId: string; orderNumber: string } | null>(
     null,
   );
+  // "today" = the live list; "week" = the last-7-days report
+  const [view, setView] = React.useState<"today" | "week">("today");
   // the row whose Reprint button gets focus back after "Back to sales"
   const [refocusId, setRefocusId] = React.useState<string | null>(null);
   const clearRefocus = React.useCallback(() => setRefocusId(null), []);
@@ -305,6 +421,7 @@ export function CounterTodaysSales() {
   const rows = q.data?.pages.flatMap((p) => p.data) ?? [];
   const summary = q.data?.pages[0]?.summary;
   const timezone = q.data?.pages[0]?.meta.timezone ?? "UTC";
+  const tenantDay = q.data?.pages[0]?.meta.day;
 
   return (
     <>
@@ -321,6 +438,7 @@ export function CounterTodaysSales() {
         onClose={() => {
           setOpen(false);
           setReprint(null);
+          setView("today");
         }}
         onEscapeKeyDown={(e) => {
           // Escape closes only the top layer: the reprint view goes back to the list first
@@ -335,12 +453,12 @@ export function CounterTodaysSales() {
           openerRef.current.focus();
         }}
         closeClassName="min-h-11 min-w-11 flex items-center justify-center"
-        title={reprint ? "Reprint receipt" : "Today's sales"}
+        title={reprint ? "Reprint receipt" : view === "week" ? "Last 7 days" : "Today's sales"}
         scroll
         className={cn(
           "max-w-2xl print:static print:max-h-none print:max-w-none print:translate-x-0 print:translate-y-0 print:overflow-visible print:p-0 print:shadow-none",
           // the modal's title row is not part of the receipt
-          reprint && "print:[&>div:first-child]:hidden",
+          (reprint || view === "week") && "print:[&>div:first-child]:hidden",
         )}
       >
         {reprint ? (
@@ -365,8 +483,28 @@ export function CounterTodaysSales() {
           </p>
         ) : (
           <div className="space-y-3">
-            {summary ? <Summary s={summary} /> : null}
-            {rows.length === 0 ? (
+            <div className="flex gap-2 print:hidden" role="group" aria-label="Range">
+              <Button
+                className="min-h-11"
+                variant={view === "today" ? "primary" : "secondary"}
+                aria-pressed={view === "today"}
+                onClick={() => setView("today")}
+              >
+                Today
+              </Button>
+              <Button
+                className="min-h-11"
+                variant={view === "week" ? "primary" : "secondary"}
+                aria-pressed={view === "week"}
+                disabled={!tenantDay}
+                onClick={() => setView("week")}
+              >
+                Last 7 days
+              </Button>
+            </div>
+            {view === "week" && tenantDay ? <WeekReport today={tenantDay} /> : null}
+            {view === "week" ? null : summary ? <Summary s={summary} /> : null}
+            {view === "week" ? null : rows.length === 0 ? (
               <p className="py-6 text-center text-sm text-navy/70">No sales yet today</p>
             ) : (
               <ul className="divide-y" aria-label="Today's sales">
@@ -384,7 +522,7 @@ export function CounterTodaysSales() {
                 ))}
               </ul>
             )}
-            {q.hasNextPage ? (
+            {view === "today" && q.hasNextPage ? (
               <Button
                 className="min-h-11 w-full"
                 variant="secondary"
