@@ -556,3 +556,9 @@ describe("B524 — checkFeatureRequires / describeUnmetFeatureRequirement / feat
 // Type-only assertion: keeps this file failing to compile if FeatureDef's shape changes without
 // the spec being revisited.
 type _AssertFeatureDefShape = FeatureDef;
+
+describe("SA-1: plain names", () => {
+  it("the fulfilment_model row is called 'Where orders go'", () => {
+    expect(featureDefByKey("fulfilment_model")?.label).toBe("Where orders go");
+  });
+});

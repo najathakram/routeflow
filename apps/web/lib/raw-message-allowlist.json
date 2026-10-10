@@ -272,10 +272,6 @@
     "count": 7,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
   },
-  "app/(platform-admin)/admin/tenants/new/page.tsx": {
-    "count": 1,
-    "why": "B986-2 platform-admin: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
-  },
   "app/(platform-admin)/admin/tenants/page.tsx": {
     "count": 2,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
