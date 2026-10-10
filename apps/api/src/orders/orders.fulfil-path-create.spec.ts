@@ -160,10 +160,11 @@ describe("OrdersService.create: fulfil path", () => {
     });
 
     it.each(["unset", "delivery", "both", "ship"])(
-      "%s tenant: a staff order asking for PICKUP is a coded 400 (the DTO accepts it, the resolver refuses), nothing written",
+      "%s tenant: a DRIVER's order asking for PICKUP is a coded 400 (no POS mode for a driver), nothing written",
       async (m) => {
         mode(m);
-        await expect(create({ fulfillPath: "PICKUP" })).rejects.toMatchObject({
+        const driver = { ...operatorPayload, sub: "user-drv", role: "DRIVER" as const };
+        await expect(create({ fulfillPath: "PICKUP" }, driver)).rejects.toMatchObject({
           status: 400,
           response: expect.objectContaining({ code: "FULFIL_METHOD_NOT_OFFERED" }),
         });

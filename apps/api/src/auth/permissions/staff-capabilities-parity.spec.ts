@@ -15,6 +15,13 @@ describe("staff-capabilities: the API literal is pinned to packages/types", () =
     expect(api.STAFF_CAPABILITY_RULES).toEqual(shared.STAFF_CAPABILITY_RULES);
   });
 
+  it("the table names the POS-mode rows in both copies", () => {
+    for (const copy of [api, shared]) {
+      expect(copy.STAFF_CAPABILITY_RULES.USE_POS_MODE.group).toBe("ORDERS");
+      expect(copy.STAFF_CAPABILITY_RULES.EDIT_AFTER_FINAL.group).toBe("FINANCE");
+    }
+  });
+
   it("COUNTER_VOID_WINDOW and COUNTER_VOID_WINDOW_VALUES are deep-equal", () => {
     expect(api.COUNTER_VOID_WINDOW).toBe(shared.COUNTER_VOID_WINDOW);
     expect([...api.COUNTER_VOID_WINDOW_VALUES]).toEqual([...shared.COUNTER_VOID_WINDOW_VALUES]);
@@ -31,7 +38,15 @@ describe("staff-capabilities: the API literal is pinned to packages/types", () =
       null,
       undefined,
     ];
-    const denials: string[][] = [[], ["PRICING"], ["ORDERS"], ["PRICING", "ORDERS"], ["FINANCE"]];
+    const denials: string[][] = [
+      [],
+      ["PRICING"],
+      ["ORDERS"],
+      ["FINANCE"],
+      ["PRICING", "ORDERS"],
+      ["ORDERS", "FINANCE"],
+      ["PRICING", "ORDERS", "FINANCE"],
+    ];
     for (const role of roles) {
       for (const action of api.STAFF_CAPABILITY_VALUES) {
         for (const denied of denials) {
