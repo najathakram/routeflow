@@ -2371,6 +2371,18 @@ export class BillingService {
       return;
     }
 
+    // SA-733r3 N1 (r4 #1 text): the legacy reinstatement needs the invoice's subscription to EQUAL the row's NON-NULL
+    // stripeSubId (dahlia has no `invoice.subscription`; the id lives where stripeInvoiceSubscriptionId reads it).
+    // Customer-wide matching let a late payment on an old / other subscription (or a one-off invoice) reinstate a
+    // SUSPENDED or lapsed-trial tenant, book +MRR and wipe a live dunning clock. The count reset above still applies.
+    const invoiceSubId = stripeInvoiceSubscriptionId(invoice);
+    if (!sub.stripeSubId || invoiceSubId !== sub.stripeSubId) {
+      this.logger.log(
+        `payment_succeeded for tenant ${sub.tenantId}: invoice subscription ${invoiceSubId ?? "none"} is not the tenant's own - no reinstatement`,
+      );
+      return;
+    }
+
     // SA-733r M3 / r3 N1 (PR-B3): a dunning pause is resumed ONLY by invoice.paid (DunningService.onInvoicePaid,
     // which books the single +MRR and clears the clock), and a paid invoice never revives a CANCELLED paused tenant
     // for free. Customer-wide `payment_succeeded` for either reason therefore reinstates nothing.
