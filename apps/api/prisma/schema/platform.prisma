@@ -65,6 +65,19 @@ model TenantSubscription {
   priceOverrideMonthly  Decimal?     @db.Decimal(10, 2)
   priceOverrideAnnual   Decimal?     @db.Decimal(10, 2)
   billingInterval       String? // "month" | "year", stamped at checkout completion
+  // Dunning + catch-up + coupon seams (sitting 3, SA-741r2). Schema only: nothing reads or writes them yet.
+  pastDueSince          DateTime?
+  pastDueInvoiceId      String?
+  pausedAt              DateTime?
+  // SESSION_OPEN | AWAITING_FIRST_PAYMENT | RELEASING (CHECK "TenantSubscription_catchupState_chk").
+  catchupState          String?
+  catchupSessionId      String?
+  catchupInvoiceId      String?
+  needsReconcile        Boolean      @default(false)
+  couponFull            Boolean      @default(false)
+  couponId              String?
+  couponEndsAt          DateTime?
+  couponSyncedAt        DateTime?
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 
@@ -73,6 +86,7 @@ model TenantSubscription {
 
   @@index([planVersionId])
   @@index([downgradeEffectiveAt])
+  @@index([pastDueInvoiceId])
 }
 
 // N3 (2026-09-16): idempotency log for billing-lifecycle emails to the tenant admin
@@ -1419,6 +1433,7 @@ model EmailDelivery {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, createdAt])
+  @@index([tenantId, kind, createdAt])
   @@index([entityType, entityId])
   @@index([providerMessageId])
 }

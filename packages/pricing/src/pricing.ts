@@ -1150,8 +1150,9 @@ export function effectiveBuyerPrice(
 //
 // DOCUMENT wording stays "boxes + pcs" deliberately (2026-07-30): it is shorter,
 // scans better in the narrow PDF qty column, and matches how wholesale paperwork
-// normally reads. The Case/Unit vocabulary is for the OPERATOR-facing setup and
-// selling UI (units-per-case field, Case|Unit toggle) — different audience.
+// normally reads. Operator-facing setup and selling UI speaks the same vocabulary
+// (owner ruling R2, 2026-10-07): "Box" is the pack, "pcs" the loose item (Pieces per box,
+// Box|Piece toggle); a bigger level uses its configured name.
 // `unitLabel` still overrides the loose-unit noun per product.
 
 export interface QtySplitInput {

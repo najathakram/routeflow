@@ -2,15 +2,16 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { formatReceiptMoney as money, type CounterReceiptModel } from "@/lib/counter-receipt";
+import {
+  adjustmentLabel,
+  formatReceiptMoney as money,
+  type CounterReceiptModel,
+} from "@/lib/counter-receipt";
 
 /**
  * The ONE printable receipt view: the live receipt and the Today's-sales reprint both render through it, so a reprint can
  * never drift from the receipt the customer first saw. `reprintLabel` ("Reprint · sold …") marks a reprint.
  */
-/** The stored rate as is (a free-precision percent), no rounding: 8.25 -> "8.25", 8 -> "8", 9.0625 -> "9.0625". */
-const taxRateText = (rate: number): string => String(rate);
-
 export function CounterReceiptView({
   model: m,
   logoUrl,
@@ -65,8 +66,8 @@ export function CounterReceiptView({
           <p data-testid="receipt-date">{m.dateLabel}</p>
         )}
         {reprintedBy ? <p data-testid="receipt-reprinted-by">Reprinted by {reprintedBy}</p> : null}
-        {m.cashier ? <p data-testid="receipt-cashier">Cashier: {m.cashier}</p> : null}
         {m.customerName ? <p data-testid="receipt-customer">Customer: {m.customerName}</p> : null}
+        {m.cashier ? <p data-testid="receipt-cashier">Cashier: {m.cashier}</p> : null}
       </div>
       <ul className="divide-y text-sm">
         {m.lines.map((l) => (
@@ -145,12 +146,16 @@ export function CounterReceiptView({
             <dd>-{money(m.discounts)}</dd>
           </div>
         ) : null}
-        {m.adjustment !== 0 ? (
+        {m.tax !== 0 ? (
+          <div className="flex justify-between" data-testid="receipt-tax">
+            <dt>{adjustmentLabel(m.taxRatePercent)}</dt>
+            <dd>{money(m.tax)}</dd>
+          </div>
+        ) : null}
+        {m.adjustments !== 0 ? (
           <div className="flex justify-between" data-testid="receipt-adjustment">
-            <dt>
-              {m.taxRate != null ? `Tax (${taxRateText(m.taxRate)}%)` : "Tax and adjustments"}
-            </dt>
-            <dd>{money(m.adjustment)}</dd>
+            <dt>Adjustments</dt>
+            <dd>{money(m.adjustments)}</dd>
           </div>
         ) : null}
         <div className="flex justify-between text-lg font-semibold" data-testid="receipt-total">
@@ -200,6 +205,15 @@ export function CounterReceiptView({
           </div>
         ) : null}
       </dl>
+      {m.footer ? (
+        // SA-762r: the footer is the business's own text: a React text node (escaped), never markup
+        <p
+          className="whitespace-pre-line break-words text-center text-sm text-navy/70 print:text-black"
+          data-testid="receipt-footer"
+        >
+          {m.footer}
+        </p>
+      ) : null}
     </div>
   );
 }

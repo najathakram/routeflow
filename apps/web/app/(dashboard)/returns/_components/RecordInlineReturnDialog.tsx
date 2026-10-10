@@ -68,6 +68,10 @@ export interface RecordInlineReturnDialogProps {
    *  used as the carrying order (capture's `orderId`) with no extra picker. Omit when
    *  opening from customer detail (the order picker below is then required). */
   orderId?: string;
+  /** SA-740: the sale the goods are from, sent on every quote and the capture. A counter return passes its sale (REQUIRED
+   *  for a walk-in, whose one shared customer row would otherwise match another receipt); omit for a named customer,
+   *  whose return may spill across orders. */
+  sourceOrderId?: string;
   /** POS-4b: offer "Store credit or Refund" on the quote step (counter receipt + order detail only).
    *  Off (customer detail) = today's dialog, no choice block. */
   allowRefund?: boolean;
@@ -86,6 +90,7 @@ const PENDING_ON_CLOSE: ReadonlySet<RefundErrorKind> = new Set([
   "needsPaid",
   "notRefundable",
   "paidWithCredit",
+  "exceedsCash",
 ]);
 /** Refusals where the saved return can still be given as store credit (not a 403). */
 const CREDIT_INSTEAD: ReadonlySet<RefundErrorKind> = new Set([
@@ -117,6 +122,7 @@ export function RecordInlineReturnDialog({
   customerId,
   customerName,
   orderId,
+  sourceOrderId,
   allowRefund = false,
   onRecorded,
   onCloseAutoFocus,
@@ -321,14 +327,17 @@ export function RecordInlineReturnDialog({
           // A stale server amount from an earlier 409 must not outrank the re-quote.
           setServerAmount(null);
           setRequoting(true);
-          requoteMutation.mutate(buildQuoteRequest(customerId, sectionState.lines), {
-            onSuccess: (fresh) => {
-              setRequoting(false);
-              setRequoteOverride(fresh);
+          requoteMutation.mutate(
+            buildQuoteRequest(customerId, sectionState.lines, undefined, sourceOrderId),
+            {
+              onSuccess: (fresh) => {
+                setRequoting(false);
+                setRequoteOverride(fresh);
+              },
+              // A failed re-quote never lets the clerk confirm the old amount: the refund stays pending.
+              onError: () => setRefundError("failed"),
             },
-            // A failed re-quote never lets the clerk confirm the old amount: the refund stays pending.
-            onError: () => setRefundError("failed"),
-          });
+          );
         }
       },
     );
@@ -357,6 +366,7 @@ export function RecordInlineReturnDialog({
           lines: sectionState.lines,
           returnKey: returnKeyRef.current,
           reason: sectionState.captureReason,
+          sourceOrderId,
         }),
         ...(showChoice ? { resolution: effResolution } : {}),
       },
@@ -432,6 +442,7 @@ export function RecordInlineReturnDialog({
         hidden={phase !== "capture"}
         customerId={customerId}
         entryOrderId={orderId}
+        sourceOrderId={sourceOrderId}
         resetToken={openSeq}
         getQuoteEnabled={!!carryingOrderId}
         onStateChange={setSectionState}
@@ -458,6 +469,8 @@ export function RecordInlineReturnDialog({
                 captureMutation.isPending ||
                 captureSentRef.current
               }
+              // SA-749r2 #9: after "more cash than was taken" the tender is the way out, so it stays editable
+              tenderEditable={refundError === "exceedsCash"}
               error={refundError}
             />
           ) : null
@@ -469,8 +482,13 @@ export function RecordInlineReturnDialog({
         )}
         renderQuoteActions={() =>
           showChoice &&
-          (refundError === "failed" || (refundError && TERMINAL_REFUND_ERRORS.has(refundError))) ? (
-            saved && (refundError === "failed" || CREDIT_INSTEAD.has(refundError)) ? (
+          (refundError === "failed" ||
+            refundError === "exceedsCash" ||
+            (refundError && TERMINAL_REFUND_ERRORS.has(refundError))) ? (
+            saved &&
+            (refundError === "failed" ||
+              refundError === "exceedsCash" ||
+              CREDIT_INSTEAD.has(refundError)) ? (
               <>
                 <Button
                   variant="secondary"
@@ -480,7 +498,7 @@ export function RecordInlineReturnDialog({
                 >
                   Give store credit instead
                 </Button>
-                {refundError === "failed" ? (
+                {refundError === "failed" || refundError === "exceedsCash" ? (
                   <Button
                     loading={refunding}
                     disabled={crediting}
@@ -630,6 +648,7 @@ function RefundChoice({
   tender,
   onTender,
   locked,
+  tenderEditable = false,
   error,
 }: {
   amount: string;
@@ -640,6 +659,8 @@ function RefundChoice({
   tender: InlineRefundTender;
   onTender: (t: InlineRefundTender) => void;
   locked: boolean;
+  /** SA-749r2 #9: keep the "Refund by" tender editable although the choice is locked (the way out of a cash cap refusal). */
+  tenderEditable?: boolean;
   error: RefundErrorKind | null;
 }) {
   const refund = resolution === "REFUND";
@@ -675,7 +696,7 @@ function RefundChoice({
           <Select
             label="Refund by"
             value={tender}
-            disabled={locked}
+            disabled={locked && !tenderEditable}
             onChange={(e) => onTender(e.target.value as InlineRefundTender)}
             options={TENDER_OPTIONS}
           />

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { BusinessProfilePicker } from "./BusinessProfilePicker";
 import {
@@ -11,9 +11,12 @@ import {
 const mockFetchProfiles = jest.fn();
 const mockPreview = jest.fn();
 const mockApply = jest.fn();
+const mockConfigValue = jest.fn();
+let storedModes: Record<string, string> = {};
 
 jest.mock("@/lib/platform-admin/business-profiles", () => ({
   fetchBusinessProfiles: () => mockFetchProfiles(),
+  fetchTenantConfigValue: (tenantId: string, key: string) => mockConfigValue(tenantId, key),
   previewBusinessProfile: (tenantId: string, profile: string) => mockPreview(tenantId, profile),
   applyBusinessProfile: (tenantId: string, profile: string, planFingerprint: string) =>
     mockApply(tenantId, profile, planFingerprint),
@@ -43,6 +46,10 @@ async function openPreview(profileName: RegExp = /Shipping wholesaler/) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  storedModes = {};
+  mockConfigValue.mockImplementation((_t: string, key: string) =>
+    Promise.resolve(storedModes[key] ?? "unset"),
+  );
   mockFetchProfiles.mockResolvedValue(PROFILES_FIXTURE);
   mockPreview.mockResolvedValue(shippingPreviewWithBilling());
   mockApply.mockResolvedValue({
@@ -59,18 +66,17 @@ describe("BusinessProfilePicker — the four profiles", () => {
     for (const p of PROFILES_FIXTURE) {
       const radio = screen.getByRole("radio", { name: new RegExp(p.label.replace("+", "\\+")) });
       expect(radio).toBeInTheDocument();
-      expect(screen.getByText(p.description)).toBeInTheDocument();
     }
     expect(screen.getAllByRole("radio")).toHaveLength(4);
   });
 
-  it("shows the in-store profiles disabled with 'Available when counter sales launch'", async () => {
+  it("shows the in-store profiles disabled, with no 'Available when counter sales launch' note (SA-1)", async () => {
     await renderPicker();
-    const inStore = screen.getByRole("radio", { name: /^In-store retailer/ });
+    const inStore = screen.getByRole("radio", { name: /In-store retailer/ });
     const inStoreShipping = screen.getByRole("radio", { name: /In-store \+ shipping retailer/ });
     expect(inStore).toBeDisabled();
     expect(inStoreShipping).toBeDisabled();
-    expect(screen.getAllByText("Available when counter sales launch")).toHaveLength(2);
+    expect(screen.queryByText("Available when counter sales launch")).toBeNull();
     // The two available ones stay selectable.
     expect(screen.getByRole("radio", { name: /Delivery distributor/ })).toBeEnabled();
     expect(screen.getByRole("radio", { name: /Shipping wholesaler/ })).toBeEnabled();
@@ -78,8 +84,8 @@ describe("BusinessProfilePicker — the four profiles", () => {
 
   it("an in-store profile can never be chosen or previewed", async () => {
     await renderPicker();
-    fireEvent.click(screen.getByRole("radio", { name: /^In-store retailer/ }));
-    expect(screen.getByRole("radio", { name: /^In-store retailer/ })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /In-store retailer/ }));
+    expect(screen.getByRole("radio", { name: /In-store retailer/ })).not.toBeChecked();
     expect(screen.getByRole("button", { name: "Preview changes" })).toBeDisabled();
     expect(mockPreview).not.toHaveBeenCalled();
   });
@@ -89,8 +95,8 @@ describe("BusinessProfilePicker — the four profiles", () => {
       PROFILES_FIXTURE.map((p) => (p.key === "in_store_retailer" ? { ...p, available: true } : p)),
     );
     await renderPicker();
-    expect(screen.getByRole("radio", { name: /^In-store retailer/ })).toBeEnabled();
-    expect(screen.getAllByText("Available when counter sales launch")).toHaveLength(1);
+    expect(screen.getByRole("radio", { name: /In-store retailer/ })).toBeEnabled();
+    expect(screen.queryByText("Available when counter sales launch")).toBeNull();
   });
 
   it("Preview changes stays disabled until a profile is chosen", async () => {
@@ -140,7 +146,7 @@ describe("BusinessProfilePicker — preview", () => {
     expect(within(manual).queryByText(/Billing stops/)).not.toBeInTheDocument();
     const changes = within(dialog).getByTestId("profile-preview-changes");
     expect(
-      within(changes).getByText("How orders reach customers: Own delivery → Ship by carrier"),
+      within(changes).getByText("Where orders go: Own delivery → Ship by carrier"),
     ).toBeInTheDocument();
     expect(within(changes).queryByText(/billing stopped/)).not.toBeInTheDocument();
   });
@@ -177,14 +183,8 @@ describe("BusinessProfilePicker — preview", () => {
   it("a preview with no billing lines has no Billing section", async () => {
     mockPreview.mockResolvedValue(
       shippingPreviewWithBilling({
-        summary: [
-          "Turn off Recurring routes",
-          "How orders reach customers: Own delivery → Ship by carrier",
-        ],
-        changes: [
-          "Turn off Recurring routes",
-          "How orders reach customers: Own delivery → Ship by carrier",
-        ],
+        summary: ["Turn off Recurring routes", "Where orders go: Own delivery → Ship by carrier"],
+        changes: ["Turn off Recurring routes", "Where orders go: Own delivery → Ship by carrier"],
         plan: { overrides: [], modes: [], billing: [] },
       }),
     );
@@ -224,9 +224,7 @@ describe("BusinessProfilePicker — preview", () => {
     await choose(/Shipping wholesaler/);
     fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(
-      "That business profile is not available yet. In-store profiles open when counter sales launch.",
-    );
+    expect(alert).toHaveTextContent("This business profile isn't available for this tenant.");
     expect(document.body.textContent).not.toContain("RAW SERVER TEXT");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
@@ -253,7 +251,7 @@ describe("BusinessProfilePicker — confirm", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(onApplied).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Business profile applied: Shipping wholesaler.",
+      "Business profile applied: Shipping only.",
     );
   });
 
@@ -392,5 +390,151 @@ describe("BusinessProfilePicker — a stale preview is re-run before Confirm (#3
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("SA-1: plain profile names", () => {
+  it("names each profile in plain words and keeps the server label as a secondary line", async () => {
+    await renderPicker();
+    const delivery = screen.getByRole("radio", { name: /Delivery distributor/ }).closest("label")!;
+    expect(within(delivery).getByText("Delivery")).toBeInTheDocument();
+    expect(
+      within(delivery).getByText(/Delivers on its own trucks, with routes/),
+    ).toBeInTheDocument();
+    const ship = screen.getByRole("radio", { name: /Shipping wholesaler/ }).closest("label")!;
+    expect(within(ship).getByText("Shipping only")).toBeInTheDocument();
+    const pos = screen.getByRole("radio", { name: /^POS only: counter sales/ }).closest("label")!;
+    expect(
+      within(pos).getByText(/Sells over the counter\. Customers pick up in store/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^POS \+ shipping/ })).toBeInTheDocument();
+  });
+
+  it("an unknown profile key falls back to the server label and description", async () => {
+    mockFetchProfiles.mockResolvedValue([
+      ...PROFILES_FIXTURE,
+      {
+        ...PROFILES_FIXTURE[0]!,
+        key: "future_profile",
+        label: "Future profile",
+        description: "Server text for a profile this build has never heard of.",
+      },
+    ]);
+    await renderPicker();
+    expect(screen.getByRole("radio", { name: /Future profile/ })).toBeInTheDocument();
+    expect(
+      screen.getByText("Server text for a profile this build has never heard of."),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("SA-1: the applied profile is marked 'Current'", () => {
+  async function current() {
+    return screen.queryAllByTestId("profile-current");
+  }
+
+  it("marks the profile whose modes the tenant stores, as text, and keeps it selectable", async () => {
+    storedModes = { fulfilment_model: "ship" };
+    await renderPicker();
+    await waitFor(async () => expect(await current()).toHaveLength(1));
+    const ship = screen.getByRole("radio", { name: /Shipping wholesaler/ });
+    expect(within(ship.closest("label")!).getByText("Current")).toBeInTheDocument();
+    expect(ship).toBeEnabled();
+    expect(
+      screen.getByRole("radio", { name: /Delivery distributor/ }).closest("label"),
+    ).not.toHaveTextContent("Current");
+  });
+
+  it("an in-store profile needs BOTH of its modes to match", async () => {
+    mockFetchProfiles.mockResolvedValue(PROFILES_FIXTURE.map((p) => ({ ...p, available: true })));
+    storedModes = { fulfilment_model: "pickup", counter_sales: "off" };
+    await renderPicker();
+    await screen.findByRole("radio", { name: /In-store retailer/ });
+    await waitFor(() => expect(mockConfigValue).toHaveBeenCalled());
+    expect(await current()).toHaveLength(0);
+  });
+
+  it("no profile applied (unset) shows no marker", async () => {
+    await renderPicker();
+    await waitFor(() => expect(mockConfigValue).toHaveBeenCalled());
+    expect(await current()).toHaveLength(0);
+  });
+
+  it("cannot be determined (config read fails) shows no marker and the picker still works", async () => {
+    mockConfigValue.mockRejectedValue(new Error("down"));
+    await renderPicker();
+    await waitFor(() => expect(mockConfigValue).toHaveBeenCalled());
+    expect(await current()).toHaveLength(0);
+    await choose(/Shipping wholesaler/);
+    expect(screen.getByRole("button", { name: "Preview changes" })).toBeEnabled();
+  });
+
+  it("moves to the new profile after Confirm, and Preview/Confirm calls are unchanged", async () => {
+    storedModes = { fulfilment_model: "delivery" };
+    await renderPicker();
+    await waitFor(async () => expect(await current()).toHaveLength(1));
+    const dialog = await openPreview(/Shipping wholesaler/);
+    mockApply.mockImplementation(() => {
+      storedModes = { fulfilment_model: "ship" };
+      return Promise.resolve({
+        profile: "shipping_wholesaler",
+        plan: {},
+        changed: [],
+        summary: [],
+      });
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(mockApply).toHaveBeenCalledTimes(1));
+    expect(mockPreview).toHaveBeenCalledWith(TENANT_ID, "shipping_wholesaler");
+    await waitFor(() =>
+      expect(
+        within(
+          screen.getByRole("radio", { name: /Shipping wholesaler/ }).closest("label")!,
+        ).queryByText("Current"),
+      ).not.toBeNull(),
+    );
+    expect(await current()).toHaveLength(1);
+  });
+});
+
+describe("SA-1 review nit: an older 'Current' read cannot overwrite a newer one", () => {
+  it("a first read that resolves late leaves the marker where the newer read put it", async () => {
+    const late: Array<() => void> = [];
+    // the two reads of the first load (one per config key) stay pending and say "delivery" when released
+    mockConfigValue.mockImplementationOnce(
+      () => new Promise((resolve) => late.push(() => resolve("delivery"))),
+    );
+    mockConfigValue.mockImplementationOnce(
+      () => new Promise((resolve) => late.push(() => resolve("unset"))),
+    );
+    storedModes = { fulfilment_model: "ship" };
+    await renderPicker();
+    const dialog = await openPreview(/Shipping wholesaler/);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(
+        within(
+          screen.getByRole("radio", { name: /Shipping wholesaler/ }).closest("label")!,
+        ).queryByText("Current"),
+      ).not.toBeNull(),
+    );
+    await act(async () => {
+      late.forEach((release) => release());
+    });
+    expect(await screen.findAllByTestId("profile-current")).toHaveLength(1);
+    expect(
+      within(
+        screen.getByRole("radio", { name: /Shipping wholesaler/ }).closest("label")!,
+      ).queryByText("Current"),
+    ).not.toBeNull();
+  });
+});
+
+describe("SA-1: the preview modal names the profile like the radios do", () => {
+  it("shows the plain name, not the server label", async () => {
+    await renderPicker();
+    const dialog = await openPreview(/Shipping wholesaler/);
+    expect(within(dialog).getByText("Shipping only")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Shipping wholesaler")).toBeNull();
   });
 });

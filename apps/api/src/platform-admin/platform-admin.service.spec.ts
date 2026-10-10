@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -2022,6 +2022,46 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  describe("getTenant — readiness product count (SA-3)", () => {
+    it("SA-3 T9 reads the product count for THIS tenant only, via the existing _count select", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "GROWTH",
+        subscription: { planKey: "GROWTH" },
+        _count: { users: 1, products: 7 },
+      } as any);
+      mrrService.priceTenant.mockResolvedValue(0);
+
+      const tenant = await service.getTenant(TENANT_ID);
+
+      const args = (prisma.tenant.findUnique as jest.Mock).mock.calls[0][0];
+      expect(args.where).toEqual({ id: TENANT_ID });
+      expect(args.include._count.select.products).toEqual({ where: { isActive: true } });
+      expect(tenant.counts?.products).toBe(7);
+    });
+
+    it("SA-3 a tenant whose only products are inactive reports 0 products (not Ready)", async () => {
+      // The filtered relation count is what the DB returns for a tenant with only inactive products.
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "GROWTH",
+        subscription: { planKey: "GROWTH" },
+        _count: { users: 1, products: 0 },
+      } as any);
+      mrrService.priceTenant.mockResolvedValue(0);
+
+      const tenant = await service.getTenant(TENANT_ID);
+
+      const args = (prisma.tenant.findUnique as jest.Mock).mock.calls[0][0];
+      expect(args.include._count.select.products.where).toEqual({ isActive: true });
+      expect(tenant.counts?.products).toBe(0);
+    });
+  });
+
   // N4: neither figure had ANY class filter on head — a qa-*/e2e-*/routeflow-demo tenant's
   // subscription/trial/creation-month could move the conversion rate or growth chart the
   // admin dashboard renders next to MrrService's PRODUCTION-only revenue numbers.
@@ -2068,7 +2108,9 @@ describe("PlatformAdminService — audit provenance", () => {
       const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
       expect(args.where.deletedAt).toBeNull();
       expect(args.where.status).toBe("ACTIVE");
-      expect(args.where.plan).toBe("STARTER");
+      // SA-1: the plan filter is the REAL billing plan (subscription.planKey), not the legacy enum.
+      expect(args.where.plan).toBeUndefined();
+      expect(JSON.stringify(args.where)).toContain('"planKey":{"in":["STARTER"]}');
       expect(args.where.OR).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ slug: { contains: "acme", mode: "insensitive" } }),
@@ -2077,6 +2119,45 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(args.orderBy).toEqual({ slug: "asc" });
       expect(result.meta.total).toBe(5);
       expect(result.meta.deletedCount).toBe(3);
+    });
+
+    it("SA-1: plan=GROWTH matches a tenant by subscription.planKey, not the legacy Tenant.plan enum", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, { plan: "GROWTH", search: "acme" });
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      expect(args.where.plan).toBeUndefined();
+      expect(args.where.AND).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            OR: expect.arrayContaining([{ subscription: { planKey: { in: ["GROWTH", "TEAM"] } } }]),
+          }),
+        ]),
+      );
+      // The search OR is untouched (the plan clause must not overwrite it).
+      expect(args.where.OR).toHaveLength(3);
+    });
+
+    it("SA-1: a drifted tenant (no subscription.planKey) is still found under the plan its row displays", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, { plan: "SCALE" });
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      // PROFESSIONAL displays as SCALE through planKeyFromEnum when subscription.planKey is null.
+      expect(JSON.stringify(args.where)).toContain('"plan":{"in":');
+      expect(JSON.stringify(args.where)).toContain("PROFESSIONAL");
+    });
+
+    it("review nit: the filter matches every stored key the row normalizes to the chosen plan", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, { plan: "SCALE" });
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      const first = args.where.AND[0].OR[0];
+      // a subscription still pinned to a legacy key (BUSINESS / PROFESSIONAL) displays as SCALE
+      expect([...first.subscription.planKey.in].sort()).toEqual(
+        ["BUSINESS", "PROFESSIONAL", "SCALE"].sort(),
+      );
     });
 
     it("includes deleted (no deletedAt filter) when requested", async () => {
@@ -2254,6 +2335,67 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  // SA-738 R16-4: the super admin sets the tenant's IANA zone at creation.
+  describe("createTenant — time zone (SA-738)", () => {
+    const dto = {
+      slug: "acme-wholesale",
+      businessName: "Acme Wholesale",
+      adminEmail: "owner@acme.example.com",
+      adminUsername: "acme_owner",
+      timezone: "America/Chicago",
+    } as any;
+
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue(null);
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.tenant.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: TENANT_ID, ...args.data }),
+      );
+      prisma.user.create.mockResolvedValue({ id: "admin-1" } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-1",
+        definitions: [{ planKey: "STARTER" }],
+      } as any);
+    });
+
+    it("writes the supplied zone into the new TenantConfig row", async () => {
+      await service.createTenant(dto);
+      expect(prisma.tenantConfig.create).toHaveBeenCalledWith({
+        data: { tenantId: TENANT_ID, businessName: "Acme Wholesale", timezone: "America/Chicago" },
+      });
+    });
+
+    it("stores the case-corrected name of a valid zone", async () => {
+      await service.createTenant({ ...dto, timezone: "america/chicago" });
+      expect(prisma.tenantConfig.create.mock.calls[0][0].data.timezone).toBe("America/Chicago");
+    });
+
+    it("records the zone in the TENANT_CREATED audit meta", async () => {
+      await service.createTenant(dto);
+      expect(auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: AdminAuditAction.TENANT_CREATED,
+          meta: expect.objectContaining({ timezone: "America/Chicago" }),
+        }),
+      );
+    });
+
+    // R16-4 + the SA ruling: no silent New York default. A missing zone, a non-zone, an offset and a
+    // fixed-offset alias are all a 400 INVALID_TIME_ZONE before any write.
+    it.each([undefined, null, "", "Mars/Phobos", "+01:00", "EST", "Etc/GMT+5"])(
+      "refuses %p with a 400 INVALID_TIME_ZONE before any write",
+      async (bad) => {
+        const err = await service.createTenant({ ...dto, timezone: bad }).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: "INVALID_TIME_ZONE",
+        });
+        expect(prisma.tenant.create).not.toHaveBeenCalled();
+        expect(prisma.tenantConfig.create).not.toHaveBeenCalled();
+      },
+    );
+  });
+
   // Phase 0 Task 10: the admin Create Tenant path used to hardcode a 7-day trial
   // independent of TRIAL_LENGTH_DAYS (public self-signup's constant); it now defaults to
   // that shared constant and accepts an explicit override.
@@ -2263,6 +2405,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme Wholesale",
       adminEmail: "owner@acme.example.com",
       adminUsername: "acme_owner",
+      timezone: "America/Chicago",
     } as any;
 
     beforeEach(() => {
@@ -2288,6 +2431,16 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(prisma.tenant.create).not.toHaveBeenCalled();
     });
 
+    it("an email or username already in use is a 400 with the ACCOUNT_IDENTIFIER_IN_USE code (message kept)", async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: "someone" } as any);
+      const err: any = await service.createTenant(validCreateDto).catch((e) => e);
+      expect(err.getStatus()).toBe(400);
+      expect(err.getResponse()).toMatchObject({
+        code: "ACCOUNT_IDENTIFIER_IN_USE",
+        message: "Email or username already in use",
+      });
+    });
+
     it("defaults trial length to TRIAL_LENGTH_DAYS when no override is given", async () => {
       const result = await service.createTenant(validCreateDto);
 
@@ -2302,6 +2455,37 @@ describe("PlatformAdminService — audit provenance", () => {
       const expectedMs = 30 * 24 * 60 * 60 * 1000;
       const actualMs = (result.trialEndsAt as Date).getTime() - Date.now();
       expect(Math.abs(actualMs - expectedMs)).toBeLessThan(5000);
+    });
+
+    // #3334: "Start active" creates then activates, so the TRIAL welcome email (trial line + Pay
+    // now) must not go out: a manually-paid tenant could pay again by card.
+    it("#3334 startMode active: the welcome email carries no pay link and no trial line", async () => {
+      await service.createTenant({ ...validCreateDto, startMode: "active" });
+      const arg = emailServiceMock.sendTenantWelcomeEmail.mock.calls.at(-1)![0];
+      expect(arg.payUrl).toBeNull();
+    });
+
+    it("#3334 startMode trial without trialLengthDays: coded 400, nothing written", async () => {
+      const err: any = await service
+        .createTenant({ ...validCreateDto, startMode: "trial" })
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(400);
+      expect(err.getResponse()).toMatchObject({ code: "TENANT_TRIAL_DAYS_REQUIRED" });
+      expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
+
+    it("#3334 no startMode: legacy trial behaviour (pay link, default days) is unchanged", async () => {
+      await service.createTenant(validCreateDto);
+      const arg = emailServiceMock.sendTenantWelcomeEmail.mock.calls.at(-1)![0];
+      expect(arg.payUrl).toEqual(expect.stringContaining("/login?redirect="));
+      expect(arg.trialDays).toBe(14);
+    });
+
+    it("#3334 startMode trial with days: sends the trial email with those days", async () => {
+      await service.createTenant({ ...validCreateDto, startMode: "trial", trialLengthDays: 21 });
+      const arg = emailServiceMock.sendTenantWelcomeEmail.mock.calls.at(-1)![0];
+      expect(arg.trialDays).toBe(21);
+      expect(arg.payUrl).not.toBeNull();
     });
 
     // B556: createTenant() used to write ONLY the Tenant row — MrrService gates MRR on
@@ -2329,6 +2513,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme Wholesale",
       adminEmail: "owner@acme.example.com",
       adminUsername: "acme_owner",
+      timezone: "America/Chicago",
     } as any;
 
     beforeEach(() => {
@@ -2396,6 +2581,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme Lite Co",
       adminEmail: "owner@acme-lite.example.com",
       adminUsername: "acme_lite_owner",
+      timezone: "America/Chicago",
     } as any;
 
     beforeEach(() => {
@@ -2463,6 +2649,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme Welcome Co",
       adminEmail: "owner@acme-welcome.example.com",
       adminUsername: "acme_owner",
+      timezone: "America/Chicago",
     } as any;
 
     beforeEach(() => {
@@ -2564,6 +2751,7 @@ describe("PlatformAdminService — audit provenance", () => {
       businessName: "Acme WebUrl Co",
       adminEmail: "owner@acme-weburl.example.com",
       adminUsername: "acme_weburl",
+      timezone: "America/Chicago",
     } as any;
     const prevEnv = process.env.NODE_ENV;
     let configGet: jest.Mock;
@@ -3281,6 +3469,7 @@ describe("PlatformAdminService — audit provenance", () => {
         businessName: "Acme Wholesale",
         adminEmail: "owner@acme.example.com",
         adminUsername: "acme_owner",
+        timezone: "America/Chicago",
       } as any);
 
       expect(result.id).toBe(TENANT_ID);

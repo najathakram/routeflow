@@ -84,6 +84,28 @@ describe("CounterReceiptBody", () => {
     expect(h.querySelector("img")).toHaveAttribute("src", "https://cdn.example/logo.png");
   });
 
+  it("SA-762r: the named customer, the settings tax rate and the footer reach the paper; a walk-in has no customer line", () => {
+    const profile = { taxRate: 10, receiptFooter: "Thanks!" };
+    const withTax = { ...RECEIPT, total: 24.75, paid: 24.75, change: undefined as never };
+    const { unmount } = renderWithProviders(
+      <CounterReceiptBody
+        receipt={withTax}
+        lines={LINES}
+        enteredTender={null}
+        profile={profile}
+        customerName="Acme Co"
+      />,
+    );
+    expect(screen.getByTestId("receipt-customer")).toHaveTextContent("Customer: Acme Co");
+    expect(screen.getByTestId("receipt-tax")).toHaveTextContent("Tax (10%)");
+    expect(screen.getByTestId("receipt-tax")).toHaveTextContent("$2.25");
+    expect(screen.queryByTestId("receipt-adjustment")).not.toBeInTheDocument();
+    expect(screen.getByTestId("receipt-footer")).toHaveTextContent("Thanks!");
+    unmount();
+    show();
+    expect(screen.queryByTestId("receipt-customer")).not.toBeInTheDocument();
+  });
+
   it("header falls back to the settings name, then to name only, then to nothing", () => {
     const { unmount } = show(RECEIPT, { businessName: "Settings Name" });
     expect(screen.getByTestId("receipt-header")).toHaveTextContent("Settings Name");
@@ -107,40 +129,7 @@ describe("CounterReceiptBody", () => {
     expect(screen.queryByTestId("receipt-adjustment")).not.toBeInTheDocument();
   });
 
-  it("row 239: the tax row names the rate (Tax (8.25%)), and says Tax and adjustments when no rate is known", () => {
-    show({ ...RECEIPT, total: 24.36, paid: 24.36 }, { ...PROFILE, taxRate: 8.25 });
-    expect(screen.getByTestId("receipt-adjustment")).toHaveTextContent("Tax (8.25%)");
-    expect(screen.getByTestId("receipt-adjustment")).toHaveTextContent("$1.86");
-  });
-
-  it("row 239: a whole-number rate prints without decimals", () => {
-    show({ ...RECEIPT, total: 24.3, paid: 24.3 }, { ...PROFILE, taxRate: 8 });
-    expect(screen.getByTestId("receipt-adjustment")).toHaveTextContent("Tax (8%)");
-  });
-
-  it("row 239: no rate known keeps the old label", () => {
-    show({ ...RECEIPT, total: 24.36, paid: 24.36 }, PROFILE);
-    expect(screen.getByTestId("receipt-adjustment")).toHaveTextContent("Tax and adjustments");
-  });
-
-  it("row 239: a named customer prints on the receipt, a walk-in prints nothing", () => {
-    renderWithProviders(
-      <CounterReceiptBody
-        receipt={RECEIPT}
-        lines={LINES}
-        enteredTender={null}
-        customer={{ businessName: "Acme Market", isWalkIn: false }}
-      />,
-    );
-    expect(screen.getByTestId("receipt-customer")).toHaveTextContent("Customer: Acme Market");
-  });
-
-  it("row 239: a walk-in sale has no customer line", () => {
-    show();
-    expect(screen.queryByTestId("receipt-customer")).toBeNull();
-  });
-
-  it("a repriced sale adds up: Subtotal + Tax and adjustments = the server total", () => {
+  it("a repriced sale adds up: Subtotal + Adjustments = the server total", () => {
     show({ ...RECEIPT, total: 24.75, paid: 24.75, change: undefined as never });
     expect(screen.getByTestId("receipt-subtotal")).toHaveTextContent("$22.50");
     expect(screen.getByTestId("receipt-adjustment")).toHaveTextContent("$2.25");
