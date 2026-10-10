@@ -43,7 +43,7 @@ interface Props {
  * blocked by this section.
  */
 export function QuickKeysGrid({ locked, onAdd }: Props) {
-  const { data } = useQuickKeys();
+  const { data, refetch } = useQuickKeys();
   // Client-only (it renders once the data has arrived), so reading storage at init cannot mismatch the server HTML.
   const [collapsed, setCollapsed] = React.useState(readCollapsed);
   const [editing, setEditing] = React.useState(false);
@@ -104,9 +104,20 @@ export function QuickKeysGrid({ locked, onAdd }: Props) {
                       "relative flex min-h-[44px] w-full flex-col items-center justify-center gap-1 rounded border bg-white px-1 py-2 text-center text-xs leading-tight",
                       "hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-navy disabled:opacity-40",
                     )}
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       if (locked) return;
-                      onAdd(k, e);
+                      // #3356: re-read the answer so the added price is the server's current one, like a scan's
+                      // lookup. A failed or empty refresh falls back to the loaded key: the till never blocks.
+                      let key = k;
+                      try {
+                        const fresh = (await refetch()).data?.keys.find(
+                          (x) => x.productId === k.productId,
+                        );
+                        if (fresh) key = fresh;
+                      } catch {
+                        /* keep the loaded key */
+                      }
+                      onAdd(key, e);
                     }}
                   >
                     {k.pinned ? (

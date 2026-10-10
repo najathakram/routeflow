@@ -129,8 +129,35 @@ describe("QuickKeysGrid: a tap is the scan add path", () => {
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(total()).toHaveTextContent("$2.50");
     const urls = get.mock.calls.map((c) => c[0] as string);
-    expect(urls.filter((u) => u === "/orders/counter-sale/quick-keys")).toHaveLength(1);
+    // the tap re-reads the same quick-keys answer for a fresh price (#3356); never a per-key /products fetch
+    expect(urls.filter((u) => u === "/orders/counter-sale/quick-keys")).toHaveLength(2);
     expect(urls.some((u) => u.startsWith("/products"))).toBe(false);
+  });
+
+  it("#3356: a price changed server-side after the grid loaded is the price the next tap adds", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    const cola = await colaKey();
+    quickKeysAnswer = async () => ({
+      data: {
+        register: "main",
+        cap: 12,
+        keys: [keyFor({ ...COLA, pricePerUnit: 3.1 }, { pinned: true }), keyFor(WATER)],
+      },
+    });
+    fireEvent.click(cola);
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(total()).toHaveTextContent("$3.10");
+  });
+
+  it("#3356: if the refresh fails the tap still adds from the loaded key", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    const cola = await colaKey();
+    quickKeysAnswer = async () => {
+      throw new Error("offline");
+    };
+    fireEvent.click(cola);
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(total()).toHaveTextContent("$2.50");
   });
 
   it("a second tap on the same product adds to the SAME line", async () => {
