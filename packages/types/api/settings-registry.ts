@@ -92,6 +92,7 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   cfg("settings.logoUrl", "/settings?tab=profile"),
   // Counter sale quick keys (SA-747): pins, hides, window and cap as one JSON value; edited from the counter screen.
   cfg("settings.quickKeys", "/orders/counter-sale"),
+  cfg("settings.receiptFooter", "/settings?tab=profile"),
   ...[
     "fromName",
     "fromEmail",

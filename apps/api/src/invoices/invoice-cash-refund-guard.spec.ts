@@ -429,6 +429,8 @@ describe("where the guards are wired (source pins; strict: one call site per pat
   const read = (rel: string) => fs.readFileSync(path.join(__dirname, rel), "utf8");
   const invoicesSource = read("invoices.service.ts");
   const ordersSource = read("../orders/orders.service.ts");
+  // SA-762r F1: the cancel transaction body moved verbatim into order-cancel-tx.ts (cancelOrderInTx).
+  const cancelTxSource = read("../orders/order-cancel-tx.ts");
   const methodBody = (name: string): string => {
     const start = invoicesSource.indexOf(`  async ${name}(`);
     expect(start).toBeGreaterThan(-1);
@@ -453,15 +455,16 @@ describe("where the guards are wired (source pins; strict: one call site per pat
   });
 
   it("order cancel: exactly one call, right after lockOrderForCancel and before the claim, the stock credit and the invoice teardown", () => {
-    expect(ordersSource.match(/assertNoCashRefundOnOrder\(/g)).toHaveLength(2); // cancel + delete
-    const lock = ordersSource.indexOf("await lockOrderForCancel(tx, id);");
-    const guard = ordersSource.indexOf("await assertNoCashRefundOnOrder(tx, id);");
+    expect(ordersSource.match(/assertNoCashRefundOnOrder\(/g)).toHaveLength(1); // delete (the cancel moved)
+    expect(cancelTxSource.match(/assertNoCashRefundOnOrder\(/g)).toHaveLength(1); // cancel
+    const lock = cancelTxSource.indexOf("await lockOrderForCancel(tx, id);");
+    const guard = cancelTxSource.indexOf("await assertNoCashRefundOnOrder(tx, id);");
     expect(lock).toBeGreaterThan(-1);
     expect(guard).toBeGreaterThan(lock);
-    const after = ordersSource.slice(lock);
+    const after = cancelTxSource.slice(lock);
     expect(guard - lock).toBeLessThan(120); // adjacent: nothing sits between the lock and the guard
     expect(guard).toBeLessThan(lock + after.indexOf("tx.order.updateMany"));
-    expect(guard).toBeLessThan(lock + after.indexOf("this.settleStockForEdit("));
+    expect(guard).toBeLessThan(lock + after.indexOf("deps.settleStockForEdit("));
     expect(guard).toBeLessThan(lock + after.indexOf("releaseOrderCreditsInTx(tx, id)"));
     expect(guard).toBeLessThan(lock + after.indexOf("releaseWalletPaymentsInTx(tx, inv.id)"));
   });

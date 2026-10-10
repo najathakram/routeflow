@@ -9,7 +9,7 @@ import {
   startOfCalendarDay,
   startOfLocalDay,
 } from "../../common/calendar-date";
-import { resolveZone } from "../../common/tenant-time-zone";
+import { resolveTenantZone, resolveZone } from "../../common/tenant-time-zone";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { CounterSaleTodayDto } from "./counter-sale-today.dto";
 import {
@@ -25,6 +25,15 @@ import {
   windowReturnsWhere,
   type TodayOrderRecord,
 } from "./counter-sale-today";
+
+/**
+ * The zone the window is cut in: the tenant's, or UTC when it has none or an unknown one. Delegates to the one
+ * resolver the "Today's sales" read uses (resolveZone -> resolveTenantZone), so the void window and the register's
+ * day can never disagree.
+ */
+export function effectiveZone(tz: string | null): string {
+  return resolveTenantZone(tz).zone;
+}
 
 const badDay = (message: string) =>
   new BadRequestException({ code: API_ERROR_CODES.COUNTER_SALES_DAY_INVALID, message });

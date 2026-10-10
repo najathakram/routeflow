@@ -113,9 +113,15 @@ const INVENTORY: Record<string, Row> = {
     kind: "FIELD_ONLY",
     why: "categoryTaxAmount only; reads the line snapshot first",
   },
-  "orders/orders.service.ts::OrdersService.changeStatus": {
+  // SA-762r F1: the cancel's line status flip, moved verbatim out of changeStatus into the shared unwind.
+  "orders/order-cancel-tx.ts::cancelOrderInTx": {
     kind: "FIELD_ONLY",
-    why: "line status flips",
+    why: "line status flips (CANCELLED); never factor or price",
+  },
+  // SA-762r: the counter-sale void zeroes deliveredQty on unevidenced lines before it cancels.
+  "orders/delivered-stamp.ts::clearUnevidencedDelivered": {
+    kind: "FIELD_ONLY",
+    why: "deliveredQty reset to 0 on lines with no delivery evidence",
   },
   "orders/orders.service.ts::OrdersService.reopenOrder": {
     kind: "FIELD_ONLY",
@@ -361,6 +367,8 @@ const NESTED_OPS = new Set([
 const parse = (name: string, text: string) =>
   ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true);
 
+type WriterNode = ts.MethodDeclaration | ts.FunctionDeclaration;
+
 function classMethods(sf: ts.SourceFile): Map<string, ts.MethodDeclaration> {
   const out = new Map<string, ts.MethodDeclaration>();
   const visit = (n: ts.Node) => {
@@ -373,6 +381,88 @@ function classMethods(sf: ts.SourceFile): Map<string, ts.MethodDeclaration> {
   };
   visit(sf);
   return out;
+}
+
+/**
+ * SA-762r: exported top-level FUNCTIONS. An extraction such as order-cancel-tx.ts moves a class method's line write into
+ * one, and a class-method-only scan silently lost it (the row for the method went stale, the write went unclassified).
+ * Files listed in FREE_WRITER_FILES are scanned for their exported functions too, keyed `file::functionName`; the
+ * inventory then proves each such row exists. A free-function line writer in `orders/` that is neither listed nor in
+ * KNOWN_UNSCANNED_FREE_WRITERS fails the baseline test below, so a NEW extraction cannot lose its writes again.
+ */
+const FREE_WRITER_FILES = ["orders/order-cancel-tx.ts", "orders/delivered-stamp.ts"];
+/** Pre-existing free-function line writers under orders/ that predate this scan (shrink-only; classify one to remove it). */
+const KNOWN_UNSCANNED_FREE_WRITERS = [
+  "orders/line-composition.ts::syncLineCompositions",
+  "orders/merge-lock-recheck.ts::deleteLoserGuarded",
+  "orders/order-edit-composition.ts::restoreCarriedComposition",
+  "orders/order-line-removal.ts::writeLineRemoval",
+  "orders/order-line-removal.ts::writeLineUpdate",
+  "orders/testing/merge-recheck.ts::pass",
+  "orders/unit-line-edit.ts::createUnitLine",
+];
+
+/**
+ * The `data` keys of every direct `orderItem`/`invoiceItem` write inside `node` (a spread or a non-literal `data` reads
+ * as "...", which no allow-list contains). Lets a FIELD_ONLY row of a free function PROVE it never writes a price.
+ */
+function lineWriteDataKeys(node: ts.Node): string[] {
+  const keys = new Set<string>();
+  const visit = (n: ts.Node) => {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      WRITE_OPS.has(n.expression.name.text) &&
+      ts.isPropertyAccessExpression(n.expression.expression) &&
+      LINE_TABLES.has(n.expression.expression.name.text)
+    ) {
+      const arg = n.arguments[0];
+      const data =
+        arg && ts.isObjectLiteralExpression(arg)
+          ? arg.properties.find((p) => ts.isPropertyAssignment(p) && p.name.getText() === "data")
+          : undefined;
+      const lit = data && ts.isPropertyAssignment(data) ? data.initializer : undefined;
+      if (lit && ts.isObjectLiteralExpression(lit))
+        for (const p of lit.properties)
+          keys.add(
+            ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)
+              ? p.name.getText()
+              : "...",
+          );
+      else keys.add("...");
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return [...keys].sort();
+}
+
+/** The only line columns each FREE_WRITER_FILES FIELD_ONLY row may write (exact set: adding a price or a qty fails). */
+const FREE_WRITER_DATA_KEYS: Record<string, string[]> = {
+  "orders/order-cancel-tx.ts::cancelOrderInTx": ["status"],
+  "orders/delivered-stamp.ts::clearUnevidencedDelivered": ["deliveredQty"],
+};
+
+function exportedFunctions(sf: ts.SourceFile): Map<string, ts.FunctionDeclaration> {
+  const out = new Map<string, ts.FunctionDeclaration>();
+  for (const st of sf.statements) {
+    if (
+      ts.isFunctionDeclaration(st) &&
+      st.name &&
+      st.body &&
+      st.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+    )
+      out.set(st.name.text, st);
+  }
+  return out;
+}
+
+/** Everything the inventory scans in one file: class methods, plus the exported functions of FREE_WRITER_FILES. */
+function writerUnits(sf: ts.SourceFile, file: string): Map<string, WriterNode> {
+  return new Map<string, WriterNode>([
+    ...classMethods(sf),
+    ...(FREE_WRITER_FILES.includes(file) ? exportedFunctions(sf) : []),
+  ]);
 }
 
 /** Object literals an initializer can evaluate to: `{..}`, `c ? {..} : undefined`, `({..})`, `{..} as T`. */
@@ -558,17 +648,17 @@ const sourceFiles = new Map(walk(SRC).map((f) => [rel(f), parse(f, fs.readFileSy
 function scanAll(): Map<string, string[]> {
   const found = new Map<string, string[]>();
   for (const [file, sf] of sourceFiles) {
-    for (const [name, node] of classMethods(sf)) {
+    for (const [name, node] of writerUnits(sf, file)) {
       const hits = lineWrites(node, sf);
       if (hits.length) found.set(`${file}::${name}`, hits);
     }
   }
   return found;
 }
-const methodNode = (key: string): { node: ts.MethodDeclaration; sf: ts.SourceFile } => {
+const methodNode = (key: string): { node: WriterNode; sf: ts.SourceFile } => {
   const [file, name] = key.split("::");
   const sf = sourceFiles.get(file)!;
-  const node = classMethods(sf).get(name);
+  const node = writerUnits(sf, file).get(name);
   if (!node) throw new Error(`method not found: ${key}`);
   return { node, sf };
 };
@@ -658,6 +748,33 @@ describe("every order/invoice line writer is classified (units_v1)", () => {
     });
   });
 
+  it("free-function line writers under orders/ are the listed files' or the shrink-only known baseline (a new extraction cannot lose its writes)", () => {
+    const free: string[] = [];
+    for (const [file, sf] of sourceFiles) {
+      if (!file.startsWith("orders/") || FREE_WRITER_FILES.includes(file)) continue;
+      for (const [name, node] of exportedFunctions(sf))
+        if (lineWrites(node, sf).length > 0) free.push(`${file}::${name}`);
+    }
+    expect(free.sort()).toEqual([...KNOWN_UNSCANNED_FREE_WRITERS].sort());
+    // the listed files exist and are really scanned: each is represented in the inventory
+    for (const f of FREE_WRITER_FILES)
+      expect(Object.keys(INVENTORY).some((k) => k.startsWith(`${f}::`))).toBe(true);
+  });
+
+  it("the free-function FIELD_ONLY rows write only their declared columns (no price, qty or factor)", () => {
+    const got: Record<string, string[]> = {};
+    for (const key of Object.keys(FREE_WRITER_DATA_KEYS)) {
+      const { node } = methodNode(key);
+      got[key] = lineWriteDataKeys(node);
+    }
+    expect(got).toEqual(FREE_WRITER_DATA_KEYS);
+    // every inventoried row of a FREE_WRITER_FILES file has a declared column set (a new function cannot skip it)
+    const freeRows = Object.keys(INVENTORY).filter((k) =>
+      FREE_WRITER_FILES.includes(k.split("::")[0]),
+    );
+    expect(freeRows.sort()).toEqual(Object.keys(FREE_WRITER_DATA_KEYS).sort());
+  });
+
   it("GUARDED / SAFE_COPY / CONVERTED writers really call what their row says, BEFORE their first line write (AST, not text)", () => {
     const failures: string[] = [];
     for (const [key, row] of Object.entries(INVENTORY)) {
@@ -720,7 +837,7 @@ describe("every order/invoice line writer is classified (units_v1)", () => {
     const failures: string[] = [];
     let callers = 0;
     for (const [file, sf] of sourceFiles) {
-      for (const [name, node] of classMethods(sf)) {
+      for (const [name, node] of writerUnits(sf, file)) {
         const calls = referencePositions(node, "recomputeOrderFromInvoices", { callOnly: true });
         if (calls.length === 0 || name === "InvoicesService.recomputeOrderFromInvoices") continue;
         callers++;

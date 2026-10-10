@@ -276,6 +276,20 @@ export const API_ERROR_CODES = {
    */
   COUNTER_SALE_VOIDED: "COUNTER_SALE_VOIDED",
   /**
+   * 503 from POST /orders/counter-sale/:orderId/void: the void could not take the order's counter-tender lock in time (a
+   * tender or another void on the same sale is running). Nothing was written; retry the same call.
+   */
+  COUNTER_SALE_VOID_BUSY: "COUNTER_SALE_VOID_BUSY",
+  /** 409 from the counter-sale void: a return exists for the order. Reverse the return in the office, do not void the sale. */
+  COUNTER_SALE_VOID_HAS_RETURN: "COUNTER_SALE_VOID_HAS_RETURN",
+  /**
+   * 409 from the counter-sale void: the sale holds money the counter did not take (an applied credit note or advance, an
+   * office payment, a deposited or cleared check). The office reverses it first; nothing was written.
+   */
+  COUNTER_SALE_VOID_FOREIGN_PAYMENT: "COUNTER_SALE_VOID_FOREIGN_PAYMENT",
+  /** 409 from the counter-sale void: the sale was rung on an earlier day in the tenant's time zone (the window is today only). */
+  COUNTER_SALE_VOID_NOT_TODAY: "COUNTER_SALE_VOID_NOT_TODAY",
+  /**
    * 409 from GET /orders/counter-sale/by-key/:key: the sale EXISTS but staff changed its order (it moved past
    * PENDING/DELIVERED) and no invoice can be read back. Definitive: do not re-ring it, check with the office.
    * (A moved order that still has a live invoice reads back as the normal sale.)
