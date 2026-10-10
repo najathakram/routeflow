@@ -185,8 +185,10 @@ export interface TodaysSaleRow {
    */
   change: number | null;
   /**
-   * The sale's single stored tax rate as a percent (0.0825 -> 8.25, 3 dp): the one distinct non-zero line rate on its live
-   * invoices; null when the lines carry several rates or none.
+   * The sale's single stored tax rate as a percent (0.0825 -> 8.25), from `@routeflow/pricing` `storedTaxRatePercent`: the one
+   * distinct non-zero line rate on its live invoices; for a legacy invoice whose lines ALL store 0, the flat rate its header
+   * tax implies (when that rate reproduces the tax); null when the lines carry several rates or none. A CANDIDATE: a receipt
+   * names it only through `explainedTaxRatePercent`.
    */
   taxRatePercent: number | null;
   returned: {

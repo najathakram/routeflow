@@ -31,20 +31,25 @@ describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
     expect(row.cashTendered).toBe(50);
   });
 
-  it("(d) a null column reads null, and a 4-dp rate rounds to 3 dp (0.0888 -> 8.88)", () => {
-    const row = toTodaysSaleRow(rec({}, ["0.0888"]));
-    expect(row.cashTendered).toBeNull();
-    expect(row.taxRatePercent).toBe(8.88);
+  it("(d) a null column reads null", () => {
+    expect(toTodaysSaleRow(rec({})).cashTendered).toBeNull();
   });
 
-  it("(e) mixed rates -> null", () => {
+  it("the rate is pricing's storedTaxRatePercent over the live invoices' lines (its cases live in explained-tax-rate.spec.ts)", () => {
+    expect(toTodaysSaleRow(rec({}, ["0.0888"])).taxRatePercent).toBe(8.88);
     expect(toTodaysSaleRow(rec({}, ["0.0825", "0.0600"])).taxRatePercent).toBeNull();
+    expect(toTodaysSaleRow(rec({}, ["0.0825", "0"])).taxRatePercent).toBe(8.25);
+    expect(toTodaysSaleRow(rec({}, [])).taxRatePercent).toBeNull();
   });
 
-  it("(e) zero-rate lines are ignored; only zero-rate or no lines -> null", () => {
-    expect(toTodaysSaleRow(rec({}, ["0.0825", "0"])).taxRatePercent).toBe(8.25);
-    expect(toTodaysSaleRow(rec({}, ["0", "0"])).taxRatePercent).toBeNull();
-    expect(toTodaysSaleRow(rec({}, [])).taxRatePercent).toBeNull();
+  it("a legacy invoice whose lines ALL store 0 names the flat rate its header tax implies (the fallback, from the header the page query now reads)", () => {
+    const o = rec({}, ["0", "0"]);
+    o.invoices[0].subtotal = "100.00";
+    o.invoices[0].taxAmount = "8.25";
+    expect(toTodaysSaleRow(o).taxRatePercent).toBe(8.25);
+    // the same legacy lines with no header tax: nothing to name
+    o.invoices[0].taxAmount = "0.00";
+    expect(toTodaysSaleRow(o).taxRatePercent).toBeNull();
   });
 
   it("only LIVE invoices' lines count (a voided sibling's rate is ignored)", () => {
@@ -100,9 +105,13 @@ describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
     expect(toTodaysSaleRow(o).change).toBeNull();
   });
 
-  it("the page query reads both in the ONE existing query: the column and each invoice's line rates", () => {
+  it("the page query reads both in the ONE existing query: the column, each invoice's header and its line rates", () => {
     const q = pageQuery("t1", { start: new Date(0), end: new Date(1) }, 1, 20);
     expect(q.select.counterCashTendered).toBe(true);
-    expect(q.select.invoices.select.items).toEqual({ select: { taxRate: true } });
+    expect(q.select.invoices.select.items).toEqual({
+      select: { taxRate: true, categoryTaxAmount: true },
+    });
+    expect(q.select.invoices.select.subtotal).toBe(true);
+    expect(q.select.invoices.select.taxAmount).toBe(true);
   });
 });

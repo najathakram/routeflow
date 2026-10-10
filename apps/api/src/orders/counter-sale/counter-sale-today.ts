@@ -5,7 +5,7 @@ import {
   ReturnStatus,
   type Prisma,
 } from "@prisma/client";
-import { roundMoney, sumConfirmed } from "@routeflow/pricing";
+import { roundMoney, storedTaxRatePercent, sumConfirmed } from "@routeflow/pricing";
 import type {
   TodaysSaleMethod,
   TodaysSalePaymentState,
@@ -15,7 +15,6 @@ import type {
   TodaysSaleRow,
   TodaysSalesSummary,
 } from "@routeflow/types";
-import { saleTaxRatePercent } from "./counter-sale-tax-rate";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
 import { counterMethodOf, servedChange } from "./counter-sale-readback";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
@@ -181,7 +180,10 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
             orderBy: { createdAt: "asc" },
             select: { method: true, amount: true, status: true },
           },
-          items: { select: { taxRate: true } },
+          // the stored header and line rates the sale's tax rate is read from (pricing's storedTaxRatePercent)
+          subtotal: true,
+          taxAmount: true,
+          items: { select: { taxRate: true, categoryTaxAmount: true } },
         },
       },
       returns: {
@@ -222,8 +224,11 @@ export interface TodayOrderRecord {
     invoiceNumber: string | null;
     status: string;
     payments: Array<{ method: string; amount: unknown; status: string }>;
+    /** SA-764: the invoice header the legacy flat-rate fallback reads (`storedTaxRatePercent`) */
+    subtotal?: unknown;
+    taxAmount?: unknown;
     /** SA-764: each line's stored tax rate (a fraction, 0.0825) */
-    items?: Array<{ taxRate: unknown }>;
+    items?: Array<{ taxRate: unknown; categoryTaxAmount?: unknown }>;
   }>;
   returns: Array<{
     id: string;
@@ -336,7 +341,10 @@ export function toTodaysSaleRow(o: TodayOrderRecord): TodaysSaleRow {
     paymentState,
     cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
     change: servedChange(o.counterCashTendered, payments, balanceDue),
-    taxRatePercent: saleTaxRatePercent(live.flatMap((i) => i.items ?? [])),
+    // ONE home for the rate (pricing): the receipt names it only through explainedTaxRatePercent
+    taxRatePercent: storedTaxRatePercent(
+      live.map((i) => ({ subtotal: i.subtotal, taxAmount: i.taxAmount, lines: i.items ?? [] })),
+    ),
     returned: { amount: returnedAmount, state: returnState, returns },
     voided,
   };

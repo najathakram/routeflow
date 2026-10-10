@@ -15,8 +15,9 @@ export function explainedTaxRatePercent(input: {
   ratePercent: number | null | undefined;
 }): number | null {
   const { base, tax, ratePercent } = input;
-  if (ratePercent == null || !(ratePercent > 0) || tax === 0) return null;
-  return tax === roundMoney((base * ratePercent) / 100) ? ratePercent : null;
+  const cents = roundMoney(tax);
+  if (ratePercent == null || !(ratePercent > 0) || cents === 0) return null;
+  return cents === roundMoney((base * ratePercent) / 100) ? ratePercent : null;
 }
 
 /** The Tax row's label, everywhere: "Tax (8.25%)" when one rate explains the tax, else plain "Tax". */
