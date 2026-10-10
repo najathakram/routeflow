@@ -66,7 +66,7 @@ const DEFAULT_PAYMENTS: Pay[] = [
   { method: "CASH", amount: "20.00" },
   { method: "CREDIT_CARD", amount: "8.62" },
 ];
-const DEFAULT_LIVE: Scenario["live"] = [
+const DEFAULT_LIVE: NonNullable<Scenario["live"]> = [
   { tempId: "li-1", name: "Cola", unitPrice: 2.5, qty: 3 },
   { tempId: "li-2", name: "Chips", unitPrice: 12, qty: 15, unitsPerBox: 12, boxes: 1, pieces: 3 },
   { tempId: "li-3", name: "Loose candy", unitPrice: 4, qty: 1, tierPrice: 5, override: {} },
