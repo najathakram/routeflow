@@ -328,6 +328,13 @@ export class PlatformAdminService {
 
     const planKey = plan ?? "STARTER";
     await this.resolvePublishedPlan(planKey); // R1.8: never the silent STARTER fallback in compute()
+    if (dto.startMode === "trial" && dto.trialLengthDays == null) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: API_ERROR_CODES.TENANT_TRIAL_DAYS_REQUIRED,
+        message: "trialLengthDays is required when startMode is trial",
+      });
+    }
     const trialDays =
       dto.trialLengthDays ??
       (isInviteOnlyPlanKey(planKey) ? INVITE_ONLY_PLAN_TRIAL_DAYS : TRIAL_LENGTH_DAYS);
@@ -431,9 +438,12 @@ export class PlatformAdminService {
       this.config.get<AppConfig["urls"]>("urls")?.web ?? "http://localhost:3001"
     ).replace(/\/+$/, "");
     const loginUrl = `${webBase}/login`;
-    const payUrl = inviteOnlyCheckoutAllowed(planKey)
-      ? `${webBase}/login?redirect=${encodeURIComponent("/settings/billing")}`
-      : null;
+    // Start active: the operator activates right after create (manual payment), so the welcome
+    // email must not offer a card payment or say a trial is running.
+    const payUrl =
+      dto.startMode !== "active" && inviteOnlyCheckoutAllowed(planKey)
+        ? `${webBase}/login?redirect=${encodeURIComponent("/settings/billing")}`
+        : null;
     const welcomeEmail = await this.sendWelcomeEmail({
       userId: result.user.id,
       to: adminEmail,

@@ -2395,6 +2395,37 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(Math.abs(actualMs - expectedMs)).toBeLessThan(5000);
     });
 
+    // #3334: "Start active" creates then activates, so the TRIAL welcome email (trial line + Pay
+    // now) must not go out: a manually-paid tenant could pay again by card.
+    it("#3334 startMode active: the welcome email carries no pay link and no trial line", async () => {
+      await service.createTenant({ ...validCreateDto, startMode: "active" });
+      const arg = emailServiceMock.sendTenantWelcomeEmail.mock.calls.at(-1)![0];
+      expect(arg.payUrl).toBeNull();
+    });
+
+    it("#3334 startMode trial without trialLengthDays: coded 400, nothing written", async () => {
+      const err: any = await service
+        .createTenant({ ...validCreateDto, startMode: "trial" })
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(400);
+      expect(err.getResponse()).toMatchObject({ code: "TENANT_TRIAL_DAYS_REQUIRED" });
+      expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
+
+    it("#3334 no startMode: legacy trial behaviour (pay link, default days) is unchanged", async () => {
+      await service.createTenant(validCreateDto);
+      const arg = emailServiceMock.sendTenantWelcomeEmail.mock.calls.at(-1)![0];
+      expect(arg.payUrl).toEqual(expect.stringContaining("/login?redirect="));
+      expect(arg.trialDays).toBe(14);
+    });
+
+    it("#3334 startMode trial with days: sends the trial email with those days", async () => {
+      await service.createTenant({ ...validCreateDto, startMode: "trial", trialLengthDays: 21 });
+      const arg = emailServiceMock.sendTenantWelcomeEmail.mock.calls.at(-1)![0];
+      expect(arg.trialDays).toBe(21);
+      expect(arg.payUrl).not.toBeNull();
+    });
+
     // B556: createTenant() used to write ONLY the Tenant row — MrrService gates MRR on
     // TenantSubscription.planKey, not Tenant.plan, so a tenant created here and later
     // activated without ever passing through "Change Plan" would show a real plan badge

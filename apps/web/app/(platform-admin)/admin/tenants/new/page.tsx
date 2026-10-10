@@ -370,6 +370,8 @@ export default function AdminCreateTenantPage() {
       // single-use set-password link (#2439) — no password is ever generated or shown.
       const payload: Record<string, string | number> = { ...form };
       if (!payload.adminPassword) delete payload.adminPassword;
+      // #3334: the server picks the welcome email from this ("active" = no trial line, no Pay now).
+      payload.startMode = mode;
       if (mode === "trial") {
         const days = trialDaysOf(startAs.trialDays);
         if (days !== null) payload.trialLengthDays = days;

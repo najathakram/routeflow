@@ -136,6 +136,7 @@ describe("SA-2 Plan and start", () => {
     expect(bodyOf("/platform-admin/tenants")).toMatchObject({
       plan: "STARTER",
       trialLengthDays: 21,
+      startMode: "trial", // #3334
     });
   });
 
@@ -173,6 +174,8 @@ describe("SA-2 Plan and start", () => {
       billingPeriodDays: 90,
     });
     expect(bodyOf("/platform-admin/tenants")).not.toHaveProperty("trialLengthDays");
+    // #3334: the server omits the trial line and Pay now from the welcome email for this start
+    expect(bodyOf("/platform-admin/tenants")).toMatchObject({ startMode: "active" });
   });
 
   it("(3) Lite disables the trial with the reason and preselects Start active", async () => {
