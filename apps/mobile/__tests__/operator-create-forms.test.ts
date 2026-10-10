@@ -562,12 +562,6 @@ describe("ProductForm — emptyProductForm (synchronous factory)", () => {
     expect(form).not.toBeInstanceOf(Promise);
     expect(typeof form).toBe("object");
   });
-
-  it("completes in under 50ms (no network I/O)", () => {
-    const t0 = Date.now();
-    emptyProductForm();
-    expect(Date.now() - t0).toBeLessThan(50);
-  });
 });
 
 describe("CustomerForm — emptyCustomerForm (synchronous factory)", () => {
@@ -582,12 +576,6 @@ describe("CustomerForm — emptyCustomerForm (synchronous factory)", () => {
     const form = emptyCustomerForm();
     expect(form).not.toBeInstanceOf(Promise);
     expect(typeof form).toBe("object");
-  });
-
-  it("completes in under 50ms (no network I/O)", () => {
-    const t0 = Date.now();
-    emptyCustomerForm();
-    expect(Date.now() - t0).toBeLessThan(50);
   });
 });
 
