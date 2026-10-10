@@ -309,6 +309,9 @@ describeDb("billing-state writers lock the Order row first (SA-760 R-1)", () => 
 
   it("Gap B: a partial committed while the reconcile waited is seen on the re-read; the mirror is not overwritten", async () => {
     const s = await seedMirror();
+    const idsBefore = (await prisma.invoiceItem.findMany({ where: { invoiceId: s.draftId } })).map(
+      (i) => i.id,
+    );
     const { waiting, outcome } = await whileOrderHeld(s, reconcile(s), async (t2) => {
       // what createPartialFromOrder does under the Order row it holds: a second order-linked draft.
       const partialId = randomUUID();
@@ -323,9 +326,11 @@ describeDb("billing-state writers lock the Order row first (SA-760 R-1)", () => 
         [randomUUID(), s.tenantId, partialId, s.orderItemId, s.productId],
       );
     });
-    expect(waiting).toBe(1);
+    // the harm first (pre-fix: the unlocked rebuild ran past the check and rewrote the mirror to the full
+    // order although a partial now bills part of it = a double bill), then the wait that prevents it
     expect(outcome.ok && outcome.v).toBe("partials"); // RECONCILE_PARTIALS: nothing rebuilt
     const mirrorItems = await prisma.invoiceItem.findMany({ where: { invoiceId: s.draftId } });
-    expect(mirrorItems.map((i) => Number(i.qty))).toEqual([96]); // untouched
+    expect(mirrorItems.map((i) => i.id).sort()).toEqual([...idsBefore].sort()); // the very same rows: untouched
+    expect(waiting).toBe(1);
   });
 });
