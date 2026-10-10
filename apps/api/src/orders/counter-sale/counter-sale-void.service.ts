@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, Logger, NotFoundException } from "@nest
 import { OrderStatus } from "@prisma/client";
 import type { CounterSaleHandBack, CounterSaleVoidResponse } from "@routeflow/types";
 import { AfterCommit } from "../../common/after-commit";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import { retryOnTxConflict, txConflictState } from "../../common/tx-retry";
 import { tenantTimeZone } from "../../common/tenant-time-zone";
@@ -267,4 +268,9 @@ export class CounterSaleVoidService {
   }
 }
 
-const saleNotFound = () => new NotFoundException("Sale not found");
+/** 404 COUNTER_SALE_NOT_FOUND (the by-key answer's code): no counter sale of this tenant has that id. */
+const saleNotFound = () =>
+  new NotFoundException({
+    code: API_ERROR_CODES.COUNTER_SALE_NOT_FOUND,
+    message: "No counter sale was found for this id",
+  });

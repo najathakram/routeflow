@@ -489,13 +489,19 @@ describe("CounterSaleVoidService: replay and refusals (test 5), each with no wri
 
   it("a sale that is not a counter sale, or is not this tenant's, is 404 before any lock is taken", async () => {
     const other = await build({ order: null });
-    expect((await code(run(other))).status).toBe(404);
+    expect(await code(run(other))).toMatchObject({
+      status: 404,
+      body: { code: "COUNTER_SALE_NOT_FOUND" },
+    });
     expect(withAdvisoryLock).not.toHaveBeenCalledWith(expect.anything(), expect.anything());
     expectNoWrites(other);
     // visible to the pre-check but not a counter sale under the lock (flipped): still 404, nothing written
     const flipped = await build({ order: { counterSale: false } });
     flipped.prisma.order.findFirst.mockResolvedValueOnce({ id: ORDER_ID });
-    expect((await code(run(flipped))).status).toBe(404);
+    expect(await code(run(flipped))).toMatchObject({
+      status: 404,
+      body: { code: "COUNTER_SALE_NOT_FOUND" },
+    });
     expectNoWrites(flipped);
   });
 
