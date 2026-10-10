@@ -12,6 +12,7 @@ import {
 } from "@nestjs/common";
 import {
   markNeedsReconcile,
+  PLAN_CHANGE_NEEDS_SUPPORT,
   PLAN_CHANGE_SUBSCRIPTION_INACTIVE,
   pushPlanChange,
   revertPlanChange,
@@ -203,6 +204,32 @@ describe("pushPlanChange - a failed update reply may still have been APPLIED (re
       .map((c) => String(c[0]))
       .find((m) => m.includes("needs_reconcile"));
     expect(alert).toBeDefined();
+  });
+});
+
+describe("pushPlanChange - N4: the 502 copy fits its audience", () => {
+  const unknownOutcome = async (over: Record<string, unknown> = {}) => {
+    const stripe = fakeStripeSubscription([BASE as any]);
+    const read = stripe.getSubscription.getMockImplementation()!;
+    stripe.getSubscription.mockImplementationOnce(read).mockRejectedValueOnce(new Error("down"));
+    stripe.updateSubscription.mockRejectedValueOnce(new Error("socket hang up"));
+    const err: any = await pushPlanChange({ stripe: stripe as any, logger }, args(over)).catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(BadGatewayException);
+    expect(err.getResponse().code).toBe("PLAN_CHANGE_STRIPE_AHEAD");
+    return String(err.getResponse().message);
+  };
+
+  it("a TENANT (the default audience) never reads 'reconcile' or Stripe internals", async () => {
+    const message = await unknownOutcome();
+    expect(message).toBe(PLAN_CHANGE_NEEDS_SUPPORT);
+    expect(message).not.toMatch(/reconcile|stripe|subscription/i);
+  });
+
+  it("an ADMIN keeps the operator detail", async () => {
+    const message = await unknownOutcome({ audience: "admin" });
+    expect(message).toContain("reconcile the subscription");
   });
 });
 

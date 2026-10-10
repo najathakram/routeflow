@@ -19,9 +19,11 @@ import {
 } from "./addon-retirement";
 import {
   markNeedsReconcile,
+  PLAN_CHANGE_NEEDS_SUPPORT,
   pushPlanChange,
   revertPlanChange,
   type DeletableAddonItem,
+  type PlanChangeAudience,
   type PlanChangeDeps,
   type PlanChangeProration,
   type PlanChangePush,
@@ -64,6 +66,8 @@ export interface PlanChangeFlowArgs {
   retireAddons: boolean;
   addonSkus: readonly AddonSkuDef[];
   localState?: Record<string, unknown>;
+  /** N4: who reads an error from this change (default: the tenant). An admin's own edit says "admin". */
+  audience?: PlanChangeAudience;
 }
 
 /** `settle`'s outcome when the local write reported failure but the row is already on the target plan. */
@@ -144,6 +148,7 @@ export async function beginStripeFirstPlanChange(
       knownAddonItemIds,
       deleteItems,
       localState: a.localState,
+      audience: a.audience,
     },
   );
 
@@ -233,7 +238,12 @@ async function compensate(
         proration: push.proration,
       },
     }).catch(() => undefined);
-    throw new BadGatewayException({ code: API_ERROR_CODES.PLAN_CHANGE_STRIPE_AHEAD, message });
+    // The detailed `message` above stays on the operator surfaces (the admin audit row, the alert); only an
+    // ADMIN caller sees it in the response - a tenant gets the fixed support copy (N4).
+    throw new BadGatewayException({
+      code: API_ERROR_CODES.PLAN_CHANGE_STRIPE_AHEAD,
+      message: a.audience === "admin" ? message : PLAN_CHANGE_NEEDS_SUPPORT,
+    });
   };
   let toRevert: PlanChangePush;
   try {
@@ -350,6 +360,7 @@ export function planChangeArgs(p: {
   proration: PlanChangeProration;
   retireAddons: boolean;
   actorId?: string | null;
+  audience?: PlanChangeAudience;
 }): PlanChangeFlowArgs {
   const price = resolvePlanPrice(p.def, {
     monthly: p.sub?.priceOverrideMonthly,
@@ -358,6 +369,7 @@ export function planChangeArgs(p: {
   return {
     tenantId: p.tenantId,
     actorId: p.actorId,
+    audience: p.audience,
     stripeSubId: p.sub?.stripeSubId,
     targetPlanKey: p.def.planKey,
     targetPlanVersionId: p.version.id,

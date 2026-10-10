@@ -2140,7 +2140,10 @@ describe("PlatformAdminService — audit provenance", () => {
 
       await service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID);
 
-      expect(restore).toHaveBeenCalledWith(TENANT_ID, "STARTER", { mustBeCleared: false });
+      expect(restore).toHaveBeenCalledWith(TENANT_ID, "STARTER", {
+        mustBeCleared: false,
+        audience: "admin",
+      });
       expect(restore.mock.invocationCallOrder[0]).toBeLessThan(
         billingServiceMock.pushResolvedPriceToStripe.mock.invocationCallOrder[0],
       );
@@ -2484,6 +2487,75 @@ describe("PlatformAdminService — audit provenance", () => {
 
       expect(withLock.mock.calls.map((c) => c[0].key)).toEqual(["tenant-a", "tenant-b"]);
       expect(seen).toEqual([true, true]);
+    });
+  });
+
+  describe("updatePlanPrices - N3: a pushed downgrade price is never reverted by the fan-out", () => {
+    const setup = () => {
+      const withLock = (require("../common/db-locks") as any).withAdvisoryLock as jest.Mock;
+      withLock.mockClear();
+      withLock.mockImplementation(async (_o: unknown, fn: () => Promise<unknown>) => ({
+        acquired: true,
+        value: await fn(),
+      }));
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v-9",
+        definitions: [{ id: "def-1", planKey: "GROWTH", monthlyPrice: 150, isCustom: false }],
+      } as any);
+      (prisma as any).planDefinition = {
+        update: jest.fn().mockResolvedValue({ monthlyPrice: 150, annualPrice: 1500 }),
+      };
+      billingServiceMock.syncStripeSubscriptionPrice.mockReset();
+      billingServiceMock.syncStripeSubscriptionPrice.mockResolvedValue({ synced: true });
+    };
+
+    it("skips (and logs) a tenant whose downgrade is scheduled: the pre-renewal push already moved Stripe to the target price", async () => {
+      setup();
+      const warn = jest.spyOn((service as any).logger, "log").mockImplementation(() => undefined);
+      (prisma as any).tenantSubscription.findMany.mockResolvedValue([
+        {
+          tenantId: "tenant-a",
+          planKey: "GROWTH",
+          downgradeToPlanKey: null,
+          tenant: { plan: "GROWTH" },
+        },
+        {
+          tenantId: "tenant-b",
+          planKey: "GROWTH",
+          downgradeToPlanKey: "STARTER",
+          tenant: { plan: "GROWTH" },
+        },
+      ]);
+
+      const out = await service.updatePlanPrices("GROWTH", { monthly: 150 } as any, ADMIN_ID);
+
+      expect(billingServiceMock.syncStripeSubscriptionPrice.mock.calls.map((c) => c[0])).toEqual([
+        "tenant-a",
+      ]);
+      expect(out).toMatchObject({ updated: 1, synced: 1, failed: 0, skippedDowngrade: 1 });
+      expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).toContain("tenant-b");
+      warn.mockRestore();
+    });
+
+    it("a downgrade armed AFTER the scan but before the tenant's lock is caught by the re-read under the lock", async () => {
+      setup();
+      (prisma as any).tenantSubscription.findMany.mockResolvedValue([
+        {
+          tenantId: "tenant-a",
+          planKey: "GROWTH",
+          downgradeToPlanKey: null,
+          tenant: { plan: "GROWTH" },
+        },
+      ]);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        downgradeToPlanKey: "STARTER",
+      });
+
+      const out = await service.updatePlanPrices("GROWTH", { monthly: 150 } as any, ADMIN_ID);
+
+      expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
+      expect(out).toMatchObject({ synced: 0, failed: 0, skippedDowngrade: 1 });
+      (prisma as any).tenantSubscription.findUnique.mockReset();
     });
   });
 

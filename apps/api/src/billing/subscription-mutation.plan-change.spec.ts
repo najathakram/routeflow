@@ -688,9 +688,12 @@ describe("upgrade(): a failed local write puts Stripe back (SA-733r M7)", () => 
     // NOT the ordinary original 409: Stripe now bills a price the database does not hold.
     expect(err).toBeInstanceOf(BadGatewayException);
     expect(err.getResponse().code).toBe("PLAN_CHANGE_STRIPE_AHEAD");
-    expect(err.getResponse().message).toContain("Stripe now bills $499");
-    expect(err.getResponse().message).toContain("the database still says $249");
+    // N4: upgrade() is the TENANT's own path - tenant-safe copy, never "Stripe now bills $X ... reconcile".
+    expect(err.getResponse().message).not.toMatch(/reconcile|stripe|\$\d/i);
     const audit = prisma.auditLog.create.mock.calls[0][0].data;
+    // ... while the operator-facing audit row keeps both prices in plain words
+    expect(JSON.stringify(audit)).toContain("Stripe now bills $499");
+    expect(JSON.stringify(audit)).toContain("the database still says $249");
     expect(audit).toMatchObject({ tenantId: "t1", userId: "admin" });
     expect(audit.meta).toMatchObject({
       kind: "plan_change_stripe_ahead",
