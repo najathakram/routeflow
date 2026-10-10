@@ -14,6 +14,9 @@ import {
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useProducts, type ApiProduct } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
+import { sellableOnly } from "@/lib/product-search-groups";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
 import {
   ruleCanZeroPrice,
   scanPromotionZeroPrice,
@@ -169,19 +172,21 @@ function ProductMultiSelect({
 }) {
   const [q, setQ] = React.useState("");
   const { data } = useProducts({ limit: 0 });
-  const products: Array<{ id: string; name: string; sku?: string }> = React.useMemo(
-    () => data?.data ?? [],
-    [data],
-  );
+  const products: Array<{ id: string; name: string; sku?: string; kind?: string | null }> =
+    React.useMemo(() => data?.data ?? [], [data]);
   const selectedSet = new Set(selected);
 
   const filtered = React.useMemo(() => {
     const term = q.trim().toLowerCase();
-    const base = products.filter((p) => !selectedSet.has(p.id));
+    // A FAMILY is a container a promotion can never price (B1215 C7); a variant is found by "<Parent> - <Variant>".
+    const base = sellableOnly(products).filter((p) => !selectedSet.has(p.id));
     if (!term) return base.slice(0, 50);
     return base
       .filter(
-        (p) => p.name.toLowerCase().includes(term) || (p.sku ?? "").toLowerCase().includes(term),
+        (p) =>
+          displayProductName(p as any)
+            .toLowerCase()
+            .includes(term) || (p.sku ?? "").toLowerCase().includes(term),
       )
       .slice(0, 50);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -199,7 +204,7 @@ function ProductMultiSelect({
               key={id}
               className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700 ring-1 ring-brand-200"
             >
-              {byId.get(id)?.name ?? id}
+              {byId.get(id) ? displayProductName(byId.get(id) as any) : id}
               <button
                 type="button"
                 onClick={() => onChange(selected.filter((x) => x !== id))}
@@ -232,7 +237,7 @@ function ProductMultiSelect({
               onClick={() => onChange([...selected, p.id])}
               className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-navy hover:bg-surface-raised"
             >
-              <span className="truncate">{p.name}</span>
+              <span className="truncate">{displayProductName(p as any)}</span>
               {p.sku && <span className="ml-2 font-mono text-[11px] text-navy/40">{p.sku}</span>}
             </button>
           ))
@@ -401,7 +406,13 @@ function PromotionFormModal({
     try {
       await onSubmit(input);
     } catch (e: any) {
-      setError(e?.response?.data?.message ?? e?.message ?? "Failed to save promotion.");
+      // A coded refusal (e.g. a family cannot be promoted) is fixed copy, never the server text.
+      setError(
+        codedToastCopy(e) ??
+          e?.response?.data?.message ??
+          e?.message ??
+          "Failed to save promotion.",
+      );
     }
   };
 

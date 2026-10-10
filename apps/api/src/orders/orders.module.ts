@@ -37,6 +37,7 @@ import { BuyerBackorderViewResolver } from "./buyer-backorder-view";
 import { CounterSaleController } from "./counter-sale/counter-sale.controller";
 import { CounterSaleService } from "./counter-sale/counter-sale.service";
 import { CounterSaleTodayService } from "./counter-sale/counter-sale-today.service";
+import { QuickKeysService } from "./counter-sale/quick-keys.service";
 import { CustomersModule } from "../customers/customers.module";
 import { BillingModule } from "../billing/billing.module";
 import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
@@ -85,6 +86,7 @@ import { StorageModule } from "../storage/storage.module";
     BuyerBackorderViewResolver,
     CounterSaleService,
     CounterSaleTodayService,
+    QuickKeysService,
     PickupCompleteService,
     WalkInCustomerService,
     { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },

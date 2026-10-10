@@ -53,6 +53,8 @@ import { useSuppliers as useInventorySuppliers, usePurchaseOrders } from "@/lib/
 import { getPoBillRefusal, type PoBillRefusal } from "@/lib/po-bill-refusal";
 import { poTotal, type PORow } from "./po-ledger-total";
 import { useProducts } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
+import { sellableFlat, sellableOnly } from "@/lib/product-search-groups";
 import {
   useExpenses,
   useExpenseCategories,
@@ -242,6 +244,11 @@ interface ProductOption {
   unit: string;
   averageCost?: string;
   barcode?: string;
+  kind?: string | null;
+  variantName?: string | null;
+  parentProductId?: string | null;
+  parent?: { name: string } | null;
+  variants?: ProductOption[];
 }
 
 function ProductCombobox({
@@ -258,8 +265,14 @@ function ProductCombobox({
   const barcodeInputRef = React.useRef<HTMLInputElement>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
 
-  const { data } = useProducts({ search: search || undefined, limit: 20, isActive: true });
-  const products: ProductOption[] = (data as any)?.data ?? [];
+  // includeVariants: a family's own name finds its variants; the family itself is never a line (B1215 C7).
+  const { data } = useProducts({
+    search: search || undefined,
+    limit: 20,
+    isActive: true,
+    includeVariants: true,
+  });
+  const products: ProductOption[] = sellableFlat<ProductOption>((data as any)?.data ?? []);
 
   React.useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -274,11 +287,11 @@ function ProductCombobox({
   const handleSelect = (p: ProductOption) => {
     onChange({
       productId: p.id,
-      description: p.name,
+      description: displayProductName(p),
       unit: p.unit,
       unitCost: p.averageCost ? String(parseFloat(p.averageCost).toFixed(4)) : "",
     });
-    setSearch(p.name);
+    setSearch(displayProductName(p));
     setOpen(false);
   };
 
@@ -341,7 +354,7 @@ function ProductCombobox({
                     className="w-full px-3 py-2 text-left text-sm hover:bg-brand-50 flex items-center justify-between gap-2"
                   >
                     <span>
-                      <span className="font-medium text-navy">{p.name}</span>
+                      <span className="font-medium text-navy">{displayProductName(p)}</span>
                       {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
                     </span>
                     <span className="shrink-0 text-xs text-navy/70">{p.unit}</span>
@@ -501,7 +514,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           const res = await apiClient.get("/products", {
             params: { search: code.trim(), limit: 5, isActive: true },
           });
-          const results: ProductOption[] = res.data?.data ?? [];
+          const results: ProductOption[] = sellableOnly<ProductOption>(res.data?.data ?? []);
           product = results.find((p) => p.sku === code.trim()) ?? results[0] ?? null;
         } catch {
           /* ignore */

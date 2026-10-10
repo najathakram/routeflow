@@ -12,7 +12,7 @@ const src = readFileSync(join(__dirname, "page.tsx"), "utf8");
 describe("orders/[id] addProduct passes the explicit bump level (#2717)", () => {
   it("declares an explicit level parameter distinct from the resolved one", () => {
     expect(src).toMatch(
-      /function addProduct\(p: any, level\?: scan\.SellLevel, explicit\?: scan\.SellLevel\)/,
+      /function addProduct\(\s*p: any,\s*level\?: scan\.SellLevel,\s*explicit\?: scan\.SellLevel,?/,
     );
   });
 
