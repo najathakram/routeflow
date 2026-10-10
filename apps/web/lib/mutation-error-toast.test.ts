@@ -1,4 +1,5 @@
 import { handleMutationError } from "./mutation-error-toast";
+import { isReadOnlyRefused, resetReadOnlyRefusedForTests } from "./read-only-gate";
 
 /**
  * The app-wide MutationCache error handler (extracted from app/providers.tsx, #1965). A mutation
@@ -193,5 +194,21 @@ describe("handleMutationError - 403 READ_ONLY while a payment is owed (B4)", () 
       },
     );
     expect(toast.mock.calls[0][0].title).toBe("Your workspace is read-only");
+  });
+});
+
+describe("handleMutationError - a 403 READ_ONLY flips the controls on screen (S5)", () => {
+  afterEach(() => resetReadOnlyRefusedForTests());
+
+  it("marks the refusal so the gated controls show the line next to themselves", () => {
+    expect(isReadOnlyRefused()).toBe(false);
+    handleMutationError(
+      { response: { status: 403, data: { code: "READ_ONLY" } } },
+      {},
+      jest.fn(),
+      { push: jest.fn() },
+      { view: () => undefined, refresh: jest.fn() },
+    );
+    expect(isReadOnlyRefused()).toBe(true);
   });
 });

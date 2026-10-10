@@ -2,7 +2,7 @@ import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import type { SubscriptionView } from "@routeflow/types";
 import { renderWithProviders, screen, within } from "@/test-utils/render";
-import { BillingShellBanner } from "./BillingShellBanner";
+import { BillingShellBanner, BillingStripReserve } from "./BillingShellBanner";
 
 const mockPortalMutate = jest.fn();
 jest.mock("@/lib/api/billing", () => ({
@@ -31,6 +31,7 @@ const view = (daysAgo: number, over: Partial<SubscriptionView> = {}): Subscripti
   addons: [],
   paymentRequired: false,
   billingContactName: "Dana",
+  pauseEnforced: true,
   pastDueSince: new Date(Date.now() - daysAgo * DAY - 3_600_000).toISOString(),
   pastDueInvoiceId: "in_1",
   openInvoiceAmount: 149,
@@ -41,6 +42,7 @@ const paused = () => view(8, { status: "READ_ONLY", readOnlyReason: "payment_ove
 beforeEach(() => {
   jest.clearAllMocks();
   window.localStorage.clear();
+  window.sessionStorage.clear();
 });
 
 describe("BillingShellBanner - the shell strip", () => {
@@ -171,5 +173,83 @@ describe("BillingShellBanner - the shell strip", () => {
       />,
     );
     expect(screen.queryByRole("link", { name: /choose a plan/i })).toBeNull();
+  });
+});
+
+describe("BillingShellBanner - announce once, link, reserve (review folds)", () => {
+  it("role=alert is claimed once per session per state; a later mount is a quiet status", async () => {
+    const first = renderWithProviders(
+      <BillingShellBanner view={paused()} userRole="TENANT_ADMIN" />,
+    );
+    expect(await screen.findByTestId("subscription-strip")).toHaveAttribute("role", "alert");
+    first.unmount();
+    renderWithProviders(<BillingShellBanner view={paused()} userRole="TENANT_ADMIN" />);
+    expect(await screen.findByTestId("subscription-strip")).toHaveAttribute("role", "status");
+  });
+
+  it("dark mode day 9: a neutral dismissible status, no threat", async () => {
+    renderWithProviders(
+      <BillingShellBanner view={view(9, { pauseEnforced: false })} userRole="TENANT_ADMIN" />,
+    );
+    const strip = await screen.findByTestId("subscription-strip");
+    expect(strip).toHaveAttribute("role", "status");
+    expect(strip.className).toMatch(/blue/);
+    expect(strip.textContent).not.toMatch(/read-only|tomorrow/i);
+    expect(within(strip).getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+  });
+
+  it("a cancelled workspace that owes an invoice: the admin gets a Billing link, never Pay", async () => {
+    renderWithProviders(
+      <BillingShellBanner
+        view={view(9, {
+          status: "READ_ONLY",
+          readOnlyReason: "subscription_cancelled",
+          pauseEnforced: true,
+        })}
+        userRole="TENANT_ADMIN"
+      />,
+    );
+    const strip = await screen.findByTestId("subscription-strip");
+    expect(within(strip).getByRole("link", { name: "Billing" })).toHaveAttribute(
+      "href",
+      "/settings/billing",
+    );
+    expect(within(strip).queryByRole("button", { name: /pay/i })).toBeNull();
+    expect(strip.textContent).not.toMatch(/goes through/i);
+  });
+
+  it("the shell remembers that a strip was showing and reserves its height while the next load is pending", async () => {
+    const shown = renderWithProviders(
+      <BillingShellBanner view={paused()} userRole="TENANT_ADMIN" />,
+    );
+    await screen.findByTestId("subscription-strip");
+    shown.unmount();
+    const reserve = renderWithProviders(<BillingStripReserve />);
+    const box = reserve.container.querySelector("[data-testid=subscription-strip-reserve]");
+    expect(box).not.toBeNull();
+    expect(box!.className).toMatch(/\bh-8\b/);
+    expect(box!.className).toMatch(/md:h-9/);
+    expect(box).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("nothing is reserved for a viewer who never had a strip", () => {
+    const reserve = renderWithProviders(<BillingStripReserve />);
+    expect(reserve.container.querySelector("[data-testid=subscription-strip-reserve]")).toBeNull();
+  });
+
+  it("once a healthy read lands the memory is cleared (no stale gap next time)", async () => {
+    const shown = renderWithProviders(
+      <BillingShellBanner view={paused()} userRole="TENANT_ADMIN" />,
+    );
+    await screen.findByTestId("subscription-strip");
+    shown.unmount();
+    renderWithProviders(
+      <BillingShellBanner
+        view={view(0, { pastDueSince: null, pastDueInvoiceId: null, openInvoiceAmount: null })}
+        userRole="TENANT_ADMIN"
+      />,
+    );
+    const reserve = renderWithProviders(<BillingStripReserve />);
+    expect(reserve.container.querySelector("[data-testid=subscription-strip-reserve]")).toBeNull();
   });
 });

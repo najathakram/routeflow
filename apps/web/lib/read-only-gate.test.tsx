@@ -1,7 +1,14 @@
 import * as React from "react";
 import type { SubscriptionView } from "@routeflow/types";
+import { act } from "@testing-library/react";
 import { renderWithProviders, screen } from "@/test-utils/render";
-import { ReadOnlyGateProvider, ReadOnlyHint, WriteButton } from "./read-only-gate";
+import {
+  ReadOnlyGateProvider,
+  ReadOnlyHint,
+  WriteButton,
+  markReadOnlyRefused,
+  resetReadOnlyRefusedForTests,
+} from "./read-only-gate";
 
 /**
  * SA-733r6 (B4) owner ruling 10-10: while read-only, new order / invoice / estimate / counter sale / record payment
@@ -62,5 +69,43 @@ describe("read-only gate", () => {
     renderWithProviders(<Screen />);
     expect(screen.getByRole("button", { name: "Record Payment" })).toBeEnabled();
     expect(screen.queryByTestId("read-only-line")).toBeNull();
+  });
+});
+
+// S5: a 403 READ_ONLY on a control the page still thought was enabled must put the line NEXT TO that control (not
+// only in a toast): the refusal flips the gate at once, before the subscription re-read lands.
+describe("read-only gate - a 403 READ_ONLY refusal", () => {
+  afterEach(() => {
+    resetReadOnlyRefusedForTests();
+    jest.useRealTimers();
+  });
+
+  it("disables the write controls and shows the exact line even though the cached view says ACTIVE", () => {
+    renderWithProviders(
+      <ReadOnlyGateProvider view={view({ status: "ACTIVE" })}>
+        <Screen />
+      </ReadOnlyGateProvider>,
+    );
+    expect(screen.getByRole("button", { name: "Record Payment" })).toBeEnabled();
+    act(() => markReadOnlyRefused());
+    expect(screen.getByRole("button", { name: "Record Payment" })).toBeDisabled();
+    expect(screen.getByTestId("read-only-line")).toHaveTextContent(
+      "Not available while read-only. Dana can restore it.",
+    );
+  });
+
+  it("lets the fresh read decide again after a minute (a stale refusal never sticks)", () => {
+    jest.useFakeTimers();
+    renderWithProviders(
+      <ReadOnlyGateProvider view={view({ status: "ACTIVE" })}>
+        <Screen />
+      </ReadOnlyGateProvider>,
+    );
+    act(() => markReadOnlyRefused());
+    expect(screen.getByRole("button", { name: "Record Payment" })).toBeDisabled();
+    act(() => {
+      jest.advanceTimersByTime(61_000);
+    });
+    expect(screen.getByRole("button", { name: "Record Payment" })).toBeEnabled();
   });
 });
