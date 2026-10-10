@@ -538,7 +538,7 @@ export class CustomerPriceHistoryService {
   async getPriceSummary(
     customerId: string,
     rawProductIds: unknown,
-    _opts: { role?: UserRole | null } = {},
+    opts: { role?: UserRole | null; excludeOrderId?: string | null } = {},
   ): Promise<PriceSummaryResponse> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("A tenant context is required.");
@@ -554,12 +554,16 @@ export class CustomerPriceHistoryService {
     });
     if (!customer) throw new NotFoundException("Customer not found");
 
+    // The order being edited is not its own history (hunt2 F6): same rule as getHistory, an invoice
+    // with no order stays.
+    const ex = opts.excludeOrderId || null;
     const invoices = (await db.invoice.findMany({
       where: {
         tenantId,
         customerId,
         status: ISSUED_STATUSES,
         items: { some: { productId: { in: ids } } },
+        ...(ex ? { OR: [{ orderId: null }, { orderId: { not: ex } }] } : {}),
       },
       orderBy: [{ issueDate: "desc" }, { createdAt: "desc" }, { id: "desc" }],
       take: SUMMARY_INVOICE_CAP,

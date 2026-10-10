@@ -48,7 +48,13 @@ export class CustomerPriceHistoryController {
     @Param("customerId") customerId: string,
     @Query("productIds") productIds: string | undefined,
     @CurrentUser() user: JwtPayload,
+    /** The order being edited, as on the history endpoint: its own invoices are not "history"
+     *  (hunt2 F6). A UUID or absent; anything else is a 400, never a 500. */
+    @Query("excludeOrderId", new ParseUUIDPipe({ optional: true })) excludeOrderId?: string,
   ): Promise<PriceSummaryResponse> {
-    return this.history.getPriceSummary(customerId, productIds, { role: user.role });
+    return this.history.getPriceSummary(customerId, productIds, {
+      role: user.role,
+      excludeOrderId,
+    });
   }
 }

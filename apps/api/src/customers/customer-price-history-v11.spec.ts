@@ -1,4 +1,5 @@
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, NotFoundException, ParseUUIDPipe } from "@nestjs/common";
+import { ROUTE_ARGS_METADATA } from "@nestjs/common/constants";
 import { Test } from "@nestjs/testing";
 import { UserRole } from "@prisma/client";
 import { getTierPrice } from "@routeflow/pricing";
@@ -323,6 +324,51 @@ describe("CustomerPriceHistoryService v1.1", () => {
       });
     });
 
+    it("excludeOrderId drops the order being edited: its invoice never reaches last3, low or high (hunt2 F6)", async () => {
+      // Newest priced line is on the order being edited (o9); an older one is on another order; the
+      // oldest is an invoice with no order (it stays, as in the history endpoint).
+      const rows = [
+        {
+          ...inv("n", "2026-06-05T00:00:00Z", 20, { orderId: "o9" }),
+          items: [line({ productId: "p1", unitPrice: 20 })],
+        },
+        {
+          ...inv("m", "2026-06-01T00:00:00Z", 10),
+          items: [line({ productId: "p1", unitPrice: 10 })],
+        },
+        {
+          ...inv("l", "2026-05-01T00:00:00Z", 8, { orderId: null }),
+          items: [line({ productId: "p1", unitPrice: 8 })],
+        },
+      ];
+      // A DB double that honours the order filter the history endpoint uses.
+      prisma.invoice.findMany.mockImplementation(async (args: any) => {
+        const or: Array<Record<string, any>> | undefined = args.where.OR;
+        return rows.filter(
+          (r) =>
+            !or ||
+            or.some((c) =>
+              c.orderId === null ? r.orderId === null : r.orderId !== c.orderId?.not,
+            ),
+        );
+      });
+      const plain = await sum("p1");
+      expect(plain.p1.last3.map((x) => x.unitPrice)).toEqual([20, 10, 8]);
+      expect([plain.p1.low, plain.p1.high]).toEqual([8, 20]);
+
+      const edited = await service.getPriceSummary("c1", "p1", {
+        role: UserRole.OPERATOR,
+        excludeOrderId: "o9",
+      });
+      expect(edited.p1.last3.map((x) => x.unitPrice)).toEqual([10, 8]);
+      expect([edited.p1.low, edited.p1.high]).toEqual([8, 10]);
+    });
+
+    it("without excludeOrderId the read has no order filter at all", async () => {
+      await sum("p1");
+      expect(prisma.invoice.findMany.mock.calls[0][0].where.OR).toBeUndefined();
+    });
+
     it("never mixes units: low/high are over the NEWEST sale's unit group and carry that unit", async () => {
       // a $2 piece price (newest) and a $24 case price (older): the range must not be $2-$24
       prisma.invoice.findMany.mockResolvedValue([
@@ -441,6 +487,34 @@ describe("CustomerPriceHistoryService v1.1", () => {
       });
       await c.getPriceSummary("c1", "a,b", user);
       expect(svc.getPriceSummary).toHaveBeenCalledWith("c1", "a,b", { role: UserRole.OPERATOR });
+    });
+
+    it("price-summary passes the edited order's id through as excludeOrderId (hunt2 F6)", async () => {
+      const svc = { getPriceSummary: jest.fn().mockResolvedValue({}) };
+      const c = new CustomerPriceHistoryController(svc as any);
+      const user = { role: UserRole.OPERATOR } as any;
+      await c.getPriceSummary("c1", "a,b", user, "3f2c7a54-1b2c-4d5e-8f90-1234567890ab");
+      expect(svc.getPriceSummary).toHaveBeenCalledWith("c1", "a,b", {
+        role: UserRole.OPERATOR,
+        excludeOrderId: "3f2c7a54-1b2c-4d5e-8f90-1234567890ab",
+      });
+    });
+
+    it("price-summary validates excludeOrderId as an optional UUID (a repeated param is a 400)", async () => {
+      const args = Reflect.getMetadata(
+        ROUTE_ARGS_METADATA,
+        CustomerPriceHistoryController,
+        "getPriceSummary",
+      ) as Record<string, { data?: string; pipes?: unknown[] }>;
+      const param = Object.values(args).find((a) => a.data === "excludeOrderId");
+      const pipe = param?.pipes?.find((p) => p instanceof ParseUUIDPipe) as
+        ParseUUIDPipe | undefined;
+      expect(pipe).toBeDefined();
+      const meta = { type: "query" as const, data: "excludeOrderId" };
+      await expect(pipe!.transform(undefined as never, meta)).resolves.toBeUndefined();
+      await expect(pipe!.transform(["a", "b"] as never, meta)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
   });
 });
