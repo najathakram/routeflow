@@ -1727,6 +1727,8 @@ function ProductPickView({
       },
     });
   };
+  // TODO(API P-1a): GET /orders/active only parses SHIP/ROUTE until P-1a lands; until then the PICKUP
+  // preview is ignored server-side and the 409 MERGE_CHOICE_REQUIRED branch below is the backstop.
   const { data: activeOrder } = useActiveOrderForCustomer(
     customerId,
     posMode ? "PICKUP" : undefined,
@@ -2619,6 +2621,7 @@ function ProductPickView({
           onChangeNotes: setOrderNotes,
           fulfillPath,
           onChangeFulfillPath: setFulfillPath,
+          posMode,
         }}
         credits={{
           rows: creditRows,
@@ -2629,9 +2632,9 @@ function ProductPickView({
             ),
           onCreateNew: () => setCreateCreditOpen(true),
         }}
-        onSave={() => {
+        onSave={(finish) => {
           setCartOpen(false);
-          onSave();
+          onSave(false, finish ?? "invoice");
         }}
       />
 

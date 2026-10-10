@@ -149,6 +149,8 @@ export interface AdminOrder {
   customer?: {
     id: string;
     businessName: string;
+    /** Walk-in counter customer: a hand-over must carry a tender. */
+    isWalkIn?: boolean | null;
     contactName?: string;
     phone?: string;
     /** Mobile number — preferred for WhatsApp/SMS over the landline `phone`. */
@@ -224,6 +226,7 @@ export interface AdminOrder {
     invoiceNumber: string;
     status: string;
     total: number;
+    balanceDue?: number;
     // #2404: `creditNote` is attached by the order read; `autoApplied` is SA-436 PR-1's column.
     payments?: Array<{
       id: string;

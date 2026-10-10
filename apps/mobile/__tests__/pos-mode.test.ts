@@ -5,7 +5,11 @@
 import {
   POS_COPY,
   POS_MODE_PREF_KEY,
+  pickupCompleteErrorCopy,
+  planPosTender,
+  posBalanceDue,
   posCanSwitchToDelivery,
+  posCartSaveLabel,
   posCutNote,
   posFinishFailureMessage,
   posFinishSuccessMessage,
@@ -129,5 +133,74 @@ describe("copy and half-failure messaging", () => {
     expect(posCutNote({ fulfillPath: "PICKUP", counterSale: false }, "CONFIRMED")).toBeNull();
     expect(posCutNote({ fulfillPath: "PICKUP", counterSale: true }, "DELIVERED")).toBeNull();
     expect(posCutNote({ fulfillPath: "ROUTE" }, "DELIVERED")).toBeNull();
+  });
+});
+
+describe("hand-over tender and fixed error copy", () => {
+  const base = {
+    skip: false,
+    method: "CASH" as const,
+    amountRaw: "",
+    reference: "",
+    balanceDue: 42.5,
+  };
+  it("a blank amount is the exact balance; the body is a payment", () => {
+    expect(planPosTender({ ...base, isWalkIn: false })).toEqual({
+      ok: true,
+      body: { payment: { method: "CASH", amount: 42.5 } },
+    });
+  });
+  it("a named customer may skip the tender (empty body); a walk-in may not", () => {
+    expect(planPosTender({ ...base, isWalkIn: false, skip: true })).toEqual({ ok: true, body: {} });
+    expect(planPosTender({ ...base, isWalkIn: true, skip: true })).toEqual({
+      ok: false,
+      problem: "TENDER_REQUIRED",
+    });
+  });
+  it("a check needs its number; amount must be positive", () => {
+    expect(planPosTender({ ...base, isWalkIn: true, method: "CHECK" })).toEqual({
+      ok: false,
+      problem: "CHECK_NUMBER",
+    });
+    expect(
+      planPosTender({ ...base, isWalkIn: true, method: "CHECK", reference: " 1042 " }),
+    ).toEqual({
+      ok: true,
+      body: { payment: { method: "CHECK", amount: 42.5, reference: "1042" } },
+    });
+    expect(planPosTender({ ...base, isWalkIn: false, amountRaw: "0" })).toEqual({
+      ok: false,
+      problem: "AMOUNT",
+    });
+    expect(planPosTender({ ...base, isWalkIn: false, amountRaw: "abc" })).toMatchObject({
+      ok: false,
+    });
+  });
+  it("the balance sums live invoices (minus payments) and falls back to the total", () => {
+    expect(posBalanceDue(10, [])).toBe(10);
+    expect(
+      posBalanceDue(99, [
+        { status: "SENT", total: 30, payments: [{ amount: "10" }] },
+        { status: "DRAFT", total: 5, balanceDue: 5 },
+        { status: "VOID", total: 100 },
+      ]),
+    ).toBe(25);
+  });
+  it("maps error codes to fixed copy and never to server text", () => {
+    const e = (code: string) => ({ response: { data: { code, message: "SERVER TEXT" } } });
+    expect(pickupCompleteErrorCopy(e("PICKUP_NOT_READY"))).toMatch(/isn't ready for pickup/);
+    expect(pickupCompleteErrorCopy(e("WALK_IN_NO_ACCOUNT"))).toMatch(/walk-in customer can't/);
+    expect(pickupCompleteErrorCopy(e("COUNTER_TENDER_SHORT"))).toBe(
+      "A walk-in customer must pay the full balance.",
+    );
+    const generic = pickupCompleteErrorCopy(e("SOMETHING_ELSE"));
+    expect(generic).toMatch(/Couldn't complete the pickup/);
+    expect(generic).not.toMatch(/SERVER TEXT/);
+    expect(pickupCompleteErrorCopy(new Error("boom"))).toBe(generic);
+  });
+  it("the cart sheet primary says Confirm & invoice in POS mode", () => {
+    expect(posCartSaveLabel(true, false)).toBe("Confirm & invoice");
+    expect(posCartSaveLabel(false, false)).toBe("Save order");
+    expect(posCartSaveLabel(true, true)).toBe("Saving…");
   });
 });

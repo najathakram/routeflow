@@ -77,12 +77,17 @@ import {
 } from "../../../../lib/order-status-flow";
 import {
   POS_COPY,
+  POS_READY_FAILED,
+  POS_SWITCH_FAILED,
+  pickupCompleteErrorCopy,
+  posBalanceDue,
   posCanSwitchToDelivery,
   posCutNote,
   posOrderActions,
   posProgressSteps,
   type PosAction,
 } from "../../../../lib/pos-mode";
+import { PosHandOverSheet } from "../../../../components/PosHandOverSheet";
 import { usePickupComplete, useSwitchOrderToDelivery } from "../../../../lib/api/pos-orders";
 import { statusActions, type StatusAction } from "../../../../lib/order-actions";
 import { useRecordReturn } from "../../../../hooks/useRecordReturn";
@@ -173,6 +178,9 @@ export default function OrderDetailScreen() {
   // The demotion awaiting a reason. The server rejects a blank one, so the sheet
   // holds the action until the operator supplies it.
   const [reasonFor, setReasonFor] = useState<StatusAction | null>(null);
+  // POS hand-over tender sheet (open flag + the last failure, as fixed copy).
+  const [handOverOpen, setHandOverOpen] = useState(false);
+  const [handOverError, setHandOverError] = useState<string | null>(null);
 
   if (isLoading) {
     return (
@@ -307,6 +315,15 @@ export default function OrderDetailScreen() {
     });
   };
 
+  /** Credit-limit / selling-restriction 409s keep their guard modals; everything else is fixed copy. */
+  const toastPosError = (e: unknown, fallback: string) => {
+    const credit = parseCreditLimitError(e);
+    if (credit) return setCreditBlock(credit);
+    const restricted = parseSellingRestricted(e);
+    if (restricted) return setRestrictedBlock(restricted);
+    showToast(fallback);
+  };
+
   /** POS-mode actions: Create invoice / Hand over / Ready for pickup / Switch to delivery / pay or print. */
   const runPosAction = (a: PosAction) => {
     switch (a.key) {
@@ -320,20 +337,8 @@ export default function OrderDetailScreen() {
         });
         return;
       case "handOver":
-        // The money step is the invoice screen's Record payment; a hand-over here leaves the invoice open.
-        confirm(
-          POS_COPY.handOver,
-          "Hand this order over to the customer? The invoice is issued; record payment from the invoice.",
-          () =>
-            pickupMut.mutate(undefined, {
-              onSuccess: () => {
-                showToast("Handed over");
-                refetch();
-              },
-              onError: (e) => toastError(e, "Couldn't hand the order over. Try again."),
-            }),
-          { confirmText: POS_COPY.handOver },
-        );
+        setHandOverError(null);
+        setHandOverOpen(true);
         return;
       case "readyForPickup":
         changeMut.mutate(
@@ -343,7 +348,7 @@ export default function OrderDetailScreen() {
               showToast("Customer notified: ready for pickup");
               refetch();
             },
-            onError: (e) => toastError(e),
+            onError: (e) => toastPosError(e, POS_READY_FAILED),
           },
         );
         return;
@@ -357,7 +362,7 @@ export default function OrderDetailScreen() {
                 showToast("Switched to delivery");
                 refetch();
               },
-              onError: (e) => toastError(e),
+              onError: (e) => toastPosError(e, POS_SWITCH_FAILED),
             }),
           { confirmText: POS_COPY.switchToDelivery },
         );
@@ -1217,6 +1222,24 @@ export default function OrderDetailScreen() {
         issuePrompt={sendSheet?.issuePrompt}
       />
 
+      <PosHandOverSheet
+        visible={handOverOpen}
+        isWalkIn={!!order.customer?.isWalkIn}
+        balanceDue={posBalanceDue(Number(order.total), order.invoices)}
+        submitting={pickupMut.isPending}
+        error={handOverError}
+        onCancel={() => setHandOverOpen(false)}
+        onSubmit={(body) =>
+          pickupMut.mutate(body, {
+            onSuccess: () => {
+              setHandOverOpen(false);
+              showToast("Handed over");
+              refetch();
+            },
+            onError: (e) => setHandOverError(pickupCompleteErrorCopy(e)),
+          })
+        }
+      />
       <ReasonSheet
         visible={reasonFor !== null}
         title={reasonFor?.label ?? "Reason"}
