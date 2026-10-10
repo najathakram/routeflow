@@ -150,8 +150,9 @@ describeDb("label write side against real Postgres", () => {
         asA(() => service.setLabel(A.gp, A.cat, { mode: "INCLUDE" }, user)),
       ).rejects.toBeInstanceOf(ConflictException);
       const waited = Date.now() - t0;
+      // Lower bound only: it waited for the lock instead of failing at once. There is no upper bound; if the 5 s
+      // interactive-transaction timeout had won, the error would not be a ConflictException (asserted above).
       expect(waited).toBeGreaterThanOrEqual(1500);
-      expect(waited).toBeLessThan(4500); // well inside Prisma's 5 s budget
       expect(await labelsOf(A.gp)).toHaveLength(0); // nothing was written
     } finally {
       await holder.query("ROLLBACK");
