@@ -33,7 +33,15 @@ async function refusal(p: Promise<unknown>) {
   }
 }
 
-const tenant = (status: string) => ({ id: "t1", status });
+// READ_ONLY defaults to the reason a pause writes; the other reasons are spelled out where they matter
+const tenant = (
+  status: string,
+  readOnlyReason: string | null = status === "READ_ONLY" ? "payment_overdue" : null,
+) => ({
+  id: "t1",
+  status,
+  readOnlyReason,
+});
 const marker = { pastDueInvoiceId: "in_1" };
 
 describe("assertNotPaymentOverdue(tenant, sub, mode, entryPoint) - 409 PAYMENT_OVERDUE (SA-733r M1, r3 N1)", () => {
@@ -67,6 +75,45 @@ describe("assertNotPaymentOverdue(tenant, sub, mode, entryPoint) - 409 PAYMENT_O
         hosted_invoice_url: "https://pay.example.test/i/in_1",
       });
       expect(c.stripe.getInvoiceFacts).toHaveBeenCalledWith("in_1");
+    }
+  });
+
+  it("every-mode refusal is keyed on status + reason: READ_ONLY payment_overdue / subscription_cancelled only", async () => {
+    for (const reason of ["payment_overdue", "subscription_cancelled"]) {
+      for (const mode of ["off", "dark", "enforced"] as const) {
+        const body = await refusal(
+          assertNotPaymentOverdue(ctx(), tenant("READ_ONLY", reason), marker, mode, "upgrade"),
+        );
+        expect(body?.code).toBe("PAYMENT_OVERDUE");
+      }
+    }
+  });
+
+  it("dark: a TRIAL tenant that carries the marker is ALLOWED (with the would-refuse line), not refused", async () => {
+    const c = ctx();
+    expect(
+      await refusal(assertNotPaymentOverdue(c, tenant("TRIAL"), marker, "dark", "subscribe")),
+    ).toBeNull();
+    expect(String(c.logger.warn.mock.calls[0][0])).toContain("entryPoint=subscribe");
+  });
+
+  it("dark: READ_ONLY(trial_expired / trial_cancelled) with the marker is ALLOWED (would-refuse logged)", async () => {
+    for (const reason of ["trial_expired", "trial_cancelled", null]) {
+      const c = ctx();
+      expect(
+        await refusal(
+          assertNotPaymentOverdue(c, tenant("READ_ONLY", reason), marker, "dark", "subscribe"),
+        ),
+      ).toBeNull();
+      expect(c.logger.warn).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("enforced: those other states follow the ACTIVE rule and are refused", async () => {
+    for (const t of [tenant("TRIAL"), tenant("READ_ONLY", "trial_expired")]) {
+      expect(
+        (await refusal(assertNotPaymentOverdue(ctx(), t, marker, "enforced", "subscribe")))?.code,
+      ).toBe("PAYMENT_OVERDUE");
     }
   });
 
@@ -133,17 +180,18 @@ describe("assertNotPaymentOverdue(tenant, sub, mode, entryPoint) - 409 PAYMENT_O
     ).toBe("PAYMENT_OVERDUE");
   });
 
-  it("the check is the marker + Stripe, never the reason text; an uncollectible invoice is still owed", async () => {
-    const body = await refusal(
-      assertNotPaymentOverdue(
-        ctx({ ...OPEN, status: "uncollectible" }),
-        tenant("READ_ONLY"),
-        marker,
-        "enforced",
-        "resume",
+  it("the check is the marker + Stripe, never the reason text; an UNCOLLECTIBLE invoice is a write-off, not owed", async () => {
+    expect(
+      await refusal(
+        assertNotPaymentOverdue(
+          ctx({ ...OPEN, status: "uncollectible" }),
+          tenant("READ_ONLY"),
+          marker,
+          "enforced",
+          "resume",
+        ),
       ),
-    );
-    expect(body?.code).toBe("PAYMENT_OVERDUE");
+    ).toBeNull();
   });
 
   it("an invoice Stripe now shows paid / void (or nothing left) is not owed: no refusal", async () => {

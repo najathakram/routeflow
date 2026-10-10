@@ -40,16 +40,11 @@ describe("StripeService invoice lists (paged)", () => {
     expect(rows).toHaveLength(3);
   });
 
-  it("owed = open + uncollectible, oldest first", async () => {
-    const { svc, list } = make({
-      open: [page(["in_open"], false, 50)],
-      uncollectible: [page(["in_unc"], false, 5)],
-    });
-    const rows = await svc.listOwedSubscriptionInvoices("sub_1");
-    expect(rows.map((r) => r.id)).toEqual(["in_unc", "in_open"]);
-    expect(list.mock.calls.map((c: any[]) => c[0].status).sort()).toEqual([
-      "open",
-      "uncollectible",
-    ]);
+  it("lists OPEN only: uncollectible is the owner's write-off and is never fetched, so it can never start a clock", async () => {
+    const { svc, list } = make({ open: [page(["in_b", "in_a"], false, 5)] });
+    const rows = await svc.listOpenSubscriptionInvoices("sub_1");
+    expect(rows.map((r) => r.id)).toEqual(["in_b", "in_a"].sort((x, y) => (x === "in_b" ? -1 : 1)));
+    expect(list.mock.calls.every((c: any[]) => c[0].status === "open")).toBe(true);
+    expect((svc as any).listOwedSubscriptionInvoices).toBeUndefined();
   });
 });

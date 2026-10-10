@@ -41,20 +41,29 @@ function make(
     rows?: any[];
     invoices?: Record<string, any[]>;
     facts?: any;
+    /** getInvoiceFacts per invoice id (phase 2 re-reads the CLOCKED invoice) */
+    factsById?: Record<string, any>;
     casCount?: number;
+    d0?: Record<string, Date>;
   } = {},
 ) {
   const tx: any = {
     $queryRaw: jest.fn().mockResolvedValue([]),
     tenantSubscription: { updateMany: jest.fn().mockResolvedValue({ count: opts.casCount ?? 1 }) },
   };
+  const wantsClock = (a: any) => a?.where?.pastDueInvoiceId !== null; // null = phase 1, {not:null} = phase 2
   const rows = opts.rows ?? [];
   const prisma: any = {
     getTenantId: () => null,
     tenantSubscription: {
-      count: jest.fn(async () => rows.length),
+      count: jest.fn(
+        async (args: any) =>
+          rows.filter((x) => (x.pastDueInvoiceId != null) === wantsClock(args)).length,
+      ),
       findMany: jest.fn(async (args: any) => {
-        let r = [...rows].sort((a, b) => (a.tenantId < b.tenantId ? -1 : 1));
+        let r = [...rows]
+          .filter((x) => (x.pastDueInvoiceId != null) === wantsClock(args))
+          .sort((a, b) => (a.tenantId < b.tenantId ? -1 : 1));
         const w = args?.where?.tenantId;
         if (w?.gt) r = r.filter((x) => x.tenantId > w.gt);
         if (w?.lte) r = r.filter((x) => x.tenantId <= w.lte);
@@ -63,12 +72,20 @@ function make(
         return r;
       }),
     },
+    billingNotificationLog: {
+      findFirst: jest.fn(async (a: any) => {
+        const at = opts.d0?.[a?.where?.key];
+        return at ? { sentAt: at } : null;
+      }),
+    },
     $transaction: jest.fn(async (fn: any) => fn(tx)),
   };
   const stripe: any = {
     isConfigured: true,
     listOpenSubscriptionInvoices: jest.fn(async (subId: string) => opts.invoices?.[subId] ?? []),
-    getInvoiceFacts: jest.fn().mockResolvedValue(opts.facts ?? OPEN_FACTS),
+    getInvoiceFacts: jest.fn(
+      async (id: string) => opts.factsById?.[id] ?? opts.facts ?? OPEN_FACTS,
+    ),
   };
   const notifications: any = {
     notifyDunning: jest.fn().mockResolvedValue({ status: "sent", recipients: 1 }),
@@ -90,15 +107,47 @@ describe("DunningService.discover (daily open-invoice discovery)", () => {
     else process.env.BILLING_PAUSE_MODE = saved;
   });
 
-  it("a never-attempted open invoice finalized 25 h ago is stamped, once, under the Tenant lock, from its finalization time", async () => {
+  it("a never-attempted open invoice finalized 25 h ago is stamped, once, under the Tenant lock, with the STAMP time as the clock start", async () => {
     const d = make({ rows: [subRow("t1")], invoices: { sub_t1: [inv("in_a", 25)] } });
     const out = await d.svc.discover(NOW);
     expect(out).toMatchObject({ tenants: 1, stamped: 1, failed: 0 });
     expect(d.tx.$queryRaw).toHaveBeenCalled();
     expect(d.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
       where: { tenantId: "t1", pastDueInvoiceId: null, catchupState: null },
-      data: { pastDueSince: new Date(NOW.getTime() - 25 * H), pastDueInvoiceId: "in_a" },
+      data: { pastDueSince: NOW, pastDueInvoiceId: "in_a" },
     });
+  });
+
+  it("a 40-day-old never-attempted invoice gets a FULL runway: d0 now, nothing due to pause before +168 h", async () => {
+    const d = make({ rows: [subRow("t1")], invoices: { sub_t1: [inv("in_old", 40 * 24)] } });
+    await d.svc.discover(NOW);
+    const stamped = d.tx.tenantSubscription.updateMany.mock.calls[0][0].data;
+    expect(stamped).toEqual({ pastDueSince: NOW, pastDueInvoiceId: "in_old" });
+    // the pause is due at pastDueSince + 168 h: a full week from NOW, not 40 days ago
+    expect(stamped.pastDueSince.getTime() + 168 * H).toBe(NOW.getTime() + 168 * H);
+  });
+
+  it("an invoice whose d0 already went out keeps that original time (moving back and forth never restarts it)", async () => {
+    const original = new Date("2026-10-30T00:00:00Z");
+    const d = make({
+      rows: [subRow("t1")],
+      invoices: { sub_t1: [inv("in_a", 30)] },
+      d0: { in_a: original },
+    });
+    await d.svc.discover(NOW);
+    expect(d.tx.tenantSubscription.updateMany.mock.calls[0][0].data.pastDueSince).toEqual(original);
+  });
+
+  it("logs the finalization time with the stamp (structured, for the report)", async () => {
+    const d = make({ rows: [subRow("t1")], invoices: { sub_t1: [inv("in_a", 30)] } });
+    const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
+    await d.svc.discover(NOW);
+    const line = String(
+      warn.mock.calls.map((c: any[]) => c[0]).find((l: string) => /clock_started/.test(l)),
+    );
+    expect(line).toContain("invoice=in_a");
+    expect(line).toContain(`stampAt=${NOW.toISOString()}`);
+    expect(line).toContain(`finalizedAt=${new Date(NOW.getTime() - 30 * H).toISOString()}`);
   });
 
   it("23 h old is NOT stamped (Stripe may still be about to collect it)", async () => {
@@ -194,7 +243,13 @@ describe("DunningService.discover (daily open-invoice discovery)", () => {
   it("BILLING_PAUSE_MODE=off does nothing at all; dark stamps (like payment_failed); enforced stamps", async () => {
     process.env.BILLING_PAUSE_MODE = "off";
     const off = make({ rows: [subRow("t1")], invoices: { sub_t1: [inv("in_a", 30)] } });
-    expect(await off.svc.discover(NOW)).toEqual({ tenants: 0, stamped: 0, failed: 0 });
+    expect(await off.svc.discover(NOW)).toEqual({
+      tenants: 0,
+      stamped: 0,
+      failed: 0,
+      cleared: 0,
+      moved: 0,
+    });
     expect(off.prisma.tenantSubscription.count).not.toHaveBeenCalled();
     for (const m of ["dark", "enforced"]) {
       process.env.BILLING_PAUSE_MODE = m;
@@ -219,15 +274,112 @@ describe("DunningService.discover (daily open-invoice discovery)", () => {
     expect(out).toMatchObject({ tenants: 2, stamped: 1, failed: 1 });
   });
 
-  it("pages the whole population by keyset, bounded per run, rotating by day so every tenant is reached", async () => {
+  it("pages the whole population by keyset: each tenant is listed EXACTLY once per run, the budget bounds a run, and the start wraps past the end", async () => {
     const rows = ["t1", "t2", "t3", "t4", "t5"].map((t) => subRow(t));
     const seen = new Set<string>();
-    for (let day = 0; day < 3; day++) {
+    let wrapped = false;
+    for (let day = 0; day < 6; day++) {
       const d = make({ rows });
       await d.svc.discover(new Date(NOW.getTime() + day * 24 * H), { maxTenants: 2, batchSize: 2 });
-      for (const c of d.stripe.listOpenSubscriptionInvoices.mock.calls) seen.add(c[0]);
+      const listed: string[] = d.stripe.listOpenSubscriptionInvoices.mock.calls.map(
+        (c: any[]) => c[0],
+      );
+      expect(listed).toHaveLength(2); // bounded by the budget
+      expect(new Set(listed).size).toBe(listed.length); // never twice in one run
+      for (const id of listed) seen.add(id);
+      if (listed.includes("sub_t5") && listed.includes("sub_t1")) wrapped = true; // [t5, t1]: past the end, to the start
     }
     expect([...seen].sort()).toEqual(["sub_t1", "sub_t2", "sub_t3", "sub_t4", "sub_t5"]);
+    expect(wrapped).toBe(true);
+  });
+
+  describe("phase 2: the clocked invoice left OPEN while the tenant is ACTIVE (void / uncollectible)", () => {
+    const clocked = (id: string, o: Record<string, unknown> = {}) =>
+      subRow(id, { pastDueInvoiceId: `in_clock_${id}`, ...o });
+    const VOID = { ...OPEN_FACTS, status: "void" };
+
+    it("clears the clock when nothing else is open - no status change, no MRR, no email", async () => {
+      const d = make({
+        rows: [clocked("t1")],
+        factsById: { in_clock_t1: VOID },
+        invoices: { sub_t1: [] },
+      });
+      const out = await d.svc.discover(NOW);
+      expect(out).toMatchObject({ cleared: 1, moved: 0, stamped: 0 });
+      expect(d.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: "t1", pastDueInvoiceId: "in_clock_t1" },
+        data: { pastDueSince: null, pastDueInvoiceId: null, pausedAt: null },
+      });
+      expect(d.notifications.notifyDunning).not.toHaveBeenCalled();
+    });
+
+    it("an UNCOLLECTIBLE clocked invoice is cleared the same way (the owner's write-off)", async () => {
+      const d = make({
+        rows: [clocked("t1")],
+        factsById: { in_clock_t1: { ...OPEN_FACTS, status: "uncollectible" } },
+      });
+      expect((await d.svc.discover(NOW)).cleared).toBe(1);
+    });
+
+    it("moves the clock to the oldest still-open owed invoice, restarting at the move time (its d0 never went out)", async () => {
+      const d = make({
+        rows: [clocked("t1")],
+        factsById: { in_clock_t1: VOID },
+        invoices: { sub_t1: [inv("in_sib", 50), inv("in_sib2", 30)] },
+      });
+      const out = await d.svc.discover(NOW);
+      expect(out).toMatchObject({ moved: 1, cleared: 0 });
+      expect(d.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: "t1", pastDueInvoiceId: "in_clock_t1" },
+        data: { pastDueInvoiceId: "in_sib", pastDueSince: NOW },
+      });
+    });
+
+    it("leaves a clock alone while its invoice is still open, and leaves a PAID one to invoice.paid", async () => {
+      const open = make({ rows: [clocked("t1")], factsById: { in_clock_t1: OPEN_FACTS } });
+      const o1 = await open.svc.discover(NOW);
+      expect(o1).toMatchObject({ cleared: 0, moved: 0 });
+      const paid = make({
+        rows: [clocked("t1")],
+        factsById: {
+          in_clock_t1: { ...OPEN_FACTS, status: "paid", amountRemaining: 0, amountPaid: 4900 },
+        },
+      });
+      expect(await paid.svc.discover(NOW)).toMatchObject({ cleared: 0, moved: 0 });
+      expect(paid.tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("only ACTIVE, unpaused, Stripe-billed, non-manual, no-claim tenants are in the population (a PAUSED tenant's exit stays admin activation)", async () => {
+      const d = make({ rows: [] });
+      await d.svc.discover(NOW);
+      const wheres = d.prisma.tenantSubscription.count.mock.calls.map((c: any[]) => c[0].where);
+      expect(wheres).toContainEqual({
+        stripeSubId: { not: null },
+        externalPayment: false,
+        catchupState: null,
+        pastDueInvoiceId: { not: null },
+        pausedAt: null,
+        tenant: { deletedAt: null, status: "ACTIVE" },
+      });
+    });
+
+    it("never touches status or the ledger (no transition is bound at all)", async () => {
+      const d = make({ rows: [clocked("t1")], factsById: { in_clock_t1: VOID } });
+      (d.svc as any).transition = null;
+      await expect(d.svc.discover(NOW)).resolves.toMatchObject({ cleared: 1 });
+    });
+
+    it("BILLING_PAUSE_MODE=off skips phase 2 too", async () => {
+      process.env.BILLING_PAUSE_MODE = "off";
+      const d = make({ rows: [clocked("t1")], factsById: { in_clock_t1: VOID } });
+      expect(await d.svc.discover(NOW)).toEqual({
+        tenants: 0,
+        stamped: 0,
+        failed: 0,
+        cleared: 0,
+        moved: 0,
+      });
+    });
   });
 
   it("is a @LeaderCron at 04:00 (billing.dunningDiscovery)", () => {

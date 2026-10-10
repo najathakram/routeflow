@@ -45,7 +45,10 @@ function make(
   };
   const prisma: any = {
     tenant: {
-      findUnique: jest.fn().mockResolvedValue({ status: o.tenantStatus ?? "READ_ONLY" }),
+      findUnique: jest.fn().mockResolvedValue({
+        status: o.tenantStatus ?? "READ_ONLY",
+        readOnlyReason: (o.tenantStatus ?? "READ_ONLY") === "READ_ONLY" ? "payment_overdue" : null,
+      }),
     },
     tenantSubscription: {
       findUnique: jest.fn().mockResolvedValue(

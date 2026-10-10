@@ -10,8 +10,7 @@
  * transaction. (dunning.db.spec.ts keeps a Promise.all smoke test against real Postgres.)
  */
 import { DunningService } from "./dunning.service";
-import { pauseTenantTx } from "./dunning-pause";
-import { BILLING_EVENTS } from "./plan-catalog.constants";
+import { pauseTenantTx, setPauseCollection } from "./dunning-pause";
 
 interface State {
   status: string;
@@ -134,7 +133,7 @@ function world(initial: Partial<State> = {}) {
       attemptCount: 2,
       subscriptionId: "sub_1",
     }),
-    listOwedSubscriptionInvoices: async () => [],
+    listOpenSubscriptionInvoices: async () => [],
     getSubscription: async () => ({ status: "active" }),
     updateSubscription: async (...a: any[]) => {
       stripeCalls.push(a);
@@ -150,22 +149,19 @@ function world(initial: Partial<State> = {}) {
     invalidate: () => undefined,
   } as any);
   svc.bindTransition(transition as any);
-  const pause = () =>
-    pauseTenantTx(
-      {
-        prisma,
-        stripe,
-        notifications,
-        logger: console as any,
-        transition: transition as any,
-        mode: () => "enforced",
-        once: () => true,
-      },
-      { tenantId: "t1" },
-      "in_1",
-      new Date("2026-11-08T09:00:00Z"),
-    );
-  return { st, svc, hooks, stripeCalls, pause, prisma };
+  const PAUSED_AT = new Date("2026-11-08T09:00:00Z");
+  const deps = {
+    prisma,
+    stripe,
+    notifications,
+    logger: console as any,
+    transition: transition as any,
+    mode: () => "enforced" as const,
+    once: () => true,
+    cursors: new Map<string, number>(),
+  };
+  const pause = () => pauseTenantTx(deps, { tenantId: "t1" }, "in_1", PAUSED_AT);
+  return { st, svc, hooks, stripeCalls, pause, prisma, deps, PAUSED_AT };
 }
 
 const invoice = {
@@ -222,7 +218,53 @@ describe("sweep racing invoice.paid (deterministic interleavings)", () => {
     expect(w.stripeCalls).toEqual([]);
   });
 
-  it("uses the same reason constants the rest of dunning books (guards a typo in the harness)", () => {
-    expect(BILLING_EVENTS.SUBSCRIPTION_RESUMED).toBeDefined();
+  describe("after-commit ordering: the sweep's pause_collection SET against a resume that commits in between", () => {
+    const target = { tenantId: "t1", stripeSubId: "sub_1" };
+    const resumeAt = new Date("2026-11-09T12:00:00Z");
+
+    it("pause commits -> invoice.paid resumes and clears pause_collection -> the sweep's late set is SKIPPED (Stripe is not left paused while local is ACTIVE)", async () => {
+      const w = world();
+      expect(await w.pause()).toBe(true);
+      expect(await w.svc.onInvoicePaid(invoice, resumeAt)).toBe("resumed");
+      expect(w.st.status).toBe("ACTIVE");
+      expect(w.st.pausedAt).toBeNull();
+
+      const set = await setPauseCollection(w.deps, target, w.PAUSED_AT);
+
+      expect(set).toBe(false);
+      // the ONLY Stripe call is the resume's unpause: the stale set never lands last
+      expect(w.stripeCalls).toHaveLength(1);
+      expect(w.stripeCalls[0][1]).toEqual({ pause_collection: "" });
+    });
+
+    it("no resume in between: the set runs (under the Tenant lock, key unchanged) and Stripe is paused", async () => {
+      const w = world();
+      await w.pause();
+      expect(await setPauseCollection(w.deps, target, w.PAUSED_AT)).toBe(true);
+      expect(w.stripeCalls).toEqual([
+        [
+          "sub_1",
+          { pause_collection: { behavior: "void" } },
+          { idempotencyKey: `t1:pause:${w.PAUSED_AT.toISOString()}` },
+        ],
+      ]);
+    });
+
+    it("a different (later) pause is not overwritten by an earlier sweep's set", async () => {
+      const w = world();
+      await w.pause();
+      w.st.pausedAt = new Date(w.PAUSED_AT.getTime() + 3_600_000); // paused again since
+      expect(await setPauseCollection(w.deps, target, w.PAUSED_AT)).toBe(false);
+      expect(w.stripeCalls).toEqual([]);
+    });
+
+    it("a Stripe error in the set is reported false and never throws (the reconciler corrects it)", async () => {
+      const w = world();
+      await w.pause();
+      w.deps.stripe.updateSubscription = async () => {
+        throw new Error("stripe down");
+      };
+      await expect(setPauseCollection(w.deps, target, w.PAUSED_AT)).resolves.toBe(false);
+    });
   });
 });

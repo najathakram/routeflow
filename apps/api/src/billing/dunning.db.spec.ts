@@ -60,7 +60,7 @@ describeDb("SA-733r7 PR-B3 dunning (real Postgres)", () => {
         stripeState.paid.has(id)
           ? { ...OPEN, status: "paid", amountPaid: 14900, amountRemaining: 0 }
           : OPEN,
-      listOwedSubscriptionInvoices: async () => [],
+      listOpenSubscriptionInvoices: async () => [],
       getSubscription: async () => ({ status: "active" }),
       updateSubscription: async (...a: any[]) => {
         stripeState.calls.push(a);

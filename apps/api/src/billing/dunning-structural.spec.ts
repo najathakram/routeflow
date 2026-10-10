@@ -77,13 +77,18 @@ describe("SA-733r7 PR-B3 structural pins", () => {
       },
     ];
 
-    it("no Tenant write outside the helper can write ACTIVE: literal, TenantStatus.ACTIVE, an unreviewed expression, or raw SQL", () => {
+    /** The scanner, parameterised on a file list so the vacuity check can run it over PLANTED files. */
+    function scanActiveWrites(
+      fileList: string[],
+      base: string,
+      allowed = new Set<string>(),
+    ): string[] {
       const offenders: string[] = [];
-      for (const f of files) {
-        if (ALLOWED.has(f)) continue;
+      for (const f of fileList) {
+        if (allowed.has(f)) continue;
         const raw = read(f);
         const src = code(raw);
-        const rel = path.relative(SRC, f);
+        const rel = path.relative(base, f);
         const re = /\.tenant\.(update|updateMany|upsert|create|createMany)\(/g;
         let m: RegExpExecArray | null;
         while ((m = re.exec(src))) {
@@ -114,27 +119,55 @@ describe("SA-733r7 PR-B3 structural pins", () => {
           }
         }
       }
-      expect(offenders).toEqual([]);
+      return offenders;
+    }
+
+    it("no Tenant write outside the helper can write ACTIVE: literal, TenantStatus.ACTIVE, an unreviewed expression, or raw SQL", () => {
+      expect(scanActiveWrites(files, SRC, ALLOWED)).toEqual([]);
     });
 
-    it("the pin itself is not vacuous: it flags each spelling of an ACTIVE write", () => {
-      const flagged = (snippet: string) => {
-        const src = code(snippet);
-        const args = balanced(src, src.indexOf("("));
-        const dm = /\bdata\s*:\s*(\{)?/.exec(args)!;
-        const data = balanced(args, dm.index + dm[0].length - 1);
-        const v = /\bstatus\s*:\s*([^,}\n]+)/.exec(data);
-        return !!v && !/^["'`](?!ACTIVE["'`])\w+["'`]$/.test(v[1].trim());
-      };
-      expect(flagged('tx.tenant.updateMany({ where: {}, data: { status: "ACTIVE" } })')).toBe(true);
-      expect(
-        flagged("tx.tenant.update({ where: {}, data: { status: TenantStatus.ACTIVE } })"),
-      ).toBe(true);
-      expect(flagged("tx.tenant.update({ where: {}, data: { status: dto.status } })")).toBe(true);
-      expect(flagged('tx.tenant.update({ where: {}, data: { status: "ACTIVE" as const } })')).toBe(
+    it("the pin is not vacuous: the SAME file walker and scanner flag each planted spelling and skip spec files", () => {
+      const os = require("os") as typeof import("os");
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "active-pin-"));
+      try {
+        const dir = path.join(root, "billing");
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(
+          path.join(dir, "planted.ts"),
+          [
+            'await tx.tenant.updateMany({ where: { id }, data: { status: "ACTIVE" } });',
+            "await tx.tenant.update({ where: { id }, data: { status: TenantStatus.ACTIVE } });",
+            "await tx.tenant.update({ where: { id }, data: { status: dto.status } });",
+            'await tx.tenant.update({ where: { id }, data: { status: "ACTIVE" as const } });',
+            "await tx.tenant.update({ where: { id }, data });",
+            'await tx.$executeRaw`UPDATE "Tenant" SET "status" = \'ACTIVE\' WHERE id = ${id}`;',
+            'await tx.tenant.update({ where: { id }, data: { status: "TRIAL" } });', // fine
+          ].join("\n"),
+        );
+        fs.writeFileSync(
+          path.join(dir, "planted.spec.ts"),
+          'await tx.tenant.update({ where: {}, data: { status: "ACTIVE" } });',
+        );
+        const walked = walk(root);
+        expect(walked.map((f) => path.basename(f))).toEqual(["planted.ts"]); // the walker skips specs
+        const found = scanActiveWrites(walked, root);
+        expect(found).toEqual(
+          [
+            'billing/planted.ts: status: "ACTIVE"',
+            "billing/planted.ts: status: TenantStatus.ACTIVE",
+            "billing/planted.ts: status: dto.status",
+            'billing/planted.ts: status: "ACTIVE" as const',
+            "billing/planted.ts: Tenant write with a non-literal data object",
+            "billing/planted.ts: raw SQL sets Tenant.status = ACTIVE",
+          ].map((x) => x.replace(/\//g, path.sep === "\\" ? "\\" : "/")),
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+      // and the real tree is not empty-scanned
+      expect(walk(path.join(SRC, "billing")).some((f) => f.endsWith("billing.service.ts"))).toBe(
         true,
       );
-      expect(flagged('tx.tenant.update({ where: {}, data: { status: "TRIAL" } })')).toBe(false);
     });
 
     it("transitionAndEmit routes toStatus === ACTIVE through transitionToActiveTx", () => {
@@ -222,6 +255,40 @@ describe("SA-733r7 PR-B3 structural pins", () => {
         /billing\.dunning\.would_refuse code=\$\{API_ERROR_CODES\.PAYMENT_OVERDUE\}/,
       );
     });
+  });
+
+  describe("deliberately UNGUARDED plan/price paths (explicit exclusion list)", () => {
+    // These change a plan or price but are SYSTEM or PRICE actions on ACTIVE tenants, not a tenant (or admin) buying its
+    // way out of an overdue invoice. Adding the overdue guard to one of them must be a deliberate edit of THIS list.
+    const UNGUARDED = [
+      {
+        file: "billing/billing-cron.service.ts",
+        method: "async applyScheduledDowngrades(",
+        reason: "cron: applies a downgrade the tenant scheduled earlier, on ACTIVE tenants only",
+      },
+      {
+        file: "billing/scheduled-price-change.ts",
+        method: "async applyDue(",
+        reason: "cron: pushes an already-scheduled lower price to Stripe before the renewal",
+      },
+      {
+        file: "platform-admin/platform-admin.service.ts",
+        method: "async updateTenantPriceOverride(",
+        reason:
+          "a negotiated PRICE for the next cycle, not a plan change; owners need it to settle disputes",
+      },
+    ];
+
+    it.each(UNGUARDED.map((u) => [u.file, u.method, u.reason]))(
+      "%s %s stays unguarded: %s",
+      (file, method) => {
+        const src = code(read(path.join(SRC, file)));
+        const i = src.indexOf(method);
+        expect(i).toBeGreaterThan(-1); // a rename must re-point this list, not silently drop out of it
+        const body = src.slice(i, i + 2500);
+        expect(body).not.toMatch(/assertNotOverdue|assertTenantNotPaymentOverdue/);
+      },
+    );
   });
 
   describe("Stripe pause_collection", () => {

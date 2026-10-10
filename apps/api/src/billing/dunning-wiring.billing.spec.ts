@@ -108,7 +108,7 @@ function make(
       },
     }),
     getInvoiceFacts: jest.fn().mockResolvedValue(OPEN_FACTS),
-    listOwedSubscriptionInvoices: jest.fn().mockResolvedValue([]),
+    listOpenSubscriptionInvoices: jest.fn().mockResolvedValue([]),
     updateSubscription: jest.fn().mockResolvedValue({}),
     createBillingPortalSession: jest.fn().mockResolvedValue({ url: "https://billing.test/p" }),
     createCheckoutSession: jest.fn(),
@@ -425,6 +425,8 @@ describe("BillingService x dunning wiring (SA-733r7 PR-B3)", () => {
         logged,
       });
       const dunning = h.dunning as DunningService;
+      // the post-commit pause_collection set re-reads pausedAt under the lock: the pause just stamped NOW
+      h.tx.tenantSubscription.findUnique.mockResolvedValue({ ...clocked, pausedAt: NOW });
 
       const out = await dunning.sweep(NOW);
       expect(out.paused).toBe(1);
