@@ -77,7 +77,7 @@ import type { LineComponentView } from "@routeflow/types";
 import { CHECK_TRANSITIONS } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import { InvoiceLineAmount } from "./InvoiceLineAmount";
-import { InvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
+import { TenantInvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
 import { RemoveCreditButton } from "./RemoveCreditButton";
 import { AdjustPricesPanel } from "./AdjustPricesPanel";
 import {
@@ -1992,7 +1992,10 @@ export default function InvoiceDetailPage() {
               {invoice.invoiceNumber}
             </h1>
             <Badge status={status} />
-            <InvoiceRevisionMarks revisedAt={invoice.revisedAt} overpaidBy={invoice.overpaidBy} />
+            <TenantInvoiceRevisionMarks
+              revisedAt={invoice.revisedAt}
+              overpaidBy={invoice.overpaidBy}
+            />
           </div>
           <p className="mt-1 text-sm text-navy/70">
             {invoice.customer?.businessName ?? "—"}

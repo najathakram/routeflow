@@ -1901,7 +1901,6 @@ export default function OrderDetailPage() {
   const updateStatus = useUpdateOrderStatus();
   // The cancel flow renders its own error (every other status change keeps the global toast), so it has its own instance.
   const cancelOrder = useUpdateOrderStatus({ localErrorToast: true });
-  const updateItems = useUpdateOrderItems();
   const reopenOrder = useReopenOrder();
   const deleteOrder = useDeleteOrder({ localErrorToast: true });
   const updateShipment = useUpdateOrderShipment();
@@ -1947,7 +1946,6 @@ export default function OrderDetailPage() {
   const [creditBlock, setCreditBlock] = React.useState<CreditLimitInfo | null>(null);
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
-  const overpay = useOrderOverpayGuard(order);
   const guardError = (retry: () => void) => (err: unknown) => {
     if (overpay.capture(err)) return;
     const restricted = parseSellingRestricted(err);
@@ -1971,6 +1969,8 @@ export default function OrderDetailPage() {
 
   // Item editing
   const [isEditing, setIsEditing] = React.useState(false);
+  const overpay = useOrderOverpayGuard(order, isEditing);
+  const updateItems = useUpdateOrderItems({ localErrorToast: overpay.ownsToast });
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
   const [pendingDeletes, setPendingDeletes] = React.useState<string[]>([]);
   const [draftAutoEntered, setDraftAutoEntered] = React.useState(false);

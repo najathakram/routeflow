@@ -18,13 +18,13 @@ export function handleMutationError(
   router: { push: (href: string) => void },
 ): void {
   const data = (error as any)?.response?.data;
+  // (ORDER_EDIT_WOULD_OVERPAY is deliberately NOT here: its notice renders only in edit mode, so the order page
+  // opts the edit save out via `localErrorToast`; the same 409 anywhere else gets the generic toast.)
   // These 409s (and READ_ONLY's 403) are turned into guided in-app flows by the
   // initiating component (merge prompt, license guard, the read-only toast below)
   // — don't also surface them as a generic error toast.
   const HANDLED_CODES = [
     "MERGE_CHOICE_REQUIRED",
-    // P-4: the order edit screen shows its own notice (fixed copy + "Record a return").
-    "ORDER_EDIT_WOULD_OVERPAY",
     "REGULATED_AUTH_REQUIRED",
     // P5-10/11: change-request 409s are turned into guided flows by the
     // initiating components (friendly buyer banners; operator toast +

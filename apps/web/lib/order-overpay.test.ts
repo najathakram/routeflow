@@ -51,7 +51,12 @@ describe("orderOverpayCopy", () => {
       excess: null,
     });
     expect(text).not.toMatch(/\$/);
-    expect(text).toMatch(/Record a return/);
+    expect(text).not.toMatch(/Record a return/);
+  });
+  it("offers Record a return only when the caller can record one", () => {
+    const info = { invoiceId: "i", paid: 100, projectedTotal: 80, excess: 20 };
+    expect(orderOverpayCopy(info)).not.toMatch(/return/i);
+    expect(orderOverpayCopy(info, true)).toMatch(/Record a return/);
   });
   it("is mapped in the central coded-error copy and never shows server text", () => {
     const copy = codedToastCopy(e409());

@@ -1,6 +1,11 @@
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
-import { InvoiceRevisionMarks } from "./InvoiceRevisionMarks";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { InvoiceRevisionMarks, TenantInvoiceRevisionMarks } from "./InvoiceRevisionMarks";
+
+jest.mock("@/lib/api-client", () => ({
+  apiClient: { get: jest.fn(() => Promise.resolve({ data: { timezone: "America/Los_Angeles" } })) },
+}));
 
 describe("InvoiceRevisionMarks", () => {
   it("renders nothing when the API sends neither field (contract-first)", () => {
@@ -16,5 +21,14 @@ describe("InvoiceRevisionMarks", () => {
     expect(screen.queryByTestId("invoice-overpaid")).toBeNull();
     rerender(<InvoiceRevisionMarks overpaidBy={7.5} />);
     expect(screen.getByTestId("invoice-overpaid")).toHaveTextContent("Overpaid by $7.50");
+  });
+  it("TenantInvoiceRevisionMarks reads the revised day in the tenant's zone", async () => {
+    const qc = new QueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <TenantInvoiceRevisionMarks revisedAt="2026-10-06T03:30:00.000Z" />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("Revised Oct 5, 2026")).toBeInTheDocument();
   });
 });

@@ -1,6 +1,14 @@
 import { overpaidText, revisedBadgeText } from "./invoice-revision";
 
 describe("revisedBadgeText", () => {
+  it("reads the day in the business's zone, not the viewer's", () => {
+    const at = "2026-10-06T03:30:00.000Z";
+    expect(revisedBadgeText(at, "America/Los_Angeles")).toBe("Revised Oct 5, 2026");
+    expect(revisedBadgeText(at, "Asia/Tokyo")).toBe("Revised Oct 6, 2026");
+  });
+  it("falls back to UTC for an invalid zone instead of throwing", () => {
+    expect(revisedBadgeText("2026-10-06T03:30:00.000Z", "Not/AZone")).toBe("Revised Oct 6, 2026");
+  });
   it("formats a revisedAt timestamp as 'Revised {date}'", () => {
     expect(revisedBadgeText("2026-10-05T15:30:00.000Z")).toMatch(/^Revised \w{3} \d{1,2}, 2026$/);
   });

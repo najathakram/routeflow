@@ -18,16 +18,21 @@ import { RecordInlineReturnDialog } from "../../../returns/_components/RecordInl
  */
 export function useOrderOverpayGuard(
   order: { id: string; customerId: string; customer?: { businessName?: string } } | undefined,
+  editing = true,
 ) {
   const [info, setInfo] = React.useState<OrderOverpayInfo | null>(null);
   const [returnOpen, setReturnOpen] = React.useState(false);
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
 
+  // The notice renders only in edit mode, so only an edit-mode 409 is ours; anywhere else it falls through
+  // to the global toast (mutation-error-toast.ts no longer swallows the code).
   const capture = (err: unknown): boolean => {
-    const parsed = parseOrderEditWouldOverpay(err);
+    const parsed = editing ? parseOrderEditWouldOverpay(err) : null;
     if (parsed) setInfo(parsed);
     return parsed !== null;
   };
+  /** `meta.localErrorToast` predicate for the edit-save mutation: skip the global toast when the notice shows. */
+  const ownsToast = (err: unknown): boolean => editing && parseOrderEditWouldOverpay(err) !== null;
 
   const node = info ? (
     <div
@@ -35,7 +40,7 @@ export function useOrderOverpayGuard(
       data-testid="order-overpay-notice"
       className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-navy"
     >
-      <p>{orderOverpayCopy(info)}</p>
+      <p>{orderOverpayCopy(info, hasInlineReturns)}</p>
       <div className="mt-2 flex gap-2">
         {hasInlineReturns && (
           <Button variant="secondary" size="sm" onClick={() => setReturnOpen(true)}>
@@ -57,5 +62,5 @@ export function useOrderOverpayGuard(
     </div>
   ) : null;
 
-  return { capture, node };
+  return { capture, ownsToast, node };
 }

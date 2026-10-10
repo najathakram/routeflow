@@ -1,7 +1,8 @@
 import * as React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => true }));
+let mockHasAddon = true;
+jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => mockHasAddon }));
 jest.mock("../../../returns/_components/RecordInlineReturnDialog", () => ({
   RecordInlineReturnDialog: (p: { open: boolean; orderId?: string }) =>
     p.open ? <div data-testid="return-dialog">{p.orderId}</div> : null,
@@ -39,6 +40,14 @@ describe("useOrderOverpayGuard", () => {
     expect(notice).not.toHaveTextContent("RAW SERVER TEXT");
     fireEvent.click(screen.getByRole("button", { name: "Record a return" }));
     expect(screen.getByTestId("return-dialog")).toHaveTextContent("o1");
+  });
+  it("without the inline-returns add-on the copy and the button drop Record a return", () => {
+    mockHasAddon = false;
+    render(<Harness error={err} />);
+    fireEvent.click(screen.getByText("go"));
+    expect(screen.getByTestId("order-overpay-notice")).not.toHaveTextContent(/return/i);
+    expect(screen.queryByRole("button", { name: "Record a return" })).toBeNull();
+    mockHasAddon = true;
   });
   it("ignores other errors", () => {
     render(<Harness error={{ response: { status: 409, data: { code: "X" } } }} />);

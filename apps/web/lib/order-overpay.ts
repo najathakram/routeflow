@@ -27,12 +27,13 @@ export function parseOrderEditWouldOverpay(err: unknown): OrderOverpayInfo | nul
 }
 
 /** Fixed copy: what happened and the next step. The server's own sentence is never shown. */
-export function orderOverpayCopy(info: OrderOverpayInfo): string {
+export function orderOverpayCopy(info: OrderOverpayInfo, canRecordReturn = false): string {
   const lead =
     info.excess !== null && roundMoney(info.excess) > 0
       ? `This change would leave the customer ${fmt(roundMoney(info.excess))} overpaid on the invoice.`
       : "This change would leave the customer overpaid on the invoice.";
-  return `${lead} Keep the order total at or above what has been paid, or Record a return for the difference.`;
+  const exit = canRecordReturn ? ", or Record a return for the difference" : "";
+  return `${lead} Keep the order total at or above what has been paid${exit}.`;
 }
 
 /** Generic copy for the central coded-error map (no number). */
