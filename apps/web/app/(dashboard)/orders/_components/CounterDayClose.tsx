@@ -8,6 +8,7 @@ import {
   DAY_CLOSE_DENOMINATIONS,
   DAY_CLOSE_MAX_COUNT,
   DAY_CLOSE_NOTES_MAX,
+  dayCloseWindowIsEmpty,
   roundMoney,
   sumDenominations,
   validOpeningFloat,
@@ -199,11 +200,12 @@ function DayCloseFormBody({ state, onClose }: { state: DayCloseState; onClose: (
       </dl>
 
       <Input
-        label="Opening float"
+        label={reopened ? "Opening float (kept from the first close)" : "Opening float"}
         inputMode="decimal"
         autoComplete="off"
         className="h-11"
         value={floatText}
+        readOnly={reopened != null}
         onChange={(e) => setFloatText(e.target.value)}
         error={
           openingFloat === null ? "Enter an amount in dollars and cents, 0.00 or more." : undefined
@@ -438,7 +440,9 @@ export function CounterDayClose() {
   const reopened = last?.reopenedAt ? last : null;
   // After a close the window is spent: offer the next close only once something happened since, or a new day began.
   const offerClose =
-    !closed || state.salesSince > 0 || closed.day !== dayIn(new Date(), state.zone);
+    !closed ||
+    !dayCloseWindowIsEmpty(state.preview.totals) ||
+    closed.day !== dayIn(new Date(), state.zone);
 
   return (
     <section aria-label="Day close" className="space-y-2" data-testid="day-close">

@@ -13,6 +13,7 @@ import {
   DAY_CLOSE_NOTES_MAX,
   roundMoney,
   sumDenominations,
+  dayCloseWindowIsEmpty,
   validOpeningFloat,
   validateDenominations,
   type DayCloseSnapshot,
@@ -351,23 +352,16 @@ export class CounterDayCloseService {
       return fresh;
     }
 
-    // A NEW window. The day label is not a key: a second close of the same tenant-zone day is a second window, but only when a
-    // sale was rung since the standing close (a double-click, or a close with nothing new to count, is refused).
+    // A NEW window. The day label is not a key: a second close of the same tenant-zone day is a second window, but only when
+    // something happened since the standing close (a double-click, or a close with nothing new to count, is refused).
     const day = calendarDateFromIso(startOfCalendarDay(cutoff, a.zone));
-    if (last && calendarDateFromIso(last.day) === day) {
-      const since = await countSalesSince(
-        tx,
-        tenantId,
-        registerKey,
-        last.windowEnd,
-        new Date(cutoff.getTime() + 1),
-      );
-      if (since === 0) throw dayAlreadyClosed();
-    }
     const windowStart = last ? last.windowEnd : calendarDayBounds(a.zone, cutoff).start;
     const fold = foldDayClose(
       await readWindowFacts(tx, tenantId, registerKey, { start: windowStart, end: cutoff }),
     );
+    if (last && calendarDateFromIso(last.day) === day && dayCloseWindowIsEmpty(fold.totals)) {
+      throw dayAlreadyClosed();
+    }
     const expected = expectedCashOf(a.openingFloat, fold);
     return tx.counterDayClose.create({
       data: {
@@ -497,7 +491,10 @@ export class CounterDayCloseService {
       if (to.length === 0) return null;
 
       if (opts.manual) await this.release(tenantId, key);
-      if (!(await this.claim(tenantId, key))) return true;
+      const claimed = await this.claim(tenantId, key);
+      // A taken claim means another sender has it (nothing to do); a claim that could not be written means nothing was sent.
+      if (claimed === "taken") return true;
+      if (claimed === "error") return false;
 
       let delivered = 0;
       try {
@@ -538,18 +535,17 @@ export class CounterDayCloseService {
     }
   }
 
-  /** True only for the caller that wins the claim; a taken claim (P2002) or any other error is "do not send". */
-  private async claim(tenantId: string, key: string): Promise<boolean> {
+  /** "won" for the caller that takes the claim, "taken" when it already exists (P2002), "error" for any other failure. */
+  private async claim(tenantId: string, key: string): Promise<"won" | "taken" | "error"> {
     try {
       await this.prisma.forTenant().billingNotificationLog.create({
         data: { tenantId, milestone: Z_REPORT_MILESTONE, key },
       });
-      return true;
+      return "won";
     } catch (e) {
-      if (!isUniqueViolation(e)) {
-        this.logger.error(`Z report claim failed for ${key}: ${(e as Error)?.message}`);
-      }
-      return false;
+      if (isUniqueViolation(e)) return "taken";
+      this.logger.error(`Z report claim failed for ${key}: ${(e as Error)?.message}`);
+      return "error";
     }
   }
 

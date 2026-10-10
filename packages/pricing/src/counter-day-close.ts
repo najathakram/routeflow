@@ -125,6 +125,22 @@ export interface DayCloseTotals {
   notAtTill: number;
 }
 
+/**
+ * True when nothing at all happened in the window: no sale, no money in, no refund, no store credit, nothing taken off the till.
+ * A second close of the same day is refused for such a window (a double click, or nothing new to count), and the web hides the
+ * button for it. One definition so the server and the screen cannot disagree.
+ */
+export function dayCloseWindowIsEmpty(t: DayCloseTotals): boolean {
+  return (
+    t.salesCount === 0 &&
+    t.moneyIn.total === 0 &&
+    t.refunds.count === 0 &&
+    t.storeCreditUsed === 0 &&
+    t.storeCreditIssued.count === 0 &&
+    t.notAtTill === 0
+  );
+}
+
 export interface DayCloseSnapshot {
   id: string;
   registerKey: string;

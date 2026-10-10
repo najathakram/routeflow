@@ -463,7 +463,9 @@ describe("CounterDayClose: the closed state", () => {
     await waitFor(() => expect(screen.queryByTestId("day-close-closed")).toBeNull());
     // the re-close form starts from the stored float, counts and notes
     fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
-    expect(await screen.findByLabelText("Opening float")).toHaveValue("100.00");
+    const floatInput = await screen.findByLabelText("Opening float (kept from the first close)");
+    expect(floatInput).toHaveValue("100.00");
+    expect(floatInput).toHaveAttribute("readonly");
     expect(screen.getByLabelText("$100 bill count")).toHaveValue("1");
     expect(screen.getByLabelText("$1.00 coin count")).toHaveValue("3");
     expect(screen.getByLabelText("$1 bill count")).toHaveValue("0");
@@ -492,19 +494,33 @@ describe("CounterDayClose: the closed state", () => {
     expect(document.body.textContent).not.toMatch(/internal detail/);
   });
 
-  it("offers no second close for a window with no sales since on the same day, but does once there are sales", async () => {
+  it("offers no second close for a quiet window on the same day, but does once anything happened", async () => {
     const today = new Intl.DateTimeFormat("en-CA", {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
       timeZone: "America/New_York",
     }).format(new Date());
-    withClose({ day: today }, 0);
+    const quiet = {
+      ...TOTALS,
+      salesCount: 0,
+      salesTotal: 0,
+      moneyIn: { cash: 0, card: 0, check: 0, other: 0, total: 0 },
+      refunds: { ...TOTALS.refunds, count: 0, cash: 0, card: 0, check: 0, other: 0, total: 0 },
+      storeCreditUsed: 0,
+      storeCreditIssued: { count: 0, amount: 0 },
+      notAtTill: 0,
+    };
+    dayState = stateOf({ lastClose: snapshot({ day: today }), salesSince: 0 }, { totals: quiet });
     const { unmount } = await openSheet();
     await screen.findByTestId("day-close-closed");
     expect(screen.queryByRole("button", { name: "Close day" })).toBeNull();
     unmount();
-    withClose({ day: today }, 2);
+    // a refund with no new sale is activity
+    dayState = stateOf(
+      { lastClose: snapshot({ day: today }), salesSince: 0 },
+      { totals: { ...quiet, refunds: { ...quiet.refunds, count: 1, cash: 5, total: 5 } } },
+    );
     await openSheet();
     expect(await screen.findByRole("button", { name: "Close day" })).toBeInTheDocument();
   });

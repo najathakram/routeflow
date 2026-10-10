@@ -49,6 +49,13 @@ const facts = (over: Partial<WindowFacts> = {}): WindowFacts => ({
   returns: [],
   ...over,
 });
+const emptyFacts = (): WindowFacts =>
+  facts({
+    sales: { _count: { _all: 0 }, _sum: { total: 0 } },
+    payments: [],
+    paidOnSales: { _sum: { amount: 0 } },
+    returns: [],
+  });
 const tens = (n: number): DenominationCount[] => [{ kind: "bill", value: 10, count: n }];
 
 function setup(opts: FakeOptions = {}, counter: "optional" | "off" = "optional") {
@@ -217,6 +224,7 @@ describe("CounterDayCloseService.close: the window chain in a non-UTC tenant zon
       clock: [T("2026-10-08T03:59:00.000Z"), T("2026-10-08T04:01:00.000Z")],
     });
     await service.close({ openingFloat: 0, denominations: tens(1) }, user);
+    (readWindowFacts as jest.Mock).mockResolvedValue(emptyFacts());
     await expect(
       service.close({ openingFloat: 0, denominations: tens(1) }, user),
     ).rejects.toMatchObject({ response: { code: "DAY_ALREADY_CLOSED" } });
@@ -244,6 +252,7 @@ describe("CounterDayCloseService.close: duplicates", () => {
       clock: [T("2026-10-08T16:00:00.000Z"), T("2026-10-08T18:00:00.000Z")],
     });
     await service.close({ openingFloat: 0, denominations: tens(1) }, user);
+    (readWindowFacts as jest.Mock).mockResolvedValue(emptyFacts());
     const err = await service
       .close({ openingFloat: 0, denominations: tens(1) }, user)
       .catch((e) => e);
@@ -253,12 +262,11 @@ describe("CounterDayCloseService.close: duplicates", () => {
     expect(email.send).toHaveBeenCalledTimes(1);
   });
 
-  it("a second close of the same day after a sale was rung since the first is a second window", async () => {
+  it("a second close of the same day with activity since the first is a second window", async () => {
     const { service, fake } = setup({
       clock: [T("2026-10-08T16:00:00.000Z"), T("2026-10-08T18:00:00.000Z")],
     });
     const first = await service.close({ openingFloat: 0, denominations: tens(1) }, user);
-    (countSalesSince as jest.Mock).mockResolvedValue(2);
     const second = await service.close({ openingFloat: 0, denominations: tens(1) }, user);
     expect(second.windowStart).toBe(first.windowEnd);
     expect(second.day).toBe(first.day);
@@ -528,6 +536,17 @@ describe("CounterDayCloseService: the Z report", () => {
     expect(snap.reportSent).toBe(false);
     expect(fake.closes).toHaveLength(1);
     expect(fake.claims).toHaveLength(0);
+  });
+
+  it("a claim that cannot be written (a database error, not a taken claim) sends nothing and reads as NOT sent", async () => {
+    const { service, email, fake } = setup();
+    jest
+      .spyOn(fake.prisma.forTenant().billingNotificationLog, "create")
+      .mockRejectedValueOnce(new Error("connection reset"));
+    const snap = await service.close({ openingFloat: 0, denominations: tens(3) }, user);
+    expect(snap.reportSent).toBe(false);
+    expect(email.send).not.toHaveBeenCalled();
+    expect(fake.closes).toHaveLength(1);
   });
 
   it("a send that THROWS is the same: the close stands, the claim is released", async () => {

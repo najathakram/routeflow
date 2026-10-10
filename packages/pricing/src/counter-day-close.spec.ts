@@ -1,5 +1,6 @@
 import {
   DAY_CLOSE_DENOMINATIONS,
+  dayCloseWindowIsEmpty,
   DAY_CLOSE_MAX_COUNT,
   sumDenominations,
   validOpeningFloat,
@@ -76,5 +77,42 @@ describe("validOpeningFloat", () => {
     for (const bad of [-1, 1.005, NaN, Infinity, "5", null, undefined, 1_000_001]) {
       expect(validOpeningFloat(bad)).toBe(false);
     }
+  });
+});
+
+describe("dayCloseWindowIsEmpty", () => {
+  const empty = {
+    salesCount: 0,
+    salesTotal: 0,
+    moneyIn: { cash: 0, card: 0, check: 0, other: 0, total: 0 },
+    refunds: {
+      count: 0,
+      cash: 0,
+      card: 0,
+      check: 0,
+      other: 0,
+      total: 0,
+      tenderKnown: true,
+      unknownTenderCount: 0,
+    },
+    storeCreditUsed: 0,
+    storeCreditIssued: { count: 0, amount: 0 },
+    onAccount: 0,
+    netCollected: 0,
+    notAtTill: 0,
+  };
+  it("is true only when nothing happened", () => {
+    expect(dayCloseWindowIsEmpty(empty)).toBe(true);
+    expect(dayCloseWindowIsEmpty({ ...empty, salesCount: 1 })).toBe(false);
+    expect(
+      dayCloseWindowIsEmpty({ ...empty, moneyIn: { ...empty.moneyIn, total: 5, cash: 5 } }),
+    ).toBe(false);
+    expect(dayCloseWindowIsEmpty({ ...empty, refunds: { ...empty.refunds, count: 1 } })).toBe(
+      false,
+    );
+    expect(dayCloseWindowIsEmpty({ ...empty, storeCreditIssued: { count: 1, amount: 3 } })).toBe(
+      false,
+    );
+    expect(dayCloseWindowIsEmpty({ ...empty, notAtTill: 2 })).toBe(false);
   });
 });

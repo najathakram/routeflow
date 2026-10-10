@@ -86,6 +86,14 @@ describe("readWindowFacts: what is sent", () => {
     expect(json(4)).toContain('"tenantId":"t-acme"');
   });
 
+  it("money in keeps the cash of an invoice written off later: only a VOID invoice drops its payments", async () => {
+    const { db, calls } = recorder();
+    await readWindowFacts(db, "t-acme", "main", window);
+    const where = JSON.stringify(calls[1].args.where);
+    expect(where).toContain('"status":{"not":"VOID"}');
+    expect(where).not.toContain("WRITTEN_OFF");
+  });
+
   it("the default register is matched with the null-key fallback on every query that reads orders", async () => {
     const { db, calls } = recorder();
     await readWindowFacts(db, "t-acme", "main", window);
