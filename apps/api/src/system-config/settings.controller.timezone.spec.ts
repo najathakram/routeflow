@@ -6,6 +6,7 @@ import { SettingsController } from "./settings.controller";
 import { SystemConfigService } from "./system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { quickKeysSettingsStubProvider } from "../testing/quick-keys-settings-stub";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { resetTenantZoneWarnings } from "../common/tenant-time-zone";
@@ -42,6 +43,7 @@ async function build(cfg: unknown, opts: { set?: jest.Mock } = {}) {
       { provide: ConfigService, useValue: { get: jest.fn() } },
       { provide: PrismaService, useValue: prisma },
       { provide: EmailService, useValue: { send: jest.fn() } },
+      quickKeysSettingsStubProvider,
     ],
   }).compile();
   return { c: m.get(SettingsController), prisma, tx, set };
@@ -273,6 +275,40 @@ describe("PATCH /settings: timezone writer (SA-738 R16-4)", () => {
       c.updateSettings({ city: "Austin", taxRate: 5, logoUrl: "logo.png" }, operator),
     ).rejects.toThrow("db down");
     expect(set).not.toHaveBeenCalled();
+  });
+
+  // SA-747 merge: quickKeys is validated BEFORE any write (a bad value rejects everything), then saved
+  // last with the other SystemConfig-side keys.
+  it("quickKeys is prepared before any write and saved only after the TenantConfig save", async () => {
+    const stub = quickKeysSettingsStubProvider.useValue;
+    const prepared = { pins: ["p1"] };
+    stub.prepare.mockResolvedValueOnce(prepared as never);
+    stub.save.mockClear();
+    const { c, tx, set } = await build({ timezone: "America/New_York" });
+    await c.updateSettings(
+      { timezone: "America/Chicago", taxRate: 5, quickKeys: { pins: ["p1"] } },
+      admin,
+    );
+    expect(stub.prepare.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.tenantConfig.upsert.mock.invocationCallOrder[0],
+    );
+    expect(stub.save).toHaveBeenCalledWith(prepared);
+    expect(stub.save.mock.invocationCallOrder[0]).toBeGreaterThan(
+      tx.tenantConfig.upsert.mock.invocationCallOrder[0],
+    );
+    expect(set).toHaveBeenCalledWith("settings.taxRate", "5");
+  });
+
+  it("a failed TenantConfig save leaves the validated quickKeys unsaved", async () => {
+    const stub = quickKeysSettingsStubProvider.useValue;
+    stub.prepare.mockResolvedValueOnce({ pins: ["p1"] } as never);
+    stub.save.mockClear();
+    const { c, tx } = await build({ timezone: "America/New_York" });
+    tx.tenantConfig.upsert.mockRejectedValue(new Error("db down"));
+    await expect(
+      c.updateSettings({ timezone: "America/Chicago", quickKeys: { pins: ["p1"] } }, admin),
+    ).rejects.toThrow("db down");
+    expect(stub.save).not.toHaveBeenCalled();
   });
 
   it("when everything succeeds taxRate and logoUrl are written after the TenantConfig save", async () => {

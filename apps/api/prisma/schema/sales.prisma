@@ -213,6 +213,9 @@ model Customer {
   creditHoldReason      String?
   creditHoldById        String?
   tenantId              String?
+  // Import marker (sitting 3, SA-741r2): which import batch created the row, and when. Nullable; no backfill.
+  importBatchId         String?
+  importedAt            DateTime?
 
   user                 User                     @relation(fields: [userId], references: [id])
   tenant               Tenant?                  @relation(fields: [tenantId], references: [id])
@@ -253,6 +256,7 @@ model Customer {
   @@index([businessName])
   @@index([customerType])
   @@index([tenantId])
+  @@index([tenantId, importBatchId])
   // Present in production but absent from this model, so Prisma treated it as
   // drift and a generated migration would have DROPped it.
   @@index([deletedAt])
@@ -653,10 +657,17 @@ model Order {
   // the unique constraint (Postgres treats NULLs as distinct, mirroring the
   // orderNumber unique below), so old clients that never send a key are unaffected.
   idempotencyKey         String?
+  // Sitting 3 (SA-741r2) seams, nullable and unread/unwritten until their code ships: a fingerprint of the cart behind
+  // the idempotency key, the register a counter sale rang on, and the staff user who rang it.
+  idempotencyCartHash    String?
+  registerKey            String?
+  soldById               String?
+  counterCashTendered    Decimal?    @db.Decimal(10, 2)
   createdAt              DateTime    @default(now())
   updatedAt              DateTime    @updatedAt
   tenantId               String?
 
+  soldBy               User?                 @relation("OrderSoldBy", fields: [soldById], references: [id], onDelete: SetNull)
   customer             Customer              @relation(fields: [customerId], references: [id])
   tenant               Tenant?               @relation(fields: [tenantId], references: [id])
   routeRun             RouteRun?             @relation(fields: [routeRunId], references: [id])
@@ -688,6 +699,9 @@ model Order {
   @@index([requestedDeliveryDate])
   @@index([orderDate])
   @@index([tenantId])
+  @@index([tenantId, counterSale, createdAt])
+  @@index([soldById])
+  @@index([tenantId, customerId, createdAt])
 }
 
 /// B215: one row per staff-merge Idempotency-Key. Written by
@@ -1119,6 +1133,8 @@ model Return {
   refundMethod String?
   refundAmount Decimal?     @db.Decimal(10, 2)
   refundedAt   DateTime?
+  // How the refund was paid out (sitting 3, SA-741r2): nullable, nothing reads or writes it yet.
+  refundTender PaymentMethod?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
   tenantId     String?
@@ -1565,4 +1581,60 @@ model CommissionPayout {
 
   @@index([statementId])
   @@index([tenantId])
+}
+
+/// Sitting 3 (SA-741r2), schema only: one closed counter day per (tenant, register, window). The cash drawer count
+/// and the day's totals are frozen at close; `reopenedAt` marks a close that was undone. Nothing reads or writes it yet.
+model CounterDayClose {
+  id            String    @id @default(uuid())
+  tenantId      String
+  registerKey   String    @default("main")
+  day           DateTime  @db.Date
+  zone          String
+  windowStart   DateTime
+  windowEnd     DateTime
+  closedAt      DateTime
+  closedById    String?
+  openingFloat  Decimal   @default(0) @db.Decimal(10, 2)
+  expectedCash  Decimal   @db.Decimal(10, 2)
+  countedCash   Decimal   @db.Decimal(10, 2)
+  variance      Decimal   @db.Decimal(10, 2)
+  denominations Json
+  totals        Json
+  notes         String?
+  reopenedAt    DateTime?
+  reopenedById  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  closedBy   User?  @relation("CounterDayCloseClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
+  reopenedBy User?  @relation("CounterDayCloseReopenedBy", fields: [reopenedById], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, registerKey, windowStart])
+  @@index([tenantId, day])
+}
+
+/// Sitting 3 (SA-741r2), schema only: a counter cart set aside ("parked") to serve another customer, resumable until
+/// `expiresAt`. `payload` is versioned by `payloadVersion`. Nothing reads or writes it yet.
+model CounterParkedCart {
+  id             String    @id @default(uuid())
+  tenantId       String
+  registerKey    String    @default("main")
+  createdById    String?
+  label          String
+  payload        Json
+  payloadVersion Int       @default(1)
+  createdAt      DateTime  @default(now())
+  expiresAt      DateTime
+  resumedAt      DateTime?
+  resumedById    String?
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy User?  @relation("CounterParkedCartCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  resumedBy User?  @relation("CounterParkedCartResumedBy", fields: [resumedById], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, registerKey, createdAt])
+  @@index([expiresAt])
+  @@index([resumedAt])
 }

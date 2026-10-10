@@ -71,6 +71,16 @@ export class CreateTenantDto {
   trialLengthDays?: number;
 
   @ApiPropertyOptional({
+    enum: ["trial", "active"],
+    description:
+      'How the tenant starts. "trial" requires trialLengthDays; "active" is activated by the caller ' +
+      "right after create, so the welcome email carries no trial line or Pay now link. Absent = legacy trial.",
+  })
+  @IsOptional()
+  @IsIn(["trial", "active"])
+  startMode?: "trial" | "active";
+
+  @ApiPropertyOptional({
     enum: TENANT_CLASS_VALUES,
     description:
       "Explicit tenant class override. Defaults to the slug's own classification " +

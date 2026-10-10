@@ -125,6 +125,7 @@ const MODEL_DOMAIN = {
   AuthHandoffCode: "tenancy",
   BuyerPasswordResetToken: "tenancy",
   BuyerEmailVerificationToken: "tenancy",
+  UserEmailVerificationToken: "tenancy",
   CustomerLink: "tenancy",
   BuyerMergeRequest: "tenancy",
 
@@ -192,6 +193,8 @@ const MODEL_DOMAIN = {
   CommissionStatement: "sales",
   CommissionStatementLine: "sales",
   CommissionPayout: "sales",
+  CounterDayClose: "sales",
+  CounterParkedCart: "sales",
 
   // ─── finance ───────────────────────────────────────────────────────────────
   Transaction: "finance",

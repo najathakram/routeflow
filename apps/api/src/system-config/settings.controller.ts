@@ -30,6 +30,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { FALLBACK_ZONE, TENANT_ZONE_SELECT, zoneFromConfig } from "../common/tenant-time-zone";
 import { changeTenantTimeZone, prepareTenantTimeZoneChange } from "./tenant-timezone.writer";
+import { QuickKeysSettingsService } from "./quick-keys-settings.service";
 
 // RF-213: serve under both /settings and /tenant/settings so the frontend
 // calling the latter doesn't get a 404 while the operator app uses /settings.
@@ -42,6 +43,7 @@ export class SettingsController {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly quickKeys: QuickKeysSettingsService,
   ) {}
 
   @Get()
@@ -125,6 +127,8 @@ export class SettingsController {
       invoiceNotes,
       invoiceTerms,
       timezone,
+      // SA-747: the counter quick keys (pins, hides, window, cap), defaults filled; a corrupt value is the defaults.
+      quickKeys: this.quickKeys.fromAll(all),
     };
   }
 
@@ -156,6 +160,11 @@ export class SettingsController {
     // before ANY field is written.
     const newZone =
       dto.timezone !== undefined ? prepareTenantTimeZoneChange(user, dto.timezone) : undefined;
+
+    // SA-747: `quickKeys` is validated (shape, caps, and that every id is this tenant's product) BEFORE any
+    // write of this request, so a bad value rejects the whole request and nothing is half-applied.
+    const quickKeys =
+      dto.quickKeys !== undefined ? await this.quickKeys.prepare(dto.quickKeys) : undefined;
 
     // ownerName, customerEmail, and address fields are stored in TenantConfig
     const tenantId = this.prisma.getTenantId();
@@ -226,6 +235,8 @@ export class SettingsController {
         .filter((k) => dto[k] !== undefined)
         .map((k) => this.svc.set(`settings.${k}`, String(dto[k]))),
     );
+    // SA-747: the quick keys are settings JSON too, so they follow the TenantConfig save as well.
+    if (quickKeys) await this.quickKeys.save(quickKeys);
 
     return this.getSettings();
   }
