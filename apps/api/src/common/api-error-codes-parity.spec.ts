@@ -245,9 +245,12 @@ const READ_ONLY_STATUS_FILES = [
   "apps/api/src/billing/mrr.service.ts",
   "apps/api/src/billing/subscription-mutation.service.ts",
   "apps/api/src/tenant/tenant-status.guard.ts",
+  "apps/api/src/buyer/buyer-capabilities.controller.ts", // SA-733r6: `sellerStatus !== "READ_ONLY"` (the seller's status), not the code
   // web: tenant STATUS checks (`status !== "READ_ONLY"`), not the error code
   "apps/web/app/(dashboard)/settings/billing/page.tsx",
   "apps/web/components/ReadOnlyBanner.tsx",
+  "apps/web/lib/read-only-gate.tsx", // SA-733r6: `view.status === "READ_ONLY"`
+  "apps/web/lib/subscription-banner-state.ts", // SA-733r6: `view.status === "READ_ONLY"`
 ];
 
 /**
