@@ -221,7 +221,7 @@ import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
 import { shippedPushCopy } from "./shipped-push-copy";
 import { attachInvoiceStages } from "./order-invoice-stage";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
-import { markSaleDelivered } from "./delivered-stamp";
+import { markLinesRecreated, markSaleDelivered, stampDeliveredAfterEdit } from "./delivered-stamp";
 import * as carrierGuard from "./order-carrier-guard";
 import {
   throwIfWithCarrier,
@@ -3193,7 +3193,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // buyer path. Drivers keep today's authoring behavior.
           // SA-422 (1): a buyer save never deletes the seller's CANCELLED rows (F07 reopen marks).
           const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items); // #2717 SA-591(b)
-          lineIdentity = "recreated";
+          lineIdentity = await markLinesRecreated(tx, orderId, heldItems); // SA-763r M2
           await tx.orderItem.deleteMany({
             where: {
               orderId,
@@ -3477,7 +3477,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // #2717 SA-591(b): a surviving FIXED line keeps its stamp + components (I11).
             const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items);
             if (opts?.isCreateMerge) markerCarry = await captureMarkerCarry(tx, orderId);
-            lineIdentity = "recreated";
+            lineIdentity = await markLinesRecreated(tx, orderId, heldItems); // SA-763r M2
             await tx.orderItem.deleteMany({ where: { orderId } });
             // R2: full replace — stamp position from the client's array order.
             let pos = 0;
@@ -4199,6 +4199,7 @@ export class OrdersService implements OnApplicationBootstrap {
           await creditGate();
         }
 
+        await stampDeliveredAfterEdit(tx, orderId, heldItems, lineIdentity); // SA-763r: DELIVERED only
         // Revert a CONFIRMED order back to PENDING when items are edited so the office
         // must re-confirm the updated pick list before dispatch. R1: scope this to a
         // CONFIRMED order whose run has NOT dispatched — once the run is out (dispatched
