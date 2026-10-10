@@ -112,6 +112,7 @@ export async function updateFulfillPathImpl(
     select: {
       id: true,
       status: true,
+      routeRunId: true,
       routeRunStopId: true,
       routeRunStop: {
         select: {
@@ -153,9 +154,19 @@ export async function updateFulfillPathImpl(
       }.`,
     );
   }
+  // B692 class: a PICKUP order that stays linked to a finished (COMPLETED / CANCELLED) run's stop is
+  // skipped by the later stock stamp, which excludes rows carrying a routeRunStopId, so a later quantity
+  // cut would restock what was never stamped. An active run was refused above; so the link left here is
+  // always a finished run's, and the switch lets go of it in the same write.
+  const releaseRun =
+    dto.fulfillPath === FulfillPath.PICKUP &&
+    (order.routeRunId != null || order.routeRunStopId != null);
   return self.prisma.forTenant().order.update({
     where: { id: orderId },
-    data: { fulfillPath: dto.fulfillPath },
+    data: {
+      fulfillPath: dto.fulfillPath,
+      ...(releaseRun ? { routeRunId: null, routeRunStopId: null } : {}),
+    },
   });
 }
 

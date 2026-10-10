@@ -98,6 +98,50 @@ describe("OrdersService.updateFulfillPath: switch to PICKUP", () => {
     expect(h.prisma.order.update).toHaveBeenCalledTimes(1);
   });
 
+  // B692 class: a PICKUP order left linked to a finished run's stop is skipped by the later stock stamp
+  // (it excludes rows carrying a routeRunStopId), so a later quantity cut would restock what was never
+  // stamped. The switch lets go of the finished run's link in the same write.
+  it.each(["COMPLETED", "CANCELLED"])(
+    "a switch off a %s run clears routeRunId AND routeRunStopId in the same write",
+    async (runStatus) => {
+      open({
+        routeRunId: "run-1",
+        routeRunStopId: "stop-1",
+        routeRunStop: { routeRun: { status: runStatus, driver: null } },
+      });
+      await toPickup();
+      expect(h.prisma.order.update).toHaveBeenCalledWith({
+        where: { id: "ord-1" },
+        data: { fulfillPath: "PICKUP", routeRunId: null, routeRunStopId: null },
+      });
+    },
+  );
+
+  it("an order with no run link is written exactly as before: the path alone", async () => {
+    open();
+    await toPickup();
+    expect(h.prisma.order.update).toHaveBeenCalledWith({
+      where: { id: "ord-1" },
+      data: { fulfillPath: "PICKUP" },
+    });
+  });
+
+  it("only a switch TO pickup lets go of the finished run: SHIP and ROUTE keep the link as today", async () => {
+    for (const fulfillPath of ["SHIP", "ROUTE"]) {
+      h.prisma.order.update.mockClear();
+      open({
+        routeRunId: "run-1",
+        routeRunStopId: "stop-1",
+        routeRunStop: { routeRun: { status: "COMPLETED", driver: null } },
+      });
+      await h.service.updateFulfillPath("ord-1", { fulfillPath } as any, operatorPayload as any);
+      expect(h.prisma.order.update).toHaveBeenCalledWith({
+        where: { id: "ord-1" },
+        data: { fulfillPath },
+      });
+    }
+  });
+
   it("SHIP on an active run is still refused with the shipping wording; ROUTE is still allowed there", async () => {
     open({
       routeRunStopId: "stop-1",
