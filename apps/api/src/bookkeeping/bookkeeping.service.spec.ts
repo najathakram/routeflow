@@ -432,6 +432,50 @@ describe("BookkeepingService", () => {
     });
   });
 
+  // ─── SA-770: an overpaid open invoice never makes an overdue figure negative ──
+  describe("getCustomerBalanceSummary — per-customer overdue is clamped (SA-770)", () => {
+    const PAST = new Date("2020-01-01T00:00:00.000Z");
+    const FUTURE = new Date("2099-01-01T00:00:00.000Z");
+    const customer = { id: "c1", businessName: "Acme", contactName: null, phone: null };
+    const inv = (id: string, total: number, paid: number, dueDate: Date, status = "SENT") => ({
+      id,
+      customerId: "c1",
+      customer,
+      status,
+      total,
+      dueDate,
+      payments: paid ? [{ amount: paid, status: "PAID" }] : [],
+    });
+    const run = async (rows: any[]) => {
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      prisma.invoice.findMany.mockResolvedValue(rows);
+      const res: any = await service.getCustomerBalanceSummary();
+      return res.data[0];
+    };
+
+    it("an overpaid open past-due invoice contributes 0, not a negative", async () => {
+      const row = await run([inv("over", 100, 110, PAST)]);
+      expect(row.overdue).toBe(0);
+    });
+
+    it("a mix: only the genuinely overdue invoice counts (before the fix: 50 - 10 = 40)", async () => {
+      const row = await run([inv("over", 100, 110, PAST), inv("owes", 50, 0, PAST, "OVERDUE")]);
+      expect(row.overdue).toBe(50);
+    });
+
+    it("overdue is the sum of the POSITIVE balances of open past-due invoices, in cents", async () => {
+      const row = await run([
+        inv("a", 0.1, 0, PAST),
+        inv("b", 0.2, 0, PAST),
+        inv("partial", 100, 40, PAST, "PARTIAL"),
+        inv("exact", 80, 80, PAST),
+        inv("over", 30, 90, PAST),
+        inv("not-due", 500, 0, FUTURE),
+      ]);
+      expect(row.overdue).toBe(60.3);
+    });
+  });
+
   // ─── P5-12: VOID payments must never count as money received ────────────────
 
   describe("P5-12 — VOID payments excluded from bookkeeping money figures", () => {

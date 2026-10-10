@@ -41,16 +41,29 @@ const OTHER_READERS: Record<string, string> = {
  * with P-3: clamp with max(0, ...) or move onto one shared overdue rule.
  */
 const FOLLOW_UP_READERS: Record<string, string> = {
-  "customers/customers.service.ts":
-    "statement overdueAmount (~:456/:1203) sums total - paid per row, so an overpaid row goes negative; also the advance-apply status write (balance-aware)",
-  "bookkeeping/bookkeeping.service.ts":
-    "per-customer aging `overdue += bal` (~:1735-1738) can go negative for an overpaid row (the summary count above it IS on the shared predicate)",
   "buyer/buyer.controller.ts":
     "getAnalytics (~:1196) classifies overdue by status/date and sums total, not balance; needs the gross-vs-balance SA ruling",
   "buyer/buyer-dashboard.service.ts":
     "dashboard unpaid strip (~:176) mirrors getAnalytics (gross total over the open statuses); same ruling",
   "import/import-payment-status.ts":
     "Zoho import status rule: OVERDUE only when nothing is confirmed-paid, paid >= total is PAID (already balance-aware)",
+};
+
+/**
+ * Readers whose overdue FIGURE sums a per-invoice balance: each contribution is clamped at max(0,
+ * roundMoney(balance)), so an overpaid open invoice can never make the figure negative (the selection of
+ * which invoices count is unchanged). The spec asserts the clamp is still in the source.
+ */
+const BALANCE_CLAMPED: Record<string, { clamp: RegExp; reason: string }> = {
+  "customers/customers.service.ts": {
+    clamp: /Math\.max\(0, roundMoney\(Number\(i\.total\) - i\.amountPaid\)\)/g,
+    reason:
+      "statement overdueAmount, both the buyer's (getMyStatement) and the operator's statement",
+  },
+  "bookkeeping/bookkeeping.service.ts": {
+    clamp: /Math\.max\(0, roundMoney\(bal\)\)/g,
+    reason: "per-customer aging (getCustomerBalanceSummary) `overdue`",
+  },
 };
 
 const CUTOFF_READER = [
@@ -100,6 +113,7 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
       ...Object.keys(USES_SQL_PREDICATE),
       ...Object.keys(OTHER_READERS),
       ...Object.keys(FOLLOW_UP_READERS),
+      ...Object.keys(BALANCE_CLAMPED),
     ]);
     const unknown = readers.filter((f) => !known.has(f));
     expect(unknown).toEqual([]); // route it through invoice-balance-sql.ts, or list it with a reason
@@ -111,6 +125,14 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
       expect(fs.existsSync(path.join(SRC_ROOT, rel))).toBe(true);
     },
   );
+
+  it.each(Object.entries(BALANCE_CLAMPED))("%s clamps its overdue contributions at 0", (rel, c) => {
+    const src = stripComments(fs.readFileSync(path.join(SRC_ROOT, rel), "utf8"));
+    expect(src.match(c.clamp)?.length ?? 0).toBeGreaterThanOrEqual(1);
+    if (rel.startsWith("customers/")) expect(src.match(c.clamp)).toHaveLength(2); // both statements
+    // the raw, unclamped accumulations are gone
+    expect(src).not.toMatch(/overdue\s*\+=\s*bal/);
+  });
 
   it.each(Object.keys(USES_SQL_PREDICATE))("%s imports the shared SQL predicate", (rel) => {
     const src = stripComments(fs.readFileSync(path.join(SRC_ROOT, rel), "utf8"));
