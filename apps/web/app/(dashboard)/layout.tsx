@@ -39,6 +39,7 @@ import { PortalSwitchLink } from "@/components/PortalSwitchLink";
 import { setLastPortalCookie } from "@/lib/presence-cookies";
 import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
+import { ReadOnlyGateProvider } from "@/lib/read-only-gate";
 import { BillingShellBanner } from "@/components/BillingShellBanner";
 import { subscriptionPollInterval } from "@/lib/subscription-banner-state";
 import { useSubscription } from "@/lib/api/billing";
@@ -1385,7 +1386,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           tabIndex={-1}
           className="flex-1 focus:outline-none overflow-x-hidden overflow-y-auto bg-surface-raised pb-24"
         >
-          {children}
+          <ReadOnlyGateProvider view={subscriptionStatus}>{children}</ReadOnlyGateProvider>
         </main>
         {/* Persistent parked-draft dock (pos-cost-roles-spec §2) — bottom-left of
             the content area, every operator screen; resume/discard + scan-to-draft. */}
