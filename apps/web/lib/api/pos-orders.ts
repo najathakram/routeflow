@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { usePreferences } from "@/lib/api/users";
 import type { Order } from "@/lib/api/orders";
+import { PREF } from "@routeflow/types";
 
 /**
  * POS mode (SA-763r P-2): a staff order created with `fulfillPath: PICKUP` from Create Order.
@@ -16,13 +17,6 @@ export function isPosOrder(
 ): boolean {
   return order?.fulfillPath === "PICKUP" && order?.counterSale !== true;
 }
-
-/**
- * The per-user preference key. TODO(P-1a): move into `@routeflow/types` PREF / PREFERENCE_KEYS when the API
- * allow-list lands it (users.controller.preferences.spec pins the three lists set-equal, so adding it to
- * the shared list alone would turn that spec red). Until then the API answers 400 for the unknown key.
- */
-export const POS_MODE_PREF_KEY = "orders.posMode";
 
 export interface PosModeState {
   /** The switch position. Seeded from GET /users/me/preferences, then follows the operator's flips. */
@@ -45,10 +39,10 @@ export function usePosMode(): PosModeState {
   const save = useMutation<unknown, Error, boolean>({
     meta: { localErrorToast: true }, // the switch renders its own inline failure
     mutationFn: (next) =>
-      apiClient.patch("/users/me/preferences", { [POS_MODE_PREF_KEY]: next ? "true" : "false" }),
+      apiClient.patch("/users/me/preferences", { [PREF.ordersPosMode]: next ? "true" : "false" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["user-preferences"] }),
   });
-  const seeded = prefs.data?.[POS_MODE_PREF_KEY] === "true";
+  const seeded = prefs.data?.[PREF.ordersPosMode] === "true";
   return {
     posMode: override ?? seeded,
     known: prefs.isSuccess || prefs.isError,
