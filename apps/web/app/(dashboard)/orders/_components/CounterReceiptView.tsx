@@ -66,6 +66,7 @@ export function CounterReceiptView({
           <p data-testid="receipt-date">{m.dateLabel}</p>
         )}
         {reprintedBy ? <p data-testid="receipt-reprinted-by">Reprinted by {reprintedBy}</p> : null}
+        {m.customerName ? <p data-testid="receipt-customer">Customer: {m.customerName}</p> : null}
         {m.cashier ? <p data-testid="receipt-cashier">Cashier: {m.cashier}</p> : null}
       </div>
       <ul className="divide-y text-sm">
@@ -145,10 +146,16 @@ export function CounterReceiptView({
             <dd>-{money(m.discounts)}</dd>
           </div>
         ) : null}
-        {m.adjustment !== 0 ? (
-          <div className="flex justify-between" data-testid="receipt-adjustment">
+        {m.tax !== 0 ? (
+          <div className="flex justify-between" data-testid="receipt-tax">
             <dt>{adjustmentLabel(m.taxRatePercent)}</dt>
-            <dd>{money(m.adjustment)}</dd>
+            <dd>{money(m.tax)}</dd>
+          </div>
+        ) : null}
+        {m.adjustments !== 0 ? (
+          <div className="flex justify-between" data-testid="receipt-adjustment">
+            <dt>Adjustments</dt>
+            <dd>{money(m.adjustments)}</dd>
           </div>
         ) : null}
         <div className="flex justify-between text-lg font-semibold" data-testid="receipt-total">
@@ -198,6 +205,15 @@ export function CounterReceiptView({
           </div>
         ) : null}
       </dl>
+      {m.footer ? (
+        // SA-762r: the footer is the business's own text: a React text node (escaped), never markup
+        <p
+          className="whitespace-pre-line break-words text-center text-sm text-navy/70 print:text-black"
+          data-testid="receipt-footer"
+        >
+          {m.footer}
+        </p>
+      ) : null}
     </div>
   );
 }

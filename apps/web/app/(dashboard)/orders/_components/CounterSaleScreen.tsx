@@ -60,6 +60,7 @@ import {
   writeAutoPrint,
   writeHeldAttempt,
 } from "@/lib/counter-sale";
+import type { ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { CounterReceiptBody } from "./CounterReceiptBody";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
@@ -266,7 +267,7 @@ export function CounterSaleScreen() {
   }, [receipt, refocus]);
 
   const isWalkIn = customer === null;
-  const { data: settings } = useQuery<{ taxRate?: number; timezone?: string | null }>({
+  const { data: settings } = useQuery<ReceiptBusinessProfile>({
     queryKey: ["settings"],
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
     staleTime: 60_000,
@@ -763,6 +764,7 @@ export function CounterSaleScreen() {
           enteredTender={enteredTender}
           profile={settings}
           fallbackMethod={method}
+          customerName={customer?.businessName}
           headingRef={receiptHeadingRef}
         />
         <div className="flex flex-wrap gap-2 print:hidden">

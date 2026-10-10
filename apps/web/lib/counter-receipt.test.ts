@@ -127,14 +127,14 @@ describe("buildCounterReceipt", () => {
     expect(formatReceiptMoney(0)).toBe("$0.00");
   });
 
-  it("subtotal + adjustment reconcile to the server total, also for a repriced sale", () => {
+  it("subtotal + adjustments reconcile to the server total, also for a repriced sale", () => {
     const same = build({ total: 22.5 });
     expect(same.subtotal).toBe(22.5);
-    expect(same.adjustment).toBe(0);
+    expect(same.adjustments).toBe(0);
     const repriced = build({ total: 24.75, paid: 24.75 });
     expect(repriced.subtotal).toBe(22.5);
-    expect(repriced.adjustment).toBe(2.25);
-    expect(roundMoney(repriced.subtotal + repriced.adjustment)).toBe(repriced.total);
+    expect(repriced.adjustments).toBe(2.25);
+    expect(roundMoney(repriced.subtotal + repriced.adjustments)).toBe(repriced.total);
   });
 
   it("falls back to the rung method when the response has none; carries the cashier", () => {

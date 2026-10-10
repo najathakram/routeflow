@@ -40,6 +40,8 @@ export interface ReceiptBusinessProfile {
   taxRate?: number;
   /** IANA zone of the business (`GET /settings`): the live receipt reads the sale time in it */
   timezone?: string | null;
+  /** SA-762r: the business's receipt footer (`GET /settings` `receiptFooter`; server-stripped). Printed as plain text only. */
+  receiptFooter?: string | null;
 }
 
 export interface CounterReceiptLine {
@@ -71,8 +73,10 @@ export interface CounterReceiptModel {
   subtotal: number;
   /** POS-5: the sum of the edited lines' discounts (0 = no `Discounts` row) */
   discounts: number;
-  /** server total minus the client subtotal (tax, a re-price, a credit): 0 = hide the row */
-  adjustment: number;
+  /** the order's tax (live: the settings rate when it explains the whole difference): 0 = hide the Tax row */
+  tax: number;
+  /** server total minus the net subtotal minus `tax` (a re-price, a credit, regulated tax): 0 = hide the Adjustments row */
+  adjustments: number;
   total: number;
   paid: number;
   balanceDue: number;
@@ -85,13 +89,20 @@ export interface CounterReceiptModel {
   tenderedAsEntered: boolean;
   change: number | null;
   changeAsEntered: boolean;
-  /** the sale's single stored tax rate in percent (8.25 = 8.25%), only when it explains `adjustment`; else null */
+  /** the sale's single stored tax rate in percent (8.25 = 8.25%), only when it explains `tax`; else null */
   taxRatePercent: number | null;
+  /** SA-762r: the customer's name, only for a named customer (null for a walk-in): printed in the receipt's header block */
+  customerName: string | null;
+  /** SA-762r: the business's receipt footer, trimmed, or null. Plain text: the view renders it as a React text node. */
+  footer: string | null;
 }
 
-/** The adjustment row's label: "Tax (8.25%)" when one stored rate explains it, else "Tax and adjustments". */
+/**
+ * The ONE formatter of the Tax row's label, live and reprint alike: "Tax (8.25%)" when one rate explains the tax, else
+ * plain "Tax" (a reprint whose rate is unknown, or a rate that does not account for the stored tax).
+ */
 export const adjustmentLabel = (taxRatePercent: number | null | undefined): string =>
-  taxRatePercent == null ? "Tax and adjustments" : `Tax (${Number(taxRatePercent.toFixed(3))}%)`;
+  taxRatePercent == null ? "Tax" : `Tax (${Number(taxRatePercent.toFixed(3))}%)`;
 
 /** Sign first: a downward reprice reads "-$1.00", never "$-1.00". */
 export const formatReceiptMoney = (n: number): string =>
@@ -133,12 +144,18 @@ export function receiptHeader(profile: ReceiptBusinessProfile | null | undefined
   };
 }
 
+/** The footer as printed: trimmed; blank = none. (The server already stripped control characters.) */
+const receiptFooterOf = (profile: ReceiptBusinessProfile | null | undefined): string | null =>
+  clean(profile?.receiptFooter) || null;
+
 export function buildCounterReceipt(input: {
   receipt: CounterSaleResponse;
   lines: readonly ReceiptLineInput[];
   /** the method the clerk rang, used when the response does not echo one */
   fallbackMethod?: CounterSalePaymentMethod;
   cashier?: string | null;
+  /** SA-762r: the named customer; omit (or pass a walk-in's null) and no customer line prints */
+  customerName?: string | null;
   /** set only for a recovered cash sale: what the clerk entered (the server stores no cash tendered) */
   enteredTender: number | null;
   profile: ReceiptBusinessProfile | null | undefined;
@@ -200,6 +217,12 @@ export function buildCounterReceipt(input: {
   });
   const netSubtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
   const discounts = roundMoney(rows.reduce((sum, r) => sum + r.discount, 0));
+  // The response carries no tax figure, so the live receipt names the settings rate only when it explains the WHOLE
+  // difference between the server total and the lines (Tax (8.25%)); anything else prints as Adjustments, never as tax.
+  const difference = roundMoney(receipt.total - netSubtotal) || 0; // never -0
+  const rate = profile?.taxRate ?? 0;
+  const rateExplains =
+    rate > 0 && difference !== 0 && difference === roundMoney((netSubtotal * rate) / 100);
 
   return {
     header: receiptHeader(profile),
@@ -211,7 +234,8 @@ export function buildCounterReceipt(input: {
     cashier: clean(input.cashier) || null,
     subtotal: roundMoney(netSubtotal + discounts),
     discounts,
-    adjustment: roundMoney(receipt.total - netSubtotal),
+    tax: rateExplains ? difference : 0,
+    adjustments: rateExplains ? 0 : difference,
     total: receipt.total,
     paid: receipt.paid,
     balanceDue: receipt.balanceDue,
@@ -224,7 +248,9 @@ export function buildCounterReceipt(input: {
     tenderedAsEntered,
     change,
     changeAsEntered,
-    taxRatePercent: null,
+    taxRatePercent: rateExplains ? rate : null,
+    customerName: clean(input.customerName) || null,
+    footer: receiptFooterOf(profile),
   };
 }
 
@@ -232,6 +258,8 @@ export function buildCounterReceipt(input: {
 export interface ReprintOrderLike {
   orderNumber: string;
   total: number;
+  /** the order's stored tax (`GET /orders/:id`); absent on an old fixture: then nothing is called tax */
+  tax?: number | null;
   lineItems: ReadonlyArray<{
     id: string;
     name?: string | null;
@@ -263,6 +291,8 @@ export interface ReprintSaleFacts {
   cashTendered?: number | null;
   /** the sale's single stored tax rate in percent (the row's `taxRatePercent`); null/absent: no rate known */
   taxRatePercent?: number | null;
+  /** the row's customer name; null/absent for a walk-in (the row's `isWalkIn`): no customer line prints */
+  customerName?: string | null;
   /** IANA zone the sale time is read in (the server's `meta.timezone`) */
   timezone?: string;
 }
@@ -343,13 +373,12 @@ export function receiptModelFromOrder(input: {
   const hasTender = sale.methods.length > 0;
   const { paid, balanceDue } = sale;
   const onAccount = !hasTender && balanceDue > 0;
-  const adjustment = roundMoney(order.total - subtotal);
+  const tax = roundMoney(order.tax ?? 0);
+  const adjustments = roundMoney(order.total - subtotal - tax) || 0; // never -0
   const rate = sale.taxRatePercent;
-  // Name the rate only when it accounts for the whole adjustment (a re-price or credit must not read as tax).
+  // Name the rate only when it accounts for the stored tax (a re-price or credit must not read as tax); else plain "Tax".
   const taxRatePercent =
-    rate != null && adjustment !== 0 && adjustment === roundMoney((subtotal * rate) / 100)
-      ? rate
-      : null;
+    rate != null && tax !== 0 && tax === roundMoney((subtotal * rate) / 100) ? rate : null;
   const cashApplied = roundMoney(
     sale.methods.filter((m) => m.method === "CASH").reduce((sum, m) => sum + m.amount, 0),
   );
@@ -363,7 +392,8 @@ export function receiptModelFromOrder(input: {
     lines: rows,
     cashier: clean(input.cashier) || null,
     subtotal,
-    adjustment,
+    tax,
+    adjustments,
     discounts: 0,
     total: order.total,
     paid,
@@ -380,5 +410,7 @@ export function receiptModelFromOrder(input: {
     change: tendered == null ? null : Math.max(0, roundMoney(tendered - cashApplied)),
     changeAsEntered: false,
     taxRatePercent,
+    customerName: clean(sale.customerName) || null,
+    footer: receiptFooterOf(profile),
   };
 }

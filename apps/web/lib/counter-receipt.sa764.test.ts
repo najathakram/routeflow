@@ -4,11 +4,13 @@ const reprint = (
   total: number,
   facts: { cashTendered?: number | null; taxRatePercent?: number | null },
   methods: Array<{ method: "CASH" | "CARD"; amount: number }>,
+  tax?: number,
 ) =>
   receiptModelFromOrder({
     order: {
       orderNumber: "ORD-1",
       total,
+      tax,
       lineItems: [{ id: "l1", name: "Cola", qty: 4, unitPrice: 10 }],
     },
     sale: {
@@ -43,15 +45,17 @@ describe("SA-764 reprint: Tendered / Change and Tax (r%)", () => {
       expect(m.change).toBeNull();
     }
   });
-  it("names the rate when one stored rate explains the adjustment", () => {
-    const m = reprint(43.3, { taxRatePercent: 8.25 }, [{ method: "CARD", amount: 43.3 }]);
+  it("names the rate when one stored rate explains the order's tax", () => {
+    const m = reprint(43.3, { taxRatePercent: 8.25 }, [{ method: "CARD", amount: 43.3 }], 3.3);
+    expect(m.tax).toBe(3.3);
+    expect(m.adjustments).toBe(0);
     expect(m.taxRatePercent).toBe(8.25);
     expect(adjustmentLabel(m.taxRatePercent)).toBe("Tax (8.25%)");
   });
-  it("keeps 'Tax and adjustments' for a null rate, or a rate that does not explain the adjustment", () => {
-    expect(adjustmentLabel(null)).toBe("Tax and adjustments");
-    expect(reprint(43.3, { taxRatePercent: null }, []).taxRatePercent).toBeNull();
-    expect(reprint(45, { taxRatePercent: 8.25 }, []).taxRatePercent).toBeNull();
+  it("prints plain 'Tax' for a null rate, or a rate that does not explain the stored tax", () => {
+    expect(adjustmentLabel(null)).toBe("Tax");
+    expect(reprint(43.3, { taxRatePercent: null }, [], 3.3).taxRatePercent).toBeNull();
+    expect(reprint(45, { taxRatePercent: 8.25 }, [], 5).taxRatePercent).toBeNull();
   });
   it("prints a whole-number rate without trailing zeros", () => {
     expect(adjustmentLabel(8)).toBe("Tax (8%)");

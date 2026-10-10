@@ -43,7 +43,6 @@ export const VOID_REASON_MIN = 3;
 export const VOID_REASON_MAX = 200;
 export const VOID_REASON_REQUIRED_COPY = "Enter a reason of at least 3 characters.";
 
-// eslint-disable-next-line no-control-regex
 const CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]/g;
 
 /** The reason as it is sent. */
