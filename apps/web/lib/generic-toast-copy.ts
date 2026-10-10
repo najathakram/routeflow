@@ -36,6 +36,10 @@ const CODE_COPY: Record<string, string> = {
   MERGE_PACK_MISMATCH:
     "The pack size on this order no longer matches the product. Refresh and review the line.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
+  ORDER_EDIT_WOULD_OVERPAY:
+    "This change would leave an invoice paid beyond its new total. If the goods came back, record a return instead of cutting the order.",
+  ORDER_BILLING_CHANGED:
+    "This order's billing changed while you were working on it. Refresh and try again.",
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
   ORDER_WITH_CARRIER_NO_CANCEL:
     "This order is already with the carrier. Use a return instead of cancelling.",

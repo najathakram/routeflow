@@ -49,7 +49,7 @@ const SWEPT_TENANT_STATUSES = ["TRIAL", "ACTIVE"] as const;
 
 /**
  * The invoice statuses the sweep may flip: issued and UNPAID only. PARTIAL is deliberately absent
- * (#2556 B2): `recomputeInvoiceStatus` keeps a part-paid invoice PARTIAL, so flipping it here
+ * (#2556 B2): `statusFromPayments` keeps a part-paid invoice PARTIAL, so flipping it here
  * would flip-flop on every payment and move it into sets that exclude PARTIAL on purpose (the
  * order-edit revert set, bookkeeping's "UNPAID" filter).
  */

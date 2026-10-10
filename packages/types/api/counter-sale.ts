@@ -219,6 +219,12 @@ export interface TodaysSalesSummary {
    * day 1's. (`sales` stays "rung this day".) `other` is ACH / Zelle / other recorded against a counter invoice.
    */
   moneyIn: { cash: number; card: number; check: number; other: number; total: number };
+  /**
+   * The "Hand-overs" line: the tenders of POS-mode pickup hand-overs (a named customer's order handed over at
+   * the till) that came in this day. Already INCLUDED in `moneyIn` and `cashExpectedInDrawer`; a counter sale is
+   * never counted here. `count` is hand-overs (orders), `total` the money.
+   */
+  handOvers: { count: number; total: number };
   /** credit-note and advance applications dated inside the day: NOT money in */
   storeCreditUsed: number;
   /** this day's sales total minus everything paid on those sales (any payment date, store credit included), never below 0 */
