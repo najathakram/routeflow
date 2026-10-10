@@ -17,6 +17,8 @@ jest.mock("../notifications/notifications.service", () => ({
 import { BadRequestException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { OrdersController } from "./orders.controller";
+import { OrderBatchShipService } from "./order-batch-ship";
+import { PackingSlipService } from "./packing-slip.service";
 import { OrdersService } from "./orders.service";
 import { ChangeRequestsService } from "./change-requests.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -70,6 +72,8 @@ describe("OrdersController — merge choice vs orderDate", () => {
       providers: [
         { provide: OrdersService, useValue: ordersService },
         { provide: ChangeRequestsService, useValue: {} },
+        { provide: OrderBatchShipService, useValue: {} },
+        { provide: PackingSlipService, useValue: {} },
       ],
     }).compile();
 
@@ -135,5 +139,53 @@ describe("OrdersController — merge choice vs orderDate", () => {
       operatorPayload,
       { skipAutoMerge: true },
     );
+  });
+
+  // Wiring pins (one predicate, merge-candidates.ts): every merge-target search passes `mergeAs`, so the
+  // incoming order's fulfil path decides which open order it may fold into.
+  it("the pre-merge candidate search AND its in-lock re-read both pass mergeAs (the request's own path)", async () => {
+    await controller.create(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 1 }],
+        mergeChoice: "merge",
+        fulfillPath: "SHIP",
+      } as any,
+      operatorPayload,
+    );
+    const calls = ordersService.findActiveOrder.mock.calls;
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const [, opts] of calls)
+      expect(opts).toEqual({ forMerge: true, mergeAs: { explicit: "SHIP" } });
+  });
+
+  it("M2: a driver's post-create sweep folds only the NEW order's path (focusOrderId)", async () => {
+    await controller.create(
+      { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }] } as any,
+      { ...operatorPayload, sub: "user-drv", role: "DRIVER" } as JwtPayload,
+    );
+    expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledWith(
+      "cust-1",
+      { buyerInitiated: false, focusOrderId: "ord-new" },
+      expect.anything(),
+    );
+  });
+
+  it("GET /orders/active takes the order's path and searches as create would (omitted = the customer's own)", async () => {
+    await controller.getActiveOrderForCustomer("cust-1", "SHIP");
+    expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
+      forMerge: true,
+      mergeAs: { explicit: "SHIP" },
+    });
+    await controller.getActiveOrderForCustomer("cust-1");
+    expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
+      forMerge: true,
+      mergeAs: { explicit: undefined },
+    });
+    await controller.getActiveOrderForCustomer("cust-1", "garbage");
+    expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
+      forMerge: true,
+      mergeAs: { explicit: undefined },
+    });
   });
 });

@@ -89,6 +89,7 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["CHANGE_REQUEST_STATUS_VALUES", "ChangeRequestStatus"],
   ["ITEM_STATUS_VALUES", "ItemStatus"],
   ["PAYMENT_METHOD_VALUES", "PaymentMethod"],
+  ["FULFILL_PATH_VALUES", "FulfillPath"],
   ["RECURRING_FREQUENCY_VALUES", "RecurringFrequency"],
   ["MOVEMENT_TYPE_VALUES", "MovementType"],
   ["CRM_CONNECTION_STATUS_VALUES", "CrmConnectionStatus"],
@@ -152,6 +153,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["EMAIL_DELIVERY_STATUS_VALUES", "EmailDeliveryStatus"],
   // #2717 M3 (SA-572): CompositionMode, mirrored immediately — see the triage tripwire below.
   ["COMPOSITION_MODE_VALUES", "CompositionMode"],
+  // Per-operator feature groups: a brand-new Prisma enum, mirrored immediately — see the triage tripwire below.
+  ["OPERATOR_PERMISSION_GROUP_VALUES", "OperatorPermissionGroup"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -259,7 +262,12 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for CompositionMode (#2717 M3, SA-572): brand-new enum, mirrored as `COMPOSITION_MODE_VALUES` + its
 // `ENUM_TABLE` row (109 → 110); the SA-603 bundle's two (EmailDeliveryStatus, PolicyScopeType) follow (110 → 112).
 // Triage for HandoffRealm (#2653, landed on master): mirrored as `HANDOFF_REALM_VALUES` (112 → 113 once merged with the bundle).
-const PINNED_PRISMA_ENUM_COUNT = 113;
+// Triage for FulfillPath (SA-650): an existing enum gaining PICKUP — a value, not a new enum, so the count stays 113;
+// mirrored as `FULFILL_PATH_VALUES` + its `ENUM_TABLE` row.
+// Triage for OperatorPermissionGroup (per-operator feature groups): a brand-new Prisma enum (migration
+// 20261009120000_operator_permission_groups), mirrored as `OPERATOR_PERMISSION_GROUP_VALUES` + its `ENUM_TABLE`
+// row above; verified via `node apps/api/scripts/split-prisma-schema.mjs --check` (113 → 114).
+const PINNED_PRISMA_ENUM_COUNT = 114;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

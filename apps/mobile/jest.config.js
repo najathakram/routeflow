@@ -51,6 +51,9 @@ module.exports = {
     // lib/internal-email.ts re-exports the SUBPATH module — resolve that one to
     // SOURCE, same as pricing/scanning/returns.
     "^@routeflow/types/internal-email$": "<rootDir>/../../packages/types/internal-email.ts",
+    // SA-714: the pure staff "Backorder" tag rule, same subpath trick (the package root is stubbed).
+    "^@routeflow/types/order-line-backorder$":
+      "<rootDir>/../../packages/types/order-line-backorder.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
     // #2653: the shell bridge is pure TS (zod only) — resolve it to SOURCE, ahead of the ui stub.
     "^@routeflow/ui/shell-bridge$": "<rootDir>/../../packages/ui/src/shell-bridge.ts",

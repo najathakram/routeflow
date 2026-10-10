@@ -21,11 +21,14 @@ import {
 } from "../../../../../lib/api/admin";
 import { resolveScanSellLevel } from "@routeflow/scanning";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import { decideScanResult, promptText, runScanDecision } from "../../../../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../../../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../../../../lib/use-scan-match-picker";
 import { levelsForScan } from "../../../../../lib/wedge-scan";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../../lib/loose-units";
 import { useUpdateInvoice } from "../../../../../lib/api/invoices";
-import { alertInfo } from "../../../../../lib/confirm";
+import { alertInfo, confirm } from "../../../../../lib/confirm";
 import { ISO_DATE } from "../../../../../lib/invoice-terms";
 import {
   computeInvoiceTotals,
@@ -41,6 +44,7 @@ import {
   packFromOwnSplit,
   type SellLevel,
 } from "@routeflow/pricing";
+import { scanHaptic } from "../../../../../lib/haptics";
 import { showToast } from "../../../../../lib/toast";
 import {
   hasUnsavedInvoiceLineEdits,
@@ -124,6 +128,8 @@ export default function EditInvoiceScreen() {
   const [notes, setNotes] = useState("");
   const [terms, setTerms] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [scanPromptOpen, setScanPromptOpen] = useState(false);
+  const matchPicker = useScanMatchPicker<AdminProduct>();
 
   // Hydrate once per invoice id — refetches must not clobber in-progress edits.
   const hydratedFor = useRef<string | null>(null);
@@ -266,12 +272,22 @@ export default function EditInvoiceScreen() {
       if (result.archived) {
         return { feedback: { kind: "error", text: archivedMessage(result.product) } };
       }
-      if (!result.notFound) {
-        addCatalogLine(
-          result.product,
-          resolveScanSellLevel(result.product, levelsForScan(trimmed, result.product)),
-        );
-        return { feedback: { kind: "added", text: `${result.product.name} added` } };
+      const decision = decideScanResult(result, "add");
+      // B1220: a lone fuzzy match asks first, 2+ matches open a list; neither adds unprompted.
+      if (
+        runScanDecision(
+          decision,
+          (p) => addCatalogLine(p, resolveScanSellLevel(p, levelsForScan(trimmed, p))),
+          confirm,
+          { pick: matchPicker.open, onPromptChange: setScanPromptOpen },
+        )
+      ) {
+        if (decision.kind === "add") {
+          return { feedback: { kind: "added", text: `${decision.product.name} added` } };
+        }
+        // A confirm/picker prompt is not a failure: neutral haptic, not the error buzz.
+        scanHaptic("info");
+        return { feedback: { kind: "info", text: promptText(decision) } };
       }
     } catch {
       // network error → fall through to the toast
@@ -468,6 +484,7 @@ export default function EditInvoiceScreen() {
   }
   if (
     isPendingOrderMirror({
+      pendingMirror: invoice.pendingMirror,
       orderId: invoice.orderId,
       deliveryBatchId: invoice.deliveryBatchId,
       orderStatus: invoice.order?.status,
@@ -618,7 +635,8 @@ export default function EditInvoiceScreen() {
           onSelect={addCatalogLine}
         />
       </FormSheet>
-      <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} />
+      <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} paused={scanPromptOpen} />
+      <ScanMatchPickerSheet {...matchPicker.props} />
     </>
   );
 }

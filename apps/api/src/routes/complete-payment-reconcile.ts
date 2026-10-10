@@ -1,5 +1,7 @@
 import { InvoiceStatus, OrderStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
+import { lockOrderRows } from "../credit-notes/credit-note-locks";
+import { assertDeliveriesFitStop } from "./delivery-lines.util";
 
 export interface StopReconcileDeps {
   // Structurally matches InvoicesService itself — callers pass the service instance
@@ -8,7 +10,30 @@ export interface StopReconcileDeps {
     tx: any,
     orderIds: string[],
     reconcileOrderIds: string[],
+    userId?: string,
   ): Promise<void>;
+}
+
+/**
+ * SA-706c: the FIRST statements of `completeWithPayment`'s transaction. The stop's Orders are locked
+ * FOR UPDATE, id-ordered, BEFORE any write: the delivery-mutation insert below takes an FK KEY SHARE
+ * on its Order, the invoice create (createInvoiceFromOrder with this tx) takes another, and settle's
+ * Order lock then upgrades it, so a concurrent partial / split create or Mark Delivered on one of the
+ * same orders could otherwise deadlock (40P01). Tenant-less on purpose: the ids come from the
+ * caller's tenant-scoped stop read. Then the delivery-fit assertion (a read) runs as before.
+ */
+export async function lockStopOrdersAndFit(
+  tx: any,
+  stopId: string,
+  stopOrders: ReadonlyArray<{ id: string }>,
+  deliveries: Parameters<typeof assertDeliveriesFitStop>[3],
+): Promise<void> {
+  await lockOrderRows(
+    tx,
+    null,
+    stopOrders.map((o) => o.id),
+  );
+  await assertDeliveriesFitStop(tx, stopId, stopOrders, deliveries);
 }
 
 /**
@@ -28,6 +53,7 @@ export async function reconcileDeliveredStopOrders(
   tx: any,
   stopOrders: ReadonlyArray<{ id: string; status: OrderStatus }>,
   deliveredOrderIdSet: ReadonlySet<string>,
+  userId?: string,
 ): Promise<string[]> {
   const deliveredOrderIds = stopOrders
     // DELIVERED stays in (the office may have marked it already; it keeps its invoice), but a
@@ -35,7 +61,12 @@ export async function reconcileDeliveredStopOrders(
     .filter((o) => o.status !== OrderStatus.CANCELLED && o.status !== OrderStatus.DRAFT)
     .map((o) => o.id);
   if (deliveredOrderIds.length > 0) {
-    await deps.reconcileDeliveredOrdersInTx(tx, deliveredOrderIds, Array.from(deliveredOrderIdSet));
+    await deps.reconcileDeliveredOrdersInTx(
+      tx,
+      deliveredOrderIds,
+      Array.from(deliveredOrderIdSet),
+      userId,
+    );
   }
   return deliveredOrderIds;
 }

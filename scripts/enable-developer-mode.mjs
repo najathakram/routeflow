@@ -33,6 +33,11 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { isTestTenant } from "./lib/test-tenants.cjs";
+import guardLib from "../apps/api/scripts/lib/live-target-guard.cjs";
+import protectedSlugsLib from "../apps/api/scripts/lib/protected-slugs.cjs";
+
+const { assertWritableTenant, ProtectedTenantError } = guardLib;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 const DEVELOPER_MODE_ADDON = "developer_mode";
 
@@ -71,6 +76,19 @@ if (!dbUrl) {
   process.exit(1);
 }
 
+// Row 195: a LIVE (non-test) slug must not be a protected tenant (paying, Stripe-linked or
+// env-listed). The list is loaded ONCE, before connecting, from the URL this script dials; approved
+// test tenants keep their behaviour. There is no override: a protected tenant is refused.
+let protectedSlugs = null;
+if (liveSlugs.length > 0) {
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, dbUrl);
+  } catch (err) {
+    console.error(`${err.message} Nothing was written.`);
+    process.exit(1);
+  }
+}
+
 const pool = new Pool({ connectionString: dbUrl });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
@@ -92,8 +110,24 @@ function confirm(question) {
  * Stripe subscription item should ever be created for it.
  */
 async function planForSlug(slug) {
-  const tenant = await prisma.tenant.findUnique({ where: { slug }, select: { id: true } });
+  const tenant = await prisma.tenant.findUnique({
+    where: { slug },
+    select: { id: true, slug: true, status: true, class: true, deletedAt: true },
+  });
   if (!tenant) return { slug, action: "missing" };
+
+  if (protectedSlugs && !isTestTenant(slug)) {
+    const sub = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenant.id },
+      select: { planKey: true, stripeSubId: true },
+    });
+    try {
+      assertWritableTenant(tenant, sub, protectedSlugs);
+    } catch (err) {
+      if (!(err instanceof ProtectedTenantError)) throw err;
+      return { slug, tenantId: tenant.id, action: "protected" };
+    }
+  }
 
   const existing = await prisma.tenantAddon.findUnique({
     where: { tenantId_addonKey: { tenantId: tenant.id, addonKey: DEVELOPER_MODE_ADDON } },
@@ -137,15 +171,25 @@ async function main() {
     const label =
       e.action === "missing"
         ? "tenant not found — will skip"
-        : e.action === "already-active"
-          ? "already active — no change"
-          : e.action === "reactivate"
-            ? "addon row exists but inactive — will activate"
-            : "no addon row — will create (active)";
+        : e.action === "protected"
+          ? "protected tenant (paying, Stripe-linked or env-listed) — refused, will skip"
+          : e.action === "already-active"
+            ? "already active — no change"
+            : e.action === "reactivate"
+              ? "addon row exists but inactive — will activate"
+              : "no addon row — will create (active)";
     console.log(`  • ${e.slug}: ${label}`);
   }
 
   const todo = entries.filter((e) => e.action === "create" || e.action === "reactivate");
+  const refusedProtected = entries.filter((e) => e.action === "protected");
+  if (refusedProtected.length > 0) {
+    console.error(
+      `\nprotected-tenant guard: refused ${refusedProtected.length} tenant(s) ` +
+        `(ids: ${refusedProtected.map((e) => e.tenantId).join(", ")}); nothing is written for them.`,
+    );
+    process.exitCode = 1;
+  }
 
   if (!execute) {
     console.log(

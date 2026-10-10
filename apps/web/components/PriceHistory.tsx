@@ -446,6 +446,7 @@ function Panel({
   anchor,
   onClose,
   onUsePrice,
+  excludeOrderId,
 }: {
   customerId: string;
   customerName?: string | null;
@@ -456,12 +457,14 @@ function Panel({
   anchor: HTMLElement;
   onClose: (reason: CloseReason) => void;
   onUsePrice: (price: number) => void;
+  excludeOrderId?: string | null;
 }) {
   const [compare, setCompare] = React.useState(false);
   // Two requests, so a failed or slow comparison never takes the customer's own rows away: the base
-  // history is always shown; `?compare=all` is a separate query that only adds the aggregate.
-  const q = usePriceHistory(customerId, productId, true);
-  const cmp = usePriceHistory(customerId, productId, compare, 25, true);
+  // history is always shown; `?compare=all` is a separate query that only adds the aggregate. Both
+  // leave the order being edited out of the history (hunt2 F6).
+  const q = usePriceHistory(customerId, productId, true, 25, excludeOrderId);
+  const cmp = usePriceHistory(customerId, productId, compare, 25, excludeOrderId, true);
   const shown = q.data
     ? { ...q.data, aggregate: compare ? (cmp.data?.aggregate ?? null) : undefined }
     : undefined;
@@ -533,6 +536,7 @@ export function PriceHistoryButton({
   onUsePrice,
   focusSelector,
   className,
+  excludeOrderId,
 }: {
   customerId?: string | null;
   customerName?: string | null;
@@ -546,12 +550,14 @@ export function PriceHistoryButton({
   /** The price input to refocus on close (searched within the row / container); defaults to the first input beside the button. */
   focusSelector?: string;
   className?: string;
+  /** The order being edited (order-edit screen): its own price is not history (hunt2 F6). */
+  excludeOrderId?: string | null;
 }) {
   const [anchor, setAnchor] = React.useState<HTMLButtonElement | null>(null);
   const [open, setOpen] = React.useState(false);
   const ready = !!customerId && !!productId;
   const slot = useAutoFetchSlot(customerId, productId);
-  usePrefetchPriceHistory(customerId, productId, 25, slot);
+  usePrefetchPriceHistory(customerId, productId, 25, slot, excludeOrderId);
 
   // Alt+H from the price field (or anywhere on the line) opens the panel.
   React.useEffect(() => {
@@ -628,6 +634,7 @@ export function PriceHistoryButton({
           anchor={anchor}
           onClose={close}
           onUsePrice={onUsePrice}
+          excludeOrderId={excludeOrderId}
         />
       )}
     </>
@@ -645,15 +652,17 @@ export function PriceChips({
   unitHint,
   packHint,
   onUsePrice,
+  excludeOrderId,
 }: {
   customerId?: string | null;
   productId?: string | null;
   unitHint?: string | null;
   packHint?: number | null;
   onUsePrice: (price: number) => void;
+  excludeOrderId?: string | null;
 }) {
   const slot = useAutoFetchSlot(customerId, productId);
-  const q = usePriceHistory(customerId, productId, slot);
+  const q = usePriceHistory(customerId, productId, slot, 25, excludeOrderId);
   const all = q.data?.rows ?? [];
   const unitCount = new Set(all.map((r) => r.unitLabel.trim().toLowerCase())).size;
   const rows = all

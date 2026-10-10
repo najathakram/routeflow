@@ -110,9 +110,9 @@ export class CreateOrderDto {
    */
   @IsOptional() @IsEnum(["merge", "separate"]) mergeChoice?: "merge" | "separate";
   /**
-   * Ad-hoc trips + fulfillment mode: how this order is delivered. Omit to fall
-   * back to the customer's own default (`create()` resolves
-   * `dto.fulfillPath ?? customer.fulfillPath ?? ROUTE`).
+   * Ad-hoc trips + fulfillment mode: how this order is delivered. Omit to fall back to the
+   * customer's own default. The DTO accepts every FulfillPath; `create()` resolves it against the
+   * business's capability (fulfil-path-resolver.ts), which refuses PICKUP where pickup is not offered.
    */
   @IsOptional()
   @IsEnum(FulfillPath)

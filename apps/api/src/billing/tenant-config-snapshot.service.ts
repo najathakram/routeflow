@@ -321,6 +321,10 @@ export class TenantConfigSnapshotService {
     });
     if (claimed.count === 0) return null;
 
+    // Config rows (fulfilment_model / counter_sales included) are restored inside the caller's own plan
+    // transaction and deliberately OUTSIDE the per-tenant settings lock that set() / clear() and the tenant
+    // Settings PATCH take: a restore may not wait on, or hold, that lock mid-plan-change. Against a
+    // concurrent settings write the last writer wins.
     for (const entry of plan.configs.create) {
       bounds?.withinBudget();
       // upsert on the (tenantId, featureKey) unique key: a concurrent writer that created the row

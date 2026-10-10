@@ -484,3 +484,16 @@ describe("NewOrderScreen resume wiring (W/N, B747)", () => {
     );
   });
 });
+
+describe("decideResumeLine refuses a FAMILY container", () => {
+  it("drops a parked line whose product is a FAMILY (never queued from a restored draft)", () => {
+    expect(decideResumeLine({ ok: true, product: { id: "f1", kind: "FAMILY" } })).toEqual({
+      product: null,
+      failed: false,
+    });
+  });
+  it("keeps a variant or plain product", () => {
+    const v = { id: "v1", kind: "VARIANT" };
+    expect(decideResumeLine({ ok: true, product: v }).product).toBe(v);
+  });
+});

@@ -3,6 +3,7 @@ import { setTenantCookie, clearTenantCookie } from "./tenant-cookie";
 import { OP_KEYS } from "./auth-keys";
 import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 import { getImpersonation, clearImpersonation } from "./impersonation";
+import { clearAllLiveCarts } from "./counter-live-cart-keys";
 
 export { OP_PRESENCE_COOKIE, clearOpPresenceCookie } from "./presence-cookies";
 
@@ -113,6 +114,7 @@ export async function logout(): Promise<void> {
   clearOpPresenceCookie();
   clearTenantCookie();
   clearImpersonation();
+  clearAllLiveCarts(); // an unfinished counter sale never outlives its cashier's session
   window.location.href = "/login";
 }
 

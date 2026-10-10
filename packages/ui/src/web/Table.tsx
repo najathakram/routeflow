@@ -61,6 +61,8 @@ export function Table<TData>({
                     key={header.id}
                     className={cn(
                       "group px-4 py-3 text-left font-medium text-navy/70 whitespace-nowrap",
+                      (header.column.columnDef.meta as { className?: string } | undefined)
+                        ?.className,
                       canSort && "cursor-pointer select-none hover:text-navy transition-colors",
                     )}
                     onClick={header.column.getToggleSortingHandler()}
@@ -136,7 +138,13 @@ export function Table<TData>({
                 onClick={() => onRowClick?.(row)}
               >
                 {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="px-4 py-3 text-navy">
+                  <td
+                    key={cell.id}
+                    className={cn(
+                      "px-4 py-3 text-navy",
+                      (cell.column.columnDef.meta as { className?: string } | undefined)?.className,
+                    )}
+                  >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}

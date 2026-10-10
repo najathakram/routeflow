@@ -72,8 +72,12 @@ const clientLikeProviders = () =>
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
 
-async function failBulkCancel(status: number) {
-  mockPatch.mockRejectedValue({ response: { status, data: { message: "RAW server text" } } });
+async function failBulkCancel(status: number, code?: string) {
+  mockPatch.mockRejectedValue({ response: { status, data: { message: "RAW server text", code } } });
+  await clickBulkCancel();
+}
+
+async function clickBulkCancel() {
   renderWithProviders(<OrdersPage />, { queryClient: clientLikeProviders() });
   fireEvent.click(screen.getByRole("button", { name: "Select" }));
   fireEvent.click(screen.getAllByRole("checkbox")[0]);
@@ -98,4 +102,28 @@ describe("OrdersPage — bulk cancel failure shows ONE summary toast (REG-B1006)
       expect(mockToast.mock.calls.map((c) => c[0].title)).toEqual(["Failed to cancel some orders"]);
     },
   );
+});
+
+describe("OrdersPage — bulk cancel names the orders with the carrier (#3219 follow-up)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("both orders refused with ORDER_WITH_CARRIER_NO_CANCEL: one toast naming the carrier and the count", async () => {
+    await failBulkCancel(409, "ORDER_WITH_CARRIER_NO_CANCEL");
+    expect(mockToast.mock.calls.map((c) => c[0].title)).toEqual([
+      "2 orders are with the carrier and can't be cancelled",
+    ]);
+    expect(mockToast.mock.calls[0][0].variant).toBe("error");
+  });
+
+  it("one refused (carrier), one other failure: the carrier count plus the rest", async () => {
+    mockPatch
+      .mockRejectedValueOnce({
+        response: { status: 409, data: { code: "ORDER_WITH_CARRIER_NO_CANCEL" } },
+      })
+      .mockRejectedValueOnce({ response: { status: 500, data: { message: "boom" } } });
+    await clickBulkCancel();
+    expect(mockToast.mock.calls.map((c) => c[0].title)).toEqual([
+      "1 order is with the carrier and can't be cancelled; 1 other failed to cancel",
+    ]);
+  });
 });

@@ -26,6 +26,7 @@ export const priceHistoryKey = (
   customerId: string | null | undefined,
   productId: string | null | undefined,
   limit: number,
+  excludeOrderId?: string | null,
   compare = false,
 ) =>
   [
@@ -35,14 +36,28 @@ export const priceHistoryKey = (
     productId,
     "price-history",
     limit,
+    excludeOrderId ?? null,
     ...(compare ? (["compare"] as const) : []),
   ] as const;
 
-/** `compare` adds `?compare=all`: the server then returns the anonymous other-customers `aggregate`. */
-const fetchPriceHistory = (customerId: string, productId: string, limit: number, compare = false) =>
+/**
+ * `excludeOrderId`: the order being edited, so its own price is never shown as history (hunt2 F6).
+ * `compare` adds `?compare=all`: the server then returns the anonymous other-customers `aggregate`.
+ */
+const fetchPriceHistory = (
+  customerId: string,
+  productId: string,
+  limit: number,
+  excludeOrderId?: string | null,
+  compare = false,
+) =>
   apiClient
     .get(`/customers/${customerId}/products/${productId}/price-history`, {
-      params: { limit, ...(compare ? { compare: "all" } : {}) },
+      params: {
+        limit,
+        ...(excludeOrderId ? { excludeOrderId } : {}),
+        ...(compare ? { compare: "all" } : {}),
+      },
     })
     .then((r) => r.data as PriceHistoryResponse);
 
@@ -51,11 +66,12 @@ export function usePriceHistory(
   productId: string | null | undefined,
   enabled: boolean,
   limit = 25,
+  excludeOrderId?: string | null,
   compare = false,
 ) {
   return useQuery<PriceHistoryResponse>({
-    queryKey: priceHistoryKey(customerId, productId, limit, compare),
-    queryFn: () => fetchPriceHistory(customerId!, productId!, limit, compare),
+    queryKey: priceHistoryKey(customerId, productId, limit, excludeOrderId, compare),
+    queryFn: () => fetchPriceHistory(customerId!, productId!, limit, excludeOrderId, compare),
     enabled: enabled && !!customerId && !!productId,
     staleTime: 30_000,
     retry: false,
@@ -105,14 +121,15 @@ export function usePrefetchPriceHistory(
   productId: string | null | undefined,
   limit = 25,
   enabled = true,
+  excludeOrderId?: string | null,
 ) {
   const qc = useQueryClient();
   React.useEffect(() => {
     if (!enabled || !customerId || !productId) return;
     void qc.prefetchQuery({
-      queryKey: priceHistoryKey(customerId, productId, limit),
-      queryFn: () => fetchPriceHistory(customerId, productId, limit),
+      queryKey: priceHistoryKey(customerId, productId, limit, excludeOrderId),
+      queryFn: () => fetchPriceHistory(customerId, productId, limit, excludeOrderId),
       staleTime: 30_000,
     });
-  }, [qc, customerId, productId, limit, enabled]);
+  }, [qc, customerId, productId, limit, enabled, excludeOrderId]);
 }
