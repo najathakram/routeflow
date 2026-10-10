@@ -8,11 +8,27 @@
 // A workspace whose campaign report is missing/partial/stale (`campaign-check --print-stale`) is
 // added to a scoped run so its tests execute — see scripts/lib/verify-scope.mjs `withStale`.
 // CI's full run is the authority.
+//
+// FAST VERIFY (owner ruling 2026-10-10, "Fast local check, full in CI"): when the pre-push hook has
+// exported RF_VERIFY_MODE=fast (scripts/verify-mode.mjs decides: not CI, not master/detached,
+// FULL_VERIFY unset) the plan keeps check-types + lint for the affected scope but runs Jest with
+// `--changedSince=<merge-base with origin/master>` — only the tests related to the diff. The two
+// always-run tripwires stay FULL (`@routeflow/pricing` tests, api `test:repo-truth`). CI, master,
+// FULL_VERIFY=1 and a bare `npm run verify` (no RF_VERIFY_MODE) are byte-identical to before. See
+// `planTurboCalls({ fast })`, `argvForCall` and `chooseRunMode` below.
 import { cpus as osCpus, totalmem } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { spawnAsync, withHeavySlot } from "./lib/heavy-slot.mjs";
-import { decideScope, loadWorkspaces } from "./lib/verify-scope.mjs";
+import {
+  FAST_VERIFY_BANNER,
+  currentBranch,
+  decideScope,
+  isFastMode,
+  loadWorkspaces,
+  mergeBaseSha,
+  wantsFastVerify,
+} from "./lib/verify-scope.mjs";
 import { prismaPreflight } from "./lib/prisma-fresh.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -51,9 +67,21 @@ export function buildTurboFlags(verifyConcurrency) {
 }
 
 /** `[]` (byte-identical to no passthrough at all) when unset; `["--", "--maxWorkers=<n>"]`
- *  when set — the `--` must be the LAST thing before it on the argv, after every turbo flag. */
-export function jestPassthrough(jestMaxWorkers) {
-  return jestMaxWorkers ? ["--", `--maxWorkers=${jestMaxWorkers}`] : [];
+ *  when set — the `--` must be the LAST thing before it on the argv, after every turbo flag.
+ *  FAST VERIFY adds `--changedSince=<sha> --passWithNoTests` (jest-only flags: a workspace with no
+ *  related test must pass, not exit 1 "No tests found"); `changedSince` must be a 40-hex sha. */
+export function jestPassthrough(jestMaxWorkers, changedSince) {
+  const flags = [];
+  if (jestMaxWorkers) flags.push(`--maxWorkers=${jestMaxWorkers}`);
+  if (changedSince) {
+    if (!/^[0-9a-f]{40}$/.test(changedSince)) {
+      throw new Error(
+        `verify: refusing a non-sha --changedSince base ${JSON.stringify(String(changedSince).slice(0, 60))}`,
+      );
+    }
+    flags.push(`--changedSince=${changedSince}`, "--passWithNoTests");
+  }
+  return flags.length ? ["--", ...flags] : [];
 }
 
 /** Pure argv builder (no spawn) so a self-test can assert the exact command line for every
@@ -120,8 +148,9 @@ export function excludedLine(excluded) {
  *    workspace is left that call is skipped; the api `test:repo-truth` tripwire is skipped only if
  *    api itself is excluded. `note` is set when no call is left at all.
  */
-export function planTurboCalls({ scope, excluded = [], splitJest }) {
+export function planTurboCalls({ scope, excluded = [], splitJest, fast = false }) {
   const drop = new Set(excluded);
+  if (fast) return planFastCalls({ scope, drop, excluded });
   if (scope.mode === "full") {
     const negatives = excluded.map((name) => `--filter=!${name}`);
     return splitJest
@@ -161,6 +190,79 @@ export function planTurboCalls({ scope, excluded = [], splitJest }) {
       ? null
       : `nothing left to verify after the exclusions (${excluded.join(", ")}) — no turbo calls`,
   };
+}
+
+/**
+ * FAST VERIFY plan (owner 2026-10-10). Same scope selection as above, but jest is never bundled with
+ * tsc/eslint and only the `test` task of the NON-tripwire workspaces is narrowed:
+ *   1. check-types + lint              — exactly the affected-scope call (no jest flags ever);
+ *   2. `test` with `changedSince: true` — the related-only run (main appends --changedSince=<sha>);
+ *   3. `@routeflow/pricing` `test`      — the cross-workspace tripwire stays FULL;
+ *   4. api `test:repo-truth`            — the structural-pin tripwire stays FULL.
+ * `changedSince` is set on call 2 ONLY — never on a `jest: false` call and never on a tripwire.
+ */
+const PRICING = "@routeflow/pricing";
+function planFastCalls({ scope, drop, excluded }) {
+  const API = "@routeflow/api";
+  const calls = [];
+  if (scope.mode === "full") {
+    const negatives = excluded.map((name) => `--filter=!${name}`);
+    calls.push({ jest: false, args: ["check-types", "lint", ...negatives] });
+    // "only negative filters = everything except those": all workspaces but pricing (its own full call).
+    calls.push({
+      jest: true,
+      changedSince: true,
+      args: ["test", `--filter=!${PRICING}`, ...negatives],
+    });
+    if (!drop.has(PRICING)) calls.push({ jest: true, args: ["test", `--filter=${PRICING}`] });
+    calls.push({ jest: true, args: ["test:repo-truth", ...negatives] });
+    return { calls, note: null };
+  }
+  const selected = scope.workspaces.filter((w) => !drop.has(w));
+  const filters = selected.map((w) => `--filter=${w}`);
+  const related = selected.filter((w) => w !== PRICING).map((w) => `--filter=${w}`);
+  if (filters.length) calls.push({ jest: false, args: ["check-types", "lint", ...filters] });
+  if (related.length) calls.push({ jest: true, changedSince: true, args: ["test", ...related] });
+  if (selected.includes(PRICING)) calls.push({ jest: true, args: ["test", `--filter=${PRICING}`] });
+  if (!drop.has(API)) calls.push({ jest: true, args: ["test:repo-truth", `--filter=${API}`] });
+  return {
+    calls,
+    note: calls.length
+      ? null
+      : `nothing left to verify after the exclusions (${excluded.join(", ")}) — no turbo calls`,
+  };
+}
+
+/**
+ * The argv of one planned call (pure). jest calls get the `--` passthrough (`--maxWorkers` when set,
+ * `--changedSince=<sha> --passWithNoTests` on a related-only call); `jest: false` calls (tsc/eslint)
+ * get NOTHING after the turbo flags, whatever else is configured.
+ */
+export function argvForCall(call, { turboFlags, jestMaxWorkers, changedSince }) {
+  if (!call.jest) return buildArgv(call.args, turboFlags);
+  return buildArgv(
+    call.args,
+    turboFlags,
+    jestPassthrough(jestMaxWorkers, call.changedSince ? changedSince : undefined),
+  );
+}
+
+/**
+ * Pure: may this run be FAST? `requested` = the explicit switch (RF_VERIFY_MODE=fast, already checked
+ * against CI/FULL_VERIFY by `isFastMode`) AND the branch policy; `mergeBase` = the sha the related-only
+ * filter needs. Requested but no merge-base -> FULL plan, with a loud message (never a silent narrow).
+ */
+export function chooseRunMode({ requested, mergeBase }) {
+  if (!requested) return { fast: false, changedSince: null, message: null };
+  if (!mergeBase) {
+    return {
+      fast: false,
+      changedSince: null,
+      message:
+        "FAST VERIFY UNAVAILABLE: cannot compute the merge-base with origin/master — falling back to the FULL plan (every test of the selected scope).",
+    };
+  }
+  return { fast: true, changedSince: mergeBase, message: FAST_VERIFY_BANNER };
 }
 
 /**
@@ -274,16 +376,24 @@ export async function main() {
   /** Like `turbo`, but for a jest-only task (`test`/`test:repo-truth`) — appends the
    *  `--maxWorkers` passthrough when `JEST_MAX_WORKERS` is set, appends nothing (byte-identical
    *  argv to plain `turbo`) when it is not. NEVER call this with `check-types`/`lint` in `args`. */
-  async function turboJest(args) {
+  async function turboJest(args, changedSince) {
     const r = await spawnAsync(
       "npx",
-      buildArgv(args, TURBO_FLAGS, jestPassthrough(JEST_MAX_WORKERS)),
+      buildArgv(args, TURBO_FLAGS, jestPassthrough(JEST_MAX_WORKERS, changedSince)),
       { cwd: ROOT, stdio: "inherit", shell: process.platform === "win32" },
     );
     return r.status ?? 1;
   }
 
   const scope = decideScope(ROOT);
+  // FAST VERIFY: the explicit switch (hook-exported RF_VERIFY_MODE=fast) + the branch policy + a
+  // computable merge-base. Anything else is the unchanged plan.
+  const runMode = chooseRunMode({
+    requested:
+      isFastMode(process.env) && wantsFastVerify({ env: process.env, branch: currentBranch(ROOT) }),
+    mergeBase: mergeBaseSha(ROOT),
+  });
+  if (runMode.message) console.log(runMode.message);
   let excluded;
   try {
     excluded = parseVerifyExclude(
@@ -318,7 +428,12 @@ export async function main() {
   // the jest run and hide its results from one push's report — a single bundled invocation gives the
   // unsplit path that property by itself. With JEST_MAX_WORKERS set the calls are split so the
   // --maxWorkers passthrough only ever reaches jest, never tsc/eslint. Exit = first non-zero status.
-  const plan = planTurboCalls({ scope, excluded, splitJest: Boolean(JEST_MAX_WORKERS) });
+  const plan = planTurboCalls({
+    scope,
+    excluded,
+    splitJest: Boolean(JEST_MAX_WORKERS),
+    fast: runMode.fast,
+  });
   if (plan.note) console.log(plan.note);
   // Fail fast BEFORE queueing for the slot: a generated Prisma client that predates this checkout's
   // schema folder otherwise surfaces ~45 min into the hold (api check-types + schema specs red).
@@ -337,7 +452,12 @@ export async function main() {
   // per host, FIFO, fail closed when the wait cap passes. Calls run strictly in order, awaited.
   const status = await withHeavySlot({ label: "verify" }, async () => {
     const statuses = [];
-    for (const c of plan.calls) statuses.push(await (c.jest ? turboJest(c.args) : turbo(c.args)));
+    for (const c of plan.calls)
+      statuses.push(
+        await (c.jest
+          ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
+          : turbo(c.args)),
+      );
     return statuses.find((s) => s !== 0) ?? 0;
   });
   process.exit(status);

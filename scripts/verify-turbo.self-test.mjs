@@ -17,6 +17,10 @@
  * S7: the hook wiring — no env var narrows the run, separate verified-tree markers, and
  *     package.json's verify chain goes through verify-turbo.mjs.
  * S10: the tmp-root containment check is portable (POSIX and Windows path shapes, via path.win32).
+ * FV: FAST VERIFY (owner 2026-10-10, "fast local check, full in CI") — mode selection, the FAST argv
+ *     (jest calls carry --changedSince=<sha>; tsc/eslint never do), the tripwires staying FULL, the
+ *     fall-back to the FULL plan without a merge-base, campaign-check's deferral only under the
+ *     explicit RF_VERIFY_MODE=fast, and the mode-suffixed verified-tree marker.
  */
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -25,19 +29,27 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path, { dirname, join } from "node:path";
 import {
+  FAST_VERIFY_BANNER,
   changedFilesSince,
   computeScope,
+  currentBranch,
   decideScope,
+  isFastMode,
   loadWorkspaces,
+  mergeBaseSha,
   shortName,
   staleWorkspaces,
+  wantsFastVerify,
   withStale,
 } from "./lib/verify-scope.mjs";
+import { resolveVerifyMode } from "./verify-mode.mjs";
 // Pure builders only — never `main`, which is side-effecting. Safe to import: verify-turbo.mjs's
 // direct-execution guard means importing it does NOT spawn turbo or call process.exit.
 import {
+  argvForCall,
   buildArgv,
   buildTurboFlags,
+  chooseRunMode,
   chooseVerifyDefaults,
   excludedLine,
   jestPassthrough,
@@ -1199,4 +1211,399 @@ check(
   ],
   [true, false, false],
 );
+
+// ---- FV: FAST VERIFY (owner ruling 2026-10-10, "Fast local check, full in CI") -------------------
+// A feature-branch push runs check-types + lint for the affected scope and ONLY the tests related to
+// the diff; CI (and master, FULL_VERIFY=1, a bare `npm run verify`) is the unchanged FULL plan.
+const SHA = "0123456789abcdef0123456789abcdef01234567";
+const PRICING = "@routeflow/pricing";
+const API = "@routeflow/api";
+const WEB = "@routeflow/web";
+
+// FV1: mode selection. The policy (wantsFastVerify) and the explicit switch (isFastMode) are separate:
+// the hook asks the policy and exports the switch; every consumer reads only the switch.
+check(
+  "FV1a policy: a feature branch with no env is FAST",
+  wantsFastVerify({ env: {}, branch: "feat/x" }),
+  true,
+);
+check(
+  "FV1b policy: CI -> not fast",
+  wantsFastVerify({ env: { CI: "true" }, branch: "feat/x" }),
+  false,
+);
+check(
+  "FV1c policy: FULL_VERIFY=1 -> not fast",
+  wantsFastVerify({ env: { FULL_VERIFY: "1" }, branch: "feat/x" }),
+  false,
+);
+check(
+  "FV1d policy: master / main / detached HEAD / unknown branch -> not fast",
+  ["master", "main", "HEAD", "", null, undefined].map((b) =>
+    wantsFastVerify({ env: {}, branch: b }),
+  ),
+  [false, false, false, false, false, false],
+);
+check(
+  "FV1e the switch: only an exact RF_VERIFY_MODE=fast (and never under CI / FULL_VERIFY=1)",
+  [
+    isFastMode({}),
+    isFastMode({ RF_VERIFY_MODE: "full" }),
+    isFastMode({ RF_VERIFY_MODE: "FAST" }),
+    isFastMode({ RF_VERIFY_MODE: "fast" }),
+    isFastMode({ RF_VERIFY_MODE: "fast", CI: "true" }),
+    isFastMode({ RF_VERIFY_MODE: "fast", FULL_VERIFY: "1" }),
+  ],
+  [false, false, false, true, false, false],
+);
+check(
+  "FV1f verify-mode: fast needs the policy AND a merge-base; anything else is full",
+  [
+    resolveVerifyMode({ env: {}, branch: "feat/x", mergeBase: SHA }),
+    resolveVerifyMode({ env: {}, branch: "feat/x", mergeBase: null }),
+    resolveVerifyMode({ env: { CI: "1" }, branch: "feat/x", mergeBase: SHA }),
+    resolveVerifyMode({ env: { FULL_VERIFY: "1" }, branch: "feat/x", mergeBase: SHA }),
+    resolveVerifyMode({ env: {}, branch: "master", mergeBase: SHA }),
+  ],
+  ["fast", "full", "full", "full", "full"],
+);
+{
+  // the real CLI, with the ambient switches stripped (this file runs inside the pre-push hook)
+  const baseEnv = { ...scrubbedGitEnv() };
+  for (const k of ["CI", "FULL_VERIFY", "RF_VERIFY_MODE"]) delete baseEnv[k];
+  const cli = (extraEnv, ...argv) =>
+    spawnSync(process.execPath, [join(ROOT, "scripts", "verify-mode.mjs"), ...argv], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: { ...baseEnv, ...extraEnv },
+    }).stdout.trim();
+  const canFast = mergeBaseSha(ROOT) !== null;
+  check(
+    "FV1g CLI: feature branch -> fast (when origin/master resolves); FULL_VERIFY=1 / CI / master -> full",
+    [
+      cli({}, "--branch", "feat/x"),
+      cli({ FULL_VERIFY: "1" }, "--branch", "feat/x"),
+      cli({ CI: "true" }, "--branch", "feat/x"),
+      cli({}, "--branch", "master"),
+    ],
+    [canFast ? "fast" : "full", "full", "full", "full"],
+  );
+}
+{
+  const m = mergeBaseSha(ROOT);
+  const b = currentBranch(ROOT);
+  check(
+    "FV1h mergeBaseSha is a 40-hex sha or null (null outside a repo); currentBranch a string or null",
+    [
+      m === null || /^[0-9a-f]{40}$/.test(m),
+      b === null || typeof b === "string",
+      mergeBaseSha(tmpdir()),
+    ],
+    [true, true, null],
+  );
+}
+
+// FV2: the FAST plan for a scoped diff (web only): types+lint call, related-only test call, then both
+// tripwires FULL. Real scope decision, nothing hand-typed beyond the diff.
+const fvScope = decideScope(
+  gitRoot,
+  { RF_VERIFY_MODE: "fast" },
+  { branch: "feat/x", files: ["apps/web/lib/a.ts"], stale: [] },
+);
+const fvPlan = planTurboCalls({ scope: fvScope, excluded: [], splitJest: false, fast: true });
+check(
+  "FV2a scoped FAST plan: types+lint, related tests (non-pricing), pricing FULL, repo-truth FULL",
+  fvPlan.calls,
+  [
+    { jest: false, args: ["check-types", "lint", `--filter=${PRICING}`, `--filter=${WEB}`] },
+    { jest: true, changedSince: true, args: ["test", `--filter=${WEB}`] },
+    { jest: true, args: ["test", `--filter=${PRICING}`] },
+    { jest: true, args: ["test:repo-truth", `--filter=${API}`] },
+  ],
+);
+check(
+  "FV2b changedSince is on the related-only `test` call and NOWHERE else (tripwires stay full)",
+  fvPlan.calls.filter((c) => c.changedSince).map((c) => c.args),
+  [["test", `--filter=${WEB}`]],
+);
+check(
+  "FV2c the related-only call never names @routeflow/pricing",
+  fvPlan.calls.filter((c) => c.changedSince).some((c) => c.args.includes(`--filter=${PRICING}`)),
+  false,
+);
+check(
+  "FV2d splitJest is irrelevant to the FAST plan (jest is never bundled with tsc/eslint)",
+  planTurboCalls({ scope: fvScope, excluded: [], splitJest: true, fast: true }).calls,
+  fvPlan.calls,
+);
+check(
+  "FV2e the check-types+lint call is EXACTLY the one the non-fast split plan makes",
+  fvPlan.calls[0],
+  planTurboCalls({ scope: fvScope, excluded: [], splitJest: true }).calls[0],
+);
+{
+  const fullScope = { mode: "full", reason: "package.json feeds every workspace" };
+  const fp = planTurboCalls({
+    scope: fullScope,
+    excluded: ["@routeflow/control"],
+    splitJest: false,
+    fast: true,
+  });
+  check(
+    "FV2f a FULL-scope diff in FAST mode: types+lint everywhere, related tests but pricing, tripwires full",
+    fp.calls,
+    [
+      { jest: false, args: ["check-types", "lint", "--filter=!@routeflow/control"] },
+      {
+        jest: true,
+        changedSince: true,
+        args: ["test", `--filter=!${PRICING}`, "--filter=!@routeflow/control"],
+      },
+      { jest: true, args: ["test", `--filter=${PRICING}`] },
+      { jest: true, args: ["test:repo-truth", "--filter=!@routeflow/control"] },
+    ],
+  );
+}
+check(
+  "FV2g fast omitted/false is the unchanged plan (CI / master / FULL_VERIFY=1 byte-identical)",
+  [
+    planTurboCalls({ scope: { mode: "full", reason: "CI" }, excluded: [], splitJest: false }),
+    planTurboCalls({ scope: fvScope, excluded: [], splitJest: false, fast: false }),
+  ],
+  [
+    {
+      calls: [{ jest: false, args: ["check-types", "lint", "test", "test:repo-truth"] }],
+      note: null,
+    },
+    planTurboCalls({ scope: fvScope, excluded: [], splitJest: false }),
+  ],
+);
+
+// FV3: argv. jest calls carry --changedSince=<sha> (+ --passWithNoTests) after `--`; tsc/eslint calls
+// never carry a `--` passthrough at all, even with JEST_MAX_WORKERS set.
+for (const jestMaxWorkers of ["", "3"]) {
+  const argvs = fvPlan.calls.map((c) =>
+    argvForCall(c, { turboFlags: FLAGS, jestMaxWorkers, changedSince: SHA }),
+  );
+  const tag = jestMaxWorkers ? "JEST_MAX_WORKERS=3" : "no worker cap";
+  check(
+    `FV3a (${tag}) tsc/eslint argv never carries a passthrough or any jest flag`,
+    argvs[0].includes("--") ||
+      argvs[0].some((a) => /changedSince|maxWorkers|passWithNoTests/.test(a)),
+    false,
+  );
+  check(
+    `FV3b (${tag}) related-only test argv: turbo flags first, jest passthrough last`,
+    argvs[1],
+    [
+      "turbo",
+      "run",
+      "test",
+      `--filter=${WEB}`,
+      ...FLAGS,
+      "--",
+      ...(jestMaxWorkers ? [`--maxWorkers=${jestMaxWorkers}`] : []),
+      `--changedSince=${SHA}`,
+      "--passWithNoTests",
+    ],
+  );
+  check(
+    `FV3c (${tag}) the tripwire argvs carry no --changedSince / --passWithNoTests`,
+    [argvs[2], argvs[3]].some((a) => a.some((x) => /changedSince|passWithNoTests/.test(x))),
+    false,
+  );
+}
+check(
+  "FV3d a non-sha changedSince is refused (no argv injection through the base)",
+  /refusing a non-sha/.test(thrown(() => jestPassthrough("", "HEAD~1; rm -rf")) ?? ""),
+  true,
+);
+check(
+  "FV3e jestPassthrough without changedSince is the pre-FAST value (WC4/WC5 unchanged)",
+  [jestPassthrough(""), jestPassthrough("4"), jestPassthrough("4", undefined)],
+  [[], ["--", "--maxWorkers=4"], ["--", "--maxWorkers=4"]],
+);
+
+// FV4: fall back to the FULL plan, loudly, when the merge-base cannot be computed.
+check(
+  "FV4a requested + merge-base -> fast, the banner line, changedSince = the sha",
+  chooseRunMode({ requested: true, mergeBase: SHA }),
+  { fast: true, changedSince: SHA, message: FAST_VERIFY_BANNER },
+);
+{
+  const lost = chooseRunMode({ requested: true, mergeBase: null });
+  check(
+    "FV4b requested but no merge-base -> NOT fast, no changedSince, a loud message",
+    [
+      lost.fast,
+      lost.changedSince,
+      /UNAVAILABLE/.test(lost.message) && /FULL plan/.test(lost.message),
+    ],
+    [false, null, true],
+  );
+}
+check(
+  "FV4c not requested -> not fast and silent (CI / master / FULL_VERIFY=1 print nothing new)",
+  chooseRunMode({ requested: false, mergeBase: SHA }),
+  { fast: false, changedSince: null, message: null },
+);
+check(
+  "FV4d the banner is the owner's one line",
+  FAST_VERIFY_BANNER,
+  "FAST VERIFY (owner 2026-10-10): types + lint for affected workspaces, related tests only; the full suite runs in CI. FULL_VERIFY=1 runs everything.",
+);
+
+// FV5: stale-report workspaces are NOT pulled in by a FAST run (they only fed campaign-check's report
+// coverage, which FAST defers); the same inputs without the switch still pull them in (SP1).
+{
+  const files = ["apps/web/lib/a.ts"];
+  const stale = ["@routeflow/api"];
+  const fast = decideScope(gitRoot, { RF_VERIFY_MODE: "fast" }, { branch: "feat/x", files, stale });
+  const slow = decideScope(gitRoot, {}, { branch: "feat/x", files, stale });
+  check(
+    "FV5a FAST: a stale api report does not add api to a web-only run",
+    [fast.workspaces.map(shortName), fast.stale],
+    [["pricing", "web"], []],
+  );
+  check(
+    "FV5b not FAST: the stale api report is still pulled in (unchanged)",
+    [slow.workspaces.map(shortName), slow.stale],
+    [["api", "pricing", "web"], ["@routeflow/api"]],
+  );
+  check(
+    "FV5c RF_VERIFY_MODE=fast under CI / FULL_VERIFY=1 is ignored (still full)",
+    [
+      decideScope(gitRoot, { RF_VERIFY_MODE: "fast", CI: "1" }, { branch: "feat/x", files }).reason,
+      decideScope(
+        gitRoot,
+        { RF_VERIFY_MODE: "fast", FULL_VERIFY: "1" },
+        { branch: "feat/x", files },
+      ).reason,
+    ],
+    ["CI", "FULL_VERIFY=1"],
+  );
+}
+
+// FV6: campaign-check defers ONLY report coverage, ONLY under the explicit switch. Real script, real
+// process, fixture ledger. (The "no switch" side is pinned structurally below: running it would make
+// campaign-check force a real turbo test run for the missing reports.)
+{
+  const dir = mkdtempSync(join(tmpdir(), "fast-verify-cc-"));
+  try {
+    const status = join(dir, "status");
+    const runs = join(dir, "runs");
+    mkdirSync(status);
+    mkdirSync(runs);
+    const row = (o) =>
+      JSON.stringify({ id: "B1", batch: "F01", tier: "T1", state: "proven", ...o });
+    writeFileSync(join(status, "F01.jsonl"), row({}) + "\n");
+    const env = { ...scrubbedGitEnv(), CAMPAIGN_CHECK_STATUS_DIR: status };
+    for (const k of ["CI", "FULL_VERIFY", "RF_VERIFY_MODE"]) delete env[k];
+    const run = (extra, ...argv) =>
+      spawnSync(
+        process.execPath,
+        [join(ROOT, "scripts", "campaign-check.mjs"), "--runs-dir", runs, ...argv],
+        { cwd: ROOT, encoding: "utf8", env: { ...env, ...extra } },
+      );
+    const DEFER = "campaign-check: report coverage deferred to CI (fast verify)";
+    const finalRun = run({ RF_VERIFY_MODE: "fast" });
+    check(
+      "FV6a fast: a T1 claim with NO report passes and says coverage is deferred to CI",
+      [finalRun.status, finalRun.stdout.includes(DEFER)],
+      [0, true],
+    );
+    const preStep = run({ RF_VERIFY_MODE: "fast" }, "--freshness-only");
+    check(
+      "FV6b fast: the --freshness-only pre-step defers too (no forced real test run) and exits 0",
+      [preStep.status, preStep.stdout.includes(DEFER)],
+      [0, true],
+    );
+    writeFileSync(join(status, "F01.jsonl"), row({}) + "\n" + "{ not json\n");
+    const bad = run({ RF_VERIFY_MODE: "fast" });
+    check(
+      "FV6c fast: every OTHER check still runs (a malformed ledger line still fails)",
+      [bad.status, /malformed JSONL/.test(bad.stderr)],
+      [1, true],
+    );
+    writeFileSync(join(status, "F01.jsonl"), row({ tier: "T9" }) + "\n");
+    const badTier = run({ RF_VERIFY_MODE: "fast" });
+    check(
+      "FV6d fast: an invalid tier still fails",
+      [badTier.status, /invalid tier/.test(badTier.stderr)],
+      [1, true],
+    );
+    const ignored = run({ RF_VERIFY_MODE: "fast", CI: "true" }, "--print-stale");
+    check(
+      "FV6e RF_VERIFY_MODE=fast under CI prints the ignored notice (never silently honoured)",
+      /RF_VERIFY_MODE=fast ignored/.test(ignored.stderr),
+      true,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+{
+  const cc = readFileSync(join(ROOT, "scripts", "campaign-check.mjs"), "utf8");
+  const at = cc.indexOf("const fastVerify");
+  check(
+    "FV6f campaign-check reads the switch ONLY through isFastMode (one reader, no report heuristic)",
+    [(cc.match(/isFastMode\(/g) ?? []).length, /partial/.test(cc.slice(at, at + 300))],
+    [1, false],
+  );
+  check(
+    "FV6g CI (ci.yml) never sets RF_VERIFY_MODE",
+    readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8").includes("RF_VERIFY_MODE"),
+    false,
+  );
+}
+
+// FV7: the hook — mode decided once, exported only on `fast`, unset otherwise, and the verified-tree
+// marker carries the mode (a fast pass can never satisfy FULL_VERIFY=1, nor the reverse).
+{
+  const at = (needle) => hook.indexOf(needle);
+  check(
+    "FV7a hook asks scripts/verify-mode.mjs, before the marker comparison and before `npm run verify`",
+    at("scripts/verify-mode.mjs") > -1 &&
+      at("scripts/verify-mode.mjs") < at('[ -f "$marker" ]') &&
+      at("scripts/verify-mode.mjs") < at("npm run verify || exit 1"),
+    true,
+  );
+  check(
+    "FV7b hook exports RF_VERIFY_MODE=fast on `fast`, unsets it otherwise, fails to full",
+    [
+      hook.includes(
+        'if [ "$verify_mode" = "fast" ]; then export RF_VERIFY_MODE=fast; else unset RF_VERIFY_MODE; fi',
+      ),
+      /verify_mode="\$\(node scripts\/verify-mode\.mjs[^\n]*\|\| verify_mode=full/.test(hook),
+    ],
+    [true, true],
+  );
+  check(
+    "FV7c marker keys present: <tree>:fast, <tree>:affected (S7b), bare <tree> for FULL_VERIFY=1",
+    [
+      hook.includes('tree_key="$tree:fast"'),
+      hook.includes('tree_key="$tree:affected"'),
+      hook.includes('else tree_key="$tree"; fi'),
+    ],
+    [true, true, true],
+  );
+}
+{
+  // The marker logic itself, run for real: extract the hook's key block and execute it in sh.
+  const start = hook.indexOf('if [ "$verify_mode" = "fast" ] && [ "$tree" != "none" ]; then');
+  const block = hook.slice(start, hook.indexOf("dirty=", start));
+  const keyFor = (verifyMode, fullVerify) => {
+    const script = `tree=abc123\nverify_mode=${verifyMode}\n${block}\nprintf '%s' "$tree_key"`;
+    const r = spawnSync("sh", ["-c", script], {
+      encoding: "utf8",
+      env: { ...process.env, FULL_VERIFY: fullVerify },
+    });
+    return r.status === 0 ? r.stdout : `sh failed: ${r.stderr}`;
+  };
+  check(
+    "FV7d the marker block, executed: fast / FULL_VERIFY=1 / CI-shaped keys are pairwise distinct",
+    [keyFor("fast", ""), keyFor("full", "1"), keyFor("full", "")],
+    ["abc123:fast", "abc123", "abc123:affected"],
+  );
+}
 process.exit(failures ? 1 : 0);

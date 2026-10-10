@@ -3,7 +3,8 @@
 Several lanes share one dev host. Three or four heavy jobs at once (verify, Docker image builds,
 Playwright, DB specs) pin the CPU for hours: a verify that takes ~15 min alone took 2 h+, and tests
 that pass alone timed out. The fix is scheduling, not fewer checks: **one heavy job at a time per
-host**, first come first served. Nothing a push runs is removed or narrowed.
+host**, first come first served. The slot itself removes and narrows nothing; what a feature-branch
+push runs was narrowed separately by the owner ruling in "Fast local check" below.
 
 ## What takes the slot (inside the script, so root `package.json` is untouched)
 
@@ -69,3 +70,45 @@ Until this change is on master, wrap a push from a branch that lacks it with thi
 3. Fails alone → a real defect; fix it.
 
 Never re-run blindly: each blind re-run is another full verify queued behind everyone else.
+
+## Fast local check (owner 2026-10-10)
+
+Ruling: **fast local check, full in CI.** A feature-branch `git push` no longer runs the whole Jest
+suite of the affected workspaces; the FULL suite runs in CI on every train/PR before anything merges,
+and CI is the authority. The accepted cost is that a broken unrelated test can surface at train time
+instead of at push. Target: a few minutes (about 3-8) per push instead of the 26-45 minute full holds.
+
+**What a fast push runs** (the hook prints `FAST VERIFY (owner 2026-10-10): ...`; it is still ONE heavy-slot hold):
+
+- `check-types` + `lint` for the affected workspaces, exactly as before (`AFFECTED SCOPE: ...`).
+- Jest only for tests **related to the changed files**: `--changedSince=<merge-base with origin/master>`
+  (plus `--passWithNoTests`, so a workspace with no related test passes).
+- The two always-run tripwires stay FULL: every `@routeflow/pricing` test and api `test:repo-truth`
+  (the structural pins, size ratchet included).
+- The Prisma freshness preflight is unchanged (seconds, before the slot is taken).
+- `campaign-check` still validates the ledger (shape, tiers, states, evidence, build-plan rows) but
+  defers the report-coverage enforcement ("a test titled REG-B### in the jest report") to CI, because a
+  related-only run leaves partial reports by design. It prints
+  `campaign-check: report coverage deferred to CI (fast verify)`.
+
+**What is NOT fast** (byte-identical to before): CI, master/main/detached HEAD, `FULL_VERIFY=1`, and a
+bare `npm run verify` typed by hand (fast mode is switched on by the pre-push hook, below).
+
+**How it is switched:** `.husky/pre-push` asks `node scripts/verify-mode.mjs` (fast = not CI, not
+`FULL_VERIFY=1`, not master/detached, merge-base with `origin/master` computable), exports
+`RF_VERIFY_MODE=fast` on `fast` (and unsets it otherwise). That one variable is what `verify-turbo.mjs`,
+`decideScope` (no stale-report workspaces pulled in) and `campaign-check.mjs` read; CI never sets it, and
+the readers ignore it under `CI` or `FULL_VERIFY=1`. If the merge-base cannot be computed the run falls
+back to the FULL plan, loudly. To emulate by hand: `RF_VERIFY_MODE=fast npm run verify`.
+
+**Verified-tree marker:** the `.git/rf-verified` key carries the mode (`<tree>:fast`, `<tree>:affected`,
+bare `<tree>` for `FULL_VERIFY=1`), so a fast pass never lets a later `FULL_VERIFY=1` push skip, and a
+full pass does not skip a fast one.
+
+**Run everything locally:** `FULL_VERIFY=1 git push ...` (or `FULL_VERIFY=1 npm run verify`).
+**Money and security branches should run `FULL_VERIFY=1` before a train when convenient**: Jest's
+related-test selection follows imports it can see inside each workspace, so a change in a shared
+package (for example `packages/pricing`) is covered by that package's own full run but may not select
+api/web/mobile tests that reach it only through the workspace link, and specs that read repo files by
+path (scripts, hooks) are not "related" to those files. CI catches these on the train; a local full run
+catches them earlier.
