@@ -11,6 +11,14 @@ import { apiClient } from "@/lib/api-client";
 window.HTMLElement.prototype.scrollIntoView = jest.fn();
 
 let mockPrefs: Record<string, string> = {};
+let mockRole: string = "OPERATOR";
+jest.mock("@/lib/auth-context", () => {
+  const actual = jest.requireActual("@/lib/auth-context");
+  return {
+    ...actual,
+    useAuth: () => ({ ...actual.useAuth(), user: { id: "u1", role: mockRole } }),
+  };
+});
 let mockActive: unknown = undefined;
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({
@@ -96,6 +104,7 @@ const posSwitch = () => screen.findByRole("switch", { name: /pos mode/i });
 beforeEach(() => {
   jest.clearAllMocks();
   mockPrefs = {};
+  mockRole = "OPERATOR";
   mockActive = undefined;
   get.mockImplementation((url: string) =>
     Promise.resolve({ data: url === "/users/me/preferences" ? mockPrefs : { taxRate: 0 } }),
@@ -108,6 +117,24 @@ beforeEach(() => {
 });
 
 describe("CreateOrderModal: POS mode switch", () => {
+  it("SUPER_ADMIN: no switch, and a stored posMode=true never sends PICKUP", async () => {
+    mockRole = "SUPER_ADMIN";
+    mockPrefs = { "orders.posMode": "true" };
+    await openWithLine();
+    expect(screen.queryByRole("switch", { name: /pos mode/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm & invoice" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^create order$/i }));
+    await waitFor(() => expect(orderPosts().length).toBe(1));
+    expect(orderPosts()[0][1].fulfillPath).not.toBe("PICKUP");
+  });
+
+  it("OPERATOR: the switch renders, its whole row is the label, and the hint describes it", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    const sw = await posSwitch();
+    expect(sw).toHaveAccessibleDescription(/\S/);
+    expect(sw.closest("label")).not.toBeNull();
+  });
+
   it("is off when the preference is unset, and a flip is written with PATCH (not localStorage)", async () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     const sw = await posSwitch();

@@ -88,7 +88,7 @@ import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
-import { API_ERROR_CODES } from "@routeflow/types";
+import { API_ERROR_CODES, staffMay } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
@@ -246,7 +246,10 @@ export function CreateOrderModal({
   const { toast } = useToast();
   const createOrder = useCreateOrder({ localErrorToast: true });
   const pos = usePosMode(); // SA-763r P-2: server-backed preference, never localStorage
-  const posMode = pos.posMode;
+  const { user: posUser } = useAuth();
+  // The switch and PICKUP are for roles with USE_POS_MODE only: a stored preference never applies without it.
+  const posAllowed = staffMay(posUser?.role, "USE_POS_MODE");
+  const posMode = posAllowed && pos.posMode;
   const posFinish = usePosFinish();
   // Which POS finishing action the operator pressed ("Confirm & invoice" vs "Confirm only"); survives the merge prompt.
   const posFinishRef = React.useRef<"invoice" | "confirm">("invoice");
@@ -1819,29 +1822,38 @@ export function CreateOrderModal({
             </div>
           )}
 
-          <div className="flex items-start justify-between gap-3 rounded-lg border border-surface-border bg-white px-3 py-2.5">
-            <div className="min-w-0">
-              <label htmlFor="pos-mode-switch" className="text-sm font-medium text-navy">
-                {POS_COPY.switchLabel}
-              </label>
-              <p className="text-[11px] leading-snug text-navy/70">{POS_COPY.switchHint}</p>
-              {pos.failed && (
-                <p role="alert" className="text-[11px] leading-snug text-danger">
-                  {POS_COPY.switchFailed}
-                </p>
-              )}
-            </div>
-            <input
-              id="pos-mode-switch"
-              type="checkbox"
-              role="switch"
-              aria-checked={posMode}
-              checked={posMode}
-              disabled={!pos.known || pos.saving}
-              onChange={(e) => pos.setPosMode(e.target.checked)}
-              className="mt-1 h-4 w-4 shrink-0 accent-brand-500"
-            />
-          </div>
+          {posAllowed && (
+            <label
+              htmlFor="pos-mode-switch"
+              className="flex min-h-11 cursor-pointer items-start justify-between gap-3 rounded-lg border border-surface-border bg-white px-3 py-2.5"
+            >
+              <span className="min-w-0">
+                <span id="pos-mode-label" className="block text-sm font-medium text-navy">
+                  {POS_COPY.switchLabel}
+                </span>
+                <span id="pos-mode-hint" className="block text-[11px] leading-snug text-navy/70">
+                  {POS_COPY.switchHint}
+                </span>
+                {pos.failed && (
+                  <span role="alert" className="block text-[11px] leading-snug text-danger">
+                    {POS_COPY.switchFailed}
+                  </span>
+                )}
+              </span>
+              <input
+                id="pos-mode-switch"
+                type="checkbox"
+                role="switch"
+                aria-checked={posMode}
+                aria-labelledby="pos-mode-label"
+                aria-describedby="pos-mode-hint"
+                checked={posMode}
+                disabled={!pos.known || pos.saving}
+                onChange={(e) => pos.setPosMode(e.target.checked)}
+                className="mt-1 h-4 w-4 shrink-0 accent-brand-500"
+              />
+            </label>
+          )}
 
           {staffFulfilment.failed && !posMode && (
             <div
