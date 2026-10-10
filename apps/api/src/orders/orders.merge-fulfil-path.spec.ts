@@ -226,6 +226,29 @@ describe("OrdersService merge entry points", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("a backdated order with an explicit PICKUP is refused only against an open PICKUP order, never a ROUTE one", async () => {
+    h.prisma.customer.findFirst.mockResolvedValue({ fulfillPath: "ROUTE" });
+    h.prisma.order.findFirst.mockResolvedValue({ id: "open-pickup" });
+    await expect(
+      assertNoBackdatedMerge(h.service as any, "cust-1", {
+        explicit: FulfillPath.PICKUP,
+        ...STAFF,
+      }),
+    ).rejects.toThrow(/open order/);
+    // the merge target it would fold into is searched on the PICKUP path, not the customer's ROUTE
+    expect(h.prisma.order.findFirst.mock.calls[0][0].where).toMatchObject({
+      fulfillPath: "PICKUP",
+    });
+    // no open PICKUP order (an open ROUTE order is not a merge target for it): the backdate goes through
+    h.prisma.order.findFirst.mockResolvedValue(null);
+    await expect(
+      assertNoBackdatedMerge(h.service as any, "cust-1", {
+        explicit: FulfillPath.PICKUP,
+        ...STAFF,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("X1: an already-shipped order is NEVER merged away (a SHIP-into-SHIP fold would delete it and its shippedAt)", async () => {
     const shipped = {
       ...order("ship-1", FulfillPath.SHIP, true),
