@@ -19,6 +19,7 @@ import {
   receiptModelFromOrder,
   type ReceiptBusinessProfile,
 } from "@/lib/counter-receipt";
+import { CounterDayClose } from "./CounterDayClose";
 import { CounterReceiptView } from "./CounterReceiptView";
 import { CounterReturnAction } from "./CounterReturnAction";
 
@@ -352,6 +353,7 @@ export function CounterTodaysSales() {
           </p>
         ) : (
           <div className="space-y-3">
+            <CounterDayClose />
             {summary ? <Summary s={summary} /> : null}
             {rows.length === 0 ? (
               <p className="py-6 text-center text-sm text-navy/70">No sales yet today</p>
