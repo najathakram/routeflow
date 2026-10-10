@@ -72,6 +72,8 @@ export class BuyerSellerContextGuard implements CanActivate {
       customerId: link.customerId,
       tenantId: tenant.id,
       tenantSlug,
+      // SA-733r6: the seller's status, so a buyer read can say "not taking online orders" (one boolean, no reason).
+      sellerStatus: tenant.status,
       customer: link.customer,
       userId: link.customer.userId,
     };

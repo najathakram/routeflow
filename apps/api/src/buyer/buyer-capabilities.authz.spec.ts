@@ -158,7 +158,12 @@ function capabilities(slug: string | null, token: string | null = buyerToken("bu
 describe("GET /buyer/capabilities — only the linked seller's facts", () => {
   it("buyer A at its own seller A: 200, read for seller A's tenant", async () => {
     const res = await capabilities("acme").expect(200);
-    expect(res.body).toEqual({ portalMethods: ["SHIP"], portalDefault: "SHIP", fleet: false });
+    expect(res.body).toEqual({
+      portalMethods: ["SHIP"],
+      portalDefault: "SHIP",
+      fleet: false,
+      acceptingOrders: true,
+    });
     expect(forBuyer).toHaveBeenCalledTimes(1);
     expect(forBuyer).toHaveBeenCalledWith("t-acme");
   });
@@ -170,7 +175,12 @@ describe("GET /buyer/capabilities — only the linked seller's facts", () => {
 
   it("buyer B at seller B: 200, read for seller B's tenant (the header picks a LINKED seller only)", async () => {
     const res = await capabilities("globex", buyerToken("buyer-b")).expect(200);
-    expect(res.body).toEqual({ portalMethods: ["ROUTE"], portalDefault: "ROUTE", fleet: true });
+    expect(res.body).toEqual({
+      portalMethods: ["ROUTE"],
+      portalDefault: "ROUTE",
+      fleet: true,
+      acceptingOrders: true,
+    });
     expect(forBuyer).toHaveBeenCalledWith("t-globex");
   });
 

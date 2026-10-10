@@ -136,16 +136,48 @@ describe("GET /buyer/capabilities", () => {
     expect(Reflect.getMetadata(INTERCEPTORS_METADATA, handler())).toEqual([BuyerTenantInterceptor]);
   });
 
-  it("the body is EXACTLY { portalMethods, portalDefault, fleet } for the active seller", async () => {
+  it("the body is EXACTLY { portalMethods, portalDefault, fleet, acceptingOrders } for the active seller", async () => {
     const { svc } = makeService({ mode: "ship" });
     const forBuyer = jest.spyOn(svc, "forBuyer");
     const controller = new BuyerCapabilitiesController(svc);
     const body = await handler().call(controller, { tenantId: "tenant-ship", customerId: "c1" });
-    expect(Object.keys(body).sort()).toEqual(BUYER_KEYS);
+    expect(Object.keys(body).sort()).toEqual([...BUYER_KEYS, "acceptingOrders"].sort());
     for (const staffField of ["methods", "staffDefault", "staffOpensAs", "counter", "consistent"]) {
       expect(body).not.toHaveProperty(staffField);
     }
-    expect(body).toEqual({ portalMethods: ["SHIP"], portalDefault: "SHIP", fleet: false });
+    expect(body).toEqual({
+      portalMethods: ["SHIP"],
+      portalDefault: "SHIP",
+      fleet: false,
+      acceptingOrders: true,
+    });
     expect(forBuyer).toHaveBeenCalledWith("tenant-ship");
+  });
+
+  // SA-733r6 (B4): a read-only (paused) seller says only "not taking online orders" - one boolean, no reason,
+  // nothing about billing or plans reaches a buyer.
+  it("acceptingOrders is false when the seller is READ_ONLY, and the body names no billing reason", async () => {
+    const { svc } = makeService({ mode: "ship" });
+    const controller = new BuyerCapabilitiesController(svc);
+    const body = await handler().call(controller, {
+      tenantId: "tenant-ship",
+      customerId: "c1",
+      sellerStatus: "READ_ONLY",
+    });
+    expect(body.acceptingOrders).toBe(false);
+    expect(JSON.stringify(body)).not.toMatch(/payment|billing|subscri|overdue|plan/i);
+  });
+
+  it("acceptingOrders is true for an ACTIVE or TRIAL seller", async () => {
+    const { svc } = makeService({ mode: "ship" });
+    const controller = new BuyerCapabilitiesController(svc);
+    for (const sellerStatus of ["ACTIVE", "TRIAL"]) {
+      const body = await handler().call(controller, {
+        tenantId: "t",
+        customerId: "c",
+        sellerStatus,
+      });
+      expect(body.acceptingOrders).toBe(true);
+    }
   });
 });

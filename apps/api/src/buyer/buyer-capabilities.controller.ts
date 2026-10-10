@@ -25,10 +25,12 @@ export class BuyerCapabilitiesController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "The active seller's fulfilment capability (how its orders ship)" })
-  getSellerCapabilities(
-    @CurrentBuyerCustomer() ctx: { tenantId: string },
+  async getSellerCapabilities(
+    @CurrentBuyerCustomer() ctx: { tenantId: string; sellerStatus?: string },
   ): Promise<BuyerSellerCapability> {
-    // Exactly { portalMethods, portalDefault, fleet } — no staff fields.
-    return this.fulfilmentCapability.forBuyer(ctx.tenantId);
+    // Exactly { portalMethods, portalDefault, fleet, acceptingOrders } — no staff fields. `acceptingOrders` is the
+    // ONE thing a buyer learns about a paused seller (SA-733r6): no reason, nothing about billing.
+    const capability = await this.fulfilmentCapability.forBuyer(ctx.tenantId);
+    return { ...capability, acceptingOrders: ctx.sellerStatus !== "READ_ONLY" };
   }
 }
