@@ -289,6 +289,32 @@ describe("REG-B857: tenant plan controls offer the published catalog, not a hard
     );
   });
 
+  it("an ended-window activation refusal shows the mapped sentence naming the open invoice, not the raw message", async () => {
+    tenantOverrides = { plan: "STARTER", planKey: "STARTER" };
+    await gotoBillingTab();
+    await screen.findByRole("combobox", { name: "Plan" });
+    const { superAdminClient } = jest.requireMock("@/lib/admin-api");
+    superAdminClient.post.mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: {
+          code: "ACTIVATION_PERIOD_ALREADY_ENDED",
+          message: "raw server text that must not be shown",
+          invoiceNumber: "RF-2026-0042",
+          endedOn: "2026-10-01",
+          minDays: 41,
+        },
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Activate Subscription" }));
+    expect(
+      await screen.findByText(
+        "Invoice RF-2026-0042 is still open and this payment's window ended on 2026-10-01. Mark it paid or void it in RouteFlow invoices, or activate for at least 41 days.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/raw server text/)).not.toBeInTheDocument();
+  });
+
   it("REG-B857 T3: Change Plan offers the catalog plans with the tenant's resolved plan selected", async () => {
     tenantOverrides = { plan: "TEAM", planKey: "GROWTH" };
     render(<TenantDetailPage />);
