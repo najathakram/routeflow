@@ -14,6 +14,22 @@ import { BLOCKED_SELLER_STATUSES, liveBuyerLinkWhere } from "../buyer-link-scope
 import type { BuyerJwtPayload } from "../interfaces/buyer-jwt-payload.interface";
 
 /**
+ * SA-733r6 (option a): the ONLY buyer writes a READ_ONLY seller still takes - the buyer paying what is owed. One named
+ * constant of exact method + anchored route (the real route shapes), so an exemption is a reviewed one-line diff:
+ * a card payment, a cash declaration, and the buyer cancelling their OWN pending request. Orders, the cart and every
+ * other buyer write stay 403 SELLER_UNAVAILABLE. Staff approving a cash request is a staff payment write and stays
+ * READ_ONLY at the tenant-status guard (unchanged).
+ */
+export const SELLER_READ_ONLY_EXEMPT_BUYER_WRITES: ReadonlyArray<{
+  method: string;
+  pattern: RegExp;
+}> = [
+  { method: "POST", pattern: /^\/api\/v1\/buyer\/payments\/card$/ },
+  { method: "POST", pattern: /^\/api\/v1\/buyer\/payments\/cash$/ },
+  { method: "POST", pattern: /^\/api\/v1\/buyer\/payments\/requests\/[^/]+\/cancel$/ },
+];
+
+/**
  * Resolves the buyer's active CustomerLink for the requested seller (X-Tenant-Slug).
  * Must run after BuyerJwtAuthGuard.
  * Sets req.buyerCustomer = { customerId, tenantId, tenantSlug, customer, userId }.
@@ -71,9 +87,17 @@ export class BuyerSellerContextGuard implements CanActivate {
 
     // SA-733r6 (B4): a READ_ONLY seller (ANY reason) takes no buyer writes. The global TenantStatusGuard never sees a
     // buyer (a buyer token has no tenantId claim), so THIS guard is the server's authority; the buyer UI line is a
-    // courtesy. Reads pass. Coded and neutral: a buyer is never told why, or anything about the seller's billing.
+    // courtesy. Reads and the buyer's own payments (SELLER_READ_ONLY_EXEMPT_BUYER_WRITES) pass. Coded and neutral: a buyer is never told why, or anything about the seller's billing.
     const method = String(req.method ?? "GET").toUpperCase();
-    if (tenant.status === READ_ONLY_STATUS && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const path = String(req.path ?? req.originalUrl ?? "").split("?")[0];
+    const exempt = SELLER_READ_ONLY_EXEMPT_BUYER_WRITES.some(
+      (e) => e.method === method && e.pattern.test(path),
+    );
+    if (
+      tenant.status === READ_ONLY_STATUS &&
+      !["GET", "HEAD", "OPTIONS"].includes(method) &&
+      !exempt
+    ) {
       throw new ForbiddenException({
         code: API_ERROR_CODES.SELLER_UNAVAILABLE,
         message: "This seller isn't taking online orders right now. Please check back soon.",

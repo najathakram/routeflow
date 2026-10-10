@@ -103,7 +103,7 @@ describe("buyer write routes carry BuyerSellerContextGuard (B4 B1 sweep)", () =>
         (n) =>
           Reflect.getMetadata(METHOD_METADATA, ctrl.prototype[n]) !== undefined && exempt(ctrl, n),
       );
-    expect(hit(BuyerPaymentsController).sort()).toEqual(["card", "cancel", "cash"]);
+    expect(hit(BuyerPaymentsController).sort()).toEqual(["cancel", "card", "cash"]);
     expect(hit(BuyerController)).toEqual([]);
   });
 });
