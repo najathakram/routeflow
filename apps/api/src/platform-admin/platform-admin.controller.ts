@@ -60,6 +60,7 @@ import {
 } from "./dto/apply-business-profile.dto";
 import type {
   BusinessProfileApplyResponse,
+  BusinessProfileBillingFailedAddon,
   BusinessProfileListResponse,
   BusinessProfilePreviewResponse,
 } from "@routeflow/types";
@@ -860,12 +861,25 @@ export class PlatformAdminController {
           : `The profile was only partly applied: the ${current.step} step for ` +
             `${label(current.key)} failed after ` +
             (billingWords ? "billing was stopped." : "the add-ons were switched off.");
+      // ROW c: say per add-on what happened. The one whose switch-off failed first, then the ones already switched
+      // off (they are in the billing disable order). A comp has no billing to stop; a paid row's billing is stopped
+      // exactly when its disable succeeded.
+      const failedKey = current.step === "billing" ? current.key : null;
+      const addons: BusinessProfileBillingFailedAddon[] = [
+        ...(failedKey ? [failedKey] : []),
+        ...alreadyDisabled,
+      ].map((key) => {
+        const wasComp = compOff.has(key);
+        const switchedOff = key !== failedKey;
+        return { key, wasComp, billingStopped: switchedOff && !wasComp, switchedOff };
+      });
       return new ServiceUnavailableException({
         statusCode: 503,
         code: API_ERROR_CODES.BUSINESS_PROFILE_BILLING_FAILED,
         featureKey: current.key,
         alreadyDisabled: [...alreadyDisabled],
         failedStep: { ...current },
+        addons,
         message:
           `${what} Already switched off${billingWords ? " with billing stopped" : ""}: ${done}. ` +
           (current.step === "billing" ? "Nothing else was changed; " : "") +

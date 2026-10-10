@@ -1,3 +1,4 @@
+import type { API_ERROR_CODES } from "./error-codes";
 import type { FeaturePreviewResponse } from "./features";
 
 // ─── Business profiles — the shared contract ────────────────────────────────────────────────
@@ -113,4 +114,33 @@ export interface BusinessProfileApplyResponse {
   /** Feature keys whose resolver verdict changed. */
   changed: string[];
   summary: string[];
+}
+
+/**
+ * One add-on's outcome in a `BUSINESS_PROFILE_BILLING_FAILED` (503) body: every add-on the apply reached (the ones
+ * already switched off, plus the one whose switch-off failed). Web and API share this one shape (ROW c).
+ */
+export interface BusinessProfileBillingFailedAddon {
+  /** The add-on module key. Clients map it to a label and never print it raw. */
+  key: string;
+  /** true = the row is a COMP: nothing is billed, so there is no billing to stop. */
+  wasComp: boolean;
+  /** true = a PAID row whose billing was stopped. Always false for a comp and for a row that is still on. */
+  billingStopped: boolean;
+  /** true = the add-on is now off. false = the switch-off failed and it is still on. */
+  switchedOff: boolean;
+}
+
+/**
+ * The 503 body. `addons` is failed-first, then the switched-off ones in the billing disable order. The other fields
+ * are the older contract (kept so an older web build still renders).
+ */
+export interface BusinessProfileBillingFailedBody {
+  statusCode: 503;
+  code: typeof API_ERROR_CODES.BUSINESS_PROFILE_BILLING_FAILED;
+  featureKey: string;
+  alreadyDisabled: string[];
+  failedStep: { step: "billing" | "grant" | "mode" | "deny" | "audit"; key: string };
+  addons: BusinessProfileBillingFailedAddon[];
+  message: string;
 }
