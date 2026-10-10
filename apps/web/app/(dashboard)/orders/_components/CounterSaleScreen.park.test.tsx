@@ -1,6 +1,7 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
+import { COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY } from "@/lib/counter-sale";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -709,11 +710,7 @@ describe("price edits on a resumed cart (the existing Complete-time check)", () 
     });
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10" } });
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
-    expect(
-      await screen.findByText(
-        "You can't change prices. Reset the edited prices, or ask your account admin.",
-      ),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY)).toBeInTheDocument();
     expect(mutateAsync.mock.calls[0][0].dto.items[0]).toMatchObject({
       productId: "p-cola",
       unitPrice: 1.5,
