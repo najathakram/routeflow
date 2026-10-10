@@ -218,6 +218,17 @@ export function RecordInlineReturnDialog({
   const effTender: InlineRefundTender = tender ?? tenderFromPaidMethods(quoted?.paidMethods);
   const quotedAmount = quoted?.total ?? 0;
   const shownAmount = serverAmount ?? quotedAmount;
+  // A 409 that carried the server's figure: the quote's Total follows it, so the screen never shows two amounts. Keyed on the
+  // figure alone (the latest quote rides in a ref) so handing it down cannot feed back into its own quote state.
+  const quotedRef = React.useRef(quoted);
+  quotedRef.current = quoted;
+  const serverQuote = React.useMemo(
+    () =>
+      serverAmount !== null && quotedRef.current
+        ? { ...quotedRef.current, total: serverAmount }
+        : null,
+    [serverAmount],
+  );
 
   /** The server's figure once a capture is saved; the quote only before (or after a re-quote). */
   function savedAmountOf(ret: InlineReturnRecord): number {
@@ -424,7 +435,8 @@ export function RecordInlineReturnDialog({
         resetToken={openSeq}
         getQuoteEnabled={!!carryingOrderId}
         onStateChange={setSectionState}
-        quoteOverride={requoteOverride}
+        quoteOverride={serverQuote ?? requoteOverride}
+        totalOnly={!!serverQuote}
         hideBack={!!saved}
         quoteNote={
           showChoice && effResolution === "REFUND" ? REFUND_COPY.quoteRefundNote : undefined

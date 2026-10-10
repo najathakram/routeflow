@@ -77,6 +77,7 @@ export function useCounterReprice<C extends PickedLike>(deps: {
             r.changed,
             r.kept,
             tierLabel(tierLabels, customer?.pricingTier ?? 1),
+            r.dropped,
           )
         : null;
       setNote(text ? { text, prevLines: before } : null);

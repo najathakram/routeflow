@@ -43,11 +43,7 @@ import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { StatementService } from "./statement.service";
 import { StatementPdfService } from "./statement-pdf.service";
 import { CustomersService } from "../customers/customers.service";
-import { UpdateCustomerDto } from "../customers/dto/update-customer.dto";
-import {
-  omitStaffOnlyCustomerFields,
-  pickSelfServiceFields,
-} from "../customers/self-service-fields";
+import { omitStaffOnlyCustomerFields } from "../customers/self-service-fields";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
 import { UpdateBuyerOrderTemplateDto } from "../order-templates/dto/update-buyer-order-template.dto";
 import { AuthorizationsService } from "../authorizations/authorizations.service";
@@ -74,7 +70,7 @@ import {
   isMergeContention,
   mapLockError,
 } from "../orders/merge-contention";
-import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
+import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
 import {
   buyerSubmitHash,
   normalizeBuyerIdempotencyKey,
@@ -497,7 +493,7 @@ export class BuyerController {
       this.prisma.forTenant(),
       candidates,
       // B1211: the parent-visibility filter is tenant-scoped, so a parent link across tenants decides nothing.
-      buyerVisibleProductWhere({ ...NO_BUYER_RESTRICTIONS, tenantId: ctx.tenantId }),
+      buyerVisibleProductWhere(noBuyerRestrictions(ctx.tenantId)),
     );
     if (!hit) throw new NotFoundException("Product not found");
     const match = hit.product;
@@ -1030,17 +1026,20 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Update authenticated buyer's own profile" })
-  async updateMe(@CurrentBuyerCustomer() ctx: any, @Body() dto: UpdateBuyerProfileDto) {
-    // SECURITY (F4-001): dto is a strict buyer-profile DTO — seller-controlled
-    // commercial fields (pricingTier/creditLimit/isTaxExempt/...) are not part of
-    // it, so the ValidationPipe rejects them and update() can only touch profile.
-    // Second layer: the same explicit allowlist /customers/me applies, so the write never depends on the
-    // pipe alone.
-    const updated = await this.customersService.update(
-      ctx.customerId,
-      pickSelfServiceFields({ ...dto }) as UpdateCustomerDto,
-    );
-    return omitStaffOnlyCustomerFields(updated);
+  async updateMe(
+    @CurrentBuyerCustomer() ctx: any,
+    @CurrentBuyer() buyer: BuyerJwtPayload,
+    @Body() dto: UpdateBuyerProfileDto,
+  ) {
+    // SECURITY (F4-001): dto is a strict buyer-profile DTO, so the ValidationPipe rejects seller-controlled
+    // commercial fields. Second layer: updateOwnProfile applies the same explicit allowlist as
+    // /customers/me and writes the audit row, so the write never depends on the pipe alone.
+    return this.customersService.updateOwnProfile({
+      customerId: ctx.customerId,
+      actor: buyer,
+      source: "buyer/me",
+      body: dto,
+    });
   }
 
   // ─── Order templates ──────────────────────────────────────────────────────────
