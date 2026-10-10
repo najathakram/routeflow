@@ -148,6 +148,16 @@ function isUnder(root, p, pathImpl = path) {
   return rel !== "" && !rel.startsWith("..") && !pathImpl.isAbsolute(rel);
 }
 
+// The env every spawned verify script (the real main(), verify-mode, campaign-check) starts from.
+// This file runs INSIDE the pre-push hook, which exports RF_VERIFY_MODE=fast (and a held heavy-slot
+// token), and a developer may have FULL_VERIFY / CI / VERIFY_EXCLUDE / JEST_MAX_WORKERS set: any of
+// them would silently change the plan a fixture's main() runs. So no ambient verify knob reaches a
+// spawned script; a case sets what it needs explicitly on top.
+const AMBIENT_VERIFY_KNOBS =
+  /^(CI|FULL_VERIFY|RF_VERIFY_MODE|VERIFY_EXCLUDE|VERIFY_CONCURRENCY|JEST_MAX_WORKERS|RF_HEAVY_SLOT.*|CAMPAIGN_CHECK_.*)$/;
+const cleanVerifyEnv = (base = scrubbedGitEnv()) =>
+  Object.fromEntries(Object.entries(base).filter(([k]) => !AMBIENT_VERIFY_KNOBS.test(k)));
+
 const fixtureEnv = () => ({
   ...scrubbedGitEnv(),
   GIT_CONFIG_GLOBAL: "/dev/null",
@@ -978,7 +988,7 @@ if (process.platform !== "win32") {
       writeFileSync(log, "");
       writeFileSync(counter, "0");
       const env = {
-        ...scrubbedGitEnv(),
+        ...cleanVerifyEnv(),
         PATH: `${stubDir}:${process.env.PATH}`,
         // The AFFECTED cases below run without CI and so really take the heavy-job slot: keep it in
         // a throwaway dir, never the host's real ~/.routeflow/heavy-slot.
@@ -986,10 +996,7 @@ if (process.platform !== "win32") {
         CI: "1",
         ...extraEnv,
       };
-      delete env.FULL_VERIFY;
       if (opts.ci === false) delete env.CI;
-      if (!("JEST_MAX_WORKERS" in extraEnv)) delete env.JEST_MAX_WORKERS;
-      if (!("VERIFY_EXCLUDE" in extraEnv)) delete env.VERIFY_EXCLUDE;
       if (!("STUB_EXIT_SEQ" in extraEnv)) delete env.STUB_EXIT_SEQ;
       const r = spawnSync(
         process.execPath,
@@ -1156,6 +1163,35 @@ if (process.platform !== "win32") {
           [/AFFECTED SCOPE/.test(affSplit.out), affSplit.calls.length, affSplit.status],
           [true, 3, 3],
         );
+        // VX28: the pre-push hook exports RF_VERIFY_MODE=fast around this whole file, and a developer
+        // may have the other knobs set. None of it may reach the fixture's main(): with every one
+        // polluted in the OUTER environment the AFFECTED fixture still runs the AFFECTED plan.
+        const polluted = {
+          RF_VERIFY_MODE: "fast",
+          FULL_VERIFY: "1",
+          CI: "1",
+          VERIFY_EXCLUDE: "@routeflow/control",
+          JEST_MAX_WORKERS: "2",
+          RF_HEAVY_SLOT_TOKEN: "inherited",
+        };
+        const savedOuter = Object.fromEntries(
+          Object.keys(polluted).map((k) => [k, process.env[k]]),
+        );
+        Object.assign(process.env, polluted);
+        let affPolluted;
+        try {
+          affPolluted = aff({ STUB_EXIT_SEQ: "3,5", JEST_MAX_WORKERS: "" });
+        } finally {
+          for (const [k, v] of Object.entries(savedOuter)) {
+            if (v === undefined) delete process.env[k];
+            else process.env[k] = v;
+          }
+        }
+        check(
+          "VX28 main() AFFECTED ignores ambient RF_VERIFY_MODE/FULL_VERIFY/CI/VERIFY_EXCLUDE/JEST_MAX_WORKERS",
+          [/AFFECTED SCOPE/.test(affPolluted.out), affPolluted.calls.length, affPolluted.status],
+          [true, 2, 3],
+        );
         // VX27: the same faithful run with a generated client that predates the schema folder is
         // refused by the preflight BEFORE the slot and before any turbo call (the preflight is not
         // weakened by the fixture; VX25/26 pass because the client above really is fresh).
@@ -1293,8 +1329,7 @@ check(
 );
 {
   // the real CLI, with the ambient switches stripped (this file runs inside the pre-push hook)
-  const baseEnv = { ...scrubbedGitEnv() };
-  for (const k of ["CI", "FULL_VERIFY", "RF_VERIFY_MODE"]) delete baseEnv[k];
+  const baseEnv = cleanVerifyEnv();
   const cli = (extraEnv, ...argv) =>
     spawnSync(process.execPath, [join(ROOT, "scripts", "verify-mode.mjs"), ...argv], {
       cwd: ROOT,
@@ -1521,8 +1556,7 @@ check(
     const row = (o) =>
       JSON.stringify({ id: "B1", batch: "F01", tier: "T1", state: "proven", ...o });
     writeFileSync(join(status, "F01.jsonl"), row({}) + "\n");
-    const env = { ...scrubbedGitEnv(), CAMPAIGN_CHECK_STATUS_DIR: status };
-    for (const k of ["CI", "FULL_VERIFY", "RF_VERIFY_MODE"]) delete env[k];
+    const env = { ...cleanVerifyEnv(), CAMPAIGN_CHECK_STATUS_DIR: status };
     const run = (extra, ...argv) =>
       spawnSync(
         process.execPath,
@@ -1620,7 +1654,7 @@ check(
     const script = `tree=abc123\nverify_mode=${verifyMode}\n${block}\nprintf '%s' "$tree_key"`;
     const r = spawnSync("sh", ["-c", script], {
       encoding: "utf8",
-      env: { ...process.env, FULL_VERIFY: fullVerify },
+      env: { ...cleanVerifyEnv(process.env), FULL_VERIFY: fullVerify },
     });
     return r.status === 0 ? r.stdout : `sh failed: ${r.stderr}`;
   };
