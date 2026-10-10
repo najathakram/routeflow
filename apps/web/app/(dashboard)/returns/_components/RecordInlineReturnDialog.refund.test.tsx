@@ -101,7 +101,7 @@ async function toQuote(q: RefundQuote, props: Record<string, unknown> = {}) {
     />,
   );
   await screen.findByText(/what came back/i);
-  fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "5" } });
+  fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
   fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
   fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
   await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));

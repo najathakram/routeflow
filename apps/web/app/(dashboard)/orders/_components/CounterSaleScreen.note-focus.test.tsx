@@ -170,3 +170,76 @@ describe("counter line note: focus and the g-shortcuts", () => {
     expect(screen.queryByText("Discard this sale?")).toBeNull();
   });
 });
+
+describe("counter line note: the scan field is re-armed (SA-762r #8)", () => {
+  const openNote = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole("button", { name: "Add a note to Cola" }));
+    return screen.findByLabelText("Note for Cola");
+  };
+
+  it("Enter saves and closes the note, and the next keystrokes land in the scan field", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(counter());
+    await scan("COLA");
+    const note = await openNote(user);
+    await user.type(note, "gift wrap{Enter}");
+
+    expect(screen.queryByLabelText("Note for Cola")).toBeNull();
+    expect(screen.getByTestId("line-note")).toHaveTextContent("gift wrap");
+    const scanField = screen.getByLabelText("Scan or search items");
+    await waitFor(() => expect(scanField).toHaveFocus());
+    await user.keyboard("0123");
+    expect(scanField).toHaveValue("0123");
+  });
+
+  it("Escape cancels the edit (the note is as it was when the field opened) and re-arms the scan field", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(counter());
+    await scan("COLA");
+    let note = await openNote(user);
+    await user.type(note, "cold{Enter}");
+    await user.click(screen.getByRole("button", { name: "Edit the note on Cola" }));
+    note = await screen.findByLabelText("Note for Cola");
+    await user.type(note, " extra{Escape}");
+
+    expect(screen.queryByLabelText("Note for Cola")).toBeNull();
+    expect(screen.getByTestId("line-note")).toHaveTextContent(/^cold$/);
+    await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
+  });
+
+  it("Clear note puts focus on the scan field (it was <body> when the note field unmounted)", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(counter());
+    await scan("COLA");
+    const note = await openNote(user);
+    await user.type(note, "cold");
+    await user.click(screen.getByRole("button", { name: "Clear the note on Cola" }));
+
+    expect(screen.queryByLabelText("Note for Cola")).toBeNull();
+    expect(screen.queryByTestId("line-note")).toBeNull();
+    await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
+  });
+
+  it("while the note is open, a re-arm (a scan landing) never pulls the cursor out of it", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(counter());
+    await scan("COLA");
+    const note = await openNote(user);
+    await user.type(note, "abc");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(note).toHaveFocus();
+    expect(note).toHaveValue("abc");
+  });
+
+  it("the Undo chip vanishing while it holds focus hands the cursor back to the scan field", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(counter());
+    await scan("COLA");
+    await user.click(screen.getByRole("button", { name: "Remove Cola" }));
+    const undo = await screen.findByRole("button", { name: /Undo: put back Cola/ });
+    undo.focus();
+    await user.click(undo);
+    expect(screen.queryByRole("button", { name: /Undo: put back/ })).toBeNull();
+    await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
+  });
+});

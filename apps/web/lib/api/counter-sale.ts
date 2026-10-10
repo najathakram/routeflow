@@ -3,6 +3,8 @@ import type {
   CounterSalePaymentMethod,
   CounterSaleRequest,
   CounterSaleResponse,
+  CounterSaleVoidRequest,
+  CounterSaleVoidResponse,
   FulfilmentCapability,
   PickupCompleteRequest,
   PickupCompleteResponse,
@@ -114,5 +116,27 @@ export function usePickupInvoiceBalances(invoiceIds: readonly string[], enabled:
             .then((r) => r.data),
         ),
       ),
+  });
+}
+
+/**
+ * `POST /orders/counter-sale/:orderId/void` (SA-762r): void a sale rung today. 200 either way (`replayed: true` on a repeat,
+ * the same `handBack`); every refusal is a coded 409/503 the void dialog shows as fixed copy (`counterVoidErrorCopy`), so the
+ * global toast stays out of it. Today's list and the order / invoice caches refresh on success.
+ */
+export function useVoidCounterSale() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ orderId, reason }: { orderId: string } & CounterSaleVoidRequest) =>
+      apiClient
+        .post<CounterSaleVoidResponse>(`/orders/counter-sale/${encodeURIComponent(orderId)}/void`, {
+          reason,
+        })
+        .then((r) => r.data),
+    meta: { localErrorToast: true },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["orders"] });
+      void qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
   });
 }

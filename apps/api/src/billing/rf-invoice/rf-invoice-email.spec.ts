@@ -178,7 +178,7 @@ function make(
       ),
     },
     tenant: { findUnique: jest.fn(async () => ({ name: "Acme Retail", slug: "acme" })) },
-    tenantConfig: { findFirst: jest.fn(async () => null) },
+    tenantConfig: { findUnique: jest.fn(async () => null) },
   };
   const sendPlatform = jest.fn(async ({ to }: any) => {
     const r = opts.deliver?.(to) ?? true;

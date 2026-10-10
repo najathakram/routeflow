@@ -248,7 +248,8 @@ describe("InvoicesService.update() — B1026 a negative line subtotal is refused
         { description: "New", qty: 1, unitPrice: 10 },
       ],
     });
-    await expect(run).rejects.toThrow("Invoice discount ($0.00) cannot exceed subtotal (-$35.00).");
+    // B1047: the copy names the real problem (negative lines), not "discount ($0.00) cannot exceed subtotal (-$35.00)".
+    await expect(run).rejects.toThrow("Invoice subtotal cannot be negative (-$35.00).");
     noWrites();
   });
 

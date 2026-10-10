@@ -1302,13 +1302,50 @@ describe("CounterSaleService.ring", () => {
     };
     const sendOpts = () => createSale.mock.calls[0][2];
 
+    // SA-762r Ruling A: the gate is staffMay(role, "EDIT_LINE_PRICE"). Owner ruling 10-07: an operator may reprice
+    // (F4: SUPER_ADMIN is not in the row until the other price paths move onto staffMay).
+    const driver = { sub: "drv-1", role: "DRIVER", tenantId: "t-1" } as never;
     it.each([
-      ["OPERATOR", staff, false],
+      ["OPERATOR", staff, true],
       ["TENANT_ADMIN", admin, true],
-      ["SUPER_ADMIN", superAdmin, true],
+      ["SUPER_ADMIN", superAdmin, false],
+      ["DRIVER", driver, false],
     ])("%s: create() is told priceEditAllowed = %s", async (_r, user, allowed) => {
       await service.ring(named({ method: "CASH" }) as never, user);
       expect(sendOpts().priceEditAllowed).toBe(allowed);
+    });
+
+    it("an OPERATOR rings a sale with a changed price: rung (not 403 PRICE_EDIT_NOT_PERMITTED), price applied, ONE price-edited audit row", async () => {
+      // createSale stands in for create()'s own gate (pinned in orders.counter-price-edit.spec.ts): it refuses a
+      // real price change exactly when the counter passed priceEditAllowed === false.
+      createSale.mockImplementation(async (_dto: any, _u: any, sale: any) => {
+        if (sale.priceEditAllowed === false) {
+          const { ForbiddenException } = jest.requireActual("@nestjs/common");
+          throw new ForbiddenException({ code: "PRICE_EDIT_NOT_PERMITTED", message: "no" });
+        }
+        return { id: "inv-1", orderId: "ord-1", invoiceNumber: "INV-1" };
+      });
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [{ ...storedLine, overriddenBy: "op-1" }],
+      });
+      const res = await service.ring(
+        named({ method: "CASH" }, { items: [priced] }) as never,
+        staff,
+        "k-1",
+      );
+      expect(res).toMatchObject({ orderId: "ord-1" });
+      expect(sendOpts().priceEditAllowed).toBe(true);
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      expect(audit.log.mock.calls[0][0]).toMatchObject({
+        userId: "op-1",
+        action: "counter-sale.price-edited",
+        entityId: "ord-1",
+        meta: {
+          lines: [{ productId: "p1", originalPrice: 10, unitPrice: 9, reason: "damaged box" }],
+        },
+      });
     });
 
     it("a refusal from create() (403 PRICE_EDIT_NOT_PERMITTED) leaves everything unwritten: no payment, no audit row", async () => {
