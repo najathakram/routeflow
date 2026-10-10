@@ -13,6 +13,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { spawnAsync, withHeavySlot } from "./lib/heavy-slot.mjs";
 import { decideScope, loadWorkspaces } from "./lib/verify-scope.mjs";
+import { prismaPreflight } from "./lib/prisma-fresh.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -319,6 +320,19 @@ export async function main() {
   // --maxWorkers passthrough only ever reaches jest, never tsc/eslint. Exit = first non-zero status.
   const plan = planTurboCalls({ scope, excluded, splitJest: Boolean(JEST_MAX_WORKERS) });
   if (plan.note) console.log(plan.note);
+  // Fail fast BEFORE queueing for the slot: a generated Prisma client that predates this checkout's
+  // schema folder otherwise surfaces ~45 min into the hold (api check-types + schema specs red).
+  // Seconds, offline, skipped on CI. See scripts/lib/prisma-fresh.mjs.
+  const prisma = prismaPreflight({
+    env: process.env,
+    scope,
+    excluded,
+    apiDir: join(ROOT, "apps", "api"),
+  });
+  if (prisma.ran && !prisma.fresh) {
+    console.error(prisma.message);
+    process.exit(1);
+  }
   // The whole turbo step is ONE heavy-slot hold (scripts/lib/heavy-slot.mjs): one verify at a time
   // per host, FIFO, fail closed when the wait cap passes. Calls run strictly in order, awaited.
   const status = await withHeavySlot({ label: "verify" }, async () => {

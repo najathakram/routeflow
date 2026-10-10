@@ -52,6 +52,14 @@ node scripts/heavy-slot.mjs run --label <x> -- <command> [args...]    # exits wi
 Until this change is on master, wrap a push from a branch that lacks it with this worktree's copy:
 `node <path-to-this-worktree>/scripts/heavy-slot.mjs run --label push -- git push ...`
 
+## Before you push
+
+- After merging master, run `npx prisma generate` in `apps/api` (the preflight now refuses a stale
+  client in seconds, before queueing). Worktrees sharing `node_modules` through junctions share ONE
+  generated client, so generating in one changes it for all of them.
+- After changing a shared type in `packages/types`, run `npx tsc --noEmit -p apps/web` (and mobile
+  if it imports it) — a type error otherwise costs a full slot hold.
+
 ## Flake triage (a test failed under load)
 
 1. Run **only the failing file**, alone (`npx jest <file> --maxWorkers=1`).
