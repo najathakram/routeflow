@@ -145,6 +145,8 @@ function Reprint({
             balanceDue: row.balanceDue,
             methods: row.methods,
             createdAt: row.createdAt,
+            cashTendered: row.cashTendered,
+            taxRatePercent: row.taxRatePercent,
             timezone,
           },
         })
