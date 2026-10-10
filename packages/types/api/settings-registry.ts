@@ -73,6 +73,8 @@ export const OFF_HUB_SCREENS: Record<string, string> = {
     "Fulfillment tab, Counter sales card: reached by its ?tab= link, shown only when self-serve is on",
   "/orders/counter-sale":
     "Counter sale screen: the Quick keys grid's Edit keys dialog saves the pins and hides here; opened from the till, not the settings hub",
+  "/orders":
+    "Create Order header: the POS mode switch saves orders.posMode here; opened from the orders list, not the settings hub",
 };
 
 const cfg = (key: string, screen: string, extra: Partial<SettingRow> = {}): SettingRow => ({
@@ -257,8 +259,8 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     key: PREF.ordersPosMode,
     home: "userPref",
     kind: "preference",
-    status: "pending WS4",
-    plannedSurface: "SA-763r P-2: the POS mode switch in the Create Order header",
+    status: "live",
+    screen: "/orders",
   },
 ];
 
