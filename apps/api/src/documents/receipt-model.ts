@@ -8,6 +8,7 @@ import {
 } from "@routeflow/pricing";
 import type { ReceiptLine, ReceiptModel } from "@routeflow/types";
 import { servedChange } from "../orders/counter-sale/counter-sale-readback";
+import { RECEIPT_FOOTER_MAX_CHARS } from "../system-config/receipt-footer";
 import { todaysMethodOf } from "../orders/counter-sale/counter-sale-today";
 
 /**
@@ -82,8 +83,6 @@ export interface ReceiptBranding {
   /** SystemConfig `receiptFooter`: tenant text, at most 200 characters. HTML-escaped by the email template. */
   footer?: string | null;
 }
-
-export const RECEIPT_FOOTER_MAX = 200;
 
 const DEAD_INVOICE_STATUSES: readonly string[] = [InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF];
 
@@ -224,7 +223,8 @@ export function buildReceiptModel(
   // in the order they were taken (the service orders them), because the first stored tender decides.
   const tendered =
     order.counterCashTendered == null ? null : roundMoney(num(order.counterCashTendered));
-  const footer = clean(branding.footer).slice(0, RECEIPT_FOOTER_MAX);
+  // cut by code points (never through a surrogate pair) at the ONE footer cap the settings route enforces
+  const footer = Array.from(clean(branding.footer)).slice(0, RECEIPT_FOOTER_MAX_CHARS).join("");
   const walkIn = !order.customer || !!order.customer.isWalkIn;
   const customerName = walkIn ? "" : clean(order.customer?.businessName);
   // a counter sale is dated when it was rung; any other order by its business date

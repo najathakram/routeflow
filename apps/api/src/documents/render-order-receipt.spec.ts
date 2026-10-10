@@ -1,4 +1,5 @@
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import { RECEIPT_FOOTER_MAX_CHARS } from "../system-config/receipt-footer";
 import { buildReceiptModel } from "./receipt-model";
 import { renderOrderReceipt } from "./render-order-receipt";
 import { BRANDING, INVOICE, orderFixture, paymentsFixture } from "./receipt.fixtures";
@@ -283,6 +284,24 @@ describe("buildReceiptModel (stored rows -> the shared ReceiptModel)", () => {
       ZONE,
     );
     expect(m.footer).toHaveLength(200);
+  });
+
+  it("cuts the footer by code points, never through a surrogate pair (the one cap the settings route enforces)", () => {
+    const m = buildReceiptModel(
+      orderFixture(),
+      [INVOICE],
+      paymentsFixture(),
+      { ...BRANDING, footer: "\u{1F600}".repeat(250) },
+      ZONE,
+    );
+    expect(Array.from(m.footer ?? "")).toHaveLength(RECEIPT_FOOTER_MAX_CHARS);
+    expect(m.footer).toBe("\u{1F600}".repeat(RECEIPT_FOOTER_MAX_CHARS));
+    // a lone surrogate would break the email's encoding
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(m.footer ?? "")).toBe(false);
+  });
+
+  it("uses the settings route's constant: there is no second footer cap", () => {
+    expect(RECEIPT_FOOTER_MAX_CHARS).toBe(200);
   });
 });
 
