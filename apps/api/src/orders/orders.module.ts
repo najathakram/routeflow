@@ -41,6 +41,7 @@ import { CounterSaleTodayService } from "./counter-sale/counter-sale-today.servi
 import { CounterDayCloseController } from "./counter-sale/day-close/day-close.controller";
 import { CounterDayCloseService } from "./counter-sale/day-close/day-close.service";
 import { EmailModule } from "../email/email.module";
+import { QuickKeysService } from "./counter-sale/quick-keys.service";
 import { CustomersModule } from "../customers/customers.module";
 import { BillingModule } from "../billing/billing.module";
 import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
@@ -97,6 +98,7 @@ import { StorageModule } from "../storage/storage.module";
     CounterSaleService,
     CounterSaleTodayService,
     CounterDayCloseService,
+    QuickKeysService,
     PickupCompleteService,
     WalkInCustomerService,
     { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },

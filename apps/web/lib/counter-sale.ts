@@ -107,6 +107,11 @@ export function changeDue(total: number, tendered: number): number {
   return Math.max(0, roundMoney(tendered - total));
 }
 
+/** What is still owed for a tender, in cents; never negative. Zero exactly when `changeDue` takes over. */
+export function amountDue(total: number, tendered: number): number {
+  return Math.max(0, roundMoney(total - tendered));
+}
+
 export interface PaymentMethodOption {
   method: CounterSalePaymentMethod;
   label: string;
@@ -235,7 +240,7 @@ export function isCounterSaleIncomplete(err: unknown): boolean {
 
 /** POS-5: 403 PRICE_EDIT_NOT_PERMITTED (an edited price from a caller who may not change prices). Nothing was written. */
 export const COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY =
-  "You can't change prices. Reset the edited prices, or ask your account admin.";
+  "You can't change prices. Use Reset price on the edited lines, or ask your account admin.";
 
 /**
  * FIXED copy by status (and the one named 403 code); the server's own message is never shown. "Nothing was charged" is
@@ -384,7 +389,7 @@ export function heldAttemptKey(tenant?: string | null, userId?: string | null): 
 }
 const isNum = (n: unknown): boolean => typeof n === "number" && Number.isFinite(n);
 const optNum = (n: unknown): boolean => n === undefined || isNum(n);
-function validLine(l: unknown): boolean {
+export function validLine(l: unknown): boolean {
   if (!l || typeof l !== "object") return false;
   const o = l as Record<string, unknown>;
   return (
@@ -397,7 +402,7 @@ function validLine(l: unknown): boolean {
     optNum(o.unitsPerBox)
   );
 }
-function validCustomer(c: unknown): boolean {
+export function validCustomer(c: unknown): boolean {
   if (c === null || c === undefined) return true;
   if (typeof c !== "object") return false;
   const o = c as Record<string, unknown>;

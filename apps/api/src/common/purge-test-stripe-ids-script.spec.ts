@@ -177,6 +177,7 @@ describe("stripe-test-purge planner (#2437)", () => {
       help: false,
       confirm: null,
       excludeTenants: [],
+      allowProtected: [],
     });
     expect(r.args[1]).toEqual({
       apply: true,
@@ -185,6 +186,7 @@ describe("stripe-test-purge planner (#2437)", () => {
       help: false,
       confirm: "7",
       excludeTenants: [],
+      allowProtected: [],
     });
     expect(r.args[2].error).toMatch(/unknown argument: --aply/);
     expect(r.args[3].error).toMatch(/--confirm needs a value/);
@@ -192,6 +194,20 @@ describe("stripe-test-purge planner (#2437)", () => {
     expect(r.args[5].excludeTenants).toEqual(["acme", "globex"]);
     expect(r.args[6].error).toMatch(/empty slug/);
     expect(r.args[7].error).toMatch(/--exclude-tenant needs a value/);
+  });
+
+  it("row 195: --allow-protected is repeatable and per tenant; a protected tenant is asserted before the transaction opens", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const src = require("node:fs")
+      .readFileSync(SCRIPT, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
+    const confirm = src.indexOf("confirmProtectedOverride({");
+    const assertAt = src.indexOf("assertWritableTenant(t, t, protectedSlugs");
+    const begin = src.indexOf('client.query("BEGIN")');
+    expect(confirm).toBeGreaterThan(-1);
+    expect(assertAt).toBeGreaterThan(confirm);
+    expect(begin).toBeGreaterThan(assertAt);
   });
 
   it("drops every row of an excluded tenant before planning; unknown slugs are reported", () => {

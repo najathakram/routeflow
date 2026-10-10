@@ -1,12 +1,9 @@
 import { BadRequestException } from "@nestjs/common";
-import { COUNTER_DEFAULT_REGISTER } from "../../../returns/counter-close-lock";
+import { COUNTER_DEFAULT_REGISTER, REGISTER_KEY_PATTERN } from "@routeflow/pricing";
 
-/**
- * A register key: the till a close belongs to. One till in v1 (R20-10): the web never sends one, and every counter order reads as
- * `COUNTER_DEFAULT_REGISTER`. The API's literal copy of `REGISTER_KEY_PATTERN` in `packages/types/api/counter-register.ts` (L-261:
- * no runtime import of that package), pinned to it by register-key-parity.spec.ts. Case-sensitive: never lower-case a key.
- */
-export const REGISTER_KEY_PATTERN = /^[A-Za-z0-9_-][A-Za-z0-9:_-]{0,63}$/;
+// A register key is the till a close belongs to. One till in v1 (R20-10): the web never sends one, and every counter order reads
+// as `COUNTER_DEFAULT_REGISTER`. The pattern's ONE home is @routeflow/pricing (counter-register.ts); case-sensitive, never lower-case.
+export { REGISTER_KEY_PATTERN };
 
 /** The request's optional register key, validated; absent or blank is the default register. */
 export function parseRegisterKey(raw: unknown): string {

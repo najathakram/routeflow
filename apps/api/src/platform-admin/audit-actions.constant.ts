@@ -77,6 +77,11 @@ export const AdminAuditAction = {
   // Counter day close (SA-750r3): a tenant operator or admin reopened a closed till window. Written INSIDE the reopen transaction
   // (entityType "CounterDayClose", meta = the snapshot that was in force), so the old figures are never lost.
   COUNTER_DAY_CLOSE_REOPENED: "COUNTER_DAY_CLOSE_REOPENED",
+  // Feature-config writes (FeatureConfigService): logged under their own entity type, so the
+  // Audit Log tab labels them instead of printing the raw code. Values equal the service's
+  // FEATURE_CONFIG_SET_ACTION / FEATURE_CONFIG_CLEARED_ACTION (pinned by the constant spec).
+  FEATURE_CONFIG_SET: "FEATURE_CONFIG_SET",
+  FEATURE_CONFIG_CLEARED: "FEATURE_CONFIG_CLEARED",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -128,6 +133,8 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   RF_INVOICE_IRREGULAR_PERIOD: "RouteFlow invoice needs review (irregular period)",
   RF_INVOICE_SENT: "RouteFlow invoice emailed",
   COUNTER_DAY_CLOSE_REOPENED: "Counter day close reopened",
+  FEATURE_CONFIG_SET: "Feature setting changed",
+  FEATURE_CONFIG_CLEARED: "Feature setting cleared",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */

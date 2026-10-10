@@ -104,6 +104,8 @@ export interface InlineReturnSectionProps {
   renderQuoteFooter?: (quote: InlineReturnQuoteResponse) => React.ReactNode;
   /** POS-4b: a re-fetched quote (REFUND_AMOUNT_CHANGED) that replaces the one on screen. */
   quoteOverride?: InlineReturnQuoteResponse | null;
+  /** Show only the Total: the host replaced the total with the server's own figure, so the old breakdown would no longer add up. */
+  totalOnly?: boolean;
   /** W21b: replaces the default "issued as credit note" line under the totals (the dialog sets it when Refund is chosen). */
   quoteNote?: string;
   /** Called (in addition to the section's own inline error) when the Step-1 quote or the
@@ -129,6 +131,7 @@ export function InlineReturnSection({
   renderQuoteFooter,
   hideBack,
   quoteOverride,
+  totalOnly = false,
   quoteNote,
   onQuoteRefused,
   hidden = false,
@@ -642,15 +645,19 @@ export function InlineReturnSection({
           )}
 
           <div className="rounded-lg bg-surface-raised p-3">
-            <div className="flex justify-between text-sm text-navy">
-              <span>Subtotal</span>
-              <span>{money(quote.subtotal)}</span>
-            </div>
-            <div className="flex justify-between text-sm text-navy">
-              <span>Tax</span>
-              <span>{money(quote.taxAmount)}</span>
-            </div>
-            {quote.categoryTax > 0 && (
+            {!totalOnly && (
+              <div className="flex justify-between text-sm text-navy">
+                <span>Subtotal</span>
+                <span>{money(quote.subtotal)}</span>
+              </div>
+            )}
+            {!totalOnly && (
+              <div className="flex justify-between text-sm text-navy">
+                <span>Tax</span>
+                <span>{money(quote.taxAmount)}</span>
+              </div>
+            )}
+            {!totalOnly && quote.categoryTax > 0 && (
               <div className="flex justify-between text-sm text-navy">
                 <span>Category levy</span>
                 <span>{money(quote.categoryTax)}</span>
