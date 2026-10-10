@@ -61,6 +61,7 @@ import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/b
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useFleetAccess } from "@/lib/api/addons";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 const CHART_COLORS = [
   "#3b82f6",
@@ -2040,6 +2041,7 @@ function LedgerReport() {
         )}
       </div>
 
+      <ReadOnlyHint className="px-4 py-2 text-xs text-slate-600" />
       {/* Table */}
       {isLoading ? (
         <Spinner />
@@ -2101,12 +2103,9 @@ function LedgerReport() {
                   </td>
                   <td className="px-4 py-2.5">
                     {tx.status !== "PAID" && (
-                      <button
-                        onClick={() => openPayment(tx)}
-                        className="rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-600 hover:bg-brand-100 transition-colors"
-                      >
+                      <WriteButton size="sm" variant="secondary" onClick={() => openPayment(tx)}>
                         Record Payment
-                      </button>
+                      </WriteButton>
                     )}
                   </td>
                 </tr>

@@ -1077,9 +1077,9 @@ export default function OrdersPage() {
               title="No orders yet"
               description="Create an order on behalf of a customer to get started."
               action={
-                <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                <WriteButton size="sm" onClick={() => setIsCreateOpen(true)}>
                   Create order
-                </Button>
+                </WriteButton>
               }
             />
           )}

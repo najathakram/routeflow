@@ -18,16 +18,17 @@ import {
  * subscription for staff) and `bannerRoleOf` returns null for them anyway.
  */
 const SHOWN_KEY = "rf.billing.strip-shown";
+const shownKey = (scope: string | null) => `${SHOWN_KEY}.${scope ?? "unknown"}`;
 
 /**
  * Reserves the strip's height while the subscription read is still loading, but ONLY for a viewer who had a strip
  * on their previous load (a per-viewer hint in storage): a content jump when the strip appears late is a layout
  * shift, and a permanent blank gap for every healthy workspace would be worse. Same fixed heights as the strip.
  */
-export function BillingStripReserve() {
+export function BillingStripReserve({ scope }: { scope: string | null }) {
   const [reserve] = React.useState(() => {
     try {
-      return window.localStorage.getItem(SHOWN_KEY) === "1";
+      return !!scope && window.localStorage.getItem(shownKey(scope)) === "1";
     } catch {
       return false;
     }
@@ -42,10 +43,11 @@ export function BillingStripReserve() {
   );
 }
 
-function rememberStrip(shown: boolean) {
+function rememberStrip(scope: string | null, shown: boolean) {
+  if (!scope) return;
   try {
-    if (shown) window.localStorage.setItem(SHOWN_KEY, "1");
-    else window.localStorage.removeItem(SHOWN_KEY);
+    if (shown) window.localStorage.setItem(shownKey(scope), "1");
+    else window.localStorage.removeItem(shownKey(scope));
   } catch {
     /* storage unavailable: no reservation next time */
   }
@@ -54,18 +56,21 @@ function rememberStrip(shown: boolean) {
 export function BillingShellBanner({
   view,
   userRole,
+  scope,
 }: {
   view: SubscriptionView;
   userRole: string | undefined;
+  /** The workspace this viewer is in (tenant slug): scopes every per-viewer memory so a switch never leaks. */
+  scope: string | null;
 }) {
-  usePaidTransition(view);
+  usePaidTransition(view, scope);
   const role = bannerRoleOf(userRole);
   const state =
     role && (ownsBillingBanner(view) || view.status === "ACTIVE")
       ? subscriptionBannerState(view, role)
       : null;
   const showing = !!state?.inShell;
-  React.useEffect(() => rememberStrip(showing), [showing]);
+  React.useEffect(() => rememberStrip(scope, showing), [scope, showing]);
   if (role && state) {
     return state.inShell ? <SubscriptionStrip view={view} role={role} state={state} /> : null;
   }

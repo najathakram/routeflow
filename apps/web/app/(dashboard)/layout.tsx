@@ -1004,8 +1004,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   // CUSTOMER/DRIVER); a 60s staleTime keeps it from refetching on every navigation.
   // Lite-L2 (WP8): the same result also drives the nav's plan-gated filtering below —
   // isSuccess/isError captured alongside `data` (do not add a second useSubscription call).
+  // Per-viewer convenience memory (the strip-shown hint, the paid notice) is scoped to the workspace.
+  const billingScope = user?.tenantSlug ?? user?.id ?? null;
   const {
     data: subscriptionStatus,
+    dataUpdatedAt: subscriptionReadAt,
     isSuccess: subscriptionResolved,
     isError: subscriptionFailed,
   } = useSubscription({
@@ -1353,9 +1356,13 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       <div className="relative flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
         {subscriptionStatus ? (
-          <BillingShellBanner view={subscriptionStatus} userRole={user?.role} />
+          <BillingShellBanner
+            view={subscriptionStatus}
+            userRole={user?.role}
+            scope={billingScope}
+          />
         ) : isStaff && !subscriptionFailed ? (
-          <BillingStripReserve />
+          <BillingStripReserve scope={billingScope} />
         ) : null}
         {register ? (
           <RegisterHeader
@@ -1388,14 +1395,18 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           tabIndex={-1}
           className="flex-1 focus:outline-none overflow-x-hidden overflow-y-auto bg-surface-raised pb-24"
         >
-          <ReadOnlyGateProvider view={subscriptionStatus}>{children}</ReadOnlyGateProvider>
+          <ReadOnlyGateProvider view={subscriptionStatus} readAt={subscriptionReadAt}>
+            {children}
+          </ReadOnlyGateProvider>
         </main>
         {/* Persistent parked-draft dock (pos-cost-roles-spec §2) — bottom-left of
             the content area, every operator screen; resume/discard + scan-to-draft. */}
         <DraftDock />
       </div>
 
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <ReadOnlyGateProvider view={subscriptionStatus} readAt={subscriptionReadAt}>
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      </ReadOnlyGateProvider>
       <PwaInstallPrompt logoSrc={BRAND_MARK_SRC} accentClass="bg-brand-600 hover:bg-brand-700" />
 
       {/* Keyboard shortcuts help modal */}

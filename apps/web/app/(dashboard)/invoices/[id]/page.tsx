@@ -2162,7 +2162,11 @@ export default function InvoiceDetailPage() {
                 </button>
               }
               items={[
-                { label: "Record Payment", onClick: () => setIsPaymentOpen(true) },
+                {
+                  label: "Record Payment",
+                  onClick: () => setIsPaymentOpen(true),
+                  disabled: readOnlyGate.readOnly,
+                },
                 // B13: web had no way to apply a customer's advance-payment wallet balance —
                 // only mobile could. Same gate as Record Payment; the server also refuses a
                 // settled/dead/forgiven invoice (CREDIT_NOT_APPLICABLE) regardless.
@@ -2728,6 +2732,7 @@ export default function InvoiceDetailPage() {
                                   label: "Mark deposited",
                                   onClick: () => handleSetCheckStatus(pmt.id, "DEPOSITED"),
                                   disabled:
+                                    readOnlyGate.readOnly ||
                                     !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
                                       "DEPOSITED",
                                     ),
@@ -2736,6 +2741,7 @@ export default function InvoiceDetailPage() {
                                   label: "Mark cleared",
                                   onClick: () => handleSetCheckStatus(pmt.id, "CLEARED"),
                                   disabled:
+                                    readOnlyGate.readOnly ||
                                     !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
                                       "CLEARED",
                                     ),
@@ -2745,6 +2751,7 @@ export default function InvoiceDetailPage() {
                                   onClick: () => setBouncingPayment(pmt),
                                   danger: true,
                                   disabled:
+                                    readOnlyGate.readOnly ||
                                     !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
                                       "BOUNCED",
                                     ),
@@ -2761,7 +2768,7 @@ export default function InvoiceDetailPage() {
             )}
             {canRecordPayment && (
               <div className="mt-4">
-                <Button
+                <WriteButton
                   variant="secondary"
                   size="sm"
                   className="w-full"
@@ -2769,7 +2776,8 @@ export default function InvoiceDetailPage() {
                   onClick={() => setIsPaymentOpen(true)}
                 >
                   Record Payment
-                </Button>
+                </WriteButton>
+                <ReadOnlyHint />
               </div>
             )}
           </Card>

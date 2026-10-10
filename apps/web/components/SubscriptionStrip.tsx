@@ -5,6 +5,7 @@ import { Info, X } from "lucide-react";
 import type { SubscriptionView } from "@routeflow/types";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { useBillingPortal } from "@/lib/api/billing";
+import { useGuardedRouter } from "@/lib/use-guarded-router";
 import { dismissBanner, isBannerDismissed } from "@/lib/banner-dismiss";
 import {
   subscriptionBannerState,
@@ -55,16 +56,24 @@ export function SubscriptionStrip({
     [given, view, role],
   );
   const portal = useBillingPortal();
+  const router = useGuardedRouter();
+  // The session claim is made in an effect, ONCE per state (a ref remembers it across StrictMode's double effect), never
+  // during render: StrictMode's second render must not find the claim already taken and downgrade the first alert.
   const announceKind = state.live === "alert" ? state.kind : null;
-  const [announced, setAnnounced] = React.useState<{ kind: string; alert: boolean } | null>(null);
-  const alertNow =
-    announceKind !== null &&
-    (announced?.kind === announceKind ? announced.alert : claimAlert(announceKind));
+  const claimed = React.useRef<{ kind: string; alert: boolean } | null>(null);
+  const [alertKind, setAlertKind] = React.useState<string | null>(null);
   React.useEffect(() => {
-    if (announceKind && announced?.kind !== announceKind) {
-      setAnnounced({ kind: announceKind, alert: alertNow });
+    if (!announceKind) {
+      claimed.current = null;
+      setAlertKind(null);
+      return;
     }
-  }, [announceKind, announced, alertNow]);
+    if (claimed.current?.kind !== announceKind) {
+      claimed.current = { kind: announceKind, alert: claimAlert(announceKind) };
+    }
+    setAlertKind(claimed.current.alert ? announceKind : null);
+  }, [announceKind]);
+  const alertNow = announceKind !== null && alertKind === announceKind;
   const [sheet, setSheet] = React.useState(false);
   const [tick, setTick] = React.useState(0);
   const dismissKey = state.dismiss?.key;
@@ -101,6 +110,10 @@ export function SubscriptionStrip({
         {action && action.intent === "open-billing" && (
           <a
             href="/settings/billing"
+            onClick={(e) => {
+              e.preventDefault();
+              router.push("/settings/billing"); // guarded: never drops an open cart silently
+            }}
             className="shrink-0 rounded-ctl border border-line-strong bg-paper px-2.5 text-[12.5px] font-medium leading-6 text-navy"
           >
             {action.label}

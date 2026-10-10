@@ -33,13 +33,23 @@ let refusalTimer: ReturnType<typeof setTimeout> | null = null;
 const refusalListeners = new Set<() => void>();
 const notifyRefusal = () => refusalListeners.forEach((fn) => fn());
 
+let refusedAt = 0;
 export function isReadOnlyRefused(): boolean {
   return refusedUntil > Date.now();
 }
 export function markReadOnlyRefused(): void {
-  refusedUntil = Date.now() + REFUSAL_MS;
+  refusedAt = Date.now();
+  refusedUntil = refusedAt + REFUSAL_MS;
   if (refusalTimer) clearTimeout(refusalTimer);
   refusalTimer = setTimeout(notifyRefusal, REFUSAL_MS + 50);
+  notifyRefusal();
+}
+/** A read that landed AFTER the refusal and shows the workspace is not read-only ends the refusal at once. */
+function clearReadOnlyRefusal(): void {
+  if (refusedUntil === 0) return;
+  refusedUntil = 0;
+  if (refusalTimer) clearTimeout(refusalTimer);
+  refusalTimer = null;
   notifyRefusal();
 }
 export function resetReadOnlyRefusedForTests(): void {
@@ -59,13 +69,27 @@ const GateContext = React.createContext<Gate>({ readOnly: false, line: null, hin
 
 export function ReadOnlyGateProvider({
   view,
+  readAt,
   children,
 }: {
   view: SubscriptionView | null | undefined;
+  /** When `view` was last read (react-query `dataUpdatedAt`); a read newer than a 403 refusal can end the refusal. */
+  readAt?: number;
   children: React.ReactNode;
 }) {
   const refused = React.useSyncExternalStore(subscribeRefusal, isReadOnlyRefused, () => false);
   const readOnly = view?.status === "READ_ONLY" || refused;
+  React.useEffect(() => {
+    if (
+      refused &&
+      view &&
+      view.status !== "READ_ONLY" &&
+      readAt !== undefined &&
+      readAt > refusedAt
+    ) {
+      clearReadOnlyRefusal();
+    }
+  }, [refused, view, readAt]);
   const name = view?.billingContactName;
   const hintId = React.useId();
   const value = React.useMemo<Gate>(

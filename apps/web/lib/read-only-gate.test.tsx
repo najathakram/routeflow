@@ -131,3 +131,37 @@ describe("WriteLink", () => {
     );
   });
 });
+
+describe("read-only gate - a fresh read clears the refusal (S5 nit)", () => {
+  afterEach(() => resetReadOnlyRefusedForTests());
+
+  it("a read that landed AFTER the refusal and shows a non-READ_ONLY status re-enables the controls", () => {
+    const v = view({ status: "ACTIVE" });
+    const ui = (readAt: number) => (
+      <ReadOnlyGateProvider view={v} readAt={readAt}>
+        <Screen />
+      </ReadOnlyGateProvider>
+    );
+    const { rerender } = renderWithProviders(ui(Date.now() - 1000));
+    act(() => markReadOnlyRefused());
+    expect(screen.getByRole("button", { name: "Record Payment" })).toBeDisabled();
+    // the same read as before the refusal changes nothing
+    rerender(ui(Date.now() - 1000));
+    expect(screen.getByRole("button", { name: "Record Payment" })).toBeDisabled();
+    // a fresh read, newer than the refusal, says ACTIVE: the gate opens at once (not after 60 s)
+    rerender(ui(Date.now() + 5));
+    expect(screen.getByRole("button", { name: "Record Payment" })).toBeEnabled();
+  });
+
+  it("a fresh read that is still READ_ONLY keeps the controls disabled", () => {
+    const ui = (readAt: number) => (
+      <ReadOnlyGateProvider view={view({ status: "READ_ONLY" })} readAt={readAt}>
+        <Screen />
+      </ReadOnlyGateProvider>
+    );
+    const { rerender } = renderWithProviders(ui(Date.now() - 1000));
+    act(() => markReadOnlyRefused());
+    rerender(ui(Date.now() + 5));
+    expect(screen.getByRole("button", { name: "Record Payment" })).toBeDisabled();
+  });
+});

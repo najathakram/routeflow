@@ -19,12 +19,15 @@ import { bannerRoleOf, subscriptionBannerState } from "@/lib/subscription-banner
 export function BillingStatusCard({
   sub,
   userRole,
+  scope,
 }: {
   sub: SubscriptionView;
   userRole: string | undefined;
+  /** The workspace (tenant slug): scopes the one-time "all set" notice. */
+  scope: string | null;
 }) {
   const role = bannerRoleOf(userRole);
-  const [paid, clearPaid] = usePaidNotice();
+  const [paid, clearPaid] = usePaidNotice(scope);
   const portal = useBillingPortal();
   if (!role) return null;
   const state = subscriptionBannerState(sub, role);

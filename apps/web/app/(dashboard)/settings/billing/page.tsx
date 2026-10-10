@@ -445,7 +445,11 @@ export default function BillingSettingsPage() {
 
       {/* SA-733r6 (B4): Pay $X primary at the top while an invoice is owed, the autopay / expiring-card line, and the
           one-time "all set". While an invoice is owed the old read-only banner (and its "Choose a plan") steps aside. */}
-      <BillingStatusCard sub={s} userRole={user?.role} />
+      <BillingStatusCard
+        sub={s}
+        userRole={user?.role}
+        scope={user?.tenantSlug ?? user?.id ?? null}
+      />
       <TrialBanner sub={s} />
       {!ownsBillingBanner(s) && (
         <ReadOnlyBanner status={s.status} readOnlyReason={s.readOnlyReason} />
