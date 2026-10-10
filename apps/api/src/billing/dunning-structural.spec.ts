@@ -157,6 +157,7 @@ describe("SA-733r7 PR-B3 structural pins", () => {
     it("the sweep and the reconcilers are @LeaderCron with the gate's job names", () => {
       expect(svc).toMatch(/@LeaderCron\(CronExpression\.EVERY_HOUR, "billing\.dunningSweep"\)/);
       expect(svc).toMatch(/@LeaderCron\(CronExpression\.EVERY_HOUR, "billing\.pauseReconcile"\)/);
+      expect(svc).toMatch(/@LeaderCron\("0 4 \* \* \*", "billing\.dunningDiscovery"\)/);
       expect(svc).toMatch(/@LeaderCron\("0 11 1 \* \*", "billing\.pauseReconcileFirst"\)/);
     });
 
