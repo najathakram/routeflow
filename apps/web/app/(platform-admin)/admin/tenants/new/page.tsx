@@ -98,6 +98,17 @@ function appliedSummary(applied: { summary?: unknown } | null | undefined): stri
     : undefined;
 }
 
+/** SA-769: the add-on keys the apply response says the profile comped (a free add-on row); none when it says nothing. */
+function compedKeys(applied: { plan?: unknown } | null | undefined): Set<string> {
+  const comps = (applied?.plan as { comps?: unknown } | undefined)?.comps;
+  if (!Array.isArray(comps)) return new Set();
+  return new Set(
+    comps
+      .map((c) => (c as { featureKey?: unknown })?.featureKey)
+      .filter((k): k is string => typeof k === "string"),
+  );
+}
+
 /** The create DTO's own rules (create-tenant.dto.ts), checked here so a 400 can name the field without its message. */
 function invalidFields(form: {
   slug: string;
@@ -210,6 +221,8 @@ export default function AdminCreateTenantPage() {
   const fieldRefs = React.useRef<Partial<Record<FieldKey, HTMLInputElement | null>>>({});
   /** What is left to do after a billing-stop review closes. */
   const afterReview = React.useRef<{ tenantId: string } | null>(null);
+  /** SA-769: the add-on keys the applied profile already comped; the Free add-ons step must not enable them again. */
+  const profileComped = React.useRef<Set<string>>(new Set());
 
   // The plan list is catalog-driven (GROWTH/SCALE ship without a web release), but the server
   // only accepts a PLAN_KEYS member (create-tenant.dto.ts's @IsIn(PLAN_KEYS)) — a legacy or
@@ -327,9 +340,13 @@ export default function AdminCreateTenantPage() {
   async function runAddons(tenantId: string) {
     const failed: string[] = [];
     for (const addon of chosenAddons) {
+      // SA-769: the profile comps its fleet modules itself, so a ticked one is already on
+      if (profileComped.current.has(addon.addonKey)) continue;
       try {
         await enableTenantAddon(tenantId, addon.addonKey, undefined, undefined, true);
-      } catch {
+      } catch (err: unknown) {
+        // 409 "already active": the module is on, which is what the admin asked for (a comp request)
+        if ((err as { response?: { status?: number } })?.response?.status === 409) continue;
         failed.push(addon.label);
       }
     }
@@ -361,6 +378,7 @@ export default function AdminCreateTenantPage() {
         profile as BusinessProfileKey,
         preview.planFingerprint,
       );
+      profileComped.current = compedKeys(applied);
       setProfileResult({ status: "applied", label, summary: appliedSummary(applied) });
     } catch (applyErr: unknown) {
       setProfileResult({ status: "failed", reason: profileErrorCopy(applyErr, "") });
@@ -379,6 +397,7 @@ export default function AdminCreateTenantPage() {
     setStartedLine(null);
     setActivationFailed(false);
     setAddonFailures([]);
+    profileComped.current = new Set();
     let reviewOpened = false;
     let refusedField: FieldKey | null = null;
     try {
@@ -468,6 +487,7 @@ export default function AdminCreateTenantPage() {
         profileReview.key,
         profileReview.response.planFingerprint,
       );
+      profileComped.current = compedKeys(response);
       setProfileResult({
         status: "applied",
         label: profileReview.label,
