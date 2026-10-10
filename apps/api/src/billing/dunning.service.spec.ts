@@ -364,11 +364,11 @@ describe("DunningService", () => {
       await d.svc.sweep(now);
       const labelled = d.notifications.localDateLabel.mock.calls[0][1] as Date;
       expect(labelled.getTime()).toBe(now.getTime() + 24 * 3_600_000);
-      // and a clock only just past 144 h keeps its real date (since + 168 h is later than now + 24 h)
+      // the milestone is due from 144 h, where since + 168 h == now + 24 h: the floor never lowers the date
       const fresh = make({ sweepRows: [row()] });
       await fresh.svc.sweep(at(145));
       expect((fresh.notifications.localDateLabel.mock.calls[0][1] as Date).getTime()).toBe(
-        at(168).getTime(),
+        at(145).getTime() + 24 * 3_600_000,
       );
     });
 

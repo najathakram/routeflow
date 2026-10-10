@@ -307,7 +307,7 @@ describe("DunningService.discover (daily open-invoice discovery)", () => {
       const out = await d.svc.discover(NOW);
       expect(out).toMatchObject({ cleared: 1, moved: 0, stamped: 0 });
       expect(d.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
-        where: { tenantId: "t1", pastDueInvoiceId: "in_clock_t1" },
+        where: { tenantId: "t1", pastDueInvoiceId: "in_clock_t1", pausedAt: null },
         data: { pastDueSince: null, pastDueInvoiceId: null, pausedAt: null },
       });
       expect(d.notifications.notifyDunning).not.toHaveBeenCalled();
@@ -330,7 +330,7 @@ describe("DunningService.discover (daily open-invoice discovery)", () => {
       const out = await d.svc.discover(NOW);
       expect(out).toMatchObject({ moved: 1, cleared: 0 });
       expect(d.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
-        where: { tenantId: "t1", pastDueInvoiceId: "in_clock_t1" },
+        where: { tenantId: "t1", pastDueInvoiceId: "in_clock_t1", pausedAt: null },
         data: { pastDueInvoiceId: "in_sib", pastDueSince: NOW },
       });
     });

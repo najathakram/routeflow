@@ -1,7 +1,13 @@
 import { ConflictException, type Logger } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { PrismaService } from "../prisma/prisma.service";
-import { billingPauseMode, type BillingPauseMode } from "./dunning-config";
+import {
+  billingPauseMode,
+  type BillingPauseMode,
+  PAYMENT_OVERDUE_REASON,
+  READ_ONLY_STATUS,
+  SUBSCRIPTION_CANCELLED_REASON,
+} from "./dunning-config";
 import type { StripeService } from "./stripe.service";
 
 /**
@@ -11,10 +17,10 @@ import type { StripeService } from "./stripe.service";
  * subscribe / upgrade / downgrade / resume / checkout and the B1 admin plan change. It answers 409 `PAYMENT_OVERDUE`
  * carrying `hosted_invoice_url`.
  *
- * WHEN IT REFUSES (the owed MARKER `pastDueInvoiceId` plus a Stripe re-read, never the reason text):
- *   - a tenant that is not ACTIVE (READ_ONLY `payment_overdue`, or `subscription_cancelled` with the owed marker):
- *     in every mode;
- *   - an ACTIVE tenant: only in `enforced`. In `dark` the call is ALLOWED and a structured
+ * WHEN IT REFUSES (the owed MARKER `pastDueInvoiceId` plus a Stripe re-read of an OPEN invoice with money remaining;
+ * `uncollectible` is the owner's write-off and is never owed):
+ *   - READ_ONLY with reason `payment_overdue`, or `subscription_cancelled` with the owed marker: in every mode;
+ *   - anything else (ACTIVE, TRIAL, a lapsed trial's READ_ONLY...): only in `enforced`. In `dark` the call is ALLOWED and a structured
  *     `billing.dunning.would_refuse code=PAYMENT_OVERDUE tenant=<id> entryPoint=<name>` warn is logged (the dark gate
  *     pattern), so the blast-radius report can count what `enforced` would refuse. `dark` is behaviour-neutral.
  *   - `off`: an ACTIVE tenant is never touched (no Stripe read, no log).
@@ -40,12 +46,9 @@ interface GuardCtx {
   logger: Pick<Logger, "warn">;
 }
 
-/** Stripe invoice statuses that still owe money. `uncollectible` stays owed (SA-733r3). */
-const OWED_STATUSES = new Set(["open", "uncollectible"]);
-
 export async function assertNotPaymentOverdue(
   ctx: GuardCtx,
-  tenant: { id: string; status: string },
+  tenant: { id: string; status: string; readOnlyReason?: string | null },
   sub: { pastDueInvoiceId?: string | null } | null | undefined,
   mode: BillingPauseMode,
   entryPoint: OverdueEntryPoint,
@@ -53,8 +56,14 @@ export async function assertNotPaymentOverdue(
   const invoiceId = sub?.pastDueInvoiceId;
   if (!invoiceId) return;
 
-  // Not ACTIVE (a pause, or a cancel while paused): the marker is the debt - refused in every mode.
-  const refuseNow = tenant.status !== "ACTIVE" || mode === "enforced";
+  // A pause, or a cancel while paused (READ_ONLY with payment_overdue / subscription_cancelled): the marker is the
+  // debt - refused in every mode. Every other state (ACTIVE, TRIAL, a lapsed trial's READ_ONLY...) follows the
+  // enforced-only rule, so `dark` stays behaviour-neutral for tenants the pause never touched.
+  const inDebtState =
+    tenant.status === READ_ONLY_STATUS &&
+    (tenant.readOnlyReason === PAYMENT_OVERDUE_REASON ||
+      tenant.readOnlyReason === SUBSCRIPTION_CANCELLED_REASON);
+  const refuseNow = inDebtState || mode === "enforced";
   if (!refuseNow && mode === "off") return;
 
   let facts: Awaited<ReturnType<StripeService["getInvoiceFacts"]>>;
@@ -69,7 +78,8 @@ export async function assertNotPaymentOverdue(
     });
   }
   const remaining = facts.amountRemaining ?? Math.max(0, facts.amountDue - facts.amountPaid);
-  if (!facts.status || !OWED_STATUSES.has(facts.status) || remaining <= 0) return;
+  // owed = status open with money remaining, nothing else (SA-733r M2, r7 r-note 2): uncollectible is a write-off
+  if (facts.status !== "open" || remaining <= 0) return;
 
   if (!refuseNow) {
     ctx.logger.warn(
@@ -101,12 +111,12 @@ export async function assertTenantNotPaymentOverdue(
   if (!sub?.pastDueInvoiceId) return;
   const tenant = await deps.prisma.tenant.findUnique({
     where: { id: tenantId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, readOnlyReason: true },
   });
   if (!tenant) return; // the caller 404s
   await assertNotPaymentOverdue(
     deps,
-    { id: tenantId, status: tenant.status },
+    { id: tenantId, status: tenant.status, readOnlyReason: tenant.readOnlyReason },
     sub,
     mode,
     entryPoint,

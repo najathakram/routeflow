@@ -155,6 +155,7 @@ describeDb("SA-733r7 PR-B3 dunning (real Postgres)", () => {
       billing.transitionAndEmit(...a),
     mode: () => "enforced" as const,
     once: () => true,
+    cursors: new Map<string, number>(),
   });
 
   it("two pause attempts racing: exactly one pauses, one -MRR row, pausedAt set once (CAS count 0 = no pause)", async () => {

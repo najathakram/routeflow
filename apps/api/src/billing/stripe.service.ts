@@ -309,18 +309,6 @@ export class StripeService implements OnModuleInit {
     return rows.sort((a, b) => (a?.created ?? 0) - (b?.created ?? 0));
   }
 
-  /**
-   * Everything the subscription still OWES, oldest first: `open` plus `uncollectible` (an uncollectible invoice is
-   * still a debt, SA-733r3). The dunning resume asks this before it clears a clock.
-   */
-  async listOwedSubscriptionInvoices(subId: string, maxPages = 5): Promise<any[]> {
-    const [open, uncollectible] = await Promise.all([
-      this.listInvoicesPaged(subId, "open", maxPages),
-      this.listInvoicesPaged(subId, "uncollectible", maxPages),
-    ]);
-    return [...open, ...uncollectible].sort((a, b) => (a?.created ?? 0) - (b?.created ?? 0));
-  }
-
   /** Deletes a DRAFT invoice (only a draft can be deleted; an open one is voided). */
   async deleteDraftInvoice(invoiceId: string): Promise<any> {
     return this.client.invoices.del(invoiceId);

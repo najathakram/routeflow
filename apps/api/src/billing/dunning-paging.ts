@@ -7,6 +7,7 @@ export interface PagedRow {
   stripeSubId: string | null;
   externalPayment: boolean;
   catchupState: string | null;
+  pastDueInvoiceId: string | null;
 }
 
 export interface PagingOptions {
@@ -18,6 +19,15 @@ export interface PagingOptions {
   timeBudgetMs: number;
   /** The rotation unit: the start row advances once per unit (an hour for the reconciler, a day for discovery). */
   unitMs: number;
+  /**
+   * Process-local rotation memory + its key: when a run is cut short by the TIME budget the next run starts where
+   * this one actually stopped (start + rows processed), so the tail is never starved. Without an entry (first run,
+   * restart, another replica) the hour-derived rotation below applies.
+   */
+  cursors?: Map<string, number>;
+  cursorKey?: string;
+  /** Injectable clock (ms) for the time budget; defaults to Date.now. */
+  clock?: () => number;
 }
 
 /**
@@ -34,12 +44,18 @@ export async function forEachRotated(
   opts: PagingOptions,
   visit: (row: PagedRow) => Promise<void>,
 ): Promise<number> {
-  const deadline = Date.now() + opts.timeBudgetMs;
+  const now = opts.clock ?? Date.now;
+  const deadline = now() + opts.timeBudgetMs;
   const total = await prisma.tenantSubscription.count({ where });
   if (total === 0) return 0;
   const budget = Math.min(total, opts.maxRows);
+  const remembered = opts.cursors && opts.cursorKey ? opts.cursors.get(opts.cursorKey) : undefined;
   const startIdx =
-    total > budget ? (Math.floor(runAt.getTime() / opts.unitMs) * budget) % total : 0;
+    remembered !== undefined
+      ? remembered % total
+      : total > budget
+        ? (Math.floor(runAt.getTime() / opts.unitMs) * budget) % total
+        : 0;
   const startAt =
     startIdx === 0
       ? null
@@ -56,7 +72,7 @@ export async function forEachRotated(
   let processed = 0;
   const page = async (cursor: string | null, upTo: string | null): Promise<void> => {
     let last = cursor;
-    while (processed < budget && Date.now() < deadline) {
+    while (processed < budget && now() < deadline) {
       const rows = await prisma.tenantSubscription.findMany({
         where: {
           ...where,
@@ -64,12 +80,19 @@ export async function forEachRotated(
             ? { tenantId: { ...(last ? { gt: last } : {}), ...(upTo ? { lte: upTo } : {}) } }
             : {}),
         },
-        select: { tenantId: true, stripeSubId: true, externalPayment: true, catchupState: true },
+        select: {
+          tenantId: true,
+          stripeSubId: true,
+          externalPayment: true,
+          catchupState: true,
+          pastDueInvoiceId: true,
+        },
         orderBy: { tenantId: "asc" },
         take: Math.min(opts.batchSize, budget - processed),
       });
       if (rows.length === 0) return;
       for (const r of rows) {
+        if (now() >= deadline) return; // the time budget is checked per row, not just per page
         processed++;
         await visit(r);
       }
@@ -78,5 +101,7 @@ export async function forEachRotated(
   };
   await page(startAt, null); // from the start row to the end of the keyset
   if (startAt && processed < budget) await page(null, startAt); // wrap to the beginning, up to the start row
+  if (opts.cursors && opts.cursorKey)
+    opts.cursors.set(opts.cursorKey, (startIdx + processed) % total);
   return processed;
 }

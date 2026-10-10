@@ -28,6 +28,7 @@ import {
   type DiscoveryOutcome,
   discoverUnstamped,
 } from "./dunning-discovery";
+import { clockStartFor, logClockStarted } from "./dunning-clock";
 import { runMilestones } from "./dunning-milestones";
 import {
   clearPauseCollection,
@@ -73,6 +74,8 @@ export class DunningService {
   private transition: StatusTransition | null = null;
   /** Keys already logged by this process (a repeating hourly condition logs once). Bounded. */
   private readonly seen = new Set<string>();
+  /** Process-local rotation cursors for the periodic sweeps (an empty map after a restart is fine). */
+  private readonly cursors = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -99,6 +102,7 @@ export class DunningService {
         }),
       mode: () => billingPauseMode(),
       once: (key) => this.once(key),
+      cursors: this.cursors,
     };
   }
 
@@ -130,15 +134,27 @@ export class DunningService {
     const facts = await this.stripe.getInvoiceFacts(invoiceId);
     if (!isOwed(facts) || facts.paymentProcessing) return "not_owed";
 
-    const stamped = await stampClock(this.deps(), row.tenantId, invoiceId, now);
+    // one full runway: the stamp time, unless this invoice's d0 already went out (r7 r-note 2)
+    const since = await clockStartFor(this.deps(), row.tenantId, invoiceId, now);
+    const stamped = await stampClock(this.deps(), row.tenantId, invoiceId, since);
     if (!stamped) return "unchanged";
     this.logger.warn(`billing.dunning.stamped tenant=${row.tenantId} invoice=${invoiceId}`);
+    const finalizedSec = invoice?.status_transitions?.finalized_at;
+    logClockStarted(this.deps(), {
+      tenantId: row.tenantId,
+      invoiceId,
+      via: "payment_failed",
+      stampAt: now,
+      since,
+      finalizedAt: typeof finalizedSec === "number" ? new Date(finalizedSec * 1000) : null,
+      firstFailureAt: now,
+    });
 
     // The d0 notice goes out now (this replaces B410's direct email); a failure never fails the webhook.
     try {
       await runMilestones(
         this.deps(),
-        { tenantId: row.tenantId, pastDueInvoiceId: invoiceId, pastDueSince: now },
+        { tenantId: row.tenantId, pastDueInvoiceId: invoiceId, pastDueSince: since },
         facts,
         now,
       );
@@ -193,9 +209,11 @@ export class DunningService {
     const stripeSub = await this.stripe.getSubscription(stripeSubId); // an error throws: redelivery
     if (!stripeSub?.pause_collection || stripeSub.status === "canceled") return;
     if (billingPauseMode() !== "enforced") {
-      this.logger.warn(
-        `billing.dunning.would_unpause tenant=${tenantId} sub=${stripeSubId} (BILLING_PAUSE_MODE=${billingPauseMode()}: Stripe pause_collection is set and local state does not know it; not removed)`,
-      );
+      if (this.once(`would_unpause:${tenantId}:${Math.floor(now.getTime() / 86_400_000)}`)) {
+        this.logger.warn(
+          `billing.dunning.would_unpause tenant=${tenantId} sub=${stripeSubId} (BILLING_PAUSE_MODE=${billingPauseMode()}: Stripe pause_collection is set and local state does not know it; not removed)`,
+        );
+      }
       return;
     }
     await clearPauseCollection(
@@ -257,9 +275,16 @@ export class DunningService {
     // M8: re-read Stripe before any email or pause. Paid / void / unknown = the clock is stale: resolve it.
     const facts = await this.stripe.getInvoiceFacts(invoiceId);
     if (!isOwed(facts)) {
-      const r = await resolveClockInvoice(deps, row, invoiceId, row.stripeSubId, now);
-      if (r === "resumed") this.tenantStatusGuard.invalidate(row.tenantId);
-      return "resolved";
+      if (facts.status === "paid") {
+        // the invoice.paid path, self-healing a missed webhook
+        const r = await resolveClockInvoice(deps, row, invoiceId, row.stripeSubId, now);
+        if (r === "resumed") this.tenantStatusGuard.invalidate(row.tenantId);
+        return "resolved";
+      }
+      // void / uncollectible (the owner's write-off) / gone: it never keeps a clock, but there is NO new resume path
+      // here - an ACTIVE tenant's clock is cleared or moved by the daily discovery, a PAUSED tenant exits through
+      // admin activation (or invoice.paid of the clocked invoice).
+      return "noop";
     }
     if (facts.paymentProcessing) return "noop"; // N6: a bank debit in flight is not a failure
 
@@ -328,7 +353,8 @@ export class DunningService {
   }
 
   discover(now: Date, opts: DiscoveryOptions = {}): Promise<DiscoveryOutcome> {
-    if (!this.stripe.isConfigured) return Promise.resolve({ tenants: 0, stamped: 0, failed: 0 });
+    if (!this.stripe.isConfigured)
+      return Promise.resolve({ tenants: 0, stamped: 0, failed: 0, cleared: 0, moved: 0 });
     return discoverUnstamped(this.deps(), now, opts);
   }
 

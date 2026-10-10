@@ -10,6 +10,7 @@ class PauseRollback extends Error {}
 
 /** Interactive-transaction budget for a transaction that makes one Stripe call while holding the lock. */
 const STRIPE_IN_TX_TIMEOUT_MS = 15_000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * SA-733r7 PR-B3 (D4): the pause. ONE transaction, Tenant row lock first, then the subscription:
@@ -62,7 +63,11 @@ export async function pauseTenantTx(
 
 /**
  * After the pause commits: tell Stripe to void the invoices it creates while the tenant is paused (SA-733r2 R17-1).
- * Key (tenant, "pause", pausedAt ISO). A failure never undoes the local pause - the hourly reconciler corrects it.
+ * Key (tenant, "pause", pausedAt ISO). Opus re-review: this runs UNLOCKED after the commit, so an `invoice.paid`
+ * resume could commit and clear `pause_collection` first and this late set would land last (Stripe paused, local
+ * ACTIVE). So the set is made inside a Tenant-lock transaction that re-reads `pausedAt` and SKIPS unless it is still
+ * exactly the stamped value (like the reconciler). Returns true when Stripe was told. A failure never undoes the
+ * local pause - the hourly reconciler corrects it.
  */
 export async function setPauseCollection(
   deps: DunningDeps,
@@ -70,12 +75,28 @@ export async function setPauseCollection(
   pausedAt: Date,
 ): Promise<boolean> {
   try {
-    await deps.stripe.updateSubscription(
-      target.stripeSubId,
-      { pause_collection: { behavior: "void" } },
-      { idempotencyKey: `${target.tenantId}:pause:${pausedAt.toISOString()}` },
+    return await deps.prisma.$transaction(
+      async (tx) => {
+        await lockTenantForLedger(tx, target.tenantId);
+        const sub = await tx.tenantSubscription.findUnique({
+          where: { tenantId: target.tenantId },
+          select: { pausedAt: true },
+        });
+        if (!sub?.pausedAt || sub.pausedAt.getTime() !== pausedAt.getTime()) {
+          deps.logger.log(
+            `billing.dunning.pause_collection_skipped tenant=${target.tenantId} (the pause was cleared or replaced before the set)`,
+          );
+          return false;
+        }
+        await deps.stripe.updateSubscription(
+          target.stripeSubId,
+          { pause_collection: { behavior: "void" } },
+          { idempotencyKey: `${target.tenantId}:pause:${pausedAt.toISOString()}` },
+        );
+        return true;
+      },
+      { timeout: STRIPE_IN_TX_TIMEOUT_MS },
     );
-    return true;
   } catch (err) {
     deps.logger.error(
       `billing.dunning.pause_collection_failed tenant=${target.tenantId}: ${(err as Error)?.message} - the reconciler will correct Stripe`,
@@ -161,6 +182,8 @@ export async function reconcilePauseCollection(
       batchSize: opts.batchSize ?? 200,
       timeBudgetMs: opts.timeBudgetMs ?? 10 * 60_000,
       unitMs: HOUR_MS,
+      cursors: deps.cursors,
+      cursorKey: "reconcile",
     },
     (r) => reconcileOne(deps, r, runAt, mode, out),
   );
@@ -191,6 +214,10 @@ async function reconcileOne(
         const wantPaused = !!local.pausedAt;
         if (wantPaused === stripePaused) return false;
         if (!wantPaused && mode !== "enforced") {
+          // once per tenant per day-window, not every hourly run
+          if (!deps.once(`would_unpause:${r.tenantId}:${Math.floor(runAt.getTime() / DAY_MS)}`)) {
+            return false;
+          }
           deps.logger.warn(
             `billing.dunning.would_unpause tenant=${r.tenantId} sub=${subId} (BILLING_PAUSE_MODE=${mode}: Stripe pause_collection is set and local state does not know it; not removed)`,
           );

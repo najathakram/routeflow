@@ -217,7 +217,11 @@ describe("assertTenantNotPaymentOverdue (the convenience every entry point calls
         findUnique: jest.fn().mockResolvedValue({ pastDueInvoiceId: o.marker ?? null }),
       },
       tenant: {
-        findUnique: jest.fn().mockResolvedValue({ id: "t1", status: o.status ?? "READ_ONLY" }),
+        findUnique: jest.fn().mockResolvedValue({
+          id: "t1",
+          status: o.status ?? "READ_ONLY",
+          readOnlyReason: (o.status ?? "READ_ONLY") === "READ_ONLY" ? "payment_overdue" : null,
+        }),
       },
     };
     const c = ctx(o.facts);

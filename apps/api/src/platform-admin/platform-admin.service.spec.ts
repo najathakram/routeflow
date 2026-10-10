@@ -4997,6 +4997,7 @@ describe("PlatformAdminService — audit provenance", () => {
         slug: "acme",
         plan: "STARTER",
         status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
         class: "PRODUCTION",
         deletedAt: null,
       } as any);
