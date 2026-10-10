@@ -181,6 +181,30 @@ describe("TenantsService", () => {
       });
     });
 
+    // SA-738: signup never relies on the column default; the zone is always written explicitly.
+    describe("timezone (SA-738)", () => {
+      const configCreate = () => (prisma as any).tenantConfig.create as jest.Mock;
+      beforeEach(() => email.send.mockResolvedValue({ delivered: true, transport: "resend" }));
+
+      it("stores UTC when the signup sends no zone", async () => {
+        await service.register(REGISTER_DTO);
+        expect(configCreate().mock.calls[0][0].data.timezone).toBe("UTC");
+      });
+
+      it("stores the zone the signup sent", async () => {
+        await service.register({ ...REGISTER_DTO, timezone: "America/Chicago" });
+        expect(configCreate().mock.calls[0][0].data.timezone).toBe("America/Chicago");
+      });
+
+      it("rejects an unknown zone with 400 INVALID_TIME_ZONE and writes nothing", async () => {
+        const err: any = await service
+          .register({ ...REGISTER_DTO, timezone: "Mars/Base" })
+          .catch((e) => e);
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.getResponse()).toMatchObject({ code: "INVALID_TIME_ZONE" });
+        expect(prisma.tenant.create).not.toHaveBeenCalled();
+      });
+    });
     it("creates the admin user as INACTIVE regardless of email outcome (gates login until verified)", async () => {
       email.send.mockResolvedValue({ delivered: true, transport: "resend" });
       await service.register(REGISTER_DTO);

@@ -124,6 +124,26 @@ describe("buildQuoteRequest — never a bare qty", () => {
     expect(req.items.map((i) => i.productId)).toEqual(["prod-1"]);
   });
 
+  it("SA-740: sends sourceOrderId only when supplied (the sale this return is from), on the quote and the capture", () => {
+    expect(buildQuoteRequest("cust-1", [line({ pieces: "1" })])).not.toHaveProperty(
+      "sourceOrderId",
+    );
+    expect(
+      buildQuoteRequest("cust-1", [line({ pieces: "1" })], undefined, "order-9").sourceOrderId,
+    ).toBe("order-9");
+    const base = {
+      customerId: "cust-1",
+      orderId: "order-1",
+      lines: [line({ pieces: "1" })],
+      returnKey: "k",
+      reason: "DAMAGED" as const,
+    };
+    expect(buildCaptureRequest(base)).not.toHaveProperty("sourceOrderId");
+    expect(buildCaptureRequest({ ...base, sourceOrderId: "order-9" }).sourceOrderId).toBe(
+      "order-9",
+    );
+  });
+
   it("includes routeRunStopId only when supplied (driver captures)", () => {
     expect(buildQuoteRequest("cust-1", [line({ pieces: "1" })])).not.toHaveProperty(
       "routeRunStopId",

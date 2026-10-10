@@ -1,13 +1,10 @@
 import {
   Injectable,
   Logger,
-  Optional,
   NotFoundException,
   ConflictException,
   BadRequestException,
   InternalServerErrorException,
-  ServiceUnavailableException,
-  BadGatewayException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -61,14 +58,6 @@ import {
   withAddonLocks,
 } from "../billing/manual-activation-addons";
 import { roundMoney } from "@routeflow/pricing";
-import { StripeService } from "../billing/stripe.service";
-import { ScheduledPriceChangeService } from "../billing/scheduled-price-change";
-import {
-  beginStripeFirstPlanChange,
-  PLAN_CHANGE_LANDED,
-  planChangeArgs,
-} from "../billing/plan-change-flow";
-import { manualPayContext } from "../billing/addon-retirement";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AppConfig } from "../config/configuration";
@@ -110,6 +99,7 @@ import { clearNeedsReconcile } from "../billing/needs-reconcile";
 import { claimRefusal } from "../billing/catchup-claim";
 import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
+import { assertValidTenantTimeZone } from "../system-config/tenant-timezone.writer";
 import { STAFF_ACCESS_AUDIENCE } from "../auth/session-token";
 
 /** 409 TENANT_TRIAL_EXTEND_NOT_ALLOWED: an ACTIVE tenant is never moved to TRIAL. */
@@ -359,6 +349,9 @@ export class PlatformAdminService {
   async createTenant(dto: CreateTenantDto, adminId: string | null = null) {
     const { slug, businessName, adminEmail, adminUsername, plan } = dto;
     assertSafeTextCell({ businessName }); // B956: the name is mirrored into a Customer row
+    // SA-738 R16-4: the creation-time zone is REQUIRED (no silent New York default). The DTO refuses at
+    // the pipe; this is the service backstop for non-HTTP callers (400 INVALID_TIME_ZONE, before any write).
+    const timezone = assertValidTenantTimeZone(dto.timezone);
 
     const RESERVED_SLUGS = ["admin", "api", "app", "www", "platform", "auth", "health", "static"];
     if (RESERVED_SLUGS.includes(slug.toLowerCase()))
@@ -428,7 +421,9 @@ export class PlatformAdminService {
         },
       });
 
-      await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName } });
+      await tx.tenantConfig.create({
+        data: { tenantId: tenant.id, businessName, timezone },
+      });
 
       await tx.expenseCategory.createMany({
         data: IRS_SYSTEM_CATEGORIES.map((c) => ({
@@ -509,6 +504,7 @@ export class PlatformAdminService {
       class: result.tenant.class,
       adminUsername: result.user.username,
       welcomeEmail,
+      timezone,
     });
 
     return {
@@ -796,12 +792,7 @@ export class PlatformAdminService {
     return { id: tenant.id, slug: tenant.slug, status: tenant.status };
   }
 
-  /** Serialised per tenant on the `tenant-price` lock (SA-733 D8): every read and write below runs inside it. */
-  updatePlan(id: string, dto: UpdateTenantPlanDto, adminId: string | null = null) {
-    return underTenantPriceLock(id, () => this.updatePlanLocked(id, dto, adminId));
-  }
-
-  private async updatePlanLocked(id: string, dto: UpdateTenantPlanDto, adminId: string | null) {
+  async updatePlan(id: string, dto: UpdateTenantPlanDto, adminId: string | null = null) {
     // SA-140: class/deletedAt added so wasPaying/isPaying below can use the shared isPayingRow
     // predicate — this select previously fetched only status, silently missing the two other
     // conditions payingWhere/isPayingRow require (a real, previously undetected gap: an admin
@@ -837,9 +828,6 @@ export class PlatformAdminService {
         planKey: true,
         basePriceSnapshot: true,
         priceOverrideMonthly: true,
-        priceOverrideAnnual: true,
-        stripeSubId: true,
-        externalPayment: true,
         discount: true,
         // SA-736r M2: a coupon-unbilled row is never in the paying set; the CAS below holds it to what was read.
         couponFull: true,
@@ -850,7 +838,6 @@ export class PlatformAdminService {
         // cancellation is armed before it can silently interact with it (see the refusal right
         // below) — this branch was blind to the field entirely before.
         cancelAtPeriodEnd: true,
-        downgradeToPlanKey: true, // R1 Option B: a pre-renewal push may have lowered Stripe's price
       },
     });
 
@@ -1002,35 +989,7 @@ export class PlatformAdminService {
     };
     const preparedTransition = await this.planTransition.prepare(transition);
 
-    // SA-733r M7: Stripe FIRST (price + retired add-on items in one update); `flow.settle` puts it back if the
-    // write below throws. A re-save of the tenant's own plan pushes nothing.
-    const isUpgrade = isRankedPlanChange && rankTo > rankFrom;
-    // A move to a HIGHER plan retires the add-ons the target includes even when the target is a custom plan
-    // (GROWTH -> ENTERPRISE); only the proration rule keeps the ranked-and-priced test.
-    const retiresAddons = rankFrom >= 0 && rankTo > rankFrom;
-    // R1 Option B: undo an early pre-renewal downgrade push BEFORE this change prorates from Stripe's price.
-    if (priorSub?.stripeSubId && priorSub.downgradeToPlanKey && fromKey !== targetPlanKey) {
-      await this.scheduledPrice?.restoreIfPushedLocked(id, priorSub.downgradeToPlanKey, {
-        mustBeCleared: false,
-        audience: "admin",
-      });
-    }
-    const flowArgs = planChangeArgs({
-      tenantId: id,
-      sub: priorSub,
-      version,
-      def: definition,
-      proration: isUpgrade ? "create_prorations" : "none",
-      retireAddons: retiresAddons,
-      actorId: adminId,
-      audience: "admin",
-    });
-    const manual = await manualPayContext(this.prisma, id, this.stripe.isConfigured, priorSub);
-    const flow = await beginStripeFirstPlanChange(
-      { prisma: this.prisma, stripe: this.stripe, logger: this.logger },
-      fromKey === targetPlanKey ? { ...flowArgs, stripeSubId: null } : flowArgs,
-    );
-    const written = this.prisma.$transaction(async (tx) => {
+    const tenant = await this.prisma.$transaction(async (tx) => {
       await this.planTransition.onPlanChange(tx, transition, preparedTransition);
       // Hook FIRST (house lock order: snapshot/config rows before tenant rows, as upgrade() does).
       // #2470 / SA-485b (i): priorSub, `before` and everything derived from them were read BEFORE this
@@ -1126,20 +1085,11 @@ export class PlatformAdminService {
           fromPlan: priorSub?.planKey ?? null,
           toPlan: definition.planKey,
           platformAdmin: true,
-          ...(flow.ctx.idempotencyKey ? { stripeIdempotencyKey: flow.ctx.idempotencyKey } : {}),
         },
         { amountDelta: roundMoney(nextContribution - priorContribution), actorId: adminId, tx },
       );
-      await flow.retireAddons(tx, this.billingEventService, { ...manual, actorId: adminId });
       return updated;
     }, this.planTransition.transactionOptions(preparedTransition));
-    const settled = await flow.settle(written);
-    // A lost commit acknowledgement: the write LANDED, so carry on exactly as a success (audit row, caches) and
-    // re-read the row the transaction would have returned.
-    const tenant =
-      settled === PLAN_CHANGE_LANDED
-        ? await this.prisma.tenant.findUniqueOrThrow({ where: { id } })
-        : settled;
 
     this.planTransition.invalidateCaches(id, preparedTransition);
     this.entitlementsService.invalidate(id);
@@ -1152,10 +1102,7 @@ export class PlatformAdminService {
       id: tenant.id,
       slug: tenant.slug,
       plan: tenant.plan,
-      // Stripe sends proration none on a trialing / past_due / unpaid subscription: no charge to claim.
-      ...(proratedNow != null
-        ? { proratedNow: flow.ctx.proration === "none" ? 0 : proratedNow }
-        : {}),
+      ...(proratedNow != null ? { proratedNow } : {}),
       ...(proratedNow != null && override != null ? { note: CUSTOM_FEE_UNCHANGED } : {}),
     };
   }
@@ -1850,22 +1797,11 @@ export class PlatformAdminService {
   }
 
   /**
-   * Set or clear a tenant's custom price override. SA-733 D8: STRIPE FIRST — a live subscription is
-   * repriced before the row is written, so a Stripe failure leaves the old fee untouched (503) and a
-   * local failure after Stripe succeeded puts Stripe back. `dto.effective` picks the proration mode:
-   * `next_cycle` (default) = `none`, `now_prorated` = `create_prorations`.
+   * Set or clear a tenant's custom price override, then sync any live Stripe
+   * subscription to the new resolved price (owner decision: `proration_behavior:
+   * "none"` — applies from the next billing cycle, never mid-period).
    */
   async updateTenantPriceOverride(id: string, dto: UpdateTenantPriceDto, adminId: string | null) {
-    // One writer per tenant price (Postgres advisory lock, held across the Stripe calls): two overlapping
-    // changes, a double submit and the plan-price fan-out can no longer interleave their Stripe updates.
-    return underTenantPriceLock(id, () => this.updateTenantPriceOverrideLocked(id, dto, adminId));
-  }
-
-  private async updateTenantPriceOverrideLocked(
-    id: string,
-    dto: UpdateTenantPriceDto,
-    adminId: string | null,
-  ) {
     await this._findOrThrow(id);
 
     // Reject BEFORE writing when the resulting state has no resolvable monthly price
@@ -1874,48 +1810,13 @@ export class PlatformAdminService {
     // negotiated fee, leave Stripe billing the old amount, and tell the admin it failed.
     const existing = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId: id },
-      select: {
-        priceOverrideMonthly: true,
-        priceOverrideAnnual: true,
-        planKey: true,
-        basePriceSnapshot: true,
-        updatedAt: true,
-        downgradeToPlanKey: true, // R1 Option B: an early pre-renewal push may have lowered Stripe's price
-        stripeSubId: true,
-      },
+      select: { priceOverrideMonthly: true, planKey: true, basePriceSnapshot: true },
     });
     const nextMonthly =
       dto.monthly === undefined ? (existing?.priceOverrideMonthly ?? null) : dto.monthly;
     if (nextMonthly == null) {
       // Throws BadRequestException when the catalog can't price this tenant's plan.
       await this.platformPricingService.resolveCatalogPricing(id);
-    }
-
-    // R1 Option B: if a pre-renewal push already moved Stripe onto a scheduled downgrade's LOWER price, put the
-    // current plan's price back FIRST - the override then applies (and prorates, if asked) from the right price,
-    // and the renewal is not left on the lowered one. Fails closed (throws) before anything else is sent.
-    if (existing?.stripeSubId && existing.downgradeToPlanKey) {
-      await this.scheduledPrice?.restoreIfPushedLocked(id, existing.downgradeToPlanKey, {
-        mustBeCleared: false,
-        audience: "admin",
-      });
-    }
-
-    const effective = dto.effective ?? "next_cycle";
-    const before = await this.platformPricingService.resolveTenantPricing(id).catch(() => null);
-    const proposed = mergeOverride(existing, dto);
-    const pushed = await this.billingService.pushResolvedPriceToStripe(id, {
-      effective,
-      proposed,
-      version: existing?.updatedAt,
-    });
-    if (isPricePushFailure(pushed)) {
-      // Stripe may still have applied it (a lost response is re-read, but a cached idempotent failure
-      // is not): check the subscription in Stripe before retrying.
-      throw new ServiceUnavailableException(
-        `Stripe did not confirm the price change (${pushed.reason}) — the price override was NOT saved. ` +
-          `Check the subscription in Stripe, then retry.`,
-      );
     }
 
     // A custom-priced plan applied BEFORE its negotiated fee was entered leaves
@@ -1925,7 +1826,7 @@ export class PlatformAdminService {
     // same transaction, mirroring updatePlan's PLAN_CHANGED emission. Only the
     // null-snapshot case back-fills — a set snapshot is already-reconciled data
     // (reconcilePriceLedger, called via syncStripeSubscriptionPrice below, rewrites it).
-    const localWrite = this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       // B864 / SA-277 (SA-163 shape): lock → read paying-set inputs → decide; a racing
       // activation serialises here.
       await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
@@ -1950,14 +1851,6 @@ export class PlatformAdminService {
           },
         },
       });
-      // D8: Stripe was repriced from the pre-tx read - a fee that moved since (a stray writer that skipped the
-      // price lock: a direct SQL edit, a script, or a code path that forgot it) is refused here; the catch below
-      // re-syncs Stripe from the committed row.
-      if (!sameOverride(row.subscription, existing)) {
-        throw new ConflictException(
-          "The tenant's price override changed while this update was in flight — reload and retry.",
-        );
-      }
       const backfillBase =
         dto.monthly != null &&
         row.subscription?.planKey != null &&
@@ -1993,33 +1886,11 @@ export class PlatformAdminService {
         );
       }
     });
-    try {
-      await localWrite;
-    } catch (err) {
-      // true = the committed row already holds the proposed fee (a lost commit ack): the write is in.
-      if (
-        !(await this.settleStripeAfterFailedWrite(id, adminId, { proposed, pushed, effective }))
-      ) {
-        throw err;
-      }
-    }
 
-    const pricing = await this.platformPricingService.resolveTenantPricing(id);
-    // The audit row goes BEFORE the ledger half: the price has changed, so an admin must never get a 500
-    // with no audit trail. The ledger converges on the next sync if its half fails.
-    await this.recordAdminAction(
-      id,
-      adminId,
-      AdminAuditAction.TENANT_CONFIG_UPDATED,
-      priceOverrideAudit({ dto, effective, before, after: pricing, sync: pushed }),
-    );
-    try {
-      await this.billingService.syncStripeSubscriptionPrice(id, { pushed });
-    } catch (e) {
-      this.logger.error(
-        `Price-override ledger reconcile failed for tenant ${id} (the next sync converges): ${(e as Error).message}`,
-      );
-    }
+    const [sync, pricing] = await Promise.all([
+      this.billingService.syncStripeSubscriptionPrice(id),
+      this.platformPricingService.resolveTenantPricing(id),
+    ]);
 
     return { ...pricing, sync: pushed };
   }
@@ -2080,19 +1951,13 @@ export class PlatformAdminService {
       }
     }
     await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_CONFIG_UPDATED, {
-      kind: "price_override_stripe_ahead",
-      effective: a.effective,
-      ...a.pushed,
-    }).catch(() => undefined);
-    this.logger.error(
-      `Price override for tenant ${id}: Stripe now bills ${a.pushed.newAmount} but the database was not updated and Stripe could not be re-synced`,
-    );
-    throw new BadGatewayException({
-      code: API_ERROR_CODES.PRICE_OVERRIDE_STRIPE_AHEAD,
-      message:
-        `Stripe now bills $${a.pushed.newAmount}, the database still says $${a.pushed.oldAmount ?? "?"} - ` +
-        `reconcile the subscription price before changing it again.`,
+      kind: "price_override",
+      monthly: dto.monthly ?? null,
+      annual: dto.annual ?? null,
+      sync,
     });
+
+    return { ...pricing, sync };
   }
 
   /**
@@ -2149,50 +2014,18 @@ export class PlatformAdminService {
           OR: [{ planVersionId: version.id }, { planVersionId: null }],
         },
       },
-      select: {
-        tenantId: true,
-        planKey: true,
-        downgradeToPlanKey: true,
-        tenant: { select: { plan: true } },
-      },
+      select: { tenantId: true, planKey: true, tenant: { select: { plan: true } } },
     });
-    const onPlan = candidates.filter(
+    const targets = candidates.filter(
       (c) => normalizePlanKey(c.planKey ?? c.tenant.plan) === planKey,
     );
-    // N3 (R1 Option B): a tenant whose scheduled DOWNGRADE price has ALREADY been pushed onto its Stripe base item
-    // (ScheduledPriceChangeService, before the renewal) must not be synced here: that would price Stripe from the
-    // plan it is LEAVING and revert the push, so the renewal bills the old plan again. Only THOSE tenants are
-    // skipped (decided per tenant under its lock below). A tenant with a downgrade scheduled but not yet pushed is
-    // synced like any other - otherwise a downgrade cancelled later would leave Stripe on the pre-update price.
-    const targets = onPlan;
-    let skippedDowngrade = 0;
 
     let synced = 0;
     let failed = 0;
     for (const target of targets) {
       try {
-        // The same per-tenant price lock the override flow takes, so the fan-out cannot overwrite an
-        // override Stripe update that has not committed yet.
-        const result = await underTenantPriceLock(target.tenantId, async () => {
-          // Decided UNDER the lock, from a fresh read: has the scheduled downgrade's price been pushed already?
-          const armed = await this.prisma.tenantSubscription.findUnique({
-            where: { tenantId: target.tenantId },
-            select: { downgradeToPlanKey: true },
-          });
-          // (Without the scheduled-price service a scheduled downgrade is skipped - the conservative answer.)
-          if (
-            armed?.downgradeToPlanKey &&
-            ((await this.scheduledPrice?.isDowngradePricePushed(target.tenantId)) ?? true)
-          ) {
-            this.logger.log(
-              `Plan price fan-out: tenant ${target.tenantId} skipped - its downgrade to ${armed.downgradeToPlanKey} price is already pushed to Stripe`,
-            );
-            return "skipped" as const;
-          }
-          return this.billingService.syncStripeSubscriptionPrice(target.tenantId);
-        });
-        if (result === "skipped") skippedDowngrade++;
-        else if (result?.synced) synced++;
+        const result = await this.billingService.syncStripeSubscriptionPrice(target.tenantId);
+        if (result?.synced) synced++;
       } catch (e) {
         failed++;
         this.logger.warn(
@@ -2212,10 +2045,9 @@ export class PlatformAdminService {
         planKey,
         monthlyPrice: dto.monthly,
         annualPrice: annualPrice === null ? null : Number(annualPrice),
-        updated: targets.length - skippedDowngrade,
+        updated: targets.length,
         synced,
         failed,
-        skippedDowngrade,
       },
     });
 
@@ -2223,10 +2055,9 @@ export class PlatformAdminService {
       planKey,
       monthlyPrice: Number(updated.monthlyPrice),
       annualPrice: updated.annualPrice === null ? null : Number(updated.annualPrice),
-      updated: targets.length - skippedDowngrade,
+      updated: targets.length,
       synced,
       failed,
-      skippedDowngrade,
     };
   }
 

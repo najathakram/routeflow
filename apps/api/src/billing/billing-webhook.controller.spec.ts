@@ -156,28 +156,6 @@ describe("#2442 BillingWebhookController — throttle skip and event-id ledger",
     expect(json).toHaveBeenCalledWith({ received: true });
   });
 
-  it("R1 option B: invoice.upcoming rides the same ledger - ledgered before the handler, and a redelivery of a COMPLETED one never re-runs it", async () => {
-    const upcoming = () => ({ type: "invoice.upcoming", id: "evt_up", created: 1_700_000_000 });
-    const first = build({ construct: upcoming });
-    await first.controller.handleWebhook(first.req as never, first.res as never);
-    expect(rawOf(first.prisma.$queryRaw, "INSERT")?.values).toEqual(
-      expect.arrayContaining(["evt_up", "invoice.upcoming"]),
-    );
-    expect(first.billing.handleWebhookEvent).toHaveBeenCalledTimes(1);
-
-    const replay = build({
-      construct: upcoming,
-      create: async () => {
-        throw dup();
-      },
-      existing: { outcome: "processed" },
-      claimed: 0,
-    });
-    await replay.controller.handleWebhook(replay.req as never, replay.res as never);
-    expect(replay.billing.handleWebhookEvent).not.toHaveBeenCalled();
-    expect(replay.res.status).toHaveBeenCalledWith(HttpStatus.OK);
-  });
-
   it.each([
     ["an error outcome", { outcome: "error:boom" }],
     ["no outcome (the first attempt never finished)", { outcome: null }],

@@ -4,6 +4,10 @@ import * as React from "react";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
 import { resolveStoredPOLineAmounts, type POItem, linePack } from "./purchase-orders-shared";
+import { unitWords } from "@routeflow/pricing";
+
+// U-3a: a PO line carries no per-product label yet, so this prints the default words.
+const UW = unitWords();
 
 /** The read-only lines table of a purchase order (supplier units, stored-exact subtotals). Shared by
  *  the list's expanded row and the PO detail page so the two can never disagree. */
@@ -21,7 +25,7 @@ export function PurchaseOrderReadOnlyLines({
           <tr>
             <th className="px-3 py-2 text-left font-medium">Product</th>
             <th className="px-3 py-2 text-right font-medium">Qty</th>
-            <th className="px-3 py-2 text-right font-medium">Unit Cost</th>
+            <th className="px-3 py-2 text-right font-medium">Cost</th>
             <th className="px-3 py-2 text-right font-medium">Received</th>
             <th className="px-3 py-2 text-right font-medium">Subtotal</th>
           </tr>
@@ -45,7 +49,7 @@ export function PurchaseOrderReadOnlyLines({
                 </td>
                 <td className="px-3 py-2 text-right text-navy/70">
                   ${Number(item.unitCost).toFixed(isBoxed ? 4 : 2)}
-                  {isBoxed && <span className="text-navy/30"> /pc</span>}
+                  {isBoxed && <span className="text-navy/30"> /{UW.base.short.one}</span>}
                 </td>
                 <td className="px-3 py-2 text-right text-navy/70">
                   {item.qtyReceived != null ? (

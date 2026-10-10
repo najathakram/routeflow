@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
+import type { InlineRefundTender } from "@routeflow/types";
 import {
   useApproveReturn,
   useCancelReturn,
@@ -18,6 +19,7 @@ import { returnActionFlags, returnPillFor } from "../../../lib/returns-logic";
 import { showToast } from "../../../lib/toast";
 import { refundErrorMessage } from "../../../lib/credit-note-error-copy";
 import { chooseAction, confirm } from "../../../lib/confirm";
+import { refundTenderChoiceActions, resolveReturnRequest } from "../../../lib/standard-refund";
 
 function fmtQty(v: number | string | null | undefined): string {
   const n = Number(v ?? 0);
@@ -31,7 +33,7 @@ function fmtCurrency(n: number | string | null | undefined): string {
 
 const REFUND_METHOD_LABELS: Record<RefundMethod, string> = {
   CREDIT_NOTE: "Store credit (credit note)",
-  EXTERNAL_REFUND: "Refunded outside RouteFlow",
+  EXTERNAL_REFUND: "Refunded (cash / card / check)",
 };
 
 export default function ReturnDetailScreen() {
@@ -54,10 +56,11 @@ export default function ReturnDetailScreen() {
     });
   };
 
-  const resolveReturn = (method: RefundMethod) => {
+  const resolveReturn = (method: RefundMethod, tender?: InlineRefundTender) => {
     if (!id) return;
     refundMut.mutate(
-      { id, method },
+      // SA-740r2: a tender rides only with a recorded refund, and only when the clerk chose one
+      resolveReturnRequest(id, method, tender),
       {
         onSuccess: () =>
           showToast(method === "CREDIT_NOTE" ? "Store credit issued" : "Refund recorded"),
@@ -77,9 +80,15 @@ export default function ReturnDetailScreen() {
         onPress: () => resolveReturn("CREDIT_NOTE"),
       },
       {
-        label: "Refunded outside app",
+        label: "Refund (cash / card / check)",
         style: "default",
-        onPress: () => resolveReturn("EXTERNAL_REFUND"),
+        // SA-740r2: ask how it was paid out; "Not recorded" sends no tender (optional until this build is the minimum)
+        onPress: () =>
+          chooseAction(
+            "Refund by",
+            "How was the money given back?",
+            refundTenderChoiceActions((tender) => resolveReturn("EXTERNAL_REFUND", tender)),
+          ),
       },
       { label: "Cancel", style: "cancel" },
     ]);

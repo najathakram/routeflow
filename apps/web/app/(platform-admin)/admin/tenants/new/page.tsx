@@ -24,6 +24,13 @@ import { profilePlainCopy } from "../[id]/_features/profile-plain-copy";
 import { BusinessProfilePreviewModal } from "../[id]/_features/BusinessProfilePreviewModal";
 import { planLabel } from "../../../_components/AdminBadge";
 import { selectablePlanKeys } from "../../../_components/usePlanOptions";
+import { TimeZoneInput } from "@/components/TimeZoneInput";
+import {
+  SUGGESTED_TIME_ZONE,
+  TIME_ZONE_REQUIRED_COPY,
+  canonicalTimeZone,
+  isValidTimeZone,
+} from "@/lib/timezones";
 import { CopyButton } from "@/components/CopyButton";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import { isTestTenantSlug } from "@/lib/test-tenant-slug";
@@ -56,11 +63,13 @@ interface CreatedTenant {
   welcomeEmail?: { to: string; delivered: boolean; transport: string; error?: string };
 }
 
-type FieldKey = "slug" | "businessName" | "adminEmail" | "adminUsername" | "adminPassword";
+type FieldKey =
+  "slug" | "businessName" | "timezone" | "adminEmail" | "adminUsername" | "adminPassword";
 /** Form order: the first invalid field in this order is the one that takes focus. */
 const FIELD_ORDER: FieldKey[] = [
   "slug",
   "businessName",
+  "timezone",
   "adminEmail",
   "adminUsername",
   "adminPassword",
@@ -70,6 +79,7 @@ const FIELD_ORDER: FieldKey[] = [
 const FIELD_COPY: Record<FieldKey, string> = {
   slug: "Use 3 to 30 lowercase letters, numbers or hyphens.",
   businessName: "Use 2 to 100 characters.",
+  timezone: TIME_ZONE_REQUIRED_COPY,
   adminEmail: "Enter a valid email address.",
   adminUsername: "Use 3 to 50 characters.",
   adminPassword:
@@ -102,6 +112,7 @@ function appliedSummary(applied: { summary?: unknown } | null | undefined): stri
 function invalidFields(form: {
   slug: string;
   businessName: string;
+  timezone: string;
   adminEmail: string;
   adminUsername: string;
   adminPassword: string;
@@ -109,6 +120,7 @@ function invalidFields(form: {
   const bad: FieldKey[] = [];
   if (!/^[a-z0-9][a-z0-9-]{2,29}$/.test(form.slug)) bad.push("slug");
   if (form.businessName.length < 2 || form.businessName.length > 100) bad.push("businessName");
+  if (!isValidTimeZone(form.timezone)) bad.push("timezone");
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.adminEmail)) bad.push("adminEmail");
   if (form.adminUsername.length < 3 || form.adminUsername.length > 50) bad.push("adminUsername");
   const pw = form.adminPassword;
@@ -133,6 +145,8 @@ function fieldErrorsOf(
   if (typeof field === "string" && (FIELD_ORDER as string[]).includes(field)) {
     out[field as FieldKey] = safeTextErrorCopy(err) ?? FIELD_COPY[field as FieldKey];
   }
+  // The API's own code for a refused zone (the client check passed, the server's tz database disagrees).
+  if (res?.data?.code === API_ERROR_CODES.INVALID_TIME_ZONE) out.timezone = FIELD_COPY.timezone;
   if (res?.status === 400 && res.data?.code === API_ERROR_CODES.ACCOUNT_IDENTIFIER_IN_USE) {
     out.adminEmail = "That email or username is already in use.";
   }
@@ -157,6 +171,7 @@ export default function AdminCreateTenantPage() {
   const [form, setForm] = React.useState({
     slug: "",
     businessName: "",
+    timezone: "",
     adminEmail: "",
     adminUsername: "",
     adminPassword: "",
@@ -312,6 +327,7 @@ export default function AdminCreateTenantPage() {
     businessName: form.businessName,
     slug: form.slug,
     adminEmail: form.adminEmail,
+    timezone: canonicalTimeZone(form.timezone) ?? form.timezone,
     planName: `${planLabel(form.plan)}, ${
       mode === "trial" ? `${trialDaysOf(startAs.trialDays) ?? "?"}-day trial` : "active"
     }`,
@@ -491,6 +507,15 @@ export default function AdminCreateTenantPage() {
       focusTrialDays();
       return;
     }
+    // The time zone is checked here (not natively) so its message reads inline next to the field.
+    const zone = canonicalTimeZone(form.timezone);
+    if (!zone) {
+      setFieldErrors((prev) => ({ ...prev, timezone: FIELD_COPY.timezone }));
+      fieldRefs.current.timezone?.focus();
+      return;
+    }
+    // Store the canonical spelling (america/chicago becomes America/Chicago).
+    if (zone !== form.timezone) setForm((prev) => ({ ...prev, timezone: zone }));
     // Nothing is sent here: the form (native required-field checks already passed) opens the review.
     setSheetOpen(true);
   };
@@ -762,6 +787,46 @@ export default function AdminCreateTenantPage() {
               />
               {fieldError("businessName")}
             </div>
+          </div>
+
+          {/* Time zone (required): receipts and "today's sales" are cut at this zone's midnight. */}
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="create-tenant-timezone" className="text-sm font-medium text-slate-300">
+              Time zone <span className="font-normal text-slate-400">(required)</span>
+            </label>
+            <div className="flex gap-2">
+              <TimeZoneInput
+                id="create-tenant-timezone"
+                aria-label="Time zone"
+                aria-required="true"
+                value={form.timezone}
+                onChange={onChange("timezone")}
+                onBlur={() => {
+                  // Tidy the spelling when the admin leaves the field; text that is not a zone stays for the submit check.
+                  const zone = canonicalTimeZone(form.timezone);
+                  if (zone && zone !== form.timezone)
+                    setForm((prev) => ({ ...prev, timezone: zone }));
+                }}
+                className={INPUT}
+                {...fieldProps("timezone")}
+              />
+              {form.timezone !== SUGGESTED_TIME_ZONE && (
+                <button
+                  type="button"
+                  disabled={isLoading}
+                  onClick={() => {
+                    setForm((prev) => ({ ...prev, timezone: SUGGESTED_TIME_ZONE }));
+                    setFieldErrors((prev) => ({ ...prev, timezone: undefined }));
+                    // The button unmounts once the suggestion is applied: keep focus on the field.
+                    fieldRefs.current.timezone?.focus();
+                  }}
+                  className="admin-tap shrink-0 rounded-lg px-3 text-sm text-indigo-300 hover:bg-slate-700"
+                >
+                  Use {SUGGESTED_TIME_ZONE}
+                </button>
+              )}
+            </div>
+            {fieldError("timezone")}
           </div>
 
           {/* Admin Email */}

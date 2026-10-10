@@ -192,24 +192,19 @@ export function upgradeConfirmedTemplate(params: {
 }): BillingEmailTemplate {
   const manageUrl = billingSettingsUrl();
   const amount = fmtMoney(params.proratedAmount);
-  // A zero figure means NO charge applies now (a custom fee, a trial, or a subscription with an unpaid
-  // invoice): never claim a prorated charge of $0.00.
-  const chargeSentence =
-    params.proratedAmount > 0
-      ? `We estimate a prorated charge of ${amount} for the remainder of this billing period. The exact amount is calculated by our payment processor and shown on your next invoice.`
-      : "No prorated charge applies now; your new plan is reflected on your next invoice.";
   const html = baseLayout({
     tagline: "Plan upgraded",
     bodyHtml: `
       <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
       <p style="margin:0 0 16px;font-size:15px;color:#374151;">
         <strong>${escapeHtml(params.businessName)}</strong> has upgraded from <strong>${escapeHtml(params.fromPlanName)}</strong> to
-        <strong>${escapeHtml(params.toPlanName)}</strong>. ${escapeHtml(chargeSentence)}
+        <strong>${escapeHtml(params.toPlanName)}</strong>. A prorated charge of
+        <strong>${escapeHtml(amount)}</strong> has been applied for the remainder of this billing period.
       </p>
       ${ctaButtonHtml(manageUrl, "View your plan")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\n${params.businessName} has upgraded from ${params.fromPlanName} to ${params.toPlanName}. ${chargeSentence}\n\nView your plan: ${manageUrl}`;
+  const text = `Hi ${params.adminName},\n\n${params.businessName} has upgraded from ${params.fromPlanName} to ${params.toPlanName}. A prorated charge of ${amount} has been applied for the remainder of this billing period.\n\nView your plan: ${manageUrl}`;
   return {
     subject: `Upgrade confirmed — ${params.businessName}`,
     html,

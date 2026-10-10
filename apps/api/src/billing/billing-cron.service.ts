@@ -1,10 +1,10 @@
-import { priceOverrideOf, sameOverride } from "./price-override";
+import { priceOverrideOf } from "./price-override";
 import { Injectable, Logger } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
-import { roundMoney, toCents } from "@routeflow/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { EntitlementsService } from "./entitlements.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
@@ -63,10 +63,6 @@ export class BillingCronService {
     private readonly billingNotification: BillingNotificationService,
     // Lane B A2b: a scheduled downgrade snapshots the tenant's feature config in the same tx.
     private readonly planTransition: PlanTransitionConfigService,
-    // READ-ONLY (lead R1): verifies the price Stripe bills after a downgrade flips. This sweep never pushes one.
-    private readonly stripe: StripeService,
-    // R1 option B: the backup sweep for a downgrade price whose `invoice.upcoming` webhook was missed.
-    private readonly scheduledPrice: ScheduledPriceChangeService,
   ) {}
 
   private planMonthly(version: PlanVersionWithCatalog | null, planKey: string | null): number {
@@ -244,8 +240,6 @@ export class BillingCronService {
         planVersionId: true,
         // #2223 / SA-444c: the negotiated fee a downgrade keeps.
         priceOverrideMonthly: true,
-        priceOverrideAnnual: true,
-        stripeSubId: true,
         // #2460 / SA-464 (2): the ledger nets against the stored snapshot, never the catalog.
         basePriceSnapshot: true,
         downgradeToPlanKey: true,
@@ -272,46 +266,7 @@ export class BillingCronService {
         continue;
       }
 
-      // SA-733 D8: the same per-tenant lock the upgrade and the price override take, so this push and its
-      // possible revert cannot interleave with another price writer. Held until the finally below.
-      let unlock: () => Promise<void>;
       try {
-        unlock = await lockTenantPrice(s.tenantId);
-      } catch (lockErr) {
-        this.logger.error(
-          `Scheduled downgrade held back for tenant=${s.tenantId} — ${(lockErr as Error).message}; still armed, next sweep retries`,
-        );
-        continue;
-      }
-      try {
-        // SA-733 D8: everything below is built from THIS read, taken UNDER the lock. The scan above ran before
-        // the lock, so a fee an admin committed in between would otherwise be overwritten by the stale one in
-        // Stripe AND on the MRR snapshot. The schedule and the tenant are re-proved here too.
-        const cur = await this.prisma.tenantSubscription.findUnique({
-          where: { tenantId: s.tenantId },
-          select: {
-            planKey: true,
-            priceOverrideMonthly: true,
-            priceOverrideAnnual: true,
-            stripeSubId: true,
-            basePriceSnapshot: true,
-            downgradeToPlanKey: true,
-            downgradeEffectiveAt: true,
-            retainedUserIds: true,
-            tenant: { select: { status: true, deletedAt: true } },
-          },
-        });
-        if (
-          !cur ||
-          cur.tenant?.status !== "ACTIVE" ||
-          cur.tenant.deletedAt != null ||
-          cur.planKey !== s.planKey ||
-          cur.downgradeToPlanKey !== target ||
-          cur.downgradeEffectiveAt == null ||
-          cur.downgradeEffectiveAt > now
-        ) {
-          throw new DowngradeOvertakenError();
-        }
         let targetVersion = fromVersion;
         let targetDef = findPlanDefinition(fromVersion.definitions, target);
         if (!targetDef) {
@@ -332,7 +287,7 @@ export class BillingCronService {
         // the new snapshot is the negotiated fee, else the target's price; the ledger books it minus
         // what the MRR snapshot counted (the stored snapshot, NULL ⇒ 0) — never a catalog price for
         // the plan being left. A consistent override row therefore books Δ0.
-        const override = priceOverrideOf(cur);
+        const override = priceOverrideOf(s);
         const newBase = override ?? this.planMonthly(targetVersion, target);
         const seatCap = targetDef.seatsIncluded ?? null;
 
@@ -350,11 +305,7 @@ export class BillingCronService {
           ? await this.planTransition.prepare(transition)
           : null;
 
-        // This 02:00 flip NEVER pushes a price to Stripe (lead ruling R1): it is date-driven and can run AFTER
-        // Stripe cut the renewal invoice at the old price. The price reaches Stripe BEFORE the renewal, from
-        // scheduled-price-change.ts, before the renewal invoice (R1 Option B: the `invoice.upcoming` webhook + the hourly backup below). Here the local
-        // row flips, and Stripe is only VERIFIED (read-only) once the flip has committed.
-        const written = this.prisma.$transaction(async (tx) => {
+        await this.prisma.$transaction(async (tx) => {
           // Snapshot first, in the same transaction: a failure here throws into the per-row catch
           // below, so THIS tenant's downgrade is not applied (fail closed) and retries next tick.
           if (transition && preparedTransition) {
@@ -376,9 +327,6 @@ export class BillingCronService {
             select: {
               planKey: true,
               basePriceSnapshot: true,
-              priceOverrideMonthly: true,
-              priceOverrideAnnual: true,
-              stripeSubId: true,
               downgradeToPlanKey: true,
               downgradeEffectiveAt: true,
               couponFull: true,
@@ -390,9 +338,6 @@ export class BillingCronService {
             lockedTenant.deletedAt != null ||
             !lockedSub ||
             lockedSub.planKey !== s.planKey ||
-            // The fee and the Stripe subscription Stripe was priced from must still be the committed ones.
-            !sameOverride(lockedSub, cur) ||
-            lockedSub.stripeSubId !== cur.stripeSubId ||
             lockedSub.downgradeToPlanKey !== target ||
             lockedSub.downgradeEffectiveAt == null ||
             lockedSub.downgradeEffectiveAt > now
@@ -444,7 +389,7 @@ export class BillingCronService {
                   role: { in: ["OPERATOR", "DRIVER"] },
                   status: "ACTIVE",
                   deletedAt: null,
-                  id: { notIn: cur.retainedUserIds },
+                  id: { notIn: s.retainedUserIds },
                 },
                 data: { status: "INACTIVE" },
               });
@@ -465,15 +410,7 @@ export class BillingCronService {
             { amountDelta, tx },
           );
         }, this.planTransition.transactionOptions(preparedTransition));
-        await written;
         this.planTransition.invalidateCaches(s.tenantId, preparedTransition);
-        await this.verifyStripeBillsDowngrade(
-          s.tenantId,
-          cur.stripeSubId,
-          targetDef,
-          { monthly: cur.priceOverrideMonthly, annual: cur.priceOverrideAnnual },
-          target,
-        );
 
         // N3: best-effort admin notification, never blocks the transaction above. `key` is
         // the effective date this tenant's row carried before the transaction cleared it —
@@ -523,8 +460,6 @@ export class BillingCronService {
           }`,
         );
         continue;
-      } finally {
-        await unlock();
       }
       this.entitlements.invalidate(s.tenantId);
       this.tenantStatus.invalidate(s.tenantId);

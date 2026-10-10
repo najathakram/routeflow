@@ -136,7 +136,7 @@ test.describe("Operator — Variant split UI (WP3-16)", () => {
     // Typing far above the pool CLAMPS rather than overruns it — works for
     // both the boxed (cases/pieces) and plain-qty row shapes: the boxed input
     // carries this title; the plain one doesn't.
-    const boxesInput = firstRow.locator('input[title="Number of whole cases"]');
+    const boxesInput = firstRow.locator('input[title="Number of whole boxes"]');
     if ((await boxesInput.count()) > 0) {
       await boxesInput.fill("9999");
     } else {
@@ -148,11 +148,11 @@ test.describe("Operator — Variant split UI (WP3-16)", () => {
     // assigned units. That label is the only readout that DISCRIMINATES:
     // the Remaining badge is `Math.max(0, pool - assigned)` in the component,
     // so it renders 0 whether the clamp holds or has been deleted, whereas an
-    // unclamped row would label the button "Assign 9999 units".
+    // unclamped row would label the button "Assign 9999 pcs".
     const assignedUnits = Math.trunc(totalPool);
-    const submitButton = modal.getByRole("button", { name: /^Assign(\s\d+\sunits?)?$/ });
+    const submitButton = modal.getByRole("button", { name: /^Assign(\s\d+\spcs?)?$/ });
     await expect(submitButton).toHaveText(
-      `Assign ${assignedUnits} unit${assignedUnits === 1 ? "" : "s"}`,
+      `Assign ${assignedUnits} ${assignedUnits === 1 ? "pc" : "pcs"}`,
       { timeout: 10_000 },
     );
     await expect(submitButton).toBeEnabled();

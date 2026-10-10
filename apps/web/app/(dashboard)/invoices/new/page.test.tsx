@@ -134,9 +134,9 @@ describe("B664 — new-invoice form and a unitsPerBox = 1 product", () => {
     capturedOnScan!("012345678905");
     await screen.findByDisplayValue("Widget");
 
-    // The box/piece stepper (title="Cases") must NOT appear for a degenerate upb=1 — only a
+    // The box/piece stepper (title="Boxes") must NOT appear for a degenerate upb=1 — only a
     // real box size renders it. Pre-fix this input exists with value 1.
-    expect(screen.queryByTitle("Cases")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Boxes")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /save as draft/i }));
     await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
@@ -157,7 +157,7 @@ describe("B664 — new-invoice form and a unitsPerBox = 1 product", () => {
     await screen.findByDisplayValue("Case Soda");
 
     // A genuine case pack keeps its Boxes+Pieces editor — the fix must not regress this.
-    expect(screen.getByTitle("Cases")).toBeInTheDocument();
+    expect(screen.getByTitle("Boxes")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /save as draft/i }));
     await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
@@ -177,7 +177,7 @@ describe("B664 — new-invoice form and a unitsPerBox = 1 product", () => {
     capturedOnScan!("222");
     await screen.findByDisplayValue("Loose Item");
 
-    expect(screen.queryByTitle("Cases")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Boxes")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /save as draft/i }));
     await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
@@ -205,7 +205,7 @@ describe("B664 — new-invoice form and a unitsPerBox = 1 product", () => {
     await user.type(input, "Dropdown");
     await user.click(await screen.findByText("Dropdown Widget"));
 
-    expect(screen.queryByTitle("Cases")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Boxes")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /save as draft/i }));
     await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());
@@ -238,7 +238,7 @@ describe("B664 — new-invoice form and a unitsPerBox = 1 product", () => {
     });
     await screen.findByDisplayValue("Brand New Thing");
 
-    expect(screen.queryByTitle("Cases")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Boxes")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /save as draft/i }));
     await waitFor(() => expect(createInvoiceMutate).toHaveBeenCalled());

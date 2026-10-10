@@ -427,7 +427,7 @@ describe("the real services mint the realm audience on every session token", () 
         prisma,
         real,
         config,
-        ...(Array(15).fill({}) as unknown as DepsAfterConfig),
+        ...(Array(14).fill({}) as unknown as DepsAfterConfig),
       );
       jest.spyOn(svc as any, "_findOrThrow").mockResolvedValue({ id: "t1", slug: "acme" });
       jest.spyOn(svc as any, "recordAdminAction").mockResolvedValue(undefined);

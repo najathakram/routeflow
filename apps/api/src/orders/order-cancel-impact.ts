@@ -52,19 +52,30 @@ export function cancelBlockedMessage(blockers: Array<{ invoiceNumber: string; am
 }
 
 /**
+ * The lock half of the cancel tx's first statements (SA-762r F1, extracted from `lockOrderForCancel`): lock
+ * the Order, then every non-VOID Invoice (SA-214 order, stable id order) in ONE statement that also lists
+ * them. Returns the locked invoice ids. No refusal: the counter-sale void reuses it before it voids the
+ * counter tender, `lockOrderForCancel` adds the blocking-payment refusal on top.
+ */
+export async function lockOrderAndInvoicesInTx(tx: any, orderId: string): Promise<string[]> {
+  await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+  // Lock AND list the live invoices in one statement, stable id order.
+  const rows: Array<{ id: string }> =
+    await tx.$queryRaw`SELECT id FROM "Invoice" WHERE "orderId" = ${orderId} AND status <> 'VOID' ORDER BY id FOR UPDATE`;
+  return rows.map((r) => r.id);
+}
+
+/**
  * #2255 / SA-404d R1: the cancel tx's FIRST statements — lock the Order, then every non-VOID
  * Invoice (SA-214 order, stable id order), re-read their payments and re-run the same blocking
  * predicate before any write. A payment committed after this tx's snapshot updates its Invoice row
  * (the #2258 writer invariant), so the voids below conflict (40001) and the retry lands here fresh.
  */
 export async function lockOrderForCancel(tx: any, orderId: string): Promise<void> {
-  await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
-  // Lock AND list the live invoices in one statement, stable id order.
-  const rows: Array<{ id: string }> =
-    await tx.$queryRaw`SELECT id FROM "Invoice" WHERE "orderId" = ${orderId} AND status <> 'VOID' ORDER BY id FOR UPDATE`;
-  if (rows.length === 0) return;
+  const invoiceIds = await lockOrderAndInvoicesInTx(tx, orderId);
+  if (invoiceIds.length === 0) return;
   const locked = await tx.invoice.findMany({
-    where: { id: { in: rows.map((r) => r.id) } },
+    where: { id: { in: invoiceIds } },
     select: {
       invoiceNumber: true,
       payments: { select: { method: true, amount: true, status: true } },

@@ -119,6 +119,10 @@ describe("InlineReturnsService.refund (SA-727)", () => {
     prisma.return.updateMany.mockResolvedValue({ count: 1 });
     prisma.invoiceItem.findMany.mockResolvedValue([{ id: "invitem-1", invoiceId: "inv-1" }]);
     prisma.invoice.findMany.mockResolvedValue([paidInvoice()]);
+    // SA-749r2 item 9: the cash applied to the source sale (the cap reads it under the locks): $30 in cash on src-order-1
+    prisma.invoicePayment.findMany.mockResolvedValue([
+      { amount: 30, invoice: { orderId: "src-order-1" } },
+    ]);
     prisma.auditLog.create.mockResolvedValue({});
     prisma.auditLog.findFirst.mockResolvedValue(null);
     creditNotes = {
@@ -164,7 +168,12 @@ describe("InlineReturnsService.refund (SA-727)", () => {
         refundMethod: "EXTERNAL_REFUND",
         refundedAt: null,
       },
-      data: { status: "REFUNDED", refundAmount: 30, refundedAt: expect.any(Date) },
+      data: {
+        status: "REFUNDED",
+        refundAmount: 30,
+        refundedAt: expect.any(Date),
+        refundTender: "CASH", // SA-740r: the tender is written in the SAME CAS as refundedAt
+      },
     });
     expect(JSON.stringify(prisma.return.updateMany.mock.calls[0][0].where)).not.toContain(
       "holdReason",
@@ -176,7 +185,7 @@ describe("InlineReturnsService.refund (SA-727)", () => {
     expect(prisma.invoice.update).not.toHaveBeenCalled();
   });
 
-  it("M5: ONE awaited audit row {returnId, invoiceIds, amount, tender, actor, impersonatedBy}; the tender is only in the audit meta", async () => {
+  it("M5: ONE awaited audit row {returnId, invoiceIds, amount, tender, actor, impersonatedBy}; the row carries the tender as its PaymentMethod column too", async () => {
     await service.refund(
       "ret-1",
       { ...REFUND, tender: "CARD", reason: " customer changed mind " },
@@ -200,10 +209,65 @@ describe("InlineReturnsService.refund (SA-727)", () => {
         }),
       }),
     });
-    // refundMethod stays the literal stored at capture: no new string, no tender in the row
+    // refundMethod stays the literal stored at capture: no new string. The tender is the PaymentMethod column (SA-740r):
+    // a CARD refund is stored as CREDIT_CARD, the same map the counter payment legs use.
     const data = prisma.return.updateMany.mock.calls[0][0].data;
     expect(data).not.toHaveProperty("refundMethod");
-    expect(JSON.stringify(data)).not.toMatch(/CARD|CASH|CHECK/);
+    expect(data.refundTender).toBe("CREDIT_CARD");
+  });
+
+  describe("SA-740r: Return.refundTender is the tender of record", () => {
+    const refundedRow = (over: Record<string, unknown> = {}) =>
+      receivedReturn({
+        status: "REFUNDED",
+        refundMethod: "EXTERNAL_REFUND",
+        refundAmount: 30,
+        refundedAt: new Date(),
+        ...over,
+      });
+
+    it("CHECK is stored as CHECK, CARD as CREDIT_CARD, CASH as CASH, in the claim itself", async () => {
+      for (const [tender, column] of [
+        ["CASH", "CASH"],
+        ["CARD", "CREDIT_CARD"],
+        ["CHECK", "CHECK"],
+      ] as const) {
+        prisma.return.updateMany.mockClear();
+        row = receivedReturn();
+        await service.refund("ret-1", { ...REFUND, tender }, OPERATOR);
+        expect(prisma.return.updateMany.mock.calls[0][0].data.refundTender).toBe(column);
+      }
+    });
+
+    it("a replay trusts the COLUMN: the same tender (CARD vs CREDIT_CARD) is a 200 with no audit row read needed", async () => {
+      row = refundedRow({ refundTender: "CREDIT_CARD" });
+      prisma.auditLog.findFirst.mockResolvedValue(null);
+      const out = await service.refund("ret-1", { ...REFUND, tender: "CARD" }, OPERATOR);
+      expect(out).toMatchObject({ status: "REFUNDED", refundTender: "CARD" });
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("a replay with another tender than the column is 409 even when the audit row says otherwise", async () => {
+      row = refundedRow({ refundTender: "CREDIT_CARD" });
+      prisma.auditLog.findFirst.mockResolvedValue({ meta: { tender: "CASH" } });
+      expect(await codeOf(service.refund("ret-1", REFUND, OPERATOR))).toBe(
+        "RETURN_ALREADY_RESOLVED",
+      );
+    });
+
+    it("a row the backfill has not reached (column null) still replays from the audit tender", async () => {
+      row = refundedRow({ refundTender: null });
+      prisma.auditLog.findFirst.mockResolvedValue({ meta: { tender: "CASH", amount: 30 } });
+      await expect(service.refund("ret-1", REFUND, OPERATOR)).resolves.toMatchObject({
+        refundTender: "CASH",
+      });
+    });
+
+    it("the response names the tender in the counter vocabulary read back from the stored column", async () => {
+      row = refundedRow({ refundTender: "CHECK" });
+      const out = await service.refund("ret-1", { ...REFUND, tender: "CHECK" }, OPERATOR);
+      expect(out.refundTender).toBe("CHECK");
+    });
   });
 
   it("M5 (rollback): an audit failure rejects the whole refund, after the claim ran inside the same transaction", async () => {
@@ -218,6 +282,123 @@ describe("InlineReturnsService.refund (SA-727)", () => {
     expect(rawCalls[0]).toMatch(/FROM "Return" WHERE id = \? AND .* FOR UPDATE/);
     expect(rawCalls[1]).toMatch(/FROM "Order" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/);
     expect(rawCalls[2]).toMatch(/FROM "Invoice" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/);
+  });
+
+  describe("SA-749r2 item 9: a CASH refund may not exceed the cash applied to the sale minus earlier cash refunds", () => {
+    it("cash applied 20 of a 30.00 return: a CASH refund is 409 REFUND_EXCEEDS_CASH_PAID carrying the maximum, nothing written", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 20, invoice: { orderId: "src-order-1" } },
+      ]);
+      const err: any = await service.refund("ret-1", REFUND, OPERATOR).catch((e) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({
+        code: "REFUND_EXCEEDS_CASH_PAID",
+        maxCashRefund: 20,
+        requested: 30,
+      });
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("N3: a COUNTER order with the tender somehow absent is capped as cash (counterOrder is passed)", async () => {
+      prisma.order.findFirst.mockResolvedValue({ counterSale: true, registerKey: null });
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 10, invoice: { orderId: "src-order-1" } },
+      ]);
+      const err: any = await service
+        .refund("ret-1", { expectedAmount: 30 } as any, OPERATOR)
+        .catch((e) => e);
+      expect(err.getResponse()).toMatchObject({
+        code: "REFUND_EXCEEDS_CASH_PAID",
+        maxCashRefund: 10,
+      });
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("the same refund by CARD or CHECK is not capped (card and check limits wait for their own reports)", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      for (const tender of ["CARD", "CHECK"]) {
+        prisma.return.updateMany.mockClear();
+        row = receivedReturn();
+        await expect(
+          service.refund("ret-1", { ...REFUND, tender }, OPERATOR),
+        ).resolves.toBeDefined();
+        expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it("an earlier cash refund of 12.00 on the sale leaves 18.00: a 30.00 cash refund is refused", async () => {
+      prisma.returnItem.findMany.mockResolvedValue([
+        { sourceOrderId: "src-order-1", subtotal: 12, taxAmount: 0, categoryTax: 0 },
+      ]);
+      const err: any = await service.refund("ret-1", REFUND, OPERATOR).catch((e) => e);
+      expect(err.getResponse()).toMatchObject({
+        code: "REFUND_EXCEEDS_CASH_PAID",
+        maxCashRefund: 18,
+      });
+    });
+
+    it("the cap runs under the order and invoice locks, before the claim", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      await service.refund("ret-1", REFUND, OPERATOR).catch(() => undefined);
+      expect(rawCalls).toHaveLength(3); // Return, Orders, Invoices all taken before the refusal
+      expect(prisma.invoicePayment.findMany.mock.invocationCallOrder[0]).toBeGreaterThan(0);
+    });
+  });
+
+  describe("SA-758 CR-2: refundedAt is the DATABASE clock, read after the close lock", () => {
+    it("the claim stamps refundedAt with clock_timestamp() of the transaction, after the lock and before the claim", async () => {
+      const dbTime = new Date("2026-10-08T20:00:00.123Z");
+      prisma.order.findFirst.mockResolvedValue({ counterSale: true, registerKey: null });
+      const q = jest.fn().mockResolvedValue([{ now: dbTime }]);
+      prisma.tenantTransaction.mockImplementation((fn: any) =>
+        fn({
+          ...prisma,
+          $queryRaw: q,
+          $executeRaw: jest.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
+            rawCalls.push(strings.join("?").replace(/\s+/g, " ").trim());
+            rawValues.push(values);
+            return Promise.resolve(0);
+          }),
+        }),
+      );
+      await service.refund("ret-1", REFUND, OPERATOR);
+      expect(prisma.return.updateMany.mock.calls[0][0].data.refundedAt).toEqual(dbTime);
+      expect(rawCalls[0]).toMatch(/pg_advisory_xact_lock_shared/);
+      expect(q).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("SA-740r2 item 6: the shared counter-close lock is the FIRST statement for a counter order", () => {
+    it("counter order: counter-close, then Return, Orders, Invoices; the key is tenant:register (Order.registerKey ?? main)", async () => {
+      prisma.order.findFirst.mockResolvedValue({ counterSale: true, registerKey: null });
+      await service.refund("ret-1", REFUND, OPERATOR);
+      expect(rawCalls).toHaveLength(4);
+      expect(rawCalls[0]).toBe(
+        "SELECT pg_advisory_xact_lock_shared(hashtext('counter-close'), hashtext(?))",
+      );
+      expect(rawValues[0]).toEqual(["test-tenant:main"]);
+      expect(rawCalls[1]).toMatch(/FROM "Return" WHERE id = \? AND .* FOR UPDATE/);
+      expect(rawCalls[2]).toMatch(/FROM "Order" WHERE id IN/);
+      expect(rawCalls[3]).toMatch(/FROM "Invoice" WHERE id IN/);
+      // the register is read from the CARRYING order, tenant-scoped
+      expect(prisma.order.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "ord-carrying" } }),
+      );
+    });
+
+    it("a named register is keyed as tenant:register", async () => {
+      prisma.order.findFirst.mockResolvedValue({ counterSale: true, registerKey: "till-2" });
+      await service.refund("ret-1", REFUND, OPERATOR);
+      expect(rawValues[0]).toEqual(["test-tenant:till-2"]);
+    });
+
+    it("a non-counter order takes no close lock (its refund is not a till event)", async () => {
+      prisma.order.findFirst.mockResolvedValue({ counterSale: false, registerKey: null });
+      await service.refund("ret-1", REFUND, OPERATOR);
+      expect(rawCalls).toHaveLength(3);
+      expect(rawCalls.some((c) => c.includes("counter-close"))).toBe(false);
+    });
   });
 
   it("F7: the Return FOR UPDATE carries an explicit, BOUND tenant predicate (never string-built SQL)", async () => {

@@ -103,7 +103,9 @@ describe("#2695 mobile credit price override", () => {
     expect(gate).toBeGreaterThan(-1);
     expect(src.indexOf("accessibilityLabel={`Credit price, ")).toBeGreaterThan(gate);
     expect(src.match(/Credit price, \$\{/g)).toHaveLength(1);
-    expect(src).toContain("onlyPurchasedRequote(customerId, screen.quote, screen.quotedLines)");
+    expect(src).toContain(
+      "onlyPurchasedRequote(customerId, screen.quote, screen.quotedLines, sourceOrderId)",
+    );
     expect(src).not.toContain("dropExcessAndRequote(");
   });
 

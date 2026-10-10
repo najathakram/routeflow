@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { resolveZone } from "../common/tenant-time-zone";
 import { EmailService } from "../email/email.service";
 import {
   trialEndingTemplate,
@@ -115,15 +116,12 @@ export class BillingNotificationService {
     return tenant?.name ?? tenant?.slug ?? "your account";
   }
 
-  /** Fix round (finding 9): display in the tenant's own timezone when TenantConfig has one,
-   *  else UTC, explicitly labelled — display-only, never affects the underlying Date value or
-   *  any idempotency key. */
+  /** Fix round (finding 9): display in the tenant's own timezone when it has a valid one (the one
+   *  resolver, SA-738), else null so the date is UTC, explicitly labelled — display-only, never
+   *  affects the underlying Date value or any idempotency key. */
   private async tenantTimezone(tenantId: string): Promise<string | null> {
-    const cfg = await this.prisma.tenantConfig.findFirst({
-      where: { tenantId },
-      select: { timezone: true },
-    });
-    return cfg?.timezone ?? null;
+    const { zone, fallback } = await resolveZone(this.prisma, { tenantId });
+    return fallback ? null : zone;
   }
 
   private formatDate(d: Date, timezone: string | null): string {

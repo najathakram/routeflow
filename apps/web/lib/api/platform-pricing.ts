@@ -41,19 +41,12 @@ export interface TenantPricingResponse {
   };
 }
 
-/** When a price override takes effect on a live Stripe subscription (`next_cycle` is the default). */
-export type PriceOverrideEffective = "next_cycle" | "now_prorated";
-
 /** `BillingService.syncStripeSubscriptionPrice` result. */
 export interface PriceSyncResult {
   synced: boolean;
   reason?: string;
   oldAmount?: number;
   newAmount?: number;
-  /** The proration mode actually sent to Stripe: `none` even for `now_prorated` on a past-due subscription. */
-  proration?: "none" | "create_prorations";
-  /** Stripe already billed the new amount, so nothing was sent. */
-  unchanged?: boolean;
 }
 
 /** `PlatformAdminService.updateTenantPriceOverride` — the resolution flattened with `sync`. */
@@ -104,7 +97,7 @@ export async function fetchTenantPricing(tenantId: string): Promise<TenantPricin
 
 export async function updateTenantPriceOverride(
   tenantId: string,
-  body: { monthly?: number | null; annual?: number | null; effective?: PriceOverrideEffective },
+  body: { monthly?: number | null; annual?: number | null },
 ): Promise<PriceOverrideUpdateResult> {
   const res = await superAdminClient.patch(
     `/platform-admin/tenants/${tenantId}/billing/price-override`,
