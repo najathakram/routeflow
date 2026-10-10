@@ -66,6 +66,19 @@ export function applyAddToItems(items: Items, a: AddToItemsInput): Items {
 }
 
 /**
+ * B992: decide an add on the LATEST lines and MOVE THE REF FORWARD in the same step. Two adds in one render (a scan engine
+ * draining its queue before React re-renders) then each see the line the previous one made, so a refusal is reported
+ * exactly (false: no count, no "Added") instead of being swallowed later by the state updater. The caller still re-applies
+ * `applyAddToItems` in its functional `setItems` on the true latest state.
+ */
+export function reserveAdd(ref: { current: Items }, input: AddToItemsInput): boolean {
+  const next = applyAddToItems(ref.current, input);
+  if (next === ref.current) return false;
+  ref.current = next;
+  return true;
+}
+
+/**
  * A refused scan: EXACTLY ONE message, in the layer the operator can see. With the scan sheet open its own error pill (the app
  * toast renders UNDER the sheet's Modal); otherwise the app toast and no pill (a pill beside it was the stacked second copy).
  */

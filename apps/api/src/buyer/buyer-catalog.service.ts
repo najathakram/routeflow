@@ -5,10 +5,30 @@ import { StorageService } from "../storage/storage.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { effectiveBuyerPrice, getTierPrice } from "@routeflow/pricing";
 import { OrdersService } from "../orders/orders.service";
+import {
+  BuyerBackorderViewResolver,
+  NO_BACKORDER_VIEW,
+  maskStockForBuyer,
+  type BuyerBackorderView,
+} from "../orders/buyer-backorder-view";
 import { ReplenishmentService } from "./replenishment.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { signableImageKeys } from "../products/product-image-keys";
 import type { BuyerProduct } from "@routeflow/types";
+import {
+  buyerVisibleProductWhere,
+  isBuyerVisibleProduct,
+  PORTAL_PARENT_SELECT,
+  noBuyerRestrictions,
+} from "./buyer-product-visibility";
+
+/** The stock fields a favourite carries (no remaining count). */
+const pickStock = (
+  s: Pick<BuyerProduct, "stockStatus" | "canBackorder">,
+): Partial<Pick<BuyerProduct, "stockStatus" | "canBackorder">> => ({
+  stockStatus: s.stockStatus,
+  canBackorder: s.canBackorder,
+});
 
 /** Max images presigned per product for the tile's dot-pager (P5-02). */
 const MAX_TILE_IMAGES = 4;
@@ -26,6 +46,7 @@ export class BuyerCatalogService {
     private readonly ordersService: OrdersService,
     private readonly replenishment: ReplenishmentService,
     private readonly promotions: PromotionsService,
+    private readonly backorderView: BuyerBackorderViewResolver,
   ) {}
 
   /**
@@ -61,21 +82,39 @@ export class BuyerCatalogService {
    * catalog listing and the single-product detail so a tile and its detail page
    * can never disagree about stock (an OOS tile must stay OOS when opened).
    */
-  private deriveStock(p: {
-    currentStock?: unknown;
-    lowStockThreshold?: unknown;
-  }): Pick<BuyerProduct, "inStock" | "stockStatus" | "stockLeft"> {
+  private deriveStock(
+    p: {
+      currentStock?: unknown;
+      lowStockThreshold?: unknown;
+    },
+    view: BuyerBackorderView,
+  ): Pick<BuyerProduct, "inStock" | "stockStatus" | "stockLeft" | "canBackorder"> {
     const stock = Number(p.currentStock ?? 0);
     const lowThreshold = Number(p.lowStockThreshold ?? 5);
     const stockStatus: BuyerProduct["stockStatus"] =
       stock <= 0 ? "OUT_OF_STOCK" : stock <= lowThreshold ? "LOW" : "IN_STOCK";
-    return {
+    const truthful = {
       inStock: stock > 0,
       stockStatus,
       // Whole units only, floor >= 1 so a fractional Decimal never renders
       // "Only 0 left" while status is LOW (stock > 0 by definition here).
       stockLeft: stockStatus === "LOW" ? Math.max(1, Math.floor(stock)) : null,
     };
+    // OOS PR2: where the seller hides backorders AND this buyer can backorder, the item looks in
+    // stock; for every other buyer the triple above is returned untouched.
+    return { ...maskStockForBuyer(truthful, view), canBackorder: view.canBackorder };
+  }
+
+  /** The tenant-scoped "no blocked ids" visibility context (B1211): no tenant on the request throws, never unscoped. */
+  private buyerVisibility() {
+    return noBuyerRestrictions(this.prisma.getTenantId());
+  }
+
+  /** ONE resolution per request (never per product): this buyer's backorder ability and visibility. */
+  private resolveBackorderView(customerId: string): Promise<BuyerBackorderView> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return Promise.resolve(NO_BACKORDER_VIEW);
+    return this.backorderView.resolve({ tenantId, customerId });
   }
 
   /**
@@ -98,6 +137,7 @@ export class BuyerCatalogService {
     customerId: string,
     buyerAccountId?: string,
   ) {
+    const backorder = await this.resolveBackorderView(customerId);
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const isPriceSort = query.sort === "price_asc" || query.sort === "price_desc";
@@ -137,19 +177,17 @@ export class BuyerCatalogService {
       andWhere.push({ id: { in: favs.map((f) => f.productId) } });
     }
 
-    const opts =
-      hiddenIds.size > 0 || andWhere.length > 0
-        ? {
-            ...(hiddenIds.size > 0 ? { excludeTrackedCategoryIds: [...hiddenIds] } : {}),
-            ...(andWhere.length > 0 ? { andWhere } : {}),
-          }
-        : undefined;
+    // One shared buyer-visibility predicate (active + portal-visible + parent visible).
+    andWhere.push(buyerVisibleProductWhere(this.buyerVisibility()) as Record<string, unknown>);
+    const opts = {
+      ...(hiddenIds.size > 0 ? { excludeTrackedCategoryIds: [...hiddenIds] } : {}),
+      andWhere,
+    };
 
     const result = await this.productsService.findAll(
       {
         search: query.search,
         category: query.category,
-        isActive: true,
         page: fetchAll ? 1 : page,
         limit: fetchAll ? 0 : limit,
       },
@@ -209,7 +247,7 @@ export class BuyerCatalogService {
           thumbnailUrl: p.thumbnailUrl ?? null,
           imageKeys: ownKeys,
           imageUrls,
-          ...this.deriveStock(p),
+          ...this.deriveStock(p, backorder),
         };
       }),
     );
@@ -267,16 +305,17 @@ export class BuyerCatalogService {
    */
   async getCatalogCounts(customerId: string, buyerAccountId: string) {
     const { hiddenIds, locked } = await this.visibility.computeGate(customerId);
-    const baseWhere: Record<string, unknown> = { isActive: true };
+    const gateOr: Record<string, unknown>[] = [];
     // Same NULL trap as products.service.findAll: `notIn` never matches NULL,
     // so keying this on trackedCategoryId zeroed every rail count for
     // untracked products whenever a license-gated category existed.
     if (hiddenIds.size > 0) {
-      baseWhere.OR = [
-        { trackedCategoryId: null },
-        { trackedCategoryId: { notIn: [...hiddenIds] } },
-      ];
+      gateOr.push({ trackedCategoryId: null }, { trackedCategoryId: { notIn: [...hiddenIds] } });
     }
+    const baseWhere = buyerVisibleProductWhere(
+      this.buyerVisibility(),
+      gateOr.length > 0 ? { OR: gateOr } : undefined,
+    );
 
     const [total, byCategory, newCount, favRows, estimates, promos] = await Promise.all([
       this.prisma.forTenant().product.count({ where: baseWhere }),
@@ -324,9 +363,10 @@ export class BuyerCatalogService {
    */
   async getProductDetail(productId: string, customerId: string) {
     const product = await this.productsService.findOne(productId);
+    const backorder = await this.resolveBackorderView(customerId);
 
     // Buyers must not see inactive/discontinued products
-    if (!(product as any).isActive) {
+    if (!isBuyerVisibleProduct(this.buyerVisibility(), product as any)) {
       throw new NotFoundException("Product not found");
     }
 
@@ -347,8 +387,13 @@ export class BuyerCatalogService {
     // only sorts isActive desc), every other buyer surface lists active products
     // only, and such a row would quote a price whose link dead-ends on this
     // endpoint's own isActive 404.
-    const activeVariants: any[] = ((product as any).variants ?? []).filter(
-      (v: any) => v.isActive !== false,
+    // The visibility twin (never an inline copy of the rule, L-167): a variant shows only when sellable, visible
+    // and its parent (this product, already visible) is visible.
+    const activeVariants: any[] = ((product as any).variants ?? []).filter((v: any) =>
+      isBuyerVisibleProduct(this.buyerVisibility(), {
+        ...v,
+        parent: { portalVisible: true, isActive: product.isActive, tenantId: product.tenantId },
+      }),
     );
     // Tier overrides for the parent AND every variant row in one query: a variant
     // carrying its own CustomerPrice must price identically here and on its own
@@ -389,7 +434,7 @@ export class BuyerCatalogService {
       thumbnailUrl: imageUrls[0] ?? null,
       imageUrls,
       imageKeys: product.imageKeys ?? [],
-      ...this.deriveStock(product),
+      ...this.deriveStock(product, backorder),
       variants: activeVariants.map((v: any) => ({
         id: v.id,
         name: v.variantName,
@@ -413,7 +458,7 @@ export class BuyerCatalogService {
    */
   async getCategories() {
     const products = await this.prisma.forTenant().product.findMany({
-      where: { isActive: true, category: { not: null } },
+      where: buyerVisibleProductWhere(this.buyerVisibility(), { category: { not: null } }),
       select: { category: true },
       distinct: ["category"],
       orderBy: { category: "asc" },
@@ -427,10 +472,12 @@ export class BuyerCatalogService {
    * Get all favorite products for this buyer at this seller, with resolved pricing.
    */
   async getFavorites(buyerAccountId: string, customerId: string) {
+    const backorder = await this.resolveBackorderView(customerId);
     const favorites = await this.prisma.forTenant().buyerFavorite.findMany({
+      // SA-606 M3: hidden favourites are KEPT (as "no longer available online" stubs) — only the read below decides.
       where: { buyerAccountId, customerId },
       include: {
-        product: true,
+        product: { include: { parent: { select: PORTAL_PARENT_SELECT } } },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -438,11 +485,16 @@ export class BuyerCatalogService {
     // Filter out inactive products + W7-gated regulated products (categories the
     // buyer isn't licensed for) so favorites never leak a hidden product.
     const { hiddenIds } = await this.visibility.computeGate(customerId);
-    const activeFavorites = favorites.filter(
+    const liveFavorites = favorites.filter(
       (f) =>
         f.product.isActive &&
         !(f.product.trackedCategoryId && hiddenIds.has(f.product.trackedCategoryId)),
     );
+    // The ONE visibility twin decides: a favourite the tenant hid (or whose parent is hidden) is a stub, not a price.
+    const visible = (f: (typeof liveFavorites)[number]) =>
+      isBuyerVisibleProduct(this.buyerVisibility(), f.product as any);
+    const activeFavorites = liveFavorites.filter(visible);
+    const unavailableFavorites = liveFavorites.filter((f) => !visible(f));
 
     // Load customer pricing tier + overrides
     const customer = await this.prisma
@@ -460,9 +512,18 @@ export class BuyerCatalogService {
     const cpMap = new Map(cpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
     const priceHist = await this.getRememberedPrices(customerId);
 
-    return activeFavorites.map((f) => {
+    const stubs = unavailableFavorites.map((f) => ({
+      id: f.id,
+      productId: f.productId,
+      name: f.product.name,
+      unavailable: true as const,
+      unavailableText: "No longer available online",
+      createdAt: f.createdAt,
+    }));
+    const live = activeFavorites.map((f) => {
       const effectiveTier = cpMap.get(f.productId) ?? defaultTier;
       return {
+        unavailable: false as const,
         id: f.id,
         productId: f.productId,
         name: f.product.name,
@@ -480,8 +541,11 @@ export class BuyerCatalogService {
         // product as boxes (not loose pieces) — matches getCatalog.
         unitsPerBox: f.product.unitsPerBox ?? null,
         createdAt: f.createdAt,
+        // OOS PR2: the SAME derivation as the catalog row, so a favourite and its tile cannot disagree.
+        ...pickStock(this.deriveStock(f.product, backorder)),
       };
     });
+    return [...live, ...stubs].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
   /**
@@ -494,9 +558,9 @@ export class BuyerCatalogService {
     tenantId: string,
   ) {
     // Verify the product exists and is active
-    const product = await this.prisma
-      .forTenant()
-      .product.findFirst({ where: { id: productId, isActive: true } });
+    const product = await this.prisma.forTenant().product.findFirst({
+      where: buyerVisibleProductWhere(noBuyerRestrictions(tenantId), { id: productId }),
+    });
     if (!product) throw new NotFoundException("Product not found");
 
     try {

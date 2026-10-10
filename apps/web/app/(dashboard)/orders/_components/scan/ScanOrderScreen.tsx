@@ -144,7 +144,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   const [history, setHistory] = React.useState<ScanHistoryEntry[]>([]);
   const [highlightId, setHighlightId] = React.useState<string | null>(null);
   const [feedback, setFeedback] = React.useState<{
-    kind: "added" | "error" | "queued";
+    kind: "added" | "error" | "queued" | "info";
     text: string;
   } | null>(null);
   // Scans waiting for signal (poor-signal queue). The ref is the source of truth (timers read it);
@@ -199,11 +199,14 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
     [],
   );
 
-  const showFeedback = React.useCallback((kind: "added" | "error" | "queued", text: string) => {
-    setFeedback({ kind, text });
-    if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
-    feedbackTimer.current = setTimeout(() => setFeedback(null), FEEDBACK_MS);
-  }, []);
+  const showFeedback = React.useCallback(
+    (kind: "added" | "error" | "queued" | "info", text: string) => {
+      setFeedback({ kind, text });
+      if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
+      feedbackTimer.current = setTimeout(() => setFeedback(null), FEEDBACK_MS);
+    },
+    [],
+  );
 
   /**
    * Shows the outcome of one resolved code: the cue, the status pill and - for an accepted scan -
@@ -231,7 +234,9 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
               ? UNITS_LOADING_SCAN_MESSAGE
               : res.kind === "unknown"
                 ? `Not in the catalog: ${code}`
-                : "Couldn't look up that code";
+                : res.kind === "suggested"
+                  ? `No exact match for ${code} - search for ${String(res.product?.name ?? "it")}`
+                  : "Couldn't look up that code";
         outcome = { feedback: { kind: "error", text } };
       }
       // The cue comes straight from the shared decision (`cueForOutcome`) and BEFORE any
@@ -694,7 +699,9 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
                   ? "bg-emerald-50 text-emerald-800"
                   : feedback.kind === "queued"
                     ? "bg-amber-50 text-amber-800"
-                    : "bg-red-50 text-red-700",
+                    : feedback.kind === "info"
+                      ? "bg-slate-100 text-slate-700"
+                      : "bg-red-50 text-red-700",
               )}
             >
               {feedback.text}

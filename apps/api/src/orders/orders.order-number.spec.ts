@@ -78,6 +78,7 @@ const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -245,6 +246,10 @@ describe("OrdersService.create — B587 order-number generation", () => {
     trackedCategoryId: null,
     trackedSubcategoryId: null,
     isActive: true,
+    // a real Product row always carries these; the buyer gate (WS6) judges them, never defaults
+    kind: "STANDARD",
+    portalVisible: true,
+    parent: null,
   };
   const NEW_ORDER = {
     id: "ord-new",

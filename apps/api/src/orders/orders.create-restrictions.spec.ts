@@ -52,6 +52,7 @@ const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -203,6 +204,10 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
     trackedCategoryId: null,
     trackedSubcategoryId: null,
     isActive: true,
+    // a real Product row always carries these; the buyer gate (WS6) judges them, never defaults
+    kind: "STANDARD",
+    portalVisible: true,
+    parent: null,
   };
   const NEW_ORDER = {
     id: "ord-new",
@@ -355,7 +360,7 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
   // cannot name one is refused rather than assumed OFF (fail closed; the price of a check that can
   // never be skipped by omitting the tenant). Staff and buyer alike.
   it.each([
-    ["a buyer", customerPayload],
+    ["a buyer", { ...customerPayload, tenantId: null }],
     ["a staff principal", operatorPayload],
   ])(
     "%s with no tenant on the caller and none ambient: refused (403) rather than skipped",

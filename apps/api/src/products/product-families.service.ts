@@ -59,6 +59,35 @@ import { blankToUndefined } from "./dto/family.dto";
  */
 const CODE_FIELDS: readonly CodeField[] = ["sku", "barcode", "unitSku"];
 const MAX_ROWS = 200;
+
+/**
+ * B998: a formula-led VARIANT name is refused with the same TEXT_CELL_FORMULA_LEAD body as ever, plus WHICH row: the 0-based
+ * `variantIndex` into the request list `variantList` ("variants" on create, "add" / "update" on an edit), so the web can put the
+ * message under that row instead of under Family name. Numbers and an enum only; the refused text is never echoed.
+ */
+type VariantList = "variants" | "add" | "update";
+function assertSafeVariantName(
+  list: VariantList,
+  index: number,
+  next: Parameters<typeof assertSafeProductNames>[0],
+  stored?: Parameters<typeof assertSafeProductNames>[1],
+): void {
+  try {
+    assertSafeProductNames(next, stored);
+  } catch (e) {
+    if (e instanceof BadRequestException) {
+      const body = e.getResponse();
+      if (typeof body === "object" && body !== null) {
+        throw new BadRequestException({
+          ...(body as Record<string, unknown>),
+          variantIndex: index,
+          variantList: list,
+        });
+      }
+    }
+    throw e;
+  }
+}
 export const FAMILY_CREATED_ACTION = "product.family_created";
 export const FAMILY_VARIANTS_UPDATED_ACTION = "product.family_variants_updated";
 
@@ -175,8 +204,9 @@ export class ProductFamiliesService {
     const familyName = dto.family.name.trim();
     // B964-2: a formula-led family / variant name is refused before any read or write (it is printed on invoices, exports, filings)
     assertSafeProductNames({ name: familyName });
-    for (const v of dto.variants)
-      assertSafeProductNames({ name: v.name.trim(), variantName: v.name.trim() });
+    dto.variants.forEach((v, i) =>
+      assertSafeVariantName("variants", i, { name: v.name.trim(), variantName: v.name.trim() }),
+    );
     // A family price copied to every variant must be a real price: missing or <= 0 would write $0.00 onto every variant.
     // Coded so a client can show it; checked BEFORE the generic "required" so the code is stable (nothing written).
     const copyPriceError = () =>
@@ -397,8 +427,9 @@ export class ProductFamiliesService {
     }
     // B964-2: an ADDED variant's name is new text, so it is guarded here, before any read or write. A RENAME is guarded
     // CHANGE-ONLY inside the transaction (against the stored name), before any write.
-    for (const v of add)
-      assertSafeProductNames({ name: v.name.trim(), variantName: v.name.trim() });
+    add.forEach((v, i) =>
+      assertSafeVariantName("add", i, { name: v.name.trim(), variantName: v.name.trim() }),
+    );
     const touchedIds = [...new Set([...update.map((u) => u.id), ...deactivate])];
     const addRows = add.map((v, i) => ({ row: i, ...v }));
     const updRows = update.map((u, i) => ({ row: add.length + i, ...u }));
@@ -452,14 +483,16 @@ export class ProductFamiliesService {
         }
         // B964-2 (CHANGE-ONLY, as master's rule): a legacy formula-led name that is sent back UNCHANGED (e.g. with a sku
         // edit) is not refused; only a name that CHANGES to formula-led text is, before any write.
-        for (const u of update) {
-          if (!u.name) continue;
+        update.forEach((u, i) => {
+          if (!u.name) return;
           const stored = mine.find((m) => m.id === u.id);
-          assertSafeProductNames(
+          assertSafeVariantName(
+            "update",
+            i,
             { name: u.name.trim(), variantName: u.name.trim() },
             stored && { name: stored.name, variantName: stored.variantName },
           );
-        }
+        });
 
         // ONE sorted lock call: the codes written AND every code of the variants being changed/deactivated.
         const held: string[] = [];

@@ -572,6 +572,31 @@ describe("AppleOAuthService — staff flow (SA-418 §3)", () => {
       data: { appleId: "apple-sub-1", forcePasswordChange: false },
     });
   });
+
+  it("staff sign-in with Apple records the sign-in time", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    prisma.tenant.findFirst.mockResolvedValue(TENANT);
+    prisma.user.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ ...STAFF_USER });
+    prisma.user.updateMany.mockResolvedValue({ count: 1 });
+
+    const { nonce, identityToken } = await mintAndSign(service, privateKey, {
+      tenantSlug: "acme",
+      context: "staff",
+      tokenOverrides: { email: STAFF_USER.email, sub: "apple-sub-1" },
+    });
+    await service.signIn({
+      identityToken,
+      authorizationCode: "code",
+      nonce,
+      tenantSlug: "acme",
+      context: "staff",
+    });
+
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: STAFF_USER.id },
+      data: { lastLoginAt: expect.any(Date) },
+    });
+  });
 });
 
 describe("AppleOAuthService — buyer flow (SA-418 §4)", () => {

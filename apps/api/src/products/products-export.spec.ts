@@ -6,6 +6,7 @@ import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
+import { INSIGHT_MAX_WINDOW_MONTHS } from "../analytics/demand-range";
 import { SalesFactsService } from "../sales-facts/sales-facts.service";
 import { CSV_BOM } from "../common/csv";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -38,7 +39,7 @@ interface P {
   currentStock?: number;
   isActive?: boolean;
   isTobacco?: boolean;
-  parent?: { name: string } | null;
+  parent?: { name: string; tenantId?: string } | null;
 }
 
 const product = (p: P) => ({
@@ -223,7 +224,7 @@ describe("products export.csv", () => {
           id: "p2",
           tenantId: TENANT_A,
           name: "Cola Diet",
-          parent: { name: "Cola 12pk" },
+          parent: { name: "Cola 12pk", tenantId: TENANT_A },
           isActive: false,
         }),
       ],
@@ -252,6 +253,31 @@ describe("products export.csv", () => {
     expect(r2).toBe("Cola Diet,,,,,each,1,,,0,No,No,Cola 12pk,0,0,");
   });
 
+  it("leaves the parent column empty for a parent that belongs to another tenant (B1211)", async () => {
+    const { svc, productCalls } = build({
+      products: [
+        product({
+          id: "p1",
+          tenantId: TENANT_A,
+          name: "Cola Cherry",
+          parent: { name: "Foreign Family", tenantId: TENANT_B },
+        }),
+        product({
+          id: "p2",
+          tenantId: TENANT_A,
+          name: "Cola Diet",
+          parent: { name: "Own Family", tenantId: TENANT_A },
+        }),
+      ],
+    });
+    const { out } = await run(svc, WINDOW);
+    const [, r1, r2] = rows(out);
+    expect(r1.split(",")[12]).toBe("");
+    expect(r2.split(",")[12]).toBe("Own Family");
+    expect(out).not.toContain("Foreign Family");
+    expect(productCalls[0].select.parent).toEqual({ select: { name: true, tenantId: true } });
+  });
+
   it("Avg cost uses @routeflow/pricing round4 (half away from zero; L-248), not a local Math.round nudge", async () => {
     // A local `Math.round((n + EPSILON) * 1e4) / 1e4` rounds a negative half (-2.00005) toward +inf -> -2.
     const { svc } = build({
@@ -269,6 +295,21 @@ describe("products export.csv", () => {
     const src = readFileSync(join(__dirname, "products-export.service.ts"), "utf8");
     expect(src).toMatch(/import \{[^}]*\bround4\b[^}]*\} from "@routeflow\/pricing"/);
     expect(src).not.toMatch(/(const|function)\s+round4\b/);
+  });
+
+  it("the export honours the list's portalVisible filter through the shared where builder (N1, #2856)", async () => {
+    const { svc, productCalls } = build({
+      products: [product({ id: "p1", tenantId: TENANT_A, name: "Cola" })],
+    });
+    await run(svc, { ...WINDOW, portalVisible: false });
+    const hidden = { OR: [{ portalVisible: false }, { parent: { portalVisible: false } }] };
+    expect(productCalls[0].where.AND).toContainEqual(hidden);
+    productCalls.length = 0;
+    await run(svc, { ...WINDOW, portalVisible: true });
+    expect(productCalls[0].where.AND).toContainEqual({ NOT: hidden });
+    productCalls.length = 0;
+    await run(svc, WINDOW);
+    expect(JSON.stringify(productCalls[0].where)).not.toContain("portalVisible");
   });
 
   it("stats come from accrual invoices only: DRAFT/VOID, other tenants and out-of-window lines never count, a PAID invoice does, and no order is read", async () => {
@@ -545,6 +586,34 @@ describe("products export.csv", () => {
     ).rejects.toMatchObject({
       status: 400,
     });
+  });
+});
+
+describe("B987-E (d): the export's window refusals carry a code and a reason (status and message unchanged)", () => {
+  const window = (q: { from?: string; to?: string }) => {
+    const { svc } = build({ products: [] });
+    return svc.prepare(q, { userId: "u1" }).catch((e) => e);
+  };
+
+  it.each([
+    [{ from: "2026-09-01", to: "2026-9-29" }, "TO_NOT_A_DAY", {}],
+    [{ from: "2026-13-40", to: "2026-09-29" }, "FROM_NOT_A_DAY", {}],
+    [{ to: "2026-02-30" }, "NOT_A_DAY", {}],
+    [{ from: "2026-09-29", to: "2026-09-01" }, "TO_BEFORE_FROM", {}],
+    [
+      { from: "2020-01-01", to: "2026-09-29" },
+      "WINDOW_TOO_LONG",
+      { maxMonths: INSIGHT_MAX_WINDOW_MONTHS },
+    ],
+  ])("%j -> INSIGHT_WINDOW_INVALID / %s", async (q, reason, extra) => {
+    const err: any = await window(q);
+    expect(err.getStatus()).toBe(400);
+    const body = err.getResponse();
+    expect(body).toMatchObject({ code: "INSIGHT_WINDOW_INVALID", reason, ...extra });
+    expect(typeof body.message).toBe("string"); // unchanged server sentence
+    expect(Object.keys(body).sort()).toEqual(
+      ["code", "message", "reason", ...Object.keys(extra)].sort(),
+    );
   });
 });
 

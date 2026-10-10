@@ -15,6 +15,8 @@ export function useProducts(
     stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
     /** Regulated-section filter: "any" (any regulated), "none" (non-regulated), or a section id. */
     section?: string;
+    /** `false` lists only products hidden from the buyer portal. */
+    portalVisible?: boolean;
     page?: number;
     limit?: number;
     includeVariants?: boolean;
@@ -56,7 +58,7 @@ export function useProductCategories() {
 }
 
 /** Invalidate every query whose data depends on the set of products. */
-function invalidateProductSet(qc: ReturnType<typeof useQueryClient>) {
+export function invalidateProductSet(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["products"] });
   // Inventory overview + valuation are derived from products but keyed
   // separately — refresh them so a newly created/deleted product shows up
@@ -79,10 +81,7 @@ export function useUpdateProduct() {
   return useMutation({
     mutationFn: ({ id, ...data }: { id: string; [k: string]: unknown }) =>
       apiClient.patch(`/products/${id}`, data).then((r) => r.data),
-    onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ["products", vars.id] });
-      qc.invalidateQueries({ queryKey: ["products"] });
-    },
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
@@ -104,10 +103,7 @@ export function useReactivateProduct() {
           ...(deactivateHolderIds?.length ? { deactivateHolderIds } : {}),
         })
         .then((r) => r.data),
-    onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ["products", vars.id] });
-      qc.invalidateQueries({ queryKey: ["products"] });
-    },
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
@@ -119,12 +115,17 @@ export function useDeactivateProduct() {
   const qc = useQueryClient();
   return useMutation({
     meta: { localErrorToast: true },
-    mutationFn: (id: string) =>
-      apiClient.patch(`/products/${id}`, { isActive: false }).then((r) => r.data),
-    onSuccess: (_d, id) => {
-      qc.invalidateQueries({ queryKey: ["products", id] });
-      qc.invalidateQueries({ queryKey: ["products"] });
+    // `confirmCascade` is only ever sent after the operator confirmed the 409 FAMILY_HAS_ACTIVE_VARIANTS prompt.
+    mutationFn: (arg: string | { id: string; confirmCascade?: boolean }) => {
+      const { id, confirmCascade } = typeof arg === "string" ? { id: arg } : arg;
+      return apiClient
+        .patch(`/products/${id}`, {
+          isActive: false,
+          ...(confirmCascade ? { confirmCascade } : {}),
+        })
+        .then((r) => r.data);
     },
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
@@ -133,7 +134,15 @@ export function useDeleteProduct() {
   return useMutation({
     // Its only caller toasts a fixed sentence itself (deactivateFailureToast).
     meta: { localErrorToast: true },
-    mutationFn: (id: string) => apiClient.delete(`/products/${id}`).then((r) => r.data),
+    mutationFn: (arg: string | { id: string; confirmCascade?: boolean }) => {
+      const { id, confirmCascade } = typeof arg === "string" ? { id: arg } : arg;
+      return apiClient
+        .delete(
+          `/products/${id}`,
+          confirmCascade ? { params: { confirmCascade: "true" } } : undefined,
+        )
+        .then((r) => r.data);
+    },
     onSuccess: () => invalidateProductSet(qc),
   });
 }
@@ -245,7 +254,7 @@ const BULK_DELETE_CHUNK = 500;
 export interface BulkDeleteProductsResult {
   deleted: number;
   softDeleted: number;
-  skipped: Array<{ id: string; reason: string }>;
+  skipped: Array<{ id: string; code?: string; reason?: string }>;
 }
 
 export function useBulkDeleteProducts() {
@@ -304,7 +313,7 @@ export function useBulkAssignParent(options?: LocalErrorToastOption) {
       apiClient
         .post("/products/bulk-assign-parent", { parentProductId, assignments })
         .then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 

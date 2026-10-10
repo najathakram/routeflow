@@ -79,10 +79,35 @@ export interface RangeWindow extends BucketedWindow {
 
 /** A window request the API refuses (the controllers map it to 400). */
 export class InsightWindowError extends Error {
-  constructor(message: string) {
+  /**
+   * B987-E (d): OPT-IN structured detail. Most callers still map only `message` to a 400 (the insights controller does), so
+   * nothing changes for them; the products export also forwards `reason` + `params` so the web can show fixed copy. `params`
+   * are numbers and a validated grain name only, never user text.
+   */
+  constructor(
+    message: string,
+    readonly reason?: InsightWindowReason,
+    readonly params?: InsightWindowParams,
+  ) {
     super(message);
     this.name = "InsightWindowError";
   }
+}
+
+export type InsightWindowReason =
+  | "NOT_A_DAY"
+  | "TO_NOT_A_DAY"
+  | "FROM_NOT_A_DAY"
+  | "BAD_GRAIN"
+  | "TO_BEFORE_FROM"
+  | "WINDOW_TOO_LONG"
+  | "TOO_MANY_BUCKETS";
+
+export interface InsightWindowParams {
+  maxMonths?: number;
+  buckets?: number;
+  maxBuckets?: number;
+  grain?: string;
 }
 
 /** Per-range shape. 30d/6m stay dense enough to read a trend; 1y/5y roll up to months. */
@@ -192,7 +217,11 @@ export function isCalendarDay(value: unknown): value is string {
 
 function dayMs(day: string): number {
   const p = parseCalendarDay(day);
-  if (!p) throw new InsightWindowError(`not a calendar day (YYYY-MM-DD): ${JSON.stringify(day)}`);
+  if (!p)
+    throw new InsightWindowError(
+      `not a calendar day (YYYY-MM-DD): ${JSON.stringify(day)}`,
+      "NOT_A_DAY",
+    );
   return Date.UTC(p.year, p.month - 1, p.day);
 }
 
@@ -255,11 +284,12 @@ function periodCount(firstMs: number, lastMs: number, grain: InsightGrain): numb
  */
 export function rangeWindow(fromDay: string, toDay: string, grain: InsightGrain): RangeWindow {
   if (!(INSIGHT_GRAINS as readonly string[]).includes(grain)) {
-    throw new InsightWindowError(`grain must be one of: ${INSIGHT_GRAINS.join(", ")}`);
+    throw new InsightWindowError(`grain must be one of: ${INSIGHT_GRAINS.join(", ")}`, "BAD_GRAIN");
   }
   const fromMs = dayMs(fromDay);
   const toMs = dayMs(toDay);
-  if (toMs < fromMs) throw new InsightWindowError(`to (${toDay}) is before from (${fromDay})`);
+  if (toMs < fromMs)
+    throw new InsightWindowError(`to (${toDay}) is before from (${fromDay})`, "TO_BEFORE_FROM");
 
   const f = new Date(fromMs);
   const limitMs = Date.UTC(
@@ -268,7 +298,11 @@ export function rangeWindow(fromDay: string, toDay: string, grain: InsightGrain)
     f.getUTCDate(),
   );
   if (toMs >= limitMs) {
-    throw new InsightWindowError(`a window may span at most ${INSIGHT_MAX_WINDOW_MONTHS} months`);
+    throw new InsightWindowError(
+      `a window may span at most ${INSIGHT_MAX_WINDOW_MONTHS} months`,
+      "WINDOW_TOO_LONG",
+      { maxMonths: INSIGHT_MAX_WINDOW_MONTHS },
+    );
   }
 
   const firstMs = periodStartMs(fromMs, grain);
@@ -277,6 +311,8 @@ export function rangeWindow(fromDay: string, toDay: string, grain: InsightGrain)
   if (count > INSIGHT_MAX_BUCKETS) {
     throw new InsightWindowError(
       `${count} ${grain} buckets exceed the ${INSIGHT_MAX_BUCKETS}-bucket limit — use a coarser grain`,
+      "TOO_MANY_BUCKETS",
+      { buckets: count, maxBuckets: INSIGHT_MAX_BUCKETS, grain },
     );
   }
 
@@ -315,6 +351,7 @@ export function resolveInsightRange(
   if (!isCalendarDay(toDay)) {
     throw new InsightWindowError(
       `to must be a calendar day (YYYY-MM-DD), got ${JSON.stringify(toDay)}`,
+      "TO_NOT_A_DAY",
     );
   }
   const t = new Date(dayMs(toDay));
@@ -323,11 +360,12 @@ export function resolveInsightRange(
   if (!isCalendarDay(fromDay)) {
     throw new InsightWindowError(
       `from must be a calendar day (YYYY-MM-DD), got ${JSON.stringify(fromDay)}`,
+      "FROM_NOT_A_DAY",
     );
   }
   const rawGrain = blank(params.grain);
   if (rawGrain != null && !(INSIGHT_GRAINS as readonly string[]).includes(rawGrain)) {
-    throw new InsightWindowError(`grain must be one of: ${INSIGHT_GRAINS.join(", ")}`);
+    throw new InsightWindowError(`grain must be one of: ${INSIGHT_GRAINS.join(", ")}`, "BAD_GRAIN");
   }
   const grain = (rawGrain as InsightGrain | null) ?? defaultInsightGrain(fromDay, toDay);
   rangeWindow(fromDay, toDay, grain); // validates span/limits; throws InsightWindowError

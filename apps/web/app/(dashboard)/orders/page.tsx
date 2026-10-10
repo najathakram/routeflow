@@ -22,20 +22,27 @@ import {
   Route as RouteIcon,
 } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
+import { useAuth } from "@/lib/auth-context";
 import { usePageTitle } from "@/lib/page-title-context";
 import { humanizeEnum } from "@/lib/format";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
 import { useProduct } from "@/lib/api/products";
+import { useShippedWeek } from "@/lib/tenant-timezone";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { downloadCsv, csvDate } from "@/lib/export";
 import { apiClient } from "@/lib/api-client";
-import { useDeliveryAccess } from "@/lib/api/addons";
+import { useDeliveryAccess, useFleetAccess } from "@/lib/api/addons";
+import { useOrderStatusLabel, useStaffFulfilment } from "@/lib/fulfilment-caps";
 import { useDrafts } from "@/lib/api/drafts";
 import { saveTripDraft } from "@/lib/trip-draft";
+import { bulkCancelFailureTitle } from "@/lib/bulk-cancel-summary";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
+import { BatchShipActions } from "./_components/BatchShipActions";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 // ─── Saved view definitions ───────────────────────────────────────────────────
@@ -72,11 +79,7 @@ function orderStatusLabel(status: string): string {
 
 // ─── Fulfillment filter options ───────────────────────────────────────────────
 
-const FULFILLMENT_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "All Fulfillment" },
-  { value: "ROUTE", label: "Delivery route" },
-  { value: "SHIP", label: "Ship via carrier" },
-];
+const FULFILLMENT_LABEL = { ROUTE: "Delivery route", SHIP: "Ship via carrier" } as const;
 
 // ─── Date column ──────────────────────────────────────────────────────────────
 
@@ -234,6 +237,11 @@ function PagerControls({
 export default function OrdersPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { user } = useAuth();
+  // Same staff test as the shell's gate callers (layout.tsx, CommandPalette): everyone but CUSTOMER / DRIVER.
+  const counterGate = useCounterSaleGate({
+    enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
     setTitle("Orders");
@@ -251,6 +259,8 @@ export default function OrdersPage() {
     // Ad-hoc trips: ROUTE (dispatched) vs SHIP (supplier/carrier-shipped,
     // excluded from trip/route dispatch) — same URL-chip treatment as status.
     fulfillPath: "",
+    // Dashboard shipping cards: "no-tracking" (shipped, no tracking number) | "week" (shipped since Sunday 00:00 in the business's timezone).
+    shipView: "",
   });
   const statusFilter = (urlFilters.status as string) ?? "";
   const urgentOnly = (urlFilters.urgent as boolean) ?? false;
@@ -258,6 +268,14 @@ export default function OrdersPage() {
   const dateTo = (urlFilters.dateTo as string) ?? "";
   const productIdFilter = (urlFilters.productId as string) ?? "";
   const fulfillPathFilter = (urlFilters.fulfillPath as string) ?? "";
+  const shipView = (urlFilters.shipView as string) ?? "";
+  // Sunday 00:00 in the business's timezone — the dashboard card uses the same helper.
+  const week = useShippedWeek(shipView === "week");
+  const weekStart = week.from;
+  const shipParams = {
+    hasTracking: shipView === "no-tracking" ? (false as const) : undefined,
+    shippedFrom: shipView === "week" ? weekStart : undefined,
+  };
   // Only fetched to render the chip's label — the filter itself is the id.
   const { data: filterProduct } = useProduct(productIdFilter);
   // Hide-only gate for the ad-hoc delivery builder entry point — bulkbar action
@@ -274,6 +292,8 @@ export default function OrdersPage() {
   // an optional barcode to add on open.
   const [resumeDraftId, setResumeDraftId] = React.useState<string | null>(null);
   const [initialScanCode, setInitialScanCode] = React.useState<string | null>(null);
+  // B1210: ?preselect=SHIP (the counter sale's "Ship this order instead") opens a FRESH builder on "Ship via carrier".
+  const [initialFulfillPath, setInitialFulfillPath] = React.useState<"SHIP" | null>(null);
 
   // Open the builder from URL intents: ?action=new (fresh), ?resumeDraft=<id>
   // (resume a parked draft), optional &scan=<code> (add on open). Runs on mount and
@@ -284,12 +304,24 @@ export default function OrdersPage() {
     const resume = searchParams.get("resumeDraft");
     const scan = searchParams.get("scan");
     if (!resume && action !== "new") return;
+    // A business whose staff default is the counter: "New order" OPENS AS the counter sale, unless the operator chose
+    // "Ship this order instead" (?ship=1), which falls through to the normal builder.
+    if (
+      !resume &&
+      action === "new" &&
+      counterGate.opensAsCounter &&
+      searchParams.get("ship") !== "1"
+    ) {
+      router.replace("/orders/counter-sale");
+      return;
+    }
     if (resume) {
       setResumeDraftId(resume);
     } else {
       setResumeDraftId(null);
     }
     setInitialScanCode(scan);
+    setInitialFulfillPath(!resume && searchParams.get("preselect") === "SHIP" ? "SHIP" : null);
     setIsCreateOpen(true);
     // Strip ONLY the intent params. This used to replace with a bare "/orders",
     // which also discarded the status/date chips and the search — so opening the
@@ -298,15 +330,19 @@ export default function OrdersPage() {
     params.delete("action");
     params.delete("resumeDraft");
     params.delete("scan");
+    params.delete("ship");
+    params.delete("preselect");
     const qs = params.toString();
     router.replace(qs ? `/orders?${qs}` : "/orders", { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [searchParams, counterGate.opensAsCounter]);
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isCancelling, setIsCancelling] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [deleteConfirm, setDeleteConfirm] = React.useState(false);
+  // REG-B2: cancelling voids the orders' linked invoices, so the bulk bar asks first.
+  const [cancelConfirm, setCancelConfirm] = React.useState(false);
   const [page, setPage] = useUrlPage();
   const [limit, setLimit] = React.useState(20);
   const [sortCol, setSortCol] = React.useState<string>("createdAt");
@@ -329,7 +365,32 @@ export default function OrdersPage() {
     );
   };
   const { toast } = useToast();
-  const updateStatus = useUpdateOrderStatus();
+  // Status words come from the shared fulfilment table (display only): per ORDER by its fulfillPath,
+  // and the account's default method for the filters below.
+  const statusLabel = useOrderStatusLabel();
+  // The fulfilment filter lists only the paths the account offers (plus an active URL filter).
+  const fulfilMethods = useStaffFulfilment().formMethods;
+  // A carrier-only (fleet-off) account has no delivery runs: the requested-delivery-date filter, sort and
+  // column are noise there. An active date filter in the URL keeps them, so it can still be cleared.
+  const { fleet } = useFleetAccess();
+  const showDelivery = fleet || !!dateFrom || !!dateTo;
+  // A sort left on the hidden Delivery Date column would order rows by a key the user can no longer see.
+  React.useEffect(() => {
+    if (!showDelivery && sortCol === "deliveryDate") {
+      setSortCol("createdAt");
+      setSortDir("desc");
+    }
+  }, [showDelivery, sortCol]);
+  const savedViews = SAVED_VIEWS.map((v) => ({
+    ...v,
+    label: statusLabel(String(v.filters.status ?? ""), v.label),
+  }));
+  const statusOptions = STATUS_OPTIONS.map((o) => ({
+    ...o,
+    label: statusLabel(o.value, o.label),
+  }));
+  // The bulk cancel shows its own single summary toast — no per-order global error toasts.
+  const updateStatus = useUpdateOrderStatus({ localErrorToast: true });
   const bulkDelete = useBulkDeleteOrders();
   // B823: DraftDock (layout.tsx) floats over the bottom-left of every dashboard screen;
   // below md there isn't enough vertical room for the toolbar above it AND the dock's own
@@ -350,24 +411,30 @@ export default function OrdersPage() {
     setSelectMode(false);
     setSelected(new Set());
     setDeleteConfirm(false);
+    setCancelConfirm(false);
   };
 
   const handleBulkCancel = async () => {
     if (isCancelling) return;
     setIsCancelling(true);
     try {
-      await Promise.all(
+      const results = await Promise.allSettled(
         Array.from(selected).map((id) => updateStatus.mutateAsync({ id, status: "CANCELLED" })),
       );
-      toast({
-        title: `${selected.size} order${selected.size !== 1 ? "s" : ""} cancelled`,
-        variant: "success",
-      });
-      exitSelectMode();
-    } catch {
-      toast({ title: "Failed to cancel some orders", variant: "error" });
+      const failures = results.flatMap((r) => (r.status === "rejected" ? [r.reason] : []));
+      if (failures.length > 0) {
+        // Orders with the carrier are refused (ORDER_WITH_CARRIER_NO_CANCEL): name them, with the count.
+        toast({ title: bulkCancelFailureTitle(failures), variant: "error" });
+      } else {
+        toast({
+          title: `${selected.size} order${selected.size !== 1 ? "s" : ""} cancelled`,
+          variant: "success",
+        });
+        exitSelectMode();
+      }
     } finally {
       setIsCancelling(false);
+      setCancelConfirm(false);
     }
   };
 
@@ -406,6 +473,7 @@ export default function OrdersPage() {
     dateTo,
     productIdFilter,
     fulfillPathFilter,
+    shipView,
     debouncedCustomerSearch,
   ]);
 
@@ -416,6 +484,7 @@ export default function OrdersPage() {
   React.useEffect(() => {
     setSelected(new Set());
     setDeleteConfirm(false);
+    setCancelConfirm(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     page,
@@ -441,7 +510,8 @@ export default function OrdersPage() {
             !dateFrom &&
             !dateTo &&
             !productIdFilter &&
-            !fulfillPathFilter
+            !fulfillPathFilter &&
+            !shipView
           );
         }
         return keys.every(
@@ -460,17 +530,28 @@ export default function OrdersPage() {
     }
   };
 
-  const { data, isLoading, isError } = useOrders({
-    status: statusFilter || undefined,
-    urgent: urgentOnly || undefined,
-    deliveryDateFrom: dateFrom || undefined,
-    deliveryDateTo: dateTo || undefined,
-    productId: productIdFilter || undefined,
-    fulfillPath: (fulfillPathFilter as "ROUTE" | "SHIP" | "") || undefined,
-    search: debouncedCustomerSearch || undefined,
-    page,
-    limit,
-  });
+  // The week view waits for the business timezone: never fetch (or show) an unfiltered list for it.
+  const weekPending = shipView === "week" && !weekStart;
+  const {
+    data,
+    isLoading: ordersLoading,
+    isError,
+  } = useOrders(
+    {
+      status: statusFilter || undefined,
+      urgent: urgentOnly || undefined,
+      deliveryDateFrom: dateFrom || undefined,
+      deliveryDateTo: dateTo || undefined,
+      productId: productIdFilter || undefined,
+      fulfillPath: (fulfillPathFilter as "ROUTE" | "SHIP" | "") || undefined,
+      ...shipParams,
+      search: debouncedCustomerSearch || undefined,
+      page,
+      limit,
+    },
+    { enabled: !weekPending },
+  );
+  const isLoading = ordersLoading || weekPending;
 
   const orders = data?.data ?? [];
   const meta = data?.meta;
@@ -505,7 +586,7 @@ export default function OrdersPage() {
   const [isExporting, setIsExporting] = React.useState(false);
 
   const handleExport = async () => {
-    if (isExporting) return;
+    if (isExporting || weekPending) return;
     setIsExporting(true);
     try {
       const EXPORT_LIMIT = 1000;
@@ -517,6 +598,7 @@ export default function OrdersPage() {
           deliveryDateTo: dateTo || undefined,
           productId: productIdFilter || undefined,
           fulfillPath: fulfillPathFilter || undefined,
+          ...shipParams,
           search: debouncedCustomerSearch || undefined,
           page: 1,
           limit: EXPORT_LIMIT,
@@ -610,7 +692,20 @@ export default function OrdersPage() {
             >
               {selectMode ? "Cancel" : "Select"}
             </Button>
-            <Button onClick={() => setIsCreateOpen(true)}>New Order</Button>
+            {counterGate.showButton ? (
+              <Button variant="secondary" onClick={() => router.push("/orders/counter-sale")}>
+                Counter sale
+              </Button>
+            ) : null}
+            <Button
+              onClick={() =>
+                counterGate.opensAsCounter
+                  ? router.push("/orders/counter-sale")
+                  : setIsCreateOpen(true)
+              }
+            >
+              New Order
+            </Button>
           </div>
         }
       />
@@ -627,13 +722,23 @@ export default function OrdersPage() {
           </button>
           <span className="h-[18px] w-px bg-white/20" />
           <button
-            onClick={handleBulkCancel}
+            onClick={() => setCancelConfirm(true)}
             disabled={isCancelling}
             className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-white/75 hover:text-white transition-colors disabled:opacity-60"
           >
             {isCancelling && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Cancel {selected.size}
           </button>
+          <BatchShipActions
+            orders={filtered
+              .filter((o) => selected.has(o.id))
+              .map((o) => ({
+                id: o.id,
+                orderNumber: o.orderNumber,
+                customerName: o.customer?.businessName,
+              }))}
+            onDone={exitSelectMode}
+          />
           {deliveryAccessEnabled && (
             <>
               <span className="h-[18px] w-px bg-white/20" />
@@ -686,7 +791,7 @@ export default function OrdersPage() {
 
       {/* Saved view chips */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1">
-        {SAVED_VIEWS.map((view) => {
+        {savedViews.map((view) => {
           const isActive = activeSavedView === view.id;
           // Only the counts we actually have from the loaded data are shown
           // (total for "All", urgent count for the urgent view); others omit
@@ -764,7 +869,7 @@ export default function OrdersPage() {
               aria-label="Sort orders by"
               options={[
                 { value: "createdAt", label: "Created" },
-                { value: "deliveryDate", label: "Delivery Date" },
+                ...(showDelivery ? [{ value: "deliveryDate", label: "Delivery Date" }] : []),
                 { value: "orderNumber", label: "Order #" },
                 { value: "customer", label: "Customer" },
                 { value: "total", label: "Total" },
@@ -791,14 +896,22 @@ export default function OrdersPage() {
         </div>
         <div className="w-48">
           <Select
-            options={STATUS_OPTIONS}
+            options={statusOptions}
             value={statusFilter}
             onChange={(e) => setFilter("status", e.target.value)}
           />
         </div>
         <div className="w-44">
           <Select
-            options={FULFILLMENT_OPTIONS}
+            options={[
+              { value: "", label: "All Fulfillment" },
+              ...Array.from(new Set([...fulfilMethods, fulfillPathFilter].filter(Boolean))).map(
+                (m) => ({
+                  value: m,
+                  label: FULFILLMENT_LABEL[m as "ROUTE" | "SHIP"] ?? m,
+                }),
+              ),
+            ]}
             value={fulfillPathFilter}
             onChange={(e) => setFilter("fulfillPath", e.target.value)}
           />
@@ -852,39 +965,41 @@ export default function OrdersPage() {
             that row, so without its own wrap the "to [date]" half ran past
             the viewport edge at 390px instead of dropping to a second line
             the way every other filter control already does (B506). */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Calendar className="h-4 w-4 text-navy/70" />
-          <span className="text-xs text-navy/70 font-medium">Delivery:</span>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setFilter("dateFrom", e.target.value)}
-            max={dateTo || undefined}
-            className="h-10 w-32 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            title="Delivery date from"
-          />
-          <span className="text-xs text-navy/40">to</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setFilter("dateTo", e.target.value)}
-            min={dateFrom || undefined}
-            className="h-10 w-32 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            title="Delivery date to"
-          />
-          {(dateFrom || dateTo) && (
-            <button
-              onClick={() => {
-                setFilter("dateFrom", "");
-                setFilter("dateTo", "");
-              }}
-              className="rounded p-1.5 text-navy/70 hover:text-danger transition-colors"
-              title="Clear dates"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
+        {showDelivery && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Calendar className="h-4 w-4 text-navy/70" />
+            <span className="text-xs text-navy/70 font-medium">Delivery:</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setFilter("dateFrom", e.target.value)}
+              max={dateTo || undefined}
+              className="h-10 w-32 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              title="Delivery date from"
+            />
+            <span className="text-xs text-navy/40">to</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setFilter("dateTo", e.target.value)}
+              min={dateFrom || undefined}
+              className="h-10 w-32 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              title="Delivery date to"
+            />
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => {
+                  setFilter("dateFrom", "");
+                  setFilter("dateTo", "");
+                }}
+                className="rounded p-1.5 text-navy/70 hover:text-danger transition-colors"
+                title="Clear dates"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Clear active filters */}
         {(statusFilter ||
@@ -893,6 +1008,7 @@ export default function OrdersPage() {
           dateTo ||
           productIdFilter ||
           fulfillPathFilter ||
+          shipView ||
           customerSearch) && (
           <button
             onClick={() => {
@@ -909,7 +1025,17 @@ export default function OrdersPage() {
 
       {/* Results — loading/error/empty are shared across both layouts below; only "has
           data" branches into the mobile card list (below md) vs. the desktop table (md+). */}
-      {isLoading ? (
+      {weekPending && week.isError ? (
+        <div
+          role="alert"
+          className="flex flex-col items-center gap-3 rounded-lg border border-surface-border bg-white py-16 text-center text-sm text-danger shadow-card"
+        >
+          <span>Couldn&apos;t load your time zone.</span>
+          <Button variant="secondary" size="sm" onClick={week.retry}>
+            Retry
+          </Button>
+        </div>
+      ) : isLoading ? (
         <div className="flex items-center justify-center rounded-lg border border-surface-border bg-white py-16 shadow-card">
           <Loader2 className="h-6 w-6 animate-spin text-navy/70" />
         </div>
@@ -925,6 +1051,7 @@ export default function OrdersPage() {
           dateTo ||
           productIdFilter ||
           fulfillPathFilter ||
+          shipView ||
           customerSearch ? (
             <EmptyState
               variant="orders"
@@ -1016,10 +1143,17 @@ export default function OrdersPage() {
                     {order.customer?.businessName ?? "—"}
                   </p>
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <Badge status={order.status} label={orderStatusLabel(order.status)} />
+                    <Badge
+                      status={order.status}
+                      label={statusLabel(
+                        order.status,
+                        orderStatusLabel(order.status),
+                        order.fulfillPath,
+                      )}
+                    />
                     {order.fulfillPath === "SHIP" && (
                       <span
-                        title="Shipped by supplier/carrier — won't appear on delivery routes"
+                        title="Shipped by supplier/carrier"
                         className="inline-flex h-[21px] items-center gap-1 rounded-full bg-sky-50 px-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200"
                       >
                         <Truck className="h-3 w-3" aria-hidden />
@@ -1047,14 +1181,16 @@ export default function OrdersPage() {
                   {/* B823 review (Opus): the desktop table's own Delivery Date column,
                       missing from the card entirely — same formatDateOnly, same em-dash
                       fallback. */}
-                  <div className="text-xs text-navy/60">
-                    Delivery:{" "}
-                    {order.requestedDeliveryDate ? (
-                      formatDateOnly(order.requestedDeliveryDate)
-                    ) : (
-                      <span className="text-navy/30">—</span>
-                    )}
-                  </div>
+                  {showDelivery && (
+                    <div className="text-xs text-navy/60">
+                      Delivery:{" "}
+                      {order.requestedDeliveryDate ? (
+                        formatDateOnly(order.requestedDeliveryDate)
+                      ) : (
+                        <span className="text-navy/30">—</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </li>
             ))}
@@ -1095,12 +1231,14 @@ export default function OrdersPage() {
                     >
                       Status <SortIcon col="status" />
                     </th>
-                    <th
-                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                      onClick={() => toggleSort("deliveryDate")}
-                    >
-                      Delivery Date <SortIcon col="deliveryDate" />
-                    </th>
+                    {showDelivery && (
+                      <th
+                        className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                        onClick={() => toggleSort("deliveryDate")}
+                      >
+                        Delivery Date <SortIcon col="deliveryDate" />
+                      </th>
+                    )}
                     <th
                       className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                       onClick={() => toggleSort("createdAt")}
@@ -1172,10 +1310,17 @@ export default function OrdersPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5">
-                          <Badge status={order.status} label={orderStatusLabel(order.status)} />
+                          <Badge
+                            status={order.status}
+                            label={statusLabel(
+                              order.status,
+                              orderStatusLabel(order.status),
+                              order.fulfillPath,
+                            )}
+                          />
                           {order.fulfillPath === "SHIP" && (
                             <span
-                              title="Shipped by supplier/carrier — won't appear on delivery routes"
+                              title="Shipped by supplier/carrier"
                               className="inline-flex h-[21px] items-center gap-1 rounded-full bg-sky-50 px-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200"
                             >
                               <Truck className="h-3 w-3" aria-hidden />
@@ -1197,15 +1342,17 @@ export default function OrdersPage() {
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-sm">
-                        {order.requestedDeliveryDate ? (
-                          <span className="text-navy/70">
-                            {formatDateOnly(order.requestedDeliveryDate)}
-                          </span>
-                        ) : (
-                          <span className="text-navy/30">—</span>
-                        )}
-                      </td>
+                      {showDelivery && (
+                        <td className="px-4 py-3 text-sm">
+                          {order.requestedDeliveryDate ? (
+                            <span className="text-navy/70">
+                              {formatDateOnly(order.requestedDeliveryDate)}
+                            </span>
+                          ) : (
+                            <span className="text-navy/30">—</span>
+                          )}
+                        </td>
+                      )}
                       <td className="px-4 py-3 text-sm text-navy/70">
                         <OrderDateCell order={order} />
                       </td>
@@ -1278,10 +1425,26 @@ export default function OrdersPage() {
           setIsCreateOpen(false);
           setResumeDraftId(null);
           setInitialScanCode(null);
+          setInitialFulfillPath(null);
         }}
         resumeDraftId={resumeDraftId}
         initialScanCode={initialScanCode}
+        initialFulfillPath={initialFulfillPath}
         onViewOrder={(orderId) => router.push(`/orders/${orderId}`)}
+      />
+
+      {/* REG-B2: the bulk bar's Cancel used to fire the cancel for every selected order on the
+          first click. Cancelling voids each order's linked invoices, so ask first — fixed copy
+          (a per-order impact preview would be N requests; the server still refuses a paid or
+          delivered order and that surfaces as the generic failure toast). */}
+      <ConfirmDialog
+        open={cancelConfirm}
+        onClose={() => setCancelConfirm(false)}
+        onConfirm={handleBulkCancel}
+        loading={isCancelling}
+        title={`Cancel ${selected.size} order${selected.size !== 1 ? "s" : ""}?`}
+        description="The linked invoices will be voided. Orders that have been paid or delivered can't be cancelled."
+        confirmLabel={`Cancel ${selected.size} order${selected.size !== 1 ? "s" : ""}`}
       />
     </div>
   );

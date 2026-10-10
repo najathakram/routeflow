@@ -30,6 +30,10 @@ describe("zero policy reads after the first FOR UPDATE (behavioural)", () => {
         pricePerUnit: 10,
         unitsPerBox: null,
         isActive: true,
+        // the buyer gate (#2856) judges these: a fixture that omits them is correctly hidden
+        kind: "STANDARD",
+        portalVisible: true,
+        parent: null,
       },
     ]);
     prisma.order.create.mockResolvedValue({
@@ -145,6 +149,9 @@ describe("zero policy reads after the first FOR UPDATE (behavioural)", () => {
         pricePerUnit: 10,
         unitsPerBox: null,
         isActive: true,
+        kind: "STANDARD",
+        portalVisible: true,
+        parent: null,
       },
     ]);
     prisma.order.create.mockResolvedValue({
@@ -185,6 +192,9 @@ describe("zero policy reads after the first FOR UPDATE (behavioural)", () => {
         pricePerUnit: 10,
         unitsPerBox: null,
         isActive: true,
+        kind: "STANDARD",
+        portalVisible: true,
+        parent: null,
       },
     ]);
     prisma.order.create.mockResolvedValue({

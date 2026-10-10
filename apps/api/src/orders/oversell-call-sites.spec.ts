@@ -10,6 +10,7 @@ import {
   TENANT,
 } from "./testing/oversell-harness";
 import { ConflictException } from "@nestjs/common";
+import { CUSTOMER_INSUFFICIENT_STOCK_MESSAGE } from "./order-stock";
 
 /**
  * WS9 call-site contract (RED until the call-site PR wires it): OrdersService calls
@@ -33,6 +34,10 @@ const PRODUCT = {
   trackedCategoryId: null,
   trackedSubcategoryId: null,
   isActive: true,
+  // the buyer gate (#2856) judges these: a fixture that omits them is correctly hidden
+  kind: "STANDARD",
+  portalVisible: true,
+  parent: null,
 };
 
 type H = Awaited<ReturnType<typeof buildOversellOrders>>;
@@ -270,7 +275,11 @@ describe("edit (updateOrderItems -> settleStockForEdit): resolveOversellAllowed 
       expectResolvedBeforeTransaction(h);
       expect(h.settle).toHaveBeenCalledTimes(1);
       const args = h.settle.mock.calls[0]; // (deps, db, order, held, final, user, event, opts)
-      expect(args[7]).toEqual({ allowOversell: true });
+      expect(args[7]).toEqual({
+        allowOversell: true,
+        blockCredits: false,
+        lineIdentity: "stable",
+      });
       expect(args).not.toContain(h.reader);
       expect(h.read).not.toHaveBeenCalled();
     },
@@ -301,7 +310,11 @@ describe("edit (updateOrderItems -> settleStockForEdit): resolveOversellAllowed 
       );
       expect(h.read).toHaveBeenCalledTimes(1);
       expectResolvedBeforeTransaction(h);
-      expect(h.settle.mock.calls[0][7]).toEqual({ allowOversell: want });
+      expect(h.settle.mock.calls[0][7]).toEqual({
+        allowOversell: want,
+        blockCredits: false,
+        lineIdentity: "recreated", // the CUSTOMER non-diff path deletes + re-creates its lines
+      });
     },
   );
 });
@@ -318,10 +331,12 @@ describe("behaviour matrix through create() with the REAL order-stock and the RE
         (e) => e,
       );
     expect(err).toBeInstanceOf(ConflictException);
-    // The coded body (`code: INSUFFICIENT_STOCK`) arrives with #2871; both shapes carry the readable message.
-    expect(String((err.getResponse() as { message?: string }).message ?? err.message)).toMatch(
-      /Insufficient stock/,
-    );
+    // OOS PR2 (R4): coded, fixed copy for a buyer, no stock numbers.
+    expect(err.getResponse()).toMatchObject({
+      code: "INSUFFICIENT_STOCK",
+      message: CUSTOMER_INSUFFICIENT_STOCK_MESSAGE,
+    });
+    expect(String((err.getResponse() as { message?: string }).message)).not.toMatch(/\d/);
     expect(a.stock.v).toBe(5);
     expect(a.movements).toHaveLength(0);
   });
@@ -345,7 +360,9 @@ describe("behaviour matrix through create() with the REAL order-stock and the RE
     const a = arrangeCreate(h, { v: 5 });
     await expect(
       h.service.create({ items: [{ productId: "prod-1", qty: 6 }] } as never, buyer as never),
-    ).rejects.toMatchObject({ response: { message: expect.stringMatching(/Insufficient stock/) } });
+    ).rejects.toMatchObject({
+      response: { code: "INSUFFICIENT_STOCK", message: CUSTOMER_INSUFFICIENT_STOCK_MESSAGE },
+    });
     expect(a.stock.v).toBe(5);
   });
 
@@ -354,7 +371,10 @@ describe("behaviour matrix through create() with the REAL order-stock and the RE
     h.useRealStock();
     const a = arrangeCreate(h, { v: 5 });
     await expect(h.service.create(createDto(6) as never, driver as never)).rejects.toMatchObject({
-      response: { message: expect.stringMatching(/Insufficient stock/) },
+      response: {
+        code: "INSUFFICIENT_STOCK",
+        message: expect.stringMatching(/Insufficient stock/),
+      },
     });
     expect(h.read).not.toHaveBeenCalled();
     expect(a.stock.v).toBe(5);

@@ -37,7 +37,6 @@ import {
   useProduct,
   useProducts,
   useUpdateProduct,
-  useDeleteProduct,
   useUploadProductImages,
   useDeleteProductImage,
   useCreateProduct,
@@ -56,7 +55,6 @@ import { tierLabel } from "@/lib/tier-label";
 import { unitsLabel } from "@/lib/stock-label";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DecimalInput } from "@/components/MoneyInput";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
 import { SubcategoryCombobox } from "@/components/SubcategoryCombobox";
@@ -70,11 +68,13 @@ import { CropModal } from "./CropModal";
 import { ProductStockCostCard } from "./ProductStockCostCard";
 import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { useReactivateFlow } from "./useReactivateFlow";
-import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
+import { useDeleteProductFlow } from "./useDeleteProductFlow";
+import { DeleteProductConfirm } from "./DeleteProductConfirm";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
 import { ProductInsightsExport } from "./ProductInsightsExport";
 import { ProductLabelsCard } from "./ProductLabelsCard";
+import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
@@ -307,7 +307,7 @@ export default function ProductDetailPage() {
   const updateProduct = useUpdateProduct();
   const reactivateFlow = useReactivateFlow();
   const createProduct = useCreateProduct();
-  const deleteProduct = useDeleteProduct();
+  const deleteFlow = useDeleteProductFlow({ onDeleted: () => router.push("/products") });
   const uploadImages = useUploadProductImages(id);
   const deleteImage = useDeleteProductImage(id);
 
@@ -580,19 +580,6 @@ export default function ProductDetailPage() {
   };
 
   // ── Delete (mirrors the mobile app's confirm → toast → navigate-back flow) ─
-  const handleDeleteProduct = async () => {
-    try {
-      await deleteProduct.mutateAsync(id);
-      toast({ title: "Product deleted", variant: "success" });
-      router.push("/products");
-    } catch (err: any) {
-      // READ_ONLY already got the global "workspace is read-only" toast.
-      if (!isReadOnlyRefusal(err)) toast(deactivateFailureToast(err, "Failed to delete product"));
-    } finally {
-      setShowDeleteConfirm(false);
-    }
-  };
-
   // ── Crop helpers ──────────────────────────────────────────────────────────
 
   /** Called by the drop zone / file input — opens the crop modal queue. */
@@ -1025,15 +1012,13 @@ export default function ProductDetailPage() {
         />
       )}
       {reactivateFlow.dialog}
-      <ConfirmDialog
+      {deleteFlow.dialog}
+      <DeleteProductConfirm
+        id={id}
+        name={product.name}
         open={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
-        onConfirm={handleDeleteProduct}
-        title="Delete product?"
-        description={`${product.name} will be deactivated and hidden from the catalog. Existing order and invoice history is preserved. Products with an in-flight (undelivered) order cannot be deleted.`}
-        confirmLabel="Yes, delete"
-        variant="danger"
-        loading={deleteProduct.isPending}
+        flow={deleteFlow}
       />
       <div className="space-y-5 p-6">
         {/* Back */}
@@ -2306,6 +2291,7 @@ export default function ProductDetailPage() {
             )}
 
             <ProductLabelsCard productId={product.id} />
+            <ProductPortalVisibilityCard product={product} />
             <ProductUnitsCard product={product} />
 
             {/* Sales demand — real data from invoiced sales. In its own file (unlike

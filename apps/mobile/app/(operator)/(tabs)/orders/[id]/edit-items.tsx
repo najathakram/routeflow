@@ -22,6 +22,7 @@ import { useCreditNotes, type CreditNote } from "../../../../../lib/api/credit-n
 import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib/api/orders";
 import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers";
 import { showToast } from "../../../../../lib/toast";
+import { FAMILY_ADD_MESSAGE, isFamilyProduct } from "../../../../../lib/sellable-products";
 import { confirm } from "../../../../../lib/confirm";
 import {
   computeLineSubtotal,
@@ -51,6 +52,7 @@ import {
   orderOriginals,
   repairBlockedLines,
   resolvePickTarget,
+  resolveDraftKeyForPick,
   serializeEditItemsSnapshot,
   shouldRehydrateFromOrder,
   snapshotBaseline,
@@ -663,6 +665,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       !isSpecial && hist != null && (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
         ? hist.lastPrice
         : catalogPrice;
+    // A FAMILY container is never a line (search pick or scan): no line added.
+    if (isFamilyProduct(p as { kind?: "FAMILY" })) {
+      showToast(FAMILY_ADD_MESSAGE);
+      return resolveDraftKeyForPick(draftRef.current, p.id, null);
+    }
     // Key resolution + the pure `apply(d)` updater: resolvePickTarget (lib/edit-items-draft.ts).
     const { key, existingLabel, apply } = resolvePickTarget(draftRef.current, {
       productId: p.id,
@@ -1047,6 +1054,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           // the order's (SPECIAL-tier lock + web's edit window, RULINGS R2/R9).
           canEditPrice={lastAddedLine ? canEditPriceFor(lastAddedLine.productId) : false}
           isSpecialTierFor={isSpecialFor}
+          priceFor={isDriver ? undefined : tierPriceFor}
           initialScanOpen={pickerScanIntent}
           // Add-and-stay (scans + wedge input): the picker stays open so N
           // items scan with zero taps — closes web's long-standing edit-screen

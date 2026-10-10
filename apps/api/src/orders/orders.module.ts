@@ -32,6 +32,24 @@ import { ReturnsModule } from "../returns/returns.module";
 // WS9: PolicyModule imports nothing (PrismaModule is global) — no cycle with OrdersModule.
 import { PolicyModule } from "../policy/policy.module";
 import { PolicyOversellReader } from "./policy-oversell-reader";
+import { BuyerBackorderViewResolver } from "./buyer-backorder-view";
+// SA-655: staff counter sales (POST /orders/counter-sale). Dark until a tenant's fulfilment capability offers a counter.
+import { CounterSaleController } from "./counter-sale/counter-sale.controller";
+import { CounterSaleService } from "./counter-sale/counter-sale.service";
+import { CounterSaleTodayService } from "./counter-sale/counter-sale-today.service";
+import { CustomersModule } from "../customers/customers.module";
+import { BillingModule } from "../billing/billing.module";
+import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
+// Pickup mode: POST /orders/:id/pickup-complete hands an order-ahead PICKUP order over at the till.
+import { PickupCompleteController } from "./counter-sale/pickup-complete.controller";
+import { PickupCompleteService } from "./counter-sale/pickup-complete.service";
+import {
+  DefaultFulfilmentCapabilityReader,
+  FULFILMENT_CAPABILITY_READER,
+} from "./counter-sale/fulfilment-capability-reader";
+import { OrderBatchShipService } from "./order-batch-ship";
+import { PackingSlipService } from "./packing-slip.service";
+import { StorageModule } from "../storage/storage.module";
 
 @Module({
   imports: [
@@ -52,9 +70,27 @@ import { PolicyOversellReader } from "./policy-oversell-reader";
     SellingRestrictionsModule,
     ReturnsModule,
     PolicyModule,
+    // WalkInCustomerService restores a removed walk-in through CustomersService.restoreCustomer.
+    CustomersModule,
+    // DefaultFulfilmentCapabilityReader needs AddonService (FeatureConfigService is global, and
+    // FeatureOverrideService comes from EntitlementsModule). BillingModule never reaches OrdersModule: no cycle.
+    BillingModule,
+    StorageModule,
   ],
-  controllers: [OrdersController],
-  providers: [OrdersService, ChangeRequestsService, PolicyOversellReader],
-  exports: [OrdersService, ChangeRequestsService, PolicyOversellReader],
+  controllers: [OrdersController, CounterSaleController, PickupCompleteController],
+  providers: [
+    OrdersService,
+    ChangeRequestsService,
+    PolicyOversellReader,
+    BuyerBackorderViewResolver,
+    CounterSaleService,
+    CounterSaleTodayService,
+    PickupCompleteService,
+    WalkInCustomerService,
+    { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },
+    OrderBatchShipService,
+    PackingSlipService,
+  ],
+  exports: [OrdersService, ChangeRequestsService, PolicyOversellReader, BuyerBackorderViewResolver],
 })
 export class OrdersModule {}

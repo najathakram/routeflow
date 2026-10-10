@@ -21,6 +21,8 @@ export type ScanResolution =
   /** #2865 (SA-632 H2): a scan of a different level landed on a line still waiting for its default unit. */
   | { kind: "refused" }
   | { kind: "archived"; name: string }
+  /** B1219: one fuzzy match, no exact code - NOT added; the caller offers "Did you mean ...?". */
+  | { kind: "suggested"; product: any }
   | { kind: "unknown" }
   | {
       kind: "error";
@@ -92,6 +94,13 @@ export interface ScanCodeHandlerDeps {
   ) => { created: boolean; refused?: boolean } | void;
   /** Nothing in the catalog matched — the caller opens create-product with `code` as the SKU. */
   onUnknownCode: (code: string) => void;
+  /**
+   * B1219: the fuzzy matches (one, or several) to confirm - "Did you mean ...?". Never auto-added.
+   * Absent = a toast, nothing added.
+   */
+  onSuggestion?: (matches: any[], code: string) => void;
+  /** B1219: true while another surface (the scan_v2 screen) owns the scan - no picker is raised. */
+  suggestionsSuppressed?: () => boolean;
   toast: ToastFn;
 }
 
@@ -153,6 +162,22 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
         title: `${name} is archived — reactivate to sell`,
       });
       return { kind: "archived", name };
+    }
+    if ((result.suggestion || result.ambiguous) && result.product) {
+      // B1219: no exact code matched and the fuzzy search found one or more products - a guess, so
+      // it is offered, never added. A surface with no picker says so instead of dropping the scan.
+      // 2+ fuzzy hits used to add the FIRST row here; they are offered together instead.
+      const matches = result.matches?.length ? result.matches : [result.product];
+      if (deps.suggestionsSuppressed?.()) {
+        // The scan screen owns the scan and reports `suggested` itself; no picker is left behind.
+      } else if (deps.onSuggestion) deps.onSuggestion(matches, code);
+      else
+        deps.toast({
+          variant: "error",
+          title: `No exact match for ${code}`,
+          description: `Closest: ${result.product?.name || "Item"}. Search for it to add it.`,
+        });
+      return { kind: "suggested", product: result.product };
     }
     if (!result.notFound && result.product) {
       // addLineItem clears search + refocuses — outside the try above: a throw here is a real

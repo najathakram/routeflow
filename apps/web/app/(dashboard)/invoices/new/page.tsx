@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { countNoun } from "@/lib/plural";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -31,6 +32,7 @@ import {
 } from "@/lib/api/invoices";
 import { useCreateSale, useUninvoicedOrders, type CreateSaleDto } from "@/lib/api/orders";
 import { SplitInvoiceModal } from "../../orders/_components/SplitInvoiceModal";
+import { toSplitInvoiceLine, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import {
   useCustomers,
   useCustomerPrices,
@@ -48,6 +50,15 @@ import { reasonRequiredMessage } from "@/lib/staff-price-override";
 import { apiClient } from "@/lib/api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { displayProductName } from "@/lib/product-display";
+import {
+  attachParent,
+  groupSearchRows,
+  isFamilyProduct,
+  isGroupExpanded,
+  pickerProductName,
+  sellableFlat,
+  sellableOnly,
+} from "@/lib/product-search-groups";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { bumpInvoiceLine, scanLevelForHit, seedLineQty } from "../invoice-scan-level";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
@@ -55,7 +66,9 @@ import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
   isSpecialTier,
-  computeLineSubtotal,
+  computeInvoiceLineTotal,
+  computeInvoiceTotals,
+  type InvoiceTotalsLine,
   getTierPrice,
   normalizeBoxesPieces,
   perUnitPrice,
@@ -229,8 +242,10 @@ function ProductSearchInput({
     limit: 20,
     includeVariants: true,
   });
-  // Only top-level products (parents + standalones) shown at root; variants appear as children
-  const products = (data?.data ?? []).filter((p: any) => !p.parentProductId);
+  // Top-level products (parents + standalones) with variants as children. A variant that matched on
+  // its own gets its parent re-attached and opened (B1215 C6); a FAMILY is never a line (C7).
+  const groups = React.useMemo(() => groupSearchRows<any>(data?.data ?? []), [data]);
+  const products = groups.rows;
 
   React.useEffect(() => {
     function handle(e: MouseEvent) {
@@ -243,8 +258,10 @@ function ProductSearchInput({
   }, []);
 
   function selectProduct(p: any, scanLevel?: SellLevel) {
+    if (isFamilyProduct(p)) return; // a FAMILY is a container, never a line (B1215 C7)
+    const label = displayProductName(p);
     onChange(
-      p.name,
+      label,
       p.id,
       String(p.pricePerUnit),
       p.averageCost ? parseFloat(String(p.averageCost)) : undefined,
@@ -252,7 +269,7 @@ function ProductSearchInput({
       p,
       scanLevel,
     );
-    setQuery(p.name);
+    setQuery(label);
     setOpen(false);
     setExpandedParentId(null);
   }
@@ -301,7 +318,7 @@ function ProductSearchInput({
             )}
             {products.map((p: any) => {
               const hasVariants = p.variants?.length > 0;
-              const isExpanded = expandedParentId === p.id;
+              const isExpanded = isGroupExpanded(expandedParentId, groups.expandedIds, p.id);
               return (
                 <React.Fragment key={p.id}>
                   <li>
@@ -309,7 +326,7 @@ function ProductSearchInput({
                       className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
                       onClick={() => {
                         if (hasVariants) {
-                          setExpandedParentId(isExpanded ? null : p.id);
+                          setExpandedParentId(isExpanded ? "" : p.id);
                         } else {
                           selectProduct(p);
                         }
@@ -330,7 +347,7 @@ function ProductSearchInput({
                         )}
                         {hasVariants && (
                           <span className="text-[10px] text-navy/70 shrink-0">
-                            {p.variants.length} variants
+                            {countNoun(p.variants.length, "variant")}
                           </span>
                         )}
                       </div>
@@ -347,14 +364,17 @@ function ProductSearchInput({
                       <li key={v.id} className="bg-surface-raised/50">
                         <button
                           className="flex w-full items-center justify-between pl-8 pr-3 py-2 text-left hover:bg-surface-raised"
-                          onClick={() => selectProduct(v)}
+                          onClick={() => selectProduct(attachParent(v, p))}
                         >
                           <div className="flex items-center gap-1.5 min-w-0">
                             <span className="text-sm font-medium text-navy truncate">
-                              {v.variantName ?? v.name}
+                              {pickerProductName(v, p)}
                             </span>
                             {v.sku && (
                               <span className="text-xs text-navy/70 shrink-0">{v.sku}</span>
+                            )}
+                            {v.unit && (
+                              <span className="text-xs text-navy/70 shrink-0">{v.unit}</span>
                             )}
                           </div>
                           <span className="text-xs text-navy/70 shrink-0 ml-2">
@@ -439,18 +459,24 @@ function boxedUnitsPerBox(value: unknown): number | undefined {
   return Number.isFinite(n) && n > 1 ? n : undefined;
 }
 
-function lineTotal(item: LineItemState): number {
-  // Use the shared boxed-proration helper (same as the backend + order builder).
+function toTotalsLine(item: LineItemState): InvoiceTotalsLine {
+  // Boxed lines go through the shared pricing helper (same as the backend + order builder).
   // A plain qty*unitPrice OVER-charges boxed lines by unitsPerBox, because qty is
   // total pieces while unitPrice is the box price (money-discipline rule).
-  const subtotal = computeLineSubtotal({
+  return {
     unitPrice: Number(item.unitPrice),
     qty: Number(item.qty),
     boxes: item.boxes ?? null,
     pieces: item.pieces ?? null,
     unitsPerBox: item.unitsPerBox ?? null,
-  });
-  return Math.max(0, subtotal - Number(item.discount));
+    discount: Number(item.discount),
+    taxable: item.taxable,
+  };
+}
+
+/** One line's post-discount, boxed-aware, rounded total. */
+function lineTotal(item: LineItemState): number {
+  return computeInvoiceLineTotal(toTotalsLine(item));
 }
 
 // ─── Basis chooser ────────────────────────────────────────────────────────────
@@ -533,14 +559,7 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
   const [splitOrder, setSplitOrder] = React.useState<{
     id: string;
     orderNumber: string | null;
-    items: {
-      id: string;
-      productName: string;
-      qty: number;
-      invoicedQty: number;
-      unitPrice: number;
-      unit?: string;
-    }[];
+    items: SplitInvoiceLine[];
   } | null>(null);
 
   const billWhole = (orderId: string) => {
@@ -613,14 +632,9 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
                         setSplitOrder({
                           id: o.id,
                           orderNumber: o.orderNumber,
-                          items: (o.lineItems ?? []).map((li) => ({
-                            id: li.id,
-                            productName: li.product?.name ?? "Item",
-                            qty: Number(li.qty),
-                            invoicedQty: Number(li.invoicedQty ?? 0),
-                            unitPrice: Number(li.unitPrice),
-                            unit: li.product?.unit,
-                          })),
+                          items: (o.lineItems ?? []).map((li) =>
+                            toSplitInvoiceLine(li, li.product?.name ?? "Item"),
+                          ),
                         })
                       }
                     >
@@ -860,9 +874,13 @@ export default function NewInvoicePage() {
 
   // ── Calculations ────────────────────────────────────────────────────────────
 
-  const subtotal = items.reduce((s, it) => s + lineTotal(it), 0);
-  const tax = items.filter((it) => it.taxable).reduce((s, it) => s + lineTotal(it) * taxRate, 0);
-  const total = subtotal + tax + adjustment;
+  // The builder's "Adjustment" is signed: negative is an invoice discount, positive a surcharge
+  // (the same mapping the submit handlers send). All footer money is rounded once, in pricing.
+  const { subtotal, tax, total } = computeInvoiceTotals(items.map(toTotalsLine), {
+    discount: adjustment < 0 ? Math.abs(adjustment) : 0,
+    shipping: adjustment > 0 ? adjustment : 0,
+    taxRate,
+  });
   const totalQty = items.reduce((s, it) => s + Number(it.qty), 0);
 
   // ── Item helpers ────────────────────────────────────────────────────────────
@@ -981,9 +999,8 @@ export default function NewInvoicePage() {
   });
   const scanSuggestions = React.useMemo(() => {
     if (!debouncedScanQuery.trim()) return [] as any[];
-    return ((scanProductsData?.data as any[]) ?? [])
-      .filter((p: any) => !p.parentProductId)
-      .slice(0, 8);
+    // Flat typeahead: variants (named under their parent) and standalones, never a FAMILY (B1215).
+    return sellableFlat<any>((scanProductsData?.data as any[]) ?? []).slice(0, 8);
   }, [scanProductsData, debouncedScanQuery]);
 
   /**
@@ -1015,7 +1032,7 @@ export default function NewInvoicePage() {
           params: { search: code, limit: 10, isActive: true, includeVariants: true },
         })
         .then((r) => r.data);
-      const matches: any[] = res?.data ?? [];
+      const matches: any[] = sellableOnly<any>(res?.data ?? []);
       const skuExact = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
       const toAdd = skuExact ?? matches[0];
       if (toAdd) {
@@ -1047,6 +1064,12 @@ export default function NewInvoicePage() {
       }
       if (Number(it.qty) <= 0) {
         errs.items = "All quantities must be greater than 0.";
+        break;
+      }
+      // The server refuses a negative line; refuse it here, before the footer shows a total the
+      // saved invoice can never have.
+      if (lineTotal(it) < 0) {
+        errs.items = "Line discount cannot exceed the line total.";
         break;
       }
     }
@@ -2039,6 +2062,7 @@ export default function NewInvoicePage() {
 
                     {/* Discount */}
                     <MoneyInput
+                      aria-label="Line discount"
                       min={0}
                       placeholder="0.00"
                       value={item.discount || null}

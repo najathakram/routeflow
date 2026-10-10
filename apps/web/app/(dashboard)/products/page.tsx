@@ -42,8 +42,15 @@ import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
+import {
+  PortalBulkButtons,
+  PortalHiddenBadge,
+  PortalHiddenFilter,
+} from "./_components/PortalVisibilityControls";
+import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visibility-ui";
 import { NewFamilyButton } from "@/components/family/NewFamilyButton";
 import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
+import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
 import {
   STOCK_FILTER_CHIPS,
@@ -81,6 +88,8 @@ interface ApiProduct {
   variantName?: string | null;
   variants?: ApiProduct[];
   parent?: ApiProduct | null;
+  /** Buyer-portal flag (hidden products never reach buyers). */
+  portalVisible?: boolean;
   isFeatured?: boolean;
   isNew?: boolean;
   isDeal?: boolean;
@@ -95,9 +104,11 @@ interface ApiProduct {
 
 // Merchandising badge row (P5-01) — reused by grid card + table cell.
 function MerchBadges({ product }: { product: ApiProduct }) {
-  if (!product.isFeatured && !product.isNew && !product.isDeal) return null;
+  if (!product.isFeatured && !product.isNew && !product.isDeal && !portalBadge(product))
+    return null;
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
+      <PortalHiddenBadge product={product} />
       {product.isFeatured && (
         <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-brand-50 text-brand-700 ring-1 ring-brand-200">
           Featured
@@ -732,6 +743,11 @@ export default function ProductsPage() {
   const [showGroupAsVariants, setShowGroupAsVariants] = React.useState(false);
   const [showAssignToSection, setShowAssignToSection] = React.useState(false);
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = React.useState(false);
+  // What the last bulk delete refused and why (#3323): shown in a dialog, not buried in a toast.
+  const [skipReport, setSkipReport] = React.useState<SkippedProduct[]>([]);
+  // Names of the products in the last bulk delete, taken before the selection clears, for the skip report.
+  const [skipNames, setSkipNames] = React.useState<ReadonlyMap<string, string>>(new Map());
+  const [hiddenOnly, setHiddenOnly] = React.useState(false);
   const [page, setPage] = useUrlPage();
   const [pageSize, setPageSize] = React.useState(50);
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
@@ -1008,6 +1024,7 @@ export default function ProductsPage() {
     stockFilter,
     sectionFilter,
     pageSize,
+    hiddenOnly,
   ]);
 
   // REG-B154: the selection Set used to accumulate across page/search/category/
@@ -1023,7 +1040,7 @@ export default function ProductsPage() {
     setShowBulkDeleteConfirm(false);
     setShowAssignToSection(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize]);
+  }, [page, debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize, hiddenOnly]);
 
   const {
     data: result,
@@ -1034,6 +1051,7 @@ export default function ProductsPage() {
     category: categoryFilter || undefined,
     ...stockFilterParams(stockFilter),
     section: sectionFilter || undefined,
+    ...portalVisibleFilterParam(hiddenOnly),
     page,
     limit: pageSize, // 0 = all
     includeVariants: true,
@@ -1094,6 +1112,7 @@ export default function ProductsPage() {
       // R1's server contract is {deleted, softDeleted, skipped[]} (vendor-bills'
       // processed-vs-skipped shape); the hook merges those three across chunks.
       const res = await bulkDelete.mutateAsync(ids);
+      setSkipNames(new Map(ids.map((id) => [id, productById.get(id)?.name ?? ""])));
       setSelected(new Set());
       const { softDeleted, skipped } = res;
       const parts = [`${res.deleted} deleted`];
@@ -1101,9 +1120,9 @@ export default function ProductsPage() {
       if (skipped.length > 0) parts.push(`${skipped.length} skipped`);
       toast({
         title: parts.join(", "),
-        description: skipped.length > 0 ? skipped.map((s) => s.reason).join("; ") : undefined,
         variant: res.deleted > 0 || softDeleted > 0 ? "success" : "error",
       });
+      if (skipped.length > 0) setSkipReport(skipped);
     } catch (err) {
       if (!isReadOnlyRefusal(err)) toast(deactivateFailureToast(err, "Failed to delete products"));
     }
@@ -1198,6 +1217,7 @@ export default function ProductsPage() {
                 search: debouncedSearch,
                 category: categoryFilter,
                 ...stockFilterParams(stockFilter),
+                ...portalVisibleFilterParam(hiddenOnly),
                 section: sectionFilter,
               }}
             />
@@ -1313,6 +1333,8 @@ export default function ProductsPage() {
           />
         </div>
 
+        <PortalHiddenFilter checked={hiddenOnly} onChange={setHiddenOnly} />
+
         {/* Per-page selector */}
         <div className="w-36">
           <Select
@@ -1384,6 +1406,7 @@ export default function ProductsPage() {
                 Assign to type…
               </Button>
             )}
+            <PortalBulkButtons selected={selected} onDone={() => setSelected(new Set())} />
             <Button
               variant="danger"
               leftIcon={<Trash2 className="h-4 w-4" />}
@@ -1430,6 +1453,12 @@ export default function ProductsPage() {
         }}
       />
 
+      <BulkDeleteSkipReport
+        skipped={skipReport}
+        onClose={() => setSkipReport([])}
+        nameById={skipNames}
+      />
+
       {/* Bulk delete confirmation */}
       <ConfirmDialog
         open={showBulkDeleteConfirm}
@@ -1474,6 +1503,7 @@ export default function ProductsPage() {
                     setSearch("");
                     setCategoryFilter("");
                     setStockFilter("");
+                    setHiddenOnly(false);
                     setUrlFilter("section", "");
                   }}
                 >

@@ -96,8 +96,43 @@ export class SettingsBillingController {
 
   @Get("proration-preview")
   @ApiOperation({ summary: "Mid-cycle prorated charge to enable an add-on today" })
-  prorationPreview(@CurrentUser() user: AuthUser, @Query("sku") sku: string) {
-    return this.proration.prorationPreview(this.tenantIdOf(user), sku);
+  async prorationPreview(@CurrentUser() user: AuthUser, @Query("sku") sku: string) {
+    const tenantId = this.tenantIdOf(user);
+    // `proratedToday` is an ESTIMATE: Stripe's own proration (returned by the enable call) is the
+    // authoritative figure. The preview must agree with what enable will DO:
+    //  - refused (annual subscription / the plan already includes the add-on): `billing: "REFUSED"`,
+    //    `billed: false`, no charge figure, and `refusal` = the SAME `{ code, message }` enable throws;
+    //  - UNBILLED (free pilot / Stripe not configured): the add-on is included at no charge, so
+    //    there is NO `proratedToday` (null), and the UI must not promise a charge.
+    // SA-690: `trial` is true while the tenant's status is TRIAL — the add-on is then on at no
+    // charge now and is billed on the card checkout, so the confirm sheet says that instead of a charge.
+    const [preview, billing, refusal, trial] = await Promise.all([
+      this.proration.prorationPreview(tenantId, sku),
+      this.mutations.addonBillingMode(tenantId),
+      this.mutations.addonEnableRefusal(tenantId, sku),
+      this.mutations.isTrialTenant(tenantId),
+    ]);
+    if (refusal) {
+      return {
+        ...preview,
+        proratedToday: null,
+        billing: "REFUSED",
+        billed: false,
+        refusal,
+        trial,
+      };
+    }
+    // `billing`: STRIPE (card, prorated) | MANUAL (appears on the owner's next invoice) | UNBILLED
+    // (free pilot). `billed` is kept for clients that only need "does this cost money".
+    const billed = billing !== "UNBILLED";
+    return {
+      ...preview,
+      proratedToday: billed ? preview.proratedToday : null,
+      billing,
+      billed,
+      refusal: null,
+      trial,
+    };
   }
 
   @Get("export")

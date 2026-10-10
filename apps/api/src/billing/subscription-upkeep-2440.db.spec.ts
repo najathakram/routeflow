@@ -78,6 +78,10 @@ describeDb("BillingService — #2440 subscription upkeep, real Postgres (SA-450/
       pricing as any,
       billingNotification as any,
       planTransition as any,
+      {
+        checkoutAddonLines: async () => ({ lineItems: [], skus: [] }),
+        adoptCheckoutAddons: async () => undefined,
+      } as any, // mutations (SA-690)
     );
   });
 
