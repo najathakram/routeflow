@@ -8,13 +8,7 @@ import {
 import { assertSellableLines } from "../products/sellable-lines";
 import { EstimateStatus, PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import {
-  isSpecialTier,
-  computeLineSubtotal,
-  getTierPrice,
-  roundMoney,
-  sumInvoiceTotals,
-} from "@routeflow/pricing";
+import { isSpecialTier, computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricing";
 import { loadMsrpMap } from "../common/msrp";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { EntitlementsService } from "../billing/entitlements.service";
@@ -30,6 +24,7 @@ import { estimateConvertLineItems } from "./estimate-convert-lines";
 import { NumberingService } from "../import/numbering.service";
 import {
   assertMoneyInvariantsOrThrow,
+  sumInvoiceTotalsStrict,
   assertNoNegativeLineSubtotal,
 } from "../common/money-invariants.util";
 import { assertNoUnitAwareLines } from "../orders/unit-aware-guard";
@@ -533,7 +528,7 @@ export class EstimatesService {
       // tax only (never the display levy of a later stage), so lineTaxRate above is a one-source recovery.
       zeroExemptCategoryTax(itemsData, isTaxExempt); // exempt: $0 of BOTH taxes, snapshots zeroed
       const discount = Number(est.discount ?? 0);
-      const { tax: taxTotal, total } = sumInvoiceTotals(itemsData, { discount, isTaxExempt });
+      const { tax: taxTotal, total } = sumInvoiceTotalsStrict(itemsData, { discount, isTaxExempt });
 
       try {
         const inv = await tx.invoice.create({

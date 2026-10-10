@@ -13,9 +13,11 @@ import { applyComposedLineEdits } from "./invoice-composed-edit";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import * as unitAware from "../orders/unit-aware-guard";
 import {
+  assertFiniteInvoiceInput,
   assertInvoiceTotalsSane,
   assertNoNegativeLineSubtotal,
   storedInvoiceTotals,
+  sumInvoiceTotalsStrict,
 } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -34,7 +36,6 @@ import {
   normalizeBoxesPieces,
   remainingCapacity,
   inferredGoodsFlatRate,
-  sumInvoiceTotals,
 } from "@routeflow/pricing";
 import { computeDepositFields } from "./deposit-fields";
 import { deriveInvoiceDetailFields } from "./invoice-detail-read";
@@ -397,6 +398,7 @@ export class InvoicesService {
   async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
+    assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
     assertNsfLinesUntaxed(dto.items); // #2656: an NSF-described line is never taxed (400)
     const customer = await this.prisma
       .forTenant()
@@ -456,7 +458,7 @@ export class InvoicesService {
       subtotal,
       tax: taxTotal,
       total,
-    } = sumInvoiceTotals(itemsData, {
+    } = sumInvoiceTotalsStrict(itemsData, {
       discount: invDiscount,
       shipping,
       isTaxExempt,
@@ -3080,6 +3082,7 @@ export class InvoicesService {
   }
 
   async update(id: string, dto: UpdateInvoiceDto) {
+    assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1: a line can be CREATED by a unit (create(), 4c-1) but not yet REWRITTEN by one (4c-2);
     // the shared DTO accepts `unitLabel`, and this path would silently store a PACK line for it.
@@ -3165,7 +3168,7 @@ export class InvoicesService {
           subtotal,
           tax: taxTotal,
           total,
-        } = sumInvoiceTotals(itemsData as any[], {
+        } = sumInvoiceTotalsStrict(itemsData as any[], {
           discount: invDiscount,
           shipping,
           isTaxExempt,
@@ -4329,7 +4332,7 @@ export class InvoicesService {
       subtotal,
       tax: taxTotal,
       total,
-    } = sumInvoiceTotals(itemsData, { discount: invDiscount, shipping, isTaxExempt });
+    } = sumInvoiceTotalsStrict(itemsData, { discount: invDiscount, shipping, isTaxExempt });
     // B89/L-047: stamp issueDate explicitly as UTC-midnight of today (tenant
     // calendar day) — every other issueDate write in this file holds this
     // invariant; omitting it here left it to whatever the schema default

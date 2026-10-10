@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
-import { roundMoney, sumInvoiceTotals } from "@routeflow/pricing";
+import { roundMoney } from "@routeflow/pricing";
+import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { sumConfirmed } from "./payment-predicates";
 
@@ -125,7 +126,7 @@ export function planHeaderOnlyTotals(
   const { invoice, storedRows, isTaxExempt } = locked;
   const discount = intakeMoney(dto.discount, invoice.discount);
   const shippingFee = intakeMoney(dto.shippingFee, invoice.shippingFee);
-  const t = sumInvoiceTotals(storedRows, { discount, shipping: shippingFee, isTaxExempt });
+  const t = sumInvoiceTotalsStrict(storedRows, { discount, shipping: shippingFee, isTaxExempt });
   const exemptWithLevy =
     isTaxExempt && storedRows.some((r) => differs(r.categoryTaxAmount ?? 0, 0));
   if (

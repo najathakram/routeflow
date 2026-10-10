@@ -1,3 +1,4 @@
+import { MoneyInvariantError } from "./money-invariants";
 import { computeLineSubtotal, roundMoney, type LineSubtotalInput } from "./pricing";
 
 /**
@@ -75,6 +76,12 @@ export interface SumInvoiceTotalsOptions {
   discount?: number | null;
   shipping?: number | null;
   isTaxExempt?: boolean | null;
+  /**
+   * N4: refuse non-finite input (NaN, Infinity, "abc") with a `MoneyInvariantError` instead of reading it as
+   * 0. A missing amount (null / undefined) is still 0. The SERVER passes true so a bad value can never be
+   * written as a silent $0; the default (false) keeps the display behaviour web and mobile footers rely on.
+   */
+  strict?: boolean;
 }
 
 export interface SummedInvoiceTotals {
@@ -108,6 +115,25 @@ export function computeInvoiceLineTotal(line: InvoiceTotalsLine): number {
   return roundMoney(before - finite(line.discount));
 }
 
+/** N4: throws MoneyInvariantError naming the first present-but-non-finite amount. */
+function assertFiniteTotalsInput(
+  lines: readonly SummedInvoiceLine[],
+  opts: SumInvoiceTotalsOptions,
+): void {
+  const check = (label: string, v: MoneyLike | null | undefined) => {
+    if (v != null && !Number.isFinite(Number(v))) {
+      throw new MoneyInvariantError(`Invoice totals: ${label} is not a valid number.`);
+    }
+  };
+  lines.forEach((l, i) => {
+    check(`line ${i + 1} subtotal`, l.subtotal);
+    check(`line ${i + 1} tax rate`, l.taxRate);
+    check(`line ${i + 1} category tax`, l.categoryTaxAmount);
+  });
+  check("the discount", opts.discount);
+  check("the shipping fee", opts.shipping);
+}
+
 /**
  * B1043: THE invoice-totals formula, over lines whose subtotals are already priced (stored rows, or
  * `computeInvoiceLineTotal` outputs). Every writer and the client footer call this; none re-derives it.
@@ -124,6 +150,7 @@ export function sumInvoiceTotals(
   lines: readonly SummedInvoiceLine[],
   opts: SumInvoiceTotalsOptions = {},
 ): SummedInvoiceTotals {
+  if (opts.strict) assertFiniteTotalsInput(lines, opts);
   const exempt = opts.isTaxExempt === true;
   const subtotal = roundMoney(lines.reduce((s, l) => s + finite(l.subtotal), 0));
   const regularTax = exempt

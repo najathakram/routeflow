@@ -1,4 +1,5 @@
 import { roundMoney } from "./pricing";
+import { MoneyInvariantError } from "./money-invariants";
 import {
   computeInvoiceTotals,
   sumInvoiceTotals,
@@ -195,5 +196,54 @@ describe("computeInvoiceTotals composes sumInvoiceTotals", () => {
     expect(t.regularTax).toBe(0);
     expect(t.categoryTax).toBe(0);
     expect(t.total).toBe(100);
+  });
+});
+
+describe("sumInvoiceTotals strict mode (N4) - the server refuses non-finite money, the display default does not", () => {
+  it("default (non-strict) keeps treating a non-finite value as 0, unchanged for web and mobile", () => {
+    expect(
+      sumInvoiceTotals([{ subtotal: Number.NaN, taxRate: 0.1 }], { discount: Number.NaN }).total,
+    ).toBe(0);
+    expect(
+      computeInvoiceTotals([{ unitPrice: Number.NaN, qty: 3 }], { taxRate: Number.NaN }).total,
+    ).toBe(0);
+  });
+
+  it.each([
+    ["a line subtotal", [{ subtotal: Number.NaN }], {}],
+    ["a line rate", [{ subtotal: 1, taxRate: Number.POSITIVE_INFINITY }], {}],
+    ["a line levy", [{ subtotal: 1, categoryTaxAmount: "abc" }], {}],
+    ["the discount", [{ subtotal: 1 }], { discount: Number.NaN }],
+    ["the shipping", [{ subtotal: 1 }], { shipping: Number.NaN }],
+  ])("strict throws MoneyInvariantError for %s", (_n, lines, opts) => {
+    expect(() => sumInvoiceTotals(lines as any, { ...opts, strict: true })).toThrow(
+      MoneyInvariantError,
+    );
+  });
+
+  it("strict still reads null / undefined as an absent amount (0), not as an error", () => {
+    expect(
+      sumInvoiceTotals([{ subtotal: 5, taxRate: null, categoryTaxAmount: undefined }], {
+        discount: null,
+        strict: true,
+      }).total,
+    ).toBe(5);
+  });
+
+  it("strict gives identical results to non-strict on finite input (1,000 seeds)", () => {
+    const rand = rng(99);
+    for (let n = 0; n < 1000; n++) {
+      const lines = Array.from({ length: Math.floor(rand() * 5) }, () => ({
+        subtotal: roundMoney(rand() * 300),
+        taxRate: Math.round(rand() * 0.15 * 1e6) / 1e6,
+        categoryTaxAmount: roundMoney(rand() * 9),
+      }));
+      const o = {
+        discount: roundMoney(rand() * 20),
+        shipping: roundMoney(rand() * 9),
+        isTaxExempt: rand() < 0.3,
+      };
+      expect(sumInvoiceTotals(lines, { ...o, strict: true })).toEqual(sumInvoiceTotals(lines, o));
+    }
   });
 });

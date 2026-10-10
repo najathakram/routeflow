@@ -568,5 +568,28 @@ describe("InvoicesService.update() — B1043 the header-only PATCH on the one bu
       expect(Number(data.subtotal)).toBe(0.3);
       expect(Number(data.total)).toBe(0.3);
     });
+
+    it.each([
+      ["a NaN unit price", { description: "a", qty: 1, unitPrice: Number.NaN }],
+      ["a NaN tax rate", { description: "a", qty: 1, unitPrice: 10, taxRate: Number.NaN }],
+    ])("N4: %s is refused (400 MONEY_INVARIANT), never written as 0", async (_n, item) => {
+      stubCreate();
+      await expect(
+        service.create({ customerId: "cust-1", items: [item] } as any),
+      ).rejects.toMatchObject({ status: 400, response: { code: "MONEY_INVARIANT" } });
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+    });
+
+    it("N4: a NaN discount on create is refused too", async () => {
+      stubCreate();
+      await expect(
+        service.create({
+          customerId: "cust-1",
+          items: [{ description: "a", qty: 1, unitPrice: 10 }],
+          discount: Number.NaN,
+        } as any),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(prisma.invoice.create).not.toHaveBeenCalled();
+    });
   });
 });

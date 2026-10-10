@@ -1,4 +1,4 @@
-import { sumInvoiceTotals } from "@routeflow/pricing";
+import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { assertSellableLines } from "../products/sellable-lines";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
 import type { EntitlementsService } from "../billing/entitlements.service";
@@ -85,5 +85,5 @@ export function foldCategoryTax(
   isTaxExempt: boolean,
 ): number {
   zeroExemptCategoryTax(itemsData, isTaxExempt);
-  return sumInvoiceTotals(itemsData, { isTaxExempt }).categoryTax;
+  return sumInvoiceTotalsStrict(itemsData, { isTaxExempt }).categoryTax;
 }
