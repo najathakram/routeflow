@@ -76,6 +76,10 @@ function statusCalls(src: string): Array<{ args: string[]; at: number }> {
   return out;
 }
 
+/** Occurrences of an InvoiceStatus.PAID produced by a comparison (the derivation shapes in the repo today). */
+const DERIVES = /(?:>=|>)[^;{}]{0,80}?(?:\?|\)\s*\w+\s*=)\s*InvoiceStatus\.PAID/g;
+const countDerivations = (src: string): number => (src.match(DERIVES) ?? []).length;
+
 describe("statusFromPayments: one body, one deliberate PAID caller (SA-763r P-3)", () => {
   it("the old name is gone everywhere", () => {
     expect(
@@ -113,18 +117,39 @@ describe("statusFromPayments: one body, one deliberate PAID caller (SA-763r P-3)
     expect(body).toContain("auditDeliberateOverpayment(");
   });
 
-  it("no code outside invoice-status.ts derives PAID from a paid-vs-total comparison", () => {
-    const DERIVES = /(?:>=|>)[^;{}]{0,80}?(?:\?|\)\s*\w+\s*=)\s*InvoiceStatus\.PAID/;
-    const ALLOWED: Record<string, string> = {
-      "import/import-payment-status.ts":
-        "imported historical invoices take the source system's own settled state; no order edit reaches them",
-      "bookkeeping/bookkeeping.service.ts":
-        "recordPayment refuses an amount above the remaining balance before it writes, so it cannot overpay",
+  it("no code outside invoice-status.ts derives PAID from a paid-vs-total comparison (counted per file)", () => {
+    // Allow-listed by the owner (review 10-10), one derivation EACH. A second derivation in either file, or
+    // one anywhere else, turns this red.
+    const ALLOWED: Record<string, { count: number; reason: string }> = {
+      "import/import-payment-status.ts": {
+        count: 1,
+        reason:
+          "imported historical invoices take the source system's own settled state; no order edit reaches them",
+      },
+      "bookkeeping/bookkeeping.service.ts": {
+        count: 1,
+        reason:
+          "recordPayment refuses an amount above the remaining balance (+ 0.001) before it writes, so it cannot overpay",
+      },
     };
-    const found = sources
-      .filter((s) => s.rel !== "invoices/invoice-status.ts" && DERIVES.test(s.src))
-      .map((s) => s.rel)
-      .sort();
-    expect(found).toEqual(Object.keys(ALLOWED).sort());
+    const found: Record<string, number> = {};
+    for (const s of sources) {
+      if (s.rel === "invoices/invoice-status.ts") continue;
+      const n = countDerivations(s.src);
+      if (n > 0) found[s.rel] = n;
+    }
+    expect(found).toEqual(
+      Object.fromEntries(Object.entries(ALLOWED).map(([k, v]) => [k, v.count])),
+    );
+  });
+
+  it("the counter sees every derivation shape, so a second one in an allow-listed file is red", () => {
+    const one =
+      "const next = totalPaid >= total - 0.001 ? InvoiceStatus.PAID : InvoiceStatus.SENT;";
+    const two = [one, "if (paid >= owed) status = InvoiceStatus.PAID;", one].join(" ");
+    expect(countDerivations(one)).toBe(1);
+    expect(countDerivations("if (totalPaid >= total - 0.001) next = InvoiceStatus.PAID;")).toBe(1);
+    expect(countDerivations(two)).toBeGreaterThanOrEqual(3);
+    expect(countDerivations("const x = a + b; status = InvoiceStatus.PAID;")).toBe(0);
   });
 });
