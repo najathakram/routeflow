@@ -114,6 +114,7 @@ export const LOCK_FAMILIES = [
   "counter-tender",
   "fulfilment-settings",
   "tenant-price",
+  "counter-park",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
@@ -198,6 +199,12 @@ const POOL_MAX: Record<string, number | undefined> = {
   // (`billing/price-lock.ts`) so a double-click burst or a slow Stripe cannot hold all 4 slots for the
   // long wait; a caller that cannot get a slot surfaces as a retryable 409 / 503, never a hang.
   "tenant-price": 4,
+  // `counter-park` (SA-748): the parked-cart cap in `CounterParkService#park`, keyed on the tenant id. That
+  // lock is a transaction-scoped `pg_advisory_xact_lock` taken on the park transaction's own Prisma connection
+  // (the idempotency-service pattern), so this family opens no lock pool today. It is listed so the family name
+  // is reserved in the one namespace (a `withAdvisoryLock` caller can never collide with it by accident) and
+  // sized small in case a pinned caller is ever added.
+  "counter-park": 2,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {

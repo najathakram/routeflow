@@ -46,6 +46,7 @@ const EXPECTED_NAMES = [
   "onboarding.purgeIntakeFiles",
   "mailbox-alert.sweepPending",
   "email.pruneDeliveries",
+  "counter.parkSweep",
 ].sort();
 
 function collectSourceFiles(dir: string, out: string[] = [], includeSpecs = false): string[] {
@@ -139,7 +140,8 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     // Manual invoices due PR3 added billing-invoice.remind (d0/d7/d14 reminders, live mode only), 26 -> 27.
     // B1158 added billing.reconcileParkedCheckouts (parked ACH/SEPA checkouts), 27 -> 28.
     // R1 option B added billing-cron.pushUpcomingDowngradePrices (the pre-renewal downgrade price push), 28 -> 29.
-    expect(declared).toBe(29);
+    // SA-748 added counter.parkSweep (hourly parked-cart cleanup), 29 -> 30.
+    expect(declared).toBe(30);
     // A site that does not match the full `(expr, "name")` shape would be invisible to the name
     // assertions below, so pin the two counts together.
     expect(wellFormed).toBe(declared);

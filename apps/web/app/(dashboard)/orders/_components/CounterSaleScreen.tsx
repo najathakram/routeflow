@@ -5,7 +5,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button, TAP_TARGET, cn } from "@routeflow/ui/web";
-import { normalizeBoxesPieces, roundMoney, type SellLevel } from "@routeflow/pricing";
+import {
+  normalizeBoxesPieces,
+  roundMoney,
+  type ParkedCartPayload,
+  type SellLevel,
+} from "@routeflow/pricing";
 import type {
   CounterSaleItem,
   CounterSaleRequest,
@@ -91,6 +96,7 @@ import { useCounterSaleScan } from "./useCounterSaleScan";
 import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { CounterTodaysSales } from "./CounterTodaysSales";
+import { ParkedSales } from "./ParkedSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
 
 interface PickedCustomer {
@@ -256,7 +262,15 @@ export function CounterSaleScreen() {
   const [sending, setSending] = React.useState(false);
   const salePosting = createSale.isPending || sending;
   const saleInFlight = () => submittingRef.current || createSale.isPending;
-  const lineLocked = locked || salePosting;
+  // A park / resume / discard request in flight (reported by ParkedSales): lines, scans and Complete wait for it, so the cart
+  // that is parked is the cart that is cleared.
+  const [parkBusy, setParkBusy] = React.useState(false);
+  const parkBusyRef = React.useRef(false);
+  const onParkBusy = (busy: boolean) => {
+    parkBusyRef.current = busy;
+    setParkBusy(busy);
+  };
+  const lineLocked = locked || salePosting || parkBusy;
   // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
@@ -285,11 +299,14 @@ export function CounterSaleScreen() {
   const shipPreselected = preselectFulfilment(customer?.fulfillPath, gate.capability) === "SHIP";
 
   // POS-2: a customer pick (or a revert to walk-in) re-prices the cart for them; Pay waits on the lookup. Display only.
+  // SA-748: a resumed parked cart bumps `repriceEpoch` so its lines are re-priced for display even when the customer is unchanged.
+  const [repriceEpoch, setRepriceEpoch] = React.useState(0);
   const reprice = useCounterReprice({
     customer,
     lines,
     setLines,
     locked: lineLocked,
+    epoch: repriceEpoch,
   });
   const repriceBlockedRef = React.useRef(false);
   repriceBlockedRef.current = reprice.blocked;
@@ -529,6 +546,18 @@ export function CounterSaleScreen() {
     refocus();
   }
 
+  // SA-748: a resumed parked cart replaces the screen's cart, customer, method, tendered and reference (the same state a
+  // finished sale resets); the lines are then re-priced for display. No sale key exists yet: it is minted at Complete.
+  function restoreParked(p: ParkedCartPayload) {
+    resetSale();
+    setLines(p.lines as SaleLine[]);
+    setCustomer(p.customer as PickedCustomer | null);
+    setMethod(p.method as CounterSalePaymentMethod);
+    setTendered(p.tendered);
+    setReference(p.reference);
+    setRepriceEpoch((n) => n + 1);
+  }
+
   // Sends one attempt. A 2xx releases the key. A FIRST attempt's refusal that proves nothing was written releases it too.
   // Anything else, and ANY failure once an attempt is already unknown (the first try may have committed), keeps the key and
   // locks the sale as "outcome unknown".
@@ -650,6 +679,7 @@ export function CounterSaleScreen() {
 
   const completeSale = async (next: boolean, retry = false) => {
     if (submittingRef.current) return; // a double Enter / click is one sale
+    if (parkBusyRef.current) return; // a park / resume request is still running
     if (shipRunningRef.current || createDraft.isPending) return; // a ship hand-off is saving this cart
     // A scan still resolving (or waiting on Retry / the picker) is not on the cart yet: never post without it.
     if (!retry && (scanBusyRef.current || repriceBlockedRef.current)) return;
@@ -794,6 +824,22 @@ export function CounterSaleScreen() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Counter sale</h1>
         <CounterTodaysSales />
+        <ParkedSales
+          cart={{ lines, customer, method, tendered, reference }}
+          blocked={
+            locked ||
+            salePosting ||
+            createDraft.isPending ||
+            scanBusy ||
+            reprice.blocked ||
+            shipIntent
+          }
+          inFlight={() => saleInFlight() || shipRunningRef.current || scanBusyRef.current}
+          canEditPrices={mayEditPrices}
+          onBusyChange={onParkBusy}
+          onParked={resetSale}
+          onRestore={restoreParked}
+        />
         {gate.offerShipInstead ? (
           <Button
             className="min-h-[44px]"
@@ -1284,7 +1330,12 @@ export function CounterSaleScreen() {
                 className="min-h-[44px]"
                 onClick={() => void completeSale(false)}
                 disabled={
-                  salePosting || createDraft.isPending || locked || scanBusy || reprice.blocked
+                  salePosting ||
+                  createDraft.isPending ||
+                  locked ||
+                  scanBusy ||
+                  reprice.blocked ||
+                  parkBusy
                 }
               >
                 Complete &amp; show receipt
@@ -1294,7 +1345,12 @@ export function CounterSaleScreen() {
                 variant="secondary"
                 onClick={() => void completeSale(true)}
                 disabled={
-                  salePosting || createDraft.isPending || locked || scanBusy || reprice.blocked
+                  salePosting ||
+                  createDraft.isPending ||
+                  locked ||
+                  scanBusy ||
+                  reprice.blocked ||
+                  parkBusy
                 }
               >
                 Complete &amp; next sale
