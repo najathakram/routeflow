@@ -283,6 +283,35 @@ describe("CounterTodaysSales", () => {
     expect(await screen.findByTestId("today-row-o1")).toBeInTheDocument();
   });
 
+  it("SA-762r: a reprint prints a named customer and the settings footer; a walk-in row prints no customer line", async () => {
+    get.mockImplementation((url: string) =>
+      url === "/orders/counter-sale/today"
+        ? Promise.resolve({
+            data: page1([
+              row({ customerName: "Acme Co", isWalkIn: false }),
+              row({ orderId: "o2", orderNumber: "ORD-2", invoiceId: "i2", invoiceNumber: "INV-2" }),
+            ]),
+          })
+        : url === "/settings"
+          ? Promise.resolve({ data: { receiptFooter: "Thanks!\nSee you soon" } })
+          : Promise.resolve({ data: {} }),
+    );
+    await open();
+    const named = await screen.findByTestId("today-row-o1");
+    fireEvent.click(within(named).getByRole("button", { name: "Reprint" }));
+    const root = await screen.findByTestId("receipt-print-root");
+    expect(within(root).getByTestId("receipt-customer")).toHaveTextContent("Customer: Acme Co");
+    expect((await within(root).findByTestId("receipt-footer")).textContent).toBe(
+      "Thanks!\nSee you soon",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Back to sales" }));
+    fireEvent.click(
+      within(await screen.findByTestId("today-row-o2")).getByRole("button", { name: "Reprint" }),
+    );
+    const root2 = await screen.findByTestId("receipt-print-root");
+    expect(within(root2).queryByTestId("receipt-customer")).toBeNull();
+  });
+
   it("while a reprint is open the page prints only the receipt; closing it undoes that", async () => {
     await open();
     expect(document.body.classList.contains("counter-reprint-open")).toBe(false);

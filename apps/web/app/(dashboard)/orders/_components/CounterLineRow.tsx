@@ -162,6 +162,7 @@ export function CounterLineRow({
   onPriceEdit,
   onPriceReset,
   onPriceClosed,
+  onNoteClosed,
   onQtyEnter,
 }: {
   line: SaleLine;
@@ -170,7 +171,7 @@ export function CounterLineRow({
   onRemove: (tempId: string) => void;
   onNote: (tempId: string, note: string) => void;
   onQty: (tempId: string, typed: TypedQty) => boolean;
-  /** POS-5: the ONE gate (`canEditPrices(user)`). False = the price control does not exist (hidden, never disabled). */
+  /** POS-5: the ONE gate (`staffMay(role, "EDIT_LINE_PRICE")`). False = the price control does not exist (hidden, never disabled). */
   canEditPrices?: boolean;
   /** POS-5: the customer's pricing tier for this product (a special tier needs a reason for a real change) */
   priceTier?: number;
@@ -178,10 +179,17 @@ export function CounterLineRow({
   onPriceEdit?: (tempId: string, edit: CounterPriceEdit) => void;
   onPriceReset?: (tempId: string) => void;
   onPriceClosed?: () => void;
+  /** The note field closed (Enter, Escape, Clear note or the toggle): the screen re-arms the scan field (SA-762r #8). */
+  onNoteClosed?: () => void;
   /** Enter on a typed quantity: the screen hands focus back to the scan field. */
   onQtyEnter?: () => void;
 }) {
   const [editing, setEditing] = React.useState(false);
+  const noteAtOpenRef = React.useRef(""); // Escape puts the note back to what it was when the field opened
+  const closeNote = () => {
+    setEditing(false);
+    onNoteClosed?.();
+  };
   const hasNote = !!l.note?.trim();
   const edited = editedLineFigures(l);
   return (
@@ -238,7 +246,11 @@ export function CounterLineRow({
           aria-label={`${hasNote ? "Edit the note on" : "Add a note to"} ${l.name}`}
           aria-expanded={editing}
           disabled={locked}
-          onClick={() => setEditing((v) => !v)}
+          onClick={() => {
+            if (editing) return closeNote();
+            noteAtOpenRef.current = l.note ?? "";
+            setEditing(true);
+          }}
         >
           {hasNote ? "Edit note" : "Add note"}
         </button>
@@ -250,7 +262,7 @@ export function CounterLineRow({
             disabled={locked}
             onClick={() => {
               onNote(l.tempId, "");
-              setEditing(false);
+              closeNote();
             }}
           >
             Clear note
@@ -267,6 +279,16 @@ export function CounterLineRow({
           disabled={locked}
           value={l.note ?? ""}
           onChange={(e) => onNote(l.tempId, e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              closeNote(); // saved (each keystroke already is): close and re-arm the scan field
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              onNote(l.tempId, noteAtOpenRef.current);
+              closeNote();
+            }
+          }}
           data-counter-note=""
           autoFocus // opening the note puts the cursor in it: the next keys are the note, never a page shortcut
         />
