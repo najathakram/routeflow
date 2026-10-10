@@ -429,6 +429,11 @@ export const API_ERROR_CODES = {
    */
   POS_MODE_NOT_PERMITTED: "POS_MODE_NOT_PERMITTED",
   /**
+   * 409 from `PATCH /orders/:id/fulfill-path` to PICKUP: the order's route-run link changed between the read and
+   * the write (a dispatch attached it), so releasing the old link would have cleared a fresh one. Nothing was written.
+   */
+  ORDER_RUN_LINK_CHANGED: "ORDER_RUN_LINK_CHANGED",
+  /**
    * 404 from GET /orders/counter-sale/by-key/:key: NO sale exists for this Idempotency-Key in this tenant.
    * A definitive answer (unlike a timeout): the clerk may ring the sale again with a new key.
    */

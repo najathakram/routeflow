@@ -33,6 +33,7 @@ describe("OrdersService.updateFulfillPath: switch to PICKUP", () => {
     h.prisma.order.update.mockImplementation((a: any) =>
       Promise.resolve({ id: "ord-1", ...a.data }),
     );
+    h.prisma.order.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it.each(["OPERATOR", "TENANT_ADMIN"])(
@@ -105,27 +106,76 @@ describe("OrdersService.updateFulfillPath: switch to PICKUP", () => {
       routeRunStop: { routeRun: { status: "COMPLETED", driver: null } },
     });
     await toPickup();
-    expect(h.prisma.order.update).toHaveBeenCalledTimes(1);
+    expect(h.prisma.order.updateMany).toHaveBeenCalledTimes(1);
+    expect(h.prisma.order.update).not.toHaveBeenCalled();
   });
 
   // B692 class: a PICKUP order left linked to a finished run's stop is skipped by the later stock stamp
   // (it excludes rows carrying a routeRunStopId), so a later quantity cut would restock what was never
   // stamped. The switch lets go of the finished run's link in the same write.
   it.each(["COMPLETED", "CANCELLED"])(
-    "a switch off a %s run clears routeRunId AND routeRunStopId in the same write",
+    "a switch off a %s run clears routeRunId AND routeRunStopId, conditional on the link it read",
     async (runStatus) => {
       open({
         routeRunId: "run-1",
         routeRunStopId: "stop-1",
         routeRunStop: { routeRun: { status: runStatus, driver: null } },
+        routeRun: { status: runStatus, driver: null },
       });
       await toPickup();
-      expect(h.prisma.order.update).toHaveBeenCalledWith({
-        where: { id: "ord-1" },
+      expect(h.prisma.order.updateMany).toHaveBeenCalledWith({
+        where: { id: "ord-1", routeRunId: "run-1", routeRunStopId: "stop-1" },
         data: { fulfillPath: "PICKUP", routeRunId: null, routeRunStopId: null },
       });
+      expect(h.prisma.order.update).not.toHaveBeenCalled();
     },
   );
+
+  it("a bare routeRunId (no stop) on a finished run is cleared; the stop id is matched as null", async () => {
+    open({ routeRunId: "run-1", routeRun: { status: "COMPLETED", driver: null } });
+    await toPickup();
+    expect(h.prisma.order.updateMany).toHaveBeenCalledWith({
+      where: { id: "ord-1", routeRunId: "run-1", routeRunStopId: null },
+      data: { fulfillPath: "PICKUP", routeRunId: null, routeRunStopId: null },
+    });
+  });
+
+  it.each(["SCHEDULED", "IN_PROGRESS"])(
+    "a bare routeRunId on a %s run (a driver-created order) is refused, link and path untouched",
+    async (runStatus) => {
+      open({
+        routeRunId: "run-1",
+        routeRun: { status: runStatus, driver: { contactName: "Dana" } },
+      });
+      await expect(toPickup()).rejects.toThrow(
+        /active delivery run with Dana.*switching it to pickup/,
+      );
+      expect(h.prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(h.prisma.order.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a link whose run cannot be read fails closed: refused, nothing written", async () => {
+    open({ routeRunId: "run-1", routeRun: null });
+    await expect(toPickup()).rejects.toThrow(/could not be read/);
+    expect(h.prisma.order.updateMany).not.toHaveBeenCalled();
+    expect(h.prisma.order.update).not.toHaveBeenCalled();
+  });
+
+  it("a dispatch attaching between the read and the write (updateMany count 0) is a coded 409", async () => {
+    open({
+      routeRunId: "run-1",
+      routeRunStopId: "stop-1",
+      routeRunStop: { routeRun: { status: "COMPLETED", driver: null } },
+      routeRun: { status: "COMPLETED", driver: null },
+    });
+    h.prisma.order.updateMany.mockResolvedValue({ count: 0 });
+    await expect(toPickup()).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "ORDER_RUN_LINK_CHANGED" }),
+    });
+    expect(h.prisma.order.update).not.toHaveBeenCalled();
+  });
 
   it("an order with no run link is written exactly as before: the path alone", async () => {
     open();
