@@ -39,8 +39,29 @@ export const COUNTER_PARK_MAX_LINES = 200;
 export const COUNTER_PARK_MAX_BYTES = 64 * 1024;
 /** Longest label. */
 export const COUNTER_PARK_LABEL_MAX = 60;
-/** The same actor may resume a row again within this window (a lost response must not lose the cart). */
+/**
+ * The RESUME retry window (5 min): a resume that carries the SAME `resumeAttemptId` as the one that took the row may read it
+ * again inside this window (a lost response must not lose the cart). Keyed on the attempt id, never on the actor: a second
+ * till on the same login is a different attempt and gets 404 PARK_TAKEN.
+ */
 export const COUNTER_PARK_RETRY_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * SERVER-RESERVED payload key. The resume compare-and-set stores `{ attemptId }` under it in the row's own JSON (atomically,
+ * in the same statement that marks the row taken). It is NOT part of {@link ParkedCartPayload} (the client shape): the
+ * whitelist rebuild never copies it, so it is absent from every response, and a park whose payload carries it is refused
+ * with 400 ({@link hasReservedParkKey}).
+ */
+export const PARKED_PAYLOAD_RESUME_KEY = "_resume";
+
+/** True when a client-sent park payload names the server-reserved key (own property, whatever its value). */
+export function hasReservedParkKey(raw: unknown): boolean {
+  return (
+    !!raw &&
+    typeof raw === "object" &&
+    Object.prototype.hasOwnProperty.call(raw, PARKED_PAYLOAD_RESUME_KEY)
+  );
+}
 /** The sweep deletes a RESUMED row after this many hours (the retry window is long past by then). */
 export const COUNTER_PARK_SWEEP_RESUMED_HOURS = 24;
 /** The list shows "from earlier - prices refresh when you pay" for a cart parked more than this many hours ago. */
@@ -274,7 +295,15 @@ export interface ParkedCartListResponse {
   pageSize: number;
 }
 
-/** POST /orders/counter-sale/parked/:id/resume */
+/**
+ * POST /orders/counter-sale/parked/:id/resume. `resumeAttemptId` is a uuid v4 the client mints per resume TAP and reuses only
+ * for a retry of that same tap whose answer was lost (see {@link COUNTER_PARK_RETRY_WINDOW_MS}).
+ */
+export interface ResumeParkedCartRequest {
+  resumeAttemptId: string;
+}
+
+/** The answer to a resume. `payload` never carries the server-reserved {@link PARKED_PAYLOAD_RESUME_KEY}. */
 export interface ResumeParkedCartResponse {
   id: string;
   label: string;

@@ -32,6 +32,15 @@ export class ParkCartDto {
 }
 
 /**
+ * POST /orders/counter-sale/parked/:id/resume (`ResumeParkedCartRequest` of @routeflow/pricing). `resumeAttemptId` is a
+ * uuid v4 the client mints per resume TAP and reuses only for a retry of that same tap; the resume stores it in the row, so
+ * only that retry can read the cart again (another till, even on the same login, has its own id).
+ */
+export class ResumeParkedDto {
+  @IsUUID(4) resumeAttemptId: string;
+}
+
+/**
  * GET /orders/counter-sale/parked. `register` is NOT pattern-checked here: a missing or invalid register means the
  * default register (the service decides), never a 400.
  */

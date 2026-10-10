@@ -1,7 +1,8 @@
 import { COUNTER_PARK_LABEL_MAX } from "@routeflow/pricing";
+import type { LockFamily } from "../../common/db-locks";
 
 /** Advisory-lock family of the parked-cart cap: keyed on the tenant id (one lock covers the per-register and tenant-wide caps). */
-export const COUNTER_PARK_LOCK_FAMILY = "counter-park";
+export const COUNTER_PARK_LOCK_FAMILY = "counter-park" satisfies LockFamily;
 
 /** Rows the hourly sweep deletes per statement. */
 export const COUNTER_PARK_SWEEP_BATCH = 500;

@@ -56,13 +56,22 @@ export class FakeParkDb {
     }
 
     if (sql.startsWith("UPDATE")) {
-      const [now, actor, id, tenantId, now2] = values as [Date, string, string, string, Date];
+      const [now, actor, attempt, id, tenantId, now2] = values as [
+        Date,
+        string,
+        string,
+        string,
+        string,
+        Date,
+      ];
       const hit = this.rows.find(
         (r) => r.id === id && r.tenantId === tenantId && r.resumedAt === null && r.expiresAt > now2,
       );
       if (!hit) return [];
       hit.resumedAt = now;
       hit.resumedById = actor;
+      // jsonb_set("payload", '{_resume}', jsonb_build_object('attemptId', attempt)): the server-reserved key, same statement
+      hit.payload = { ...(hit.payload as object), _resume: { attemptId: attempt } };
       return [{ id: hit.id, label: hit.label, createdAt: hit.createdAt, payload: hit.payload }];
     }
 
@@ -81,25 +90,30 @@ export class FakeParkDb {
       return [{ n: this.open(tenantId, registerKey, now).length }];
     }
 
-    if (
-      sql.includes('FROM "CounterParkedCart" WHERE "id" = ? AND "tenantId" = ? AND "resumedById"')
-    ) {
-      const [id, tenantId, actor, since] = values as [string, string, string, Date];
+    if (sql.includes(`"payload"->'_resume'->>'attemptId' = ?`)) {
+      // The resume retry: (id, tenantId, since, attempt): the row THAT attempt took, inside the window.
+      const [id, tenantId, since, attempt] = values as [string, string, Date, string];
       return this.rows
         .filter(
           (r) =>
             r.id === id &&
             r.tenantId === tenantId &&
-            r.resumedById === actor &&
             r.resumedAt !== null &&
-            r.resumedAt > since,
+            r.resumedAt > since &&
+            (r.payload as { _resume?: { attemptId?: string } })._resume?.attemptId === attempt,
         )
         .map((r) => ({ id: r.id, label: r.label, createdAt: r.createdAt, payload: r.payload }));
     }
 
     if (sql.includes('FROM "CounterParkedCart" WHERE "id" = ? AND "tenantId" = ?')) {
-      const [id, tenantId] = values as [string, string];
-      return this.rows.filter((r) => r.id === id && r.tenantId === tenantId);
+      // The park replay read: (id, tenantId, now) and only an OPEN row (not resumed, not expired) is a replay.
+      const [id, tenantId, now] = values as [string, string, Date | undefined];
+      return this.rows.filter(
+        (r) =>
+          r.id === id &&
+          r.tenantId === tenantId &&
+          (now === undefined || (r.resumedAt === null && r.expiresAt > now)),
+      );
     }
 
     if (sql.includes('ORDER BY "createdAt" DESC, "id" DESC LIMIT')) {

@@ -30,6 +30,9 @@ const TENANT = "tenant-a";
 const OTHER_TENANT = "tenant-b";
 const OP = { sub: "op-1", role: "OPERATOR" } as never;
 const OP2 = { sub: "op-2", role: "OPERATOR" } as never;
+/** Resume attempt ids (a uuid v4 each, minted per resume tap by the client). */
+const A1 = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
+const B1 = "b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1";
 const NOW = new Date("2026-10-08T15:30:00.000Z"); // 11:30 in New York (EDT)
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
@@ -84,6 +87,18 @@ function setup(opts: { counter?: FulfilmentCapability["counter"]; timezone?: str
 }
 
 describe("CounterParkService.park", () => {
+  it("a payload that names the server-reserved _resume key is 400, whatever its value, and nothing is stored", async () => {
+    const t = setup();
+    for (const v of [{ attemptId: A1 }, null, "x", 0]) {
+      const e = await t.park({ payload: { ...payload(), _resume: v } }).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(e).toBeInstanceOf(BadRequestException);
+    }
+    expect(t.db.rows).toHaveLength(0);
+    expect(t.db.statements.some((s) => s.sql.startsWith("INSERT"))).toBe(false);
+  });
   it("stores ONLY the rebuilt payload: unknown keys and a customer email are not in what is inserted", async () => {
     const t = setup();
     await t.park({
@@ -243,6 +258,40 @@ describe("CounterParkService.park", () => {
       expect(again.createdAt).toBe(first.createdAt);
       expect(again.expiresAt).toBe(first.expiresAt);
     });
+    it("a CLOSED row is never a replay: park -> resume -> park the same id is 409 PARK_ID_CONFLICT, not the resumed cart", async () => {
+      const t = setup();
+      await t.park();
+      await t.service.resume(id(1), A1, OP, NOW);
+      const e = await t.park({}, OP, new Date(NOW.getTime() + 60_000)).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(e).toBeInstanceOf(ConflictException);
+      expect((e as ConflictException).getResponse()).toMatchObject({ code: "PARK_ID_CONFLICT" });
+      expect(t.db.rows).toHaveLength(1);
+      expect(t.db.rows[0].resumedAt).not.toBeNull();
+    });
+    it("an EXPIRED row is never a replay either: the same id after 24 h is 409 PARK_ID_CONFLICT", async () => {
+      const t = setup();
+      await t.park();
+      const e = await t.park({}, OP, new Date(NOW.getTime() + 25 * 3_600_000)).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(e).toBeInstanceOf(ConflictException);
+      expect((e as ConflictException).getResponse()).toMatchObject({ code: "PARK_ID_CONFLICT" });
+      expect(t.db.rows).toHaveLength(1);
+    });
+    it("the id-conflict 409 carries the code (another tenant's id, a different register)", async () => {
+      const t = setup();
+      await t.park();
+      t.setTenant(OTHER_TENANT);
+      const e = await t.park().then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect((e as ConflictException).getResponse()).toMatchObject({ code: "PARK_ID_CONFLICT" });
+    });
     it("another tenant's id (or a different register) => 409 that does not say which", async () => {
       const t = setup();
       await t.park();
@@ -371,7 +420,7 @@ describe("CounterParkService.park", () => {
     const t = setup();
     await t.park();
     await t.service.list({}, NOW);
-    await t.service.resume(id(1), OP, NOW);
+    await t.service.resume(id(1), A1, OP, NOW);
     for (const s of t.db.statements.filter((x) => !x.sql.startsWith("SELECT pg_advisory"))) {
       expect(s.sql).toContain('"tenantId"');
       expect(s.values).toContain(TENANT);
@@ -441,16 +490,20 @@ describe("CounterParkService.resume", () => {
   it("is ONE compare-and-set UPDATE with the actor, tenant, id and clock bound; returns the sanitized payload", async () => {
     const t = setup();
     await parked(t);
-    const res = await t.service.resume(id(1), OP2, NOW);
+    const res = await t.service.resume(id(1), A1, OP2, NOW);
     const upd = t.db.statements.find((s) => s.sql.startsWith("UPDATE"))!;
-    expect(upd.sql).toContain('SET "resumedAt" = ?, "resumedById" = ?');
+    expect(upd.sql).toContain(
+      `SET "resumedAt" = ?, "resumedById" = ?, "payload" = jsonb_set("payload", '{_resume}'`,
+    );
+    expect(upd.sql).toContain("jsonb_build_object('attemptId', ?::text)");
     expect(upd.sql).toContain(
       'WHERE "id" = ? AND "tenantId" = ? AND "resumedAt" IS NULL AND "expiresAt" > ?',
     );
     expect(upd.sql).toContain('RETURNING "id", "label", "createdAt", "payload"');
-    expect(upd.values).toEqual([NOW, "op-2", id(1), TENANT, NOW]);
+    expect(upd.values).toEqual([NOW, "op-2", A1, id(1), TENANT, NOW]);
     expect(res.id).toBe(id(1));
     expect(res.payload.lines).toHaveLength(2);
+    expect(res.payload).not.toHaveProperty("_resume");
     expect(res.createdAt).toBe(NOW.toISOString());
     expect(t.db.rows).toHaveLength(1); // never deleted
     expect(t.db.rows[0]).toMatchObject({ resumedById: "op-2" });
@@ -458,11 +511,11 @@ describe("CounterParkService.resume", () => {
     expect(t.deleteMany).not.toHaveBeenCalled();
   });
 
-  it("a second caller (another actor) gets 404 PARK_TAKEN", async () => {
+  it("a second caller (another actor, another attempt) gets 404 PARK_TAKEN", async () => {
     const t = setup();
     await parked(t);
-    await t.service.resume(id(1), OP, NOW);
-    const e = await t.service.resume(id(1), OP2, NOW).then(
+    await t.service.resume(id(1), A1, OP, NOW);
+    const e = await t.service.resume(id(1), B1, OP2, NOW).then(
       () => null,
       (err: unknown) => err,
     );
@@ -472,37 +525,64 @@ describe("CounterParkService.resume", () => {
     });
   });
 
-  it("the same actor's retry within 5 minutes returns the payload again; after that, and for another actor, it does not", async () => {
+  it("the SAME LOGIN on a second till (a different attempt id) within 5 minutes is 404 PARK_TAKEN, never the payload", async () => {
     const t = setup();
     await parked(t);
-    await t.service.resume(id(1), OP, NOW);
+    await t.service.resume(id(1), A1, OP, NOW); // till A
+    await expect(
+      t.service.resume(id(1), B1, OP, new Date(NOW.getTime() + 1000)), // till B, same login
+    ).rejects.toMatchObject({ response: { code: API_ERROR_CODES.PARK_TAKEN } });
+  });
+
+  it("a retry with the SAME attempt id within 5 minutes returns the payload again (no _resume in it); after that it does not", async () => {
+    const t = setup();
+    await parked(t);
+    const first = await t.service.resume(id(1), A1, OP, NOW);
     const retry = await t.service.resume(
       id(1),
+      A1,
       OP,
       new Date(NOW.getTime() + COUNTER_PARK_RETRY_WINDOW_MS - 1000),
     );
+    expect(retry.payload).toEqual(first.payload);
     expect(retry.payload.lines).toHaveLength(2);
+    expect(JSON.stringify(retry)).not.toContain("_resume");
+    expect(JSON.stringify(retry)).not.toContain(A1);
     await expect(
-      t.service.resume(id(1), OP, new Date(NOW.getTime() + COUNTER_PARK_RETRY_WINDOW_MS + 1000)),
+      t.service.resume(
+        id(1),
+        A1,
+        OP,
+        new Date(NOW.getTime() + COUNTER_PARK_RETRY_WINDOW_MS + 1000),
+      ),
     ).rejects.toBeInstanceOf(NotFoundException);
-    await expect(
-      t.service.resume(id(1), OP2, new Date(NOW.getTime() + 1000)),
-    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("the retry predicate is the attempt id: another actor with the same attempt id is not special-cased, and a wrong attempt never reads", async () => {
+    const t = setup();
+    await parked(t);
+    await t.service.resume(id(1), A1, OP, NOW);
+    const retrySql = () => t.db.statements.filter((s) => s.sql.startsWith("SELECT")).pop()!;
+    await expect(t.service.resume(id(1), B1, OP, NOW)).rejects.toBeInstanceOf(NotFoundException);
+    expect(retrySql().sql).toContain(`"payload"->'_resume'->>'attemptId' = ?`);
+    expect(retrySql().sql).not.toContain("resumedById");
   });
 
   it("an expired, discarded, unknown, malformed or other-tenant id is 404 PARK_TAKEN", async () => {
     const t = setup();
     await parked(t);
     const expired = new Date(NOW.getTime() + 25 * 3_600_000);
-    await expect(t.service.resume(id(1), OP, expired)).rejects.toMatchObject({
+    await expect(t.service.resume(id(1), A1, OP, expired)).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.PARK_TAKEN },
     });
-    await expect(t.service.resume(id(99), OP, NOW)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(t.service.resume(id(99), A1, OP, NOW)).rejects.toBeInstanceOf(NotFoundException);
     const before = t.db.statements.length;
-    await expect(t.service.resume("not-a-uuid", OP, NOW)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(t.service.resume("not-a-uuid", A1, OP, NOW)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
     expect(t.db.statements).toHaveLength(before); // no query for a malformed id
     t.setTenant(OTHER_TENANT);
-    await expect(t.service.resume(id(1), OP, NOW)).rejects.toMatchObject({
+    await expect(t.service.resume(id(1), A1, OP, NOW)).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.PARK_TAKEN },
     });
     expect(t.db.rows[0].resumedAt).toBeNull(); // the other tenant's attempt changed nothing
@@ -511,16 +591,16 @@ describe("CounterParkService.resume", () => {
   it("another tenant's resumed row is not retryable by a same-numbered actor in this tenant", async () => {
     const t = setup();
     await parked(t);
-    await t.service.resume(id(1), OP, NOW);
+    await t.service.resume(id(1), A1, OP, NOW);
     t.setTenant(OTHER_TENANT);
-    await expect(t.service.resume(id(1), OP, NOW)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(t.service.resume(id(1), A1, OP, NOW)).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it("a stored row that no longer sanitizes is 404 PARK_TAKEN, never a 500", async () => {
     const t = setup();
     await parked(t);
     t.db.rows[0].payload = { lines: [{ nope: true }], method: "CASH" };
-    await expect(t.service.resume(id(1), OP, NOW)).rejects.toMatchObject({
+    await expect(t.service.resume(id(1), A1, OP, NOW)).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.PARK_TAKEN },
     });
   });
@@ -557,7 +637,7 @@ describe("the COUNTER_SALES_DISABLED gate and the tenant, on every route", () =>
   const calls: Array<[string, (t: ReturnType<typeof setup>) => Promise<unknown>]> = [
     ["park", (t) => t.park()],
     ["list", (t) => t.service.list({}, NOW)],
-    ["resume", (t) => t.service.resume(id(1), OP, NOW)],
+    ["resume", (t) => t.service.resume(id(1), A1, OP, NOW)],
     ["discard", (t) => t.service.discard(id(1))],
   ];
 

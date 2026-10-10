@@ -401,6 +401,8 @@ export const API_ERROR_CODES = {
   PARK_LIMIT: "PARK_LIMIT",
   /** 404 from resume / discard of a parked cart: it was already taken back (by another till), discarded, or has expired. */
   PARK_TAKEN: "PARK_TAKEN",
+  /** 409 from POST /orders/counter-sale/parked: the client-minted park id already names a row this park may not replay (another tenant's or register's, or one already taken back or expired). Park again; the client mints a new id. */
+  PARK_ID_CONFLICT: "PARK_ID_CONFLICT",
   WALK_IN_NO_ACCOUNT: "WALK_IN_NO_ACCOUNT",
   WALK_IN_WITH_CUSTOMER: "WALK_IN_WITH_CUSTOMER",
   WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",

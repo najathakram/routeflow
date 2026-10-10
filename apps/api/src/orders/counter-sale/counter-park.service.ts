@@ -15,6 +15,7 @@ import {
   COUNTER_PARK_MAX_PER_TENANT,
   COUNTER_PARK_PAGE_SIZE,
   REGISTER_KEY_PATTERN,
+  hasReservedParkKey,
   COUNTER_PARK_RETRY_WINDOW_MS,
   COUNTER_PARK_TTL_HOURS,
   sanitizeParkedPayload,
@@ -59,8 +60,12 @@ const takenError = () =>
     message: "This parked sale is no longer available.",
   });
 
+/** 409 PARK_ID_CONFLICT: the id belongs to another tenant or register, or to a row already taken back or expired. */
 const conflictError = () =>
-  new ConflictException("This parked sale could not be saved. Park it again.");
+  new ConflictException({
+    code: API_ERROR_CODES.PARK_ID_CONFLICT,
+    message: "This parked sale could not be saved. Park it again.",
+  });
 
 /**
  * Counter-sale PARK / RESUME (SA-748). A clerk sets the live cart aside as a SERVER row (`CounterParkedCart`) and takes
@@ -72,8 +77,9 @@ const conflictError = () =>
  *            (all registers), then: replay check (same id + tenant + register returns the stored row, it does not count against
  *            the cap), cap check (open rows >= 10 -> 409 PARK_LIMIT), `INSERT ... ON CONFLICT (id) DO NOTHING`.
  *  - resume: ONE compare-and-set `UPDATE ... WHERE id AND tenantId AND resumedAt IS NULL AND expiresAt > now RETURNING`.
- *            Exactly one concurrent caller gets the row. No delete (the sweep removes it later); the same actor may
- *            read it again within COUNTER_PARK_RETRY_WINDOW_MS (a lost response must not lose the cart).
+ *            Exactly one concurrent caller gets the row. No delete (the sweep removes it later); a retry may
+ *            read it again within COUNTER_PARK_RETRY_WINDOW_MS, but only with the SAME `resumeAttemptId` (a lost response
+ *            must not lose the cart; a second till has its own id and gets 404).
  *  - discard: `deleteMany({ id, tenantId, resumedAt: null })`.
  * The clock is the app's (`now`, bound): `timestamp(3)` columns are naive UTC, and a bound value does not depend on the
  * DB session's time zone the way `now()` compared to a naive column does. The race-safety rests on row state, not time.
@@ -120,6 +126,9 @@ export class CounterParkService {
     const actor = this.actorId(user);
     const registerKey = this.register(dto.registerKey);
 
+    // `_resume` is server-reserved (the resume compare-and-set writes it): a client may never send it.
+    if (hasReservedParkKey(dto.payload))
+      throw new BadRequestException("The sale to park is not valid.");
     const clean = sanitizeParkedPayload(dto.payload, COUNTER_SALE_METHODS);
     if (!clean.ok) {
       if (clean.reason === "TOO_MANY_LINES") {
@@ -153,11 +162,14 @@ export class CounterParkService {
         // read and written together whatever the register); released at commit/rollback. Contention is negligible.
         await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${COUNTER_PARK_LOCK_FAMILY}), hashtext(${tenantId}))`;
 
-        // 1. Replay: the same id, in THIS tenant, parked on THIS register, is the stored row (not counted against the cap).
+        // 1. Replay: the same id, in THIS tenant, parked on THIS register, still OPEN, is the stored row (not counted
+        // against the cap). A row already taken back or expired is closed: it falls through to the insert, whose ON
+        // CONFLICT answers 409, so park -> resume -> park again never hands back the cart that was resumed.
         const stored = await db.$queryRaw<ParkedRow[]>`
           SELECT "id", "label", "registerKey", "createdAt", "expiresAt", "payload"
             FROM "CounterParkedCart"
-           WHERE "id" = ${dto.id} AND "tenantId" = ${tenantId}`;
+           WHERE "id" = ${dto.id} AND "tenantId" = ${tenantId}
+             AND "resumedAt" IS NULL AND "expiresAt" > ${now}`;
         if (stored.length > 0) {
           const row = stored[0];
           if (row.registerKey !== registerKey) throw conflictError();
@@ -255,8 +267,15 @@ export class CounterParkService {
     return { data, total: total[0]?.n ?? 0, page, pageSize };
   }
 
+  /**
+   * Takes a parked cart back. `attemptId` is the client's per-tap uuid: the compare-and-set stores it in the row's own
+   * JSON (`_resume`, server-reserved) in the SAME statement that marks the row taken, and only a retry that carries that
+   * same id may read the row again (inside COUNTER_PARK_RETRY_WINDOW_MS). Another till, even on the same login, has a
+   * different id and gets 404 PARK_TAKEN, so a cart can never be held by two tills.
+   */
   async resume(
     id: string,
+    attemptId: string,
     user: JwtPayload,
     now: Date = new Date(),
   ): Promise<ResumeParkedCartResponse> {
@@ -272,23 +291,25 @@ export class CounterParkService {
       // The compare-and-set: the row changes state only if it is still open, in this tenant, and unexpired.
       let rows = await db.$queryRaw<ParkedRow[]>`
         UPDATE "CounterParkedCart"
-           SET "resumedAt" = ${now}, "resumedById" = ${actor}
+           SET "resumedAt" = ${now}, "resumedById" = ${actor},
+               "payload" = jsonb_set("payload", '{_resume}', jsonb_build_object('attemptId', ${attemptId}::text))
          WHERE "id" = ${id} AND "tenantId" = ${tenantId}
            AND "resumedAt" IS NULL AND "expiresAt" > ${now}
         RETURNING "id", "label", "createdAt", "payload"`;
 
       if (rows.length === 0) {
-        // The same actor's retry (a lost response): the row they resumed a moment ago, and only that.
+        // The retry of the SAME tap (a lost response): the row THAT attempt took a moment ago, and only that.
         const since = new Date(now.getTime() - COUNTER_PARK_RETRY_WINDOW_MS);
         rows = await db.$queryRaw<ParkedRow[]>`
           SELECT "id", "label", "createdAt", "payload"
             FROM "CounterParkedCart"
            WHERE "id" = ${id} AND "tenantId" = ${tenantId}
-             AND "resumedById" = ${actor} AND "resumedAt" > ${since}`;
+             AND "resumedAt" > ${since} AND "payload"->'_resume'->>'attemptId' = ${attemptId}`;
       }
       if (rows.length === 0) throw takenError();
 
-      // Defence in depth: only a payload that still passes the whitelist leaves the server.
+      // Defence in depth: only a payload that still passes the whitelist leaves the server. The whitelist rebuild never
+      // copies the server-reserved `_resume` key, so it is absent from the answer.
       const clean = sanitizeParkedPayload(rows[0].payload, COUNTER_SALE_METHODS);
       if (!clean.ok) throw takenError();
       return {

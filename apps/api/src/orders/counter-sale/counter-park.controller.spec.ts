@@ -25,6 +25,7 @@ const request = require("supertest");
 /** The HTTP edge of the parked-sale routes (SA-748): route resolution, the role gate, the DTO pipe. */
 
 const ID = "00000000-0000-4000-8000-000000000001";
+const ATTEMPT = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
 type Route = { controller: string; handler: string; method: RequestMethod; path: string };
 
 /** Every route of every controller of the orders module, as the full path template Nest registers, in module order. */
@@ -134,12 +135,27 @@ describe("the parked-sale routes over HTTP (roles and the DTO pipe)", () => {
   it.each(["OPERATOR", "TENANT_ADMIN"])("%s may park, list, resume and discard", async (role) => {
     await call("post", "/orders/counter-sale/parked", role).send(body()).expect(201);
     await call("get", "/orders/counter-sale/parked", role).expect(200);
-    await call("post", `/orders/counter-sale/parked/${ID}/resume`, role).expect(201);
+    await call("post", `/orders/counter-sale/parked/${ID}/resume`, role)
+      .send({ resumeAttemptId: ATTEMPT })
+      .expect(201);
     await call("delete", `/orders/counter-sale/parked/${ID}`, role).expect(204);
     expect(svc.park).toHaveBeenCalledTimes(1);
     expect(svc.list).toHaveBeenCalledTimes(1);
-    expect(svc.resume).toHaveBeenCalledWith(ID, expect.objectContaining({ sub: "u-1" }));
+    expect(svc.resume).toHaveBeenCalledWith(ID, ATTEMPT, expect.objectContaining({ sub: "u-1" }));
     expect(svc.discard).toHaveBeenCalledWith(ID);
+  });
+
+  it.each([
+    ["no body", undefined],
+    ["no resumeAttemptId", {}],
+    ["a non-uuid attempt id", { resumeAttemptId: "tap-1" }],
+    ["a uuid that is not v4", { resumeAttemptId: "a1a1a1a1-a1a1-1a1a-8a1a-a1a1a1a1a1a1" }],
+    ["an unknown key", { resumeAttemptId: ATTEMPT, actor: "u-2" }],
+  ])("resume with %s is a 400 before the service runs", async (_n, sent) => {
+    await call("post", `/orders/counter-sale/parked/${ID}/resume`, "OPERATOR")
+      .send(sent as never)
+      .expect(400);
+    expect(svc.resume).not.toHaveBeenCalled();
   });
 
   it.each(["DRIVER", "CUSTOMER"])(

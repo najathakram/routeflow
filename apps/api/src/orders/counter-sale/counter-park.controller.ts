@@ -21,7 +21,7 @@ import { RolesGuard } from "../../auth/guards/roles.guard";
 import { Roles } from "../../auth/decorators/roles.decorator";
 import { CurrentUser } from "../../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
-import { ListParkedDto, ParkCartDto } from "./counter-park.dto";
+import { ListParkedDto, ParkCartDto, ResumeParkedDto } from "./counter-park.dto";
 import { CounterParkService } from "./counter-park.service";
 
 /**
@@ -51,13 +51,14 @@ export class CounterParkController {
     return this.parked.list(query);
   }
 
-  /** Take a parked cart back: exactly one caller wins; 404 PARK_TAKEN for everyone else. */
+  /** Take a parked cart back: exactly one caller wins (a retry with the SAME `resumeAttemptId` re-reads it); 404 PARK_TAKEN for everyone else. */
   @Post(":id/resume")
   resume(
     @Param("id") id: string,
+    @Body() dto: ResumeParkedDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<ResumeParkedCartResponse> {
-    return this.parked.resume(id, user);
+    return this.parked.resume(id, dto.resumeAttemptId, user);
   }
 
   /** Discard a parked cart that nobody has resumed: 204, or 404 PARK_TAKEN. */

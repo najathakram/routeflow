@@ -1,6 +1,7 @@
 import { COUNTER_PARK_MAX_LINES, COUNTER_PARK_STALE_HOURS } from "@routeflow/pricing";
 import { validCustomer, validLine } from "./counter-sale";
 import {
+  PARK_FAILED_COPY,
   PARK_LIMIT_COPY,
   PARK_TENANT_LIMIT_COPY,
   PARK_TAKEN_COPY,
@@ -80,6 +81,9 @@ describe("buildParkPayload (the whitelist the server also applies)", () => {
 });
 
 describe("fixed copy, never the server message", () => {
+  it("PARK_ID_CONFLICT (409) is the fixed 'park it again' line, never the server message", () => {
+    expect(parkErrorCopy(err(409, "PARK_ID_CONFLICT"))).toBe(PARK_FAILED_COPY);
+  });
   it("PARK_LIMIT (409) names the cap", () => {
     expect(parkErrorCopy(err(409, "PARK_LIMIT"))).toBe(PARK_LIMIT_COPY);
     expect(PARK_LIMIT_COPY).toBe(
@@ -130,7 +134,10 @@ describe("list helpers", () => {
   });
   it("formats the time in the given zone, falls back on a bad zone", () => {
     expect(formatParkedTime("2026-10-08T18:41:00.000Z", "America/New_York")).toBe("2:41 PM");
-    expect(formatParkedTime("2026-10-08T18:41:00.000Z", "Not/AZone")).toMatch(/\d{1,2}:41/);
+    // no zone, or a bad one: UTC, never the browser's own zone (SA-738)
+    expect(formatParkedTime("2026-10-08T18:41:00.000Z", "Not/AZone")).toBe("6:41 PM");
+    expect(formatParkedTime("2026-10-08T18:41:00.000Z")).toBe("6:41 PM");
+    expect(formatParkedTime("2026-10-08T18:41:00.000Z", null)).toBe("6:41 PM");
   });
   it("counts lines", () => {
     expect(lineCountLabel(1)).toBe("1 line");

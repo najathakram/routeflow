@@ -2,6 +2,8 @@ import {
   COUNTER_PARK_MAX_LINES,
   COUNTER_PARK_NAME_MAX,
   COUNTER_PARK_NOTE_MAX,
+  PARKED_PAYLOAD_RESUME_KEY,
+  hasReservedParkKey,
   sanitizeParkedPayload,
   validCustomer,
   validLine,
@@ -34,6 +36,23 @@ const refusal = (raw: unknown) => {
   if (r.ok) throw new Error("expected a refusal");
   return r.reason;
 };
+
+describe("the server-reserved _resume key", () => {
+  it("is named once, and a client payload naming it is detected whatever its value", () => {
+    expect(PARKED_PAYLOAD_RESUME_KEY).toBe("_resume");
+    for (const v of [{ attemptId: "x" }, null, undefined, 0, ""]) {
+      expect(hasReservedParkKey({ ...cart(), _resume: v })).toBe(true);
+    }
+    expect(hasReservedParkKey(cart())).toBe(false);
+    expect(hasReservedParkKey(null)).toBe(false);
+    expect(hasReservedParkKey("_resume")).toBe(false);
+  });
+  it("the whitelist rebuild never copies it, so a stored payload leaves the server without it", () => {
+    const stored = cart({ _resume: { attemptId: "a1" } });
+    expect(ok(stored)).toEqual(cart());
+    expect(JSON.stringify(ok(stored))).not.toContain("_resume");
+  });
+});
 
 describe("sanitizeParkedPayload", () => {
   it("keeps the cart snapshot fields", () => {

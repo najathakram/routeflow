@@ -81,6 +81,8 @@ describeDb("SA-748 — parked counter sales on real Postgres", () => {
         now,
       ),
     );
+  /** A deterministic uuid v4 per resume attempt (the client mints a fresh one per tap). */
+  const attempt = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
   const outcome = <T>(p: Promise<T>) =>
     p.then(
       (value) => ({ ok: true as const, value }),
@@ -184,7 +186,7 @@ describeDb("SA-748 — parked counter sales on real Postgres", () => {
   it("N=10 parallel resumes of one cart: exactly ONE wins, the other nine are 404 PARK_TAKEN", async () => {
     const { id } = await park("A", { registerKey: "race" });
     const results = await Promise.all(
-      actorsA.map((a) => outcome(asA(() => service.resume(id, a as never)))),
+      actorsA.map((a, i) => outcome(asA(() => service.resume(id, attempt(i), a as never)))),
     );
     const wins = results.filter((r) => r.ok);
     const losses = results.filter((r) => !r.ok);
@@ -201,18 +203,75 @@ describeDb("SA-748 — parked counter sales on real Postgres", () => {
     expect(await raw.counterParkedCart.count({ where: { id } })).toBe(1);
   });
 
-  it("the same actor may resume again within 5 minutes (a lost response); another actor and a later retry may not", async () => {
+  it("a retry with the SAME attempt id within 5 minutes re-reads the cart (no _resume in the body); a second till on the same login, another actor, and a late retry get 404 PARK_TAKEN", async () => {
     const { id } = await park("A", { registerKey: "retry", lines: 3 });
-    const first = await asA(() => service.resume(id, actorsA[0] as never));
-    const again = await asA(() => service.resume(id, actorsA[0] as never));
+    const first = await asA(() => service.resume(id, attempt(1), actorsA[0] as never));
+    const again = await asA(() => service.resume(id, attempt(1), actorsA[0] as never));
     expect(again.payload).toEqual(first.payload);
     expect(again.payload.lines).toHaveLength(3);
-    await expect(asA(() => service.resume(id, actorsA[1] as never))).rejects.toMatchObject({
-      response: { code: API_ERROR_CODES.PARK_TAKEN },
-    });
+    expect(JSON.stringify([first, again])).not.toContain("_resume");
+    // till B on the SAME login, a different attempt id: refused (the double-sale hole)
     await expect(
-      asA(() => service.resume(id, actorsA[0] as never, new Date(Date.now() + 6 * 60_000))),
+      asA(() => service.resume(id, attempt(2), actorsA[0] as never)),
     ).rejects.toMatchObject({ response: { code: API_ERROR_CODES.PARK_TAKEN } });
+    await expect(
+      asA(() => service.resume(id, attempt(2), actorsA[1] as never)),
+    ).rejects.toMatchObject({ response: { code: API_ERROR_CODES.PARK_TAKEN } });
+    await expect(
+      asA(() =>
+        service.resume(id, attempt(1), actorsA[0] as never, new Date(Date.now() + 6 * 60_000)),
+      ),
+    ).rejects.toMatchObject({ response: { code: API_ERROR_CODES.PARK_TAKEN } });
+    // the server-reserved key is stored in the row's own JSON and nowhere in a response
+    const row = await raw.counterParkedCart.findUniqueOrThrow({ where: { id } });
+    expect((row.payload as { _resume?: { attemptId?: string } })._resume?.attemptId).toBe(
+      attempt(1),
+    );
+  });
+
+  it("two concurrent resumes with DIFFERENT attempt ids: one 200, one 404 PARK_TAKEN", async () => {
+    const { id } = await park("A", { registerKey: "race-attempts" });
+    const [x, y] = await Promise.all([
+      outcome(asA(() => service.resume(id, attempt(3), actorsA[0] as never))),
+      outcome(asA(() => service.resume(id, attempt(4), actorsA[0] as never))),
+    ]);
+    expect([x.ok, y.ok].filter(Boolean)).toHaveLength(1);
+    const loser = x.ok ? y : x;
+    expect(loser.ok === false && codeOf(loser.error)).toBe(API_ERROR_CODES.PARK_TAKEN);
+  });
+
+  it("park -> resume -> park the same id again is 409 PARK_ID_CONFLICT, never replayed: true", async () => {
+    const { id } = await park("A", { registerKey: "replay-closed" });
+    await asA(() => service.resume(id, attempt(5), actorsA[0] as never));
+    const e = await outcome(park("A", { id, registerKey: "replay-closed" }));
+    expect(e.ok).toBe(false);
+    expect(e.ok === false && (e.error as { status?: number }).status).toBe(409);
+    expect(e.ok === false && codeOf(e.error)).toBe(API_ERROR_CODES.PARK_ID_CONFLICT);
+    // an expired row is closed too
+    const old = await park("A", { registerKey: "replay-closed" });
+    const e2 = await outcome(
+      park(
+        "A",
+        { id: old.id, registerKey: "replay-closed" },
+        undefined,
+        new Date(Date.now() + 25 * H),
+      ),
+    );
+    expect(e2.ok === false && codeOf(e2.error)).toBe(API_ERROR_CODES.PARK_ID_CONFLICT);
+  });
+
+  it("a park whose payload names the server-reserved _resume key is a 400 and stores nothing", async () => {
+    const id = randomUUID();
+    const e = await outcome(
+      asA(() =>
+        service.park(
+          { id, payload: { ...payload(1), _resume: { attemptId: attempt(6) } } } as never,
+          actorsA[0] as never,
+        ),
+      ),
+    );
+    expect(e.ok === false && (e.error as { status?: number }).status).toBe(400);
+    expect(await raw.counterParkedCart.count({ where: { id } })).toBe(0);
   });
 
   it("15 parallel parks on one register: exactly 10 rows, the other 5 are 409 PARK_LIMIT (the advisory lock holds)", async () => {
@@ -300,7 +359,9 @@ describeDb("SA-748 — parked counter sales on real Postgres", () => {
     const { id } = await park("A", { registerKey: "expiry" });
     const later = new Date(Date.now() + 25 * H);
     expect((await asA(() => service.list({ register: "expiry" }, later))).total).toBe(0);
-    await expect(asA(() => service.resume(id, actorsA[0] as never, later))).rejects.toMatchObject({
+    await expect(
+      asA(() => service.resume(id, attempt(0), actorsA[0] as never, later)),
+    ).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.PARK_TAKEN },
     });
     expect((await asA(() => service.list({ register: "expiry" }))).total).toBe(1);
@@ -325,7 +386,9 @@ describeDb("SA-748 — parked counter sales on real Postgres", () => {
         expiresAt: new Date(Date.now() + 3_600_000),
       },
     });
-    await expect(asA(() => service.resume(stale, actorsA[0] as never))).rejects.toMatchObject({
+    await expect(
+      asA(() => service.resume(stale, attempt(0), actorsA[0] as never)),
+    ).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.PARK_TAKEN },
     });
     const row = await raw.counterParkedCart.findUnique({ where: { id: stale } });
@@ -340,7 +403,7 @@ describeDb("SA-748 — parked counter sales on real Postgres", () => {
   it("discard: only an unresumed cart of this tenant", async () => {
     const mine = await park("A", { registerKey: "discard" });
     const resumed = await park("A", { registerKey: "discard" });
-    await asA(() => service.resume(resumed.id, actorsA[0] as never));
+    await asA(() => service.resume(resumed.id, attempt(0), actorsA[0] as never));
     await expect(asB(() => service.discard(mine.id))).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.PARK_TAKEN },
     });
@@ -357,7 +420,7 @@ describeDb("SA-748 — parked counter sales on real Postgres", () => {
   it("tenant isolation: another tenant cannot list, resume or discard this tenant's carts", async () => {
     const { id } = await park("A", { registerKey: "iso" });
     expect((await asB(() => service.list({ register: "iso" }))).total).toBe(0);
-    await expect(asB(() => service.resume(id, actorB as never))).rejects.toMatchObject({
+    await expect(asB(() => service.resume(id, attempt(0), actorB as never))).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.PARK_TAKEN },
     });
     await expect(asB(() => service.discard(id))).rejects.toMatchObject({

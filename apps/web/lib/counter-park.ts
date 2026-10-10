@@ -52,6 +52,8 @@ export function parkErrorCopy(err: unknown): string {
       ? PARK_TENANT_LIMIT_COPY
       : PARK_LIMIT_COPY;
   }
+  // PARK_ID_CONFLICT: the id names a row this park may not replay. Nothing was saved; the next try mints a new id.
+  if (status === 409 && code === API_ERROR_CODES.PARK_ID_CONFLICT) return PARK_FAILED_COPY;
   if (status === 413) return PARK_TOO_BIG_COPY;
   if (status === 400) return PARK_INVALID_COPY;
   return PARK_FAILED_COPY;
@@ -96,16 +98,16 @@ export function isStaleParked(createdAtIso: string, nowMs: number = Date.now()):
   return Number.isFinite(t) && nowMs - t > COUNTER_PARK_STALE_HOURS * 3_600_000;
 }
 
-/** "2:41 PM" in the business's zone (the browser's own zone when none, or when the zone name is not valid). */
+/** "2:41 PM" in the business's zone. UTC when there is none or its name is not valid, never the browser's own zone (SA-738). */
 export function formatParkedTime(iso: string, timeZone?: string | null): string {
-  const fmt = (tz?: string) =>
+  const fmt = (tz: string) =>
     new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz }).format(
       new Date(iso),
     );
   try {
-    return fmt(timeZone || undefined);
+    return fmt(timeZone || "UTC");
   } catch {
-    return fmt();
+    return fmt("UTC");
   }
 }
 
