@@ -23,6 +23,11 @@ import {
   isOwed,
   type StatusTransition,
 } from "./dunning-core";
+import {
+  type DiscoveryOptions,
+  type DiscoveryOutcome,
+  discoverUnstamped,
+} from "./dunning-discovery";
 import { runMilestones } from "./dunning-milestones";
 import {
   clearPauseCollection,
@@ -34,6 +39,7 @@ import {
 } from "./dunning-pause";
 import { resolveClockInvoice, type ResolveOutcome } from "./dunning-resolve";
 import { hoursSince, pauseHourReached } from "./dunning-time";
+import { stampClock } from "./dunning-stamp";
 import { dunningZone } from "./dunning-zone";
 import { stripeInvoiceSubscriptionId } from "./stripe-period";
 import { StripeService } from "./stripe.service";
@@ -124,15 +130,7 @@ export class DunningService {
     const facts = await this.stripe.getInvoiceFacts(invoiceId);
     if (!isOwed(facts) || facts.paymentProcessing) return "not_owed";
 
-    const stamped = await this.prisma.$transaction(async (tx) => {
-      await lockTenantForLedger(tx, row.tenantId);
-      const r = await tx.tenantSubscription.updateMany({
-        // The older clock wins: a second invoice failing while one is owed leaves it where it is.
-        where: { tenantId: row.tenantId, pastDueInvoiceId: null, catchupState: null },
-        data: { pastDueSince: now, pastDueInvoiceId: invoiceId },
-      });
-      return r.count === 1;
-    });
+    const stamped = await stampClock(this.deps(), row.tenantId, invoiceId, now);
     if (!stamped) return "unchanged";
     this.logger.warn(`billing.dunning.stamped tenant=${row.tenantId} invoice=${invoiceId}`);
 
@@ -319,6 +317,19 @@ export class DunningService {
       );
     }
     return "paused";
+  }
+
+  // ─── the daily discovery sweep ────────────────────────────────────────────
+
+  /** SA-733r M2: open invoices Stripe never attempted raise no payment_failed; stamp them once a day at 04:00. */
+  @LeaderCron("0 4 * * *", "billing.dunningDiscovery")
+  async dunningDiscovery(): Promise<void> {
+    await this.discover(new Date());
+  }
+
+  discover(now: Date, opts: DiscoveryOptions = {}): Promise<DiscoveryOutcome> {
+    if (!this.stripe.isConfigured) return Promise.resolve({ tenants: 0, stamped: 0, failed: 0 });
+    return discoverUnstamped(this.deps(), now, opts);
   }
 
   // ─── pause_collection reconciler ──────────────────────────────────────────

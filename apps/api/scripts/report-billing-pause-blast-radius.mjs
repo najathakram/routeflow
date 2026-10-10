@@ -18,6 +18,18 @@
  *   - OUT OF SCOPE (listed so nobody is surprised): ACTIVE tenants with no `stripeSubId`, manual-pay tenants, and
  *     tenants whose catch-up claim is held. The sweep never sees them.
  *
+ * WHAT THIS REPORT CANNOT SEE (it is SELECT-only and never calls Stripe):
+ *   - open invoices Stripe never attempted: the daily discovery sweep (`billing.dunningDiscovery`, 04:00) finds and
+ *     stamps them. The report counts the POPULATION discovery will read (Stripe-billed, not manual-pay, no clock,
+ *     no catch-up claim) - an upper bound, not the number it will stamp. After a `dark` day, count the
+ *     `billing.dunning.discovered` log lines for the real figure.
+ *   - subscriptions whose Stripe `pause_collection` is set but local state does not know it (for example a pause set
+ *     by hand in the Stripe dashboard). In `off` / `dark` the reconciler and the invoice.paid heal do NOT remove
+ *     them; each logs `billing.dunning.would_unpause tenant=<id> sub=<id>` instead. Those log lines are the signal;
+ *     review them before flipping to `enforced`, which WILL remove an unknown pause.
+ *   - ACTIVE tenants that tried a plan change while an invoice was owed: in `dark` each logs
+ *     `billing.dunning.would_refuse code=PAYMENT_OVERDUE tenant=<id> entryPoint=<name>`; count those lines.
+ *
  * SAFETY (this script must never be able to touch a client database):
  *   - `default_transaction_read_only = on` is set on the session before any other query runs, so the server itself
  *     rejects a write even if one slipped past review.
@@ -115,6 +127,18 @@ async function main() {
       ORDER BY t.slug ASC`,
   );
 
+  // The population the daily discovery sweep will read (it lists each one's open invoices in Stripe; we cannot).
+  const [{ n: discoveryPopulation }] = await q(
+    `SELECT COUNT(*)::int AS n
+       FROM "TenantSubscription" s
+       JOIN "Tenant" t ON t.id = s."tenantId"
+      WHERE s."stripeSubId" IS NOT NULL
+        AND s."externalPayment" = false
+        AND s."catchupState" IS NULL
+        AND s."pastDueInvoiceId" IS NULL
+        AND t."deletedAt" IS NULL`,
+  );
+
   const wouldPause = stamped.filter((r) => r.onFlip.startsWith("pause after")).length;
   const summary = {
     eligibleTenants: eligible.length,
@@ -122,6 +146,7 @@ async function main() {
     pausedNow: alreadyPaused.length,
     wouldReceiveFinalNoticeOnFlip: wouldPause,
     outOfScopeActive: outOfScope.length,
+    discoveryPopulation, // an upper bound: the discovery sweep reads Stripe, this report cannot
   };
 
   if (json) {
@@ -142,6 +167,13 @@ async function main() {
     console.log("\nACTIVE tenants the sweep never sees:");
     console.table(outOfScope);
   }
+  console.log(
+    "\nLIMITS: this report cannot call Stripe. discoveryPopulation is the number of tenants the daily discovery" +
+      " sweep will LIST (an upper bound for what it stamps). A Stripe pause_collection set by hand and not known" +
+      " locally is invisible here: in off/dark the reconciler logs `billing.dunning.would_unpause`, and in dark the" +
+      " plan changes that enforced would refuse log `billing.dunning.would_refuse` - read those log lines before" +
+      " flipping to enforced.",
+  );
   console.log(
     `\n${wouldPause} tenant(s) would get the final notice on the first enforced sweep and be paused no sooner than 24 h later.\n`,
   );

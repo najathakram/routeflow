@@ -189,6 +189,14 @@ describe("SA-733r7 PR-B3 structural pins", () => {
       );
     });
 
+    it("states what it cannot see and names the log signals (it never calls Stripe)", () => {
+      expect(script).toMatch(/discoveryPopulation/);
+      expect(script).toMatch(/billing\.dunning\.would_unpause/);
+      expect(script).toMatch(/billing\.dunning\.would_refuse/);
+      expect(script).toMatch(/cannot call Stripe/);
+      expect(script).not.toMatch(/require\(["']stripe/i);
+    });
+
     it("never hardcodes a tenant or a connection string", () => {
       expect(script).not.toMatch(/postgres(ql)?:\/\//i);
       expect(script).toMatch(/resolveReportDbUrl\("report-billing-pause-blast-radius"\)/);

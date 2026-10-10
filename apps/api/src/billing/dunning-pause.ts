@@ -1,6 +1,7 @@
 import { lockTenantForLedger } from "./addon-ledger";
 import { HOUR_MS, PAYMENT_OVERDUE_REASON, READ_ONLY_STATUS } from "./dunning-config";
 import { type DunningDeps, type DunningRow, isStripeMissing } from "./dunning-core";
+import { forEachRotated } from "./dunning-paging";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import type { PauseExit } from "./transition-to-active";
 
@@ -149,55 +150,20 @@ export async function reconcilePauseCollection(
   runAt: Date,
   opts: ReconcileOptions = {},
 ): Promise<ReconcileOutcome> {
-  const maxRows = opts.maxRows ?? 2000;
-  const batchSize = opts.batchSize ?? 200;
-  const deadline = Date.now() + (opts.timeBudgetMs ?? 10 * 60_000);
   const mode = deps.mode();
   const out: ReconcileOutcome = { checked: 0, corrected: 0, failed: 0 };
-
-  const total = await deps.prisma.tenantSubscription.count({ where: RECONCILE_WHERE });
-  if (total === 0) return out;
-  const budget = Math.min(total, maxRows);
-  const startIdx = total > budget ? (Math.floor(runAt.getTime() / HOUR_MS) * budget) % total : 0;
-  const startAt =
-    startIdx === 0
-      ? null
-      : ((
-          await deps.prisma.tenantSubscription.findMany({
-            where: RECONCILE_WHERE,
-            select: { tenantId: true },
-            orderBy: { tenantId: "asc" },
-            skip: startIdx - 1,
-            take: 1,
-          })
-        )[0]?.tenantId ?? null);
-
-  let processed = 0;
-  const page = async (cursor: string | null, upTo: string | null): Promise<string | null> => {
-    let last = cursor;
-    while (processed < budget && Date.now() < deadline) {
-      const rows = await deps.prisma.tenantSubscription.findMany({
-        where: {
-          ...RECONCILE_WHERE,
-          ...(last || upTo
-            ? { tenantId: { ...(last ? { gt: last } : {}), ...(upTo ? { lte: upTo } : {}) } }
-            : {}),
-        },
-        select: { tenantId: true, stripeSubId: true },
-        orderBy: { tenantId: "asc" },
-        take: Math.min(batchSize, budget - processed),
-      });
-      if (rows.length === 0) break;
-      for (const r of rows) {
-        processed++;
-        await reconcileOne(deps, r, runAt, mode, out);
-      }
-      last = rows[rows.length - 1].tenantId;
-    }
-    return last;
-  };
-  await page(startAt, null); // from the start row to the end of the keyset
-  if (startAt && processed < budget) await page(null, startAt); // wrap to the beginning, up to the start row
+  await forEachRotated(
+    deps.prisma,
+    RECONCILE_WHERE,
+    runAt,
+    {
+      maxRows: opts.maxRows ?? 2000,
+      batchSize: opts.batchSize ?? 200,
+      timeBudgetMs: opts.timeBudgetMs ?? 10 * 60_000,
+      unitMs: HOUR_MS,
+    },
+    (r) => reconcileOne(deps, r, runAt, mode, out),
+  );
   return out;
 }
 
