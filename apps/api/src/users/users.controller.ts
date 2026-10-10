@@ -22,19 +22,23 @@ import { CreateOperatorDto } from "./dto/create-operator.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { ChangeUserStatusDto } from "./dto/change-user-status.dto";
 import { PreferencesBodyPipe } from "./dto/update-preferences.dto";
+import { OperatorPermissionsService } from "../auth/permissions/operator-permissions.service";
 
 @ApiTags("users")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller("users")
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly permissions: OperatorPermissionsService,
+  ) {}
 
   @Get()
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
-  findAll(@Query() query: ListUsersDto) {
-    return this.usersService.findAll(query);
+  findAll(@Query() query: ListUsersDto, @CurrentUser() user: JwtPayload) {
+    return this.usersService.findAll(query, user.role);
   }
 
   @Post("operator")
@@ -47,6 +51,12 @@ export class UsersController {
   @Get("me")
   getMe(@CurrentUser() user: JwtPayload) {
     return this.usersService.findById(user.sub);
+  }
+
+  /** The caller's feature groups (any authenticated staff role). Declared before `:id` so it is not shadowed. */
+  @Get("me/permissions")
+  getMyPermissions(@CurrentUser() user: JwtPayload) {
+    return this.permissions.mine(user);
   }
 
   @Get("me/preferences")

@@ -352,6 +352,24 @@ describe("ProductsService: every parent write goes through it (B1211)", () => {
       expect(prisma.product.update.mock.calls[0][0].data).not.toHaveProperty("kind");
     });
 
+    it("moving a VARIANT from a FAMILY to a STANDARD parent resets its kind to STANDARD (no orphan VARIANT)", async () => {
+      seed({ std: { ...FAMILY, id: "std", kind: "STANDARD" } });
+      prisma.product.findUnique.mockResolvedValue({
+        ...PRODUCT,
+        parentProductId: "fam",
+        kind: "VARIANT",
+      });
+      const lookup = prisma.product.findFirst.getMockImplementation()!;
+      prisma.product.findFirst.mockImplementation(async (args: { where?: { id?: string } }) =>
+        args?.where?.id === "prod-1" ? { parentProductId: "fam", unitsPerBox: null } : lookup(args),
+      );
+      await service.update("prod-1", { parentProductId: "std" } as never);
+      expect(prisma.product.update.mock.calls[0][0].data).toMatchObject({
+        parentProductId: "std",
+        kind: "STANDARD",
+      });
+    });
+
     it("an echo of the CURRENT parent is not re-judged (an archived family must not block editing its variants)", async () => {
       prisma.product.findUnique.mockResolvedValue({
         ...PRODUCT,

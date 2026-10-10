@@ -64,6 +64,8 @@ export const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  // B1211: the buyer order gate is tenant-scoped, so a buyer's token carries its tenant (the mock prisma's).
+  tenantId: "test-tenant",
 };
 /** The buyer pseudo-user (`makePseudoUser`): role CUSTOMER, stamped `type: "BUYER"`. */
 export const buyerPseudoUser = { ...customerPayload, type: "BUYER" as const };

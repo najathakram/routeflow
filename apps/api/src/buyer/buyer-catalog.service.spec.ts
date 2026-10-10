@@ -14,10 +14,11 @@ import {
 } from "../orders/buyer-backorder-view";
 import { PromotionsService } from "../promotions/promotions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
+import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
 
 // The one shared buyer-visibility clause getCatalog always appends to findAll's andWhere.
-const VIS = buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS);
+// The mock prisma's tenant ("test-tenant") scopes the parent filters (B1211).
+const VIS = buyerVisibleProductWhere(noBuyerRestrictions("test-tenant"));
 
 describe("BuyerCatalogService — W7 visibility gate", () => {
   let service: BuyerCatalogService;
@@ -123,6 +124,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      tenantId: "test-tenant",
       kind: "STANDARD",
       portalVisible: true,
       parent: null,
@@ -169,6 +171,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
   describe("OOS PR2: the detail uses the SAME view as the listing (tile <-> detail parity)", () => {
     const oosProduct = () => ({
       id: "p1",
+      tenantId: "test-tenant",
       kind: "STANDARD",
       portalVisible: true,
       parent: null,
@@ -218,6 +221,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([{ productId: "v1", pricingTier: 3 }]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      tenantId: "test-tenant",
       kind: "STANDARD",
       portalVisible: true,
       parent: null,
@@ -256,6 +260,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      tenantId: "test-tenant",
       kind: "STANDARD",
       portalVisible: true,
       parent: null,
