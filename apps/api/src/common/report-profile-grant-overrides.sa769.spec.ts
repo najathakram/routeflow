@@ -67,6 +67,23 @@ describe("report-profile-grant-overrides.mjs", () => {
     expect(reportSrc).toContain('o."featureKey" = ANY($1::text[])');
   });
 
+  it("classifies a profile apply through its BUSINESS_PROFILE_APPLIED audit row; the reason prefix is only a secondary signal and unknown is not called hand-made", () => {
+    // the controller writes `dto.reason?.trim() || resolved.reason`: a custom reason hides the prefix
+    expect(reportSrc).toContain("g.action = 'BUSINESS_PROFILE_APPLIED'");
+    expect(reportSrc).toContain("jsonb_array_elements(COALESCE(g.meta -> 'plan' -> 'overrides'");
+    expect(reportSrc).toContain("e ->> 'effect' = 'GRANT'");
+    expect(reportSrc).toContain("e ->> 'action' IN ('create', 'replace')");
+    expect(reportSrc).toContain('g."tenantId" = o."tenantId"');
+    expect(reportSrc).toContain("auditMatch");
+    expect(reportSrc).toContain("prefixMatch");
+    const code = codeOf(reportSrc);
+    expect(code).toMatch(
+      /auditMatch === true \|\| r\.prefixMatch === true \? "profile-apply" : "unknown"/,
+    );
+    expect(code).not.toContain("handMade");
+    expect(code).toMatch(/LIMITS: origin=unknown is NOT proof of a hand-made override/);
+  });
+
   it("prints tenant id, module and override id only: never a name, slug, email, user id or the free-text reason", () => {
     const code = codeOf(reportSrc);
     expect(code).not.toMatch(/\bt\.(slug|name)\b|"createdById"|\bemail\b/);
