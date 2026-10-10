@@ -78,7 +78,14 @@ export interface SubscriptionView<TDate = string> {
   /** The card autopay will charge (brand / last4 / expiry); null when none or not a card. */
   paymentMethodSummary?: PaymentMethodSummary | null;
   /** What the next renewal charges and when (dollars, ISO date). */
-  nextCharge?: { amount: number; date: TDate } | null;
+  nextCharge?: { amount: number; date: TDate; dateLabel?: string } | null;
+  /** The month the failed charge was for ("November") and the grace deadline ("Nov 8"), formatted by the SERVER in
+   *  the tenant's zone - render verbatim, never re-derive a date in the browser's zone. */
+  pastDueMonthLabel?: string | null;
+  graceEndsLabel?: string | null;
+  /** True only when the server will really pause an unpaid workspace (BILLING_PAUSE_MODE=enforced). In dark / off the
+   *  banner never threatens a read-only date. */
+  pauseEnforced?: boolean;
 }
 
 /** The autopay card shown on the Billing card ("Your Visa ending 4242 expires Oct 31"). */
@@ -92,7 +99,8 @@ export interface PaymentMethodSummary {
 /** `POST /billing/portal` (TENANT_ADMIN): the Stripe portal to update the card, and - while an invoice is
  *  owed - its hosted page to pay it. */
 export interface BillingPortalResult {
-  portalUrl: string;
+  /** Null when only the pay link could be produced (a portal outage never loses the pay link). */
+  portalUrl: string | null;
   hostedInvoiceUrl: string | null;
 }
 

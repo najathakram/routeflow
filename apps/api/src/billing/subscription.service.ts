@@ -10,6 +10,7 @@ import {
   INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
 } from "./plan-catalog.constants";
 import { computeServedFlags } from "./plan-flag-policy";
+import { billingPauseMode } from "./dunning-config";
 import { FeatureOverrideService } from "./feature-override.service";
 import {
   EMPTY_BILLING_VIEW_EXTRAS,
@@ -142,6 +143,11 @@ export class SubscriptionService {
       openInvoiceAmount: extras.openInvoiceAmount,
       paymentMethodSummary: extras.paymentMethodSummary,
       nextCharge: extras.nextCharge,
+      pastDueMonthLabel: extras.pastDueMonthLabel,
+      graceEndsLabel: extras.graceEndsLabel,
+      // B2: only the SERVER knows whether a pause will really happen (BILLING_PAUSE_MODE=enforced). In dark / off the
+      // banner never threatens a read-only date.
+      pauseEnforced: billingPauseMode() === "enforced",
     };
   }
 
