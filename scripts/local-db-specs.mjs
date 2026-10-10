@@ -16,10 +16,15 @@
 // purpose (for debugging) and prints the name.
 //
 // Usage: node scripts/local-db-specs.mjs [--keep] -- "<command string>"
-import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  HeavySlotTimeout,
+  TIMEOUT_EXIT_CODE,
+  spawnAsync,
+  withHeavySlot,
+} from "./lib/heavy-slot.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const API_DIR = path.join(REPO_ROOT, "apps", "api");
@@ -120,8 +125,9 @@ async function main() {
   }
   console.log(`${TAG}: created ${name}`);
 
-  // Ctrl-C reaches the child too; spawnSync defers this handler until the child has exited, so
-  // the drop below still runs.
+  // Ctrl-C reaches the child too. This handler only records it and lets the awaited child (and the
+  // heavy-slot wait, which sees the signal too) wind down; because another listener exists,
+  // withHeavySlot leaves the exit decision to us, so the drop below still runs.
   let interrupted = false;
   const onSignal = () => {
     interrupted = true;
@@ -137,20 +143,27 @@ async function main() {
     env.DATABASE_URL = connectionUrl(composeConnection(process.env, name));
     env.RUN_DB_SPECS = "local";
 
-    const migrate = spawnSync("npx prisma migrate deploy", {
-      cwd: API_DIR,
-      shell: true,
-      stdio: "inherit",
-      env,
-    });
-    if (migrate.status !== 0 || interrupted) {
-      console.error(`${TAG}: migrate deploy failed on ${name}; not running the specs`);
-      status = migrate.status || 1;
-    } else {
-      const run = spawnSync(opts.command, { shell: true, stdio: "inherit", env });
+    // migrate + the spec run are ONE heavy-slot hold (awaited async spawns so the heartbeat runs).
+    status = await withHeavySlot({ label: "local:test:db" }, async (ctx) => {
+      if (ctx?.token) env.RF_HEAVY_SLOT_TOKEN = ctx.token;
+      const migrate = await spawnAsync("npx prisma migrate deploy", [], {
+        cwd: API_DIR,
+        shell: true,
+        stdio: "inherit",
+        env,
+      });
+      if (migrate.status !== 0 || interrupted) {
+        console.error(`${TAG}: migrate deploy failed on ${name}; not running the specs`);
+        return migrate.status || 1;
+      }
+      const run = await spawnAsync(opts.command, [], { shell: true, stdio: "inherit", env });
       if (run.error) console.error(`${TAG}: ${run.error.message}`);
-      status = run.status ?? 1;
-    }
+      return run.status ?? 1;
+    });
+  } catch (e) {
+    // The slot wait ran out (or was interrupted): nothing ran. Still drop the database below.
+    console.error(e instanceof Error ? e.message : String(e));
+    status = e instanceof HeavySlotTimeout ? TIMEOUT_EXIT_CODE : 1;
   } finally {
     if (opts.keep) {
       console.log(`${TAG}: --keep: left ${name} in place`);

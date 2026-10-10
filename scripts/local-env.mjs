@@ -12,6 +12,12 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  spawnAsync,
+  withHeavySlot,
+  HeavySlotTimeout,
+  TIMEOUT_EXIT_CODE,
+} from "./lib/heavy-slot.mjs";
 import { loadLocalSaEnv } from "./lib/local-sa-env.mjs";
 import {
   STACK_IMAGES,
@@ -209,9 +215,33 @@ if (flags.has("--proof-stack")) {
   }
 }
 
-const res = spawnSync(command, { shell: true, stdio: "inherit", env });
-if (res.error) {
-  console.error(`local-env: ${res.error.message}`);
-  process.exit(1);
+// Docker image builds (--build-sha) and the Playwright lane (--e2e) are the heavy modes: they take
+// the machine-wide heavy-job slot (scripts/lib/heavy-slot.mjs) so they never run beside a verify or
+// another build on a shared host. The light modes (--db, --smoke, --proof-stack alone, --smtp-specs,
+// --db-specs) run immediately. The wrapped command is an AWAITED async spawn (spawnSync would block
+// the event loop, and with it the slot heartbeat); env, exit status and signal behaviour are the
+// same as before: a spawn error exits 1, a signal-killed child (status null) exits 1.
+async function runWrapped(ctx) {
+  if (ctx?.token) env.RF_HEAVY_SLOT_TOKEN = ctx.token;
+  const res = await spawnAsync(command, [], { shell: true, stdio: "inherit", env });
+  if (res.error) {
+    console.error(`local-env: ${res.error.message}`);
+    return 1;
+  }
+  return res.status ?? 1;
 }
-process.exit(res.status ?? 1);
+
+let code;
+try {
+  code =
+    flags.has("--build-sha") || flags.has("--e2e")
+      ? await withHeavySlot(
+          { label: `local:${command.trim().split(/\s+/)[0] || "cmd"}` },
+          runWrapped,
+        )
+      : await runWrapped();
+} catch (e) {
+  console.error(e instanceof Error ? e.message : String(e));
+  code = e instanceof HeavySlotTimeout ? TIMEOUT_EXIT_CODE : 1;
+}
+process.exit(code);
