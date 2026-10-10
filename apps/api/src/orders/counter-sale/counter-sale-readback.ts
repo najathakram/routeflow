@@ -19,6 +19,23 @@ export type InvoiceRow = {
 export const isTender = (p: { method?: string; status?: string }) =>
   p.status !== "VOID" && p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE";
 
+/**
+ * SA-764: the change a reprint shows, from STORAGE alone: the stored cash tendered less the sale's OWN original
+ * counter-tender CASH rows (the shared `isTender`: never a credit-note / advance application, never a voided
+ * row, never "today's cash" or a method roll-up), so later rows can not move it. null when nothing was
+ * tendered or no cash tender exists. Not clamped; every figure is rounded to the cent.
+ */
+export function storedChange(
+  tendered: unknown,
+  payments: Array<{ amount: unknown; method?: string; status?: string }>,
+): number | null {
+  if (tendered == null) return null;
+  const cash = payments.filter((p) => isTender(p) && p.method === "CASH");
+  if (cash.length === 0) return null;
+  const cashTotal = roundMoney(cash.reduce((sum, p) => sum + Number(p.amount), 0));
+  return roundMoney(roundMoney(Number(tendered)) - cashTotal);
+}
+
 /** The counter method of a stored tender (Prisma CREDIT_CARD reads back as CARD); undefined for any other. */
 export function counterMethodOf(
   prismaMethod: string | undefined,
@@ -85,7 +102,9 @@ export function buildCounterSaleResponse(input: {
   const owed = tendered != null ? roundMoney(tendered - cashPaid) : 0;
   // Change is handed back ONLY once the STORED balance is fully covered: this call's tender against stored
   // cash is otherwise money still owed (a replay must never read an unpaid sibling's share as change).
-  const change = method === "CASH" && balanceDue <= 0 && owed > 0 ? owed : undefined;
+  const stored = storedChange(order.counterCashTendered, payments);
+  const change =
+    method === "CASH" && balanceDue <= 0 ? (stored ?? (owed > 0 ? owed : undefined)) : undefined;
 
   return {
     orderId: order.id,

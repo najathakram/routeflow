@@ -204,7 +204,7 @@ export class CounterSaleService {
       try {
         const locked = await withAdvisoryLock(
           { family: "counter-tender", key: orderId, mode: "wait" },
-          () => this.tender(dto, orderId, replayed),
+          () => this.tender(dto, orderId),
         );
         if (!locked.acquired) throw new LockTimeoutError("counter-tender", orderId, 0);
         ({ invoices, planError } = locked.value);
@@ -219,7 +219,20 @@ export class CounterSaleService {
       }
     }
 
-    return buildCounterSaleResponse({ payment: dto.payment, order, invoices, replayed, planError });
+    // SA-764: the stored tendered as the tender left it (the pre-tender read above may hold a stale figure).
+    const tendered =
+      method === "CASH"
+        ? await this.prisma
+            .forTenant()
+            .order.findFirst({ where: { id: orderId }, select: { counterCashTendered: true } })
+        : null;
+    return buildCounterSaleResponse({
+      payment: dto.payment,
+      order: order && { ...order, counterCashTendered: tendered?.counterCashTendered },
+      invoices,
+      replayed,
+      planError,
+    });
   }
 
   /**
@@ -287,7 +300,6 @@ export class CounterSaleService {
   private async tender(
     dto: CounterSaleDto,
     orderId: string,
-    replayed: boolean,
   ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
@@ -312,41 +324,51 @@ export class CounterSaleService {
       // A refusal only stands when nothing was taken yet: a stored tender means a payment already went in.
       if (!invoices.some((i) => (i.payments ?? []).some(isTender))) planError = plan.code;
     } else if (plan.kind === "pay") {
-      try {
-        for (const part of allocateOldestFirst(balances, plan.amount)) {
-          const row = invoices.find((i) => i.id === part.invoiceId)!;
-          const stored = roundMoney(
-            (row.payments ?? [])
-              .filter((p) => isTender(p))
-              .reduce((sum, p) => sum + Number(p.amount), 0),
-          );
-          const due = roundMoney(
-            Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
-          );
-          if (due <= 0) continue;
-          await this.invoices.recordPayment(part.invoiceId, {
-            amount: due,
-            method: toPrismaMethod(method)!,
-            reference: dto.payment.reference,
-          } as never);
-        }
-      } catch (e) {
-        this.logger.warn(
-          `counter sale ${orderId}: payment not recorded (${(e as Error)?.message ?? e})`,
+      // SA-764: the CASH handed over is stored BEFORE any money moves, so a paid sale can never lack its tender.
+      // Until a CASH tender row anchors it the amount is overwritten (a failed first attempt's stale figure must
+      // not survive a retry); once one exists it is frozen (only a NULL is filled). Same lock, no transaction.
+      if (method === "CASH") {
+        const anchored = invoices.some((i) =>
+          (i.payments ?? []).some((p) => isTender(p) && p.method === "CASH"),
         );
-        planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
-      }
-      // SA-764: a NEW sale's CASH handed over, once (the NULL filter keeps any later write idempotent).
-      if (!planError && !replayed && method === "CASH") {
-        await this.prisma
-          .forTenant()
-          .order.updateMany({
-            where: { id: orderId, counterCashTendered: null },
+        try {
+          await this.prisma.forTenant().order.updateMany({
+            where: anchored ? { id: orderId, counterCashTendered: null } : { id: orderId },
             data: { counterCashTendered: roundMoney(plan.tendered) },
-          })
-          .catch((e: Error) =>
-            this.logger.warn(`counter sale ${orderId}: cash tendered not stored (${e?.message})`),
+          });
+        } catch (e) {
+          this.logger.warn(
+            `counter sale ${orderId}: cash tendered not stored (${(e as Error)?.message ?? e})`,
           );
+          planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+        }
+      }
+      // A tender that could not be stored takes NO money: the payment loop is skipped entirely.
+      if (!planError) {
+        try {
+          for (const part of allocateOldestFirst(balances, plan.amount)) {
+            const row = invoices.find((i) => i.id === part.invoiceId)!;
+            const stored = roundMoney(
+              (row.payments ?? [])
+                .filter((p) => isTender(p))
+                .reduce((sum, p) => sum + Number(p.amount), 0),
+            );
+            const due = roundMoney(
+              Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
+            );
+            if (due <= 0) continue;
+            await this.invoices.recordPayment(part.invoiceId, {
+              amount: due,
+              method: toPrismaMethod(method)!,
+              reference: dto.payment.reference,
+            } as never);
+          }
+        } catch (e) {
+          this.logger.warn(
+            `counter sale ${orderId}: payment not recorded (${(e as Error)?.message ?? e})`,
+          );
+          planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+        }
       }
       invoices = await this.readInvoices(orderId);
     }

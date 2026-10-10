@@ -67,6 +67,7 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
   let productId = "";
   let invoiceSeq = 0;
   let lineRates: string[] = ["0.0825", "0.0825"];
+  let failNextPayment = false;
 
   const staff = (): JwtPayload =>
     ({
@@ -135,6 +136,10 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
     invoiceId: string,
     dto: { amount: number; method: "CASH" | "CREDIT_CARD" | "CHECK"; reference?: string },
   ) => {
+    if (failNextPayment) {
+      failNextPayment = false;
+      throw new Error("payment pipeline unavailable");
+    }
     await raw.invoicePayment.create({
       data: {
         invoiceId,
@@ -225,10 +230,16 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
     ).id;
   }, 120_000);
 
-  afterAll(async () => {
-    const ids = (await raw.order.findMany({ where: { tenantId }, select: { id: true } })).map(
-      (o) => o.id,
-    );
+  /** Everything one throwaway tenant owns here, deleted children-first (what the first tenant's afterAll always did). */
+  const purge = async (t: {
+    tenantId: string;
+    productId: string;
+    customerId: string;
+    users: string[];
+  }) => {
+    const ids = (
+      await raw.order.findMany({ where: { tenantId: t.tenantId }, select: { id: true } })
+    ).map((o) => o.id);
     const invoiceIds = (
       await raw.invoice.findMany({ where: { orderId: { in: ids } }, select: { id: true } })
     ).map((i) => i.id);
@@ -236,14 +247,21 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
     await raw.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
     await raw.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
     await raw.orderIdempotencyKey.deleteMany({ where: { orderId: { in: ids } } }).catch(() => {});
-    await raw.stockMovement.deleteMany({ where: { productId } });
+    await raw.stockMovement.deleteMany({ where: { productId: t.productId } });
     await raw.orderItem.deleteMany({ where: { orderId: { in: ids } } });
     await raw.order.deleteMany({ where: { id: { in: ids } } });
-    await raw.product.deleteMany({ where: { id: productId } });
-    await raw.customer.deleteMany({ where: { id: customerId } });
-    await raw.systemConfig.deleteMany({ where: { tenantId } });
-    await raw.user.deleteMany({ where: { id: { in: [operatorId, customerUserId] } } });
-    await raw.tenant.deleteMany({ where: { id: tenantId } });
+    await raw.product.deleteMany({ where: { id: t.productId } });
+    await raw.customer.deleteMany({ where: { id: t.customerId } });
+    await raw.systemConfig.deleteMany({ where: { tenantId: t.tenantId } });
+    await raw.user.deleteMany({ where: { id: { in: t.users } } });
+    await raw.tenant.deleteMany({ where: { id: t.tenantId } });
+  };
+  let other: { tenantId: string; productId: string; customerId: string; users: string[] } | null =
+    null;
+
+  afterAll(async () => {
+    if (other) await purge(other);
+    await purge({ tenantId, productId, customerId, users: [operatorId, customerUserId] });
     await prisma?.$disconnect();
     await raw?.$disconnect();
     await pool?.end();
@@ -269,9 +287,9 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
     await tenantCtx.run(tenantId, () =>
       (
         service as unknown as {
-          tender: (dto: unknown, orderId: string, replayed: boolean) => Promise<unknown>;
+          tender: (dto: unknown, orderId: string) => Promise<unknown>;
         }
-      ).tender({ payment: { method: "CASH", amount: 70 } }, cashOrderId, false),
+      ).tender({ payment: { method: "CASH", amount: 70 } }, cashOrderId),
     );
     expect(Number(await stored(cashOrderId))).toBe(50);
     // the DB filter itself: a direct write behind the NULL guard changes nothing
@@ -306,4 +324,83 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
     expect(row(cardOrderId).taxRatePercent).toBe(8.25);
     expect(row(mixed.orderId).taxRatePercent).toBeNull();
   }, 60_000);
+
+  it("(6) a first attempt whose payment fails, retried on the SAME key with a new amount, stores the NEW amount and its change", async () => {
+    const key = `cs-retry-${randomUUID()}`;
+    failNextPayment = true;
+    const first = await ring({ method: "CASH", amount: 50 }, key);
+    expect(first.paymentRecorded).toBe(false);
+    expect(first.paymentErrorCode).toBe("COUNTER_PAYMENT_NOT_RECORDED");
+    expect(Number(await stored(first.orderId))).toBe(50);
+    const retry = await ring({ method: "CASH", amount: 60 }, key);
+    expect(retry.orderId).toBe(first.orderId);
+    expect(retry.paymentRecorded).toBe(true);
+    expect(Number(await stored(first.orderId))).toBe(60);
+    expect(retry.cashTendered).toBe(60);
+    expect(retry.change).toBe(18.73);
+    // now anchored by a CASH row: frozen against a further replay, and every read agrees
+    const again = await ring({ method: "CASH", amount: 90 }, key);
+    expect(Number(await stored(first.orderId))).toBe(60);
+    expect(again.change).toBe(18.73);
+    const byKey = await tenantCtx.run(tenantId, () => service.byKey(key));
+    expect(byKey.change).toBe(18.73);
+    const res = await tenantCtx.run(tenantId, () => today.today({} as never));
+    expect(res.data.find((d) => d.orderId === first.orderId)!.change).toBe(18.73);
+  }, 60_000);
+
+  it("(7) another tenant's cash sale is absent from this tenant's Today rows and its key is a 404 here", async () => {
+    const mine = { tenantId, productId, customerId, operatorId, customerUserId };
+    const otherSlug = assertTestTenant(
+      `qa-cs-cash-${run}b`,
+      "counter-sale-cash-tendered.db.spec.ts",
+    );
+    const otherKey = `cs-other-${randomUUID()}`;
+    const t = await raw.tenant.create({ data: { slug: otherSlug, name: `CS cash ${otherSlug}` } });
+    const uOp = await raw.user.create({
+      data: {
+        email: `op-${run}b@example.test`,
+        username: `op-${run}b`,
+        role: "OPERATOR",
+        tenantId: t.id,
+      },
+    });
+    const uCust = await raw.user.create({
+      data: {
+        email: `c-${run}b@example.test`,
+        username: `c-${run}b`,
+        role: "CUSTOMER",
+        tenantId: t.id,
+      },
+    });
+    const cust = await raw.customer.create({
+      data: { userId: uCust.id, businessName: "cs cash other", contactName: "T", tenantId: t.id },
+    });
+    const prod = await raw.product.create({
+      data: {
+        name: `plain ${run}b`,
+        unit: "each",
+        pricePerUnit: PRICE,
+        currentStock: 1000,
+        tenantId: t.id,
+      },
+    });
+    other = { tenantId: t.id, productId: prod.id, customerId: cust.id, users: [uOp.id, uCust.id] };
+    let foreignOrderId = "";
+    try {
+      // ring in the OTHER tenant (the harness reads these closure ids), then restore ours
+      tenantId = t.id;
+      customerId = cust.id;
+      productId = prod.id;
+      operatorId = uOp.id;
+      foreignOrderId = (await ring({ method: "CASH", amount: 50 }, otherKey)).orderId;
+      expect(Number(await stored(foreignOrderId))).toBe(50);
+    } finally {
+      ({ tenantId, productId, customerId, operatorId, customerUserId } = mine);
+    }
+    const res = await tenantCtx.run(tenantId, () => today.today({} as never));
+    expect(res.data.some((d) => d.orderId === foreignOrderId)).toBe(false);
+    await expect(tenantCtx.run(tenantId, () => service.byKey(otherKey))).rejects.toMatchObject({
+      status: 404,
+    });
+  }, 90_000);
 });

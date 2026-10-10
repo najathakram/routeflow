@@ -59,6 +59,17 @@ describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
     expect(toTodaysSaleRow(o).taxRatePercent).toBe(8.25);
   });
 
+  it("change is the stored tendered less the sale's own CASH rows (storedChange); null with none", () => {
+    const o = rec({ counterCashTendered: "50.00" });
+    o.invoices[0].payments = [
+      { method: "CASH", amount: "41.27", status: "PAID" },
+      { method: "CREDIT_NOTE", amount: "5.00", status: "PAID" },
+    ];
+    expect(toTodaysSaleRow(o).change).toBe(8.73);
+    expect(toTodaysSaleRow(rec({ counterCashTendered: "50.00" })).change).toBeNull();
+    expect(toTodaysSaleRow(rec()).change).toBeNull();
+  });
+
   it("the page query reads both in the ONE existing query: the column and each invoice's line rates", () => {
     const q = pageQuery("t1", { start: new Date(0), end: new Date(1) }, 1, 20);
     expect(q.select.counterCashTendered).toBe(true);

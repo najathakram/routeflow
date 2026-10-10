@@ -50,6 +50,11 @@ export interface CounterSaleResponse {
   total: number;
   paid: number;
   balanceDue: number;
+  /**
+   * Cash handed back. Server-owned: on the POST and on GET .../by-key/:key it is the STORED `cashTendered` less the sale's
+   * own original CASH tender rows (so a same-key replay reads the stored amount's change); when nothing was stored it falls
+   * back to this call's tender less the cash on the sale. Omitted (not null) unless the sale is CASH and fully covered.
+   */
   change?: number;
   paymentId?: string;
   /**
@@ -63,7 +68,10 @@ export interface CounterSaleResponse {
    */
   paymentRecorded: boolean;
   paymentErrorCode?: string;
-  /** GET .../by-key/:key only: the cash handed over, as stored on the order (absent = card / check / on account / legacy). */
+  /**
+   * The cash handed over, as stored on the order. Optional because it is OMITTED (never null) when nothing was stored
+   * (card / check / on account / a sale rung before it was stored); the Today's-sales row carries `number | null`.
+   */
   cashTendered?: number;
   /** true when this response is a replay of an earlier request carrying the same Idempotency-Key. */
   replayed?: boolean;
@@ -142,6 +150,11 @@ export interface TodaysSaleRow {
   paymentState: TodaysSalePaymentState;
   /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
   cashTendered: number | null;
+  /**
+   * Server-owned: the stored `cashTendered` minus the sale's own original counter-tender CASH rows (credit-note, advance
+   * and voided rows never count); null when nothing was tendered or no cash tender exists.
+   */
+  change: number | null;
   /**
    * The sale's single stored tax rate as a percent (0.0825 -> 8.25, 3 dp): the one distinct non-zero line rate on its live
    * invoices; null when the lines carry several rates or none.

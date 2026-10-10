@@ -76,6 +76,7 @@ const row = (over: Partial<TodaysSaleRow> = {}): TodaysSaleRow => ({
   paymentState: "PAID",
   methods: [{ method: "CASH", amount: 22.5 }],
   cashTendered: null,
+  change: null,
   taxRatePercent: null,
   returned: { amount: 0, state: "NONE", returns: [] },
   voided: false,
