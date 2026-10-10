@@ -1,5 +1,6 @@
 -- Sitting 3 (SA-741r2), folder 7/10: counter-sale seams.
---   - "Order"."registerKey" (nullable TEXT, no default) and "Order"."soldById" (nullable TEXT, FK to "User" ON DELETE SET NULL).
+--   - "Order"."registerKey" (nullable TEXT, no default), "Order"."soldById" (nullable TEXT, FK to "User" ON DELETE SET NULL)
+--     and "Order"."counterCashTendered" (nullable DECIMAL(10,2), no default; SA-762 §C2).
 --   - the new table "CounterParkedCart" (a counter cart set aside, resumable until "expiresAt"): three btree indexes and
 --     three foreign keys ("Tenant" ON DELETE CASCADE; "createdById" and "resumedById" to "User" ON DELETE SET NULL).
 --   (the two "Order" indexes for these seams are in the NEXT folder, 20261010090650_order_counter_seams_indexes, so their
@@ -19,14 +20,15 @@
 -- Rollback (nothing reads or writes these yet):
 --   DROP TABLE "CounterParkedCart";
 --   ALTER TABLE "Order" DROP CONSTRAINT "Order_soldById_fkey";
---   ALTER TABLE "Order" DROP COLUMN "soldById", DROP COLUMN "registerKey";
+--   ALTER TABLE "Order" DROP COLUMN "counterCashTendered", DROP COLUMN "soldById", DROP COLUMN "registerKey";
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
 -- AlterTable
-ALTER TABLE "Order" ADD COLUMN     "registerKey" TEXT,
-ADD COLUMN     "soldById" TEXT CONSTRAINT "Order_soldById_fkey" REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+-- reason: inline FK on a new no-default column skips the validation scan
+-- squawk-ignore adding-foreign-key-constraint
+ALTER TABLE "Order" ADD COLUMN "registerKey" TEXT, ADD COLUMN "soldById" TEXT CONSTRAINT "Order_soldById_fkey" REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE, ADD COLUMN "counterCashTendered" DECIMAL(10,2);
 
 -- CreateTable
 CREATE TABLE "CounterParkedCart" (
