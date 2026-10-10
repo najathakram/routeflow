@@ -2022,6 +2022,46 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  describe("getTenant — readiness product count (SA-3)", () => {
+    it("SA-3 T9 reads the product count for THIS tenant only, via the existing _count select", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "GROWTH",
+        subscription: { planKey: "GROWTH" },
+        _count: { users: 1, products: 7 },
+      } as any);
+      mrrService.priceTenant.mockResolvedValue(0);
+
+      const tenant = await service.getTenant(TENANT_ID);
+
+      const args = (prisma.tenant.findUnique as jest.Mock).mock.calls[0][0];
+      expect(args.where).toEqual({ id: TENANT_ID });
+      expect(args.include._count.select.products).toEqual({ where: { isActive: true } });
+      expect(tenant.counts?.products).toBe(7);
+    });
+
+    it("SA-3 a tenant whose only products are inactive reports 0 products (not Ready)", async () => {
+      // The filtered relation count is what the DB returns for a tenant with only inactive products.
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "ACTIVE",
+        plan: "GROWTH",
+        subscription: { planKey: "GROWTH" },
+        _count: { users: 1, products: 0 },
+      } as any);
+      mrrService.priceTenant.mockResolvedValue(0);
+
+      const tenant = await service.getTenant(TENANT_ID);
+
+      const args = (prisma.tenant.findUnique as jest.Mock).mock.calls[0][0];
+      expect(args.include._count.select.products.where).toEqual({ isActive: true });
+      expect(tenant.counts?.products).toBe(0);
+    });
+  });
+
   // N4: neither figure had ANY class filter on head — a qa-*/e2e-*/routeflow-demo tenant's
   // subscription/trial/creation-month could move the conversion rate or growth chart the
   // admin dashboard renders next to MrrService's PRODUCTION-only revenue numbers.
@@ -2355,6 +2395,37 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(Math.abs(actualMs - expectedMs)).toBeLessThan(5000);
     });
 
+    // #3334: "Start active" creates then activates, so the TRIAL welcome email (trial line + Pay
+    // now) must not go out: a manually-paid tenant could pay again by card.
+    it("#3334 startMode active: the welcome email carries no pay link and no trial line", async () => {
+      await service.createTenant({ ...validCreateDto, startMode: "active" });
+      const arg = emailServiceMock.sendTenantWelcomeEmail.mock.calls.at(-1)![0];
+      expect(arg.payUrl).toBeNull();
+    });
+
+    it("#3334 startMode trial without trialLengthDays: coded 400, nothing written", async () => {
+      const err: any = await service
+        .createTenant({ ...validCreateDto, startMode: "trial" })
+        .catch((e) => e);
+      expect(err.getStatus()).toBe(400);
+      expect(err.getResponse()).toMatchObject({ code: "TENANT_TRIAL_DAYS_REQUIRED" });
+      expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
+
+    it("#3334 no startMode: legacy trial behaviour (pay link, default days) is unchanged", async () => {
+      await service.createTenant(validCreateDto);
+      const arg = emailServiceMock.sendTenantWelcomeEmail.mock.calls.at(-1)![0];
+      expect(arg.payUrl).toEqual(expect.stringContaining("/login?redirect="));
+      expect(arg.trialDays).toBe(14);
+    });
+
+    it("#3334 startMode trial with days: sends the trial email with those days", async () => {
+      await service.createTenant({ ...validCreateDto, startMode: "trial", trialLengthDays: 21 });
+      const arg = emailServiceMock.sendTenantWelcomeEmail.mock.calls.at(-1)![0];
+      expect(arg.trialDays).toBe(21);
+      expect(arg.payUrl).not.toBeNull();
+    });
+
     // B556: createTenant() used to write ONLY the Tenant row — MrrService gates MRR on
     // TenantSubscription.planKey, not Tenant.plan, so a tenant created here and later
     // activated without ever passing through "Change Plan" would show a real plan badge
@@ -2403,6 +2474,18 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(prisma.tenant.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ class: "TEST" }) }),
       );
+    });
+
+    // Row 195 (lead ruling): platform-admin create KEEPS allowing the test patterns (super-admin
+    // intent) but flags them, so the console can say "this will be a TEST tenant".
+    it("row 195 createTenant flags a test-pattern slug with a TEST-tenant notice", async () => {
+      const r = await service.createTenant({ ...baseDto, slug: "qa-smoke-2" });
+      expect(r.notice).toMatch(/TEST tenant/);
+    });
+
+    it("row 195 createTenant adds no notice for an ordinary slug", async () => {
+      const r = await service.createTenant({ ...baseDto, slug: "acme-wholesale" });
+      expect(r).not.toHaveProperty("notice");
     });
 
     it("REG-743-F7 createTenant writes class PRODUCTION for an ordinary slug", async () => {

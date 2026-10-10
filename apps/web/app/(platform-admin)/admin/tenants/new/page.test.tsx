@@ -421,7 +421,7 @@ describe("create-tenant business profile", () => {
     fireEvent.click(await screen.findByRole("radio", { name: /Shipping wholesaler/ }));
     fillForm();
     await submit();
-    await screen.findByText("Failed to create tenant");
+    await screen.findByText("Could not create the tenant. Try again.");
     expect(mockApplyProfile).not.toHaveBeenCalled();
   });
 
@@ -514,5 +514,24 @@ describe("create-tenant business profile", () => {
       "Created Acme, but the profile didn't apply. Open Setup to finish it.",
     );
     expect(mockApplyProfile).not.toHaveBeenCalled();
+  });
+});
+
+describe("AdminCreateTenantPage — test-tenant slug notice (row 195)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFetchPlanCatalog.mockResolvedValue({ version: 1, effectiveAt: null, plans: [] });
+  });
+
+  it("shows 'this will be a TEST tenant' only while the slug matches a test pattern", async () => {
+    render(<AdminCreateTenantPage />);
+    const slug = await screen.findByLabelText("Slug");
+    expect(screen.queryByTestId("test-tenant-notice")).toBeNull();
+    fireEvent.change(slug, { target: { value: "acme-foods" } });
+    expect(screen.queryByTestId("test-tenant-notice")).toBeNull();
+    fireEvent.change(slug, { target: { value: "qa-smoke-1" } });
+    expect(screen.getByTestId("test-tenant-notice").textContent).toMatch(/TEST tenant/);
+    fireEvent.change(slug, { target: { value: "e2e-routeflow" } });
+    expect(screen.getByTestId("test-tenant-notice")).toBeTruthy();
   });
 });

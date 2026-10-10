@@ -11,6 +11,7 @@ import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import type { AppConfig } from "../config/configuration";
 import type { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
+import { BUYER_ACCESS_AUDIENCE } from "../auth/session-token";
 
 /**
  * SUPER_ADMIN buyer account management.
@@ -124,6 +125,7 @@ export class BuyerAdminService {
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: BUYER_ACCESS_AUDIENCE,
       expiresIn: "15m", // match platform admin impersonation window
     });
 

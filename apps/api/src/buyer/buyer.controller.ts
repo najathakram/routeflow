@@ -16,7 +16,7 @@ import {
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
-import { InvoiceStatus, OrderStatus, UserRole, UserStatus } from "@prisma/client";
+import { FulfillPath, InvoiceStatus, OrderStatus, UserRole, UserStatus } from "@prisma/client";
 import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
@@ -43,11 +43,7 @@ import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { StatementService } from "./statement.service";
 import { StatementPdfService } from "./statement-pdf.service";
 import { CustomersService } from "../customers/customers.service";
-import { UpdateCustomerDto } from "../customers/dto/update-customer.dto";
-import {
-  omitStaffOnlyCustomerFields,
-  pickSelfServiceFields,
-} from "../customers/self-service-fields";
+import { omitStaffOnlyCustomerFields } from "../customers/self-service-fields";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
 import { UpdateBuyerOrderTemplateDto } from "../order-templates/dto/update-buyer-order-template.dto";
 import { AuthorizationsService } from "../authorizations/authorizations.service";
@@ -74,7 +70,7 @@ import {
   isMergeContention,
   mapLockError,
 } from "../orders/merge-contention";
-import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
+import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
 import {
   buyerSubmitHash,
   normalizeBuyerIdempotencyKey,
@@ -496,7 +492,8 @@ export class BuyerController {
     const hit = await findScanMatches(
       this.prisma.forTenant(),
       candidates,
-      buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS),
+      // B1211: the parent-visibility filter is tenant-scoped, so a parent link across tenants decides nothing.
+      buyerVisibleProductWhere(noBuyerRestrictions(ctx.tenantId)),
     );
     if (!hit) throw new NotFoundException("Product not found");
     const match = hit.product;
@@ -524,8 +521,21 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get the buyer's active DRAFT/PENDING order (or null)" })
-  async getActiveOrder(@CurrentBuyerCustomer() ctx: any) {
-    const order = await this.ordersService.findActiveOrder(ctx.customerId);
+  async getActiveOrder(
+    @CurrentBuyerCustomer() ctx: any,
+    @Query("fulfillPath") fulfillPath?: string,
+  ) {
+    // `fulfillPath` scopes the read to the order a cart on that path would fold into (the SAME
+    // search create runs), so the cart banner matches the server. Absent or unknown = today's read.
+    const path = (Object.values(FulfillPath) as string[]).includes(fulfillPath ?? "")
+      ? (fulfillPath as FulfillPath)
+      : null;
+    const order = path
+      ? await this.ordersService.findActiveOrder(ctx.customerId, {
+          forMerge: true,
+          mergeAs: { audience: "buyer", explicit: path },
+        })
+      : await this.ordersService.findActiveOrder(ctx.customerId);
     return toCustomerOrder(order);
   }
 
@@ -1015,17 +1025,20 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Update authenticated buyer's own profile" })
-  async updateMe(@CurrentBuyerCustomer() ctx: any, @Body() dto: UpdateBuyerProfileDto) {
-    // SECURITY (F4-001): dto is a strict buyer-profile DTO — seller-controlled
-    // commercial fields (pricingTier/creditLimit/isTaxExempt/...) are not part of
-    // it, so the ValidationPipe rejects them and update() can only touch profile.
-    // Second layer: the same explicit allowlist /customers/me applies, so the write never depends on the
-    // pipe alone.
-    const updated = await this.customersService.update(
-      ctx.customerId,
-      pickSelfServiceFields({ ...dto }) as UpdateCustomerDto,
-    );
-    return omitStaffOnlyCustomerFields(updated);
+  async updateMe(
+    @CurrentBuyerCustomer() ctx: any,
+    @CurrentBuyer() buyer: BuyerJwtPayload,
+    @Body() dto: UpdateBuyerProfileDto,
+  ) {
+    // SECURITY (F4-001): dto is a strict buyer-profile DTO, so the ValidationPipe rejects seller-controlled
+    // commercial fields. Second layer: updateOwnProfile applies the same explicit allowlist as
+    // /customers/me and writes the audit row, so the write never depends on the pipe alone.
+    return this.customersService.updateOwnProfile({
+      customerId: ctx.customerId,
+      actor: buyer,
+      source: "buyer/me",
+      body: dto,
+    });
   }
 
   // ─── Order templates ──────────────────────────────────────────────────────────

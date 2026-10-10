@@ -18,10 +18,10 @@ import {
   Download,
   History,
   Package,
-  Truck,
   Route as RouteIcon,
 } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
+import { useAuth } from "@/lib/auth-context";
 import { usePageTitle } from "@/lib/page-title-context";
 import { humanizeEnum } from "@/lib/format";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
@@ -236,7 +236,11 @@ function PagerControls({
 export default function OrdersPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const counterGate = useCounterSaleGate();
+  const { user } = useAuth();
+  // Same staff test as the shell's gate callers (layout.tsx, CommandPalette): everyone but CUSTOMER / DRIVER.
+  const counterGate = useCounterSaleGate({
+    enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
     setTitle("Orders");
@@ -1147,13 +1151,9 @@ export default function OrdersPage() {
                       )}
                     />
                     {order.fulfillPath === "SHIP" && (
-                      <span
-                        title="Shipped by supplier/carrier"
-                        className="inline-flex h-[21px] items-center gap-1 rounded-full bg-sky-50 px-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200"
-                      >
-                        <Truck className="h-3 w-3" aria-hidden />
+                      <Badge variant="neutral" title="Shipped by supplier/carrier">
                         Shipped
-                      </span>
+                      </Badge>
                     )}
                     {(order._count?.changeRequests ?? 0) > 0 && (
                       <span
@@ -1314,13 +1314,9 @@ export default function OrdersPage() {
                             )}
                           />
                           {order.fulfillPath === "SHIP" && (
-                            <span
-                              title="Shipped by supplier/carrier"
-                              className="inline-flex h-[21px] items-center gap-1 rounded-full bg-sky-50 px-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200"
-                            >
-                              <Truck className="h-3 w-3" aria-hidden />
+                            <Badge variant="neutral" title="Shipped by supplier/carrier">
                               Shipped
-                            </span>
+                            </Badge>
                           )}
                           {/* P5-11: pending post-dispatch change requests on this order
                               (filtered _count from the list endpoint; absent = no pill). */}

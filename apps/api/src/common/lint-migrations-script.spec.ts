@@ -269,6 +269,7 @@ describe("lint-migrations.mjs contract (T1 / R2, R3)", () => {
       "20260927043000_sa436_credit_auto_apply_off",
       "20260927060000_onboarding_s1_cases",
       "20260928230000_2717_m1_catalog_barcodes_images",
+      "20261008120000_invoice_payment_tenant_paid_at_index",
     ];
     const PRESENT = EXPECTED_EXEMPT.filter((n) => fs.existsSync(path.join(MIGRATIONS, n)));
     const UNWRAPPED = "SET LOCAL lock_timeout = '5s';\nSELECT 1;\n";

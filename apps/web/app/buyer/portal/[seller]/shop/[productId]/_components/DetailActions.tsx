@@ -121,7 +121,7 @@ export function DetailActions({
             <Plus className="h-4 w-4" /> Add to cart
           </button>
         )}
-        {shipsWhenRestocked && !cartItem && (
+        {shipsWhenRestocked && (
           <p data-testid="ships-when-restocked" className="mt-2 text-sm font-medium text-warning">
             {SHIPS_WHEN_RESTOCKED}
           </p>

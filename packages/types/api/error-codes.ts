@@ -41,6 +41,8 @@
 //   FAMILY_ROWS_CONFLICT — `body.code` of the 409 from POST /products/families and PATCH /products/:id/variants: `rows` lists
 //                    EVERY conflicting row (see FamilyRowsConflictError), never just the first.
 //   FAMILY_NOT_FOUND — `body.code` of the 404 from PATCH /products/:id/variants when `:id` is not a product of the tenant.
+//   PRODUCT_PARENT_INVALID — `body.code` of the 400 when the parent named for a product cannot be used; `body.reason` is
+//                    NOT_FOUND | SELF | VARIANT_PARENT | INACTIVE | HAS_VARIANTS. Nothing was written.
 //   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
 //                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
@@ -171,7 +173,8 @@
 //                    COUNTER_SALES_DISABLED (the tenant's fulfilment capability has no counter); 409 WALK_IN_OPEN_CREDIT (the walk-in
 //                    customer holds open credit that send would auto-apply); 400 WALK_IN_NO_ACCOUNT (a walk-in cannot buy on account),
 //                    WALK_IN_WITH_CUSTOMER (customerId and walkIn together), COUNTER_CHECK_NUMBER_REQUIRED (a check needs its number),
-//                    IDEMPOTENCY_KEY_REQUIRED (the Idempotency-Key header is missing or blank: the till must send one per sale).
+//                    IDEMPOTENCY_KEY_REQUIRED (the Idempotency-Key header is missing or blank: the till must send one per sale);
+//                    403 PRICE_EDIT_NOT_PERMITTED (a line carries a real price change from a caller who may not edit prices).
 //                    COUNTER_TENDER_SHORT (a zero tender), COUNTER_PAYMENT_EXCEEDS_TOTAL (card or check above the balance) and
 //                    COUNTER_PAYMENT_NOT_RECORDED are NOT HTTP errors: the balance is server-computed, so these are the
 //                    `paymentErrorCode` of a 201 whose sale committed but whose payment did not (`paymentRecorded: false`, the invoice
@@ -200,8 +203,18 @@ export const API_ERROR_CODES = {
   NAME_TAKEN: "NAME_TAKEN",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
   FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
+  /** 400 from PUT customer price overrides and POST/PATCH promotions: a FAMILY container is never priced or promoted; `productIds` names them. Use its variants. */
+  FAMILY_NOT_PRICEABLE: "FAMILY_NOT_PRICEABLE",
   FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",
   FAMILY_NOT_FOUND: "FAMILY_NOT_FOUND",
+  /** 409 from DELETE /products/bulk and /products/clear-all: a unique violation while deleting; nothing was deleted, reload and retry. */
+  PRODUCT_DELETE_CONFLICT: "PRODUCT_DELETE_CONFLICT",
+  /** 409 from PATCH/DELETE /products/:id: a family still has ACTIVE variants; body carries `variantCount`. Resend with `confirmCascade: true` to deactivate them with it. */
+  FAMILY_HAS_ACTIVE_VARIANTS: "FAMILY_HAS_ACTIVE_VARIANTS",
+  /** 409 from PATCH /products/:id: a variant cannot be reactivated while its parent family is inactive; reactivate the family first. */
+  VARIANT_PARENT_INACTIVE: "VARIANT_PARENT_INACTIVE",
+  /** `skipped[].code` of DELETE /products/bulk and /products/clear-all: the product has active (undelivered) order items, so it was not deleted. */
+  PRODUCT_HAS_ACTIVE_ORDER_ITEMS: "PRODUCT_HAS_ACTIVE_ORDER_ITEMS",
   CODES_CHANGED: "CODES_CHANGED",
   CATALOG_TOO_LARGE_FOR_CLEAR_ALL: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",
@@ -275,6 +288,9 @@ export const API_ERROR_CODES = {
   PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
   BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
   INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
+  INVOICE_HAS_CASH_REFUND: "INVOICE_HAS_CASH_REFUND",
+  // Order cancel refused: part of the order was refunded in cash (the invoice void keeps INVOICE_HAS_CASH_REFUND).
+  ORDER_HAS_CASH_REFUND: "ORDER_HAS_CASH_REFUND",
   HANDOFF_CODE_INVALID: "HANDOFF_CODE_INVALID",
   CHANGE_REQUEST_ALREADY_RESOLVED: "CHANGE_REQUEST_ALREADY_RESOLVED",
   CHANGE_REQUEST_PACK_CHANGED: "CHANGE_REQUEST_PACK_CHANGED",
@@ -327,6 +343,13 @@ export const API_ERROR_CODES = {
   ADDON_UNCOMP_STRIPE_UNAVAILABLE: "ADDON_UNCOMP_STRIPE_UNAVAILABLE",
   FEATURES_UNAVAILABLE: "FEATURES_UNAVAILABLE",
   FULFILMENT_MODE_NEEDS_FLEET: "FULFILMENT_MODE_NEEDS_FLEET",
+  // Settings -> Fulfillment (tenant admin toggle): 400 body {field} / 403 flag off / 409 stale (body = a fresh
+  // GET /settings/fulfilment) / 409 carrier orders in transit (body {count}).
+  FULFILMENT_TENANT_MISMATCH: "FULFILMENT_TENANT_MISMATCH",
+  FULFILMENT_SETTING_INVALID: "FULFILMENT_SETTING_INVALID",
+  FULFILMENT_SELF_SERVE_OFF: "FULFILMENT_SELF_SERVE_OFF",
+  FULFILMENT_SETTINGS_STALE: "FULFILMENT_SETTINGS_STALE",
+  FULFILMENT_CARRIER_IN_TRANSIT: "FULFILMENT_CARRIER_IN_TRANSIT",
   BUSINESS_PROFILE_UNKNOWN: "BUSINESS_PROFILE_UNKNOWN",
   BUSINESS_PROFILE_UNAVAILABLE: "BUSINESS_PROFILE_UNAVAILABLE",
   BUSINESS_PROFILE_BILLING_FAILED: "BUSINESS_PROFILE_BILLING_FAILED",
@@ -392,6 +415,12 @@ export const API_ERROR_CODES = {
    * counter POST refuses it before any write; use a fresh key.
    */
   COUNTER_SALE_KEY_CONFLICT: "COUNTER_SALE_KEY_CONFLICT",
+  /**
+   * 403 from the counter-sale POST (POS-5): a line carries a real price change (a price off the server's own price
+   * for this customer) from a caller who may not edit prices (`canEditPrices`: account admins only today). Raised
+   * before anything is written; the Idempotency-Key is not consumed. A typed price equal to the server's is no change.
+   */
+  PRICE_EDIT_NOT_PERMITTED: "PRICE_EDIT_NOT_PERMITTED",
   /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
   WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
   /**
@@ -419,6 +448,8 @@ export const API_ERROR_CODES = {
   COUNTER_SALE_CHANGED: "COUNTER_SALE_CHANGED",
   /** 400 from GET /orders/counter-sale/by-key/:key: the `?method=` is not CASH, CARD, CHECK or ON_ACCOUNT. */
   COUNTER_SALE_METHOD_INVALID: "COUNTER_SALE_METHOD_INVALID",
+  /** 400 from GET /orders/counter-sale/today: `day` is not a real calendar day, or is after the tenant's today. */
+  COUNTER_SALES_DAY_INVALID: "COUNTER_SALES_DAY_INVALID",
   /**
    * 409 from create(): this Idempotency-Key already belongs to ANOTHER customer's order. The order EXISTS: for
    * a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
@@ -455,6 +486,26 @@ export const API_ERROR_CODES = {
   PICKUP_KEY_CONFLICT: "PICKUP_KEY_CONFLICT",
   PICKUP_INVOICE_MISSING: "PICKUP_INVOICE_MISSING",
   /**
+   * SA-727 (counter refund). POST /returns/inline/:id/refund: the return was already resolved (store credit, or a refund
+   * with a different tender or amount). 409. A same-tender, same-amount replay is a 200 with the stored result instead.
+   */
+  RETURN_ALREADY_RESOLVED: "RETURN_ALREADY_RESOLVED",
+  /** SA-727: the client's expectedAmount differs from the amount the server computed for the return. 409; carries `amount`. */
+  REFUND_AMOUNT_CHANGED: "REFUND_AMOUNT_CHANGED",
+  /** SA-727: a cash/card/check refund needs every source invoice paid in full (non-VOID, balance 0); otherwise issue store credit. 409. */
+  REFUND_NEEDS_PAID_INVOICE: "REFUND_NEEDS_PAID_INVOICE",
+  /**
+   * SA-727 (F4): any part of a source invoice was paid with store credit (a CREDIT_NOTE or ADVANCE payment), so the return
+   * goes back as store credit only: store credit is never turned into cash. 409 on the refund and on a REFUND capture.
+   */
+  REFUND_PAID_WITH_STORE_CREDIT: "REFUND_PAID_WITH_STORE_CREDIT",
+  /** SA-727: a return that was refunded in cash/card/check cannot be cancelled (the money already left). 409. */
+  RETURN_REFUNDED_CASH: "RETURN_REFUNDED_CASH",
+  /** SA-727: the return is not in a state a refund can resolve (not captured, on hold, rejected, cancelled, or worth $0). 409. */
+  RETURN_NOT_REFUNDABLE: "RETURN_NOT_REFUNDABLE",
+  /** SA-727: the service-level refund gate (office roles only); also guards the REFUND capture and the store-credit conversion. 403. */
+  REFUND_NOT_ALLOWED: "REFUND_NOT_ALLOWED",
+  /**
    * Manual invoices due (platform-admin /rf-invoices). 409s: ALREADY_PAID / IS_VOID / NOT_PAID carry the
    * current `row`; NOTHING_TO_ISSUE, INVOICING_OFF (RF_INVOICING_MODE=off), NOT_MANUAL and NO_PRICE come from
    * POST tenants/:id/rf-invoices/issue. 400s: a missing or card-like payment reference, and a `paidAt` that
@@ -471,10 +522,18 @@ export const API_ERROR_CODES = {
   RF_INVOICE_REFERENCE_LOOKS_LIKE_CARD: "RF_INVOICE_REFERENCE_LOOKS_LIKE_CARD",
   /** Create Tenant (platform-admin): the admin email or username is already used by a user in that tenant (400). */
   ACCOUNT_IDENTIFIER_IN_USE: "ACCOUNT_IDENTIFIER_IN_USE",
+  /** Create Tenant (platform-admin): startMode "trial" was sent without trialLengthDays (400). Nothing was written. */
+  TENANT_TRIAL_DAYS_REQUIRED: "TENANT_TRIAL_DAYS_REQUIRED",
   RF_INVOICE_PAID_AT_TOO_OLD: "RF_INVOICE_PAID_AT_TOO_OLD",
   RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
   /** Back office: an ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH). 409. */
   TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",
+  /** 403 `code` when an operator holds none of the feature groups an endpoint needs; `groups` lists them. */
+  PERMISSION_DENIED: "PERMISSION_DENIED",
+  /** 409 from PUT /users/:id/permissions: `expectedVersion` is stale (reload and retry). */
+  PERMISSIONS_VERSION_CONFLICT: "PERMISSIONS_VERSION_CONFLICT",
+  /** A product's parent cannot be used (400); `reason` names the rule. See the header list. */
+  PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

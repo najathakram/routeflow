@@ -1286,7 +1286,12 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         expect(prisma.tenantFeatureConfigSnapshot.findFirst).not.toHaveBeenCalled();
         expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
         expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled(); // no CAS, no tx write
-        expect(tx.auditLog.create).not.toHaveBeenCalled();
+        // B1157: the plain apply tx writes the APPLIED marker (and nothing else) — every apply path does
+        expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+        expect(tx.auditLog.create.mock.calls[0][0].data).toMatchObject({
+          action: "STRIPE_CHECKOUT_APPLIED",
+          entityId: "cs_off",
+        });
         expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
       });
     });

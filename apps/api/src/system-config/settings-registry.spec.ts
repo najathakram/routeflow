@@ -24,11 +24,14 @@ import {
 } from "@routeflow/types";
 import { SettingsController } from "./settings.controller";
 import { SystemConfigService } from "./system-config.service";
+import { QuickKeysSettingsService } from "./quick-keys-settings.service";
+import { QuickKeysRankCache } from "./quick-keys-rank.cache";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { EncryptionService } from "../common/encryption.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { PREFERENCE_KEYS } from "../users/dto/update-preferences.dto";
+import { QUICK_KEYS_CONFIG_KEY } from "./quick-keys-settings";
 import { TOBACCO_EXCLUDE_KEY } from "../analytics/analytics.service";
 import {
   CREDIT_LIMIT_DELIVERY_ENFORCE_KEY,
@@ -209,6 +212,8 @@ describe("settings registry — every SystemConfig key the settings writers writ
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { isEmailConfigured: jest.fn(async () => true) } },
+        QuickKeysSettingsService,
+        QuickKeysRankCache,
       ],
     }).compile();
     controller = mod.get(SettingsController);
@@ -422,6 +427,7 @@ describe("settings registry — structural source scan of every SystemConfig wri
       "messaging/staff-email-settings.service.ts",
       "restrictions-settings/restrictions-settings.service.ts",
       "route-optimization/route-optimization.service.ts",
+      "system-config/quick-keys-settings.service.ts",
       "system-config/settings.controller.ts",
       "system-config/system-config.service.ts",
       "tobacco/tobacco.service.ts",
@@ -445,6 +451,10 @@ describe("settings registry — structural source scan of every SystemConfig wri
    */
   const INDIRECT_KEY_WRITERS: Record<string, Record<string, string[]>> = {
     "tobacco/tobacco.service.ts": { TOBACCO_EXCLUDE_KEY: [TOBACCO_EXCLUDE_KEY] },
+    // SA-747: the counter quick keys value is ONE JSON string under this constant (quick-keys-settings.ts)
+    "system-config/quick-keys-settings.service.ts": {
+      QUICK_KEYS_CONFIG_KEY: [QUICK_KEYS_CONFIG_KEY],
+    },
     // static key constants inside SystemConfigService itself (the generic set(key) is a definition)
     "system-config/system-config.service.ts": {
       "SystemConfigService.REMITTANCE_KEY": ["remittance.config"],

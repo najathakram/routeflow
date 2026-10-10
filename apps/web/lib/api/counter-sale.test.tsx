@@ -124,3 +124,31 @@ describe("useCounterSaleGate enabled option", () => {
     expect(featureOpts[0]).toEqual({ enabled: true });
   });
 });
+
+describe("useCounterSaleGate: a disabled gate stays dark even with cached add-on data (W20-L2)", () => {
+  const cached = (counter: string) => ({ data: { capabilities: { fulfilment: { counter } } } });
+  afterEach(() => {
+    features = { data: undefined };
+  });
+  it.each(["optional", "always"])("enabled:false with cached %s: showButton false", (counter) => {
+    features = cached(counter);
+    const r = renderHook(() => useCounterSaleGate({ enabled: false })).result.current;
+    expect(r.showButton).toBe(false);
+  });
+  it.each(["optional", "always"])("enabled:false with cached %s: capability is null", (counter) => {
+    features = cached(counter);
+    const r = renderHook(() => useCounterSaleGate({ enabled: false })).result.current;
+    expect(r.capability).toBeNull();
+  });
+  it("enabled:true with cached always: capability is passed through", () => {
+    features = cached("always");
+    const r = renderHook(() => useCounterSaleGate({ enabled: true })).result.current;
+    expect(r.capability).toEqual({ counter: "always" });
+  });
+  it("enabled:true with cached optional: unchanged", () => {
+    features = cached("optional");
+    expect(renderHook(() => useCounterSaleGate({ enabled: true })).result.current.showButton).toBe(
+      true,
+    );
+  });
+});

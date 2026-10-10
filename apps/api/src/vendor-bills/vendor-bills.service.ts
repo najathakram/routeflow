@@ -39,6 +39,7 @@ import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
 import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertSellableLines } from "../products/sellable-lines";
+import { tenantSafeParentView } from "../products/product-parent";
 
 /** What clients render when a bill is blocked as a duplicate. */
 export interface VendorBillDuplicatePayload {
@@ -1825,7 +1826,7 @@ export class VendorBillsService {
   ): Promise<{ supplierId: string | null; items: any[] }> {
     const supplierId = await this.resolveSupplierId(supplierRaw);
 
-    const [products, allMappings, aliasMap] = await Promise.all([
+    const [catalogRows, mappingRows, aliasMap] = await Promise.all([
       this.prisma.forTenant().product.findMany({
         select: {
           id: true,
@@ -1834,7 +1835,8 @@ export class VendorBillsService {
           barcode: true,
           unitSku: true,
           parentProductId: true,
-          parent: { select: { name: true } },
+          // tenantId only for the cross-tenant check below (B1211).
+          parent: { select: { name: true, tenantId: true } },
         },
       }),
       this.prisma.forTenant().productMapping.findMany({
@@ -1846,7 +1848,7 @@ export class VendorBillsService {
               sku: true,
               barcode: true,
               parentProductId: true,
-              parent: { select: { name: true } },
+              parent: { select: { name: true, tenantId: true } },
             },
           },
         },
@@ -1856,6 +1858,19 @@ export class VendorBillsService {
         items.map((item) => item.extractedName ?? ""),
       ),
     ]);
+
+    // B1211: a parent that belongs to another tenant never lends its name to a composed product name.
+    const tenantId = this.prisma.getTenantId();
+    const products = catalogRows.map((p) => ({
+      ...p,
+      parent: tenantSafeParentView(p.parent, tenantId),
+    }));
+    const allMappings = mappingRows.map((m) => ({
+      ...m,
+      product: m.product
+        ? { ...m.product, parent: tenantSafeParentView(m.product.parent, tenantId) }
+        : m.product,
+    }));
 
     // Build mapping index keyed by supplierName → rawDescription (lowercase)
     const mappingIndex: Record<

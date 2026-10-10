@@ -189,6 +189,17 @@ export default defineConfig({
       },
     },
 
+    // ── Counter "Today's sales" sheet (POS-7b-2) ───────────────────────────────
+    // Mocked reads only (POS-7b-1 contract); 1440/768/390 + 80 mm print emulation.
+    {
+      name: "counter-todays-sales",
+      testMatch: /70-counter-todays-sales\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
     // ── Dashboard CLS (PKG-8) ──────────────────────────────────────────────────
     // /dashboard layout shift with every read delayed 2 s; read-only.
     {
@@ -388,7 +399,7 @@ export default defineConfig({
       name: "migration-hub-gate",
       testMatch: /25-migration-hub\.spec\.ts/,
       dependencies: ["setup"],
-      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── Payments-import duplicate reporting (F17, spec 26) ─────────────────────
@@ -402,7 +413,7 @@ export default defineConfig({
       name: "import-duplicates",
       testMatch: /26-import-duplicates\.spec\.ts/,
       dependencies: ["setup"],
-      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── Order-edit pricing readiness gate (F06, spec 24) ───────────────────────
@@ -511,7 +522,7 @@ export default defineConfig({
       name: "invoice-numbering-card",
       testMatch: /67-invoice-numbering-card\.spec\.ts/,
       dependencies: ["setup"],
-      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── Recurring-template edit + standing-order item edit (F13, spec 30) ──────
@@ -887,7 +898,7 @@ export default defineConfig({
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],
-        storageState: path.join(AUTH_DIR, "operator.json"),
+        storageState: path.join(AUTH_DIR, "tenant-admin.json"),
       },
     },
 
@@ -943,9 +954,7 @@ export default defineConfig({
       },
     },
 
-    // PageHeader action-slot wrap (B749/B770 shared root cause) — proves no
-    // page-level header action overflows the viewport at 390px across every
-    // affected list page. Operator auth, same shape as "orders" et al.
+    // Customers list UX (spec 65). Operator auth, same shape as "orders" et al.
     // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
     // header for the precedent.
     {
@@ -957,6 +966,12 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+
+    // PageHeader action-slot wrap (B749/B770 shared root cause) — proves no
+    // page-level header action overflows the viewport at 390px across every
+    // affected list page. Operator auth, same shape as "orders" et al.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent.
     {
       name: "pageheader-action-wrap",
       testMatch: /57-pageheader-action-wrap\.spec\.ts/,
@@ -1009,6 +1024,15 @@ export default defineConfig({
           {
             name: "counter-pos-stack",
             testMatch: /72-counter-pos-stack\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          {
+            name: "counter-register-look",
+            testMatch: /73-counter-register-look\.spec\.ts/,
             dependencies: ["setup"],
             use: {
               ...devices["Desktop Chrome"],

@@ -3,6 +3,8 @@ import { TAP_TARGET, cn } from "@routeflow/ui/web";
 import { cartTotals } from "@/lib/counter-sale";
 import { NOTE_MAX, isBoxedLine, lineQtyLabel, type TypedQty } from "./counter-sale-line-edit";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
+import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceEdit";
+import { editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
@@ -62,11 +64,13 @@ function QtyField({
   value,
   locked,
   onCommit,
+  onEnter,
 }: {
   label: string;
   value: number;
   locked: boolean;
   onCommit: (text: string) => boolean;
+  onEnter?: () => void;
 }) {
   const [draft, setDraft] = React.useState<string | null>(null);
   const commit = () => {
@@ -91,6 +95,7 @@ function QtyField({
         if (e.key === "Enter") {
           e.preventDefault();
           commit();
+          onEnter?.();
         } else if (e.key === "Escape") {
           e.preventDefault();
           setDraft(null);
@@ -105,10 +110,12 @@ function LineQtyEditor({
   line,
   locked,
   onQty,
+  onEnter,
 }: {
   line: SaleLine;
   locked: boolean;
   onQty: (tempId: string, typed: TypedQty) => boolean;
+  onEnter?: () => void;
 }) {
   return isBoxedLine(line) ? (
     <span className="flex items-center gap-1">
@@ -117,12 +124,14 @@ function LineQtyEditor({
         value={line.boxes ?? 0}
         locked={locked}
         onCommit={(t) => onQty(line.tempId, { boxes: t })}
+        onEnter={onEnter}
       />
       <QtyField
         label={`Pieces of ${line.name}`}
         value={line.pieces ?? 0}
         locked={locked}
         onCommit={(t) => onQty(line.tempId, { pieces: t })}
+        onEnter={onEnter}
       />
     </span>
   ) : (
@@ -131,6 +140,7 @@ function LineQtyEditor({
       value={line.qty}
       locked={locked}
       onCommit={(t) => onQty(line.tempId, { qty: t })}
+      onEnter={onEnter}
     />
   );
 }
@@ -146,6 +156,13 @@ export function CounterLineRow({
   onRemove,
   onNote,
   onQty,
+  canEditPrices = false,
+  priceTier = 1,
+  customerName,
+  onPriceEdit,
+  onPriceReset,
+  onPriceClosed,
+  onQtyEnter,
 }: {
   line: SaleLine;
   locked: boolean;
@@ -153,9 +170,20 @@ export function CounterLineRow({
   onRemove: (tempId: string) => void;
   onNote: (tempId: string, note: string) => void;
   onQty: (tempId: string, typed: TypedQty) => boolean;
+  /** POS-5: the ONE gate (`canEditPrices(user)`). False = the price control does not exist (hidden, never disabled). */
+  canEditPrices?: boolean;
+  /** POS-5: the customer's pricing tier for this product (a special tier needs a reason for a real change) */
+  priceTier?: number;
+  customerName?: string;
+  onPriceEdit?: (tempId: string, edit: CounterPriceEdit) => void;
+  onPriceReset?: (tempId: string) => void;
+  onPriceClosed?: () => void;
+  /** Enter on a typed quantity: the screen hands focus back to the scan field. */
+  onQtyEnter?: () => void;
 }) {
   const [editing, setEditing] = React.useState(false);
   const hasNote = !!l.note?.trim();
+  const edited = editedLineFigures(l);
   return (
     <li className="flex flex-col gap-2 p-3 text-sm">
       <div className="flex items-start justify-between gap-2">
@@ -163,7 +191,14 @@ export function CounterLineRow({
           {l.name} · {lineQtyLabel(l)}
         </span>
         <span className="flex shrink-0 items-center gap-2">
-          <span>{money(cartTotals([l], 0).subtotal)}</span>
+          {edited ? (
+            <s className="text-xs text-navy/60" data-testid="line-original-total">
+              {money(edited.original)}
+            </s>
+          ) : null}
+          <span data-testid={edited ? "line-net-total" : undefined}>
+            {money(cartTotals([l], 0).subtotal)}
+          </span>
           <button
             type="button"
             className={LINE_BTN}
@@ -177,7 +212,26 @@ export function CounterLineRow({
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <LineStepper line={l} locked={locked} onStep={onStep} />
-        <LineQtyEditor line={l} locked={locked} onQty={onQty} />
+        <LineQtyEditor line={l} locked={locked} onQty={onQty} onEnter={onQtyEnter} />
+        <CounterLinePriceEdit
+          canEditPrices={canEditPrices}
+          name={l.name}
+          line={priceEditLineOf(l, priceTier)}
+          edited={!!l.override}
+          customerName={customerName}
+          locked={locked}
+          onApply={(edit) => onPriceEdit?.(l.tempId, edit)}
+          onReset={() => onPriceReset?.(l.tempId)}
+          onClosed={onPriceClosed}
+        />
+        {edited ? (
+          <span
+            className="rounded bg-navy/5 px-2 py-1 text-xs text-navy"
+            data-testid="line-price-chip"
+          >
+            {edited.chip}
+          </span>
+        ) : null}
         <button
           type="button"
           className={LINE_BTN}
@@ -213,6 +267,8 @@ export function CounterLineRow({
           disabled={locked}
           value={l.note ?? ""}
           onChange={(e) => onNote(l.tempId, e.target.value)}
+          data-counter-note=""
+          autoFocus // opening the note puts the cursor in it: the next keys are the note, never a page shortcut
         />
       ) : hasNote ? (
         <p className="break-words text-xs text-navy/70" data-testid="line-note">

@@ -93,8 +93,18 @@ export interface InlineReturnSectionProps {
   onStateChange?: (state: InlineReturnSectionState) => void;
   /** Rendered next to "Get quote" on the lines step (e.g. the dialog's own Cancel button). */
   renderLinesActions?: () => React.ReactNode;
+  /** POS-4b: hide "Back" once a capture is saved (its lines can no longer change). */
+  hideBack?: boolean;
   /** Rendered next to "Back" on the quote step (e.g. the dialog's confirm/capture button). */
   renderQuoteActions?: (quote: InlineReturnQuoteResponse) => React.ReactNode;
+  /** POS-4b: rendered above the quote step's action row (the dialog's refund-vs-credit choice). */
+  renderQuoteFooter?: (quote: InlineReturnQuoteResponse) => React.ReactNode;
+  /** POS-4b: a re-fetched quote (REFUND_AMOUNT_CHANGED) that replaces the one on screen. */
+  quoteOverride?: InlineReturnQuoteResponse | null;
+  /** Show only the Total: the host replaced the total with the server's own figure, so the old breakdown would no longer add up. */
+  totalOnly?: boolean;
+  /** W21b: replaces the default "issued as credit note" line under the totals (the dialog sets it when Refund is chosen). */
+  quoteNote?: string;
   /** Called (in addition to the section's own inline error) when the Step-1 quote or the
    *  excess re-quote is refused — the dialog uses this to switch to its full "refused" screen. */
   onQuoteRefused?: (message: string) => void;
@@ -114,6 +124,11 @@ export function InlineReturnSection({
   onStateChange,
   renderLinesActions,
   renderQuoteActions,
+  renderQuoteFooter,
+  hideBack,
+  quoteOverride,
+  totalOnly = false,
+  quoteNote,
   onQuoteRefused,
   hidden = false,
 }: InlineReturnSectionProps) {
@@ -128,6 +143,9 @@ export function InlineReturnSection({
   const [productSearch, setProductSearch] = React.useState("");
 
   const quoteMutation = useInlineReturnQuote();
+  React.useEffect(() => {
+    if (quoteOverride) setQuote(quoteOverride);
+  }, [quoteOverride]);
   // #2695 (SA-557): staff only — the server refuses the fields from anyone else with a 400.
   const canOverrideCredit = canOverrideReturnCredit(useOptionalAuth()?.user?.role);
 
@@ -623,15 +641,19 @@ export function InlineReturnSection({
           )}
 
           <div className="rounded-lg bg-surface-raised p-3">
-            <div className="flex justify-between text-sm text-navy">
-              <span>Subtotal</span>
-              <span>{money(quote.subtotal)}</span>
-            </div>
-            <div className="flex justify-between text-sm text-navy">
-              <span>Tax</span>
-              <span>{money(quote.taxAmount)}</span>
-            </div>
-            {quote.categoryTax > 0 && (
+            {!totalOnly && (
+              <div className="flex justify-between text-sm text-navy">
+                <span>Subtotal</span>
+                <span>{money(quote.subtotal)}</span>
+              </div>
+            )}
+            {!totalOnly && (
+              <div className="flex justify-between text-sm text-navy">
+                <span>Tax</span>
+                <span>{money(quote.taxAmount)}</span>
+              </div>
+            )}
+            {!totalOnly && quote.categoryTax > 0 && (
               <div className="flex justify-between text-sm text-navy">
                 <span>Category levy</span>
                 <span>{money(quote.categoryTax)}</span>
@@ -642,7 +664,7 @@ export function InlineReturnSection({
               <span>{money(quote.total)}</span>
             </div>
             <p className="mt-2 text-xs text-navy/70">
-              This will be issued as credit note on the customer&apos;s balance.
+              {quoteNote ?? <>This will be issued as credit note on the customer&apos;s balance.</>}
             </p>
           </div>
 
@@ -653,10 +675,13 @@ export function InlineReturnSection({
             options={[{ value: "", label: "Select a reason…" }, ...REASON_OPTIONS]}
           />
 
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setStep("lines")}>
-              Back
-            </Button>
+          {renderQuoteFooter?.(quote)}
+          <div className="flex flex-wrap justify-end gap-2">
+            {!hideBack && (
+              <Button variant="ghost" onClick={() => setStep("lines")}>
+                Back
+              </Button>
+            )}
             {renderQuoteActions?.(quote)}
           </div>
         </div>

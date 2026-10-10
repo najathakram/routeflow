@@ -55,6 +55,7 @@ import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { classifyTenantSlug } from "../tenant/tenant-class";
+import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
 import { CreateTenantAdminDto } from "./dto/create-tenant-admin.dto";
 import { IRS_SYSTEM_CATEGORIES } from "../bookkeeping/irs-categories.constant";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
@@ -74,6 +75,7 @@ import { escapeHtml } from "../common/html-escape";
 import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "../billing/price-override";
 import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
+import { STAFF_ACCESS_AUDIENCE } from "../auth/session-token";
 
 /** 409 TENANT_TRIAL_EXTEND_NOT_ALLOWED: an ACTIVE tenant is never moved to TRIAL. */
 function activeTenantTrialRefusal(): ConflictException {
@@ -269,6 +271,9 @@ export class PlatformAdminService {
               drivers: true,
               routes: true,
               customerLinks: true,
+              // SA-3: the Readiness card's "Has at least one product" row (tenant-scoped relation count).
+              // Active products only: a tenant whose products are all inactive has nothing to sell.
+              products: { where: { isActive: true } },
             },
           },
         },
@@ -323,6 +328,13 @@ export class PlatformAdminService {
 
     const planKey = plan ?? "STARTER";
     await this.resolvePublishedPlan(planKey); // R1.8: never the silent STARTER fallback in compute()
+    if (dto.startMode === "trial" && dto.trialLengthDays == null) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: API_ERROR_CODES.TENANT_TRIAL_DAYS_REQUIRED,
+        message: "trialLengthDays is required when startMode is trial",
+      });
+    }
     const trialDays =
       dto.trialLengthDays ??
       (isInviteOnlyPlanKey(planKey) ? INVITE_ONLY_PLAN_TRIAL_DAYS : TRIAL_LENGTH_DAYS);
@@ -426,9 +438,12 @@ export class PlatformAdminService {
       this.config.get<AppConfig["urls"]>("urls")?.web ?? "http://localhost:3001"
     ).replace(/\/+$/, "");
     const loginUrl = `${webBase}/login`;
-    const payUrl = inviteOnlyCheckoutAllowed(planKey)
-      ? `${webBase}/login?redirect=${encodeURIComponent("/settings/billing")}`
-      : null;
+    // Start active: the operator activates right after create (manual payment), so the welcome
+    // email must not offer a card payment or say a trial is running.
+    const payUrl =
+      dto.startMode !== "active" && inviteOnlyCheckoutAllowed(planKey)
+        ? `${webBase}/login?redirect=${encodeURIComponent("/settings/billing")}`
+        : null;
     const welcomeEmail = await this.sendWelcomeEmail({
       userId: result.user.id,
       to: adminEmail,
@@ -467,6 +482,11 @@ export class PlatformAdminService {
       loginUrl,
       payUrl,
       welcomeEmail,
+      // Row 195: a test-pattern slug is allowed here (super-admin intent) but is flagged, because the
+      // tenant is classed TEST and every test-only script treats it as disposable.
+      ...(isApprovedTestTenantSlug(slug.toLowerCase())
+        ? { notice: "This will be a TEST tenant: its slug matches a test-tenant pattern." }
+        : {}),
     };
   }
 
@@ -1360,6 +1380,7 @@ export class PlatformAdminService {
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: "15m",
     });
 

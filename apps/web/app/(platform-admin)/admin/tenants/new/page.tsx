@@ -26,6 +26,7 @@ import { planLabel } from "../../../_components/AdminBadge";
 import { selectablePlanKeys } from "../../../_components/usePlanOptions";
 import { CopyButton } from "@/components/CopyButton";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
+import { isTestTenantSlug } from "@/lib/test-tenant-slug";
 import {
   StartAsSection,
   START_AS_DEFAULT,
@@ -74,6 +75,21 @@ const FIELD_COPY: Record<FieldKey, string> = {
   adminPassword:
     "Use 8 or more characters with an upper-case letter, a lower-case letter and a number or symbol.",
 };
+
+/** Fixed copy for a trial with no usable length (client guard and the server's TENANT_TRIAL_DAYS_REQUIRED). */
+const TRIAL_DAYS_COPY = "Enter a trial length from 1 to 90 days.";
+
+/** Moves the operator to the trial-length field (it is not a FieldKey field, so it has no ref). */
+function focusTrialDays() {
+  const el = document.getElementById("create-tenant-start-days");
+  if (!el) return;
+  const calm =
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  el.scrollIntoView?.({ block: "center", behavior: calm ? "auto" : "smooth" });
+  el.focus({ preventScroll: true });
+}
 
 /** The apply response's plain-English change list, when the response carries one. */
 function appliedSummary(applied: { summary?: unknown } | null | undefined): string[] | undefined {
@@ -188,6 +204,7 @@ export default function AdminCreateTenantPage() {
   // Result focus: bumping the token (once a create has settled) scrolls to and focuses the banner, or the first
   // invalid field when the server refused one.
   const [resultToken, setResultToken] = React.useState(0);
+  const [trialError, setTrialError] = React.useState<string | null>(null);
   const [focusField, setFocusField] = React.useState<FieldKey | null>(null);
   const bannerRef = React.useRef<HTMLDivElement>(null);
   const fieldRefs = React.useRef<Partial<Record<FieldKey, HTMLInputElement | null>>>({});
@@ -369,6 +386,8 @@ export default function AdminCreateTenantPage() {
       // single-use set-password link (#2439) — no password is ever generated or shown.
       const payload: Record<string, string | number> = { ...form };
       if (!payload.adminPassword) delete payload.adminPassword;
+      // #3334: the server picks the welcome email from this ("active" = no trial line, no Pay now).
+      payload.startMode = mode;
       if (mode === "trial") {
         const days = trialDaysOf(startAs.trialDays);
         if (days !== null) payload.trialLengthDays = days;
@@ -378,6 +397,17 @@ export default function AdminCreateTenantPage() {
         const res = await superAdminClient.post("/platform-admin/tenants", payload);
         created = { ...res.data, businessName: form.businessName };
       } catch (err: unknown) {
+        const refused = (err as { response?: { status?: number; data?: { code?: unknown } } })
+          ?.response;
+        if (
+          refused?.status === 400 &&
+          refused.data?.code === API_ERROR_CODES.TENANT_TRIAL_DAYS_REQUIRED
+        ) {
+          setTrialError(TRIAL_DAYS_COPY);
+          setIsLoading(false);
+          setTimeout(focusTrialDays, 0);
+          return;
+        }
         const fields = fieldErrorsOf(err, form);
         const first = FIELD_ORDER.find((f) => fields[f]);
         if (first) {
@@ -385,12 +415,8 @@ export default function AdminCreateTenantPage() {
           refusedField = first;
           return;
         }
-        const msg = (err as { response?: { data?: { message?: string | string[] } } })?.response
-          ?.data?.message;
-        setError(
-          safeTextErrorCopy(err) ??
-            (Array.isArray(msg) ? msg.join(", ") : (msg ?? "Failed to create tenant")),
-        );
+        // Never echo the server's free text: only the fixed sentence or the safe-text refusal copy.
+        setError(safeTextErrorCopy(err) ?? "Could not create the tenant. Try again.");
         settle();
         return;
       }
@@ -460,6 +486,11 @@ export default function AdminCreateTenantPage() {
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (isLoading) return;
+    if (mode === "trial" && trialDaysOf(startAs.trialDays) === null) {
+      setTrialError(TRIAL_DAYS_COPY);
+      focusTrialDays();
+      return;
+    }
     // Nothing is sent here: the form (native required-field checks already passed) opens the review.
     setSheetOpen(true);
   };
@@ -706,6 +737,15 @@ export default function AdminCreateTenantPage() {
                 {...fieldProps("slug")}
               />
               {fieldError("slug")}
+              {isTestTenantSlug(form.slug) && (
+                <p
+                  className="text-xs text-amber-300"
+                  role="status"
+                  data-testid="test-tenant-notice"
+                >
+                  This will be a TEST tenant: its slug matches a test-tenant pattern.
+                </p>
+              )}
             </div>
 
             {/* Business Name */}
@@ -856,8 +896,12 @@ export default function AdminCreateTenantPage() {
             planName={planLabel(form.plan)}
             priceText={priceText(planEntry)}
             value={startAs}
-            onChange={setStartAs}
+            onChange={(next) => {
+              setStartAs(next);
+              if (trialError) setTrialError(null);
+            }}
             disabled={isLoading}
+            trialError={trialError}
           />
 
           {/* Business profile (optional) */}

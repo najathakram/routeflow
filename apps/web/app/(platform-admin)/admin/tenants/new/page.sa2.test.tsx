@@ -85,6 +85,9 @@ function setPost(over: Record<string, PostHandler> = {}) {
 function httpError(status: number, data: Record<string, unknown>) {
   return Object.assign(new Error(`status ${status}`), { response: { status, data } });
 }
+const TRIAL_COPY = "Enter a trial length from 1 to 90 days.";
+/** The field's own error (the billing line can show the same sentence, so match by id). */
+const trialErr = () => document.getElementById("create-tenant-start-days-error");
 const urls = () => post.mock.calls.map((c) => c[0] as string);
 const bodyOf = (url: string) => post.mock.calls.find((c) => c[0] === url)?.[1];
 
@@ -136,6 +139,7 @@ describe("SA-2 Plan and start", () => {
     expect(bodyOf("/platform-admin/tenants")).toMatchObject({
       plan: "STARTER",
       trialLengthDays: 21,
+      startMode: "trial", // #3334
     });
   });
 
@@ -173,6 +177,8 @@ describe("SA-2 Plan and start", () => {
       billingPeriodDays: 90,
     });
     expect(bodyOf("/platform-admin/tenants")).not.toHaveProperty("trialLengthDays");
+    // #3334: the server omits the trial line and Pay now from the welcome email for this start
+    expect(bodyOf("/platform-admin/tenants")).toMatchObject({ startMode: "active" });
   });
 
   it("(3) Lite disables the trial with the reason and preselects Start active", async () => {
@@ -459,11 +465,68 @@ describe("SA-2 addendum: the result lands in view and takes focus", () => {
     await createThroughSheet();
     const banner = await screen.findByTestId("create-banner");
     expect(banner).toHaveAttribute("role", "alert");
-    expect(banner).toHaveTextContent("Failed to create tenant");
+    expect(banner).toHaveTextContent("Could not create the tenant. Try again.");
     await waitFor(() => expect(banner).toHaveFocus());
     expect(scrollIntoView.mock.instances).toContain(banner);
     // input kept
     expect(screen.getByLabelText(/slug/i)).toHaveValue("acme");
+  });
+
+  it("a 500 with server text shows the fixed sentence, never the server message", async () => {
+    setPost({
+      "/platform-admin/tenants": () => httpError(500, { message: "secret server text" }),
+    });
+    await renderPage();
+    fillForm();
+    await createThroughSheet();
+    const banner = await screen.findByTestId("create-banner");
+    expect(banner).toHaveTextContent("Could not create the tenant. Try again.");
+    expect(banner).not.toHaveTextContent("secret server text");
+  });
+
+  it("a blank trial length opens no review sheet (never '?-day trial')", async () => {
+    await renderPage();
+    fillForm();
+    fireEvent.change(screen.getByLabelText("Trial length (days)"), { target: { value: "" } });
+    fireEvent.click(formCreate());
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      (screen.getByLabelText("Trial length (days)") as HTMLInputElement).validity.valueMissing,
+    ).toBe(true);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("a trial with no valid length sends nothing and names the field (submit bypassing native checks)", async () => {
+    await renderPage();
+    fillForm();
+    const days = screen.getByLabelText("Trial length (days)");
+    fireEvent.change(days, { target: { value: "" } });
+    fireEvent.submit(formCreate().closest("form") as HTMLFormElement);
+    await waitFor(() => expect(trialErr()).toHaveTextContent(TRIAL_COPY));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(urls()).not.toContain("/platform-admin/tenants");
+    expect(days).toHaveAttribute("aria-invalid", "true");
+    expect(days).toHaveFocus();
+    expect(screen.getByLabelText(/slug/i)).toHaveValue("acme");
+    fireEvent.change(days, { target: { value: "30" } });
+    expect(trialErr()).toBeNull();
+  });
+
+  it("the server's TENANT_TRIAL_DAYS_REQUIRED refusal shows the same trial-length copy", async () => {
+    setPost({
+      "/platform-admin/tenants": () =>
+        httpError(400, {
+          statusCode: 400,
+          code: "TENANT_TRIAL_DAYS_REQUIRED",
+          message: "trialLengthDays is required",
+        }),
+    });
+    await renderPage();
+    fillForm();
+    await createThroughSheet();
+    await waitFor(() => expect(trialErr()).toHaveTextContent(TRIAL_COPY));
+    expect(screen.getByLabelText("Trial length (days)")).toHaveAttribute("aria-invalid", "true");
+    expect(document.body.textContent).not.toContain("trialLengthDays is required");
   });
 
   it("a taken slug focuses and scrolls to the slug field, says so inline, and keeps the input", async () => {

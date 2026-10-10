@@ -92,6 +92,13 @@ import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 import { isLocalDbTarget } from "./lib/local-db-target.cjs";
 import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
+import guard from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+
+// Row 195 (BELT 3): protected tenants (paying | stripe-linked | PROTECTED_TENANT_SLUGS) are never
+// planned and never stamped, with or without --live-tenant-override. Counts only, never a slug.
+const { protectedTenantIds } = guard;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 const TAG = "backfill-2169";
 // NSF_FEE_SYSTEM_KIND / NSF_FEE_DESCRIPTION_PREFIX come from @routeflow/pricing (#2392 / SA-478 —
@@ -427,9 +434,10 @@ async function dryRun() {
     return 1;
   }
 
-  let url, client;
+  let url, client, protectedSlugs;
   try {
     url = await resolveTarget();
+    protectedSlugs = loadProtectedSlugs(process.env, url);
     console.log(`${TAG}: target ${redactUrl(url)} DRY-RUN`);
     client = new pg.Client(dialConfig(url));
     await client.connect();
@@ -447,6 +455,7 @@ async function dryRun() {
       ? (await client.query(PAYMENTS_SQL, [lines.map((l) => l.invoiceId)])).rows
       : [];
     const slugById = await fetchSlugById(client, [...new Set(lines.map((l) => l.tenantId))]);
+    const protectedIds = await protectedTenantIds(client, protectedSlugs);
     await client.query("ROLLBACK");
 
     const linesByInvoice = new Map();
@@ -486,12 +495,21 @@ async function dryRun() {
       });
     }
 
+    // BELT 3 (row 195): protected tenants' rows are dropped before anything else is counted.
+    const applyProtPartition = partitionApplyByExclusion(apply, protectedIds);
+    const reviewProtPartition = partitionReviewByExclusion(review, protectedIds);
+    const protectedLineCount = applyProtPartition.excludedCount + reviewProtPartition.excludedCount;
+    const protectedTenantCount = new Set([
+      ...applyProtPartition.excludedTenantIds,
+      ...reviewProtPartition.excludedTenantIds,
+    ]).size;
+
     // BELT 2 (external exclusion list, unchanged from #2169): excluded tenants' rows are never
     // stamped and never counted per-tenant — folded into one aggregate line. No-op when no list
     // was supplied to this dry run.
     const excludedIds = exclusion ? exclusion.ids : [];
-    const applyExclPartition = partitionApplyByExclusion(apply, excludedIds);
-    const reviewExclPartition = partitionReviewByExclusion(review, excludedIds);
+    const applyExclPartition = partitionApplyByExclusion(applyProtPartition.kept, excludedIds);
+    const reviewExclPartition = partitionReviewByExclusion(reviewProtPartition.kept, excludedIds);
     const excludedLineCount = applyExclPartition.excludedCount + reviewExclPartition.excludedCount;
     const excludedTenantIds = new Set([
       ...applyExclPartition.excludedTenantIds,
@@ -562,6 +580,9 @@ async function dryRun() {
         `  excluded: ${excludedLineCount} line(s) across ${excludedTenantIds.size} tenant(s)`,
       );
     }
+    console.log(
+      `  protected-skipped: ${protectedLineCount} line(s) across ${protectedTenantCount} tenant(s)`,
+    );
     console.log(
       `  live-skipped: ${liveSkippedCount} line(s) across ${liveSkippedTenantIds.size} tenant(s)${liveOverride ? " (override was on for THIS dry run — re-check --confirm-live at apply time)" : ""}`,
     );
@@ -653,9 +674,10 @@ async function apply() {
     return 1;
   }
 
-  let url, client;
+  let url, client, protectedSlugs;
   try {
     url = await resolveTarget();
+    protectedSlugs = loadProtectedSlugs(process.env, url);
     console.log(
       `${TAG}: target ${redactUrl(url)} APPLY (${kept.length} line(s) proposed, excluding ${exclusion.ids.length} tenant(s))`,
     );
@@ -673,6 +695,18 @@ async function apply() {
     await client.query("SET LOCAL lock_timeout = '10s'");
     if (JSON.stringify(await fingerprint(client)) !== JSON.stringify(plan.fingerprint)) {
       throw refuse("DB fingerprint changed since the dry run (database or tenants differ)");
+    }
+
+    // Gate 9 (row 195 BELT 3): a plan row whose tenant is protected NOW (paying, Stripe-linked or
+    // env-listed — it may have become so since the dry run) refuses the WHOLE apply. Counts only.
+    const protectedHit = partitionApplyByExclusion(
+      kept,
+      await protectedTenantIds(client, protectedSlugs),
+    );
+    if (protectedHit.excludedCount > 0) {
+      throw refuse(
+        `${protectedHit.excludedCount} planned line(s) across ${protectedHit.excludedTenantIds.size} protected tenant(s); re-run the dry run`,
+      );
     }
 
     // Gate 8 (SA-403 BELT 1): default allow-list, re-derived fresh (never trusts the dry run's
