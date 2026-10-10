@@ -22,5 +22,6 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/components-shared.md](web/components-shared.md) | Components & shared                                                                                    |
 | [web/api-hooks.md](web/api-hooks.md)                 | API hooks (`lib/api/`)                                                                                 |
 | [web/catchup-2026-09-21.md](web/catchup-2026-09-21.md) | Catch-up 2026-09-21: restrictions UI, product labels, PO tab, scan-to-order, credit-limit guard, config snapshots tab |
+| [web/landing-2026-10-10-w21b-w22a1.md](web/landing-2026-10-10-w21b-w22a1.md) | Landing 2026-10-10 (W21b + W22a-1): counter live cart, price edit and receipt, leave guard, returns and refunds, variant pickers, family cascade, test-tenant notice |
 | [web/landing-2026-10-06-w4-w10.md](web/landing-2026-10-06-w4-w10.md) | Landing 2026-10-06 (windows 4 to 10): order actions by role, business profile picker, billing confirm sheets, order suggestions |
 | [web/landing-2026-10-01-w12-w27.md](web/landing-2026-10-01-w12-w27.md) | Landing 2026-10-01 w12-w27: settings hub, PO route/detail/scan, scan level/aim/hold, shell handoff, CN edit/void |
