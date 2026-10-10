@@ -254,7 +254,7 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
     expect(r.change).toBe(8.73);
   });
 
-  it("(N4) a CASH sale with a cash tender row but NO stored tendered (legacy) serves no change", async () => {
+  it("no stored tendered: a CASH sale with a cash tender row but NO stored tendered (legacy) serves no change", async () => {
     findReplayCandidateByKey.mockResolvedValue({
       id: "ord-1",
       orderNumber: "ORD-1",
@@ -267,6 +267,25 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
     expect(r.method).toBe("CASH");
     expect(r.change).toBeUndefined();
     expect(r.cashTendered).toBeUndefined();
+  });
+
+  it("a CARD replay on a sale whose stored first tender is CASH serves the same change as by-key", async () => {
+    replay = true;
+    stored = 50;
+    invoices[0].status = "PAID";
+    invoices[0].payments.push({ id: "p0", amount: 41.27, method: "CASH", status: "PAID" });
+    const r = await ring({ method: "CARD", amount: 41.27 });
+    findReplayCandidateByKey.mockResolvedValue({
+      id: "ord-1",
+      orderNumber: "ORD-1",
+      counterSale: true,
+      status: "DELIVERED",
+      counterCashTendered: 50,
+    });
+    const k = await service.byKey("k1");
+    expect(k.change).toBe(8.73);
+    expect(r.cashTendered).toBe(k.cashTendered);
+    expect(r.change).toBe(k.change);
   });
 
   it("(f) a sale with no stored tendered (card / legacy) reads back without the field", async () => {

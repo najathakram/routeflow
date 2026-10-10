@@ -225,8 +225,9 @@ export class CounterSaleService {
     }
 
     // SA-764: the stored tendered as the tender left it (the pre-tender read above may hold a stale figure).
+    // Any non-ON_ACCOUNT request, so a CARD replay on a sale first tendered in CASH serves what by-key serves.
     const tendered =
-      method === "CASH"
+      method !== "ON_ACCOUNT"
         ? await this.prisma
             .forTenant()
             .order.findFirst({ where: { id: orderId }, select: { counterCashTendered: true } })
