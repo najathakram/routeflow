@@ -87,6 +87,7 @@ import {
   type RemovedLine,
 } from "./counter-sale-line-edit";
 import { useCounterSaleScan } from "./useCounterSaleScan";
+import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 
@@ -191,15 +192,11 @@ export function CounterSaleScreen() {
   }, [heldKey]);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
   // While a walk-in sale waits for the customer to ship to, the customer field keeps focus instead.
-  const refocus = React.useCallback(
-    () =>
-      window.setTimeout(() => {
-        // A line's note field the clerk just opened (or is typing in) keeps focus: never pull it back to the scan field.
-        if (document.activeElement?.hasAttribute("data-counter-note")) return;
-        (awaitingCustomerRef.current ? customerFindRef.current : scanRef.current)?.focus();
-      }, 0),
-    [],
-  );
+  const { refocus, focusCustomerFind, refocusFromActive } = useCounterScanFocus({
+    scanRef,
+    customerFindRef,
+    awaitingCustomerRef,
+  });
   // Fixing the tender clears the "less than the total" message and ONLY that one (never a server or final-sale error).
   const clearUnderpaidError = () =>
     setError((e) => (e === PAYMENT_PROBLEM_COPY.TENDER_SHORT ? "" : e));
@@ -359,7 +356,7 @@ export function CounterSaleScreen() {
     }
     if (customer === null) {
       awaitingCustomerRef.current = lines.length > 0;
-      customerFindRef.current?.focus();
+      focusCustomerFind();
     }
     setShipIntent(true);
   };
@@ -425,9 +422,11 @@ export function CounterSaleScreen() {
     if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
     undoTimerRef.current = null;
     undoLeftRef.current = UNDO_MS;
+    const hadFocus = undoFocusRef.current;
     undoFocusRef.current = false; // the focused Undo button is gone with the line; the pointer may still be over the bar
     setUndo(null);
-  }, []);
+    if (hadFocus) refocus(); // the focused Undo chip vanished: the cursor goes back to the scan field, not <body>
+  }, [refocus]);
   // The 5 s window PAUSES while the bar is hovered or focused and resumes with what was left.
   const undoLeftRef = React.useRef(UNDO_MS);
   const undoStartedRef = React.useRef(0);
@@ -1019,7 +1018,8 @@ export function CounterSaleScreen() {
                 onPriceEdit={editPrice}
                 onPriceReset={resetPrice}
                 onPriceClosed={refocus}
-                onQtyEnter={refocus}
+                onNoteClosed={refocus}
+                onQtyEnter={refocusFromActive}
               />
             ))}
           </ul>
