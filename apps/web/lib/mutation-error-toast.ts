@@ -2,6 +2,7 @@ import type { ToastData } from "@routeflow/ui/web";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { genericToastCopy } from "./generic-toast-copy";
 import { safeTextBodyCopy } from "./safe-text-error-copy";
+import { markReadOnlyRefused } from "./read-only-gate";
 import { ownsBillingBanner, readOnlyLine } from "./subscription-banner-state";
 
 /**
@@ -65,6 +66,7 @@ export function handleMutationError(
     // payment is owed; the server answers a plan change with 409 PAYMENT_OVERDUE).
     const view = readOnlyState?.view();
     readOnlyState?.refresh();
+    markReadOnlyRefused();
     if (ownsBillingBanner(view)) {
       toast({ title: readOnlyLine(view?.billingContactName), variant: "warning" });
       return;

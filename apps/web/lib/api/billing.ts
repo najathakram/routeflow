@@ -298,12 +298,45 @@ export function useResumeSubscription() {
  * Leaving to Stripe goes through the counter's leave guard so an open cart is never dropped silently.
  */
 export function useBillingPortal() {
-  return useMutation<BillingPortalResult, Error, { intent: "update-payment" | "pay" }>({
+  return useMutation<
+    BillingPortalResult,
+    Error,
+    { intent: "update-payment" | "pay" },
+    { win: Window | null }
+  >({
     mutationFn: () => apiClient.post("/billing/portal").then((r) => r.data),
-    onSuccess: (r, { intent }) => {
-      const url = intent === "pay" ? (r.hostedInvoiceUrl ?? r.portalUrl) : r.portalUrl;
+    // Stripe opens in a NEW tab, claimed synchronously on the click (before the request, so a popup blocker allows it):
+    // the counter tab - and an open cart in it - is never navigated away. If the browser refuses the tab we fall back
+    // to this tab through the counter's leave guard.
+    onMutate: () => {
+      let win: Window | null = null;
+      try {
+        win = window.open("", "_blank");
+        if (win) win.opener = null;
+      } catch {
+        win = null;
+      }
+      return { win };
+    },
+    onSuccess: (r, { intent }, ctx) => {
+      // Pay prefers the invoice page; Update payment prefers the portal; either falls back to the other.
+      const url =
+        intent === "pay"
+          ? (r.hostedInvoiceUrl ?? r.portalUrl)
+          : (r.portalUrl ?? r.hostedInvoiceUrl);
+      if (!url) {
+        ctx?.win?.close();
+        return;
+      }
+      if (ctx?.win) {
+        ctx.win.location.href = url;
+        return;
+      }
       if (guardCounterLeave(() => window.location.assign(url))) return;
       window.location.assign(url);
+    },
+    onError: (_e, _v, ctx) => {
+      ctx?.win?.close();
     },
   });
 }

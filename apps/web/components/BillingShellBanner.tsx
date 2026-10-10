@@ -17,6 +17,40 @@ import {
  * cancelled) keeps the existing ReadOnlyBanner. Buyers and drivers never reach this (the shell only reads the
  * subscription for staff) and `bannerRoleOf` returns null for them anyway.
  */
+const SHOWN_KEY = "rf.billing.strip-shown";
+
+/**
+ * Reserves the strip's height while the subscription read is still loading, but ONLY for a viewer who had a strip
+ * on their previous load (a per-viewer hint in storage): a content jump when the strip appears late is a layout
+ * shift, and a permanent blank gap for every healthy workspace would be worse. Same fixed heights as the strip.
+ */
+export function BillingStripReserve() {
+  const [reserve] = React.useState(() => {
+    try {
+      return window.localStorage.getItem(SHOWN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  if (!reserve) return null;
+  return (
+    <div
+      data-testid="subscription-strip-reserve"
+      aria-hidden="true"
+      className="h-8 shrink-0 md:h-9"
+    />
+  );
+}
+
+function rememberStrip(shown: boolean) {
+  try {
+    if (shown) window.localStorage.setItem(SHOWN_KEY, "1");
+    else window.localStorage.removeItem(SHOWN_KEY);
+  } catch {
+    /* storage unavailable: no reservation next time */
+  }
+}
+
 export function BillingShellBanner({
   view,
   userRole,
@@ -26,8 +60,13 @@ export function BillingShellBanner({
 }) {
   usePaidTransition(view);
   const role = bannerRoleOf(userRole);
-  if (role && (ownsBillingBanner(view) || view.status === "ACTIVE")) {
-    const state = subscriptionBannerState(view, role);
+  const state =
+    role && (ownsBillingBanner(view) || view.status === "ACTIVE")
+      ? subscriptionBannerState(view, role)
+      : null;
+  const showing = !!state?.inShell;
+  React.useEffect(() => rememberStrip(showing), [showing]);
+  if (role && state) {
     return state.inShell ? <SubscriptionStrip view={view} role={role} state={state} /> : null;
   }
   if (ownsBillingBanner(view)) return null; // never "Choose a plan" while an invoice is owed

@@ -40,7 +40,7 @@ import { setLastPortalCookie } from "@/lib/presence-cookies";
 import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
 import { ReadOnlyGateProvider } from "@/lib/read-only-gate";
-import { BillingShellBanner } from "@/components/BillingShellBanner";
+import { BillingShellBanner, BillingStripReserve } from "@/components/BillingShellBanner";
 import { subscriptionPollInterval } from "@/lib/subscription-banner-state";
 import { useSubscription } from "@/lib/api/billing";
 import { useAuth } from "@/lib/auth-context";
@@ -1352,9 +1352,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           control; below lg the rail is a drawer so it becomes the viewport corner. */}
       <div className="relative flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
-        {subscriptionStatus && (
+        {subscriptionStatus ? (
           <BillingShellBanner view={subscriptionStatus} userRole={user?.role} />
-        )}
+        ) : isStaff && !subscriptionFailed ? (
+          <BillingStripReserve />
+        ) : null}
         {register ? (
           <RegisterHeader
             onOpenMobileNav={() => setMobileNavOpen(true)}

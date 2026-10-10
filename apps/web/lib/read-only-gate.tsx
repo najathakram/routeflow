@@ -23,6 +23,37 @@ interface Gate {
   hintId: string;
 }
 
+// A 403 READ_ONLY on a control the page still thought was enabled flips the gate at once (before the subscription
+// re-read lands) so the line appears NEXT TO that control, not only in a toast. It expires after a minute: the fresh
+// read decides again, so a stale refusal (the server's status cache is 60 s) never sticks.
+const REFUSAL_MS = 60_000;
+let refusedUntil = 0;
+let refusalTimer: ReturnType<typeof setTimeout> | null = null;
+const refusalListeners = new Set<() => void>();
+const notifyRefusal = () => refusalListeners.forEach((fn) => fn());
+
+export function isReadOnlyRefused(): boolean {
+  return refusedUntil > Date.now();
+}
+export function markReadOnlyRefused(): void {
+  refusedUntil = Date.now() + REFUSAL_MS;
+  if (refusalTimer) clearTimeout(refusalTimer);
+  refusalTimer = setTimeout(notifyRefusal, REFUSAL_MS + 50);
+  notifyRefusal();
+}
+export function resetReadOnlyRefusedForTests(): void {
+  refusedUntil = 0;
+  if (refusalTimer) clearTimeout(refusalTimer);
+  refusalTimer = null;
+  notifyRefusal();
+}
+const subscribeRefusal = (fn: () => void) => {
+  refusalListeners.add(fn);
+  return () => {
+    refusalListeners.delete(fn);
+  };
+};
+
 const GateContext = React.createContext<Gate>({ readOnly: false, line: null, hintId: "ro-line" });
 
 export function ReadOnlyGateProvider({
@@ -32,7 +63,8 @@ export function ReadOnlyGateProvider({
   view: SubscriptionView | null | undefined;
   children: React.ReactNode;
 }) {
-  const readOnly = view?.status === "READ_ONLY";
+  const refused = React.useSyncExternalStore(subscribeRefusal, isReadOnlyRefused, () => false);
+  const readOnly = view?.status === "READ_ONLY" || refused;
   const name = view?.billingContactName;
   const hintId = React.useId();
   const value = React.useMemo<Gate>(

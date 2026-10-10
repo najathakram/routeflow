@@ -198,6 +198,7 @@ describe("handleMutationError - 403 READ_ONLY while a payment is owed (B4)", () 
 });
 
 describe("handleMutationError - a 403 READ_ONLY flips the controls on screen (S5)", () => {
+  beforeEach(() => resetReadOnlyRefusedForTests());
   afterEach(() => resetReadOnlyRefusedForTests());
 
   it("marks the refusal so the gated controls show the line next to themselves", () => {

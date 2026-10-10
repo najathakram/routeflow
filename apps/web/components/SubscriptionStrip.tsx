@@ -25,6 +25,21 @@ const TONE: Record<"neutral" | "amber", string> = {
   amber: "bg-amber-50 text-amber-900 ring-amber-200",
 };
 
+/**
+ * role=alert is claimed ONCE per session per state (the first time the last-day / read-only strip appears); a later
+ * mount (another page load, the poll remounting it) is a quiet status, so a screen reader is not re-interrupted.
+ */
+function claimAlert(kind: string): boolean {
+  try {
+    const key = `rf.billing.alerted.${kind}`;
+    if (window.sessionStorage.getItem(key)) return false;
+    window.sessionStorage.setItem(key, "1");
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 export function SubscriptionStrip({
   view,
   role,
@@ -40,6 +55,16 @@ export function SubscriptionStrip({
     [given, view, role],
   );
   const portal = useBillingPortal();
+  const announceKind = state.live === "alert" ? state.kind : null;
+  const [announced, setAnnounced] = React.useState<{ kind: string; alert: boolean } | null>(null);
+  const alertNow =
+    announceKind !== null &&
+    (announced?.kind === announceKind ? announced.alert : claimAlert(announceKind));
+  React.useEffect(() => {
+    if (announceKind && announced?.kind !== announceKind) {
+      setAnnounced({ kind: announceKind, alert: alertNow });
+    }
+  }, [announceKind, announced, alertNow]);
   const [sheet, setSheet] = React.useState(false);
   const [tick, setTick] = React.useState(0);
   const dismissKey = state.dismiss?.key;
@@ -57,7 +82,7 @@ export function SubscriptionStrip({
       <div
         data-testid="subscription-strip"
         data-state={state.kind}
-        role={state.live === "alert" ? "alert" : "status"}
+        role={alertNow ? "alert" : "status"}
         className={cn(
           "flex h-8 shrink-0 items-center gap-2 px-3 text-[13px] ring-1 md:h-9 md:px-4 md:text-sm",
           TONE[state.tone],
@@ -73,13 +98,21 @@ export function SubscriptionStrip({
         >
           {state.copy}
         </button>
-        {action && (
+        {action && action.intent === "open-billing" && (
+          <a
+            href="/settings/billing"
+            className="shrink-0 rounded-ctl border border-line-strong bg-paper px-2.5 text-[12.5px] font-medium leading-6 text-navy"
+          >
+            {action.label}
+          </a>
+        )}
+        {action && action.intent !== "open-billing" && (
           <Button
             size="sm"
             variant="secondary"
             className="h-6 shrink-0 md:h-7"
             loading={portal.isPending}
-            onClick={() => portal.mutate({ intent: action.intent })}
+            onClick={() => portal.mutate({ intent: action.intent as "pay" | "update-payment" })}
           >
             {action.label}
           </Button>
@@ -103,10 +136,10 @@ export function SubscriptionStrip({
         onClose={() => setSheet(false)}
         title="Billing"
         footer={
-          action ? (
+          action && action.intent !== "open-billing" ? (
             <Button
               loading={portal.isPending}
-              onClick={() => portal.mutate({ intent: action.intent })}
+              onClick={() => portal.mutate({ intent: action.intent as "pay" | "update-payment" })}
             >
               {action.label}
             </Button>
