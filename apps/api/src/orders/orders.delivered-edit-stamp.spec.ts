@@ -134,6 +134,13 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
     expect(d("li-A")).toBe(12);
   });
 
+  it("the same legacy line cut through a replace-all: no restock, d ends at max(d, old, new) = 12", async () => {
+    seed([lineA({ qty: 12, deliveredQty: 0 })]);
+    await edit([{ productId: "prod-A", qty: 10 }], true);
+    expect(h.prisma.product.update).not.toHaveBeenCalled(); // red on base: increment 2
+    expect(Number(store[0].deliveredQty)).toBe(12); // red on base: 10
+  });
+
   it("a route-stop order keeps today's settle: a cut restocks (its columns are never touched)", async () => {
     seed([lineA({ qty: 12, deliveredQty: 0 })]);
     h.prisma.order.findFirst.mockResolvedValue({

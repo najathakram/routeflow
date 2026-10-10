@@ -31,6 +31,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PickupCompleteService } from "./counter-sale/pickup-complete.service";
+import { clearUnevidencedDelivered, unevidencedDeliveredFloor } from "./delivered-stamp";
 import { OrdersService } from "./orders.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -144,6 +145,7 @@ describeDb("SA-763r — the delivered stamp through the real writers, real Postg
       promotionsService: { activeForCatalog: async () => [] },
       notifications: { sendToCustomer: async () => undefined },
       messaging: anyMethod,
+      ledger: anyMethod,
       featureConfig: { getEffectiveMode: async () => "unset" },
       tenantCtx,
       invoicesService: {
@@ -157,8 +159,13 @@ describeDb("SA-763r — the delivered stamp through the real writers, real Postg
       },
       logger: new Logger(OrdersService.name),
       inlineReturns: {},
-      creditNotes: { settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }) },
+      creditNotes: {
+        settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }),
+        releaseOrderCreditsInTx: async () => [],
+      },
     });
+    orders.invoicesService.releaseWalletPaymentsInTx = async () => ({ credits: [], advances: 0 });
+    orders.invoicesService.voidInvoiceInTx = async () => ({});
     tenantId = (await raw.tenant.create({ data: { slug, name: `Stampx ${slug}` } })).id;
     userId = (
       await raw.user.create({
@@ -285,5 +292,51 @@ describeDb("SA-763r — the delivered stamp through the real writers, real Postg
     );
     expect(await dq(lineIds[0])).toBe(3); // red on base: 0
     expect(await dq(lineIds[1])).toBe(2);
+  });
+  /** The counter void's order step, as CounterSaleVoidService.voidInTx runs it (floor read, reset, then the cancel). */
+  const voidLike = (orderId: string) =>
+    as(() =>
+      prisma.tenantTransaction(async (tx: any) => {
+        const bookedFloor = await unevidencedDeliveredFloor(tx, orderId);
+        await clearUnevidencedDelivered(tx, orderId);
+        await orders.cancelOrderInTx(
+          tx,
+          { id: orderId },
+          {
+            fromStatuses: ["DELIVERED"],
+            statusUpdateData: { status: "CANCELLED" },
+            carrier: null,
+            user: operator(),
+            notes: "CANCEL",
+            bookedFloor,
+          },
+        );
+      }),
+    );
+  const stock = async () =>
+    Number((await raw.product.findUniqueOrThrow({ where: { id: productId } })).currentStock);
+
+  it("a LEGACY counter line (d 0): 12 sold, cut to 10, then voided: stock ends where it started (no over-restock)", async () => {
+    const { orderId, lineIds } = await seed({
+      status: "DELIVERED",
+      lines: [{ qty: 12, d: 0 }],
+    });
+    await raw.product.update({ where: { id: productId }, data: { currentStock: 88 } }); // the sale took 12
+    await edit(orderId, { items: [{ id: lineIds[0], productId, qty: 10 }], replaceAll: false });
+    expect(await stock()).toBe(88); // red on base: 90 (the cut put 2 back)
+    expect(await dq(lineIds[0])).toBe(12);
+    await voidLike(orderId);
+    expect(await stock()).toBe(100); // red on base: 102 (14 restocked for 12 sold)
+  });
+
+  it("the same legacy line cut through a replace-all keeps the books: no restock, d 12, void back to the start", async () => {
+    const { orderId } = await seed({ status: "DELIVERED", lines: [{ qty: 12, d: 0 }] });
+    await raw.product.update({ where: { id: productId }, data: { currentStock: 88 } });
+    await edit(orderId, { items: [{ productId, qty: 10 }], replaceAll: true });
+    const [row] = await lines(orderId);
+    expect(Number(row.deliveredQty)).toBe(12);
+    expect(await stock()).toBe(88);
+    await voidLike(orderId);
+    expect(await stock()).toBe(100);
   });
 });

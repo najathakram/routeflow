@@ -193,7 +193,8 @@ export async function captureRecreatedCarry(
     held: held.map((h) => ({
       id: h.id,
       key: keyOf(h.productId),
-      deliveredQty: Number(h.deliveredQty ?? 0),
+      // no evidence on this order (refused above): the units that left are the booked floor max(d, qty)
+      deliveredQty: Math.max(Number(h.deliveredQty ?? 0), Number(h.qty)),
     })),
   };
 }
