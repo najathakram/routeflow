@@ -119,6 +119,65 @@ export class ScheduledPriceChangeService {
   }
 
   /**
+   * Has this tenant's scheduled downgrade price ALREADY been pushed onto its Stripe base item? True only when
+   * the live monthly base item bills exactly the downgrade target's price (and that differs from the price of
+   * the plan the tenant is on). The plan-price fan-out uses it, under the tenant-price lock, to leave ONLY such
+   * tenants alone: syncing them would price Stripe from the plan they are leaving and revert the push. A tenant
+   * whose downgrade is scheduled but NOT yet pushed must still be synced: its Stripe item bills the plan's old
+   * price, and the catalog edit has to reach it (the later push, if the downgrade stands, overwrites it; if the
+   * downgrade is cancelled it simply stays correct). Anything unreadable answers true - never revert blind.
+   */
+  async isDowngradePricePushed(tenantId: string): Promise<boolean> {
+    try {
+      const sub = await this.prisma.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: {
+          planKey: true,
+          planVersionId: true,
+          stripeSubId: true,
+          priceOverrideMonthly: true,
+          priceOverrideAnnual: true,
+          downgradeToPlanKey: true,
+        },
+      });
+      if (
+        !sub?.stripeSubId ||
+        !sub.downgradeToPlanKey ||
+        !sub.planKey ||
+        !this.stripe.isConfigured
+      ) {
+        return false;
+      }
+      const version = await this.catalog.getVersionForTenant(sub.planVersionId);
+      const override = { monthly: sub.priceOverrideMonthly, annual: sub.priceOverrideAnnual };
+      const kept = resolvePlanPrice(findPlanDefinition(version.definitions, sub.planKey), override);
+      let targetDef = findPlanDefinition(version.definitions, sub.downgradeToPlanKey);
+      if (!targetDef) {
+        const published = await this.catalog.getPublishedVersion();
+        targetDef = published
+          ? findPlanDefinition(published.definitions, sub.downgradeToPlanKey)
+          : undefined;
+      }
+      const target = resolvePlanPrice(targetDef, override);
+      if (!kept.ok || !target.ok) return true;
+      const targetCents = toCents(target.monthly);
+      if (targetCents === toCents(kept.monthly)) return false; // a custom fee: no lower price was pushed
+
+      const stripeSub = await this.stripe.getSubscription(sub.stripeSubId, {
+        expand: CHECKOUT_ADDON_EXPAND,
+      });
+      if (!isLiveStripeSubscriptionStatus(stripeSub?.status)) return false;
+      const ids = await stripeAddonItemIds(this.prisma, tenantId, stripeSub);
+      const base = stripeBaseItem(stripeSub, ids);
+      const recurring = base?.price?.recurring;
+      if (!base || ids.has(base.id) || recurring?.interval !== "month") return false;
+      return base.price?.unit_amount === targetCents;
+    } catch {
+      return true;
+    }
+  }
+
+  /**
    * The undo of {@link apply}: the tenant kept its plan (`resume()` = "Keep current plan") AFTER the lower price
    * had already been pushed for the renewal. If Stripe's base item still bills exactly the cleared target's price
    * (and the row now carries no schedule), put it back on the price of the plan the tenant is staying on - proration

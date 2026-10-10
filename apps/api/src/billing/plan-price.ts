@@ -28,6 +28,7 @@ export function resolvePlanPrice(
   if (override?.monthly != null || override?.annual != null) {
     const monthly = override.monthly != null ? Number(override.monthly) : catalogMonthly;
     if (monthly == null) return { ok: false, reason: "annual_override_without_monthly" };
+    // (annual = monthly x 10 is unrounded here; toCents rounds it to cents before any Stripe amount is built)
     const annual = override.annual != null ? Number(override.annual) : monthly * 10;
     return { ok: true, monthly, annual, source: "override" };
   }

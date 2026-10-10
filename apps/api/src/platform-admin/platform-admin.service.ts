@@ -2068,17 +2068,13 @@ export class PlatformAdminService {
     const onPlan = candidates.filter(
       (c) => normalizePlanKey(c.planKey ?? c.tenant.plan) === planKey,
     );
-    // N3 (R1 Option B): a tenant with a scheduled DOWNGRADE has (or soon will have) the target's lower price
-    // pushed onto its Stripe base item BEFORE the renewal (ScheduledPriceChangeService). Syncing it here would
-    // price Stripe from the plan it is LEAVING and revert that push, so the renewal bills the old plan again.
-    // Skipped and logged; the scheduled push owns its price until the downgrade lands or is cancelled.
-    const targets = onPlan.filter((c) => !c.downgradeToPlanKey);
-    let skippedDowngrade = onPlan.length - targets.length;
-    for (const c of onPlan.filter((c) => c.downgradeToPlanKey)) {
-      this.logger.log(
-        `Plan price fan-out: tenant ${c.tenantId} skipped - a downgrade to ${c.downgradeToPlanKey} is scheduled (its price is owned by the scheduled push)`,
-      );
-    }
+    // N3 (R1 Option B): a tenant whose scheduled DOWNGRADE price has ALREADY been pushed onto its Stripe base item
+    // (ScheduledPriceChangeService, before the renewal) must not be synced here: that would price Stripe from the
+    // plan it is LEAVING and revert the push, so the renewal bills the old plan again. Only THOSE tenants are
+    // skipped (decided per tenant under its lock below). A tenant with a downgrade scheduled but not yet pushed is
+    // synced like any other - otherwise a downgrade cancelled later would leave Stripe on the pre-update price.
+    const targets = onPlan;
+    let skippedDowngrade = 0;
 
     let synced = 0;
     let failed = 0;
@@ -2087,14 +2083,18 @@ export class PlatformAdminService {
         // The same per-tenant price lock the override flow takes, so the fan-out cannot overwrite an
         // override Stripe update that has not committed yet.
         const result = await underTenantPriceLock(target.tenantId, async () => {
-          // Re-proved UNDER the lock: a downgrade scheduled since the scan above is skipped too.
+          // Decided UNDER the lock, from a fresh read: has the scheduled downgrade's price been pushed already?
           const armed = await this.prisma.tenantSubscription.findUnique({
             where: { tenantId: target.tenantId },
             select: { downgradeToPlanKey: true },
           });
-          if (armed?.downgradeToPlanKey) {
+          // (Without the scheduled-price service a scheduled downgrade is skipped - the conservative answer.)
+          if (
+            armed?.downgradeToPlanKey &&
+            ((await this.scheduledPrice?.isDowngradePricePushed(target.tenantId)) ?? true)
+          ) {
             this.logger.log(
-              `Plan price fan-out: tenant ${target.tenantId} skipped - a downgrade to ${armed.downgradeToPlanKey} was scheduled meanwhile`,
+              `Plan price fan-out: tenant ${target.tenantId} skipped - its downgrade to ${armed.downgradeToPlanKey} price is already pushed to Stripe`,
             );
             return "skipped" as const;
           }
@@ -2121,7 +2121,7 @@ export class PlatformAdminService {
         planKey,
         monthlyPrice: dto.monthly,
         annualPrice: annualPrice === null ? null : Number(annualPrice),
-        updated: targets.length,
+        updated: targets.length - skippedDowngrade,
         synced,
         failed,
         skippedDowngrade,
@@ -2132,7 +2132,7 @@ export class PlatformAdminService {
       planKey,
       monthlyPrice: Number(updated.monthlyPrice),
       annualPrice: updated.annualPrice === null ? null : Number(updated.annualPrice),
-      updated: targets.length,
+      updated: targets.length - skippedDowngrade,
       synced,
       failed,
       skippedDowngrade,
