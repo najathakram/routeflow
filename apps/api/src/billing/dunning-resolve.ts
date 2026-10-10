@@ -43,6 +43,8 @@ export async function resolveClockInvoice(
   // uncollectible to stop chasing; leave open to keep chasing. An uncollectible invoice is the owner's write-off and
   // never counts here, so paying the newer invoice resumes the tenant.
   // The clocked invoice is never age-filtered (a young one is still owed), siblings follow the one owed rule.
+  // ACCEPTED: an attempted sibling whose bank debit is still in flight counts as owed, so it holds a resume until it
+  // settles (paid -> the next invoice.paid / sweep resumes; failed -> it stays owed).
   const others = open.filter((i) => i.id !== paidInvoiceId && isOwedInvoice(i, now, clockId));
   if (others.length > 0) {
     const oldest = others[0];

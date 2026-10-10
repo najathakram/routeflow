@@ -41,12 +41,32 @@ export async function runMilestones(
   const M = DUNNING_MILESTONES;
 
   const logged = await deps.prisma.billingNotificationLog.findMany({
-    where: { tenantId, key, milestone: { in: [M.D0, M.D3, M.D6, M.FINAL, M.PAUSED_STILL_OWED] } },
+    where: {
+      tenantId,
+      key,
+      milestone: { in: [M.D0, M.D3, M.D6, M.FINAL, M.PAUSED, M.PAUSED_STILL_OWED] },
+    },
     select: { milestone: true, sentAt: true },
   });
   const sent = new Map(logged.map((l) => [l.milestone, l.sentAt]));
   const elapsed = hoursSince(row.pastDueSince, now);
   const payUrl = facts.hostedInvoiceUrl ?? null;
+
+  // `paused`: the tenant is already read-only, so the message is about the still-owed notice, once per EPISODE
+  // (the claim is released on a send nobody accepted, so every sweep retries quietly; the operator hears once).
+  const warnUndeliverable = (res: { status: string }, paused = false) => {
+    const onceKey = paused ? `no_admin_paused:${key}` : `no_admin:${tenantId}:${invoiceId}`;
+    if (res.status === "no_recipients" && deps.once(onceKey)) {
+      deps.logger.warn(
+        `billing.dunning.no_deliverable_admin tenant=${tenantId} invoice=${invoiceId} - ${
+          paused
+            ? "the paused-still-owed notice cannot be delivered"
+            : "no notice can be delivered, so the pause will never be due"
+        }`,
+      );
+    }
+    return res;
+  };
 
   if (opts.paused) {
     // SA G8: nothing to warn about any more. Log what is held back once per episode; tell the admin once.
@@ -55,18 +75,24 @@ export async function runMilestones(
         `billing.dunning.paused_notices_suppressed tenant=${tenantId} invoice=${invoiceId} episode=${key}`,
       );
     }
-    if (!sent.has(M.PAUSED_STILL_OWED)) {
-      await deps.notifications.notifyDunning(
-        tenantId,
-        M.PAUSED_STILL_OWED,
-        key,
-        "paused_still_owed",
-        {
-          payUrl,
-          invoiceNumber: facts.invoiceNumber ?? null,
-          amountCents: remainingCents(facts),
-          currency: facts.currency ?? null,
-        },
+    // The pause itself already told THIS episode's admin (DUNNING_PAUSED: read-only now, pay the open invoice, with the
+    // hosted link), so a still-owed notice an hour later would be a second mail for one event. A clock moved while
+    // paused is a new episode with no PAUSED under its key: that one gets its single still-owed notice.
+    if (!sent.has(M.PAUSED) && !sent.has(M.PAUSED_STILL_OWED)) {
+      warnUndeliverable(
+        await deps.notifications.notifyDunning(
+          tenantId,
+          M.PAUSED_STILL_OWED,
+          key,
+          "paused_still_owed",
+          {
+            payUrl,
+            invoiceNumber: facts.invoiceNumber ?? null,
+            amountCents: remainingCents(facts),
+            currency: facts.currency ?? null,
+          },
+        ),
+        true,
       );
     }
     return null;
@@ -79,15 +105,6 @@ export async function runMilestones(
   ) => deps.notifications.notifyDunning(tenantId, milestone, key, kind, { payUrl, ...dates });
   const readOnlyOn = () =>
     deps.notifications.localDateLabel(tenantId, new Date(now.getTime() + 24 * HOUR_MS));
-
-  const warnUndeliverable = (res: { status: string }) => {
-    if (res.status === "no_recipients" && deps.once(`no_admin:${tenantId}:${invoiceId}`)) {
-      deps.logger.warn(
-        `billing.dunning.no_deliverable_admin tenant=${tenantId} invoice=${invoiceId} - no notice can be delivered, so the pause will never be due`,
-      );
-    }
-    return res;
-  };
 
   // SAFETY NET (Opus re-review): ONLY the highest milestone that is due goes out in a sweep. A clock that carries an
   // old time (a legacy backlog, a restored clock) must not mail d0 + d3 + d6 in one hour; the earlier ones are

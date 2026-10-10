@@ -303,7 +303,7 @@ export class DunningService {
       // admin activation (or invoice.paid of the clocked invoice). A paused tenant whose invoice closed is the
       // operator's cue: one warn per tenant per day.
       if (
-        (row.pausedAt || row.tenant.status === READ_ONLY_STATUS) &&
+        isPausedRow(row) &&
         this.once(`paused_closed:${row.tenantId}:${Math.floor(now.getTime() / 86_400_000)}`)
       ) {
         this.logger.warn(

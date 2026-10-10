@@ -1,3 +1,4 @@
+import { fromCents } from "@routeflow/pricing";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 export { escapeHtml };
 // N3 (2026-09-16): billing-lifecycle email templates to the tenant admin — trial ending,
@@ -429,10 +430,10 @@ function formatDunningAmount(cents: number, currency?: string | null): string {
   const code = (currency || "usd").toUpperCase();
   try {
     return new Intl.NumberFormat("en-US", { style: "currency", currency: code }).format(
-      cents / 100,
+      fromCents(cents),
     );
   } catch {
-    return `${(cents / 100).toFixed(2)} ${code}`;
+    return `${fromCents(cents).toFixed(2)} ${code}`;
   }
 }
 
