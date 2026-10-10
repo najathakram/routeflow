@@ -656,6 +656,7 @@ describe("DunningService", () => {
           }),
         ],
         facts: { ...OPEN_FACTS, status: "paid", amountPaid: 4900, amountRemaining: 0 },
+        txTenant: { status: "READ_ONLY", readOnlyReason: "payment_overdue" },
         exit: { tenantId: "t1", stripeSubId: "sub_1", exitAt: NOW },
       });
       const out = await d.svc.sweep(NOW);

@@ -41,7 +41,7 @@ export async function resolveClockInvoice(
   if (!clockId) return "unchanged";
   const subId = subIdHint ?? row.stripeSubId;
 
-  const open: any[] = subId ? await deps.stripe.listOpenSubscriptionInvoices(subId) : [];
+  const open: any[] = subId ? await deps.stripe.listOwedSubscriptionInvoices(subId) : [];
   const others = open.filter(
     (i) => i?.id && i.id !== paidInvoiceId && (i.amount_remaining ?? 0) > 0,
   );
@@ -64,35 +64,49 @@ export async function resolveClockInvoice(
     return moved ? "moved" : "unchanged";
   }
 
-  // Nothing else is owed: resume.
+  // Nothing else is owed: resume - decided UNDER the Tenant lock, in ONE transaction (Opus BLOCKER 1). The row this
+  // function was handed was read BEFORE the lock; a sweep may have paused the tenant since. So the decision (paused
+  // or not, still our clock or not) is re-read here, and the resume rides the same transaction.
   const box: { exit: PauseExit | null } = { exit: null };
-  const resumed = await deps.transition(
-    row.tenantId,
-    {
-      status: READ_ONLY_STATUS,
-      readOnlyReason: PAYMENT_OVERDUE_REASON,
-      subscription: { is: { pastDueInvoiceId: clockId } },
-    },
-    "ACTIVE",
-    1,
-    BILLING_EVENTS.SUBSCRIPTION_RESUMED,
-    { source: "stripe", reason: "invoice_paid", invoiceId: paidInvoiceId },
-    { onExit: (e) => (box.exit = e) },
-  );
-  if (resumed) {
-    // After commit; a Stripe error throws so the webhook is redelivered (r4 F4 #6).
-    if (box.exit) await clearPauseCollection(deps, box.exit, { throwOnError: true });
-    return "resumed";
-  }
-
-  // The CAS lost: dark / ACTIVE, already resumed by a racing delivery, or a cancelled tenant. Clear the marker.
-  const cleared = await deps.prisma.$transaction(async (tx) => {
+  const outcome = await deps.prisma.$transaction(async (tx) => {
     await lockTenantForLedger(tx, row.tenantId);
+    const [tenant, sub] = await Promise.all([
+      tx.tenant.findUnique({
+        where: { id: row.tenantId },
+        select: { status: true, readOnlyReason: true },
+      }),
+      tx.tenantSubscription.findUnique({
+        where: { tenantId: row.tenantId },
+        select: { pastDueInvoiceId: true },
+      }),
+    ]);
+    if (sub?.pastDueInvoiceId !== clockId) return "unchanged" as const; // the clock moved or cleared meanwhile
+
+    if (tenant?.status === READ_ONLY_STATUS && tenant.readOnlyReason === PAYMENT_OVERDUE_REASON) {
+      // paused (now): +MRR once, the status CAS also clears the clock + pause; leaving payment_overdue
+      const ok = await deps.transition(
+        row.tenantId,
+        { status: READ_ONLY_STATUS, readOnlyReason: PAYMENT_OVERDUE_REASON },
+        "ACTIVE",
+        1,
+        BILLING_EVENTS.SUBSCRIPTION_RESUMED,
+        { source: "stripe", reason: "invoice_paid", invoiceId: paidInvoiceId },
+        { tx, onExit: (e) => (box.exit = e) },
+      );
+      if (ok) return "resumed" as const;
+    }
+
+    // ACTIVE (dark, or nobody paused it) or a cancelled tenant: only the marker clears, no status change.
     const r = await tx.tenantSubscription.updateMany({
       where: { tenantId: row.tenantId, pastDueInvoiceId: clockId },
       data: { ...DUNNING_CLEAR },
     });
-    return r.count === 1;
+    return r.count === 1 ? ("cleared" as const) : ("unchanged" as const);
   });
-  return cleared ? "cleared" : "unchanged";
+
+  // After commit; a Stripe error throws so the webhook is redelivered (r4 F4 #6).
+  if (outcome === "resumed" && box.exit) {
+    await clearPauseCollection(deps, box.exit, { throwOnError: true });
+  }
+  return outcome;
 }

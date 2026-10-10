@@ -457,6 +457,10 @@ describe("BillingService x dunning wiring (SA-733r7 PR-B3)", () => {
         ...clocked,
         pausedAt: NOW,
       });
+      h.tx.tenant.findUnique.mockResolvedValue({
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
+      });
       await h.svc.handleWebhookEvent(invoiceEvent("invoice.paid"));
       const resumed = eventsOfType(h.events, BILLING_EVENTS.SUBSCRIPTION_RESUMED);
       expect(resumed).toHaveLength(1);

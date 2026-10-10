@@ -281,13 +281,44 @@ export class StripeService implements OnModuleInit {
   }
 
   /**
-   * A subscription's OPEN invoices, oldest first (SA-733r M2): the dunning resume asks whether anything else is
-   * still owed, and moves the clock to the oldest one when it is. `created` ascending, at most `limit`.
+   * One status of a subscription's invoices, ALL pages: a `starting_after` loop with a hard page cap, so a tenant
+   * with a long open tail is never silently truncated at the first page (SA-733r M2).
    */
-  async listOpenSubscriptionInvoices(subId: string, limit = 20): Promise<any[]> {
-    const page = await this.client.invoices.list({ subscription: subId, status: "open", limit });
-    const rows: any[] = Array.isArray(page?.data) ? page.data : [];
-    return [...rows].sort((a, b) => (a?.created ?? 0) - (b?.created ?? 0));
+  private async listInvoicesPaged(subId: string, status: string, maxPages: number): Promise<any[]> {
+    const out: any[] = [];
+    let startingAfter: string | undefined;
+    for (let page = 0; page < maxPages; page++) {
+      const res: any = await this.client.invoices.list({
+        subscription: subId,
+        status: status as any,
+        limit: 100,
+        ...(startingAfter ? { starting_after: startingAfter } : {}),
+      });
+      const data: any[] = Array.isArray(res?.data) ? res.data : [];
+      out.push(...data);
+      if (!res?.has_more || data.length === 0) break;
+      startingAfter = data[data.length - 1]?.id;
+      if (!startingAfter) break;
+    }
+    return out;
+  }
+
+  /** A subscription's OPEN invoices, oldest first, all pages up to `maxPages`. */
+  async listOpenSubscriptionInvoices(subId: string, maxPages = 5): Promise<any[]> {
+    const rows = await this.listInvoicesPaged(subId, "open", maxPages);
+    return rows.sort((a, b) => (a?.created ?? 0) - (b?.created ?? 0));
+  }
+
+  /**
+   * Everything the subscription still OWES, oldest first: `open` plus `uncollectible` (an uncollectible invoice is
+   * still a debt, SA-733r3). The dunning resume asks this before it clears a clock.
+   */
+  async listOwedSubscriptionInvoices(subId: string, maxPages = 5): Promise<any[]> {
+    const [open, uncollectible] = await Promise.all([
+      this.listInvoicesPaged(subId, "open", maxPages),
+      this.listInvoicesPaged(subId, "uncollectible", maxPages),
+    ]);
+    return [...open, ...uncollectible].sort((a, b) => (a?.created ?? 0) - (b?.created ?? 0));
   }
 
   /** Deletes a DRAFT invoice (only a draft can be deleted; an open one is voided). */

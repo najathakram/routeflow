@@ -1,5 +1,5 @@
 import { lockTenantForLedger } from "./addon-ledger";
-import { PAYMENT_OVERDUE_REASON, READ_ONLY_STATUS } from "./dunning-config";
+import { HOUR_MS, PAYMENT_OVERDUE_REASON, READ_ONLY_STATUS } from "./dunning-config";
 import { type DunningDeps, type DunningRow, isStripeMissing } from "./dunning-core";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import type { PauseExit } from "./transition-to-active";
@@ -115,60 +115,139 @@ export interface ReconcileOutcome {
   failed: number;
 }
 
+export interface ReconcileOptions {
+  /** Row budget for one run (default 2000). Over budget, the start rotates hourly so every row is reached. */
+  maxRows?: number;
+  /** Keyset page size (default 200). */
+  batchSize?: number;
+  /** Wall-clock budget for one run in ms (default 10 minutes). */
+  timeBudgetMs?: number;
+}
+
+const RECONCILE_WHERE = {
+  stripeSubId: { not: null },
+  externalPayment: false,
+  tenant: { deletedAt: null },
+} as const;
+
 /**
  * SA-733r3 F4 / r4 #5: `pausedAt` set <=> Stripe `pause_collection` set. Per Stripe-billed tenant: read Stripe FIRST,
  * then read local under the Tenant `FOR UPDATE`, and make the corrective call while holding that lock. Scope:
  * `stripeSubId` set and Stripe status not `canceled`. Key (tenant, "reconcile", runAt ISO). Local is the truth.
+ *
+ * MODES (Opus review): the SET direction (locally paused, Stripe not) is always safe. The UNPAUSE direction removes a
+ * pause nobody here put there - on the first `dark` deploy that would erase hand-set dashboard pauses - so it writes
+ * ONLY in `enforced`; in `off` / `dark` it LOGS `would_unpause` (the signal for the blast-radius report, which cannot
+ * call Stripe).
+ *
+ * PAGING: a keyset cursor (`tenantId > last`) over the WHOLE population in bounded batches. When the population is
+ * larger than the row budget the run starts at a start row that rotates with the hour (`hourIndex * budget mod
+ * total`) and wraps around, so successive hourly runs cover every row without a persisted cursor.
  */
 export async function reconcilePauseCollection(
   deps: DunningDeps,
   runAt: Date,
-  maxRows = 1000,
+  opts: ReconcileOptions = {},
 ): Promise<ReconcileOutcome> {
+  const maxRows = opts.maxRows ?? 2000;
+  const batchSize = opts.batchSize ?? 200;
+  const deadline = Date.now() + (opts.timeBudgetMs ?? 10 * 60_000);
+  const mode = deps.mode();
   const out: ReconcileOutcome = { checked: 0, corrected: 0, failed: 0 };
-  const rows = await deps.prisma.tenantSubscription.findMany({
-    where: { stripeSubId: { not: null }, externalPayment: false, tenant: { deletedAt: null } },
-    select: { tenantId: true, stripeSubId: true },
-    orderBy: { tenantId: "asc" },
-    take: maxRows,
-  });
-  for (const r of rows) {
-    const subId = r.stripeSubId as string;
-    try {
-      const stripeSub = await deps.stripe.getSubscription(subId);
-      if (stripeSub?.status === "canceled") continue;
-      const stripePaused = !!stripeSub?.pause_collection;
-      out.checked++;
-      const fixed = await deps.prisma.$transaction(
-        async (tx) => {
-          await lockTenantForLedger(tx, r.tenantId);
-          const local = await tx.tenantSubscription.findUnique({
-            where: { tenantId: r.tenantId },
-            select: { pausedAt: true, stripeSubId: true },
-          });
-          if (!local || local.stripeSubId !== subId) return false;
-          const wantPaused = !!local.pausedAt;
-          if (wantPaused === stripePaused) return false;
-          await deps.stripe.updateSubscription(
-            subId,
-            { pause_collection: wantPaused ? { behavior: "void" } : "" },
-            { idempotencyKey: `${r.tenantId}:reconcile:${runAt.toISOString()}` },
-          );
-          deps.logger.error(
-            `billing.dunning.pause_collection_reconciled tenant=${r.tenantId} local_paused=${wantPaused} stripe_paused=${stripePaused}`,
-          );
-          return true;
+
+  const total = await deps.prisma.tenantSubscription.count({ where: RECONCILE_WHERE });
+  if (total === 0) return out;
+  const budget = Math.min(total, maxRows);
+  const startIdx = total > budget ? (Math.floor(runAt.getTime() / HOUR_MS) * budget) % total : 0;
+  const startAt =
+    startIdx === 0
+      ? null
+      : ((
+          await deps.prisma.tenantSubscription.findMany({
+            where: RECONCILE_WHERE,
+            select: { tenantId: true },
+            orderBy: { tenantId: "asc" },
+            skip: startIdx - 1,
+            take: 1,
+          })
+        )[0]?.tenantId ?? null);
+
+  let processed = 0;
+  const page = async (cursor: string | null, upTo: string | null): Promise<string | null> => {
+    let last = cursor;
+    while (processed < budget && Date.now() < deadline) {
+      const rows = await deps.prisma.tenantSubscription.findMany({
+        where: {
+          ...RECONCILE_WHERE,
+          ...(last || upTo
+            ? { tenantId: { ...(last ? { gt: last } : {}), ...(upTo ? { lte: upTo } : {}) } }
+            : {}),
         },
-        { timeout: STRIPE_IN_TX_TIMEOUT_MS },
-      );
-      if (fixed) out.corrected++;
-    } catch (err) {
-      if (isStripeMissing(err)) continue;
-      out.failed++;
-      deps.logger.warn(
-        `billing.dunning.reconcile_failed tenant=${r.tenantId}: ${(err as Error)?.message}`,
-      );
+        select: { tenantId: true, stripeSubId: true },
+        orderBy: { tenantId: "asc" },
+        take: Math.min(batchSize, budget - processed),
+      });
+      if (rows.length === 0) break;
+      for (const r of rows) {
+        processed++;
+        await reconcileOne(deps, r, runAt, mode, out);
+      }
+      last = rows[rows.length - 1].tenantId;
     }
-  }
+    return last;
+  };
+  await page(startAt, null); // from the start row to the end of the keyset
+  if (startAt && processed < budget) await page(null, startAt); // wrap to the beginning, up to the start row
   return out;
+}
+
+async function reconcileOne(
+  deps: DunningDeps,
+  r: { tenantId: string; stripeSubId: string | null },
+  runAt: Date,
+  mode: ReturnType<DunningDeps["mode"]>,
+  out: ReconcileOutcome,
+): Promise<void> {
+  const subId = r.stripeSubId as string;
+  try {
+    const stripeSub = await deps.stripe.getSubscription(subId);
+    if (stripeSub?.status === "canceled") return;
+    const stripePaused = !!stripeSub?.pause_collection;
+    out.checked++;
+    const fixed = await deps.prisma.$transaction(
+      async (tx) => {
+        await lockTenantForLedger(tx, r.tenantId);
+        const local = await tx.tenantSubscription.findUnique({
+          where: { tenantId: r.tenantId },
+          select: { pausedAt: true, stripeSubId: true },
+        });
+        if (!local || local.stripeSubId !== subId) return false;
+        const wantPaused = !!local.pausedAt;
+        if (wantPaused === stripePaused) return false;
+        if (!wantPaused && mode !== "enforced") {
+          deps.logger.warn(
+            `billing.dunning.would_unpause tenant=${r.tenantId} sub=${subId} (BILLING_PAUSE_MODE=${mode}: Stripe pause_collection is set and local state does not know it; not removed)`,
+          );
+          return false;
+        }
+        await deps.stripe.updateSubscription(
+          subId,
+          { pause_collection: wantPaused ? { behavior: "void" } : "" },
+          { idempotencyKey: `${r.tenantId}:reconcile:${runAt.toISOString()}` },
+        );
+        deps.logger.error(
+          `billing.dunning.pause_collection_reconciled tenant=${r.tenantId} local_paused=${wantPaused} stripe_paused=${stripePaused}`,
+        );
+        return true;
+      },
+      { timeout: STRIPE_IN_TX_TIMEOUT_MS },
+    );
+    if (fixed) out.corrected++;
+  } catch (err) {
+    if (isStripeMissing(err)) return;
+    out.failed++;
+    deps.logger.warn(
+      `billing.dunning.reconcile_failed tenant=${r.tenantId}: ${(err as Error)?.message}`,
+    );
+  }
 }

@@ -44,6 +44,8 @@ export interface DunningDeps {
   logger: Pick<Logger, "log" | "warn" | "error" | "debug">;
   transition: StatusTransition;
   mode: () => BillingPauseMode;
+  /** True the FIRST time `key` is seen by this process: keeps a repeating condition to one log line. */
+  once: (key: string) => boolean;
 }
 
 /** The subscription + tenant columns every dunning decision reads. */

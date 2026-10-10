@@ -27,6 +27,7 @@ import { runMilestones } from "./dunning-milestones";
 import {
   clearPauseCollection,
   pauseTenantTx,
+  type ReconcileOptions,
   type ReconcileOutcome,
   reconcilePauseCollection,
   setPauseCollection,
@@ -64,6 +65,8 @@ type ClockedRow = DunningRow & { pastDueInvoiceId: string };
 export class DunningService {
   private readonly logger = new Logger(DunningService.name);
   private transition: StatusTransition | null = null;
+  /** Keys already logged by this process (a repeating hourly condition logs once). Bounded. */
+  private readonly seen = new Set<string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -89,7 +92,15 @@ export class DunningService {
           throw new Error("DunningService: BillingService has not bound its status transition");
         }),
       mode: () => billingPauseMode(),
+      once: (key) => this.once(key),
     };
+  }
+
+  private once(key: string): boolean {
+    if (this.seen.has(key)) return false;
+    if (this.seen.size >= 5000) this.seen.clear();
+    this.seen.add(key);
+    return true;
   }
 
   // ─── invoice.payment_failed: stamp the clock once per invoice ─────────────
@@ -161,7 +172,10 @@ export class DunningService {
       outcome = await resolveClockInvoice(this.deps(), row, invoiceId, subId, now);
       if (outcome === "resumed") this.tenantStatusGuard.invalidate(row.tenantId);
     }
-    // SA-733r4 F4 #6: EVERY delivery (a CAS loser too) clears a stale Stripe pause when local `pausedAt` is null.
+    // SA-733r4 F4 #6: EVERY delivery (a CAS loser too) heals a stale Stripe pause when local `pausedAt` is null.
+    // COST, deliberately accepted: this is one extra `subscriptions.retrieve` on EVERY subscription invoice.paid,
+    // including a healthy tenant's routine renewal, and a Stripe error fails the webhook so it is redelivered.
+    // `off` skips it; `dark` only LOGS the would-unpause (a hand-set dashboard pause must survive the first deploy).
     if (viaSub && billingPauseMode() !== "off") {
       await this.healPauseCollection(row.tenantId, subId as string, now);
     }
@@ -180,6 +194,12 @@ export class DunningService {
     if (local?.pausedAt) return; // locally paused: Stripe is meant to be paused
     const stripeSub = await this.stripe.getSubscription(stripeSubId); // an error throws: redelivery
     if (!stripeSub?.pause_collection || stripeSub.status === "canceled") return;
+    if (billingPauseMode() !== "enforced") {
+      this.logger.warn(
+        `billing.dunning.would_unpause tenant=${tenantId} sub=${stripeSubId} (BILLING_PAUSE_MODE=${billingPauseMode()}: Stripe pause_collection is set and local state does not know it; not removed)`,
+      );
+      return;
+    }
     await clearPauseCollection(
       this.deps(),
       { tenantId, stripeSubId, exitAt: now },
@@ -259,9 +279,12 @@ export class DunningService {
     if (!pauseHourReached(now, zone)) return "noop";
 
     if (mode === "dark") {
-      this.logger.log(
-        `billing.dunning.would_pause tenant=${row.tenantId} invoice=${invoiceId} (BILLING_PAUSE_MODE=dark: no status change)`,
-      );
+      // once per tenant and invoice, not every hourly sweep
+      if (this.once(`would_pause:${row.tenantId}:${invoiceId}`)) {
+        this.logger.log(
+          `billing.dunning.would_pause tenant=${row.tenantId} invoice=${invoiceId} (BILLING_PAUSE_MODE=dark: no status change)`,
+        );
+      }
       return "would_pause";
     }
     // enforced: the final notice must be >= 24 h old (a flip pauses nobody in hour one).
@@ -314,9 +337,9 @@ export class DunningService {
     await this.reconcile(new Date());
   }
 
-  reconcile(runAt: Date): Promise<ReconcileOutcome> {
+  reconcile(runAt: Date, opts: ReconcileOptions = {}): Promise<ReconcileOutcome> {
     if (!this.stripe.isConfigured) return Promise.resolve({ checked: 0, corrected: 0, failed: 0 });
-    return reconcilePauseCollection(this.deps(), runAt);
+    return reconcilePauseCollection(this.deps(), runAt, opts);
   }
 
   // ─── exits ────────────────────────────────────────────────────────────────

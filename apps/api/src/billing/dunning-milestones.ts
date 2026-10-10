@@ -39,23 +39,32 @@ export async function runMilestones(
   const readOnlyOn = () =>
     deps.notifications.localDateLabel(tenantId, new Date(now.getTime() + 24 * HOUR_MS));
 
-  if (!sent.has(M.D0)) await send(M.D0, "d0");
-  if (elapsed >= DUNNING_D3_HOURS && !sent.has(M.D3)) await send(M.D3, "d3");
+  const warnUndeliverable = (res: { status: string }) => {
+    if (res.status === "no_recipients" && deps.once(`no_admin:${tenantId}:${invoiceId}`)) {
+      deps.logger.warn(
+        `billing.dunning.no_deliverable_admin tenant=${tenantId} invoice=${invoiceId} - no notice can be delivered, so the pause will never be due`,
+      );
+    }
+    return res;
+  };
+
+  if (!sent.has(M.D0)) warnUndeliverable(await send(M.D0, "d0"));
+  if (elapsed >= DUNNING_D3_HOURS && !sent.has(M.D3)) warnUndeliverable(await send(M.D3, "d3"));
 
   let finalSentAt = sent.get(M.FINAL) ?? null;
   if (elapsed >= DUNNING_D6_HOURS) {
     if (mode === "dark") {
-      if (!sent.has(M.D6)) await send(M.D6, "d6");
+      if (!sent.has(M.D6)) warnUndeliverable(await send(M.D6, "d6"));
     } else if (!sent.has(M.D6)) {
       // enforced, first time: this d6 email is the final notice - record both.
-      const res = await send(M.D6, "final", await readOnlyOn());
+      const res = warnUndeliverable(await send(M.D6, "final", await readOnlyOn()));
       if (res.status === "sent" && !finalSentAt) {
         await deps.notifications.recordDunningMilestone(tenantId, M.FINAL, invoiceId);
         finalSentAt = now;
       }
     } else if (!finalSentAt) {
       // enforced after a dark d6: a separate final notice, then the 24 h lead starts.
-      const res = await send(M.FINAL, "final", await readOnlyOn());
+      const res = warnUndeliverable(await send(M.FINAL, "final", await readOnlyOn()));
       if (res.status === "sent") finalSentAt = now;
     }
   }
