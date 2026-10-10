@@ -1107,6 +1107,7 @@ if (process.platform !== "win32") {
           "check-git-hooks.mjs",
           "scrubbed-git-env.cjs",
           "heavy-slot.mjs",
+          "prisma-fresh.mjs",
         ]) {
           put(`scripts/lib/${f}`, readFileSync(join(ROOT, "scripts", "lib", f), "utf8"));
         }
@@ -1117,7 +1118,20 @@ if (process.platform !== "win32") {
         ]) {
           put(`${dir}/package.json`, JSON.stringify({ name }));
         }
-        fgit("add", "-A");
+        // The Prisma freshness preflight runs here too (CI is unset, api is in the plan), so the
+        // fixture carries a schema folder and a generated client that is FRESH for it, resolved the
+        // way apps/api finds its own (@prisma/client -> .prisma/client). Same text on both sides is
+        // fresh by prisma-fresh's block comparison; no preflight seam exists or is needed.
+        const FIX_SCHEMA = "model Probe {\n  id String @id\n}\n";
+        const genDir = "apps/api/node_modules/.prisma/client";
+        put("apps/api/prisma/schema/_base.prisma", FIX_SCHEMA);
+        put(
+          "apps/api/node_modules/@prisma/client/package.json",
+          JSON.stringify({ name: "@prisma/client" }),
+        );
+        put(`${genDir}/package.json`, JSON.stringify({ name: ".prisma/client" }));
+        put(`${genDir}/schema.prisma`, FIX_SCHEMA);
+        fgit("add", "-A", "-f");
         fgit("commit", "-q", "-m", "base");
         fgit("update-ref", "refs/remotes/origin/master", "HEAD");
         fgit("checkout", "-q", "-b", "feat/x");
@@ -1141,6 +1155,16 @@ if (process.platform !== "win32") {
           "VX26 main() AFFECTED split: all 3 calls ran, first non-zero (3, not the last 5) wins",
           [/AFFECTED SCOPE/.test(affSplit.out), affSplit.calls.length, affSplit.status],
           [true, 3, 3],
+        );
+        // VX27: the same faithful run with a generated client that predates the schema folder is
+        // refused by the preflight BEFORE the slot and before any turbo call (the preflight is not
+        // weakened by the fixture; VX25/26 pass because the client above really is fresh).
+        put(`${genDir}/schema.prisma`, "model Probe {\n  id String @id\n  old Int\n}\n");
+        const affStale = aff({ STUB_EXIT_SEQ: "0" });
+        check(
+          "VX27 main() AFFECTED with a stale Prisma client: exit 1, STALE message, no turbo call",
+          [affStale.status, /STALE Prisma client/.test(affStale.err), affStale.calls.length],
+          [1, true, 0],
         );
       }
     } finally {
