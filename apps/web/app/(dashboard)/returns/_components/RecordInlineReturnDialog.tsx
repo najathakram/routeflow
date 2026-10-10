@@ -15,6 +15,8 @@
 // call, and the "success"/"refused" screens — `InlineReturnSection` stays mounted underneath
 // them (hidden, never unmounted) across a refusal so a retry doesn't lose the operator's typed
 // lines/quote.
+import { RefundSlipAction } from "./RefundSlipAction";
+import { readAutoPrint } from "@/lib/counter-sale";
 import * as React from "react";
 import Link from "next/link";
 import { Button, Modal, Select, useToast } from "@routeflow/ui/web";
@@ -590,6 +592,9 @@ export function RecordInlineReturnDialog({
             <p role="status" className="text-sm text-navy">
               Refund recorded. {handBackLine(refundDone.tender, money(refundDone.amount))}
             </p>
+          )}
+          {(refundDone || result.creditNoteId) && (
+            <RefundSlipAction returnId={result.id} autoPrint={readAutoPrint()} />
           )}
           {result.parkedReversals && (
             <div
