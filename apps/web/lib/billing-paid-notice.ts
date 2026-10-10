@@ -7,23 +7,31 @@ import type { SubscriptionView } from "@routeflow/types";
  * flag; the Billing card reads and clears it. Per-viewer convenience storage, every access in try/catch.
  */
 const KEY = "rf.billing.paid-notice";
+const OWED_KEY = "rf.billing.owed-invoice";
 const EVENT = "rf:billing-paid";
 
-/** Call on every subscription read; flags a payment when the owed invoice just disappeared. */
+/**
+ * Call on every subscription read. The owed invoice is REMEMBERED in storage while it exists; the first read that
+ * shows it gone flags the payment - so it also works when the admin paid in Stripe and came back through a full page
+ * load (an in-memory "previous value" would be lost with the page).
+ */
 export function usePaidTransition(view: SubscriptionView | null | undefined): void {
-  const prev = React.useRef<string | null | undefined>(undefined);
   const owed = view ? (view.pastDueInvoiceId ?? null) : undefined;
   React.useEffect(() => {
     if (owed === undefined) return;
-    if (prev.current && owed === null) {
-      try {
-        window.localStorage.setItem(KEY, "1");
-      } catch {
-        /* no storage: the notice is skipped, nothing else changes */
+    try {
+      if (owed) {
+        window.localStorage.setItem(OWED_KEY, owed);
+        return;
       }
-      window.dispatchEvent(new Event(EVENT));
+      if (window.localStorage.getItem(OWED_KEY)) {
+        window.localStorage.removeItem(OWED_KEY);
+        window.localStorage.setItem(KEY, "1");
+        window.dispatchEvent(new Event(EVENT));
+      }
+    } catch {
+      /* no storage: the notice is skipped, nothing else changes */
     }
-    prev.current = owed;
   }, [owed]);
 }
 
