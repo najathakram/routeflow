@@ -7,6 +7,7 @@ import { RECEIPT_FOOTER_MAX_CHARS, sanitizeReceiptFooter } from "./receipt-foote
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { quickKeysSettingsStubProvider } from "../testing/quick-keys-settings-stub";
 
 /**
  * SA-762r F6: `settings.receiptFooter` rides PATCH /settings through SystemConfigService.set (the tenant-scoped
@@ -36,6 +37,7 @@ describe("SettingsController: receiptFooter (SA-762r F6)", () => {
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn() } },
+        quickKeysSettingsStubProvider,
       ],
     }).compile();
     controller = mod.get(SettingsController);
