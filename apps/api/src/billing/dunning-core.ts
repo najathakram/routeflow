@@ -4,7 +4,7 @@ import type { PrismaService } from "../prisma/prisma.service";
 import type { BillingNotificationService } from "./billing-notification.service";
 import type { BillingEventType } from "./plan-catalog.constants";
 import type { InvoiceFacts } from "./catchup-claim";
-import type { BillingPauseMode, READ_ONLY_STATUS } from "./dunning-config";
+import { type BillingPauseMode, PAYMENT_OVERDUE_REASON, READ_ONLY_STATUS } from "./dunning-config";
 import type { PauseExit } from "./transition-to-active";
 import type { StripeService } from "./stripe.service";
 
@@ -47,7 +47,7 @@ export interface DunningDeps {
   /** True the FIRST time `key` is seen by this process: keeps a repeating condition to one log line. */
   once: (key: string) => boolean;
   /** Process-local rotation cursors of the periodic sweeps (see dunning-paging.ts); empty after a restart. */
-  cursors: Map<string, number>;
+  cursors: Map<string, string>;
 }
 
 /** The subscription + tenant columns every dunning decision reads. */
@@ -70,19 +70,48 @@ export function remainingCents(f: InvoiceFacts): number {
 }
 
 /**
- * "Owed" (SA-733r M2, r7 r-note 2): a Stripe invoice with status `open` and `amount_remaining > 0` - NOTHING else.
- * `uncollectible` is the owner's write-off and `void` is cancelled: neither starts, keeps or moves a clock. ONE
- * predicate shared by the stamp, the resume, the clock move and discovery. (SA-733r M8: only an invoice Stripe still
- * shows as owed may be stamped, mailed or paused over.)
+ * "Owed" (SA-733r M2, r7 r-notes 2 and 4): a Stripe invoice with status `open` and `amount_remaining > 0` - NOTHING
+ * else. `uncollectible` is the owner's write-off and `void` is cancelled: neither starts, keeps or moves a clock.
+ * This is the rule for an invoice whose FACTS we hold (the clocked invoice, a stamp, the 409 guard): it is never
+ * age-filtered. (SA-733r M8: only an invoice Stripe still shows as owed may be stamped, mailed or paused over.)
  */
 export function isOwed(f: InvoiceFacts): boolean {
   return f.status === "open" && remainingCents(f) > 0;
 }
 
-/** The same predicate for a row of a Stripe invoice LIST (the lists are `open`-only; a stray status never counts). */
-export function isOwedInvoice(i: any): boolean {
+/** When an open invoice started to be owed: its finalization time, else its creation, else `fallback`. */
+export function invoiceOwedSince(inv: any, fallback: Date): Date {
+  const sec = inv?.status_transitions?.finalized_at ?? inv?.created;
+  return typeof sec === "number" && sec > 0 ? new Date(sec * 1000) : fallback;
+}
+
+/** A finalized open invoice younger than this, and never attempted, is left alone: Stripe may still collect it. */
+const OWED_MIN_AGE_HOURS = 24;
+
+/**
+ * The ONE owed rule for a row of a Stripe invoice LIST (SA r-note 4): status `open` AND `amount_remaining > 0` AND
+ * (older than 24 h OR Stripe already attempted it). Resume (is a sibling still owed?), the clock move, discovery
+ * (stamp) and discovery's phase-2 move/clear all call this and nothing else. A young invoice Stripe has not yet
+ * tried is not owed YET (if its collection fails, `payment_failed` stamps it); one it HAS tried is.
+ *
+ * The CLOCKED invoice itself is never age-filtered: pass its id as `clockedId` (it is already being chased, so a
+ * 2-hour-old clocked invoice must not read as "gone" because a sibling was paid). Lists are `open`-only; a stray
+ * status never counts.
+ */
+export function isOwedInvoice(i: any, now: Date, clockedId?: string | null): boolean {
+  if (!i?.id) return false;
+  if (i.status !== undefined && i.status !== "open") return false;
+  if (!((i.amount_remaining ?? 0) > 0)) return false;
+  if (clockedId && i.id === clockedId) return true;
+  if ((i.attempt_count ?? 0) > 0) return true;
+  return invoiceOwedSince(i, now).getTime() <= now.getTime() - OWED_MIN_AGE_HOURS * 3_600_000;
+}
+
+/** A tenant that is paused for non-payment (local `pausedAt`, or READ_ONLY with the `payment_overdue` reason). */
+export function isPausedRow(row: Pick<DunningRow, "pausedAt" | "tenant">): boolean {
   return (
-    !!i?.id && (i.status === undefined || i.status === "open") && (i.amount_remaining ?? 0) > 0
+    !!row.pausedAt ||
+    (row.tenant.status === READ_ONLY_STATUS && row.tenant.readOnlyReason === PAYMENT_OVERDUE_REASON)
   );
 }
 

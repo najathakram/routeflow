@@ -36,6 +36,9 @@ export interface InvoiceFacts {
   amountRemaining?: number;
   /** Stripe's hosted payment page for the invoice; the 409 PAYMENT_OVERDUE body carries it. */
   hostedInvoiceUrl?: string | null;
+  /** The invoice's display number and currency: the paused-still-owed notice names them. */
+  invoiceNumber?: string | null;
+  currency?: string | null;
 }
 
 /** An invoice is settled when Stripe says paid. */

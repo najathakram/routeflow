@@ -6,18 +6,23 @@ import {
   DUNNING_PAUSE_HOURS,
   HOUR_MS,
 } from "./dunning-config";
-import type { DunningDeps } from "./dunning-core";
+import { episodeKey } from "./dunning-clock";
+import { type DunningDeps, remainingCents } from "./dunning-core";
 import { hoursSince } from "./dunning-time";
 
 /**
  * SA-733r7 PR-B3 (brief item 2 / SA-733r M4): the d0 / d3 / d6 reminders, keyed in `BillingNotificationLog` by
- * (tenant, milestone, invoiceId) so an hourly sweep or a redelivered webhook sends each once per invoice.
+ * (tenant, milestone, episode key = `<invoiceId>:<pastDueSince ISO>`) so an hourly sweep or a redelivered webhook sends each once per invoice.
  *
  *   - They send in `dark` too; `off` sends nothing. The copy is truthful for the mode: `dark`'s d6 names no date.
  *   - In `enforced` the d6 notice IS the final notice ("read-only tomorrow") and also records `dunning_final` in
  *     the log. If d6 already went out in `dark`, the flip sends a separate final notice instead - so flipping to
  *     `enforced` pauses nobody in hour one: the pause waits for a `dunning_final` that is >= 24 h old.
  *   - Every send re-reads the invoice first (the caller passes the fresh facts): paid / void / processing = no email.
+ *
+ *   - A tenant that is already PAUSED (SA G8) gets none of d0/d3/d6/final - there is nothing left to warn about. The
+ *     suppression is logged once per episode, and ONE `paused_still_owed` notice per episode says the workspace is
+ *     still read-only, which invoice is open and how to pay it. The tenant stays paused.
  *
  * Returns the instant `dunning_final` was sent (this run or earlier), or null when it never was.
  */
@@ -26,36 +31,80 @@ export async function runMilestones(
   row: { tenantId: string; pastDueInvoiceId: string; pastDueSince: Date },
   facts: InvoiceFacts,
   now: Date,
+  opts: { paused?: boolean } = {},
 ): Promise<Date | null> {
   const mode = deps.mode();
   if (mode === "off") return null;
   const { tenantId, pastDueInvoiceId: invoiceId } = row;
+  // the notice key of THIS episode (SA r-note 3): a re-stamp after an exit notifies afresh
+  const key = episodeKey(invoiceId, row.pastDueSince);
   const M = DUNNING_MILESTONES;
 
   const logged = await deps.prisma.billingNotificationLog.findMany({
-    where: { tenantId, key: invoiceId, milestone: { in: [M.D0, M.D3, M.D6, M.FINAL] } },
+    where: {
+      tenantId,
+      key,
+      milestone: { in: [M.D0, M.D3, M.D6, M.FINAL, M.PAUSED, M.PAUSED_STILL_OWED] },
+    },
     select: { milestone: true, sentAt: true },
   });
   const sent = new Map(logged.map((l) => [l.milestone, l.sentAt]));
   const elapsed = hoursSince(row.pastDueSince, now);
   const payUrl = facts.hostedInvoiceUrl ?? null;
 
-  const send = (
-    milestone: string,
-    kind: "d0" | "d3" | "d6" | "final",
-    dates: { readOnlyOn?: string; byDate?: string } = {},
-  ) => deps.notifications.notifyDunning(tenantId, milestone, invoiceId, kind, { payUrl, ...dates });
-  const readOnlyOn = () =>
-    deps.notifications.localDateLabel(tenantId, new Date(now.getTime() + 24 * HOUR_MS));
-
-  const warnUndeliverable = (res: { status: string }) => {
-    if (res.status === "no_recipients" && deps.once(`no_admin:${tenantId}:${invoiceId}`)) {
+  // `paused`: the tenant is already read-only, so the message is about the still-owed notice, once per EPISODE
+  // (the claim is released on a send nobody accepted, so every sweep retries quietly; the operator hears once).
+  const warnUndeliverable = (res: { status: string }, paused = false) => {
+    const onceKey = paused ? `no_admin_paused:${key}` : `no_admin:${tenantId}:${invoiceId}`;
+    if (res.status === "no_recipients" && deps.once(onceKey)) {
       deps.logger.warn(
-        `billing.dunning.no_deliverable_admin tenant=${tenantId} invoice=${invoiceId} - no notice can be delivered, so the pause will never be due`,
+        `billing.dunning.no_deliverable_admin tenant=${tenantId} invoice=${invoiceId} - ${
+          paused
+            ? "the paused-still-owed notice cannot be delivered"
+            : "no notice can be delivered, so the pause will never be due"
+        }`,
       );
     }
     return res;
   };
+
+  if (opts.paused) {
+    // SA G8: nothing to warn about any more. Log what is held back once per episode; tell the admin once.
+    if (deps.once(`paused_suppressed:${key}`)) {
+      deps.logger.log(
+        `billing.dunning.paused_notices_suppressed tenant=${tenantId} invoice=${invoiceId} episode=${key}`,
+      );
+    }
+    // The pause itself already told THIS episode's admin (DUNNING_PAUSED: read-only now, pay the open invoice, with the
+    // hosted link), so a still-owed notice an hour later would be a second mail for one event. A clock moved while
+    // paused is a new episode with no PAUSED under its key: that one gets its single still-owed notice.
+    if (!sent.has(M.PAUSED) && !sent.has(M.PAUSED_STILL_OWED)) {
+      warnUndeliverable(
+        await deps.notifications.notifyDunning(
+          tenantId,
+          M.PAUSED_STILL_OWED,
+          key,
+          "paused_still_owed",
+          {
+            payUrl,
+            invoiceNumber: facts.invoiceNumber ?? null,
+            amountCents: remainingCents(facts),
+            currency: facts.currency ?? null,
+          },
+        ),
+        true,
+      );
+    }
+    return null;
+  }
+
+  const send = (
+    milestone: string,
+    kind: "d0" | "d3" | "d6" | "final",
+    dates: { readOnlyOn?: string; byDate?: string } = {},
+  ) => deps.notifications.notifyDunning(tenantId, milestone, key, kind, { payUrl, ...dates });
+  const readOnlyOn = () =>
+    deps.notifications.localDateLabel(tenantId, new Date(now.getTime() + 24 * HOUR_MS));
 
   // SAFETY NET (Opus re-review): ONLY the highest milestone that is due goes out in a sweep. A clock that carries an
   // old time (a legacy backlog, a restored clock) must not mail d0 + d3 + d6 in one hour; the earlier ones are
@@ -68,7 +117,7 @@ export async function runMilestones(
   const unsent = dueAll.filter(([m, h]) => elapsed >= h && !sent.has(m)).map(([m]) => m);
   const top = unsent[unsent.length - 1];
   for (const skipped of unsent.slice(0, -1)) {
-    await deps.notifications.recordDunningMilestone(tenantId, skipped, invoiceId);
+    await deps.notifications.recordDunningMilestone(tenantId, skipped, key);
     sent.set(skipped, now);
   }
 
@@ -95,7 +144,7 @@ export async function runMilestones(
       // enforced, first time: this d6 email is the final notice - record both.
       const res = warnUndeliverable(await send(M.D6, "final", { readOnlyOn: await readOnlyOn() }));
       if (res.status === "sent" && !finalSentAt) {
-        await deps.notifications.recordDunningMilestone(tenantId, M.FINAL, invoiceId);
+        await deps.notifications.recordDunningMilestone(tenantId, M.FINAL, key);
         finalSentAt = now;
       }
     }

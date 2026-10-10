@@ -560,6 +560,7 @@ export default function BuyerShopPage() {
                           })
                         }
                         onUpdateQty={(qty) => cart.updateQty(p.id, qty)}
+                        onRestore={(line) => cart.addItem(line)}
                         onToggleFavorite={() => toggleFavorite(p.id)}
                         isAlertSubscribed={alertIds.has(p.id)}
                         onToggleStockAlert={() => toggleStockAlert(p.id)}
@@ -653,8 +654,12 @@ export default function BuyerShopPage() {
                                     {qty > 0 ? (
                                       <QtyStepper
                                         qty={qty}
+                                        name={p.name}
                                         onUpdate={(n) => cart.updateQty(p.id, n)}
                                         onRemove={() => cart.updateQty(p.id, 0)}
+                                        onRestore={
+                                          cartItem ? () => cart.addItem(cartItem) : undefined
+                                        }
                                         size="sm"
                                       />
                                     ) : (

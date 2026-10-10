@@ -16,7 +16,14 @@ const OPEN_FACTS = {
   attemptCount: 3,
   subscriptionId: "sub_1",
   hostedInvoiceUrl: "https://pay.example.test/i/in_1",
+  invoiceNumber: "INV-0042",
+  currency: "usd",
 };
+
+/** The notice key of an episode: `<invoiceId>:<pastDueSince ISO>` (SA r-note 3). */
+const ep = (since: Date, invoiceId = "in_1") => `${invoiceId}:${since.toISOString()}`;
+/** The default row's episode (pastDueSince 2026-11-01T00:00Z). */
+const EP = ep(new Date("2026-11-01T00:00:00Z"));
 
 const row = (o: Record<string, unknown> = {}) => ({
   tenantId: "t1",
@@ -50,8 +57,6 @@ function make(
     stripeSub?: any;
     openInvoices?: any[];
     localPausedAt?: Date | null;
-    /** When this invoice's d0 notice went out (BillingNotificationLog), if it did. */
-    d0?: Date | null;
     /** The tenant row as the resume transaction re-reads it UNDER the Tenant lock. */
     txTenant?: { status: string; readOnlyReason: string | null };
     /** The owed marker as the resume transaction re-reads it under the lock (default: still in_1). */
@@ -103,9 +108,15 @@ function make(
         .fn()
         .mockResolvedValue({ timezone: opts.tz === undefined ? "UTC" : opts.tz }),
     },
+    // the log is keyed per EPISODE (`<invoiceId>:<pastDueSince ISO>`): the fake only returns rows for the key asked
     billingNotificationLog: {
-      findMany: jest.fn().mockResolvedValue(opts.logged ?? []),
-      findFirst: jest.fn().mockResolvedValue(opts.d0 ? { sentAt: opts.d0 } : null),
+      findMany: jest.fn(async (a: any) =>
+        (opts.logged ?? [])
+          .filter((l: any) => (l.key ?? EP) === a?.where?.key)
+          .filter(
+            (l: any) => !a?.where?.milestone?.in || a.where.milestone.in.includes(l.milestone),
+          ),
+      ),
     },
     $transaction: jest.fn(async (fn: any) => {
       const r = await fn(tx);
@@ -166,7 +177,7 @@ describe("DunningService", () => {
       expect(d.notifications.notifyDunning).toHaveBeenCalledWith(
         "t1",
         "DUNNING_D0",
-        "in_1",
+        ep(now),
         "d0",
         expect.objectContaining({ payUrl: "https://pay.example.test/i/in_1" }),
       );
@@ -186,14 +197,40 @@ describe("DunningService", () => {
       expect(e.prisma.tenantSubscription.findFirst).not.toHaveBeenCalled();
     });
 
-    it("re-stamping an invoice whose d0 already went out (clocked before, moved away, failed again) keeps its ORIGINAL time", async () => {
+    // SA r-note 3 (supersedes r-note 2's keep-original clause): a re-stamp after an exit is a NEW episode
+    it("(ii) a webhook re-stamp after an exit: pastDueSince = the stamp time, d0 goes out AGAIN under the new episode key", async () => {
       mode("dark");
-      const original = new Date("2026-10-20T00:00:00Z");
-      const d = make({ row: row({ pastDueInvoiceId: null, pastDueSince: null }), d0: original });
+      const oldEpisode = new Date("2026-10-20T00:00:00Z");
+      const d = make({
+        row: row({ pastDueInvoiceId: null, pastDueSince: null }),
+        // the previous episode's rows are still there (audit): d0, d3, final and PAUSED under the OLD key
+        logged: ["DUNNING_D0", "DUNNING_D3", "DUNNING_FINAL", "DUNNING_PAUSED"].map((m) => ({
+          milestone: m,
+          sentAt: oldEpisode,
+          key: ep(oldEpisode),
+        })),
+      });
       expect(await d.svc.onPaymentFailed(invoice(), now)).toBe("stamped");
       expect(d.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
         where: { tenantId: "t1", pastDueInvoiceId: null, catchupState: null },
-        data: { pastDueSince: original, pastDueInvoiceId: "in_1" },
+        data: { pastDueSince: now, pastDueInvoiceId: "in_1" },
+      });
+      expect(d.notifications.notifyDunning).toHaveBeenCalledWith(
+        "t1",
+        "DUNNING_D0",
+        ep(now),
+        "d0",
+        expect.anything(),
+      );
+    });
+
+    it("the lookup of already-sent milestones is by the CURRENT episode key", async () => {
+      mode("dark");
+      const d = make({ row: row({ pastDueInvoiceId: null, pastDueSince: null }) });
+      await d.svc.onPaymentFailed(invoice(), now);
+      expect(d.prisma.billingNotificationLog.findMany.mock.calls[0][0].where).toMatchObject({
+        tenantId: "t1",
+        key: ep(now),
       });
     });
 
@@ -317,19 +354,15 @@ describe("DunningService", () => {
       mode("dark");
       const d = make({ sweepRows: [row()] });
       await d.svc.sweep(at(1));
-      expect(sentMilestones(d)).toEqual([["DUNNING_D0", "in_1", "d0"]]);
+      expect(sentMilestones(d)).toEqual([["DUNNING_D0", EP, "d0"]]);
     });
 
     it("at +80 h d0 and d3 are both due, so ONLY d3 is sent; d0 is recorded as skipped so it never sends later", async () => {
       mode("dark");
       const d = make({ sweepRows: [row()] });
       await d.svc.sweep(at(80));
-      expect(sentMilestones(d)).toEqual([["DUNNING_D3", "in_1", "d3"]]);
-      expect(d.notifications.recordDunningMilestone).toHaveBeenCalledWith(
-        "t1",
-        "DUNNING_D0",
-        "in_1",
-      );
+      expect(sentMilestones(d)).toEqual([["DUNNING_D3", EP, "d3"]]);
+      expect(d.notifications.recordDunningMilestone).toHaveBeenCalledWith("t1", "DUNNING_D0", EP);
     });
 
     // deploy day (Opus re-review): a clock that keeps an OLD finalization time (discovery, a moved clock) must not
@@ -338,7 +371,7 @@ describe("DunningService", () => {
       mode("dark");
       const d = make({ sweepRows: [row()] });
       await d.svc.sweep(at(200));
-      expect(sentMilestones(d)).toEqual([["DUNNING_D6", "in_1", "d6"]]);
+      expect(sentMilestones(d)).toEqual([["DUNNING_D6", EP, "d6"]]);
       const recorded = d.notifications.recordDunningMilestone.mock.calls
         .map((c: any[]) => c[1])
         .sort();
@@ -349,7 +382,7 @@ describe("DunningService", () => {
       mode("enforced");
       const d = make({ sweepRows: [row()] });
       const out = await d.svc.sweep(at(200));
-      expect(sentMilestones(d)).toEqual([["DUNNING_D6", "in_1", "final"]]);
+      expect(sentMilestones(d)).toEqual([["DUNNING_D6", EP, "final"]]);
       const recorded = d.notifications.recordDunningMilestone.mock.calls
         .map((c: any[]) => c[1])
         .sort();
@@ -382,7 +415,7 @@ describe("DunningService", () => {
         ],
       });
       await d.svc.sweep(at(150));
-      expect(sentMilestones(d)).toEqual([["DUNNING_D6", "in_1", "d6"]]);
+      expect(sentMilestones(d)).toEqual([["DUNNING_D6", EP, "d6"]]);
       expect(d.notifications.recordDunningMilestone).not.toHaveBeenCalled();
       // neutral copy, with the date the card should be updated by (pastDueSince + 168 h), and no read-only line
       const extra = d.notifications.notifyDunning.mock.calls[0][4];
@@ -422,14 +455,14 @@ describe("DunningService", () => {
       expect(d.notifications.notifyDunning).toHaveBeenCalledWith(
         "t1",
         "DUNNING_D6",
-        "in_1",
+        EP,
         "final",
         expect.objectContaining({ readOnlyOn: "Nov 9, 2026" }),
       );
       expect(d.notifications.recordDunningMilestone).toHaveBeenCalledWith(
         "t1",
         "DUNNING_FINAL",
-        "in_1",
+        EP,
       );
       expect(d.transition).not.toHaveBeenCalled();
     });
@@ -445,7 +478,7 @@ describe("DunningService", () => {
         ],
       });
       const out = await d.svc.sweep(at(200)); // 200 h = 08:00Z, past 03:00 UTC
-      expect(sentMilestones(d)).toEqual([["DUNNING_FINAL", "in_1", "final"]]);
+      expect(sentMilestones(d)).toEqual([["DUNNING_FINAL", EP, "final"]]);
       expect(out.paused).toBe(0);
       expect(d.transition).not.toHaveBeenCalled();
       expect(d.stripe.updateSubscription).not.toHaveBeenCalled();
@@ -534,7 +567,13 @@ describe("DunningService", () => {
 
       // the CAS on the subscription row
       expect(d.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
-        where: { tenantId: "t1", pausedAt: null, pastDueInvoiceId: "in_1", catchupState: null },
+        where: {
+          tenantId: "t1",
+          pausedAt: null,
+          pastDueInvoiceId: "in_1",
+          pastDueSince: since,
+          catchupState: null,
+        },
         data: { pausedAt: NOW },
       });
       // MRR through the one transition helper: ACTIVE -> READ_ONLY, -1, joined to the same tx
@@ -560,7 +599,7 @@ describe("DunningService", () => {
       expect(d.notifications.notifyDunning).toHaveBeenCalledWith(
         "t1",
         "DUNNING_PAUSED",
-        "in_1",
+        EP,
         "paused",
         expect.anything(),
       );
@@ -603,10 +642,10 @@ describe("DunningService", () => {
       const s = new Date("2026-10-20T00:00:00Z");
       const sweepRow = row({ pastDueSince: s });
       const logged = [
-        { milestone: "DUNNING_D0", sentAt: s },
-        { milestone: "DUNNING_D3", sentAt: new Date("2026-10-23T00:00:00Z") },
-        { milestone: "DUNNING_D6", sentAt: new Date("2026-10-26T00:00:00Z") },
-        { milestone: "DUNNING_FINAL", sentAt: new Date("2026-10-26T00:00:00Z") },
+        { milestone: "DUNNING_D0", sentAt: s, key: ep(s) },
+        { milestone: "DUNNING_D3", sentAt: new Date("2026-10-23T00:00:00Z"), key: ep(s) },
+        { milestone: "DUNNING_D6", sentAt: new Date("2026-10-26T00:00:00Z"), key: ep(s) },
+        { milestone: "DUNNING_FINAL", sentAt: new Date("2026-10-26T00:00:00Z"), key: ep(s) },
       ];
       // +168 h = 2026-10-27 00:00Z. CDT is UTC-5: 07:59Z = 02:59 local, 08:00Z = 03:00 local.
       const a = make({ sweepRows: [sweepRow], logged, tz: "America/Chicago" });
@@ -713,6 +752,13 @@ describe("DunningService", () => {
       });
       expect((await d.svc.sweep(NOW)).paused).toBe(0);
       expect(d.transition).not.toHaveBeenCalled();
+      expect(d.notifications.notifyDunning).not.toHaveBeenCalledWith(
+        "t1",
+        expect.stringMatching(/^DUNNING_(D0|D3|D6|FINAL)$/),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+      );
     });
 
     it("a payment still processing is never paused over", async () => {
@@ -866,6 +912,42 @@ describe("DunningService", () => {
       expect(lines).toHaveLength(1);
     });
 
+    it("dark: the would_pause once-key includes the EPISODE: a re-stamped clock on the same invoice logs again", async () => {
+      mode("dark");
+      const s1 = new Date("2026-11-01T00:00:00Z");
+      const s2 = new Date("2026-11-03T00:00:00Z");
+      const rows = [row({ pastDueSince: s1 })];
+      const logged = [s1, s2].flatMap((s) =>
+        ["DUNNING_D0", "DUNNING_D3", "DUNNING_D6"].map((m) => ({
+          milestone: m,
+          sentAt: s,
+          key: ep(s),
+        })),
+      );
+      const d = make({ sweepRows: rows, logged });
+      const log = jest.spyOn((d.svc as any).logger, "log").mockImplementation(() => undefined);
+      const t0 = new Date("2026-11-12T09:00:00Z");
+      await d.svc.sweep(t0);
+      await d.svc.sweep(new Date(t0.getTime() + H));
+      rows[0] = row({ pastDueSince: s2 }); // exit + re-stamp of the SAME invoice
+      await d.svc.sweep(new Date(t0.getTime() + 2 * H));
+      await d.svc.sweep(new Date(t0.getTime() + 3 * H));
+      expect(log.mock.calls.filter((c: any[]) => /would_pause/.test(String(c[0])))).toHaveLength(2);
+    });
+
+    it("a clocked row with no pastDueSince is a no-op with a warn (never `now`): no notice, no pause", async () => {
+      mode("enforced");
+      const d = make({ sweepRows: [row({ pastDueSince: null })] });
+      const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
+      const out = await d.svc.sweep(new Date("2026-11-12T09:00:00Z"));
+      expect(out.paused).toBe(0);
+      expect(d.notifications.notifyDunning).not.toHaveBeenCalled();
+      expect(d.transition).not.toHaveBeenCalled();
+      expect(String(warn.mock.calls[0]?.[0])).toBe(
+        "billing.dunning.clock_without_since tenant=t1 invoice=in_1",
+      );
+    });
+
     it("enforced: a tenant with no deliverable admin gets ONE warn (and is never paused), not one per hour", async () => {
       mode("enforced");
       const d = make({ sweepRows: [row({ pastDueSince: since })] });
@@ -944,6 +1026,366 @@ describe("DunningService", () => {
         logged: log,
       });
       expect((await on.svc.sweep(new Date("2026-11-08T09:00:00Z"))).paused).toBe(1);
+    });
+  });
+
+  // ─── SA r-note 3: a dunning EPISODE runs from a stamp to the next exit ─────────────────────────────
+
+  describe("episodes: notices are keyed <invoiceId>:<pastDueSince ISO>", () => {
+    const T1 = new Date("2026-11-10T04:00:00Z"); // 04:00 UTC: the pause hour is reached on every sweep
+    const H = 3_600_000;
+    const at = (h: number) => new Date(T1.getTime() + h * H);
+    const OLD = new Date("2026-10-20T00:00:00Z");
+    const oldEpisodeRows = [
+      "DUNNING_D0",
+      "DUNNING_D3",
+      "DUNNING_D6",
+      "DUNNING_FINAL",
+      "DUNNING_PAUSED",
+    ].map((m) => ({ milestone: m, sentAt: OLD, key: ep(OLD) }));
+
+    /** A stateful notice log: the notification mocks append rows keyed exactly as the service passes them. */
+    function world(initial: any[] = [], extra: Record<string, unknown> = {}) {
+      const log: any[] = [...initial];
+      let clock = T1;
+      const d = make({
+        sweepRows: [row({ pastDueSince: T1 })],
+        tz: "UTC",
+        localPausedAt: T1,
+        ...extra,
+      });
+      d.prisma.billingNotificationLog.findMany.mockImplementation(async (a: any) =>
+        log.filter(
+          (l) =>
+            l.key === a?.where?.key &&
+            (!a.where.milestone?.in || a.where.milestone.in.includes(l.milestone)),
+        ),
+      );
+      d.notifications.notifyDunning.mockImplementation(
+        async (_t: string, m: string, key: string) => {
+          log.push({ milestone: m, key, sentAt: clock });
+          return { status: "sent", recipients: 1 };
+        },
+      );
+      d.notifications.recordDunningMilestone.mockImplementation(
+        async (_t: string, m: string, key: string) => {
+          log.push({ milestone: m, key, sentAt: clock });
+          return true;
+        },
+      );
+      const sweepAt = (h: number) => {
+        clock = at(h);
+        return d.svc.sweep(clock);
+      };
+      return { d, log, sweepAt };
+    }
+    const sent = (d: ReturnType<typeof make>) =>
+      d.notifications.notifyDunning.mock.calls.map((c: any[]) => [c[1], c[2], c[3]]);
+
+    it("(i) after an exit the SAME invoice is re-stamped: d0 goes out again, the old FINAL cannot authorise a pause, no pause before +168 h, and the PAUSED notice is sent when it does pause", async () => {
+      mode("enforced");
+      const w = world(oldEpisodeRows); // episode 1 is history: d0, d3, d6, FINAL and PAUSED under the OLD key
+      await w.sweepAt(1);
+      expect(sent(w.d)).toEqual([["DUNNING_D0", ep(T1), "d0"]]); // fresh notice, not suppressed by the old rows
+
+      await w.sweepAt(144); // d6 is due: it IS the final notice of THIS episode
+      expect(sent(w.d).at(-1)).toEqual(["DUNNING_D6", ep(T1), "final"]);
+      expect(w.log.some((l) => l.milestone === "DUNNING_FINAL" && l.key === ep(T1))).toBe(true);
+
+      expect((await w.sweepAt(167)).paused).toBe(0); // 167 h: one hour short of the week
+      const out = await w.sweepAt(168); // 168 h, final notice exactly 24 h old, 04:00 UTC
+      expect(out.paused).toBe(1);
+      expect(sent(w.d).at(-1)).toEqual(["DUNNING_PAUSED", ep(T1), "paused"]); // told again, under the new key
+      // the audit trail is kept: nothing deleted, the old rows are still there
+      expect(w.log.filter((l) => l.key === ep(OLD))).toHaveLength(5);
+    });
+
+    it("(ii) a payment_failed webhook re-stamp after an exit: d0 again, no pause before +168 h, the PAUSED notice when it does pause", async () => {
+      mode("enforced");
+      // the row is unclocked when the webhook arrives; afterwards the sweep sees the clock the stamp wrote
+      const w = world(oldEpisodeRows, { row: row({ pastDueInvoiceId: null, pastDueSince: null }) });
+      expect(await w.d.svc.onPaymentFailed(invoice(), T1)).toBe("stamped");
+      expect(w.d.tx.tenantSubscription.updateMany.mock.calls[0][0].data).toEqual({
+        pastDueSince: T1,
+        pastDueInvoiceId: "in_1",
+      });
+      expect(sent(w.d)).toEqual([["DUNNING_D0", ep(T1), "d0"]]); // not suppressed by episode 1's rows
+
+      await w.sweepAt(144); // this episode's own final notice
+      expect((await w.sweepAt(167)).paused).toBe(0); // the old FINAL cannot short-cut the week
+      expect(w.d.transition).not.toHaveBeenCalled();
+      expect((await w.sweepAt(168)).paused).toBe(1);
+      expect(sent(w.d).at(-1)).toEqual(["DUNNING_PAUSED", ep(T1), "paused"]);
+      expect(w.log.filter((l) => l.key === ep(OLD))).toHaveLength(5); // history kept
+    });
+
+    it("the OLD episode's final notice never authorises a pause in the new episode", async () => {
+      mode("enforced");
+      const w = world(oldEpisodeRows);
+      // 200 h into the new episode, 03:00+ UTC, with a (stale) FINAL in the log under the old key
+      const out = await w.sweepAt(200);
+      expect(out.paused).toBe(0);
+      expect(w.d.transition).not.toHaveBeenCalled();
+      expect(sent(w.d)).toEqual([["DUNNING_D6", ep(T1), "final"]]); // this episode's own final goes out first
+    });
+
+    it("a pause is announced ONCE: pause at +168 h, the next hourly sweep (now paused) sends no paused_still_owed for the same episode", async () => {
+      mode("enforced");
+      const rows = [row({ pastDueSince: T1 })];
+      const w = world([], { sweepRows: rows });
+      await w.sweepAt(1);
+      await w.sweepAt(144); // d6 is this episode's final notice
+      expect((await w.sweepAt(168)).paused).toBe(1);
+      // the next sweep re-reads the row: paused now
+      rows[0] = row({
+        pastDueSince: T1,
+        pausedAt: at(168),
+        tenant: {
+          status: "READ_ONLY",
+          readOnlyReason: "payment_overdue",
+          deletedAt: null,
+          class: "PRODUCTION",
+        },
+      });
+      await w.sweepAt(169);
+      await w.sweepAt(170);
+      const kinds = sent(w.d).map((c: any[]) => c[0]);
+      expect(kinds.filter((m: string) => m === "DUNNING_PAUSED")).toHaveLength(1);
+      expect(kinds.filter((m: string) => m === "DUNNING_PAUSED_STILL_OWED")).toHaveLength(0);
+    });
+
+    it("(iii) within ONE episode a replayed sweep sends nothing twice: one row per milestone", async () => {
+      mode("dark");
+      const w = world();
+      await w.sweepAt(1);
+      await w.sweepAt(1);
+      await w.sweepAt(2);
+      expect(sent(w.d)).toEqual([["DUNNING_D0", ep(T1), "d0"]]);
+      await w.sweepAt(80);
+      await w.sweepAt(81);
+      const keys = w.log.map((l) => `${l.milestone}|${l.key}`);
+      expect(new Set(keys).size).toBe(keys.length); // never the same (milestone, key) twice
+    });
+
+    it("the PAUSED notice carries the episode key", async () => {
+      mode("enforced");
+      const w = world([
+        { milestone: "DUNNING_D0", sentAt: T1, key: ep(T1) },
+        { milestone: "DUNNING_D3", sentAt: T1, key: ep(T1) },
+        { milestone: "DUNNING_D6", sentAt: T1, key: ep(T1) },
+        { milestone: "DUNNING_FINAL", sentAt: at(100), key: ep(T1) },
+      ]);
+      expect((await w.sweepAt(170)).paused).toBe(1);
+      expect(w.d.notifications.notifyDunning).toHaveBeenCalledWith(
+        "t1",
+        "DUNNING_PAUSED",
+        ep(T1),
+        "paused",
+        expect.anything(),
+      );
+    });
+  });
+
+  describe("G8: a PAUSED tenant is told ONCE per episode that it is still read-only (no d0/d3/d6/final)", () => {
+    const P = new Date("2026-11-09T04:00:00Z"); // the clock was moved to this invoice while the tenant stays paused
+    const H = 3_600_000;
+    const pausedAtP = () =>
+      row({
+        pastDueSince: P,
+        pausedAt: new Date("2026-11-08T09:00:00Z"),
+        tenant: {
+          status: "READ_ONLY",
+          readOnlyReason: "payment_overdue",
+          deletedAt: null,
+          class: "PRODUCTION",
+        },
+      });
+    function pausedWorld(modeName = "enforced") {
+      mode(modeName);
+      const log: any[] = [];
+      const d = make({ sweepRows: [pausedAtP()], tz: "UTC" });
+      d.prisma.billingNotificationLog.findMany.mockImplementation(async (a: any) =>
+        log.filter(
+          (l) =>
+            l.key === a?.where?.key &&
+            (!a.where.milestone?.in || a.where.milestone.in.includes(l.milestone)),
+        ),
+      );
+      d.notifications.notifyDunning.mockImplementation(async (_t: string, m: string, k: string) => {
+        log.push({ milestone: m, key: k, sentAt: P });
+        return { status: "sent", recipients: 1 };
+      });
+      return { d, log };
+    }
+    const calls = (d: ReturnType<typeof make>) =>
+      d.notifications.notifyDunning.mock.calls.map((c: any[]) => [c[1], c[2], c[3]]);
+
+    it("a clock moved for an already-paused tenant: exactly one PAUSED_STILL_OWED for the episode, never d0/d3/d6/final, a replay sends none", async () => {
+      const { d } = pausedWorld();
+      await d.svc.sweep(new Date(P.getTime() + 1 * H));
+      await d.svc.sweep(new Date(P.getTime() + 1 * H)); // replay
+      await d.svc.sweep(new Date(P.getTime() + 80 * H)); // d3 would be due
+      await d.svc.sweep(new Date(P.getTime() + 150 * H)); // d6 / final would be due
+      await d.svc.sweep(new Date(P.getTime() + 200 * H));
+      expect(calls(d)).toEqual([["DUNNING_PAUSED_STILL_OWED", ep(P), "paused_still_owed"]]);
+      expect(d.notifications.recordDunningMilestone).not.toHaveBeenCalled(); // nothing "skipped" is recorded either
+      expect(d.transition).not.toHaveBeenCalled(); // the tenant stays paused
+    });
+
+    it("a clock MOVED while paused: the OLD episode's PAUSED row does not stand in for the new episode - exactly one PAUSED_STILL_OWED", async () => {
+      const { d, log } = pausedWorld();
+      const old = new Date("2026-11-08T09:00:00Z");
+      log.push({ milestone: "DUNNING_PAUSED", key: ep(old), sentAt: old }); // the pause notice of the previous episode
+      await d.svc.sweep(new Date(P.getTime() + 1 * H));
+      await d.svc.sweep(new Date(P.getTime() + 2 * H));
+      expect(calls(d)).toEqual([["DUNNING_PAUSED_STILL_OWED", ep(P), "paused_still_owed"]]);
+    });
+
+    it("a paused tenant with no deliverable admin: ONE operator warn per episode, not one per hour", async () => {
+      const { d } = pausedWorld();
+      d.notifications.notifyDunning.mockResolvedValue({ status: "no_recipients", recipients: 0 });
+      const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
+      for (const h of [1, 2, 3, 30]) await d.svc.sweep(new Date(P.getTime() + h * H));
+      const lines = warn.mock.calls
+        .map((c: any[]) => String(c[0]))
+        .filter((l: string) => /no_deliverable_admin/.test(l));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("tenant=t1");
+      expect(lines[0]).toContain("invoice=in_1");
+      expect(lines[0]).not.toMatch(/pause will never be due/); // the tenant is already paused: different wording
+    });
+
+    it("the notice names the invoice number and the amount and carries the hosted pay link", async () => {
+      const { d } = pausedWorld();
+      await d.svc.sweep(new Date(P.getTime() + 1 * H));
+      expect(d.notifications.notifyDunning).toHaveBeenCalledWith(
+        "t1",
+        "DUNNING_PAUSED_STILL_OWED",
+        ep(P),
+        "paused_still_owed",
+        expect.objectContaining({
+          payUrl: "https://pay.example.test/i/in_1",
+          invoiceNumber: "INV-0042",
+          amountCents: 4900,
+          currency: "usd",
+        }),
+      );
+    });
+
+    it("dark sends it too (a tenant paused earlier is still read-only), and off sends nothing", async () => {
+      const dark = pausedWorld("dark");
+      await dark.d.svc.sweep(new Date(P.getTime() + 1 * H));
+      expect(calls(dark.d)).toEqual([["DUNNING_PAUSED_STILL_OWED", ep(P), "paused_still_owed"]]);
+      const off = pausedWorld("off");
+      await off.d.svc.sweep(new Date(P.getTime() + 1 * H));
+      expect(off.d.notifications.notifyDunning).not.toHaveBeenCalled();
+    });
+
+    it("the suppressed d0/d3/d6/final are LOGGED once per episode, not hourly", async () => {
+      const { d } = pausedWorld();
+      const log = jest.spyOn((d.svc as any).logger, "log").mockImplementation(() => undefined);
+      for (const h of [1, 2, 80, 150]) await d.svc.sweep(new Date(P.getTime() + h * H));
+      const lines = log.mock.calls
+        .map((c: any[]) => String(c[0]))
+        .filter((l: string) => /paused_notices_suppressed/.test(l));
+      expect(lines).toEqual([
+        `billing.dunning.paused_notices_suppressed tenant=t1 invoice=in_1 episode=${ep(P)}`,
+      ]);
+    });
+
+    it("a payment_failed stamp on a tenant that is already paused sends the still-owed notice, not d0", async () => {
+      mode("enforced");
+      const d = make({
+        row: row({
+          pastDueInvoiceId: null,
+          pastDueSince: null,
+          pausedAt: new Date("2026-11-08T09:00:00Z"),
+          tenant: {
+            status: "READ_ONLY",
+            readOnlyReason: "payment_overdue",
+            deletedAt: null,
+            class: "PRODUCTION",
+          },
+        }),
+      });
+      expect(await d.svc.onPaymentFailed(invoice(), P)).toBe("stamped");
+      expect(calls(d)).toEqual([["DUNNING_PAUSED_STILL_OWED", ep(P), "paused_still_owed"]]);
+    });
+
+    it("an ACTIVE tenant is unaffected: it still gets d0", async () => {
+      mode("enforced");
+      const d = make({ sweepRows: [row({ pastDueSince: P })] });
+      await d.svc.sweep(new Date(P.getTime() + 1 * H));
+      expect(calls(d)).toEqual([["DUNNING_D0", ep(P), "d0"]]);
+    });
+  });
+
+  describe("a PAUSED tenant whose clocked invoice is no longer open", () => {
+    const since = new Date("2026-11-01T00:00:00Z");
+    const paused = () =>
+      row({
+        pastDueSince: since,
+        pausedAt: new Date("2026-11-08T09:00:00Z"),
+        tenant: {
+          status: "READ_ONLY",
+          readOnlyReason: "payment_overdue",
+          deletedAt: null,
+          class: "PRODUCTION",
+        },
+      });
+
+    it("warns billing.dunning.paused_on_closed_invoice (tenant, invoice, status) ONCE per tenant per day; the sweep still does nothing", async () => {
+      mode("enforced");
+      const d = make({ sweepRows: [paused()], facts: { ...OPEN_FACTS, status: "void" } });
+      const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
+      const lines = () =>
+        warn.mock.calls.filter((c: any[]) => /paused_on_closed_invoice/.test(String(c[0])));
+      const t0 = new Date("2026-11-09T05:00:00Z");
+      await d.svc.sweep(t0);
+      await d.svc.sweep(new Date(t0.getTime() + 3_600_000));
+      expect(lines()).toHaveLength(1);
+      expect(String(lines()[0][0])).toBe(
+        "billing.dunning.paused_on_closed_invoice tenant=t1 invoice=in_1 status=void",
+      );
+      await d.svc.sweep(new Date(t0.getTime() + 25 * 3_600_000)); // the next day
+      expect(lines()).toHaveLength(2);
+      expect(d.transition).not.toHaveBeenCalled();
+    });
+
+    it("paused is ONE definition (isPausedRow): READ_ONLY for another reason (cancelled) is not 'paused on a closed invoice'", async () => {
+      mode("enforced");
+      const d = make({
+        sweepRows: [
+          row({
+            pastDueSince: since,
+            tenant: {
+              status: "READ_ONLY",
+              readOnlyReason: "subscription_cancelled",
+              deletedAt: null,
+              class: "PRODUCTION",
+            },
+          }),
+        ],
+        facts: { ...OPEN_FACTS, status: "void" },
+      });
+      const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
+      await d.svc.sweep(new Date("2026-11-09T05:00:00Z"));
+      expect(
+        warn.mock.calls.some((c: any[]) => /paused_on_closed_invoice/.test(String(c[0]))),
+      ).toBe(false);
+    });
+
+    it("an ACTIVE tenant with a closed clocked invoice does not warn (discovery clears it)", async () => {
+      mode("enforced");
+      const d = make({
+        sweepRows: [row({ pastDueSince: since })],
+        facts: { ...OPEN_FACTS, status: "void" },
+      });
+      const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
+      await d.svc.sweep(new Date("2026-11-09T05:00:00Z"));
+      expect(
+        warn.mock.calls.some((c: any[]) => /paused_on_closed_invoice/.test(String(c[0]))),
+      ).toBe(false);
     });
   });
 
@@ -1041,6 +1483,57 @@ describe("DunningService", () => {
       expect(d.prisma.$transaction).not.toHaveBeenCalled();
     });
 
+    describe("the owed rule: open AND remaining > 0 AND (age >= 24 h OR attempted); the clocked invoice is never age-filtered", () => {
+      const sec = (d: Date) => Math.floor(d.getTime() / 1000);
+      const young = (id: string, attempts: number, hours = 2) => ({
+        id,
+        status: "open",
+        amount_remaining: 4900,
+        attempt_count: attempts,
+        created: sec(new Date(now.getTime() - (hours + 1) * 3_600_000)),
+        status_transitions: { finalized_at: sec(new Date(now.getTime() - hours * 3_600_000)) },
+      });
+
+      it("(a) a YOUNG clocked invoice is still owed: a paid sibling does not clear its clock", async () => {
+        mode("enforced");
+        const d = make({
+          row: row({ pastDueInvoiceId: "in_a", pastDueSince: new Date(now.getTime() - 3_600_000) }),
+          openInvoices: [young("in_a", 0)], // finalized 2 h ago, never attempted: age-filtering it was the bug
+        });
+        expect(await d.svc.onInvoicePaid(invoice({ id: "in_b" }), now)).toBe("unchanged");
+        expect(d.prisma.$transaction).not.toHaveBeenCalled(); // clock stays, nothing resumed or cleared
+        expect(d.transition).not.toHaveBeenCalled();
+      });
+
+      it("(b) a paused tenant pays the clocked invoice while a 2 h-old sibling WITH an attempt is open: stays paused, the clock MOVES (new episode), no MRR", async () => {
+        mode("enforced");
+        const d = make({
+          row: pausedRow({ pastDueInvoiceId: "in_a" }),
+          openInvoices: [young("in_s", 1)],
+        });
+        expect(await d.svc.onInvoicePaid(invoice({ id: "in_a" }), now)).toBe("moved");
+        expect(d.transition).not.toHaveBeenCalled();
+        expect(d.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
+          where: { tenantId: "t1", pastDueInvoiceId: "in_a" },
+          data: { pastDueInvoiceId: "in_s", pastDueSince: now },
+        });
+      });
+
+      it("(c) a 2 h-old sibling with NO attempt does not hold a resume (Stripe may still collect it; payment_failed stamps it if it fails)", async () => {
+        mode("enforced");
+        const exit = { tenantId: "t1", stripeSubId: "sub_1", exitAt: now };
+        const d = make({
+          row: pausedRow({ pastDueInvoiceId: "in_a" }),
+          txTenant: PAUSED,
+          txClock: "in_a",
+          exit,
+          openInvoices: [young("in_s", 0)],
+        });
+        expect(await d.svc.onInvoicePaid(invoice({ id: "in_a" }), now)).toBe("resumed");
+        expect(d.transition).toHaveBeenCalledTimes(1);
+      });
+    });
+
     it("a cancelled paused tenant (READ_ONLY subscription_cancelled) stays cancelled: only the marker clears, no MRR", async () => {
       mode("enforced");
       const d = make({
@@ -1131,14 +1624,13 @@ describe("DunningService", () => {
       );
     });
 
-    it("a clock moved onto a sibling whose d0 was NEVER sent restarts at the move time", async () => {
+    it("a clock moved onto a sibling restarts at the move time, as a NEW episode", async () => {
       mode("enforced");
       const d = make({
         row: pausedRow({ pastDueInvoiceId: "in_2" }),
         openInvoices: [
           { id: "in_0", status: "open", amount_remaining: 4900, created: 1_700_000_000 },
         ],
-        d0: null,
       });
       expect(await d.svc.onInvoicePaid(invoice({ id: "in_1" }), now)).toBe("moved");
       expect(d.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
@@ -1147,23 +1639,100 @@ describe("DunningService", () => {
       });
     });
 
-    it("moved back onto an invoice whose d0 already went out: it keeps its original time", async () => {
+    it("follow-through: the clock moved to B while paused, then invoice.paid of B RESUMES on the new clock (+MRR once)", async () => {
       mode("enforced");
-      const original = new Date("2026-10-20T00:00:00Z");
+      const exit = { tenantId: "t1", stripeSubId: "sub_1", exitAt: now };
+      // webhook 1: A (the clock) is paid while B is open -> the clock moves to B, still paused
+      const mv = make({
+        row: pausedRow({ pastDueInvoiceId: "in_a" }),
+        openInvoices: [
+          { id: "in_b", status: "open", amount_remaining: 4900, created: 1_700_000_000 },
+        ],
+      });
+      expect(await mv.svc.onInvoicePaid(invoice({ id: "in_a" }), now)).toBe("moved");
+      expect(mv.transition).not.toHaveBeenCalled();
+      const moved = mv.tx.tenantSubscription.updateMany.mock.calls[0][0].data;
+      expect(moved).toEqual({ pastDueInvoiceId: "in_b", pastDueSince: now });
+      // webhook 2: B is paid; the row now carries the moved clock
+      const later = new Date(now.getTime() + 3_600_000);
+      const rs = make({
+        row: pausedRow({ pastDueInvoiceId: "in_b", pastDueSince: moved.pastDueSince }),
+        txTenant: PAUSED,
+        txClock: "in_b",
+        exit,
+        openInvoices: [],
+      });
+      expect(await rs.svc.onInvoicePaid(invoice({ id: "in_b" }), later)).toBe("resumed");
+      expect(rs.transition).toHaveBeenCalledTimes(1);
+      expect(rs.transition.mock.calls[0].slice(0, 5)).toEqual([
+        "t1",
+        { status: "READ_ONLY", readOnlyReason: "payment_overdue" },
+        "ACTIVE",
+        1,
+        BILLING_EVENTS.SUBSCRIPTION_RESUMED,
+      ]);
+    });
+
+    it("paid(A) then a LOST paid(B): the clock moved to B, and the hourly sweep self-heals - it finds B paid and resumes", async () => {
+      mode("enforced");
+      const exit = { tenantId: "t1", stripeSubId: "sub_1", exitAt: now };
       const d = make({
+        row: pausedRow({ pastDueInvoiceId: "in_a" }),
+        // the sweep reads the row AFTER the move: clocked on B, still paused
+        sweepRows: [pausedRow({ pastDueInvoiceId: "in_b", pastDueSince: now })],
+        txTenant: PAUSED,
+        txClock: "in_b",
+        exit,
+        facts: { ...OPEN_FACTS, status: "paid", amountRemaining: 0, amountPaid: 4900 },
+      });
+      d.stripe.listOpenSubscriptionInvoices.mockResolvedValueOnce([
+        { id: "in_b", status: "open", amount_remaining: 4900, created: 1_700_000_000 },
+      ]);
+      expect(await d.svc.onInvoicePaid(invoice({ id: "in_a" }), now)).toBe("moved");
+      expect(d.transition).not.toHaveBeenCalled();
+      // paid(B) never arrives; one hour later the sweep reads B from Stripe
+      const out = await d.svc.sweep(new Date(now.getTime() + 3_600_000));
+      expect(out.resolved).toBe(1);
+      expect(d.transition).toHaveBeenCalledTimes(1);
+      expect(d.transition.mock.calls[0][2]).toBe("ACTIVE");
+      expect(d.guard.invalidate).toHaveBeenCalledWith("t1");
+    });
+
+    it("(iv) moved BACK onto an invoice that was clocked before: a NEW episode, and the old episode's FINAL cannot authorise a pause (a real sweep)", async () => {
+      mode("enforced");
+      const old = new Date("2026-10-20T00:00:00Z");
+      const oldRows = ["DUNNING_D0", "DUNNING_D3", "DUNNING_D6", "DUNNING_FINAL"].map((m) => ({
+        milestone: m,
+        sentAt: old,
+        key: ep(old, "in_0"),
+      }));
+      const mv = make({
         row: pausedRow({ pastDueInvoiceId: "in_2" }),
         openInvoices: [
           { id: "in_0", status: "open", amount_remaining: 4900, created: 1_700_000_000 },
         ],
-        d0: original,
+        logged: oldRows,
       });
-      await d.svc.onInvoicePaid(invoice({ id: "in_1" }), now);
-      expect(d.prisma.billingNotificationLog.findFirst).toHaveBeenCalledWith({
-        where: { tenantId: "t1", milestone: "DUNNING_D0", key: "in_0" },
-        select: { sentAt: true },
+      expect(await mv.svc.onInvoicePaid(invoice({ id: "in_1" }), now)).toBe("moved");
+      const data = mv.tx.tenantSubscription.updateMany.mock.calls[0][0].data;
+      expect(data).toEqual({ pastDueInvoiceId: "in_0", pastDueSince: now });
+
+      // the sweep that follows: ACTIVE-and-clocked again (the pause was exited), 200 h into the NEW episode, 13:00Z
+      const later = new Date(now.getTime() + 200 * 3_600_000);
+      const sw = make({
+        sweepRows: [row({ pastDueInvoiceId: "in_0", pastDueSince: data.pastDueSince })],
+        logged: oldRows,
       });
-      expect(d.tx.tenantSubscription.updateMany.mock.calls[0][0].data.pastDueSince).toEqual(
-        original,
+      const out = await sw.svc.sweep(later);
+      expect(out.paused).toBe(0);
+      expect(sw.transition).not.toHaveBeenCalled();
+      // this episode's own final notice goes out first (d0/d3 skipped): the lead time starts now, not in October
+      expect(sw.notifications.notifyDunning).toHaveBeenCalledWith(
+        "t1",
+        "DUNNING_D6",
+        ep(data.pastDueSince, "in_0"),
+        "final",
+        expect.anything(),
       );
     });
 

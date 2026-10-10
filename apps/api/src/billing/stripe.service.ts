@@ -265,6 +265,8 @@ export class StripeService implements OnModuleInit {
       subscriptionId: stripeInvoiceSubscriptionId(inv),
       amountRemaining: Number.isFinite(inv?.amount_remaining) ? inv.amount_remaining : undefined,
       hostedInvoiceUrl: typeof inv?.hosted_invoice_url === "string" ? inv.hosted_invoice_url : null,
+      invoiceNumber: typeof inv?.number === "string" ? inv.number : null,
+      currency: typeof inv?.currency === "string" ? inv.currency : null,
     };
   }
 

@@ -51,6 +51,9 @@ function world(initial: Partial<State> = {}) {
         // the pause CAS
         if ("pausedAt" in (where ?? {}) && where.pausedAt === null) {
           if (st.pausedAt !== null || st.clock !== where.pastDueInvoiceId) return { count: 0 };
+          // the CAS is pinned to the EPISODE the sweep decided on
+          if (where.pastDueSince && st.since?.getTime() !== where.pastDueSince.getTime())
+            return { count: 0 };
           st.pausedAt = data.pausedAt;
           return { count: 1 };
         }
@@ -158,9 +161,11 @@ function world(initial: Partial<State> = {}) {
     transition: transition as any,
     mode: () => "enforced" as const,
     once: () => true,
-    cursors: new Map<string, number>(),
+    cursors: new Map<string, string>(),
   };
-  const pause = () => pauseTenantTx(deps, { tenantId: "t1" }, "in_1", PAUSED_AT);
+  const SINCE0 = st.since as Date;
+  const pause = (since: Date = SINCE0) =>
+    pauseTenantTx(deps, { tenantId: "t1" }, "in_1", since, PAUSED_AT);
   return { st, svc, hooks, stripeCalls, pause, prisma, deps, PAUSED_AT };
 }
 
@@ -216,6 +221,19 @@ describe("sweep racing invoice.paid (deterministic interleavings)", () => {
     expect(w.st.status).toBe("ACTIVE");
     expect(w.st.ledger).toEqual([]);
     expect(w.stripeCalls).toEqual([]);
+  });
+
+  it("a same-invoice re-stamp between the sweep's read and its pause: the pause (decided on the OLD episode) pauses nothing", async () => {
+    const w = world();
+    const decidedOn = w.st.since as Date;
+    // exit + re-stamp of the same invoice lands first: a NEWER episode whose own final notice has not gone out
+    w.st.since = new Date(decidedOn.getTime() + 9 * 24 * 3_600_000);
+    expect(await w.pause(decidedOn)).toBe(false);
+    expect(w.st.status).toBe("ACTIVE");
+    expect(w.st.pausedAt).toBeNull();
+    expect(w.st.ledger).toEqual([]);
+    // ...while a pause decided on the CURRENT episode goes through
+    expect(await w.pause(w.st.since as Date)).toBe(true);
   });
 
   describe("after-commit ordering: the sweep's pause_collection SET against a resume that commits in between", () => {

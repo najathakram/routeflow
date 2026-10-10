@@ -467,7 +467,7 @@ describe("fixture git repos scrub git's repo-scoped env", () => {
         {
           cwd: REPO_ROOT,
           encoding: "utf8",
-          timeout: 120_000,
+          timeout: 300_000, // the child alone takes ~100 s; a loaded machine doubled it past the old 120 s
           env: {
             ...scrubbedGitEnv(),
             GIT_DIR: path.join(poison, ".git"),
@@ -482,5 +482,5 @@ describe("fixture git repos scrub git's repo-scoped env", () => {
     } finally {
       fs.rmSync(poison, { recursive: true, force: true });
     }
-  }, 180_000);
+  }, 360_000);
 });

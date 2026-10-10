@@ -25,6 +25,8 @@ export const DUNNING_MILESTONES = {
   D6: "DUNNING_D6",
   FINAL: "DUNNING_FINAL",
   PAUSED: "DUNNING_PAUSED",
+  /** SA G8: while a tenant stays paused, ONE per episode replaces d0/d3/d6/final. */
+  PAUSED_STILL_OWED: "DUNNING_PAUSED_STILL_OWED",
 } as const;
 export type DunningMilestone = (typeof DUNNING_MILESTONES)[keyof typeof DUNNING_MILESTONES];
 

@@ -180,6 +180,22 @@ describe("settings registry — rules", () => {
     expect(r.adminOnly).toBeFalsy();
   });
 
+  it("the business time zone (SA-738) is an admin-only tenantConfig row on the profile tab", () => {
+    const r = SETTINGS_REGISTRY.find((x) => x.key === "timezone")!;
+    expect(r).toMatchObject({
+      home: "tenantConfig",
+      kind: "config",
+      status: "live",
+      screen: "/settings?tab=profile",
+      adminOnly: true,
+    });
+    expect(
+      validateSettingsRegistry([row({ key: "tz", home: "tenantConfig", kind: "behaviour" })]).join(
+        " ",
+      ),
+    ).toMatch(/tenant-config rows are config data only/);
+  });
+
   it("userPref rows are exactly the shared and api preference allow-lists", () => {
     const keys = SETTINGS_REGISTRY.filter((r) => r.home === "userPref")
       .map((r) => r.key)
@@ -221,6 +237,7 @@ describe("settings registry — every SystemConfig key the settings writers writ
     await controller.updateSettings({
       taxRate: 5,
       logoUrl: "u",
+      receiptFooter: "Thank you",
       // Every other field the handler accepts is NOT tenant-editable: none may reach SystemConfig.
       businessName: "b",
       ownerName: "o",
@@ -269,9 +286,10 @@ describe("settings registry — every SystemConfig key the settings writers writ
     expect(written).toContain("margin.floor.category.SNACKS");
   });
 
-  it("driving every settings.* field writes only settings.taxRate and settings.logoUrl", () => {
+  it("driving every settings.* field writes only settings.taxRate, settings.logoUrl and settings.receiptFooter", () => {
     expect([...written].filter((k) => k.startsWith("settings.")).sort()).toEqual([
       "settings.logoUrl",
+      "settings.receiptFooter",
       "settings.taxRate",
     ]);
   });

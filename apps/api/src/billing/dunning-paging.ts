@@ -21,10 +21,10 @@ export interface PagingOptions {
   unitMs: number;
   /**
    * Process-local rotation memory + its key: when a run is cut short by the TIME budget the next run starts where
-   * this one actually stopped (start + rows processed), so the tail is never starved. Without an entry (first run,
+   * this one actually stopped (the last tenantId it visited: a keyset cursor, not a row index), so the tail is never starved. Without an entry (first run,
    * restart, another replica) the hour-derived rotation below applies.
    */
-  cursors?: Map<string, number>;
+  cursors?: Map<string, string>;
   cursorKey?: string;
   /** Injectable clock (ms) for the time budget; defaults to Date.now. */
   clock?: () => number;
@@ -49,27 +49,28 @@ export async function forEachRotated(
   const total = await prisma.tenantSubscription.count({ where });
   if (total === 0) return 0;
   const budget = Math.min(total, opts.maxRows);
+  // The remembered cursor is the LAST tenantId visited (a keyset), not a row index: a population that grows or
+  // shrinks between runs neither skips nor repeats rows.
   const remembered = opts.cursors && opts.cursorKey ? opts.cursors.get(opts.cursorKey) : undefined;
   const startIdx =
-    remembered !== undefined
-      ? remembered % total
-      : total > budget
-        ? (Math.floor(runAt.getTime() / opts.unitMs) * budget) % total
-        : 0;
+    total > budget ? (Math.floor(runAt.getTime() / opts.unitMs) * budget) % total : 0;
   const startAt =
-    startIdx === 0
-      ? null
-      : ((
-          await prisma.tenantSubscription.findMany({
-            where,
-            select: { tenantId: true },
-            orderBy: { tenantId: "asc" },
-            skip: startIdx - 1,
-            take: 1,
-          })
-        )[0]?.tenantId ?? null);
+    remembered !== undefined
+      ? remembered
+      : startIdx === 0
+        ? null
+        : ((
+            await prisma.tenantSubscription.findMany({
+              where,
+              select: { tenantId: true },
+              orderBy: { tenantId: "asc" },
+              skip: startIdx - 1,
+              take: 1,
+            })
+          )[0]?.tenantId ?? null);
 
   let processed = 0;
+  let lastVisited: string | null = null;
   const page = async (cursor: string | null, upTo: string | null): Promise<void> => {
     let last = cursor;
     while (processed < budget && now() < deadline) {
@@ -94,6 +95,7 @@ export async function forEachRotated(
       for (const r of rows) {
         if (now() >= deadline) return; // the time budget is checked per row, not just per page
         processed++;
+        lastVisited = r.tenantId;
         await visit(r);
       }
       last = rows[rows.length - 1].tenantId;
@@ -101,7 +103,7 @@ export async function forEachRotated(
   };
   await page(startAt, null); // from the start row to the end of the keyset
   if (startAt && processed < budget) await page(null, startAt); // wrap to the beginning, up to the start row
-  if (opts.cursors && opts.cursorKey)
-    opts.cursors.set(opts.cursorKey, (startIdx + processed) % total);
+  if (opts.cursors && opts.cursorKey && lastVisited !== null)
+    opts.cursors.set(opts.cursorKey, lastVisited);
   return processed;
 }

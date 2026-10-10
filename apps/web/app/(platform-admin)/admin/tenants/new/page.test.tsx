@@ -72,7 +72,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
 
     render(<AdminCreateTenantPage />);
 
-    const select = await screen.findByRole("combobox");
+    const select = await screen.findByRole("combobox", { name: "Plan" });
     await waitFor(() => {
       const options = Array.from(select.querySelectorAll("option"));
       expect(options.map((o) => (o as HTMLOptionElement).value)).toEqual([
@@ -94,7 +94,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
     await waitFor(() => {
       expect(screen.getByText(/plan catalog unavailable/i)).toBeInTheDocument();
     });
-    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    const select = screen.getByRole("combobox", { name: "Plan" }) as HTMLSelectElement;
     expect(select).not.toBeDisabled();
     const options = Array.from(select.querySelectorAll("option")) as HTMLOptionElement[];
     expect(options.map((o) => o.value)).toEqual([...PLAN_KEYS]);
@@ -110,7 +110,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
     await waitFor(() => {
       expect(screen.getByText(/plan catalog unavailable/i)).toBeInTheDocument();
     });
-    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    const select = screen.getByRole("combobox", { name: "Plan" }) as HTMLSelectElement;
     expect(select).not.toBeDisabled();
     const options = Array.from(select.querySelectorAll("option")) as HTMLOptionElement[];
     expect(options.map((o) => o.value)).toEqual([...PLAN_KEYS]);
@@ -127,7 +127,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
 
     render(<AdminCreateTenantPage />);
 
-    const select = (await screen.findByRole("combobox")) as HTMLSelectElement;
+    const select = (await screen.findByRole("combobox", { name: "Plan" })) as HTMLSelectElement;
     await waitFor(() => {
       expect(select.value).toBe("GROWTH");
     });
@@ -151,7 +151,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
 
     render(<AdminCreateTenantPage />);
 
-    const select = await screen.findByRole("combobox");
+    const select = await screen.findByRole("combobox", { name: "Plan" });
     await waitFor(() => {
       const options = Array.from(select.querySelectorAll("option")) as HTMLOptionElement[];
       expect(options.map((o) => o.value)).toEqual(["STARTER", "GROWTH", "SCALE", "ENTERPRISE"]);
@@ -174,7 +174,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
     await waitFor(() => {
       expect(screen.getByText(/plan catalog unavailable/i)).toBeInTheDocument();
     });
-    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    const select = screen.getByRole("combobox", { name: "Plan" }) as HTMLSelectElement;
     const options = Array.from(select.querySelectorAll("option")) as HTMLOptionElement[];
     expect(options.map((o) => o.value)).toEqual([...PLAN_KEYS]);
   });
@@ -193,6 +193,9 @@ describe("#2439 create-tenant success panel", () => {
       target: { value: "o@acme.example" },
     });
     fireEvent.change(screen.getByLabelText(/admin username/i), { target: { value: "owner" } });
+    fireEvent.change(screen.getByLabelText("Time zone"), {
+      target: { value: "America/New_York" },
+    });
     await submitViaSheet();
     return screen.findByTestId("welcome-email-status");
   }
@@ -300,6 +303,9 @@ describe("B956 create-tenant refused business name", () => {
       target: { value: "o@acme.example" },
     });
     fireEvent.change(screen.getByLabelText(/admin username/i), { target: { value: "owner" } });
+    fireEvent.change(screen.getByLabelText("Time zone"), {
+      target: { value: "America/New_York" },
+    });
     await submitViaSheet();
 
     expect(
@@ -327,6 +333,9 @@ describe("create-tenant business profile", () => {
       target: { value: "o@acme.example" },
     });
     fireEvent.change(screen.getByLabelText(/admin username/i), { target: { value: "owner" } });
+    fireEvent.change(screen.getByLabelText("Time zone"), {
+      target: { value: "America/New_York" },
+    });
   }
   async function submit() {
     await submitViaSheet();

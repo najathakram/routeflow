@@ -16,8 +16,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * SA-733r7 PR-B3 (D4): the pause. ONE transaction, Tenant row lock first, then the subscription:
  *
  *   1. the tenant must still be ACTIVE;
- *   2. CAS on the subscription: `updateMany(pausedAt null, pastDueInvoiceId = X, no catch-up claim)` - count 0 means
- *      another sweep paused it, or `invoice.paid` resumed it first: NO pause;
+ *   2. CAS on the subscription: `updateMany(pausedAt null, pastDueInvoiceId = X, pastDueSince = the episode the
+ *      sweep decided on, no catch-up claim)` - count 0 means another sweep paused it, `invoice.paid` resumed it first,
+ *      or the invoice was re-stamped (a NEWER episode, whose own final notice has not gone out): NO pause;
  *   3. ACTIVE -> READ_ONLY(`payment_overdue`) through `transitionAndEmit` (the −MRR delta, booked once), joined to
  *      this transaction. If that CAS loses after the subscription CAS won, everything rolls back.
  *
@@ -27,6 +28,7 @@ export async function pauseTenantTx(
   deps: DunningDeps,
   row: Pick<DunningRow, "tenantId">,
   invoiceId: string,
+  since: Date,
   now: Date,
 ): Promise<boolean> {
   const { tenantId } = row;
@@ -39,7 +41,13 @@ export async function pauseTenantTx(
       });
       if (tenant?.status !== "ACTIVE") return false;
       const cas = await tx.tenantSubscription.updateMany({
-        where: { tenantId, pausedAt: null, pastDueInvoiceId: invoiceId, catchupState: null },
+        where: {
+          tenantId,
+          pausedAt: null,
+          pastDueInvoiceId: invoiceId,
+          pastDueSince: since,
+          catchupState: null,
+        },
         data: { pausedAt: now },
       });
       if (cas.count === 0) return false;

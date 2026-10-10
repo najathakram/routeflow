@@ -3,6 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, act, fireEvent, within } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 
+import { unitWords } from "@routeflow/pricing";
+
+// U-3a: the add-extra control is named by the default unit words.
+// WCAG 2.5.3: the accessible name contains the visible "+ pieces" text.
+const ADD_EXTRA = `+ ${unitWords().base.lowerOther}: add extra ${unitWords().base.lowerOther}`;
+const REMOVE_EXTRA = `Remove extra ${unitWords().base.lowerOther}`;
+
 // JSDOM has no scrollIntoView implementation at all (not a stub — genuinely absent), and
 // addLineItem's scroll-to-added-row effect calls it. No prior test in this file exercised
 // that path (only the customer-not-selected submit guard), so this gap was never hit before.
@@ -453,7 +460,7 @@ describe("CreateOrderModal", () => {
       await scanCode("111"); // this scan CREATED the line
       await screen.findByText("Case Soda");
       // The operator raises it to 3 cases by hand.
-      fireEvent.change(screen.getByTitle("Number of whole cases"), { target: { value: "3" } });
+      fireEvent.change(screen.getByTitle("Number of whole boxes"), { target: { value: "3" } });
       await waitFor(() => expect(screen.getByText("1 item · $72.00")).toBeInTheDocument());
 
       fireEvent.click(screen.getByRole("button", { name: /undo last scan/i }));
@@ -1151,38 +1158,38 @@ describe("CreateOrderModal", () => {
 
     it("(d) a new case-packed line shows ONLY the cases field and submits pieces = 0", async () => {
       await setup(boxed);
-      expect(await screen.findByTitle("Number of whole cases")).toBeInTheDocument();
-      expect(screen.queryByLabelText("Extra loose units")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "+ units" })).toBeInTheDocument();
+      expect(await screen.findByTitle("Number of whole boxes")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Extra pieces")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: ADD_EXTRA })).toBeInTheDocument();
       expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 24, boxes: 1, pieces: 0 }]);
     });
 
-    it("(d) “+ units” reveals the loose field; its value rides as pieces on top of the cases", async () => {
+    it("(d) “+ pieces” reveals the loose field; its value rides as pieces on top of the cases", async () => {
       await setup(boxed);
-      fireEvent.click(await screen.findByRole("button", { name: "+ units" }));
-      fireEvent.change(screen.getByLabelText("Extra loose units"), { target: { value: "5" } });
+      fireEvent.click(await screen.findByRole("button", { name: ADD_EXTRA }));
+      fireEvent.change(screen.getByLabelText("Extra pieces"), { target: { value: "5" } });
       expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 29, boxes: 1, pieces: 5 }]);
     });
 
     it("(d) removing the extra units puts pieces back to 0 and hides the field", async () => {
       await setup(boxed);
-      fireEvent.click(await screen.findByRole("button", { name: "+ units" }));
-      fireEvent.change(screen.getByLabelText("Extra loose units"), { target: { value: "5" } });
-      fireEvent.click(screen.getByRole("button", { name: "Remove extra units" }));
-      expect(screen.queryByLabelText("Extra loose units")).not.toBeInTheDocument();
+      fireEvent.click(await screen.findByRole("button", { name: ADD_EXTRA }));
+      fireEvent.change(screen.getByLabelText("Extra pieces"), { target: { value: "5" } });
+      fireEvent.click(screen.getByRole("button", { name: REMOVE_EXTRA }));
+      expect(screen.queryByLabelText("Extra pieces")).not.toBeInTheDocument();
       expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 24, boxes: 1, pieces: 0 }]);
     });
 
     it("(d) Unit mode shows only the total units; back in Case mode a loose remainder is shown, never dropped", async () => {
       await setup(boxed);
-      fireEvent.click(await screen.findByRole("button", { name: "Unit" }));
-      const total = screen.getByTitle("Total units") as HTMLInputElement;
+      fireEvent.click(await screen.findByRole("button", { name: "Piece" }));
+      const total = screen.getByTitle("Total pieces") as HTMLInputElement;
       expect(total.value).toBe("24"); // 1 case → 24 units: the same qty, converted by display
-      expect(screen.queryByTitle("Number of whole cases")).not.toBeInTheDocument();
+      expect(screen.queryByTitle("Number of whole boxes")).not.toBeInTheDocument();
       fireEvent.change(total, { target: { value: "25" } });
-      fireEvent.click(screen.getByRole("button", { name: "Case" }));
-      expect((screen.getByTitle("Number of whole cases") as HTMLInputElement).value).toBe("1");
-      expect((screen.getByLabelText("Extra loose units") as HTMLInputElement).value).toBe("1");
+      fireEvent.click(screen.getByRole("button", { name: "Box" }));
+      expect((screen.getByTitle("Number of whole boxes") as HTMLInputElement).value).toBe("1");
+      expect((screen.getByLabelText("Extra pieces") as HTMLInputElement).value).toBe("1");
       expect(saveDraft()).toEqual([{ productId: "prod-1", qty: 25, boxes: 1, pieces: 1 }]);
     });
 
