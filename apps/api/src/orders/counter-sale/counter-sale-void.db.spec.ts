@@ -510,7 +510,7 @@ describeDb("SA-762r: void a counter sale, real Postgres", () => {
   }, 120_000);
 
   it("(l) a box-unaware boxed line: 3 boxes of 12 sold, cut to 2, void: all 36 pieces come back", async () => {
-    const s = await seedStampedThenCut("boxed", 3, 2, PACK);
+    const s = await seedStampedThenCut("boxedcut", 3, 2, PACK);
     expect((await snapshot(s)).stock).toBe(100 - 36);
     await doVoid(s);
     expect((await snapshot(s)).stock).toBe(100);
