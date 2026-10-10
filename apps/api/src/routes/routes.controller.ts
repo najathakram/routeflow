@@ -24,6 +24,7 @@ import { ListRoutesDto } from "./dto/list-routes.dto";
 import { CreateRouteDto } from "./dto/create-route.dto";
 import { UpdateRouteDto } from "./dto/update-route.dto";
 import { AddStopDto } from "./dto/add-stop.dto";
+import { ReorderRouteStopsDto } from "./dto/reorder-route-stops.dto";
 import { CreateRouteRunDto } from "./dto/create-route-run.dto";
 import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
 import { ListRunsDto } from "./dto/list-runs.dto";
@@ -31,6 +32,8 @@ import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
 import { SettleRunDto } from "./dto/settle-run.dto";
 import { AttachPodArtifactDto } from "./dto/attach-pod-artifact.dto";
+import { UpdateStopStatusDto } from "./dto/update-stop-status.dto";
+import { ReorderRunStopsDto } from "./dto/reorder-run-stops.dto";
 import { DriverPaymentsGuard } from "./driver-payments.guard";
 
 @ApiTags("routes")
@@ -108,10 +111,7 @@ export class RoutesController {
   @Patch(":id/stops/reorder")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  reorderStops(
-    @Param("id") id: string,
-    @Body() body: { order: { id: string; stopNumber: number }[] },
-  ) {
+  reorderStops(@Param("id") id: string, @Body() body: ReorderRouteStopsDto) {
     return this.routesService.reorderStops(id, body.order);
   }
 
@@ -246,26 +246,25 @@ export class RouteRunsController {
     return this.routesService.getStopPod(runId, stopId, user);
   }
 
+  // Declared BEFORE ":id/stops/:stopId": Express matches in order, so "reorder" would otherwise be
+  // taken as a :stopId and this handler would never run (#2110).
+  @Patch(":id/stops/reorder")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  reorderRunStops(@Param("id") id: string, @Body() body: ReorderRunStopsDto) {
+    return this.routesService.reorderRunStops(id, body.order);
+  }
+
   @Patch(":id/stops/:stopId")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   updateStopStatus(
     @Param("id") id: string,
     @Param("stopId") stopId: string,
-    @Body() body: { status: "IN_PROGRESS" | "SKIPPED"; driverNote?: string },
+    @Body() body: UpdateStopStatusDto,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.routesService.updateStopStatus(id, stopId, body, user);
-  }
-
-  @Patch(":id/stops/reorder")
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  reorderRunStops(
-    @Param("id") id: string,
-    @Body() body: { order: { id: string; stopNumber: number }[] },
-  ) {
-    return this.routesService.reorderRunStops(id, body.order);
   }
 
   @Patch(":id")

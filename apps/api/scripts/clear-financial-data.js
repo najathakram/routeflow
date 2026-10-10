@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // PRODUCTION GUARD — must be first executable code
 const { productionGuard } = require("./lib/production-guard");
-productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
+// Runs below once the API base URL is resolved (#2421): this script calls the HTTP API, not a
+// database, so it checks the environment AND that the API host is provably local.
 
 /**
  * Clear Financial Data Script
@@ -18,6 +19,12 @@ const BASE_URL =
   "http://localhost:3000/api/v1";
 const USERNAME = process.env.ROUTEFLOW_USERNAME || "admin";
 const PASSWORD = process.env.ROUTEFLOW_PASSWORD || "Admin@123";
+
+productionGuard({
+  requireFlag: "--i-know-this-deletes-everything",
+  requireDb: false,
+  apiUrl: BASE_URL,
+});
 
 async function main() {
   console.log(`\n🗑️  RouteFlow – Clear Financial Data`);

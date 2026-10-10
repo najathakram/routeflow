@@ -50,6 +50,13 @@
 #      routine already used for schema-migration pushes (see
 #      docs/runbooks/deploy-visibility-flip.md) — just not run twice for free.
 #
+# ONE EXCEPTION to rule 2 (lead ruling 2026-10-01): apps/control has its OWN workflow,
+# .github/workflows/control.yml — its own job, installing only its own tree, started only by
+# PRs that touch apps/control or a file its specs read. Its Jest suite spawns real git, a server
+# and the CLI and was pushing this job toward the 20-minute cap; product PRs should neither run
+# nor wait on it. It is excluded from the Verify step below (VERIFY_EXCLUDE) and still gates the
+# PRs that touch it. Do not add a second exception without the same measurement.
+#
 # ═══ LOCAL GATE IS AUTHORITATIVE ════════════════════════════════════════════════
 # `.husky/pre-push` runs `npm run verify` — the SAME command this workflow runs —
 # on every push, and blocks direct trunk pushes. CI is the Linux confirmation of a
@@ -288,8 +295,18 @@ jobs:
       # `--coverage` was dropped on 2026-08-30: no coverageThreshold is configured
       # in any workspace, so it gated nothing, and the coverage artifact it fed
       # was never consumed by anything downstream.
+      #
+      # VERIFY_EXCLUDE (scripts/verify-turbo.mjs): apps/control is verified by its own job in
+      # .github/workflows/control.yml (path-filtered, installs only its tree), so it is taken out
+      # of THIS turbo scope — product PRs neither run nor wait on its Jest suite. It is still gated
+      # on every PR that touches it by that workflow, and locally by the pre-push scope (developers
+      # do not set this variable, so a local FULL_VERIFY still runs control).
+      # The script ACCEPTS ONLY that one name and exits 1 on any other (an allow-list, so a later edit
+      # here cannot silently exclude api/web); widening it means editing scripts/verify-turbo.mjs.
       - name: Verify (lockfile, bug-signature scan, types, lint, tests)
         run: npm run verify
+        env:
+          VERIFY_EXCLUDE: "@routeflow/control"
 
       # Registry state, not tree state — so this belongs in CI and not in the
       # local pre-push gate, where it would add network latency to every push.
@@ -376,43 +393,31 @@ jobs:
   #   seed failure FAILS the job); when absent, seeding is skipped with a notice
   #   and the standing tenant is assumed pre-seeded. Never point it at anything
   #   but the deployment the PLAYWRIGHT_BASE_URL app reads from.
-  e2e:
-    name: E2E (Playwright)
+  # The freshness decision lives in its own job (B621). It used to be a step inside `e2e`, and when
+  # it decided "superseded" every later step skipped while the job still concluded `success`: across
+  # the last 40 deployment runs Playwright completed zero times and each was read as a pass. Now a
+  # superseded deployment SKIPS the `e2e` job itself, and only after the guard has CONFIRMED a later
+  # E2E run exists for the newest deployment; otherwise this job fails (see the guard's header).
+  # A skipped `e2e` is not a required check anywhere: it only runs on deployment_status /
+  # dispatch, which no branch-protection rule can name.
+  e2e-gate:
+    name: E2E gate (freshness)
     runs-on: ubuntu-latest
-    # Restricted default = contents+packages read only. The freshness guard
-    # below needs deployments:read to see the newest deployment (REG-E2EGUARD-403).
+    # deployments:read for the newest-deployment read (REG-E2EGUARD-403); actions:read for the
+    # workflow-runs lookup that confirms a later E2E run exists.
     permissions:
       contents: read
       deployments: read
-    # 45, not 25: the readiness gate below still owns a 15-minute budget for the
-    # case where Railway reports success before the web service is actually
-    # serving, so the suite needs its own budget on top of that.
-    timeout-minutes: 45
+      actions: read
+    # The confirmation polls up to 10 min (CI_E2E_SUCCESSOR_TIMEOUT_MS) on a superseded deploy.
+    timeout-minutes: 15
     if: >
       (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success') ||
       github.event_name == 'repository_dispatch' ||
       github.event_name == 'workflow_dispatch'
-    # Keyed on the COMMIT, deliberately not on a constant.
-    #
-    # A constant group with cancel-in-progress looks right ("a newer deploy
-    # supersedes an in-flight check" — post-deploy.yml says exactly that) and is
-    # wrong here, because of the Railway behaviour documented on the freshness
-    # guard below: when deployment N succeeds, Railway ALSO re-posts `success`
-    # onto deployment N-1, about 4 seconds later (measured: 19:49:41 then
-    # 19:49:45). Under a constant group that STALE event would cancel the run for
-    # the commit that actually shipped, and then skip itself — E2E would silently
-    # never run. Per-SHA grouping lets the stale run start and bail out on its own.
-    concurrency:
-      group: ci-e2e-${{ github.event.deployment.sha || github.sha }}
-      cancel-in-progress: true
-    env:
-      # TRANSITIONAL — accepts a /api/v1/health payload whose `commit` is
-      # null/absent (an API build that predates wave B′, a CLI `railway up`
-      # deploy, or RAILWAY_GIT_COMMIT_SHA unset in the container). Flip to
-      # "false" once the first post-wave-B′ GitHub deploy of the API serves
-      # `commit`; from then on a null `commit` means an API build of unknown
-      # provenance and must fail the readiness gate rather than downgrade it.
-      ALLOW_NULL_API_SHA: "true"
+    outputs:
+      run: ${{ steps.freshness.outputs.run }}
+      reason: ${{ steps.freshness.outputs.reason }}
     steps:
       # A minimal, unconditional checkout — just `scripts/` — so the freshness
       # guard below has scripts/ci-freshness-guard.mjs to run. Cheap (one
@@ -443,9 +448,10 @@ jobs:
       # and then fail. That is a false red AND ~17 billed minutes, per deploy.
       #
       # So: bail out before the FULL checkout, via scripts/ci-freshness-guard.mjs.
-      # It ALWAYS exits 0 and only ever emits run=false when a real, structurally
-      # valid deployments response shows this commit was genuinely superseded —
-      # a non-zero exit, an unparseable body, a timeout, or a missing permission
+      # It only ever emits run=false when a real, structurally valid deployments
+      # response shows this commit was genuinely superseded AND a later E2E run
+      # for the newest deployment is confirmed to exist (else it exits 3, red).
+      # Reading the newest deployment fails OPEN — a non-zero exit, an unparseable body, a timeout, or a missing permission
       # (this job needs deployments:read, above) all fail OPEN (run=true, with an
       # ::warning::) instead of silently skipping the suite (REG-E2EGUARD-403).
       - name: Skip superseded deployments
@@ -453,6 +459,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DEPLOY_SHA: ${{ github.event.deployment.sha }}
+          # #1134 item 4: "newest deployment" is read for THIS deployment's environment only.
+          DEPLOY_ENV: ${{ github.event.deployment.environment }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           # Dispatch runs carry no deployment: the guard reports that as a
           # notice and proceeds, instead of warning about an API read that
@@ -473,12 +481,54 @@ jobs:
               echo "::error::freshness guard exited 2 (GITHUB_OUTPUT unset)"
               exit 2
             fi
+            # Exit 3 = superseded but NO later E2E run confirmed (the guard already printed why).
+            # Deliberate and red: swallowing it into the crash fallback below would run the suite
+            # against a deployment production no longer serves, or worse, hide the gap.
+            if [ "$rc" = "3" ]; then
+              exit 3
+            fi
             echo "::warning::freshness guard crashed (exit $rc) — proceeding rather than skipping"
             echo "run=true" >> "$GITHUB_OUTPUT"
           }
 
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    # Restricted default = contents+packages read only. The freshness guard
+    # below needs deployments:read to see the newest deployment (REG-E2EGUARD-403).
+    permissions:
+      contents: read
+    # 45, not 25: the readiness gate below still owns a 15-minute budget for the
+    # case where Railway reports success before the web service is actually
+    # serving, so the suite needs its own budget on top of that.
+    timeout-minutes: 45
+    # Runs only when the e2e-gate job decided this deployment is the one to test. A superseded
+    # deployment SKIPS this whole job (grey); it never reports a green job whose steps all skipped.
+    needs: e2e-gate
+    if: needs.e2e-gate.outputs.run == 'true'
+    # Keyed on the COMMIT, deliberately not on a constant.
+    #
+    # A constant group with cancel-in-progress looks right ("a newer deploy
+    # supersedes an in-flight check" — post-deploy.yml says exactly that) and is
+    # wrong here, because of the Railway behaviour documented on the freshness
+    # guard below: when deployment N succeeds, Railway ALSO re-posts `success`
+    # onto deployment N-1, about 4 seconds later (measured: 19:49:41 then
+    # 19:49:45). Under a constant group that STALE event would cancel the run for
+    # the commit that actually shipped, and then skip itself — E2E would silently
+    # never run. Per-SHA grouping lets the stale run start and bail out on its own.
+    concurrency:
+      group: ci-e2e-${{ github.event.deployment.sha || github.sha }}
+      cancel-in-progress: true
+    env:
+      # TRANSITIONAL — accepts a /api/v1/health payload whose `commit` is
+      # null/absent (an API build that predates wave B′, a CLI `railway up`
+      # deploy, or RAILWAY_GIT_COMMIT_SHA unset in the container). Flip to
+      # "false" once the first post-wave-B′ GitHub deploy of the API serves
+      # `commit`; from then on a null `commit` means an API build of unknown
+      # provenance and must fail the readiness gate rather than downgrade it.
+      ALLOW_NULL_API_SHA: "true"
+    steps:
       - uses: actions/checkout@v7
-        if: steps.freshness.outputs.run == 'true'
         with:
           # The DEPLOYED commit, which is what every spec below asserts against.
           # On deployment_status that is the deployment's sha; the fallback covers
@@ -491,13 +541,11 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/setup-node@v7
-        if: steps.freshness.outputs.run == 'true'
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
       - name: Install dependencies
-        if: steps.freshness.outputs.run == 'true'
         run: npm ci --engine-strict=false
 
       # Deliberately BEFORE the readiness gate. Both this and the install above
@@ -508,7 +556,6 @@ jobs:
       # first attempt: it is exactly the ordering that keeps the residual wait at
       # zero rather than merely small.
       - name: Install Playwright browsers
-        if: steps.freshness.outputs.run == 'true'
         working-directory: apps/web
         run: npx playwright install chromium --with-deps
 
@@ -557,7 +604,6 @@ jobs:
       # log; once it is flipped to "false" a null `commit` keeps the gate waiting
       # and then fails it, like any other build whose freshness is unproven.
       - name: Wait for the deployed app to match this commit
-        if: steps.freshness.outputs.run == 'true'
         env:
           API_BASE: ${{ secrets.SMOKE_BASE_URL || 'https://routeflowapi-production.up.railway.app' }}
           WEB_BASE: ${{ secrets.PLAYWRIGHT_BASE_URL || 'https://routeflowweb-production.up.railway.app' }}
@@ -753,7 +799,6 @@ jobs:
           exit 1
 
       - name: Run Playwright tests
-        if: steps.freshness.outputs.run == 'true'
         working-directory: apps/web
         run: npx playwright test
         env:
@@ -761,15 +806,16 @@ jobs:
           PLAYWRIGHT_TENANT_SLUG: ${{ secrets.PLAYWRIGHT_TENANT_SLUG || 'e2e-routeflow' }}
           # Optional — see the job comment. Empty (secret absent) = seed skipped.
           E2E_SEED_DATABASE_URL: ${{ secrets.E2E_SEED_DATABASE_URL }}
+          # Optional — the seeded e2e_driver login; absent = the driver fixture is skipped.
+          E2E_DRIVER_PASSWORD: ${{ secrets.E2E_DRIVER_PASSWORD }}
           # Super-admin specs skip when these secrets are absent (never hardcoded).
           PLAYWRIGHT_SA_USERNAME: ${{ secrets.PLAYWRIGHT_SA_USERNAME }}
           PLAYWRIGHT_SA_PASSWORD: ${{ secrets.PLAYWRIGHT_SA_PASSWORD }}
           CI: "true"
 
       - name: Upload Playwright report
-        # `failure()` alone would be true for a stale-deployment run too, and
-        # there is no report to upload there.
-        if: failure() && steps.freshness.outputs.run == 'true'
+        # This job only runs for the deployment the gate chose, so `failure()` always has a report.
+        if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report-ci-${{ github.run_number }}
@@ -794,10 +840,8 @@ jobs:
       # step is safe to merge and run before those secrets are ever provisioned; it simply
       # warns and stays green until then.
       #
-      # Only runs when the deploy was fresh (not a superseded/stale event) — same gate every
-      # other step in this job past the freshness check uses.
+      # This job only runs for the deployment the e2e-gate job chose (never a superseded one).
       - name: Release health check (Sentry regression gate)
-        if: steps.freshness.outputs.run == 'true'
         env:
           SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}

@@ -8,6 +8,7 @@ import {
   type ChannelPrincipal,
 } from "../selling-restrictions/selling-restrictions.core";
 import type { PrismaService } from "../prisma/prisma.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * The credit-limit guard, lifted out of `OrdersService` (B585) so that new enforcement points cost
@@ -41,7 +42,7 @@ export interface CreditLimitCheckDeps {
  * request cleanly; this call site cannot.)
  */
 export async function isCreditLimitCheckEnabled(deps: CreditLimitCheckDeps): Promise<boolean> {
-  // Release toggle (REMOVE by 2026-10-01): plan-flag enforcement ships dark.
+  // Release toggle (review by 2027-01-31): plan-flag enforcement ships dark.
   // "on" = enforce; anything else = legacy behavior (always check).
   if ((process.env.PLAN_FLAG_ENFORCEMENT ?? "off") !== "on") return true;
   const tenantId = deps.prisma.getTenantId();
@@ -165,7 +166,7 @@ export async function assertWithinCreditLimit(
   );
   if (exposure > limit) {
     throw new ConflictException({
-      code: "CREDIT_LIMIT_EXCEEDED",
+      code: API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED,
       message:
         `This ${action} would take the customer's exposure to ${exposure.toFixed(2)}, ` +
         `over their credit limit of ${limit.toFixed(2)}.`,
@@ -220,7 +221,8 @@ export async function creditEnforcementMode(
 
 const isCreditLimitExceeded = (e: unknown): e is ConflictException =>
   e instanceof ConflictException &&
-  (e.getResponse() as { code?: string } | undefined)?.code === "CREDIT_LIMIT_EXCEEDED";
+  (e.getResponse() as { code?: string } | undefined)?.code ===
+    API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED;
 
 const ACTION_LABEL = { order: "new order", delivery: "delivery" } as const;
 
@@ -297,7 +299,10 @@ export async function assertCreditAtEnforcementPoint(
   } catch (e) {
     if (mode === "ENFORCED") {
       if (isCreditLimitExceeded(e) && restrictionChannelForPrincipal(p.principal) !== "STAFF")
-        throw new ConflictException({ code: "CREDIT_LIMIT_EXCEEDED", message: GENERIC_DENIAL });
+        throw new ConflictException({
+          code: API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED,
+          message: GENERIC_DENIAL,
+        });
       throw e;
     }
     if (!isCreditLimitExceeded(e)) {

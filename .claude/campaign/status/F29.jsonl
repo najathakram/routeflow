@@ -12,3 +12,9 @@
 {"id":"B179","batch":"F29","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
 {"id":"B184","batch":"F29","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
 {"id":"B187","batch":"F29","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
+{"id":"B852","batch":"F29","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B853","batch":"F29","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B854","batch":"F29","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B860","batch":"F29","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B861","batch":"F29","tier":"T1","state":"done","pr":2170,"proof":"REG-B861 numbering-continuity.db.spec.ts (F2 21/21 x3, full lane 325/325 at cbae3b85): a save carrying the current expectedNextNumber updates the saved row; REG-B861-AB/AD assert BadRequestException","evidence":"#2170 merged dd33057a (squash of cbae3b85); api+web deploy SUCCESS at dd33057a; post-deploy-check green; owner's SA-274 Q4 prod count = 0 across 0 tenants (read-only, after backup, #938); F2 numbering-continuity 21/21 x3, full lane 325/325 at cbae3b85; SA-311 + Opus SHIP at cbae3b85.","buildPlan":".claude/pipeline/2026-09-25-B861-numbering-continuity/build-plan.md"}
+{"id":"B862","batch":"F29","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}

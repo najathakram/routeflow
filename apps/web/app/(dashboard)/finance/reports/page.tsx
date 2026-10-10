@@ -54,11 +54,13 @@ import {
   Download,
   Printer,
 } from "lucide-react";
-import { cn, useToast, type ToastVariant } from "@routeflow/ui/web";
+import { Badge, cn, useToast, type ToastVariant } from "@routeflow/ui/web";
+import { depositOverdueLine, groupArAgingByCustomer } from "@/lib/ar-aging-rows";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
+import { useFleetAccess } from "@/lib/api/addons";
 
 const CHART_COLORS = [
   "#3b82f6",
@@ -247,18 +249,10 @@ function ArAgingReport({
     },
     { key: `days${interval * 3}plus`, label: `${interval * 3 + 1}+ days` },
   ];
-  const customerMap: Record<string, { name: string; buckets: Record<string, number> }> = {};
-  for (const [bKey, items] of Object.entries(buckets)) {
-    for (const item of items as Array<{
-      customer: { id: string; businessName: string };
-      balance: number;
-    }>) {
-      if (!customerMap[item.customer.id])
-        customerMap[item.customer.id] = { name: item.customer.businessName, buckets: {} };
-      customerMap[item.customer.id].buckets[bKey] =
-        (customerMap[item.customer.id].buckets[bKey] ?? 0) + item.balance;
-    }
-  }
+  // #1529 (SA-517 PR-B): the same per-customer sums, plus a marker when any invoice carries an
+  // overdue deposit; the buckets and totals are unchanged.
+  const customerMap = groupArAgingByCustomer(buckets);
+  const depositLine = depositOverdueLine(data?.depositOverdue, fmt);
 
   return (
     <div>
@@ -279,6 +273,12 @@ function ArAgingReport({
           </button>
         ))}
       </div>
+      {depositLine && (
+        <p className="px-4 pb-3 text-sm text-navy/80" data-testid="ar-deposit-overdue-summary">
+          <Badge variant="warning" label="Deposits" className="mr-2" />
+          {depositLine}
+        </p>
+      )}
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
@@ -309,7 +309,16 @@ function ArAgingReport({
                   className={cn("hover:bg-surface-raised/50", onSelectReport && "cursor-pointer")}
                   onClick={() => onSelectReport?.("ar-aging-details", { customerId })}
                 >
-                  <td className="px-4 py-2.5 font-medium text-brand-600">{c.name}</td>
+                  <td className="px-4 py-2.5 font-medium text-brand-600">
+                    {c.name}
+                    {c.depositOverdue && (
+                      <Badge
+                        variant="warning"
+                        label="Deposit overdue"
+                        className="ml-2 align-middle"
+                      />
+                    )}
+                  </td>
                   {colDefs.map((col) => (
                     <td key={col.key} className="px-4 py-2.5 text-right text-navy">
                       {c.buckets[col.key] ? fmt(c.buckets[col.key]) : "\u2014"}
@@ -2292,9 +2301,28 @@ function FinanceReportsContent() {
     setTitle("Reports");
   }, [setTitle]);
   const { toast } = useToast();
+  // Fleet-off (no routes / delivery addon): there are no drivers, so no "Sales by Driver" report.
+  const { fleet } = useFleetAccess();
+  const reportGroups = React.useMemo(
+    () =>
+      REPORT_GROUPS.map((g) => ({
+        ...g,
+        reports: g.reports.filter((r) => fleet || r.id !== "sales-by-driver"),
+      })),
+    [fleet],
+  );
   const router = useRouter();
   const searchParams = useSearchParams();
-  const activeReport = searchParams.get("report") ?? "sales-by-customer";
+  const requestedReport = searchParams.get("report") ?? "sales-by-customer";
+  // A fleet-off account that opens the Sales by Driver report by direct URL gets the default report.
+  const activeReport =
+    !fleet && requestedReport === "sales-by-driver" ? "sales-by-customer" : requestedReport;
+  React.useEffect(() => {
+    if (activeReport === requestedReport) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("report", activeReport);
+    router.replace(`/finance/reports?${params.toString()}`);
+  }, [activeReport, requestedReport, router, searchParams]);
   const contextCustomerId = searchParams.get("customerId") ?? undefined;
   const contextCategoryId = searchParams.get("categoryId") ?? undefined;
 
@@ -2305,7 +2333,7 @@ function FinanceReportsContent() {
     searchParams.get("to") ?? new Date().toISOString().split("T")[0],
   );
 
-  const activeInfo = REPORT_GROUPS.flatMap((g) => g.reports).find((r) => r.id === activeReport);
+  const activeInfo = reportGroups.flatMap((g) => g.reports).find((r) => r.id === activeReport);
   const needsDates = !["ar-aging", "bad-debts", "customer-balance", "ledger"].includes(
     activeReport,
   );
@@ -2374,7 +2402,7 @@ function FinanceReportsContent() {
             <h2 className="text-sm font-semibold text-navy">All Reports</h2>
           </div>
           <div className="py-2">
-            {REPORT_GROUPS.map((group) => {
+            {reportGroups.map((group) => {
               const Icon = group.icon;
               return (
                 <div key={group.id} className="mb-1">

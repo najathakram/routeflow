@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AppConfig } from "../config/configuration";
+import { STRIPE_API_VERSION } from "./stripe-period";
 
 // Stripe v22 CJS `export =` isn't compatible with `module: "nodenext"` named
 // imports, so we use require() for the constructor value.
@@ -23,7 +24,7 @@ export class StripeService implements OnModuleInit {
   onModuleInit() {
     const secretKey = this.config.get<AppConfig["stripe"]>("stripe")?.secretKey;
     if (secretKey) {
-      this.stripe = new Stripe(secretKey);
+      this.stripe = new Stripe(secretKey, { apiVersion: STRIPE_API_VERSION }); // #2436
       this.logger.log("Stripe SDK initialised");
     } else {
       this.logger.warn(
@@ -89,44 +90,105 @@ export class StripeService implements OnModuleInit {
 
   // ─── Subscription ─────────────────────────────────────────────────────────
 
-  async getSubscription(subId: string): Promise<any> {
-    return this.client.subscriptions.retrieve(subId);
+  /** `params` carries `expand` (SA-690: checkout completion reads each item's product metadata). */
+  async getSubscription(subId: string, params?: { expand?: string[] }): Promise<any> {
+    return params
+      ? this.client.subscriptions.retrieve(subId, params)
+      : this.client.subscriptions.retrieve(subId);
+  }
+
+  /**
+   * B1158: a subscription's status and whether its latest invoice's payment is STILL IN FLIGHT (a bank debit —
+   * ACH / SEPA — whose PaymentIntent is `processing`). Under API dahlia `Invoice.payment_intent` no longer exists:
+   * the invoice carries `payments` (InvoicePayment list) and each entry names its PaymentIntent at
+   * `payment.payment_intent` (an id, or an object when expanded). `resource_missing` on the subscription means
+   * Stripe no longer knows it ({ status: null }); ANY other error — including one reading a PaymentIntent —
+   * rethrows, because a failed read says nothing about whether money is in flight.
+   */
+  async getSubscriptionPaymentState(
+    subId: string,
+  ): Promise<{ status: string | null; paymentProcessing: boolean }> {
+    let sub: any;
+    try {
+      sub = await this.client.subscriptions.retrieve(subId, {
+        // 4 levels is Stripe's expand limit: the PaymentIntent object comes back in the same call.
+        expand: ["latest_invoice.payments.data.payment.payment_intent"],
+      });
+    } catch (err) {
+      const e = err as { code?: string; statusCode?: number } | undefined;
+      if (e?.code === "resource_missing" || e?.statusCode === 404) {
+        return { status: null, paymentProcessing: false };
+      }
+      throw err;
+    }
+    const status: string | null = typeof sub?.status === "string" ? sub.status : null;
+    const invoice = sub?.latest_invoice;
+    const payments: any[] =
+      invoice && typeof invoice === "object" && Array.isArray(invoice.payments?.data)
+        ? invoice.payments.data
+        : [];
+    let paymentProcessing = false;
+    for (const entry of payments) {
+      if (entry?.payment?.type !== "payment_intent") continue;
+      const ref = entry.payment.payment_intent;
+      const pi =
+        ref && typeof ref === "object"
+          ? ref
+          : typeof ref === "string"
+            ? await this.client.paymentIntents.retrieve(ref)
+            : null;
+      if (pi?.status === "processing") paymentProcessing = true;
+    }
+    return { status, paymentProcessing };
+  }
+
+  /** B1158: the completed session by id — the parked-checkout sweep re-runs the webhook handling from it. */
+  async getCheckoutSession(sessionId: string): Promise<any> {
+    return this.client.checkout.sessions.retrieve(sessionId);
   }
 
   async updateSubscription(subId: string, params: any): Promise<any> {
     return this.client.subscriptions.update(subId, params);
   }
 
-  async cancelSubscription(subId: string): Promise<any> {
-    return this.client.subscriptions.cancel(subId);
+  /**
+   * `params` (`prorate`, `invoice_now`) and `options` (`idempotencyKey`) are for a caller that must cancel
+   * exactly once without a proration invoice (the duplicate-checkout guard); omit both for the plain cancel.
+   */
+  async cancelSubscription(
+    subId: string,
+    params?: { prorate?: boolean; invoice_now?: boolean },
+    options?: { idempotencyKey?: string },
+  ): Promise<any> {
+    if (!params && !options) return this.client.subscriptions.cancel(subId);
+    return this.client.subscriptions.cancel(subId, params ?? {}, options);
+  }
+
+  // ─── Invoices ─────────────────────────────────────────────────────────────
+
+  async getInvoice(invoiceId: string): Promise<any> {
+    return this.client.invoices.retrieve(invoiceId);
+  }
+
+  /** Voids an OPEN invoice (a paid one cannot be voided — refund it instead). */
+  async voidInvoice(invoiceId: string): Promise<any> {
+    return this.client.invoices.voidInvoice(invoiceId);
   }
 
   // ─── Billing Portal ───────────────────────────────────────────────────────
 
-  async createBillingPortalSession(params: {
-    customerId: string;
-    returnUrl: string;
-  }): Promise<{ url: string }> {
-    return this.client.billingPortal.sessions.create({
-      customer: params.customerId,
-      return_url: params.returnUrl,
-    });
-  }
-
-  // ─── Price lookup ─────────────────────────────────────────────────────────
-
-  getPriceIdForPlan(plan: string): string {
-    const stripeConfig = this.config.get<AppConfig["stripe"]>("stripe")!;
-    switch (plan) {
-      case "STARTER":
-        return stripeConfig.priceStarter;
-      case "PROFESSIONAL":
-        return stripeConfig.priceProfessional;
-      case "ENTERPRISE":
-        return stripeConfig.priceEnterprise;
-      default:
-        throw new Error(`Unknown plan: ${plan}`);
-    }
+  /** #2476: `request` caps this one call (stripe-node's `timeout` / `maxNetworkRetries`); omit it for
+   *  Stripe's defaults. */
+  async createBillingPortalSession(
+    params: { customerId: string; returnUrl: string },
+    request?: { timeoutMs: number; maxNetworkRetries: number },
+  ): Promise<{ url: string }> {
+    return this.client.billingPortal.sessions.create(
+      { customer: params.customerId, return_url: params.returnUrl },
+      request
+        ? { timeout: request.timeoutMs, maxNetworkRetries: request.maxNetworkRetries }
+        : undefined,
+    );
   }
 
   // ─── Webhook signature verification ───────────────────────────────────────

@@ -1,10 +1,46 @@
 import { Injectable } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "@routeflow/pricing";
+import { billableAddonWhere } from "./addon-row";
+
+/**
+ * SA-140: the one place "is this tenant currently in MrrService's paying set" is defined.
+ * `payingWhere`/the add-on `where` (both Prisma filters, DB-side) build FROM this constant;
+ * `isPayingRow` (JS-side, for an already-fetched row) reads it too — a Prisma `where` object
+ * can't call a JS function, so this is the practical version of "one shared predicate" (L-167):
+ * both forms are built from ONE named source instead of two independently-typed copies.
+ */
+export const PAYING_TENANT_CONDITIONS = {
+  status: "ACTIVE" as const,
+  deletedAt: null,
+  class: "PRODUCTION" as const,
+};
+
+/**
+ * The full paying-set gate, for a caller that already has the row (no second query). Mirrors
+ * `payingWhere` exactly — see `mrr-paying-predicate.parity.spec.ts` for the pin. Every site that
+ * decides "does this tenant count toward MRR" from an in-memory tenant snapshot must call this,
+ * never re-derive its own `planKey == null` / status / class check (a grep-pin enforces it).
+ */
+export function isPayingRow(
+  tenant: { status: string; deletedAt: Date | null; class: string },
+  planKey: string | null,
+): boolean {
+  return (
+    tenant.status === PAYING_TENANT_CONDITIONS.status &&
+    // Loose, matching every prior inline copy's `deletedAt == null` — never strict `===`,
+    // which would reject `undefined` (a caller's select that never fetched the column).
+    tenant.deletedAt == PAYING_TENANT_CONDITIONS.deletedAt &&
+    tenant.class === PAYING_TENANT_CONDITIONS.class &&
+    planKey != null
+  );
+}
 
 export interface MrrPlanRow {
   planKey: string;
   tenants: number;
+  /** B866 / SA-277: gross base run-rate, before discounts — Σ raw basePriceSnapshot. */
   baseMrr: number;
 }
 
@@ -36,16 +72,14 @@ export interface MrrOverview {
    * that would make `mrr`/`ledgerMrr` agree by construction and permanently disable the
    * reconciliation check the divergence between them exists to provide.
    *
-   * The gaps that DO still exist today, and can drift `ledgerMrr` away from `mrr`:
-   *   - BillingService.reconcilePriceLedger() only mirrors this file's `planKey != null`
-   *     condition, not the full four-part payingWhere (status/deletedAt/class too) — a price
-   *     edit on a non-ACTIVE-but-still-PRODUCTION tenant can book a delta live `mrr` never sees.
-   *   - PlatformAdminService.updateTenantClass() retroactively imports a tenant's ENTIRE
-   *     historical delta stream into this SUM the moment it flips a tenant into PRODUCTION
-   *     (this query re-scopes by CURRENT class, not class-at-event-time), with no compensating
-   *     entry for that import.
-   * See apps/api/scripts/report-mrr-ledger-drift.mjs for a read-only tool that finds which
-   * tenant(s) and which of the above account for a given drift.
+   * #2045: the two gaps this comment used to list are both closed —
+   *   - BillingService.reconcilePriceLedger() gates its emit on the shared isPayingRow (the full
+   *     four-part paying set), so a price edit on a non-paying row books nothing (SA-140 item 1);
+   *   - PlatformAdminService.updateTenantClass() books a compensating tenant.class_changed delta
+   *     (live contribution − the imported history) when a tenant enters PRODUCTION, with the class
+   *     read under the Tenant lock (SA-140 item 2, #2045).
+   * A remaining `mrr`/`ledgerMrr` divergence is therefore a real defect to investigate, not a
+   * known gap; start from the tenant's BillingEvent stream against its current snapshot.
    */
   ledgerMrr: number;
   /** Net MRR change over the last 30 days (Σ amountDelta in that window). */
@@ -112,7 +146,7 @@ export class MrrService {
     // not just here in the paying-subscription filter.
     const payingWhere = {
       planKey: { not: null },
-      tenant: { status: "ACTIVE" as const, deletedAt: null, class: "PRODUCTION" as const },
+      tenant: PAYING_TENANT_CONDITIONS,
     };
     const now = new Date();
     // Fixed trailing 30-day window. (Decrementing the month component instead overflows
@@ -143,15 +177,10 @@ export class MrrService {
         // Mirror `payingWhere`: only count add-ons whose tenant has a PAYING base plan
         // (planKey != null). Otherwise an add-on on a plan-less ACTIVE tenant (e.g. a
         // manual/external-payment activation) would book add-on MRR with no base behind it.
-        where: {
+        where: billableAddonWhere({
           active: true,
-          tenant: {
-            status: "ACTIVE",
-            deletedAt: null,
-            class: "PRODUCTION",
-            subscription: { planKey: { not: null } },
-          },
-        },
+          tenant: { ...PAYING_TENANT_CONDITIONS, subscription: { planKey: { not: null } } },
+        }),
         select: { tenantId: true, priceSnapshot: true, quantity: true },
       }),
       this.prisma.tenant.count({
@@ -217,7 +246,9 @@ export class MrrService {
       mrr += rowPrice;
       const key = s.planKey as string;
       const row = byPlanMap.get(key) ?? { tenants: 0, baseMrr: 0 };
-      row.baseMrr = roundMoney(row.baseMrr + base - discount);
+      // B866 / SA-277: gross — the SAME formula as the top-level baseMrr accumulator (L-119).
+      // Identity: mrr = Σ rowPrice = baseMrr − discountTotal + addonMrr; Σ byPlan.baseMrr = baseMrr.
+      row.baseMrr = roundMoney(row.baseMrr + base);
       // REG-743-N5: a row's `payingWhere` match (a planKey) is not the same claim as "this
       // tenant pays" — a null snapshot or a full discount prices it $0. Count it as paying
       // ONLY when it actually contributes money, so "N paying tenants" and "$0" are never
@@ -286,14 +317,26 @@ export class MrrService {
    * exceptions; no subscription or no planKey → $0, never a catalog-price guess), so the card
    * and the platform-wide rollup can never diverge by construction. Replaces the retired
    * `_monthlyPriceUsd`/`_catalogPriceByPlanKey` catalog-fallback estimator.
+   *
+   * SA-140: `db` defaults to `this.prisma` but accepts an enclosing transaction's client — a
+   * caller computing a compensating delta for a write it just made (e.g.
+   * PlatformAdminService.updateTenantClass() flipping `class` into PRODUCTION) must call this
+   * WITH that transaction's `tx`, AFTER the write, inside the SAME transaction. Called without
+   * `tx` (or from outside any transaction, or before the write commits), this reads the
+   * pre-write row under normal read-committed isolation and silently prices the OLD state —
+   * here specifically the OLD `class`, so it would return 0 for a tenant that (post-commit) is
+   * actually PRODUCTION, understating the compensation with no error.
    */
-  async priceTenant(tenantId: string): Promise<number> {
+  async priceTenant(
+    tenantId: string,
+    db: Pick<PrismaService, "tenant" | "tenantAddon"> = this.prisma,
+  ): Promise<number> {
     // Gate must match computeOverview()'s payingWhere EXACTLY (review finding) — it also
     // requires deletedAt: null. Without it, a soft-deleted tenant that a webhook later
     // flips back to ACTIVE (deletedAt untouched by that CAS) prices nonzero here while
     // still contributing $0 to the dashboard: the exact divergence this function exists
     // to close, just relocated.
-    const tenant = await this.prisma.tenant.findUnique({
+    const tenant = await db.tenant.findUnique({
       where: { id: tenantId },
       select: {
         status: true,
@@ -302,20 +345,13 @@ export class MrrService {
         subscription: { select: { planKey: true, basePriceSnapshot: true, discount: true } },
       },
     });
-    if (
-      !tenant ||
-      tenant.status !== "ACTIVE" ||
-      tenant.class !== "PRODUCTION" ||
-      tenant.deletedAt != null ||
-      !tenant.subscription ||
-      tenant.subscription.planKey == null
-    ) {
+    if (!tenant || !isPayingRow(tenant, tenant.subscription?.planKey ?? null)) {
       return 0;
     }
-    const addons = await this.prisma.tenantAddon.findMany({
-      where: { tenantId, active: true },
+    const addons = await db.tenantAddon.findMany({
+      where: billableAddonWhere({ tenantId, active: true }),
       select: { priceSnapshot: true, quantity: true },
     });
-    return this.priceSubscription(tenant.subscription, addons);
+    return this.priceSubscription(tenant.subscription!, addons);
   }
 }

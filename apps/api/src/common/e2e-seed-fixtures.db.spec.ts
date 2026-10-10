@@ -119,6 +119,31 @@ describeDb("e2e-seed.js commerce fixtures (B566) — real Postgres", () => {
     expect(second.products).toBe(first.products);
   }, 300_000);
 
+  it("B917: the harbor_cafe CUSTOMER login is linked to ONE live Customer, idempotently, and a soft-delete is repaired", async () => {
+    runSeed(dbUrl);
+    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { slug: TENANT_SLUG } });
+    const user = await prisma.user.findFirstOrThrow({
+      where: { tenantId: tenant.id, username: "harbor_cafe", role: "CUSTOMER" },
+    });
+    const linked = await prisma.customer.findMany({ where: { userId: user.id } });
+    // Without this row GET /orders answers the login 403 CUSTOMER_NOT_LINKED (the dashboard showed
+    // "Could not load recent orders.").
+    expect(linked).toHaveLength(1);
+    expect(linked[0]).toMatchObject({ tenantId: tenant.id, deletedAt: null });
+
+    // re-run: still exactly one, same row
+    runSeed(dbUrl);
+    const again = await prisma.customer.findMany({ where: { userId: user.id } });
+    expect(again.map((c) => c.id)).toEqual(linked.map((c) => c.id));
+
+    // a soft-deleted link is restored, not duplicated
+    await prisma.customer.update({ where: { id: linked[0].id }, data: { deletedAt: new Date() } });
+    runSeed(dbUrl);
+    const repaired = await prisma.customer.findMany({ where: { userId: user.id } });
+    expect(repaired).toHaveLength(1);
+    expect(repaired[0].deletedAt).toBeNull();
+  }, 300_000);
+
   it("a customer SOFT-DELETED through the API is restored on re-seed — no duplicate user/customer (B566 follow-up)", async () => {
     runSeed(dbUrl);
     const tenant = await prisma.tenant.findUniqueOrThrow({ where: { slug: TENANT_SLUG } });
@@ -186,5 +211,64 @@ describeDb("e2e-seed.js commerce fixtures (B566) — real Postgres", () => {
     expect(await prisma.customerAddress.count({ where: { customerId: links[0].customerId } })).toBe(
       0,
     );
+  }, 300_000);
+
+  // #2195: the units e2e lane (#2233) and any unit-label screenshot need a tenant granted
+  // flag.units_v1 and a product with a Piece/Case ladder. Before this, POST .../units was a 403
+  // PLAN_GATE on e2e-routeflow, so those states were "not capturable".
+  it("grants flag.units_v1 to e2e-routeflow ONLY, with one Piece/Case x12 product, idempotently (#2195)", async () => {
+    // A stale DENY left by a spec must not survive a re-seed: the canary state is deterministic.
+    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { slug: TENANT_SLUG } });
+    await prisma.tenantFeatureOverride.updateMany({
+      where: { tenantId: tenant.id, featureKey: "flag.units_v1", revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    await prisma.tenantFeatureOverride.create({
+      data: {
+        tenantId: tenant.id,
+        featureKey: "flag.units_v1",
+        effect: "DENY",
+        kind: "SUPPORT",
+        reason: "#2195 spec: a stale DENY the re-seed must replace",
+      },
+    });
+
+    runSeed(dbUrl);
+    runSeed(dbUrl);
+
+    const active = await prisma.tenantFeatureOverride.findMany({
+      where: { tenantId: tenant.id, featureKey: "flag.units_v1", revokedAt: null },
+    });
+    expect(active.map((r) => ({ effect: r.effect, expiresAt: r.expiresAt }))).toEqual([
+      { effect: "GRANT", expiresAt: null },
+    ]);
+
+    // Never any other tenant: the seed writes units_v1 overrides for e2e-routeflow alone.
+    const elsewhere = await prisma.tenantFeatureOverride.count({
+      where: {
+        featureKey: "flag.units_v1",
+        tenantId: { not: tenant.id },
+        reason: { contains: "e2e-seed" },
+      },
+    });
+    expect(elsewhere).toBe(0);
+
+    const products = await prisma.product.findMany({
+      where: { tenantId: tenant.id, sku: "E2E-FIX-UNITS" },
+      include: { units: true },
+    });
+    expect(products).toHaveLength(1);
+    const [p] = products;
+    expect(p.isActive).toBe(true);
+    // Piece is the product itself (factor 1, no pack); Case is a real ProductUnit row at 12 —
+    // ProductUnitsService refuses a factor-1 row when the pack is itself factor 1.
+    expect(p.unitsPerBox ?? 1).toBeLessThanOrEqual(1);
+    expect(p.trackedCategoryId).toBeNull();
+    expect(p.units.map((u) => ({ label: u.label, factorToBase: u.factorToBase }))).toEqual([
+      { label: "Case", factorToBase: 12 },
+    ]);
+    expect(p.units[0].tenantId).toBe(tenant.id);
+    // Never matched by 13-boxed-order-entry's "case" product search.
+    expect(p.name.toLowerCase()).not.toContain("case");
   }, 300_000);
 });

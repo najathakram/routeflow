@@ -135,6 +135,8 @@ function DriverSplitForOrder({ orderId, onClose }: { orderId: string; onClose: (
         // bills — never a raw qty × unitPrice (over-charges boxed lines).
         subtotal: li.subtotal != null ? Number(li.subtotal) : undefined,
         unit: li.product?.unit,
+        unitLabel: li.unitLabel ?? null,
+        unitsPerBox: li.unitsPerBox != null ? Number(li.unitsPerBox) : null,
       }))}
       onCancel={onClose}
       onCreated={onClose}

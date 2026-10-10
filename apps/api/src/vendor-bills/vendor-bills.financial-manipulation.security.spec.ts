@@ -58,7 +58,11 @@ describe("VendorBillsService.create — negative-line/net-negative handling (B45
         { provide: StorageService, useValue: { upload: jest.fn(), presignedUrl: jest.fn() } },
         {
           provide: InventoryService,
-          useValue: { recomputeProductInTx: jest.fn(), fireStockAlerts: jest.fn() },
+          useValue: {
+            recomputeProductInTx: jest.fn(),
+            lockProducts: jest.fn(),
+            fireStockAlerts: jest.fn(),
+          },
         },
         ProductAliasService,
       ],

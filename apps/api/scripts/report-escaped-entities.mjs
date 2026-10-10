@@ -16,30 +16,14 @@
 // Optional: REPORT_TENANT_SLUG scopes to one tenant (default: ALL tenants —
 // this is a corruption census, so nothing is filtered out).
 import { Client } from "pg";
+import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 
-const e = process.env;
-let url = e.DATABASE_URL || null;
-if (!url) {
-  const need = [
-    "POSTGRES_USER",
-    "POSTGRES_PASSWORD",
-    "POSTGRES_DB",
-    "RAILWAY_TCP_PROXY_DOMAIN",
-    "RAILWAY_TCP_PROXY_PORT",
-  ];
-  const missing = need.filter((k) => !e[k]);
-  if (missing.length) {
-    console.error(
-      `\nSet DATABASE_URL, or run via the proxy: railway run --service postgres node apps/api/scripts/report-escaped-entities.mjs\n(missing: ${missing.join(", ")})\n`,
-    );
-    process.exit(1);
-  }
-  url =
-    `postgresql://${e.POSTGRES_USER}:${encodeURIComponent(e.POSTGRES_PASSWORD)}` +
-    `@${e.RAILWAY_TCP_PROXY_DOMAIN}:${e.RAILWAY_TCP_PROXY_PORT}/${e.POSTGRES_DB}`;
-}
+// B768: the shared resolver lets Railway's TCP-proxy variables win. Under `railway run`,
+// DATABASE_URL is the unreachable *.railway.internal host, so it must not be read first.
+const url = resolveReportDbUrl("report-escaped-entities");
+if (!url) process.exit(1);
 
-const slug = e.REPORT_TENANT_SLUG || null;
+const slug = process.env.REPORT_TENANT_SLUG || null;
 
 // The five entities sanitize-html's serializer emits (what StripHtml stored).
 const ENTITIES = [

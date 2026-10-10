@@ -12,6 +12,11 @@ import { MailboxSendService } from "./mailbox-send.service";
  * `BillingModule` → `EmailModule` (billing notifications) → `MailboxModule` (for
  * `MailboxSendService`, injected into `EmailService.send()`) → `BillingModule` (for
  * `AddonGuard`) — see the matching `forwardRef` in `billing.module.ts` and `email.module.ts`.
+ *
+ * F-10a: `MailboxSendService` writes the `mailbox.revoked_detected` / `mailbox.throttled_detected`
+ * audit rows itself, in the same transaction as the status change they record; the admin
+ * notifications come from `MailboxAlertService`, which EmailModule provides (it needs
+ * `EmailService`) and which subscribes to `MailboxSendService.onStateChange`.
  */
 @Module({
   imports: [forwardRef(() => BillingModule)],

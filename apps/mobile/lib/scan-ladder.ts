@@ -10,8 +10,10 @@
  * The ladder itself is pure: the network call, the cart write and the two
  * hand-offs are injected, so it unit-tests in the node Jest env.
  */
+import type { SellLevel } from "@routeflow/pricing";
+import { isSharedScanCode, resolveScanSellLevel } from "@routeflow/scanning";
 import {
-  scanUnitKind,
+  levelsForScan,
   looksLikeScanCode,
   findExactScanMatch,
   type ScanMatchable,
@@ -19,6 +21,13 @@ import {
 import type { BarcodeResolveResult } from "./barcode-resolve";
 import type { ScanOutcome } from "./scan-loop";
 import type { ScanAcceptGuard, ScanAcceptResolution } from "./scan-accept-guard";
+
+/** SA-626: set only for a SHARED code (resolves at both levels): the new line starts on the default selling unit. */
+export interface ScanAcceptOpts {
+  startOnDefault?: boolean;
+  /** The scanned/typed code (trimmed): lets the screen tell a repeat of the SAME label from a different one. */
+  code?: string;
+}
 
 export interface ScanLadderDeps<T extends ScanMatchable> {
   /**
@@ -28,7 +37,7 @@ export interface ScanLadderDeps<T extends ScanMatchable> {
    */
   products: readonly T[] | (() => readonly T[]);
   /** Put the product in the cart and describe what happened. Screen-owned. */
-  accept: (product: T, unitKind: "case" | "piece") => ScanOutcome;
+  accept: (product: T, level: SellLevel, opts?: ScanAcceptOpts) => ScanOutcome;
   /**
    * Server fallback (`resolveProductByCode`), injected to keep this testable.
    * MUST forward `signal` to the underlying request: the ladder's deadline
@@ -52,6 +61,19 @@ export interface ScanLadderDeps<T extends ScanMatchable> {
    * pickers): every branch below still runs, unclaimed and unchanged.
    */
   acceptGuard?: ScanAcceptGuard<T>;
+}
+
+/** The level the scanned code carries on `product` (SA-580 R1/R2): the ONE shared resolver. */
+function scanLevel<T extends ScanMatchable & { unitsPerBox?: number | null }>(
+  code: string,
+  product: T,
+): SellLevel {
+  return resolveScanSellLevel(product, levelsForScan(code, product));
+}
+
+/** `{ startOnDefault: true }` for a shared code, else undefined (the code decides the level). */
+export function scanAcceptOpts<T extends ScanMatchable>(code: string, product: T): ScanAcceptOpts {
+  return isSharedScanCode(levelsForScan(code, product)) ? { startOnDefault: true, code } : { code };
 }
 
 function resolveProducts<T extends ScanMatchable>(p: ScanLadderDeps<T>["products"]): readonly T[] {
@@ -95,7 +117,11 @@ export function makeScanHandler<T extends ScanMatchable>(
     const settle = (resolution: ScanAcceptResolution, outcome: ScanOutcome): ScanOutcome => {
       const deferred = claim?.settle(resolution) ?? null;
       if (!deferred) return outcome;
-      return deps.accept(deferred.product, deferred.unitKind);
+      return deps.accept(
+        deferred.product,
+        deferred.unitKind,
+        scanAcceptOpts(trimmed, deferred.product),
+      );
     };
 
     // 1) Local fast-path over the rows already in memory. Uses the same
@@ -110,7 +136,10 @@ export function makeScanHandler<T extends ScanMatchable>(
     const localMatch = findExactScanMatch(trimmed, resolveProducts(deps.products));
     if (localMatch.match) {
       const local = localMatch.match;
-      return settle("accepted", deps.accept(local, scanUnitKind(trimmed, local)));
+      return settle(
+        "accepted",
+        deps.accept(local, scanLevel(trimmed, local), scanAcceptOpts(trimmed, local)),
+      );
     }
     if (localMatch.multiple) {
       return settle("unresolved", {
@@ -140,7 +169,9 @@ export function makeScanHandler<T extends ScanMatchable>(
         return settle("unresolved", {
           feedback: {
             kind: "error",
-            text: `${result.matches?.length ?? 0} products match "${trimmed}"`,
+            text: result.suggestion
+              ? `Did you mean ${(result.product as { name?: string })?.name ?? "this item"}?`
+              : `${result.matches?.length ?? 0} products match "${trimmed}"`,
             action: { label: "Choose", onPress: () => deps.onAmbiguous(trimmed) },
           },
         });
@@ -159,11 +190,15 @@ export function makeScanHandler<T extends ScanMatchable>(
         });
       }
       if (!result.notFound && result.product?.id) {
-        // Classify against the RESOLVED product's own codes — the endpoint
-        // resolves either code but doesn't say which one matched.
+        // The server's `scanMatch.levels` (or, failing that, the resolved product's own
+        // codes) says which level the code carries.
         return settle(
           "accepted",
-          deps.accept(result.product, scanUnitKind(trimmed, result.product)),
+          deps.accept(
+            result.product,
+            scanLevel(trimmed, result.product),
+            scanAcceptOpts(trimmed, result.product),
+          ),
         );
       }
     } catch (err: any) {

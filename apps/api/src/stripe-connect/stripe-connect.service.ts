@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
+import { UserRole } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   CONNECT_OAUTH_PROVIDER,
@@ -10,6 +11,11 @@ import {
   type ConnectOAuthToken,
 } from "./provider/connect-oauth.interface";
 import { AppConfig } from "../config/configuration";
+import {
+  DERIVED_JWT_AUDIENCES,
+  DERIVED_JWT_LABELS,
+  derivedJwtKey,
+} from "../common/derived-jwt-key";
 
 /**
  * Stripe Connect (Standard accounts, direct charges, no platform fee).
@@ -47,13 +53,27 @@ import { AppConfig } from "../config/configuration";
 @Injectable()
 export class StripeConnectService {
   private readonly logger = new Logger(StripeConnectService.name);
+  private readonly stateKey: Buffer;
+
+  /**
+   * The platform's own Stripe account id, cached after the first successful
+   * `retrievePlatformAccountId()` call — it never changes for a running
+   * process, and `completeOAuth` needs it on every callback (B2441).
+   */
+  private platformAccountId: string | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
     @Inject(CONNECT_OAUTH_PROVIDER) private readonly oauth: ConnectOAuthProvider,
     private readonly config: ConfigService<AppConfig>,
     private readonly jwt: JwtService,
-  ) {}
+  ) {
+    // Fails the boot on a missing or short secret (see derived-jwt-key.ts).
+    this.stateKey = derivedJwtKey(
+      DERIVED_JWT_LABELS.stripeConnectState,
+      config.get<AppConfig["jwt"]>("jwt")?.secret ?? "",
+    );
+  }
 
   private get clientId(): string {
     return this.config.get<AppConfig["stripe"]>("stripe")?.connectClientId ?? "";
@@ -103,8 +123,26 @@ export class StripeConnectService {
    * connect, so this upserts a "link started" shell; `stripeAccountId` stays
    * null until the callback actually completes, and a later relink only
    * touches the pending-jti pair, never clobbering an existing connection.
+   *
+   * REG-2441: Stripe otherwise pre-selects whichever Stripe account is
+   * already signed in on the operator's browser — on the owner's own browser
+   * that is RouteFlow's platform account, so a tenant could end up
+   * "connected" to the platform's account instead of their own. The actual
+   * guard against that is the refusal in `completeOAuth` below — these URL
+   * params are NOT the guard, just a best-effort nudge that reduces the
+   * chance of picking the wrong account in the first place: `stripe_landing=
+   * register` + `always_prompt=true` push Stripe toward its own account
+   * picker instead of an auto-selected session, and prefilling
+   * `stripe_user[email]`/`stripe_user[business_name]` steers a fresh sign-in
+   * toward the tenant's business rather than leaving the fields blank.
+   * Prefill is best-effort: an empty value is omitted rather than sent as
+   * `stripe_user[email]=`.
    */
-  async buildAuthorizeUrl(tenantId: string, startedByName?: string | null): Promise<string> {
+  async buildAuthorizeUrl(
+    tenantId: string,
+    startedByUserId?: string | null,
+    startedByName?: string | null,
+  ): Promise<string> {
     if (!this.isConfigured) {
       throw new BadRequestException(
         "Stripe Connect is not configured on this platform yet (STRIPE_SECRET_KEY / STRIPE_CONNECT_CLIENT_ID).",
@@ -113,20 +151,64 @@ export class StripeConnectService {
     const jti = randomUUID();
     const state = await this.jwt.signAsync(
       { purpose: "stripe-connect", tid: tenantId, by: startedByName ?? null, jti },
-      { expiresIn: "15m" },
+      {
+        secret: this.stateKey,
+        audience: DERIVED_JWT_AUDIENCES.stripeConnectState,
+        expiresIn: "15m",
+      },
     );
     await this.prisma.tenantStripeConnect.upsert({
       where: { tenantId },
       create: { tenantId, pendingJti: jti, pendingJtiIssuedAt: new Date() },
       update: { pendingJti: jti, pendingJtiIssuedAt: new Date() },
     });
+
+    // PREFILL-EMAIL RULING (SA-458, supersedes the earlier "requester
+    // first"): the prefilled email becomes the login for the Stripe account
+    // that gets created/signed into, and that account belongs to the
+    // BUSINESS, not to whichever staff member happened to click the button.
+    // Order: (1) the requester's own email, but ONLY when the requester is a
+    // TENANT_ADMIN — the role that actually owns the business's Stripe
+    // account; (2) else the tenant's oldest non-deleted TENANT_ADMIN, so a
+    // non-admin requester (e.g. OPERATOR) still steers Stripe toward the
+    // account's rightful owner instead of a line staffer's inbox; (3) else
+    // the requester's own email regardless of role, when the tenant has no
+    // TENANT_ADMIN at all — some prefill beats none; (4) else omitted.
+    const [requester, tenant] = await Promise.all([
+      // Tenant-scoped on purpose: a requester id that belongs to a different
+      // tenant (stale/forged) must never leak that other tenant's email into
+      // this authorize URL — findFirst with both id AND tenantId yields
+      // nothing in that case, so a cross-tenant id is ignored entirely.
+      startedByUserId
+        ? this.prisma.user.findFirst({
+            where: { id: startedByUserId, tenantId, deletedAt: null },
+            select: { email: true, role: true },
+          })
+        : Promise.resolve(null),
+      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } }),
+    ]);
+    let adminEmail = requester?.role === UserRole.TENANT_ADMIN ? requester.email : null;
+    if (!adminEmail) {
+      const fallbackAdmin = await this.prisma.user.findFirst({
+        where: { tenantId, role: UserRole.TENANT_ADMIN, deletedAt: null },
+        orderBy: { createdAt: "asc" },
+        select: { email: true },
+      });
+      adminEmail = fallbackAdmin?.email || requester?.email || null;
+    }
+    const businessName = tenant?.name || null;
+
     const params = new URLSearchParams({
       response_type: "code",
       client_id: this.clientId,
       scope: "read_write",
       redirect_uri: this.redirectUri,
       state,
+      stripe_landing: "register",
+      always_prompt: "true",
     });
+    if (adminEmail) params.set("stripe_user[email]", adminEmail);
+    if (businessName) params.set("stripe_user[business_name]", businessName);
     return `https://connect.stripe.com/oauth/authorize?${params.toString()}`;
   }
 
@@ -139,13 +221,24 @@ export class StripeConnectService {
    * exception text (invariant 12).
    */
   async completeOAuth(code: string, state: string) {
-    let payload: { purpose?: string; tid?: string; by?: string | null; jti?: string };
+    let payload: {
+      purpose?: string;
+      tid?: string;
+      by?: string | null;
+      jti?: string;
+      aud?: unknown;
+    };
     try {
-      payload = await this.jwt.verifyAsync(state);
+      payload = await this.jwt.verifyAsync(state, { secret: this.stateKey });
     } catch {
       throw new BadRequestException("state_expired");
     }
-    if (payload.purpose !== "stripe-connect" || !payload.tid || !payload.jti) {
+    if (
+      payload.aud !== DERIVED_JWT_AUDIENCES.stripeConnectState ||
+      payload.purpose !== "stripe-connect" ||
+      !payload.tid ||
+      !payload.jti
+    ) {
       throw new BadRequestException("state_invalid");
     }
     const tenantId = payload.tid;
@@ -168,6 +261,28 @@ export class StripeConnectService {
     });
     if (!tenant) throw new BadRequestException("tenant_not_found");
 
+    // REG-2441: resolve the PLATFORM's own account id BEFORE exchanging the
+    // code — a code exchange creates a live Stripe OAuth grant, so doing the
+    // exchange first and only then discovering we can't even check for a
+    // self-connect would leave a live, unrecorded connection dangling on
+    // Stripe's side with nothing to show for it here. Fail closed if the
+    // platform-id check itself can't be made — never proceed to exchange
+    // (and never store) without it. Cached after the first successful read
+    // since the platform's own account id never changes per process; an
+    // empty/missing id is never cached or trusted, even if a provider
+    // implementation ever resolves "" instead of throwing.
+    let platformAccountId: string;
+    try {
+      platformAccountId = this.platformAccountId ?? (await this.oauth.retrievePlatformAccountId());
+      if (!platformAccountId) {
+        throw new Error("Platform account id was empty.");
+      }
+    } catch (err: any) {
+      this.logger.warn(`Platform account check failed for ${tenant.slug}: ${err?.message}`);
+      throw new BadRequestException("platform_account_check_failed");
+    }
+    this.platformAccountId = platformAccountId;
+
     let token: ConnectOAuthToken;
     try {
       token = await this.oauth.exchangeCode(code);
@@ -177,6 +292,16 @@ export class StripeConnectService {
     }
     const accountId = token.accountRef;
     if (!accountId) throw new BadRequestException("account_missing");
+
+    // The id COMPARISON stays here, after the exchange — it's the exchanged
+    // account we're checking, so this can only run once we have it.
+    if (accountId === platformAccountId) {
+      this.logger.warn(
+        `Tenant ${tenant.slug} attempted to connect the platform's own Stripe account ` +
+          `(${accountId}) — refused, nothing stored.`,
+      );
+      throw new BadRequestException("platform_account_not_allowed");
+    }
 
     // Account status now, so chargesEnabled is correct before the first
     // account.updated webhook arrives.
@@ -239,12 +364,40 @@ export class StripeConnectService {
   /**
    * The connected, charge-ready account for a tenant — the gate in front of
    * every buyer card action. Returns null rather than throwing so read paths
-   * can render "card unavailable" instead of erroring.
+   * can render "card unavailable" instead of erroring — callers
+   * (`PaymentRequestsService.paymentContext` sets `cardEnabled: !!account`;
+   * `createBuyerPaymentRequest` throws a user-safe "does not accept card
+   * payments yet" on null) already treat null as "cards temporarily
+   * unavailable", so failing closed here degrades gracefully rather than
+   * breaking anything.
+   *
+   * REG-2441: also refuses the PLATFORM's own account id, the same guard as
+   * `completeOAuth` — a row can only carry that id if it slipped in before
+   * this guard existed. FAILS CLOSED on the platform-id check itself: a
+   * lookup that throws, or resolves empty, returns null rather than the
+   * stored account, using (and refreshing) the same in-memory cache
+   * `completeOAuth` populates.
    */
   async chargeableAccount(tenantId: string): Promise<string | null> {
     if (!this.oauth.isConfigured) return null;
     const row = await this.prisma.tenantStripeConnect.findUnique({ where: { tenantId } });
     if (!row || row.disconnectedAt || !row.chargesEnabled) return null;
+
+    let platformAccountId: string;
+    try {
+      platformAccountId = this.platformAccountId ?? (await this.oauth.retrievePlatformAccountId());
+      if (!platformAccountId) {
+        throw new Error("Platform account id was empty.");
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `Platform account check failed for tenant ${tenantId}: ${err?.message} — refusing to charge.`,
+      );
+      return null;
+    }
+    this.platformAccountId = platformAccountId;
+
+    if (row.stripeAccountId === platformAccountId) return null;
     return row.stripeAccountId;
   }
 

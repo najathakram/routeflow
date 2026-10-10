@@ -18,26 +18,96 @@
  * the bucket math deterministically testable; this repo uses no fake timers anywhere.
  */
 
+import { parseCalendarDay } from "../common/calendar-date";
+
 export const DEMAND_RANGES = ["30d", "6m", "1y", "5y"] as const;
 export type DemandRange = (typeof DEMAND_RANGES)[number];
 
 export type DemandGranularity = "day" | "week" | "month";
 
-export interface DemandBucketBounds {
+/**
+ * #2118: the insights grains. The API's runtime copy of `INSIGHT_GRAIN_VALUES`
+ * (`@routeflow/types`, which the API may only `import type` from — see
+ * `no-runtime-workspace-imports.spec.ts`); `sales-facts.contract.spec.ts` pins the two
+ * set-equal, together with the two limits below.
+ */
+export const INSIGHT_GRAINS = ["day", "week", "month", "quarter"] as const;
+export type InsightGrain = (typeof INSIGHT_GRAINS)[number];
+export const INSIGHT_MAX_WINDOW_MONTHS = 36;
+export const INSIGHT_MAX_BUCKETS = 400;
+
+type BucketGranularity = DemandGranularity | "quarter";
+
+interface DemandBucketBounds {
   /** UTC-midnight start as "YYYY-MM-DD". The series key the client renders. */
   date: string;
   /** UTC-midnight EXCLUSIVE end. Equals the next bucket's `date`. */
   end: string;
 }
 
-export interface DemandWindow {
-  range: DemandRange;
-  granularity: DemandGranularity;
+/** What `bucketIndexOf` needs: period-aligned buckets over [from, to). */
+export interface BucketedWindow {
+  granularity: BucketGranularity;
   /** Inclusive lower bound — `buckets[0].date` at 00:00:00.000Z. */
   from: Date;
   /** EXCLUSIVE upper bound — the last bucket's end at 00:00:00.000Z. */
   to: Date;
   buckets: DemandBucketBounds[];
+}
+
+export interface DemandWindow extends BucketedWindow {
+  range: DemandRange;
+  granularity: DemandGranularity;
+}
+
+/**
+ * #2118: an explicit calendar-day window. The buckets are period-aligned, so the first and
+ * last may extend past the window; the DATA bounds are the exact days. Reads filter a
+ * UTC-midnight stamp column (`issueDate`) on `{ gte: dataFrom, lt: dataTo }`.
+ */
+export interface RangeWindow extends BucketedWindow {
+  granularity: InsightGrain;
+  /** First calendar day, inclusive ("YYYY-MM-DD"). */
+  fromDay: string;
+  /** Last calendar day, inclusive ("YYYY-MM-DD"). */
+  toDay: string;
+  /** `fromDay` at 00:00:00.000Z — inclusive. */
+  dataFrom: Date;
+  /** The day after `toDay` at 00:00:00.000Z — EXCLUSIVE. */
+  dataTo: Date;
+}
+
+/** A window request the API refuses (the controllers map it to 400). */
+export class InsightWindowError extends Error {
+  /**
+   * B987-E (d): OPT-IN structured detail. Most callers still map only `message` to a 400 (the insights controller does), so
+   * nothing changes for them; the products export also forwards `reason` + `params` so the web can show fixed copy. `params`
+   * are numbers and a validated grain name only, never user text.
+   */
+  constructor(
+    message: string,
+    readonly reason?: InsightWindowReason,
+    readonly params?: InsightWindowParams,
+  ) {
+    super(message);
+    this.name = "InsightWindowError";
+  }
+}
+
+export type InsightWindowReason =
+  | "NOT_A_DAY"
+  | "TO_NOT_A_DAY"
+  | "FROM_NOT_A_DAY"
+  | "BAD_GRAIN"
+  | "TO_BEFORE_FROM"
+  | "WINDOW_TOO_LONG"
+  | "TOO_MANY_BUCKETS";
+
+export interface InsightWindowParams {
+  maxMonths?: number;
+  buckets?: number;
+  maxBuckets?: number;
+  grain?: string;
 }
 
 /** Per-range shape. 30d/6m stay dense enough to read a trend; 1y/5y roll up to months. */
@@ -117,18 +187,187 @@ export function demandWindow(now: Date, range: DemandRange): DemandWindow {
  * Index of the bucket containing `date`, or -1 when it falls outside [from, to).
  * O(1) — keeps the service O(rows) rather than O(rows x buckets).
  */
-export function bucketIndexOf(win: DemandWindow, date: Date): number {
+export function bucketIndexOf(win: BucketedWindow, date: Date): number {
   const t = utcMidnightMs(date);
   if (t < win.from.getTime() || t >= win.to.getTime()) return -1;
 
-  if (win.granularity === "month") {
+  if (win.granularity === "month" || win.granularity === "quarter") {
     const fromY = win.from.getUTCFullYear();
     const fromM = win.from.getUTCMonth();
-    const idx = (date.getUTCFullYear() - fromY) * 12 + (date.getUTCMonth() - fromM);
+    const months = (date.getUTCFullYear() - fromY) * 12 + (date.getUTCMonth() - fromM);
+    const idx = win.granularity === "quarter" ? Math.floor(months / 3) : months;
     return idx >= 0 && idx < win.buckets.length ? idx : -1;
   }
 
   const step = win.granularity === "week" ? MS_PER_WEEK : MS_PER_DAY;
   const idx = Math.floor((t - win.from.getTime()) / step);
   return idx >= 0 && idx < win.buckets.length ? idx : -1;
+}
+
+// ─── #2118: the from/to form (insights endpoints) ───────────────────────────
+//
+// Same conventions as `demandWindow`: every day is a UTC-midnight symbolic stamp (the storage
+// convention of `issueDate`), the clock is never read (the caller passes `today`), and every
+// bucket is materialized so empty periods stay explicit zeros.
+
+/** A real "YYYY-MM-DD" calendar day (never a timestamp, never an impossible day). */
+export function isCalendarDay(value: unknown): value is string {
+  return typeof value === "string" && parseCalendarDay(value) != null;
+}
+
+function dayMs(day: string): number {
+  const p = parseCalendarDay(day);
+  if (!p)
+    throw new InsightWindowError(
+      `not a calendar day (YYYY-MM-DD): ${JSON.stringify(day)}`,
+      "NOT_A_DAY",
+    );
+  return Date.UTC(p.year, p.month - 1, p.day);
+}
+
+/** `day` shifted by `n` calendar days ("YYYY-MM-DD" in, "YYYY-MM-DD" out). */
+export function addCalendarDays(day: string, n: number): string {
+  return isoDay(dayMs(day) + n * MS_PER_DAY);
+}
+
+/** Inclusive day count of [fromDay, toDay]. */
+function spanDays(fromDay: string, toDay: string): number {
+  return Math.round((dayMs(toDay) - dayMs(fromDay)) / MS_PER_DAY) + 1;
+}
+
+/**
+ * The grain a window gets when the caller names none: daily up to ~2 months, weekly up to
+ * ~6 months (26 points, the same density `demandWindow`'s 6m range chose), monthly beyond.
+ */
+export function defaultInsightGrain(fromDay: string, toDay: string): InsightGrain {
+  const days = spanDays(fromDay, toDay);
+  if (days <= 62) return "day";
+  if (days <= 184) return "week";
+  return "month";
+}
+
+/** Start (epoch ms, UTC midnight) of the `grain` period containing `ms`. */
+function periodStartMs(ms: number, grain: InsightGrain): number {
+  const d = new Date(ms);
+  if (grain === "day") return ms;
+  if (grain === "week") return ms - ((d.getUTCDay() + 6) % 7) * MS_PER_DAY;
+  const month = grain === "quarter" ? d.getUTCMonth() - (d.getUTCMonth() % 3) : d.getUTCMonth();
+  return Date.UTC(d.getUTCFullYear(), month, 1);
+}
+
+/** Start (epoch ms) of the period `n` periods after the one starting at `startMs`. */
+function periodShiftMs(startMs: number, grain: InsightGrain, n: number): number {
+  if (grain === "day") return startMs + n * MS_PER_DAY;
+  if (grain === "week") return startMs + n * MS_PER_WEEK;
+  const d = new Date(startMs);
+  const months = grain === "quarter" ? 3 * n : n;
+  // Date.UTC normalizes month overflow (never setMonth, see demandWindow).
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + months, 1);
+}
+
+/** Number of `grain` periods from the one starting at `firstMs` to the one at `lastMs`. */
+function periodCount(firstMs: number, lastMs: number, grain: InsightGrain): number {
+  if (grain === "day") return Math.round((lastMs - firstMs) / MS_PER_DAY) + 1;
+  if (grain === "week") return Math.round((lastMs - firstMs) / MS_PER_WEEK) + 1;
+  const a = new Date(firstMs);
+  const b = new Date(lastMs);
+  const months =
+    (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth());
+  return (grain === "quarter" ? months / 3 : months) + 1;
+}
+
+/**
+ * The bucketed window for [fromDay, toDay] (both inclusive) at `grain`. Refuses (throws
+ * `InsightWindowError`) a malformed/impossible day, `toDay` before `fromDay`, a span of more
+ * than `INSIGHT_MAX_WINDOW_MONTHS` months, and more than `INSIGHT_MAX_BUCKETS` buckets — the
+ * last two are the read budget of plan A4.
+ */
+export function rangeWindow(fromDay: string, toDay: string, grain: InsightGrain): RangeWindow {
+  if (!(INSIGHT_GRAINS as readonly string[]).includes(grain)) {
+    throw new InsightWindowError(`grain must be one of: ${INSIGHT_GRAINS.join(", ")}`, "BAD_GRAIN");
+  }
+  const fromMs = dayMs(fromDay);
+  const toMs = dayMs(toDay);
+  if (toMs < fromMs)
+    throw new InsightWindowError(`to (${toDay}) is before from (${fromDay})`, "TO_BEFORE_FROM");
+
+  const f = new Date(fromMs);
+  const limitMs = Date.UTC(
+    f.getUTCFullYear(),
+    f.getUTCMonth() + INSIGHT_MAX_WINDOW_MONTHS,
+    f.getUTCDate(),
+  );
+  if (toMs >= limitMs) {
+    throw new InsightWindowError(
+      `a window may span at most ${INSIGHT_MAX_WINDOW_MONTHS} months`,
+      "WINDOW_TOO_LONG",
+      { maxMonths: INSIGHT_MAX_WINDOW_MONTHS },
+    );
+  }
+
+  const firstMs = periodStartMs(fromMs, grain);
+  const lastMs = periodStartMs(toMs, grain);
+  const count = periodCount(firstMs, lastMs, grain);
+  if (count > INSIGHT_MAX_BUCKETS) {
+    throw new InsightWindowError(
+      `${count} ${grain} buckets exceed the ${INSIGHT_MAX_BUCKETS}-bucket limit — use a coarser grain`,
+      "TOO_MANY_BUCKETS",
+      { buckets: count, maxBuckets: INSIGHT_MAX_BUCKETS, grain },
+    );
+  }
+
+  const buckets: DemandBucketBounds[] = [];
+  for (let i = 0; i < count; i++) {
+    buckets.push({
+      date: isoDay(periodShiftMs(firstMs, grain, i)),
+      end: isoDay(periodShiftMs(firstMs, grain, i + 1)),
+    });
+  }
+
+  return {
+    granularity: grain,
+    fromDay: isoDay(fromMs),
+    toDay: isoDay(toMs),
+    dataFrom: new Date(fromMs),
+    dataTo: new Date(toMs + MS_PER_DAY),
+    from: new Date(firstMs),
+    to: new Date(periodShiftMs(firstMs, grain, count)),
+    buckets,
+  };
+}
+
+/**
+ * Fills the defaults of an insights query and validates the result: `to` = `today` (the
+ * tenant's calendar day, supplied by the caller), `from` = the 1st of the month eleven months
+ * before `to` (twelve calendar months), `grain` = `defaultInsightGrain`. Blank params count as
+ * absent. Throws `InsightWindowError` for anything `rangeWindow` would refuse.
+ */
+export function resolveInsightRange(
+  params: { from?: string | null; to?: string | null; grain?: string | null },
+  today: string,
+): { fromDay: string; toDay: string; grain: InsightGrain } {
+  const blank = (v: string | null | undefined) => (v == null || v.trim() === "" ? null : v.trim());
+  const toDay = blank(params.to) ?? today;
+  if (!isCalendarDay(toDay)) {
+    throw new InsightWindowError(
+      `to must be a calendar day (YYYY-MM-DD), got ${JSON.stringify(toDay)}`,
+      "TO_NOT_A_DAY",
+    );
+  }
+  const t = new Date(dayMs(toDay));
+  const fromDay =
+    blank(params.from) ?? isoDay(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() - 11, 1));
+  if (!isCalendarDay(fromDay)) {
+    throw new InsightWindowError(
+      `from must be a calendar day (YYYY-MM-DD), got ${JSON.stringify(fromDay)}`,
+      "FROM_NOT_A_DAY",
+    );
+  }
+  const rawGrain = blank(params.grain);
+  if (rawGrain != null && !(INSIGHT_GRAINS as readonly string[]).includes(rawGrain)) {
+    throw new InsightWindowError(`grain must be one of: ${INSIGHT_GRAINS.join(", ")}`, "BAD_GRAIN");
+  }
+  const grain = (rawGrain as InsightGrain | null) ?? defaultInsightGrain(fromDay, toDay);
+  rangeWindow(fromDay, toDay, grain); // validates span/limits; throws InsightWindowError
+  return { fromDay, toDay, grain };
 }

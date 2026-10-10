@@ -88,17 +88,17 @@ jest.mock("@routeflow/ui/web", () => ({
 }));
 
 const search = () => screen.getByPlaceholderText(/search by name, sku or scan barcode/i);
-const qtyField = () => screen.getByLabelText("Quantity to add") as HTMLInputElement;
-const unitsOf = (name: string) =>
-  lineFor(name).querySelector("span.w-8.text-center")?.textContent ?? "";
+// #2696: the add-qty field is gone; a line's qty is edited on the line itself.
+const lineQty = (name: string) =>
+  lineFor(name).querySelector('input[aria-label="Quantity"]') as HTMLInputElement;
+const unitsOf = (name: string) => lineQty(name)?.value ?? "";
 const lineFor = (name: string) =>
   screen
     .getAllByText(name)
     .map((el) => el.closest("li"))
     .find((li) => li?.querySelector('[title="Remove"]')) as HTMLElement;
 
-async function pick(name: string, qty?: string) {
-  if (qty !== undefined) fireEvent.change(qtyField(), { target: { value: qty } });
+async function pick(name: string) {
   fireEvent.change(search(), { target: { value: name.split(" ")[1].toLowerCase() } });
   const row = await screen.findByRole("button", { name: new RegExp(name, "i") });
   fireEvent.click(row);
@@ -126,8 +126,8 @@ afterEach(() => {
   dateNowSpy.mockRestore();
 });
 
-describe("a real wedge (USB) scan of an EXISTING line — typed Qty must be left alone (Mac Lead / #982)", () => {
-  it("adds exactly +1, never inherits the typed Qty, and the field is untouched", async () => {
+describe("a real wedge (USB) scan of an EXISTING line — adds exactly one (Mac Lead / #982, #2696)", () => {
+  it("adds exactly +1 to the line's edited qty and never duplicates the line", async () => {
     mockResolveProductByCode.mockResolvedValue({
       notFound: false,
       archived: false,
@@ -135,15 +135,12 @@ describe("a real wedge (USB) scan of an EXISTING line — typed Qty must be left
     });
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
 
-    // Sample Cola already on the order at qty 4 (a prior plain pick, Qty left at 1 x4 adds —
-    // simplest is one pick at "4").
-    await pick("Sample Cola", "4");
+    // Sample Cola already on the order, its qty edited on the line to 4.
+    await pick("Sample Cola");
+    await waitFor(() => expect(unitsOf("Sample Cola")).toBe("1"));
+    fireEvent.change(lineQty("Sample Cola"), { target: { value: "4" } });
     await waitFor(() => expect(unitsOf("Sample Cola")).toBe("4"));
     mockToast.mockClear();
-
-    // The operator has 9 typed in the Qty field — LEFT OVER from a moment ago, not meant for
-    // this scan (the whole point of the camera-scan contract this screen already guarantees).
-    fireEvent.change(qtyField(), { target: { value: "9" } });
 
     await act(async () => {
       wedgeScan(PLAIN.sku);
@@ -153,8 +150,7 @@ describe("a real wedge (USB) scan of an EXISTING line — typed Qty must be left
     // Exactly ONE resolution: the detector fires (B672) and the modal's own Enter handler
     // bails on e.defaultPrevented instead of double-firing.
     expect(mockResolveProductByCode).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(unitsOf("Sample Cola")).toBe("5")); // +1, not +9
-    expect(qtyField().value).toBe("9"); // never consumed — a wedge scan must not touch it
+    await waitFor(() => expect(unitsOf("Sample Cola")).toBe("5")); // +1 on the edited qty
     expect(screen.getAllByTitle("Remove")).toHaveLength(1); // one line, not a duplicate
   });
 });

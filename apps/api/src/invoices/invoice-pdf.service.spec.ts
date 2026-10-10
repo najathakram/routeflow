@@ -35,9 +35,11 @@ jest.mock("@react-pdf/renderer", () => ({
   }),
 }));
 
+import { readFileSync } from "fs";
+import { join } from "path";
 import { Test, TestingModule } from "@nestjs/testing";
 import { InvoicePdfService } from "./invoice-pdf.service";
-import { promoNote, showOriginalPrice } from "./invoice-pdf-item";
+import { promoNote, qtyCellText, showOriginalPrice } from "./invoice-pdf-item";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -327,5 +329,48 @@ describe("invoice-pdf-item — BOGO/promo line display (T-B103, R9, REG-B103)", 
     expect(
       showOriginalPrice({ qty: 1, unitPrice: 9, originalPrice: 12, priceType: "MANUAL" }, false),
     ).toBe(true);
+  });
+});
+
+describe("invoice-pdf-item — qty cell text (B653)", () => {
+  it('REG-B653-pdf: a units_v1 line (boxes = unit count, pieces = 0, unitLabel "Case") reads "N Case(s)", never "N boxes"', () => {
+    expect(qtyCellText({ qty: 36, boxes: 3, pieces: 0, unitLabel: "Case" })).toBe("3 Cases");
+    // Singular stays unpluralized — same rule formatQtySplit already applies to boxLabel.
+    expect(qtyCellText({ qty: 12, boxes: 1, pieces: 0, unitLabel: "Case" })).toBe("1 Case");
+  });
+
+  it('REG-B653-pdf: a factor-1 units_v1 line (boxes AND pieces null) names its unit — "5 Bag", never a bare "5"', () => {
+    // buildInvoiceUnitLine: factor === 1 stores boxes: null, pieces: null (a
+    // factor-1 unit is per-piece and snapshots as such). qtyCellText now shares
+    // invoiceLineQtyText (@routeflow/pricing) with web and mobile, which reads the
+    // unit off `unitLabel` directly when there's no split to attach a boxLabel to —
+    // web parity (apps/web/lib/invoice-line-unit.ts), review follow-up to B653.
+    expect(qtyCellText({ qty: 5, boxes: null, pieces: null, unitLabel: "Bag" })).toBe("5 Bag");
+  });
+
+  it('REG-B653-pdf: an ordinary boxed line (no unitLabel) is unchanged — still "boxes"/"pcs"', () => {
+    expect(qtyCellText({ qty: 27, boxes: 2, pieces: 3 })).toBe("2 boxes + 3 pcs");
+    expect(qtyCellText({ qty: 27, boxes: 2, pieces: 3, unitLabel: null })).toBe("2 boxes + 3 pcs");
+  });
+
+  it("REG-B653-pdf: a plain non-boxed line is unaffected", () => {
+    expect(qtyCellText({ qty: 5, boxes: null, pieces: null })).toBe("5");
+  });
+});
+
+// `./invoice-pdf-template` is replaced wholesale by apps/api/test/__mocks__/invoice-pdf-template.js
+// under Jest (see this file's header), so the real .tsx renderer never executes and no assertion
+// above can prove it actually WIRES unitLabel into qtyCellText — only that qtyCellText itself is
+// correct. Source-pinned instead (readFileSync pattern per
+// apps/mobile/__tests__/credit-limit-wiring.test.ts): today the template could revert to
+// `qtyCellText({ qty, boxes, pieces })` with no unitLabel and every other B653 test would stay
+// green.
+describe("invoice-pdf-template — qtyCellText wiring (B653)", () => {
+  it("the qty column's qtyCellText call passes unitLabel: item.unitLabel", () => {
+    const src = readFileSync(join(__dirname, "invoice-pdf-template.tsx"), "utf8");
+    const at = src.indexOf("qtyCellText({");
+    expect(at).toBeGreaterThan(-1);
+    const call = src.slice(at, src.indexOf("})", at) + 2);
+    expect(call).toMatch(/unitLabel:\s*item\.unitLabel/);
   });
 });

@@ -1,6 +1,7 @@
 import axios from "axios";
 import { BUYER_KEYS } from "./auth-keys";
 import { setBuyerPresenceCookie, clearBuyerPresenceCookie } from "./presence-cookies";
+import { clearBuyerSubmitKey } from "./api/buyer-submit-key";
 
 const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(
   /\/$/,
@@ -73,6 +74,32 @@ export function getStoredBuyer(): BuyerUser | null {
   };
 }
 
+/**
+ * The signed-in buyer account's id (the access token's `sub`), whether or not the token has
+ * expired yet: an identity for keying this buyer's local data, never proof of a live session.
+ */
+export function getStoredBuyerId(): string | null {
+  const token = getBuyerAccessToken();
+  if (!token) return null;
+  const payload = parseJwtPayload(token);
+  if (!payload || (payload.type as string) !== "BUYER") return null;
+  return typeof payload.sub === "string" && payload.sub ? payload.sub : null;
+}
+
+/**
+ * #2142 N2/W2: the notification bell persists per buyer account AND per seller, under
+ * `rf_buyer_notifications:<buyerId>:<seller tenant id>`, so a second buyer on the same browser
+ * never sees the first one's notices, and one buyer never sees seller A's notices in seller B's
+ * portal (after a switch, or once A has revoked the link). The seller is the active seller's
+ * `tenant.id` (a stable id, unlike a renameable slug). `buyerLogout` removes every key under the
+ * prefix, including the old unkeyed and per-buyer-only ones.
+ */
+export const BUYER_NOTIFICATIONS_PREFIX = "rf_buyer_notifications";
+
+export function buyerNotificationsKey(buyerId: string, sellerTenantId: string): string {
+  return `${BUYER_NOTIFICATIONS_PREFIX}:${buyerId}:${sellerTenantId}`;
+}
+
 export function getStoredActiveSeller(): BuyerSeller | null {
   if (typeof window === "undefined") return null;
   const raw = localStorage.getItem(BUYER_KEYS.activeSeller);
@@ -86,22 +113,32 @@ export function getStoredActiveSeller(): BuyerSeller | null {
 
 export function storeActiveSeller(seller: BuyerSeller): void {
   localStorage.setItem(BUYER_KEYS.activeSeller, JSON.stringify(seller));
+  clearBuyerSubmitKey(); // B1094: the submit key is customer-scoped; never carried across sellers
 }
 
 export function clearActiveSeller(): void {
   localStorage.removeItem(BUYER_KEYS.activeSeller);
+  clearBuyerSubmitKey();
 }
 
 export { BUYER_PRESENCE_COOKIE, clearBuyerPresenceCookie } from "./presence-cookies";
+
+/**
+ * Adopt a freshly-issued buyer token pair as THIS browser's buyer session — the ONE post-login
+ * step shared by buyer login, register and the in-app handoff (#2653, SA-542b).
+ */
+export function adoptBuyerTokenPair(data: { accessToken: string; refreshToken: string }): void {
+  localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
+  localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
+  setBuyerPresenceCookie();
+}
 
 export async function buyerLogin(email: string, password: string): Promise<BuyerAuthResponse> {
   const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/login`, {
     email,
     password,
   });
-  localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
-  localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
-  setBuyerPresenceCookie();
+  adoptBuyerTokenPair(data);
   return data;
 }
 
@@ -115,9 +152,7 @@ export async function buyerRegister(
     password,
     name,
   });
-  localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
-  localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
-  setBuyerPresenceCookie();
+  adoptBuyerTokenPair(data);
   return data;
 }
 
@@ -137,8 +172,14 @@ export async function buyerLogout(): Promise<void> {
   localStorage.removeItem(BUYER_KEYS.accessToken);
   localStorage.removeItem(BUYER_KEYS.refreshToken);
   localStorage.removeItem(BUYER_KEYS.activeSeller);
+  clearBuyerSubmitKey(); // B1094: the next buyer on this browser must not inherit this one's key
   Object.keys(localStorage)
-    .filter((k) => k.startsWith("buyerCart_"))
+    .filter(
+      (k) =>
+        k.startsWith("buyerCart_") ||
+        k === BUYER_NOTIFICATIONS_PREFIX ||
+        k.startsWith(`${BUYER_NOTIFICATIONS_PREFIX}:`),
+    )
     .forEach((k) => localStorage.removeItem(k));
   clearBuyerPresenceCookie();
 }

@@ -8,6 +8,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
+import { BLOCKED_SELLER_STATUSES, liveBuyerLinkWhere } from "../buyer-link-scope";
 import type { BuyerJwtPayload } from "../interfaces/buyer-jwt-payload.interface";
 
 /**
@@ -33,20 +34,16 @@ export class BuyerSellerContextGuard implements CanActivate {
     // Resolve tenant (unscoped — platform-level lookup)
     const tenant = await this.prisma.tenant.findUnique({ where: { slug: tenantSlug } });
     if (!tenant) throw new NotFoundException("Seller not found");
-    if (tenant.status === "SUSPENDED" || tenant.status === "CANCELLED") {
+    if (BLOCKED_SELLER_STATUSES.includes(tenant.status)) {
       throw new ForbiddenException("This seller account is not available");
     }
 
     // Verify active CustomerLink. REG-B141: removing a customer leaves its link ACTIVE on purpose (restore
     // must bring the portal back untouched), so the removal is enforced here, on every seller-scoped
     // request. No refresh-token revocation: BuyerRefreshToken is account-wide (no tenantId).
+    // The predicate is shared with the realtime gateway's buyer rooms (B104) — see buyer-link-scope.ts.
     const link = await this.prisma.customerLink.findFirst({
-      where: {
-        buyerAccountId: buyer.sub,
-        tenantId: tenant.id,
-        status: "ACTIVE",
-        customer: { deletedAt: null },
-      },
+      where: { ...liveBuyerLinkWhere(buyer.sub), tenantId: tenant.id },
       include: {
         customer: {
           select: { id: true, userId: true, businessName: true, email: true },

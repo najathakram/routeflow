@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { useGuardedRouter } from "@/lib/use-guarded-router";
 import { createPortal } from "react-dom";
 import {
   Search,
@@ -28,12 +29,16 @@ import {
   Megaphone,
   Route as RouteIcon,
   type LucideIcon,
+  PackageCheck,
+  Store,
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { apiClient } from "@/lib/api-client";
+import { displayEmail } from "@/lib/formatting";
 import { useI18n } from "@/lib/i18n";
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
 
 /**
  * `?action=new` for a list route, preserving that list's own query state when
@@ -73,10 +78,16 @@ interface CommandItem {
  */
 const ROUTES_COMMAND_IDS = ["nav-routes", "nav-drivers", "act-new-route"];
 const DELIVERY_COMMAND_IDS = ["act-plan-trip", "nav-deliveries"];
+/** POS-7a: shown only when the tenant's counter capability is always|optional (useCounterSaleGate.showButton). */
+const COUNTER_COMMAND_IDS = ["act-counter-sale"];
 
 function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] {
+  const { user } = useAuth();
   const { enabled: routesAccess } = useRoutesAccess();
   const { enabled: deliveryAccess } = useDeliveryAccess();
+  const { showButton: counterEnabled } = useCounterSaleGate({
+    enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
+  });
   return React.useMemo(
     () =>
       [
@@ -153,6 +164,13 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           action: () => router.push("/inventory"),
         },
         {
+          id: "nav-purchase-orders",
+          group: "Navigate",
+          label: "Purchase Orders",
+          icon: PackageCheck,
+          action: () => router.push("/purchase-orders"),
+        },
+        {
           id: "nav-suppliers",
           group: "Navigate",
           label: "Suppliers",
@@ -190,7 +208,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "nav-expenses",
           group: "Navigate",
-          label: "Bills & Purchasing",
+          label: "Supplier Bills",
           icon: ShoppingBag,
           action: () => router.push("/vendor-bills"),
         },
@@ -230,6 +248,14 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           icon: Plus,
           action: () => router.push(createHref("/orders")),
           keywords: "create add order",
+        },
+        {
+          id: "act-counter-sale",
+          group: "Actions",
+          label: "New counter sale",
+          icon: Store,
+          action: () => router.push("/orders/counter-sale"),
+          keywords: "walk-in pickup pos till scan",
         },
         {
           id: "act-new-invoice",
@@ -274,9 +300,10 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
       ].filter((c) => {
         if (ROUTES_COMMAND_IDS.includes(c.id)) return routesAccess;
         if (DELIVERY_COMMAND_IDS.includes(c.id)) return deliveryAccess;
+        if (COUNTER_COMMAND_IDS.includes(c.id)) return counterEnabled;
         return true;
       }),
-    [router, routesAccess, deliveryAccess],
+    [router, routesAccess, deliveryAccess, counterEnabled],
   );
 }
 
@@ -338,7 +365,7 @@ function useSearchResults(
             items.push({
               id: `customer-${c.id}`,
               label: c.businessName ?? c.contactName ?? "Unknown",
-              sublabel: c.email ?? c.phone ?? "",
+              sublabel: displayEmail(c.email) ?? c.phone ?? "",
               href: `/customers/${c.id}`,
               icon: Users,
               group: "results",
@@ -408,7 +435,7 @@ function useGroupLabel() {
 }
 
 export function CommandPalette({ open, onClose }: Props) {
-  const router = useRouter();
+  const router = useGuardedRouter(); // POS-7: a selection cannot leave the counter mid-sale
   const { user } = useAuth();
   const { t } = useI18n();
   const groupLabel = useGroupLabel();

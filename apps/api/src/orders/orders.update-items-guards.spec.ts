@@ -1,3 +1,7 @@
+// SA-429 (#2377): these driver cases pin OTHER behaviour (pricing, merges, restrictions, returns),
+// not ownership, and their mocks carry no assigned run; the ownership predicate itself is pinned by
+// driver-edit-access.spec.ts and driver-edit-access.db.spec.ts.
+jest.mock("./driver-edit-access", () => ({ assertDriverMayEditOrder: jest.fn() }));
 /**
  * F06 — updateOrderItems authorization + line build (test plan TP2).
  *
@@ -52,6 +56,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ForbiddenException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -101,6 +106,7 @@ const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -136,6 +142,7 @@ describe("OrdersService — F06 guards (TP2)", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -627,6 +634,57 @@ describe("OrdersService — F06 guards (TP2)", () => {
       },
     );
 
+    // Typed in full (tenantId / tenantSlug), unlike the older `customerPayload`, so these cases add no spec type errors.
+    const buyer = { ...customerPayload, tenantId: "t1", tenantSlug: "test" };
+
+    // B1135: for an order with the carrier the change-request flow is closed too (a request on it
+    // is refused), so this 403 must not send the buyer there. A route-run order keeps the sentence.
+    it.each(["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED"] as const)(
+      "B1135: a CUSTOMER items-edit on a %s order WITH THE CARRIER is refused without promising a change request",
+      async (status) => {
+        primePostDispatchFixture(status);
+        prisma.order.findUnique.mockResolvedValue({
+          ...MOCK_ORDER,
+          status,
+          tenantId: "t1",
+          fulfillPath: "SHIP",
+          shippedAt: new Date("2026-10-01T00:00:00Z"),
+          lineItems: [],
+        });
+        (service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("ship") };
+
+        const attempt = service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-x", qty: 1 }] },
+          buyer,
+        );
+
+        await expect(attempt).rejects.toBeInstanceOf(ForbiddenException);
+        await expect(attempt).rejects.toThrow(
+          "This order has already shipped. Contact the seller for changes.",
+        );
+        await expect(attempt).rejects.not.toThrow(/change request/i);
+        expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      },
+    );
+
+    it("B1135 control: a SHIP order of a business that does not bill at shipment keeps the change-request sentence", async () => {
+      primePostDispatchFixture("OUT_FOR_DELIVERY");
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "OUT_FOR_DELIVERY",
+        tenantId: "t1",
+        fulfillPath: "SHIP",
+        shippedAt: new Date("2026-10-01T00:00:00Z"),
+        lineItems: [],
+      });
+      (service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("pickup") };
+
+      await expect(
+        service.updateOrderItems("ord-1", { items: [{ productId: "prod-x", qty: 1 }] }, buyer),
+      ).rejects.toThrow(/change request/i);
+    });
+
     describe("T7 control (pin — green pre-fix)", () => {
       it("the same CUSTOMER edit on a PENDING order is NOT refused — the 403 is status-driven, not fixture-driven", async () => {
         primePostDispatchFixture("PENDING");
@@ -1008,8 +1066,8 @@ describe("OrdersService — F06 guards (TP2)", () => {
     });
   });
 
-  describe("updateOrderItems — a genuinely repriced BOGO line still flips MANUAL (T12, pin — green pre-fix)", () => {
-    it("REG-B60 (T12): a price that differs from the stored price flips MANUAL with no snapshot", async () => {
+  describe("updateOrderItems — a genuinely repriced BOGO line is an override, DISCOUNTED below list (T12, #2716c)", () => {
+    it("REG-B60 (T12): a price that differs from the stored price is a DISCOUNTED override with no snapshot", async () => {
       primeBogoReplaceAll();
 
       await service.updateOrderItems(
@@ -1019,7 +1077,7 @@ describe("OrdersService — F06 guards (TP2)", () => {
       );
 
       const created = prisma.orderItem.create.mock.calls[0][0].data;
-      expect(created.priceType).toBe("MANUAL");
+      expect(created.priceType).toBe("DISCOUNTED");
       // Accepts both "key absent" (today) and "key null" (post-fix plumbing) —
       // this pin only guards against preservation over-reaching onto a
       // genuinely repriced line, not the R9 plumbing itself (see T13).

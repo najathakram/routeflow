@@ -1,5 +1,7 @@
-import { NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { OrderStatus } from "@prisma/client";
+import { formatMoney } from "../messaging/messaging.helpers";
 import { isBlockingPayment, roundMoney } from "@routeflow/pricing";
 import type { CreditNotesService } from "../credit-notes/credit-notes.service";
 import type { PrismaService } from "../prisma/prisma.service";
@@ -16,6 +18,78 @@ export interface CancelImpactDeps {
  * back to CN-7") and the guard that refuses the cancel, so the warning and the
  * rule can never disagree.
  */
+/**
+ * The external money that blocks a cancel, per invoice — the ONE predicate the pre-check
+ * (cancelImpact) and the in-lock re-check (lockOrderForCancel, #2255 / SA-404d) share.
+ */
+export function cancelBlockers(
+  invoices: Array<{
+    invoiceNumber: string | null;
+    payments?: Array<{ method: unknown; amount: unknown; status?: string }>;
+  }>,
+): Array<{ invoiceNumber: string; amount: number }> {
+  const blockers: Array<{ invoiceNumber: string; amount: number }> = [];
+  for (const inv of invoices) {
+    const external = roundMoney(
+      (inv.payments ?? [])
+        .filter(
+          (p: any) => isBlockingPayment(p) && p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE",
+        )
+        .reduce((s: number, p: any) => s + Number(p.amount), 0),
+    );
+    if (external > 0.001)
+      blockers.push({ invoiceNumber: inv.invoiceNumber ?? "", amount: external });
+  }
+  return blockers;
+}
+
+/** The refusal for external money on the order (the text assertCancellableOrThrow always used). */
+export function cancelBlockedMessage(blockers: Array<{ invoiceNumber: string; amount: number }>) {
+  const detail = blockers
+    .map((b) => `${formatMoney(b.amount)} on ${b.invoiceNumber || "an invoice"}`)
+    .join(", ");
+  return `This order has payments that must be refunded before it can be cancelled: ${detail}. Reverse or refund them, then cancel.`;
+}
+
+/**
+ * #2255 / SA-404d R1: the cancel tx's FIRST statements — lock the Order, then every non-VOID
+ * Invoice (SA-214 order, stable id order), re-read their payments and re-run the same blocking
+ * predicate before any write. A payment committed after this tx's snapshot updates its Invoice row
+ * (the #2258 writer invariant), so the voids below conflict (40001) and the retry lands here fresh.
+ */
+export async function lockOrderForCancel(tx: any, orderId: string): Promise<void> {
+  await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+  // Lock AND list the live invoices in one statement, stable id order.
+  const rows: Array<{ id: string }> =
+    await tx.$queryRaw`SELECT id FROM "Invoice" WHERE "orderId" = ${orderId} AND status <> 'VOID' ORDER BY id FOR UPDATE`;
+  if (rows.length === 0) return;
+  const locked = await tx.invoice.findMany({
+    where: { id: { in: rows.map((r) => r.id) } },
+    select: {
+      invoiceNumber: true,
+      payments: { select: { method: true, amount: true, status: true } },
+    },
+  });
+  const blockers = cancelBlockers(locked);
+  if (blockers.length > 0) throw new BadRequestException(cancelBlockedMessage(blockers));
+}
+
+/**
+ * The status read under the Order lock. B1053: a merge that committed first folded this order away — a
+ * coded 409, never a TypeError (500) on the missing row.
+ */
+export async function lockedOrderStatus(tx: any, id: string): Promise<OrderStatus> {
+  // #2472 (2): decided from the status UNDER the lock, never the unlocked pre-read.
+  const row = await tx.order.findUnique({ where: { id }, select: { status: true } });
+  if (!row) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
+      message: "This order was merged into another order — review and try again.",
+    });
+  }
+  return row.status;
+}
+
 export async function cancelImpact(deps: CancelImpactDeps, id: string) {
   const order = await deps.prisma.forTenant().order.findFirst({
     where: { id },
@@ -49,18 +123,7 @@ export async function cancelImpact(deps: CancelImpactDeps, id: string) {
   // isHeldPayment) — a DRAFT external payment is money in flight and must keep
   // blocking the cancel exactly as it does today; HELD (PAID ∪ PENDING) is for
   // money TOTALS only, never an existence/blocking check.
-  const blockers: Array<{ invoiceNumber: string; amount: number }> = [];
-  for (const inv of invoices) {
-    const external = roundMoney(
-      (inv.payments ?? [])
-        .filter(
-          (p: any) => isBlockingPayment(p) && p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE",
-        )
-        .reduce((s: number, p: any) => s + Number(p.amount), 0),
-    );
-    if (external > 0.001)
-      blockers.push({ invoiceNumber: inv.invoiceNumber ?? "", amount: external });
-  }
+  const blockers = cancelBlockers(invoices);
 
   const credits = await deps.creditNotes.previewOrderCreditRelease(id);
   // scan-ok: draft-payment-not-void — method-scoped to ADVANCE; a CHECK/PENDING row

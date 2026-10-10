@@ -29,6 +29,8 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { mockRouteRefsInTenant } from "../testing/route-refs-mock";
+import { AfterCommit } from "../common/after-commit";
 
 jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
 jest.mock("../storage/compress.util", () => ({
@@ -58,25 +60,27 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
   let gateway: jest.Mocked<
     Pick<
       RouteFlowGateway,
-      | "emitStopCompleted"
-      | "emitOrderCreated"
-      | "emitOrderStatusChanged"
-      | "emitLowStock"
-      | "emitToDriver"
+      "emitStopCompleted" | "emitOrderCreated" | "emitOrderStatusChanged" | "emitToDriver"
     >
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
-  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock; reverseRunAdvancesInTx: jest.Mock };
+  let invoicesService: {
+    recordDeliveryPaymentInTx: jest.Mock;
+    reconcileDeliveredOrdersInTx: jest.Mock;
+    reverseRunAdvancesInTx: jest.Mock;
+  };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    mockRouteRefsInTenant(prisma, { a1: "c1", a2: "c2" });
 
     invoicesService = {
       recordDeliveryPaymentInTx: jest
         .fn()
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
+      reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(0),
     };
 
@@ -84,7 +88,6 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
       emitStopCompleted: jest.fn(),
       emitOrderCreated: jest.fn(),
       emitOrderStatusChanged: jest.fn(),
-      emitLowStock: jest.fn(),
       emitToDriver: jest.fn(),
     };
 
@@ -144,7 +147,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
       ...prisma,
       routeRunStop: {
         ...prisma.routeRunStop,
-        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         // Not allDone — the RF-016 auto-complete branch stays out of this pin's way.
         findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
       },
@@ -169,9 +172,9 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
       operatorPayload,
     );
 
-    expect(txMock.routeRunStop.update).toHaveBeenCalledWith(
+    expect(txMock.routeRunStop.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "stop-1" },
+        where: { id: "stop-1", status: { in: ["PENDING", "IN_PROGRESS"] } }, // #2409: SKIPPED is not claimable
         data: expect.objectContaining({ status: "COMPLETED" }),
       }),
     );
@@ -180,10 +183,10 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
     // commit or roll back together.
     expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
       txMock,
+      expect.any(AfterCommit), // #2175: the route tx's post-commit queue
       expect.any(Array),
       50,
       "CASH",
-      expect.any(Array),
       expect.objectContaining({ runId: "run-1", stopId: "stop-1" }),
     );
   });
@@ -404,7 +407,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
       ...prisma,
       routeRunStop: {
         ...prisma.routeRunStop,
-        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findMany: jest.fn().mockResolvedValue([
           { id: "s1", status: "COMPLETED" },
           { id: "s2", status: "COMPLETED" },
@@ -460,7 +463,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
       ...prisma,
       routeRunStop: {
         ...prisma.routeRunStop,
-        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         // s3 is still PENDING and s4 SKIPPED — the run is NOT done, so no
         // auto-completion and no release may happen. Releasing here would null
         // the pointers of the live run's own remaining work.

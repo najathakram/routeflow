@@ -446,8 +446,9 @@ transaction as the state change, so MRR is a query rather than a spreadsheet.
 
 #### PLAN-A4
 
-- [ ] A 20% discount on $249 shows 199.20 on the tenant card, Stripe charge and `baseMrr` — one
-      number in three places `Jest` + `manual`
+- [ ] A 20% discount on $249 shows 199.20 on the tenant card, Stripe charge and `mrr` — one number
+      in three places; `baseMrr` stays gross at 249 (B866 / SA-277: mrr is baseMrr minus
+      discountTotal plus addonMrr) `Jest` + `manual`
 - [ ] A time-boxed discount stops applying after expiry and emits a restoring `BillingEvent`
       `Jest`
 - [ ] A discount can never make a resolved price negative `Jest`

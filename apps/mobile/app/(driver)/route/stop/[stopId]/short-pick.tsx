@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useQueries } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Pressable,
@@ -14,15 +15,36 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useActiveRouteRun, useRouteRun } from "../../../../../lib/api/routes";
 import { useDriverPayments } from "../../../../../lib/api/addons";
-import { useOrder, type OrderItem } from "../../../../../lib/api/orders";
+import { orderQueryOptions, type Order, type OrderItem } from "../../../../../lib/api/orders";
 import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import {
-  freeUnitSizeFor,
   reconciledTotal,
+  caseStepperCasesDelivered,
+  caseStepperDecrement,
+  caseStepperIncrement,
+  caseStepperRemainderPieces,
+  formatCaseStepperSplit,
   deliveryTypeForQty,
+  deliveredSoFarByLine,
+  isLineAdjustable,
+  isUnitAwareLine,
+  linesAwaitingEntry,
+  normalizeDeliveryPlan,
+  remainingByLine,
+  shortPickLinesFromOrder,
   type ShortPickLine,
 } from "../../../../../lib/short-pick";
 import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
+
+/** Same "adjustable" predicate `shortPickLinesFromOrder` applies for the
+ *  money-math half — kept alongside it here since rendering needs the
+ *  RICHER `OrderItem` (product name), not the pure `ShortPickLine`. */
+function adjustableLines(
+  order: Order | undefined,
+  remainingById: Record<string, number>,
+): OrderItem[] {
+  return (order?.lineItems ?? []).filter((li) => isLineAdjustable(li, remainingById[li.id]));
+}
 
 /**
  * Per-line "how much did you actually deliver" review, interposed between the
@@ -43,39 +65,59 @@ export default function ShortPickScreen() {
   const runId = params.runId ?? activeData?.data?.[0]?.id;
   const { data: run, isLoading: runLoading } = useRouteRun(runId ?? "");
   const stop = useMemo(() => run?.stops?.find((s) => s.id === stopId), [run, stopId]);
-  const orderId = stop?.orders?.[0]?.id;
-  const { data: order, isLoading: orderLoading } = useOrder(orderId ?? "");
 
-  // Same adjustability gate as adjust.tsx: not cancelled, nothing already
-  // delivered (a reopened, partially-completed stop shouldn't re-offer
-  // already-settled lines).
-  const lines: OrderItem[] = useMemo(
-    () =>
-      (order?.lineItems ?? []).filter(
-        (li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) === 0,
+  // B762: review EVERY order at the stop, not just orders[0] — a multi-order
+  // stop must let the driver short-pick/refuse each order independently, or
+  // the others silently complete as fully delivered no matter what actually
+  // happened at the door. Same shared query definition useOrder uses
+  // (orderQueryOptions), so this lands on the SAME cache entry as any other
+  // screen reading one of these orders — never a second, divergent fetch
+  // (mirrors return/index.tsx's existing fan-out).
+  const stopOrderIds = useMemo(() => (stop?.orders ?? []).map((o) => o.id), [stop]);
+  const { ordersById, ordersLoading } = useQueries({
+    queries: stopOrderIds.map((id) => orderQueryOptions(id)),
+    combine: (results) => ({
+      ordersById: Object.fromEntries(
+        stopOrderIds
+          .map((id, i) => [id, results[i]?.data] as const)
+          .filter((entry): entry is [string, Order] => !!entry[1]),
       ),
-    [order],
-  );
+      ordersLoading: results.some((r) => r.isLoading),
+    }),
+  });
 
+  // Per-order RICH lines for rendering (product name) — same adjustability
+  // gate as adjust.tsx: not cancelled, nothing already delivered (a
+  // reopened, partially-completed stop shouldn't re-offer already-settled
+  // lines). Money math is derived SEPARATELY via shortPickLinesFromOrder
+  // (the shared, screen-agnostic mapping payment.tsx also uses) since the
+  // pure `ShortPickLine` doesn't carry a display name.
+  // B785/SA-116: pieces delivered at OTHER visits, off the stop's run snapshot — a second visit
+  // is offered (and bounded by) the REMAINING, never the full order.
+  // SA-367a: every quantity decision (offered or not, stepper default and ceiling) reads the
+  // server's per-line `remaining`; `deliveredSoFar` only prices the remaining money (SA-367b).
+  const soFarById = useMemo(() => deliveredSoFarByLine(stop?.orders), [stop]);
+  const remainingById = useMemo(() => remainingByLine(stop?.orders), [stop]);
+  const linesByOrder = useMemo(() => {
+    const map: Record<string, OrderItem[]> = {};
+    for (const id of stopOrderIds) map[id] = adjustableLines(ordersById[id], remainingById);
+    return map;
+  }, [stopOrderIds, ordersById, remainingById]);
+
+  // B648/B762 merge: shortPickLinesFromOrder now carries unitLabel/
+  // unitsPerBox/boxes through (see lib/short-pick.ts), so this flattened,
+  // multi-order form is both the B762 fan-out AND B648's whole-Case data —
+  // no separate inline mapping needed.
   const shortPickLines: ShortPickLine[] = useMemo(
     () =>
-      lines.map((li) => ({
-        orderItemId: li.id,
-        productId: li.productId,
-        orderedQty: Number(li.qty),
-        subtotal: li.subtotal ?? null,
-        // Must stay byte-identical to payment.tsx's mapping: both screens feed
-        // the SAME reconciledTotal, and omitting freeUnits here would silently
-        // fall back to the plain linear proration (freeUnits ?? 0) — so this
-        // review screen would quote one number and the very next screen would
-        // collect another for the same delivery plan (REG-B50).
-        freeUnits: li.promoFreeUnits ?? 0,
-        // `promoFreeUnits` counts whole SELLING units (BOXES on a box-split
-        // line) while `orderedQty` and the qty steppers below are in PIECES —
-        // the server oracle's `freeUnitSize` bridges the two axes.
-        freeUnitSize: freeUnitSizeFor(li),
-      })),
-    [lines],
+      stopOrderIds.flatMap((id) =>
+        shortPickLinesFromOrder(ordersById[id], remainingById, soFarById),
+      ),
+    [stopOrderIds, ordersById, remainingById, soFarById],
+  );
+  const visitLineById = useMemo(
+    () => Object.fromEntries(shortPickLines.map((l) => [l.orderItemId, l])),
+    [shortPickLines],
   );
 
   // Seed from any override this stop already has in the plan store (e.g. an
@@ -89,19 +131,37 @@ export default function ShortPickScreen() {
   );
   const setPlanQty = useDeliveryPlanStore((s) => s.setQty);
 
-  const total = useMemo(() => reconciledTotal(shortPickLines, qtyById), [shortPickLines, qtyById]);
+  // SA-094b: the ONE normalized plan every reader here must use — the row's
+  // displayed qty/badge AND the total, so a stray/un-snapped entry can never
+  // show one number on the row and bill a different one (must stay in step
+  // with payment.tsx's own normalizedPlan, since both feed the SAME money
+  // functions from lib/run-money.ts).
+  const normalizedPlan = useMemo(
+    () => normalizeDeliveryPlan(shortPickLines, qtyById),
+    [shortPickLines, qtyById],
+  );
+
+  const total = useMemo(
+    () => reconciledTotal(shortPickLines, normalizedPlan),
+    [shortPickLines, normalizedPlan],
+  );
   const orderedTotal = useMemo(() => reconciledTotal(shortPickLines, {}), [shortPickLines]);
   const anyShort = total < orderedTotal - 0.005;
+  // SA-367a: lines the server served no remaining for, still un-entered — Continue waits on them.
+  const awaiting = useMemo(
+    () => linesAwaitingEntry(shortPickLines, qtyById),
+    [shortPickLines, qtyById],
+  );
 
   function handleContinue() {
-    if (!stopId) return;
+    if (!stopId || awaiting.length > 0) return;
     for (const [orderItemId, qty] of Object.entries(qtyById)) {
       setPlanQty(stopId, orderItemId, qty);
     }
     router.push(`/route/stop/${stopId}/payment` as any);
   }
 
-  if (activeLoading || runLoading || orderLoading) {
+  if (activeLoading || runLoading || ordersLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
         <NavBar
@@ -129,14 +189,34 @@ export default function ShortPickScreen() {
           Everything defaults to fully delivered. Only adjust a line if you're short or the customer
           refused it.
         </Text>
-        {lines.map((li) => (
-          <ShortPickRow
-            key={li.id}
-            li={li}
-            qty={qtyById[li.id] ?? li.qty}
-            onChangeQty={(q) => setQtyById((m) => ({ ...m, [li.id]: q }))}
-          />
-        ))}
+        {(stop?.orders ?? []).map((o) => {
+          const lines = linesByOrder[o.id] ?? [];
+          if (lines.length === 0) return null;
+          return (
+            <View key={o.id}>
+              {/* Only label sections on an actual multi-order stop — a single
+                  order needs no header, matching the pre-B762 screen exactly. */}
+              {stopOrderIds.length > 1 ? (
+                <Text style={styles.orderHeader}>ORDER {o.orderNumber}</Text>
+              ) : null}
+              {lines.map((li) => (
+                <ShortPickRow
+                  key={li.id}
+                  li={li}
+                  visit={visitLineById[li.id]}
+                  soFar={soFarById[li.id] ?? 0}
+                  // B648/SA-094b: normalizedPlan is the stop-WIDE snapped map
+                  // (item 3 of the B762 adaptation) — every order's rows read
+                  // the SAME snapped number the total/badge use, never the
+                  // raw qtyById entry.
+                  qty={normalizedPlan[li.id] ?? (visitLineById[li.id]?.needsEntry ? 0 : li.qty)}
+                  awaitingEntry={awaiting.includes(li.id)}
+                  onChangeQty={(q) => setQtyById((m) => ({ ...m, [li.id]: q }))}
+                />
+              ))}
+            </View>
+          );
+        })}
 
         <View style={styles.totalBlock}>
           <Text style={styles.totalLabel}>
@@ -146,7 +226,18 @@ export default function ShortPickScreen() {
         </View>
 
         <View style={{ paddingHorizontal: 16 }}>
-          <Pressable style={styles.continueBtn} onPress={handleContinue}>
+          {awaiting.length > 0 ? (
+            <Text style={styles.hint}>
+              Enter how many were delivered for the highlighted{" "}
+              {awaiting.length === 1 ? "line" : `${awaiting.length} lines`} to continue.
+            </Text>
+          ) : null}
+          <Pressable
+            style={[styles.continueBtn, awaiting.length > 0 ? { opacity: 0.5 } : null]}
+            onPress={handleContinue}
+            disabled={awaiting.length > 0}
+            accessibilityState={{ disabled: awaiting.length > 0 }}
+          >
             <Text style={styles.continueBtnText}>
               {canCollect ? "Continue to payment" : "Review & complete"}
             </Text>
@@ -159,16 +250,57 @@ export default function ShortPickScreen() {
 
 function ShortPickRow({
   li,
+  visit,
+  soFar,
   qty,
+  awaitingEntry,
   onChangeQty,
 }: {
   li: OrderItem;
+  /** This visit's view of the line (B785): ordered = remaining, boxes = Cases remaining. */
+  visit?: ShortPickLine;
+  /** Pieces already delivered at other visits. */
+  soFar: number;
   qty: number;
+  /** SA-367a: no server remaining and not entered yet — the stepper shows EMPTY, never a default. */
+  awaitingEntry?: boolean;
   onChangeQty: (qty: number) => void;
 }) {
-  const ordered = Number(li.qty);
+  // B785/SA-116: the stepper bound is what THIS visit can still deliver (count − cases delivered
+  // so far), read off the per-visit line — identical to the full order on a first visit.
+  const ordered = visit?.orderedQty ?? Number(li.qty);
   const type = deliveryTypeForQty(qty, ordered);
-  const [draft, setDraft] = useState(String(qty));
+  const [draft, setDraft] = useState(awaitingEntry ? "" : String(qty));
+  // SA-094/SA-094a: a units_v1 line whose OWN unitsPerBox > 1 gets a
+  // whole-Case stepper — its ordered qty is base pieces, and a partial
+  // piece count within one Case has no physical meaning. A factor-1 unit
+  // line ("Piece") is excluded (isUnitAwareLine requires unitsPerBox > 1)
+  // and keeps the ordinary piece stepper below.
+  const unitAware = isUnitAwareLine(li);
+  const hasUnitLabel = (li.unitLabel ?? "").trim() !== "";
+  const unitsPerBox = Number(li.unitsPerBox ?? 0);
+  // FIX 6 (SA-175): the STORED count (never derived from the live product) — unit-line-build.ts
+  // stores `boxes = count` for a factor>1 unit line. `caseCount` is FLOORED, never rounded: on a
+  // second visit `ordered` is the REMAINING qty, which is not always an exact multiple of the
+  // Case size — the stepper's top value must be exactly `ordered` (the last, partial step), never
+  // a rounded-up Case count that lets "+" send more than remains. `caseRemainderPieces` is what's
+  // left over after `caseCount` whole Cases — 0 on a well-formed first visit, but can be nonzero
+  // on a second visit (some of a Case may have been delivered at another stop).
+  const caseCount =
+    visit?.boxes ?? li.boxes ?? (unitsPerBox > 0 ? Math.floor(ordered / unitsPerBox) : 0);
+  const caseRemainderPieces = visit?.pieces ?? caseStepperRemainderPieces(ordered, unitsPerBox);
+  // Whole Cases the CURRENT qty represents — floored and capped at caseCount, so a qty that
+  // includes the partial-Case remainder (i.e. qty === ordered) still shows the right Case count.
+  const casesDelivered = unitAware ? caseStepperCasesDelivered(qty, ordered, unitsPerBox) : 0;
+  const atFullDelivery = qty >= ordered;
+  const casesDeliveredLabel = awaitingEntry
+    ? "—"
+    : formatCaseStepperSplit(
+        casesDelivered,
+        atFullDelivery ? caseRemainderPieces : 0,
+        li.unitLabel,
+      );
+  const caseCountLabel = formatCaseStepperSplit(caseCount, caseRemainderPieces, li.unitLabel);
 
   return (
     <View style={styles.card}>
@@ -177,9 +309,17 @@ function ShortPickRow({
           <Text style={styles.cardName} numberOfLines={2}>
             {li.product?.name ?? li.name ?? "Item"}
           </Text>
-          <Text style={styles.cardMeta}>Ordered {ordered}</Text>
+          <Text style={styles.cardMeta}>
+            Ordered{" "}
+            {hasUnitLabel ? `${li.boxes ?? Number(li.qty)} ${li.unitLabel}`.trim() : Number(li.qty)}
+            {soFar > 0 ? ` · ${hasUnitLabel ? caseCountLabel : ordered} still to deliver` : ""}
+          </Text>
         </View>
-        {type !== "DELIVERED" ? (
+        {awaitingEntry ? (
+          <View style={[styles.badge, styles.badgeShort]}>
+            <Text style={styles.badgeText}>Enter qty</Text>
+          </View>
+        ) : type !== "DELIVERED" ? (
           <View
             style={[styles.badge, type === "REFUSED" ? styles.badgeRefused : styles.badgeShort]}
           >
@@ -187,48 +327,81 @@ function ShortPickRow({
           </View>
         ) : null}
       </View>
-      <View style={styles.stepperRow}>
-        <Text style={styles.stepperLabel}>Delivered</Text>
-        <View style={styles.stepper}>
-          <Pressable
-            style={styles.stepBtn}
-            onPress={() => {
-              const n = Math.max(0, qty - 1);
-              onChangeQty(n);
-              setDraft(String(n));
-            }}
-            hitSlop={6}
-          >
-            <Text style={styles.stepText}>−</Text>
-          </Pressable>
-          <TextInput
-            style={styles.qtyInput}
-            value={draft}
-            onChangeText={(txt) => {
-              const clean = sanitizeIntInput(txt);
-              setDraft(clean);
-              if (clean === "") return;
-              onChangeQty(Math.min(ordered, parseIntQty(clean, qty)));
-            }}
-            onBlur={() => setDraft(String(qty))}
-            keyboardType="number-pad"
-            returnKeyType="done"
-            maxLength={5}
-            selectTextOnFocus
-          />
-          <Pressable
-            style={styles.stepBtn}
-            onPress={() => {
-              const n = Math.min(ordered, qty + 1);
-              onChangeQty(n);
-              setDraft(String(n));
-            }}
-            hitSlop={6}
-          >
-            <Text style={styles.stepText}>+</Text>
-          </Pressable>
+      {unitAware ? (
+        <View style={styles.stepperRow}>
+          <Text style={styles.stepperLabel}>
+            Cases delivered: {casesDeliveredLabel} of {caseCountLabel}
+          </Text>
+          <View style={styles.stepper}>
+            <Pressable
+              style={styles.stepBtn}
+              onPress={() => onChangeQty(caseStepperDecrement(qty, ordered, unitsPerBox))}
+              hitSlop={6}
+              disabled={qty <= 0}
+              accessibilityRole="button"
+              accessibilityLabel={`One fewer ${li.unitLabel} delivered`}
+              accessibilityState={{ disabled: qty <= 0 }}
+            >
+              <Text style={styles.stepText}>−</Text>
+            </Pressable>
+            <Text style={styles.qtyInput}>{casesDeliveredLabel}</Text>
+            <Pressable
+              style={styles.stepBtn}
+              onPress={() => onChangeQty(caseStepperIncrement(qty, ordered, unitsPerBox))}
+              hitSlop={6}
+              disabled={qty >= ordered}
+              accessibilityRole="button"
+              accessibilityLabel={`One more ${li.unitLabel} delivered`}
+              accessibilityState={{ disabled: qty >= ordered }}
+            >
+              <Text style={styles.stepText}>+</Text>
+            </Pressable>
+          </View>
         </View>
-      </View>
+      ) : (
+        <View style={styles.stepperRow}>
+          <Text style={styles.stepperLabel}>Delivered</Text>
+          <View style={styles.stepper}>
+            <Pressable
+              style={styles.stepBtn}
+              onPress={() => {
+                const n = Math.max(0, qty - 1);
+                onChangeQty(n);
+                setDraft(String(n));
+              }}
+              hitSlop={6}
+            >
+              <Text style={styles.stepText}>−</Text>
+            </Pressable>
+            <TextInput
+              style={styles.qtyInput}
+              value={draft}
+              onChangeText={(txt) => {
+                const clean = sanitizeIntInput(txt);
+                setDraft(clean);
+                if (clean === "") return;
+                onChangeQty(Math.min(ordered, parseIntQty(clean, qty)));
+              }}
+              onBlur={() => setDraft(awaitingEntry ? "" : String(qty))}
+              keyboardType="number-pad"
+              returnKeyType="done"
+              maxLength={5}
+              selectTextOnFocus
+            />
+            <Pressable
+              style={styles.stepBtn}
+              onPress={() => {
+                const n = Math.min(ordered, qty + 1);
+                onChangeQty(n);
+                setDraft(String(n));
+              }}
+              hitSlop={6}
+            >
+              <Text style={styles.stepText}>+</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -244,6 +417,14 @@ const styles = StyleSheet.create({
     marginTop: 12,
     lineHeight: 18,
   },
+  orderHeader: {
+    fontSize: 12,
+    fontFamily: "Inter_700Bold",
+    color: ios.label2,
+    letterSpacing: 0.6,
+    marginHorizontal: 16,
+    marginTop: 18,
+  },
   card: {
     marginHorizontal: 16,
     marginTop: 10,
@@ -257,7 +438,8 @@ const styles = StyleSheet.create({
   cardMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   badge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
   badgeShort: { backgroundColor: "#FEF3C7" },
-  badgeRefused: { backgroundColor: "#FEE2E2" },
+  // SA-094a review (6): a design token instead of a hard-coded hex.
+  badgeRefused: { backgroundColor: ios.system.redWash },
   badgeText: { fontSize: 11, fontFamily: "Inter_700Bold", color: ios.label },
   stepperRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   stepperLabel: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2 },

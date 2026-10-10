@@ -1,0 +1,4 @@
+-- B904 / SA-582 RED fixture: BEGIN; ... COMMIT; but no SET LOCAL lock_timeout inside it.
+BEGIN;
+ALTER TABLE "User" ADD COLUMN "lastLoginAt" TIMESTAMP(3);
+COMMIT;

@@ -15,6 +15,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { EncryptionService } from "../../common/encryption.service";
 import { AuditService } from "../../audit/audit.service";
 import { withAdvisoryLock } from "../../common/db-locks";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
 
 /** Scope granted to the mailbox client — send-only, never a read scope (design D1/§3). */
 const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
@@ -41,6 +42,9 @@ interface OAuthNoncePayload {
   userId: string;
   provider: MailboxProviderName;
   verifier: string;
+  /** SHA-256 of the connect secret `start*` handed the initiating browser tab (#2115). The raw
+   *  secret is never stored. The callback copies this hash into the pending grant. */
+  secretHash: string;
 }
 
 /**
@@ -65,6 +69,23 @@ interface PendingGrant {
   accessTokenCipher: string | null;
   /** ISO string — Redis stores JSON, not Date instances. */
   accessTokenExpiresAt: string | null;
+  /** The nonce's connect-secret hash, carried over: preview and confirm need the raw secret. */
+  secretHash: string;
+}
+
+/** What `startConnect`/`startConnectMicrosoft` return: the provider's consent URL, and the
+ *  one-time connect secret for the tab that started the connect (#2115). The secret travels in
+ *  the response body and in request headers, never in a URL. */
+export interface MailboxConnectStart {
+  url: string;
+  connectSecret: string;
+}
+
+/** What the explicit confirm dialog may show about a pending grant: which account, nothing
+ *  else (#2115). */
+export interface MailboxConnectPreview {
+  provider: MailboxProviderName;
+  accountEmail: string;
 }
 
 /** The ONLY connection shape that ever crosses a controller boundary — no token field, ever. */
@@ -93,6 +114,27 @@ function randomToken(): string {
 }
 
 /**
+ * The connect secret (#2115, SA-215). `start*` hands a fresh one to the browser tab that
+ * starts a connect. The tab keeps it in sessionStorage, and the server keeps only this hash:
+ * first in the state nonce, then in the pending grant. Preview and confirm require the raw
+ * secret back, so a confirm token replayed anywhere but that tab (another tab, another browser)
+ * is refused even with the same admin's JWT.
+ */
+function hashConnectSecret(secret: string): string {
+  return crypto.createHash("sha256").update(secret, "utf8").digest("base64url");
+}
+
+/** Constant-time: does `presented` hash to `expectedHash`? A missing or empty value on either
+ *  side never matches. That includes a grant minted before the secret existed. */
+function connectSecretMatches(presented: unknown, expectedHash: unknown): boolean {
+  if (typeof presented !== "string" || presented.length === 0) return false;
+  if (typeof expectedHash !== "string" || expectedHash.length === 0) return false;
+  const actual = Buffer.from(hashConnectSecret(presented));
+  const expected = Buffer.from(expectedHash);
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+/**
  * `MailboxConnection` CRUD + the Google OAuth connect/disconnect flow (PR-2). Tenant isolation
  * is structural, not a filter: every method takes `tenantId` from the caller's OWN JWT (never a
  * client-supplied id), and `MailboxConnection.tenantId` is the row's unique key — there is no
@@ -102,6 +144,12 @@ function randomToken(): string {
  * exchanges the code and stashes a `PendingGrant`; `confirmConnect` (authenticated,
  * TENANT_ADMIN) is the ONLY place a `MailboxConnection` row is ever written from an OAuth flow,
  * and only after proving the confirming JWT matches who started it.
+ *
+ * #2115 (SA-215) binds that confirm to the browser tab that started the connect as well as to
+ * the user: `start*` returns a connect secret, whose hash rides in the nonce and the pending
+ * grant, and `previewConnect`/`confirmConnect` require it. The web confirms only on an explicit
+ * click in a dialog that names the account (`previewConnect` feeds it, non-consuming);
+ * `discardPendingGrant` burns a grant nobody will confirm.
  */
 @Injectable()
 export class MailboxConnectionService {
@@ -226,9 +274,10 @@ export class MailboxConnectionService {
   /**
    * Build the Google consent URL and persist a single-use, PKCE-bound nonce (10 min TTL) that
    * records WHO initiated the connect (`tenantId`/`userId`) — `confirmConnect` re-checks this
-   * identity against the confirming JWT before ever writing a row.
+   * identity against the confirming JWT before ever writing a row. Also mints the connect secret
+   * for the initiating tab (#2115); only its hash goes into the nonce.
    */
-  async startConnect(tenantId: string, userId: string): Promise<string> {
+  async startConnect(tenantId: string, userId: string): Promise<MailboxConnectStart> {
     if (!this.isGoogleConfigured()) {
       throw new ServiceUnavailableException(
         "Google mailbox connect is not configured on this server yet.",
@@ -238,12 +287,14 @@ export class MailboxConnectionService {
     const client = this.newOAuthClient();
     const { codeVerifier, codeChallenge } = await client.generateCodeVerifierAsync();
     const nonce = randomToken();
+    const connectSecret = randomToken();
 
     const payload: OAuthNoncePayload = {
       tenantId,
       userId,
       provider: "GOOGLE",
       verifier: codeVerifier,
+      secretHash: hashConnectSecret(connectSecret),
     };
     await this.redis.set(
       `${OAUTH_NONCE_PREFIX}${nonce}`,
@@ -252,7 +303,7 @@ export class MailboxConnectionService {
       NONCE_TTL_SECS,
     );
 
-    return client.generateAuthUrl({
+    const url = client.generateAuthUrl({
       access_type: "offline",
       prompt: "consent",
       scope: [GMAIL_SEND_SCOPE, "openid", "email"],
@@ -260,6 +311,27 @@ export class MailboxConnectionService {
       code_challenge: codeChallenge,
       code_challenge_method: CodeChallengeMethod.S256,
     });
+    return { url, connectSecret };
+  }
+
+  /**
+   * Burn a connect `state` nonce without exchanging anything. Both OAuth callbacks call this on
+   * every outcome that isn't a successful exchange: the provider's own error/cancel redirect,
+   * and a failed exchange. Same atomic GETDEL as `handleCallback`, so a state is consumed on
+   * EVERY terminal outcome. Before this, a cancel left the state alive for its whole 600 s TTL:
+   * anyone holding the provider sign-in URL could still finish that flow with THEIR OWN
+   * account, and the grant would be minted for the (tenant, user) who started it (#2115,
+   * SA-215). Provider-agnostic on purpose: a state that shows up in any error redirect is
+   * burned. Never throws. A missing/unknown/expired state is simply nothing to burn, and the
+   * caller's redirect must still happen.
+   */
+  async discardState(state: unknown): Promise<void> {
+    if (typeof state !== "string" || !state) return;
+    try {
+      await this.getdel(`${OAUTH_NONCE_PREFIX}${state}`);
+    } catch (err: any) {
+      this.logger.warn(`Mailbox connect state discard failed: ${err?.message ?? err}`);
+    }
   }
 
   /**
@@ -280,7 +352,14 @@ export class MailboxConnectionService {
     } catch {
       throw new BadRequestException("state_invalid");
     }
-    if (!oauthPayload?.tenantId || !oauthPayload?.userId || !oauthPayload?.verifier) {
+    // No secret hash means a state minted before the connect secret existed. Its grant could
+    // never be confirmed, so refuse it like a tampered state, before any exchange (#2115).
+    if (
+      !oauthPayload?.tenantId ||
+      !oauthPayload?.userId ||
+      !oauthPayload?.verifier ||
+      !oauthPayload?.secretHash
+    ) {
       throw new BadRequestException("state_invalid");
     }
     // A state minted by startConnectMicrosoft (or any future provider) redeemed here would
@@ -333,6 +412,7 @@ export class MailboxConnectionService {
       refreshTokenCipher: this.encryption.encrypt(tokens.refresh_token),
       accessTokenCipher: tokens.access_token ? this.encryption.encrypt(tokens.access_token) : null,
       accessTokenExpiresAt: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
+      secretHash: oauthPayload.secretHash,
     };
 
     const confirmToken = randomToken();
@@ -350,9 +430,10 @@ export class MailboxConnectionService {
    * Build the Microsoft consent URL (v2 authorize endpoint, tenant `common` — multi-tenant +
    * personal accounts, design §2) and persist the same single-use, PKCE-bound nonce shape
    * `startConnect` uses for Google — `confirmConnect` below is provider-agnostic and binds
-   * either grant through the identical pending-grant → authenticated-confirm flow.
+   * either grant through the identical pending-grant → authenticated-confirm flow, including
+   * the connect secret for the initiating tab (#2115).
    */
-  async startConnectMicrosoft(tenantId: string, userId: string): Promise<string> {
+  async startConnectMicrosoft(tenantId: string, userId: string): Promise<MailboxConnectStart> {
     if (!this.isMicrosoftConfigured()) {
       throw new ServiceUnavailableException(
         "Microsoft mailbox connect is not configured on this server yet.",
@@ -362,12 +443,14 @@ export class MailboxConnectionService {
     const codeVerifier = randomToken(); // 32 random bytes, base64url — well within the 43-128 char PKCE range.
     const codeChallenge = crypto.createHash("sha256").update(codeVerifier).digest("base64url");
     const nonce = randomToken();
+    const connectSecret = randomToken();
 
     const payload: OAuthNoncePayload = {
       tenantId,
       userId,
       provider: "MICROSOFT",
       verifier: codeVerifier,
+      secretHash: hashConnectSecret(connectSecret),
     };
     await this.redis.set(
       `${OAUTH_NONCE_PREFIX}${nonce}`,
@@ -386,7 +469,7 @@ export class MailboxConnectionService {
       code_challenge: codeChallenge,
       code_challenge_method: "S256",
     });
-    return `${MS_AUTHORIZE_URL}?${params.toString()}`;
+    return { url: `${MS_AUTHORIZE_URL}?${params.toString()}`, connectSecret };
   }
 
   /**
@@ -412,7 +495,13 @@ export class MailboxConnectionService {
     } catch {
       throw new BadRequestException("state_invalid");
     }
-    if (!oauthPayload?.tenantId || !oauthPayload?.userId || !oauthPayload?.verifier) {
+    // No secret hash: a state minted before the connect secret existed (see handleCallback).
+    if (
+      !oauthPayload?.tenantId ||
+      !oauthPayload?.userId ||
+      !oauthPayload?.verifier ||
+      !oauthPayload?.secretHash
+    ) {
       throw new BadRequestException("state_invalid");
     }
     // A state minted by startConnect (Google) redeemed here — same reasoning as the Google
@@ -491,6 +580,7 @@ export class MailboxConnectionService {
       accessTokenExpiresAt: tokenData.expires_in
         ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString()
         : null,
+      secretHash: oauthPayload.secretHash,
     };
 
     const confirmToken = randomToken();
@@ -504,35 +594,88 @@ export class MailboxConnectionService {
     return { confirmToken };
   }
 
-  /**
-   * Bind the pending grant to a real `MailboxConnection` row — ONLY IF the confirming JWT's
-   * `(userId, tenantId)` matches who started the connect. The pending grant is single-use
-   * (GETDEL) regardless of outcome, so a mismatched confirm cannot be retried against the same
-   * token. Controller-level guards (JwtAuthGuard/RolesGuard TENANT_ADMIN) additionally ensure
-   * the caller is an authenticated tenant admin before this is ever reached.
-   */
-  async confirmConnect(
-    confirmToken: string,
-    jwtUserId: string,
-    jwtTenantId: string,
-  ): Promise<MailboxStatusView> {
-    if (!confirmToken) throw new BadRequestException("state_invalid");
-
-    const stored = await this.getdel(`${PENDING_GRANT_PREFIX}${confirmToken}`);
+  /** A pending grant by its confirm token. Preview reads it with a plain GET; confirm consumes
+   *  it with GETDEL. Any missing, unknown, expired or unreadable token is `state_invalid`. */
+  private async readPendingGrant(confirmToken: unknown, consume: boolean): Promise<PendingGrant> {
+    if (typeof confirmToken !== "string" || !confirmToken) {
+      throw new BadRequestException("state_invalid");
+    }
+    const key = `${PENDING_GRANT_PREFIX}${confirmToken}`;
+    const stored = consume ? await this.getdel(key) : await this.redis.get(key);
     if (!stored) throw new BadRequestException("state_invalid");
-
-    let pending: PendingGrant;
     try {
-      pending = JSON.parse(stored) as PendingGrant;
+      return JSON.parse(stored) as PendingGrant;
     } catch {
       throw new BadRequestException("state_invalid");
     }
+  }
 
-    // The pending grant is already deleted (GETDEL above) whether this check passes or fails —
-    // a mismatched confirm can never be retried against the same token.
+  /**
+   * The two things a pending grant is bound to, both checked on preview AND confirm: the
+   * `(tenant, user)` that started the connect (the caller's own JWT), and the connect secret of
+   * the browser tab that started it (#2115). A grant minted before the secret existed has no
+   * hash, so it matches nothing.
+   */
+  private assertGrantHolder(
+    pending: PendingGrant,
+    connectSecret: unknown,
+    jwtUserId: string,
+    jwtTenantId: string,
+  ): void {
     if (pending.userId !== jwtUserId || pending.tenantId !== jwtTenantId) {
-      throw new ForbiddenException("mailbox_confirm_identity_mismatch");
+      throw new ForbiddenException(API_ERROR_CODES.MAILBOX_CONFIRM_IDENTITY_MISMATCH);
     }
+    if (!connectSecretMatches(connectSecret, pending.secretHash)) {
+      throw new ForbiddenException(API_ERROR_CODES.MAILBOX_CONNECT_SECRET_MISMATCH);
+    }
+  }
+
+  /**
+   * What the explicit confirm dialog shows before anything is bound: the pending grant's
+   * provider and account email, and nothing else (#2115). NON-consuming, so the grant stays
+   * available to `confirmConnect` or `discardPendingGrant`. The same holder checks as
+   * `confirmConnect` apply.
+   */
+  async previewConnect(
+    confirmToken: string,
+    connectSecret: unknown,
+    jwtUserId: string,
+    jwtTenantId: string,
+  ): Promise<MailboxConnectPreview> {
+    const pending = await this.readPendingGrant(confirmToken, false);
+    this.assertGrantHolder(pending, connectSecret, jwtUserId, jwtTenantId);
+    return { provider: pending.provider, accountEmail: pending.accountEmail };
+  }
+
+  /**
+   * Cancel in the confirm dialog, or the web giving up on a confirm it can't finish: burn the
+   * pending grant (GETDEL) so it can never be confirmed (#2115). This deliberately checks no
+   * holder. It can only destroy, never bind or reveal anything, and it must still work in the
+   * very case the tab's secret is missing. Idempotent: an unknown token is nothing to burn.
+   */
+  async discardPendingGrant(confirmToken: unknown): Promise<void> {
+    if (typeof confirmToken !== "string" || !confirmToken) return;
+    await this.getdel(`${PENDING_GRANT_PREFIX}${confirmToken}`);
+  }
+
+  /**
+   * Bind the pending grant to a real `MailboxConnection` row — ONLY IF the confirming JWT's
+   * `(userId, tenantId)` matches who started the connect AND the caller presents the connect
+   * secret of the browser tab that started it (#2115). The pending grant is single-use (GETDEL)
+   * regardless of outcome, so a refused confirm cannot be retried against the same token.
+   * Controller-level guards (JwtAuthGuard/RolesGuard TENANT_ADMIN) additionally ensure the
+   * caller is an authenticated tenant admin before this is ever reached.
+   */
+  async confirmConnect(
+    confirmToken: string,
+    connectSecret: unknown,
+    jwtUserId: string,
+    jwtTenantId: string,
+  ): Promise<MailboxStatusView> {
+    // Consumed (GETDEL) before the checks below: whether they pass or fail, a refused confirm
+    // can never be retried against the same token.
+    const pending = await this.readPendingGrant(confirmToken, true);
+    this.assertGrantHolder(pending, connectSecret, jwtUserId, jwtTenantId);
 
     // Serialize against MailboxSendService's token-refresh critical section — the SAME
     // "mailbox" advisory lock, keyed by tenantId (Opus review, LOW — rotation race). Without
@@ -546,8 +689,14 @@ export class MailboxConnectionService {
           where: { tenantId: pending.tenantId },
         });
         const isReconnect = !!existing;
-        const externalSubjectChanged =
-          !!existing && existing.externalSubject !== pending.externalSubject;
+        // A mailbox is identified by (provider, externalSubject). A Google `sub` and a Microsoft
+        // object id come from different namespaces, so the subject alone can't say two grants
+        // are for the same mailbox. This is the ONE predicate behind both the audit action and
+        // the lastSentAt reset below.
+        const mailboxChanged =
+          !!existing &&
+          (existing.provider !== pending.provider ||
+            existing.externalSubject !== pending.externalSubject);
 
         const data = {
           provider: pending.provider,
@@ -563,7 +712,16 @@ export class MailboxConnectionService {
           throttledUntil: null,
           lastError: null,
           lastErrorAt: null,
+          // #2113: an alert still owed about the OLD grant says nothing true about the new one.
+          alertPendingAt: null,
           connectedByUserId: pending.userId,
+          // Every field above belongs to the GRANT and is rewritten on every confirm.
+          // `lastSentAt` belongs to the MAILBOX: re-granting the same mailbox keeps its history,
+          // but a different mailbox (the other provider, or another account) has never sent
+          // anything through RouteFlow. Carrying the old value over would report a send the
+          // new account never made. When the mailbox is unchanged the key is left OUT of the
+          // update rather than written back, so a send that finishes in between keeps its value.
+          ...(mailboxChanged ? { lastSentAt: null } : {}),
         };
 
         const row = await this.prisma.mailboxConnection.upsert({
@@ -572,20 +730,20 @@ export class MailboxConnectionService {
           update: data,
         });
 
-        return { row, isReconnect, externalSubjectChanged };
+        return { row, isReconnect, mailboxChanged };
       },
     );
 
     if (!lockResult.acquired) {
       throw new ServiceUnavailableException("Couldn't complete the connection — try again.");
     }
-    const { row, isReconnect, externalSubjectChanged } = lockResult.value;
+    const { row, isReconnect, mailboxChanged } = lockResult.value;
 
     await this.audit.log({
       tenantId: pending.tenantId,
       userId: pending.userId,
       action: isReconnect
-        ? externalSubjectChanged
+        ? mailboxChanged
           ? "mailbox.reconnected_different_account"
           : "mailbox.reconnected"
         : "mailbox.connected",

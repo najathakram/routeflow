@@ -107,6 +107,9 @@ model TenantAddon {
   stripePriceId String? // Stripe price for this add-on
   stripeItemId  String? // Stripe subscription item ID
   active        Boolean  @default(true)
+  // SA-693: granted free ON PURPOSE by the platform. Never billed, never blocks a checkout, never
+  // booked as revenue. Written only by the admin comp/uncomp paths; self-serve always writes false.
+  isComp        Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -342,6 +345,20 @@ model BillingEvent {
   @@index([type])
 }
 
+// #2442: the platform billing webhook's event ledger — one row per Stripe event id, inserted BEFORE
+// the event is handled (as StripeConnectEvent does for Connect). A redelivery collides on the id; it
+// is skipped only when `outcome` shows the first delivery completed (non-null, not "error:…").
+// Platform-level, not tenant-scoped: the tenant is resolved from the event inside the handler.
+model StripeBillingEvent {
+  id          String   @id
+  type        String
+  createdAt   DateTime
+  processedAt DateTime @default(now())
+  outcome     String?
+
+  @@index([type, createdAt])
+}
+
 // ─── RouteFlow's own invoices to the tenant (platform billing) ────────────────
 
 model RfInvoice {
@@ -349,14 +366,40 @@ model RfInvoice {
   tenantId String
   number   String       @unique // RF-YYYY-NNNN
   amount   Decimal      @db.Decimal(10, 2)
-  status   String // PAID | OPEN | FAILED
+  status   String // OPEN | PAID | VOID (legacy FAILED is never written; deliberately not a Prisma enum)
   cycle    BillingCycle @default(MONTHLY)
   pdfKey   String?
   issuedAt DateTime     @default(now())
 
+  // Manual-pay lifecycle (manual invoices due, PR1). All nullable/defaulted: the table had no
+  // writer before this, so existing rows (none expected) are untouched.
+  periodStart DateTime?
+  periodEnd   DateTime?
+  /// ISO of periodStart; "<iso>:void:<id>" once voided so a new live invoice can take the period.
+  periodKey   String?
+  /// Net 0: equal to periodStart.
+  dueDate     DateTime?
+  currency    String    @default("USD")
+  /// [{ kind: PLAN | ADDON, code, label, quantity, unitAmount, amount }]
+  lines       Json?
+  issuedById  String?
+  paidAt      DateTime?
+  paidMethod  String?
+  paidRef     String?
+  paidNote    String?
+  paidById    String?
+  lastSentAt  DateTime?
+  sendCount   Int       @default(0)
+  voidedAt    DateTime?
+  voidReason  String?
+  /// An add-on line had no price snapshot and was written at 0: the office must look at it.
+  needsReview Boolean   @default(false)
+
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@unique([tenantId, periodKey])
   @@index([tenantId, issuedAt])
+  @@index([status, dueDate])
 }
 
 model SystemConfig {
@@ -368,6 +411,40 @@ model SystemConfig {
   updatedAt DateTime @updatedAt
 
   @@unique([tenantId, key])
+  @@index([tenantId])
+}
+
+/// SA-138 phase 1: which layer a tenant POLICY value applies to. Resolution order is
+/// registry default → TENANT → CATEGORY → CUSTOMER (the most specific active row wins).
+/// Mirrored by packages/types/api/enums.ts POLICY_SCOPE_TYPE_VALUES (enum-parity.spec.ts).
+enum PolicyScopeType {
+  TENANT
+  CATEGORY
+  CUSTOMER
+}
+
+/// SA-138 phase 1: a tenant's own policy value for one `apps/api/src/policy/policy-registry.ts`
+/// key at one scope. APPEND-ONLY: a write supersedes the active row (`supersededAt`/`supersededById`)
+/// and inserts the new one in one transaction under the `policy-write` advisory lock (key
+/// `${tenantId}:${key}`), which is what keeps one active row per (tenant, key, scope) — Prisma
+/// cannot express the partial unique index. Nothing is updated except the supersede stamps and
+/// nothing is deleted. `scopeId` is a soft pointer (TrackedCategory / Customer id; null for TENANT).
+model PolicyValue {
+  id             String          @id @default(uuid())
+  tenantId       String
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  key            String
+  scopeType      PolicyScopeType
+  scopeId        String?
+  value          Json
+  reason         String
+  setById        String?
+  setByName      String?
+  createdAt      DateTime        @default(now())
+  supersededAt   DateTime?
+  supersededById String?
+
+  @@index([tenantId, key, scopeType, scopeId, supersededAt])
   @@index([tenantId])
 }
 
@@ -456,6 +533,22 @@ enum NotificationEvent {
   // requires one), and it is NOT added to DEFAULT_ON (default-on-is-wired.spec.ts
   // would fail otherwise).
   CHECK_RETURNED // internal alert
+  // SA-603c (additive-only, appended at the END): salvage's staff/buyer order emails.
+  // The schema bundle never USES these values; only app code after the commit does
+  // (ADD VALUE cannot be used in its own transaction). Urgent orders will REUSE
+  // STAFF_NEW_ORDER with a subject prefix; URGENT_ORDER_PLACED stays untouched.
+  // messaging-config.service.ts gains exhaustiveness-only entries; NOT in DEFAULT_ON.
+  STAFF_NEW_ORDER // internal alert
+  BUYER_ORDER_EDITED // internal alert
+  BUYER_ORDER_CANCELLED // internal alert
+  // Carrier-shipped orders (additive-only, appended at the END): the accurate "your order has
+  // shipped" email (replaces OUT_FOR_DELIVERY for SHIP orders) and the one-time follow-up when
+  // tracking is first added after the order was already marked shipped.
+  ORDER_SHIPPED
+  SHIPMENT_TRACKING_ADDED
+  // Pickup orders (additive-only, appended at the END): "your order is ready for pickup". The pickup
+  // flow (a separate PR) is its firing site; this PR only creates the event, template and seed rows.
+  READY_FOR_PICKUP
 }
 
 // One conversation with a customer across all channels (the inbox row).
@@ -975,6 +1068,11 @@ model MailboxConnection {
   lastError            String?
   lastErrorAt          DateTime?
   lastSentAt           DateTime?
+  /// #2113 (SA-528) — durable admin alert. Set in the SAME transaction as an automatic
+  /// REVOKED/THROTTLED transition that warrants an alert; null = nothing owed. A deliverer claims
+  /// it by CAS (value → a lease ≥ 3× the sweep cadence ahead), delivers, then clears it by CAS on
+  /// the lease. A value <= now is due: a fresh transition, or a lease whose deliverer died.
+  alertPendingAt       DateTime?
   connectedByUserId    String?
   createdAt            DateTime                @default(now())
   updatedAt            DateTime                @updatedAt
@@ -1041,6 +1139,286 @@ model DemoBooking {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  onboardingCase OnboardingCase?
+
   @@index([startsAt, status])
   @@index([email, createdAt])
+}
+
+// ─── Wholesaler onboarding (#2159 S1 — NOT tenant-scoped) ─────────────────────
+// One OnboardingCase per wholesaler we are bringing live, from the demo follow-up
+// to LIVE. Platform-level (super-admin only): a case exists before its workspace
+// does, so `tenantId` is null until Activate. Steps are COPIED from the code
+// catalog (`src/onboarding/onboarding-catalog.ts`) when the case is created and
+// stamped with `catalogVersion`, so a later catalog change never rewrites an
+// in-flight case. Read and written through the BASE Prisma client only — the
+// tenant extension (`forTenant()`) would inject a `tenantId` filter.
+
+enum OnboardingStage {
+  FOLLOW_UP
+  AGREE
+  ACTIVATE
+  COLLECT
+  CONFIGURE
+  VERIFY_TRAIN
+  GO_LIVE
+  HYPERCARE
+}
+
+enum OnboardingCaseStatus {
+  OPEN
+  ON_HOLD
+  LIVE
+  LOST
+}
+
+enum OnboardingStepStatus {
+  PENDING
+  DONE
+  WAIVED
+}
+
+enum OnboardingActorType {
+  ADMIN
+  CUSTOMER
+  SYSTEM
+}
+
+model OnboardingCase {
+  id String @id @default(uuid())
+
+  /// Set at Activate (S3a); unique — one case per workspace.
+  tenantId      String?      @unique
+  tenant        Tenant?      @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  /// The demo booking this case was opened from, if any.
+  demoBookingId String?      @unique
+  demoBooking   DemoBooking? @relation(fields: [demoBookingId], references: [id], onDelete: SetNull)
+
+  companyName  String
+  contactName  String
+  contactEmail String
+  contactPhone String?
+
+  stage          OnboardingStage      @default(FOLLOW_UP)
+  status         OnboardingCaseStatus @default(OPEN)
+  /// The step catalog version this case's rows were materialised from.
+  catalogVersion Int
+  /// Super-admin user id owning the case (no FK: platform admins are Users of
+  /// the house tenant, and the case must outlive a deleted admin).
+  ownerAdminId   String?
+  targetGoLiveOn DateTime?            @db.Date
+  cutoverAt      DateTime?
+
+  fitNotes  Json?
+  /// { planKey?, addonSkus?, interval?, setupFeeCents?, note? } — S3b reads setupFeeCents.
+  dealTerms Json  @default("{}")
+
+  lostReason  String?
+  closedAt    DateTime?
+  createdById String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  steps       OnboardingStep[]
+  events      OnboardingEvent[]
+  sections    IntakeSection[]
+  files       IntakeFile[]
+  tokens      IntakeAccessToken[]
+  acceptances OrderAcceptance[]
+
+  @@index([stage, status])
+  @@index([ownerAdminId])
+}
+
+model OnboardingStep {
+  id     String         @id @default(uuid())
+  caseId String
+  case   OnboardingCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  /// Catalog key, copied at materialisation together with the fields below, so the
+  /// case keeps the rules it was created under.
+  key       String
+  stage     OnboardingStage
+  title     String
+  required  Boolean
+  autoCheck String?
+
+  status     OnboardingStepStatus @default(PENDING)
+  /// { ok, detail, checkedAt } from the latest auto-check run.
+  autoResult Json?
+  evidence   Json?
+
+  doneById     String?
+  doneAt       DateTime?
+  waivedReason String?
+  waivedById   String?
+  waivedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([caseId, key])
+  @@index([caseId, stage])
+}
+
+/// Append-only activity feed for a case.
+model OnboardingEvent {
+  id        String              @id @default(uuid())
+  caseId    String
+  case      OnboardingCase      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  type      String
+  actorType OnboardingActorType
+  actorId   String?
+  payload   Json?
+  createdAt DateTime            @default(now())
+
+  @@index([caseId, createdAt])
+}
+
+// ─── Wholesaler onboarding intake (#2159 S2) ──────────────────────────────────
+// The secure intake link: the wholesaler fills the questionnaire (playbook Appendix A,
+// sections B–H → the seven IntakeSectionKeys), uploads their data files, and click-accepts
+// the order summary. Platform-level like OnboardingCase; the link's token is the only
+// credential and only its SHA-256 is stored.
+
+enum IntakeSectionKey {
+  ACCOUNT
+  TAX_COMPLIANCE
+  INVOICING
+  TEAM
+  OPERATIONS
+  DATA_FILES
+  GO_LIVE_PREFS
+}
+
+enum IntakeSectionStatus {
+  EMPTY
+  DRAFT
+  SUBMITTED
+  CHANGES_REQUESTED
+  APPROVED
+  APPLIED
+  WAIVED
+}
+
+model IntakeSection {
+  id            String              @id @default(uuid())
+  caseId        String
+  case          OnboardingCase      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  key           IntakeSectionKey
+  /// The answers schema version the DTOs validated (bump when a section's fields change).
+  schemaVersion Int
+  status        IntakeSectionStatus @default(EMPTY)
+  answers       Json                @default("{}")
+  submittedAt   DateTime?
+  reviewedById  String?
+  reviewedAt    DateTime?
+  reviewNote    String?
+  /// S3a — set when an approved section is applied to the workspace.
+  appliedAt     DateTime?
+  appliedDiff   Json?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@unique([caseId, key])
+}
+
+/// A file the wholesaler (or an admin) uploaded for the case. Read only through signed URLs.
+model IntakeFile {
+  id           String           @id @default(uuid())
+  caseId       String
+  case         OnboardingCase   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  sectionKey   IntakeSectionKey
+  /// products · customers · suppliers · stock · ar_aging · open_docs · tax_cert · licence · logo · other
+  kind         String
+  /// onboarding/<caseId>/<uuid>-<safeName>
+  storageKey   String           @unique
+  originalName String
+  contentType  String
+  sizeBytes    Int
+  sha256       String
+  containsPii  Boolean
+  /// "customer" or the uploading admin's user id.
+  uploadedBy   String
+  /// S5 purges raw files 30 days after LIVE; the row stays as the record.
+  purgedAt     DateTime?
+  deletedAt    DateTime?
+  createdAt    DateTime         @default(now())
+
+  @@index([caseId, sectionKey])
+}
+
+/// One ACTIVE token per case (issuing revokes the prior one). Only the SHA-256 is stored.
+model IntakeAccessToken {
+  id          String         @id @default(uuid())
+  caseId      String
+  case        OnboardingCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  tokenHash   String         @unique
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  lastUsedAt  DateTime?
+  createdById String
+  createdAt   DateTime       @default(now())
+
+  @@index([caseId])
+}
+
+/// APPEND-ONLY click-acceptance of the order summary + Terms/Privacy. The snapshot is computed
+/// server-side at acceptance time and frozen: a re-quote means a new acceptance, which sets
+/// `supersededAt` on the prior row. Migration 20260927070000 adds a trigger that refuses any
+/// UPDATE except setting `supersededAt` once (Prisma cannot model triggers).
+model OrderAcceptance {
+  id             String         @id @default(uuid())
+  caseId         String
+  case           OnboardingCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  tenantId       String?
+  orderSnapshot  Json
+  termsVersion   String
+  privacyVersion String
+  acceptedName   String
+  acceptedEmail  String
+  acceptedAt     DateTime       @default(now())
+  ip             String?
+  userAgent      String?
+  tokenId        String
+  supersededAt   DateTime?
+
+  @@index([caseId, acceptedAt])
+}
+
+enum EmailDeliveryStatus {
+  QUEUED
+  SENT
+  FAILED
+  BOUNCED
+  // WOULD_SEND = dark-week record (nothing sent), OPTED_OUT = recipient opted out.
+  WOULD_SEND
+  OPTED_OUT
+}
+
+/// One outbound transactional email attempt (SA-603). PII minimal: NO subject/body columns, the
+/// content is re-derivable from `kind` + `entityType`/`entityId`. Retention 90 days (purge in app).
+model EmailDelivery {
+  id                String              @id @default(uuid())
+  tenantId          String
+  // An app allow-list of template keys, no enum churn.
+  kind              String
+  toAddress         String
+  entityType        String?
+  entityId          String?
+  status            EmailDeliveryStatus @default(QUEUED)
+  providerMessageId String?
+  // Provider text, truncated to 500 in the app.
+  error             String?
+  attempts          Int                 @default(0)
+  sentAt            DateTime?
+  createdAt         DateTime            @default(now())
+  // SHA-256 of the rendered subject+body computed in the app, stored as a hash never the content; no index yet.
+  contentFingerprint String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([entityType, entityId])
+  @@index([providerMessageId])
 }

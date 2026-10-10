@@ -1,4 +1,8 @@
-import { productSalesSummaryLine, productSaleRowTarget } from "../lib/product-sales-logic";
+import {
+  productSaleQtyLabel,
+  productSalesSummaryLine,
+  productSaleRowTarget,
+} from "../lib/product-sales-logic";
 import type { ProductSalesSummary } from "../lib/api/product-sales";
 
 function summary(overrides: Partial<ProductSalesSummary> = {}): ProductSalesSummary {
@@ -53,5 +57,18 @@ describe("productSaleRowTarget", () => {
       screen: "invoice",
       id: "inv-1",
     });
+  });
+});
+
+// #2253: the product's own selling unit ("box") is NOT the loose-piece noun. 18 base pieces at
+// 12 per box = 1 box + 6 pieces, and must read "1 box + 6 pcs" (web parity), never "1 box + 6 box".
+describe("productSaleQtyLabel (#2253)", () => {
+  it("reads the remainder in pieces, never the product's selling unit", () => {
+    expect(productSaleQtyLabel({ qty: 18, boxes: 1, pieces: 6 })).toBe("1 box + 6 pcs");
+  });
+
+  it("whole boxes only, and a non-boxed line reads its plain qty", () => {
+    expect(productSaleQtyLabel({ qty: 24, boxes: 2, pieces: 0 })).toBe("2 boxes");
+    expect(productSaleQtyLabel({ qty: 5, boxes: null, pieces: null })).toBe("5");
   });
 });

@@ -23,8 +23,10 @@ const item = (o: Partial<POItem> = {}): POItem => ({
 const upb = (map: Record<string, number>) => (id: string) => map[id] ?? 0;
 
 describe("toEditLine", () => {
-  it("passes a non-boxed line through, carrying id / received / sku / packSize", () => {
-    const l = toEditLine(item({ qtyReceived: "4", sku: "W-1", packSize: 12 }), 0);
+  // B699: a stored packSize > 1 means the line is PER CASE (update-purchase-order.dto.ts), so a per-piece
+  // line is one with no stored pack; the stored-pack case is pinned in purchase-orders-stored-pack-b699.test.ts.
+  it("passes a per-piece line (no stored pack) through, carrying id / received / sku / packSize", () => {
+    const l = toEditLine(item({ qtyReceived: "4", sku: "W-1", packSize: null }), 0);
     expect(l).toMatchObject({
       id: "i1",
       productId: "p1",
@@ -34,7 +36,7 @@ describe("toEditLine", () => {
       pieces: "",
       received: 4,
       sku: "W-1",
-      packSize: 12,
+      packSize: null,
     });
   });
 
@@ -123,11 +125,11 @@ describe("buildUpdateItems", () => {
   const p = upb({ p1: 0, p2: 12 });
 
   it("keeps id / sku / packSize on existing lines, none on new ones, and drops blank rows", () => {
-    const existing = toEditLine(item({ sku: "W-1", packSize: 12 }), 0);
+    const existing = toEditLine(item({ sku: "W-1", packSize: null }), 0);
     const fresh = { ...emptyEditLine(), productId: "p2", boxes: "2", pieces: "3", unitCost: "24" };
     const out = buildUpdateItems([existing, fresh, emptyEditLine()], p);
     expect(out).toEqual([
-      { id: "i1", productId: "p1", qtyOrdered: 10, unitCost: 3, sku: "W-1", packSize: 12 },
+      { id: "i1", productId: "p1", qtyOrdered: 10, unitCost: 3, sku: "W-1", packSize: null },
       // a boxed line: the ENTERED case figures (the server computes pieces, per-piece cost and the total)
       { productId: "p2", packSize: 12, caseCost: 24, cases: 2, loosePieces: 3 },
     ]);

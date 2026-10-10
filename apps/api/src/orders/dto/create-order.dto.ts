@@ -19,6 +19,7 @@ import {
 import { Type } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
 
 // BUG-B1-6: bound numeric inputs server-side. The audit submitted a
 // $25,664,510.89 order — all line items totalled cleanly through the API
@@ -50,6 +51,8 @@ export class OrderItemDto {
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
   @IsOptional() @IsString() @MaxLength(2000) itemNote?: string;
   @IsOptional() @IsString() @MaxLength(200) substitution?: string;
+  /** #2696(c): why a staff price moves off this customer's special (tier) price — required then. */
+  @IsOptional() @IsString() @MaxLength(200) overrideReason?: string;
 }
 
 export class AppliedCreditNoteDto {
@@ -107,9 +110,9 @@ export class CreateOrderDto {
    */
   @IsOptional() @IsEnum(["merge", "separate"]) mergeChoice?: "merge" | "separate";
   /**
-   * Ad-hoc trips + fulfillment mode: how this order is delivered. Omit to fall
-   * back to the customer's own default (`create()` resolves
-   * `dto.fulfillPath ?? customer.fulfillPath ?? ROUTE`).
+   * Ad-hoc trips + fulfillment mode: how this order is delivered. Omit to fall back to the
+   * customer's own default. The DTO accepts every FulfillPath; `create()` resolves it against the
+   * business's capability (fulfil-path-resolver.ts), which refuses PICKUP where pickup is not offered.
    */
   @IsOptional()
   @IsEnum(FulfillPath)
@@ -122,4 +125,14 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => AppliedCreditNoteDto)
   appliedCreditNotes?: AppliedCreditNoteDto[];
+
+  /**
+   * #2094 (SA-194): a return taken inside this order's own transaction. Customer and order are
+   * DERIVED from the document, never supplied; `returnKey` is the per-attempt nonce (replay -> one
+   * credit). Staff and driver only: a buyer carrying it is refused before any read (OrdersService).
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => InlineReturnLinesDto)
+  inlineReturn?: InlineReturnLinesDto;
 }

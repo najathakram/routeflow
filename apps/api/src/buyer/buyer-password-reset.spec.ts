@@ -7,6 +7,7 @@ import * as crypto from "crypto";
 import { BuyerAuthService } from "./buyer-auth.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 jest.mock("bcrypt", () => ({ compare: jest.fn(), hash: jest.fn() }));
@@ -70,6 +71,10 @@ describe("BuyerAuthService — password reset", () => {
           },
         },
         { provide: EmailService, useValue: emailService },
+        {
+          provide: AppleOAuthService,
+          useValue: { revokeForBuyer: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
 
@@ -136,14 +141,21 @@ describe("BuyerAuthService — password reset", () => {
     const rawToken = "a".repeat(64);
     const fakeHash = crypto.createHash("sha256").update(rawToken).digest("hex");
 
-    const baseRecord = {
+    // B791: built PER TEST. Built at collection time, its 60 s expiry would start when Jest
+    // COLLECTS the file, so a slow run (a loaded host, CI) executed the tests after their own
+    // fixture had expired.
+    const makeBaseRecord = () => ({
       id: "bprt-1",
       buyerAccountId: "buyer-1",
       tokenHash: fakeHash,
       expiresAt: new Date(Date.now() + 60_000),
       usedAt: null,
       createdAt: new Date(),
-    };
+    });
+    let baseRecord: ReturnType<typeof makeBaseRecord>;
+    beforeEach(() => {
+      baseRecord = makeBaseRecord();
+    });
 
     beforeEach(() => {
       (prisma.$transaction as jest.Mock).mockImplementation((ops: any[]) =>

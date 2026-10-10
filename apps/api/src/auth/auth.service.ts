@@ -16,6 +16,15 @@ import { EmailService } from "../email/email.service";
 import { AppConfig } from "../config/configuration";
 import { JwtPayload } from "./jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { escapeHtml } from "../common/html-escape";
+import {
+  DERIVED_JWT_AUDIENCES,
+  DERIVED_JWT_LABELS,
+  derivedJwtKey,
+} from "../common/derived-jwt-key";
+import { isLoginEligible, isSignInBlocked } from "./login-eligibility";
+import { mayUseVerificationLink, VERIFICATION_REFUSED } from "./verification-link-eligibility";
+import { hasForeignAudience, STAFF_ACCESS_AUDIENCE, STAFF_REFRESH_AUDIENCE } from "./session-token";
 
 export interface DeviceInfo {
   userAgent?: string;
@@ -26,6 +35,7 @@ export interface DeviceInfo {
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly emailVerifyKey: Buffer;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -34,7 +44,13 @@ export class AuthService {
     private readonly configService: ConfigService<AppConfig>,
     private readonly emailService: EmailService,
     private readonly entitlements: EntitlementsService,
-  ) {}
+  ) {
+    // Fails the boot on a missing or short secret (see derived-jwt-key.ts).
+    this.emailVerifyKey = derivedJwtKey(
+      DERIVED_JWT_LABELS.emailVerify,
+      configService.get<AppConfig["jwt"]>("jwt")?.secret ?? "",
+    );
+  }
 
   /**
    * Validate username + password.
@@ -60,12 +76,12 @@ export class AuthService {
       }
     }
 
-    if (!user || user.deletedAt !== null) return null;
-    // Account lockout: a locked account fails WITHOUT running bcrypt (no
+    // Deleted, or the account lockout: refused WITHOUT running bcrypt (no
     // timing oracle, no counter churn) and with the same null as any bad
     // credential — enumeration-safe. Time-based auto-unlock; TENANT_ADMIN can
-    // clear it early via POST /users/:id/unlock.
-    if (user.lockedUntil && user.lockedUntil > new Date()) return null;
+    // clear it early via POST /users/:id/unlock. The rule itself lives in
+    // login-eligibility.ts (one rule for every sign-in path, #2653).
+    if (!user || isSignInBlocked(user)) return null;
     // Google-only accounts have no password
     if (!user.password) return null;
     const valid = await bcrypt.compare(password, user.password);
@@ -97,7 +113,7 @@ export class AuthService {
     // gated safely without a schema discriminator (e.g. a nullable
     // `emailVerifiedAt` column or a distinct `PENDING_VERIFICATION` status) —
     // proposed as a follow-up, not built here.
-    if (user.status !== "ACTIVE") return null;
+    if (!isLoginEligible(user)) return null;
     if (user.failedLoginAttempts > 0 || user.lockedUntil) {
       await this.prisma.user.update({
         where: { id: user.id },
@@ -106,6 +122,20 @@ export class AuthService {
     }
     const { password: _pw, ...result } = user;
     return result;
+  }
+
+  /**
+   * #2159 S1: stamp `User.lastLoginAt` on every interactive session mint (password, Google,
+   * email-verification, set/change password) — the onboarding "admin / drivers have signed in"
+   * checks read it. Best-effort: a failed stamp never blocks a sign-in. Platform impersonation
+   * mints its own tokens elsewhere and deliberately does not come through here.
+   */
+  private async touchLastLogin(userId: string): Promise<void> {
+    try {
+      await this.prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
+    } catch (err) {
+      this.logger.warn(`lastLoginAt stamp failed for user ${userId}: ${(err as Error).message}`);
+    }
   }
 
   /** 10 consecutive failures → 15-minute lock. The per-IP login throttle
@@ -142,6 +172,7 @@ export class AuthService {
     if (!user.tenantId && user.role !== "SUPER_ADMIN") {
       throw new UnauthorizedException("Tenant not found");
     }
+    await this.touchLastLogin(user.id);
 
     // Fetch tenant slug if user belongs to a tenant
     let tenantSlug: string | null = null;
@@ -181,6 +212,7 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
 
@@ -188,7 +220,11 @@ export class AuthService {
       // F5-003: tag staff refresh tokens with a realm discriminator so a
       // buyer refresh token can never be replayed on the staff refresh path.
       { sub: user.id, type: "staff" },
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: STAFF_REFRESH_AUDIENCE,
+      },
     );
 
     // RF-228: new-device login notification (minimum viable security measure).
@@ -211,9 +247,9 @@ export class AuthService {
             to: (user as any).email as string,
             subject: "New login detected on your RouteFlow account",
             html: `<p>A new login was detected on your RouteFlow account.</p>
-                   <p><strong>Device:</strong> ${deviceName}</p>
-                   <p><strong>IP address:</strong> ${deviceInfo.ipAddress ?? "unknown"}</p>
-                   <p><strong>Time:</strong> ${loginTime}</p>
+                   <p><strong>Device:</strong> ${escapeHtml(deviceName)}</p>
+                   <p><strong>IP address:</strong> ${escapeHtml(deviceInfo.ipAddress ?? "unknown")}</p>
+                   <p><strong>Time:</strong> ${escapeHtml(loginTime)}</p>
                    <p>If this wasn't you, please contact support immediately and change your password.</p>`,
             // email-connect-google PR-3: a security notification must never leave from a
             // tenant's own connected mailbox/SMTP — platform sender only.
@@ -246,7 +282,7 @@ export class AuthService {
   async refresh(incomingToken: string, deviceInfo?: DeviceInfo) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
-    let payload: { sub: string; type?: string };
+    let payload: { sub: string; type?: string; aud?: unknown };
     try {
       payload = this.jwtService.verify(incomingToken, {
         secret: jwtConfig.refreshSecret,
@@ -261,6 +297,14 @@ export class AuthService {
     // (grace) so live sessions are never force-logged-out. Defense-in-depth on
     // top of the per-table hash lookup below.
     if (payload.type && payload.type !== "staff") {
+      throw new UnauthorizedException("Invalid or expired refresh token");
+    }
+    // A refresh token that names an audience must name this realm's; one with no `aud`
+    // (minted before audiences existed) is still accepted.
+    // Remove in PR-4a; strict refresh is safe only 30 days after deploy.
+    // The staff refresh path re-derives role and tenant from the database row; the audience
+    // does not separate platform-admin from tenant sessions.
+    if (hasForeignAudience(payload, STAFF_REFRESH_AUDIENCE)) {
       throw new UnauthorizedException("Invalid or expired refresh token");
     }
 
@@ -307,6 +351,7 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(newPayload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
 
@@ -320,7 +365,11 @@ export class AuthService {
       // (merging the two sessions); the compare-and-swap below would instead raise P2002
       // and 500 the refresh, which every client treats as a dead session.
       { sub: user.id, type: "staff", jti: crypto.randomUUID() },
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: STAFF_REFRESH_AUDIENCE,
+      },
     );
 
     // B155: rotate IN PLACE. The old code deleted the row and upserted a NEW one
@@ -426,13 +475,24 @@ export class AuthService {
   async verifyEmailAndLogin(token: string, deviceInfo?: DeviceInfo) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
-    let payload: { sub: string; type: string; tenantId: string };
+    let payload: { sub: string; type: string; tenantId: string; aud?: unknown };
     try {
-      payload = this.jwtService.verify(token, { secret: jwtConfig.secret });
+      payload = this.jwtService.verify(token, {
+        secret: this.emailVerifyKey,
+        audience: DERIVED_JWT_AUDIENCES.emailVerify,
+      });
     } catch {
-      throw new BadRequestException(
-        "Verification link is invalid or has expired. Please sign up again or request a new link.",
-      );
+      // Links issued before per-purpose keys were signed with the session secret and carry no
+      // audience; they stay valid for their own 24h and nothing else is accepted that way.
+      // remove in PR-4a (token audience required), added 2026-10-07
+      try {
+        payload = this.jwtService.verify(token, { secret: jwtConfig.secret });
+        if (payload.aud !== undefined) throw new Error("audience on a legacy-key token");
+      } catch {
+        throw new BadRequestException(
+          "Verification link is invalid or has expired. Please sign up again or request a new link.",
+        );
+      }
     }
 
     if (payload.type !== "email_verify") {
@@ -444,25 +504,35 @@ export class AuthService {
       throw new BadRequestException("Account not found.");
     }
 
-    // Already verified — still issue tokens so clicking the link twice works smoothly.
-    // X2 fix: only INACTIVE (the legitimate self-signup-pending-verification
-    // state) may transition to ACTIVE here. This token is a 24h-lived JWT
-    // signed at signup time — if an admin SUSPENDS the account within that
-    // window (e.g. for abuse, before the owner ever verified), the still-valid
-    // link must not silently un-suspend it. Any other non-ACTIVE status is a
-    // deliberate administrative decision this token was never meant to override.
-    if (user.status !== "ACTIVE" && user.status !== "INACTIVE") {
-      throw new BadRequestException(
-        "This account is not available. Contact support if you believe this is an error.",
-      );
+    // Only a signup admin that has never signed in may be activated by this link; every other
+    // account is refused with one coded, reason-free answer (see verification-link-eligibility).
+    if (!(await mayUseVerificationLink(this.prisma, user))) {
+      throw new BadRequestException({ ...VERIFICATION_REFUSED });
     }
-    const activeUser =
-      user.status === "ACTIVE"
-        ? user
-        : await this.prisma.user.update({
-            where: { id: user.id },
-            data: { status: "ACTIVE" },
-          });
+    // Claim the activation atomically (a second concurrent use loses) and record it in the same
+    // transaction, so a failed audit write rolls the activation back.
+    const claimed = await this.prisma.tenantTransaction(async (tx) => {
+      const res = await tx.user.updateMany({
+        where: { id: user.id, status: "INACTIVE", lastLoginAt: null },
+        data: { status: "ACTIVE" },
+      });
+      if (res.count !== 1) return false;
+      await tx.auditLog.create({
+        data: {
+          tenantId: user.tenantId ?? null,
+          userId: user.id,
+          action: "user.activate",
+          entityType: "User",
+          entityId: user.id,
+          meta: { reason: "email_verify" },
+        },
+      });
+      return true;
+    });
+    if (!claimed) {
+      throw new BadRequestException({ ...VERIFICATION_REFUSED });
+    }
+    const activeUser = { ...user, status: "ACTIVE" as const };
 
     const { password: _pw, ...safeUser } = activeUser;
     return this.login(safeUser, deviceInfo);
@@ -521,7 +591,7 @@ export class AuthService {
         subject: "Reset your RouteFlow password",
         html: `<p>Hi,</p>
 <p>We received a request to reset the password for your RouteFlow account.</p>
-<p><a href="${resetUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
+<p><a href="${escapeHtml(resetUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
 <p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
         // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
         senderClass: "platform",
@@ -654,8 +724,8 @@ export class AuthService {
           to: user.email,
           subject: "A password was set on your RouteFlow account",
           html: `<p>A password was just set on your RouteFlow account, which previously signed in with Google only.</p>
-                 <p><strong>Time:</strong> ${new Date().toUTCString()}</p>
-                 <p><strong>IP address:</strong> ${deviceInfo?.ipAddress ?? "unknown"}</p>
+                 <p><strong>Time:</strong> ${escapeHtml(new Date().toUTCString())}</p>
+                 <p><strong>IP address:</strong> ${escapeHtml(deviceInfo?.ipAddress ?? "unknown")}</p>
                  <p>You can now sign in with your username and this password as well as with Google. If this wasn't you, reset your password immediately and contact support.</p>`,
           // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
           senderClass: "platform",
@@ -677,6 +747,7 @@ export class AuthService {
    */
   private async mintSessionForUser(user: User, deviceInfo?: DeviceInfo) {
     await this.prisma.refreshToken.deleteMany({ where: { userId: user.id } });
+    await this.touchLastLogin(user.id);
 
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
@@ -708,12 +779,17 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
 
     const refreshToken = this.jwtService.sign(
       { sub: user.id, type: "staff" }, // F5-003: realm discriminator (force-refresh)
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: STAFF_REFRESH_AUDIENCE,
+      },
     );
 
     await this.storeRefreshToken(user.id, refreshToken, deviceInfo);

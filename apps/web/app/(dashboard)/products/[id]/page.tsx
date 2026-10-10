@@ -1,5 +1,6 @@
 "use client";
 
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -36,7 +37,6 @@ import {
   useProduct,
   useProducts,
   useUpdateProduct,
-  useDeleteProduct,
   useUploadProductImages,
   useDeleteProductImage,
   useCreateProduct,
@@ -55,7 +55,6 @@ import { tierLabel } from "@/lib/tier-label";
 import { unitsLabel } from "@/lib/stock-label";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DecimalInput } from "@/components/MoneyInput";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
 import { SubcategoryCombobox } from "@/components/SubcategoryCombobox";
@@ -66,40 +65,27 @@ import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
+import { ProductStockCostCard } from "./ProductStockCostCard";
+import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
+import { useReactivateFlow } from "./useReactivateFlow";
+import { useDeleteProductFlow } from "./useDeleteProductFlow";
+import { DeleteProductConfirm } from "./DeleteProductConfirm";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
+import { ProductInsightsExport } from "./ProductInsightsExport";
 import { ProductLabelsCard } from "./ProductLabelsCard";
+import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
-
-const COMMON_UNITS = [
-  "unit",
-  "each",
-  "case",
-  "box",
-  "bag",
-  "pack",
-  "dozen",
-  "pallet",
-  "kg",
-  "g",
-  "lb",
-  "oz",
-  "L",
-  "ml",
-  "tray",
-  "bottle",
-  "can",
-  "roll",
-  "sheet",
-];
+import { COMMON_UNITS } from "@/lib/common-units";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 type StockStatus = "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
 
-function getStockStatus(currentStock: number, isActive: boolean): StockStatus {
+function getStockStatus(currentStock: number, isActive: boolean, kind?: string): StockStatus {
+  if (kind === "FAMILY") return "IN_STOCK"; // a non-stocked container: no stock badge
   if (!isActive) return "OUT_OF_STOCK";
   if (currentStock <= 0) return "OUT_OF_STOCK";
   if (currentStock <= 5) return "LOW";
@@ -319,8 +305,9 @@ export default function ProductDetailPage() {
   const { data: allProductsResult } = useProducts({ limit: 0 });
   const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
+  const reactivateFlow = useReactivateFlow();
   const createProduct = useCreateProduct();
-  const deleteProduct = useDeleteProduct();
+  const deleteFlow = useDeleteProductFlow({ onDeleted: () => router.push("/products") });
   const uploadImages = useUploadProductImages(id);
   const deleteImage = useDeleteProductImage(id);
 
@@ -463,7 +450,7 @@ export default function ProductDetailPage() {
 
   const priceNumber = parseFloat(String(product.pricePerUnit));
   const currentStock = Number(product.currentStock ?? 0);
-  const stockStatus = getStockStatus(currentStock, product.isActive);
+  const stockStatus = getStockStatus(currentStock, product.isActive, product.kind);
 
   // MSRP — display-only, never money math. Warn (non-blocking) when it undercuts
   // the wholesale price expressed per PIECE (pricePerUnit / unitsPerBox), which is
@@ -576,7 +563,10 @@ export default function ProductDetailPage() {
         onError: (e: any) =>
           toast({
             title: "Failed to save product",
-            description: String(e?.response?.data?.message ?? "Check the fields and try again."),
+            // B964-2: a refused formula-led product / variant name is fixed copy with its label, never the server text
+            description:
+              safeTextErrorCopy(e) ??
+              String(e?.response?.data?.message ?? "Check the fields and try again."),
             variant: "error",
           }),
       },
@@ -590,22 +580,6 @@ export default function ProductDetailPage() {
   };
 
   // ── Delete (mirrors the mobile app's confirm → toast → navigate-back flow) ─
-  const handleDeleteProduct = async () => {
-    try {
-      await deleteProduct.mutateAsync(id);
-      toast({ title: "Product deleted", variant: "success" });
-      router.push("/products");
-    } catch (err: any) {
-      toast({
-        title: "Failed to delete product",
-        description: err?.response?.data?.message,
-        variant: "error",
-      });
-    } finally {
-      setShowDeleteConfirm(false);
-    }
-  };
-
   // ── Crop helpers ──────────────────────────────────────────────────────────
 
   /** Called by the drop zone / file input — opens the crop modal queue. */
@@ -794,16 +768,9 @@ export default function ProductDetailPage() {
 
   const handleToggleVariantActive = (variant: ApiProduct) => {
     if (variant.isActive) {
-      if (!window.confirm("Deactivate this variant?")) return;
-      updateProduct.mutate(
-        { id: variant.id, isActive: false },
-        { onSuccess: () => toast({ title: "Variant deactivated", variant: "success" }) },
-      );
+      reactivateFlow.askDeactivate(variant.id, variant.variantName ?? variant.name, "variant");
     } else {
-      updateProduct.mutate(
-        { id: variant.id, isActive: true },
-        { onSuccess: () => toast({ title: "Variant reactivated", variant: "success" }) },
-      );
+      reactivateFlow.start(variant.id, "variant");
     }
   };
 
@@ -1044,15 +1011,14 @@ export default function ProductDetailPage() {
           onSuccess={() => setShowVariantSplit(false)}
         />
       )}
-      <ConfirmDialog
+      {reactivateFlow.dialog}
+      {deleteFlow.dialog}
+      <DeleteProductConfirm
+        id={id}
+        name={product.name}
         open={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
-        onConfirm={handleDeleteProduct}
-        title="Delete product?"
-        description={`${product.name} will be deactivated and hidden from the catalog. Existing order and invoice history is preserved. Products with an in-flight (undelivered) order cannot be deleted.`}
-        confirmLabel="Yes, delete"
-        variant="danger"
-        loading={deleteProduct.isPending}
+        flow={deleteFlow}
       />
       <div className="space-y-5 p-6">
         {/* Back */}
@@ -1421,86 +1387,14 @@ export default function ProductDetailPage() {
               </div>
             </div>
 
-            <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-              <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                  Stock &amp; Cost
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setShowCostModal(true)}
-                  className="text-xs font-medium text-brand-600 transition-colors hover:underline"
-                >
-                  Set cost
-                </button>
-              </div>
-              <div className="px-4">
-                <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
-                  <span className="text-navy/70">Stock status</span>
-                  {stockStatus === "OUT_OF_STOCK" ? (
-                    <Badge variant="danger" label="Out of Stock" />
-                  ) : stockStatus === "LOW" ? (
-                    <Badge variant="warning" label="Low Stock" />
-                  ) : (
-                    <Badge variant="success" label="In Stock" />
-                  )}
-                </div>
-                <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
-                  <span className="text-navy/70">On hand</span>
-                  <span className="font-mono font-medium tabular-nums text-navy">
-                    {unitsLabel(currentStock, product.unitsPerBox, product.unit)}
-                  </span>
-                </div>
-                {!product.parentProductId && (product.variants?.length ?? 0) > 0 && (
-                  <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
-                    <span
-                      className="text-navy/70"
-                      title="Stock on this generic not yet attributed to a variant"
-                    >
-                      Unassigned stock
-                    </span>
-                    <span className="font-mono font-medium tabular-nums text-navy">
-                      {unitsLabel(currentStock, product.unitsPerBox, product.unit)}
-                    </span>
-                  </div>
-                )}
-                <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
-                  <span className="text-navy/70">Waitlist</span>
-                  <span
-                    className={
-                      (product.stockAlertCount ?? 0) > 0
-                        ? "font-mono font-medium tabular-nums text-amber-700"
-                        : "font-mono font-medium tabular-nums text-navy/50"
-                    }
-                  >
-                    {product.stockAlertCount ?? 0} waiting for restock
-                  </span>
-                </div>
-                <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
-                  <span className="text-navy/70">Avg cost</span>
-                  {product.averageCost != null ? (
-                    <span className="font-mono font-medium tabular-nums text-navy">
-                      ${parseFloat(String(product.averageCost)).toFixed(2)}
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setShowCostModal(true)}
-                      title="No cost basis recorded — click to set one"
-                      className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-200"
-                    >
-                      No cost set
-                    </button>
-                  )}
-                </div>
-                <Link
-                  href={`/inventory/movements?product=${product.id}`}
-                  className="block py-3 text-xs font-semibold text-brand-600 hover:underline"
-                >
-                  View stock movements →
-                </Link>
-              </div>
-            </div>
+            {product.kind !== "FAMILY" && (
+              <ProductStockCostCard
+                product={product}
+                stockStatus={stockStatus}
+                currentStock={currentStock}
+                onSetCost={() => setShowCostModal(true)}
+              />
+            )}
           </div>
 
           {/* ── Right: details + chart ── */}
@@ -1545,7 +1439,7 @@ export default function ProductDetailPage() {
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
-                      {isOperator && !product.parentProductId && (
+                      {isOperator && !product.parentProductId && product.kind !== "FAMILY" && (
                         <Button
                           size="sm"
                           variant="secondary"
@@ -1559,9 +1453,11 @@ export default function ProductDetailPage() {
                         size="sm"
                         variant="secondary"
                         onClick={() =>
-                          updateProduct.mutate({ id: id, isActive: !product.isActive })
+                          product.isActive
+                            ? reactivateFlow.askDeactivate(id, product.name)
+                            : reactivateFlow.start(id)
                         }
-                        loading={updateProduct.isPending}
+                        loading={reactivateFlow.isPending}
                       >
                         {product.isActive ? "Deactivate" : "Activate"}
                       </Button>
@@ -2395,6 +2291,7 @@ export default function ProductDetailPage() {
             )}
 
             <ProductLabelsCard productId={product.id} />
+            <ProductPortalVisibilityCard product={product} />
             <ProductUnitsCard product={product} />
 
             {/* Sales demand — real data from invoiced sales. In its own file (unlike
@@ -2405,12 +2302,17 @@ export default function ProductDetailPage() {
             {/* Sales — per-buyer invoiced-sale history (PR-B): who bought this,
                 when, and at what price, with min/avg/max price summary chips. */}
             <SalesHistoryCard productId={product.id} />
+            <ProductInsightsExport productId={product.id} sku={product.sku ?? product.id} />
 
             {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}
             <CostHistoryCard productId={product.id} />
 
+            {product.kind === "FAMILY" && (
+              <FamilyVariantsEditor familyId={product.id} variants={product.variants ?? []} />
+            )}
+
             {/* Variants section — only for non-variant (parent) products */}
-            {!product.parentProductId && (
+            {!product.parentProductId && product.kind !== "FAMILY" && (
               <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5">
                   <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">

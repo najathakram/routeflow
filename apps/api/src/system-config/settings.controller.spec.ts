@@ -207,4 +207,79 @@ describe("SettingsController — GET/PATCH /settings/invoice deposit policy", ()
     expect(svc.set).not.toHaveBeenCalledWith("invoice.depositDefaultPercent", expect.anything());
     expect(svc.set).not.toHaveBeenCalledWith("invoice.depositCollectAtOrder", expect.anything());
   });
+  // SA-436 (#2401): the send-time credit sweep switch lives on TenantConfig, OFF by default.
+  it("GET reports creditAutoApplyOnSend false when the tenant has no config row", async () => {
+    prisma.tenantConfig.findUnique.mockResolvedValue(null);
+    const result = await controller.getInvoiceSettings();
+    expect(result.creditAutoApplyOnSend).toBe(false);
+  });
+
+  it("PATCH {creditAutoApplyOnSend:true} upserts TenantConfig and GET reads it back", async () => {
+    prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: true } as any);
+    const result = await controller.updateInvoiceSettings({ creditAutoApplyOnSend: true });
+    expect(prisma.tenantConfig.upsert).toHaveBeenCalledWith({
+      where: { tenantId: "test-tenant" },
+      create: { tenantId: "test-tenant", creditAutoApplyOnSend: true },
+      update: { creditAutoApplyOnSend: true },
+    });
+    expect(result.creditAutoApplyOnSend).toBe(true);
+  });
+
+  it("PATCH without creditAutoApplyOnSend never writes TenantConfig", async () => {
+    await controller.updateInvoiceSettings({ defaultTerms: "Net 15" });
+    expect(prisma.tenantConfig.upsert).not.toHaveBeenCalled();
+  });
+});
+
+// B1188: the Settings "Save Numbering" button used to PATCH invoicePrefix / paymentDueDays here,
+// where neither is stored — accepted (200) and silently dropped. They now 400 with a pointer to
+// the real stores (PUT /import/numbering/INVOICE and PATCH /settings/invoice defaultTerms), and
+// NOTHING in the same body is written (no half-applied save).
+describe("SettingsController — PATCH /settings refuses invoicePrefix / paymentDueDays (B1188)", () => {
+  let controller: SettingsController;
+  let svc: { get: jest.Mock; set: jest.Mock; getAll: jest.Mock };
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    prisma.tenantConfig.upsert = jest.fn().mockResolvedValue({});
+    svc = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+      getAll: jest.fn().mockResolvedValue({}),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [SettingsController],
+      providers: [
+        { provide: SystemConfigService, useValue: svc },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: PrismaService, useValue: prisma },
+        { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+      ],
+    }).compile();
+    controller = module.get<SettingsController>(SettingsController);
+  });
+
+  it.each([
+    ["invoicePrefix", "INV-", /import\/numbering|Invoice Numbering/i],
+    ["paymentDueDays", "30", /settings\/invoice|payment terms/i],
+  ])("400s %s with a message naming the real store", async (key, value, message) => {
+    await expect(controller.updateSettings({ [key]: value })).rejects.toThrow(message);
+    await expect(controller.updateSettings({ [key]: value })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it("writes nothing from the same body when one of the refused keys is present", async () => {
+    await expect(
+      controller.updateSettings({ taxRate: 8, invoiceNotes: "hi", invoicePrefix: "X-" }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(svc.set).not.toHaveBeenCalled();
+    expect(prisma.tenantConfig.upsert).not.toHaveBeenCalled();
+  });
+
+  it("still accepts invoiceNotes / invoiceTerms (control)", async () => {
+    await controller.updateSettings({ invoiceNotes: "n", invoiceTerms: "t" });
+    expect(prisma.tenantConfig.upsert).toHaveBeenCalled();
+  });
 });

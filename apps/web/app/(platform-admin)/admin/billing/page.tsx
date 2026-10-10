@@ -6,6 +6,7 @@ import { superAdminClient } from "@/lib/admin-api";
 import { AdminStatCard } from "../../_components/AdminStatCard";
 import { AdminBadge } from "../../_components/AdminBadge";
 import { AdminCard } from "../../_components/AdminCard";
+import { DisabledHint } from "../../_components/DisabledHint";
 import { CreditCard, Users, AlertTriangle, TrendingUp, Download, Search } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -96,7 +97,10 @@ export default function BillingPage() {
   if (error)
     return (
       <div className="p-6">
-        <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
+        <div
+          role="alert"
+          className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700"
+        >
           {error}
         </div>
       </div>
@@ -173,11 +177,19 @@ export default function BillingPage() {
         <button
           onClick={exportCsv}
           disabled={filtered.length === 0}
+          aria-describedby={filtered.length === 0 ? "export-csv-hint" : undefined}
           className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Download className="h-4 w-4" />
           Export CSV
         </button>
+        <DisabledHint
+          id="export-csv-hint"
+          show={filtered.length === 0}
+          className="basis-full text-right text-xs text-slate-400"
+        >
+          No subscriptions match the current filters, so there is nothing to export.
+        </DisabledHint>
       </div>
 
       {/* Summary Cards */}

@@ -4,7 +4,7 @@ import * as React from "react";
 import { Plus, X } from "lucide-react";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
-import { resolvePOLine, resolvePOLineAmounts } from "./purchase-orders-shared";
+import { linePack, resolvePOLine, resolvePOLineAmounts } from "./purchase-orders-shared";
 import { emptyEditLine, type EditLine } from "./purchase-orders-edit";
 
 export type CatalogProduct = {
@@ -63,7 +63,7 @@ export function PurchaseOrderLinesTable({
   const removeLine = (i: number) => setLines((l) => l.filter((_, idx) => idx !== i));
 
   const total = lines.reduce(
-    (sum, l) => sum + resolvePOLineAmounts(l, unitsPerBoxFor(l.productId)).totalCost,
+    (sum, l) => sum + resolvePOLineAmounts(l, linePack(l, unitsPerBoxFor(l.productId))).totalCost,
     0,
   );
 
@@ -105,7 +105,7 @@ export function PurchaseOrderLinesTable({
         </div>
         <div role="rowgroup" className="divide-y divide-surface-border">
           {lines.map((line, i) => {
-            const upb = unitsPerBoxFor(line.productId);
+            const upb = linePack(line, unitsPerBoxFor(line.productId)); // B699: stored pack wins
             const isBoxed = upb > 1;
             const locked = received && !!line.id && line.received > 0;
             const { qty } = resolvePOLine(line, upb);
@@ -121,7 +121,7 @@ export function PurchaseOrderLinesTable({
                     aria-label="Product"
                     value={line.productId}
                     disabled={locked}
-                    onChange={(e) => updateLine(i, { productId: e.target.value })}
+                    onChange={(e) => updateLine(i, { productId: e.target.value, packSize: null })}
                     className={inputCls}
                   >
                     <option value="">Select…</option>

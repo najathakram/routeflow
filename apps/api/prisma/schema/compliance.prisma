@@ -97,11 +97,16 @@ enum LedgerEntryType {
   REVERSAL
 }
 
-/// A regulated filing is either successfully GENERATED (artifacts stored) or a
-/// FAILED attempt (recorded so the tenant still sees it in their filing list).
+/// A regulated filing is either successfully GENERATED (artifacts stored), a
+/// FAILED attempt (recorded so the tenant still sees it in their filing list), or
+/// LOCKED (B297/SA-088): an explicit tenant-admin action that closes the
+/// (tenant, category, periodKey) triple — `prepareFiling` never regenerates a
+/// LOCKED filing, and edits to a line whose sale falls in a locked period are
+/// refused. Locking is one-way in this work; there is no unlock endpoint yet.
 enum RegulatedFilingStatus {
   GENERATED
   FAILED
+  LOCKED
 }
 
 /// A tenant-defined class of items handled separately for sales/tax/reporting
@@ -333,6 +338,7 @@ model RegulatedLedgerParkedReversal {
   resolvedById        String?
   unitsPerBoxSupplied Int? // the split the operator supplied (Int, like Product.unitsPerBox)
   resolvedEntryId     String? // the REVERSAL row the resolution booked
+  resolvedReason      String? // the operator's own resolve-time reason (distinct from `reason`, the PARK reason)
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -392,6 +398,12 @@ model RegulatedFiling {
   errorMessage      String?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
+  // B297 (SA-088) LOCKED filing (D4): set together, only by the lock endpoint, only
+  // once (no unlock in this work). A filing may be locked only when GENERATED, its
+  // periodEnd <= now (a running period never locks), and it has no parked reversals.
+  lockedAt          DateTime?
+  lockedById        String?
+  lockReason        String?
 
   tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   trackedCategory TrackedCategory @relation(fields: [trackedCategoryId], references: [id], onDelete: Restrict)

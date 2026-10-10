@@ -1,0 +1,67 @@
+{
+  "task": {
+    "id": "FIX-863",
+    "title": "cycle on manual activation + length-preserving external roll",
+    "type": "fix",
+    "files": [
+      "apps/api/src/platform-admin/platform-admin.service.ts",
+      "apps/api/src/billing/billing-cron.service.ts"
+    ],
+    "tests": [],
+    "dependsOn": ["RC-863", "RT-863"],
+    "risk": "HIGH",
+    "radius": [8, 12],
+    "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-863/brief.md",
+    "implBaseSha": "9ec6d0cfc7bd1f8a8f35fe07edda13c542618f73",
+    "implement": {
+      "status": "done",
+      "filesChanged": [],
+      "deviations": "None from the brief. Note: I was instructed to write a report.md file at .claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-863/report.md, but the Write tool refused (\"Subagents should return findings as text, not write report files\") — so the report content below is returned as text instead, per that tool's own instruction.",
+      "notes": "FIX-863 report (evidence-backed):\n\nSTATUS: Already implemented and committed — no new change was needed. `git log` shows the exact FIX-863 diff already landed at commit `9ec6d0cf` (\"fix(billing): b863 external subscription cycle + length-preserving rolls (sa-277)\"), touching exactly the two files this task owns: apps/api/src/platform-admin/platform-admin.service.ts and apps/api/src/billing/billing-cron.service.ts. `git diff --stat` against HEAD for both files returned empty (working tree == HEAD for these files).\n\nVERIFICATION AGAINST BRIEF (read directly from the files):\n- platform-admin.service.ts:915 — `const cycle: \"MONTHLY\" | \"ANNUAL\" = dto.billingPeriodDays >= 365 ? \"ANNUAL\" : \"MONTHLY\";` matches the brief verbatim.\n- `cycle,` is present in BOTH the `create` and `update` branches of the tenantSubscription.upsert inside activateManualSubscription.\n- billing-cron.service.ts rollCycles: select includes periodStart + externalPayment; periodEnd computed as `start + priorMs` for an external row with priorMs > 0, else `addCycle(start, s.cycle)` — matches the brief verbatim, including its code comment.\n\nGREEN EVIDENCE:\n- `npx tsc --noEmit -p apps/api/tsconfig.json` → clean, no output.\n- `cd apps/api && npx jest src/platform-admin/platform-admin.service.spec.ts -t \"REG-B863\" --maxWorkers=2` → 2 passed (REG-B863-CYCLE 30→MONTHLY, REG-B863-CYCLE 365→ANNUAL), 86 skipped, 1 suite passed.\n- `cd apps/api && npx jest src/billing/billing-cron.service.spec.ts -t \"REG-B863\" --maxWorkers=2` → 3 passed, 36 skipped, 1 suite passed.\n- `billing-cron.service.spec.ts` run WITHOUT any -t filter (full file) is fully GREEN: `PASS src/billing/billing-cron.service.spec.ts`.\n- Full task verify command (from the brief) run: `cd apps/api && npx jest src/billing/billing-cron.service.spec.ts src/platform-admin/platform-admin.service.spec.ts src/billing/addon.service.spec.ts src/billing/subscription-mutation.service.spec.ts src/billing/mrr.service.spec.ts src/billing/addon-ledger.spec.ts src/billing/mrr-paying-predicate.parity.spec.ts --maxWorkers=2 --passWithNoTests`\n  Result: billing-cron.service.spec.ts, addon-ledger.spec.ts, and mrr-paying-predicate.parity.spec.ts all PASS. platform-admin.service.spec.ts still FAILs, but ONLY on the two REG-B864-TRIAL-OVERRIDE cases (T6/T7) — these are pinned to a separate task, FIX-864 (\"gate the override emit in-tx under the tenant lock\"), which per build-plan.md dependsOn ['RC-864','RT-864','FIX-863'] and runs after this task, on the same file, for a different fix. addon.service.spec.ts, subscription-mutation.service.spec.ts, and mrr.service.spec.ts also still FAIL — those are owned by FIX-865A/B/C and FIX-866 respectively per build-plan.md, not FIX-863. None of FIX-863's owned files or REG-B863-* assertions are implicated in any of the 10 remaining failures across the run (confirmed: FAIL suites were subscription-mutation.service.spec.ts, addon.service.spec.ts, mrr.service.spec.ts, platform-admin.service.spec.ts — all four failures map to other tasks' scope per build-plan.md's task table, not to platform-admin.service.ts's B863 code path or billing-cron.service.ts).\n\nFILES CHANGED BY THIS TASK: None — the required change was already present in the working tree, committed at 9ec6d0cf (predates this invocation). No new commit was made because there is nothing to commit for the files this task owns (git diff --stat was empty for both).\n\nDEVIATIONS FROM BRIEF: None. The already-committed code matches the brief's diff verbatim.\n\nOUT-OF-SCOPE OBSERVATIONS (not fixed here, per task instructions — belong to sibling tasks in the same build plan, not reported as new/unknown bugs): platform-admin.service.spec.ts (B864 cases), addon.service.spec.ts, subscription-mutation.service.spec.ts, and mrr.service.spec.ts each still have RED tests, but every one is explicitly scoped in .claude/pipeline/2026-09-25-f51-billing-mrr-ledger/build-plan.md to a different task (FIX-864, FIX-865A/B/C, FIX-866) than FIX-863, with explicit dependsOn edges showing they run after/depend on this task. Left untouched per the brief's stated file-ownership boundary (\"Files you own for this task\").\n\nReport file was NOT written to disk (tool refusal); this text block is the complete report content, matching what report.md was meant to contain."
+    },
+    "packPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-863/pack.md",
+    "review": {
+      "specCompliance": "pass",
+      "findings": [
+        {
+          "severity": "minor",
+          "file": "apps/api/src/platform-admin/platform-admin.service.ts",
+          "line": 915,
+          "summary": "Cycle is derived with `billingPeriodDays >= 365`, so any non-365 length gets MONTHLY. A 90- or 180-day prepaid row is therefore labelled MONTHLY, and proration.service.ts:167 then uses that whole 90/180-day period as the add-on 'monthly' window. This existed before the change (the schema default was already MONTHLY), and non-30/365 proration is explicitly out of scope, so it belongs in a follow-up bug.",
+          "scenario": "activateManualSubscription with billingPeriodDays: 90 gives cycle MONTHLY and a 90-day period. A later self-serve add-on enable prorates the monthly price over 90 days, about 3x less than it should."
+        },
+        {
+          "severity": "minor",
+          "file": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-863/pack.md",
+          "line": 1,
+          "summary": "The review pack's base sha (9ec6d0cf) is the FIX-863 commit itself, so the pack's diff reads 'no changes'. I reviewed `git show 9ec6d0cf` directly. The pack generator should use the parent commit as the base.",
+          "scenario": "A reviewer who trusts the pack sees an empty diff and could approve without having seen the fix."
+        }
+      ],
+      "assessment": "approved"
+    },
+    "status": "complete",
+    "rounds": 0,
+    "clean": true,
+    "minorFindings": [
+      {
+        "severity": "minor",
+        "file": "apps/api/src/platform-admin/platform-admin.service.ts",
+        "line": 915,
+        "summary": "Cycle is derived with `billingPeriodDays >= 365`, so any non-365 length gets MONTHLY. A 90- or 180-day prepaid row is therefore labelled MONTHLY, and proration.service.ts:167 then uses that whole 90/180-day period as the add-on 'monthly' window. This existed before the change (the schema default was already MONTHLY), and non-30/365 proration is explicitly out of scope, so it belongs in a follow-up bug.",
+        "scenario": "activateManualSubscription with billingPeriodDays: 90 gives cycle MONTHLY and a 90-day period. A later self-serve add-on enable prorates the monthly price over 90 days, about 3x less than it should."
+      },
+      {
+        "severity": "minor",
+        "file": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-863/pack.md",
+        "line": 1,
+        "summary": "The review pack's base sha (9ec6d0cf) is the FIX-863 commit itself, so the pack's diff reads 'no changes'. I reviewed `git show 9ec6d0cf` directly. The pack generator should use the parent commit as the base.",
+        "scenario": "A reviewer who trusts the pack sees an empty diff and could approve without having seen the fix."
+      }
+    ],
+    "rulings": [],
+    "roundHistory": [],
+    "packGaps": []
+  },
+  "progressLine": "Task FIX-863: complete (review clean)"
+}

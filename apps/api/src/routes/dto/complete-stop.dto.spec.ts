@@ -61,3 +61,36 @@ describe("CompleteWithPaymentDto — deliveries[].productId whitelisting (T-B148
     expect(flagged).not.toContain("productId");
   });
 });
+
+describe("RunDeliveryDto.type — only real MutationType values (SA-346)", () => {
+  const OPTS = { whitelist: true, forbidNonWhitelisted: true };
+  const errorsFor = (type: string) =>
+    validateSync(
+      plainToInstance(CompleteWithPaymentDto, {
+        deliveries: [{ orderItemId: "oi-1", type, quantityDelivered: 1 }],
+      }),
+      OPTS,
+    );
+  const typeErrors = (errors: ValidationError[]): string[] => {
+    const out: string[] = [];
+    for (const e of errors) {
+      if (e.property === "type" && e.constraints) out.push(...Object.keys(e.constraints));
+      if (e.children?.length) out.push(...typeErrors(e.children));
+    }
+    return out;
+  };
+
+  it.each(["DELIVERED", "PARTIAL", "REFUSED", "ADD_ON", "SUBSTITUTED"])(
+    "accepts the real MutationType %s",
+    (type) => {
+      expect(typeErrors(errorsFor(type))).toEqual([]);
+    },
+  );
+
+  it.each(["SHORT", "delivered", "", "BOGUS"])(
+    "rejects %p (it used to reach Prisma's enum and 500 mid-transaction)",
+    (type) => {
+      expect(typeErrors(errorsFor(type))).toContain("isIn");
+    },
+  );
+});

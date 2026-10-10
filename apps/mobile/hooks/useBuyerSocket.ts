@@ -127,8 +127,9 @@ export function useBuyerSocket() {
         void qc.invalidateQueries({ queryKey: ["buyer-statement"] });
       });
 
-      socket.on("inventory.low.stock", () => {
-        void qc.invalidateQueries({ queryKey: ["buyer-products"] });
+      // #2095: the run carrying a delivery moved (`{ runId }` only) — refetch the tracking card.
+      socket.on("route.progress", () => {
+        void qc.invalidateQueries({ queryKey: ["buyer-order-tracking"] });
       });
 
       socket.on("creditNote.created", () => {

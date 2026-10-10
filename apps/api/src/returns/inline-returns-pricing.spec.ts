@@ -4,9 +4,11 @@
  */
 import {
   allocateReturnedPieces,
-  priceManualChunk,
+  applyCreditOverride,
+  CREDIT_OVERRIDE_EQUAL_TOLERANCE,
   priceMatchedChunk,
   priceUnreferencedChunk,
+  resolveReturnPackFactor,
   returnRequestPieces,
   totalChunks,
   type CandidateInvoiceLine,
@@ -164,6 +166,61 @@ describe("returnRequestPieces", () => {
   });
 });
 
+describe("resolveReturnPackFactor — SA-101(2)/B3/B765 interim guard", () => {
+  it("a single candidate pack is used — the sound case, no conflict", () => {
+    expect(resolveReturnPackFactor([12], null)).toEqual({ factor: 12, conflictingPacks: null });
+  });
+
+  it("packs 12 and 4 disagree — reports the conflict, ascending, no usable factor", () => {
+    expect(resolveReturnPackFactor([12, 4], null)).toEqual({
+      factor: null,
+      conflictingPacks: [4, 12],
+    });
+  });
+
+  it("the same pack repeated across multiple lines is NOT a conflict", () => {
+    expect(resolveReturnPackFactor([12, 12, 12], null)).toEqual({
+      factor: 12,
+      conflictingPacks: null,
+    });
+  });
+
+  it("no candidate lines at all falls back to the product's own unitsPerBox", () => {
+    expect(resolveReturnPackFactor([], 6)).toEqual({ factor: 6, conflictingPacks: null });
+  });
+
+  it("no candidates AND no product unitsPerBox: a null factor — the caller must refuse before using it as a boxed multiplier", () => {
+    expect(resolveReturnPackFactor([], null)).toEqual({ factor: null, conflictingPacks: null });
+  });
+
+  it("null/undefined/zero entries among the candidates are ignored, not counted as a distinct pack", () => {
+    expect(resolveReturnPackFactor([null, undefined, 0, 12], null)).toEqual({
+      factor: 12,
+      conflictingPacks: null,
+    });
+  });
+
+  // SA-108 (R-029): a pack of exactly 1 means "no packaging" — the same convention
+  // isBoxedProduct/ResolveParkedRestockDto use — never a competing distinct pack claim.
+  it("a pack of 1 is ignored too, exactly like null/undefined/zero — never a distinct pack", () => {
+    expect(resolveReturnPackFactor([1, 1, 1], null)).toEqual({
+      factor: null,
+      conflictingPacks: null,
+    });
+  });
+
+  it("packs 1 and 12 do NOT conflict — 1 means no packaging, 12 wins as the real pack", () => {
+    expect(resolveReturnPackFactor([1, 12], null)).toEqual({ factor: 12, conflictingPacks: null });
+  });
+
+  it("packs 1 and 12 and 4 STILL conflict on the two real packs — the 1 just drops out", () => {
+    expect(resolveReturnPackFactor([1, 12, 4], null)).toEqual({
+      factor: null,
+      conflictingPacks: [4, 12],
+    });
+  });
+});
+
 describe("allocateReturnedPieces", () => {
   it("allocates newest order first, then the unallocated remainder as the over-return chunk", () => {
     const newer = line({ sourceOrderId: "order-newer", qty: 10, unitPrice: 5, subtotal: 50 });
@@ -217,7 +274,7 @@ describe("allocateReturnedPieces", () => {
   });
 });
 
-describe("priceUnreferencedChunk / priceManualChunk", () => {
+describe("priceUnreferencedChunk", () => {
   it("unreferenced tier price, taxed", () => {
     const priced = priceUnreferencedChunk(
       "prod-1",
@@ -230,20 +287,6 @@ describe("priceUnreferencedChunk / priceManualChunk", () => {
     expect(priced.taxAmount).toBe(2.4);
     expect(priced.priceSource).toBe("TIER");
     expect(priced.sourceOrderId).toBeNull();
-  });
-
-  it("manual override keeps the reason and overriddenBy for audit", () => {
-    const priced = priceManualChunk(
-      "prod-1",
-      2,
-      { unitPrice: 15, reason: "damaged, priced below list", overriddenBy: "user-1" },
-      0,
-      false,
-    );
-    expect(priced.subtotal).toBe(30.0);
-    expect(priced.priceSource).toBe("MANUAL");
-    expect(priced.overrideReason).toBe("damaged, priced below list");
-    expect(priced.overriddenBy).toBe("user-1");
   });
 
   it("Opus fix-round BLOCKER: a boxed unreferenced return prices via the SELLING-UNIT (box) rate, never unitPrice x pieces (revert $288.00)", () => {
@@ -260,17 +303,131 @@ describe("priceUnreferencedChunk / priceManualChunk", () => {
     // rate, crediting 24 * 12 = $288.00 for what should be exactly one box.
     expect(priced.subtotal).not.toBe(288.0);
   });
+});
 
-  it("Opus fix-round BLOCKER: a boxed manual override prices via the SELLING-UNIT (box) rate too", () => {
-    const priced = priceManualChunk(
+describe("applyCreditOverride (#2695, SA-557: lower-only staff credit price)", () => {
+  const WHO = { reason: "damaged in transit", overriddenBy: "user-op-1" };
+  // A matched chunk: 4 pieces of a $10/piece line, 8% snapshot, $1.20 excise carried.
+  const matched = priceMatchedChunk(
+    line({
+      qty: 10,
+      unitPrice: 10,
+      subtotal: 100,
+      taxRate: 0.08,
+      invoiceTaxAmount: 8,
+      categoryTax: 3,
+    }),
+    4,
+    false,
+  );
+  const matchedBasis = { unitsPerBox: null, taxRate: 0.08, taxExempt: false };
+
+  it("fixture sanity: the default matched chunk is $40.00 / $3.20 tax / $1.20 excise", () => {
+    expect([matched.subtotal, matched.taxAmount, matched.categoryTax]).toEqual([40, 3.2, 1.2]);
+  });
+
+  it("an override EQUAL to the default (within the tolerance) is not an override: the default chunk untouched", () => {
+    for (const p of [
+      10,
+      10 + CREDIT_OVERRIDE_EQUAL_TOLERANCE,
+      10 - CREDIT_OVERRIDE_EQUAL_TOLERANCE,
+    ]) {
+      const r = applyCreditOverride(matched, { unitPrice: p, ...WHO }, matchedBasis);
+      expect(r).toEqual({ overCap: false, chunk: matched });
+      if (!r.overCap) expect(r.chunk).toBe(matched); // same object: no MANUAL, no audit fields
+    }
+  });
+
+  it("an override BELOW the default rescales subtotal and tax, carries excise and source ids, and records the default replaced", () => {
+    const r = applyCreditOverride(matched, { unitPrice: 7.5, ...WHO }, matchedBasis);
+    expect(r.overCap).toBe(false);
+    if (r.overCap) return;
+    expect(r.chunk).toEqual({
+      ...matched,
+      subtotal: 30, // 4 x $7.50 (revert: $40.00)
+      taxAmount: 2.4, // $30 x 8% snapshot (revert: $3.20)
+      categoryTax: 1.2, // CARRIED (revert of the old manual path: $0.00)
+      priceSource: "MANUAL",
+      unitPrice: 7.5,
+      originalPrice: 10, // the DEFAULT replaced (the old manual path stored the override: 7.5)
+      overrideReason: "damaged in transit",
+      overriddenBy: "user-op-1",
+    });
+    expect(r.chunk.sourceInvoiceItemId).toBe("item-1");
+  });
+
+  it("an override ABOVE the default is over the cap (no uncapped path)", () => {
+    expect(applyCreditOverride(matched, { unitPrice: 10.01, ...WHO }, matchedBasis)).toEqual({
+      overCap: true,
+      defaultUnitPrice: 10,
+    });
+  });
+
+  it("zero is a valid override (a no-credit return), still MANUAL and audited", () => {
+    const r = applyCreditOverride(matched, { unitPrice: 0, ...WHO }, matchedBasis);
+    expect(r.overCap).toBe(false);
+    if (!r.overCap) {
+      expect([r.chunk.subtotal, r.chunk.taxAmount, r.chunk.priceSource]).toEqual([0, 0, "MANUAL"]);
+    }
+  });
+
+  it("a boxed chunk compares and prices per SELLING unit via computeLineSubtotal (1 box + 6 pieces at $18/box = $27.00, revert $324.00)", () => {
+    const boxed = priceUnreferencedChunk(
       "prod-1",
-      12,
-      { unitPrice: 24, reason: "damaged", overriddenBy: "user-1", unitsPerBox: 12 },
-      0,
+      18,
+      { unitPrice: 24, source: "TIER", unitsPerBox: 12 },
+      0.05,
       false,
     );
-    expect(priced.subtotal).toBe(24.0);
-    expect(priced.subtotal).not.toBe(288.0);
+    expect(boxed.subtotal).toBe(36); // 1.5 boxes at $24
+    const r = applyCreditOverride(
+      boxed,
+      { unitPrice: 18, ...WHO },
+      { unitsPerBox: 12, taxRate: 0.05, taxExempt: false },
+    );
+    expect(r.overCap).toBe(false);
+    if (r.overCap) return;
+    expect(r.chunk.subtotal).toBe(27);
+    expect(r.chunk.subtotal).not.toBe(324);
+    expect(r.chunk.taxAmount).toBe(1.35); // the replaced chunk's quote rate
+    expect(r.chunk.originalPrice).toBe(24);
+    // $24.50/box is above the $24 box default: over the cap even though it is < $36 total.
+    expect(
+      applyCreditOverride(
+        boxed,
+        { unitPrice: 24.5, ...WHO },
+        { unitsPerBox: 12, taxRate: 0.05, taxExempt: false },
+      ).overCap,
+    ).toBe(true);
+  });
+
+  it("an exempt basis (a no-tax invoice, or an exempt customer) credits $0.00 tax on the override", () => {
+    const r = applyCreditOverride(
+      matched,
+      { unitPrice: 5, ...WHO },
+      { ...matchedBasis, taxExempt: true },
+    );
+    expect(r.overCap).toBe(false);
+    if (!r.overCap) expect([r.chunk.subtotal, r.chunk.taxAmount]).toEqual([20, 0]);
+  });
+
+  it("a matched line's DISCOUNTED net price is the cap, not its list price", () => {
+    // $100 line on a $100 invoice with a $20 discount: 4 pieces default to $32.00 ($8.00 net each).
+    const net = priceMatchedChunk(
+      line({ qty: 10, unitPrice: 10, subtotal: 100, invoiceSubtotal: 100, invoiceDiscount: 20 }),
+      4,
+      false,
+    );
+    expect(net.subtotal).toBe(32);
+    const basis = { unitsPerBox: null, taxRate: 0, taxExempt: false };
+    expect(applyCreditOverride(net, { unitPrice: 9, ...WHO }, basis)).toEqual({
+      overCap: true,
+      defaultUnitPrice: 8,
+    });
+    expect(applyCreditOverride(net, { unitPrice: 8, ...WHO }, basis)).toEqual({
+      overCap: false,
+      chunk: net,
+    });
   });
 });
 

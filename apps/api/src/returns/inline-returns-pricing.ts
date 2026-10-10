@@ -10,13 +10,13 @@
  *
  * Money discipline: every returned subtotal/tax figure is rounded via {@link roundMoney}
  * from `@routeflow/pricing`; the line-subtotal proration itself goes through
- * {@link prorateLineSubtotal} — never re-derived here — so this stays consistent with
- * every other partial-quantity money computation in the codebase.
+ * {@link creditedThrough} (B894/SA-576: a credit is a LINEAR slice of the billed line, additive
+ * across slices) — never re-derived here.
  */
 import {
   computeLineSubtotal,
   normalizeBoxesPieces,
-  prorateLineSubtotal,
+  creditedThrough,
   roundMoney,
 } from "@routeflow/pricing";
 
@@ -76,13 +76,31 @@ export interface UnreferencedPriceContext {
   unitsPerBox?: number | null;
 }
 
-export interface ManualOverride {
+/** #2695 (SA-557): a staff member's per-line CREDIT price, LOWER-ONLY — see {@link applyCreditOverride}. */
+export interface CreditOverride {
   /** A typed box/piece price — same SELLING-UNIT convention as `UnreferencedPriceContext`. */
   unitPrice: number;
+  /** Trimmed, 1..200 chars — validated by the caller. */
   reason: string;
+  /** `user.sub` of the OPERATOR/TENANT_ADMIN who typed it. */
   overriddenBy: string;
-  unitsPerBox?: number | null;
 }
+
+/** What priced the chunk an override REPLACES: the pack its default was priced against (so the
+ * override is compared per the same selling unit) and its tax basis — a matched chunk's
+ * `InvoiceItem.taxRate` snapshot (exempt when the invoice charged no tax), an unreferenced
+ * chunk's quote rate. Never the tenant's current rate for a matched chunk. */
+export interface ReplacedChunkBasis {
+  unitsPerBox: number | null;
+  taxRate: number;
+  taxExempt: boolean;
+}
+
+/** An override within this of the default per-selling-unit price is the default itself. */
+export const CREDIT_OVERRIDE_EQUAL_TOLERANCE = 0.005;
+
+export type CreditOverrideResult =
+  { overCap: false; chunk: PricedChunk } | { overCap: true; defaultUnitPrice: number };
 
 /** Prices `chunkPieces` at a SELLING-UNIT rate (one box when `unitsPerBox > 1`, else one piece)
  * via the canonical `computeLineSubtotal` — never `unitPrice * chunkPieces` directly, which
@@ -118,6 +136,9 @@ export interface PricedChunk {
   originalPrice?: number | null;
   overrideReason?: string | null;
   overriddenBy?: string | null;
+  /** B961 / SA-071c: an over-return chunk of a product WITH prior sales on this customer's candidate invoices (all returned or
+   * credited): "already returned or credited". Absent otherwise (a never-invoiced product stays "not on any invoice"). */
+  alreadyReturned?: boolean;
 }
 
 export interface QuoteBreakdown {
@@ -128,12 +149,57 @@ export interface QuoteBreakdown {
   total: number;
 }
 
+/** Result of {@link resolveReturnPackFactor}. */
+export interface ReturnPackFactorResult {
+  /** The pack size to use, or null when none is known at all (no candidate line has one
+   * and the product itself has no box size). */
+  factor: number | null;
+  /** Non-null (2+ distinct values, ascending) when the candidate lines DISAGREE on pack
+   * size — the caller must refuse the whole item rather than guess which one applies. */
+  conflictingPacks: number[] | null;
+}
+
+/**
+ * SA-101(2) interim guard (B3/B765): resolves the pack (unitsPerBox) factor for one
+ * return-request item from ALL of its product's candidate invoice lines, not just the
+ * newest. Before this fix, the caller picked `matchingSet.find(l => l.productId ===
+ * productId)?.unitsPerBox` — the newest invoice's line — and silently applied that pack
+ * size even when an OLDER line (the one the operator actually saw) used a different one:
+ * a product with a 12-pack line and a newer 48-unit Case line would price a return typed
+ * against the 12-pack order at the Case's factor instead, a 4x mis-credit. This function
+ * makes that ambiguity an explicit, reported conflict instead of a silent guess — the
+ * caller throws (see `inline-returns-quote.service.ts`). The durable fix (carrying the
+ * actual `sourceOrderItemId` on the wire, so the factor is never guessed at all) is a
+ * later PR; this only stops the silent wrong guess.
+ *
+ * SA-108 precision: a pack of exactly 1 (or null) means "no packaging" (R-029) — the same
+ * convention `isBoxedProduct`/`ResolveParkedRestockDto` use elsewhere (only `> 1` is a real
+ * box size). A candidate line legitimately carrying `unitsPerBox: 1` must never conflict
+ * with a genuinely boxed sibling at, say, 12 — it is not a competing PACK claim, it is a
+ * line that was never boxed in the first place. Only distinct values `> 1` count toward a
+ * conflict; a lone `1` among the candidates is simply ignored, exactly like `null`.
+ */
+export function resolveReturnPackFactor(
+  candidatePacks: ReadonlyArray<number | null | undefined>,
+  productUnitsPerBox: number | null,
+): ReturnPackFactorResult {
+  const distinct = [...new Set(candidatePacks.filter((p): p is number => p != null && p > 1))].sort(
+    (a, b) => a - b,
+  );
+  if (distinct.length > 1) {
+    return { factor: null, conflictingPacks: distinct };
+  }
+  return { factor: distinct[0] ?? productUnitsPerBox ?? null, conflictingPacks: null };
+}
+
 // ─── §3.1 matching / allocation ────────────────────────────────────────────────
 
 /** Converts a return-request DTO qty (raw qty, or an explicit boxes/pieces split) into
- * pieces, the SAME rule OrderItem/InvoiceItem storage already uses — `boxes != null` means
- * the DTO qty is already pieces; otherwise multiply by the unitsPerBox snapshot (falling
- * back to the raw qty when no box size is known). */
+ * pieces, the SAME rule OrderItem/InvoiceItem storage already uses — `boxes != null` (or
+ * `pieces != null`) means the caller supplied an explicit split: `qty` is IGNORED entirely
+ * and the piece count is `boxes * unitsPerBox + pieces`. Otherwise (a bare `qty`, no split),
+ * a boxed product's `qty` means BOXES (multiplied by the unitsPerBox snapshot) and a
+ * non-boxed product's `qty` is already pieces. */
 export function returnRequestPieces(input: {
   qty: number;
   boxes?: number | null;
@@ -205,16 +271,10 @@ export function priceMatchedChunk(
   const boxSplit = line.boxes != null;
   const upb = Number(line.unitsPerBox ?? 0);
   const chunkInLineAxis = boxSplit ? chunkPieces : upb > 1 ? chunkPieces / upb : chunkPieces;
-  const freeUnits = Number(line.promoFreeUnits ?? 0);
-  const freeUnitSize = boxSplit ? upb || 1 : 1;
-
-  const prorated = prorateLineSubtotal(
-    line.subtotal,
-    chunkInLineAxis,
-    line.qty,
-    freeUnits,
-    freeUnitSize,
-  );
+  // B894 (SA-576): a credit prices a SLICE of the already-billed line from scratch, so it is LINEAR
+  // (additive: the slices of one line credit at most its stored subtotal). The invoice's floored
+  // free-unit telescope (prorateLineSubtotal) is non-monotone and over-credits per slice.
+  const prorated = creditedThrough(line.subtotal, chunkInLineAxis, line.qty);
 
   // Discount share: the SAME fraction of the line's stored subtotal that `prorated`
   // represents, applied to this line's own share of the invoice's total discount.
@@ -279,31 +339,65 @@ export function priceUnreferencedChunk(
   };
 }
 
-/** Case 4 — staff manual override: a typed box/piece price, reason required, kept for audit. */
-export function priceManualChunk(
-  productId: string,
-  chunkPieces: number,
-  override: ManualOverride,
-  taxRate: number,
-  customerIsTaxExempt: boolean,
-): PricedChunk {
-  const subtotal = priceSellingUnitChunk(override.unitPrice, chunkPieces, override.unitsPerBox);
-  const taxAmount = customerIsTaxExempt ? 0 : roundMoney(subtotal * taxRate);
+/**
+ * Case 4 — #2695 (SA-557) staff credit-price override, LOWER-ONLY, applied to a chunk the engine
+ * has ALREADY priced (matched or unreferenced). The cap is that chunk's own DEFAULT per selling
+ * unit (its subtotal over its selling units — a matched chunk's is the source line's NET price),
+ * so there is no uncapped path:
+ *  - within {@link CREDIT_OVERRIDE_EQUAL_TOLERANCE} of the default: NOT an override — the default
+ *    chunk comes back untouched (no MANUAL source, nothing to audit);
+ *  - above it (or a subtotal above the default's): `overCap` — the caller refuses with a 400;
+ *  - below it: the pieces re-priced at the override via `computeLineSubtotal`, taxed at the
+ *    REPLACED chunk's basis, the category (excise) tax and source ids CARRIED (the same goods
+ *    went back; only the credit per unit changed), `originalPrice` = the default replaced.
+ */
+export function applyCreditOverride(
+  defaultChunk: PricedChunk,
+  override: CreditOverride,
+  basis: ReplacedChunkBasis,
+): CreditOverrideResult {
+  const upb = Number(basis.unitsPerBox ?? 0);
+  const sellingUnits = upb > 1 ? defaultChunk.pieces / upb : defaultChunk.pieces;
+  if (!(sellingUnits > 0)) return { overCap: false, chunk: defaultChunk };
+  const defaultPerUnit = defaultChunk.subtotal / sellingUnits;
+  const defaultUnitPrice = roundMoney(defaultPerUnit);
+  // + 1e-9: the tolerance is inclusive, and 10.005 - 10 is 0.005000000000000782 in floats.
+  if (Math.abs(override.unitPrice - defaultPerUnit) <= CREDIT_OVERRIDE_EQUAL_TOLERANCE + 1e-9) {
+    return { overCap: false, chunk: defaultChunk };
+  }
+  if (override.unitPrice > defaultPerUnit) return { overCap: true, defaultUnitPrice };
+  const subtotal = priceSellingUnitChunk(
+    override.unitPrice,
+    defaultChunk.pieces,
+    basis.unitsPerBox,
+  );
+  if (subtotal > defaultChunk.subtotal) return { overCap: true, defaultUnitPrice };
   return {
-    sourceOrderId: null,
-    sourceInvoiceItemId: null,
-    sourceOrderItemId: null,
-    productId,
-    pieces: chunkPieces,
-    subtotal,
-    taxAmount,
-    categoryTax: 0,
-    priceSource: "MANUAL",
-    unitPrice: override.unitPrice,
-    originalPrice: override.unitPrice,
-    overrideReason: override.reason,
-    overriddenBy: override.overriddenBy,
+    overCap: false,
+    chunk: {
+      ...defaultChunk,
+      subtotal,
+      taxAmount: basis.taxExempt ? 0 : roundMoney(subtotal * basis.taxRate),
+      priceSource: "MANUAL",
+      unitPrice: override.unitPrice,
+      originalPrice: defaultUnitPrice,
+      overrideReason: override.reason,
+      overriddenBy: override.overriddenBy,
+    },
   };
+}
+
+/** #2695: the per-chunk entries of the `inline_return.price_override` audit row. Kept out of
+ * `captureInTx`'s body: the copier contract scans that body for ReturnItem column writes, and
+ * these are audit-meta keys, not columns. */
+export function creditOverrideAuditItems(chunks: readonly PricedChunk[]) {
+  return chunks.map((c) => ({
+    productId: c.productId,
+    pieces: c.pieces,
+    defaultUnitPrice: c.originalPrice ?? null,
+    unitPrice: c.unitPrice,
+    reason: c.overrideReason ?? null,
+  }));
 }
 
 // ─── §3.3 totals ────────────────────────────────────────────────────────────────

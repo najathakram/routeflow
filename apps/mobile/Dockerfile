@@ -16,7 +16,8 @@ COPY packages/eslint-config/package.json     packages/eslint-config/
 # runs its tsc build during the `npm ci` below, so its sources + tsconfigs must
 # already be here — a manifest-only copy makes that build fail with no inputs.
 COPY packages/pricing/                       packages/pricing/
-COPY packages/scanning/package.json          packages/scanning/
+# @routeflow/scanning is COMPILED the same way (built right after pricing).
+COPY packages/scanning/                      packages/scanning/
 # The same postinstall then builds @routeflow/returns (`npm run build -w
 # @routeflow/returns`), and returns imports types from `@routeflow/types` —
 # so both need a full-directory copy here too, not just their manifests.
@@ -83,6 +84,17 @@ ENV NODE_PATH=/app/apps/mobile/node_modules
 
 # Export the app as a static web bundle (Expo Router web output → dist/)
 RUN npx expo export --platform web
+
+# #2338 SECURITY TIER 1: the dev-only parity sign-in (lib/dev-parity-login.ts) must never reach a
+# production bundle. Its body, the "dev-parity-login" marker and every EXPO_PUBLIC_PARITY_LOGIN
+# read sit inside `if (__DEV__)`, which the production export folds away. Fail the build if any trace
+# survives.
+# A missing dist must FAIL too (exit 2), never pass as "no trace found" (Opus nit).
+RUN test -d dist || { echo "no dist/ to check for the dev-only parity sign-in" >&2; exit 2; }; \
+    if grep -rqE "dev-parity-login|EXPO_PUBLIC_PARITY_LOGIN" dist; then \
+      echo "production bundle carries the dev-only parity sign-in (lib/dev-parity-login.ts)" >&2; \
+      exit 1; \
+    fi
 
 # ─── Stage 2: Runner ──────────────────────────────────────────────────────────
 # B389/F12-003: nginx-unprivileged is nginx's own image, already hardened to

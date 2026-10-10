@@ -31,6 +31,7 @@
  *     never hardcoded here.
  */
 import { createRequire } from "module";
+import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 const { Client } = createRequire(import.meta.url)("pg");
 
 function parseArgs(argv) {
@@ -51,16 +52,12 @@ function parseArgs(argv) {
 
 const { addon, json } = parseArgs(process.argv.slice(2));
 
-// Fail closed BEFORE any connection is attempted — a missing DATABASE_URL must never fall
-// through to a driver-level connection error.
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
-  console.error(
-    "DATABASE_URL is required and not set. Run via " +
-      "`railway run --service postgres node apps/api/scripts/report-addon-gate-blast-radius.mjs --addon <key>`.",
-  );
-  process.exit(1);
-}
+// Fail closed BEFORE any connection is attempted. B768: Railway's TCP-proxy variables win over
+// DATABASE_URL, which under `railway run --service postgres` is the unreachable
+// *.railway.internal host (scripts/lib/report-db-url.mjs). The redacted target goes to stderr,
+// so --json stdout stays clean.
+const databaseUrl = resolveReportDbUrl("report-addon-gate-blast-radius");
+if (!databaseUrl) process.exit(2);
 
 const host = (() => {
   try {

@@ -10,6 +10,7 @@ import {
   Query,
   Req,
   Res,
+  ServiceUnavailableException,
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
@@ -23,6 +24,11 @@ import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { TenantGoogleOAuthService } from "../tenants/tenant-google-oauth.service";
 import { GoogleOAuthService } from "./google-oauth.service";
+import { AppleOAuthService } from "./apple-oauth.service";
+import { AppleNonceDto } from "./dto/apple-nonce.dto";
+import { AppleSignInDto } from "./dto/apple-sign-in.dto";
+import { AppleLinkDto } from "./dto/apple-link.dto";
+import { AppleNotificationDto } from "./dto/apple-notification.dto";
 import { LoginDto } from "./dto/login.dto";
 import { RefreshDto } from "./dto/refresh.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
@@ -32,6 +38,9 @@ import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { ExchangeCodeDto } from "./dto/exchange-code.dto";
 import { resolveLoginThrottle } from "./login-throttle.config";
 import { extractDeviceInfo } from "./device-info.util";
+import { StaffHandoffService } from "./handoff/staff-handoff.service";
+import { HandoffExchangeDto, HandoffMintDto } from "./handoff/handoff.dto";
+import type { JwtPayload } from "./jwt-payload.interface";
 
 // SEC-4 / F11-002: name + scope of the httpOnly refresh cookie. Path is scoped
 // to the auth routes so it is never sent to unrelated API endpoints. Kept in
@@ -44,19 +53,63 @@ const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30d fallback (mat
 @Controller("auth")
 export class AuthController {
   private readonly webUrl: string;
+  /** B825/SA-132: the Expo mobile-web build's own origin — the second allowed
+   *  `returnOrigin` value a browser Google flow may ask the callback to
+   *  redirect back to (see `resolveReturnOrigin`). `undefined` when
+   *  MOBILE_WEB_URL is unset or blank — there is deliberately NO hardcoded
+   *  production fallback here (unlike `configuration.ts`'s `urls.mobileWeb`,
+   *  used for password-reset links): a misconfigured/missing env var must
+   *  fail CLOSED to WEB_URL-only, never silently trust a guessed prod origin. */
+  private readonly mobileWebUrl: string | undefined;
 
   constructor(
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
     private readonly tenantGoogleOAuth: TenantGoogleOAuthService,
     private readonly googleOAuth: GoogleOAuthService,
+    private readonly staffHandoff: StaffHandoffService,
+    private readonly appleOAuth: AppleOAuthService,
   ) {
-    this.webUrl = configService.get<string>("WEB_URL") ?? "http://localhost:3001";
+    this.webUrl = AuthController.normalizeOrigin(
+      configService.get<string>("WEB_URL") || "http://localhost:3001",
+    );
+    // SA-132: `||` (not `??`) so a blank MOBILE_WEB_URL="" (the .env.example
+    // default) is treated the same as unset, not as a configured empty origin.
+    const rawMobileWebUrl = configService.get<string>("MOBILE_WEB_URL") || undefined;
+    this.mobileWebUrl = rawMobileWebUrl
+      ? AuthController.normalizeOrigin(rawMobileWebUrl)
+      : undefined;
 
     if (this.webUrl.includes("localhost") && configService.get("NODE_ENV") !== "development") {
       console.warn(
         "[GoogleAuth] WEB_URL is not set — OAuth callbacks will redirect to localhost, which will fail in production.",
       );
+    }
+    if (!this.mobileWebUrl) {
+      console.warn(
+        "[GoogleAuth] MOBILE_WEB_URL is not set — the return_origin allow-list accepts WEB_URL only, " +
+          "so a mobile-web (Expo) Google sign-in will land on the Next web app instead of returning to " +
+          "itself. Set MOBILE_WEB_URL on the api service in Railway to fix this.",
+      );
+    }
+  }
+
+  /**
+   * B825/SA-132: canonicalize a CONFIGURED trust-boundary value (WEB_URL /
+   * MOBILE_WEB_URL) via the URL parser's own `.origin` so an operator-set
+   * trailing slash or explicit default port (`:443`) doesn't silently make
+   * every candidate comparison fail. Never applied to the untrusted
+   * `return_origin` candidate itself — `resolveReturnOrigin` keeps an exact
+   * `===` there, so a candidate with a trailing slash, different case, or a
+   * userinfo/downgrade trick is still rejected rather than leniently matched.
+   * Falls back to the raw value if it isn't a parseable absolute URL, so a
+   * malformed env var can never crash boot.
+   */
+  private static normalizeOrigin(url: string): string {
+    try {
+      return new URL(url).origin;
+    } catch {
+      return url;
     }
   }
 
@@ -87,6 +140,41 @@ export class AuthController {
     // SEC-4 / F11-002: ALSO set the refresh token as an httpOnly cookie. Purely
     // additive — the body still carries the token, so mobile and the current web
     // client are unaffected; web can later stop persisting it in localStorage.
+    this.setRefreshCookie(res, result.refreshToken);
+    return result;
+  }
+
+  // ─── #2653 in-app sign-in handoff (SA-542a/b), staff realm ──────────────────────
+
+  @Post("handoff")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "Mint a one-time code for the in-app web shell (OPERATOR/TENANT_ADMIN)",
+  })
+  mintHandoff(@CurrentUser() user: JwtPayload, @Body() dto: HandoffMintDto) {
+    return this.staffHandoff.mint(user, dto.deviceId);
+  }
+
+  @Post("handoff/exchange")
+  @HttpCode(HttpStatus.OK)
+  // Same throttle as login: an exchange signs someone in.
+  @Throttle({
+    default: {
+      limit: () => resolveLoginThrottle().limit,
+      ttl: () => resolveLoginThrottle().ttl,
+    },
+  })
+  @ApiOperation({ summary: "Trade a one-time handoff code for a fresh session" })
+  async exchangeHandoff(
+    @Body() dto: HandoffExchangeDto,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.staffHandoff.exchange(dto.code, extractDeviceInfo(req));
+    // The same httpOnly refresh cookie login() sets (SEC-4).
     this.setRefreshCookie(res, result.refreshToken);
     return result;
   }
@@ -227,6 +315,10 @@ export class AuthController {
     @Query("invite_token") inviteToken: string | undefined,
     @Query("mobile") mobileFlag: string | undefined,
     @Query("device_state") deviceState: string | undefined,
+    // B825: the Expo mobile-web build passes its own origin so a browser-based
+    // sign-in there returns to it instead of always landing on the Next web
+    // app; the Next web client passes nothing, so its own flow is unchanged.
+    @Query("return_origin") returnOrigin: string | undefined,
     @Res({ passthrough: true }) res: any,
   ) {
     if (!this.googleOAuth.isConfigured()) {
@@ -239,6 +331,9 @@ export class AuthController {
       return { message: "tenant query parameter is required", statusCode: 400 };
     }
     const mobile = mobileFlag === "1" || mobileFlag === "true";
+    // Only meaningful for the BROWSER flow — the native deep-link flow always
+    // uses GOOGLE_MOBILE_SCHEME regardless, never this origin.
+    const resolvedReturnOrigin = mobile ? undefined : this.resolveReturnOrigin(returnOrigin);
     const url = await this.googleOAuth.generateAuthUrl(
       "tenant",
       tenantSlug,
@@ -247,6 +342,7 @@ export class AuthController {
       mobile,
       // F12-005: only meaningful on the mobile deep-link flow; echoed back to the app.
       mobile ? deviceState : undefined,
+      resolvedReturnOrigin,
     );
     return { url };
   }
@@ -289,11 +385,13 @@ export class AuthController {
   ) {
     // Peek at the state blob (without consuming the nonce) to decide web vs mobile redirect
     // on OAuth-cancelled or invalid-state paths. verifyCallback() still consumes the nonce
-    // atomically on the success path.
+    // atomically on the success path. B825: the peeked returnOrigin is UNVERIFIED input
+    // (no signature check yet) — resolveReturnOrigin re-validates it against the exact
+    // allow-list before it's ever used as a redirect target.
     const peekedMobile = this.peekMobileFlag(state);
     const base = peekedMobile
       ? (this.configService.get<string>("GOOGLE_MOBILE_SCHEME") ?? "routeflow://auth/callback")
-      : `${this.webUrl}/auth/google/callback`;
+      : `${this.resolveReturnOrigin(this.peekReturnOrigin(state))}/auth/google/callback`;
 
     if (oauthError) {
       return res.redirect(`${base}?error=oauth_cancelled`);
@@ -304,9 +402,14 @@ export class AuthController {
 
     try {
       const profile = await this.googleOAuth.verifyCallback(code, state);
+      // B825: profile.returnOrigin was already validated at mint time (googleAuthUrl's
+      // resolveReturnOrigin call) and the signature above proves it wasn't tampered
+      // with since — resolveReturnOrigin here is defense-in-depth, never a second
+      // trust boundary. A request with no returnOrigin (the Next web client) resolves
+      // to webUrl exactly as it always did.
       const callbackBase = profile.mobile
         ? (this.configService.get<string>("GOOGLE_MOBILE_SCHEME") ?? "routeflow://auth/callback")
-        : `${this.webUrl}/auth/google/callback`;
+        : `${this.resolveReturnOrigin(profile.returnOrigin)}/auth/google/callback`;
 
       // ── Link-account flow ────────────────────────────────────────────────────
       // When `linkUserId` is present the user is already authenticated and just
@@ -396,6 +499,148 @@ export class AuthController {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * B825/SA-132: validate a candidate return origin against the EXACT
+   * allow-list (`webUrl`, `mobileWebUrl` — the latter `undefined`, hence
+   * never matchable, whenever MOBILE_WEB_URL isn't configured) — no prefix
+   * or substring matching, so `https://routeflowmobile-production.up.railway
+   * .app.evil.example` is rejected even though it starts with an allowed
+   * origin. `candidate` is typed `unknown` because NestJS binds a repeated
+   * query param (`?return_origin=a&return_origin=b`) as an array regardless
+   * of the controller's declared `string | undefined` type — the `typeof`
+   * guard below rejects that (and any other non-string) outright rather than
+   * relying on `===` against a string to happen to be false. Anything not an
+   * exact string match falls back to `webUrl`, which is also what a request
+   * with no candidate at all resolves to — the Next web client's own flow is
+   * byte-identical to before this existed.
+   */
+  private resolveReturnOrigin(candidate: unknown): string {
+    if (
+      typeof candidate === "string" &&
+      (candidate === this.webUrl || candidate === this.mobileWebUrl)
+    ) {
+      return candidate;
+    }
+    if (candidate !== undefined) {
+      // Only the parsed origin is logged, never the raw candidate — a
+      // return_origin is attacker-controlled input we haven't verified yet.
+      const rejectedOrigin = AuthController.safeOriginForLogging(candidate);
+      console.warn(
+        `[GoogleAuth] rejected return_origin${rejectedOrigin ? ` (${rejectedOrigin})` : ""} — not on the allow-list, falling back to WEB_URL.`,
+      );
+    }
+    return this.webUrl;
+  }
+
+  /**
+   * Best-effort extraction of just the `origin` of an untrusted candidate,
+   * for logging only — never the full string (which may carry a path/query,
+   * control characters, or not be a string at all). Returns undefined when
+   * the candidate isn't a parseable absolute URL string.
+   */
+  private static safeOriginForLogging(candidate: unknown): string | undefined {
+    if (typeof candidate !== "string") return undefined;
+    try {
+      return new URL(candidate).origin;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Decode the state param's `returnOrigin` without consuming the nonce or
+   * verifying its signature — mirrors `peekMobileFlag` above, for the same
+   * error/cancelled paths. Non-authoritative: the raw peeked value is NEVER
+   * used as a redirect target directly — always re-validated through
+   * `resolveReturnOrigin` first, since (unlike the post-verifyCallback
+   * `profile.returnOrigin`) this reads a state blob whose signature hasn't
+   * been checked yet, so an attacker's crafted state could claim anything.
+   */
+  private peekReturnOrigin(state: string | undefined): string | undefined {
+    if (!state) return undefined;
+    try {
+      const payloadPart = state.split(".")[0];
+      const obj = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf-8"));
+      return typeof obj?.returnOrigin === "string" ? obj.returnOrigin : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // ─── Sign in with Apple (#2309, SA-418 — native iOS only) ─────────────────
+  //
+  // ENV VARS required in Railway:
+  //   APPLE_BUNDLE_ID     — the app's bundle identifier (exact `aud` match)
+  //   APPLE_TEAM_ID       — Apple Developer Team ID
+  //   APPLE_KEY_ID        — Sign in with Apple private key's Key ID
+  //   APPLE_PRIVATE_KEY   — the .p8 private key contents, verbatim
+  //
+  // No redirect flow — the native client (expo-apple-authentication) does the
+  // consent UI itself and posts identityToken/authorizationCode directly.
+
+  @Post("apple/nonce")
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @ApiOperation({ summary: "Mint a server-side nonce for a Sign in with Apple request" })
+  async appleNonce(@Body() dto: AppleNonceDto) {
+    if (!this.appleOAuth.isConfigured()) {
+      throw new ServiceUnavailableException(
+        "Sign in with Apple is not configured for this environment.",
+      );
+    }
+    return this.appleOAuth.mintNonce(dto.tenantSlug, dto.context);
+  }
+
+  @Post("apple")
+  @HttpCode(HttpStatus.OK)
+  // SA-418 §1: the SAME throttle as /auth/login.
+  @Throttle({
+    default: {
+      limit: () => resolveLoginThrottle().limit,
+      ttl: () => resolveLoginThrottle().ttl,
+    },
+  })
+  @ApiOperation({ summary: "Sign in with Apple (native iOS only)" })
+  async appleSignIn(@Body() dto: AppleSignInDto, @Req() req: Request) {
+    if (!this.appleOAuth.isConfigured()) {
+      throw new ServiceUnavailableException(
+        "Sign in with Apple is not configured for this environment.",
+      );
+    }
+    return this.appleOAuth.signIn(dto, extractDeviceInfo(req));
+  }
+
+  @Post("apple/link")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Link an Apple account to the current user" })
+  async appleLink(@CurrentUser() user: { sub: string }, @Body() dto: AppleLinkDto) {
+    if (!this.appleOAuth.isConfigured()) {
+      throw new ServiceUnavailableException(
+        "Sign in with Apple is not configured for this environment.",
+      );
+    }
+    await this.appleOAuth.linkAppleAccount(user.sub, dto.identityToken, dto.nonce);
+    return { message: "Apple account linked" };
+  }
+
+  @Post("apple/notifications")
+  // Unauthenticated and does a JWKS lookup + a Redis write per call: its own tight limit.
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Apple server-to-server notifications (consent-revoked, account-delete)",
+  })
+  async appleNotifications(@Body() dto: AppleNotificationDto) {
+    // Unconfigured ⇒ refuse: with no bundle id there is no audience to verify against.
+    if (!this.appleOAuth.isNotificationConfigured()) {
+      throw new ServiceUnavailableException("Sign in with Apple is not configured");
+    }
+    await this.appleOAuth.handleNotification((dto.payload ?? dto.signedPayload) as string);
+    return { received: true };
   }
 
   // ─── Per-tenant Google OAuth (legacy path-param variant) ──────────────────
@@ -493,6 +738,8 @@ export class AuthController {
       "google_email_is_staff",
       "google_already_linked",
       "google_id_taken",
+      // #2495: an email match already bound to a DIFFERENT Google sub.
+      "google_account_mismatch",
     ]);
     return allowed.has(raw) ? raw : "unknown_error";
   }

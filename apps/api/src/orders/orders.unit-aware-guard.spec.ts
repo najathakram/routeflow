@@ -1,3 +1,7 @@
+// SA-429 (#2377): these driver cases pin OTHER behaviour (pricing, merges, restrictions, returns),
+// not ownership, and their mocks carry no assigned run; the ownership predicate itself is pinned by
+// driver-edit-access.spec.ts and driver-edit-access.db.spec.ts.
+jest.mock("./driver-edit-access", () => ({ assertDriverMayEditOrder: jest.fn() }));
 /**
  * units_v1 step 4 (PR-A) — every order rewrite path refuses a unit-aware line (a line sold by a
  * non-pack unit: `unitLabel != null`) rather than re-deriving its factor/price from the LIVE
@@ -23,6 +27,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -73,6 +78,7 @@ const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -108,6 +114,7 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -296,6 +303,44 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
       expect(prisma.orderItem.create).not.toHaveBeenCalled();
       expect(prisma.orderItem.update).not.toHaveBeenCalled();
     });
+
+    it("Opus delta item 6: a STAFF qty edit of a CANCELLED Case line naming no unit is refused BEFORE any invoice/mirror write", async () => {
+      // SA-422b(b) dropped cancelled lines from the pre-lock unit map for EVERY role, while the
+      // lock-time map kept them: the pre-lock check passed, revertLinkedInvoicesForOrderEdit
+      // committed on its own connection, and only the in-tx 409 followed — a SENT invoice's
+      // mirror stranded in DRAFT. Staff keep every line in the pre-lock map.
+      prisma.order.findUnique.mockResolvedValue(unitAwareOrder({ status: "CANCELLED" }));
+      const err = await service
+        .updateOrderItems(
+          "ord-1",
+          { replaceAll: false, items: [{ id: "li-case", qty: 3 }] } as never,
+          operatorPayload as never,
+        )
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({ code: "UNIT_AWARE_LINE" });
+      expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["SUPER_ADMIN", { ...operatorPayload, role: "SUPER_ADMIN" }],
+      ["a missing user", undefined],
+    ])(
+      "Opus delta (0bebefad): %s editing a CANCELLED Case line is refused BEFORE any invoice/mirror write",
+      async (_who, user) => {
+        prisma.order.findUnique.mockResolvedValue(unitAwareOrder({ status: "CANCELLED" }));
+        const err = await service
+          .updateOrderItems(
+            "ord-1",
+            { replaceAll: false, items: [{ id: "li-case", qty: 3 }] } as never,
+            user as never,
+          )
+          .catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getResponse()).toMatchObject({ code: "UNIT_AWARE_LINE" });
+        expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
+      },
+    );
 
     it("a CANCELLED unit-aware line does not trip the guard (the edit proceeds past it)", async () => {
       prisma.order.findUnique.mockResolvedValue(unitAwareOrder({ status: "CANCELLED" }));

@@ -169,6 +169,20 @@ export function planRank(planKey: string): number {
 }
 
 /**
+ * Is an add-on bundled free at `planKey`? `includedAtPlan` is the plan at AND ABOVE which the
+ * catalog includes it (AddonSku.includedAtPlan); both keys are normalized (legacy aliases rank as
+ * their current plan). False when the SKU has no bundling plan or either key is unknown.
+ */
+export function isAddonIncludedAtPlan(
+  includedAtPlan: string | null | undefined,
+  planKey: string | null | undefined,
+): boolean {
+  const need = includedAtPlan ? planRank(includedAtPlan) : -1;
+  const have = planKey ? planRank(planKey) : -1;
+  return need >= 0 && have >= need;
+}
+
+/**
  * Find a catalog definition by plan key, NORMALIZING both sides so a stored key and a
  * pinned version that disagree about the rename still resolve to the same row — a v7-pinned
  * tenant carrying SCALE matches the BUSINESS row, a v8 tenant carrying legacy TEAM matches
@@ -182,6 +196,42 @@ export function findPlanDefinition<T extends { planKey: string }>(
   if (!planKey) return undefined;
   const want = normalizePlanKey(planKey) ?? planKey;
   return definitions.find((d) => (normalizePlanKey(d.planKey) ?? d.planKey) === want);
+}
+
+/**
+ * #2700 (SA-559(2)) — FEATURE FLAGS GAIN FORWARD. A tenant's plan flags are its PINNED definition's
+ * `featureFlags` ∪ the PUBLISHED version's definition for the SAME normalized plan key, so a flag a
+ * later catalog adds to a plan reaches every tenant already on it without re-pinning anyone. Only
+ * the flags move: caps, prices, SKUs and `planVersionId` stay grandfathered from the pinned version
+ * (the caller keeps using the pinned definition for those). A union never REMOVES a flag, so a flag
+ * a later version drops is kept by a grandfathered tenant. No union when the pinned version IS the
+ * published one, when nothing is published, or when the published version has no such plan.
+ *
+ * The ONE predicate: `EntitlementsService.compute` calls it; the standalone scripts' twin is
+ * `effectivePlanFlagsMirror` (scripts/lib/feature-registry-mirror.cjs), pinned to this by
+ * feature-registry-mirror.parity.spec.ts. Pinned flags keep their order; added ones follow in the
+ * published definition's order.
+ */
+export function effectivePlanFlags(
+  pinnedDef: { planKey: string; featureFlags: readonly string[] },
+  pinnedVersionId: string,
+  published: {
+    id: string;
+    definitions: readonly { planKey: string; featureFlags: readonly string[] }[];
+  } | null,
+): string[] {
+  const flags = [...new Set(pinnedDef.featureFlags)];
+  if (!published || published.id === pinnedVersionId) return flags;
+  const forward = findPlanDefinition(published.definitions, pinnedDef.planKey);
+  if (!forward) return flags;
+  const have = new Set(flags);
+  for (const flag of forward.featureFlags) {
+    if (!have.has(flag)) {
+      have.add(flag);
+      flags.push(flag);
+    }
+  }
+  return flags;
 }
 
 /** The 8 add-on SKUs (pricing-plans.md §Add-on SKUs). */
@@ -418,3 +468,9 @@ export const SELF_SERVICE_ADDON_SKUS: readonly AddonSkuCode[] = [
   "CUSTOMER_PACK_100",
   "FORECASTING",
 ] as const;
+
+/** A SKU a TENANT_ADMIN may add or drop themselves. Everything else "ships dark" —
+ *  platform-admin grants it (see SELF_SERVICE_ADDON_SKUS). */
+export function isSelfServiceAddon(sku: string): boolean {
+  return (SELF_SERVICE_ADDON_SKUS as readonly string[]).includes(sku);
+}

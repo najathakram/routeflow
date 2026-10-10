@@ -308,13 +308,17 @@ describe("marketing.css is delivered from the root layout — R-MKT T6", () => {
 
 // Hashes computed from this repo at branch base 5ddec78e (`git diff 5ddec78e
 // -- <path>` is empty for both at plan time — see the test-plan's T7 row).
-// globals.css re-pinned by B511 (touch-reveal media query, a legitimate
-// unrelated dashboard change — this pin exists to catch the marketing port
-// leaking into shared files, not to freeze globals.css forever), and again
-// here for the owner-reported mobile horizontal-drift fix: a global
-// `html { overflow-x: hidden }` safety net, unrelated to the marketing port.
-const GLOBALS_CSS_SHA256 = "80bf4ebb92b7c7d48dde5c0113b734b0ec5d925ec7cbb64ec984d2e33caeb743";
-const TAILWIND_CONFIG_SHA256 = "5b62085fee3f38bba484393c94238b8651806d8c7e0e47efc9a91cce68ff9754";
+// globals.css re-pinned by #2080 (date/time-input appearance-none rule, a
+// legitimate unrelated dashboard change — this pin exists to catch the
+// marketing port leaking into shared files, not to freeze globals.css
+// forever; see B511 above for the same precedent). Re-pinned again by #2497 (the `.overline`
+// label class renamed `.eyebrow-label` — it collided with Tailwind's `overline` utility; a
+// dashboard fix, not marketing leakage).
+const GLOBALS_CSS_SHA256 = "0804180c82de14659e8aeead69783e9fbd2c848bc71f644925ef1868ed91bf6d";
+// tailwind.config.ts re-pinned by #2329: the preset now builds its values from the shared
+// Ledger token source (packages/ui/src/tokens/ledger.ts). Behaviour-preserving — the compiled
+// web CSS is byte-identical before and after — and unrelated to the marketing port.
+const TAILWIND_CONFIG_SHA256 = "5731ba0cb3c580056ec0c57b3cd90d5e529828fbb0aa549913afbdbd096c03c0";
 
 function sha256OfFile(filePath: string): string {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");

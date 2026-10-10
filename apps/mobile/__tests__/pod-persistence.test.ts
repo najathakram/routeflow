@@ -292,11 +292,12 @@ describe("REG-B136-E: every sign-in path explicitly rehydrates the user-scoped s
  * touching auth-store.ts at all, which is exactly the gap REG-B136-E's
  * source-text pin cannot see.
  */
-describe("REG-B136-G: rehydrateUserScopedStores hydrates all four skipHydration stores", () => {
+describe("REG-B136-G: rehydrateUserScopedStores hydrates all five skipHydration stores", () => {
   const podRehydrate = jest.fn();
   const runSettlementRehydrate = jest.fn();
   const stopCartRehydrate = jest.fn();
   const returnSubmissionRehydrate = jest.fn();
+  const inlineReturnRehydrate = jest.fn();
 
   jest.mock("../store/podStore", () => ({
     usePodStore: { persist: { rehydrate: (...args: unknown[]) => podRehydrate(...args) } },
@@ -317,15 +318,26 @@ describe("REG-B136-G: rehydrateUserScopedStores hydrates all four skipHydration 
     },
   }));
 
+  jest.mock("../store/offlineQueue", () => ({
+    useOfflineQueue: { getState: () => ({ queue: [], failedActions: [] }) },
+  }));
+  jest.mock("../lib/auth", () => ({ getStoredUser: async () => null }));
+  jest.mock("../store/inlineReturnSubmissionStore", () => ({
+    useInlineReturnSubmissionStore: {
+      persist: { rehydrate: (...args: unknown[]) => inlineReturnRehydrate(...args) },
+    },
+  }));
+
   beforeEach(() => {
     jest.resetModules();
+    inlineReturnRehydrate.mockReset();
     podRehydrate.mockReset();
     runSettlementRehydrate.mockReset();
     stopCartRehydrate.mockReset();
     returnSubmissionRehydrate.mockReset();
   });
 
-  it("calls persist.rehydrate() on ALL FOUR stores — TODAY (emptied body): 0 calls on any", async () => {
+  it("calls persist.rehydrate() on ALL FIVE stores — TODAY (emptied body): 0 calls on any", async () => {
     const { rehydrateUserScopedStores } = await import("../lib/session-hydrate");
 
     await rehydrateUserScopedStores();
@@ -334,6 +346,8 @@ describe("REG-B136-G: rehydrateUserScopedStores hydrates all four skipHydration 
     expect(runSettlementRehydrate).toHaveBeenCalledTimes(1);
     expect(stopCartRehydrate).toHaveBeenCalledTimes(1);
     expect(returnSubmissionRehydrate).toHaveBeenCalledTimes(1);
+    // Losing this call would silently wipe every saved inline-return nonce on relaunch.
+    expect(inlineReturnRehydrate).toHaveBeenCalledTimes(1);
   });
 
   it("a rejecting rehydrate on one store never blocks the others, or the caller — best-effort per store", async () => {

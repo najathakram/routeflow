@@ -44,6 +44,17 @@ export function roundMoney(n: number): number {
   return (sign * cents) / 100;
 }
 
+/**
+ * True when `n` is a finite amount in whole cents — the ONE predicate for "is this a cents
+ * amount" (#2695, SA-557c). Defined by {@link roundMoney}, so it agrees with every rounded write:
+ * `19.99` passes even though `19.99 * 100` is `1998.9999999999998` in floats (a hand-rolled
+ * `Math.round(n * 100) === n * 100` refuses 1,146 of the 10,001 cent values in $0–$100).
+ * Sign is not its concern: a caller that needs ≥ 0 checks that itself.
+ */
+export function isWholeCents(n: number): boolean {
+  return Number.isFinite(n) && roundMoney(n) === n;
+}
+
 export interface NormalizedQty {
   /** Whole boxes (null for non-boxed products / no split). */
   boxes: number | null;
@@ -114,9 +125,37 @@ export function packFromOwnSplit(input: {
   return Number.isInteger(pack) && pack > 1 ? pack : null;
 }
 
+/**
+ * Does a stored box/piece split add up to its qty? True only when the pack is known and greater than 1 and
+ * `boxes x pack + pieces === qty` (tolerance 1e-6 on qty). A split with no pack (null, 0 or 1) is never
+ * "matching": it cannot be checked. ONE definition, used by the invoice edit plan and the invoice -> order
+ * back-sync (SA-257), so a split one writes is never one the other would refuse.
+ */
+export function splitMatchesQty(input: {
+  qty: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+}): boolean {
+  const pack = Number(input.unitsPerBox ?? 0);
+  if (!(pack > 1)) return false;
+  const boxes = Number(input.boxes ?? 0);
+  const pieces = Number(input.pieces ?? 0);
+  return Math.abs(boxes * pack + pieces - Number(input.qty ?? 0)) < 1e-6;
+}
+
 export interface LineSubtotalInput {
   unitPrice: number;
-  /** Total qty in pieces — kept for backward compat & non-boxed products. */
+  /**
+   * B683: on a NON-boxed product this is genuinely pieces (the selling unit
+   * IS the piece). On a BOXED product (`unitsPerBox > 1`) with no `boxes`/
+   * `pieces` split, this is the legacy/lenient convention instead: `qty` is
+   * the SELLING-UNIT (box) count and `unitPrice` the per-box price — NOT
+   * pieces, despite the name. `computeLineSubtotal` cannot tell the two
+   * conventions apart on its own; it trusts the caller. See
+   * `computeLineSubtotal`'s own fallback-branch comment, and `lineAmbiguity`/
+   * `buildLine`, which refuse this exact ambiguous shape going forward.
+   */
   qty: number;
   /** Number of full boxes (only meaningful when unitsPerBox > 1). */
   boxes?: number | null;
@@ -148,7 +187,17 @@ export function computeLineSubtotal(input: LineSubtotalInput): number {
     return roundMoney(unitPrice * boxEquivalent);
   }
 
-  // Non-boxed product (or caller didn't split): unitPrice is per piece, qty in pieces.
+  // B683: two DIFFERENT shapes reach here, and this line prices them identically
+  // (unitPrice * qty) without being able to tell them apart:
+  //   - a genuinely non-boxed product (unitsPerBox <= 1): qty is pieces,
+  //     unitPrice is per piece — the comment this replaced was accurate here.
+  //   - a BOXED product (unitsPerBox > 1) whose caller sent a bare qty with no
+  //     boxes/pieces split (the legacy/lenient/ambiguous shape `lineAmbiguity`
+  //     and `buildLine` refuse going forward, B644/B682): qty is conventionally
+  //     the SELLING-UNIT (box) count and unitPrice the per-box price — NEVER
+  //     pieces. A caller needing an actual piece count for this shape (e.g. a
+  //     regulated per-unit tax basis) must multiply by unitsPerBox itself; see
+  //     manual-invoice-lines.ts's pieceQty for the pattern.
   return roundMoney(unitPrice * Math.max(0, qty - free));
 }
 
@@ -331,6 +380,9 @@ export function computeLineSubtotalStrict(input: LineSubtotalInput): number {
  * PAID quantity instead (`orderQty - freeUnits * freeUnitSize`). That keeps the
  * stored subtotal equal to `computeLineSubtotal(..., freeUnits)` and makes a
  * full delivery (`deliveredQty === orderQty`) copy it back verbatim.
+ *
+ * `priorBilledQty` (default 0) is the qty earlier partial invoices of this line already billed — pass
+ * the order line's `invoicedQty` to preview the NEXT partial exactly as the server bills it.
  */
 export function prorateLineSubtotal(
   storedSubtotal: number | null | undefined,
@@ -338,6 +390,7 @@ export function prorateLineSubtotal(
   orderQty: number,
   freeUnits = 0,
   freeUnitSize = 1,
+  priorBilledQty = 0,
 ): number {
   const stored = Number(storedSubtotal) || 0;
   const order = Number(orderQty) || 0;
@@ -370,7 +423,42 @@ export function prorateLineSubtotal(
   // price). Unreachable at size 1, opened by the freeUnitSize axis; the cap
   // makes every partial bill at most the stored subtotal, and a full delivery
   // still copies it back verbatim.
-  return roundMoney((stored * Math.min(billedThrough(delivered), basisQty)) / basisQty);
+  // `priorBilledQty` (default 0): the qty earlier partial bills already took. The bill is then the
+  // TELESCOPE `cum(prior + delivered) - cum(prior)` with `cum(c) = roundMoney(S x paid(c) / basis)`,
+  // exactly the server's `buildInvoiceItemData` — successive partials sum to S to the cent (one bill
+  // can be a cent off a from-scratch proration). At prior 0, `cum(0)` is 0 and this is the line above.
+  const cumulative = (cumQty: number) =>
+    roundMoney((stored * Math.min(billedThrough(cumQty), basisQty)) / basisQty);
+  const prior = Math.max(0, Number(priorBilledQty) || 0);
+  return roundMoney(cumulative(prior + delivered) - (prior > 0 ? cumulative(prior) : 0));
+}
+
+/**
+ * B894 (SA-576) / SA-581: THE linear cumulative basis, `creditedThrough(S, c, P) = roundMoney(S × min(c, P) / P)`,
+ * shared by `prorateComponentCredit` (#2717) and the return-credit / price-correction callers. What does a SLICE
+ * of an already-billed line cost — a return credit, or the target for the qty still held after a partial
+ * return? LINEAR.
+ *
+ * Use this — never {@link prorateLineSubtotal} — wherever a slice is priced FROM SCRATCH. That function is
+ * the invoice's delivered-basis bill: its floored free-unit telescope must agree with the invoice line the
+ * document shows, and it is non-monotone point by point (a free unit is a whole box on a pieces axis), so
+ * it is only right where the curve is telescoped (sum = S). Priced per slice it is NOT additive: BOGO,
+ * P=2, F=1, S: returning 1 piece credits S, returning the other credits S again (2S on an S line).
+ *
+ * Additive (any chunking sums to S up to half a cent per chunk; capped at S), monotone, never negative, and
+ * equal to `prorateLineSubtotal(S, c, P)` when there are no free units. `storedSubtotal` accepts null /
+ * undefined like its sibling. A non-positive or non-finite `lineQty`, or a non-positive slice, is 0.
+ */
+export function creditedThrough(
+  storedSubtotal: number | null | undefined,
+  sliceQty: number,
+  lineQty: number,
+): number {
+  const stored = Number(storedSubtotal) || 0;
+  const line = Number(lineQty) || 0;
+  const slice = Number(sliceQty) || 0;
+  if (!(line > 0) || !(slice > 0)) return 0;
+  return roundMoney((stored * Math.min(slice, line)) / line);
 }
 
 /**
@@ -499,6 +587,81 @@ export function computeCategoryTax(input: CategoryTaxInput): number {
     default:
       return 0;
   }
+}
+
+/** The trio B297 (SA-088) freezes on a line at sale time — see the `categoryTaxType` /
+ *  `categoryTaxRate` / `categoryPriceIncludesTax` columns on OrderItem/InvoiceItem. */
+export interface CategoryTaxSnapshot {
+  categoryTaxType: CategoryTaxType | null;
+  categoryTaxRate: number | null;
+  categoryPriceIncludesTax: boolean | null;
+}
+
+/**
+ * What a sale writer needs from a live `TrackedCategory` row to stamp the trio — never the
+ * full Prisma model, just the fields `categoryTaxSnapshotOf`/`computeCategoryTax` actually
+ * read. A `loadCategoryMapForProducts`-shaped loader's `Map<string, TrackedCategoryRow>` is
+ * the ONE place callers should type this against, instead of each hand-rolling its own `any`.
+ *
+ * `rate` accepts a Decimal-shaped value (this package stays framework-agnostic — never
+ * `@prisma/client`'s own `Decimal` type — but the real `TrackedCategory.rate` column IS one;
+ * a bare `number | string` here was never actually checked against it, since every real caller
+ * passes an untyped `tx`). `priceIncludesTax` is non-optional: `TrackedCategory`'s own column
+ * is `NOT NULL` — unlike the snapshot trio this function PRODUCES (all three nullable on
+ * OrderItem/InvoiceItem, for a non-regulated line), the LIVE category row always has a real
+ * boolean here.
+ */
+export interface TrackedCategoryRow {
+  taxType: CategoryTaxType;
+  rate: number | string | { toNumber(): number };
+  priceIncludesTax: boolean;
+}
+
+/**
+ * The ONE place a sale writer turns "the category this line belongs to" into the three
+ * columns it stamps onto the line. `null`/`undefined` (a non-regulated line — no
+ * trackedCategoryId) yields an all-null snapshot; any tracked category — even one whose
+ * `taxType` is NONE — yields a full trio, because the line WAS priced under that category's
+ * rules (zero tax is still a recorded basis, not "no snapshot"). Never hand-type these three
+ * fields at a call site — that's how one of them drifts from the other two (B297-SPEC.md D1).
+ */
+export function categoryTaxSnapshotOf(
+  category: TrackedCategoryRow | null | undefined,
+): CategoryTaxSnapshot {
+  if (!category) {
+    return { categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null };
+  }
+  return {
+    categoryTaxType: category.taxType,
+    categoryTaxRate: Number(category.rate),
+    categoryPriceIncludesTax: !!category.priceIncludesTax,
+  };
+}
+
+/**
+ * COPIES a line's own already-stamped trio verbatim (a merge/consolidation folding a losing
+ * line into a winner, or an invoice line duplicated from another) — never re-derives it from any
+ * category, live or otherwise. A merge is not a new sale (SA-098a): the line's own snapshot is
+ * the fact. `null`/`undefined` copies through as an all-null snapshot (nothing to copy).
+ */
+export function copyCategoryTaxSnapshot(
+  src:
+    | {
+        categoryTaxType: CategoryTaxType | null;
+        categoryTaxRate: number | string | null;
+        categoryPriceIncludesTax: boolean | null;
+      }
+    | null
+    | undefined,
+): CategoryTaxSnapshot {
+  if (!src) {
+    return { categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null };
+  }
+  return {
+    categoryTaxType: src.categoryTaxType,
+    categoryTaxRate: src.categoryTaxRate == null ? null : Number(src.categoryTaxRate),
+    categoryPriceIncludesTax: src.categoryPriceIncludesTax,
+  };
 }
 
 // ─── Promotions (P5-04, + BUY_N_GET_M) ────────────────────────────────────────
@@ -886,6 +1049,80 @@ export function isUpsellLine(line: PriceOverrideLine): boolean {
   return Number(line.unitPrice) > Number(line.originalPrice);
 }
 
+/** The half-cent band inside which a typed price IS the baseline (no repricing decision). */
+export const STAFF_OVERRIDE_TOLERANCE = 0.005;
+
+/**
+ * SA-588 — is `a` within ±½¢ ({@link STAFF_OVERRIDE_TOLERANCE}) of `b`? Decided in 4-dp units via
+ * the one {@link round4}: both prices and their difference are snapped to 4 dp, so a boundary
+ * like 8.005 vs 8 is deterministically IN band (a raw `Math.abs(a - b) <= 0.005` is float noise
+ * there). One 4-dp unit beyond the boundary is out of band.
+ */
+export function withinStaffOverrideTolerance(a: number, b: number): boolean {
+  return Math.abs(round4(round4(a) - round4(b))) <= STAFF_OVERRIDE_TOLERANCE;
+}
+
+/**
+ * SA-558b (3) — THE predicate for "this staff-typed price needs a reason": a special-tier line whose
+ * price moves more than ½¢ from the action's baseline, with no reason sent or on file. Each caller
+ * passes its own baseline: the customer's TIER price for create / substitute / add-during-edit, the
+ * line's STORED price (and `hasReason` = sent-or-stored) for an existing-line edit. The band test is
+ * {@link withinStaffOverrideTolerance}.
+ */
+export function needsOverrideReason(input: {
+  overridePrice: number;
+  baselinePrice: number;
+  isSpecialTier: boolean;
+  hasReason: boolean;
+}): boolean {
+  const { overridePrice, baselinePrice, isSpecialTier, hasReason } = input;
+  if (!isSpecialTier || hasReason) return false;
+  return !withinStaffOverrideTolerance(overridePrice, baselinePrice);
+}
+
+export type StaffOverrideDecision =
+  | {
+      priceType: "SPECIAL" | "STANDARD" | "DISCOUNTED" | "MANUAL";
+      unitPrice: number;
+      originalPrice: number | null;
+    }
+  | { refused: "REASON_REQUIRED" };
+
+/**
+ * #2696(c) / SA-558 + SA-558a — the ONE rule for a staff-typed price on an order line, shared by
+ * the api and both clients (a client's "needs a reason" check is
+ * `decideStaffOverride(...).refused === "REASON_REQUIRED"`; the api owns the 400 text).
+ *   - within ½¢ ({@link STAFF_OVERRIDE_TOLERANCE}) of `baselinePrice` (the customer's tier price) is
+ *     NOT an override: SPECIAL on a special-tier line (originalPrice = list), STANDARD otherwise
+ *     (originalPrice null) — at the clean baseline, never the incoming near-miss float;
+ *   - a real change on a special-tier line with no reason ⇒ refused;
+ *   - otherwise an override: below list ⇒ DISCOUNTED, at or above list ⇒ MANUAL (an upsell above
+ *     list — see {@link isUpsellLine}), originalPrice = list, the price rounded to cents.
+ * Pure: the caller resolves the tier and list prices and whether a reason is on file.
+ */
+export function decideStaffOverride(input: {
+  overridePrice: number;
+  baselinePrice: number;
+  listPrice: number;
+  isSpecialTier: boolean;
+  hasReason: boolean;
+}): StaffOverrideDecision {
+  const { overridePrice, baselinePrice, listPrice, isSpecialTier, hasReason } = input;
+  if (withinStaffOverrideTolerance(overridePrice, baselinePrice)) {
+    return isSpecialTier
+      ? { priceType: "SPECIAL", unitPrice: baselinePrice, originalPrice: listPrice }
+      : { priceType: "STANDARD", unitPrice: baselinePrice, originalPrice: null };
+  }
+  if (needsOverrideReason({ overridePrice, baselinePrice, isSpecialTier, hasReason })) {
+    return { refused: "REASON_REQUIRED" };
+  }
+  return {
+    priceType: overridePrice < listPrice ? "DISCOUNTED" : "MANUAL",
+    unitPrice: roundMoney(overridePrice),
+    originalPrice: listPrice,
+  };
+}
+
 /**
  * A customer's EFFECTIVE buyer price for a product. An operator's remembered
  * upsell — a saved override net price ABOVE the catalog LIST price — is sticky and
@@ -953,6 +1190,55 @@ export function formatQtySplit({ qty, boxes, pieces, unitLabel, boxLabel }: QtyS
   return parts.length > 0 ? parts.join(" + ") : "0";
 }
 
+export interface UnitLineQtyInput {
+  qty: number | string;
+  boxes?: number | null;
+  pieces?: number | null;
+  /** units_v1 (2026-09-19): the line's own selling unit ("Case") when this line
+   *  was sold by a non-pack unit rather than by loose pieces. Empty/whitespace
+   *  is the pack (every existing call, no `unitLabel`, is unchanged). */
+  unitLabel?: string | null;
+}
+
+/**
+ * The quantity text of a line that may be sold by its own unit (units_v1) — the ONE
+ * formatter for the invoice/order qty cell on web, api (PDF + email) and mobile, so a
+ * units_v1 line reads the same everywhere: "3 Cases" (boxed split), never "3 boxes"
+ * (B653), and "5 Piece" for a factor-1 unit (no split to attach the label to — web
+ * parity, B757 follow-up), never a bare "5". A pack line (no `unitLabel`) is EXACTLY
+ * `formatQtySplit` — byte-identical to before this function existed, so a tenant
+ * without `flag.units_v1` (which can never hold a unit line) sees no change.
+ */
+export function invoiceLineQtyText(item: UnitLineQtyInput): string {
+  const split = { qty: item.qty, boxes: item.boxes, pieces: item.pieces };
+  const label = (item.unitLabel ?? "").trim();
+  if (!label) return formatQtySplit(split);
+  if (item.boxes == null && item.pieces == null) return `${formatQtySplit(split)} ${label}`;
+  return formatQtySplit({ ...split, boxLabel: label });
+}
+
+// ─── Purchase-order line pack (#2066 review round) ────────────────────────────
+// `linePack` moved here verbatim from
+// apps/web/app/(dashboard)/inventory/_components/purchase-orders-shared.ts, which now
+// re-exports it. Mobile's PO detail screen had read the boxes+pieces split straight off the
+// LIVE product's `unitsPerBox`, skipping this stored-wins rule (the class of bug B707/#1171
+// fixed for invoice/order lines): a repack (12 -> 6) silently re-denominated an already-written
+// line at the NEW pack. Web and mobile both import it; no-mirrors-linepack.spec.ts fails the
+// build on a local copy. (The label itself, `unitsLabel`, is ./units-label.ts.)
+
+/**
+ * B699/B722: the pack a PO line is denominated in. The line's OWN stored
+ * `packSize` wins; the live catalog pack is only the fallback, for a new line
+ * or one that never stored a pack. A line stores the pack it was actually
+ * written against — re-splitting it at the live pack on every render silently
+ * rewrites an already-agreed line's display the moment the product is repacked
+ * or un-boxed, the exact bug this function exists to prevent.
+ */
+export function linePack(line: { packSize?: number | null }, livePack: number): number {
+  const stored = Number(line.packSize ?? 0);
+  return stored > 1 ? stored : livePack;
+}
+
 // ─── Per-unit cost rounding ───────────────────────────────────────────────────
 
 /**
@@ -965,11 +1251,18 @@ export function formatQtySplit({ qty, boxes, pieces, unitLabel, boxLabel }: QtyS
  * additive — does not alter `roundMoney` or any other existing helper.
  */
 export function roundUnitCost(n: number): number {
+  return round4(n);
+}
+
+/**
+ * The ONE 4-decimal rounding body (#2717, SA-574 H1): half away from zero via the same
+ * decimal-string path as roundMoney (REG-B122) — EPSILON is <= half a ULP for any |n| above
+ * ~2e-4 once scaled by 1e4, so a Math.round(n * 1e4) nudge rounds half-at-the-4th-decimal
+ * values DOWN. Non-finite input is 0. `roundUnitCost` delegates here.
+ */
+export function round4(n: number): number {
   if (!Number.isFinite(n)) return 0;
   const sign = n < 0 ? -1 : 1;
-  // Same decimal-string path as roundMoney (REG-B122): EPSILON is <= half a ULP
-  // for any |n| above ~2e-4 once scaled by 1e4, so the old nudge was a no-op and
-  // half-at-the-4th-decimal values rounded DOWN against the documented intent.
   return (sign * Math.round(Number((Math.abs(n) * 10000).toFixed(4)))) / 10000;
 }
 
@@ -990,3 +1283,11 @@ export function effectiveQty(
   }
   return line.qty ?? 0;
 }
+
+/**
+ * B465 / SA-588 — the ONE special-tier rule: a tier other than 1 (list / STANDARD) is the customer's
+ * documented contract price for the product, so the line is SPECIAL. A pure module-level function
+ * (no `this`) so it works detached from any service instance. api, web and mobile import it; no
+ * app carries a local copy (pinned by `no-mirrors-special-tier.spec.ts`).
+ */
+export const isSpecialTier = (tierForProduct: number): boolean => tierForProduct !== 1;

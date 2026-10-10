@@ -1,6 +1,7 @@
 // ─── Invoices / payments / finance (wave E / imp-10b) ───────────────────────────
 
 import type { CheckStatus } from "./enums";
+import type { API_ERROR_CODES } from "./error-codes";
 
 export interface CreatePartialInvoiceItem {
   orderItemId: string;
@@ -37,6 +38,15 @@ export interface CreateInvoiceItem {
   taxRate?: number;
   /** Buyer-visible line note — prints under the description on the PDF (≤2000). */
   notes?: string;
+}
+
+/** An invoice PATCH line: a create line plus the stored row it edits (SA-186) and
+ *  an operator-attested pack for an unrecoverable legacy box line (SA-189). */
+export interface UpdateInvoiceItem extends CreateInvoiceItem {
+  /** Stored line id — the server matches THIS row; unknown/foreign ids are a 400. */
+  id?: string;
+  /** Integer >= 2, only from an operator who set the box/piece count explicitly. */
+  unitsPerBox?: number;
 }
 
 export interface SendInvoiceEmailResult {
@@ -175,9 +185,34 @@ export interface RecurringInvoice {
 // ─── Vendor-bill scan / AP identical DTOs ──────────────────────────────────────
 
 export interface UnlinkedItemsError {
-  code: "UNLINKED_ITEMS";
+  code: typeof API_ERROR_CODES.UNLINKED_ITEMS;
   message: string;
   unlinkedItems: { id: string; description: string; qty: number; unitCost: number }[];
+}
+
+/**
+ * B743: a bill line's pack size wasn't stated (or was left at 0/1, which
+ * never means "confirmed one piece") for a product the catalog already
+ * knows is sold by the case. Mirrors `UnlinkedItemsError`'s warn-and-confirm
+ * shape — retry with `acknowledgePackSizeUnknown: true` (receive) or
+ * `acknowledgePackSizeUnknown: true` (create's raise-PO path) to record the
+ * line as loose pieces anyway.
+ */
+export interface PackSizeUnknownError {
+  code: typeof API_ERROR_CODES.PACK_SIZE_UNKNOWN;
+  message: string;
+  packSizeUnknownItems: {
+    /** The existing VendorBillItem id; null for a line not yet saved. */
+    id: string | null;
+    lineIndex: number;
+    description: string;
+    productId: string;
+    productName: string;
+    qty: number;
+    unitCost: number;
+    /** The product's own known pack — a HINT only, never applied automatically. */
+    productPack: number;
+  }[];
 }
 
 /** An already-recorded bill that matches the one being entered. */
@@ -198,7 +233,7 @@ export interface DuplicateVendorBillInfo {
 }
 
 export interface DuplicateVendorBillError {
-  code: "DUPLICATE_VENDOR_BILL";
+  code: typeof API_ERROR_CODES.DUPLICATE_VENDOR_BILL;
   message: string;
   duplicate: DuplicateVendorBillInfo;
 }
@@ -306,7 +341,10 @@ export interface RecordSupplierPaymentResult {
 }
 
 export type StatementAiErrorCode =
-  "AI_KEY_INVALID" | "AI_SCAN_REJECTED" | "AI_UNAVAILABLE" | "AI_PARSE_FAILED";
+  | typeof API_ERROR_CODES.AI_KEY_INVALID
+  | typeof API_ERROR_CODES.AI_SCAN_REJECTED
+  | typeof API_ERROR_CODES.AI_UNAVAILABLE
+  | typeof API_ERROR_CODES.AI_PARSE_FAILED;
 
 export interface StatementAiError {
   /** null covers both the no-API-key case (a plain, code-less

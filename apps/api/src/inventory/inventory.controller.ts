@@ -8,8 +8,12 @@ import {
   Post,
   Put,
   Query,
+  Req,
+  Res,
   UseGuards,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
+import type { Request, Response } from "express";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -18,7 +22,11 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { InventoryService } from "./inventory.service";
+import { InventoryMovementsExportService } from "./inventory-movements-export.service";
+import { streamCsv } from "../products/products-export.stream";
+import { ExportMovementsDto } from "./dto/export-movements.dto";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
+import { CreatePurchaseOrderDto, ReceivePurchaseOrderDto } from "./dto/create-purchase-order.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
@@ -41,7 +49,10 @@ import { VariantAssignDto } from "./dto/variant-assign.dto";
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.OPERATOR)
 export class InventoryController {
-  constructor(private readonly inventoryService: InventoryService) {}
+  constructor(
+    private readonly inventoryService: InventoryService,
+    private readonly movementsExporter: InventoryMovementsExportService,
+  ) {}
 
   @Get("overview")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
@@ -53,6 +64,24 @@ export class InventoryController {
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   listMovements(@Query() query: ListMovementsDto) {
     return this.inventoryService.listMovements(query);
+  }
+
+  // The movements list's own filters as a streamed CSV (never paged, capped, audit-logged). OPERATOR
+  // only: the class-level gate applies (the list above admits DRIVER; this export must not). Declared
+  // before any `movements/:id` route. A refused window is a JSON 400 before the first byte.
+  @Get("movements/export.csv")
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  async exportMovementsCsv(
+    @Query() query: ExportMovementsDto,
+    @CurrentUser() user: { sub?: string; id?: string },
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { csv, filename } = await this.movementsExporter.prepare(query, {
+      userId: user?.sub ?? user?.id ?? null,
+      ip: req?.ip ?? null,
+    });
+    await streamCsv(res, filename, csv);
   }
 
   // B168: writes inherit the class-level OPERATOR gate; DRIVER reads below are deliberate.
@@ -147,22 +176,15 @@ export class InventoryController {
     return this.inventoryService.bulkSetCostBasis(dto, user.id);
   }
 
-  // B562 (interim mitigation, owner-approved 2026-09-18): the web and mobile UI
-  // entry points that called this endpoint were deliberately removed — this
-  // recompute replays purchase history but is blind to raw order decrements
-  // (order creation/edits decrement stock without writing StockMovement rows).
-  // `recomputeCosts`/`recomputeProductInTx` NOW DETECT this (a nonzero
-  // stockDrift between currentStock and the replayed ledger) and refuse to
-  // write a sales-blind average or rewrite snapshots for the affected product
-  // — see replayProduct's gap-detection comment — so a call here can no
-  // longer silently corrupt valuation. It still can't produce a TRUE average
-  // for a product with any order-consumption gap (root cause: order paths
-  // write no StockMovement — unfixed, tracked as remaining B562 work), so it
-  // mostly reports `gapsDetected` rather than repairing anything useful. Keep
-  // the UI hidden until that root cause lands.
+  // B562 PR-3 (SA-136 §4): TENANT_ADMIN only (platform admin included), dry run by default. The
+  // apply path only APPENDS one dated COST_BASIS correction per product whose replayed average
+  // differs — it never rewrites a movement — and refuses (reports) any product whose ledger can't
+  // account for its stock. Audited on every apply. The web/mobile entry points stay hidden (#931)
+  // until this deploys.
   @Post("recompute-costs")
-  recomputeCosts(@Body() dto: RecomputeCostsDto) {
-    return this.inventoryService.recomputeCosts(dto);
+  @Roles(UserRole.TENANT_ADMIN)
+  recomputeCosts(@Body() dto: RecomputeCostsDto, @CurrentUser() user: { id: string }) {
+    return this.inventoryService.recomputeCosts(dto, user?.id ?? null);
   }
 
   @Get("suppliers")
@@ -182,7 +204,7 @@ export class InventoryController {
 
   // ── Purchase Orders ──
   @Post("purchase-orders")
-  createPO(@Body() dto: any, @CurrentUser() user: { id: string }) {
+  createPO(@Body() dto: CreatePurchaseOrderDto, @CurrentUser() user: { id: string }) {
     return this.inventoryService.createPurchaseOrder(dto, user.id);
   }
 
@@ -218,7 +240,11 @@ export class InventoryController {
   }
 
   @Post("purchase-orders/:id/receive")
-  receivePO(@Param("id") id: string, @Body() dto: any, @CurrentUser() user: { id: string }) {
+  receivePO(
+    @Param("id") id: string,
+    @Body() dto: ReceivePurchaseOrderDto,
+    @CurrentUser() user: { id: string },
+  ) {
     return this.inventoryService.receivePurchaseOrder(id, dto, user.id);
   }
 

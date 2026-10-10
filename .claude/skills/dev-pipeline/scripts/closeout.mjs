@@ -27,6 +27,19 @@
 //       [--light [--scale small|major] [--findings <json>]]
 //   node closeout.mjs selftest
 //
+// NO runDir? (SS8, 2026-09-16) This script needs a run directory and a
+// result.json. A session that fanned out via RAW Agent-tool calls outside a
+// Workflow produces neither -- and that is exactly how the 108-agent /
+// 7.43M-token incident ended up with no ledger row at all. Such a run is NOT
+// exempt from the Pipeline Law: close it out by hand with
+//
+//   node ~/.claude/skills/model-routing/scripts/pipeline-ledger.mjs append-manual \
+//        --run <slug> --approach dev-pipeline --session <sid> --project <dir>
+//
+// which reads true cost and active time from session-usage.mjs --all. The
+// 'dev-pipeline' approach value was refused there until SS8 widened the check
+// to the full APPROACH_VALUES set. Then write the RUN-LOG entry as usual.
+//
 // --project   Project root. Resolved via `git -C <runDir> rev-parse
 //             --git-common-dir` (its parent is the MAIN checkout, which is
 //             what carries the real ~/.claude/projects/<enc> transcript dir
@@ -92,6 +105,7 @@ import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = path.dirname(__filename);
@@ -142,6 +156,52 @@ function loadJsonSafe(p) {
   } catch {
     return null;
   }
+}
+
+// SS4d (2026-09-16): pipeline.js writes result.json through an agent, which
+// stops being reliable past ~150 KB, so an oversized payload now moves its
+// bulkiest array fields into <runDir>/result-overflow.json and leaves
+// `overflow: { path, fields, counts, written }` behind as a pointer. Every
+// reader downstream of here expects the WHOLE result, so the two halves are
+// rejoined at the single point result.json is loaded. A result with no
+// overflow (the normal case) passes through byte-identical.
+//
+// Fail-safe, deliberately: if the overflow file is missing or unreadable, the
+// fields stay empty and a warning is raised -- fabricating them, or silently
+// treating "0 findings because the file is gone" as "0 findings", is exactly
+// the false-clean this whole redesign exists to stop.
+function mergeResultOverflow(result, runDir, warnings) {
+  if (!result || !result.overflow || !Array.isArray(result.overflow.fields) || !result.overflow.fields.length) return result;
+  const declared = result.overflow.fields;
+  const overflowPath = typeof result.overflow.path === "string" && result.overflow.path
+    ? result.overflow.path
+    : path.join(runDir, "result-overflow.json");
+  const data = loadJsonSafe(overflowPath) || loadJsonSafe(path.join(runDir, "result-overflow.json"));
+  if (!data) {
+    warnings.push(
+      `WARNING: result.json declares an overflow (${declared.join(", ")}) at '${overflowPath}' but that file is missing or unparseable -- ` +
+        `those fields stay EMPTY in this close-out. Counts are in result.overflow.counts; ${path.join(runDir, "phases")} holds the authoritative per-phase record.`
+    );
+    return result;
+  }
+  const merged = { ...result };
+  const restored = [];
+  const missing = [];
+  for (const field of declared) {
+    if (Array.isArray(data[field])) {
+      merged[field] = data[field];
+      restored.push(field);
+    } else {
+      missing.push(field);
+    }
+  }
+  if (missing.length) {
+    warnings.push(
+      `WARNING: '${overflowPath}' does not carry ${missing.join(", ")}, which result.json says it moved there -- those fields stay EMPTY in this close-out.`
+    );
+  }
+  merged.overflow = { ...result.overflow, merged: true, restoredFields: restored };
+  return merged;
 }
 
 function readTextSafe(p) {
@@ -227,7 +287,10 @@ function firstLine(s) {
 function resolveProjectViaGit(cwd) {
   let res;
   try {
-    res = spawnSync("git", ["-C", cwd, "rev-parse", "--git-common-dir"], { encoding: "utf8" });
+    res = spawnSync("git", ["-C", cwd, "rev-parse", "--git-common-dir"], {
+      encoding: "utf8",
+      env: scrubbedGitEnv(),
+    });
   } catch {
     return null;
   }
@@ -591,10 +654,9 @@ function parseFindingsFlag(raw) {
 // Builds the minimal result.json a light loop never wrote on its own. Every
 // field here mirrors what buildRow() in pipeline-ledger.mjs actually reads
 // (phaseReport[], mode/scale/clean, confirmedByPhase, remainingFindings) plus
-// a self-reported telemetry marker -- see stepLedger's telemetry decision for
-// why a light-loop row reads "true" rather than "legacy" even without a
-// matched --usage file.
-function buildLightResult({ usage, flags, fallbackStartedAt, endedAt }) {
+// a telemetry marker from lightTelemetry() -- "true" only when session-usage
+// actually produced usage for this run, "legacy" under --no-usage.
+function buildLightResult({ usage, flags, fallbackStartedAt, endedAt, telemetry }) {
   const findings = parseFindingsFlag(typeof flags.findings === "string" ? flags.findings : null);
   const remaining = findings && Array.isArray(findings.remaining) ? findings.remaining : [];
   const confirmedByPhase =
@@ -614,8 +676,20 @@ function buildLightResult({ usage, flags, fallbackStartedAt, endedAt }) {
     phaseReport: phaseRowsFromUsage(usage),
     confirmedByPhase,
     remainingFindings: remaining,
-    telemetry: "true",
+    telemetry,
   };
+}
+
+// A light loop's telemetry marker. "true" only when session-usage genuinely
+// ran for this close-out (a real or selftest-stubbed usage blob); "legacy"
+// when it was skipped via --no-usage --reason (the row keeps its
+// usageOverrideReason, so it still satisfies the true-telemetry cutoff
+// predicate) or when a --dry preview's session-usage attempt failed.
+// pipeline-ledger.mjs accepts only 'legacy' | 'true' for --telemetry.
+// 2026-09-28 fix: this used to be a hard-coded "true", which made every
+// --no-usage light-loop row falsely claim true telemetry.
+function lightTelemetry(usageResult) {
+  return usageResult && usageResult.telemetry === "true" && !usageResult.usageOverrideReason ? "true" : "legacy";
 }
 
 // ---------------------------------------------------------------------------
@@ -758,12 +832,10 @@ function stepLedger(ctx) {
     args.push("--usage", usageResult.outFile);
     if (ctx.runId) args.push("--run-id", ctx.runId);
   } else if (mode === "light-loop") {
-    // A light-loop result.json self-reports telemetry:"true" (see
-    // buildLightResult) even when no --usage file matched this run (e.g.
-    // --no-usage, or no session transcript found) -- mark the ledger row
-    // "true" rather than "legacy", which is reserved for runs that predate
-    // this telemetry mechanism entirely.
-    args.push("--telemetry", "true");
+    // No --usage file to hand the ledger (e.g. --dry, or a stubbed usage
+    // blob): the marker follows whether session-usage actually ran --
+    // "legacy" under --no-usage, never a self-reported "true" (2026-09-28).
+    args.push("--telemetry", lightTelemetry(usageResult));
   } else {
     args.push("--telemetry", "legacy");
   }
@@ -783,7 +855,11 @@ function stepLedger(ctx) {
   }
 
   if (dry) {
-    const telemetryPreview = usageResult?.outFile || mode === "light-loop" ? "true" : "legacy";
+    const telemetryPreview = usageResult?.outFile
+      ? "true"
+      : mode === "light-loop"
+        ? lightTelemetry(usageResult)
+        : "legacy";
     return {
       status: "dry",
       ledgerPath,
@@ -796,6 +872,24 @@ function stepLedger(ctx) {
 
   assertSelftestSafePath(ledgerPath);
 
+  // P0-1 fix (Opus review 2026-09-16): pipeline-ledger.mjs is invoked as a
+  // SUBPROCESS below and re-reads result.json fresh from DISK -- it never
+  // sees mergeResultOverflow()'s in-memory merge (main(), above). An
+  // overflowing run's ledger row therefore silently recorded
+  // confirmedFindings/tasks/checkpoints as empty (not "unknown"), which is
+  // exactly the metric this whole redesign is judged on. ctx.result IS the
+  // merged object -- when the merge actually restored something, write it to
+  // a throwaway temp file and point the subprocess at THAT instead of the
+  // raw on-disk file. The real result.json is never touched: other close-out
+  // re-reads must still see exactly what the engine wrote.
+  let mergedTempFile = null;
+  if (result && result.overflow && Array.isArray(result.overflow.restoredFields) && result.overflow.restoredFields.length) {
+    mergedTempFile = path.join(os.tmpdir(), `closeout-merged-result-${process.pid}-${Date.now()}.json`);
+    fs.writeFileSync(mergedTempFile, JSON.stringify(result), "utf8");
+    args[1] = mergedTempFile;
+  }
+
+  try {
   if (repair) {
     // Build the replacement row through the SAME code path a fresh append
     // uses (pipeline-ledger.mjs buildRow) by appending into a throwaway
@@ -844,6 +938,11 @@ function stepLedger(ctx) {
     return { status: "failed", ledgerPath, message: `ledger: append failed -- ${firstLine(res.stderr) || res.error?.message}` };
   }
   return { status: "appended", ledgerPath, message: `ledger: appended '${slug}' -> ${ledgerPath}` };
+  } finally {
+    if (mergedTempFile) {
+      try { fs.rmSync(mergedTempFile, { force: true }); } catch {}
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -961,6 +1060,59 @@ function stepRunLog(ctx) {
   assertSelftestSafePath(runLogPath);
   fs.writeFileSync(runLogPath, insertAfterDashLine(text, entryBlock), "utf8");
   return { status: "appended", runLogPath, message: `RUN-LOG: entry added for '${slug}' -> ${runLogPath}` };
+}
+
+// ---------------------------------------------------------------------------
+// check-runlog: refuse an entry that is still a bare, unfilled stub
+// ---------------------------------------------------------------------------
+// Process fix (retro 2026-09-16, learning-loop health finding): stepRunLog
+// above always writes literal "TODO" placeholders for Knob candidate/
+// Deviation -- correct at close-out time, since the real evidence is often
+// not known yet. Nothing ever came back to verify a human later replaced
+// them; four light-loop RUN-LOG entries sat as bare TODO indefinitely,
+// losing that run's learning-loop signal. This is a SEPARATE, explicit check
+// (`node closeout.mjs check-runlog <slug>`) run later by a human or a hook --
+// close-out itself must still be free to write the initial stub.
+function extractRunLogEntry(text, slug) {
+  const lines = text.split(/\r?\n/);
+  const headingRe = /^##\s+(\S+)\s+·/;
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(headingRe);
+    if (m && slugMatches(m[1], slug)) {
+      start = i;
+      break;
+    }
+  }
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^##\s+/.test(lines[i]) || lines[i].trim() === "---") {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start, end).join("\n").trim();
+}
+
+function bareTodoLines(entryText) {
+  return entryText.split(/\r?\n/).filter((l) => /^-\s*(Knob candidates?|Deviations?):\s*TODO\b/i.test(l.trim()));
+}
+
+function checkRunLogFilled(slug, runLogPath) {
+  const text = readTextSafe(runLogPath);
+  if (text == null) return { status: "failed", message: `RUN-LOG: cannot read '${runLogPath}'` };
+  const entry = extractRunLogEntry(text, slug);
+  if (!entry) return { status: "failed", message: `RUN-LOG: no entry found for slug '${slug}'` };
+  const bare = bareTodoLines(entry);
+  if (bare.length) {
+    return {
+      status: "refused",
+      message: `RUN-LOG entry '${slug}' still has ${bare.length} bare TODO line(s): ${bare.join(" | ")}`,
+      entry,
+    };
+  }
+  return { status: "ok", message: `RUN-LOG: '${slug}' is filled in (no bare TODO)`, entry };
 }
 
 // ---------------------------------------------------------------------------
@@ -1160,7 +1312,7 @@ function stepCodeMap({ project, result }) {
 
 function gitInfo(project) {
   const run = (args) => {
-    const r = spawnSync("git", args, { cwd: project, encoding: "utf8" });
+    const r = spawnSync("git", args, { cwd: project, encoding: "utf8", env: scrubbedGitEnv() });
     return r.status === 0 ? r.stdout.trim() : null;
   };
   const branch = run(["branch", "--show-current"]);
@@ -1294,6 +1446,20 @@ function buildChecklist(ctx) {
   lines.push("MANUAL walk the coverage matrix (R# -> T# -> result) out loud");
   lines.push("MANUAL set the Status line (IMPLEMENTED/CLOSED) on every artifact and reconcile code-map entries");
   lines.push("MANUAL write the RUN-LOG entry's Knob candidate line with real evidence");
+  // P1-4 fix (Opus review 2026-09-16): pre-merge-review (SS3b) is a
+  // required close-out step for EVERY lane on EITHER engine, but this
+  // checklist -- the one script that prints the S8 checklist for both --
+  // never mentioned it, so a run that skipped it looked identical to one
+  // that did not owe it. result.preMergeReview exists on both engines' own
+  // payloads now; a result predating this fix (or a manual/light-loop stub
+  // that never set it) is treated as "n/a", never as silently satisfied.
+  if (ctx.result && ctx.result.preMergeReview && ctx.result.preMergeReview.required) {
+    lines.push(
+      ctx.result.preMergeReview.ran
+        ? "✓ pre-merge-review -- ran"
+        : "MANUAL run pre-merge-review on this run's PR diff before it enters a merge window (result.preMergeReview.ran is false)"
+    );
+  }
   if (ctx.mode === "bugfix") lines.push("MANUAL write the LESSONS entry's Symptom/Root cause/Lesson/Guard body");
   return lines;
 }
@@ -1442,6 +1608,10 @@ function runMain(argv) {
   }
 
   let result = loadJsonSafe(path.join(runDir, "result.json"));
+  // SS4d: rejoin an overflow split before ANY consumer reads the result --
+  // ledger row, RUN-LOG stub, code-map TODOs and the handoff card all count
+  // fields that may have been moved out.
+  result = mergeResultOverflow(result, runDir, warnings);
   const resumeText = readTextSafe(path.join(runDir, "RESUME.md"));
   const pipelineArgs = loadJsonSafe(path.join(runDir, "pipeline-args.json"));
   const { mode: resumeMode, scale: resumeScale } = extractModeScale(resumeText);
@@ -1511,6 +1681,7 @@ function runMain(argv) {
       flags,
       fallbackStartedAt: startedAt,
       endedAt,
+      telemetry: lightTelemetry(usageResult),
     });
     mode = result.mode;
     scale = result.scale ?? scale;
@@ -1597,7 +1768,7 @@ function runMain(argv) {
     dry,
   });
 
-  const checklist = buildChecklist({ ledgerResult, runLogResult, lessonsResult, codeMapResult, handoffResult, mode });
+  const checklist = buildChecklist({ ledgerResult, runLogResult, lessonsResult, codeMapResult, handoffResult, mode, result });
 
   // Finding 2 (2026-09-10 audit): a real (non-dry) run with any failed step
   // exits non-zero so a CI/hook caller can actually detect it, instead of
@@ -1769,6 +1940,26 @@ function runSelftest() {
     const runLogEntryCount1 = (fs.readFileSync(runLogPath, "utf8").match(/^## /gm) || []).length;
     assert(runLogEntryCount1 === 2, `expected 2 RUN-LOG entries (1 existing + 1 new), got ${runLogEntryCount1}`);
 
+    // Process fix (retro 2026-09-16): check-runlog refuses a bare TODO stub.
+    const stubCheck = checkRunLogFilled(slug, runLogPath);
+    assert(stubCheck.status === "refused", `expected check-runlog to refuse a fresh TODO stub, got '${stubCheck.status}'`);
+    assert(/Knob candidate/i.test(stubCheck.message), `expected the refusal to name the Knob candidate line, got '${stubCheck.message}'`);
+    assert(/Deviation/i.test(stubCheck.message), `expected the refusal to name the Deviation line, got '${stubCheck.message}'`);
+    assert(stubCheck.entry.includes(slug), "expected the returned entry text to include the run's own heading");
+
+    // Hand-fill the stub, exactly as the house process expects a human to -- check-runlog must now pass.
+    const filledText = fs
+      .readFileSync(runLogPath, "utf8")
+      .replace("- Knob candidate: TODO (one change WITH evidence)", "- Knob candidate: raise the ceiling (evidence: this run)")
+      .replace("- Deviation: TODO", "- Deviation: none");
+    fs.writeFileSync(runLogPath, filledText, "utf8");
+    const filledCheck = checkRunLogFilled(slug, runLogPath);
+    assert(filledCheck.status === "ok", `expected check-runlog to pass once filled in, got '${filledCheck.status}'`);
+
+    // A slug with no RUN-LOG entry at all is a distinct failure, not a false pass.
+    const missingCheck = checkRunLogFilled("no-such-slug-at-all", runLogPath);
+    assert(missingCheck.status === "failed", `expected check-runlog to fail (not refuse) on an unknown slug, got '${missingCheck.status}'`);
+
     const metaAfter1 = loadJsonSafe(path.join(project, ".claude", "lessons", "_meta.json"));
     assert(metaAfter1.nextId === 43, `expected nextId bumped to 43, got ${metaAfter1.nextId}`);
     assert(metaAfter1.activeCount === 6, `expected activeCount bumped to 6 (non-full register), got ${metaAfter1.activeCount}`);
@@ -1908,8 +2099,98 @@ function runSelftest() {
       .map((l) => JSON.parse(l));
     const lightRow = lightLedgerRows.find((r) => r.run === lightSlug);
     assert(lightRow, "expected a ledger row for the --light run");
-    assert(lightRow.telemetry === "true", `expected ledger row telemetry 'true' for light-loop run, got '${lightRow.telemetry}'`);
+    // 2026-09-28 fix (reported by lane U-units, B889 close-out): a light loop
+    // closed with --no-usage has NO true telemetry -- the row (and the
+    // synthesized result.json) must say "legacy", never "true", while still
+    // carrying the declared usageOverrideReason.
+    assert(
+      lightRow.telemetry === "legacy",
+      `expected ledger row telemetry 'legacy' for a --no-usage light-loop run, got '${lightRow.telemetry}'`
+    );
+    assert(
+      lightRow.usageOverrideReason === NO_USAGE_REASON,
+      `expected usageOverrideReason on the --no-usage light-loop row, got '${lightRow.usageOverrideReason}'`
+    );
+    assert(
+      lightResultOnDisk.telemetry === "legacy",
+      `expected synthesized result.json telemetry 'legacy' under --no-usage, got '${lightResultOnDisk.telemetry}'`
+    );
+    // The decision function itself (also drives the --dry preview line).
+    assert(
+      lightTelemetry({ telemetry: "legacy", usageOverrideReason: NO_USAGE_REASON }) === "legacy",
+      "lightTelemetry: --no-usage must be 'legacy'"
+    );
+    assert(lightTelemetry({ telemetry: "true", usageOverrideReason: null }) === "true", "lightTelemetry: real usage must be 'true'");
+    assert(lightTelemetry({ telemetry: "none", status: "warn" }) === "legacy", "lightTelemetry: a failed --dry attempt must be 'legacy'");
+    assert(lightTelemetry(null) === "legacy", "lightTelemetry: no usage result must be 'legacy'");
     assert(lightRow.scale === "small", `expected ledger row scale 'small', got '${lightRow.scale}'`);
+
+    // --- light-loop WITH real session usage (stubbed session-usage.mjs) keeps
+    // telemetry "true" on both the row and the synthesized result.json -------
+    const lightUsageSlug = "selftest-run-light-usage";
+    const lightUsageRunDir = path.join(project, ".claude", "pipeline", lightUsageSlug);
+    fs.mkdirSync(lightUsageRunDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(lightUsageRunDir, "RESUME.md"),
+      "# RESUME — selftest light-loop fixture with real usage\n",
+      "utf8"
+    );
+    const lightUsageStubPath = path.join(tmpBase, "light-usage-stub-session-usage.json");
+    fs.writeFileSync(
+      lightUsageStubPath,
+      JSON.stringify({
+        v: 1,
+        sessionId: "sess-light-selftest",
+        project,
+        session: {
+          total: { costUsd: 1.23 },
+          activeMs: 60000,
+          firstAt: "2026-09-28T10:00:00.000Z",
+          lastAt: "2026-09-28T10:30:00.000Z",
+        },
+        workflows: {},
+      }),
+      "utf8"
+    );
+    process.env.CLOSEOUT_SELFTEST_USAGE_JSON = lightUsageStubPath;
+    let rLightUsage;
+    try {
+      rLightUsage = runMain([
+        lightUsageRunDir,
+        "--project",
+        project,
+        "--runlog",
+        runLogPath,
+        "--ledger",
+        ledgerPath,
+        "--light",
+        "--scale",
+        "small",
+      ]);
+    } finally {
+      delete process.env.CLOSEOUT_SELFTEST_USAGE_JSON;
+    }
+    assert(
+      rLightUsage.ledgerResult.status === "appended",
+      `expected light-loop+usage ledger append, got '${rLightUsage.ledgerResult.status}'`
+    );
+    const lightUsageRow = fs
+      .readFileSync(ledgerPath, "utf8")
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .find((r) => r.run === lightUsageSlug);
+    assert(lightUsageRow, "expected a ledger row for the light-loop+usage run");
+    assert(
+      lightUsageRow.telemetry === "true",
+      `expected telemetry 'true' for a light-loop run with real usage, got '${lightUsageRow.telemetry}'`
+    );
+    assert(!lightUsageRow.usageOverrideReason, "expected no usageOverrideReason on the light-loop+usage row");
+    const lightUsageResult = loadJsonSafe(path.join(lightUsageRunDir, "result.json"));
+    assert(
+      lightUsageResult.telemetry === "true",
+      `expected synthesized result.json telemetry 'true' with real usage, got '${lightUsageResult.telemetry}'`
+    );
 
     // --- finding 3: missing result.json with NO --light still gets a ledger
     // row (finding 1 is unconditional), but RUN-LOG refuses -----------------
@@ -2235,7 +2516,9 @@ function runSelftest() {
     // given (the exact 2026-09-11 bug: a worktree's own path encodes to a
     // ~/.claude/projects/<enc> dir that never existed).
     function runGitCmd(args, cwd) {
-      return spawnSync("git", args, { cwd, encoding: "utf8" });
+      // Scrub git's repo-scoped env (GIT_DIR ...): under a git hook it would re-point this fixture
+      // at the real repository (fixture-git-env-scrub.spec.ts).
+      return spawnSync("git", args, { cwd, encoding: "utf8", env: scrubbedGitEnv() });
     }
     const gitMainRepo = path.join(tmpBase, "git-main-repo");
     fs.mkdirSync(gitMainRepo, { recursive: true });
@@ -2572,6 +2855,108 @@ function runSelftest() {
       );
     }
 
+    // --- P1-4 regression (Opus review 2026-09-16): the S8 checklist must
+    // actually surface an owed pre-merge-review, on either engine's result. ---
+    {
+      const okStub = { ledgerResult: { status: "appended" }, runLogResult: { status: "appended" }, lessonsResult: { status: "appended" }, codeMapResult: { status: "na" }, handoffResult: { status: "written" }, mode: "feature" };
+      const owedLines = buildChecklist({ ...okStub, result: { preMergeReview: { required: true, ran: false } } });
+      assert(
+        owedLines.some((l) => l.startsWith("MANUAL") && /pre-merge-review/i.test(l)),
+        `P1-4: expected a MANUAL pre-merge-review line when required:true/ran:false, got ${JSON.stringify(owedLines)}`
+      );
+      const doneLines = buildChecklist({ ...okStub, result: { preMergeReview: { required: true, ran: true } } });
+      assert(
+        doneLines.some((l) => /pre-merge-review -- ran/.test(l)) && !doneLines.some((l) => l.startsWith("MANUAL") && /pre-merge-review/i.test(l)),
+        `P1-4: expected a done (non-MANUAL) pre-merge-review line when ran:true, got ${JSON.stringify(doneLines)}`
+      );
+      const noFieldLines = buildChecklist({ ...okStub, result: {} });
+      assert(
+        !noFieldLines.some((l) => /pre-merge-review/i.test(l)),
+        `P1-4: expected NO pre-merge-review line when the result carries no such field at all (a stub/legacy result), got ${JSON.stringify(noFieldLines)}`
+      );
+    }
+
+    // --- P0-1 regression (Opus review 2026-09-16): stepLedger must read the
+    // MERGED result, not the raw on-disk one, when an overflow split
+    // happened. Without the fix, pipeline-ledger.mjs (a subprocess that
+    // re-reads result.json fresh from disk) would see confirmedFindings:[]
+    // (the emptied-by-overflow disk value) and record a confident
+    // {critical:0,...} instead of the real counts -- exactly the false-zero
+    // the review caught. ---
+    {
+      const ovRunDir = path.join(tmpBase, "ov-run");
+      fs.mkdirSync(ovRunDir, { recursive: true });
+      const ovSlug = "p0-1-overflow-fixture";
+      const ovLedgerDir = path.join(tmpBase, "ov-ledger-project");
+      const ovLedgerPath = path.join(ovLedgerDir, ".claude", "pipeline", "cost-ledger.jsonl");
+      // The disk copy of result.json: what pipeline.js's overflow split
+      // actually writes -- confirmedFindings/tasks emptied, a pointer left
+      // behind. stepLedger checks fs.existsSync(runDir/result.json) before
+      // it will proceed, so this file must exist even though ctx.result
+      // (below) is what actually gets used for the append.
+      const ovDiskResult = {
+        phaseReport: [],
+        mode: "feature",
+        scale: "small",
+        confirmedFindings: [],
+        tasks: [],
+        overflow: {
+          path: path.join(ovRunDir, "result-overflow.json"),
+          fields: ["checkpoints", "tasks", "confirmedFindings"],
+          counts: { checkpoints: 3, tasks: 2, confirmedFindings: 1 },
+          written: true,
+          residualOverCap: false,
+          bytesBefore: 999999,
+          bytesAfter: 9000,
+          capBytes: 153600,
+        },
+      };
+      fs.writeFileSync(path.join(ovRunDir, "result.json"), JSON.stringify(ovDiskResult), "utf8");
+      // The MERGED object -- what main()'s mergeResultOverflow() produces
+      // in-memory before calling stepLedger. This is ctx.result.
+      const ovMergedResult = {
+        phaseReport: [],
+        mode: "feature",
+        scale: "small",
+        confirmedFindings: [{ severity: "blocker", file: "src/money.ts", summary: "restored via overflow merge" }],
+        tasks: [{ id: "T1", status: "complete" }],
+        overflow: { ...ovDiskResult.overflow, merged: true, restoredFields: ["checkpoints", "tasks", "confirmedFindings"] },
+      };
+      const ovLedgerResult = stepLedger({
+        flags: { ledger: ovLedgerPath },
+        project: tmpBase,
+        runDir: ovRunDir,
+        slug: ovSlug,
+        result: ovMergedResult,
+        usageResult: null,
+        dry: false,
+        startedAt: "2026-09-16T00:00:00.000Z",
+        endedAt: "2026-09-16T01:00:00.000Z",
+        branch: null,
+        pr: null,
+        mode: "feature",
+        scale: "small",
+      });
+      assert(
+        ovLedgerResult.status === "appended",
+        `P0-1: expected the overflow fixture's ledger append to succeed, got '${ovLedgerResult.status}' (${ovLedgerResult.message})`
+      );
+      const ovRows = fs
+        .readFileSync(ovLedgerPath, "utf8")
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map((l) => JSON.parse(l));
+      const ovRow = ovRows.find((r) => r.run === ovSlug);
+      assert(ovRow, "P0-1: expected a ledger row for the overflow fixture run");
+      assert(
+        ovRow.quality && ovRow.quality.reviewFindings && ovRow.quality.reviewFindings.critical === 1,
+        `P0-1: expected the ledger row's reviewFindings.critical to be 1 (from the MERGED confirmedFindings), got ${JSON.stringify(ovRow.quality && ovRow.quality.reviewFindings)} -- this is exactly the false-zero the overflow-merge bug produced`
+      );
+      // The temp merged-result file must not be left behind.
+      const tmpLeftovers = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("closeout-merged-result-"));
+      assert(tmpLeftovers.length === 0, `P0-1: expected no leftover closeout-merged-result-* temp files, found ${JSON.stringify(tmpLeftovers)}`);
+    }
+
     // --- proof the real RUN-LOG.md / real routeflow ledger were never
     // touched by any of the runs above (this is what the 2026-09-10 leak
     // would have failed) ---
@@ -2606,6 +2991,29 @@ function main() {
   const argv = process.argv.slice(2);
   if (argv[0] === "selftest") {
     runSelftest();
+    return;
+  }
+  if (argv[0] === "check-runlog") {
+    const { positional, flags } = parseFlags(argv.slice(1));
+    const slug = positional[0];
+    if (!slug) {
+      process.stderr.write("check-runlog: a slug is required, e.g. `node closeout.mjs check-runlog 2026-09-11-session-sess-g6`\n");
+      process.exitCode = 2;
+      return;
+    }
+    const res = checkRunLogFilled(slug, runLogPathFor(flags));
+    if (res.status === "refused") {
+      process.stdout.write((res.entry || "") + "\n");
+      process.stderr.write("REFUSED: " + res.message + "\n");
+      process.exitCode = 1;
+      return;
+    }
+    if (res.status === "failed") {
+      process.stderr.write(res.message + "\n");
+      process.exitCode = 2;
+      return;
+    }
+    console.log(res.message);
     return;
   }
   if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {

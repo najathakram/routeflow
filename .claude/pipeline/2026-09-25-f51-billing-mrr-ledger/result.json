@@ -1,0 +1,1072 @@
+{
+  "phaseReport": [
+    {
+      "phase": "Baseline",
+      "ran": true,
+      "agents": 5,
+      "rawFindings": 3,
+      "tokens": 42852,
+      "estUsd": 0.21,
+      "estUsdApprox": true,
+      "estUnknown": false,
+      "model": "claude-haiku-4-5",
+      "effort": "low",
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Author tests",
+      "ran": true,
+      "agents": 44,
+      "rawFindings": 1,
+      "tokens": null,
+      "estUsd": null,
+      "estUsdApprox": null,
+      "estUnknown": true,
+      "model": "claude-sonnet-5",
+      "effort": "medium",
+      "overlappedWith": "Implement",
+      "note": "two or more tasks entered this phase concurrently in the same wave -- budget.spent() is one shared cumulative scalar, so no reliable per-phase delta exists here; tokens unknown, not zero"
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": 8,
+      "rawFindings": 2,
+      "tokens": null,
+      "estUsd": null,
+      "estUsdApprox": null,
+      "estUnknown": true,
+      "model": "claude-haiku-4-5",
+      "effort": "low",
+      "overlappedWith": "Implement",
+      "note": "two or more tasks entered this phase concurrently in the same wave -- budget.spent() is one shared cumulative scalar, so no reliable per-phase delta exists here; tokens unknown, not zero"
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": 24,
+      "rawFindings": 0,
+      "tokens": 700373,
+      "estUsd": 7,
+      "estUsdApprox": true,
+      "estUnknown": false,
+      "model": "claude-sonnet-5",
+      "effort": "medium",
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Gate & Review",
+      "ran": true,
+      "agents": 31,
+      "rawFindings": 24,
+      "tokens": null,
+      "estUsd": null,
+      "estUsdApprox": null,
+      "estUnknown": true,
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "overlappedWith": "Implement",
+      "note": "two or more tasks entered this phase concurrently in the same wave -- budget.spent() is one shared cumulative scalar, so no reliable per-phase delta exists here; tokens unknown, not zero"
+    },
+    {
+      "phase": "Verify",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": 0,
+      "tokens": 6462,
+      "estUsd": 0.06,
+      "estUsdApprox": true,
+      "estUnknown": false,
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "UI verify",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "estUsd": 0,
+      "estUsdApprox": true,
+      "estUnknown": false,
+      "model": "claude-sonnet-5",
+      "effort": "high",
+      "overlappedWith": "Implement",
+      "note": "runs nested inside the single Implement bracket (the whole wave loop) -- this tokens/estUsd figure is shown for visibility only and is ALREADY included in Implement's own total, so it is excluded from estimatedCostUsd (see overlappedWith) to avoid double-counting"
+    },
+    {
+      "phase": "Mutation probe",
+      "ran": true,
+      "agents": 7,
+      "rawFindings": 7,
+      "tokens": 38761,
+      "estUsd": 0.19,
+      "estUsdApprox": true,
+      "estUnknown": false,
+      "model": "claude-haiku-4-5",
+      "effort": "medium",
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 25,
+      "rawFindings": 0,
+      "tokens": null,
+      "estUsd": null,
+      "estUsdApprox": null,
+      "estUnknown": true,
+      "model": "claude-sonnet-5",
+      "effort": "medium",
+      "overlappedWith": "Implement",
+      "note": "two or more tasks entered this phase concurrently in the same wave -- budget.spent() is one shared cumulative scalar, so no reliable per-phase delta exists here; tokens unknown, not zero"
+    },
+    {
+      "phase": "Final pass",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 3,
+      "tokens": 16202,
+      "estUsd": 0.08,
+      "estUsdApprox": true,
+      "estUnknown": false,
+      "model": "claude-haiku-4-5",
+      "effort": "low",
+      "overlappedWith": null,
+      "note": ""
+    }
+  ],
+  "confirmedByPhase": {
+    "Baseline": 3,
+    "Author tests": 1,
+    "Red gate": 2,
+    "Implement": 0,
+    "Gate & Review": 24,
+    "Verify": 0,
+    "UI verify": 0,
+    "Mutation probe": 7,
+    "Fix": 0,
+    "Final pass": 3
+  },
+  "confirmedFindings": [
+    {
+      "severity": "minor",
+      "file": "apps/api/src/platform-admin/platform-admin.service.ts",
+      "line": 915,
+      "summary": "Cycle is derived with `billingPeriodDays >= 365`, so any non-365 length gets MONTHLY. A 90- or 180-day prepaid row is therefore labelled MONTHLY, and proration.service.ts:167 then uses that whole 90/180-day period as the add-on 'monthly' window. This existed before the change (the schema default was already MONTHLY), and non-30/365 proration is explicitly out of scope, so it belongs in a follow-up bug.",
+      "scenario": "activateManualSubscription with billingPeriodDays: 90 gives cycle MONTHLY and a 90-day period. A later self-serve add-on enable prorates the monthly price over 90 days, about 3x less than it should.",
+      "taskId": "FIX-863",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "minor",
+      "file": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-863/pack.md",
+      "line": 1,
+      "summary": "The review pack's base sha (9ec6d0cf) is the FIX-863 commit itself, so the pack's diff reads 'no changes'. I reviewed `git show 9ec6d0cf` directly. The pack generator should use the parent commit as the base.",
+      "scenario": "A reviewer who trusts the pack sees an empty diff and could approve without having seen the fix.",
+      "taskId": "FIX-863",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/billing/addon-ledger.spec.ts",
+      "line": 36,
+      "summary": "T14 only covers the positive (enable) branch. Nothing in this unit spec checks that a negative deltaQty maps to BILLING_EVENTS.ADDON_DISABLED with a negative amountDelta, or that the FOR UPDATE lock is taken on d.tenantId.",
+      "scenario": "Suppose someone flips the ternary so deltaQty < 0 emits ADDON_ENABLED, or drops the sign from the amount. addon-ledger.spec.ts stays green. Only the call-site tests T10/T13 (FIX-865B/C) would catch it.",
+      "taskId": "FIX-865A",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/billing/addon-ledger.ts",
+      "line": 27,
+      "summary": "The guard skips only a null snapshot. A stored 0 snapshot on a paying tenant still emits an ADDON_ENABLED/ADDON_DISABLED event with amountDelta 0. The spec comment calls null 'a free grant, D1', but addon.service.spec.ts:516 says D1 writes 0 for a free grant, so the two disagree on how D1 is represented.",
+      "scenario": "An admin grants a free add-on (priceSnapshot 0 under D1) to an ACTIVE/PRODUCTION tenant. A billing.event row is written with amountDelta 0. The ledger math is unaffected. This is audit noise, or intended audit, depending on the ruling. It needs a one-line decision, not a code change.",
+      "taskId": "FIX-865A",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "major",
+      "file": "apps/api/src/billing/mrr.service.spec.ts",
+      "line": 236,
+      "summary": "The existing REG-743-N5 pin still expects byPlan to be net of discounts, so the mrr spec suite now fails. The test plan's claim that no other pin is touched missed this test.",
+      "scenario": "Fixture: STARTER 59/discount 0 plus GROWTH 100/discount 100. With the gross fix, GROWTH gets baseMrr 100 (not 0) and sorts ahead of STARTER. The test expects [{STARTER,1,59},{GROWTH,0,0}]. I ran `npx jest src/billing/mrr.service.spec.ts`: Tests 1 failed, 14 passed, with the failure at mrr.service.spec.ts:236. Fix: change the expected value to [{GROWTH,tenants:0,baseMrr:100},{STARTER,tenants:1,baseMrr:59}] and add an SA-277 comment.",
+      "taskId": "FIX-866",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/billing/mrr.service.spec.ts",
+      "line": 76,
+      "summary": "Fix commit b4249436 changes only mrr.service.ts. The T15/T16 spec changes are uncommitted working-tree edits (git status shows M), so the commit is red on its own.",
+      "scenario": "If you check out b4249436 and run the mrr spec, the old ':78 net of discounts' test still expects BUSINESS baseMrr 339 and receives 349. That breaks bisect and any per-commit CI. Commit the spec flips with the code, or in the same PR before landing.",
+      "taskId": "FIX-866",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/billing/mrr.service.ts",
+      "line": 263,
+      "summary": "byPlan.baseMrr is now gross, but byPlan.tenants still counts only rows with rowPrice > 0. A fully discounted plan now reads '0 tenants, $100 base MRR', the reverse of the mismatch REG-743-N5 was written to prevent.",
+      "scenario": "A GROWTH tenant with snapshot 100 and discount 100 gives byPlan {GROWTH, tenants:0, baseMrr:100}. SA-277 (∑ byPlan.baseMrr === baseMrr) requires this, so it is not a defect. Any dashboard label for byPlan should say gross/before discounts. I found no web or mobile consumer of byPlan (grep only hits api files), so the risk is limited to the API response.",
+      "taskId": "FIX-866",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "major",
+      "file": "apps/api/src/platform-admin/platform-admin.service.spec.ts",
+      "line": 1227,
+      "summary": "No test checks the FOR UPDATE lock AC2 requires. Test-plan pin P3 ('$queryRaw (FOR UPDATE) ran inside the tx before findUniqueOrThrow') is only half written, and pin P3b (lock-order via mock.invocationCallOrder for BOTH updateTenantPriceOverride and activateManualSubscription) is missing. grep finds no 'queryRaw', 'FOR UPDATE' or 'invocationCallOrder' anywhere in platform-admin.service.spec.ts.",
+      "scenario": "Delete either new `await tx.$queryRaw\\`SELECT id FROM \"Tenant\" ... FOR UPDATE\\`` line (service ~:943 or ~:1451), or move it after the tenantSubscription.upsert or emit. The platform-admin suite stays green: I ran the B864/P3/activateManualSubscription tests and 18 passed with no lock assertion. The race the lock exists to serialize (override vs activation) could then come back without any test noticing.",
+      "taskId": "FIX-864",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/platform-admin/platform-admin.service.ts",
+      "line": 1452,
+      "summary": "The comment says backfillBase 'must be decided from the locked row, not from `existing` read before the tx', but the code does not do that. The under-lock re-read (`row`) selects only status/class/deletedAt/subscription.planKey. backfillBase is still computed at ~:1446 from the unlocked pre-tx `existing` (planKey/basePriceSnapshot), and it gates both the snapshot write and the emit. The build plan has the same inconsistency.",
+      "scenario": "updatePlan (no tenant row lock) writes basePriceSnapshot=499 and emits +499. It commits after updateTenantPriceOverride has read `existing` (snapshot null) but before that call takes the lock. The override then overwrites the snapshot with 1200 and, for a paying row, emits +1200. The ledger moves 1699 while the snapshot says 1200 (whether reconcilePriceLedger later corrects this is not verified). The stated override-vs-activation race is handled correctly, because activation never writes basePriceSnapshot. Fix: select basePriceSnapshot in `row` and compute backfillBase from row.subscription under the lock, or correct the comment.",
+      "taskId": "FIX-864",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "major",
+      "file": "apps/api/src/billing/subscription-mutation.service.ts",
+      "line": 1321,
+      "summary": "Self-serve disableAddon still has the double-disable double-emit race that FIX-865B fixed only in the admin path (addon.service.disableAddon).",
+      "detail": "Read in this session (sed 1290-1350): `addon` is read via findFirst OUTSIDE the transaction and with no advisory lock (enableAddon uses withAdvisoryLock; disableAddon does not). The tx then does `tenantAddon.update({ where: { id } , data: { active: false } })` unconditionally and calls `emitAddonDelta(... deltaQty: -addon.quantity)` from the stale pre-tx read. Two concurrent disables of the same active add-on (self-serve vs self-serve, or self-serve vs admin `AddonService.disableAddon`, which now locks the TenantAddon row FOR UPDATE and re-checks `active`, but cannot protect a peer that never re-checks) both observe active=true; the second blocks on the row lock, then writes active=false again and emits a second −priceSnapshot×qty. The ledger under-states MRR by one add-on's run-rate. Same fix shape as FIX-865B finding #0: lock `addon.id` FOR UPDATE inside the tx, re-read, and gate both the update and the emit on the locked row's `active`. Not verified by an executed race test; verified by reading the code path.",
+      "source": "holistic-read",
+      "taskId": "FIX-864",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "major",
+      "file": "apps/api/src/billing/addon-ledger.spec.ts",
+      "line": 1,
+      "summary": "addon-ledger.spec.ts (95 lines, the spec for the single ledger writer emitAddonDelta) is untracked and absent from the reviewed diff.",
+      "detail": "`git status --short` shows `?? apps/api/src/billing/addon-ledger.spec.ts`, so `git diff b11879f1` (the artifact every reviewer in this round reads) does not contain it, and a commit built from the modified files alone will drop it. addon-ledger.ts itself is committed (6fc0bb21). The paying-gate / null-snapshot / deltaQty=0 behaviours in emitAddonDelta that every enable/disable site now depends on are therefore unproven in the PR as it stands. Action: `git add` the spec (with explicit pathspec) in the next fix round and confirm it runs green; also the untracked `.claude/pipeline/.../phases/` and `tasks/` directories should be deliberately included or excluded.",
+      "source": "holistic-read",
+      "taskId": "FIX-864",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "major",
+      "file": "apps/api/src/billing/addon.service.ts",
+      "line": 372,
+      "summary": "The admin disableAddon checks `addon.active` on a row it read outside the transaction and before the lock, then does an unconditional update and emits. Two concurrent disables both book −snapshot×qty.",
+      "scenario": "An admin double-clicks Disable on a paying tenant's REGULATED_ITEMS row (priceSnapshot 10, qty 1). Both requests read active=true. The second Stripe del returns resource_missing, which the code treats as success. Both transactions then run emitAddonDelta. The Tenant FOR UPDATE lock only serialises them; nothing re-checks `active`. The ledger records −20 where it should record −10, and MRR drifts below the stored truth. Fix: inside the tx, use `updateMany({ where: { tenantId, addonKey, active: true } })` and emit only when count === 1, or re-read the row after the lock. The self-serve disableAddon in subscription-mutation.service.ts:1311 has the same read-outside-tx shape, so it needs the same fix as a sibling.",
+      "taskId": "FIX-865B",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "major",
+      "file": "apps/api/src/billing/addon.service.ts",
+      "line": 263,
+      "summary": "The upsert now writes `sku` for every key, including unbridged keys with no catalog SKU (developer_mode). This changes the entitlements output, which nothing in the spec asked for.",
+      "scenario": "enableAddon('t1','developer_mode') now stores sku='developer_mode' where it used to store null. addonSkuCode(row) then returns 'developer_mode' instead of null. EntitlementsService.compute (entitlements.service.ts:224-245) pushes it into activeCodes, so `ent.addons` now contains 'developer_mode'. compute also fetches the published catalog again and logs a 'granting nothing' warning on every compute for that tenant. `ent.addons` feeds feature-resolver.service.ts:104, feature-preview.service.ts:71/101, subscription.service.ts:200 and platform-admin.service.ts:1754. That breaks P6 ('unbridged key … still resolves, no snapshot') and acceptance item 5's intent. The P6 pin only asserts 'no emit', so it misses this. Fix: write `sku` only when `isBridged || skuDef` (otherwise leave it undefined/null). I did not check whether any of those consumers change a user-visible gate as a result.",
+      "taskId": "FIX-865B",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/billing/addon.service.ts",
+      "line": 222,
+      "summary": "When a stripePriceId is passed but Stripe is not configured, priceSnapshot is still set to the catalog price and revenue is booked, even though no Stripe item exists. That contradicts D1 ('only a Stripe-billed enable carries revenue').",
+      "scenario": "With this.stripe.isConfigured=false, enableAddon('t1','tobacco_dealer','price_x') on an ACTIVE tenant skips the Stripe block, writes priceSnapshot=catalog price and emits +price to the ledger. Nothing is actually billed.",
+      "taskId": "FIX-865B",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/billing/addon.service.ts",
+      "line": 195,
+      "summary": "`let skuDef: any` gives up the catalog's type. eslint reports no-unsafe-* warnings (0 errors), and `Number(skuDef.monthlyPrice)` goes unchecked.",
+      "scenario": "If the catalog's addonSkus field is renamed (e.g. monthlyPrice becomes price), this still compiles and produces priceSnapshot NaN, which Prisma rejects at runtime. Type it as `(typeof published.addonSkus)[number] | undefined`.",
+      "taskId": "FIX-865B",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/billing/addon.service.ts",
+      "line": 258,
+      "summary": "The Stripe subscription item is created before the transaction. The transaction now also takes the Tenant FOR UPDATE lock, runs findUniqueOrThrow and emits, so there are more ways for it to fail and leave a billed Stripe item with no local row.",
+      "scenario": "The Stripe create succeeds, then the tx throws (for example a lock timeout or an emit failure). The tenant is billed by Stripe for an add-on whose TenantAddon row never activated, and no compensating subscriptionItems.del runs. The Stripe-before-upsert ordering already existed; this change widens the failure window.",
+      "taskId": "FIX-865B",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/billing/addon.service.spec.ts",
+      "line": 571,
+      "summary": "No test covers the FIX-865B change itself. A disable of a row with priceSnapshot null, or of an already-inactive row, should emit nothing, and no spec checks that.",
+      "scenario": "If someone reverts the `addon.priceSnapshot != null && Number(...) > 0` guard to `Number(addon.priceSnapshot) > 0`, or drops `addon.active`, the suite stays green. I ran the suite and all 25 tests pass. The only disable test uses priceSnapshot 10 on an active row.",
+      "taskId": "FIX-865B",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/billing/addon.service.ts",
+      "line": 375,
+      "summary": "The disable path derives the ledger sku from `LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey` and ignores the stored row.sku. The self-serve path uses addonSkuCode(addon) (stored sku first).",
+      "scenario": "If a row's stored sku differs from the one the legacy map derives, the enable event and the disable event record different sku payloads for the same add-on. Any per-SKU ledger breakdown then fails to net to zero.",
+      "taskId": "FIX-865B",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "major",
+      "file": "apps/api/src/billing/addon.service.ts",
+      "line": 280,
+      "summary": "The update branch of the upsert now writes `sku: null` whenever the key is unbridged and has no stripePriceId. That wipes a correct `sku` already stored on an existing row, which master never did because its update branch did not touch sku. The update should use `sku: skuToStore ?? undefined`.",
+      "scenario": "A tenant self-enables FORECASTING. subscription-mutation.service.ts:1248-1256 writes addonKey='FORECASTING', sku='FORECASTING'. The tenant then disables it. Later a platform admin re-enables it with POST tenants/:id/addons/enable {addonKey:'FORECASTING'} and no stripePriceId. isBridged is false because FORECASTING is not a key in LEGACY_ADDON_KEY_TO_SKU (plan-catalog.constants.ts:397-405). With no stripePriceId the catalog is never read, so skuDef is null and skuToStore is null. The upsert then runs the update branch with sku: null. The row is now active=true with sku=null, so addonSkuCode (plan-catalog.constants.ts:409) returns null, and EntitlementsService.compute drops FORECASTING from ent.addons. The admin sees the add-on 'enabled', but the tenant has lost the feature. On master (update branch had no sku) and on the r0 diff (sku='FORECASTING'), the entitlement survived. I did not check whether EnableAddonDto restricts addonKey to legacy keys, which would block this path.",
+      "taskId": "FIX-865B",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/billing/subscription-mutation.service.ts",
+      "line": 1261,
+      "summary": "This change adds a new lock-upgrade deadlock. enableAddon's tx runs tenantAddon.upsert first. When the row is new, that INSERT takes FOR KEY SHARE on the Tenant row through the TenantAddon_tenantId_fkey foreign key. emitAddonDelta then asks for SELECT ... FOR UPDATE on the same Tenant row. So the tenant lock is not the tx's first statement, which is the rule P3b pins for the platform-admin paths.",
+      "scenario": "Two concurrent first-time enables of DIFFERENT SKUs for the same tenant, for example an OPERATOR enabling CUSTOMER_PACK_100 and another self-serve SKU from two tabs, or an admin grant of one SKU racing a self-serve enable of another. They use different advisory-lock keys (addon:<tenant>:<sku>), so both txs hold KEY SHARE on the Tenant row and each waits for the other's FOR UPDATE. Postgres aborts one with 40P01 and the user gets a 500. Both txs roll back, so the ledger stays correct; the cost is availability only. Before this change neither path took FOR UPDATE, so this deadlock is new. Fix: take the tenant FOR UPDATE as the first statement of the tx, before the upsert or update, for example with a lock-first helper or by moving emitAddonDelta's lock ahead of the write. This is not verified against a live DB. It follows from Postgres FK lock semantics plus the migration's FK constraint.",
+      "taskId": "FIX-865C",
+      "phase": "Gate & Review"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/billing/subscription-mutation.service.ts",
+      "line": 1257,
+      "summary": "Pre-existing and out of scope, reported as a follow-up. A quantity-change re-enable overwrites priceSnapshot with the current catalog price but books only deltaQty × the new price. After a catalog price change, the later disable (which now credits −quantity × stored snapshot) does not net the earlier booked amount back to zero.",
+      "scenario": "A paying tenant enables CUSTOMER_PACK_100 ×1 at 12, which books +12. The catalog republishes at 15. The tenant re-enables ×2, which books +15 and sets the snapshot to 15. A disable then books −30. Net ledger is −3 for an add-on that is no longer active.",
+      "taskId": "FIX-865C",
+      "phase": "Gate & Review"
+    }
+  ],
+  "baseline": {
+    "ran": true,
+    "preflight": {
+      "treeClean": true,
+      "nodeVersion": "v24.21.0",
+      "npmVersion": "11.9.0",
+      "testDiscovery": 1048,
+      "packagesResolved": true,
+      "missingPackages": []
+    },
+    "commands": [
+      "npx tsc --noEmit -p apps/api/tsconfig.json",
+      "cd apps/api && npx jest src/billing/billing-cron.service.spec.ts src/platform-admin/platform-admin.service.spec.ts src/billing/addon.service.spec.ts src/billing/subscription-mutation.service.spec.ts src/billing/mrr.service.spec.ts src/billing/addon-ledger.spec.ts src/billing/mrr-paying-predicate.parity.spec.ts --maxWorkers=2 --passWithNoTests",
+      "npm test -w apps/api -- --maxWorkers=2",
+      "npm run lint -w apps/api"
+    ],
+    "badCommands": ["npx tsc --noEmit -p apps/api/tsconfig.json"],
+    "deferredCommands": [],
+    "gate": {
+      "ran": true,
+      "pass": false,
+      "results": [
+        {
+          "command": "npx tsc --noEmit -p apps/api/tsconfig.json",
+          "pass": false,
+          "executed": 2,
+          "summary": "TypeScript compilation failed. Error TS2305: Module '@routeflow/pricing' has no exported member 'flatRateFromTotals' (apps/api/src/common/tax-rate.ts:1:10). Error TS2305: Module '@routeflow/pricing' has no exported member 'inferredFlatRate' (apps/api/src/invoices/invoices.service.ts:26:3)."
+        },
+        {
+          "command": "cd apps/api && npx jest src/billing/billing-cron.service.spec.ts src/platform-admin/platform-admin.service.spec.ts src/billing/addon.service.spec.ts src/billing/subscription-mutation.service.spec.ts src/billing/mrr.service.spec.ts src/billing/addon-ledger.spec.ts src/billing/mrr-paying-predicate.parity.spec.ts --maxWorkers=2 --passWithNoTests",
+          "pass": true,
+          "executed": 293,
+          "summary": "All specified Jest test files passed: Test Suites 6 passed, 6 total; Tests 1 todo, 292 passed, 293 total; Time 3.039s."
+        },
+        {
+          "command": "npm test -w apps/api -- --maxWorkers=2",
+          "pass": false,
+          "executed": 8739,
+          "summary": "Full API test suite failed. Error: Cannot find module '@routeflow/pricing/dist/index.js' imported from scripts/repair-f03.mjs. Results: Test Suites 2 failed, 523 passed, 525 total; Tests 14 failed, 1 todo, 8724 passed, 8739 total."
+        },
+        {
+          "command": "npm run lint -w apps/api",
+          "pass": true,
+          "executed": -1,
+          "summary": "ESLint completed with 0 errors, 9384 warnings. No errors encountered; warnings are non-blocking."
+        }
+      ]
+    },
+    "grounding": {
+      "ran": true,
+      "artifacts": [
+        ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/build-plan.md",
+        ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/test-plan.md"
+      ],
+      "findings": []
+    }
+  },
+  "manifest": {
+    "ran": true,
+    "files": [
+      {
+        "path": ".claude/code-map/api/feature-modules-4/billing.md",
+        "status": "modified",
+        "exists": true,
+        "digest": "ba443f5f2c6afabb3a7b5608299874342029e39e",
+        "risk": "LOW",
+        "changedLines": 1
+      },
+      {
+        "path": ".claude/lessons/LESSONS.md",
+        "status": "modified",
+        "exists": true,
+        "digest": "3a0be6601bae792eadd34be67f7e3a09042a145c",
+        "risk": "LOW",
+        "changedLines": 18
+      },
+      {
+        "path": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/RESUME.md",
+        "status": "modified",
+        "exists": true,
+        "digest": "81118f24950f9c86a4918dc63421e5931b4e40c7",
+        "risk": "LOW",
+        "changedLines": 352
+      },
+      {
+        "path": "apps/api/src/platform-admin/platform-admin.service.ts",
+        "status": "planned",
+        "exists": true,
+        "digest": "db69bc627a68c2086118fe1d489a4df3b8417171",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/billing/billing-cron.service.ts",
+        "status": "planned",
+        "exists": true,
+        "digest": "43e2a4e762cbfc91235ee69cfcf0d8da91c1faea",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/billing/addon-ledger.ts",
+        "status": "planned",
+        "exists": false,
+        "digest": "",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/billing/addon.service.ts",
+        "status": "planned",
+        "exists": true,
+        "digest": "80968620e552e75fae9c72be22d2f023c6530045",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/billing/subscription-mutation.service.ts",
+        "status": "planned",
+        "exists": true,
+        "digest": "6b549f1f5cd7a0be23c15c62c470435c920f3d02",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/billing/mrr.service.ts",
+        "status": "planned",
+        "exists": true,
+        "digest": "09b669f40a234e5b97e27bf1196253f455ca3edb",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/common/override-activation-ledger.db.spec.ts",
+        "status": "planned",
+        "exists": false,
+        "digest": "",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/platform-admin/platform-admin.service.spec.ts",
+        "status": "planned",
+        "exists": true,
+        "digest": "1e1008dad4fb54cb241c8afa59fd5d191cfa5e04",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/billing/billing-cron.service.spec.ts",
+        "status": "planned",
+        "exists": true,
+        "digest": "24e1534fcad312364410cf35c0b3141ecfb36e4d",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/billing/addon.service.spec.ts",
+        "status": "planned",
+        "exists": true,
+        "digest": "bac459dfb5957177171656ecbe55c97459c69fff",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/billing/subscription-mutation.service.spec.ts",
+        "status": "planned",
+        "exists": true,
+        "digest": "6a9e88ea3207c014893956c280c94c70d7fc2ba3",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/billing/addon-ledger.spec.ts",
+        "status": "planned",
+        "exists": false,
+        "digest": "",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/billing/mrr.service.spec.ts",
+        "status": "planned",
+        "exists": true,
+        "digest": "c3221d9724a2cd48f9bd0e51aaa036493ed36a04",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(platform-admin)/admin/tenants/[id]/_features/EnableAddonModal.test.tsx",
+        "status": "planned",
+        "exists": true,
+        "digest": "fa9cdec2c77261b7a7effcdfe46dc8a52ca17f36",
+        "risk": "LOW",
+        "changedLines": 0
+      }
+    ],
+    "validCommands": [
+      "cd apps/api && npx jest src/billing/billing-cron.service.spec.ts src/platform-admin/platform-admin.service.spec.ts src/billing/addon.service.spec.ts src/billing/subscription-mutation.service.spec.ts src/billing/mrr.service.spec.ts src/billing/addon-ledger.spec.ts src/billing/mrr-paying-predicate.parity.spec.ts --maxWorkers=2 --passWithNoTests",
+      "npm test -w apps/api -- --maxWorkers=2",
+      "npm run lint -w apps/api"
+    ],
+    "artifacts": [
+      ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/build-plan.md",
+      ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/test-plan.md"
+    ],
+    "planBytes": { "build": 23783, "test": 25316 }
+  },
+  "harnessCheck": {
+    "ran": true,
+    "issues": [
+      {
+        "file": "apps/api/src/billing/addon.service.spec.ts",
+        "line": 106,
+        "issue": "AddonService constructed with 6 args; FIX-865B adds a 7th ctor param `events: BillingEventService`. Both construction sites (line 106 and 390) will leave `this.events` undefined, so the new `emitAddonDelta(tx, this.events, ...)` call throws for every enable/disable test.",
+        "remedy": "Add a mocked `events` (`{ emit: jest.fn() }`) to make() and pass as 7th arg at both call sites."
+      },
+      {
+        "file": "apps/api/src/billing/addon.service.spec.ts",
+        "line": 93,
+        "issue": "prisma mock in make() has no `$transaction`; FIX-865B wraps enableAddon/disableAddon's writes in `this.prisma.$transaction(async (tx) => {...})`, so calls throw 'prisma.$transaction is not a function' and existing assertions on prisma.tenantAddon.upsert/update (lines 127, 293, etc.) won't see the tx-scoped calls.",
+        "remedy": "Add `$transaction: jest.fn((fn) => fn(prisma))` to the mock (or an equivalent tx object sharing the same jest.fn()s) so existing assertions keep working."
+      },
+      {
+        "file": "apps/api/src/billing/addon.service.spec.ts",
+        "line": 93,
+        "issue": "mocked `tenant` only has `findUnique`, not `findUniqueOrThrow`; emitAddonDelta (FIX-865A) calls `tx.tenant.findUniqueOrThrow` for isPayingRow, and tenantAddon.upsert/update mock resolutions lack `priceSnapshot`/`quantity` needed for the new amountDelta computation.",
+        "remedy": "Add `findUniqueOrThrow: jest.fn().mockResolvedValue({status, class, deletedAt, subscription:{planKey}})` to the tenant mock, and extend tenantAddon.upsert/update resolved values with priceSnapshot/quantity."
+      }
+    ],
+    "skipped": null
+  },
+  "preMergeReview": {
+    "required": true,
+    "ran": false,
+    "note": "REQUIRED before the PR for this run enters a merge window: invoke the `pre-merge-review` skill on the PR diff. It is independent of the in-lane review above and catches what an embedded reviewer structurally cannot see."
+  },
+  "remainingFindings": [
+    {
+      "file": "(gate-command)",
+      "severity": "major",
+      "phase": "Baseline",
+      "summary": "`npx tsc --noEmit -p apps/api/tsconfig.json` already fails on the unmodified baseline tree -- the command is broken, not the code",
+      "detail": "Baseline output: TypeScript compilation failed. Error TS2305: Module '@routeflow/pricing' has no exported member 'flatRateFromTotals' (apps/api/src/common/tax-rate.ts:1:10). Error TS2305: Module '@routeflow/pricing' has no exported member 'inferredFlatRate' (apps/api/src/invoices/invoices.service.ts:26:3).. This command failed BEFORE any agent wrote anything, so its failures during this run are not evidence about the change. It is excluded from every later gate and cannot make the result unclean."
+    },
+    {
+      "file": "(gate-command)",
+      "severity": "blocker",
+      "phase": "Baseline",
+      "summary": "`npm test -w apps/api -- --maxWorkers=2` is a FINAL verify command and already fails on the unmodified baseline tree.",
+      "detail": "Baseline output: Full API test suite failed. Error: Cannot find module '@routeflow/pricing/dist/index.js' imported from scripts/repair-f03.mjs. Results: Test Suites 2 failed, 523 passed, 525 total; Tests 14 failed, 1 todo, 8724 passed, 8739 total. A final-gate command broken at Baseline can never prove the finished tree clean, so it blocks this run rather than being silently excluded (retro 2026-09-16, P1a). Fix the command or the environment before the run can complete."
+    },
+    {
+      "file": "(artifact)",
+      "severity": "major",
+      "phase": "Baseline",
+      "summary": "Test plan is 25316 bytes, over the \"major\" cap of 24576",
+      "detail": "Route to a Sonnet low trim pass before Author tests/Implement read it."
+    },
+    {
+      "file": "(mutation)",
+      "severity": "blocker",
+      "phase": "Mutation probe",
+      "summary": "Revert-probe restore is UNVERIFIED for: apps/api/src/billing/billing-cron.service.ts, apps/api/src/platform-admin/platform-admin.service.ts, apps/api/src/billing/addon-ledger.ts, apps/api/src/billing/addon.service.ts, apps/api/src/billing/subscription-mutation.service.ts, apps/api/src/billing/mrr.service.ts",
+      "detail": "the in-script comparison of `git hash-object` digests -- Baseline's recorded digest vs this checksum:after agent's -- did not match, or no after-digest exists. Never trust a probe agent's own restored:true self-report as the sole evidence."
+    },
+    {
+      "file": "(red-gate)",
+      "severity": "blocker",
+      "phase": "Red gate",
+      "summary": "Task RT-865's tests never proved they can fail on an assertion containing the bug's own wrong value, after one remediation attempt.",
+      "detail": "[\"addon-ledger.ts module does not exist; addon-ledger.spec.ts cannot load until FIX-865A creates the implementation\"]"
+    },
+    {
+      "file": "apps/api/src/platform-admin/platform-admin.service.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "Cycle is derived with `billingPeriodDays >= 365`, so any non-365 length gets MONTHLY. A 90- or 180-day prepaid row is therefore labelled MONTHLY, and proration.service.ts:167 then uses that whole 90/180-day period as the add-on 'monthly' window. This existed before the change (the schema default was already MONTHLY), and non-30/365 proration is explicitly out of scope, so it belongs in a follow-up bug.",
+      "detail": "activateManualSubscription with billingPeriodDays: 90 gives cycle MONTHLY and a 90-day period. A later self-serve add-on enable prorates the monthly price over 90 days, about 3x less than it should."
+    },
+    {
+      "file": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-863/pack.md",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "The review pack's base sha (9ec6d0cf) is the FIX-863 commit itself, so the pack's diff reads 'no changes'. I reviewed `git show 9ec6d0cf` directly. The pack generator should use the parent commit as the base.",
+      "detail": "A reviewer who trusts the pack sees an empty diff and could approve without having seen the fix."
+    },
+    {
+      "file": "apps/api/src/billing/addon-ledger.spec.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "T14 only covers the positive (enable) branch. Nothing in this unit spec checks that a negative deltaQty maps to BILLING_EVENTS.ADDON_DISABLED with a negative amountDelta, or that the FOR UPDATE lock is taken on d.tenantId.",
+      "detail": "Suppose someone flips the ternary so deltaQty < 0 emits ADDON_ENABLED, or drops the sign from the amount. addon-ledger.spec.ts stays green. Only the call-site tests T10/T13 (FIX-865B/C) would catch it."
+    },
+    {
+      "file": "apps/api/src/billing/addon-ledger.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "The guard skips only a null snapshot. A stored 0 snapshot on a paying tenant still emits an ADDON_ENABLED/ADDON_DISABLED event with amountDelta 0. The spec comment calls null 'a free grant, D1', but addon.service.spec.ts:516 says D1 writes 0 for a free grant, so the two disagree on how D1 is represented.",
+      "detail": "An admin grants a free add-on (priceSnapshot 0 under D1) to an ACTIVE/PRODUCTION tenant. A billing.event row is written with amountDelta 0. The ledger math is unaffected. This is audit noise, or intended audit, depending on the ruling. It needs a one-line decision, not a code change."
+    },
+    {
+      "file": "apps/api/src/billing/mrr.service.spec.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "Fix commit b4249436 changes only mrr.service.ts. The T15/T16 spec changes are uncommitted working-tree edits (git status shows M), so the commit is red on its own.",
+      "detail": "If you check out b4249436 and run the mrr spec, the old ':78 net of discounts' test still expects BUSINESS baseMrr 339 and receives 349. That breaks bisect and any per-commit CI. Commit the spec flips with the code, or in the same PR before landing."
+    },
+    {
+      "file": "apps/api/src/billing/mrr.service.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "byPlan.baseMrr is now gross, but byPlan.tenants still counts only rows with rowPrice > 0. A fully discounted plan now reads '0 tenants, $100 base MRR', the reverse of the mismatch REG-743-N5 was written to prevent.",
+      "detail": "A GROWTH tenant with snapshot 100 and discount 100 gives byPlan {GROWTH, tenants:0, baseMrr:100}. SA-277 (∑ byPlan.baseMrr === baseMrr) requires this, so it is not a defect. Any dashboard label for byPlan should say gross/before discounts. I found no web or mobile consumer of byPlan (grep only hits api files), so the risk is limited to the API response."
+    },
+    {
+      "file": "apps/api/src/billing/mrr.service.spec.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "Recorded findings #1 and #2 are already resolved at HEAD b11879f1 — the mrr spec suite is green and the REG-743-N5 pin already expects the gross byPlan; the next fix round should verify, not re-apply.",
+      "detail": "Evidence from this session: `git show --stat b11879f1` touches only apps/api/src/billing/mrr.service.spec.ts (73+/3-), `git status --short` shows that file clean (no M), and `npx jest src/billing/mrr.service.spec.ts ...` prints `PASS src/billing/mrr.service.spec.ts` with the :236-240 pin now reading `[{ planKey: \"GROWTH\", tenants: 0, baseMrr: 100 }, { planKey: \"STARTER\", tenants: 1, baseMrr: 59 }]` plus an SA-277 comment — exactly the fix finding #1 prescribes. Acting on #1/#2 again would be a no-op edit at best. What does remain from #2 is only the bisect nit: b4249436 (code) and b11879f1 (spec) are separate commits, so b4249436 alone is still red; squash-merge to master makes that moot, so no further action is required unless the landing coordinator wants the two commits fixed up."
+    },
+    {
+      "file": "apps/api/src/billing/addon.service.spec.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "The working tree carries 9 intentionally-RED B864/B865 pins in three uncommitted spec files (plus untracked addon-ledger.spec.ts); they belong to FIX-864/FIX-865B/FIX-865C, and FIX-866's landing must not sweep them into its commit or the PR goes red.",
+      "detail": "`git status --short -- apps/` shows M addon.service.spec.ts, M subscription-mutation.service.spec.ts, M platform-admin.service.spec.ts, M billing-cron.service.spec.ts, ?? addon-ledger.spec.ts — none committed. `git diff 4e80b024 --stat` shows addon.service.ts and subscription-mutation.service.ts are NOT changed on the branch, and platform-admin.service.ts only gained the `cycle` write (B863). Jest result this session: FAIL addon.service.spec.ts (5 × 'AddonService.enableAddon/disableAddon — B865 ledger'), FAIL subscription-mutation.service.spec.ts (2 × 'B865 ledger gating'), FAIL platform-admin.service.spec.ts (2 × 'REG-B864-TRIAL-OVERRIDE'); PASS addon-ledger.spec.ts, mrr.service.spec.ts, billing-cron.service.spec.ts — Tests: 9 failed, 293 passed. The spec at :122 says so itself ('cast the class to bypass the (not-yet-updated) 6-arg constructor type until FIX-865B lands'), and progress.md lists only FIX-863 and FIX-865A complete. This is expected red-first state for the other tasks, not a FIX-866 defect — recorded so the fix/landing round commits FIX-866 with explicit pathspecs (mrr.service.ts, mrr.service.spec.ts, code-map/lessons per Option B) and leaves those four spec files to their owning tasks. Note billing-cron.service.spec.ts is also uncommitted but green (B863's pins) — FIX-863 is marked complete in progress.md yet its spec edits are not in 9ec6d0cf; that is a FIX-863 bookkeeping gap, flagged here only as a follow-up."
+    },
+    {
+      "file": "docs/product/billing-plans.md",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "PLAN-A4 in billing-plans.md says a 20% discount on $249 'shows 199.20 on ... `baseMrr`', which contradicts the SA-277 identity this change pins in code (baseMrr and byPlan.baseMrr are gross; mrr = baseMrr − discountTotal + addonMrr) and the same doc's PLAN-M11 at :183.",
+      "detail": "`sed -n 447,451p docs/product/billing-plans.md` reads: 'A 20% discount on $249 shows 199.20 on the tenant card, Stripe charge and `baseMrr` — one number in three places'. `sed -n 181,184p` (PLAN-M11) reads '`mrr === roundMoney(baseMrr + addonMrr − discountTotal)`', which only holds when baseMrr is gross — as mrr.service.ts:250-252 now documents and T16 asserts (`o.mrr === roundMoney(o.baseMrr - o.discountTotal + o.addonMrr)`, `∑ byPlan.baseMrr === baseMrr`). The top-level baseMrr was already gross before this change (accumulator `baseMrr += base` at :243, untouched), so :449 was already wrong; but B866 is the diff that makes 'gross' the stated contract for every base figure, so the checklist line should now say the 199.20 appears on the tenant card, the Stripe charge and `mrr` (or `baseMrr − discountTotal`), not `baseMrr`. Docs-only; lands in the Option B bookkeeping follow-up, not the code PR. No other stale pin of byPlan/baseMrr exists: grep over apps/, packages/, scripts/, docs/ hit only the two `byPlan: []` / `baseMrr: 0|748` overview stubs in platform-admin.service.spec.ts (unaffected) and a plan doc under docs/superpowers/plans/."
+    },
+    {
+      "file": "apps/api/src/platform-admin/platform-admin.service.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "The comment says backfillBase 'must be decided from the locked row, not from `existing` read before the tx', but the code does not do that. The under-lock re-read (`row`) selects only status/class/deletedAt/subscription.planKey. backfillBase is still computed at ~:1446 from the unlocked pre-tx `existing` (planKey/basePriceSnapshot), and it gates both the snapshot write and the emit. The build plan has the same inconsistency.",
+      "detail": "updatePlan (no tenant row lock) writes basePriceSnapshot=499 and emits +499. It commits after updateTenantPriceOverride has read `existing` (snapshot null) but before that call takes the lock. The override then overwrites the snapshot with 1200 and, for a paying row, emits +1200. The ledger moves 1699 while the snapshot says 1200 (whether reconcilePriceLedger later corrects this is not verified). The stated override-vs-activation race is handled correctly, because activation never writes basePriceSnapshot. Fix: select basePriceSnapshot in `row` and compute backfillBase from row.subscription under the lock, or correct the comment."
+    },
+    {
+      "file": "apps/api/src/billing/addon.service.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "Admin enableAddon books catalog revenue from `stripePriceId` alone, even when Stripe is not configured and no subscription item is created.",
+      "detail": "`priceSnapshot = stripePriceId && skuDef ? Number(skuDef.monthlyPrice) : 0` and the +delta emit key off the presence of `stripePriceId`, while the Stripe item write below is gated on `this.stripe.isConfigured` (pre-existing). With Stripe unconfigured (local/compose, test tenants), an admin enable with a price id writes priceSnapshot and, for a paying row, emits +price×qty into the ledger although nothing is billed. The D1 ruling reads 'Stripe-billed enable'; if that means 'has a Stripe item', the gate should be `stripeItemId != null` (post-Stripe-write) rather than `stripePriceId`. Reading the ruling as 'a price id was supplied' makes this by design — flagging so the next round decides explicitly. Follow-up, not required for FIX-864: existing active admin-enabled billed rows in prod have priceSnapshot=null (the old enableAddon never wrote it), so they were never booked and, under the new disable path, never un-booked — consistent within the ledger but invisible to MRR; a one-off backfill is outside this change."
+    },
+    {
+      "file": "apps/api/src/billing/subscription-mutation.service.spec.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "No test covers the fix's new lost-race no-op branch (`if (!current?.active) return` at subscription-mutation.service.ts:1329). The tx-scoped `tenantAddon.findUnique` mock always returns opts.addonRow, which every disableAddon fixture sets to active: true, and no test makes the in-tx re-read return an inactive row.",
+      "detail": "Delete or invert the `if (!current?.active) return;` guard (a revert of finding #0). Every spec in subscription-mutation.service.spec.ts stays green (136/136 pass today, and none drives findUnique to active:false), so the double-disable double-emit regression would ship unnoticed. The fix needs one test where the pre-tx findFirst returns an active row and the in-tx findUnique returns active:false. It should assert that tx.tenantAddon.update is not called and that ADDON_DISABLED / SEAT_FREED are not emitted."
+    },
+    {
+      "file": "apps/api/src/billing/addon.service.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "When a stripePriceId is passed but Stripe is not configured, priceSnapshot is still set to the catalog price and revenue is booked, even though no Stripe item exists. That contradicts D1 ('only a Stripe-billed enable carries revenue').",
+      "detail": "With this.stripe.isConfigured=false, enableAddon('t1','tobacco_dealer','price_x') on an ACTIVE tenant skips the Stripe block, writes priceSnapshot=catalog price and emits +price to the ledger. Nothing is actually billed."
+    },
+    {
+      "file": "apps/api/src/billing/addon.service.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "`let skuDef: any` gives up the catalog's type. eslint reports no-unsafe-* warnings (0 errors), and `Number(skuDef.monthlyPrice)` goes unchecked.",
+      "detail": "If the catalog's addonSkus field is renamed (e.g. monthlyPrice becomes price), this still compiles and produces priceSnapshot NaN, which Prisma rejects at runtime. Type it as `(typeof published.addonSkus)[number] | undefined`."
+    },
+    {
+      "file": "apps/api/src/billing/addon.service.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "The Stripe subscription item is created before the transaction. The transaction now also takes the Tenant FOR UPDATE lock, runs findUniqueOrThrow and emits, so there are more ways for it to fail and leave a billed Stripe item with no local row.",
+      "detail": "The Stripe create succeeds, then the tx throws (for example a lock timeout or an emit failure). The tenant is billed by Stripe for an add-on whose TenantAddon row never activated, and no compensating subscriptionItems.del runs. The Stripe-before-upsert ordering already existed; this change widens the failure window."
+    },
+    {
+      "file": "apps/api/src/billing/addon.service.spec.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "No test covers the FIX-865B change itself. A disable of a row with priceSnapshot null, or of an already-inactive row, should emit nothing, and no spec checks that.",
+      "detail": "If someone reverts the `addon.priceSnapshot != null && Number(...) > 0` guard to `Number(addon.priceSnapshot) > 0`, or drops `addon.active`, the suite stays green. I ran the suite and all 25 tests pass. The only disable test uses priceSnapshot 10 on an active row."
+    },
+    {
+      "file": "apps/api/src/billing/addon.service.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "The disable path derives the ledger sku from `LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey` and ignores the stored row.sku. The self-serve path uses addonSkuCode(addon) (stored sku first).",
+      "detail": "If a row's stored sku differs from the one the legacy map derives, the enable event and the disable event record different sku payloads for the same add-on. Any per-SKU ledger breakdown then fails to net to zero."
+    },
+    {
+      "file": "apps/api/src/billing/addon.service.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "The new race-loser branch has no test: re-read under the row lock sees active=false, so no update and no emit. The race fix for finding #0 is therefore unpinned.",
+      "detail": "Someone later removes the `if (!current?.active) return` guard, or moves the findUnique before the FOR UPDATE. Every existing disable test still passes because the tx mock returns an active row and $queryRaw resolves []. The double −snapshot×qty booking from finding #0 would come back without any test failing."
+    },
+    {
+      "file": "apps/api/src/platform-admin/platform-admin.service.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "updateTenantPriceOverride's in-tx re-read does not include basePriceSnapshot, so `backfillBase` is still decided from the pre-tx `existing` read, contrary to the comment and the P3 pin's stated guarantee.",
+      "detail": "Lines 1454-1462 say 'Re-read the subscription UNDER the lock: backfillBase must be decided from the locked row, not from `existing`', but `row` selects only status/class/deletedAt/subscription.planKey, and `backfillBase` (line 1446) is still `existing.basePriceSnapshot == null` from the read at line 1430, outside the tx. Only paying-ness is decided under the lock. Race: an admin `updatePlan` (Tenant lock at :483; writes basePriceSnapshot at :826/:832 and books its delta) commits between the :1430 read and this tx. This tx then sees backfillBase=true (stale), overwrites the snapshot with dto.monthly (:1469) and books +dto.monthly on top of updatePlan's booking. activateManualSubscription does NOT write basePriceSnapshot (verified :938-1010), so the P3 test's scenario is safe; the updatePlan race is the one the code does not cover. Fix: add `basePriceSnapshot: true` to the `subscription` select in `row` and compute backfillBase from `row.subscription` inside the tx; extend the P3 pin to assert the snapshot read happens after the lock. Narrow admin-vs-admin race on one tenant, hence minor."
+    },
+    {
+      "file": "apps/api/src/billing/addon.service.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "Admin enableAddon books `priceSnapshot × row.quantity` while the Stripe item it just created is quantity 1; the upsert update branch never resets `quantity`, so a stale quantity > 1 would book N× what Stripe bills.",
+      "detail": "Line 249 creates the Stripe subscription item with `quantity: 1`; line 289 emits `deltaQty: row.quantity ?? 1`, where `row` is the upserted TenantAddon whose update branch (lines 280-286) leaves an existing `quantity` untouched. Today this is hard to reach over HTTP: rows with quantity > 1 are self-serve rows keyed by uppercase SKU (subscription-mutation.service.ts:1248-1256), and the platform-admin EnableAddonDto regex `^[a-z][a-z0-9_]*$` (apps/api/src/billing/dto/manage-addon.dto.ts:12) rejects uppercase keys, so an admin cannot address them. Note this same regex also blocks the HTTP path of recorded finding #7 (FORECASTING via admin re-enable); the `sku: skuToStore ?? undefined` fix there is still right, but the scenario is service-level only. To close this latent mismatch make the ledger and Stripe agree: either emit `deltaQty: 1` for the admin path or set `quantity: 1` in the update branch."
+    },
+    {
+      "file": "apps/api/src/billing/subscription-mutation.service.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "A self-serve quantity bump rewrites the stored priceSnapshot to the current catalog price while booking only `newPrice × deltaQty`; with disable now booking −storedSnapshot × qty (D1), the enable/disable pair no longer nets when the catalog price changed in between.",
+      "detail": "Sequence: enable qty 2 at catalog 10 → books +20, snapshot 10. Catalog re-published at 12. Bump to qty 3 → deltaQty 1, books +12 (line 1261-1268), and the update branch at line 1258 rewrites snapshot to 12. Disable → `emitAddonDelta` books −12 × 3 = −36 (line 1323-1329). Net −4 for an add-on that is fully gone. Pre-existing rewrite (the base update branch already did it), but this change is what makes disable depend on the stored snapshot, so the asymmetry now lives entirely inside the ledger writer the change introduced. Fix options: on a bump of an already-active row keep the existing snapshot (write priceSnapshot only on create / re-activation of an inactive row), or book the re-price `(newPrice − oldSnapshot) × priorQty` alongside the quantity delta. Report-as-follow-up is acceptable if the round wants to keep FIX-865B scoped."
+    },
+    {
+      "file": "apps/api/src/billing/addon.service.spec.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "No spec pins the r2 behavior. Nothing checks that the enableAddon upsert update branch leaves an existing sku alone (update.sku is undefined, not null) when skuToStore is null. Commit 3d357d46 touches only addon.service.ts, and the uncommitted spec diff has no case for it.",
+      "detail": "If someone later changes line 289 back to `sku: skuToStore`, a platform-admin re-enable of a self-serve-enabled unbridged key (FORECASTING, no stripePriceId) nulls the stored sku again. The add-on then silently drops out of ent.addons, and no test goes red. The fix is one test: mock an existing row with sku='FORECASTING', re-enable with no stripePriceId, and assert that upsert's update arg has no sku value, or has undefined."
+    },
+    {
+      "file": "apps/api/src/billing/subscription-mutation.service.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "This change adds a new lock-upgrade deadlock. enableAddon's tx runs tenantAddon.upsert first. When the row is new, that INSERT takes FOR KEY SHARE on the Tenant row through the TenantAddon_tenantId_fkey foreign key. emitAddonDelta then asks for SELECT ... FOR UPDATE on the same Tenant row. So the tenant lock is not the tx's first statement, which is the rule P3b pins for the platform-admin paths.",
+      "detail": "Two concurrent first-time enables of DIFFERENT SKUs for the same tenant, for example an OPERATOR enabling CUSTOMER_PACK_100 and another self-serve SKU from two tabs, or an admin grant of one SKU racing a self-serve enable of another. They use different advisory-lock keys (addon:<tenant>:<sku>), so both txs hold KEY SHARE on the Tenant row and each waits for the other's FOR UPDATE. Postgres aborts one with 40P01 and the user gets a 500. Both txs roll back, so the ledger stays correct; the cost is availability only. Before this change neither path took FOR UPDATE, so this deadlock is new. Fix: take the tenant FOR UPDATE as the first statement of the tx, before the upsert or update, for example with a lock-first helper or by moving emitAddonDelta's lock ahead of the write. This is not verified against a live DB. It follows from Postgres FK lock semantics plus the migration's FK constraint."
+    },
+    {
+      "file": "apps/api/src/billing/subscription-mutation.service.ts",
+      "severity": "minor",
+      "phase": "Gate & Review",
+      "summary": "Pre-existing and out of scope, reported as a follow-up. A quantity-change re-enable overwrites priceSnapshot with the current catalog price but books only deltaQty × the new price. After a catalog price change, the later disable (which now credits −quantity × stored snapshot) does not net the earlier booked amount back to zero.",
+      "detail": "A paying tenant enables CUSTOMER_PACK_100 ×1 at 12, which books +12. The catalog republishes at 15. The tenant re-enables ×2, which books +15 and sets the snapshot to 15. A disable then books −30. Net ledger is −3 for an add-on that is no longer active."
+    },
+    {
+      "file": "(red-gate)",
+      "severity": "blocker",
+      "phase": "Red gate",
+      "summary": "Task UI-865's tests never proved they can fail on an assertion, after one remediation attempt.",
+      "detail": "[\"Red gate received passing tests when all should fail on assertion. This suggests fix code is already applied or test setup masks the bug.\",\"Cannot validate red gate hypothesis: tests must fail WITHOUT the fix to prove they catch the bug UI-865 addresses.\"]"
+    },
+    {
+      "file": "(scope)",
+      "severity": "blocker",
+      "phase": "Author tests",
+      "summary": "test author touched non-test files: apps/api/src/common/override-activation-ledger.db.spec.ts",
+      "detail": "Task DBT-F51's declared tests are []; per-path rule matched: apps/api/src/common/override-activation-ledger.db.spec.ts (in this task's own implementation files (t.files)). Reverted to HEAD / deleted before the red gate ran: [\"apps/api/src/common/override-activation-ledger.db.spec.ts\"]."
+    },
+    {
+      "file": "(mutation)",
+      "severity": "blocker",
+      "phase": "Mutation probe",
+      "summary": "Test \"cd apps/api && npx jest src/billing/billing-cron.service.spec.ts -t \"REG-B863-ROLL\" --maxWorkers=2\" did not fail when the fix in apps/api/src/billing/billing-cron.service.ts was reverted -- it does not actually cover the fix.",
+      "detail": "Test output: PASS src/billing/billing-cron.service.spec.ts - all 3 REG-B863-ROLL tests passed (✓ 365-day external row, ✓ 90-day external row, ✓ 180-day external row). The test did not fail when the file was reverted to HEAD; the fix is already in the committed history (commit 9ec6d0cf is an ancestor of HEAD)."
+    },
+    {
+      "file": "(mutation)",
+      "severity": "blocker",
+      "phase": "Mutation probe",
+      "summary": "Test \"cd apps/api && npx jest src/platform-admin/platform-admin.service.spec.ts -t \"REG-B864-TRIAL-OVERRIDE\" --maxWorkers=2\" did not fail when the fix in apps/api/src/platform-admin/platform-admin.service.ts was reverted -- it does not actually cover the fix.",
+      "detail": "Test PASSED when run against HEAD version. The fix has already been committed at 89ca4d85 (fix(billing): gate override backfill emit on isPayingRow). The critical gate `if (backfillBase && isPayingRow(row, row.subscription?.planKey ?? null))` is present in HEAD, preventing double-booking on TRIAL tenants. Test output: 2 passed tests including \"REG-B864-TRIAL-OVERRIDE override then activation books exactly +1200 once\"."
+    },
+    {
+      "file": "(mutation)",
+      "severity": "blocker",
+      "phase": "Mutation probe",
+      "summary": "Test \"cd apps/api && npx jest src/billing/addon-ledger.spec.ts -t \"REG-B865-LEDGER\" --maxWorkers=2\" did not fail when the fix in apps/api/src/billing/addon-ledger.ts was reverted -- it does not actually cover the fix.",
+      "detail": "Test PASSED (did not fail). The test executed successfully: \"✓ REG-B865-LEDGER emitAddonDelta books ±snapshot×deltaQty only for a paying row\". The file at HEAD contains the implementation that makes the test pass; there was no fix to revert because the file has no uncommitted changes from HEAD. Backup and restored file verified with matching MD5: d16af8ac499011c96cf748351953c3f9."
+    },
+    {
+      "file": "(mutation)",
+      "severity": "blocker",
+      "phase": "Mutation probe",
+      "summary": "Test \"cd apps/api && npx jest src/billing/addon.service.spec.ts -t \"REG-B865-ADMIN\" --maxWorkers=2\" did not fail when the fix in apps/api/src/billing/addon.service.ts was reverted -- it does not actually cover the fix.",
+      "detail": "Test PASSED when file was reverted to HEAD. All 4 REG-B865-ADMIN test cases passed:\n- REG-B865-ADMIN priced enable writes priceSnapshot and books +10 for a paying tenant (flips REG-ADMIN-ADDON-MRR, SA-277) ✓\n- REG-B865-ADMIN priced enable on a TRIAL tenant writes the snapshot but books nothing ✓\n- REG-B865-ADMIN disable books −priceSnapshot×qty from the STORED snapshot ✓\n- REG-B865-ADMIN a stripePriceId whose key has no catalog SKU is a 400 before Stripe ✓\n\nTest output: \"Tests: 21 skipped, 4 passed, 25 total\" with \"Test Suites: 1 passed, 1 total\"\n\nThe test did not fail without the fix, indicating the fix may not be the actual cause of test passage."
+    },
+    {
+      "file": "(mutation)",
+      "severity": "blocker",
+      "phase": "Mutation probe",
+      "summary": "Test \"cd apps/api && npx jest src/billing/subscription-mutation.service.spec.ts -t \"REG-B865-SELF\" --maxWorkers=2\" did not fail when the fix in apps/api/src/billing/subscription-mutation.service.ts was reverted -- it does not actually cover the fix.",
+      "detail": "Both REG-B865-SELF tests passed when the fix was reverted to HEAD. The test suite ran successfully with 2 passed tests, showing the test is blind to the fix: (1) \"REG-B865-SELF TRIAL tenant enabling CUSTOMER_PACK_100 ×2 books nothing (activation books it once)\" - PASS; (2) \"REG-B865-SELF disable books −stored snapshot, not −catalog\" - PASS."
+    },
+    {
+      "file": "(mutation)",
+      "severity": "blocker",
+      "phase": "Mutation probe",
+      "summary": "Test \"cd apps/api && npx jest src/billing/mrr.service.spec.ts -t \"REG-B866-BYPLAN\" --maxWorkers=2\" did not fail when the fix in apps/api/src/billing/mrr.service.ts was reverted -- it does not actually cover the fix.",
+      "detail": "Test PASSED (2 passed, 13 skipped) when reverted to HEAD: shows test is not blind to code changes but HEAD already contains the fix, so test did not fail as expected. Output: \"PASS src/billing/mrr.service.spec.ts (✓ T15 REG-B866-BYPLAN ... ✓ T16 REG-B866-BYPLAN ...)\" indicating fix is already present in HEAD."
+    },
+    {
+      "file": "(final-gate)",
+      "severity": "blocker",
+      "phase": "Final pass",
+      "summary": "The final verify suite did not pass clean.",
+      "detail": "[{\"command\":\"npm test -w apps/api -- --maxWorkers=2\",\"pass\":false,\"executed\":8759,\"summary\":\"Test Suites: 1 failed, 525 passed, 526 total; Tests: 1 failed, 1 todo, 8757 passed. FAILURE: src/billing/mrr-paying-predicate.parity.spec.ts — platform-admin.service.ts isPayingRow() call count: expected 6, received 7 (line 85)\"}]"
+    },
+    {
+      "severity": "major",
+      "file": "apps/api/src/billing/subscription-mutation.service.ts",
+      "summary": "subscribe() is a third add-on ledger writer (lines 395-421) left on the old catalog-price formula, bypassing emitAddonDelta — contradicting addon-ledger.ts:17's 'every enable/disable site books through here' and L-217's own rule.",
+      "detail": "Evidence: sed 370-430 shows `subscribe()` (header at :183) still calls `this.events.emit(tenantId, BILLING_EVENTS.ADDON_ENABLED, …, { amountDelta: roundMoney(monthlyOf(code) * deltaQty) })` at :400-404 and `ADDON_DISABLED … { amountDelta: roundMoney(-monthlyOf(code) * prior.qty) }` at :417-421, where `monthlyOf` (:272) is a LIVE catalog read. No `isPayingRow` gate, no tenant FOR UPDATE, not routed through `emitAddonDelta`. grep for `ADDON_ENABLED|ADDON_DISABLED` over non-spec .ts confirms these are the only emit sites outside addon-ledger.ts. This is the exact B865 asymmetry the change fixed at the other two self-serve sites (D1: disable books −STORED snapshot). Failure: paying tenant enables CUSTOMER_PACK_100 ×2 at catalog 10 via enableAddon (+20, snapshot 10); catalog republished at 12; tenant changes plan via subscribe() omitting the add-on → toDisable books −24 → ledger net −4 for an add-on that is fully gone. cause-ruling.md:23 explicitly bounded the widening to four call sites (:1259-1265, :1324-1329, override backfill, admin add-on), so this is out of the ruling's scope and ships as a follow-up — but two artifacts in this diff overclaim: addon-ledger.ts:17 ('the single add-on ledger writer … every enable/disable site') and the uncommitted L-217 entry in .claude/lessons/LESSONS.md whose Lesson line says 'grep every `emit(` / `amountDelta:` in the tree, not just the call sites the brief named' — the run did not apply its own lesson. At minimum the addon-ledger.ts comment and L-217's Guard should name subscribe():395-421 as the known unswept writer, and a follow-up bug should route it through emitAddonDelta (with priceSnapshot from priorAddons rows for the disable branch). No fix round remains; recorded as a finding.",
+      "phase": "Final pass"
+    },
+    {
+      "severity": "minor",
+      "file": "apps/api/src/billing/addon-ledger.ts",
+      "summary": "Gating moved from 'amountDelta 0' to 'no event row at all' — a non-paying (TRIAL / non-PRODUCTION class) tenant's self-serve add-on enable/disable now leaves no addon.enabled/addon.disabled history, while SEAT_ADDED/SEAT_FREED for the same action still are written.",
+      "detail": "Before this change subscription-mutation.service.ts always emitted ADDON_ENABLED (with quantity/prorated payload) and ADDON_DISABLED for every self-serve enable/disable; the diff replaces both with emitAddonDelta, which returns 0 without emitting when `!isPayingRow(row, …)` (addon-ledger.ts:37). The sibling SEAT_ADDED emit at subscription-mutation.service.ts:~1268 (`sku === 'SEAT_EXTRA' && priorQty === 0`) and SEAT_FREED at :~1337 are still unconditional, so a TRIAL tenant's event stream now shows 'seat added' with no 'add-on enabled' beside it. `billing/subscription.service.ts:131` reads `billingEvent.findMany` (grep) — presumably a tenant-facing billing history — so this is a visible audit/history regression for non-paying tenants; I did NOT open that consumer to confirm what it renders, so the user-visible impact is unverified. The ledger math is unaffected (the previous recorded finding about a 0-amount emit on a paying tenant is the adjacent case). Options: emit the audit event with amountDelta 0 when the row is non-paying (keeping the ledger identity), or gate SEAT_ADDED/SEAT_FREED the same way for consistency. Needs a one-line ruling, not necessarily a code change.",
+      "phase": "Final pass"
+    }
+  ],
+  "clean": false,
+  "tasks": [],
+  "rulings": [],
+  "checkpoints": [],
+  "mutationProbe": {
+    "ran": true,
+    "skipped": null,
+    "probed": 6,
+    "allCaught": false,
+    "restoredVerified": false,
+    "results": [
+      {
+        "caught": false,
+        "restored": true,
+        "evidence": "Test output: PASS src/billing/billing-cron.service.spec.ts - all 3 REG-B863-ROLL tests passed (✓ 365-day external row, ✓ 90-day external row, ✓ 180-day external row). The test did not fail when the file was reverted to HEAD; the fix is already in the committed history (commit 9ec6d0cf is an ancestor of HEAD).",
+        "backupPath": "/private/tmp/billing-cron.service.ts.backup-1790368235",
+        "fallback": ""
+      },
+      {
+        "caught": false,
+        "restored": true,
+        "evidence": "Test PASSED when run against HEAD version. The fix has already been committed at 89ca4d85 (fix(billing): gate override backfill emit on isPayingRow). The critical gate `if (backfillBase && isPayingRow(row, row.subscription?.planKey ?? null))` is present in HEAD, preventing double-booking on TRIAL tenants. Test output: 2 passed tests including \"REG-B864-TRIAL-OVERRIDE override then activation books exactly +1200 once\".",
+        "backupPath": "/private/tmp/claude-501/-Users-maznahamanullah-code-routeflow--claude-worktrees-zealous-franklin-2c1741/7d3ab2ba-d88d-4a18-bc3b-7e831296b0e1/scratchpad/platform-admin-service-backup-1790368388.ts",
+        "fallback": ""
+      },
+      {
+        "caught": false,
+        "restored": true,
+        "evidence": "Test PASSED (did not fail). The test executed successfully: \"✓ REG-B865-LEDGER emitAddonDelta books ±snapshot×deltaQty only for a paying row\". The file at HEAD contains the implementation that makes the test pass; there was no fix to revert because the file has no uncommitted changes from HEAD. Backup and restored file verified with matching MD5: d16af8ac499011c96cf748351953c3f9.",
+        "backupPath": "/tmp/addon-ledger-backup-86318.ts",
+        "fallback": ""
+      },
+      {
+        "caught": false,
+        "restored": true,
+        "evidence": "Test PASSED when file was reverted to HEAD. All 4 REG-B865-ADMIN test cases passed:\n- REG-B865-ADMIN priced enable writes priceSnapshot and books +10 for a paying tenant (flips REG-ADMIN-ADDON-MRR, SA-277) ✓\n- REG-B865-ADMIN priced enable on a TRIAL tenant writes the snapshot but books nothing ✓\n- REG-B865-ADMIN disable books −priceSnapshot×qty from the STORED snapshot ✓\n- REG-B865-ADMIN a stripePriceId whose key has no catalog SKU is a 400 before Stripe ✓\n\nTest output: \"Tests: 21 skipped, 4 passed, 25 total\" with \"Test Suites: 1 passed, 1 total\"\n\nThe test did not fail without the fix, indicating the fix may not be the actual cause of test passage.",
+        "backupPath": "/private/tmp/addon.service.ts.backup"
+      },
+      {
+        "caught": false,
+        "restored": true,
+        "evidence": "Both REG-B865-SELF tests passed when the fix was reverted to HEAD. The test suite ran successfully with 2 passed tests, showing the test is blind to the fix: (1) \"REG-B865-SELF TRIAL tenant enabling CUSTOMER_PACK_100 ×2 books nothing (activation books it once)\" - PASS; (2) \"REG-B865-SELF disable books −stored snapshot, not −catalog\" - PASS.",
+        "backupPath": "/private/tmp/claude-501/-Users-maznahamanullah-code-routeflow--claude-worktrees-zealous-franklin-2c1741/7d3ab2ba-d88d-4a18-bc3b-7e831296b0e1/scratchpad/subscription-mutation.service.ts.backup",
+        "fallback": ""
+      },
+      {
+        "caught": false,
+        "restored": true,
+        "evidence": "Test PASSED (2 passed, 13 skipped) when reverted to HEAD: shows test is not blind to code changes but HEAD already contains the fix, so test did not fail as expected. Output: \"PASS src/billing/mrr.service.spec.ts (✓ T15 REG-B866-BYPLAN ... ✓ T16 REG-B866-BYPLAN ...)\" indicating fix is already present in HEAD.",
+        "backupPath": "/var/tmp/mrr.service.ts.backup.1790368679",
+        "fallback": ""
+      }
+    ]
+  },
+  "uiVerify": null,
+  "siblingSweep": {
+    "ran": false,
+    "supplied": 3,
+    "patterns": 3,
+    "hits": 0,
+    "findings": 0,
+    "toplevelReported": "",
+    "toplevelExpected": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741",
+    "skipped": "grep-wrong-tree"
+  },
+  "finalPass": {
+    "ran": true,
+    "skipped": null,
+    "model": "claude-fable-5-1",
+    "holisticReads": 3,
+    "highRiskTasks": 21,
+    "completed": false
+  },
+  "redGate": {
+    "ran": true,
+    "structurallyRed": false,
+    "behaviorallyRed": false,
+    "attempts": 8,
+    "audits": [
+      {
+        "taskId": "RT-863",
+        "structurallyRed": true,
+        "structuralRedAccepted": false,
+        "behaviorallyRed": true,
+        "attempts": 1,
+        "blockers": []
+      },
+      {
+        "taskId": "RT-865",
+        "structurallyRed": false,
+        "structuralRedAccepted": false,
+        "behaviorallyRed": false,
+        "attempts": 2,
+        "blockers": [
+          "addon-ledger.ts module does not exist; addon-ledger.spec.ts cannot load until FIX-865A creates the implementation"
+        ]
+      },
+      {
+        "taskId": "RT-866",
+        "structurallyRed": true,
+        "structuralRedAccepted": false,
+        "behaviorallyRed": true,
+        "attempts": 2,
+        "blockers": []
+      },
+      {
+        "taskId": "RT-864",
+        "structurallyRed": true,
+        "structuralRedAccepted": false,
+        "behaviorallyRed": true,
+        "attempts": 1,
+        "blockers": []
+      },
+      {
+        "taskId": "UI-865",
+        "structurallyRed": false,
+        "structuralRedAccepted": false,
+        "behaviorallyRed": null,
+        "attempts": 2,
+        "blockers": [
+          "Red gate received passing tests when all should fail on assertion. This suggests fix code is already applied or test setup masks the bug.",
+          "Cannot validate red gate hypothesis: tests must fail WITHOUT the fix to prove they catch the bug UI-865 addresses."
+        ]
+      }
+    ]
+  },
+  "gate": {
+    "pass": false,
+    "results": [
+      {
+        "command": "npm test -w apps/api -- --maxWorkers=2",
+        "pass": false,
+        "executed": 8759,
+        "summary": "Test Suites: 1 failed, 525 passed, 526 total; Tests: 1 failed, 1 todo, 8757 passed. FAILURE: src/billing/mrr-paying-predicate.parity.spec.ts — platform-admin.service.ts isPayingRow() call count: expected 6, received 7 (line 85)"
+      },
+      {
+        "command": "npm run lint -w apps/api",
+        "pass": true,
+        "executed": -1,
+        "summary": "eslint passed — 0 errors, 9378 warnings (no blocking errors)"
+      }
+    ]
+  },
+  "riskSummary": {
+    "totalTasks": 22,
+    "highRiskTasks": 21,
+    "explicitHighRiskTasks": 21,
+    "manifestHighRiskFiles": 13
+  },
+  "fixRouting": { "totalRounds": 5, "sonnetRounds": 5, "fableRounds": 0, "designedRounds": 0 },
+  "fixRounds": 2,
+  "fixPlanning": {
+    "enabled": false,
+    "rounds": [
+      { "taskId": "FIX-866", "round": 1, "model": "claude-sonnet-5", "designer": false },
+      { "taskId": "FIX-864", "round": 1, "model": "claude-sonnet-5", "designer": false },
+      { "taskId": "FIX-864", "round": 2, "model": "claude-sonnet-5", "designer": false },
+      { "taskId": "FIX-865B", "round": 1, "model": "claude-sonnet-5", "designer": false },
+      { "taskId": "FIX-865B", "round": 2, "model": "claude-sonnet-5", "designer": false }
+    ],
+    "deferred": [],
+    "briefTruncated": false
+  },
+  "estimatedCostUsd": 7.54,
+  "estUnknownPhases": [],
+  "pricesAsOf": "2026-06-24",
+  "startedAt": "2026-09-25T19:20:34.862Z",
+  "endedAt": "2026-09-25T20:48:14.283Z",
+  "mode": "bugfix",
+  "scale": "major",
+  "runId": "wf_2026-09-25-f51-billing-mrr-ledger",
+  "profile": "standard",
+  "approach": "dev-pipeline",
+  "overlap": null,
+  "verify": null,
+  "cascadeAudit": null,
+  "escalation": null,
+  "lensesRun": null,
+  "lensReport": null,
+  "radiusPack": null,
+  "plausibleFindings": null,
+  "quarantined": null,
+  "legacyNotes": {
+    "overlap": "old engine tracked Gate & Review/UI-verify wall-clock overlap explicitly; this rebuild expresses concurrency via phaseReport[].overlappedWith instead",
+    "verify": "old engine's Verify phase ran a location-check + per-file refuters + a tie-break vote; this rebuild's Verify phase is the bugfix-only sibling sweep (see result.siblingSweep) -- there is no equivalent verify-lens summary to report",
+    "cascadeAudit": "old engine partitioned Gate & Review into a HIGH-risk cascade plus a sampled LOW-risk spot audit; this rebuild runs one adversarial reviewer per task, so there is no cascade to audit",
+    "escalation": "old engine could skip review lenses under token pressure and record which; this rebuild has no lens fan-out to escalate or skip",
+    "lensesRun": "old engine ran up to seven review lenses per file; this rebuild runs one adversarial reviewer per task (see result.tasks[].reviewVerdict)",
+    "lensReport": "see legacyNotes.lensesRun",
+    "radiusPack": "old engine built a separate radius-only pack section; this rebuild folds radius excerpts into review-pack.mjs's own --radius section, already part of pack.md",
+    "plausibleFindings": "old engine quarantined a lens's low-confidence findings separately before a tie-break vote; this rebuild has one reviewer per task, so there is no separate plausible/quarantined split",
+    "quarantined": "see legacyNotes.plausibleFindings"
+  },
+  "overflow": {
+    "path": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/result-overflow.json",
+    "fields": ["tasks", "checkpoints"],
+    "counts": { "tasks": 22, "checkpoints": 16 },
+    "written": true,
+    "residualOverCap": false,
+    "bytesBefore": 329350,
+    "bytesAfter": 71463,
+    "capBytes": 153600,
+    "note": "These fields live in result-overflow.json; closeout.mjs merges them back automatically."
+  }
+}

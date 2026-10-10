@@ -17,6 +17,9 @@
  * Without the lock, both could read Σ=0 concurrently and both issue, jointly exceeding
  * the cap — the HIGH-1 bug this test pins shut.
  *
+ * Case 3 (#2424): the SAME customer/order reusing a returnKey with DIFFERENT items is a 409, not
+ * a silent replay of the first capture (which would lose the second capture's lines).
+ *
  * Case 2 (returnKey conflict, MED-7): two PARALLEL captures from DIFFERENT customers
  * reusing the SAME returnKey race the real `@@unique([tenantId, returnKey])`
  * constraint — they acquire DIFFERENT customer-scoped locks (keyed on customerId), so
@@ -353,5 +356,59 @@ describeDb("B467 — InlineReturnsService.capture() concurrency, real Postgres",
     expect(await raw.return.count({ where: { customerId: loserCustomerId, kind: "INLINE" } })).toBe(
       0,
     );
+  }, 30_000);
+
+  // #2424 (tier 1): a same-key replay on the SAME customer/order used to return the first Return
+  // without comparing items, so a second, DIFFERENT capture reusing the key was silently lost.
+  it("case 3 (#2424): same key + same items replays; same key + DIFFERENT items is a 409 and writes nothing", async () => {
+    const f = await seedOrder("reuse", 500);
+    const key = `b2424-reuse-${run}`;
+    const op: JwtPayload = {
+      sub: f.driverId,
+      username: "operator",
+      role: "OPERATOR" as any,
+      status: "ACTIVE" as any,
+      forcePasswordChange: false,
+      tenantId,
+      tenantSlug: slug,
+    };
+    const captureWith = (qty: number) =>
+      tenantCtx.run(tenantId, () =>
+        svc.capture(
+          {
+            customerId: f.customerId,
+            orderId: f.orderId,
+            items: [{ productId: f.productId, qty }],
+            returnKey: key,
+          },
+          op,
+        ),
+      );
+    const rowJson = async (id: string) =>
+      (
+        (await raw.$queryRawUnsafe(
+          `SELECT to_jsonb(r)::text AS j FROM "Return" r WHERE id = $1`,
+          id,
+        )) as any[]
+      )[0]?.j;
+
+    const first = await captureWith(2);
+    const firstRow = await rowJson(first.id);
+
+    const replay = await captureWith(2); // an offline retry of the SAME capture
+    expect(replay.id).toBe(first.id);
+
+    const refused: any = await captureWith(5).catch((e: unknown) => e); // a DIFFERENT capture, same key
+    expect(refused?.status ?? refused?.getStatus?.()).toBe(409);
+    expect(refused?.getResponse?.()?.code).toBe("INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS");
+    // the body names the return that WAS recorded (never "nothing was recorded")
+    expect(refused?.getResponse?.()).toMatchObject({
+      returnId: first.id,
+      returnNumber: first.returnNumber,
+    });
+
+    expect(await raw.return.count({ where: { returnKey: key, kind: "INLINE" } })).toBe(1);
+    expect(await raw.creditNote.count({ where: { customerId: f.customerId } })).toBe(1);
+    expect(await rowJson(first.id)).toBe(firstRow); // the first capture is untouched
   }, 30_000);
 });

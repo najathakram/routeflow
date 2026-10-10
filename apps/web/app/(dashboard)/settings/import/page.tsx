@@ -25,12 +25,17 @@ import {
   useUpdateNumbering,
   formatDocumentNumber,
   type DocumentNumberType,
+  type NumberingSetting,
+  type UpdateNumberingInput,
 } from "@/lib/api/numbering";
 import {
   useIncompleteProducts,
   useCompleteSetup,
   type IncompleteProduct,
 } from "@/lib/api/import-resolution";
+import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
+import { PRODUCT_IMPORT_COLUMNS, CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
+import { validateDocumentPrefix } from "@/lib/document-prefix";
 
 interface ImportResult {
   imported?: number;
@@ -51,6 +56,10 @@ interface ImportSection {
   icon: React.ComponentType<{ className?: string }>;
   color: string;
   zohoExportPath: string;
+  /** B858/B859 (FIX5): products/contacts render the preview-then-import ImportCsvPanel instead
+   *  of this file's plain upload UI, so their column-registry-driven plan/diff is visible before
+   *  writing. Every other card (inventory/invoices/payments/expenses) keeps ImportCard as-is. */
+  csvPanelColumns?: { field: string; canonical: string; aliases: string[] }[];
 }
 
 const IMPORT_SECTIONS: ImportSection[] = [
@@ -62,6 +71,7 @@ const IMPORT_SECTIONS: ImportSection[] = [
     icon: Package,
     color: "text-purple-500 bg-purple-50",
     zohoExportPath: "Zoho Inventory → Items → ≡ → Export Items → CSV",
+    csvPanelColumns: PRODUCT_IMPORT_COLUMNS,
   },
   {
     id: "contacts",
@@ -71,6 +81,7 @@ const IMPORT_SECTIONS: ImportSection[] = [
     icon: Users,
     color: "text-brand-500 bg-brand-50",
     zohoExportPath: "Zoho Invoices → Contacts → ⋮ → Export Contacts",
+    csvPanelColumns: CUSTOMER_IMPORT_COLUMNS,
   },
   {
     id: "inventory",
@@ -247,90 +258,179 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
           </span>
         </div>
 
-        {/* Drop zone */}
-        <div
-          onDrop={handleDrop}
-          onDragOver={(e) => e.preventDefault()}
-          onClick={() => inputRef.current?.click()}
-          className={cn(
-            "flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 cursor-pointer transition-colors min-h-[100px]",
-            file
-              ? "border-brand-300 bg-brand-50"
-              : "border-surface-border hover:border-brand-300 hover:bg-brand-50/30",
-          )}
-        >
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".csv"
-            className="hidden"
-            onChange={handleFileChange}
+        {section.csvPanelColumns ? (
+          <ImportCsvPanel
+            endpoint={section.endpoint}
+            title={section.label}
+            columns={section.csvPanelColumns}
+            testIdPrefix={`import-${section.id}`}
           />
-          <Upload className={cn("h-6 w-6", file ? "text-brand-500" : "text-navy/30")} />
-          {file ? (
-            <div className="text-center">
-              <p className="text-sm font-medium text-brand-600">{file.name}</p>
-              <p className="text-xs text-navy/70">
-                {(file.size / 1024).toFixed(1)} KB · Click to change
-              </p>
-            </div>
-          ) : (
-            <div className="text-center">
-              <p className="text-sm text-navy/70">
-                Drop CSV file here or <span className="text-brand-500">browse</span>
-              </p>
-              <p className="text-xs text-navy/70 mt-0.5">Zoho CSV export format</p>
-            </div>
-          )}
-        </div>
+        ) : (
+          <LegacyImportBody section={section} />
+        )}
+      </div>
+    </div>
+  );
+}
 
-        {/* Import button */}
-        <button
-          onClick={handleImport}
-          disabled={!file || loading}
-          className="w-full rounded-lg bg-brand-500 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
-        >
-          {loading ? (
-            <span className="flex items-center justify-center gap-2">
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-              Importing…
-            </span>
-          ) : (
-            `Import ${section.label}`
-          )}
-        </button>
+/** Unchanged upload UI for the cards NOT ported to ImportCsvPanel (inventory/invoices/payments/expenses). */
+function LegacyImportBody({ section }: { section: ImportSection }) {
+  const { toast } = useToast();
+  const [file, setFile] = React.useState<File | null>(null);
+  const [result, setResult] = React.useState<ImportResult | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [showErrors, setShowErrors] = React.useState(false);
+  const inputRef = React.useRef<HTMLInputElement>(null);
 
-        {/* Errors */}
-        {result && result.errors.length > 0 && (
-          <div className="rounded-lg border border-warning/30 bg-warning-bg/50 px-3 py-2">
-            <button
-              onClick={() => setShowErrors((v) => !v)}
-              className="flex w-full items-center justify-between text-xs font-medium text-warning"
-            >
-              <span>
-                {result.errors.length} error{result.errors.length > 1 ? "s" : ""} during import
-              </span>
-              {showErrors ? (
-                <ChevronUp className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5" />
-              )}
-            </button>
-            {showErrors && (
-              <ul className="mt-2 space-y-0.5 text-xs text-navy/70 max-h-32 overflow-y-auto">
-                {result.errors.slice(0, 20).map((e, i) => (
-                  <li key={i} className="truncate">
-                    • {e}
-                  </li>
-                ))}
-                {result.errors.length > 20 && (
-                  <li className="text-navy/70">…and {result.errors.length - 20} more</li>
-                )}
-              </ul>
-            )}
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) {
+      setFile(f);
+      setResult(null);
+      setShowErrors(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const f = e.dataTransfer.files?.[0];
+    if (f && f.name.endsWith(".csv")) {
+      setFile(f);
+      setResult(null);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!file) return;
+    setLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await apiClient.post(section.endpoint, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 300_000, // 5 min for large files
+      });
+      setResult(res.data);
+      const d = res.data;
+      const skipped = d.skipped ?? 0;
+      const duplicates = d.duplicates ?? 0;
+      const created = d.created ?? d.imported ?? 0;
+      let summary =
+        d.updated !== undefined
+          ? `${d.updated} updated, ${created} created, ${skipped} skipped`
+          : `${d.imported} records imported, ${skipped} skipped`;
+      if (duplicates > 0) {
+        summary += `, ${duplicates} duplicate${duplicates !== 1 ? "s" : ""} skipped`;
+      }
+      if (d.suppliersCreated || d.suppliersUpdated) {
+        const parts: string[] = [];
+        if (d.suppliersCreated)
+          parts.push(
+            `${d.suppliersCreated} supplier${d.suppliersCreated !== 1 ? "s" : ""} created`,
+          );
+        if (d.suppliersUpdated)
+          parts.push(
+            `${d.suppliersUpdated} supplier${d.suppliersUpdated !== 1 ? "s" : ""} matched`,
+          );
+        summary += ` · ${parts.join(", ")}`;
+      }
+      toast({ title: `${section.label} imported`, description: summary, variant: "success" });
+    } catch (err: any) {
+      toast({
+        title: "Import failed",
+        description: err?.response?.data?.message ?? "Please check your file format and try again",
+        variant: "error",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col flex-1 gap-3">
+      {/* Drop zone */}
+      <div
+        onDrop={handleDrop}
+        onDragOver={(e) => e.preventDefault()}
+        onClick={() => inputRef.current?.click()}
+        className={cn(
+          "flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 cursor-pointer transition-colors min-h-[100px]",
+          file
+            ? "border-brand-300 bg-brand-50"
+            : "border-surface-border hover:border-brand-300 hover:bg-brand-50/30",
+        )}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".csv"
+          className="hidden"
+          onChange={handleFileChange}
+        />
+        <Upload className={cn("h-6 w-6", file ? "text-brand-500" : "text-navy/30")} />
+        {file ? (
+          <div className="text-center">
+            <p className="text-sm font-medium text-brand-600">{file.name}</p>
+            <p className="text-xs text-navy/70">
+              {(file.size / 1024).toFixed(1)} KB · Click to change
+            </p>
+          </div>
+        ) : (
+          <div className="text-center">
+            <p className="text-sm text-navy/70">
+              Drop CSV file here or <span className="text-brand-500">browse</span>
+            </p>
+            <p className="text-xs text-navy/70 mt-0.5">Zoho CSV export format</p>
           </div>
         )}
       </div>
+
+      {/* Import button */}
+      <button
+        onClick={handleImport}
+        disabled={!file || loading}
+        className="w-full rounded-lg bg-brand-500 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
+      >
+        {loading ? (
+          <span className="flex items-center justify-center gap-2">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+            Importing…
+          </span>
+        ) : (
+          `Import ${section.label}`
+        )}
+      </button>
+
+      {/* Errors */}
+      {result && result.errors.length > 0 && (
+        <div className="rounded-lg border border-warning/30 bg-warning-bg/50 px-3 py-2">
+          <button
+            onClick={() => setShowErrors((v) => !v)}
+            className="flex w-full items-center justify-between text-xs font-medium text-warning"
+          >
+            <span>
+              {result.errors.length} error{result.errors.length > 1 ? "s" : ""} during import
+            </span>
+            {showErrors ? (
+              <ChevronUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
+          </button>
+          {showErrors && (
+            <ul className="mt-2 space-y-0.5 text-xs text-navy/70 max-h-32 overflow-y-auto">
+              {result.errors.slice(0, 20).map((e, i) => (
+                <li key={i} className="truncate">
+                  • {e}
+                </li>
+              ))}
+              {result.errors.length > 20 && (
+                <li className="text-navy/70">…and {result.errors.length - 20} more</li>
+              )}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -341,7 +441,6 @@ const DOC_TYPE_LABELS: Record<DocumentNumberType, string> = {
   INVOICE: "Invoices",
   ESTIMATE: "Estimates",
   CREDIT_NOTE: "Credit notes",
-  PAYMENT: "Payments",
 };
 
 interface NumberingDraft {
@@ -350,12 +449,19 @@ interface NumberingDraft {
   padding: number;
 }
 
+/** A draft in progress plus the row values it was seeded from (the server row at seed time). */
+interface NumberingDraftEntry {
+  draft: NumberingDraft;
+  loaded: NumberingDraft;
+}
+
 function NumberingRow({
   docType,
   draft,
   serverPreview,
   dirty,
   saving,
+  prefixError,
   onChange,
   onSave,
 }: {
@@ -364,6 +470,8 @@ function NumberingRow({
   serverPreview: string;
   dirty: boolean;
   saving: boolean;
+  /** B1188: the shared prefix rule's message for an edited prefix, else null. */
+  prefixError: string | null;
   onChange: (patch: Partial<NumberingDraft>) => void;
   onSave: () => void;
 }) {
@@ -378,17 +486,18 @@ function NumberingRow({
         value={draft.prefix}
         onChange={(e) => onChange({ prefix: e.target.value })}
         placeholder="Prefix"
+        aria-invalid={prefixError ? true : undefined}
         className="rounded-lg border border-surface-border px-2.5 py-1.5 text-sm font-mono text-navy focus:border-brand-400 focus:outline-none"
       />
       <input
         aria-label={`${DOC_TYPE_LABELS[docType]} next number`}
         type="number"
         min={1}
-        max={2_000_000_000}
+        max={999_999_999}
         value={Number.isFinite(draft.nextNumber) ? draft.nextNumber : ""}
         onChange={(e) => {
           const v = parseInt(e.target.value, 10);
-          onChange({ nextNumber: Number.isNaN(v) ? NaN : Math.min(2_000_000_000, v) });
+          onChange({ nextNumber: Number.isNaN(v) ? NaN : Math.min(999_999_999, v) });
         }}
         className="rounded-lg border border-surface-border px-2.5 py-1.5 text-sm font-mono text-right text-navy focus:border-brand-400 focus:outline-none"
       />
@@ -409,11 +518,16 @@ function NumberingRow({
       </span>
       <button
         onClick={onSave}
-        disabled={!dirty || saving}
+        disabled={!dirty || saving || !!prefixError}
         className="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
       >
         {saving ? "Saving…" : "Save"}
       </button>
+      {prefixError ? (
+        <p role="alert" className="col-span-full text-xs text-danger">
+          {prefixError}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -422,56 +536,87 @@ function NumberingCard() {
   const { toast } = useToast();
   const { data: settings, isLoading } = useNumberingSettings();
   const updateNumbering = useUpdateNumbering();
-  const [drafts, setDrafts] = React.useState<Record<string, NumberingDraft>>({});
+  const [drafts, setDrafts] = React.useState<Record<string, NumberingDraftEntry>>({});
   const [savingType, setSavingType] = React.useState<DocumentNumberType | null>(null);
 
-  // Seed a draft per doc type from the server once; keep local edits afterwards.
+  // Seed a draft (+ the loaded values it started from) per doc type from the
+  // server once; keep local edits afterwards. Seeding only fills in missing
+  // types, so a 409 that drops an entry re-seeds it from the next render.
   React.useEffect(() => {
     if (!settings) return;
     setDrafts((prev) => {
       const next = { ...prev };
       for (const s of settings) {
         if (!next[s.docType]) {
-          next[s.docType] = { prefix: s.prefix, nextNumber: s.nextNumber, padding: s.padding };
+          const seeded = { prefix: s.prefix, nextNumber: s.nextNumber, padding: s.padding };
+          next[s.docType] = { draft: seeded, loaded: seeded };
         }
       }
       return next;
     });
   }, [settings]);
 
-  const save = (docType: DocumentNumberType) => {
-    const d = drafts[docType];
-    if (!d) return;
-    if (!Number.isFinite(d.nextNumber) || d.nextNumber < 1) {
+  // Falls back to the server row (draft === loaded) when there is no local entry yet —
+  // covers the initial render and the render right after a 409 drops the entry.
+  const getEntry = (s: NumberingSetting): NumberingDraftEntry => {
+    const existing = drafts[s.docType];
+    if (existing) return existing;
+    const seeded = { prefix: s.prefix, nextNumber: s.nextNumber, padding: s.padding };
+    return { draft: seeded, loaded: seeded };
+  };
+
+  const save = (s: NumberingSetting) => {
+    const { draft, loaded } = getEntry(s);
+    const nextNumberChanged = draft.nextNumber !== loaded.nextNumber;
+    if (nextNumberChanged && (!Number.isFinite(draft.nextNumber) || draft.nextNumber < 1)) {
       toast({ title: "Enter a next number of 1 or more", variant: "error" });
       return;
     }
-    setSavingType(docType);
+    if (draft.prefix !== loaded.prefix) {
+      const invalid = validateDocumentPrefix(draft.prefix);
+      if (invalid) {
+        toast({ title: invalid, variant: "error" });
+        return;
+      }
+    }
+    const data: UpdateNumberingInput = { expectedNextNumber: loaded.nextNumber };
+    if (draft.prefix !== loaded.prefix) data.prefix = draft.prefix;
+    if (nextNumberChanged) data.nextNumber = draft.nextNumber;
+    if (draft.padding !== loaded.padding) {
+      data.padding = Number.isFinite(draft.padding) ? draft.padding : 0;
+    }
+    setSavingType(s.docType);
     updateNumbering.mutate(
-      {
-        docType,
-        data: {
-          prefix: d.prefix,
-          nextNumber: d.nextNumber,
-          padding: Number.isFinite(d.padding) ? d.padding : 0,
-        },
-      },
+      { docType: s.docType, data },
       {
         onSuccess: (row) => {
-          // Reconcile the draft to the server-normalized row so the dirty flag
+          // Reconcile draft AND loaded to the server-normalized row so the dirty flag
           // clears after every save (covers NaN/clamped inputs that would
           // otherwise never round-trip to equality).
-          setDrafts((prev) => ({
-            ...prev,
-            [docType]: { prefix: row.prefix, nextNumber: row.nextNumber, padding: row.padding },
-          }));
+          const seeded = { prefix: row.prefix, nextNumber: row.nextNumber, padding: row.padding };
+          setDrafts((prev) => ({ ...prev, [s.docType]: { draft: seeded, loaded: seeded } }));
           toast({
-            title: `${DOC_TYPE_LABELS[docType]} numbering saved`,
-            description: `Next ${DOC_TYPE_LABELS[docType].toLowerCase()} will be ${row.preview}`,
+            title: `${DOC_TYPE_LABELS[s.docType]} numbering saved`,
+            description: `Next ${DOC_TYPE_LABELS[s.docType].toLowerCase()} will be ${row.preview}`,
             variant: "success",
           });
         },
         onError: (e: any) => {
+          if (e?.response?.status === 409) {
+            // The row moved since we loaded it — drop the draft so it re-seeds
+            // from the server row (SA-274 Q3) instead of keeping a stale edit.
+            setDrafts((prev) => {
+              const next = { ...prev };
+              delete next[s.docType];
+              return next;
+            });
+            toast({
+              title: "Numbering changed since you opened this page",
+              description: e?.response?.data?.message ?? e.message,
+              variant: "error",
+            });
+            return;
+          }
           toast({
             title: "Could not save numbering",
             description: e?.response?.data?.message ?? e.message,
@@ -492,11 +637,13 @@ function NumberingCard() {
         <div className="flex-1">
           <p className="font-semibold text-navy">Document numbering</p>
           <p className="text-xs text-navy/70 mt-0.5 leading-relaxed">
-            Continue where your old system left off — set the next number for each document type
-            (e.g. last invoice <span className="font-mono">INV-08841</span> → next{" "}
-            <span className="font-mono">INV-08842</span>). Imported documents keep their original
-            numbers; if a number already exists we skip to the next free one and note it on the
-            document.
+            Continue where your old system left off. Set the prefix and next number for each
+            document type (last invoice <span className="font-mono">INV-08841</span> → next{" "}
+            <span className="font-mono">INV-08842</span>) and save. Until you save a row, that type
+            keeps the yearly series (<span className="font-mono">INV-2026-0001</span>,{" "}
+            <span className="font-mono">INV-2026-0002</span>…). New numbers always continue after
+            the highest one already on file, so imported documents keep their numbers and nothing is
+            issued twice.
           </p>
         </div>
       </div>
@@ -514,25 +661,29 @@ function NumberingCard() {
             <span />
           </div>
           {(settings ?? []).map((s) => {
-            const d = drafts[s.docType] ?? {
-              prefix: s.prefix,
-              nextNumber: s.nextNumber,
-              padding: s.padding,
-            };
+            const { draft, loaded } = getEntry(s);
             const dirty =
-              d.prefix !== s.prefix || d.nextNumber !== s.nextNumber || d.padding !== s.padding;
+              draft.prefix !== loaded.prefix ||
+              draft.nextNumber !== loaded.nextNumber ||
+              draft.padding !== loaded.padding;
             return (
               <NumberingRow
                 key={s.docType}
                 docType={s.docType}
-                draft={d}
+                draft={draft}
                 serverPreview={s.preview}
                 dirty={dirty}
                 saving={savingType === s.docType}
-                onChange={(patch) =>
-                  setDrafts((prev) => ({ ...prev, [s.docType]: { ...d, ...patch } }))
+                prefixError={
+                  draft.prefix !== loaded.prefix ? validateDocumentPrefix(draft.prefix) : null
                 }
-                onSave={() => save(s.docType)}
+                onChange={(patch) =>
+                  setDrafts((prev) => ({
+                    ...prev,
+                    [s.docType]: { draft: { ...draft, ...patch }, loaded },
+                  }))
+                }
+                onSave={() => save(s)}
               />
             );
           })}
@@ -694,7 +845,7 @@ export default function SettingsImportPage() {
       <FinishSetupCard />
 
       {/* Import cards — uniform 2-column grid, cards stretch to equal height per row */}
-      <div className="grid grid-cols-2 gap-5">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         {IMPORT_SECTIONS.map((section, i) => (
           <ImportCard key={section.id} section={section} step={i + 1} />
         ))}

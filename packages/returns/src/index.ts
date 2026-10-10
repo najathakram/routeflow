@@ -10,3 +10,4 @@
 // this package. Either strategy is valid; the seam is that `buildCaptureRequest` only ever
 // receives the result, never the strategy.
 export * from "./inline-return-state";
+export * from "./return-scan";

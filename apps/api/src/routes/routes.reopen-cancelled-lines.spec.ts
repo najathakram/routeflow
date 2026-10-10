@@ -42,16 +42,16 @@ describe("RoutesService — reopenStop never revives a cancelled line (bug id pe
   let gateway: jest.Mocked<
     Pick<
       RouteFlowGateway,
-      | "emitStopCompleted"
-      | "emitOrderCreated"
-      | "emitOrderStatusChanged"
-      | "emitLowStock"
-      | "emitToDriver"
+      "emitStopCompleted" | "emitOrderCreated" | "emitOrderStatusChanged" | "emitToDriver"
     >
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
-  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock; reverseRunAdvancesInTx: jest.Mock };
+  let invoicesService: {
+    recordDeliveryPaymentInTx: jest.Mock;
+    reconcileDeliveredOrdersInTx: jest.Mock;
+    reverseRunAdvancesInTx: jest.Mock;
+  };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
@@ -61,6 +61,7 @@ describe("RoutesService — reopenStop never revives a cancelled line (bug id pe
       recordDeliveryPaymentInTx: jest
         .fn()
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
+      reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(0),
     };
 
@@ -68,7 +69,6 @@ describe("RoutesService — reopenStop never revives a cancelled line (bug id pe
       emitStopCompleted: jest.fn(),
       emitOrderCreated: jest.fn(),
       emitOrderStatusChanged: jest.fn(),
-      emitLowStock: jest.fn(),
       emitToDriver: jest.fn(),
     };
 
@@ -165,12 +165,39 @@ describe("RoutesService — reopenStop never revives a cancelled line (bug id pe
     });
     prisma.invoice.findFirst.mockResolvedValue(null);
     prisma.transaction.findMany.mockResolvedValue([]);
-    const tx = txFor();
+    // SA-346: the pre-delete read returns the qualifying row actually deleted, so the line is in
+    // the force set and recomputes to 0 (a legacy line with no row is not rewritten).
+    const tx = txFor({
+      deliveryMutation: {
+        ...prisma.deliveryMutation,
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([
+            { orderId: "ord-1", orderItemId: "oi-1", type: "DELIVERED", quantityDelivered: 5 },
+          ])
+          .mockResolvedValue([]),
+        create: jest.fn(),
+      },
+    });
 
     await service.reopenStop("run-1", "stop-1", operatorPayload);
 
     const call = tx.orderItem.updateMany.mock.calls[0][0];
-    expect(call.data).toMatchObject({ status: "PENDING", deliveredQty: 0 });
+    expect(call.data).toMatchObject({ status: "PENDING" });
     expect(call.where).toMatchObject({ orderId: "ord-1", status: { not: "CANCELLED" } });
+    // F-05 (#2093) + SA-365 R6: this is what carries reopenStop's EXEMPT row — it adds no quantity of
+    // any product: the only line writes reset delivery state — status here, deliveredQty via the
+    // SA-346 recompute — never qty, and no line is created.
+    expect(Object.keys(call.data).sort()).toEqual(["status"]);
+    expect(tx.orderItem.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.orderItem.create ?? { mock: { calls: [] } }).toHaveProperty("mock.calls.length", 0);
+    // B785/SA-133: deliveredQty is a separate RECOMPUTE write, not part of updateMany's data.
+    expect(tx.orderItem.update).toHaveBeenCalledWith({
+      where: { id: "oi-1" },
+      data: { deliveredQty: 0 },
+    });
+    for (const [arg] of tx.orderItem.update.mock.calls) {
+      expect(Object.keys(arg.data)).toEqual(["deliveredQty"]);
+    }
   });
 });

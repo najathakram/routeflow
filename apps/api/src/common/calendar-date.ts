@@ -1,3 +1,5 @@
+import { BadRequestException } from "@nestjs/common";
+
 /**
  * A "calendar date" is a YYYY-MM-DD string — the meaningful part of a stored
  * UTC-midnight instant (RouteFlow's storage convention for every calendar-date
@@ -81,6 +83,41 @@ function localMidnightUtc(year: number, month: number, day: number, timeZone: st
   return new Date(guess - offsetMs);
 }
 
+const CALENDAR_DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Strict "YYYY-MM-DD" → its parts, or null when the string is malformed OR names a day that
+ * does not exist (2026-02-30) — `new Date()` would silently roll such a day into the next month.
+ */
+export function parseCalendarDay(
+  value: string,
+): { year: number; month: number; day: number } | null {
+  const m = CALENDAR_DAY_RE.exec(value);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
+    return null;
+  }
+  return { year, month, day };
+}
+
+/**
+ * The REAL UTC instant at which calendar day `day` ("YYYY-MM-DD") begins in `timeZone` — the
+ * lower bound (inclusive) of that day for a real-instant column (`CreditNote.createdAt`,
+ * `Return.refundedAt`); the next day's value is the exclusive upper bound. The inverse of
+ * `startOfCalendarDay` at a day's edges, DST-safe (see `localMidnightUtc`). A null/blank/
+ * unknown zone falls back to UTC, same as every helper here. Throws RangeError on a value that
+ * is not a real calendar day — callers validate input first; this is the last line.
+ */
+export function startOfLocalDay(day: string, timeZone?: string | null): Date {
+  const parts = parseCalendarDay(day);
+  if (!parts) throw new RangeError(`startOfLocalDay: not a calendar day: ${JSON.stringify(day)}`);
+  return localMidnightUtc(parts.year, parts.month, parts.day, timeZone || "UTC");
+}
+
 /** UTC-midnight instant (`iso.slice(0,10)`) → its calendar-date string. `""` for null/invalid. */
 export function calendarDateFromIso(iso: string | Date | null | undefined): string {
   if (!iso) return "";
@@ -134,6 +171,40 @@ export function startOfCalendarDay(
 }
 
 /**
+ * A CLIENT-supplied calendar-date field (e.g. invoice `issueDate`) → the
+ * UTC-midnight SYMBOLIC stamp of the literal day it names (#2197): its first
+ * ten characters, the house `calendarDayOf` rule. The client's offset and the
+ * tenant's zone are both ignored — re-reading a datetime through either shifts
+ * the day (`2026-09-25T20:00:00-04:00` is 00:00Z on the 26th). `null` when the
+ * value does not name a real calendar day (bad shape, `2026-02-31`, or `2026-13-01`).
+ */
+export function calendarStampFromInput(raw: string): Date | null {
+  const day = raw.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const stamp = new Date(isoFromCalendarDate(day));
+  // An out-of-range month or day ("2026-13-01") is Invalid Date, and toISOString() would throw.
+  if (Number.isNaN(stamp.getTime())) return null;
+  // Date rolls an out-of-range day over ("2026-02-31" → Mar 3) instead of failing.
+  return stamp.toISOString().slice(0, 10) === day ? stamp : null;
+}
+
+/**
+ * #2197/#2256: a client calendar-date field → the stamp of the literal day it names; 400 (naming
+ * `field`) when it names none. Every invoice date the client supplies (issueDate, dueDate,
+ * depositDueDate) goes through this, never `new Date(raw)`.
+ */
+export function calendarFieldStamp(raw: string, field: string): Date {
+  const stamp = calendarStampFromInput(raw);
+  if (!stamp) throw new BadRequestException(`${field} must be a calendar date (YYYY-MM-DD)`);
+  return stamp;
+}
+
+/** #2197: a client issueDate → the stamp of the literal day it names; 400 when it names none. */
+export function issueDateStamp(raw: string): Date {
+  return calendarFieldStamp(raw, "issueDate");
+}
+
+/**
  * The last instant (− 1 ms) of the calendar day `date` encodes, evaluated at
  * `timeZone`'s real wall-clock day boundary. `date`'s own UTC year/month/day
  * is read directly (never re-derived through `timeZone`) because every
@@ -152,4 +223,37 @@ export function endOfCalendarDay(date: Date | string, timeZone?: string | null):
   );
   const nextMidnightLocal = localMidnightUtc(next.year, next.month, next.day, timeZone || "UTC");
   return new Date(nextMidnightLocal.getTime() - 1);
+}
+
+/**
+ * SA-488 (#2493 item 3): THE overdue rule. An invoice is overdue once `now` is past the END of its
+ * due day in the tenant's zone (UTC when the zone is unknown) — the whole due day is grace. The
+ * cron, the list filter, bookkeeping aging and the KPI summary use `overdueCutoff` (its SQL twin);
+ * recomputeStatus uses this. The two agree at every boundary (pinned).
+ */
+export function isOverdue(
+  dueDate: Date | string | null | undefined,
+  now: Date = new Date(),
+  timeZone?: string | null,
+): boolean {
+  if (!dueDate) return false;
+  // #2518 review: defined FROM the exact SQL twin, never via endOfCalendarDay — that reads the zone
+  // offset at a UTC-midnight guess, which is an hour off on a DST eve east of UTC.
+  return startOfCalendarDay(dueDate, "UTC").getTime() < overdueCutoff(now, timeZone).getTime();
+}
+
+/** The SQL twin of `isOverdue`: `dueDate < overdueCutoff(now, tz)` selects exactly the overdue rows. */
+export function overdueCutoff(now: Date = new Date(), timeZone?: string | null): Date {
+  return startOfCalendarDay(now, timeZone);
+}
+
+/**
+ * Payment-term arithmetic on a calendar date, in UTC. `setDate`/`getDate` read LOCAL
+ * components, so on a non-UTC host they shift a UTC-midnight instant by the DST delta
+ * and can land the due date on the previous calendar day.
+ */
+export function addCalendarDays(date: Date, days: number): Date {
+  const out = new Date(date);
+  out.setUTCDate(out.getUTCDate() + days);
+  return out;
 }

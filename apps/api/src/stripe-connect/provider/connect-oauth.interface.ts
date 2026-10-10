@@ -50,6 +50,18 @@ export interface ConnectOAuthProvider {
    */
   retrieveAccount(accountRef: string): Promise<ConnectAccountSnapshot>;
 
+  /**
+   * The PLATFORM's own Stripe account id (Stripe's `accounts.retrieve()`
+   * called with no id argument). `completeOAuth` compares this to the
+   * just-connected account so a tenant whose browser had RouteFlow's own
+   * Stripe account signed in (Stripe pre-selects whichever account the
+   * browser session belongs to) is refused rather than silently linked to
+   * the platform's own account (B2441). Throws on failure — the caller must
+   * treat that as fatal and store nothing (fail closed), never as "not known
+   * yet".
+   */
+  retrievePlatformAccountId(): Promise<string>;
+
   /** Revokes the platform's access to a connected account. Throws on failure. */
   deauthorize(clientId: string, accountRef: string): Promise<void>;
 }

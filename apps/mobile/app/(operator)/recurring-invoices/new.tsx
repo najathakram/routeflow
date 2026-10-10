@@ -21,7 +21,10 @@ import {
   useCreateRecurringInvoice,
   type RecurringFrequency,
 } from "../../../lib/api/recurring-invoices";
-import { recurringScheduleFields } from "../../../lib/recurring-invoices-logic";
+import {
+  recurringScheduleFields,
+  RECURRING_QTY_BOXES_HINT,
+} from "../../../lib/recurring-invoices-logic";
 import { sanitizeIntInput } from "../../../lib/qty";
 import { showToast } from "../../../lib/toast";
 
@@ -327,6 +330,9 @@ function Composer({
                 </View>
               ))
             )}
+            <Text style={{ fontSize: 12, color: ios.label3, paddingHorizontal: 16, paddingTop: 8 }}>
+              {RECURRING_QTY_BOXES_HINT}
+            </Text>
             <View style={styles.addRow}>
               <Pressable style={styles.addBtn} onPress={() => setPickerOpen(true)}>
                 <Ionicons name="add-circle-outline" size={16} color={ios.brand} />

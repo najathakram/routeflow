@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ReportCadence } from "./tracked-categories";
 import type {
+  RegulatedFilingStatus,
   RegulatedLedgerResponse,
   RegulatedLedgerRow,
   RegulatedReportColumn,
@@ -10,6 +11,7 @@ import type {
   RegulatedReportWarningCode,
 } from "@routeflow/types";
 export type {
+  RegulatedFilingStatus,
   RegulatedLedgerResponse,
   RegulatedLedgerRow,
   RegulatedReportColumn,
@@ -19,8 +21,6 @@ export type {
 } from "@routeflow/types";
 
 // ─── Filings — mirrors apps/web/lib/api/tracked-categories.ts (Filings, W5b) ────
-
-export type RegulatedFilingStatus = "GENERATED" | "FAILED";
 
 export interface RegulatedFiling {
   id: string;

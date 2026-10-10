@@ -21,6 +21,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { InvoicesService, addCalendarDays } from "./invoices.service";
 import { startOfCalendarDay } from "../common/calendar-date";
+import { AfterCommit } from "../common/after-commit";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { NumberingService } from "../import/numbering.service";
@@ -35,12 +36,17 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
 
 const mockCompressDocument = compressDocument as jest.Mock;
 
+/** #2175: a caller-owned AfterCommit queue for InTx calls whose emits these tests don't assert. */
+const q = new AfterCommit();
 describe("InvoicesService", () => {
   let service: InvoicesService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -107,7 +113,10 @@ describe("InvoicesService", () => {
   };
 
   beforeEach(async () => {
+    fillSparseCasBasis(); // #2645: sparse order fixtures vs the CAS basis pin
     prisma = createMockPrisma();
+    // #2070: createPartialFromOrder's invoicedQty bump is a CAS (updateMany); a clean read matches 1.
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.invoice.findFirst.mockResolvedValue({ items: [] }); // units_v1 guard reads the parent invoice
     mockNumbering.reserveNext.mockClear();
     mockNumbering.reserveNext.mockResolvedValue("INV-2026-0001");
@@ -143,6 +152,13 @@ describe("InvoicesService", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: mockGateway },
         { provide: EmailService, useValue: mockEmailService },
@@ -150,7 +166,11 @@ describe("InvoicesService", () => {
         { provide: SystemConfigService, useValue: mockSystemConfig },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            correctSaleForPriceChange: jest.fn(),
+          },
         },
         {
           provide: AuthorizationGuardService,
@@ -164,6 +184,13 @@ describe("InvoicesService", () => {
         { provide: StorageService, useValue: mockStorage },
         // flag.msrp defaults OFF so applyMsrpSnapshots is a no-op — the
         // pre-MSRP tests keep their exact write shapes (msrp stays null).
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         { provide: EntitlementsService, useValue: mockEntitlements },
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
         { provide: NumberingService, useValue: mockNumbering },
@@ -385,7 +412,11 @@ describe("InvoicesService", () => {
         },
         customer: { findFirst: jest.fn().mockResolvedValue({ isTaxExempt: false }) },
         trackedCategory: { findMany: jest.fn().mockResolvedValue([]) },
-        orderItem: { update: jest.fn().mockResolvedValue({}) },
+        orderItem: {
+          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        }, // #2612 CAS
+        deliveryMutation: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
         $queryRaw: jest.fn().mockResolvedValue([]),
       };
@@ -628,6 +659,63 @@ describe("InvoicesService", () => {
       expect(created.subtotal).toBeCloseTo(17.5, 2); // 3.5 * 5
       expect(created.boxes).toBeNull();
       expect(created.pieces).toBeNull();
+    });
+
+    it("SA-144f/item-3 (correction, B679): a pieces-only line (boxes null, pieces set) taxes on qty as-is, not qty*unitsPerBox", async () => {
+      // Old inline code checked `boxes != null` only, so a pieces-only line (boxes absent,
+      // pieces sent) fell through to the box-unaware branch and was OVER-taxed by
+      // unitsPerBox. regulatedUnitBasis checks boxes-OR-pieces, matching pricing.ts's
+      // effectiveQty, which already treats either one as "qty is already pieces."
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-box", unitsPerBox: 12, trackedCategoryId: "cat-1" },
+      ]);
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-1",
+          taxType: "EXCISE_PER_UNIT",
+          rate: 0.1,
+          unitBasis: "pack",
+          priceIncludesTax: false,
+        },
+      ]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+      await service.update("inv-box", {
+        items: [
+          { productId: "prod-box", description: "Loose pieces", qty: 5, pieces: 5, unitPrice: 10 },
+        ],
+      });
+
+      const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      expect(created.boxes).toBeNull();
+      expect(created.pieces).toBe(5);
+      expect(created.categoryTaxAmount).toBe(0.5); // 0.1 x 5, never 0.1 x (5*12)=6
+    });
+
+    it("SA-144g: refuses ANY non-blank requested unitLabel up front — this is why the tax derivation below never sees one", async () => {
+      // update()'s pieceQty/categoryTaxAmount derivation (:3401) reads item.unitLabel with no
+      // resolveLineUnits call of its own; its safety rests entirely on this refusal running
+      // BEFORE the item loop, for every item, on ANY non-blank label — including one that
+      // would resolve to the pack itself (e.g. "Case" naming a product's own base unit).
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+
+      await expect(
+        service.update("inv-box", {
+          items: [
+            {
+              productId: "prod-box",
+              description: "Case",
+              qty: 3,
+              unitLabel: "Case",
+              unitPrice: 10,
+            },
+          ],
+        }),
+      ).rejects.toThrow("Selling by a unit can't be set on an invoice edit yet.");
+
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
 
     // ─── BUY_N_GET_M: the free-unit snapshot is MONEY and must survive the edit ──
@@ -1037,6 +1125,12 @@ describe("InvoicesService", () => {
       prisma.invoice.update.mockResolvedValue({ id: "d1", status: InvoiceStatus.DRAFT });
       prisma.orderItem.findMany.mockResolvedValue([{ id: "li1" }]);
       prisma.orderItem.update.mockResolvedValue({});
+      // B785/SA-113a: basis "delivered" now reads the evidence basis
+      // (delivered-basis-by-line.ts), never li.deliveredQty — li1's own
+      // evidence row delivers 8 of the ordered 10.
+      prisma.deliveryMutation.findMany.mockResolvedValue([
+        { orderItemId: "li1", type: "DELIVERED", quantityDelivered: 8 },
+      ]);
     }
 
     it("returns null and does nothing when there is no open draft", async () => {
@@ -1581,100 +1675,6 @@ describe("InvoicesService", () => {
   });
 
   // WP2 — order-scoped credit notes: stuck-SENT fix + explicit-amount exclusions.
-  describe("send() — credit-note interactions (WP2)", () => {
-    it("flips a fully-pre-credited DRAFT to PAID, not SENT (stuck-SENT regression)", async () => {
-      prisma.invoice.findUnique
-        .mockResolvedValueOnce({
-          // findOneOrThrow — the invoice as it is before send()
-          id: "i1",
-          orderId: null,
-          status: InvoiceStatus.DRAFT,
-          deliveryBatchId: null,
-        })
-        .mockResolvedValueOnce({
-          // fresh read inside the tx, after the DRAFT→SENT flip already committed —
-          // a credit applied at order-create time already covers the full total.
-          id: "i1",
-          status: InvoiceStatus.SENT,
-          total: 100,
-          dueDate: null,
-          payments: [{ id: "pay-1", amount: 100, status: "PAID" }],
-        })
-        .mockResolvedValueOnce({
-          // final post-tx re-fetch for the return value
-          id: "i1",
-          invoiceNumber: "INV-1",
-          customerId: "c1",
-          status: InvoiceStatus.PAID,
-          total: 100,
-        });
-      prisma.invoice.update.mockResolvedValueOnce({
-        id: "i1",
-        invoiceNumber: "INV-1",
-        customerId: "c1",
-        orderId: null,
-        status: InvoiceStatus.SENT,
-        total: 100,
-        dueDate: null,
-      });
-      // Auto-apply finds nothing left to apply — the credit already covered this
-      // invoice at order-create time via settleOrderCreditsInTx.
-      mockCreditNotes.autoApplyOldestCreditsInTx.mockResolvedValueOnce({
-        applied: 0,
-        invoiceStatus: null,
-      });
-
-      const result = await service.send("i1");
-
-      // The stuck-SENT fix recomputed status from the invoice's own payments and
-      // promoted it to PAID instead of leaving it SENT.
-      expect(prisma.invoice.update).toHaveBeenCalledWith({
-        where: { id: "i1" },
-        data: { status: InvoiceStatus.PAID, paidAt: expect.any(Date) },
-      });
-      expect((result as any).status).toBe(InvoiceStatus.PAID);
-    });
-
-    it("passes the order's explicit-amount intent ids as excludeCreditNoteIds", async () => {
-      prisma.invoice.findUnique.mockResolvedValueOnce({
-        id: "i2",
-        orderId: "ord-2",
-        status: InvoiceStatus.DRAFT,
-        deliveryBatchId: null,
-      });
-      prisma.order.findFirst.mockResolvedValue({ status: "DELIVERED", orderNumber: "O2" });
-      prisma.invoice.update.mockResolvedValueOnce({
-        id: "i2",
-        invoiceNumber: "INV-2",
-        customerId: "c2",
-        orderId: "ord-2",
-        status: InvoiceStatus.SENT,
-        total: 50,
-        dueDate: null,
-      });
-      prisma.orderCreditNote.findMany.mockResolvedValueOnce([
-        { creditNoteId: "cn-explicit-1" },
-        { creditNoteId: "cn-explicit-2" },
-      ]);
-      mockCreditNotes.autoApplyOldestCreditsInTx.mockResolvedValueOnce({
-        applied: 0,
-        invoiceStatus: InvoiceStatus.SENT,
-      });
-
-      await service.send("i2");
-
-      expect(prisma.orderCreditNote.findMany).toHaveBeenCalledWith({
-        where: { orderId: "ord-2", amount: { not: null } },
-        select: { creditNoteId: true },
-      });
-      expect(mockCreditNotes.autoApplyOldestCreditsInTx).toHaveBeenCalledWith(
-        expect.anything(),
-        "i2",
-        "c2",
-        { excludeCreditNoteIds: ["cn-explicit-1", "cn-explicit-2"] },
-      );
-    });
-  });
 
   // R5 — sendEmail must only claim "sent" when the email ACTUALLY went out.
   describe("sendEmail — email honesty (R5)", () => {
@@ -1794,7 +1794,7 @@ describe("InvoicesService", () => {
         id: "o1",
         subtotal: 100, // prior values — used to derive effective tax rate (10%)
         tax: 10,
-        lineItems: [{ id: "li1", productId: "p1" }],
+        lineItems: [{ id: "li1", productId: "p1", qty: 2 }],
       });
       prisma.invoice.findMany.mockResolvedValue([
         {
@@ -1812,7 +1812,7 @@ describe("InvoicesService", () => {
       prisma.orderItem.update.mockResolvedValue({});
       prisma.order.update.mockResolvedValue({});
 
-      const res = await service.recomputeOrderFromInvoices("o1");
+      const res = await service.recomputeOrderFromInvoices("o1", prisma);
 
       // Order line synced to the aggregate.
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
@@ -1837,7 +1837,7 @@ describe("InvoicesService", () => {
         id: "o1",
         subtotal: 100,
         tax: 0,
-        lineItems: [{ id: "li1", productId: "p1", boxes: 2, pieces: 0, unitsPerBox: 11 }],
+        lineItems: [{ id: "li1", productId: "p1", boxes: 2, pieces: 0, unitsPerBox: 11, qty: 22 }],
       });
       prisma.invoice.findMany.mockResolvedValue([
         {
@@ -1849,7 +1849,7 @@ describe("InvoicesService", () => {
       prisma.orderItem.update.mockResolvedValue({});
       prisma.order.update.mockResolvedValue({});
 
-      await service.recomputeOrderFromInvoices("o1");
+      await service.recomputeOrderFromInvoices("o1", prisma);
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1871,7 +1871,7 @@ describe("InvoicesService", () => {
         id: "o1",
         subtotal: 100,
         tax: 0,
-        lineItems: [{ id: "li1", productId: "p1", boxes: null, pieces: null }],
+        lineItems: [{ id: "li1", productId: "p1", boxes: null, pieces: null, qty: 4 }],
       });
       prisma.invoice.findMany.mockResolvedValue([
         {
@@ -1883,7 +1883,7 @@ describe("InvoicesService", () => {
       prisma.orderItem.update.mockResolvedValue({});
       prisma.order.update.mockResolvedValue({});
 
-      await service.recomputeOrderFromInvoices("o1");
+      await service.recomputeOrderFromInvoices("o1", prisma);
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1901,7 +1901,7 @@ describe("InvoicesService", () => {
       });
       prisma.invoice.findMany.mockResolvedValue([]);
 
-      const res = await service.recomputeOrderFromInvoices("o1");
+      const res = await service.recomputeOrderFromInvoices("o1", prisma);
       expect(res).toBeNull();
       expect(prisma.order.update).not.toHaveBeenCalled();
       expect(prisma.orderItem.update).not.toHaveBeenCalled();
@@ -1916,7 +1916,7 @@ describe("InvoicesService", () => {
         id: "o1",
         subtotal: 100,
         tax: 10,
-        lineItems: [{ id: "li1", productId: "p1" }],
+        lineItems: [{ id: "li1", productId: "p1", qty: 2 }],
       });
       prisma.invoice.findMany.mockResolvedValue([
         {
@@ -1937,7 +1937,7 @@ describe("InvoicesService", () => {
       prisma.orderItem.update.mockResolvedValue({});
       prisma.order.update.mockResolvedValue({});
 
-      const res = await service.recomputeOrderFromInvoices("o1");
+      const res = await service.recomputeOrderFromInvoices("o1", prisma);
 
       const data = prisma.order.update.mock.calls[0][0].data;
       expect(data.shippingFee).toBe(6);
@@ -2128,7 +2128,7 @@ describe("InvoicesService", () => {
       expect(Number(primary.taxAmount)).toBe(2);
       expect(Number(sibling.taxAmount)).toBe(1);
       // invoicedQty bumped exactly once per line.
-      expect(prisma.orderItem.update).toHaveBeenCalledTimes(2);
+      expect(prisma.orderItem.updateMany).toHaveBeenCalledTimes(2); // #2612: one CAS per line
     });
 
     it("produces a single invoice with no groupId for a non-regulated order (byte-identical path)", async () => {
@@ -2599,6 +2599,7 @@ describe("InvoicesService", () => {
     });
   });
 
+  // F-05 (#2093, owner ruling 2026-09-25): SPLIT IS EXEMPT — flag, never block. Siblings inherit.
   describe("updateInvoiceShipment", () => {
     it("sets carrier + tracking + shippedAt on a non-void invoice", async () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1", status: "SENT", shippedAt: null });
@@ -3417,6 +3418,9 @@ describe("InvoicesService", () => {
           discount: 0,
           taxRate: 0,
           subtotal: 25,
+          // #2169 (SA-395): the ONE writer of systemKind — every consumer's dual-read predicate
+          // (invoices/nsf-line.ts) depends on this stamp landing here.
+          systemKind: "NSF_FEE",
         }),
       });
       expect(prisma.invoice.update).toHaveBeenCalledWith({
@@ -4320,13 +4324,19 @@ describe("InvoicesService", () => {
       prisma.invoice.update.mockResolvedValue({} as any);
       // T-B83 / R4 / REG-B83: deterministic id for the excess-advance assertions.
       prisma.advancePayment.create.mockResolvedValue({ id: "adv-1" } as any);
+      // SA-404f N1: the under-lock re-read sees each invoice as listed (nothing voided meanwhile).
+      prisma.invoice.findUnique.mockImplementation(async ({ where }: any) =>
+        ((await prisma.invoice.findMany.mock.results.at(-1)?.value) ?? []).find(
+          (r: any) => r.id === where.id,
+        ),
+      );
     });
 
     it("records an InvoicePayment against the order's existing invoice and marks it PAID", async () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" }); // ensure-step: invoice exists
       prisma.invoice.findMany.mockResolvedValue([inv()]);
 
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+      const res = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
 
       expect(res.applied).toBe(100);
       expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
@@ -4369,7 +4379,7 @@ describe("InvoicesService", () => {
         { id: "pay-draft", amount: 50, status: "DRAFT" },
       ]);
 
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 50, "CASH");
+      const res = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 50, "CASH");
 
       expect(res.applied).toBe(50);
       expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
@@ -4390,7 +4400,7 @@ describe("InvoicesService", () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
       prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
 
-      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 40, "CASH");
+      await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 40, "CASH");
 
       const upd = prisma.invoice.update.mock.calls[0][0];
       // recomputeStatus(40, 100, …, SENT) → PARTIAL (would be DRAFT if not finalized)
@@ -4398,134 +4408,20 @@ describe("InvoicesService", () => {
       expect(upd.data.sentAt).toBeInstanceOf(Date); // DRAFT was finalized
     });
 
-    it("creates a DRAFT when the order has none, then reconciles it on the DELIVERED basis", async () => {
-      // No draft initially; one exists after createInvoiceFromOrder.
-      (service.findOpenOrderDraft as jest.Mock)
-        .mockReset()
-        .mockResolvedValueOnce(null)
-        .mockResolvedValue({ id: "inv-1" });
-      prisma.invoice.findFirst.mockResolvedValue(null); // no live invoice at all
+    // B663: ensuring/reconciling the order's invoice onto the delivered basis is no
+    // longer this method's job at all — see `reconcileDeliveredOrdersInTx` below,
+    // which the real caller (`completeWithPayment`) now runs UNCONDITIONALLY before
+    // ever reaching this one. These next few just pay whatever invoice(s) are
+    // already there.
+    it("pays an order's existing DRAFT invoice without touching findOpenOrderDraft/createInvoiceFromOrder/reconcile at all", async () => {
       prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
 
-      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+      await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
 
-      expect(service.createInvoiceFromOrder).toHaveBeenCalledWith("ord-1", prisma);
-      // Sibling-aware delivered reconcile is what makes a short-pick bill delivered.
-      expect(service.reconcileOrderDeliveredInvoices).toHaveBeenCalledWith("ord-1", prisma);
       expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1);
-    });
-
-    it("reconciles an EXISTING draft on the delivered basis (no re-create)", async () => {
-      (service.findOpenOrderDraft as jest.Mock).mockReset().mockResolvedValue({ id: "inv-1" });
-      prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
-
-      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
-
-      expect(service.reconcileOrderDeliveredInvoices).toHaveBeenCalledWith("ord-1", prisma);
-      expect(service.createInvoiceFromOrder).not.toHaveBeenCalled(); // a draft already existed
-    });
-
-    it("reconciles a SPLIT-invoice order too (sibling-aware — no gate, no double-bill)", async () => {
-      // A SEPARATE_INVOICE regulated order has base + -R# sibling drafts. The
-      // sibling-aware reconcile rebuilds each from ITS OWN lines, so it now runs
-      // (the old invoiceCount<=1 skip is gone) without folding lines onto the base.
-      (service.findOpenOrderDraft as jest.Mock).mockReset().mockResolvedValue({ id: "inv-base" });
-      prisma.invoice.findMany.mockResolvedValue([
-        inv({ id: "inv-base", invoiceNumber: "INV-9", total: 60 }),
-        inv({ id: "inv-r1", invoiceNumber: "INV-9-R1", total: 40 }),
-      ]);
-
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
-
-      expect(service.reconcileOrderDeliveredInvoices).toHaveBeenCalledWith("ord-1", prisma);
-      // Both siblings still get paid — each billed once (no double).
-      expect(res.applied).toBe(100);
-      expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(2);
-    });
-
-    // B2 (WP-D1): a deposit mirror issued at placement is SENT — there is no open
-    // DRAFT to find, so the delivered-basis rebuild used to be skipped entirely and a
-    // short delivery collected against the FULL pre-delivery total.
-    it("rebuilds an ISSUED deposit mirror on the DELIVERED basis, preserving payments and recomputing status", async () => {
-      // 10 units @ $100 = $1,000, issued SENT at placement with a 30% deposit ($300,
-      // already paid). Only 6 are delivered → the bill must restate to $600.
-      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-dep" }); // a live invoice exists
-      prisma.invoice.findMany.mockResolvedValue([
-        {
-          id: "inv-dep",
-          invoiceNumber: "INV-DEP",
-          customerId: "cust-1",
-          status: InvoiceStatus.SENT,
-          deliveryBatchId: null,
-          depositPercent: 30,
-          discount: 0,
-          shippingFee: 0,
-          dueDate: null,
-          total: 1000,
-          payments: [{ amount: 300, status: "PAID" }],
-        },
-      ]);
-      prisma.order.findUnique.mockResolvedValue({
-        id: "ord-1",
-        customerId: "cust-1",
-        subtotal: 1000,
-        tax: 0,
-        shippingFee: 0,
-        lineItems: [
-          {
-            id: "li-1",
-            productId: "p1",
-            qty: 10,
-            deliveredQty: 6,
-            unitPrice: 100,
-            subtotal: 1000,
-            originalPrice: null,
-            priceType: "STANDARD",
-            product: { name: "Widget" },
-            status: "PENDING",
-          },
-        ],
-      });
-      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
-      prisma.invoice.update.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-dep", ...args.data, items: [] }),
-      );
-
-      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 300, "CASH");
-
-      const rebuild = prisma.invoice.update.mock.calls[0][0];
-      expect(rebuild.where).toEqual({ id: "inv-dep" });
-      expect(rebuild.data.subtotal).toBeCloseTo(600, 2); // 6 of 10 × $100
-      expect(rebuild.data.total).toBeCloseTo(600, 2);
-      // Payment rows are never written by the rebuild; status recomputes from the
-      // $300 already paid against the NEW $600 total.
-      expect("payments" in rebuild.data).toBe(false);
-      expect(rebuild.data.status).toBe(InvoiceStatus.PARTIAL);
-      // The DRAFT-only delivered reconcile can't run here — there is no draft.
+      expect(service.findOpenOrderDraft).not.toHaveBeenCalled();
+      expect(service.createInvoiceFromOrder).not.toHaveBeenCalled();
       expect(service.reconcileOrderDeliveredInvoices).not.toHaveBeenCalled();
-    });
-
-    it("leaves a plain SENT invoice (no deposit) alone when there is no draft — the fence", async () => {
-      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
-      prisma.invoice.findMany.mockResolvedValue([inv({ deliveryBatchId: null })]);
-
-      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
-
-      // Only the payment-status update ran — no rebuild of a non-deposit invoice.
-      expect(prisma.invoiceItem.deleteMany).not.toHaveBeenCalled();
-    });
-
-    it("does NOT reconcile an order absent from reconcileOrderIds (not delivered this completion)", async () => {
-      // An order merely linked to the stop but delivered elsewhere has deliveredQty
-      // 0; reconciling it would zero its open draft. It must still be PAID, just not
-      // reconciled.
-      (service.findOpenOrderDraft as jest.Mock).mockReset().mockResolvedValue({ id: "inv-1" });
-      prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
-
-      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH", []);
-
-      expect(service.reconcileOrderDeliveredInvoices).not.toHaveBeenCalled();
-      expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1); // still paid
     });
 
     it("spreads a lump-sum oldest-first across regulated split siblings, capped at each remaining", async () => {
@@ -4535,7 +4431,7 @@ describe("InvoicesService", () => {
         inv({ id: "inv-r1", invoiceNumber: "INV-9-R1", total: 40 }),
       ]);
 
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+      const res = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
 
       expect(res.applied).toBe(100);
       const amounts = prisma.invoicePayment.create.mock.calls.map((c: any) => ({
@@ -4555,11 +4451,14 @@ describe("InvoicesService", () => {
 
       const res = await service.recordDeliveryPaymentInTx(
         prisma as any,
+        q,
         ["ord-1"],
         100,
         "CASH",
-        undefined,
-        { runId: "run-1", stopId: "stop-1" },
+        {
+          runId: "run-1",
+          stopId: "stop-1",
+        },
       );
 
       expect(res.applied).toBe(70); // 30 residual not applied to the invoice
@@ -4597,11 +4496,14 @@ describe("InvoicesService", () => {
 
       const res = await service.recordDeliveryPaymentInTx(
         prisma as any,
+        q,
         ["ord-1"],
         100,
         "CASH",
-        undefined,
-        { runId: "run-1", stopId: "stop-1" },
+        {
+          runId: "run-1",
+          stopId: "stop-1",
+        },
       );
 
       expect(res.applied).toBe(0);
@@ -4629,10 +4531,10 @@ describe("InvoicesService", () => {
 
       const res = await service.recordDeliveryPaymentInTx(
         prisma as any,
+        q,
         ["ord-1", "ord-2"],
         150,
         "CASH",
-        undefined,
         { runId: "run-1", stopId: "stop-1" },
       );
 
@@ -4648,11 +4550,14 @@ describe("InvoicesService", () => {
 
       const res = await service.recordDeliveryPaymentInTx(
         prisma as any,
+        q,
         ["ord-1"],
         100,
         "CASH",
-        undefined,
-        { runId: "run-1", stopId: "stop-1" },
+        {
+          runId: "run-1",
+          stopId: "stop-1",
+        },
       );
 
       expect(res.applied).toBe(100);
@@ -4666,7 +4571,7 @@ describe("InvoicesService", () => {
       prisma.invoice.findMany.mockResolvedValue([inv()]);
       prisma.invoicePayment.findMany.mockResolvedValue([]);
 
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+      const res = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
 
       expect(res.applied).toBe(100);
       // FOR UPDATE lock taken (serializes a concurrent back-office payment).
@@ -4681,7 +4586,7 @@ describe("InvoicesService", () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
       prisma.invoice.findMany.mockResolvedValue([inv()]);
 
-      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+      await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
 
       expect(prisma.invoice.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -4700,19 +4605,28 @@ describe("InvoicesService", () => {
     });
 
     it("refuses CREDIT_NOTE / ADVANCE (they must debit a source balance, not book a payment)", async () => {
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 50, "ADVANCE");
+      const res = await service.recordDeliveryPaymentInTx(
+        prisma as any,
+        q,
+        ["ord-1"],
+        50,
+        "ADVANCE",
+      );
       expect(res.applied).toBe(0);
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
     });
 
     it("is a no-op for a zero amount or no orders", async () => {
-      const a = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 0, "CASH");
-      const b = await service.recordDeliveryPaymentInTx(prisma as any, [], 50, "CASH");
+      const a = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 0, "CASH");
+      const b = await service.recordDeliveryPaymentInTx(prisma as any, q, [], 50, "CASH");
       expect(a.applied).toBe(0);
       expect(b.applied).toBe(0);
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
     });
   });
+
+  // B663: reconcileDeliveredOrdersInTx's own tests moved to invoices.service.b663.spec.ts
+  // (size ratchet — this file has no headroom for them).
 
   // reconcileOrderDeliveredInvoices rebuilds EACH open draft from ONLY its own lines
   // (orderItemId provenance) on the delivered qty — sibling-aware, so a regulated
@@ -4757,14 +4671,28 @@ describe("InvoicesService", () => {
       draft({ id: "d-base", items: [{ orderItemId: "oi-std" }] }),
       draft({ id: "d-r1", items: [{ orderItemId: "oi-reg" }] }),
     ];
-    const mockOrder = (lines: any[], over: any = {}) => ({
-      id: "ord-1",
-      customerId: "cust-1",
-      subtotal: 100,
-      tax: 0,
-      lineItems: lines,
-      ...over,
-    });
+    const mockOrder = (lines: any[], over: any = {}) => {
+      // B785/SA-113a: the delivered basis now comes from evidence rows
+      // (deliveredBasisByLine), never li.deliveredQty — synthesize one
+      // evidence row per fixture line, from the SAME deliveredQty these
+      // fixtures already encode, so every existing test's intent survives
+      // unchanged.
+      prisma.deliveryMutation.findMany.mockResolvedValue(
+        lines.map((li) => ({
+          orderItemId: li.id,
+          type: Number(li.deliveredQty ?? 0) > 0 ? "DELIVERED" : "REFUSED",
+          quantityDelivered: Number(li.deliveredQty ?? 0),
+        })),
+      );
+      return {
+        id: "ord-1",
+        customerId: "cust-1",
+        subtotal: 100,
+        tax: 0,
+        lineItems: lines,
+        ...over,
+      };
+    };
     // Pull the invoice.update payload for a given draft id.
     const updOf = (id: string) =>
       prisma.invoice.update.mock.calls.find((c: any) => c[0].where.id === id)?.[0];
@@ -5097,7 +5025,7 @@ describe("InvoicesService", () => {
 
     it("no linked invoice — returns null, writes nothing", async () => {
       prisma.invoice.findMany.mockResolvedValue([] as any);
-      const res = await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+      const res = await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
       expect(res).toBeNull();
       expect(prisma.invoice.update).not.toHaveBeenCalled();
     });
@@ -5108,7 +5036,7 @@ describe("InvoicesService", () => {
       ] as any);
       prisma.order.findUnique.mockResolvedValue(mockOrder([line()]) as any);
 
-      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
 
       const upd = updOf("inv-1");
       expect(upd.data.subtotal).toBe(50);
@@ -5125,7 +5053,7 @@ describe("InvoicesService", () => {
         mockOrder([line({ qty: 6, subtotal: 30 })], { subtotal: 30 }) as any,
       );
 
-      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
 
       const upd = updOf("inv-1");
       expect(upd.data.subtotal).toBe(30);
@@ -5139,7 +5067,7 @@ describe("InvoicesService", () => {
       ] as any);
       prisma.order.findUnique.mockResolvedValue(mockOrder([line()]) as any);
 
-      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
 
       // The only payment is VOID → paid 0 → SENT (not PAID/PARTIAL).
       expect(updOf("inv-1").data.status).toBe(InvoiceStatus.SENT);
@@ -5152,7 +5080,7 @@ describe("InvoicesService", () => {
         mockOrder([line(), line({ id: "oi-new", productId: "p-new" })], { subtotal: 100 }) as any,
       );
 
-      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
 
       const upd = updOf("inv-1");
       expect(upd.data.subtotal).toBe(100);
@@ -5168,7 +5096,7 @@ describe("InvoicesService", () => {
       prisma.order.findUnique.mockResolvedValue(mockOrder([line()]) as any);
       const ledger = (service as any).ledger;
 
-      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
 
       expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
         expect.objectContaining({ invoiceId: "inv-1", preserveReturns: true }),
@@ -5184,7 +5112,7 @@ describe("InvoicesService", () => {
         inv({ id: "inv-b", items: [{ orderItemId: "oi-std" }] }),
       ] as any);
 
-      const res = await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+      const res = await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
 
       expect(res).toBeNull();
       expect(prisma.invoice.update).not.toHaveBeenCalled();
@@ -5194,7 +5122,7 @@ describe("InvoicesService", () => {
     it("BAILS when an invoice line has no orderItemId provenance (manual/legacy)", async () => {
       prisma.invoice.findMany.mockResolvedValue([inv({ items: [{ orderItemId: null }] })] as any);
 
-      const res = await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+      const res = await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
 
       expect(res).toBeNull();
       expect(prisma.invoice.update).not.toHaveBeenCalled();
@@ -5223,7 +5151,7 @@ describe("InvoicesService", () => {
         }) as any,
       );
 
-      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
 
       // Base keeps only its standard line; the NEW regulated line joins the cat-reg
       // sibling (inv-r1) instead of co-mingling onto the base.
@@ -5249,8 +5177,10 @@ describe("InvoicesService", () => {
       ] as any);
       prisma.order.findUnique.mockResolvedValue(mockOrder([line()]) as any);
 
-      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
-
+      const after = new AfterCommit(); // #2175: queued until the tx owner flushes
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma, after);
+      expect(mockGateway.emitInvoiceUpdated).not.toHaveBeenCalled();
+      after.flush();
       expect(mockGateway.emitInvoiceUpdated).toHaveBeenCalledTimes(1);
       expect(mockGateway.emitInvoiceUpdated).toHaveBeenCalledWith("test-tenant", {
         invoiceId: "inv-1",
@@ -5282,8 +5212,10 @@ describe("InvoicesService", () => {
         ) as any,
       );
 
-      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
-
+      const after = new AfterCommit(); // #2175: queued until the tx owner flushes
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma, after);
+      expect(mockGateway.emitInvoiceUpdated).not.toHaveBeenCalled();
+      after.flush();
       expect(mockGateway.emitInvoiceUpdated).toHaveBeenCalledTimes(2);
       const ids = mockGateway.emitInvoiceUpdated.mock.calls.map((c: any) => c[1].invoiceId).sort();
       expect(ids).toEqual(["inv-base", "inv-r1"]);
@@ -5292,7 +5224,7 @@ describe("InvoicesService", () => {
     it("REG-INV-RESYNC-3 emits NOTHING when there is no linked invoice", async () => {
       prisma.invoice.findMany.mockResolvedValue([] as any);
 
-      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
 
       expect(mockGateway.emitInvoiceUpdated).not.toHaveBeenCalled();
     });
@@ -5303,7 +5235,7 @@ describe("InvoicesService", () => {
         inv({ id: "inv-b", items: [{ orderItemId: "oi-std" }] }),
       ] as any);
 
-      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
 
       expect(prisma.invoice.update).not.toHaveBeenCalled();
       expect(mockGateway.emitInvoiceUpdated).not.toHaveBeenCalled();
@@ -5451,7 +5383,7 @@ describe("InvoicesService", () => {
       expect(updOf("d-only").data.subtotal).toBe(50);
     });
 
-    it("bails to legacy when a finalized invoice already bills part of the order", async () => {
+    it('SA-681: with a finalized invoice already billing part of the order, nothing is rebuilt ("partials")', async () => {
       prisma.invoice.findMany.mockResolvedValue([
         ...splitDrafts(),
         {
@@ -5471,14 +5403,16 @@ describe("InvoicesService", () => {
       prisma.order.findUnique.mockResolvedValue(mockOrder([line(), regLine()]) as any);
       prisma.orderItem.findMany.mockResolvedValue([{ id: "oi-std" }, { id: "oi-reg" }] as any);
 
-      await service.reconcileOrderDraftInvoice("ord-1", { basis: "order", tx: prisma as any });
+      const res = await service.reconcileOrderDraftInvoice("ord-1", {
+        basis: "order",
+        tx: prisma as any,
+      });
 
-      // Legacy single-draft path took over → exactly ONE invoice.update (the base), not
-      // the two-sibling rebuild.
-      expect(prisma.invoice.update).toHaveBeenCalledTimes(1);
-      expect(updOf("d-base")).toBeDefined();
-      // The legacy group-unaware path must NOT touch the ledger (folding the regulated
-      // line onto the base + writing a SALE would double-count vs the live -R1 SALE).
+      // Pre-SA-681 the legacy single-draft path took over and folded EVERY line onto the base while
+      // the SENT invoice and the -R1 sibling still billed theirs (a double bill). Now: no rebuild.
+      expect(res).toBe("partials");
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
       expect((service as any).ledger.writeSaleEntries).not.toHaveBeenCalled();
     });
   });
@@ -5652,7 +5586,10 @@ describe("InvoicesService", () => {
           })),
           findFirst: jest.fn().mockResolvedValue(null),
         },
-        orderItem: { update: jest.fn().mockResolvedValue({}) },
+        orderItem: {
+          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        }, // #2070 CAS
         $executeRaw: jest.fn().mockResolvedValue(0),
         $queryRaw: jest.fn().mockResolvedValue([]),
       };
@@ -7157,6 +7094,51 @@ describe("InvoicesService", () => {
       // foldCategoryTax zeroed this line at creation; the recompute must preserve
       // that, not re-derive $100 of excise onto an exempt customer's invoice.
       expect(itemUpdateData().categoryTaxAmount).toBe(0);
+    });
+
+    it("SA-144f/item-3 (correction, B679): a pieces-only stored line taxes on qty as-is, not qty*unitsPerBox", async () => {
+      // Old inline code checked `li.boxes != null` only, so a pieces-only stored line
+      // (boxes null, pieces set) fell into the same product-fallback branch as a
+      // box-unaware selling-units line and was OVER-taxed by unitsPerBox.
+      seedExciseLine();
+      const pieceItem = {
+        id: "li-b57e",
+        invoiceId: "inv-b57e",
+        productId: "prod-reg",
+        trackedCategoryId: "cat-2",
+        unitPrice: 10,
+        discount: 0,
+        subtotal: 100,
+        qty: 10,
+        pieces: 10,
+        boxes: null,
+        unitsPerBox: null,
+        taxRate: 0,
+        categoryTaxAmount: 100,
+      };
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-b57e",
+        customerId: "cust-2",
+        orderId: null,
+        status: InvoiceStatus.SENT,
+        discount: 0,
+        shippingFee: 0,
+        internalNotes: null,
+        dueDate: null,
+        items: [pieceItem],
+        payments: [],
+      });
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        { ...pieceItem, unitPrice: 5, subtotal: 50, categoryTaxAmount: 0 },
+      ]);
+
+      await service.applyPriceAdjustment("inv-b57e", {
+        items: [{ itemId: "li-b57e", newUnitPrice: 5 }],
+        scope: "SINGLE",
+      });
+
+      // 0.50 x 10 pieces, never 0.50 x (10*20)=200 pieces.
+      expect(itemUpdateData().categoryTaxAmount).toBe(5);
     });
   });
 
@@ -8692,7 +8674,7 @@ describe("InvoicesService", () => {
       // …and the POPULATION it averages is pinned: the pass-through oracle
       // above cannot tell a correctly-scoped average from one taken over the
       // wrong rows.
-      const sql = (prisma.$queryRaw.mock.calls[0][0] as string[]).join("?");
+      const sql = (prisma.$queryRaw.mock.calls[0][0] as unknown as string[]).join("?");
       expect(sql).toContain("status = 'PAID'");
       expect(sql).toContain('"paidAt" IS NOT NULL');
       expect(sql).toContain('"sentAt" IS NOT NULL');

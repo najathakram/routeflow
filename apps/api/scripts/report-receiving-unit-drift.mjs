@@ -54,38 +54,18 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { assertTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 
 // ─── Connection ───────────────────────────────────────────────────────────────
-// Mirrors prod-migrate.mjs / tidy-regulated-categories.mjs: `railway run
-// --service postgres` does not set DATABASE_URL — the postgres service only
-// exposes credential PARTS (POSTGRES_* + the public TCP proxy host/port) — so
-// build the URL from those when DATABASE_URL itself isn't set. A directly-set
-// DATABASE_URL (local docker-compose, CI) always wins.
-function resolveDbUrl() {
-  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
-  const e = process.env;
-  const need = [
-    "POSTGRES_USER",
-    "POSTGRES_PASSWORD",
-    "POSTGRES_DB",
-    "RAILWAY_TCP_PROXY_DOMAIN",
-    "RAILWAY_TCP_PROXY_PORT",
-  ];
-  const missing = need.filter((k) => !e[k]);
-  if (missing.length) {
-    console.error(
-      `\nMissing env: ${missing.join(", ")}\n` +
-        "Set DATABASE_URL, or run via: railway run --service postgres node apps/api/scripts/report-receiving-unit-drift.mjs\n",
-    );
-    process.exit(1);
-  }
-  return (
-    `postgresql://${e.POSTGRES_USER}:${encodeURIComponent(e.POSTGRES_PASSWORD)}` +
-    `@${e.RAILWAY_TCP_PROXY_DOMAIN}:${e.RAILWAY_TCP_PROXY_PORT}/${e.POSTGRES_DB}`
-  );
-}
-
-const pool = new Pool({ connectionString: resolveDbUrl() });
+// B768: scripts/lib/report-db-url.mjs resolves the URL. Railway's TCP-proxy variables (the
+// postgres service's POSTGRES_* + public proxy host/port) WIN whenever they are present, because
+// the DATABASE_URL a `railway run --service postgres` shell carries is the *.railway.internal
+// host, unreachable from outside Railway. A directly-set DATABASE_URL (local docker-compose, CI)
+// is used only when those variables are absent. Run via:
+//   railway run --service postgres node apps/api/scripts/report-receiving-unit-drift.mjs
+const databaseUrl = resolveReportDbUrl("report-receiving-unit-drift");
+if (!databaseUrl) process.exit(2);
+const pool = new Pool({ connectionString: databaseUrl });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 

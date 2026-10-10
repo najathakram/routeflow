@@ -1,39 +1,18 @@
 "use client";
 
 import * as React from "react";
+import { roundMoney } from "@routeflow/pricing";
 import { Modal, Button, useToast } from "@routeflow/ui/web";
+import { previewSplitLineTotal, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import { useCreatePartialInvoiceFromOrder } from "@/lib/api/invoices";
-
-interface OrderItemForSplit {
-  id: string;
-  productName: string;
-  qty: number;
-  invoicedQty: number;
-  unitPrice: number;
-  /** Stored line subtotal — prorated for the preview so boxed lines aren't over-charged. */
-  subtotal?: number;
-  unit?: string;
-}
-
-/**
- * Preview line total for billing `billQty` of an order line. Mirrors the server:
- * prorate the STORED subtotal by qty (so boxed lines, whose unitPrice is the BOX
- * price, are never multiplied by the piece count). Falls back to qty × unitPrice
- * only when the line has no stored subtotal.
- */
-function previewLineTotal(it: OrderItemForSplit, billQty: number): number {
-  if (it.subtotal != null && it.qty > 0) {
-    return Math.round(((it.subtotal * billQty) / it.qty) * 100) / 100;
-  }
-  return Math.round(billQty * it.unitPrice * 100) / 100;
-}
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 interface SplitInvoiceModalProps {
   isOpen: boolean;
   onClose: () => void;
   orderId: string;
   orderNumber: string | null;
-  items: OrderItemForSplit[];
+  items: SplitInvoiceLine[];
   /** Default tenant terms (e.g. "Net 30"). Used to compute the initial due date. */
   defaultTerms?: string;
   onCreated?: (invoiceId: string) => void;
@@ -63,7 +42,7 @@ export function SplitInvoiceModal({
   onCreated,
 }: SplitInvoiceModalProps) {
   const { toast } = useToast();
-  const createPartial = useCreatePartialInvoiceFromOrder();
+  const createPartial = useCreatePartialInvoiceFromOrder({ localErrorToast: true });
 
   // Per-row qty to invoice (defaults to remaining for each row).
   const [qtyById, setQtyById] = React.useState<Record<string, number>>({});
@@ -86,10 +65,9 @@ export function SplitInvoiceModal({
   }, [isOpen, items, defaultTerms]);
 
   const billable = items.filter((it) => it.qty - it.invoicedQty > 0.001);
-  const selectedTotal = billable.reduce((s, it) => {
-    const q = qtyById[it.id] ?? 0;
-    return s + previewLineTotal(it, q);
-  }, 0);
+  const selectedTotal = roundMoney(
+    billable.reduce((s, it) => s + previewSplitLineTotal(it, qtyById[it.id] ?? 0), 0),
+  );
 
   const onTermsChange = (newTerms: string) => {
     setTerms(newTerms);
@@ -126,11 +104,14 @@ export function SplitInvoiceModal({
           onClose();
         },
         onError: (err: any) => {
-          const msg =
-            err?.response?.data?.message ||
-            err?.message ||
-            "Failed to create invoice. Please try again.";
-          toast({ title: "Could not create invoice", description: msg, variant: "error" });
+          toast({
+            title: "Could not create invoice",
+            description: genericToastCopy(
+              err,
+              "The invoice couldn't be created. Check the selected lines, then try again.",
+            ),
+            variant: "error",
+          });
         },
       },
     );
@@ -203,7 +184,7 @@ export function SplitInvoiceModal({
                         />
                       </td>
                       <td className="px-3 py-2 text-right font-medium text-navy">
-                        ${previewLineTotal(it, q).toFixed(2)}
+                        ${previewSplitLineTotal(it, q).toFixed(2)}
                       </td>
                     </tr>
                   );

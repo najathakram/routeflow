@@ -3,6 +3,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { ProductAliasService } from "./product-alias.service";
 import { roundMoney } from "@routeflow/pricing";
+import { assertSafeProductCategory } from "../common/text-cell-guards";
+import { isFormulaLedText } from "../common/safe-text-cell";
+import { lockBarcodeCodes, syncProductBarcodesFromLegacy } from "../products/product-catalog-sync";
 
 /** Default gross margin for a brand-new product's list price: cost × (1 + margin). */
 const DEFAULT_MARGIN = 0.3;
@@ -45,7 +48,8 @@ export class VariantResolutionService {
       priceTier3: parent.priceTier3.toString(),
       priceTier4: parent.priceTier4.toString(),
       priceTier5: parent.priceTier5.toString(),
-      category: parent.category ?? undefined,
+      // B990: a legacy formula-led parent category is NEUTRALISED (the variant simply carries none), never copied and never a refusal
+      category: parent.category && !isFormulaLedText(parent.category) ? parent.category : undefined,
       unitsPerBox: parent.unitsPerBox ?? undefined,
       costingMethod: parent.costingMethod,
       standardCost: parent.standardCost != null ? parent.standardCost.toString() : undefined,
@@ -117,22 +121,43 @@ export class VariantResolutionService {
     });
   }
 
-  /** Confirm a brand-new product's details and clear the incomplete flag. */
+  /**
+   * Confirm a brand-new product's details and clear the incomplete flag. #2728 M1 F1: `unitsPerBox`
+   * feeds `planBarcodeRows`, so a product that already carries a barcode must re-sync its
+   * ProductBarcode rows after this write — same pattern as products.service.ts update(): lock the
+   * barcode code before the write (read fresh, inside the tx), then sync from the row the UPDATE
+   * returns.
+   */
   async completeSetup(
     id: string,
     dto: { pricePerUnit?: number; unit?: string; unitsPerBox?: number; category?: string },
   ) {
-    const product = await this.prisma.forTenant().product.findUnique({ where: { id } });
-    if (!product) throw new NotFoundException("Product not found");
-    return this.prisma.forTenant().product.update({
-      where: { id },
-      data: {
-        ...(dto.pricePerUnit !== undefined && { pricePerUnit: dto.pricePerUnit.toFixed(2) }),
-        ...(dto.unit !== undefined && { unit: dto.unit }),
-        ...(dto.unitsPerBox !== undefined && { unitsPerBox: dto.unitsPerBox }),
-        ...(dto.category !== undefined && { category: dto.category }),
-        detailsIncomplete: false,
-      },
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("No tenant context");
+    return this.prisma.tenantTransaction(async (tx: any) => {
+      const product = await tx.product.findUnique({ where: { id } });
+      if (!product) throw new NotFoundException("Product not found");
+      // B990: the confirmed free-text category is written verbatim; change-only against the stored text
+      if (dto.category !== undefined)
+        assertSafeProductCategory(dto.category, product.category ?? null);
+      await lockBarcodeCodes(tx, tenantId, [product.barcode]);
+      const row = await tx.product.update({
+        where: { id },
+        data: {
+          ...(dto.pricePerUnit !== undefined && { pricePerUnit: dto.pricePerUnit.toFixed(2) }),
+          ...(dto.unit !== undefined && { unit: dto.unit }),
+          ...(dto.unitsPerBox !== undefined && { unitsPerBox: dto.unitsPerBox }),
+          ...(dto.category !== undefined && { category: dto.category }),
+          detailsIncomplete: false,
+        },
+      });
+      await syncProductBarcodesFromLegacy(tx, {
+        tenantId,
+        productId: row.id,
+        barcode: row.barcode,
+        unitsPerBox: row.unitsPerBox,
+      });
+      return row;
     });
   }
 }

@@ -18,6 +18,16 @@ function matchesWhere(row: any, where: any = {}): boolean {
       if (row.customer.deletedAt !== null) return false;
       continue;
     }
+    if (key === "buyerAccount") {
+      // #2142 R1: the buyer's own account, a to-one relation filter.
+      const rel = (cond as any)?.is ?? cond;
+      const keys = rel ? Object.keys(rel).sort().join(",") : "";
+      if (keys !== "deletedAt,status" || rel.status !== "ACTIVE" || rel.deletedAt !== null) {
+        throw new Error(`matchesWhere: unsupported buyerAccount filter ${JSON.stringify(cond)}`);
+      }
+      if (row.buyerAccount.status !== "ACTIVE" || row.buyerAccount.deletedAt !== null) return false;
+      continue;
+    }
     if (cond !== null && typeof cond === "object" && !(cond instanceof Date)) {
       const c = cond as any;
       if ("has" in c) {
@@ -38,9 +48,14 @@ function matchesWhere(row: any, where: any = {}): boolean {
 
 const REMOVED_AT = new Date("2026-09-01T00:00:00.000Z");
 
-const link = (status: string, deletedAt: Date | null) => ({
+const link = (
+  status: string,
+  deletedAt: Date | null,
+  buyerAccount: { status: string; deletedAt: Date | null } = { status: "ACTIVE", deletedAt: null },
+) => ({
   id: "l-1",
   buyerAccountId: "b-1",
+  buyerAccount,
   tenantId: "tn-1",
   customerId: "c-1",
   status,
@@ -109,5 +124,32 @@ describe("BuyerSellerContextGuard — removed customer (B141)", () => {
   it("B141 P5: a DISCONNECTED link is still refused for a live customer", async () => {
     const { guard, ctx } = boot([link("DISCONNECTED", null)]);
     await expect(guard.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+describe("BuyerSellerContextGuard — the buyer's own account (#2142 R1)", () => {
+  // BuyerAdminService.setBuyerStatus flips the account only and leaves every link ACTIVE, so the
+  // guard must read the account itself, or a suspended buyer keeps the portal for the rest of its
+  // access token's life.
+  it("#2142 R1: a SUSPENDED account's ACTIVE link is refused", async () => {
+    const { guard, req, ctx } = boot([
+      link("ACTIVE", null, { status: "SUSPENDED", deletedAt: null }),
+    ]);
+    await expect(guard.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(req.buyerCustomer).toBeUndefined();
+  });
+
+  it("#2142 R1: a DELETED account's ACTIVE link is refused", async () => {
+    const { guard, req, ctx } = boot([
+      link("ACTIVE", null, { status: "DELETED", deletedAt: REMOVED_AT }),
+    ]);
+    await expect(guard.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(req.buyerCustomer).toBeUndefined();
+  });
+
+  it("an ACTIVE account with its link ACTIVE still passes", async () => {
+    const { guard, req, ctx } = boot([link("ACTIVE", null, { status: "ACTIVE", deletedAt: null })]);
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect(req.buyerCustomer.customerId).toBe("c-1");
   });
 });

@@ -6,22 +6,31 @@
  * what the operator previews in-app is literally the downloaded file's content.
  */
 
-export type ReportWarningCode =
-  | "MISSING_WHOLESALER_LICENSE"
-  | "MISSING_ITEM_TYPE"
-  | "MISSING_UOM"
-  | "MISSING_TAXPAYER_ID"
-  | "INVALID_TAXPAYER_ID"
-  | "MISSING_RETAILER_LICENSE"
-  | "INVALID_RETAILER_LICENSE"
-  | "INVALID_WHOLESALER_LICENSE"
-  | "MISSING_ADDRESS"
-  | "NEGATIVE_NET_INVOICE"
-  | "FRACTIONAL_QTY"
-  | "UNLINKED_LEDGER_ROWS"
-  | "UNMATCHED_LEDGER_LINE"
-  | "UNLISTED_PRODUCT_LINE"
-  | "PARKED_REVERSALS";
+/**
+ * The warning codes of a regulated report, in the order the shared list (`REGULATED_REPORT_WARNING_CODES` in
+ * `@routeflow/types`) declares them. The API cannot value-import that package, so this is the local copy;
+ * `report-warning-codes-parity.spec.ts` pins the two equal (members and order).
+ */
+export const REPORT_WARNING_CODES = [
+  "MISSING_WHOLESALER_LICENSE",
+  "MISSING_ITEM_TYPE",
+  "MISSING_UOM",
+  "MISSING_TAXPAYER_ID",
+  "INVALID_TAXPAYER_ID",
+  "MISSING_RETAILER_LICENSE",
+  "INVALID_RETAILER_LICENSE",
+  "INVALID_WHOLESALER_LICENSE",
+  "MISSING_ADDRESS",
+  "NEGATIVE_NET_INVOICE",
+  "FRACTIONAL_QTY",
+  "UNLINKED_LEDGER_ROWS",
+  "UNMATCHED_LEDGER_LINE",
+  "UNLISTED_PRODUCT_LINE",
+  "UNCATEGORISED_LINE_IN_RULE_STATE",
+  "PARKED_REVERSALS",
+] as const;
+
+export type ReportWarningCode = (typeof REPORT_WARNING_CODES)[number];
 
 export interface ReportWarning {
   code: ReportWarningCode;

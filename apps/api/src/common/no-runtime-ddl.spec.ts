@@ -69,6 +69,12 @@ const SCRIPT_EXCLUSIONS = new Set([
   // transaction. Hand-run via `railway run`; never enters the API image. (The sibling stamp script
   // t6-stamp-null-rows.mjs contains no DDL keyword, so it needs no exemption and gets none.)
   "t6-null-rows-report.mjs",
+  // reason: #2118/SA-314 LOCAL-only benchmark (refuses any non-local DATABASE_URL via
+  // requireLocalDatabaseUrl). `--index-build` times a DROP + CREATE of the four indexes migration
+  // 20260925160000 already created, in ONE transaction (a failure rolls back to the original), so
+  // the schema ends exactly as migrated — it measures the build, it is never a schema path. Outside
+  // tsconfig.build.json; never enters the API image.
+  "sales-facts-timing.ts",
 ]);
 
 /**

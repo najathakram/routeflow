@@ -1,8 +1,18 @@
+// SA-434: these driver cases pin OTHER behaviour; ownership is pinned in driver-edit-access*.spec.ts.
+jest.mock("./driver-edit-access", () => ({
+  ...jest.requireActual("./driver-edit-access"),
+  assertDriverMayEditOrder: jest.fn(),
+  confirmPendingAsDriver: jest.fn(async (_p: unknown, id: string, _u: unknown, data: object) => ({
+    id,
+    ...data,
+  })),
+}));
 // Mock InvoicesService / NotificationsService before they are imported: they pull ESM-only modules
 // (@react-pdf/renderer, expo-server-sdk) that Jest's CommonJS transform cannot parse.
 jest.mock("../invoices/invoices.service", () => ({ InvoicesService: jest.fn() }));
 jest.mock("../notifications/notifications.service", () => ({ NotificationsService: jest.fn() }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import * as fs from "fs";
 import * as path from "path";
 import { Test } from "@nestjs/testing";
@@ -64,6 +74,12 @@ describe("OrdersService.changeStatus — B585 credit check at delivery", () => {
 
   let service: OrdersService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  // The credit-exposure derivation reads the CUSTOMER's invoices (where.customerId). Mark Delivered's
+  // own SA-687 remainder check also lists the ORDER's invoices (where.orderId), which is not a credit read.
+  const creditExposureReads = () =>
+    prisma.invoice.findMany.mock.calls.filter(
+      ([args]: any[]) => args?.where?.customerId !== undefined,
+    );
   let warn: jest.SpyInstance;
 
   const out = (user = operator, status = "OUT_FOR_DELIVERY") =>
@@ -97,6 +113,7 @@ describe("OrdersService.changeStatus — B585 credit check at delivery", () => {
       );
     const module = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -133,7 +150,7 @@ describe("OrdersService.changeStatus — B585 credit check at delivery", () => {
     await expect(out()).resolves.toMatchObject({ status: "OUT_FOR_DELIVERY" });
 
     expect(prisma.systemConfig.findFirst).toHaveBeenCalledTimes(1);
-    expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+    expect(creditExposureReads()).toHaveLength(0);
     expect(prisma.order.update).toHaveBeenCalledTimes(1);
   });
 
@@ -221,7 +238,7 @@ describe("OrdersService.changeStatus — B585 credit check at delivery", () => {
     await out(driver, "CONFIRMED");
 
     expect(prisma.systemConfig.findFirst).not.toHaveBeenCalled();
-    expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+    expect(creditExposureReads()).toHaveLength(0);
   });
 
   it("delivery has ITS OWN key: enforce_new_orders = 'true' alone never enforces a delivery (one read of the delivery key, then out)", async () => {
@@ -235,7 +252,7 @@ describe("OrdersService.changeStatus — B585 credit check at delivery", () => {
     expect(prisma.systemConfig.findFirst.mock.calls[0][0].where.key).toBe(
       "credit_limit.enforce_delivery",
     );
-    expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+    expect(creditExposureReads()).toHaveLength(0);
   });
 
   describe("goods that already left are not gated again on a re-dispatch", () => {
@@ -298,7 +315,7 @@ describe("OrdersService.changeStatus — B585 credit check at delivery", () => {
       overLimit();
       await expect(handOver()).resolves.toMatchObject({ status: "DELIVERED" });
       expect(prisma.systemConfig.findFirst).toHaveBeenCalledTimes(1);
-      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+      expect(creditExposureReads()).toHaveLength(0);
 
       setSwitch("dark");
       await expect(handOver()).resolves.toMatchObject({ status: "DELIVERED" });
@@ -315,7 +332,7 @@ describe("OrdersService.changeStatus — B585 credit check at delivery", () => {
         overLimit();
         await expect(handOver(from)).resolves.toMatchObject({ status: "DELIVERED" });
         expect(prisma.systemConfig.findFirst).not.toHaveBeenCalled();
-        expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+        expect(creditExposureReads()).toHaveLength(0);
       },
     );
 

@@ -9,6 +9,9 @@ import {
   requiresConsent,
 } from "./messaging.helpers";
 import { MESSAGE_PROVIDER, type MessageProvider } from "./providers/message-provider.interface";
+import type { ChannelStatusMap, NotificationAudience } from "@routeflow/types";
+import { NOTIFICATION_TRIGGERS, notificationAudience } from "./notification-triggers";
+import { upgradeLegacyDefaultBody } from "./order-confirmed-copy";
 
 const { INTERNAL, WHATSAPP, SMS, EMAIL, PORTAL } = MessageChannel;
 const CUSTOMER_CHANNELS: MessageChannel[] = [WHATSAPP, SMS, EMAIL, PORTAL];
@@ -18,6 +21,14 @@ const CUSTOMER_CHANNELS: MessageChannel[] = [WHATSAPP, SMS, EMAIL, PORTAL];
 export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
   [NotificationEvent.ORDER_CONFIRMED]: CUSTOMER_CHANNELS,
   [NotificationEvent.OUT_FOR_DELIVERY]: CUSTOMER_CHANNELS,
+  // Carrier-shipped (fulfillPath SHIP) orders: ORDER_SHIPPED replaces OUT_FOR_DELIVERY for them
+  // (unless the business customised its OUT_FOR_DELIVERY wording); SHIPMENT_TRACKING_ADDED is the
+  // one-time follow-up when tracking is first added after the order was already marked shipped.
+  [NotificationEvent.ORDER_SHIPPED]: CUSTOMER_CHANNELS,
+  [NotificationEvent.SHIPMENT_TRACKING_ADDED]: CUSTOMER_CHANNELS,
+  // Pickup orders: fired by the pickup flow (not by this module's PR). {{pickupLine}} is "" or
+  // " Pick up at <address>. Hours: <hours>." built by the caller from the business's pickup settings.
+  [NotificationEvent.READY_FOR_PICKUP]: CUSTOMER_CHANNELS,
   [NotificationEvent.DELIVERED]: CUSTOMER_CHANNELS,
   // N1 (2026-09-16): real order-cancelled event, alongside the real EMAIL
   // channel — CONFIRMED/OUT_FOR_DELIVERY/DELIVERED already fired through this
@@ -37,23 +48,43 @@ export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
   [NotificationEvent.LOW_STOCK]: [INTERNAL],
   [NotificationEvent.FAILED_DELIVERY]: [INTERNAL],
   [NotificationEvent.PAYMENT_FAILED_NSF]: [INTERNAL],
-  // Post-dated check payments PR-1: no firing site yet (see NO_TRIGGER_EVENTS
-  // below) — entry exists only so this Record stays exhaustive over
+  // Post-dated check payments PR-1: no firing site yet (absent from
+  // NOTIFICATION_TRIGGERS) — entry exists only so this Record stays exhaustive over
   // NotificationEvent.
   [NotificationEvent.CHECK_RETURNED]: [INTERNAL],
+  // SA-603c: no firing site yet — exhaustiveness only (absent from NOTIFICATION_TRIGGERS).
+  [NotificationEvent.STAFF_NEW_ORDER]: [INTERNAL],
+  [NotificationEvent.BUYER_ORDER_EDITED]: [INTERNAL],
+  [NotificationEvent.BUYER_ORDER_CANCELLED]: [INTERNAL],
 };
 
 /** Friendly label + starter body per event; `variables` derived from the body
  *  via extractVariables at seed time. Money-looking vars are PRE-FORMATTED
  *  STRINGS supplied by P6-5 callers — no money math in messaging. */
 export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body: string }> = {
+  // B1127: {{deliveryClause}} is " for delivery on <date>" / " and will ship by carrier" / "" — built by
+  // orderConfirmedVars() (order-confirmed-copy.ts); the pre-fix body is upgraded at render time.
   [NotificationEvent.ORDER_CONFIRMED]: {
     label: "Order confirmed",
-    body: "Hi {{customerName}}, your order {{orderNumber}} is confirmed for delivery on {{deliveryDate}}. Total: {{orderTotal}}.",
+    body: "Hi {{customerName}}, your order {{orderNumber}} is confirmed{{deliveryClause}}. Total: {{orderTotal}}.",
   },
   [NotificationEvent.OUT_FOR_DELIVERY]: {
     label: "Out for delivery",
     body: "Hi {{customerName}}, your order {{orderNumber}} is out for delivery today with {{driverName}}.",
+  },
+  // Variables: carrier (label, or "the carrier"), trackingLine (" Tracking: <no> — <url>" when known,
+  // else ""). The 20261003120100 seed migration carries this exact body (pinned by a spec).
+  [NotificationEvent.ORDER_SHIPPED]: {
+    label: "Order shipped",
+    body: "Hi {{customerName}}, your order {{orderNumber}} has shipped with {{carrier}}.{{trackingLine}}",
+  },
+  [NotificationEvent.SHIPMENT_TRACKING_ADDED]: {
+    label: "Tracking added",
+    body: "Hi {{customerName}}, tracking for order {{orderNumber}}: {{trackingNumber}} — {{trackingUrl}}",
+  },
+  [NotificationEvent.READY_FOR_PICKUP]: {
+    label: "Ready for pickup",
+    body: "Hi {{customerName}}, your order {{orderNumber}} is ready for pickup.{{pickupLine}}",
   },
   [NotificationEvent.DELIVERED]: {
     label: "Delivered",
@@ -105,11 +136,29 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
     label: "Check returned",
     body: "A check payment from {{customerName}} for {{amount}} was returned ({{reason}}) on invoice {{invoiceNumber}}.",
   },
+  // SA-603c: exhaustiveness-only templates; no firing site yet.
+  [NotificationEvent.STAFF_NEW_ORDER]: {
+    label: "New order (staff)",
+    body: "New order {{orderNumber}} from {{customerName}}.",
+  },
+  [NotificationEvent.BUYER_ORDER_EDITED]: {
+    label: "Order edited (buyer)",
+    body: "Order {{orderNumber}} from {{customerName}} was edited.",
+  },
+  [NotificationEvent.BUYER_ORDER_CANCELLED]: {
+    label: "Order cancelled (buyer)",
+    body: "Order {{orderNumber}} from {{customerName}} was cancelled.",
+  },
 };
+
+/** The body to render/show for a stored template row: the current default when the row still holds a
+ *  superseded default verbatim (B1127), else the stored text. See `upgradeLegacyDefaultBody`. */
+export const effectiveTemplateBody = (eventKey: NotificationEvent, storedBody: string): string =>
+  upgradeLegacyDefaultBody(eventKey, storedBody, DEFAULT_TEMPLATES[eventKey].body);
 
 /** Cells seeded enabled=true — PORTAL/EMAIL (free, un-metered, consent-less).
  *  Every metered/consented channel (WA/SMS) seeds OFF, and so does every
- *  INTERNAL ops alert below (NO_TRIGGER_EVENTS) — seeding a key ON that can
+ *  INTERNAL ops alert below (none is in NOTIFICATION_TRIGGERS) — seeding a key ON that can
  *  never fire is B180 (cause-ruling.md §2/Check).
  *
  *  N1 (2026-09-16): the four order-status events default their EMAIL cell ON
@@ -123,26 +172,23 @@ export const DEFAULT_ON = new Set<string>([
   `${NotificationEvent.ORDER_CONFIRMED}:${EMAIL}`,
   `${NotificationEvent.OUT_FOR_DELIVERY}:${EMAIL}`,
   `${NotificationEvent.OUT_FOR_DELIVERY}:${PORTAL}`,
+  `${NotificationEvent.ORDER_SHIPPED}:${EMAIL}`,
+  `${NotificationEvent.ORDER_SHIPPED}:${PORTAL}`,
+  `${NotificationEvent.SHIPMENT_TRACKING_ADDED}:${EMAIL}`,
+  `${NotificationEvent.SHIPMENT_TRACKING_ADDED}:${PORTAL}`,
+  `${NotificationEvent.READY_FOR_PICKUP}:${EMAIL}`,
+  `${NotificationEvent.READY_FOR_PICKUP}:${PORTAL}`,
   `${NotificationEvent.DELIVERED}:${EMAIL}`,
   `${NotificationEvent.DELIVERED}:${PORTAL}`,
   `${NotificationEvent.CANCELLED}:${EMAIL}`,
 ]);
 
-/** Events with no firing site anywhere in `apps/api/src` outside `messaging/` today (S3 check on
- *  12cdc26a, cause-ruling.md §2/Check — `default-on-is-wired.spec.ts` re-proves this by walking
- *  the tree). Their cells render `unavailable: "NO_TRIGGER"` and are excluded from `DEFAULT_ON`.
- *  Re-add a key here (and to `DEFAULT_ON`) only in the same PR that adds its firing site —
- *  FAILED_DELIVERY specifically: B146/F11 reconciles a skipped stop but never emits the event. */
-const NO_TRIGGER_EVENTS = new Set<NotificationEvent>([
-  NotificationEvent.URGENT_ORDER_PLACED,
-  NotificationEvent.LOW_STOCK,
-  NotificationEvent.FAILED_DELIVERY,
-  NotificationEvent.PAYMENT_FAILED_NSF,
-  // Post-dated check payments PR-1: added with the enum value itself; a later
-  // PR adds the firing site (check-lifecycle transition to BOUNCED) and moves
-  // this to DEFAULT_ON in the same PR, per this set's own header comment.
-  NotificationEvent.CHECK_RETURNED,
-]);
+/** An event with no firing site (absent from `NOTIFICATION_TRIGGERS`, the single registry that
+ *  `notification-triggers.spec.ts` proves against the tree) renders `unavailable: "NO_TRIGGER"`
+ *  and is excluded from `DEFAULT_ON`. Re-add it to the registry (and `DEFAULT_ON`) only in the
+ *  same PR that adds its firing site — FAILED_DELIVERY specifically: B146/F11 reconciles a skipped
+ *  stop but never emits the event. */
+const hasNoTrigger = (eventKey: NotificationEvent): boolean => !NOTIFICATION_TRIGGERS.has(eventKey);
 
 export interface TemplateView {
   id: string;
@@ -166,6 +212,10 @@ export interface MatrixCell {
 export interface MatrixEvent {
   eventKey: NotificationEvent;
   label: string;
+  /** #1965: who receives this event's message (buyer vs staff). */
+  audience: NotificationAudience;
+  /** #1965: false = no firing site; the web lists it under "Coming soon" with no switch. */
+  hasTrigger: boolean;
   channels: MatrixCell[];
 }
 export interface MessagingSettingsView {
@@ -176,6 +226,8 @@ export interface MessagingSettingsView {
 }
 export interface MessagingConfigView {
   events: MatrixEvent[];
+  /** #1965: per-channel availability so the web never infers it per cell. */
+  channelStatus: ChannelStatusMap;
   settings: MessagingSettingsView;
   msgsMeter: {
     used: number;
@@ -229,7 +281,13 @@ export class MessagingConfigService {
           if (isInvoicePolicyViolation(eventKey, channel))
             channels.push({ channel, enabled: false, ruleId: null, locked: true, template: null });
         }
-        return { eventKey, label: DEFAULT_TEMPLATES[eventKey].label, channels };
+        return {
+          eventKey,
+          label: DEFAULT_TEMPLATES[eventKey].label,
+          audience: notificationAudience(eventKey),
+          hasTrigger: !hasNoTrigger(eventKey),
+          channels,
+        };
       },
     );
 
@@ -246,7 +304,7 @@ export class MessagingConfigService {
     } catch {
       /* meter readout is decorative — never fail the matrix for it */
     }
-    return { events, settings, msgsMeter };
+    return { events, channelStatus: this.channelStatus(), settings, msgsMeter };
   }
 
   async setRuleEnabled(id: string, enabled: boolean) {
@@ -322,6 +380,13 @@ export class MessagingConfigService {
     return this.getSettings();
   }
 
+  /** NOT_CONFIGURED is reserved for a channel that has a transport but no tenant setup; no such
+   *  channel exists yet, so today every channel is LIVE (transport bound) or NOT_BUILT. */
+  private channelStatus(): ChannelStatusMap {
+    const st = (c: MessageChannel) => (this.provider.transports(c) ? "LIVE" : "NOT_BUILT");
+    return { EMAIL: st(EMAIL), WHATSAPP: st(WHATSAPP), SMS: st(SMS), PORTAL: st(PORTAL) };
+  }
+
   /** F23/B180+B182+B183a (cause-ruling.md §2): the ONE capability seam consulted by both
    *  getMatrix()/setRuleEnabled() here and sendMessage() in messaging.service.ts. NO_TRIGGER
    *  takes priority (an INTERNAL-only ops alert with no firing site — its channel is always
@@ -331,9 +396,9 @@ export class MessagingConfigService {
     eventKey: NotificationEvent,
     channel: MessageChannel,
   ): MatrixCell["unavailable"] {
-    if (NO_TRIGGER_EVENTS.has(eventKey)) return "NO_TRIGGER";
+    if (hasNoTrigger(eventKey)) return "NO_TRIGGER";
     // The `channel !== INTERNAL` exemption is currently unreachable: every INTERNAL event is
-    // in NO_TRIGGER_EVENTS above, so this line never sees channel === INTERNAL today. Kept for
+    // absent from NOTIFICATION_TRIGGERS (so `hasNoTrigger` returns above), so this line never sees channel === INTERNAL today. Kept for
     // the first wired INTERNAL event; pinned by the NO_TRANSPORT spec in
     // messaging-config.service.spec.ts.
     if (channel !== INTERNAL && !this.provider.transports(channel)) return "NO_TRANSPORT";
@@ -349,16 +414,19 @@ export class MessagingConfigService {
 
   private templateView(t: {
     id: string;
+    eventKey: NotificationEvent;
     body: string;
     variables: string[];
     waTemplateName: string | null;
     waApprovalStatus: WaApprovalStatus;
     isActive: boolean;
   }): TemplateView {
+    // B1127: show what notify() will actually send (a superseded default is upgraded at render time).
+    const body = effectiveTemplateBody(t.eventKey, t.body);
     return {
       id: t.id,
-      body: t.body,
-      variables: t.variables,
+      body,
+      variables: body === t.body ? t.variables : extractVariables(body),
       waTemplateName: t.waTemplateName,
       waApprovalStatus: t.waApprovalStatus,
       isActive: t.isActive,

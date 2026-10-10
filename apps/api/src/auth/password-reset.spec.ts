@@ -14,7 +14,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 jest.mock("bcrypt", () => ({ compare: jest.fn(), hash: jest.fn(), genSalt: jest.fn() }));
 
 const JWT_CONFIG = {
-  secret: "test-secret",
+  secret: "test-jwt-secret-0123456789-abcdefghijklmnop",
   refreshSecret: "test-refresh-secret",
   expiresIn: "15m",
   refreshExpiresIn: "30d",
@@ -163,14 +163,21 @@ describe("AuthService — password reset (RF-018)", () => {
     const rawToken = "a".repeat(64);
     const fakeHash = crypto.createHash("sha256").update(rawToken).digest("hex");
 
-    const baseRecord = {
+    // B791: built PER TEST. Built at collection time, its 60 s expiry would start when Jest
+    // COLLECTS the file, so a slow run (a loaded host, CI) executed the tests after their own
+    // fixture had expired.
+    const makeBaseRecord = () => ({
       id: "prt-1",
       userId: "user-1",
       tokenHash: fakeHash,
       expiresAt: new Date(Date.now() + 60_000),
       usedAt: null,
       createdAt: new Date(),
-    };
+    });
+    let baseRecord: ReturnType<typeof makeBaseRecord>;
+    beforeEach(() => {
+      baseRecord = makeBaseRecord();
+    });
 
     beforeEach(() => {
       // $transaction: call the callback with an array of operations

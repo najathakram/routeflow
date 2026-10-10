@@ -7,6 +7,7 @@ import {
   daysBetween,
   addMonthsUtc,
   addCycle,
+  periodMonths,
 } from "./billing-math";
 
 describe("billing-math — subscription money (regression lock)", () => {
@@ -143,5 +144,19 @@ describe("billing-math — subscription money (regression lock)", () => {
       const from = new Date("2026-02-28T00:00:00.000Z");
       expect(addMonthsUtc(from, 1, 31).toISOString()).toBe("2026-03-31T00:00:00.000Z");
     });
+  });
+});
+
+describe("periodMonths (SA-383, #2187)", () => {
+  const at = (days: number) => [new Date(0), new Date(days * 24 * 60 * 60 * 1000)] as const;
+  it.each([
+    [28, 1],
+    [31, 1],
+    [45, 1],
+    [90, 3],
+    [180, 6],
+    [0, 1],
+  ])("a %i-day period covers %i monthly charge(s)", (days, want) => {
+    expect(periodMonths(...at(days))).toBe(want);
   });
 });

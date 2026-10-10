@@ -73,6 +73,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -145,9 +146,11 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    prisma.order.updateMany.mockResolvedValue({ count: 1 }); // SA-404f F2: cancel CAS claims
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -556,7 +559,7 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
       // order stays DELIVERED and staff retries invoicing from the order page.
       expect(prisma.order.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "ord-1" },
+          where: { id: "ord-1", status: "CONFIRMED" },
           data: expect.objectContaining({ status: "DELIVERED" }),
         }),
       );
@@ -733,13 +736,15 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
      */
     function captureTenantTransaction() {
       const allOptions: any[] = [];
-      const txExecuteRaw: jest.Mock = jest.fn().mockResolvedValue(0);
+      // B562 PR-2: the aggregated decrement is `$queryRaw … RETURNING`, the lock `$executeRaw`; one spy
+      // (resolving no rows) serves both so the decrement oracle below finds it wherever it is issued.
+      const txExecuteRaw: jest.Mock = jest.fn().mockResolvedValue([]);
       prisma.tenantTransaction.mockImplementation((fn: any, opts?: any) => {
         allOptions.push(opts);
         const tx = {
           ...(prisma as unknown as Record<string, any>),
           $executeRaw: txExecuteRaw,
-          $queryRaw: jest.fn().mockResolvedValue([]),
+          $queryRaw: txExecuteRaw,
         };
         return fn(tx);
       });

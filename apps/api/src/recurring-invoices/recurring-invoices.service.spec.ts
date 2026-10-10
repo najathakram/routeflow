@@ -14,6 +14,9 @@ jest.mock("../common/db-locks", () => ({
 import { NotFoundException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { RecurringInvoicesService } from "./recurring-invoices.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { NotificationsService } from "../notifications/notifications.service";
+import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -37,6 +40,15 @@ describe("RecurringInvoicesService (pause/resume)", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: {} },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = mod.get(RecurringInvoicesService);
@@ -47,10 +59,14 @@ describe("RecurringInvoicesService (pause/resume)", () => {
     );
   });
 
-  it("activate() sets isActive=true", async () => {
+  it("activate() sets isActive=true (conditionally, on a currently inactive template)", async () => {
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
+    prisma.recurringInvoice.findUnique
+      .mockResolvedValueOnce({ id: "ri-1", isActive: false })
+      .mockResolvedValueOnce({ id: "ri-1", isActive: true });
     const res = await service.activate("ri-1");
-    expect(prisma.recurringInvoice.update).toHaveBeenCalledWith({
-      where: { id: "ri-1" },
+    expect(prisma.recurringInvoice.updateMany).toHaveBeenCalledWith({
+      where: { id: "ri-1", isActive: false },
       data: { isActive: true },
     });
     expect(res.isActive).toBe(true);
@@ -107,6 +123,15 @@ describe("RecurringInvoicesService (auto-send honesty, R5)", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = mod.get(RecurringInvoicesService);
@@ -174,6 +199,15 @@ describe("RecurringInvoicesService (cycle claim, B9)", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = mod.get(RecurringInvoicesService);
@@ -270,6 +304,15 @@ describe("RecurringInvoicesService (archived SKU in generation, B142)", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = mod.get(RecurringInvoicesService);
@@ -314,6 +357,15 @@ describe("RecurringInvoicesService (calcNextRunAt MONTHLY pins)", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: {} },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = mod.get(RecurringInvoicesService);
@@ -352,6 +404,15 @@ describe("RecurringInvoicesService (calcNextRunAt WEEKLY/BIWEEKLY, pin)", () => 
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: {} },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = mod.get(RecurringInvoicesService);
@@ -419,6 +480,15 @@ describe("RecurringInvoicesService (cron continues past a failing template, pin)
           useValue: { run: jest.fn((_id: string, fn: () => unknown) => fn()) },
         },
         { provide: InvoicesService, useValue: invoices },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = mod.get(RecurringInvoicesService);
@@ -511,6 +581,15 @@ describe("RecurringInvoicesService.generateDueRecurringInvoices — removed cust
           useValue: { run: jest.fn((_id: string, fn: () => unknown) => fn()) },
         },
         { provide: InvoicesService, useValue: invoices },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = mod.get(RecurringInvoicesService);
@@ -607,6 +686,15 @@ describe("RecurringInvoicesService.create — removed customer (B131)", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: {} },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = mod.get(RecurringInvoicesService);

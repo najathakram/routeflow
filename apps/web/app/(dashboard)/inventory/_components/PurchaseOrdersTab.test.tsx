@@ -57,7 +57,7 @@ function po(over: Partial<PurchaseOrder>): PurchaseOrder {
     supplier,
     status: "DRAFT",
     items: [],
-    total: 120,
+    totalAmount: "120.00", // the API sends the raw Prisma Decimal (B719)
     expectedDate: "2026-10-01",
     createdAt: "2026-09-01",
     ...over,
@@ -205,7 +205,16 @@ describe("resolveStoredPOLineAmounts (stored line, exact total)", () => {
 describe("PurchaseOrdersTab", () => {
   it("shows the empty state", () => {
     render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
-    expect(screen.getByText("No purchase orders found.")).toBeInTheDocument();
+    expect(screen.getByText("No purchase orders yet")).toBeInTheDocument();
+  });
+
+  it("each PO number links to its detail page", () => {
+    listData = { data: [po({ id: "a", poNumber: "PO-A", status: "DRAFT" })] };
+    render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
+    expect(screen.getByRole("link", { name: "PO-A" })).toHaveAttribute(
+      "href",
+      "/purchase-orders/a",
+    );
   });
 
   it("offers Send on DRAFT, Receive on SENT/PARTIAL, and neither on CLOSED", () => {
@@ -250,12 +259,56 @@ describe("PurchaseOrdersTab", () => {
   });
 
   it("renders the row total and expected date through the shared formatters", () => {
-    listData = { data: [po({ id: "a", poNumber: "PO-A", status: "SENT", total: 120 })] };
+    listData = { data: [po({ id: "a", poNumber: "PO-A", status: "SENT", totalAmount: "120.00" })] };
     render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
     const row = screen.getByText("PO-A").closest("tr") as HTMLElement;
     expect(within(row).getByText(formatMoney(120))).toBeInTheDocument();
     expect(within(row).getByText(fmtCalendarDate("2026-10-01"))).toBeInTheDocument();
     expect(within(row).getByText("Acme Supply")).toBeInTheDocument();
+  });
+
+  // B719 (#1485): the list read a `total` the API never sends, so every row showed $0.00.
+  it("B719: the Total column shows the server's totalAmount (a numeric string), never $0.00", () => {
+    listData = { data: [po({ id: "a", poNumber: "PO-A", status: "SENT", totalAmount: "123.45" })] };
+    render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
+    const row = screen.getByText("PO-A").closest("tr") as HTMLElement;
+    expect(within(row).getByText(formatMoney(123.45))).toBeInTheDocument();
+    expect(within(row).queryByText(formatMoney(0))).toBeNull();
+  });
+
+  it("B719: with no stored total the row falls back to the sum of the lines' STORED totals", () => {
+    listData = {
+      data: [
+        po({
+          id: "a",
+          poNumber: "PO-A",
+          status: "DRAFT",
+          totalAmount: null,
+          items: [
+            {
+              id: "i1",
+              productId: "p1",
+              qtyOrdered: "3",
+              qtyReceived: "0",
+              unitCost: "10.0000",
+              totalCost: "30.00",
+            },
+            {
+              id: "i2",
+              productId: "p2",
+              qtyOrdered: "12",
+              qtyReceived: "0",
+              unitCost: "1.0417",
+              totalCost: "12.50",
+              packSize: 12,
+            },
+          ],
+        }),
+      ],
+    };
+    render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
+    const row = screen.getByText("PO-A").closest("tr") as HTMLElement;
+    expect(within(row).getByText(formatMoney(42.5))).toBeInTheDocument();
   });
 
   it("send button fires the send mutation for that PO", () => {
@@ -299,11 +352,13 @@ describe("PurchaseOrdersTab", () => {
   });
 
   it("the detail subtotal of a boxed line is the stored exact total, not qty x per-piece cost (#1199)", () => {
-    listData = { data: [po({ id: "c", poNumber: "PO-C", status: "SENT", total: 11000 })] };
+    listData = {
+      data: [po({ id: "c", poNumber: "PO-C", status: "SENT", totalAmount: "11000.00" })],
+    };
     detailById.c = po({
       id: "c",
       status: "SENT",
-      total: 11000,
+      totalAmount: "11000.00",
       items: [
         {
           id: "i1",
@@ -385,6 +440,33 @@ describe("ReceivePOModal", () => {
           { id: "i2", receivedQty: 10 },
         ],
       },
+      expect.any(Object),
+    );
+  });
+
+  it("#2734: a line stored at pack 12 on a product repacked to 6 seeds and sends at 12", () => {
+    receiveMutate.mockClear();
+    const order = po({
+      id: "c",
+      status: "SENT",
+      items: [
+        {
+          id: "i1",
+          productId: "p3",
+          qtyOrdered: "24",
+          qtyReceived: "0",
+          unitCost: "2",
+          packSize: 12,
+        },
+      ],
+    });
+    const repacked = [{ id: "p3", name: "Repacked", unitsPerBox: 6 }];
+    render(<ReceivePOModal po={order} products={repacked} onClose={jest.fn()} />);
+    // 24 pcs at the stored pack 12 = 2 boxes + 0 (at the live pack 6 it would seed 4 boxes)
+    expect((screen.getByTitle("Boxes") as HTMLInputElement).value).toBe("2");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
+    expect(receiveMutate).toHaveBeenCalledWith(
+      { id: "c", items: [{ id: "i1", receivedQty: 24 }] },
       expect.any(Object),
     );
   });

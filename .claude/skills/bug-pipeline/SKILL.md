@@ -27,7 +27,7 @@ registry was refuted on investigation. Bug work is test-heavy and cause-skeptica
 > session, from a Sonnet-transcribed brief, and rules on final-pass candidates in the session too.
 > `CFG.models.fable` stays defined only for that session-side use.
 
-**Opus 5** (`claude-opus-5`) is the engine's HIGH-risk judgment tier: the **HIGH-risk reviewer** on a `fix` or
+**Opus 5.5** (`claude-opus-5-5`) is the engine's HIGH-risk judgment tier: the **HIGH-risk reviewer** on a `fix` or
 `docs` task touching a HIGH-risk file (money, auth, tenancy, schema, PII) — the only two task types whose chain
 runs `reviewStage` at all; `root-cause`'s own implementer-risk routing (next paragraph) instead; `repro-test`'s
 RED check is purely mechanical; `revert-probe` is deliberately Haiku-only (a scripted mechanical operation,
@@ -51,7 +51,7 @@ Opus takes that single call (never a per-hit decision).
 checkpoints, the post-loop sibling-sweep `git grep` over `args.siblingPatterns`, and the `revert-probe`
 `checksum:after` verification against Baseline's recorded digests — never a judgment call, always at `low`.
 
-`CFG.models.fallbackModel` (also `claude-opus-5`) is a leftover refusal-fallback constant that only backs the
+`CFG.models.fallbackModel` (also `claude-opus-5-5`) is a leftover refusal-fallback constant that only backs the
 now-dead `executorIsDesigner` path — it is not evidence Opus is "fallback only": Opus is chosen directly for
 every role named above.
 

@@ -198,7 +198,7 @@ export default function PaymentDetailPage() {
           {/* Notes */}
           {payment.notes && (
             <div className="mt-6 border-t border-surface-border pt-4">
-              <p className="overline mb-1">Notes</p>
+              <p className="eyebrow-label mb-1">Notes</p>
               <p className="text-sm text-navy/70 whitespace-pre-line">{payment.notes}</p>
             </div>
           )}

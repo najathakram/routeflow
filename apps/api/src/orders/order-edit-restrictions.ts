@@ -12,6 +12,7 @@ import {
 } from "../selling-restrictions/order-edit-lines";
 import { checkableProductIds } from "../selling-restrictions/selling-restrictions.core";
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * Selling restrictions at `OrdersService.updateOrderItems` (lane R 2a-7). The service keeps the
@@ -53,7 +54,9 @@ export function orderEditMode(
   replaceAll: boolean | undefined,
   isDiffPayload: boolean,
 ): OrderEditMode {
-  if (role === UserRole.CUSTOMER) return { kind: "replace", actor: "buyer" };
+  // SA-407: a buyer's per-line diff (a unit line's count / a removal) is merged like staff's.
+  if (role === UserRole.CUSTOMER)
+    return isDiffPayload ? { kind: "merge" } : { kind: "replace", actor: "buyer" };
   if (role === UserRole.DRIVER)
     return isDiffPayload ? { kind: "merge" } : { kind: "replace", actor: "driver" };
   return replaceAll === true ? { kind: "replace", actor: "staff" } : { kind: "merge" };
@@ -107,7 +110,7 @@ export async function planOrderEditRestrictions(
     assertHeld(lockTimeRows) {
       if (checkableProductIds(linesFor(lockTimeRows)).some((id) => !judged.has(id)))
         throw new ConflictException({
-          code: "ORDER_CHANGED_DURING_EDIT",
+          code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
           message: "The order changed while your edit was being applied — review it and try again.",
         });
     },

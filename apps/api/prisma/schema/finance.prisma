@@ -62,6 +62,12 @@ enum InvoiceStatus {
   WRITTEN_OFF
 }
 
+// #2169 (SA-395): a system-written InvoiceItem purpose marker. One member today (the NSF
+// bounce-fee line); see InvoiceItem.systemKind's doc comment.
+enum InvoiceItemSystemKind {
+  NSF_FEE
+}
+
 enum EstimateStatus {
   DRAFT
   SENT
@@ -225,18 +231,19 @@ model Invoice {
   updatedAt              DateTime      @updatedAt
   tenantId               String?
 
-  customer           Customer              @relation(fields: [customerId], references: [id])
-  tenant             Tenant?               @relation(fields: [tenantId], references: [id])
-  order              Order?                @relation(fields: [orderId], references: [id])
-  deliveryBatch      DeliveryBatch?        @relation(fields: [deliveryBatchId], references: [id])
+  customer           Customer               @relation(fields: [customerId], references: [id])
+  tenant             Tenant?                @relation(fields: [tenantId], references: [id])
+  order              Order?                 @relation(fields: [orderId], references: [id])
+  deliveryBatch      DeliveryBatch?         @relation(fields: [deliveryBatchId], references: [id])
   items              InvoiceItem[]
   payments           InvoicePayment[]
   creditNotes        CreditNote[]
-  recurringInvoice   RecurringInvoice?     @relation(fields: [recurringInvoiceId], references: [id])
+  creditApplyBlocks  CreditNoteApplyBlock[]
+  recurringInvoice   RecurringInvoice?      @relation(fields: [recurringInvoiceId], references: [id])
   paymentRequests    BuyerPaymentRequest[]
   commissionAccruals CommissionAccrual[]
   // F01/B17+B70: back-relation of Estimate.invoiceId (the converted-from estimate).
-  estimate           Estimate?             @relation("EstimateInvoice")
+  estimate           Estimate?              @relation("EstimateInvoice")
 
   @@unique([tenantId, invoiceNumber])
   @@index([customerId])
@@ -252,59 +259,82 @@ model Invoice {
   // of those filtered tenantId + issueDate on a heap scan. Mirrors RfInvoice's
   // @@index([tenantId, issuedAt]).
   @@index([tenantId, issueDate])
+  // #2118: one customer's invoices on the analytics date (buyer-filtered product line pages,
+  // customer insights).
+  @@index([customerId, issueDate])
 }
 
 model InvoiceItem {
-  id                   String    @id @default(uuid())
-  invoiceId            String
-  description          String
-  productId            String?
-  qty                  Decimal   @db.Decimal(10, 3)
-  unitPrice            Decimal   @db.Decimal(10, 2)
-  discount             Decimal   @default(0) @db.Decimal(10, 2)
-  originalPrice        Decimal?  @db.Decimal(10, 2)
+  id                       String                  @id @default(uuid())
+  invoiceId                String
+  description              String
+  productId                String?
+  qty                      Decimal                 @db.Decimal(10, 3)
+  unitPrice                Decimal                 @db.Decimal(10, 2)
+  discount                 Decimal                 @default(0) @db.Decimal(10, 2)
+  originalPrice            Decimal?                @db.Decimal(10, 2)
   // MSRP snapshot taken at line-creation time (customer override, else product default —
   // see common/msrp.ts resolveMsrp). Display-only, never money math. An issued invoice
   // must never change when the product's MSRP is later edited, so this is never re-read
   // from the live product at render time. Null when unset or flag.msrp is off.
-  msrp                 Decimal?  @db.Decimal(10, 2)
-  priceType            PriceType @default(STANDARD)
-  taxRate              Decimal   @default(0) @db.Decimal(5, 4)
-  subtotal             Decimal   @db.Decimal(10, 2)
-  boxes                Int?
-  pieces               Int?
+  msrp                     Decimal?                @db.Decimal(10, 2)
+  priceType                PriceType               @default(STANDARD)
+  taxRate                  Decimal                 @default(0) @db.Decimal(5, 4)
+  subtotal                 Decimal                 @db.Decimal(10, 2)
+  boxes                    Int?
+  pieces                   Int?
   // Sale-time snapshot of the product's box size, carried from the order line.
   // Any recompute of this invoice line (edit form, PDF) must use THIS value, not
   // the live product. Null for lines created before the snapshot shipped.
-  unitsPerBox          Int?
+  unitsPerBox              Int?
   // BUY_N_GET_M snapshot carried from OrderItem.promoFreeUnits: whole free
   // SELLING units billed on this line (boxes for a boxed line; loose pieces never
   // count). Prorated the same telescoping way as `subtotal` on a partial bill. The
   // DRAFT edit path delete-and-recreates every line, so this MUST round-trip —
   // without it a $350 (12 boxes, 2 free) line silently re-prices to $420 on save.
   // Feeds computeLineSubtotal's freeUnits param; null for every non-BOGO line.
-  promoFreeUnits       Int?
+  promoFreeUnits           Int?
   // Per-line note carried verbatim from OrderItem.notes (or entered on a manual
   // invoice line). Buyer-visible: renders under the description on the invoice
   // detail and the PDF.
-  notes                String?
+  notes                    String?
   // Provenance: the OrderItem this invoice line was billed from (null for manual
   // / freeform lines). Enables exact partial-billing bookkeeping and precise
   // invoicedQty release on void. SetNull so an order-line hard-delete (order edit
   // replaces line items) never blocks on this FK.
-  orderItemId          String?
+  orderItemId              String?
   // Phase 4: regulated-category snapshot carried from the order line onto the
   // (possibly split) invoice; `categoryTaxAmount` is this line's category tax.
-  trackedCategoryId    String?
-  trackedSubcategoryId String?
-  categoryTaxAmount    Decimal   @default(0) @db.Decimal(10, 2)
+  trackedCategoryId        String?
+  trackedSubcategoryId     String?
+  categoryTaxAmount        Decimal                 @default(0) @db.Decimal(10, 2)
+  // B297 (SA-088): the TrackedCategory trio this line was priced at, carried verbatim
+  // from OrderItem's own snapshot when the invoice line is built from an order line
+  // (buildInvoiceItemData copies it — the invoice inherits the order's sale-time rate,
+  // it never re-reads the category); stamped directly for a manual/freeform invoice
+  // line. NULL means "no snapshot" — same recompute rule as OrderItem (see there).
+  // Nullable, no default, no backfill in this migration — see B297-SPEC.md D1-D3.
+  categoryTaxType          TrackedCategoryTaxType?
+  categoryTaxRate          Decimal?                @db.Decimal(12, 4)
+  categoryPriceIncludesTax Boolean?
   // Units/PO minimal (2026-09-19): the line's own unit name, carried verbatim
   // from OrderItem.unitLabel on invoice-from-order copy. Null = today's
   // behaviour byte-for-byte.
-  unitLabel            String?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
-  tenantId             String?
+  unitLabel                String?
+  // #2717 M3 (SA-572 I11): composition provenance on the line. recipeId/recipeVersion are plain
+  // strings/ints with NO foreign key: documents never JOIN Recipe (SA-589 confirms). NULL = a plain line.
+  compositionMode          CompositionMode?
+  recipeId                 String?
+  recipeVersion            Int?
+  // #2169 (SA-395): marks a line the SYSTEM wrote for a specific, machine-meaningful purpose —
+  // today only the NSF bounce-fee line `InvoicesService.setCheckStatus`'s BOUNCED branch
+  // creates (the ONLY writer). NULL for every ordinary line and for every pre-existing NSF fee
+  // line until the backfill (apps/api/scripts/backfill-2169-nsf-system-kind.mjs) stamps it — see
+  // apps/api/src/invoices/nsf-line.ts for the TRANSITION dual-read this enables.
+  systemKind               InvoiceItemSystemKind?
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+  tenantId                 String?
 
   invoice            Invoice             @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   tenant             Tenant?             @relation(fields: [tenantId], references: [id])
@@ -312,6 +342,7 @@ model InvoiceItem {
   orderItem          OrderItem?          @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
   trackedCategory    TrackedCategory?    @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
   trackedSubcategory TrackedSubcategory? @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
+  components         InvoiceItemComponent[]
 
   @@index([invoiceId])
   @@index([productId])
@@ -319,6 +350,36 @@ model InvoiceItem {
   @@index([tenantId])
   @@index([trackedCategoryId])
   @@index([trackedSubcategoryId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
+  packLabel String?
+  lineCode  String?
+}
+
+// #2717 M3: the invoice-side twin of OrderItemComponent, frozen at bill time. qty is an INTEGER
+// (SA-579 S1) and there is NO link back to OrderItemComponent (SA-579 S2). displayUnitPrice4 is written
+// per invoice line from componentUnitPrice4(that line's net, its pieces) (SA-589) and never read by any
+// sum, tax or credit path (I5).
+model InvoiceItemComponent {
+  id                   String            @id @default(uuid())
+  tenantId             String
+  invoiceItemId        String
+  componentProductId   String
+  qty                  Int
+  name                 String
+  unitSku              String?
+  unitBarcode          String?
+  barcodeSymbology     BarcodeSymbology?
+  displayUnitPrice4    Decimal?          @db.Decimal(12, 4)
+  position             Int               @default(0)
+  createdAt            DateTime          @default(now())
+
+  invoiceItem        InvoiceItem         @relation(fields: [invoiceItemId], references: [id], onDelete: Cascade)
+  componentProduct   Product             @relation(fields: [componentProductId], references: [id], onDelete: Restrict)
+
+  @@unique([invoiceItemId, componentProductId])
+  @@index([componentProductId])
+  @@index([tenantId])
 }
 
 model InvoicePayment {
@@ -342,6 +403,9 @@ model InvoicePayment {
   paymentNumber    String?       @unique
   bankCharges      Decimal?      @db.Decimal(10, 2)
   status           PaymentStatus @default(PAID)
+  // SA-436 (#2401): this CREDIT_NOTE payment was written by the send-time sweep, not by a person.
+  // Existing rows read as manual.
+  autoApplied      Boolean       @default(false)
   paymentGroupId   String?
   tenantId         String?
 
@@ -388,6 +452,7 @@ model InvoicePayment {
   @@index([status])
   @@index([tenantId])
   @@index([tenantId, settledAt])
+  @@index([tenantId, paidAt])
   @@index([tenantId, checkDate])
   @@index([tenantId, checkStatus])
 }
@@ -528,24 +593,30 @@ model CreditNote {
   // application was automatic. "Expired" is a COMPUTED FILTER in code (excluded from
   // the wallet, never auto-applies) — NEVER a status flip; an expired note keeps its
   // amountUsed / already-issued InvoicePayments untouched.
-  expiresAt   DateTime?
-  appliedAt   DateTime?
-  autoApplied Boolean   @default(false)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  tenantId    String?
+  expiresAt         DateTime?
+  appliedAt         DateTime?
+  autoApplied       Boolean   @default(false)
+  // SA-436 (#2401): an operator excluded this note from the send-time oldest-first sweep. A manual
+  // apply (applyToInvoice) is still allowed.
+  autoApplyExcluded Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  tenantId          String?
 
-  customer        Customer          @relation(fields: [customerId], references: [id])
-  tenant          Tenant?           @relation(fields: [tenantId], references: [id])
-  invoice         Invoice?          @relation(fields: [invoiceId], references: [id])
+  customer        Customer               @relation(fields: [customerId], references: [id])
+  tenant          Tenant?                @relation(fields: [tenantId], references: [id])
+  invoice         Invoice?               @relation(fields: [invoiceId], references: [id])
   invoicePayments InvoicePayment[]
   items           CreditNoteItem[]
   orderLinks      OrderCreditNote[]
+  applyBlocks     CreditNoteApplyBlock[]
 
   @@unique([tenantId, creditNoteNumber])
   @@index([customerId])
   @@index([status])
   @@index([tenantId])
+  // #2118: the accrual credit-note term is keyed on createdAt (B440) — tenant-window reads.
+  @@index([tenantId, createdAt])
 }
 
 /// Phase 4 (W5c): per-line breakdown of a credit note, derived from the SOURCE
@@ -569,6 +640,12 @@ model CreditNoteItem {
 
   @@index([tenantId])
   @@index([creditNoteId])
+  // #2118: per-line credited amounts on the product sales page (a page's line ids).
+  @@index([invoiceItemId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
+  packLabel String?
+  lineCode  String?
 }
 
 /// Order↔credit-note INTENT: "apply this credit (up to `amount`, or its remaining
@@ -592,6 +669,34 @@ model OrderCreditNote {
 
   @@unique([orderId, creditNoteId])
   @@index([creditNoteId])
+  @@index([tenantId])
+}
+
+// SA-436 (#2401): why a (credit note, invoice) pair must not be re-applied automatically.
+enum CreditNoteApplyBlockReason {
+  UNAPPLIED // an operator removed the credit from the invoice (unapplyFromInvoice)
+  UNTICKED // an operator dropped the credit from the order's selections (syncOrderCreditSelections)
+  VOID_REVERSAL // the note was voided with its applications reversed (SA-436 PR-2)
+}
+
+// SA-436 (#2401): the don't-re-apply memory. While a row exists, neither the send-time sweep nor the
+// order-intent settle applies this note to this invoice; a manual apply deletes the row (explicit
+// human intent wins), and so does re-ticking or re-amounting the note on the order (SA-436a).
+model CreditNoteApplyBlock {
+  id           String                     @id @default(uuid())
+  tenantId     String
+  creditNoteId String
+  invoiceId    String
+  reason       CreditNoteApplyBlockReason
+  createdById  String? // null when a system path (the order-selection sync) wrote it
+  createdAt    DateTime                   @default(now())
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  creditNote CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+  invoice    Invoice    @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@unique([creditNoteId, invoiceId])
+  @@index([invoiceId])
   @@index([tenantId])
 }
 
@@ -656,6 +761,9 @@ model EstimateItem {
   @@index([estimateId])
   @@index([productId])
   @@index([tenantId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
+  packLabel String?
 }
 
 // ─── Vendor bills (accounts payable) ───────────────────────────────
@@ -856,6 +964,8 @@ model VendorBillItem {
   @@index([vendorBillId])
   @@index([productId])
   @@index([tenantId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
 }
 
 model BillPayment {

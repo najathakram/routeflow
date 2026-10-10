@@ -1,17 +1,26 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
 import {
+  isSpecialTier,
+  AmbiguousLineError,
   InvalidTierError,
+  UnknownUnitError,
+  buildLine,
+  categoryTaxSnapshotOf,
   computeCategoryTax,
-  computeLineSubtotal,
+  computeLineSubtotalStrict,
   normalizeBoxesPieces,
   resolveUnitPrice,
+  type CategoryTaxSnapshot,
   type CategoryTaxType,
   type LadderProduct,
   type LadderUnit,
+  type TrackedCategoryRow,
   roundMoney,
 } from "@routeflow/pricing";
+import { assertUnitLineSplit } from "./unit-line-split";
 import { lineUnitsPerBoxSnapshot, type ResolvedLineUnits } from "../products/line-units";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * units_v1, step 4b-2 — building ONE order line that is sold by a non-pack unit (a Case, a Pallet,
@@ -168,32 +177,63 @@ export function replayLineKey(
   r: {
     productId?: string | null;
     name?: string | null;
-    qty: unknown;
+    qty?: unknown;
     boxes?: unknown;
+    pieces?: unknown;
+    unitsPerBox?: unknown;
     unitLabel?: string | null;
   },
   stored: boolean,
 ): string {
   const unit = (r.unitLabel ?? "").trim().toLowerCase();
-  const count = stored && unit ? (r.boxes ?? r.qty) : r.qty;
+  let count: unknown = stored && unit ? (r.boxes ?? r.qty) : r.qty;
+  // A boxes/pieces-only request line has no qty: derive the piece count the writer stores (same
+  // normalizeBoxesPieces) instead of keying NaN, which can never match a stored line. Without a pack size
+  // it falls back to the split itself, so the key is still well-formed (never NaN).
+  if (count == null && !unit && (r.boxes != null || r.pieces != null)) {
+    const upb = Number(r.unitsPerBox ?? 0);
+    count =
+      upb > 1
+        ? normalizeBoxesPieces({
+            boxes: Number(r.boxes ?? 0),
+            pieces: Number(r.pieces ?? 0),
+            unitsPerBox: upb,
+          }).qty
+        : `b${Number(r.boxes ?? 0)}p${Number(r.pieces ?? 0)}`;
+    return `${r.productId ?? `unlisted:${r.name ?? ""}`}×${String(count)}`;
+  }
   return `${r.productId ?? `unlisted:${r.name ?? ""}`}×${Number(count)}${unit ? `@${unit}` : ""}`;
 }
 
-/** Regulated per-category tax for a unit line (0 when the product has no tracked category). */
+/**
+ * Regulated per-category tax for a unit line (0 when the product has no tracked category), PLUS
+ * (B297/SA-088) the rate trio it was computed from — the ONE place `taxFor` below produces both
+ * together, so a unit line's snapshot can never drift from the amount it priced.
+ */
 export const categoryTaxForLine = (
-  category: { taxType: unknown; rate: unknown; priceIncludesTax: boolean } | null | undefined,
+  category: TrackedCategoryRow | null | undefined,
   qtyPieces: number,
   lineSubtotal: number,
-): number =>
-  category
+): { amount: number; snapshot: CategoryTaxSnapshot } => ({
+  amount: category
     ? computeCategoryTax({
-        taxType: category.taxType as CategoryTaxType,
+        taxType: category.taxType,
         rate: Number(category.rate),
         unitBasisQty: qtyPieces,
         lineSubtotal,
-        priceIncludesTax: category.priceIncludesTax,
+        priceIncludesTax: category.priceIncludesTax ?? undefined,
       })
-    : 0;
+    : 0,
+  snapshot: categoryTaxSnapshotOf(
+    category
+      ? {
+          taxType: category.taxType,
+          rate: category.rate,
+          priceIncludesTax: category.priceIncludesTax,
+        }
+      : null,
+  ),
+});
 
 /** OrderItem.qty is Decimal(10,3) and subtotal Decimal(10,2): a bigger line would 500 the order. */
 export const MAX_LINE_QTY = 9_999_999;
@@ -216,6 +256,9 @@ export interface UnitLineData {
   trackedCategoryId: string | null;
   trackedSubcategoryId: string | null;
   categoryTaxAmount: number;
+  categoryTaxType: CategoryTaxSnapshot["categoryTaxType"];
+  categoryTaxRate: CategoryTaxSnapshot["categoryTaxRate"];
+  categoryPriceIncludesTax: CategoryTaxSnapshot["categoryPriceIncludesTax"];
   position: number;
   tenantId: string | null | undefined;
 }
@@ -227,8 +270,16 @@ export function buildUnitLine(input: {
   item: UnitLineRequest;
   /** The customer's pricing tier for this product (1..5). */
   tier: number;
-  /** Regulated per-category tax for a line of `qtyPieces` base pieces worth `subtotal`. */
-  taxFor: (qtyPieces: number, subtotal: number) => number;
+  /**
+   * Regulated per-category tax for a line of `qtyPieces` base pieces worth `subtotal`, PLUS
+   * (B297) the rate trio it was priced under — see `categoryTaxForLine`. A caller that defers
+   * the amount to a later recompute pass (unit-line-edit.ts's `taxFor: () => 0`) defers the
+   * snapshot the same way — the two must never disagree about whether this line has been priced.
+   */
+  taxFor: (
+    qtyPieces: number,
+    subtotal: number,
+  ) => { amount: number; snapshot: CategoryTaxSnapshot };
   /** Set on every line by the caller's tenancy: a nested create bypasses `forTenant()`. */
   position: number;
   tenantId: string | null | undefined;
@@ -242,22 +293,33 @@ export function buildUnitLine(input: {
       `A line sold by the ${label} takes a quantity of ${label} units only — leave boxes and pieces out.`,
     );
   }
-  const count = Math.trunc(Number(item.qty));
-  if (!(count > 0)) {
-    throw new BadRequestException(`Line quantity must be greater than zero (${label}).`);
-  }
-
+  // B682/SA-145: the count/split validation is buildLine's unit axis (site 2 of 2 —
+  // buildInvoiceItemData is excluded, it prorates a stored subtotal). This call's own
+  // `subtotal` is discarded (unitPrice isn't known yet — tier pricing below resolves it);
+  // it exists only to get buildLine's validated `{boxes, pieces, qty}` split and reject a
+  // fractional/non-positive count with the SAME wording every buildLine site uses, rather
+  // than the old `Math.trunc`, which used to silently bill 1 for a typed 1.5 on the EDIT
+  // path (CREATE's own DTO is already `@IsInt`, so it never reached here truncated).
   const factor = resolved.unitsPerBox;
-  const baseQty = count * factor;
-  if (baseQty > MAX_LINE_QTY) {
+  let split: { boxes: number | null; pieces: number | null; qty: number };
+  try {
+    split = buildLine({
+      axis: { kind: "unit", label, count: Number(item.qty), factorToBase: factor },
+      unitPrice: 0,
+    });
+  } catch (e) {
+    if (e instanceof AmbiguousLineError) {
+      throw new BadRequestException(
+        `A line sold by the ${label} needs a whole number of ${label}.`,
+      );
+    }
+    throw e;
+  }
+  if (split.qty > MAX_LINE_QTY) {
     throw new BadRequestException(
-      `${count} x ${label} is ${baseQty.toLocaleString("en-US")} pieces — over the ${MAX_LINE_QTY.toLocaleString("en-US")} a single line can hold.`,
+      `${item.qty} x ${label} is ${split.qty.toLocaleString("en-US")} pieces — over the ${MAX_LINE_QTY.toLocaleString("en-US")} a single line can hold.`,
     );
   }
-  const split =
-    factor === 1
-      ? { boxes: null, pieces: null, qty: count }
-      : normalizeBoxesPieces({ boxes: count, pieces: 0, unitsPerBox: factor });
 
   let listPrice: number;
   let tierPrice: number;
@@ -270,12 +332,21 @@ export function buildUnitLine(input: {
         "This customer's pricing tier is invalid (must be 1-5) — fix it on the customer first.",
       );
     }
+    // #2277: a line HELD in a unit the product no longer offers (removed after the order was
+    // placed) keeps its snapshot factor through resolveLineUnits, but has no ladder price — a 400
+    // with a remedy, never an UnknownUnitError escaping as a 500.
+    if (e instanceof UnknownUnitError) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.UNIT_NOT_OFFERED,
+        message: `The ${e.unitLabel} is no longer offered for this product — choose another unit, or ask an admin to add it back.`,
+      });
+    }
     throw e;
   }
   const typed = item.unitPrice != null ? roundMoney(item.unitPrice) : null; // round every write
   let unitPrice = tierPrice;
-  let priceType: PriceType = tier !== 1 ? PriceType.SPECIAL : PriceType.STANDARD;
-  let originalPrice: number | null = tier !== 1 ? listPrice : null;
+  let priceType: PriceType = isSpecialTier(tier) ? PriceType.SPECIAL : PriceType.STANDARD;
+  let originalPrice: number | null = isSpecialTier(tier) ? listPrice : null;
   if (typed != null && typed < listPrice) {
     unitPrice = typed;
     priceType = PriceType.DISCOUNTED;
@@ -286,7 +357,9 @@ export function buildUnitLine(input: {
     originalPrice = listPrice;
   }
 
-  const subtotal = computeLineSubtotal({
+  // The real subtotal, now that tier pricing has resolved the actual unitPrice — the split
+  // above is already buildLine-validated, so computeLineSubtotalStrict never throws here.
+  const subtotal = computeLineSubtotalStrict({
     unitPrice,
     qty: split.qty,
     boxes: split.boxes,
@@ -299,24 +372,33 @@ export function buildUnitLine(input: {
     );
   }
 
-  return {
-    productId: item.productId,
-    name: null,
-    qty: split.qty,
-    boxes: split.boxes,
-    pieces: split.pieces,
-    unitsPerBox: lineUnitsPerBoxSnapshot(resolved, split.boxes, "boxed"),
-    unitLabel: label,
-    unitPrice,
-    priceType,
-    originalPrice,
-    promoFreeUnits: null,
-    subtotal,
-    notes: item.itemNote || item.notes || undefined,
-    trackedCategoryId: product.trackedCategoryId ?? null,
-    trackedSubcategoryId: product.trackedSubcategoryId ?? null,
-    categoryTaxAmount: taxFor(split.qty, subtotal),
-    position: input.position,
-    tenantId: input.tenantId,
-  };
+  const categoryTax = taxFor(split.qty, subtotal);
+  return assertUnitLineSplit(
+    {
+      productId: item.productId,
+      name: null,
+      qty: split.qty,
+      boxes: split.boxes,
+      pieces: split.pieces,
+      unitsPerBox: lineUnitsPerBoxSnapshot(resolved, split.boxes, "boxed"),
+      unitLabel: label,
+      unitPrice,
+      priceType,
+      originalPrice,
+      promoFreeUnits: null,
+      subtotal,
+      notes: item.itemNote || item.notes || undefined,
+      trackedCategoryId: product.trackedCategoryId ?? null,
+      trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+      categoryTaxAmount: categoryTax.amount,
+      // B297 (SA-088): the rate trio categoryTaxAmount was computed from (or, for a caller that
+      // defers the amount to a later recompute pass, deferred the same way — see `taxFor`).
+      categoryTaxType: categoryTax.snapshot.categoryTaxType,
+      categoryTaxRate: categoryTax.snapshot.categoryTaxRate,
+      categoryPriceIncludesTax: categoryTax.snapshot.categoryPriceIncludesTax,
+      position: input.position,
+      tenantId: input.tenantId,
+    },
+    "buildUnitLine",
+  );
 }

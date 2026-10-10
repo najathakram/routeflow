@@ -13,8 +13,10 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { MessagingService } from "../messaging/messaging.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { ChangeRequestResolveAction } from "./dto/resolve-change-request.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 const customerUser: JwtPayload = {
   sub: "user-cust",
@@ -233,6 +235,107 @@ describe("ChangeRequestsService", () => {
         response: expect.objectContaining({ code: "CHANGE_WINDOW_CLOSED" }),
       });
       expect(prisma.changeRequest.create).not.toHaveBeenCalled();
+    });
+
+    // B1135 / SA-696: a SHIP (carrier) order has no route run, so the G7 inverse gate answered
+    // EDIT_WINDOW_OPEN ("use PATCH /orders/:id/items") while that PATCH sent the buyer back here. A
+    // with-carrier order's lines are frozen, so a change request on it gets its own coded refusal.
+    describe("B1135: an order with the carrier (SHIP, no route run)", () => {
+      const SHIPPED_MESSAGE = "This order has already shipped. Contact the seller for changes.";
+      const withCarrier = {
+        ...dispatchedOrder,
+        tenantId: "test-tenant",
+        fulfillPath: "SHIP" as const,
+        shippedAt: new Date("2026-10-01T00:00:00Z"),
+        routeRunId: null,
+        routeRunStopId: null,
+        routeRun: null,
+      };
+      const shipBillingTenant = (mode: string) => {
+        (ordersService as any).featureConfig = {
+          getEffectiveMode: jest.fn().mockResolvedValue(mode),
+        };
+      };
+
+      it.each(["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED"] as const)(
+        "a %s order with the carrier: 409 with the new code and message, nothing filed",
+        async (status) => {
+          shipBillingTenant("ship");
+          prisma.order.findUnique.mockResolvedValue({ ...withCarrier, status });
+          prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+
+          const attempt = service.create(
+            "ord-1",
+            { type: "NOTE" as any, note: "add a case please" },
+            customerUser,
+          );
+
+          await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+          await expect(attempt).rejects.toMatchObject({
+            response: {
+              code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST,
+              message: SHIPPED_MESSAGE,
+            },
+          });
+          expect(prisma.changeRequest.create).not.toHaveBeenCalled();
+          expect(messaging.notifyEvent).not.toHaveBeenCalled();
+        },
+      );
+
+      it("the staff caller gets the same answer (the order, not the role, decides)", async () => {
+        shipBillingTenant("both");
+        prisma.order.findUnique.mockResolvedValue(withCarrier);
+
+        await expect(
+          service.create("ord-1", { type: "NOTE" as any, note: "hi" }, operatorUser),
+        ).rejects.toMatchObject({
+          response: { code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST },
+        });
+      });
+
+      it("a CUSTOMER who does not own the order still meets the bare 403, never the shipped message", async () => {
+        shipBillingTenant("ship");
+        prisma.order.findUnique.mockResolvedValue(withCarrier);
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-OTHER" });
+
+        await expect(
+          service.create("ord-1", { type: "NOTE" as any, note: "hi" }, customerUser),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      });
+
+      it("a route-run order is unchanged: an IN_PROGRESS run still files the request", async () => {
+        shipBillingTenant("ship");
+        prisma.order.findUnique.mockResolvedValue({ ...dispatchedOrder, fulfillPath: "ROUTE" });
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.changeRequest.create.mockResolvedValue({ id: "cr-new", status: "PENDING" });
+
+        await service.create("ord-1", { type: "NOTE" as any, note: "leave at back" }, customerUser);
+
+        expect(prisma.changeRequest.create).toHaveBeenCalledTimes(1);
+      });
+
+      it("a route-run order is unchanged: a SCHEDULED run still answers EDIT_WINDOW_OPEN", async () => {
+        shipBillingTenant("ship");
+        prisma.order.findUnique.mockResolvedValue({
+          ...dispatchedOrder,
+          fulfillPath: "ROUTE",
+          status: "CONFIRMED",
+          routeRun: { status: "SCHEDULED" },
+        });
+
+        await expect(
+          service.create("ord-1", { type: "NOTE" as any, note: "hi" }, operatorUser),
+        ).rejects.toMatchObject({ response: { code: API_ERROR_CODES.EDIT_WINDOW_OPEN } });
+      });
+
+      it("a business that does not bill at shipment keeps today's EDIT_WINDOW_OPEN (the guard is gated on it)", async () => {
+        shipBillingTenant("pickup");
+        prisma.order.findUnique.mockResolvedValue(withCarrier);
+
+        await expect(
+          service.create("ord-1", { type: "NOTE" as any, note: "hi" }, operatorUser),
+        ).rejects.toMatchObject({ response: { code: API_ERROR_CODES.EDIT_WINDOW_OPEN } });
+      });
     });
 
     it("forbids a CUSTOMER filing against an order they do not own", async () => {
@@ -764,6 +867,12 @@ describe("ChangeRequestsService", () => {
         routeRun: { driverId: "drv-1", status: "IN_PROGRESS" },
       });
       prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
+      // SA-434: the SA-429 predicate reads the ORDER's own stop chain (not order.routeRun).
+      prisma.order.findFirst.mockResolvedValue({ routeRunStopId: "stop-1" });
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        status: "PENDING",
+        routeRun: { driverId: "drv-1", status: "IN_PROGRESS" },
+      });
       prisma.changeRequest.updateMany.mockResolvedValue({ count: 1 });
       prisma.changeRequest.findUnique.mockResolvedValue({ ...PENDING_CR, status: "DECLINED" });
 
@@ -775,6 +884,229 @@ describe("ChangeRequestsService", () => {
           driverUser,
         ),
       ).resolves.toBeDefined();
+    });
+  });
+
+  // ─── B673: a door ADD_ITEM's box split must survive a next-delivery rollover ─────────────────
+
+  /**
+   * B673 (REG-B673). A driver adding 1 box of a 12-pack at the door files the ADD_ITEM as
+   * `{ qty: 12 (total pieces), boxes: 1, pieces: 0 }`. `approveNextDelivery` used to read only the
+   * bare `qty` and hand `{ productId, qty: 12 }` to `OrdersService.create()`, which — by house
+   * convention — reads a bare qty on a boxed product as a BOX count: 12 boxes, billed $480 for $40.
+   *
+   * The buyer portal files the other shape — a bare `qty` in selling units (boxes), no split — and
+   * that path must stay byte-identical. So the fix branches on "a split is present", never on who
+   * filed the request, and never reinterprets a bare qty.
+   *
+   * Harness: `create()` is replaced by a boundary fake that prices each item EXACTLY as create()
+   * does — its own split predicate (`orders.service.ts` ~:1995), `normalizeBoxesPieces`, then the
+   * real `computeLineSubtotal` from @routeflow/pricing at the $40 box price and the LIVE pack — and
+   * returns that as the draft's total. The service passes `Number(draft.total)` on to the credit
+   * re-check, so the billed figure is read where the service itself reads it. A plain jest.fn()
+   * here would hide the price entirely, which is how this shipped.
+   */
+  describe("B673 — APPROVE_NEXT_DELIVERY of an ADD_ITEM carrying a box split (REG-B673)", () => {
+    const BOX_PRICE = 40;
+    let livePack = 12;
+
+    /** What create() bills for one item: its split predicate, normalizeBoxesPieces, then pricing. */
+    const priceLikeCreate = (item: {
+      qty: number;
+      boxes?: number | null;
+      pieces?: number | null;
+    }): number => {
+      let qty = item.qty;
+      let boxes: number | null = null;
+      let pieces: number | null = null;
+      if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) {
+        const split = normalizeBoxesPieces({
+          boxes: item.boxes,
+          pieces: item.pieces,
+          qty: item.qty,
+          unitsPerBox: livePack,
+        });
+        qty = split.qty;
+        boxes = split.boxes;
+        pieces = split.pieces;
+      }
+      return computeLineSubtotal({
+        unitPrice: BOX_PRICE,
+        qty,
+        boxes,
+        pieces,
+        unitsPerBox: livePack,
+      });
+    };
+
+    /** The draft total the service passed on to the credit re-check — i.e. what was billed. */
+    const billed = (): number => ordersService.assertCreditForProjectedOrder.mock.calls[0][2];
+    const createdItems = () => ordersService.create.mock.calls[0][0].items;
+
+    const doorAdd = (payload: Record<string, unknown>) => ({
+      ...PENDING_CR,
+      requestedById: "user-drv",
+      requestedByName: "driver1",
+      requestedByRole: "DRIVER",
+      payload: { productId: "prod-1", productName: "Sample Cola 12pk", ...payload },
+    });
+
+    const approveNextDelivery = () =>
+      service.resolve(
+        "ord-1",
+        "cr-1",
+        { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+        operatorUser,
+      );
+
+    beforeEach(() => {
+      livePack = 12;
+      prisma.order.findUnique.mockResolvedValue({
+        ...dispatchedOrder,
+        routeRun: { driverId: "drv-1", status: "IN_PROGRESS" },
+      });
+      prisma.product.findFirst.mockImplementation(async () => ({
+        id: "prod-1",
+        name: "Sample Cola 12pk",
+        trackedCategoryId: null,
+        unitsPerBox: livePack,
+      }));
+      prisma.customer.findFirst.mockResolvedValue({ userId: "user-cust" });
+      prisma.changeRequest.updateMany.mockResolvedValue({ count: 1 });
+      prisma.changeRequest.findUnique.mockResolvedValue({ ...PENDING_CR, status: "APPROVED" });
+      ordersService.create.mockImplementation(async (dto: { items: any[] }) => ({
+        id: "draft-1",
+        total: dto.items.reduce((sum, item) => sum + priceLikeCreate(item), 0),
+      }));
+    });
+
+    it("REG-B673-1: 1 box of a 12-pack at $40 is billed $40, not $480 (12 boxes)", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue(doorAdd({ qty: 12, boxes: 1, pieces: 0 }));
+
+      await approveNextDelivery();
+
+      expect(billed()).toBe(40);
+      expect(createdItems()).toEqual([{ productId: "prod-1", qty: 12, boxes: 1, pieces: 0 }]);
+    });
+
+    it("REG-B673-4: 5 loose pieces of a 12-pack are billed $16.67, not $200 (5 boxes)", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue(doorAdd({ qty: 5, boxes: 0, pieces: 5 }));
+
+      await approveNextDelivery();
+
+      expect(billed()).toBe(16.67);
+      expect(createdItems()).toEqual([{ productId: "prod-1", qty: 5, boxes: 0, pieces: 5 }]);
+    });
+
+    it("REG-B673-2: the pack changed since filing (12 → 6) — refused, naming BOTH packs; nothing drafted, CR stays PENDING", async () => {
+      livePack = 6;
+      prisma.changeRequest.findFirst.mockResolvedValue(doorAdd({ qty: 12, boxes: 1, pieces: 0 }));
+
+      const err = await approveNextDelivery().catch((e) => e);
+
+      expect(ordersService.create).not.toHaveBeenCalled();
+      expect(err).toBeInstanceOf(BadRequestException);
+      const body = err.getResponse();
+      expect(body.code).toBe("CHANGE_REQUEST_PACK_CHANGED");
+      expect(body.message).toContain("12 per box");
+      expect(body.message).toContain("6 per box");
+      expect(body.message).toContain("Sample Cola 12pk");
+      // The advice: decline and re-add on the next order. Never approve-at-stop — the item was not
+      // on the truck, and that path's merge re-prices at 12x on an old box-unaware line (B753(a)).
+      expect(body.message).toContain("Decline it and re-add the item to the next order");
+      expect(body.message).not.toMatch(/approve at stop/i);
+      expect(prisma.changeRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("REG-B673-3: the product is no longer sold by the box — refused, naming the filed pack; nothing drafted", async () => {
+      livePack = 1;
+      prisma.changeRequest.findFirst.mockResolvedValue(doorAdd({ qty: 12, boxes: 1, pieces: 0 }));
+
+      const err = await approveNextDelivery().catch((e) => e);
+
+      expect(ordersService.create).not.toHaveBeenCalled();
+      expect(err).toBeInstanceOf(BadRequestException);
+      const body = err.getResponse();
+      expect(body.code).toBe("CHANGE_REQUEST_PACK_CHANGED");
+      expect(body.message).toContain("12 per box");
+      expect(body.message).toContain("no longer sold by the box");
+      expect(prisma.changeRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("REG-B673-3b: a filed pack that disagrees with the live one (1 box = 11 pieces vs 12) is a pack mismatch — refused, never billed", async () => {
+      // `(qty - pieces) / boxes` is the only record of the pack at filing; 11 is a valid pack, so
+      // this reads as "filed at 11 per box" and is refused naming both packs, like any pack change.
+      prisma.changeRequest.findFirst.mockResolvedValue(doorAdd({ qty: 11, boxes: 1, pieces: 0 }));
+
+      const err = await approveNextDelivery().catch((e) => e);
+
+      expect(ordersService.create).not.toHaveBeenCalled();
+      expect(err.getResponse().code).toBe("CHANGE_REQUEST_PACK_CHANGED");
+      expect(err.getResponse().message).toContain("11 per box");
+      expect(err.getResponse().message).toContain("12 per box");
+    });
+
+    it.each([
+      ["negative boxes", { qty: 12, boxes: -1, pieces: 0 }],
+      ["fractional boxes", { qty: 12, boxes: 1.5, pieces: 0 }],
+      ["negative pieces", { qty: 12, boxes: 1, pieces: -1 }],
+      ["an all-zero split", { qty: 12, boxes: 0, pieces: 0 }],
+      ["more loose pieces than the qty", { qty: 3, boxes: 0, pieces: 5 }],
+      ["a pack that is not a whole number", { qty: 13, boxes: 2, pieces: 0 }],
+    ])(
+      "REG-B673-5: an inconsistent split (%s) is refused as INVALID_LINE_SPLIT — never reinterpreted, never billed",
+      async (_label, payload) => {
+        prisma.changeRequest.findFirst.mockResolvedValue(doorAdd(payload));
+
+        const err = await approveNextDelivery().catch((e) => e);
+
+        expect(ordersService.create).not.toHaveBeenCalled();
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.getResponse().code).toBe("INVALID_LINE_SPLIT");
+      },
+    );
+
+    it("PIN-B673-1: the buyer's bare qty (boxes, no split) is untouched — create() gets exactly { productId, qty }", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue({
+        ...PENDING_CR,
+        payload: { productId: "prod-1", qty: 3, productName: "Sample Cola 12pk" },
+      });
+
+      await approveNextDelivery();
+
+      expect(createdItems()).toEqual([{ productId: "prod-1", qty: 3 }]);
+      expect(Object.keys(createdItems()[0])).toEqual(["productId", "qty"]);
+      expect(billed()).toBe(120); // 3 boxes at $40
+    });
+
+    it("PIN-B673-1b: a buyer's bare 1 (box) is still $40", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue({
+        ...PENDING_CR,
+        payload: { productId: "prod-1", qty: 1, productName: "Sample Cola 12pk" },
+      });
+
+      await approveNextDelivery();
+
+      expect(createdItems()).toEqual([{ productId: "prod-1", qty: 1 }]);
+      expect(billed()).toBe(40);
+    });
+
+    it("PIN-B673-1c: an explicit null split (how the create path stores a buyer request) is still a bare qty", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue({
+        ...PENDING_CR,
+        payload: {
+          productId: "prod-1",
+          qty: 2,
+          boxes: null,
+          pieces: null,
+          productName: "Sample Cola 12pk",
+        },
+      });
+
+      await approveNextDelivery();
+
+      expect(createdItems()).toEqual([{ productId: "prod-1", qty: 2 }]);
+      expect(billed()).toBe(80);
     });
   });
 });

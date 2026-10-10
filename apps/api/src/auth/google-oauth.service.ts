@@ -1,5 +1,7 @@
+import { safeBuyerDisplayName } from "../common/text-cell-guards";
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -19,6 +21,15 @@ import type { JwtPayload } from "./jwt-payload.interface";
 import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
 import type { DeviceInfo } from "./auth.service";
+import { escapeHtml } from "../common/html-escape";
+import { DERIVED_JWT_LABELS, derivedJwtKey } from "../common/derived-jwt-key";
+import { casLinkProviderId, resolveBySubThenEmail } from "./oauth-account-link";
+import {
+  BUYER_ACCESS_AUDIENCE,
+  BUYER_REFRESH_AUDIENCE,
+  STAFF_ACCESS_AUDIENCE,
+  STAFF_REFRESH_AUDIENCE,
+} from "./session-token";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +51,18 @@ interface OAuthState {
    * builds don't send it.
    */
   deviceState?: string;
+  /**
+   * B825: the browser origin the callback should redirect back to for a
+   * BROWSER-based flow (never the native `mobile` deep-link flow above) —
+   * the Expo mobile-web build's own origin, so a driver signing in from
+   * there returns to it instead of always landing on the Next web app.
+   * Already validated against the exact allow-list (AuthController's
+   * `resolveReturnOrigin`) at mint time, in `generateAuthUrl` — the HMAC over
+   * this whole payload (B349) makes it tamper-proof from here on, so nothing
+   * downstream needs to re-derive or re-check it against the allow-list;
+   * only the callback's PRE-signature-check peek does (untrusted input).
+   */
+  returnOrigin?: string;
 }
 
 export interface GoogleProfile {
@@ -57,6 +80,8 @@ export interface GoogleProfile {
   mobile?: boolean;
   /** F12-005: device-generated state nonce to echo back in the mobile deep link. */
   deviceState?: string;
+  /** B825: already-validated browser origin for a non-`mobile` (browser) flow. */
+  returnOrigin?: string;
 }
 
 interface TokenPair {
@@ -85,10 +110,8 @@ const NONCE_TTL_SECS = 600; // 10 minutes
 
 // B349: the OAuth `state` is signed so a caller cannot rewrite `linkUserId` (or any
 // other field) to attach their Google identity to someone else's account. The key is
-// HKDF-derived from JWT_SECRET (same isolation pattern as STORAGE_URL_SIGNING_SECRET)
-// — no new secret to provision.
-const OAUTH_STATE_HKDF_INFO = "routeflow-oauth-state-v1";
-const OAUTH_STATE_KEY_LEN = 32;
+// derived from JWT_SECRET by the shared helper (common/derived-jwt-key.ts) — no new secret to
+// provision.
 
 @Injectable()
 export class GoogleOAuthService {
@@ -109,20 +132,11 @@ export class GoogleOAuthService {
     const clientSecret = configService.get<string>("GOOGLE_CLIENT_SECRET") ?? "";
     this.oauth2Client = new OAuth2Client(clientId, clientSecret);
 
-    const jwtSecret = configService.get<{ secret: string }>("jwt")?.secret ?? "";
-    if (!jwtSecret) {
-      // B349 round 1: deriving the state-signing key from an empty string is a fixed,
-      // publicly-known key — fail closed instead of silently signing state with it.
-      throw new Error("JWT_SECRET is required to sign OAuth state");
-    }
-    this.stateSigningKey = Buffer.from(
-      crypto.hkdfSync(
-        "sha256",
-        jwtSecret,
-        Buffer.alloc(0),
-        OAUTH_STATE_HKDF_INFO,
-        OAUTH_STATE_KEY_LEN,
-      ),
+    // B349 round 1: a missing or short secret fails closed (the helper throws) rather than
+    // deriving the state-signing key from a guessable value.
+    this.stateSigningKey = derivedJwtKey(
+      DERIVED_JWT_LABELS.oauthState,
+      configService.get<{ secret: string }>("jwt")?.secret ?? "",
     );
 
     if (!clientId || !clientSecret) {
@@ -236,6 +250,9 @@ export class GoogleOAuthService {
     context?: "portal" | "staff" | "buyer-standalone",
     mobile?: boolean,
     deviceState?: string,
+    // B825: already validated by the caller (AuthController.resolveReturnOrigin)
+    // against the exact WEB_URL/MOBILE_WEB_URL allow-list — never re-derived here.
+    returnOrigin?: string,
   ): Promise<string> {
     const nonce = crypto.randomUUID();
     const stateObj: OAuthState = {
@@ -247,6 +264,7 @@ export class GoogleOAuthService {
       ...(mobile && { mobile: true }),
       // F12-005: carry the device state nonce through Google (opaque round-trip).
       ...(deviceState && { deviceState }),
+      ...(returnOrigin && { returnOrigin }),
     };
     const payloadJson = JSON.stringify(stateObj);
     const state = this.signState(payloadJson);
@@ -317,12 +335,27 @@ export class GoogleOAuthService {
     if (existingByGoogleId) throw new ForbiddenException("google_id_taken");
     if (user.googleId) throw new ForbiddenException("google_already_linked");
 
-    await this.prisma.user.update({
-      where: { id: linkUserId },
-      data: { googleId, forcePasswordChange: false },
-    });
+    // Link by compare-and-set (oauth-account-link.ts, shared with sign-in): only the first writer
+    // wins. A lost race to a DIFFERENT sub is refused like the read-time check above; to the SAME
+    // sub it is a harmless duplicate (nothing to repeat, no second notification).
+    let linked: boolean;
+    try {
+      ({ linked } = await casLinkProviderId({
+        updateMany: (args) => this.prisma.user.updateMany(args as any),
+        findUnique: (id) => this.prisma.user.findUnique({ where: { id } }),
+        row: user,
+        column: "googleId",
+        sub: googleId,
+        data: { forcePasswordChange: false },
+        extraWhere: { tenantId: user.tenantId },
+      }));
+    } catch (e) {
+      if (e instanceof ConflictException) throw new ForbiddenException("google_already_linked");
+      throw e;
+    }
+    if (!linked) return;
 
-    this.logger.log(`Google account linked for user ${linkUserId} (${email})`);
+    this.logger.log(`Google account linked for user ${linkUserId}`);
 
     // Fire-and-forget security notification
     if (user.email) {
@@ -330,7 +363,7 @@ export class GoogleOAuthService {
         .send({
           to: user.email,
           subject: "Google Sign-In linked to your RouteFlow account",
-          html: `<p>Your Google account (<strong>${email}</strong>) has been linked to your RouteFlow account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+          html: `<p>Your Google account (<strong>${escapeHtml(email)}</strong>) has been linked to your RouteFlow account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
           // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
           senderClass: "platform",
         })
@@ -430,6 +463,7 @@ export class GoogleOAuthService {
       linkUserId: stateObj.linkUserId,
       mobile: stateObj.mobile,
       deviceState: stateObj.deviceState,
+      returnOrigin: stateObj.returnOrigin,
     };
   }
 
@@ -482,6 +516,76 @@ export class GoogleOAuthService {
     }
   }
 
+  // ─── Lookup order (#2495) ───────────────────────────────────────────────────
+  // Shared by handlePlatformAuth, handleTenantAuth's staff lookup and
+  // handleBuyerPortalAuth. The old `findFirst({ OR: [{ googleId }, { email }] })`
+  // was nondeterministic when two rows matched (one bound to this Google sub,
+  // another merely sharing the email) — Postgres gives no ordering guarantee over
+  // an OR with no ORDER BY, so which row "won" could vary. Resolve by the Google
+  // sub FIRST (a bound identity is unambiguous); only fall back to email when no
+  // sub match exists. If the email match is already bound to a DIFFERENT Google
+  // sub, refuse outright — signing in must never silently re-target someone
+  // else's linked account.
+  //
+  // Callers only ever receive a `GoogleProfile` from `verifyCallback`, which
+  // rejects `email_verified === false` before ever constructing one (see
+  // `google-oauth.email-verified.security.spec.ts`) — so an unverified email
+  // can never reach this lookup or the auto-link branches below it. Pinned,
+  // not re-checked here, to avoid duplicating that gate.
+  private async resolveBySubThenEmail<T extends { googleId: string | null }>(
+    findFirst: (args: Record<string, unknown>) => Promise<T | null>,
+    baseWhere: Record<string, unknown>,
+    profile: GoogleProfile,
+  ): Promise<T | null> {
+    // #2664: fail closed before touching the DB at all — a falsy sub or email means
+    // `verifyCallback`'s profile is malformed, and an undefined/empty filter would turn `where`
+    // into an unscoped match. (Google always carries an email, so unlike Apple it is required.)
+    if (!profile.googleId || !profile.email) {
+      throw new ForbiddenException("unauthorized");
+    }
+    // The ONE rule (oauth-account-link.ts, shared with Apple): sub first, then the ordered email
+    // match; an email row bound to a DIFFERENT sub is a 409 google_account_mismatch.
+    return resolveBySubThenEmail({
+      findFirst,
+      baseWhere,
+      column: "googleId",
+      sub: profile.googleId,
+      email: profile.email,
+    });
+  }
+
+  // ─── Link race guard (#2495 LOW) ────────────────────────────────────────────
+  // The googleId-NULL email-match auto-link (handlePlatformAuth, handleTenantAuth's
+  // staff link, handleBuyerPortalAuth's first-link branch) used to be check-then-update:
+  // read the row with googleId:null, then unconditionally write the sub. Two concurrent
+  // sign-ins for the same email (one with the rightful sub, one with an attacker's) could
+  // both pass the read before either wrote, and the writer that lost the race would still
+  // overwrite whatever the winner just set. Guard the write itself with a compare-and-set
+  // (`updateMany` scoped to `googleId: null`) so only the first writer succeeds; a losing
+  // writer re-reads and either finds itself already linked (a harmless duplicate — same
+  // sub) or a DIFFERENT sub now bound, which is refused exactly like the read-time check.
+  private async casLinkGoogleId<T extends { id: string; googleId: string | null }>(
+    updateMany: (args: {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }) => Promise<{ count: number }>,
+    findUnique: (id: string) => Promise<T | null>,
+    row: T,
+    profile: GoogleProfile,
+    data: Record<string, unknown>,
+  ): Promise<{ row: T; linked: boolean }> {
+    // Shared CAS (oauth-account-link.ts): only the first writer succeeds; a lost race to a
+    // different sub is a 409 google_account_mismatch, to the same sub a harmless duplicate.
+    return casLinkProviderId({
+      updateMany,
+      findUnique,
+      row,
+      column: "googleId",
+      sub: profile.googleId,
+      data,
+    });
+  }
+
   /** Find or create the appropriate user record and return a token pair. */
   async findOrCreateUser(
     profile: GoogleProfile,
@@ -498,14 +602,11 @@ export class GoogleOAuthService {
     profile: GoogleProfile,
     deviceInfo?: DeviceInfo,
   ): Promise<GoogleAuthResult> {
-    const user = await this.prisma.user.findFirst({
-      where: {
-        tenantId: null,
-        role: "SUPER_ADMIN",
-        deletedAt: null,
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
-      },
-    });
+    const user = await this.resolveBySubThenEmail(
+      (args: any) => this.prisma.user.findFirst(args),
+      { tenantId: null, role: "SUPER_ADMIN", deletedAt: null },
+      profile,
+    );
 
     if (!user || user.status !== "ACTIVE") {
       throw new ForbiddenException("unauthorized");
@@ -515,10 +616,13 @@ export class GoogleOAuthService {
     // Also clear forcePasswordChange — Google-authenticated users cannot set a
     // password via the change-password form, so the flag must not block them.
     if (!user.googleId) {
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { googleId: profile.googleId, forcePasswordChange: false },
-      });
+      await this.casLinkGoogleId(
+        (args) => this.prisma.user.updateMany(args),
+        (id) => this.prisma.user.findUnique({ where: { id } }),
+        user,
+        profile,
+        { googleId: profile.googleId, forcePasswordChange: false },
+      );
     }
 
     const tokens = await this.issueUserTokenPair(user, null, deviceInfo);
@@ -556,14 +660,15 @@ export class GoogleOAuthService {
     }
 
     // Check for a matching staff user in this tenant first
-    let staffUser = await this.prisma.user.findFirst({
-      where: {
+    let staffUser = await this.resolveBySubThenEmail(
+      (args: any) => this.prisma.user.findFirst(args),
+      {
         tenantId: tenant.id,
         deletedAt: null,
         role: { in: ["OPERATOR", "DRIVER", "TENANT_ADMIN"] },
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
       },
-    });
+      profile,
+    );
 
     if (staffUser) {
       if (staffUser.status !== "ACTIVE") throw new ForbiddenException("unauthorized");
@@ -572,12 +677,16 @@ export class GoogleOAuthService {
       if (profile.context === "portal") throw new ForbiddenException("google_email_is_staff");
 
       if (!staffUser.googleId) {
-        staffUser = await this.prisma.user.update({
-          where: { id: staffUser.id },
+        const { row } = await this.casLinkGoogleId(
+          (args) => this.prisma.user.updateMany(args),
+          (id) => this.prisma.user.findUnique({ where: { id } }),
+          staffUser,
+          profile,
           // Clear forcePasswordChange — Google users cannot use the password
           // change form, so the flag must not redirect them to /change-password.
-          data: { googleId: profile.googleId, forcePasswordChange: false },
-        });
+          { googleId: profile.googleId, forcePasswordChange: false },
+        );
+        staffUser = row;
       }
       const tokens = await this.issueUserTokenPair(staffUser, tenant.slug, deviceInfo);
       return {
@@ -598,12 +707,11 @@ export class GoogleOAuthService {
   }
 
   private async handleBuyerPortalAuth(profile: GoogleProfile): Promise<GoogleAuthResult> {
-    let buyer = await this.prisma.buyerAccount.findFirst({
-      where: {
-        deletedAt: null,
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
-      },
-    });
+    let buyer = await this.resolveBySubThenEmail(
+      (args: any) => this.prisma.buyerAccount.findFirst(args),
+      { deletedAt: null },
+      profile,
+    );
 
     if (buyer) {
       if (buyer.status === "SUSPENDED") throw new ForbiddenException("unauthorized");
@@ -626,42 +734,59 @@ export class GoogleOAuthService {
       const squattedPassword = googleAttestsMailbox && buyer.passwordSet && !buyer.emailVerified;
 
       if (!buyer.googleId) {
+        let linked: boolean;
         if (squattedPassword) {
           const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
-          buyer = await this.prisma.buyerAccount.update({
-            where: { id: buyer.id },
-            data: {
+          const casResult = await this.casLinkGoogleId(
+            (args) => this.prisma.buyerAccount.updateMany(args),
+            (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
+            buyer,
+            profile,
+            {
               googleId: profile.googleId,
               emailVerified: true,
               passwordHash: placeholderHash,
               passwordSet: false,
             },
-          });
-          await this.prisma.buyerRefreshToken.deleteMany({
-            where: { buyerAccountId: buyer.id },
-          });
-          this.logger.warn(
-            `Buyer ${buyer.id} had an unverified password neutralized on first Google link ` +
-              `(mailbox now attested by Google; prior sessions revoked)`,
           );
+          buyer = casResult.row;
+          linked = casResult.linked;
+          if (linked) {
+            await this.prisma.buyerRefreshToken.deleteMany({
+              where: { buyerAccountId: buyer.id },
+            });
+            this.logger.warn(
+              `Buyer ${buyer.id} had an unverified password neutralized on first Google link ` +
+                `(mailbox now attested by Google; prior sessions revoked)`,
+            );
+          }
         } else {
-          buyer = await this.prisma.buyerAccount.update({
-            where: { id: buyer.id },
-            data: {
+          const casResult = await this.casLinkGoogleId(
+            (args) => this.prisma.buyerAccount.updateMany(args),
+            (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
+            buyer,
+            profile,
+            {
               googleId: profile.googleId,
               ...(googleAttestsMailbox ? { emailVerified: true } : {}),
             },
-          });
+          );
+          buyer = casResult.row;
+          linked = casResult.linked;
         }
-        void this.emailService
-          .send({
-            to: buyer.email,
-            subject: "Google Sign-In linked to your RouteFlow account",
-            html: `<p>Your Google account (<strong>${profile.email}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
-            // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
-            senderClass: "platform",
-          })
-          .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
+        // Only notify when THIS request actually performed the link — a request
+        // that lost the race to an identical concurrent one must not re-send it.
+        if (linked) {
+          void this.emailService
+            .send({
+              to: buyer.email,
+              subject: "Google Sign-In linked to your RouteFlow account",
+              html: `<p>Your Google account (<strong>${escapeHtml(profile.email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+              // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+              senderClass: "platform",
+            })
+            .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
+        }
       } else if (googleAttestsMailbox && !buyer.emailVerified) {
         // Already-linked account whose mailbox was never verified (e.g. password
         // registration followed by Google linking before this gate existed). Same
@@ -701,13 +826,14 @@ export class GoogleOAuthService {
           email: profile.email,
           passwordHash,
           passwordSet: false,
-          name: profile.name,
+          // B964: the provider's name never blocks a sign-in; a formula-led one is neutralised to the email local-part
+          name: safeBuyerDisplayName(profile.name, profile.email),
           googleId: profile.googleId,
           status: "ACTIVE",
           emailVerified: true,
         },
       });
-      this.logger.log(`BuyerAccount created via Google: ${profile.email}`);
+      this.logger.log(`BuyerAccount created via Google: ${buyer.id}`);
     }
 
     // Process an invite token embedded in the OAuth state
@@ -717,9 +843,10 @@ export class GoogleOAuthService {
       );
     }
 
-    // REG-B141: this count decides the mobile Google-login branch (sellerCount === 0 shows the
-    // "not connected to any supplier" message), so it must use the SAME definition of a usable
-    // seller as BuyerService.getSellers — a link whose customer was removed is not one.
+    // REG-B141: the count of USABLE sellers the Google callback hands the client (web reads it
+    // from the redirect). It must use the SAME definition as BuyerService.getSellers' ACTIVE
+    // links — a link whose customer was removed is not one. Mobile no longer branches on it
+    // (#2546): it reads GET /buyer/sellers itself so a pending-only buyer lands on its seller list.
     const sellerCount = await this.prisma.customerLink.count({
       where: { buyerAccountId: buyer.id, status: "ACTIVE", customer: { deletedAt: null } },
     });
@@ -783,6 +910,13 @@ export class GoogleOAuthService {
     tenantSlug: string | null,
     deviceInfo?: DeviceInfo,
   ): Promise<TokenPair> {
+    // #2159 S1: a Google sign-in is an interactive sign-in too — stamp lastLoginAt exactly as
+    // AuthService.login() does (best-effort; a failed stamp never blocks the sign-in).
+    try {
+      await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    } catch (err) {
+      this.logger.warn(`lastLoginAt stamp failed for user ${user.id}: ${(err as Error).message}`);
+    }
     const jwtConfig = this.configService.get<{
       secret: string;
       refreshSecret: string;
@@ -798,17 +932,28 @@ export class GoogleOAuthService {
       tenantId: user.tenantId ?? null,
       tenantSlug: tenantSlug ?? null,
       hasPassword: !!user.password,
+      // #2495: mirror AuthService.login()'s claims exactly — a Google-authenticated
+      // staff token must carry the same isAdmin claim a password login would.
+      isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
+      // #1534: the same capability claim password login and refresh mint (auth.service) — the
+      // staff socket re-check compares it with the user row.
+      canActAsDriver: user.canActAsDriver ?? false,
     };
     // Plans & Billing: embed the entitlement snapshot for Google-login users too.
     const claims = await this.entitlements.claimsFor(payload.tenantId);
     if (claims) Object.assign(payload, claims);
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: STAFF_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
     const refreshToken = this.jwtService.sign(
       { sub: user.id, type: "staff" }, // F5-003: realm discriminator (Google staff login)
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: STAFF_REFRESH_AUDIENCE,
+      },
     );
     await this.storeUserRefreshToken(user.id, refreshToken, deviceInfo);
     return { accessToken, refreshToken };
@@ -835,11 +980,16 @@ export class GoogleOAuthService {
     };
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
+      audience: BUYER_ACCESS_AUDIENCE,
       expiresIn: jwtConfig.expiresIn as any,
     });
     const refreshToken = this.jwtService.sign(
       { sub: buyerAccountId, type: "buyer" }, // F5-003: realm discriminator (Google buyer login)
-      { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
+      {
+        secret: jwtConfig.refreshSecret,
+        expiresIn: jwtConfig.refreshExpiresIn as any,
+        audience: BUYER_REFRESH_AUDIENCE,
+      },
     );
     const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
     const decoded = this.jwtService.decode(refreshToken);

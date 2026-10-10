@@ -102,6 +102,9 @@ export function PreviewDrawer({
           <button
             onClick={onConfirm}
             disabled={confirming || (groups.total === 0 && !allowEmptyConfirm)}
+            aria-describedby={
+              groups.total === 0 && !allowEmptyConfirm ? "preview-empty-reason" : undefined
+            }
             className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
             {confirming ? "Applying..." : "Confirm"}
@@ -119,7 +122,7 @@ export function PreviewDrawer({
         </div>
       )}
       {groups.total === 0 ? (
-        <p className="text-sm text-slate-400" data-testid="preview-empty">
+        <p id="preview-empty-reason" className="text-sm text-slate-400" data-testid="preview-empty">
           {emptyMessage ?? "This change makes no difference for this tenant."}
         </p>
       ) : (

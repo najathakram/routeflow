@@ -4,9 +4,12 @@ import { EstimatesService } from "./estimates.service";
 import * as EstimatesServiceModule from "./estimates.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { computeLineSubtotal } from "@routeflow/pricing";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 // B8: accept() had no status guard and convertToInvoice() was a read-then-write
 // with no transaction, so a double-click (re-accept a CONVERTED estimate, or two
@@ -26,20 +29,45 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
     reserveNext: jest.fn().mockResolvedValue("INV-2026-0001"),
   };
 
+  /** What prisma.invoice.create returns: the created row, with its nested item creates as real rows. */
+  const echoInvoice = (id: string, args: any) => ({
+    id,
+    ...args.data,
+    items: (args.data.items?.create ?? []).map((c: any, i: number) => ({
+      id: `${id}-ii-${i}`,
+      ...c,
+    })),
+    customer: {},
+  });
+  const mockLedger = { writeSaleEntries: jest.fn().mockResolvedValue(undefined) };
+
   beforeEach(async () => {
     prisma = createMockPrisma();
+    mockLedger.writeSaleEntries.mockClear();
     mockNumbering.reserveNext.mockClear();
     mockNumbering.reserveNext.mockResolvedValue("INV-2026-0001");
     const mod = await Test.createTestingModule({
       providers: [
         EstimatesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         // flag.msrp defaults OFF so convertToInvoice's MSRP snapshot is a no-op.
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         {
           provide: EntitlementsService,
           useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
         },
         { provide: NumberingService, useValue: mockNumbering },
+        { provide: RegulatedLedgerService, useValue: mockLedger },
       ],
     }).compile();
     service = mod.get(EstimatesService);
@@ -97,7 +125,17 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       // Simulates the losing side of a race: another request's claim already
       // flipped ACCEPTED -> CONVERTED first, so this updateMany matches nothing.
       prisma.estimate.updateMany.mockResolvedValue({ count: 0 });
-      prisma.estimate.findUnique.mockResolvedValue({ id: "est-1", status: "ACCEPTED" });
+      // B659: the pre-flight now also reads subtotal/discount/taxAmount/total for the money
+      // guards (finding 5) — trivially-passing values here so this stays a pure race-loss repro.
+      prisma.estimate.findUnique.mockResolvedValue({
+        id: "est-1",
+        status: "ACCEPTED",
+        subtotal: 0,
+        discount: 0,
+        taxAmount: 0,
+        total: 0,
+        items: [],
+      });
 
       await expect(service.convertToInvoice("est-1")).rejects.toThrow(BadRequestException);
       await expect(service.convertToInvoice("est-1")).rejects.toThrow(
@@ -134,7 +172,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         ],
       });
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-1", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-1", args)),
       );
 
       const inv = await service.convertToInvoice("est-1");
@@ -182,7 +220,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         ],
       });
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-294", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-294", args)),
       );
 
       await service.convertToInvoice("est-294");
@@ -222,7 +260,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         ],
       });
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-294x", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-294x", args)),
       );
 
       await service.convertToInvoice("est-294x");
@@ -251,10 +289,59 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       });
       prisma.invoice.create.mockRejectedValue({
         code: "P2002",
-        message: "Unique constraint failed on the fields: (`invoiceNumber`)",
+        // the pg driver adapter's shape (B1186): no meta.target, the index rides in the cause
+        meta: {
+          driverAdapterError: {
+            cause: { constraint: { index: "Invoice_tenantId_invoiceNumber_key" } },
+          },
+        },
       });
 
       await expect(service.convertToInvoice("est-2")).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    // B1186: the convert's own link constraint (one estimate, one invoice) is the same coded 409; any
+    // OTHER unique violation propagates untouched instead of reading as an invoice-number conflict.
+    describe("B1186 convertToInvoice P2002 goes through the shared reader", () => {
+      const arrange = (err: unknown) => {
+        prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
+        prisma.estimate.findUnique.mockResolvedValue({
+          id: "est-2",
+          status: "ACCEPTED",
+          customerId: "cust-1",
+          subtotal: 100,
+          taxAmount: 10,
+          discount: 0,
+          total: 110,
+          notes: null,
+          terms: null,
+          items: [],
+        });
+        prisma.invoice.create.mockRejectedValue(err);
+      };
+      it("Estimate_invoiceId_key (adapter shape) => 409", async () => {
+        arrange({
+          code: "P2002",
+          // the pg driver adapter's shape (B1186): no meta.target, the index rides in the cause
+          meta: {
+            driverAdapterError: { cause: { constraint: { index: "Estimate_invoiceId_key" } } },
+          },
+        });
+        await expect(service.convertToInvoice("est-2")).rejects.toBeInstanceOf(ConflictException);
+      });
+      it("a native field-array target (no constraint NAME) is not claimed: exact names only", async () => {
+        arrange({ code: "P2002", meta: { target: ["tenantId", "invoiceNumber"] } });
+        await expect(service.convertToInvoice("est-2")).rejects.toMatchObject({ code: "P2002" });
+      });
+      it("another constraint propagates untouched", async () => {
+        const err = {
+          code: "P2002",
+          // the pg driver adapter's shape (B1186): no meta.target, the index rides in the cause
+          meta: { driverAdapterError: { cause: { constraint: { index: "Tenant_slug_key" } } } },
+        };
+        arrange(err);
+        await expect(service.convertToInvoice("est-2")).rejects.toBe(err);
+      });
     });
 
     // B100/F16b pin (P5, cause-ruling.md §2 D3): convertToInvoice calls
@@ -278,7 +365,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       });
       mockNumbering.reserveNext.mockResolvedValueOnce("INV-2026-0038");
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-9", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-9", args)),
       );
 
       const inv = await service.convertToInvoice("est-3");
@@ -308,7 +395,14 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
       prisma.estimate.create.mockRejectedValue({
         code: "P2002",
-        message: "Unique constraint failed on the fields: (`estimateNumber`)",
+        message:
+          "Unique constraint failed on the constraint: `Estimate_tenantId_estimateNumber_key`",
+        // the pg driver adapter's shape (B1186): no meta.target, the index rides in the cause
+        meta: {
+          driverAdapterError: {
+            cause: { constraint: { index: "Estimate_tenantId_estimateNumber_key" } },
+          },
+        },
       });
 
       await expect(
@@ -1015,8 +1109,9 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         id: "est-645",
         status: "ACCEPTED",
         customerId: "cust-645",
-        // 12 boxes * 12 units/box @ $10/unit = $1,440 — the exact repro shape
-        // from the live bug report (12x, $1,440 -> $17,280 on a naive re-price).
+        // 12 boxes @ $120/box = $1,440 — the exact repro shape from the live bug report (a
+        // dropped box-split re-prices this as qty(144) x unitPrice, 12x too high or too low
+        // depending which figure survives).
         subtotal: 1440,
         taxAmount: 0,
         discount: 0,
@@ -1028,7 +1123,11 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
             description: "Widget (case of 12)",
             productId: "prod-645",
             qty: 144,
-            unitPrice: 10,
+            // Box-split lines price by the BOX: 12 boxes @ $120/box = $1,440. (A $10 figure here
+            // was internally inconsistent with the fixture's own subtotal/box math — a per-unit
+            // price would need qty(144) x $10 = $1,440, but computeLineSubtotal prices a box-split
+            // line off boxes x unitPrice, not qty x unitPrice.)
+            unitPrice: 120,
             subtotal: 1440,
             boxes: 12,
             pieces: 0,
@@ -1036,8 +1135,11 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
           },
         ],
       });
+      // echoInvoice (not a naive spread): the ledger-write below reads created.items as an
+      // ARRAY of created rows (Prisma's real nested-create return shape), not the {create:[...]}
+      // write-args shape a bare `...args.data` spread would leave it as.
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-645", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-645", args)),
       );
 
       await service.convertToInvoice("est-645");
@@ -1067,10 +1169,10 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         id: "est-645-old",
         status: "ACCEPTED",
         customerId: "cust-645",
-        subtotal: 500,
+        subtotal: 600,
         taxAmount: 0,
         discount: 0,
-        total: 500,
+        total: 600,
         notes: null,
         terms: null,
         items: [
@@ -1081,10 +1183,11 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
             // 6 boxes with no loose pieces means qty is 72 (pack 12), never 5.
             // unitsPerBox is null because this row predates the create()
             // snapshot this fix added; the pack is still recoverable from the
-            // line's own split, (72 - 0) / 6 = 12.
+            // line's own split, (72 - 0) / 6 = 12. Box-split lines price by the
+            // BOX: 6 boxes @ $100/box = $600 (was an inconsistent 500).
             qty: 72,
             unitPrice: 100,
-            subtotal: 500,
+            subtotal: 600,
             boxes: 6,
             pieces: 0,
             unitsPerBox: null,
@@ -1092,7 +1195,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         ],
       });
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-645-old", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-645-old", args)),
       );
 
       await service.convertToInvoice("est-645-old");
@@ -1134,13 +1237,15 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         ],
       });
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-645-old-unboxed", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-645-old-unboxed", args)),
       );
 
       await service.convertToInvoice("est-645-old-unboxed");
 
       const createdLine = prisma.invoice.create.mock.calls[0][0].data.items.create[0];
-      expect(createdLine.boxes).toBe(0);
+      // A 0/0 "split" is NO split (B659 review finding 6): boxes:0, pieces:0 never counts as
+      // hasSplit, so this line converts as a plain qty line — boxes stays null, not 0.
+      expect(createdLine.boxes).toBeNull();
       expect(createdLine.unitsPerBox).toBeNull();
     });
 
@@ -1181,7 +1286,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
         ],
       });
       prisma.invoice.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: "inv-645-box-price", ...args.data, customer: {} }),
+        Promise.resolve(echoInvoice("inv-645-box-price", args)),
       );
 
       await service.convertToInvoice("est-645-box-price");

@@ -6,7 +6,8 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useInvoice, useUpdateInvoice, type CreateInvoiceItem } from "@/lib/api/invoices";
+import { useInvoice, useUpdateInvoice, type UpdateInvoiceItem } from "@/lib/api/invoices";
+import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
 import { hasUnitLine, unitLabelsOf } from "@/lib/invoice-line-unit";
 import {
   useCustomers,
@@ -18,13 +19,19 @@ import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { scanRowQty } from "../../invoice-scan-level";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
+import { sellableFlat } from "@/lib/product-search-groups";
 import {
-  computeLineSubtotal,
+  isSpecialTier,
+  computeInvoiceLineTotal,
+  computeInvoiceTotals,
+  type InvoiceTotalsLine,
   normalizeBoxesPieces,
-  roundMoney,
+  packFromOwnSplit,
   getTierPrice,
+  isNsfLine,
 } from "@routeflow/pricing";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -96,6 +103,8 @@ function ProductSearchInput({
     productId?: string,
     unitPrice?: number,
     unitsPerBox?: number,
+    /** #2717 M4a-1: the qty a SCAN put on the row (undefined = a tap / shared code: leave it). */
+    scanQty?: number,
   ) => void;
   onCreateProduct?: (searchTerm: string) => void;
   onBarcodeNotFound?: (barcode: string) => void;
@@ -118,8 +127,13 @@ function ProductSearchInput({
     return () => clearTimeout(t);
   }, [query]);
 
-  const { data } = useProducts({ search: debouncedQuery || undefined, isActive: true });
-  const products = data?.data ?? [];
+  // includeVariants: a family's own name finds its variants; the family itself is never a line (B1215 C7).
+  const { data } = useProducts({
+    search: debouncedQuery || undefined,
+    isActive: true,
+    includeVariants: true,
+  });
+  const products = sellableFlat<any>(data?.data ?? []);
 
   React.useEffect(() => {
     function handle(e: MouseEvent) {
@@ -167,7 +181,13 @@ function ProductSearchInput({
                 .then((r) => r.data);
               if (product) {
                 setQuery(product.name);
-                onChange(product.name, product.id, tierPriceFor(product), product.unitsPerBox);
+                onChange(
+                  product.name,
+                  product.id,
+                  tierPriceFor(product),
+                  product.unitsPerBox,
+                  scanRowQty(code, product),
+                );
                 setOpen(false);
                 return;
               }
@@ -203,14 +223,20 @@ function ProductSearchInput({
                     <button
                       className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
                       onClick={() => {
-                        setQuery(p.name);
-                        onChange(p.name, p.id, tierPriceFor(p), p.unitsPerBox ?? undefined);
+                        const label = displayProductName(p as any);
+                        setQuery(label);
+                        onChange(label, p.id, tierPriceFor(p), p.unitsPerBox ?? undefined);
                         setOpen(false);
                       }}
                     >
                       <div>
-                        <span className="text-sm font-medium text-navy">{p.name}</span>
+                        <span className="text-sm font-medium text-navy">
+                          {displayProductName(p as any)}
+                        </span>
                         {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
+                        {(p as any).unit && (
+                          <span className="ml-2 text-xs text-navy/70">{(p as any).unit}</span>
+                        )}
                       </div>
                       <span className="text-xs text-navy/70">
                         {fmt.format(Number(p.pricePerUnit))}
@@ -244,8 +270,21 @@ function ProductSearchInput({
 
 interface LineItemState {
   key: string;
+  /** Stored row id (SA-186). Sent back so the server matches THIS row, never by
+   *  position or product. Absent on lines added in this session. */
+  id?: string;
+  /** SA-184/189: a stored box line whose pack cannot be recovered (no snapshot,
+   *  split not derivable). Shown read-only until the operator sets the pack. */
+  locked?: boolean;
+  /** The stored figures of a locked line, re-sent verbatim so it stays untouched. */
+  storedBoxes?: number;
+  storedPieces?: number;
+  /** Operator-attested pack (integer >= 2) set by unlocking; sent as `unitsPerBox`. */
+  attestedPack?: number;
   productId?: string;
   description: string;
+  /** #2656: carried so the NSF fee line's tax rate can be locked at 0 (the server refuses > 0). */
+  systemKind?: string | null;
   qty: number;
   unitPrice: number;
   taxRate: number;
@@ -301,10 +340,10 @@ function lineFreeUnits(it: LineItemState): number {
   return Math.min(stored, earned, units - 1);
 }
 
-/** Post-discount line total, boxed-aware, rounded — same basis the server stores. */
-function lineTotal(it: LineItemState): number {
+/** The pricing-helper view of a line: boxed split, BUY_N_GET_M free units, discount, tax rate. */
+function toTotalsLine(it: LineItemState): InvoiceTotalsLine {
   const { boxes, pieces } = lineSplit(it);
-  const beforeDiscount = computeLineSubtotal({
+  return {
     unitPrice: Number(it.unitPrice),
     qty: Number(it.qty),
     boxes,
@@ -312,8 +351,14 @@ function lineTotal(it: LineItemState): number {
     unitsPerBox: it.unitsPerBox ?? null,
     // BUY_N_GET_M: free whole units come off before pricing, exactly like the server.
     freeUnits: lineFreeUnits(it),
-  });
-  return roundMoney(beforeDiscount - Number(it.discount));
+    discount: Number(it.discount),
+    taxRate: Number(it.taxRate),
+  };
+}
+
+/** Post-discount line total, boxed-aware, rounded — same basis the server stores. */
+function lineTotal(it: LineItemState): number {
+  return computeInvoiceLineTotal(toTotalsLine(it));
 }
 
 function createEmptyItem(): LineItemState {
@@ -329,6 +374,19 @@ function createEmptyItem(): LineItemState {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+/** B890: a line field with its own label below sm (the column header row is sm+ only). The input
+ *  carries the same name as its aria-label, so it is named at every width. */
+function MobileField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <span aria-hidden="true" className="text-[11px] font-medium text-navy/60 sm:hidden">
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
 export default function EditInvoicePage() {
   const params = useParams();
   const id = params.id as string;
@@ -338,6 +396,24 @@ export default function EditInvoicePage() {
 
   const { data: invoice, isLoading, isError } = useInvoice(id);
   const updateInvoice = useUpdateInvoice();
+
+  // #2791: a pending-mirror draft can't be edited here (the API refuses by design — the order is the
+  // source of truth until delivery). Send the user to the order instead of showing a form that can only fail.
+  const pendingMirrorOrderId =
+    invoice && isPendingMirrorInvoice(invoice) ? (invoice.orderId ?? null) : null;
+  const pendingMirrorOrderNo = invoice?.order?.orderNumber ?? "";
+  React.useEffect(() => {
+    if (!pendingMirrorOrderId) return;
+    // The toast provider lives in the dashboard layout, so it survives the navigation and the order
+    // page shows the reason. Fixed copy only — nothing from the URL is ever echoed.
+    toast({
+      title: `This invoice mirrors order ${pendingMirrorOrderNo}`,
+      description: "It can't be edited until the order is delivered — edit the order instead.",
+      duration: 8000,
+    });
+    router.replace(`/orders/${pendingMirrorOrderId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- toast identity is unstable; fire once per mirror
+  }, [pendingMirrorOrderId, pendingMirrorOrderNo, router]);
 
   // Customer tier pricing (mirrors invoices/new): every product-selection path
   // below should price at this customer's tier, not the raw catalog price.
@@ -370,7 +446,9 @@ export default function EditInvoicePage() {
     (product: TierPriceableProduct) => {
       const listPrice = parseFloat(String(product.pricePerUnit ?? 0)) || 0;
       const customerTier = customer?.pricingTier ?? 1;
-      const tierLadderPrice = customerTier !== 1 ? getTierPrice(product, customerTier) : undefined;
+      const tierLadderPrice = isSpecialTier(customerTier)
+        ? getTierPrice(product, customerTier)
+        : undefined;
       const specialPrice = priceMap[product.id] ?? tierLadderPrice;
       return specialPrice != null && Number.isFinite(specialPrice) ? specialPrice : listPrice;
     },
@@ -418,15 +496,30 @@ export default function EditInvoicePage() {
               // the product's packaging changed since, would re-price the line and
               // show the per-box price as the whole line total). Selling-unit lines
               // (boxes == null) stay non-boxed so qty × unitPrice is preserved.
+              // B674/SA-144: a legacy line (boxes stored, unitsPerBox never
+              // snapshotted) recovers its pack from its OWN split via
+              // packFromOwnSplit — never the live product, which is what silently
+              // re-split a repacked line's pieces on the next save.
               const isBoxSplit = it.boxes != null;
-              const upb = Number(it.unitsPerBox ?? it.product?.unitsPerBox ?? 0);
+              const upb = Number(
+                it.unitsPerBox ??
+                  packFromOwnSplit({ qty: it.qty, boxes: it.boxes, pieces: it.pieces }) ??
+                  0,
+              );
+              const locked = isBoxSplit && !(upb > 1);
               return {
                 key: it.id,
+                id: it.id,
+                locked: locked || undefined,
+                storedBoxes: locked ? Number(it.boxes ?? 0) : undefined,
+                storedPieces: locked ? Number(it.pieces ?? 0) : undefined,
                 productId: it.productId,
                 description: it.description,
+                systemKind: it.systemKind ?? null,
                 qty: Number(it.qty),
                 unitPrice: Number(it.unitPrice),
-                taxRate: Number(it.taxRate ?? 0),
+                // #2656: the NSF fee line is never taxed — a legacy stored rate loads (and saves) as 0.
+                taxRate: isNsfLine(it) ? 0 : Number(it.taxRate ?? 0),
                 discount: Number(it.discount ?? 0),
                 unitsPerBox: isBoxSplit && upb > 1 ? upb : undefined,
                 notes: it.notes ?? undefined,
@@ -445,13 +538,16 @@ export default function EditInvoicePage() {
 
   // ── Calculations ─────────────────────────────────────────────────────────────
 
-  // Boxed lines prorate via computeLineSubtotal (unitPrice is the BOX price); a
+  // Boxed lines prorate via the pricing helpers (unitPrice is the BOX price); a
   // plain qty*unitPrice would over-charge by unitsPerBox. Matches server pricing.
-  const subtotal = items.reduce((s, it) => s + lineTotal(it), 0);
-  const taxTotal = items.reduce((s, it) => s + lineTotal(it) * Number(it.taxRate), 0);
   const invDiscount = parseFloat(discount) || 0;
   const shipping = parseFloat(shippingFee) || 0;
-  const total = subtotal - invDiscount + shipping + taxTotal;
+  // One rounded footer, the same arithmetic the server stores (subtotal, tax rounded once, total).
+  const {
+    subtotal,
+    tax: taxTotal,
+    total,
+  } = computeInvoiceTotals(items.map(toTotalsLine), { discount: invDiscount, shipping });
 
   // ── Item helpers ──────────────────────────────────────────────────────────────
 
@@ -490,6 +586,12 @@ export default function EditInvoicePage() {
         errs.items = "All quantities must be greater than 0.";
         break;
       }
+      // The server refuses a negative line; refuse it here, before the footer shows a total the
+      // saved invoice can never have.
+      if (lineTotal(it) < 0) {
+        errs.items = "Line discount cannot exceed the line total.";
+        break;
+      }
     }
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -515,20 +617,27 @@ export default function EditInvoicePage() {
       paymentTermsLabel,
       referenceNumber: referenceNumber.trim(),
       subject: subject.trim(),
-      items: items.map((it): CreateInvoiceItem => {
+      items: items.map((it): UpdateInvoiceItem => {
         // Send the boxed split so the server prorates (unitPrice is the BOX price).
         // Without boxes/pieces the server falls back to unitPrice*qty and over-charges.
         const { boxes, pieces } = lineSplit(it);
         const freeUnits = lineFreeUnits(it);
         return {
+          ...(it.id ? { id: it.id } : {}),
           productId: it.productId,
           description: it.description,
           qty: Number(it.qty),
           unitPrice: Number(it.unitPrice),
-          taxRate: it.taxRate != null ? Number(it.taxRate) : undefined,
+          taxRate: isNsfLine(it) ? 0 : it.taxRate != null ? Number(it.taxRate) : undefined, // #2656
           discount:
             it.discount != null && Number(it.discount) !== 0 ? Number(it.discount) : undefined,
-          ...(it.unitsPerBox && it.productId ? { boxes: boxes ?? 0, pieces: pieces ?? 0 } : {}),
+          ...(it.locked
+            ? { boxes: it.storedBoxes ?? 0, pieces: it.storedPieces ?? 0 }
+            : it.unitsPerBox && it.productId
+              ? { boxes: boxes ?? 0, pieces: pieces ?? 0 }
+              : {}),
+          // SA-189: only an operator-attested pack is ever sent.
+          ...(it.attestedPack ? { unitsPerBox: it.attestedPack } : {}),
           // Round-trip the BUY_N_GET_M snapshot — the server replaces every line.
           ...(freeUnits > 0 ? { promoFreeUnits: freeUnits } : {}),
           // Round-trip the per-line note — the server recreates all items on update.
@@ -547,9 +656,14 @@ export default function EditInvoicePage() {
         router.push(`/invoices/${id}`);
       },
       onError: (err: any) => {
+        // A class-validator 400 carries `message` as a string[] when more than
+        // one constraint fails at once — join it into one readable sentence
+        // instead of handing the array straight to the toast (B788).
+        const message = err?.response?.data?.message;
         toast({
           title: "Failed to update invoice",
-          description: err?.response?.data?.message ?? "Please try again.",
+          description:
+            (Array.isArray(message) ? message.join("; ") : message) || "Please try again.",
           variant: "error",
         });
       },
@@ -572,6 +686,20 @@ export default function EditInvoicePage() {
         <p className="text-base font-medium text-navy">Invoice not found.</p>
         <Button variant="secondary" href="/invoices">
           Back to Invoices
+        </Button>
+      </div>
+    );
+  }
+
+  if (pendingMirrorOrderId) {
+    const orderNo = pendingMirrorOrderNo;
+    return (
+      <div className="mx-auto flex max-w-xl flex-col items-center gap-4 p-12 text-center">
+        <p className="text-base font-medium text-navy">
+          This invoice mirrors order #{orderNo} until it&apos;s delivered — edit the order instead.
+        </p>
+        <Button variant="secondary" href={`/orders/${pendingMirrorOrderId}`}>
+          Open order #{orderNo}
         </Button>
       </div>
     );
@@ -680,7 +808,8 @@ export default function EditInvoicePage() {
             <div className="space-y-2">
               {errors.items && <p className="text-xs text-danger">{errors.items}</p>}
               {/* Table header */}
-              <div className="grid grid-cols-[1fr_70px_90px_70px_70px_32px] gap-2 px-1">
+              {/* B890: the column header is sm+ only; below sm each field carries its own label. */}
+              <div className="hidden gap-2 px-1 sm:grid sm:grid-cols-[1fr_70px_90px_70px_70px_32px]">
                 <span className="text-xs font-medium text-navy/70">Description</span>
                 <span className="text-xs font-medium text-navy/70 text-right">Qty</span>
                 <span className="text-xs font-medium text-navy/70 text-right">Unit Price</span>
@@ -692,71 +821,136 @@ export default function EditInvoicePage() {
               {items.map((item) => (
                 <div
                   key={item.key}
-                  className="grid grid-cols-[1fr_70px_90px_70px_70px_32px] items-center gap-2"
+                  // B890: below sm a line wraps — description + delete, then Qty / Unit Price / Disc. $ /
+                  // Tax % — so nothing is clipped inside the overflow-x-hidden main at 390px; the fixed
+                  // six-column grid applies from sm up.
+                  className="grid grid-cols-4 items-end gap-2 border-b border-surface-border pb-3 sm:grid-cols-[1fr_70px_90px_70px_70px_32px] sm:items-center sm:border-0 sm:pb-0"
                 >
-                  <ProductSearchInput
-                    value={item.description}
-                    tierPriceFor={tierPriceFor}
-                    pricingPending={tierPricingPending}
-                    onCreateProduct={(searchTerm) => {
-                      const idx = items.findIndex((it) => it.key === item.key);
-                      const looksLikeSku = /^\d{6,}$/.test(searchTerm.trim());
-                      setCreateProductInitialName(looksLikeSku ? "" : searchTerm);
-                      setCreateProductInitialSku(looksLikeSku ? searchTerm.trim() : "");
-                      setCreateProductTargetIdx(idx);
-                      setCreateProductOpen(true);
-                    }}
-                    onBarcodeNotFound={(barcode) => {
-                      const idx = items.findIndex((it) => it.key === item.key);
-                      setCreateProductInitialName("");
-                      setCreateProductInitialSku(barcode);
-                      setCreateProductTargetIdx(idx);
-                      setCreateProductOpen(true);
-                    }}
-                    onChange={(description, productId, unitPrice, unitsPerBox) => {
-                      updateItem(item.key, {
-                        description,
-                        productId,
-                        unitPrice: unitPrice !== undefined ? unitPrice : item.unitPrice,
-                        unitsPerBox: unitsPerBox && unitsPerBox > 1 ? unitsPerBox : undefined,
-                      });
-                    }}
-                  />
+                  <div className="col-span-3 row-start-1 min-w-0 sm:col-span-1 sm:row-start-auto">
+                    <ProductSearchInput
+                      value={item.description}
+                      tierPriceFor={tierPriceFor}
+                      pricingPending={tierPricingPending}
+                      onCreateProduct={(searchTerm) => {
+                        const idx = items.findIndex((it) => it.key === item.key);
+                        const looksLikeSku = /^\d{6,}$/.test(searchTerm.trim());
+                        setCreateProductInitialName(looksLikeSku ? "" : searchTerm);
+                        setCreateProductInitialSku(looksLikeSku ? searchTerm.trim() : "");
+                        setCreateProductTargetIdx(idx);
+                        setCreateProductOpen(true);
+                      }}
+                      onBarcodeNotFound={(barcode) => {
+                        const idx = items.findIndex((it) => it.key === item.key);
+                        setCreateProductInitialName("");
+                        setCreateProductInitialSku(barcode);
+                        setCreateProductTargetIdx(idx);
+                        setCreateProductOpen(true);
+                      }}
+                      onChange={(description, productId, unitPrice, unitsPerBox, scanQty) => {
+                        // Re-picking the SAME product keeps the row's own pack (never the live one); a real swap is a
+                        // NEW line (SA-186): no stored id, and the picker's pack.
+                        const swapped = productId !== item.productId;
+                        updateItem(item.key, {
+                          ...(swapped
+                            ? { id: undefined, locked: undefined, attestedPack: undefined }
+                            : {}),
+                          description,
+                          productId,
+                          unitPrice: unitPrice !== undefined ? unitPrice : item.unitPrice,
+                          unitsPerBox: swapped
+                            ? unitsPerBox && unitsPerBox > 1
+                              ? unitsPerBox
+                              : undefined
+                            : item.unitsPerBox,
+                          // A scanned distinct UNIT / BOX code sets the qty (one piece / a case).
+                          ...(swapped && scanQty !== undefined ? { qty: scanQty } : {}),
+                        });
+                      }}
+                    />
+                  </div>
                   {/* Editable while typing — commit numbers live, format on blur only
                       (the old parseFloat(...) || 0 bindings collapsed "2." and turned
                       a cleared field into 0). */}
-                  <DecimalInput
-                    decimals={3}
-                    min={0}
-                    value={item.qty}
-                    onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
-                    className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  />
-                  <MoneyInput
-                    min={0}
-                    value={item.unitPrice}
-                    onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
-                    className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  />
-                  <MoneyInput
-                    min={0}
-                    value={item.discount}
-                    onChange={(v) => updateItem(item.key, { discount: v ?? 0 })}
-                    className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  />
-                  <DecimalInput
-                    decimals={4}
-                    min={0}
-                    max={1}
-                    value={item.taxRate}
-                    placeholder="0.10"
-                    onChange={(v) => updateItem(item.key, { taxRate: v ?? 0 })}
-                    className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  />
+                  {item.locked ? (
+                    <div
+                      data-testid="locked-line"
+                      className="col-span-3 flex items-center justify-between gap-2 text-xs text-navy/60"
+                    >
+                      <span>
+                        {item.storedBoxes} box · {item.storedPieces} pcs · $
+                        {Number(item.unitPrice).toFixed(2)} — set the box and piece count for this
+                        line to edit it.
+                      </span>
+                      <DecimalInput
+                        decimals={0}
+                        min={2}
+                        value={null}
+                        placeholder="Pcs / box"
+                        onChange={(v) => {
+                          if (v != null && Number.isInteger(v) && v >= 2) {
+                            updateItem(item.key, {
+                              locked: false,
+                              unitsPerBox: v,
+                              attestedPack: v,
+                              qty: item.storedBoxes! * v + item.storedPieces!,
+                            });
+                          }
+                        }}
+                        className="h-8 w-24 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy"
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <MobileField label="Qty">
+                        <DecimalInput
+                          aria-label="Qty"
+                          decimals={3}
+                          min={0}
+                          value={item.qty}
+                          onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
+                          className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        />
+                      </MobileField>
+                      <MobileField label="Unit Price">
+                        <MoneyInput
+                          aria-label="Unit Price"
+                          min={0}
+                          value={item.unitPrice}
+                          onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
+                          className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        />
+                      </MobileField>
+                      <MobileField label="Disc. $">
+                        <MoneyInput
+                          aria-label="Disc. $"
+                          min={0}
+                          value={item.discount}
+                          onChange={(v) => updateItem(item.key, { discount: v ?? 0 })}
+                          className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        />
+                      </MobileField>
+                    </>
+                  )}
+                  <MobileField label="Tax %">
+                    <DecimalInput
+                      decimals={4}
+                      min={0}
+                      max={1}
+                      value={isNsfLine(item) ? 0 : item.taxRate}
+                      placeholder="0.10"
+                      // #2656: the NSF fee line is never taxed — locked at 0 (the API refuses > 0).
+                      disabled={isNsfLine(item)}
+                      title={isNsfLine(item) ? "The NSF fee is never taxed" : undefined}
+                      aria-label={isNsfLine(item) ? "Tax rate (NSF fee: never taxed)" : "Tax %"}
+                      onChange={(v) => updateItem(item.key, { taxRate: v ?? 0 })}
+                      className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    />
+                  </MobileField>
                   <button
                     onClick={() => removeItem(item.key)}
                     disabled={items.length === 1}
-                    className="flex items-center justify-center rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    aria-label="Remove line"
+                    className="col-start-4 row-start-1 flex items-center justify-end self-center rounded p-1 text-navy/30 transition-colors hover:text-danger disabled:cursor-not-allowed disabled:opacity-30 sm:col-start-auto sm:row-start-auto sm:justify-center"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>

@@ -1004,7 +1004,7 @@ function LedgerCard({ agentId }: { agentId: string }) {
             type="date"
             value={recomputeFrom}
             onChange={(e) => setRecomputeFrom(e.target.value)}
-            className="h-8 rounded border border-surface-border bg-white px-2 text-xs text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-8 w-32 rounded border border-surface-border bg-white px-2 text-xs text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           <Button
             size="sm"

@@ -37,6 +37,10 @@ export class AnalyticsController {
         "GET /analytics/cost-history/:productId",
         "GET /analytics/demand/:productId",
         "GET /analytics/product-sales/:productId",
+        // #2118: served by ProductInsightsController (sales-facts), same gate.
+        "GET /analytics/products/:id/insights",
+        "GET /analytics/products/:id/sales",
+        "GET /analytics/products/:id/insights.csv",
       ],
     };
   }

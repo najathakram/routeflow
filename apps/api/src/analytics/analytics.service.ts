@@ -13,92 +13,21 @@ import {
 } from "../common/invoiced-sales";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
-import {
-  type DemandGranularity,
-  type DemandRange,
-  bucketIndexOf,
-  demandWindow,
-} from "./demand-range";
+import { ProductInsightsService } from "../sales-facts/product-insights.service";
+import type {
+  ProductDemandSeries,
+  ProductSalesHistory,
+} from "../sales-facts/legacy-product-shapes";
+import type { DemandRange } from "./demand-range";
 
-export const TOBACCO_ADDON_KEY = "tobacco_dealer";
+const TOBACCO_ADDON_KEY = "tobacco_dealer";
 export const TOBACCO_EXCLUDE_KEY = "tobacco.excludeFromMainAnalytics";
 
-/** One bucket of the per-product demand series. Both metrics ship together. */
-export interface ProductDemandBucket {
-  /** Bucket START, "YYYY-MM-DD". Never an ISO timestamp — see demand-range.ts. */
-  date: string;
-  /** Total base units (pieces) invoiced in this bucket. */
-  units: number;
-  /** Net invoiced sales in this bucket (line subtotals, pre-tax). */
-  revenue: number;
-}
-
-/** One invoiced sale of a product to one buyer — a row of the Sales tab. */
-export interface ProductSaleLine {
-  /** The sale's business date (parent invoice `issueDate`), ISO. */
-  date: string;
-  invoiceId: string;
-  invoiceNumber: string;
-  /** Null when the invoice was raised directly rather than from an order. */
-  orderId: string | null;
-  /** The human order number for `orderId`. Null alongside a null orderId — the
-   *  UI must never fall back to slicing the uuid, which reads as noise. */
-  orderNumber: string | null;
-  customerId: string;
-  customerName: string;
-  /** Base units (pieces) — `Number(item.qty)`, the same basis demand uses. */
-  qty: number;
-  /** Sale-time box split, for rendering "N boxes + M pcs". Null when not boxed. */
-  boxes: number | null;
-  pieces: number | null;
-  unitsPerBox: number | null;
-  /** Net price actually charged per selling unit. */
-  unitPrice: number;
-  /** Authoritative line total — never re-derived from qty × unitPrice. */
-  lineTotal: number;
-  /** The struck-through list price when this line was re-priced, else null. */
-  originalPrice: number | null;
-  /** True when the line carries a non-STANDARD price (override/promo/tier). */
-  overridden: boolean;
-}
-
-export interface ProductSalesHistory {
-  productId: string;
-  lines: ProductSaleLine[];
-  summary: {
-    /** Number of invoiced lines. */
-    count: number;
-    /** Distinct buyers who bought it. */
-    buyers: number;
-    /** Σ base units. */
-    totalQty: number;
-    /** Σ line subtotals. */
-    totalRevenue: number;
-    /** Per-unit price extremes/average across the returned lines; null when empty. */
-    minPrice: number | null;
-    maxPrice: number | null;
-    /** Revenue-weighted, not a mean of unit prices — a 100-unit sale should
-     *  move the average more than a 1-unit sale. Null when no units sold. */
-    avgPrice: number | null;
-  };
-}
-
-export interface ProductDemandSeries {
-  productId: string;
-  range: DemandRange;
-  granularity: DemandGranularity;
-  /** ISO, inclusive. */
-  from: string;
-  /** ISO, EXCLUSIVE. */
-  to: string;
-  buckets: ProductDemandBucket[];
-  totals: { units: number; revenue: number };
-  /** False ⇒ never invoiced at any date: "never sold", not "zero this window". */
-  hasAnySales: boolean;
-  /** "YYYY-MM-DD" of this product's first / most recent invoiced sale. */
-  firstSaleAt: string | null;
-  lastSaleAt: string | null;
-}
+// #2118: the per-product read shapes moved with their producer (the sales-facts layer).
+export type {
+  ProductDemandSeries,
+  ProductSalesHistory,
+} from "../sales-facts/legacy-product-shapes";
 
 /**
  * Per-group (route or driver) accumulator for the stop-level operational
@@ -140,6 +69,7 @@ export class AnalyticsService {
     private readonly prisma: PrismaService,
     private readonly addonService: AddonService,
     private readonly systemConfig: SystemConfigService,
+    private readonly productInsights: ProductInsightsService,
   ) {}
 
   /**
@@ -575,7 +505,8 @@ export class AnalyticsService {
     const recentMovements = await this.prisma.forTenant().stockMovement.findMany({
       where: {
         productId: { in: productIds },
-        createdAt: windowEnd ? { gte: windowStart, lte: windowEnd } : { gte: windowStart },
+        // B562: the movement's accounting date (effectiveAt), not its insertion time.
+        effectiveAt: windowEnd ? { gte: windowStart, lte: windowEnd } : { gte: windowStart },
       },
       select: { productId: true },
       distinct: ["productId"],
@@ -591,12 +522,12 @@ export class AnalyticsService {
     // replaces the old per-product findFirst over EVERY stocked product.
     const movementRows = await this.prisma.forTenant().stockMovement.findMany({
       where: { productId: { in: deadCandidates.map((p) => p.id) } },
-      orderBy: { createdAt: "desc" },
-      select: { productId: true, createdAt: true },
+      orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+      select: { productId: true, effectiveAt: true },
     });
     const lastMovementAt = new Map<string, Date>();
     for (const m of movementRows) {
-      if (!lastMovementAt.has(m.productId)) lastMovementAt.set(m.productId, m.createdAt);
+      if (!lastMovementAt.has(m.productId)) lastMovementAt.set(m.productId, m.effectiveAt);
     }
 
     return deadCandidates.map((p) => {
@@ -679,11 +610,12 @@ export class AnalyticsService {
   async getCostHistory(productId: string) {
     const movements = await this.prisma.forTenant().stockMovement.findMany({
       where: { productId, type: { in: ["PURCHASE", "COST_BASIS"] } },
-      orderBy: { createdAt: "asc" },
+      // B562: accounting order (effectiveAt), insertion time and id break ties.
+      orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
       take: 100,
     });
     return movements.map((m) => ({
-      date: m.createdAt,
+      date: m.effectiveAt,
       unitCost: Number(m.unitCost ?? 0),
       avgCostAfter: m.avgCostAfter != null ? Number(m.avgCostAfter) : null,
       type: m.type,
@@ -691,190 +623,32 @@ export class AnalyticsService {
   }
 
   /**
-   * PR-B: "who bought this, when, and at what price" — the per-buyer sales history
-   * behind the product Sales tab. One row per invoiced line, newest first.
+   * PR-B: "who bought this, when, and at what price" — the per-buyer sales history behind
+   * the product Sales tab: the newest `limit` invoiced LINES, and their summary.
    *
-   * ⚠️ Same tenancy trap as `getProductDemand` below: queried THROUGH `Invoice`, never
-   * `invoiceItem.findMany`. Invoice lines are created as NESTED writes, which bypass the
-   * tenant extension's `data.tenantId` injection, so historical/imported lines can carry
-   * `tenantId = null` — and `forTenant()` injects `where.tenantId`, which would silently
-   * drop the large majority of the history this tab exists to show.
-   *
-   * Source is invoiced sales (`REAL_INVOICE_STATUSES` — DRAFT/VOID/WRITTEN_OFF are not
-   * sales), not orders: an order can be edited or cancelled after the fact, whereas the
-   * invoice is what the buyer was actually charged. `subtotal` is authoritative and is
-   * never re-derived from qty × unitPrice — that would over-charge boxed lines by
-   * `unitsPerBox` (see the money discipline in CLAUDE.md).
-   *
-   * Like price/cost history and demand, the tobacco-exclusion toggle deliberately does
-   * NOT apply: the operator reached this by opening that exact product.
+   * #2118: one-line delegate into the sales-facts layer (`ProductInsightsService`), which
+   * reads THROUGH `Invoice` on the accrual basis (plan A2: a written-off invoice's lines are
+   * sales, badged `writtenOff`) and pages by line. Callers and the response shape are
+   * unchanged. The tobacco-exclusion toggle deliberately does NOT apply: the operator reached
+   * this by opening that exact product.
    */
   async getProductSales(productId: string, limit = 200): Promise<ProductSalesHistory> {
-    const invoices = await this.prisma.forTenant().invoice.findMany({
-      where: {
-        status: REAL_INVOICE_STATUSES,
-        // Equality can never match NULL, so ad-hoc unlisted lines are excluded free.
-        items: { some: { productId } },
-      },
-      select: {
-        id: true,
-        invoiceNumber: true,
-        orderId: true,
-        order: { select: { orderNumber: true } },
-        issueDate: true,
-        customerId: true,
-        customer: { select: { id: true, businessName: true } },
-        items: {
-          where: { productId },
-          select: {
-            qty: true,
-            boxes: true,
-            pieces: true,
-            unitsPerBox: true,
-            unitPrice: true,
-            subtotal: true,
-            originalPrice: true,
-            priceType: true,
-          },
-        },
-      },
-      orderBy: { issueDate: "desc" },
-      take: limit,
-    });
-
-    const lines: ProductSaleLine[] = [];
-    for (const inv of invoices) {
-      for (const item of inv.items ?? []) {
-        lines.push({
-          date: inv.issueDate.toISOString(),
-          invoiceId: inv.id,
-          invoiceNumber: inv.invoiceNumber,
-          orderId: inv.orderId ?? null,
-          orderNumber: inv.order?.orderNumber ?? null,
-          customerId: inv.customerId,
-          // A deleted/renamed customer still renders the name stored on the row.
-          customerName: inv.customer?.businessName ?? "—",
-          qty: roundQty(Number(item.qty)),
-          boxes: item.boxes ?? null,
-          pieces: item.pieces ?? null,
-          unitsPerBox: item.unitsPerBox ?? null,
-          unitPrice: roundMoney(Number(item.unitPrice)),
-          lineTotal: roundMoney(Number(item.subtotal)),
-          originalPrice: item.originalPrice != null ? roundMoney(Number(item.originalPrice)) : null,
-          overridden: item.priceType !== "STANDARD",
-        });
-      }
-    }
-
-    const totalQty = roundQty(lines.reduce((s, l) => s + l.qty, 0));
-    const totalRevenue = roundMoney(lines.reduce((s, l) => s + l.lineTotal, 0));
-    const prices = lines.map((l) => l.unitPrice);
-    return {
-      productId,
-      lines,
-      summary: {
-        count: lines.length,
-        buyers: new Set(lines.map((l) => l.customerId)).size,
-        totalQty,
-        totalRevenue,
-        minPrice: prices.length ? Math.min(...prices) : null,
-        maxPrice: prices.length ? Math.max(...prices) : null,
-        // Revenue-weighted: Σsubtotal / Σqty, so volume moves it more than a
-        // one-off. Guarded on totalQty — a fully-credited history can sum to 0.
-        avgPrice: totalQty > 0 ? roundMoney(totalRevenue / totalQty) : null,
-      },
-    };
+    return this.productInsights.getSalesHistory(productId, limit);
   }
 
   /**
-   * Per-product demand series for the product-detail chart. Units AND revenue ship in
-   * one payload so the card's metric toggle never refetches.
+   * Per-product demand series for the product-detail chart — units AND revenue in one
+   * payload so the card's metric toggle never refetches.
    *
-   * Source is invoiced sales: `InvoiceItem` has no business date of its own, so the
-   * window filters `Invoice.issueDate`. `StockMovement type:"SALE"` — the source the
-   * inventory forecasting tab uses — is not viable here: it is only written on the
-   * route-delivery path, so a tenant that invoices directly has none at all.
-   *
-   * ⚠️ Queried THROUGH Invoice, never `invoiceItem.findMany`. Invoice lines are created
-   * as NESTED writes, which bypass the tenant extension's `data.tenantId` injection, so
-   * historical/imported lines can carry `tenantId = null` — and `forTenant()` injects
-   * `where.tenantId`, which would silently drop every one of them. On this dataset that
-   * is the large majority of the history the 6m/1y/5y ranges exist to show. Same guard
-   * and rationale as `bookkeeping.service.ts getSalesByItem`. A spec pins it.
-   *
-   * The tobacco exclusion toggle is deliberately NOT applied: this is a per-product
-   * drill-down the operator reached by opening that exact product, same carve-out as
-   * price/cost history (see the `tobaccoExclusionActive` doc comment above).
+   * #2118: one-line delegate into `ProductInsightsService` (same through-Invoice read,
+   * accrual basis, UTC-anchored `demandWindow`). Callers and the response shape are
+   * unchanged; the tobacco toggle does not apply (per-product drill-down).
    */
   async getProductDemand(
     productId: string,
     range: DemandRange = "30d",
   ): Promise<ProductDemandSeries> {
-    const win = demandWindow(new Date(), range);
-    // Equality on productId can never match NULL, so ad-hoc "unlisted" lines
-    // (productId = null) are excluded by this filter for free.
-    const soldWhere = { status: REAL_INVOICE_STATUSES, items: { some: { productId } } };
-
-    const [invoices, firstSale, lastSale] = await Promise.all([
-      this.prisma.forTenant().invoice.findMany({
-        where: { ...soldWhere, issueDate: { gte: win.from, lt: win.to } },
-        select: {
-          issueDate: true,
-          items: { where: { productId }, select: { qty: true, subtotal: true } },
-        },
-      }),
-      this.prisma.forTenant().invoice.findFirst({
-        where: soldWhere,
-        orderBy: { issueDate: "asc" },
-        select: { issueDate: true },
-      }),
-      this.prisma.forTenant().invoice.findFirst({
-        where: soldWhere,
-        orderBy: { issueDate: "desc" },
-        select: { issueDate: true },
-      }),
-    ]);
-
-    // Buckets are materialized up front and indexed into, so empty periods stay in the
-    // series as explicit zeros (getRevenueTrend's Record+Object.entries approach drops
-    // them and hands the client a chart with holes).
-    const units = new Array<number>(win.buckets.length).fill(0);
-    const revenue = new Array<number>(win.buckets.length).fill(0);
-
-    for (const inv of invoices) {
-      const idx = bucketIndexOf(win, inv.issueDate);
-      if (idx < 0) continue; // defensive — the half-open filter already excludes these
-      for (const item of inv.items) {
-        // qty is ALREADY the normalized base-unit total (a "2 cases + 3 packs" line
-        // with unitsPerBox 12 stores qty 27) — never re-derive it from boxes/pieces.
-        units[idx] += Number(item.qty);
-        // subtotal is authoritative. NEVER qty × unitPrice: that re-introduces the
-        // boxed-line overcharge by unitsPerBox that @routeflow/pricing exists to prevent.
-        revenue[idx] += Number(item.subtotal);
-      }
-    }
-
-    const day = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
-
-    return {
-      productId,
-      range,
-      granularity: win.granularity,
-      from: win.from.toISOString(),
-      to: win.to.toISOString(),
-      buckets: win.buckets.map((b, i) => ({
-        date: b.date,
-        units: roundQty(units[i]),
-        revenue: roundMoney(revenue[i]),
-      })),
-      totals: {
-        units: roundQty(units.reduce((s, v) => s + v, 0)),
-        revenue: roundMoney(revenue.reduce((s, v) => s + v, 0)),
-      },
-      hasAnySales: firstSale != null,
-      firstSaleAt: day(firstSale?.issueDate),
-      lastSaleAt: day(lastSale?.issueDate),
-    };
+    return this.productInsights.getDemandSeries(productId, range);
   }
 
   async getSalesByCategory(from?: string, to?: string) {

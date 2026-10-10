@@ -1,5 +1,6 @@
 "use client";
 
+import { PREF } from "@routeflow/types";
 import * as React from "react";
 import { apiClient } from "@/lib/api-client";
 import { OP_KEYS } from "@/lib/auth-keys";
@@ -68,7 +69,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.lang = next;
     // Persist per-user (cross-device); best effort.
     if (localStorage.getItem(OP_KEYS.accessToken)) {
-      apiClient.patch("/users/me/preferences", { locale: next }).catch(() => {});
+      apiClient.patch("/users/me/preferences", { [PREF.locale]: next }).catch(() => {});
     }
   }, []);
 

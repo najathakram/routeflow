@@ -1,4 +1,8 @@
-import { formatQtySplit } from "@routeflow/pricing";
+import { invoiceLineQtyText } from "@routeflow/pricing";
+
+/** The ONE qty-text formatter — web, api (PDF + email) and mobile all call this same
+ *  function from @routeflow/pricing (B653 review: no second copy of the decision). */
+export { invoiceLineQtyText };
 
 /**
  * units_v1 (step 5c-1): how the web reads an invoice line that was SOLD BY A UNIT (`unitLabel` set,
@@ -24,22 +28,3 @@ export const hasUnitLine = (items: ReadonlyArray<UnitLabelled> | null | undefine
 export const unitLabelsOf = (items: ReadonlyArray<UnitLabelled> | null | undefined): string[] => [
   ...new Set((items ?? []).filter(isUnitLine).map((it) => (it.unitLabel as string).trim())),
 ];
-
-/**
- * The quantity text of a stored invoice line. A pack line is EXACTLY `formatQtySplit` (byte-identical
- * to before). A unit line names its unit instead of "boxes": 3 Cases -> "3 Cases", not "3 boxes"
- * (the unit's pieces stay in the row's "864 pcs total" tooltip); a factor-1 unit has no split, so it
- * reads "5 Piece".
- */
-export function invoiceLineQtyText(it: {
-  qty: number | string;
-  boxes?: number | null;
-  pieces?: number | null;
-  unitLabel?: string | null;
-}): string {
-  const split = { qty: it.qty, boxes: it.boxes, pieces: it.pieces };
-  if (!isUnitLine(it)) return formatQtySplit(split);
-  const label = (it.unitLabel as string).trim();
-  if (it.boxes == null && it.pieces == null) return `${formatQtySplit(split)} ${label}`;
-  return formatQtySplit({ ...split, boxLabel: label });
-}

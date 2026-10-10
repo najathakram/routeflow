@@ -1,6 +1,20 @@
 import { EmailService } from "./email.service";
 
 jest.mock("nodemailer", () => ({ createTransport: jest.fn() }));
+// B909: never let a unit test reach the real Resend client — a spec that goes
+// red (e.g. a guard regression) must fail on its assertions, not attempt the
+// network. The mocked client REFUSES by default (SDK {data, error} shape);
+// tests that need a delivery result override `(svc as any).resend.emails.send`.
+jest.mock("resend", () => ({
+  Resend: jest.fn().mockImplementation(() => ({
+    emails: {
+      send: jest.fn().mockResolvedValue({
+        data: null,
+        error: { message: "resend is mocked in unit tests (B909)" },
+      }),
+    },
+  })),
+}));
 import * as nodemailer from "nodemailer";
 
 /**
@@ -61,7 +75,7 @@ function makeService(
         error: "not_connected",
       }),
     } as any);
-  return new EmailService(config, prisma, encryption, mailboxSend);
+  return new EmailService(config, prisma, encryption, mailboxSend, { record: jest.fn() } as any);
 }
 
 describe("EmailService — honest send (R5)", () => {
@@ -149,6 +163,64 @@ describe("EmailService — honest send (R5)", () => {
  * (security/account mail only) is deliberately untouched — invoice sends never use
  * `senderClass:"platform"`.
  */
+describe("EmailService — sentinel recipients refused at the choke point (#2854 B4)", () => {
+  // Import sentinels (@imported.local / @placeholder.local) are non-routable. ONE
+  // guard at the top of send() covers every caller — the new-device login notice,
+  // resetPassword's set-password invite, and future sends — with a configured
+  // transport present, proving the refusal is the guard, not "nothing configured".
+  it.each(["acme_store@imported.local", "no-email+x@placeholder.local"])(
+    "send() to %s is refused before any transport: delivered:false, transport:'none'",
+    async (sentinel) => {
+      const svc = makeService({ resendKey: "re_test_key" });
+      const res = await svc.send({ to: sentinel, subject: "x", html: "<p>x</p>" });
+      expect(res).toMatchObject({ delivered: false, transport: "none" });
+      expect(res.error).toMatch(/placeholder address/i);
+    },
+  );
+
+  it("platform-class sends are refused too — the guard sits before the sendPlatform delegation", async () => {
+    const svc = makeService({ resendKey: "re_test_key" });
+    const res = await svc.send({
+      to: "acme_store@imported.local",
+      subject: "x",
+      html: "<p>x</p>",
+      senderClass: "platform",
+    });
+    expect(res).toMatchObject({ delivered: false, transport: "none" });
+    expect(res.error).toMatch(/placeholder address/i);
+  });
+
+  it("sendSetPasswordEmail to a sentinel is refused too — sendPlatform carries its own guard (Opus r2: admin resetPassword of an imported user)", async () => {
+    const svc = makeService({ resendKey: "re_test_key" });
+    const res = await svc.sendSetPasswordEmail({
+      to: "acme_store@imported.local",
+      username: "acme_store",
+      setPasswordUrl: "https://app.routeflow.info/reset-password?token=abc123",
+      expiryHours: 72,
+    });
+    expect(res).toMatchObject({ delivered: false, transport: "none" });
+  });
+
+  it("a real recipient still flows past the guard (unconfigured here → honest R5 refusal, not the placeholder error)", async () => {
+    const res = await makeService().send({
+      to: "owner@acme.example",
+      subject: "x",
+      html: "<p>x</p>",
+    });
+    expect(res.delivered).toBe(false);
+    expect(res.error ?? "").not.toMatch(/placeholder address/i);
+  });
+
+  it("B911: platform-send logs carry the recipient DOMAIN only, never the full address", async () => {
+    const svc = makeService();
+    const warnSpy = jest.spyOn((svc as any).logger, "warn");
+    await svc.sendPlatform({ to: "owner@acme.example", subject: "x", html: "<p>x</p>" });
+    const logged = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain("@acme.example");
+    expect(logged).not.toContain("owner@");
+  });
+});
+
 describe("EmailService — attachments threaded to every transport", () => {
   const smtpRows = () => [
     { key: "email.smtpHost", value: "smtp.example.com" },
@@ -1310,9 +1382,238 @@ describe("EmailService.sendInvoice — BOGO/promo item display (T-B103, R9, REG-
   });
 });
 
+/**
+ * B653 — a units_v1 line (sold by its own unit, e.g. "Case", not loose pieces) read
+ * "qty 36 @ $40.00 = $120.00" in the invoice email: `qty` is the BASE PIECE count
+ * (`buildInvoiceUnitLine`: `qty = count x unitsPerBox`), so a customer doing the
+ * arithmetic gets $1,440, not the real $120 subtotal. The email is the only
+ * customer-facing document that never read boxes/pieces/unitLabel at all — the PDF
+ * (this same PR) and web invoice detail already show "3 Cases"; the mobile piece
+ * (fix/b653-mobile-invoice-detail-unit, PR #1275) is not yet merged to master.
+ * Fixture: 3 Cases of 12 ($40/Case) — qty 36, boxes 3, pieces 0.
+ */
+describe("EmailService.sendInvoice — units_v1 qty text (B653)", () => {
+  const unitLine = {
+    description: "Widget (Case)",
+    qty: 36,
+    boxes: 3,
+    pieces: 0,
+    unitLabel: "Case",
+    unitPrice: 40,
+    subtotal: 120,
+  };
+
+  function itemRowsOf(html: string): string {
+    return (html.match(/<tbody>([\s\S]*?)<\/tbody>/) ?? ["", ""])[1];
+  }
+
+  it('REG-B653-email: the HTML item row reads "3 Cases", never the bare base-piece qty (36)', async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-4001",
+      invoiceId: "inv-4001",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 120,
+      totalPaid: 0,
+      balanceDue: 120,
+      items: [unitLine],
+    } as any);
+
+    const row = itemRowsOf(sendSpy.mock.calls[0][0].html);
+    expect(row).toContain("3 Cases");
+    expect(row).not.toMatch(/>36</);
+  });
+
+  it('REG-B653-email: the plaintext body reads "qty 3 Cases", never "qty 36"', async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-4002",
+      invoiceId: "inv-4002",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 120,
+      totalPaid: 0,
+      balanceDue: 120,
+      items: [unitLine],
+    } as any);
+
+    const text = sendSpy.mock.calls[0][0].text as string;
+    expect(text).toContain("qty 3 Cases");
+    expect(text).not.toContain("qty 36");
+  });
+
+  it('REG-B653-email: an ordinary boxed line (no unitLabel) reads "2 boxes + 3 pcs" @ the box price, never the pre-fix bare piece-qty (27) — master rendered this exact fixture wrong too', async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    // unitsPerBox 12: 2 boxes + 3 pcs = 27 pieces (qty). unitPrice is the BOX
+    // price ($40, not a per-piece figure) — subtotal is the stored box-prorated
+    // total (2 + 3/12) * 40 = $90, read verbatim, never re-derived from qty.
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-4003",
+      invoiceId: "inv-4003",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 90,
+      totalPaid: 0,
+      balanceDue: 90,
+      items: [{ description: "Widget", qty: 27, boxes: 2, pieces: 3, unitPrice: 40, subtotal: 90 }],
+    } as any);
+
+    const row = itemRowsOf(sendSpy.mock.calls[0][0].html);
+    expect(row).toContain("2 boxes + 3 pcs");
+    expect(row).not.toMatch(/>27</);
+    expect(row).toContain("$40.00");
+    expect(row).toContain("$90.00");
+  });
+
+  it("PIN-B653-email: a plain non-boxed line is unaffected — still the bare qty", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-4004",
+      invoiceId: "inv-4004",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 50,
+      totalPaid: 0,
+      balanceDue: 50,
+      items: [{ description: "Widget", qty: 5, unitPrice: 10, subtotal: 50 }],
+    } as any);
+
+    const row = itemRowsOf(sendSpy.mock.calls[0][0].html);
+    expect(row).toMatch(/>5</);
+  });
+
+  it("REG-B653-email-xss: a tenant-set unitLabel containing HTML is escaped in the HTML row, never injected raw", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendInvoice({
+      to: "buyer@example.com",
+      customerName: "Acme Buyer",
+      invoiceNumber: "INV-4005",
+      invoiceId: "inv-4005",
+      issueDate: "Jan 1, 2026",
+      dueDate: "Jan 31, 2026",
+      total: 40,
+      totalPaid: 0,
+      balanceDue: 40,
+      items: [
+        {
+          description: "Widget",
+          qty: 1,
+          boxes: 1,
+          pieces: 0,
+          unitLabel: "<img src=x onerror=alert(1)>",
+          unitPrice: 40,
+          subtotal: 40,
+        },
+      ],
+    } as any);
+
+    const row = itemRowsOf(sendSpy.mock.calls[0][0].html);
+    expect(row).not.toContain("<img src=x onerror=alert(1)>");
+    expect(row).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+});
+
 // ─── N2: account + invite email templates ──────────────────────────────────────
 
 describe("EmailService — N2 account/invite templates", () => {
+  // #2439: the new-workspace welcome email.
+  const WELCOME = {
+    to: "owner@acme.example.com",
+    username: "acme_owner",
+    businessName: "Acme Wholesale",
+    workspace: "acme",
+    setPasswordUrl: "https://app.routeflow.info/reset-password?token=abc123",
+    expiryHours: 72,
+    loginUrl: "https://app.routeflow.info/login",
+    payUrl: "https://app.routeflow.info/login?redirect=%2Fsettings%2Fbilling",
+    trialDays: 14,
+  };
+
+  it("sendTenantWelcomeEmail (#2439): workspace, username, set-password, sign-in and Pay-now links; never a password", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    const r = await svc.sendTenantWelcomeEmail(WELCOME);
+
+    expect(r).toEqual({ delivered: true, transport: "smtp" });
+    const { subject, html, text } = sendSpy.mock.calls[0][0];
+    expect(subject).toBe("Welcome to RouteFlow — your Acme Wholesale workspace is ready");
+    expect(html).toContain('href="https://app.routeflow.info/reset-password?token=abc123"');
+    expect(html).toContain('href="https://app.routeflow.info/login"');
+    expect(html).toContain(
+      'href="https://app.routeflow.info/login?redirect=%2Fsettings%2Fbilling"',
+    );
+    expect(html).toContain("Workspace:</strong> acme");
+    expect(html).toContain("Username:</strong> acme_owner");
+    expect(html).toContain("expires in 72 hours");
+    expect(text).toContain("Pay now");
+    // No credential value anywhere — only the set-password link.
+    expect(`${html}\n${text}`).not.toMatch(
+      /temporary password|<strong>password|password:\s*[A-Z0-9]{6}-/i,
+    );
+  });
+
+  it("sendTenantWelcomeEmail (#2439): no Pay-now section when checkout isn't offered; 0-day trial says 'activate'", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+
+    await svc.sendTenantWelcomeEmail({ ...WELCOME, payUrl: null });
+    expect(sendSpy.mock.calls[0][0].html).not.toContain("Pay now");
+    expect(sendSpy.mock.calls[0][0].text).not.toContain("Pay now");
+
+    await svc.sendTenantWelcomeEmail({ ...WELCOME, trialDays: 0 });
+    expect(sendSpy.mock.calls[1][0].html).toContain("Complete payment to activate your workspace");
+  });
+
+  it("sendTenantWelcomeEmail (#2439): escapes the business name and username", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "sendPlatform")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendTenantWelcomeEmail({
+      ...WELCOME,
+      businessName: "<b>A&B</b>",
+      username: '<i>"x"</i>',
+    });
+    const html = sendSpy.mock.calls[0][0].html;
+    expect(html).not.toContain("<b>A&B</b>");
+    expect(html).toContain("&lt;b&gt;A&amp;B&lt;/b&gt;");
+    expect(html).not.toContain('<i>"x"</i>');
+  });
+
   it("sendSetPasswordEmail: subject, link, and expiry hours all land in the html", async () => {
     const svc = makeService();
     const sendSpy = jest
@@ -1574,7 +1875,7 @@ describe("EmailService.sendLowStockDigest (N4)", () => {
     const mailboxSend = {
       trySend: jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" }),
     } as any;
-    return new EmailService(config, prisma, encryption, mailboxSend);
+    return new EmailService(config, prisma, encryption, mailboxSend, { record: jest.fn() } as any);
   }
 
   const items = [
@@ -1778,7 +2079,9 @@ describe("EmailService — brand restyle (2026-09-17): shared layout invariants"
     const mailboxSend = {
       trySend: jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" }),
     } as any;
-    const svc = new EmailService(config, prisma, encryption, mailboxSend);
+    const svc = new EmailService(config, prisma, encryption, mailboxSend, {
+      record: jest.fn(),
+    } as any);
     const sendSpy = jest
       .spyOn(svc, "send")
       .mockResolvedValue({ delivered: true, transport: "resend" } as any);
@@ -1794,5 +2097,202 @@ describe("EmailService — brand restyle (2026-09-17): shared layout invariants"
     expect(call.text).toBeTruthy();
     expect(call.text).toContain("Acme Widget");
     expect(call.text).toContain("WID-001");
+  });
+});
+
+describe("EmailService — mailbox add-on gate fall-through", () => {
+  it("an `addon_required` mailbox result is a plain skip: the next transport (tenant SMTP) is attempted", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m-smtp" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const trySend = jest
+      .fn()
+      .mockResolvedValue({ delivered: false, transport: "mailbox", error: "addon_required" });
+    const svc = makeService({
+      mailboxSend: { trySend },
+      systemConfigRows: [
+        { key: "email.smtpHost", value: "smtp.example.com" },
+        { key: "email.smtpUser", value: "user@example.com" },
+        { key: "email.smtpPassword", value: "pw" },
+        { key: "email.smtpPort", value: "587" },
+      ],
+    });
+
+    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(trySend).toHaveBeenCalledTimes(1);
+    expect(sendMail).toHaveBeenCalledTimes(1);
+    expect(res).toMatchObject({ delivered: true, transport: "smtp" });
+  });
+});
+
+describe("EmailService — send() logs never carry a full recipient address; Resend messages are redacted (B927, #2873)", () => {
+  const TO = "owner@acme.example";
+  const smtpRows = () => [
+    { key: "email.smtpHost", value: "smtp.example.com" },
+    { key: "email.smtpUser", value: "user@example.com" },
+    { key: "email.smtpPassword", value: "pw" },
+    { key: "email.smtpPort", value: "587" },
+  ];
+  const logged = (svc: EmailService) => {
+    const logger = (svc as any).logger;
+    const spies = (["log", "warn", "error"] as const).map((l) => jest.spyOn(logger, l));
+    return () => spies.flatMap((s) => s.mock.calls.map((c) => String(c[0]))).join("\n");
+  };
+  const noFullAddress = (text: string) => {
+    expect(text).toContain("@acme.example");
+    expect(text).not.toContain("owner@");
+  };
+
+  it("tenant SMTP success log is domain-only", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({ systemConfigRows: smtpRows() });
+    const read = logged(svc);
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("platform SMTP success log inside send() is domain-only", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m2" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      smtpHost: "smtp.platform.example",
+      smtpUser: "noreply@platform.example",
+      smtpPass: "pw",
+    });
+    const read = logged(svc);
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("Resend rejection and throw logs in send() are domain-only", async () => {
+    const svc = makeService({ resendKey: "re_test" });
+    const read = logged(svc);
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValueOnce({ data: null, error: { message: "rejected" } })
+      .mockRejectedValueOnce(new Error("boom"));
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("Resend success log in send() is domain-only", async () => {
+    const svc = makeService({ resendKey: "re_test" });
+    const read = logged(svc);
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValue({ data: { id: "e1" }, error: null });
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("the no-transport 'EMAIL NOT SENT' warning is domain-only", async () => {
+    const svc = makeService();
+    const read = logged(svc);
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("the error RETURNED to callers on a Resend rejection/throw is redacted too", async () => {
+    const leaky = "connect ECONNREFUSED 10.0.1.4:443 for owner@acme.example";
+    const svc = makeService({ resendKey: "re_test" });
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValueOnce({ data: null, error: { message: leaky } })
+      .mockResolvedValueOnce({ data: null, error: { message: leaky } })
+      .mockRejectedValueOnce(new Error(leaky))
+      .mockRejectedValueOnce(new Error(leaky));
+    const results = [
+      await svc.send({ to: TO, subject: "x", html: "<p>x</p>" }),
+      await svc.sendPlatform({ to: TO, subject: "x", html: "<p>x</p>" }),
+      await svc.send({ to: TO, subject: "x", html: "<p>x</p>" }),
+      await svc.sendPlatform({ to: TO, subject: "x", html: "<p>x</p>" }),
+    ];
+    for (const r of results) {
+      expect(r.delivered).toBe(false);
+      expect(r.error ?? "").not.toContain("10.0.1.4");
+      expect(r.error ?? "").not.toContain("owner@");
+      expect(r.error ?? "").toContain("[address]");
+    }
+  });
+
+  it("Resend error text is redacted of address literals in both send() and sendPlatform() logs", async () => {
+    const leaky = "connect ECONNREFUSED 10.0.1.4:443 via ::1:587";
+    const svc = makeService({ resendKey: "re_test" });
+    const read = logged(svc);
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValue({ data: null, error: { message: leaky } });
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.sendPlatform({ to: TO, subject: "x", html: "<p>x</p>" });
+    (svc as any).resend.emails.send = jest.fn().mockRejectedValue(new Error(leaky));
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.sendPlatform({ to: TO, subject: "x", html: "<p>x</p>" });
+    const text = read();
+    expect(text).not.toContain("10.0.1.4");
+    expect(text).not.toContain("::1:587");
+    expect(text).toContain("[address]");
+  });
+});
+
+describe("redactAddresses — masks IP literals AND email addresses (keeps the domain)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { redactAddresses } = require("./email.service") as {
+    redactAddresses: (s: string) => string;
+  };
+
+  it("masks a plain address, keeping the domain", () => {
+    expect(redactAddresses("rejected owner@acme.example today")).toBe(
+      "rejected ***@acme.example today",
+    );
+  });
+
+  it("masks the address inside a display-name form", () => {
+    expect(redactAddresses('bad recipient "Acme Store <owner@acme.example>"')).toBe(
+      'bad recipient "Acme Store <***@acme.example>"',
+    );
+  });
+
+  it("masks every address in one string, including plus-tags and subdomains", () => {
+    expect(redactAddresses("to a.b+tag@mail.acme.example, cc c@other.org and d@x.co.uk")).toBe(
+      "to ***@mail.acme.example, cc ***@other.org and ***@x.co.uk",
+    );
+  });
+
+  it("leaves IP masking unchanged", () => {
+    expect(redactAddresses("connect EHOSTUNREACH 10.0.1.4:587")).toBe(
+      "connect EHOSTUNREACH [address]:587",
+    );
+    expect(redactAddresses("connect ECONNREFUSED ::1:587")).toContain("[address]");
+  });
+
+  it("finishes fast on a hostile 50k string with no @ (no quadratic backtracking)", () => {
+    const hostile = "a".repeat(50_000);
+    const started = Date.now();
+    const out = redactAddresses(hostile);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(out.length).toBeLessThanOrEqual(4096);
+  });
+
+  it("stays fast on other pathological shapes (dots, dashes, colons, many '@')", () => {
+    for (const hostile of [
+      "a.".repeat(25_000),
+      "a-".repeat(25_000),
+      "1:".repeat(25_000),
+      "x@".repeat(25_000),
+      `${"a".repeat(49_000)}@`,
+    ]) {
+      const started = Date.now();
+      redactAddresses(hostile);
+      expect(Date.now() - started).toBeLessThan(500);
+    }
+  });
+
+  it("handles an address and an IP together, and text with neither", () => {
+    expect(redactAddresses("x@acme.example failed at 10.0.1.4")).toBe(
+      "***@acme.example failed at [address]",
+    );
+    expect(redactAddresses("plain message")).toBe("plain message");
   });
 });

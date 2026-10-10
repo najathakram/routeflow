@@ -1,7 +1,6 @@
 import {
   IsBoolean,
   IsEmail,
-  IsEnum,
   IsIn,
   IsInt,
   IsNumber,
@@ -18,6 +17,8 @@ import { Type } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { CreateAddressDto } from "./create-address.dto";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { WRITABLE_FULFILL_PATHS } from "../../orders/writable-fulfill-paths";
+import { MAX_DECIMAL_10_2 } from "../../common/decimal-bounds.constant";
 import { VALID_TERMS } from "../../system-config/dto/update-invoice-settings.dto";
 
 // Canonical list plus "" to allow explicitly leaving this customer on the
@@ -39,7 +40,7 @@ export class CreateCustomerDto {
   @IsString() @MaxLength(120) contactName: string;
   @IsOptional() @IsString() @MaxLength(40) phone?: string;
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
-  @IsOptional() @IsEnum(FulfillPath) fulfillPath?: FulfillPath;
+  @IsOptional() @IsIn(WRITABLE_FULFILL_PATHS) fulfillPath?: FulfillPath;
   @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => CreateAddressDto)
@@ -52,7 +53,12 @@ export class CreateCustomerDto {
   @IsOptional() @IsString() @MaxLength(80) lastName?: string;
   @IsOptional() @IsString() @MaxLength(40) taxId?: string;
   @IsOptional() @IsBoolean() isTaxExempt?: boolean;
-  @IsOptional() @Min(0) @Max(1_000_000_000) creditLimit?: number;
+  // SA-423: scale is part of the Decimal(10,2) bound — refuse a third decimal, never round it.
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(MAX_DECIMAL_10_2)
+  creditLimit?: number;
   @IsOptional() @IsString() @MaxLength(3) currency?: string;
   @IsOptional() @IsInt() @Min(1) @Max(5) pricingTier?: number;
   /**

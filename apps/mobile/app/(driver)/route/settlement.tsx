@@ -19,6 +19,7 @@ import {
   computeVariance,
   expectedPhysicalCash,
   isReconciled,
+  COLLECTED_METHODS,
   type CollectedMethod,
   type CollectionEntry,
 } from "../../../lib/run-settlement";
@@ -176,14 +177,12 @@ export default function RunSettlementScreen() {
         </Text>
 
         <View style={styles.card}>
-          {(["CASH", "CHECK", "ZELLE", "CREDIT_CARD", "ADVANCE", "OTHER"] as const)
-            .filter((m) => summary.byMethod[m])
-            .map((m) => (
-              <View key={m} style={styles.row}>
-                <Text style={styles.rowLabel}>{methodLabel(m)}</Text>
-                <Text style={styles.rowValue}>${(summary.byMethod[m] ?? 0).toFixed(2)}</Text>
-              </View>
-            ))}
+          {COLLECTED_METHODS.filter((m) => summary.byMethod[m]).map((m) => (
+            <View key={m} style={styles.row}>
+              <Text style={styles.rowLabel}>{methodLabel(m)}</Text>
+              <Text style={styles.rowValue}>${(summary.byMethod[m] ?? 0).toFixed(2)}</Text>
+            </View>
+          ))}
           <View style={[styles.row, styles.rowTotal]}>
             <Text style={styles.rowTotalLabel}>Cash & checks to reconcile</Text>
             <Text style={styles.rowTotalValue}>${expectedCash.toFixed(2)}</Text>

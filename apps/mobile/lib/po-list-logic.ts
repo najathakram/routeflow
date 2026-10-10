@@ -1,5 +1,3 @@
-import { roundMoney } from "@routeflow/pricing";
-import { poLineSubtotal, type StoredPOLine } from "./po-line-subtotal";
 import type { POStatus } from "./api/purchase-orders";
 
 /**
@@ -44,30 +42,13 @@ export function poFilterFromLabel(label: string): PoFilterId {
   return PO_FILTERS.find((f) => f.label === label)?.id ?? "ALL";
 }
 
-interface PoTotalInput {
-  /** `PurchaseOrder.totalAmount` is a Prisma `Decimal(10,2)` — it arrives as a numeric STRING. */
-  totalAmount?: number | string | null;
-  items: StoredPOLine[];
-}
-
 /**
- * The total to show on a PO row. Prefers the server-stored total (the agreed money); when it is
- * missing or not positive, falls back to the rounded sum of the lines — the detail screen's
- * `Number(po.totalAmount) || computedTotal` rule, except that a negative stored total also falls
- * back here (unreachable today: costs are validated >= 0). The stored total is coerced with `Number()`:
- * the list used to guard with `Number.isFinite(<string>)`, which is false for "123.45", so every
- * PO with a server total rendered $0.00.
- *
- * B698: the line fallback sums each line's STORED `totalCost` via `poLineSubtotal` — it used to
- * re-multiply `qtyOrdered x unitCost`, which on a boxed line multiplies the rounded 4 dp per-piece
- * cost back up (1,000 cases of 12 at $11.00 summed to $11,000.40, not the stored $11,000.00).
+ * The total to show on a PO row or detail header: #2637 (the lead's condition) moved the ONE rule to
+ * @routeflow/pricing (`poDisplayTotal`), shared with web. It prefers the server-stored `totalAmount`
+ * (a numeric STRING, coerced and now rounded to cents like web's), else the rounded sum of the lines'
+ * STORED totals (B698).
  */
-export function poDisplayTotal(po: PoTotalInput): number {
-  const stored = Number(po.totalAmount);
-  if (Number.isFinite(stored) && stored > 0) return stored;
-  const computed = roundMoney(po.items.reduce((sum, i) => sum + poLineSubtotal(i), 0));
-  return Number.isFinite(computed) ? computed : 0;
-}
+export { poDisplayTotal } from "@routeflow/pricing";
 
 export function formatPoMoney(n: number): string {
   return `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;

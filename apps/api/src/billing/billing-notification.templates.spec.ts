@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import {
   escapeHtml,
   trialEndingTemplate,
@@ -64,6 +65,21 @@ describe("billing-notification.templates", () => {
       process.env = { ...ORIGINAL_ENV, WEB_URL: undefined, FRONTEND_URL: undefined };
       expect(billingSettingsUrl()).toBe("https://www.routeflow.info/settings/billing");
       expect(billingSettingsUrl()).not.toContain("localhost");
+    });
+
+    it("B809: a non-http(s) base URL never becomes the CTA's href; the email still renders (REG-B809)", () => {
+      const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+      process.env = { ...ORIGINAL_ENV, WEB_URL: "javascript:alert(1)//" };
+      const t = trialEndingTemplate({
+        businessName: "Acme Retail",
+        adminName: "Jamie",
+        milestone: "TRIAL_ENDING_7D",
+        trialEndsAt: "2026-09-23",
+      });
+      expect(t.html).not.toContain('href="javascript:');
+      expect(t.html).toMatch(/<span [^>]*>Choose a plan<\/span>/);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/^ctaButtonHtml: refused/));
+      errorSpy.mockRestore();
     });
   });
 

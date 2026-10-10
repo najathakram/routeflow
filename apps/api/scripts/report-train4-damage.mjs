@@ -33,6 +33,7 @@
  *   - Findings are written to a JSONL file under gitignored `local-assets/` for the owner's review.
  */
 import pg from "pg";
+import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -100,22 +101,11 @@ if (showHelp) {
 }
 
 // ─── Connection resolution — copied verbatim from prod-readonly-audit.mjs's resolveUrl() ────────
+// B768: one shared resolver (scripts/lib/report-db-url.mjs) instead of hand-copied ones.
+// Railway's TCP-proxy variables win; DATABASE_URL is the fallback when they are absent.
+// Returns null (after logging why) when nothing usable is set.
 function resolveUrl() {
-  const direct = process.env.DATABASE_URL;
-  if (direct && !direct.includes(".railway.internal")) return direct;
-  const {
-    POSTGRES_USER,
-    POSTGRES_PASSWORD,
-    POSTGRES_DB,
-    RAILWAY_TCP_PROXY_DOMAIN,
-    RAILWAY_TCP_PROXY_PORT,
-  } = process.env;
-  if (RAILWAY_TCP_PROXY_DOMAIN && POSTGRES_USER && POSTGRES_PASSWORD) {
-    const db = POSTGRES_DB || "railway";
-    const port = RAILWAY_TCP_PROXY_PORT || "5432";
-    return `postgresql://${encodeURIComponent(POSTGRES_USER)}:${encodeURIComponent(POSTGRES_PASSWORD)}@${RAILWAY_TCP_PROXY_DOMAIN}:${port}/${db}`;
-  }
-  return direct || null;
+  return resolveReportDbUrl("report-train4-damage");
 }
 
 const url = resolveUrl();

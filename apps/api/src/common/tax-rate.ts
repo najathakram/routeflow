@@ -1,3 +1,4 @@
+import { flatRateFromTotals } from "@routeflow/pricing";
 import type { SystemConfigService } from "../system-config/system-config.service";
 
 /**
@@ -71,8 +72,7 @@ export function effectiveTaxRateFromTotals(
   subtotal: unknown,
   isTaxExempt: boolean,
 ): number {
-  if (isTaxExempt) return 0;
-  const rowSubtotal = Number(subtotal) || 0;
-  if (rowSubtotal <= 0) return 0;
-  return Number(tax ?? 0) / rowSubtotal;
+  // B294 (SA-141): the one `tax / subtotal` rule lives in @routeflow/pricing (flatRateFromTotals),
+  // shared with inferredFlatRate — the backfill, applyPriceAdjustment and mobile all use it.
+  return isTaxExempt ? 0 : flatRateFromTotals(tax, subtotal);
 }

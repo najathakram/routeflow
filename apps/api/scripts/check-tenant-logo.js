@@ -2,14 +2,12 @@
 /**
  * Quick read-only inspection of a tenant's branding state — used to debug why
  * a logo isn't appearing on an invoice PDF. No mutations.
+ *
+ * Run via `railway run --service postgres node apps/api/scripts/check-tenant-logo.js <slug>`.
+ * The connection comes from scripts/lib/report-db-url.mjs (B768): Railway's TCP-proxy variables
+ * win, because under `railway run` DATABASE_URL is the unreachable *.railway.internal host.
  */
 const { Client } = require("pg");
-const url = process.env.DATABASE_URL;
-if (!url) {
-  console.error("DATABASE_URL not set");
-  process.exit(1);
-}
-const isRailway = /\.railway\.internal|\.proxy\.rlwy\.net/i.test(url);
 const slug = process.argv[2];
 if (!slug) {
   console.error("Usage: node apps/api/scripts/check-tenant-logo.js <tenant-slug>");
@@ -17,6 +15,11 @@ if (!slug) {
 }
 
 (async () => {
+  const { resolveReportDbUrl } = await import("./lib/report-db-url.mjs");
+  const url = resolveReportDbUrl("check-tenant-logo");
+  if (!url) process.exit(2);
+  // Decided on the RESOLVED url: the Railway proxy host (*.proxy.rlwy.net) takes no SSL here.
+  const isRailway = /\.railway\.internal|\.proxy\.rlwy\.net/i.test(url);
   const c = new Client({
     connectionString: url,
     ssl: isRailway ? false : { rejectUnauthorized: false },

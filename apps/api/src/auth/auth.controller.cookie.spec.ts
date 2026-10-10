@@ -11,7 +11,14 @@ function makeController(authService: any) {
   const configService = {
     get: jest.fn((k: string) => (k === "WEB_URL" ? "http://localhost:3001" : undefined)),
   };
-  return new AuthController(authService, configService as any, {} as any, {} as any);
+  return new AuthController(
+    authService,
+    configService as any,
+    {} as any,
+    {} as any,
+    {} as any, // staffHandoff (#2653) — unused by the cookie paths under test
+    {} as any, // appleOAuth — unused by the cookie paths under test
+  );
 }
 
 function makeRes() {

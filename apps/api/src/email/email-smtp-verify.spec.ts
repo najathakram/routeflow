@@ -25,7 +25,7 @@ function makeService(opts: { systemConfigRows?: any[]; tenantConfig?: any } = {}
   const mailboxSend = {
     trySend: jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" }),
   } as any;
-  return new EmailService(config, prisma, encryption, mailboxSend);
+  return new EmailService(config, prisma, encryption, mailboxSend, { record: jest.fn() } as any);
 }
 
 const mockTransport = (verify: jest.Mock) =>

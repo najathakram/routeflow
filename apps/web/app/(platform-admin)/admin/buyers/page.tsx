@@ -212,7 +212,10 @@ export default function AdminBuyersPage() {
 
       {loading && <div className="py-12 text-center text-slate-400">Loading buyers...</div>}
       {error && (
-        <div className="mb-4 rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
+        <div
+          role="alert"
+          className="mb-4 rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700"
+        >
           {error}
         </div>
       )}

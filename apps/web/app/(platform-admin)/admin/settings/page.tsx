@@ -14,6 +14,7 @@ import {
   Zap,
 } from "lucide-react";
 import { superAdminClient } from "@/lib/admin-api";
+import { DisabledHint } from "../../_components/DisabledHint";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -268,11 +269,15 @@ export default function AdminSettingsPage() {
                     type="button"
                     onClick={handleTest}
                     disabled={testing || !config?.configured}
+                    aria-describedby={!config?.configured ? "test-connection-hint" : undefined}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800 disabled:opacity-50"
                   >
                     <Zap className="h-3.5 w-3.5" />
                     {testing ? "Testing…" : "Test connection"}
                   </button>
+                  <DisabledHint id="test-connection-hint" show={!config?.configured}>
+                    Save an API key first to enable the connection test.
+                  </DisabledHint>
                   {config?.source === "database" && (
                     <button
                       type="button"

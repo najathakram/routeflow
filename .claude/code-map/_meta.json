@@ -1,6 +1,6 @@
 {
-  "mappedSha": "b87656895e3eeb530b8c523dc4124de47194fe25",
-  "generatedAt": "2026-09-21T01:21:47.750Z",
+  "mappedSha": "b22689aa8bec2d07ed76bf6a8d951973cffa39c4",
+  "generatedAt": "2026-10-08T00:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -14,6 +14,6 @@
     "mobile": 5,
     "packages": 0
   },
-  "fileCount": 1045,
-  "notes": "**2026-09-19 — refresh 56c01d2b→a3c37bdb: B562 critical inventory sales-blind-replay fix + #931 UI hiding, #933 LineItemRow extraction, B536/B543 platform-admin getStats fixes, B559 platform-admin mobile tab-overflow, B535 TAP_TARGET + B534 grid-cols + B533 buyer-table mobile sweep, B343 credit-note voided event, B525 dead-addon-toggle removal, B519 web unmet-requires warning, B549 booking min-width + A7 nav-CSS guard, #871 marketing copy rewrite, A6 marketing cache-control, B523 campaign-check self-heal, #940 docs-only bug filings, and #936 schema spine (ProductUnit/SupplierProduct/ProductCategoryLabel/SellingRestriction+enums/CustomerAddress.stateCode/VendorBill.purchaseOrderId — schema-only, no API surface yet) mapped once merged.** See CHANGELOG.md for the full landing list."
+  "fileCount": 1050,
+  "notes": "**2026-10-08 — W17 landings #3256, #3257, #3213 and #3263 (master `b22689aa8`) (docs-only bookkeeping).** W17 sections in `api/`, `web/` and `mobile/landing-2026-10-06-w4-w10.md` and `packages.md`: #3256 same-cart replay guard and web submit key, #3257 `common/prisma-unique.ts`, #3213 `credit-notes/credit-note-locks.ts` and `retryCreditTx`/`retryRouteTx`, #3263 `SkipToContentLink`. `mappedSha` = W17 master `b22689aa8`. No source changed. See CHANGELOG.md."
 }

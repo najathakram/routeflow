@@ -23,9 +23,11 @@ jest.mock("../../notifications/notifications.service", () => ({
   NotificationsService: jest.fn().mockImplementation(() => ({
     sendToCustomer: jest.fn().mockResolvedValue(undefined),
     sendToDriver: jest.fn().mockResolvedValue(undefined),
+    sendToUser: jest.fn().mockResolvedValue(1),
   })),
 }));
 
+import { oversellReaderOffProvider } from "./policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
@@ -62,6 +64,8 @@ export const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  // B1211: the buyer order gate is tenant-scoped, so a buyer's token carries its tenant (the mock prisma's).
+  tenantId: "test-tenant",
 };
 /** The buyer pseudo-user (`makePseudoUser`): role CUSTOMER, stamped `type: "BUYER"`. */
 export const buyerPseudoUser = { ...customerPayload, type: "BUYER" as const };
@@ -70,6 +74,7 @@ export async function buildOrdersService() {
   const prisma = createMockPrisma();
   const module: TestingModule = await Test.createTestingModule({
     providers: [
+      oversellReaderOffProvider,
       OrdersService,
       {
         provide: TenantContextService,
@@ -121,6 +126,7 @@ export async function buildOrdersService() {
         useValue: {
           sendToCustomer: jest.fn().mockResolvedValue(undefined),
           sendToDriver: jest.fn().mockResolvedValue(undefined),
+          sendToUser: jest.fn().mockResolvedValue(1),
         },
       },
       {
@@ -204,7 +210,10 @@ export async function buildOrdersService() {
     /** the side-effect stubs a refused or rolled-back status change must never reach */
     sideEffects: {
       gateway: module.get(RouteFlowGateway) as unknown as { emitOrderStatusChanged: jest.Mock },
-      notifications: module.get(NotificationsService) as unknown as { sendToCustomer: jest.Mock },
+      notifications: module.get(NotificationsService) as unknown as {
+        sendToCustomer: jest.Mock;
+        sendToUser: jest.Mock;
+      },
       messaging: module.get(MessagingService) as unknown as { notifyEvent: jest.Mock },
     },
   };

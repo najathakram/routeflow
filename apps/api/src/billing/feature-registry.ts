@@ -100,7 +100,7 @@ export interface FeatureDef {
   requires?: { allOf?: readonly string[]; anyOf?: readonly string[] };
   conflicts?: readonly string[];
   meter?: string;
-  config?: { fallbackMode: "unset"; modes: Record<string, FeatureConfigMode> };
+  config?: { fallbackMode: "unset" | "off"; modes: Record<string, FeatureConfigMode> };
 }
 
 /** Shared text for the seven `RequirePlanFlag` rows that ship dark under the 2026-08-23 rollout. */
@@ -166,6 +166,8 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
         "POST /regulated/filings/prepare",
         "GET /regulated/filings/:id/csv",
         "GET /regulated/filings/:id/pdf",
+        "GET /regulated/parked-reversals",
+        "POST /regulated/parked-reversals/:id/resolve",
         "ALL /tobacco/* (class-level)",
       ],
       grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "tobacco_dealer")',
@@ -264,6 +266,10 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     billing: { skus: [], selfService: false },
     defaultGranted: false,
   },
+  // The SEND path (MailboxSendService.trySend) is gated on this key too, though it is not an HTTP
+  // route and so is not in `routes`: it shares the guard's decision (addon-access.ts) — dark = send
+  // + would-deny warning, enforced = `addon_required` (EmailService falls through to the next
+  // transport). Covered by mailbox-send.addon-gate.spec.ts.
   {
     key: "email.connected_mailbox",
     kind: "boolean",
@@ -279,7 +285,9 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
         "GET /settings/email/mailbox",
         "GET /settings/email/mailbox/google/start",
         "GET /settings/email/mailbox/microsoft/start",
+        "GET /settings/email/mailbox/confirm/:token/preview",
         "POST /settings/email/mailbox/confirm",
+        "POST /settings/email/mailbox/confirm/cancel",
         "DELETE /settings/email/mailbox",
       ],
       grantPath:
@@ -365,11 +373,19 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
         "POST /orders/:id/inline-returns (PR-1d)",
         "POST /returns/inline/:id/* (PR-1c/1d)",
       ],
-      grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "orders_inline_returns")',
-      backfill: "New feature 2026-09-16; zero existing users; nothing to backfill.",
+      grantPath:
+        "Default-granted to every tenant whose plan carries flag.returns (owner ruling " +
+        '2026-09-28); remove per tenant with a DENY override (addonKey "orders_inline_returns")',
+      backfill:
+        'New feature 2026-09-16; zero existing users. Owner ruling 2026-09-28 ("On for ' +
+        'everyone"): defaultGranted, so no TenantAddon row is needed and none is backfilled — ' +
+        "isDefaultGrantedAddon() grants it at runtime; flag.returns still gates it (requires).",
     },
     billing: { skus: [], selfService: false },
-    defaultGranted: false,
+    // Owner ruling 2026-09-28: "On for everyone". Honoured at runtime by
+    // isDefaultGrantedAddon() (AddonService → AddonGuard, /tenants/me/addons, hasAddon), not just
+    // the explain/preview resolver; `requires` below still gates it, and a DENY override removes it.
+    defaultGranted: true,
     requires: { allOf: ["flag.returns"] },
     config: {
       fallbackMode: "unset",
@@ -999,6 +1015,33 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
     },
   },
   {
+    key: "mixed_packs",
+    kind: "boolean",
+    area: "catalog",
+    label: "Mixed packs",
+    description:
+      "Family price authority and fixed recipes: a family owns its variants' prices, and a recipe sells a fixed mix of them as one product.",
+    gate: {
+      via: "none",
+      state: "none",
+      added: "2026-09-29",
+      routes: [],
+      grantPath: NEW_ROW_GRANT_PATH,
+      backfill: NEW_ROW_BACKFILL,
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: false,
+    // #2717 M2 (SA-574 Q5): the mode is read only, never a setting. `on` turns family price
+    // write-through and the recipe routes on for the tenant; the owner flips it per tenant.
+    config: {
+      fallbackMode: "off",
+      modes: {
+        off: { label: "Off (today's behavior)", available: true, settings: [] },
+        on: { label: "On", available: true, settings: [] },
+      },
+    },
+  },
+  {
     key: "routes_dispatch",
     kind: "boolean",
     area: "routes",
@@ -1058,6 +1101,93 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
             },
           ],
         },
+      },
+    },
+  },
+  {
+    key: "fulfilment_model",
+    kind: "boolean",
+    area: "routes",
+    label: "How orders reach customers",
+    description:
+      "Whether a tenant's orders go out on its own delivery runs, ship by carrier, or both. Unset keeps today's behavior exactly.",
+    gate: {
+      via: "none",
+      state: "none",
+      added: "2026-10-04",
+      routes: [],
+      grantPath: NEW_ROW_GRANT_PATH,
+      backfill: NEW_ROW_BACKFILL,
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: true,
+    // Business profiles 1A: a free configuration row (never gates a paid feature). `unset` is
+    // today, for every existing tenant. `delivery` and `both` need a fleet key (FeatureConfigService.set refuses them
+    // otherwise; the registry's mode schema stays allOf-only); the ship and in-store modes need none.
+    config: {
+      fallbackMode: "unset",
+      modes: {
+        unset: {
+          label: "Not configured (today's behavior)",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        delivery: {
+          label: "Own delivery",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        ship: { label: "Ship by carrier", available: true, lifecycle: "ga", settings: [] },
+        both: {
+          label: "Both",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        // SA-671 M1 lifted (pickup mode API): PICKUP orders can be written (counter sale, order-ahead
+        // pickup), so a tenant may now be SET to an in-store mode. A STORED mode that the registry
+        // marks UNAVAILABLE would derive as unset (deriveFulfilmentCapability, SA-666a/b).
+        pickup: { label: "In store only", available: true, lifecycle: "proposed", settings: [] },
+        pickup_ship: {
+          label: "In store + shipping",
+          available: true,
+          lifecycle: "proposed",
+          settings: [],
+        },
+      },
+    },
+  },
+  {
+    key: "counter_sales",
+    kind: "boolean",
+    area: "routes",
+    label: "Counter sales",
+    description:
+      "Lets a business that is not in-store sell over the counter too. In-store modes always have the counter; unset keeps today's behavior.",
+    gate: {
+      via: "none",
+      state: "none",
+      added: "2026-10-04",
+      routes: [],
+      grantPath: NEW_ROW_GRANT_PATH,
+      backfill: NEW_ROW_BACKFILL,
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: true,
+    // Business profiles 1A: a free configuration row; clients read `capabilities.fulfilment.counter`
+    // only, never this value.
+    config: {
+      fallbackMode: "unset",
+      modes: {
+        unset: {
+          label: "Not configured (today's behavior)",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        on: { label: "On", available: true, lifecycle: "ga", settings: [] },
       },
     },
   },
@@ -1202,6 +1332,58 @@ export function checkFeatureRequires(
     unmetAnyOf: anyOfSatisfied ? null : [...anyOf],
   };
 }
+
+/**
+ * Owner ruling 2026-09-28 ("On for everyone") / SA-540: the ONE rule for an add-on-keyed feature
+ * (`gate.via` "RequireAddon" | "guard") that a tenant holds WITHOUT a TenantAddon row:
+ *
+ *   effective(addon) = (preset ∪ registry defaultGranted ∪ explicit grants) − explicit denies,
+ *   AND its `requires` are met — a SEPARATE conjunct that an add-on default never satisfies.
+ *
+ * This function is the default term plus the `requires` conjunct: true when the row is
+ * `defaultGranted: true` and its `requires` hold against the tenant's REQUIREMENT set,
+ * `(rowKeys ∪ entFlags ∪ GRANT overrides) − DENY overrides` (ent.flags = plan flags plus add-on
+ * granted flags; overrides applied exactly as PlanFlagGuard/hasFlag apply them, strictly, with no
+ * dark courtesy). Default-granted keys are never in that set, so a default cannot satisfy another
+ * key's `requires`. A DENY override on the feature key itself is the caller's job (AddonService,
+ * AddonGuard, /tenants/me/addons, the old path and the resolver all check it first).
+ *
+ * Every runtime and report path that decides "does this tenant hold add-on X" calls THIS function
+ * (AddonService.getActiveAddons/hasAddon, EntitlementAuthority's old paths, resolveOneKey); the
+ * publish/blast-radius scripts' mirror (`scripts/lib/feature-registry-mirror.cjs`) keeps a JS twin,
+ * pinned by `feature-registry-mirror.parity.spec.ts`. Never re-derive it inline. `defaultGranted`
+ * on a flag-keyed row is unrelated; resolveOneKey reads that one directly.
+ */
+export function isDefaultGrantedAddon(
+  feature: Pick<FeatureDef, "defaultGranted" | "requires"> & {
+    gate: Pick<FeatureDef["gate"], "via">;
+  },
+  rowKeys: Iterable<string>,
+  entFlags: Iterable<string>,
+  overrides?: ReadonlyMap<string, "GRANT" | "DENY">,
+): boolean {
+  if (!feature.defaultGranted) return false;
+  if (feature.gate.via !== "RequireAddon" && feature.gate.via !== "guard") return false;
+  const effective = new Set<string>([...rowKeys, ...entFlags]);
+  for (const [k, effect] of overrides ?? []) {
+    if (effect === "GRANT") effective.add(k);
+    else effective.delete(k);
+  }
+  return checkFeatureRequires(feature.requires, effective).satisfied;
+}
+
+/** Every key a default-granted add-on's `requires` names — the overrides that predicate needs. */
+export function defaultGrantRequirementKeys(features: readonly FeatureDef[]): string[] {
+  const keys = new Set<string>();
+  for (const f of features)
+    for (const k of [...(f.requires?.allOf ?? []), ...(f.requires?.anyOf ?? [])]) keys.add(k);
+  return [...keys];
+}
+
+/** The add-on-keyed registry rows a tenant may hold with no row (see `isDefaultGrantedAddon`). */
+export const DEFAULT_GRANTED_ADDON_FEATURES: readonly FeatureDef[] = FEATURE_REGISTRY.filter(
+  (f) => f.defaultGranted && (f.gate.via === "RequireAddon" || f.gate.via === "guard"),
+);
 
 /** Human-readable phrase for what's unmet — mirrors `describeUnmetRequirement` in
  *  FeatureConsole.tsx, resolving registry keys to their `label`s. `undefined` when satisfied. */

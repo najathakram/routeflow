@@ -19,6 +19,14 @@
  * always reads the artifact the same invocation just regenerated; a stale
  * scoped artifact outside verify can only produce a false RED, never a false
  * green.
+ *
+ * Two-lane runs (#2192): `npm test -w apps/api` is TWO jest runs (scripts/run-unit-tests.mjs) —
+ * the parallel pool, then the serial `*-script.spec.ts` lane — sharing one artifact. The runner
+ * sets RF_CAMPAIGN_RUN_ID for both; the pool stamps it as `runId`, and the serial lane (option
+ * `{ merge: true }`) appends its suites to the existing artifact ONLY when that artifact carries
+ * the same runId. Anything else (a standalone `jest -c jest.scripts.config.js`, a stale file from
+ * an earlier run) is never refreshed: the lane writes its own results alone, marked `partial`,
+ * so the gate can only go falsely RED, never falsely green.
  */
 const fs = require("node:fs");
 const path = require("node:path");
@@ -92,12 +100,15 @@ function computePartial(globalConfig) {
 class CampaignReporter {
   constructor(globalConfig, options) {
     this._name = (options && options.artifact) || "api";
+    this._merge = Boolean(options && options.merge);
+    // Test seam only: the repo root the artifact is written under (default: two levels up from cwd).
+    this._root = options && options.root;
     this._globalConfig = globalConfig;
   }
   onRunComplete(_contexts, results) {
     try {
       // Repo root = two levels up from the workspace jest ran in (apps/<ws>).
-      const root = path.resolve(process.cwd(), "..", "..");
+      const root = this._root || path.resolve(process.cwd(), "..", "..");
       const dir = path.join(root, ".campaign", "runs");
       fs.mkdirSync(dir, { recursive: true });
       const { partial, partialPatterns } = computePartial(this._globalConfig);
@@ -122,7 +133,31 @@ class CampaignReporter {
           })),
         })),
       };
-      fs.writeFileSync(path.join(dir, `${this._name}.json`), JSON.stringify(out));
+      const runId = process.env.RF_CAMPAIGN_RUN_ID || null;
+      if (runId) out.runId = runId;
+      const file = path.join(dir, `${this._name}.json`);
+      if (this._merge) {
+        let prev = null;
+        try {
+          prev = JSON.parse(fs.readFileSync(file, "utf8"));
+        } catch {
+          prev = null;
+        }
+        if (runId && prev && prev.runId === runId && Array.isArray(prev.testResults)) {
+          out.numTotalTests += prev.numTotalTests || 0;
+          out.numPassedTests += prev.numPassedTests || 0;
+          out.numFailedTests += prev.numFailedTests || 0;
+          out.partial = Boolean(prev.partial) || out.partial;
+          out.partialPatterns = [...(prev.partialPatterns || []), ...out.partialPatterns];
+          out.testResults = [...prev.testResults, ...out.testResults];
+        } else {
+          // Not the second half of the same run: never refresh an artifact this lane did not
+          // extend. Its own results alone are not full-suite evidence.
+          out.partial = true;
+          out.partialPatterns = [...out.partialPatterns, "merge lane without its parallel run"];
+        }
+      }
+      fs.writeFileSync(file, JSON.stringify(out));
     } catch (e) {
       // Never fail the run being observed.
       console.warn(`jest-campaign-reporter: could not write artifact: ${e && e.message}`);

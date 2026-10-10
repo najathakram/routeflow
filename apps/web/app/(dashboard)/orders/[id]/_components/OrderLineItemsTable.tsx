@@ -3,11 +3,14 @@
 import * as React from "react";
 import { Package } from "lucide-react";
 import { Badge, cn } from "@routeflow/ui/web";
-import { computeLineSubtotal, formatQtySplit } from "@routeflow/pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
+import { BACKORDER_TAG_LABEL, lineBackorderPieces } from "@routeflow/types";
+import { invoiceLineQtyText, isUnitLine } from "@/lib/invoice-line-unit";
 import { formatMoney } from "@/lib/format";
 import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
 import { displayLineStatus } from "./line-status";
+import { ComponentSubLines } from "@/components/ComponentSubLines";
 
 /**
  * The order-detail line list (read-only table). Extracted VERBATIM from `orders/[id]/page.tsx`
@@ -29,11 +32,11 @@ export function OrderLineItemsTable({
       <table className="w-full text-sm">
         <thead className="border-b border-surface-border bg-surface-raised">
           <tr>
-            <th className="overline px-6 py-2.5 text-left">Product</th>
-            <th className="overline px-4 py-2.5 text-right">Qty</th>
-            <th className="overline px-4 py-2.5 text-right">Unit Price</th>
-            <th className="overline px-4 py-2.5 text-right">Line Total</th>
-            <th className="overline px-6 py-2.5 text-left">Status</th>
+            <th className="eyebrow-label px-6 py-2.5 text-left">Product</th>
+            <th className="eyebrow-label px-4 py-2.5 text-right">Qty</th>
+            <th className="eyebrow-label px-4 py-2.5 text-right">Unit Price</th>
+            <th className="eyebrow-label px-4 py-2.5 text-right">Line Total</th>
+            <th className="eyebrow-label px-6 py-2.5 text-left">Status</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-surface-border">
@@ -56,11 +59,21 @@ export function OrderLineItemsTable({
                     >
                       {orderLineName(li) ?? "Custom item"}
                     </span>
+                    {lineBackorderPieces(li, orderStatus) > 0 && (
+                      <span
+                        data-testid="line-backorder-tag"
+                        title={`${lineBackorderPieces(li, orderStatus)} pcs sold past stock`}
+                        className="ml-2 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200"
+                      >
+                        {BACKORDER_TAG_LABEL}
+                      </span>
+                    )}
                     {li.notes && (
                       <p className="mt-0.5 whitespace-pre-line text-xs italic text-navy/60">
                         {li.notes}
                       </p>
                     )}
+                    <ComponentSubLines components={li.components} />
                   </div>
                   {!li.productId && (
                     <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
@@ -71,15 +84,13 @@ export function OrderLineItemsTable({
               </td>
               <td className="px-4 py-3 text-right text-navy/70">
                 {li.boxes != null || li.pieces != null ? (
-                  <span title={`${Number(li.qty)} pcs total`}>
-                    {formatQtySplit({
-                      qty: li.qty,
-                      boxes: li.boxes,
-                      pieces: li.pieces,
-                    })}
+                  <span title={isUnitLine(li) ? undefined : `${Number(li.qty)} pcs total`}>
+                    {/* B653: a named-unit line (Case, Pallet…) shows ITS label via the ONE shared
+                        formatter, never the generic "boxes"; a pack line is byte-identical. */}
+                    {invoiceLineQtyText(li)}
                   </span>
                 ) : (
-                  <span className="mono">{formatQtySplit({ qty: li.qty })}</span>
+                  <span className="mono">{invoiceLineQtyText(li)}</span>
                 )}
                 {/* BUY_N_GET_M: name the free units, or the reduced line
                     total reads as a pricing error. */}

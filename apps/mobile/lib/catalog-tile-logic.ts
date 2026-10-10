@@ -21,11 +21,32 @@ import type { CartItem } from "../store/cartStore";
 
 export type TileCta = "stepper" | "notify" | "add";
 
-/** In-cart → stepper (even if now OOS); OOS → notify; else → add. */
-export function tileCta(product: Pick<BuyerProduct, "stockStatus">, inCartUnits: number): TileCta {
+/**
+ * In-cart → stepper (even if now OOS); OOS → notify, UNLESS the server says this buyer may order it
+ * anyway (`canBackorder`, OOS PR2: the seller's setting, resolved server-side) → add; else → add.
+ */
+// Partial: a missing stockStatus reads as IN_STOCK (cart/cached rows), though the catalog always sends it.
+// A missing canBackorder reads as "cannot" (fail closed, as before).
+export function tileCta(
+  product: Partial<Pick<BuyerProduct, "stockStatus" | "canBackorder">>,
+  inCartUnits: number,
+): TileCta {
   if (inCartUnits > 0) return "stepper";
-  if ((product.stockStatus ?? "IN_STOCK") === "OUT_OF_STOCK") return "notify";
+  if ((product.stockStatus ?? "IN_STOCK") === "OUT_OF_STOCK" && product.canBackorder !== true) {
+    return "notify";
+  }
   return "add";
+}
+
+/** The note under an out-of-stock item this buyer may order anyway (the web tile's exact words). */
+export const SHIPS_WHEN_RESTOCKED = "Ships when restocked";
+
+export function backorderNote(
+  product: Partial<Pick<BuyerProduct, "stockStatus" | "canBackorder">>,
+): string | null {
+  return (product.stockStatus ?? "IN_STOCK") === "OUT_OF_STOCK" && product.canBackorder === true
+    ? SHIPS_WHEN_RESTOCKED
+    : null;
 }
 
 export function alertIdSet(alerts: BuyerStockAlerts | undefined): Set<string> {
@@ -37,14 +58,11 @@ export function alertIdSet(alerts: BuyerStockAlerts | undefined): Set<string> {
  * to the cent (same inputs as buyer-cart-pricing.priceCart).
  */
 export function deriveTilePrice(
-  product: Pick<
-    BuyerProduct,
-    "id" | "buyerPrice" | "basePrice" | "price" | "category" | "unitsPerBox"
-  >,
+  product: Pick<BuyerProduct, "id" | "buyerPrice" | "category" | "unitsPerBox">,
   promoRules: PromotionRule[],
   cartItem: CartItem | undefined,
 ): PromoResult {
-  const base = Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0;
+  const base = product.buyerPrice;
   const upb = Number(product.unitsPerBox ?? 0);
   const unitsPerBox = cartItem?.unitsPerBox ?? product.unitsPerBox ?? null;
   const qtyPieces = normalizeBoxesPieces({
@@ -141,7 +159,9 @@ export interface StockLabelResult {
   tone: StockTone;
 }
 
-export function stockLabel(p: Pick<BuyerProduct, "stockStatus" | "stockLeft">): StockLabelResult {
+export function stockLabel(
+  p: Partial<Pick<BuyerProduct, "stockStatus" | "stockLeft">>,
+): StockLabelResult {
   const status = p.stockStatus ?? "IN_STOCK";
   if (status === "OUT_OF_STOCK") return { label: "Out of stock", tone: "danger" };
   if (status === "LOW")

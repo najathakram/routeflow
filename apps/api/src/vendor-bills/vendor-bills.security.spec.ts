@@ -42,7 +42,11 @@ const dupMatch = {
 
 const storage = { upload: jest.fn(), presignedUrl: jest.fn() };
 
-const inventory = { recomputeProductInTx: jest.fn(), fireStockAlerts: jest.fn() };
+const inventory = {
+  recomputeProductInTx: jest.fn(),
+  lockProducts: jest.fn(),
+  fireStockAlerts: jest.fn(),
+};
 
 describe("VendorBillsService — F10-004 payment amount guard", () => {
   let service: VendorBillsService;

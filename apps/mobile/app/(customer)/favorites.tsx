@@ -4,15 +4,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
-import { useBuyerFavorites, useToggleFavorite, type BuyerProduct } from "../../lib/api/buyer";
+import { useBuyerFavorites, useToggleFavorite } from "../../lib/api/buyer";
 import { useCartStore } from "../../store/cartStore";
-
-function priceOf(p: BuyerProduct): number {
-  return Number(p.buyerPrice ?? p.basePrice ?? p.price) || 0;
-}
-function idOf(p: BuyerProduct): string {
-  return (p as { productId?: string }).productId ?? p.id;
-}
 
 /**
  * Favorites-only view — the products the buyer hearted, with quick add-to-cart
@@ -59,8 +52,31 @@ export default function BuyerFavoritesScreen() {
           </View>
         ) : (
           items.map((p) => {
-            const id = idOf(p);
-            const price = priceOf(p);
+            // #2703: a favorite row's `id` is the FAVORITE's id — the product is `productId`, and
+            // `buyerPrice` is the server's effective price (typed BuyerFavoriteProduct).
+            const id = p.productId;
+            if (p.unavailable) {
+              // SA-606 M3: hidden by the tenant: name + reason + remove, no price, no add.
+              return (
+                <View key={id} style={styles.row} testID="favorite-unavailable">
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.name} numberOfLines={2}>
+                      {p.name}
+                    </Text>
+                    <Text style={styles.emptySub}>{p.unavailableText}</Text>
+                  </View>
+                  <Pressable
+                    hitSlop={8}
+                    style={styles.iconBtn}
+                    onPress={() => toggleFavorite.mutate({ productId: id, isFavorite: true })}
+                    accessibilityLabel="Remove from favorites"
+                  >
+                    <Ionicons name="heart" size={18} color="#ef4444" />
+                  </Pressable>
+                </View>
+              );
+            }
+            const price = p.buyerPrice;
             return (
               <View key={id} style={styles.row}>
                 <View style={{ flex: 1, minWidth: 0 }}>

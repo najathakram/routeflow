@@ -18,6 +18,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConflictException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -146,6 +147,26 @@ const existingPackLine = {
   position: 1,
 };
 
+// B297 (SA-098a) fixtures — a regulated Case product + its stamped line + the live category
+// a stale-rate trio must NOT be re-derived from.
+const regulatedCaseProduct = { ...caseProduct, id: "prod-case-reg", trackedCategoryId: "cat-1" };
+const regulatedCaseLadderRow = { ...caseLadderRow, productId: "prod-case-reg" };
+const existingRegulatedCaseLine = {
+  ...existingCaseLine,
+  id: "li-case-reg",
+  productId: "prod-case-reg",
+  trackedCategoryId: "cat-1",
+  categoryTaxType: "EXCISE_PER_UNIT",
+  categoryTaxRate: 0.3,
+  categoryPriceIncludesTax: false,
+};
+const liveCategory = {
+  id: "cat-1",
+  taxType: "EXCISE_PER_UNIT",
+  rate: 0.5,
+  priceIncludesTax: false,
+};
+
 describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", () => {
   let service: OrdersService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -157,6 +178,7 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -341,7 +363,7 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
     );
     expect(prisma.orderItem.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "li-case" },
+        where: { id: "li-case", orderId: "ord-1" },
         data: expect.objectContaining({
           qty: 36,
           boxes: 3,
@@ -412,13 +434,71 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
     );
     expect(prisma.orderItem.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "li-pack" },
+        where: { id: "li-pack", orderId: "ord-1" },
         data: expect.objectContaining({
           productId: "prod-case",
           unitLabel: "Case",
           qty: 24,
           boxes: 2,
           unitsPerBox: 12,
+        }),
+      }),
+    );
+  });
+
+  it("B297 (SA-098a): a same-product Case qty edit preserves the STORED trio, never re-stamping from a since-changed live rate", async () => {
+    prisma.order.findUnique.mockResolvedValue({
+      ...MOCK_ORDER,
+      lineItems: [existingRegulatedCaseLine],
+    });
+    prisma.product.findMany.mockResolvedValue([regulatedCaseProduct]);
+    prisma.product.findUniqueOrThrow.mockResolvedValue(regulatedCaseProduct);
+    prisma.productUnit.findMany.mockResolvedValue([regulatedCaseLadderRow]);
+    // Live rate has moved to 0.5 since the line was sold at 0.3 — must never overwrite it.
+    prisma.trackedCategory.findMany.mockResolvedValue([liveCategory]);
+
+    await service.updateOrderItems(
+      "ord-1",
+      { replaceAll: false, items: [{ id: "li-case-reg", unitLabel: "Case", qty: 3 }] } as never,
+      operatorPayload as never,
+    );
+
+    const upd = prisma.orderItem.update.mock.calls.find(
+      (c: any) => c[0]?.where?.id === "li-case-reg",
+    );
+    expect(upd).toBeDefined();
+    const data = upd![0].data;
+    // The 3 trio keys are absent from the write entirely — Prisma leaves the stored
+    // 0.3 rate untouched, never overwritten by the live 0.5.
+    expect("categoryTaxType" in data).toBe(false);
+    expect("categoryTaxRate" in data).toBe(false);
+    expect("categoryPriceIncludesTax" in data).toBe(false);
+  });
+
+  it("B297 (SA-098a): substituting to a regulated Case product re-stamps the trio from the NEW product's live category", async () => {
+    prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, lineItems: [existingPackLine] });
+    prisma.product.findMany.mockResolvedValue([regulatedCaseProduct]);
+    prisma.product.findUniqueOrThrow.mockResolvedValue(regulatedCaseProduct);
+    prisma.productUnit.findMany.mockResolvedValue([regulatedCaseLadderRow]);
+    prisma.trackedCategory.findMany.mockResolvedValue([liveCategory]);
+
+    await service.updateOrderItems(
+      "ord-1",
+      {
+        replaceAll: false,
+        items: [{ id: "li-pack", substituteProductId: "prod-case-reg", unitLabel: "Case", qty: 2 }],
+      } as never,
+      operatorPayload as never,
+    );
+
+    expect(prisma.orderItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "li-pack", orderId: "ord-1" },
+        data: expect.objectContaining({
+          productId: "prod-case-reg",
+          categoryTaxType: "EXCISE_PER_UNIT",
+          categoryTaxRate: 0.5,
+          categoryPriceIncludesTax: false,
         }),
       }),
     );

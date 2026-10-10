@@ -29,6 +29,13 @@ export class ReceiveVendorBillDto {
   /** Operator confirmed that unlinked lines won't update stock or costs. */
   @IsOptional() @IsBoolean() acknowledgeUnlinked?: boolean;
 
+  /**
+   * Operator confirmed a line with no stated pack size should be received as
+   * loose pieces anyway (B743). Only meaningful once the PACK_SIZE_UNKNOWN
+   * gate is enforced — while dark, the gate never blocks regardless of this.
+   */
+  @IsOptional() @IsBoolean() acknowledgePackSizeUnknown?: boolean;
+
   /** Per-line quantities for a partial receive. Omit to receive everything remaining. */
   @IsOptional()
   @IsArray()

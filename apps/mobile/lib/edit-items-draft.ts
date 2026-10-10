@@ -19,7 +19,16 @@
  * screen's BUY_N_GET_M netting through so the drawer, the line card and the
  * footer cannot disagree.
  */
-import { roundMoney, effectiveQty } from "@routeflow/pricing";
+import type { ProductUnitLevel } from "@routeflow/types";
+import { isFamilyProduct } from "./sellable-products";
+import { needsUnitLabelConfirm } from "./scan-unit-confirm";
+import {
+  roundMoney,
+  effectiveQty,
+  unitLineCount,
+  type LadderProduct,
+  type SellLevel,
+} from "@routeflow/pricing";
 import {
   buildOrderItemDiff,
   type DiffCatalogLine,
@@ -29,6 +38,8 @@ import {
 import { editedLineFreeUnits } from "./invoice-totals";
 import { lineUnitsPerBox } from "./at-door-line-units";
 import { trayRowsFrom, type TrayRow } from "./scan-tray";
+import { defaultStartOption, unitPriceBase, type UnitOption } from "./unit-options";
+import { incrementLine, incrementLinePiece, isUnitLine } from "./sale-line";
 import type { UpdateOrderItemInput } from "./api/orders";
 
 /** Shared with the route file's own "Add unlisted item" flow. */
@@ -67,6 +78,23 @@ export type DraftItem = {
    * (UNIT_AWARE_LINE) since a bare qty would be misread as pieces (B707).
    */
   unitLabel?: string | null;
+  /**
+   * units_v1: the currently-active unit's own resolved tier price — the comparison base
+   * `unitPrice` diverging from means a genuine operator override, in place of `catalogPrice`
+   * (the PACK's price) whenever `unitLabel` is set (a Case's price is never the Box's, even with
+   * no override typed). Unset while `unitLabel` is unset.
+   */
+  unitBasePrice?: number;
+  /**
+   * units_v1 (SA-085f HIGH #2): the REAL product's ladder inputs — its own pack
+   * unit/unitsPerBox and all 5 tier-price columns — snapshotted once from the embedded
+   * `product` record (hydration) or the picker's product (a fresh add). Never reconstructed
+   * from this row's own mutable fields: a stored unit line's `unitsPerBox` is the CHOSEN
+   * UNIT's own factor (the server's snapshot convention, unit-line-build.ts), not the pack's,
+   * and this row's `catalogPrice`/`unitPrice` are the line's price, not the product's tier
+   * ladder. `UnitPickerRow` prices off THIS, exactly like `resolveUnitPrice` does server-side.
+   */
+  packLadder?: LadderProduct;
   /** Set when this row substitutes a different product onto its original line. */
   substituteProductId?: string;
   /**
@@ -89,6 +117,17 @@ export type DraftItem = {
    */
   promoFreeUnits?: number | null;
   promoBaseUnits?: number | null;
+  /**
+   * #2231 / SA-388: a stored unit line whose COUNT can't be derived (see `unitLineCount`).
+   * Its qty is not editable and any edit to it refuses to save (`repairBlockedLines`) —
+   * the server needs a count on every unit-line UPDATE, and guessing one bills wrong.
+   */
+  needsRepair?: boolean;
+  /**
+   * UI-only: the qty a line added THIS session was created with. The default selling unit applies once, only while `qty`
+   * still equals it and no unit is held (any quantity edit or unit pick ends the default-start). Never submitted.
+   */
+  startOnDefaultUnit?: number;
 };
 
 /**
@@ -134,6 +173,11 @@ function toNumber(v: number | string | null | undefined): number {
  * clears a line's unit, only resends the one it was loaded with (see
  * `stagedDiffItems` below, which puts it on the wire for a unit line's save).
  */
+// #2231 / SA-388 rule 1: the COUNT of a stored unit line — ONE implementation in
+// @routeflow/pricing (#2276; web and mobile had drifting copies). Re-exported so buyer-edit-items
+// and the specs keep importing it from here.
+export { unitLineCount };
+
 export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | null | undefined): {
   draft: Record<string, DraftItem>;
   unlisted: UnlistedDraft[];
@@ -159,22 +203,52 @@ export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | 
     const product = (li as any).product ?? {};
     const catalogPrice = toNumber(product.pricePerUnit ?? li.unitPrice);
     const unitsPerBox = lineUnitsPerBox({ unitsPerBox: li.unitsPerBox, product });
-    next[li.productId] = {
+    const unitLabel = li.unitLabel ?? undefined;
+    // SA-085f MEDIUM #4: a stored unit line persists qty/boxes/pieces on the server's PACK-PIECE
+    // basis (buildUnitLine, unit-line-build.ts — a 2-Case line is qty:480, boxes:2), so its
+    // ONE qty basis is the COUNT, matching every unit line this session picks fresh via
+    // setUnitLabel (qty:<count>, boxes/pieces unset). Normalize once, here, so the count is
+    // `item.qty` everywhere downstream — the steppers, the margin hint, the on-screen "Qty
+    // (Case) N" — and `buildOrderItemDiff`'s existing `line.boxes ?? line.qty` wire fallback
+    // still resolves correctly (boxes is now always unset for a unit line).
+    // #2231 / SA-388: the count comes from ONE rule (unitLineCount); an underivable one is 0
+    // + needsRepair (0 on both this side and orderOriginals', so untouched it sends nothing).
+    const count = unitLabel ? unitLineCount(li) : null;
+    const qty = unitLabel ? (count ?? 0) : toNumber(li.qty);
+    // B775 (SA-101/SA-108): key by the line's OWN id — the record key is the
+    // ONLY identity, never a `?? productId` fallback. units_v1 can legitimately
+    // carry two lines for the same product (a Case line + a pack line), and a
+    // non-unit order can too (create() maps dto.items one OrderItem per entry
+    // with no dedupe, no @@unique([orderId, productId])). Keying by productId
+    // collapsed the second line into the first at hydration; order-item-diff.ts
+    // then read the dropped line's id as missing from the surviving set and
+    // emitted {id, action:"DELETE"} for it — even on a zero-edit Save, since
+    // the collision happens here, before any operator interaction. `li.id` is
+    // always present for an existing (server-loaded) line.
+    next[li.id] = {
       productId: li.productId,
-      qty: toNumber(li.qty),
-      boxes: li.boxes ?? undefined,
-      pieces: li.pieces ?? undefined,
+      qty,
+      boxes: unitLabel ? undefined : (li.boxes ?? undefined),
+      pieces: unitLabel ? undefined : (li.pieces ?? undefined),
       unitsPerBox,
-      unitLabel: li.unitLabel ?? undefined,
+      unitLabel,
       unitPrice: toNumber(li.unitPrice),
       catalogPrice,
+      // The product's OWN pack factor — never the line's `unitsPerBox` above, which on a
+      // stored unit line is the chosen unit's factor, not the pack's (see the field doc).
+      packLadder: buildPackLadder({
+        ...product,
+        pricePerUnit: product.pricePerUnit ?? li.unitPrice ?? 0,
+      }),
       name: product.name ?? "Item",
       unit: product.unit,
       overrideReason: li.overrideReason ?? undefined,
       notes: (li as any).notes ?? undefined,
       lineId: li.id ?? undefined,
-      // Preserve the stored denomination so a qty-only edit doesn't invent a split.
-      boxSplit: li.boxes != null || li.pieces != null,
+      // Preserve the stored denomination so a qty-only edit doesn't invent a split. A unit
+      // line is never box-split (its boxes/pieces are normalized away above, matching
+      // setUnitLabel's own convention for a freshly-picked one).
+      boxSplit: !unitLabel && (li.boxes != null || li.pieces != null),
       // NEW (P10-POS-1): read via the existing `any`-cast `product` ref above —
       // the server already returns these on the order's embedded product, only
       // AdminOrder's TS type doesn't declare them yet (out of scope here).
@@ -184,11 +258,365 @@ export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | 
       // at, so a qty edit rescales it exactly like the server does on save.
       promoFreeUnits: li.promoFreeUnits ?? null,
       promoBaseUnits: li.promoFreeUnits
-        ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
+        ? unitLabel
+          ? count
+          : Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
         : null,
+      ...(unitLabel && count == null ? { needsRepair: true } : {}),
     };
   }
   return { draft: next, unlisted: nextUnlisted };
+}
+
+/**
+ * Apply a `UnitPickerRow` choice to a draft line (SA-085f, size-ratchet extraction out of
+ * edit-items.tsx's `setUnitLabel` — the route file's own tsc-guarded line cap). `qty` resets to
+ * the count (1), boxes/pieces clear (a unit line is a plain qty x unitPrice line). `unitPrice`
+ * AND `unitBasePrice` both take the option's own resolved price — same value in both, so
+ * `isOverridden` reads false immediately after picking (a lookup, not an operator override)
+ * until the operator's own price edit diverges the two.
+ *
+ * `unitsPerBox` means "the current selling unit's own factor" (SA-085f HIGH #3): the pack's own
+ * factor while unset (restored from `packLadder`, the untouched real snapshot — never `cur`'s own
+ * mutable field, which IS that factor while a unit is active), else the picked unit's factor —
+ * so the margin/floor hint always multiplies cost by the right pieces-per-unit.
+ *
+ * `packTierPrice` is the caller's already-resolved live tier price for the pack (SA-085f LOW:
+ * `cur.catalogPrice` is the product's LIST price on a hydrated/stored line, never tier-adjusted —
+ * restoring it on a pack-switch would show the wrong price to a tier≠1 customer).
+ */
+/**
+ * The REAL product's ladder inputs for a draft row's `UnitPickerRow` (SA-085f HIGH #2,
+ * size-ratchet extraction) — the snapshotted `packLadder` when one exists, else a best-effort
+ * fallback (a legacy on-device snapshot from before this field existed) that at least carries
+ * the pack's own price, never the corrupted `unitsPerBox`/`catalogPrice` a mini-product built
+ * from the row's OWN mutable fields used to.
+ */
+export function ladderProductFor(
+  item: Pick<DraftItem, "unit" | "unitsPerBox" | "catalogPrice" | "packLadder">,
+): LadderProduct {
+  return (
+    item.packLadder ?? {
+      unit: item.unit ?? null,
+      unitsPerBox: item.unitsPerBox ?? null,
+      pricePerUnit: item.catalogPrice,
+      priceTier2: null,
+      priceTier3: null,
+      priceTier4: null,
+      priceTier5: null,
+    }
+  );
+}
+
+/** A fresh add's ladder snapshot (SA-085f HIGH #2, size-ratchet extraction) — see `packLadder`. */
+export function buildPackLadder(p: {
+  unit?: string;
+  unitsPerBox?: number | null;
+  pricePerUnit: number | string;
+  priceTier2?: number | string | null;
+  priceTier3?: number | string | null;
+  priceTier4?: number | string | null;
+  priceTier5?: number | string | null;
+}): LadderProduct {
+  return {
+    unit: p.unit ?? null,
+    unitsPerBox: p.unitsPerBox ?? null,
+    pricePerUnit: p.pricePerUnit,
+    priceTier2: p.priceTier2 ?? null,
+    priceTier3: p.priceTier3 ?? null,
+    priceTier4: p.priceTier4 ?? null,
+    priceTier5: p.priceTier5 ?? null,
+  };
+}
+
+export function applyUnitPick(
+  cur: DraftItem,
+  option: UnitOption,
+  packTierPrice: number,
+): DraftItem {
+  const isPack = option.value === "";
+  return {
+    ...cur,
+    startOnDefaultUnit: undefined,
+    unitLabel: isPack ? undefined : option.value,
+    unitBasePrice: isPack ? undefined : option.price,
+    unitsPerBox: isPack ? (cur.packLadder?.unitsPerBox ?? cur.unitsPerBox) : option.factorToBase,
+    qty: 1,
+    boxes: undefined,
+    pieces: undefined,
+    boxSplit: false,
+    unitPrice: isPack ? packTierPrice : option.price,
+  };
+}
+
+/** A line added this session that still waits for its default selling unit: untouched quantity, no unit held. */
+export function startsOnDefaultUnit(
+  item: Pick<DraftItem, "startOnDefaultUnit" | "qty" | "unitLabel">,
+): boolean {
+  return item.startOnDefaultUnit != null && item.qty === item.startOnDefaultUnit && !item.unitLabel;
+}
+
+/**
+ * A new line moved onto the product's default selling unit (the level flagged `isDefaultSelling`, only if the picker
+ * offers it), exactly like web's Create Order (`defaultStartOption`). With nothing flagged/offered the line is returned
+ * as it was. This is the same decision `UnitPickerRow` makes when it mounts with `startOnDefaultUnit`.
+ */
+export function startNewLineOnDefault(
+  item: DraftItem,
+  units: readonly ProductUnitLevel[],
+  tier: number,
+  packTierPrice: number,
+): DraftItem {
+  if (!startsOnDefaultUnit(item)) return item;
+  const start = defaultStartOption(ladderProductFor(item), units, tier, {
+    hasUnit: !!item.unitLabel,
+  });
+  return start ? applyUnitPick(item, start, packTierPrice) : item;
+}
+
+/**
+ * SA-085i(c): a non-unit line's Cases/Loose edit matches master's OLD inline rule byte-for-
+ * byte — the typed count REPLACES qty; a legacy line's plain (un-split) qty is never
+ * reinterpreted as loose pieces. The shared sale-line.ts fold (`splitFromPrev`, correct for
+ * NewOrderScreen's own in-session cart accumulation) reads a no-split qty as PIECES, which
+ * would invent phantom loose units out of a STORED historical qty the first time this screen's
+ * own Cases/Loose steppers touch it — a separate, pre-existing bug, not fixed here. A
+ * unit-sold line refuses the edit outright (returns unchanged; the UI never shows this
+ * control for one, but this is the executable half of that guarantee).
+ */
+export function applyBoxEdit(cur: DraftItem, boxes: number, unitsPerBox: number): DraftItem {
+  if (cur.unitLabel) return cur;
+  const b = Math.max(0, Math.floor(boxes));
+  const pieces = cur.pieces ?? 0;
+  return {
+    ...cur,
+    boxes: b,
+    pieces,
+    qty: b * unitsPerBox + pieces,
+    boxSplit: true,
+    startOnDefaultUnit: undefined,
+  };
+}
+
+/** SA-085i(c): the loose-pieces counterpart of `applyBoxEdit` — see its doc comment. */
+export function applyPieceEdit(cur: DraftItem, pieces: number, unitsPerBox: number): DraftItem {
+  if (cur.unitLabel) return cur;
+  const pcs = Math.max(0, Math.floor(pieces));
+  const boxes = cur.boxes ?? 0;
+  return {
+    ...cur,
+    boxes,
+    pieces: pcs,
+    qty: boxes * unitsPerBox + pcs,
+    boxSplit: true,
+    startOnDefaultUnit: undefined,
+  };
+}
+
+/**
+ * B775 (fleet lead review, rules 1+2): the draft key a scan/add should
+ * write to. Merges into an EXISTING entry for the SAME product AND the
+ * SAME unit (`unitLabel` — `undefined`/`null` both mean "base/boxed", the
+ * only shape a scan can ever represent; a scan must never merge into a
+ * units_v1 selling-unit line like a Case). Matched by VALUE, since the
+ * draft record is keyed by lineId/a fresh local id, never bare productId.
+ * `Object.entries` iteration order is the draft's own (display) order, so
+ * with more than one legacy match (two non-unit lines already on one
+ * product — reachable only pre-fix, or from data written outside this
+ * screen) this deliberately merges into the FIRST and never touches the
+ * others. No match at all — including every genuinely new addition — gets
+ * a FRESH key, never the bare productId: two new same-product rows added
+ * in different units (or two independent adds before either is saved)
+ * must never collide the same way hydration did.
+ *
+ * CAUTION (currently unreachable, but load-bearing the day it isn't): a
+ * `new:<id>` row's key is never re-keyed to the server's real id in place —
+ * this screen only ever re-reads it via `hydrateFromOrder` after a save,
+ * which always follows `leaveEditor()` and remounts the screen fresh. That
+ * is safe only as long as every successful save leaves the editor. The day a
+ * "save and stay" flow exists, a saved `new:<id>` row would keep its local
+ * key while the record it maps to now has a real lineId — any code added
+ * for that flow must explicitly re-key the draft entry (swap the `new:<id>`
+ * key for the returned lineId), not assume this function's callers already
+ * handle it.
+ */
+export function resolveDraftKeyForPick(
+  draft: Record<string, DraftItem>,
+  productId: string,
+  unitLabel?: string | null,
+): string {
+  if (!unitLabel) {
+    const match = Object.entries(draft).find(
+      ([, it]) => it.productId === productId && !it.unitLabel,
+    );
+    if (match) return match[0];
+  }
+  return newDraftKey();
+}
+
+/**
+ * B775 (SA-103): the key for a NOT-YET-SAVED row — always `new:` prefixed,
+ * never a bare productId (two unsaved same-product rows, e.g. one added
+ * per unit, would collide again exactly like the hydration bug this fixes)
+ * and never a bare counter alone (recognizably distinct from a real DB
+ * line id, e.g. for the save response's re-key step). Reuses `newLocalId`'s
+ * existing per-session-unique generator rather than introducing separate
+ * counter state.
+ */
+export function newDraftKey(): string {
+  return `new:${newLocalId()}`;
+}
+
+/** The inputs `applyPickToDraft` needs beyond the draft key it writes to. */
+export interface PickInput {
+  productId: string;
+  unitsPerBox: number | null;
+  /** The price to start a FRESH row at — already resolved (price-history vs.
+   *  tier/list) by the caller; this function never re-derives it. */
+  startPrice: number;
+  catalogPrice: number;
+  name: string;
+  unit?: string;
+  level: SellLevel;
+  /** A FAMILY container is never added: the pick is a no-op. */
+  kind?: "FAMILY" | "STANDARD" | "VARIANT" | "RECIPE" | null;
+  /** The fresh-add ladder snapshot (`ladderProductFor`'s real-tier-prices
+   *  input) — only used on a fresh add; an existing entry keeps its own. */
+  packLadder?: LadderProduct;
+}
+
+/**
+ * SA-108d (E44 correction of SA-108a): the merge/add transform a scan or tap
+ * applies to the draft, extracted to a PURE function of `(draft, key, input)`
+ * alone — no closure over component state, no side effects. This is what
+ * makes it safe to run TWICE for one logical pick: once synchronously by the
+ * caller (`draftRef.current = applyPickToDraft(draftRef.current, key,
+ * input)`) to keep the ref an accurate same-tick mirror, and once more
+ * whenever React actually processes the `setDraft` update it was ALSO handed
+ * to — a functional setState updater must never itself write to a ref (see
+ * `resolveDraftKeyForPick`'s caller in edit-items.tsx): React does not
+ * reliably run it synchronously even for the first call in a same-tick
+ * burst, since the eager-dispatch path also requires the alternate fiber's
+ * lanes to be empty, which a component's own earlier renders can leave
+ * non-empty. `key` is resolved by the CALLER (via `resolveDraftKeyForPick`)
+ * before this runs — never re-derived here, and never re-derived from an
+ * existing entry's own fields (the SA-108 bug this whole lineage fixes).
+ */
+export function applyPickToDraft(
+  draft: Record<string, DraftItem>,
+  key: string,
+  input: PickInput,
+): Record<string, DraftItem> {
+  if (isFamilyProduct(input)) return draft; // a family container is never a line
+  const existing = draft[key];
+  const upb = Number(existing?.unitsPerBox ?? input.unitsPerBox ?? 0);
+  const boxed = upb > 1;
+  if (existing) {
+    // units_v1 (SA-085f): a re-scan of an already unit-sold line merges into
+    // its COUNT — never the pack's box math, regardless of scan kind.
+    if (boxed && !isUnitLine(existing)) {
+      const line =
+        input.level === "UNIT"
+          ? incrementLinePiece(existing, true, upb)
+          : incrementLine(existing, true, upb);
+      return { ...draft, [key]: { ...line, boxSplit: true } };
+    }
+    return { ...draft, [key]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
+  }
+  const base = {
+    productId: input.productId,
+    unitsPerBox: input.unitsPerBox,
+    unitPrice: input.startPrice,
+    catalogPrice: input.catalogPrice,
+    name: input.name,
+    unit: input.unit,
+    packLadder: input.packLadder,
+  };
+  if (boxed) {
+    // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
+    // Only a tap/case add starts on the default unit; a piece-code scan's level is decided by the code (as web).
+    return input.level === "UNIT"
+      ? { ...draft, [key]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
+      : {
+          ...draft,
+          [key]: {
+            ...base,
+            qty: upb,
+            boxes: 1,
+            pieces: 0,
+            boxSplit: true,
+            startOnDefaultUnit: upb,
+          },
+        };
+  }
+  return {
+    ...draft,
+    [key]: { ...base, qty: 1, ...(input.level === "UNIT" ? {} : { startOnDefaultUnit: 1 }) },
+  };
+}
+
+/** The screen's own resolved inputs a pick needs, beyond what `PickInput` already covers. */
+export interface ResolvePickTargetInput {
+  productId: string;
+  name: string;
+  unit?: string;
+  unitsPerBox: number | null;
+  level: SellLevel;
+  kind?: PickInput["kind"];
+  startPrice: number;
+  catalogPrice: number;
+  packLadder?: LadderProduct;
+}
+
+/**
+ * size-ratchet extraction out of edit-items.tsx's `addPickedToDraft`: resolve
+ * the draft key AND build the pure `apply(d)` updater for one pick, in a
+ * single call — everything about a pick that does NOT need React state
+ * (`setDraft`/`draftRef`/`confirm`, which stay in the screen).
+ *
+ * units_v1 (SA-085i): a piece scan on an already unit-sold line adds a whole
+ * unit — the caller confirms before committing when `existingLabel` comes
+ * back set. Found by VALUE (productId + unitLabel), never a productId-keyed
+ * lookup (B775/SA-108) — `resolveDraftKeyForPick` deliberately EXCLUDES a
+ * unit-labeled line from its own match, so this line's own key is resolved
+ * separately here and reused for the confirmed add.
+ */
+export function resolvePickTarget(
+  draft: Record<string, DraftItem>,
+  input: ResolvePickTargetInput,
+): {
+  key: string;
+  existingLabel?: string;
+  apply: (d: Record<string, DraftItem>) => Record<string, DraftItem>;
+} {
+  const existingUnitEntry = Object.entries(draft).find(
+    ([, it]) => it.productId === input.productId && it.unitLabel,
+  );
+  // SA-580b: the unit-label keying + confirm apply only to a UNIT scan on a BOXED product (same
+  // rule as NewOrderScreen's needsUnitLabelConfirm); upb <= 1 behaves like a picker tap.
+  const unitLabelScan = needsUnitLabelConfirm(
+    input.level,
+    { unitsPerBox: input.unitsPerBox },
+    existingUnitEntry?.[1].unitLabel,
+  );
+  const existingLabel = unitLabelScan ? (existingUnitEntry?.[1].unitLabel ?? undefined) : undefined;
+  const key =
+    unitLabelScan && existingUnitEntry
+      ? existingUnitEntry[0]
+      : resolveDraftKeyForPick(draft, input.productId, null);
+  const apply = (d: Record<string, DraftItem>) =>
+    applyPickToDraft(d, key, {
+      productId: input.productId,
+      unitsPerBox: input.unitsPerBox,
+      startPrice: input.startPrice,
+      catalogPrice: input.catalogPrice,
+      name: input.name,
+      unit: input.unit,
+      level: input.level,
+      kind: input.kind,
+      packLadder: input.packLadder,
+    });
+  return { key, existingLabel, apply };
 }
 
 /**
@@ -235,6 +663,10 @@ export interface BaselineLine {
   notes?: string | null;
   status?: string | null;
   overrideReason?: string | null;
+  /** units_v1 (SA-085f MEDIUM #4): present only on a unit-sold line — see `orderOriginals`. */
+  unitLabel?: string | null;
+  boxes?: number | null;
+  unitsPerBox?: number | null;
 }
 
 export interface BaselineOrderLike {
@@ -247,6 +679,12 @@ export interface BaselineOrderLike {
  * The order's non-cancelled lines as `buildOrderItemDiff` compares against.
  * Exported so the dirty check and the save share ONE derivation — a second
  * hand-rolled comparison is how "Save changes" and "are there changes?" drift.
+ *
+ * SA-085f MEDIUM #4: `qty` here must be on the SAME basis `hydrateFromOrder` normalizes the
+ * draft to — the unit COUNT for a unit-sold line (`li.boxes ?? li.qty`, matching the server's
+ * pack-piece storage convention), never the raw `li.qty` (total base pieces, e.g. 480 for 2
+ * Cases). Comparing an un-normalized 480 against the draft's normalized 2 would read every
+ * UNTOUCHED unit line as "changed" and send a spurious UPDATE on every save.
  */
 export function orderOriginals(order: BaselineOrderLike | null | undefined): OriginalLine[] {
   return (order?.lineItems ?? [])
@@ -254,7 +692,7 @@ export function orderOriginals(order: BaselineOrderLike | null | undefined): Ori
     .map((li) => ({
       id: li.id,
       productId: li.productId ?? null,
-      qty: toNumber(li.qty),
+      qty: li.unitLabel ? (unitLineCount(li) ?? 0) : toNumber(li.qty),
       unitPrice: toNumber(li.unitPrice),
       name: li.name ?? null,
       notes: li.notes ?? null,
@@ -281,7 +719,10 @@ export function stagedDiffItems(
     pieces: i.pieces ?? null,
     boxSplit: !!i.boxSplit,
     unitPrice: i.unitPrice,
-    basePrice: i.catalogPrice,
+    // units_v1: a unit-sold NEW line's override-vs-normal comparison (buildOrderItemDiff's
+    // `overridden` check) must use THAT unit's own resolved price, never the pack's
+    // `catalogPrice` — see lib/unit-options.ts#unitPriceBase.
+    basePrice: unitPriceBase(i, i.catalogPrice),
     overrideReason: i.overrideReason,
     substituteProductId: i.substituteProductId,
     notes: i.notes,
@@ -301,6 +742,32 @@ export function stagedDiffItems(
     pendingDeletes: [...staged.pendingDeletes],
     pendingCancels: [],
   });
+}
+
+/**
+ * #2231 / SA-388: names of LOCKED unit lines (`needsRepair`) the operator has edited. The
+ * diff can't carry them (no derivable count, qty 0 skips the UPDATE), so Save must refuse
+ * with "needs repair" and send nothing rather than drop the edit or guess a count. Removing
+ * the line is fine — it leaves the draft, and a DELETE needs no count.
+ */
+export function repairBlockedLines(
+  draft: Record<string, DraftItem>,
+  originals: OriginalLine[],
+): string[] {
+  const byId = new Map(originals.map((o) => [o.id, o]));
+  return Object.values(draft)
+    .filter((i) => {
+      const o = i.needsRepair && i.lineId ? byId.get(i.lineId) : undefined;
+      if (!o) return false;
+      return (
+        i.qty !== o.qty ||
+        Math.abs(i.unitPrice - o.unitPrice) > 0.0001 ||
+        (i.notes ?? "").trim() !== (o.notes ?? "").trim() ||
+        (i.overrideReason ?? null) !== (o.overrideReason ?? null) ||
+        !!i.substituteProductId
+      );
+    })
+    .map((i) => i.name);
 }
 
 /** True when Save would send at least one line action. */
@@ -354,7 +821,10 @@ export function shouldRehydrateFromOrder(input: {
 
 // ─── The on-device snapshot ──────────────────────────────────────────────────
 
-export const EDIT_ITEMS_SNAPSHOT_VERSION = 1;
+// Bumped 1→2 (B775/SA-108): pre-fix snapshots stored `draft` keyed by
+// `productId`, which collides two same-product lines into one entry. A v1
+// snapshot must be discarded, never restored, so it can't resurrect that bug.
+export const EDIT_ITEMS_SNAPSHOT_VERSION = 2;
 /** Same TTL shape as `lib/list-ui-snapshot.ts`; a day-old staged edit is stale. */
 export const EDIT_ITEMS_SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
 /** Idle debounce before a snapshot write, matching the stock-count autosave. */
@@ -432,6 +902,17 @@ export function serializeEditItemsSnapshot(snapshot: EditItemsSnapshot): string 
  * version, or structurally wrong returns null, because a corrupt blob on disk
  * must degrade to "no restore offered", never to a crashed editor.
  */
+/**
+ * SA-085h LOW: a unit-sold DraftItem still carrying `boxes` (an on-device snapshot saved by a
+ * build from before hydrateFromOrder normalized qty to the COUNT — a 2-Case line stored as
+ * qty:480, boxes:2) is un-normalized. Fold it to the SAME count basis hydrateFromOrder always
+ * produces, so a restored snapshot's stepper/display/diff agree with a freshly-hydrated line.
+ */
+function normalizeUnitLineQty(item: DraftItem): DraftItem {
+  if (!item.unitLabel || item.boxes == null) return item;
+  return { ...item, qty: item.boxes, boxes: undefined, pieces: undefined, boxSplit: false };
+}
+
 export function deserializeEditItemsSnapshot(
   raw: string | null | undefined,
 ): EditItemsSnapshot | null {
@@ -459,7 +940,12 @@ export function deserializeEditItemsSnapshot(
     savedAt: s.savedAt,
     baseline: s.baseline,
     orderUpdatedAt: s.orderUpdatedAt ?? null,
-    draft: s.draft as Record<string, DraftItem>,
+    draft: Object.fromEntries(
+      Object.entries(s.draft as Record<string, DraftItem>).map(([id, item]) => [
+        id,
+        normalizeUnitLineQty(item),
+      ]),
+    ),
     unlisted: s.unlisted as UnlistedDraft[],
     pendingDeletes: s.pendingDeletes as string[],
     selectedCreditIds: s.selectedCreditIds as string[],
@@ -552,7 +1038,15 @@ export function draftTrayRows(input: {
       const it = input.draft[id];
       return it ? { id, name: it.name, unitsPerBox: it.unitsPerBox ?? null } : undefined;
     },
-    priceFor: (product) => input.draft[product.id]?.catalogPrice ?? 0,
+    // SA-085h: the SAME comparison base every other reader of this line uses — a unit-sold
+    // line's reference price is its own resolved level, never the pack's catalogPrice. (This
+    // is the fallback the tray subtotal uses only when overridable is false or unitPrice is
+    // unset; a DraftItem always has both, so it never actually reaches this value today —
+    // fixed for consistency with the create screen's identical tray.)
+    priceFor: (product) => {
+      const item = input.draft[product.id];
+      return item ? unitPriceBase(item, item.catalogPrice) : 0;
+    },
     overridable: () => true,
     freeUnitsFor: (id) => draftFreeUnits(input.draft[id]),
   });

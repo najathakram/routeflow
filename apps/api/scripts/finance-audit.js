@@ -4,17 +4,18 @@ const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 
-if (!process.env.DATABASE_URL) {
-  console.error(
-    "DATABASE_URL not set. Run via: railway run --service postgres node apps/api/scripts/finance-audit.js",
-  );
-  process.exit(1);
-}
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
+// B768: run via `railway run --service postgres node apps/api/scripts/finance-audit.js`. The connection
+// comes from scripts/lib/report-db-url.mjs: Railway's TCP-proxy variables win, because under
+// `railway run` DATABASE_URL is the unreachable *.railway.internal host.
+let pool;
+let prisma;
 
 async function main() {
+  const { resolveReportDbUrl } = await import("./lib/report-db-url.mjs");
+  const url = resolveReportDbUrl("finance-audit");
+  if (!url) process.exit(2);
+  pool = new Pool({ connectionString: url });
+  prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
   const now = new Date();
   const startOfYear = new Date(now.getFullYear(), 0, 1);
 
@@ -238,8 +239,8 @@ async function main() {
     );
   }
 
-  await prisma.$disconnect();
-  await pool.end();
+  await prisma?.$disconnect();
+  await pool?.end();
 }
 
 main().catch((e) => {

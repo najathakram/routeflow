@@ -24,6 +24,13 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { gateVia, FEATURE_REGISTRY } from "../billing/feature-registry";
 import type { ResolvedFeatures } from "../billing/feature-resolver.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { PolicyService } from "../policy/policy.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import {
+  capabilityFromInputs,
+  heldAddonKeys,
+  readFulfilmentInputs,
+} from "../billing/fulfilment-capability";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -35,6 +42,7 @@ import { UpdateBrandingDto } from "./dto/update-branding.dto";
 import { MB, uploadLimits } from "../common/upload-limits";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { TenantFeaturesResponse } from "@routeflow/types";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 @ApiTags("tenants")
 @Controller("tenants")
@@ -45,6 +53,8 @@ export class TenantsController {
     private readonly addonService: AddonService,
     private readonly featureOverrides: FeatureOverrideService,
     private readonly authority: EntitlementAuthority,
+    private readonly policies: PolicyService,
+    private readonly featureConfig: FeatureConfigService,
   ) {}
 
   // ─── Me: Features (feature grants v2 brief A) ─────────────────────────────────
@@ -65,17 +75,24 @@ export class TenantsController {
     // able to tell "genuinely nothing granted" apart from "the server couldn't tell you."
     if (!user.tenantId) {
       throw new ServiceUnavailableException({
-        code: "FEATURES_UNAVAILABLE",
+        code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
         message: "No tenant context.",
       });
     }
-    const [resolved, served]: [ResolvedFeatures | null, string[] | null] = await Promise.all([
+    // SA-138: the TENANT-scope effective policy values ride `modes`. `effectiveForClient` never
+    // throws — a failed policy read yields the registry defaults, i.e. today's behaviour.
+    const [resolved, served, policyModes]: [
+      ResolvedFeatures | null,
+      string[] | null,
+      Record<string, string>,
+    ] = await Promise.all([
       this.authority.resolveAll(user.tenantId),
       this.authority.servedFlags(user.tenantId).catch(() => null),
+      this.policies.effectiveForClient(user.tenantId),
     ]);
     if (!resolved || served === null) {
       throw new ServiceUnavailableException({
-        code: "FEATURES_UNAVAILABLE",
+        code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
         message: "Feature resolution is temporarily unavailable. Please retry.",
       });
     }
@@ -83,10 +100,33 @@ export class TenantsController {
     for (const f of FEATURE_REGISTRY) {
       resolver[f.key] = resolved.byKey.get(f.key)?.effective ?? false;
     }
+    // Business profiles 1A: the fulfilment modes and the ONE derived capability answer, read by the shared
+    // `readFulfilmentInputs` (also behind the counter-sale gate). A failed mode read falls back to `unset`
+    // (today's behavior): never a 5xx for a field old clients ignore. A failed fleet read must not 500 (and
+    // must not guess fleet=false): the existing 503.
+    const fulfilment = await readFulfilmentInputs(
+      {
+        featureConfig: this.featureConfig,
+        addonService: this.addonService,
+        featureOverrides: this.featureOverrides,
+      },
+      user.tenantId,
+    );
+    if (fulfilment.fleet === null) {
+      throw new ServiceUnavailableException({
+        code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
+        message: "Feature resolution is temporarily unavailable. Please retry.",
+      });
+    }
     return {
       served,
       resolver,
-      modes: {},
+      modes: {
+        ...policyModes,
+        fulfilment_model: fulfilment.fulfilmentMode,
+        counter_sales: fulfilment.counterSales,
+      },
+      capabilities: { fulfilment: capabilityFromInputs(fulfilment) },
       catalogVersionId: resolved.catalogVersionId,
       computedAt: resolved.computedAt,
     };
@@ -103,19 +143,11 @@ export class TenantsController {
   @ApiOperation({ summary: "Active add-on keys for the current tenant (feature flags)" })
   async getMyAddons(@CurrentUser() user: JwtPayload) {
     if (!user.tenantId) return { addons: [] };
-    const active = await this.addonService.getActiveAddons(user.tenantId);
-    // An active override is absolute (owner ruling, feature-grants PR-1): GRANT surfaces a key
-    // the tenant holds no addon row for at all; DENY hides a key it does hold one for.
-    const overrides = await this.featureOverrides.allActive(user.tenantId);
-    const addons = new Set(active);
-    for (const [key, effect] of overrides) {
-      // Opus review of 8130b204, item 6: only a RequireAddon-gated key belongs in this array —
-      // an override on a flag/guard/none-gated key has no addon-consumer to reach here.
-      if (gateVia(key) !== "RequireAddon") continue;
-      if (effect === "GRANT") addons.add(key);
-      else addons.delete(key);
-    }
-    return { addons: Array.from(addons) };
+    return {
+      addons: Array.from(
+        await heldAddonKeys(this.addonService, this.featureOverrides, user.tenantId),
+      ),
+    };
   }
 
   // ─── Me/Config: Email ──────────────────────────────────────────────────────

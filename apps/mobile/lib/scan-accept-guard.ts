@@ -29,7 +29,8 @@
  * `scan-loop.ts#gateScan` uses, so a UPC-A in the box and the EAN-13 the
  * camera decodes for the same physical label are one claim.
  */
-import { normalizeScanCode } from "./barcode-normalize";
+import type { SellLevel } from "@routeflow/pricing";
+import { normalizeScanCode } from "@routeflow/scanning";
 
 /** Do two decoded/typed strings denote the same physical label? */
 export function sameScanCode(a: string, b: string): boolean {
@@ -45,7 +46,7 @@ export type ScanAcceptResolution = "accepted" | "refused" | "unresolved";
 export interface DeferredAccept<T> {
   code: string;
   product: T;
-  unitKind: "case" | "piece";
+  unitKind: SellLevel;
 }
 
 export interface ScanClaim<T> {
@@ -75,7 +76,7 @@ export interface ScanAcceptGuard<T> {
    * nothing in flight); returns false when it was parked on the open claim
    * for this same label instead.
    */
-  offer: (code: string, product: T, unitKind: "case" | "piece") => boolean;
+  offer: (code: string, product: T, unitKind: SellLevel) => boolean;
 }
 
 export function createScanAcceptGuard<T>(): ScanAcceptGuard<T> {
@@ -109,7 +110,7 @@ export function createScanAcceptGuard<T>(): ScanAcceptGuard<T> {
     return { code, settle };
   };
 
-  const offer = (code: string, product: T, unitKind: "case" | "piece"): boolean => {
+  const offer = (code: string, product: T, unitKind: SellLevel): boolean => {
     if (!open || !sameScanCode(open.code, code)) return true;
     open.deferred = { code, product, unitKind };
     return false;

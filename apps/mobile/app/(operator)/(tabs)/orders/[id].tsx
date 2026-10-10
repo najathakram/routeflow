@@ -49,11 +49,15 @@ import {
   type CreditLimitExceededInfo,
 } from "../../../../lib/credit-limit-error";
 import { parseSellingRestricted } from "../../../../lib/selling-restricted";
-import type { BlockedLine } from "@routeflow/types";
+import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
+import { lineBackorderPieces } from "@routeflow/types/order-line-backorder";
+import { useOfflineQueue } from "../../../../store/offlineQueue";
 import { alertInfo, confirm } from "../../../../lib/confirm";
-import { formatQtySplit } from "@routeflow/pricing";
+import { invoiceLineQtyText } from "@routeflow/pricing";
+import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../../lib/invoice-line-display";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { OrderLineCard } from "../../../../components/OrderLineCard";
+import { OrderAppliedCredits } from "../../../../components/OrderAppliedCredits";
 import { orderLineCardModel } from "../../../../lib/order-line-display";
 import { useOrderUiV2 } from "../../../../lib/api/addons";
 import {
@@ -63,10 +67,12 @@ import {
   sharePdf,
 } from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
+import { shipmentForDisplay } from "../../../../lib/shipment-display";
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
 import { canDeleteOrder, demotionRequiresReason } from "../../../../lib/order-status-flow";
 import { statusActions, type StatusAction } from "../../../../lib/order-actions";
+import { useRecordReturn } from "../../../../hooks/useRecordReturn";
 
 function formatCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -101,6 +107,12 @@ export default function OrderDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: order, isLoading, isError, refetch } = useAdminOrder(id ?? "");
+  // #2420: before any early return (rules of hooks) — null until the add-on resolves allowed.
+  const recordReturn = useRecordReturn({
+    customerId: order?.customerId ?? order?.customer?.id,
+    orderId: order?.id,
+    customerName: order?.customer?.businessName,
+  });
   // `order_ui_v2` (dark): card rows instead of the legacy item row.
   const orderUiV2 = useOrderUiV2();
   const changeMut = useChangeOrderStatus();
@@ -121,7 +133,14 @@ export default function OrderDetailScreen() {
     invoiceId: string;
     invoiceNumber: string;
     totalFmt: string;
+    // #2089: threads postDeliveryInvoicePrompt's "issue-and-send" outcome into
+    // the sheet's copy — see SendInvoiceSheet's own issuePrompt doc.
+    issuePrompt: boolean;
   } | null>(null);
+  // #2089: the ONE offline signal (store/offlineQueue.ts, fed by the app's
+  // NetInfo listener) — postDeliveryInvoicePrompt checks it before ever
+  // attempting the createInvoiceMut network call below.
+  const isOnline = useOfflineQueue((s) => s.isOnline);
   // WhatsApp (file-share mode) and Share PDF each run their own prepare →
   // (maybe) tap-again → share dance against ACTIVATION_BUDGET_MS — see
   // share-pdf.ts. The ref holds the already-prepared sharePdf() args so a
@@ -202,11 +221,28 @@ export default function OrderDetailScreen() {
    * the first; the rest are reachable from the Invoices list.
    */
   const openSendForOrder = () => {
+    // #2089 (owner ruling): "automatically open the invoice, then ask if you
+    // want to send it" — offline is checked FIRST and unconditionally
+    // (postDeliveryInvoicePrompt's own contract), before the network call
+    // below, since a dropped connection right after delivery must read as
+    // "try again once synced," never as "no invoice."
+    if (postDeliveryInvoicePrompt({ invoice: undefined, online: isOnline }) === "offline-later") {
+      showToast("Invoice will be ready to send once you're back online.");
+      return;
+    }
     createInvoiceMut.mutate(order.id, {
       onSuccess: (invoices) => {
         const inv = invoices[0];
-        if (!inv) {
-          showToast("Invoice created — open it from Invoices to send.");
+        // #2089: same shared decision as web/driver — a DRAFT invoice still
+        // gets the prompt (sendEmail issues DRAFT → SENT atomically on send,
+        // so "issue and send" is one action, not two); only VOID/no-invoice
+        // skips silently.
+        const outcome = postDeliveryInvoicePrompt({
+          invoice: inv ? { status: inv.status } : null,
+          online: true,
+        });
+        if (outcome === "skip" || outcome === "offline-later") {
+          if (!inv) showToast("Invoice created — open it from Invoices to send.");
           return;
         }
         // Reset any leftover share phase/cache from a previous open — a
@@ -219,6 +255,7 @@ export default function OrderDetailScreen() {
           invoiceId: inv.id,
           invoiceNumber: inv.invoiceNumber,
           totalFmt: formatCurrency(inv.total),
+          issuePrompt: outcome === "issue-and-send",
         });
       },
       onError: (e) => toastError(e, "Couldn't prepare the invoice. Create it from Invoices."),
@@ -674,16 +711,21 @@ export default function OrderDetailScreen() {
                     />
                   );
                 }
-                const upbRaw = (li as any).product?.unitsPerBox;
+                // #2046 review (B757): the pack size is the LINE's own snapshot first — the
+                // live product is only a fallback for an old line sold before the snapshot
+                // existed — and the suffix shows only for an actual boxes/pieces split, never
+                // for a factor-1 unit line (a Case/Piece line has no "per box" to name).
+                const upbRaw = li.unitsPerBox ?? (li as any).product?.unitsPerBox;
                 const upb = upbRaw == null ? 0 : Number(upbRaw);
-                const isBoxed = upb > 1;
+                const hasSplit = li.boxes != null || li.pieces != null;
                 // Show "1 box + 2 pcs · $30 / box of 12" when split, otherwise the
                 // existing "8 ea · $5.00" form. Shared formatter — reads the
                 // same on web order/invoice detail and the PDF.
-                const qtyLine =
-                  li.boxes != null || li.pieces != null
-                    ? formatQtySplit({ qty: li.qty, boxes: li.boxes, pieces: li.pieces })
-                    : `${li.qty} ${li.product?.unit ?? "ea"}`;
+                const qtyLine = usesUnitDisplay(li)
+                  ? // B757: a units_v1 named unit (Case, Pallet, a factor-1 "5 Piece") shows ITS
+                    // label via the ONE shared formatter; a pack line is unchanged.
+                    invoiceLineQtyText(li)
+                  : `${li.qty} ${li.product?.unit ?? "ea"}`;
                 return (
                   <View
                     key={li.id}
@@ -705,10 +747,15 @@ export default function OrderDetailScreen() {
                             <Text style={styles.customTagText}>Custom</Text>
                           </View>
                         ) : null}
+                        {lineBackorderPieces(li, order.status) > 0 ? (
+                          <View style={styles.customTag} testID="line-backorder-tag">
+                            <Text style={styles.customTagText}>Backorder</Text>
+                          </View>
+                        ) : null}
                       </View>
                       <Text style={styles.itemSub}>
                         {qtyLine} · {formatCurrency(li.unitPrice)}
-                        {isBoxed ? ` / box of ${upb}` : ""}
+                        {hasSplit && upb > 1 ? ` / ${invoiceLineUnitNoun(li)} of ${upb}` : ""}
                       </Text>
                       {/* BUY_N_GET_M: name the free units, or the reduced line
                           total reads as a pricing error (web parity). */}
@@ -794,50 +841,7 @@ export default function OrderDetailScreen() {
             </View>
           </View>
 
-          {/* Applied credits — order-scoped credit-note intents (server:
-              OrderCreditNote). "Applied so far" sums this credit's CREDIT_NOTE
-              payments across the order's invoices; the reason renders via the
-              relation so a later edit shows up here automatically. */}
-          {(order.orderCreditNotes?.length ?? 0) > 0 ? (
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Applied credits</Text>
-              {order.orderCreditNotes!.map((oc, i) => {
-                const appliedSoFar = (order.invoices ?? [])
-                  .flatMap((inv) => inv.payments ?? [])
-                  .filter((p) => p.creditNoteId === oc.creditNoteId)
-                  .reduce((s, p) => s + Number(p.amount ?? 0), 0);
-                return (
-                  <View
-                    key={oc.id}
-                    style={[
-                      styles.invoiceRow,
-                      i > 0 && {
-                        borderTopWidth: StyleSheet.hairlineWidth,
-                        borderTopColor: ios.separator,
-                      },
-                    ]}
-                  >
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.invoiceNumber} numberOfLines={1}>
-                        {oc.creditNote?.creditNoteNumber ?? "Credit"}
-                      </Text>
-                      {oc.creditNote?.reason ? (
-                        <Text style={styles.itemSub} numberOfLines={2}>
-                          {oc.creditNote.reason}
-                        </Text>
-                      ) : null}
-                      <Text style={styles.itemSub}>
-                        {oc.amount != null
-                          ? `Requested ${formatCurrency(oc.amount)}`
-                          : "Up to remaining balance"}
-                      </Text>
-                    </View>
-                    <Text style={styles.itemTotal}>{formatCurrency(appliedSoFar)}</Text>
-                  </View>
-                );
-              })}
-            </View>
-          ) : null}
+          <OrderAppliedCredits order={order} />
 
           {/* R3: Invoice — mirror web's Invoice card. A CONFIRMED (or later) order
               can already have a draft invoice; surface it so mobile can open it, or
@@ -891,7 +895,10 @@ export default function OrderDetailScreen() {
           {/* Carrier shipment — only for carrier-shipped orders, or rows that
               already carry tracking data recorded before this gate existed. */}
           {order.fulfillPath === "SHIP" || order.shippingCarrier || order.shippingTrackingNumber ? (
-            <ShipmentSection shipment={order} onEdit={() => setShipmentModal(true)} />
+            <ShipmentSection
+              shipment={shipmentForDisplay(order, order.status)}
+              onEdit={() => setShipmentModal(true)}
+            />
           ) : null}
 
           {/* Status transitions */}
@@ -952,6 +959,18 @@ export default function OrderDetailScreen() {
           <View style={styles.card}>
             <Text style={styles.cardTitle}>More</Text>
             <View style={styles.actionsCol}>
+              {/* #2420: Record return — web's RecordReturnAction twin. Any order status (never
+                  gated on it); hidden without the orders_inline_returns add-on. */}
+              {recordReturn ? (
+                <Pressable
+                  style={[styles.actionBtn, styles.secondaryAction]}
+                  onPress={recordReturn}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="return-down-back-outline" size={18} color={ios.brand} />
+                  <Text style={styles.actionBtnText}>Record return</Text>
+                </Pressable>
+              ) : null}
               {/* Split into multiple invoices — available once the order has items
                   and isn't a draft / cancelled. The screen prevents over-invoicing via
                   OrderItem.invoicedQty. */}
@@ -1055,6 +1074,7 @@ export default function OrderDetailScreen() {
         openPdfPending={openPdfPending}
         onMarkAsSent={handleMarkAsSent}
         markingSent={markingSent}
+        issuePrompt={sendSheet?.issuePrompt}
       />
 
       <ReasonSheet

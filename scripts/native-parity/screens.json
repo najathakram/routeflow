@@ -1,0 +1,72 @@
+{
+  "$comment": "#2338 native-parity screen manifest. One row per screen captured side by side: `web` is the Next.js path ({seller} = the parity tenant slug), `native` is the expo-router path (route groups dropped) opened by deep link on the simulator. `states` lists what the harness captures: loaded = PARITY_BUYER, empty = PARITY_BUYER_EMPTY (scripts/native-parity/fixtures.cjs).",
+  "buyer": [
+    {
+      "id": "home",
+      "web": "/buyer/portal/{seller}/dashboard",
+      "native": "/home",
+      "states": ["loaded", "empty"]
+    },
+    {
+      "id": "shop",
+      "web": "/buyer/portal/{seller}/shop",
+      "native": "/catalog",
+      "states": ["loaded"]
+    },
+    {
+      "id": "cart",
+      "web": "/buyer/portal/{seller}/cart",
+      "native": "/orders/cart",
+      "states": ["empty"]
+    },
+    {
+      "id": "orders",
+      "web": "/buyer/portal/{seller}/orders",
+      "native": "/orders",
+      "states": ["loaded", "empty"]
+    },
+    {
+      "id": "invoices",
+      "web": "/buyer/portal/{seller}/invoices",
+      "native": "/invoices",
+      "states": ["loaded", "empty"]
+    },
+    {
+      "id": "favorites",
+      "web": "/buyer/portal/{seller}/favorites",
+      "native": "/favorites",
+      "states": ["loaded", "empty"]
+    },
+    {
+      "id": "finances",
+      "web": "/buyer/portal/{seller}/finances",
+      "native": "/finances",
+      "states": ["loaded", "empty"]
+    },
+    {
+      "id": "licenses",
+      "web": "/buyer/portal/{seller}/licenses",
+      "native": "/licenses",
+      "states": ["loaded"]
+    },
+    {
+      "id": "payments",
+      "web": "/buyer/portal/{seller}/payments",
+      "native": "/payments",
+      "states": ["loaded", "empty"]
+    },
+    {
+      "id": "shelf",
+      "web": "/buyer/portal/{seller}/shelf",
+      "native": "/shelf",
+      "states": ["loaded"]
+    },
+    {
+      "id": "account",
+      "web": "/buyer/portal/{seller}/account",
+      "native": "/profile",
+      "states": ["loaded"]
+    },
+    { "id": "sellers", "web": "/buyer/portal", "native": "/sellers", "states": ["loaded"] }
+  ]
+}

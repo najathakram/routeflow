@@ -166,3 +166,44 @@ describe("buildLine — unit axis", () => {
     expect(() => buildLine({ axis, unitPrice: 40 })).toThrow(AmbiguousLineError);
   });
 });
+
+/**
+ * D-20 (#1808): the copier-contract registry (`apps/api/src/common/testing/copier-contract/`) can only
+ * classify a copier that spreads `buildLine`'s result if the KEY SET of that result is fixed and known, and
+ * `unitsPerBox` is the snapshot column the whole contract exists to protect (B644/B646/B647/B655/B665: a copy
+ * that drops it re-prices a boxed line at the LIVE pack). Until now nothing pinned that `unitsPerBox` is ALWAYS
+ * a key of a built line — on either axis, boxed or not. These pins are what a future
+ * `SPREAD_HELPER_KEYS.buildLine` entry would stand on.
+ */
+describe("buildLine — the snapshot key contract (D-20)", () => {
+  const KEYS = ["boxes", "pieces", "qty", "subtotal", "unitLabel", "unitPrice", "unitsPerBox"];
+  const cases: [string, Parameters<typeof buildLine>[0]][] = [
+    [
+      "a boxed pack line",
+      { axis: { kind: "pack", boxes: 6, pieces: 0, unitsPerBox: 12 }, unitPrice: 40 },
+    ],
+    [
+      "an unboxed pack line",
+      { axis: { kind: "pack", qty: 4, unitsPerBox: null }, unitPrice: 5.25 },
+    ],
+    [
+      "a unit-axis line",
+      { axis: { kind: "unit", label: "Case", count: 3, factorToBase: 12 }, unitPrice: 40 },
+    ],
+    [
+      "a factor-1 unit line",
+      { axis: { kind: "unit", label: "Piece", count: 5, factorToBase: 1 }, unitPrice: 4 },
+    ],
+  ];
+
+  it.each(cases)("%s returns EXACTLY the fixed key set, with unitsPerBox present", (_n, input) => {
+    expect(Object.keys(buildLine(input)).sort()).toEqual(KEYS);
+  });
+
+  it("unitsPerBox is the SNAPSHOT: the boxed pack, the unit factor (even 1), and null only when unboxed", () => {
+    expect(buildLine(cases[0][1]).unitsPerBox).toBe(12);
+    expect(buildLine(cases[1][1]).unitsPerBox).toBeNull();
+    expect(buildLine(cases[2][1]).unitsPerBox).toBe(12);
+    expect(buildLine(cases[3][1]).unitsPerBox).toBe(1); // a Piece off a boxed pack still snapshots its factor
+  });
+});

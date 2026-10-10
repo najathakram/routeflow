@@ -16,7 +16,14 @@
  *    silently — both land in `failedActions` with a reason instead of being
  *    dequeued with zero signal (REG-B143 / REG-B111).
  */
+import axios from "axios";
+import { API_ERROR_CODES } from "@routeflow/types";
 import type { QueuedAction } from "../store/offlineQueue";
+import {
+  creditsPendingFromError,
+  creditsPendingFromOrder,
+  type SavedCreditsPending,
+} from "./order-credits-pending";
 
 export const MAX_RETRIES = 3;
 
@@ -54,6 +61,9 @@ export interface FailedActionRecord {
   action: QueuedAction;
   /** Human-readable reason surfaced to the operator (alertInfo/InlineToast). */
   reason: string;
+  /** The server's own error `code` (`response.data.code`), when it sent one — lets a caller
+   *  tell a capture service's business refusal from a guard/validation 4xx (SA-204). */
+  code?: string;
   failedAt: number;
 }
 
@@ -63,15 +73,54 @@ export interface DrainResult {
   /** Ids that hit a retriable failure — left queued, retries incremented. */
   retriedIds: string[];
   /**
+   * #2389 (tier 1): ids never attempted because the device is unreachable — the first action
+   * hit a network-class error (no response: offline, DNS, timeout), so it and everything
+   * queued after it stay queued with their retry counts UNCHANGED (FIFO kept). Offline time
+   * must never count toward MAX_RETRIES, or a queued stop completion is dead-lettered by the
+   * drain itself before the device reconnects.
+   */
+  unreachedIds: string[];
+  /**
    * Entries that must NEVER be silently dropped: a non-retriable 4xx or an
    * already retry-exhausted entry. These are persisted to the offline queue
    * store's `failedActions` list and alerted — never just dequeued.
    */
   failedActions: FailedActionRecord[];
+  /**
+   * B1205: entries that were DELIVERED but whose order has credit notes still unapplied (a 503
+   * ORDER_SAVED_CREDITS_PENDING, or a replayed 2xx with `creditsPending: true`). They are also in
+   * `delivered` (dequeue) and are never retried; the caller must show `message` and may open `orderId`.
+   */
+  creditsPending: CreditsPendingRecord[];
+}
+
+/** B1205: ONE dialog for the whole drain. The fixed copy is never altered; a count line precedes it. */
+export function describeCreditsPendingDrain(records: CreditsPendingRecord[]): {
+  title: string;
+  message: string;
+  orderId: string;
+} {
+  const [first] = records;
+  if (records.length === 1) {
+    return { title: "Order saved", message: first.message, orderId: first.orderId };
+  }
+  return {
+    title: `${records.length} orders saved`,
+    message: `${records.length} orders were saved.\n\n${first.message}`,
+    orderId: first.orderId,
+  };
+}
+
+export interface CreditsPendingRecord {
+  action: QueuedAction;
+  orderId: string;
+  /** The fixed CREDITS_PENDING_COPY - never the server's text. */
+  message: string;
 }
 
 export interface DrainDeps {
   /** Issue the actual HTTP call for one queued action (e.g. via apiClient). */
+  /** Resolves the response BODY (B1205: drain inspects it for `creditsPending`). */
   request: (action: QueuedAction) => Promise<unknown>;
   /**
    * Called once per entry that lands in `failedActions`, as it is classified —
@@ -92,6 +141,11 @@ export interface DrainDeps {
  * operator nothing; Nest sends the useful text in `response.data.message`
  * (a string, or an array of them from class-validator).
  */
+function serverCode(err: unknown): string | undefined {
+  const code = (err as { response?: { data?: { code?: unknown } } })?.response?.data?.code;
+  return typeof code === "string" && code ? code : undefined;
+}
+
 function serverMessage(err: unknown): string | undefined {
   const data = (err as { response?: { data?: unknown } })?.response?.data;
   if (typeof data === "string") return data.trim() || undefined;
@@ -120,6 +174,8 @@ function isRetriableLockContention(err: unknown, status: number | undefined): bo
   const code = typeof data?.code === "string" ? data.code : undefined;
   if (status === 409 && code === "MERGE_IN_PROGRESS") return true;
   if (status === 503 && code === "LOCK_UNAVAILABLE") return true;
+  // #2645: the invoicedQty CAS miss rolls the whole invoice back (nothing billed) — safe to retry.
+  if (status === 409 && code === API_ERROR_CODES.ORDER_LINE_CHANGED) return true;
   return false;
 }
 
@@ -135,12 +191,30 @@ function isRetriableLockContention(err: unknown, status: number | undefined): bo
  * or a merge-lock-contention 409/503 — see `isRetriableLockContention`) is
  * left queued with its retry count bumped by the caller.
  */
+/**
+ * #2389: a failure with NO server response — the request never demonstrably reached the API
+ * (offline, DNS/route failure, a timed-out socket). Distinct from a 5xx (the server answered)
+ * and a 4xx (the server refused). Replays carry their idempotency key, so re-sending one that
+ * did land is safe.
+ */
+export function isNetworkClassError(err: unknown): boolean {
+  // #2389 Opus nit (a): ONLY an axios transport failure. A plain Error with no `response` — e.g.
+  // api-client's "No refresh token" for a signed-out driver — is NOT unreachable: treating it so
+  // blocked the queue forever with no failed badge. It keeps the normal retry → dead-letter path.
+  return axios.isAxiosError(err) && !err.response && err.code !== "ERR_CANCELED";
+}
+
 export async function drainQueue(actions: QueuedAction[], deps: DrainDeps): Promise<DrainResult> {
   const delivered: string[] = [];
   const retriedIds: string[] = [];
+  const unreachedIds: string[] = [];
   const failedActions: FailedActionRecord[] = [];
+  const creditsPending: CreditsPendingRecord[] = [];
+  const warn = (action: QueuedAction, p: SavedCreditsPending | null) => {
+    if (p) creditsPending.push({ action, orderId: p.orderId, message: p.message });
+  };
 
-  for (const action of actions) {
+  for (const [index, action] of actions.entries()) {
     if (action.retries >= MAX_RETRIES) {
       const record: FailedActionRecord = {
         action,
@@ -153,21 +227,38 @@ export async function drainQueue(actions: QueuedAction[], deps: DrainDeps): Prom
     }
 
     try {
-      await deps.request(action);
+      const body = await deps.request(action);
       delivered.push(action.id);
+      if (action.method === "POST" && action.endpoint.split("?")[0] === "/orders") {
+        warn(action, creditsPendingFromOrder(body as { id?: string; creditsPending?: boolean }));
+      }
     } catch (err: unknown) {
+      // B1205: the order WAS saved - retrying replays the key, returns 200 and drops the credits.
+      const saved = creditsPendingFromError(err);
+      if (saved) {
+        delivered.push(action.id);
+        warn(action, saved);
+        continue;
+      }
       const status = (err as { response?: { status?: number } })?.response?.status;
       const isNonRetriableClientError =
         status !== undefined &&
         status >= 400 &&
         status < 500 &&
         !isRetriableLockContention(err, status);
+      if (isNetworkClassError(err)) {
+        // Unreachable: stop here — the rest would fail the same way, and replaying them out of
+        // order would break the FIFO the queue relies on (POD attaches before completions).
+        unreachedIds.push(...actions.slice(index).map((a) => a.id));
+        break;
+      }
       if (isNonRetriableClientError) {
         const message = serverMessage(err) ?? (err instanceof Error ? err.message : String(err));
         const record: FailedActionRecord = {
           action,
           reason: `HTTP ${status}: ${message}`,
           failedAt: Date.now(),
+          ...(serverCode(err) ? { code: serverCode(err) } : {}),
         };
         failedActions.push(record);
         deps.notifyFailed(record);
@@ -177,7 +268,17 @@ export async function drainQueue(actions: QueuedAction[], deps: DrainDeps): Prom
     }
   }
 
-  return { delivered, retriedIds, failedActions };
+  return { delivered, retriedIds, unreachedIds, failedActions, creditsPending };
+}
+
+/**
+ * #2389: when to try the queue again after a drain stopped unreachable — bounded exponential
+ * backoff (2s, 4s, 8s … capped at 60s), so an offline device never hot-loops the network. The
+ * reconnect event re-triggers a drain immediately regardless.
+ */
+export function nextDrainDelayMs(consecutiveUnreached: number): number {
+  const n = Math.max(0, Math.floor(consecutiveUnreached));
+  return Math.min(60_000, 2_000 * 2 ** Math.min(n, 5));
 }
 
 /**
@@ -237,4 +338,16 @@ export function describeFailedDrain(records: FailedActionRecord[]): {
     title: `${records.length} actions could not be sent`,
     message: `${shown}${rest > 0 ? `\n• …and ${rest} more` : ""}\n\n${footer}`,
   };
+}
+
+/**
+ * #2410: the query keys to refresh after a drain DELIVERED these actions. A replayed stop
+ * completion (or any route-run write) changes the run the driver's route list reads, so the list
+ * showed the stop as "Up next" with 0 Done until a manual pull-to-refresh. `["route-runs"]` is the
+ * prefix every route-run query shares (active, scheduled, the run itself, its packing list).
+ */
+export function queriesToRefreshAfterDrain(
+  delivered: readonly Pick<QueuedAction, "endpoint">[],
+): string[][] {
+  return delivered.some((a) => a.endpoint.startsWith("/route-runs/")) ? [["route-runs"]] : [];
 }

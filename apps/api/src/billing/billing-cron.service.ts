@@ -1,3 +1,4 @@
+import { priceOverrideOf } from "./price-override";
 import { Injectable, Logger } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
@@ -19,11 +20,21 @@ import {
   UnknownPlanKeyError,
 } from "./plan-catalog.constants";
 import { addCycle } from "./billing-math";
+import { lockTenantForLedger } from "./addon-ledger";
+import { isPayingRow } from "./mrr.service";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transition-config.service";
 
 /** A run of this many snapshot failures in one sweep is systemic — the sweep aborts loudly. */
 const MAX_CONSECUTIVE_SNAPSHOT_FAILURES = 3;
+
+/**
+ * #2641 / SA-544: a scheduled downgrade whose tenant or schedule changed between the sweep's scan
+ * and the Tenant row lock (suspended, deleted, schedule disarmed or retargeted). Thrown INSIDE the
+ * transaction so the plan-transition snapshot rolls back with it; the per-row catch skips the
+ * tenant (the row stays armed) without counting it toward the snapshot-failure breaker.
+ */
+class DowngradeOvertakenError extends Error {}
 
 /**
  * Plan lifecycle crons (Plans & Billing Phase 5). Operate cross-tenant with explicit
@@ -219,6 +230,10 @@ export class BillingCronService {
         tenantId: true,
         planKey: true,
         planVersionId: true,
+        // #2223 / SA-444c: the negotiated fee a downgrade keeps.
+        priceOverrideMonthly: true,
+        // #2460 / SA-464 (2): the ledger nets against the stored snapshot, never the catalog.
+        basePriceSnapshot: true,
         downgradeToPlanKey: true,
         downgradeEffectiveAt: true,
         retainedUserIds: true,
@@ -229,6 +244,7 @@ export class BillingCronService {
       },
     });
     let applied = 0;
+    let overtaken = 0;
     let consecutiveSnapshotFailures = 0;
     for (const s of subs) {
       const target = s.downgradeToPlanKey as string;
@@ -259,9 +275,12 @@ export class BillingCronService {
           }
           targetVersion = published;
         }
-        const amountDelta = roundMoney(
-          this.planMonthly(targetVersion, target) - this.planMonthly(fromVersion, s.planKey),
-        );
+        // #2223 / SA-444c (i) + #2460 / SA-464 (2), one invariant (snapshot = what the tenant pays):
+        // the new snapshot is the negotiated fee, else the target's price; the ledger books it minus
+        // what the MRR snapshot counted (the stored snapshot, NULL ⇒ 0) — never a catalog price for
+        // the plan being left. A consistent override row therefore books Δ0.
+        const override = priceOverrideOf(s);
+        const newBase = override ?? this.planMonthly(targetVersion, target);
         const seatCap = targetDef.seatsIncluded ?? null;
 
         const tenantPlan = (s as { tenant?: { plan?: string } }).tenant?.plan;
@@ -284,6 +303,44 @@ export class BillingCronService {
           if (transition && preparedTransition) {
             await this.planTransition.onPlanChange(tx, transition, preparedTransition);
           }
+          // #2551 / SA-503a: the house order — Tenant row lock right after the hook, before the
+          // subscription write (reconcile/updatePlan/Pricing hold Tenant, then write this row).
+          await lockTenantForLedger(tx, s.tenantId);
+          // #2641 / SA-544: the scan's filter is re-proved on the rows read UNDER that lock — a
+          // tenant suspended/deleted, or a schedule disarmed/retargeted, since the scan is skipped
+          // (not applied at Δ0). "Paying" on both sides is the shared isPayingRow, and Δ nets
+          // against the LOCKED snapshot; a non-PRODUCTION class still applies, booking Δ0.
+          const lockedTenant = await tx.tenant.findUnique({
+            where: { id: s.tenantId },
+            select: { status: true, class: true, deletedAt: true },
+          });
+          const lockedSub = await tx.tenantSubscription.findUnique({
+            where: { tenantId: s.tenantId },
+            select: {
+              planKey: true,
+              basePriceSnapshot: true,
+              downgradeToPlanKey: true,
+              downgradeEffectiveAt: true,
+            },
+          });
+          if (
+            !lockedTenant ||
+            lockedTenant.status !== "ACTIVE" ||
+            lockedTenant.deletedAt != null ||
+            !lockedSub ||
+            lockedSub.planKey !== s.planKey ||
+            lockedSub.downgradeToPlanKey !== target ||
+            lockedSub.downgradeEffectiveAt == null ||
+            lockedSub.downgradeEffectiveAt > now
+          ) {
+            throw new DowngradeOvertakenError();
+          }
+          const amountDelta = roundMoney(
+            (isPayingRow(lockedTenant, target) ? newBase : 0) -
+              (isPayingRow(lockedTenant, lockedSub.planKey)
+                ? Number(lockedSub.basePriceSnapshot ?? 0)
+                : 0),
+          );
           await tx.tenantSubscription.update({
             where: { tenantId: s.tenantId },
             data: {
@@ -295,7 +352,7 @@ export class BillingCronService {
               // bad row never stops the sweep from applying every other tenant's downgrade.
               currentPlan: planKeyToEnum(target),
               planVersionId: targetVersion.id,
-              basePriceSnapshot: targetDef.monthlyPrice ?? null,
+              basePriceSnapshot: override ?? targetDef.monthlyPrice ?? null,
               downgradeToPlanKey: null,
               downgradeEffectiveAt: null,
               retainedUserIds: [],
@@ -366,6 +423,11 @@ export class BillingCronService {
           );
         }
       } catch (err) {
+        // #2641 / SA-544: overtaken since the scan — skipped, still armed, never a breaker count.
+        if (err instanceof DowngradeOvertakenError) {
+          overtaken++;
+          continue;
+        }
         // F2: narrowed from "catch everything" — only planKeyToEnum()'s own unresolvable-key
         // Error is a data problem this sweep may skip past. Anything else (pool exhaustion, a
         // Prisma error, any other unrelated failure) rethrows so it surfaces as a real cron
@@ -396,6 +458,9 @@ export class BillingCronService {
       applied++;
     }
     if (applied) this.logger.log(`Applied ${applied} scheduled downgrades`);
+    if (overtaken) {
+      this.logger.log(`Skipped ${overtaken} scheduled downgrades changed since the scan`);
+    }
   }
 
   /** End access for self-cancelled subscriptions whose period has ended → READ_ONLY
@@ -409,51 +474,94 @@ export class BillingCronService {
         periodEnd: { not: null, lt: now },
         tenant: { status: "ACTIVE", deletedAt: null },
       },
-      select: { tenantId: true, basePriceSnapshot: true, discount: true },
+      select: { tenantId: true },
     });
+    let applied = 0;
     for (const s of subs) {
-      // The run-rate this tenant stops contributing once access ends → emit it as a NEGATIVE
-      // MRR delta (base + active add-ons − discount) so the append-only ledger nets down with
-      // churn instead of over-counting the tenant's last plan forever.
-      const addons = await this.prisma.tenantAddon.findMany({
-        where: { tenantId: s.tenantId, active: true },
-        select: { priceSnapshot: true, quantity: true },
+      // #2641 / SA-544: ONE transaction per tenant, Tenant row lock FIRST; the scan's filter is
+      // re-proved on the rows read under it (suspended/deleted, cancellation resumed, or period
+      // moved since the scan ⇒ no-op). Everything below is priced from those LOCKED rows.
+      const done = await this.prisma.$transaction(async (tx) => {
+        await lockTenantForLedger(tx, s.tenantId);
+        const tenant = await tx.tenant.findUnique({
+          where: { id: s.tenantId },
+          select: { status: true, class: true, deletedAt: true },
+        });
+        const sub = await tx.tenantSubscription.findUnique({
+          where: { tenantId: s.tenantId },
+          select: {
+            planKey: true,
+            basePriceSnapshot: true,
+            discount: true,
+            cancelAtPeriodEnd: true,
+            periodEnd: true,
+          },
+        });
+        if (
+          !tenant ||
+          tenant.status !== "ACTIVE" ||
+          tenant.deletedAt != null ||
+          !sub?.cancelAtPeriodEnd ||
+          sub.periodEnd == null ||
+          sub.periodEnd >= now
+        ) {
+          return false;
+        }
+        // The run-rate this tenant stops contributing once access ends → emit it as a NEGATIVE
+        // MRR delta (base + active add-ons − discount) so the append-only ledger nets down with
+        // churn instead of over-counting the tenant's last plan forever. Booked only for a row in
+        // the shared paying set (isPayingRow) — any other class was never counted, so Δ0.
+        const addons = await tx.tenantAddon.findMany({
+          where: { tenantId: s.tenantId, active: true },
+          select: { priceSnapshot: true, quantity: true },
+        });
+        const addonMrr = addons.reduce(
+          (sum, a) => sum + (a.priceSnapshot != null ? Number(a.priceSnapshot) : 0) * a.quantity,
+          0,
+        );
+        const contribution = isPayingRow(tenant, sub.planKey ?? null)
+          ? roundMoney(
+              (sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0) +
+                addonMrr -
+                Number(sub.discount ?? 0),
+            )
+          : 0;
+        await tx.tenant.update({
+          where: { id: s.tenantId },
+          data: { status: "READ_ONLY", readOnlyReason: "subscription_cancelled" },
+        });
+        // Deactivate the cancelled subscription's add-ons: the negative delta above already
+        // removed their run-rate, so the rows must follow suit — otherwise a later reactivation
+        // via subscribe() sees them still-active (deltaQty=0) and never re-adds the +add-on delta,
+        // drifting the ledger below the snapshot. (A non-paying tenant holding "active" paid
+        // add-ons is itself incorrect state.)
+        // NOTE for support: this drops admin-granted "ships dark" SKUs too (MSRP, SALES_AGENTS,
+        // REGULATED_ITEMS). They are outside SELF_SERVICE_ADDON_SKUS, so a re-subscribe cannot
+        // bring them back — platform-admin must re-grant them after the tenant reactivates.
+        await tx.tenantAddon.updateMany({
+          where: { tenantId: s.tenantId, active: true },
+          data: { active: false },
+        });
+        await this.events.emit(
+          s.tenantId,
+          BILLING_EVENTS.SUBSCRIPTION_CANCELED,
+          { appliedAt: now.toISOString() },
+          { amountDelta: contribution ? -contribution : 0, tx },
+        );
+        return true;
       });
-      const addonMrr = addons.reduce(
-        (sum, a) => sum + (a.priceSnapshot != null ? Number(a.priceSnapshot) : 0) * a.quantity,
-        0,
-      );
-      const contribution = roundMoney(
-        (s.basePriceSnapshot != null ? Number(s.basePriceSnapshot) : 0) +
-          addonMrr -
-          Number(s.discount ?? 0),
-      );
-      await this.prisma.tenant.update({
-        where: { id: s.tenantId },
-        data: { status: "READ_ONLY", readOnlyReason: "subscription_cancelled" },
-      });
-      // Deactivate the cancelled subscription's add-ons: the negative delta above already
-      // removed their run-rate, so the rows must follow suit — otherwise a later reactivation
-      // via subscribe() sees them still-active (deltaQty=0) and never re-adds the +add-on delta,
-      // drifting the ledger below the snapshot. (A non-paying tenant holding "active" paid
-      // add-ons is itself incorrect state.)
-      // NOTE for support: this drops admin-granted "ships dark" SKUs too (MSRP, SALES_AGENTS,
-      // REGULATED_ITEMS). They are outside SELF_SERVICE_ADDON_SKUS, so a re-subscribe cannot
-      // bring them back — platform-admin must re-grant them after the tenant reactivates.
-      await this.prisma.tenantAddon.updateMany({
-        where: { tenantId: s.tenantId, active: true },
-        data: { active: false },
-      });
-      await this.events.emit(
-        s.tenantId,
-        BILLING_EVENTS.SUBSCRIPTION_CANCELED,
-        { appliedAt: now.toISOString() },
-        { amountDelta: contribution ? -contribution : 0 },
-      );
+      if (!done) continue;
+      // After commit: caches never observe a rolled-back transition.
       this.entitlements.invalidate(s.tenantId);
       this.tenantStatus.invalidate(s.tenantId);
+      applied++;
     }
-    if (subs.length) this.logger.log(`Applied ${subs.length} scheduled cancellations → READ_ONLY`);
+    if (applied) this.logger.log(`Applied ${applied} scheduled cancellations → READ_ONLY`);
+    if (subs.length > applied) {
+      this.logger.log(
+        `Skipped ${subs.length - applied} scheduled cancellations changed since the scan`,
+      );
+    }
   }
 
   /** Advance billing periods past their end so SCANS/MSGS meters bucket into the new
@@ -487,13 +595,26 @@ export class BillingCronService {
         planKey: { not: null },
         cancelAtPeriodEnd: false,
       },
-      select: { tenantId: true, cycle: true, periodEnd: true },
+      select: {
+        tenantId: true,
+        cycle: true,
+        periodStart: true,
+        periodEnd: true,
+        externalPayment: true,
+      },
     });
     for (const s of subs) {
       const start = s.periodEnd as Date;
+      // B863 / SA-277: an external (prepaid) row rolls by its OWN prior length (start := old end, end := start + prior
+      // length); Stripe/catalog rows keep addCycle's calendar clamping (B329 note above).
+      const priorMs = s.periodStart ? start.getTime() - s.periodStart.getTime() : 0;
+      const periodEnd =
+        s.externalPayment && priorMs > 0
+          ? new Date(start.getTime() + priorMs)
+          : addCycle(start, s.cycle);
       await this.prisma.tenantSubscription.update({
         where: { tenantId: s.tenantId },
-        data: { periodStart: start, periodEnd: addCycle(start, s.cycle) },
+        data: { periodStart: start, periodEnd },
       });
     }
     if (subs.length) this.logger.log(`Rolled ${subs.length} billing cycles`);

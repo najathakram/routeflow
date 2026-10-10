@@ -98,7 +98,13 @@ function tenantFixture(opts: TenantOpts = {}) {
 
 function makeService(tenant: ReturnType<typeof tenantFixture> | null) {
   const prisma = { tenant: { findUnique: jest.fn().mockResolvedValue(tenant) } } as any;
-  const catalog = { getVersionForTenant: jest.fn().mockResolvedValue(catalogVersion()) } as any;
+  // #2700: compute also reads the PUBLISHED version (flags gain forward) when the pinned one is
+  // not itself published. Defaulting it to the same version keeps every pre-existing test's
+  // pinned === published premise, so none of them sees a union.
+  const catalog = {
+    getVersionForTenant: jest.fn().mockResolvedValue(catalogVersion()),
+    getPublishedVersion: jest.fn().mockResolvedValue(catalogVersion()),
+  } as any;
   // Every pre-existing test in this file exercises a tenant with no override rows, so this
   // collaborator-contract addition (feature-grants PR-1) defaults to "no override" — the same
   // plan-only behavior those tests already assert on.
@@ -200,34 +206,35 @@ describe("EntitlementsService.resolve", () => {
     const { svc, catalog } = makeService(
       tenantFixture({ plan: "STARTER", addons: [{ addonKey: "msrp", sku: "MSRP" }] }),
     );
-    catalog.getVersionForTenant.mockImplementation(async (pinned: string | null) =>
-      pinned === null
-        ? {
-            ...catalogVersion(),
-            id: "planver_v9",
-            addonSkus: [
-              ...catalogVersion().addonSkus,
-              { sku: "MSRP", meteredKey: null, capacityPerUnit: null, grantsFlags: ["flag.msrp"] },
-            ],
-          }
-        : catalogVersion(),
-    );
+    catalog.getPublishedVersion.mockResolvedValue({
+      ...catalogVersion(),
+      id: "planver_v9",
+      status: "PUBLISHED",
+      addonSkus: [
+        ...catalogVersion().addonSkus,
+        { sku: "MSRP", meteredKey: null, capacityPerUnit: null, grantsFlags: ["flag.msrp"] },
+      ],
+    });
     const e = await svc.resolve("t1");
     expect(e.addons).toContain("MSRP");
     expect(e.flags).toContain("flag.msrp");
     expect(catalog.getVersionForTenant).toHaveBeenCalledWith("planver_v7");
-    expect(catalog.getVersionForTenant).toHaveBeenCalledWith(null);
+    // #2700: the published version is read once, via getPublishedVersion (the SKU fallback and
+    // the flag union share it).
+    expect(catalog.getPublishedVersion).toHaveBeenCalledTimes(1);
   });
 
-  it("never fetches the published catalog when the pinned version already knows every active SKU", async () => {
+  it("never fetches the published catalog when the tenant's pinned version IS the published one", async () => {
     const { svc, catalog } = makeService(
       tenantFixture({
         plan: "STARTER",
-        addons: [{ addonKey: "buyer_portal", sku: "BUYER_PORTAL" }],
+        addons: [{ addonKey: "msrp", sku: "MSRP" }],
       }),
     );
+    catalog.getVersionForTenant.mockResolvedValue({ ...catalogVersion(), status: "PUBLISHED" });
     await svc.resolve("t1");
     expect(catalog.getVersionForTenant).toHaveBeenCalledTimes(1);
+    expect(catalog.getPublishedVersion).not.toHaveBeenCalled();
   });
 
   it("treats Enterprise caps as unlimited (null), even with capacity add-ons", async () => {
@@ -403,5 +410,105 @@ describe("EntitlementsService.isAlwaysEnforcedTenant", () => {
   it("never throws — resolves false when entitlement resolution itself fails", async () => {
     const { svc } = makeService(null);
     expect(await svc.isAlwaysEnforcedTenant("missing-tenant")).toBe(false);
+  });
+});
+
+describe("EntitlementsService — #2700 (SA-559(2)): feature flags gain forward", () => {
+  /** v13-shaped published catalog: STARTER gains flag.returns and a brand-new flag.later. */
+  function publishedV13() {
+    const v = catalogVersion();
+    return {
+      ...v,
+      id: "planver_v13",
+      status: "PUBLISHED",
+      definitions: v.definitions.map((d) =>
+        d.planKey === "STARTER"
+          ? { ...d, seatsIncluded: 99, featureFlags: ["flag.returns", "flag.later"] }
+          : d,
+      ),
+    };
+  }
+
+  it("a tenant pinned to an older version gains the published plan's NEW flags — caps and planVersionId stay pinned", async () => {
+    const { svc, catalog } = makeService(tenantFixture({ plan: "STARTER" }));
+    catalog.getPublishedVersion.mockResolvedValue(publishedV13());
+    const e = await svc.resolve("t1");
+    expect(e.flags).toEqual(expect.arrayContaining(["addon.ocr", "flag.returns", "flag.later"]));
+    expect(e.planVersionId).toBe("planver_v7"); // never re-pinned
+    expect(e.caps.seats).toBe(1); // v7's STARTER, not v13's 99
+  });
+
+  it("a flag the published plan DROPPED is never removed from a grandfathered tenant (a union)", async () => {
+    const { svc, catalog } = makeService(tenantFixture({ plan: "STARTER" }));
+    catalog.getPublishedVersion.mockResolvedValue(publishedV13()); // v13 STARTER lacks addon.ocr
+    expect((await svc.resolve("t1")).flags).toContain("addon.ocr");
+  });
+
+  it("no union when the published version has no such plan", async () => {
+    const { svc, catalog } = makeService(tenantFixture({ plan: "STARTER" }));
+    const v = publishedV13();
+    catalog.getPublishedVersion.mockResolvedValue({
+      ...v,
+      definitions: v.definitions.filter((d) => d.planKey !== "STARTER"),
+    });
+    expect((await svc.resolve("t1")).flags).toEqual(["addon.ocr"]);
+  });
+
+  it("the union follows the plan-key rename (a TEAM-keyed tenant gains the published GROWTH row's flags)", async () => {
+    const { svc, catalog } = makeService(tenantFixture({ plan: "STARTER", planKey: "TEAM" }));
+    const v = catalogVersion();
+    catalog.getPublishedVersion.mockResolvedValue({
+      ...v,
+      id: "planver_v13",
+      status: "PUBLISHED",
+      definitions: [
+        ...v.definitions.filter((d) => d.planKey !== "TEAM"),
+        {
+          ...v.definitions.find((d) => d.planKey === "TEAM")!,
+          planKey: "GROWTH",
+          featureFlags: ["flag.sales_agents"],
+        },
+      ],
+    });
+    expect((await svc.resolve("t1")).flags).toContain("flag.sales_agents");
+  });
+
+  it("compute writes nothing: the only DB call is the tenant read", async () => {
+    const { svc, prisma, catalog } = makeService(tenantFixture({ plan: "STARTER" }));
+    catalog.getPublishedVersion.mockResolvedValue(publishedV13());
+    await svc.resolve("t1");
+    expect(Object.keys(prisma)).toEqual(["tenant"]);
+    expect(Object.keys(prisma.tenant)).toEqual(["findUnique"]);
+    expect(prisma.tenant.findUnique).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("EntitlementsService — #2700: the REAL v11 → v12 gain at compute level (lead pin)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const v11 = require("../../prisma/plan-catalog-v11.definitions");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const v12 = require("../../prisma/plan-catalog-v12.definitions");
+  const versionOf = (id: string, status: string, defs: any[]) => ({
+    id,
+    status,
+    definitions: defs,
+    addonSkus: [],
+  });
+
+  it("a GROWTH tenant pinned to v11 gains v12's five new plan flags; its caps stay v11's", async () => {
+    const { svc, catalog } = makeService(tenantFixture({ plan: "STARTER", planKey: "GROWTH" }));
+    catalog.getVersionForTenant.mockResolvedValue(
+      versionOf("planver_v11", "SUPERSEDED", v11.V11_DEFINITIONS),
+    );
+    catalog.getPublishedVersion.mockResolvedValue(
+      versionOf("planver_v12", "PUBLISHED", v12.V12_DEFINITIONS),
+    );
+    const e = await svc.resolve("t1");
+    const v11Growth = v11.V11_DEFINITIONS.find((d: any) => d.planKey === "GROWTH");
+    for (const flag of v12.NEW_PLAN_FLAGS) expect(e.flags).toContain(flag);
+    for (const flag of v11Growth.featureFlags) expect(e.flags).toContain(flag);
+    expect(e.planVersionId).toBe("planver_v11");
+    expect(e.caps.seats).toBe(v11Growth.seatsIncluded);
+    expect(e.caps.customers).toBe(v11Growth.customersIncluded);
   });
 });

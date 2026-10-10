@@ -219,6 +219,19 @@ const esc = (v) =>
 // it — then the hash line is appended, so the description always ends with
 // the exact `registry-hash: <sha256>` line the diff logic greps back out of
 // `description_stripped`.
+// A Railway deployment id is uuid-shaped, exactly the tenant-uuid pattern's
+// shape, and ledger evidence quotes one ("api deployment <uuid> SUCCESS").
+// It names a deploy, never a tenant, so the description carries its first 8
+// characters (the form the ledger already uses elsewhere). Only a uuid that
+// follows the word "deployment" is shortened; any other uuid still reaches
+// the denylist scan and still trips it.
+export function shortenDeploymentIds(text) {
+  return String(text).replace(
+    /\b(deployment\s+)([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+    "$1$2",
+  );
+}
+
 function buildDescriptionHtml({ row, ledgerRow, batch, issue, wavePlacement, hash }) {
   const lines = [
     `id: ${row.id}`,
@@ -229,8 +242,8 @@ function buildDescriptionHtml({ row, ledgerRow, batch, issue, wavePlacement, has
     `tier: ${ledgerRow?.tier ?? "—"}`,
     `state: ${ledgerRow?.state ?? "queued"}`,
     `pr: ${ledgerRow?.pr ? `#${ledgerRow.pr}` : "—"}`,
-    `proof: ${ledgerRow?.proof ?? "—"}`,
-    `evidence: ${ledgerRow?.evidence ?? "—"}`,
+    `proof: ${shortenDeploymentIds(ledgerRow?.proof ?? "—")}`,
+    `evidence: ${shortenDeploymentIds(ledgerRow?.evidence ?? "—")}`,
     `roundSha: ${ledgerRow?.roundSha ?? "—"}`,
     `sensitive: ${row.sensitiveFor?.length ? row.sensitiveFor.join(", ") : "none"}`,
     `wave: ${wavePlacement ?? "unknown"}`,

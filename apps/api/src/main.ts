@@ -11,6 +11,8 @@ import { RedisIoAdapter } from "./gateways/redis-io.adapter";
 import { ThrottlerExceptionFilter } from "./common/throttler-exception.filter";
 import { SentryExceptionFilter } from "./common/sentry-exception.filter";
 import { MulterExceptionFilter } from "./common/multer-exception.filter";
+import { schemelessLinkBaseVars } from "./common/html-escape";
+import { assertSecrets } from "./assert-secrets";
 
 const DEFAULT_CORS_ORIGINS = [
   "http://localhost:3001", // web dashboard
@@ -36,36 +38,15 @@ function buildWildcardPatterns(): RegExp[] {
     });
 }
 
-function assertSecrets() {
-  const missing: string[] = [];
-  if (!process.env.JWT_SECRET) missing.push("JWT_SECRET");
-  if (!process.env.JWT_REFRESH_SECRET) missing.push("JWT_REFRESH_SECRET");
-  // F5-001: in production the storage-URL signing secret MUST be set independently.
-  // Without it the key was derived from JWT_SECRET, so a JWT_SECRET leak let an
-  // attacker forge signed file-access URLs cross-tenant. Fail closed instead.
-  if (process.env.NODE_ENV === "production" && !process.env.STORAGE_URL_SIGNING_SECRET) {
-    missing.push("STORAGE_URL_SIGNING_SECRET");
-  }
-  if (missing.length > 0) {
-    console.error(`\n❌ FATAL: Missing required environment variables: ${missing.join(", ")}`);
-    console.error("   These must be set before the API can start.\n");
-    process.exit(1);
-  }
-
-  // F5-002: warn (do NOT crash) when ENCRYPTION_KEY is unset in production —
-  // encrypt() self-disables so the app can still boot for non-encryption paths.
-  if (process.env.NODE_ENV === "production") {
-    const encKey = process.env.ENCRYPTION_KEY ?? "";
-    if (encKey.length !== 64) {
-      console.warn(
-        "\n⚠️  Production secret not fully configured: ENCRYPTION_KEY (expected 64 hex chars)\n",
-      );
-    }
-  }
-}
-
 async function bootstrap() {
   assertSecrets();
+  // B809: every email link is built from these. Without a scheme, each link renders as plain
+  // text (see safeLinkHref), so say so loudly at boot rather than per email.
+  for (const name of schemelessLinkBaseVars()) {
+    console.error(
+      `\n⚠️  ${name} does not start with http:// or https:// — email links built from it render without a link\n`,
+    );
+  }
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     // rawBody: true preserves req.rawBody for Stripe webhook signature verification
     rawBody: true,

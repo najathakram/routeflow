@@ -1,12 +1,22 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest, ChangeRequestResolveAction } from "@/lib/change-requests";
+import { fetchPdfBlob } from "../fetch-pdf-blob";
 import type {
   ActiveOrderSummary,
+  BatchShipRequest,
+  BatchShipResult,
+  PackingSlipsRequest,
+  PackingSlipsResult,
   CancelImpact,
   CustomerPriceHistory,
+  InlineReturnLinesRequest,
+  LineComponentView,
+  OrderInvoicesNeedReview,
   PriceType,
+  OrderCancelBlockedReason,
 } from "@routeflow/types";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
 export type { ChangeRequest } from "@/lib/change-requests";
 
@@ -30,10 +40,12 @@ export interface Order {
     phone?: string | null;
     mobile?: string | null;
     email?: string | null;
+    /** a walk-in customer cannot be charged on account (the pickup hand-over's tender rules) */
+    isWalkIn?: boolean | null;
   };
   status: "DRAFT" | "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
-  /** ROUTE = dispatched on a delivery route (default); SHIP = supplier/carrier-shipped, excluded from trip/route dispatch. */
-  fulfillPath: "ROUTE" | "SHIP";
+  /** ROUTE = dispatched on a delivery route (default); SHIP = supplier/carrier-shipped, excluded from trip/route dispatch; PICKUP = order ahead, picked up at the store. */
+  fulfillPath: "ROUTE" | "SHIP" | "PICKUP";
   urgent: boolean;
   subtotal: number;
   tax: number;
@@ -54,9 +66,23 @@ export interface Order {
     invoiceNumber: string;
     status: string;
     total: number;
-    /** CREDIT_NOTE payments only (server-scoped include) — sums to the "applied
-     *  $ so far" shown per credit-note intent on the order detail page. */
-    payments?: Array<{ id: string; amount: number | string; creditNoteId?: string | null }>;
+    /** The server's default PDF stage for this invoice: "final" once issued or settled at shipment. */
+    pdfVariant?: "draft" | "final";
+    /** CREDIT_NOTE payments only (server-scoped include), listed by the order's
+     *  "Applied credits" panel (#2404). `creditNote` is attached by the order read
+     *  (InvoicePayment has no relation); `autoApplied` is SA-436 PR-1's column. */
+    payments?: Array<{
+      id: string;
+      amount: number | string;
+      creditNoteId?: string | null;
+      autoApplied: boolean;
+      creditNote?: {
+        id: string;
+        creditNoteNumber: string;
+        reason?: string | null;
+        autoApplied?: boolean;
+      } | null;
+    }>;
   }>;
   /**
    * Credit-note intents applied to this order (join table — survives invoice
@@ -84,12 +110,16 @@ export interface Order {
   shippedAt?: string | null;
   /** P5-08: append-only edit history (one row per pre-dispatch edit). */
   revisions?: OrderRevision[];
+  /** B1083: the server says this order cannot be cancelled ("WITH_CARRIER": the parcel is out). */
+  cancelBlockedReason?: OrderCancelBlockedReason | null;
   /** P5-08: whether the order can still be edited directly (closes on dispatch). */
   editWindow?: {
     editable: boolean;
     editableUntil: string | null;
     closedReason: "DISPATCHED" | "STATUS" | null;
   };
+  /** B1116: STAFF-ONLY — whether the order's invoices need review (absent on buyer/driver reads and older API). */
+  invoicesNeedReview?: OrderInvoicesNeedReview;
   /** P5-09: post-dispatch change requests, newest first (absent on older API). */
   changeRequests?: ChangeRequest[];
   /** P5-11: filtered relation counts from the LIST endpoint — `changeRequests`
@@ -157,6 +187,8 @@ export interface OrderItem {
    *  boxed line). Any local re-pricing MUST subtract it — otherwise the line
    *  previews at full price while the server bills the reduced subtotal. */
   promoFreeUnits?: number | null;
+  /** SA-714: pieces sold past stock (staff-only, display only). The API serialises a Decimal, so a string. */
+  backorderedPieces?: number | string | null;
   /** Server-stored line subtotal (the agreed money). Prefer this over recomputing. */
   subtotal?: number;
   /**
@@ -171,6 +203,8 @@ export interface OrderItem {
   notes?: string;
   /** Cumulative qty already covered by issued invoices for this item. */
   invoicedQty?: number;
+  /** #2717 M3: frozen components of a composed (mixed-pack) line; absent on a plain line. */
+  components?: LineComponentView[];
   /** Cumulative qty actually delivered — advanced by the route completeStop flow. */
   deliveredQty?: number;
 }
@@ -192,6 +226,10 @@ export function useOrders(
     limit?: number;
     deliveryDateFrom?: string;
     deliveryDateTo?: string;
+    /** Shipped on/after this date (`shippedAt`): the "Shipped this week" card + its list. */
+    shippedFrom?: string;
+    /** `false` = only orders with no tracking number yet ("Shipped, no tracking"). */
+    hasTracking?: boolean;
     /**
      * B144: composes with `customerId` and role scope (never swallowed by
      * either) — matches against order number OR the customer's business
@@ -242,6 +280,8 @@ export type CreateOrderItem =
       boxes?: number;
       pieces?: number;
       unitPrice?: number;
+      /** #2696(c): required by the server when unitPrice moves off a special (tier) price. */
+      overrideReason?: string;
       notes?: string;
     }
   | {
@@ -251,7 +291,7 @@ export type CreateOrderItem =
       notes?: string;
     };
 
-export function useCreateOrder() {
+export function useCreateOrder(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     Order,
@@ -278,10 +318,30 @@ export function useCreateOrder() {
       appliedCreditNotes?: { creditNoteId: string; amount?: number }[];
       /** Staff-only per-order commission override; 0 = exempt. */
       commissionRatePct?: number;
+      /** #2406: an inline return to capture in the SAME write as this order — `customerId`/
+       *  `orderId` are DERIVED server-side from the order being created, never sent here (see
+       *  CreateOrderDto.inlineReturn, apps/api/src/orders/orders.controller.ts). */
+      inlineReturn?: InlineReturnLinesRequest;
+      /** SA-484a: the B215 replay key, sent as the `Idempotency-Key` HEADER (never in the body),
+       *  paired with `inlineReturn.returnKey` — one per save attempt, reused on its retries. */
+      idempotencyKey?: string;
     }
   >({
-    mutationFn: (dto) => apiClient.post("/orders", dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["orders"] }),
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
+    mutationFn: ({ idempotencyKey, ...dto }) =>
+      apiClient
+        .post(
+          "/orders",
+          dto,
+          idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
+        )
+        .then((r) => r.data),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      // #2406: this create carried an inline return — refresh any "Returns on this order"
+      // read (GET /returns?orderId=).
+      if (variables.inlineReturn) qc.invalidateQueries({ queryKey: ["returns"] });
+    },
   });
 }
 
@@ -358,10 +418,15 @@ export function useUninvoicedOrders(customerId: string | null | undefined) {
  * Look up the most recent DRAFT/PENDING order for a customer (operator only).
  * Used by the create-order modal to ask the operator whether to merge or keep separate.
  */
-export function useActiveOrderForCustomer(customerId: string | null | undefined) {
+export function useActiveOrderForCustomer(
+  customerId: string | null | undefined,
+  /** The path the order being built is on: the merge preview must look for the same target create would. */
+  fulfillPath?: "ROUTE" | "SHIP",
+) {
   return useQuery<ActiveOrderSummary | null>({
-    queryKey: ["orders", "active", customerId],
-    queryFn: () => apiClient.get("/orders/active", { params: { customerId } }).then((r) => r.data),
+    queryKey: ["orders", "active", customerId, fulfillPath],
+    queryFn: () =>
+      apiClient.get("/orders/active", { params: { customerId, fulfillPath } }).then((r) => r.data),
     enabled: !!customerId,
   });
 }
@@ -380,9 +445,14 @@ export function useCustomerPriceHistory(customerId: string | null | undefined) {
   });
 }
 
-export function useUpdateOrderStatus() {
+/**
+ * `localErrorToast`: the caller renders its own error UI (the orders list's bulk cancel shows ONE summary
+ * toast), so the app-wide generic error toast must not also fire once per request.
+ */
+export function useUpdateOrderStatus(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<Order, Error, { id: string; status: string; reason?: string }>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ id, status, reason }) =>
       apiClient.patch(`/orders/${id}/status`, { status, reason }).then((r) => r.data),
     onSuccess: (_, { id }) => {
@@ -438,9 +508,21 @@ export function useUpdateOrderItems() {
        * Staff-only (operator/tenant-admin); the server ignores it otherwise.
        */
       appliedCreditNotes?: { creditNoteId: string; amount?: number }[];
+      /** #2406: an inline return to capture in the SAME write as this edit — `customerId`/
+       *  `orderId` are DERIVED server-side from the order being edited, never sent here (see
+       *  UpdateOrderItemsDto.inlineReturn). */
+      inlineReturn?: InlineReturnLinesRequest;
     }
   >({
-    mutationFn: ({ id, items, orderNotes, replaceAll, shippingFee, appliedCreditNotes }) =>
+    mutationFn: ({
+      id,
+      items,
+      orderNotes,
+      replaceAll,
+      shippingFee,
+      appliedCreditNotes,
+      inlineReturn,
+    }) =>
       apiClient
         .patch<Order>(`/orders/${id}/items`, {
           items,
@@ -448,11 +530,15 @@ export function useUpdateOrderItems() {
           replaceAll,
           shippingFee,
           appliedCreditNotes,
+          inlineReturn,
         })
         .then((r) => r.data),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       qc.setQueryData(["orders", data.id], data);
       qc.invalidateQueries({ queryKey: ["orders"] });
+      // #2406: this write carried an inline return — refresh the order-detail "Returns on
+      // this order" panel (GET /returns?orderId=), which reads the server's own figures.
+      if (variables.inlineReturn) qc.invalidateQueries({ queryKey: ["returns"] });
     },
   });
 }
@@ -479,9 +565,10 @@ export function useReopenOrder() {
   });
 }
 
-export function useDeleteOrder() {
+export function useDeleteOrder(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<{ success: boolean }, Error, string>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (id) => apiClient.delete(`/orders/${id}`).then((r) => r.data),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["orders"] });
@@ -557,11 +644,38 @@ export function usePatchOrderCommissionRate() {
   });
 }
 
-export function usePatchOrderFulfillPath() {
+export function usePatchOrderFulfillPath(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<Order, Error, { id: string; fulfillPath: "ROUTE" | "SHIP" }>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ id, fulfillPath }) =>
       apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath }).then((r) => r.data),
     onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["orders", vars.id] }),
+  });
+}
+
+// ─── Batch ship + packing slips (#3168) ───────────────────────────────────────
+
+/** Mark several carrier orders shipped in one request. Always 200 with a per-order outcome. */
+export function useBatchShipOrders() {
+  const qc = useQueryClient();
+  return useMutation<BatchShipResult, Error, BatchShipRequest>({
+    mutationFn: (req) => apiClient.post("/orders/batch-ship", req).then((r) => r.data),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["orders"] }),
+  });
+}
+
+/** One PDF, a packing slip page per carrier order. Resolves the signed URL and its bytes (printable). */
+export function usePackingSlips() {
+  return useMutation<PackingSlipsResult & { blob: Blob | null }, Error, string[]>({
+    mutationFn: async (orderIds) => {
+      const res = await apiClient
+        .post<PackingSlipsResult>("/orders/packing-slips", {
+          orderIds,
+        } satisfies PackingSlipsRequest)
+        .then((r) => r.data);
+      const blob = res.url ? await fetchPdfBlob(res.url, apiClient) : null;
+      return { ...res, blob };
+    },
   });
 }

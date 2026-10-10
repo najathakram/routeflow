@@ -13,7 +13,7 @@ jest.mock("../notifications/notifications.service", () => ({
 }));
 
 import { Test } from "@nestjs/testing";
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
 import { OrdersService } from "./orders.service";
@@ -62,6 +62,10 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     trackedCategoryId: null,
     trackedSubcategoryId: null,
     isActive: true,
+    // the buyer gate (#2856) judges these: a fixture that omits them is correctly hidden
+    kind: "STANDARD",
+    portalVisible: true,
+    parent: null,
   };
   const ladder = [
     { productId: "prod-1", label: "Case", factorToBase: 288, price: "480.00", sortOrder: 0 },
@@ -176,6 +180,50 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     ).rejects.toBeInstanceOf(err);
     expect(prisma.tenantTransaction).not.toHaveBeenCalled();
     expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("WS8: a FAMILY container on a line is a 400 FAMILY_NOT_SELLABLE, for staff too, and nothing is written", async () => {
+    prisma.product.findMany.mockResolvedValue([{ ...PRODUCT, kind: "FAMILY" }]);
+    const err = await create([{ productId: "prod-1", qty: 1 }]).catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({
+      code: "FAMILY_NOT_SELLABLE",
+      productIds: ["prod-1"],
+    });
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("a BUYER naming a FAMILY container gets the buyer 409 SELLING_RESTRICTED (blocked-lines dialog), not the staff 400", async () => {
+    prisma.product.findMany.mockResolvedValue([{ ...PRODUCT, kind: "FAMILY" }]);
+    const err = await create([{ productId: "prod-1", qty: 1 }], {
+      ...customerPayload,
+      tenantId: "t-1",
+    } as never).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: "SELLING_RESTRICTED",
+      blockedLines: [
+        expect.objectContaining({ productId: "prod-1", reason: "HIDDEN_FROM_PORTAL" }),
+      ],
+    });
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("#2784 / SA-601 interim: a BUYER's plain qty stays a PACK line even when a level is flagged isDefaultSelling, and no ladder is read for a buyer", async () => {
+    scopedUnits.findMany.mockResolvedValue(
+      ladder.map((u) => (u.label === "Case" ? { ...u, isDefaultSelling: true } : u)),
+    );
+    (service as any).promotionsService.activeForCatalog.mockResolvedValue([]);
+    await create([{ productId: "prod-1", qty: 2 }], {
+      ...customerPayload,
+      tenantId: "t-1",
+    } as never);
+    const line = orderData().lineItems.create[0];
+    expect("unitLabel" in line).toBe(false);
+    // a plain pack line: no unit, and no factor snapshot (snapshots only for a box-split or unit-aware line)
+    expect(line).toMatchObject({ productId: "prod-1", unitsPerBox: null, qty: 2 });
+    expect(scopedUnits.findMany).not.toHaveBeenCalled();
+    // The goal (owner #2780: a buyer's plain qty = the default selling unit) needs the SA's buyer unit-line design first.
   });
 
   it("an unknown unit, boxes beside a unit, and a unit on a custom line are 400s that write nothing", async () => {

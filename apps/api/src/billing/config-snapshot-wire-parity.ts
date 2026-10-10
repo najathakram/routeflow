@@ -17,8 +17,11 @@ import type {
   ConfigSnapshotRestoreReport,
   ConfigSnapshotRestoreResult,
 } from "@routeflow/types";
-import type { RestoreNowResult, SnapshotPreviewView } from "./tenant-config-snapshot-admin.service";
-import type { SnapshotListItem } from "./tenant-config-snapshot.service";
+import type {
+  ConfigSnapshotListItemView,
+  RestoreNowResult,
+  SnapshotPreviewView,
+} from "./tenant-config-snapshot-admin.service";
 
 /** A `Date` on the API side is its ISO string on the wire. */
 type Wire<T> = {
@@ -27,7 +30,7 @@ type Wire<T> = {
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Assert<T extends true> = T;
 
-export type ListItemParity = Assert<Same<Wire<SnapshotListItem>, ConfigSnapshotListItem>>;
+export type ListItemParity = Assert<Same<Wire<ConfigSnapshotListItemView>, ConfigSnapshotListItem>>;
 export type PreviewParity = Assert<Same<Wire<SnapshotPreviewView>, ConfigSnapshotPreview>>;
 // The WHOLE restore envelope, not just its report (`supersededSnapshots` once slipped past a
 // report-only check: the API returned it and the wire type did not know it).

@@ -23,5 +23,11 @@
     "noFallthroughCasesInSwitch": false,
     "jsx": "react"
   },
-  "exclude": ["**/*.spec.ts", "**/*.test.ts", "prisma.config.ts", "scripts/**", "prisma/**"]
+  "exclude": [
+    "**/*.spec.ts",
+    "**/*.test.ts",
+    "prisma.config.ts",
+    "scripts/**",
+    "prisma/migrations/**"
+  ]
 }

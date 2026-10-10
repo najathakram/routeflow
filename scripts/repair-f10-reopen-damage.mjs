@@ -69,6 +69,11 @@ import pg from "pg";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import guardLib from "../apps/api/scripts/lib/live-target-guard.cjs";
+import protectedSlugsLib from "../apps/api/scripts/lib/protected-slugs.cjs";
+
+const { protectedTenantIds } = guardLib;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 const argv = process.argv.slice(2);
 const EXECUTE = argv.includes("--execute");
@@ -122,6 +127,16 @@ if (!url) {
   process.exit(2);
 }
 
+// Row 195: the protected-tenant list is loaded ONCE, before connecting, from the URL this script
+// dials. A protected tenant's products (paying, Stripe-linked, env-listed) are never repaired here.
+let protectedSlugs;
+try {
+  protectedSlugs = loadProtectedSlugs(process.env, url);
+} catch (e) {
+  console.error(`\n✖ ${e.message}`);
+  process.exit(2);
+}
+
 const REOPEN_MOVEMENT_PREDICATE = `
   m.type = 'SALE'
   AND m.quantity > 0
@@ -158,6 +173,10 @@ async function main() {
     return;
   }
 
+  // SELECT-only (read-only in a dry run); the ids are used to skip + to pin every write below.
+  const protectedIds = await protectedTenantIds(client, protectedSlugs);
+  const protectedSet = new Set(protectedIds);
+
   console.log(`\nF10 repair flight — database "${db}" — ${EXECUTE ? "EXECUTE" : "DRY RUN"}`);
   console.log("=".repeat(78));
 
@@ -189,7 +208,10 @@ async function main() {
         `    ${r.movement_count} reopen movement(s), ${r.first_reopen.toISOString().slice(0, 10)} → ` +
         `${r.last_reopen.toISOString().slice(0, 10)}\n` +
         `    currentStock ${r.current_stock} → ${proposed}   (inflated by ${r.inflated_by})` +
-        (proposed < 0 ? "   ⚠ REPAIR WOULD GO NEGATIVE — needs an owner decision, skipped" : ""),
+        (proposed < 0 ? "   ⚠ REPAIR WOULD GO NEGATIVE — needs an owner decision, skipped" : "") +
+        (protectedSet.has(r.tenant_id)
+          ? "   ⛔ PROTECTED TENANT — never repaired by this script"
+          : ""),
     );
     if (VERBOSE) {
       console.log(
@@ -290,6 +312,11 @@ async function main() {
       skipped++;
       continue;
     }
+    if (protectedSet.has(r.tenant_id)) {
+      console.log(`\n  ⏭ ${id}: belongs to a protected tenant — skipped (never repaired here)`);
+      skipped++;
+      continue;
+    }
     const proposed = Number(r.current_stock) - Number(r.inflated_by);
     if (proposed < 0) {
       console.log(
@@ -321,10 +348,12 @@ async function main() {
         throw new Error("reopen movement set drifted since the dry run");
       }
 
-      await client.query(
-        `UPDATE "Product" SET "currentStock" = "currentStock" - $2 WHERE id = $1`,
-        [id, r.inflated_by],
+      const written = await client.query(
+        `UPDATE "Product" SET "currentStock" = "currentStock" - $2
+          WHERE id = $1 AND "tenantId" <> ALL($3::text[])`,
+        [id, r.inflated_by, protectedIds],
       );
+      if (written.rowCount !== 1) throw new Error("product row not writable (protected tenant)");
       await client.query(
         `UPDATE "StockMovement" m
             SET notes = COALESCE(m.notes || ' ', '') || '[F10-repaired]'

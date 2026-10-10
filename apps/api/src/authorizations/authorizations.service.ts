@@ -1,3 +1,4 @@
+import { assertSafeLicense } from "../common/text-cell-guards";
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -8,6 +9,7 @@ import { CreateAuthorizationDto } from "./dto/create-authorization.dto";
 import { RejectAuthorizationDto } from "./dto/reject-authorization.dto";
 import { RenewAuthorizationDto } from "./dto/renew-authorization.dto";
 import { SubmitAuthorizationDto } from "./dto/submit-authorization.dto";
+import { escapeHtml } from "../common/html-escape";
 
 export interface BuyerAuthorizationRow {
   trackedCategoryId: string;
@@ -192,6 +194,7 @@ export class AuthorizationsService {
     });
     // A buyer must not knock a currently-valid license back into review.
     this.assertNotLiveVerified(existing, now);
+    assertSafeLicense({ licenseNumber: dto.licenseNumber }, existing); // B964: buyer-typed, change-only, before any write
 
     const submitted = {
       status: "PENDING_REVIEW" as const,
@@ -278,6 +281,7 @@ export class AuthorizationsService {
         customerId_trackedCategoryId: { customerId, trackedCategoryId: dto.trackedCategoryId },
       },
     });
+    assertSafeLicense({ licenseNumber: dto.licenseNumber }, existing); // B964: staff-typed, change-only, before any write
     let auth;
     try {
       auth = existing
@@ -339,6 +343,7 @@ export class AuthorizationsService {
   /** Re-verify with a fresh license/expiry (spec §8 "update one field + re-verify"). */
   async renew(customerId: string, authId: string, dto: RenewAuthorizationDto, user: JwtPayload) {
     const auth = await this.getOwned(customerId, authId);
+    assertSafeLicense({ licenseNumber: dto.licenseNumber }, auth); // B964: change-only, before any write
     // Renew re-verifies — only from an already-vetted state. Blocks laundering a
     // REJECTED / PENDING_REVIEW / NONE row straight to VERIFIED (bypassing approve()).
     if (auth.status !== "VERIFIED" && auth.status !== "EXPIRED")
@@ -433,7 +438,11 @@ export class AuthorizationsService {
       await this.notifications.sendToUser(op.id, { title: subject, body }).catch(() => {});
       if (op.email && !op.email.startsWith("no-email+")) {
         await this.email
-          .send({ to: op.email, subject: `${who} — ${subject}`, html: `<p>${body}</p>` })
+          .send({
+            to: op.email,
+            subject: `${who} — ${subject}`,
+            html: `<p>${escapeHtml(body)}</p>`,
+          })
           .catch(() => {});
       }
     }

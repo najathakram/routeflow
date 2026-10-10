@@ -14,6 +14,9 @@ import { BarcodeScanner } from "../../components/BarcodeScanner";
 import { BarcodeFab } from "../../components/BarcodeFab";
 import { resolveProductByCode } from "../../lib/barcode-resolve";
 import { showToast } from "../../lib/toast";
+import { decideScanResult } from "../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../lib/use-scan-match-picker";
 
 const FILTERS: { id: "ALL" | MovementType; label: string }[] = [
   { id: "ALL", label: "All" },
@@ -50,6 +53,7 @@ export default function MovementsScreen() {
   const [filter, setFilter] = useState<"ALL" | MovementType>("ALL");
   const [search, setSearch] = useState("");
   const [scanOpen, setScanOpen] = useState(false);
+  const matchPicker = useScanMatchPicker();
   const [productFilter, setProductFilter] = useState<{
     id: string;
     label: string;
@@ -79,6 +83,17 @@ export default function MovementsScreen() {
     if (!trimmed) return;
     try {
       const result = await resolveProductByCode(trimmed);
+      // B1220 parity: several fuzzy matches -> choose one; never silently filter on the first.
+      const decision = decideScanResult(result, "add");
+      if (decision.kind === "pick-from-list") {
+        matchPicker.open(
+          decision.matches,
+          "Select",
+          (p: { id: string; name: string }) => setProductFilter({ id: p.id, label: p.name }),
+          () => {},
+        );
+        return;
+      }
       if (!result.notFound) {
         setProductFilter({ id: result.product.id, label: result.product.name });
         return;
@@ -155,6 +170,7 @@ export default function MovementsScreen() {
 
       {/* Draggable scan FAB — same handler as the inline barcode icon. */}
       <BarcodeFab onScanned={onScanned} hidden={scanOpen} />
+      <ScanMatchPickerSheet {...matchPicker.props} />
     </SafeAreaView>
   );
 }
@@ -162,7 +178,8 @@ export default function MovementsScreen() {
 function MovementRow({ m, onPress }: { m: InventoryMovement; onPress?: () => void }) {
   const p = pillForType(m.type);
   const positive = m.quantity > 0;
-  const date = new Date(m.createdAt).toLocaleDateString(undefined, {
+  // B562: the movement's accounting date (a backdated receipt shows its own date).
+  const date = new Date(m.effectiveAt ?? m.createdAt).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
     hour: "numeric",

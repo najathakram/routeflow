@@ -1,3 +1,5 @@
+import { keepsHeldUnit } from "../orders/unit-label-norm";
+import { resolveLineUnits } from "../products/line-units";
 import {
   sellableLinesForMergeEdit,
   type EditItem,
@@ -233,5 +235,209 @@ describe("sellableLinesForMergeEdit", () => {
         { productId: "p1", qtyDelta: 6 },
       ]);
     });
+  });
+});
+
+/**
+ * #2275 / SA-408 — a units_v1 line stores PIECES (`qty`) and its unit's factor on the row
+ * (`unitsPerBox`); an edit of it sends a COUNT of that unit in `qty`. Master compared the count to
+ * the stored pieces (3 → 4 Cases of 12: 4 − 36 = −32), so an increase on a banned product passed as a
+ * decrease. It is compared in pieces: incoming count × the HELD row's snapshot factor.
+ */
+describe("sellableLinesForMergeEdit — a unit line nets in PIECES at its held factor (#2275)", () => {
+  const caseLine = (over: Partial<ExistingLine> = {}) =>
+    line({ unitLabel: "Case", unitsPerBox: 12, qty: 36, boxes: 3, pieces: 0, ...over } as any);
+  const count = (qty: number, unitLabel = "Case") => items({ id: "li-1", unitLabel, qty });
+
+  it("3 → 4 Cases of a 12-pack is +12 pieces — an increase, so it is checked (master: −32 passed)", () => {
+    expect(merge([caseLine()], count(4))).toEqual([{ productId: "p1", qtyDelta: 12 }]);
+  });
+
+  it("3 → 2 Cases is −12 pieces — a decrease, never checked downstream", () => {
+    expect(merge([caseLine()], count(2))).toEqual([{ productId: "p1", qtyDelta: -12 }]);
+  });
+
+  it("an unchanged re-send after the Case is repacked 12 → 24 nets 0 (the held factor, not the live one)", () => {
+    expect(merge([caseLine()], count(3), new Map([["p1", 24]]))).toEqual([
+      { productId: "p1", qtyDelta: 0 },
+    ]);
+  });
+
+  it("SA-408b: a held row with no usable snapshot factor is UNSIZED — checked, never sized by the live pack", () => {
+    // The live pack is the PACK's size, not the Case's: 4 × 6 − 36 = −12 would pass an increase.
+    expect(merge([caseLine({ unitsPerBox: null })], count(4), new Map([["p1", 6]]))).toEqual([
+      { productId: "p1" },
+    ]);
+    expect(merge([caseLine({ unitsPerBox: 0 })], count(4), new Map([["p1", 12]]))).toEqual([
+      { productId: "p1" },
+    ]);
+    expect(merge([caseLine({ unitsPerBox: null })], count(4))).toEqual([{ productId: "p1" }]);
+  });
+
+  it("SA-408b: the label compare uses THE one normaliser — 'case' and ' Case' are the held Case", () => {
+    expect(merge([caseLine()], count(4, "case"))).toEqual([{ productId: "p1", qtyDelta: 12 }]);
+    expect(merge([caseLine()], count(4, " Case "))).toEqual([{ productId: "p1", qtyDelta: 12 }]);
+  });
+
+  it("SA-408b: a PACK line's split still sizes from the live pack when its snapshot is null", () => {
+    expect(
+      merge(
+        [line({ qty: 6, boxes: 1, pieces: 0, unitsPerBox: null })],
+        items({ id: "li-1", boxes: 2, pieces: 0 }),
+        new Map([["p1", 6]]),
+      ),
+    ).toEqual([{ productId: "p1", qtyDelta: 6 }]);
+  });
+
+  it("a DIFFERENT unit re-denominates the line (staff): its factor is not the held one — checked", () => {
+    expect(merge([caseLine()], count(1, "Pallet"))).toEqual([{ productId: "p1" }]);
+  });
+
+  it("pack lines are unchanged: a bare qty on a plain line is still qty − stored", () => {
+    expect(merge([line({ qty: 5 })], items({ id: "li-1", qty: 7 }))).toEqual([
+      { productId: "p1", qtyDelta: 2 },
+    ]);
+  });
+});
+
+/**
+ * #2288 / SA-447 — a HELD unit line whose incoming `unitLabel` is CLEARED (explicit null, "", or
+ * blank) is re-denominated to the PACK by the write (`products/line-units.ts` resolveLineUnits: only
+ * an ABSENT label, or the same one re-sent, keeps the held unit). The netting used to read
+ * `item.unitLabel ?? ""` and net the count at the HELD factor, so the netting and the write disagreed
+ * on pieces. A cleared label is a re-denomination: unsized, so the choke point checks the product in
+ * full. An absent label keeps today's SA-408 netting; a pack line is untouched.
+ */
+describe("sellableLinesForMergeEdit — a cleared unitLabel on a held unit line re-denominates (#2288, SA-447)", () => {
+  const caseLine = (over: Partial<ExistingLine> = {}) =>
+    line({ unitLabel: "Case", unitsPerBox: 12, qty: 36, boxes: 3, pieces: 0, ...over } as any);
+
+  it.each([
+    ["null", null],
+    ['""', ""],
+    ["blank", "   "],
+  ])(
+    "SA-447: unitLabel %s on a held Case line is a re-denomination — unsized, checked",
+    (_l, label) => {
+      expect(merge([caseLine()], items({ id: "li-1", unitLabel: label, qty: 4 }))).toEqual([
+        { productId: "p1" },
+      ]);
+    },
+  );
+
+  it("SA-447: a cleared label with no qty is still a re-denomination — checked", () => {
+    expect(merge([caseLine()], items({ id: "li-1", unitLabel: null }))).toEqual([
+      { productId: "p1" },
+    ]);
+  });
+
+  it("SA-447: an ABSENT unitLabel keeps today's SA-408 netting (count × held factor)", () => {
+    expect(merge([caseLine()], items({ id: "li-1", qty: 4 }))).toEqual([
+      { productId: "p1", qtyDelta: 12 },
+    ]);
+  });
+
+  it("SA-447: the SAME label (through norm) keeps the netting", () => {
+    expect(merge([caseLine()], items({ id: "li-1", unitLabel: " case ", qty: 4 }))).toEqual([
+      { productId: "p1", qtyDelta: 12 },
+    ]);
+  });
+
+  it("SA-447: a DIFFERENT label on a held line is still a re-denomination — checked", () => {
+    expect(merge([caseLine()], items({ id: "li-1", unitLabel: "Pallet", qty: 1 }))).toEqual([
+      { productId: "p1" },
+    ]);
+  });
+
+  it("SA-447: unitLabel null on a PACK line is untouched by this branch — qty − stored", () => {
+    expect(merge([line({ qty: 5 })], items({ id: "li-1", unitLabel: null, qty: 7 }))).toEqual([
+      { productId: "p1", qtyDelta: 2 },
+    ]);
+  });
+});
+
+/**
+ * #2288 / SA-447 source pin: the netting reads `unitLabel` with the SAME three cases as the write's
+ * resolveLineUnits — absent (undefined) = the held unit; the same label re-sent = the held unit;
+ * explicit null / "" / blank = the pack. If either side changes its reading, this fails until the
+ * other is changed with it.
+ */
+describe("#2288 / SA-447 / SA-070 — the netting and resolveLineUnits share ONE keep-held-unit rule", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { readFileSync } = require("fs") as typeof import("fs");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { join } = require("path") as typeof import("path");
+
+  // SA-070: ONE keep-held-unit rule (orders/unit-label-norm.ts keepsHeldUnit) drives both sides.
+  // Behavioural: for every label case the write (resolveLineUnits) and the netting agree with it.
+  const product = { unit: "Box", unitsPerBox: 6, pricePerUnit: "55.00" };
+  const ladder = [
+    {
+      label: "Case",
+      factorToBase: 12,
+      price: "100.00",
+      priceTier2: null,
+      priceTier3: null,
+      priceTier4: null,
+      priceTier5: null,
+    },
+    {
+      label: "Pallet",
+      factorToBase: 240,
+      price: null,
+      priceTier2: null,
+      priceTier3: null,
+      priceTier4: null,
+      priceTier5: null,
+    },
+  ];
+  const held = { unitLabel: "Case", unitsPerBox: 12 };
+  it.each([
+    ["absent", undefined, true],
+    ["the same label", "Case", true],
+    ["the same label through norm", " case ", true],
+    ["null", null, false],
+    ['""', "", false],
+    ["blank", "   ", false],
+    ["another unit", "Pallet", false],
+  ] as const)(
+    "SA-070: %s — keepsHeldUnit, the write and the netting agree",
+    (_l, explicit, keeps) => {
+      expect(keepsHeldUnit(explicit, "Case")).toBe(keeps);
+      const written = resolveLineUnits(
+        product,
+        ladder,
+        explicit === undefined ? {} : { unitLabel: explicit },
+        held,
+      );
+      expect(written.unitLabel === "Case" && written.unitsPerBox === 12).toBe(keeps);
+      const netted = merge(
+        [line({ unitLabel: "Case", unitsPerBox: 12, qty: 36, boxes: 3, pieces: 0 } as any)],
+        items({ id: "li-1", qty: 4, ...(explicit === undefined ? {} : { unitLabel: explicit }) }),
+      );
+      expect("qtyDelta" in netted[0]).toBe(keeps);
+    },
+  );
+
+  it("SA-070: a line with no held unit keeps nothing", () => {
+    expect(keepsHeldUnit(undefined, null)).toBe(false);
+    expect(keepsHeldUnit("Case", "")).toBe(false);
+  });
+
+  // SA-447a: with the label ABSENT, a qty/price edit of a held unit line never reaches the netting
+  // because updateOrderItems refuses it first (UNIT_AWARE_LINE). The real-PG pin relies on that
+  // order; this fails if a later reorder puts the restriction check ahead of the label check.
+  it("SA-447a: in updateOrderItems, assertUnitLabelNamed runs BEFORE assertLinesSellable", () => {
+    const service = readFileSync(join(__dirname, "..", "orders", "orders.service.ts"), "utf8");
+    const start = service.indexOf("  async updateOrderItems(");
+    expect(start).toBeGreaterThan(-1);
+    const rest = service.slice(start + 1);
+    const nextMethod = rest.search(/\n  (?:async |private |public |protected )?[A-Za-z]+\(/);
+    const body = nextMethod === -1 ? rest : rest.slice(0, nextMethod);
+    const labelCheck = body.indexOf("assertUnitLabelNamed(");
+    const restrictionCheck = body.indexOf("assertLinesSellable(");
+    expect(labelCheck).toBeGreaterThan(-1);
+    expect(restrictionCheck).toBeGreaterThan(-1);
+    expect(labelCheck).toBeLessThan(restrictionCheck);
   });
 });

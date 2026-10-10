@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import axios from "axios";
+import * as crypto from "crypto";
 import { MailboxConnectionService } from "./mailbox-connection.service";
 import { EncryptionService } from "../../common/encryption.service";
 import { withAdvisoryLock } from "../../common/db-locks";
@@ -105,7 +106,7 @@ describe("MailboxConnectionService", () => {
     userId = "user-1",
     tokens: Record<string, unknown> = GOOD_TOKENS,
     idPayload: Record<string, unknown> = GOOD_ID_PAYLOAD,
-  ): Promise<string> {
+  ): Promise<{ confirmToken: string; connectSecret: string }> {
     mockOAuthClient.generateCodeVerifierAsync.mockResolvedValue({
       codeVerifier: "verifier-1",
       codeChallenge: "challenge-1",
@@ -116,10 +117,10 @@ describe("MailboxConnectionService", () => {
     mockOAuthClient.getToken.mockResolvedValue({ tokens });
     mockOAuthClient.verifyIdToken.mockResolvedValue({ getPayload: () => idPayload });
 
-    const url = await service.startConnect(tenantId, userId);
+    const { url, connectSecret } = await service.startConnect(tenantId, userId);
     const state = new URL(url).searchParams.get("state")!;
     const { confirmToken } = await service.handleCallback("code-1", state);
-    return confirmToken;
+    return { confirmToken, connectSecret };
   }
 
   beforeEach(() => {
@@ -138,7 +139,7 @@ describe("MailboxConnectionService", () => {
     );
 
     const { service, mockRedis } = buildService();
-    const url = await service.startConnect("tenant-a", "user-1");
+    const { url, connectSecret } = await service.startConnect("tenant-a", "user-1");
 
     expect(url).toContain("accounts.google.com");
     expect(mockOAuthClient.generateAuthUrl).toHaveBeenCalledWith(
@@ -157,6 +158,13 @@ describe("MailboxConnectionService", () => {
       verifier: "verifier-123",
     });
     expect(ttl).toBeLessThanOrEqual(600);
+    // #2115: the tab gets a fresh 256-bit connect secret; the nonce keeps only its SHA-256.
+    expect(connectSecret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(stored.secretHash).toBe(
+      crypto.createHash("sha256").update(connectSecret, "utf8").digest("base64url"),
+    );
+    expect(storedJson).not.toContain(connectSecret);
+    expect(url).not.toContain(connectSecret);
   });
 
   it("startConnect 503s when the Google mailbox client isn't configured (NIT)", async () => {
@@ -200,7 +208,7 @@ describe("MailboxConnectionService", () => {
     mockOAuthClient.getToken.mockResolvedValue({ tokens: GOOD_TOKENS });
     mockOAuthClient.verifyIdToken.mockResolvedValue({ getPayload: () => GOOD_ID_PAYLOAD });
 
-    const url = await service.startConnect("tenant-a", "user-1");
+    const { url } = await service.startConnect("tenant-a", "user-1");
     const state = new URL(url).searchParams.get("state")!;
 
     // First use succeeds.
@@ -225,7 +233,7 @@ describe("MailboxConnectionService", () => {
     mockOAuthClient.getToken.mockResolvedValue({ tokens: GOOD_TOKENS });
     mockOAuthClient.verifyIdToken.mockResolvedValue({ getPayload: () => GOOD_ID_PAYLOAD });
 
-    const url = await service.startConnect("tenant-a", "user-1");
+    const { url } = await service.startConnect("tenant-a", "user-1");
     const state = new URL(url).searchParams.get("state")!;
     await service.handleCallback("code-1", state);
 
@@ -245,7 +253,7 @@ describe("MailboxConnectionService", () => {
     mockOAuthClient.getToken.mockResolvedValue({ tokens: { access_token: "at-1" } });
     const { service } = buildService();
 
-    const url = await service.startConnect("tenant-a", "user-1");
+    const { url } = await service.startConnect("tenant-a", "user-1");
     const state = new URL(url).searchParams.get("state")!;
 
     await expect(service.handleCallback("code-1", state)).rejects.toThrow(BadRequestException);
@@ -264,7 +272,7 @@ describe("MailboxConnectionService", () => {
     });
     const { service } = buildService();
 
-    const url = await service.startConnect("tenant-a", "user-1");
+    const { url } = await service.startConnect("tenant-a", "user-1");
     const state = new URL(url).searchParams.get("state")!;
 
     await expect(service.handleCallback("code-1", state)).rejects.toThrow(BadRequestException);
@@ -282,7 +290,7 @@ describe("MailboxConnectionService", () => {
     };
     const { service } = buildService({ prisma });
 
-    const confirmToken = await connectThroughCallback(service);
+    const { confirmToken } = await connectThroughCallback(service);
 
     expect(typeof confirmToken).toBe("string");
     expect(confirmToken.length).toBeGreaterThan(20);
@@ -306,8 +314,12 @@ describe("MailboxConnectionService", () => {
     const audit = { log: jest.fn().mockResolvedValue(undefined) };
     const { service } = buildService({ prisma, audit });
 
-    const confirmToken = await connectThroughCallback(service, "tenant-a", "user-1");
-    const view = await service.confirmConnect(confirmToken, "user-1", "tenant-a");
+    const { confirmToken, connectSecret } = await connectThroughCallback(
+      service,
+      "tenant-a",
+      "user-1",
+    );
+    const view = await service.confirmConnect(confirmToken, connectSecret, "user-1", "tenant-a");
 
     expect(view).toMatchObject({ connected: true, accountEmail: "owner@acme.test" });
     expect(savedData.tenantId).toBe("tenant-a");
@@ -326,11 +338,15 @@ describe("MailboxConnectionService", () => {
     };
     const { service } = buildService({ prisma });
 
-    const confirmToken = await connectThroughCallback(service, "tenant-a", "user-1");
-
-    await expect(service.confirmConnect(confirmToken, "user-2", "tenant-a")).rejects.toThrow(
-      ForbiddenException,
+    const { confirmToken, connectSecret } = await connectThroughCallback(
+      service,
+      "tenant-a",
+      "user-1",
     );
+
+    await expect(
+      service.confirmConnect(confirmToken, connectSecret, "user-2", "tenant-a"),
+    ).rejects.toThrow(ForbiddenException);
     expect(prisma.mailboxConnection.upsert).not.toHaveBeenCalled();
   });
 
@@ -340,11 +356,15 @@ describe("MailboxConnectionService", () => {
     };
     const { service } = buildService({ prisma });
 
-    const confirmToken = await connectThroughCallback(service, "tenant-a", "user-1");
-
-    await expect(service.confirmConnect(confirmToken, "user-1", "tenant-b")).rejects.toThrow(
-      ForbiddenException,
+    const { confirmToken, connectSecret } = await connectThroughCallback(
+      service,
+      "tenant-a",
+      "user-1",
     );
+
+    await expect(
+      service.confirmConnect(confirmToken, connectSecret, "user-1", "tenant-b"),
+    ).rejects.toThrow(ForbiddenException);
     expect(prisma.mailboxConnection.upsert).not.toHaveBeenCalled();
   });
 
@@ -354,15 +374,19 @@ describe("MailboxConnectionService", () => {
     };
     const { service } = buildService({ prisma });
 
-    const confirmToken = await connectThroughCallback(service, "tenant-a", "user-1");
+    const { confirmToken, connectSecret } = await connectThroughCallback(
+      service,
+      "tenant-a",
+      "user-1",
+    );
 
-    await expect(service.confirmConnect(confirmToken, "user-2", "tenant-a")).rejects.toThrow(
-      ForbiddenException,
-    );
+    await expect(
+      service.confirmConnect(confirmToken, connectSecret, "user-2", "tenant-a"),
+    ).rejects.toThrow(ForbiddenException);
     // The SAME token, now presented with the RIGHT identity, is already gone (single-use).
-    await expect(service.confirmConnect(confirmToken, "user-1", "tenant-a")).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(
+      service.confirmConnect(confirmToken, connectSecret, "user-1", "tenant-a"),
+    ).rejects.toThrow(BadRequestException);
     expect(prisma.mailboxConnection.upsert).not.toHaveBeenCalled();
   });
 
@@ -375,23 +399,27 @@ describe("MailboxConnectionService", () => {
     };
     const { service } = buildService({ prisma });
 
-    const confirmToken = await connectThroughCallback(service, "tenant-a", "user-1");
-
-    await service.confirmConnect(confirmToken, "user-1", "tenant-a");
-    await expect(service.confirmConnect(confirmToken, "user-1", "tenant-a")).rejects.toThrow(
-      BadRequestException,
+    const { confirmToken, connectSecret } = await connectThroughCallback(
+      service,
+      "tenant-a",
+      "user-1",
     );
+
+    await service.confirmConnect(confirmToken, connectSecret, "user-1", "tenant-a");
+    await expect(
+      service.confirmConnect(confirmToken, connectSecret, "user-1", "tenant-a"),
+    ).rejects.toThrow(BadRequestException);
     expect(prisma.mailboxConnection.upsert).toHaveBeenCalledTimes(1);
   });
 
   it("confirmConnect rejects a missing/unknown token with 400", async () => {
     const { service } = buildService();
-    await expect(service.confirmConnect("", "user-1", "tenant-a")).rejects.toThrow(
+    await expect(service.confirmConnect("", "any-secret", "user-1", "tenant-a")).rejects.toThrow(
       BadRequestException,
     );
-    await expect(service.confirmConnect("not-a-real-token", "user-1", "tenant-a")).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(
+      service.confirmConnect("not-a-real-token", "any-secret", "user-1", "tenant-a"),
+    ).rejects.toThrow(BadRequestException);
   });
 
   // ── ciphertext-at-rest ────────────────────────────────────────────────────
@@ -409,12 +437,17 @@ describe("MailboxConnectionService", () => {
     };
     const { service } = buildService({ prisma });
 
-    const confirmToken = await connectThroughCallback(service, "tenant-a", "user-1", {
-      ...GOOD_TOKENS,
-      refresh_token: "super-secret-refresh-token",
-      access_token: "super-secret-access-token",
-    });
-    await service.confirmConnect(confirmToken, "user-1", "tenant-a");
+    const { confirmToken, connectSecret } = await connectThroughCallback(
+      service,
+      "tenant-a",
+      "user-1",
+      {
+        ...GOOD_TOKENS,
+        refresh_token: "super-secret-refresh-token",
+        access_token: "super-secret-access-token",
+      },
+    );
+    await service.confirmConnect(confirmToken, connectSecret, "user-1", "tenant-a");
 
     // AES-256-GCM storage format: IV_HEX:TAG_HEX:CIPHERTEXT_B64 (email.service.ts's
     // ENCRYPTED_FORMAT, EncryptionService's documented contract).
@@ -618,8 +651,12 @@ describe("MailboxConnectionService", () => {
     };
     const { service } = buildService({ prisma });
 
-    const confirmToken = await connectThroughCallback(service, "tenant-a", "user-1");
-    await service.confirmConnect(confirmToken, "user-1", "tenant-a");
+    const { confirmToken, connectSecret } = await connectThroughCallback(
+      service,
+      "tenant-a",
+      "user-1",
+    );
+    await service.confirmConnect(confirmToken, connectSecret, "user-1", "tenant-a");
 
     expect(withAdvisoryLock).toHaveBeenCalledWith(
       expect.objectContaining({ family: "mailbox", key: "tenant-a" }),

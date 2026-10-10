@@ -568,119 +568,119 @@ export default function BuyerShopPage() {
                   /* List view */
                   <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
                     <div className="overflow-x-auto">
-                    <table className="w-full min-w-[640px]">
-                      <thead>
-                        <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider">
-                          <th className="px-4 py-2.5 text-left">Product</th>
-                          <th className="px-4 py-2.5 text-left w-28">Category</th>
-                          <th className="px-4 py-2.5 text-left w-24">SKU</th>
-                          <th className="px-4 py-2.5 text-right w-28">Price</th>
-                          <th className="px-4 py-2.5 text-right w-44">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-surface-border">
-                        {products.map((p) => {
-                          const qty = cart.getItemQty(p.id);
-                          const cartItem = cart.items.find((i) => i.productId === p.id);
-                          const priced = deriveTilePrice(p, promoRules, cartItem);
-                          return (
-                            <tr
-                              key={p.id}
-                              className="hover:bg-surface-raised/50"
-                              data-testid="product-tile"
-                            >
-                              <td className="px-4 py-3">
-                                <Link
-                                  href={`/buyer/portal/${sellerSlug}/shop/${p.id}`}
-                                  data-testid="product-tile-link"
-                                  className="flex items-center gap-3"
-                                >
-                                  <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
-                                    {p.thumbnailUrl ? (
-                                      <img
-                                        src={p.thumbnailUrl}
-                                        alt=""
-                                        className="h-full w-full object-cover"
-                                        style={{
-                                          objectPosition: objectPositionForUrl(p.thumbnailUrl),
-                                        }}
+                      <table className="w-full min-w-[640px]">
+                        <thead>
+                          <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider">
+                            <th className="px-4 py-2.5 text-left">Product</th>
+                            <th className="px-4 py-2.5 text-left w-28">Category</th>
+                            <th className="px-4 py-2.5 text-left w-24">SKU</th>
+                            <th className="px-4 py-2.5 text-right w-28">Price</th>
+                            <th className="px-4 py-2.5 text-right w-44">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-surface-border">
+                          {products.map((p) => {
+                            const qty = cart.getItemQty(p.id);
+                            const cartItem = cart.items.find((i) => i.productId === p.id);
+                            const priced = deriveTilePrice(p, promoRules, cartItem);
+                            return (
+                              <tr
+                                key={p.id}
+                                className="hover:bg-surface-raised/50"
+                                data-testid="product-tile"
+                              >
+                                <td className="px-4 py-3">
+                                  <Link
+                                    href={`/buyer/portal/${sellerSlug}/shop/${p.id}`}
+                                    data-testid="product-tile-link"
+                                    className="flex items-center gap-3"
+                                  >
+                                    <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
+                                      {p.thumbnailUrl ? (
+                                        <img
+                                          src={p.thumbnailUrl}
+                                          alt=""
+                                          className="h-full w-full object-cover"
+                                          style={{
+                                            objectPosition: objectPositionForUrl(p.thumbnailUrl),
+                                          }}
+                                        />
+                                      ) : (
+                                        <Package className="h-5 w-5 text-navy/15" />
+                                      )}
+                                    </div>
+                                    <div>
+                                      <p className="text-sm font-medium text-navy">{p.name}</p>
+                                      <p className="text-xs text-navy/70">per {p.unit}</p>
+                                    </div>
+                                  </Link>
+                                </td>
+                                <td className="px-4 py-3 text-xs text-navy/70">
+                                  {p.category ?? "N/A"}
+                                </td>
+                                <td className="px-4 py-3 text-xs text-navy/70">{p.sku ?? "N/A"}</td>
+                                <td className="px-4 py-3 text-right">
+                                  {priced.originalPrice != null && (
+                                    <p className="text-[11px] text-navy/40 line-through">
+                                      {fmt(priced.originalPrice)}
+                                    </p>
+                                  )}
+                                  <p className="text-sm font-semibold text-navy">
+                                    {fmt(priced.unitPrice)}
+                                  </p>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center justify-end gap-2">
+                                    <button
+                                      onClick={() => toggleFavorite(p.id)}
+                                      className={`rounded p-1.5 transition-colors ${
+                                        favoriteIds.has(p.id)
+                                          ? "text-danger hover:bg-danger-bg"
+                                          : "text-navy/30 hover:text-danger"
+                                      }`}
+                                      title={
+                                        favoriteIds.has(p.id)
+                                          ? "Remove from favorites"
+                                          : "Add to favorites"
+                                      }
+                                    >
+                                      <Heart
+                                        className={`h-4 w-4 ${favoriteIds.has(p.id) ? "fill-current" : ""}`}
+                                      />
+                                    </button>
+                                    {qty > 0 ? (
+                                      <QtyStepper
+                                        qty={qty}
+                                        onUpdate={(n) => cart.updateQty(p.id, n)}
+                                        onRemove={() => cart.updateQty(p.id, 0)}
+                                        size="sm"
                                       />
                                     ) : (
-                                      <Package className="h-5 w-5 text-navy/15" />
+                                      <button
+                                        onClick={() =>
+                                          cart.addItem({
+                                            productId: p.id,
+                                            qty: p.unitsPerBox ? p.unitsPerBox : 1,
+                                            name: p.name,
+                                            unit: p.unit,
+                                            thumbnailUrl: p.thumbnailUrl,
+                                            unitsPerBox: p.unitsPerBox,
+                                            boxes: p.unitsPerBox ? 1 : undefined,
+                                            pieces: p.unitsPerBox ? 0 : undefined,
+                                          })
+                                        }
+                                        className="flex items-center gap-1 rounded-lg bg-buyer-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-buyer-600 transition-colors"
+                                      >
+                                        <Plus className="h-3.5 w-3.5" /> Add
+                                      </button>
                                     )}
                                   </div>
-                                  <div>
-                                    <p className="text-sm font-medium text-navy">{p.name}</p>
-                                    <p className="text-xs text-navy/70">per {p.unit}</p>
-                                  </div>
-                                </Link>
-                              </td>
-                              <td className="px-4 py-3 text-xs text-navy/70">
-                                {p.category ?? "N/A"}
-                              </td>
-                              <td className="px-4 py-3 text-xs text-navy/70">{p.sku ?? "N/A"}</td>
-                              <td className="px-4 py-3 text-right">
-                                {priced.originalPrice != null && (
-                                  <p className="text-[11px] text-navy/40 line-through">
-                                    {fmt(priced.originalPrice)}
-                                  </p>
-                                )}
-                                <p className="text-sm font-semibold text-navy">
-                                  {fmt(priced.unitPrice)}
-                                </p>
-                              </td>
-                              <td className="px-4 py-3">
-                                <div className="flex items-center justify-end gap-2">
-                                  <button
-                                    onClick={() => toggleFavorite(p.id)}
-                                    className={`rounded p-1.5 transition-colors ${
-                                      favoriteIds.has(p.id)
-                                        ? "text-danger hover:bg-danger-bg"
-                                        : "text-navy/30 hover:text-danger"
-                                    }`}
-                                    title={
-                                      favoriteIds.has(p.id)
-                                        ? "Remove from favorites"
-                                        : "Add to favorites"
-                                    }
-                                  >
-                                    <Heart
-                                      className={`h-4 w-4 ${favoriteIds.has(p.id) ? "fill-current" : ""}`}
-                                    />
-                                  </button>
-                                  {qty > 0 ? (
-                                    <QtyStepper
-                                      qty={qty}
-                                      onUpdate={(n) => cart.updateQty(p.id, n)}
-                                      onRemove={() => cart.updateQty(p.id, 0)}
-                                      size="sm"
-                                    />
-                                  ) : (
-                                    <button
-                                      onClick={() =>
-                                        cart.addItem({
-                                          productId: p.id,
-                                          qty: p.unitsPerBox ? p.unitsPerBox : 1,
-                                          name: p.name,
-                                          unit: p.unit,
-                                          thumbnailUrl: p.thumbnailUrl,
-                                          unitsPerBox: p.unitsPerBox,
-                                          boxes: p.unitsPerBox ? 1 : undefined,
-                                          pieces: p.unitsPerBox ? 0 : undefined,
-                                        })
-                                      }
-                                      className="flex items-center gap-1 rounded-lg bg-buyer-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-buyer-600 transition-colors"
-                                    >
-                                      <Plus className="h-3.5 w-3.5" /> Add
-                                    </button>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 )}

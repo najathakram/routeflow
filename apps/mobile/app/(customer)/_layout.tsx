@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { useBuyerSessionStore } from "../../lib/buyer-session-store";
 import { useBuyerSocket } from "../../hooks/useBuyerSocket";
+import { customerLayoutTarget } from "../../lib/buyer-route-guard";
 
 export default function CustomerLayout() {
   const { buyer, activeSeller, isLoading } = useBuyerSessionStore();
@@ -14,13 +15,10 @@ export default function CustomerLayout() {
 
   useEffect(() => {
     if (isLoading) return;
-    if (!buyer || !activeSeller) {
-      // Not authenticated as buyer — redirect to login
-      if (!(segments[0] === "(auth)" && segments[1] === "customer-login")) {
-        router.replace("/(auth)/customer-login");
-      }
-    }
-  }, [buyer, activeSeller, isLoading]);
+    // Signed out → customer-login; signed in with 0 sellers → sellers/connect only (#2341).
+    const target = customerLayoutTarget({ hasBuyer: !!buyer, hasSeller: !!activeSeller, segments });
+    if (target) router.replace(target as any);
+  }, [buyer, activeSeller, isLoading, segments.join("/")]);
 
   return <Stack screenOptions={{ headerShown: false }} />;
 }

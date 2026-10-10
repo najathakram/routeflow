@@ -30,4 +30,10 @@ export class UpdateInvoiceSettingsDto {
   @IsOptional()
   @IsBoolean()
   depositCollectAtOrder?: boolean;
+
+  // SA-436 (#2401): TenantConfig.creditAutoApplyOnSend. When true, sending an invoice sweeps the
+  // customer's open credit notes onto it oldest-first. OFF by default (owner ruling).
+  @IsOptional()
+  @IsBoolean()
+  creditAutoApplyOnSend?: boolean;
 }

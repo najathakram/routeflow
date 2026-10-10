@@ -163,7 +163,8 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
   // Hooks must be called unconditionally — before any early returns
   const sellerSlug = activeSeller?.tenant.slug;
   const { totalQty: cartItemCount } = useBuyerCart(buyer?.id, sellerSlug);
-  const { notifications, unreadCount, markAllRead, clearAll } = useBuyerNotifications();
+  const { notifications, unreadCount, markAllRead, clearAll, sessionExpired } =
+    useBuyerNotifications(activeSeller?.tenant.id ?? null);
   const { data: expiring = [] } = useBuyerExpiringAuthorizations(!!activeSeller);
   const bellCount = unreadCount + expiring.length;
   const [sellersOpen, setSellersOpen] = React.useState(false);
@@ -564,6 +565,29 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
             horizontal drift). See globals.css's `html { overflow-x: hidden }` for the
             project-wide net this is one layer of. */}
         <main className="flex-1 overflow-x-hidden overflow-y-auto">
+          {sessionExpired && (
+            // #2167: the realtime socket's token expired and the refresh failed. Say so instead of
+            // leaving tracking and notifications silently frozen.
+            <div
+              role="alert"
+              className="flex flex-wrap items-center justify-between gap-3 border-b border-warning/30 bg-warning-bg px-4 py-3 text-sm text-warning"
+            >
+              <span>Your session has expired, so live updates have stopped.</span>
+              <button
+                type="button"
+                onClick={async () => {
+                  const redirect = encodeURIComponent(
+                    window.location.pathname + window.location.search,
+                  );
+                  await logout();
+                  router.push(`/buyer/login?redirect=${redirect}`);
+                }}
+                className="rounded-lg bg-white px-3 py-1.5 font-medium text-navy shadow-sm hover:bg-surface-raised"
+              >
+                Sign in again
+              </button>
+            </div>
+          )}
           <BuyerPortalErrorBoundary>{children}</BuyerPortalErrorBoundary>
         </main>
       </div>

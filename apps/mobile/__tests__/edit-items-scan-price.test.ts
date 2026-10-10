@@ -15,6 +15,7 @@
  */
 import { readFileSync } from "fs";
 import { join } from "path";
+import { readEditItemsSurface } from "./support/edit-items-source";
 
 const SCREEN_PATH = join(
   __dirname,
@@ -26,7 +27,9 @@ const SCREEN_PATH = join(
   "[id]",
   "edit-items.tsx",
 );
-const source = readFileSync(SCREEN_PATH, "utf8");
+// #2340: the screen plus its sliced modules, in an order that keeps ProductPicker (and only the
+// modules after it) in pickerSrc — the same split the single file had.
+const source = readEditItemsSurface();
 
 // `ProductPicker` owns the whole scan-add surface (cause-ruling.md §2 D3);
 // splitting here is how the picker-branch assertions below can't
@@ -102,8 +105,10 @@ describe("edit-items.tsx picker-branch price edit (REG-B263-B)", () => {
   it("REG-B263-G: the parent's onEditPrice handler writes into the draft", () => {
     // Its own `it`: a mount that passes the prop but drops the write on the
     // floor is the same silent no-op from the operator's side.
+    // B805: every draft writer, including this one, goes through the shared
+    // updateDraft(fn) now instead of calling setDraft directly.
     const handler = (parentPickerMount.match(/onEditPrice=\{[\s\S]{0,1200}?\n\s*\}\}/) ?? [""])[0];
-    expect(handler).toMatch(/setDraft\(|setLinePrice\(|updateDraftItem\(/);
+    expect(handler).toMatch(/setDraft\(|setLinePrice\(|updateDraft\(|updateDraftItem\(/);
   });
 });
 

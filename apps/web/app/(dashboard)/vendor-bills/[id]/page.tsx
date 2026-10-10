@@ -1,5 +1,6 @@
 "use client";
 
+import { PREF } from "@routeflow/types";
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -30,6 +31,8 @@ import {
   useSaveProductMapping,
   getUnlinkedItemsError,
   type UnlinkedItemsError,
+  getPackSizeUnknownError,
+  type PackSizeUnknownError,
   type VendorBill,
   type VendorBillItem,
   type VendorBillStatus,
@@ -42,6 +45,7 @@ import { SupplierSelect } from "@/components/SupplierSelect";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { VariantSplitModal } from "@/components/VariantSplitModal";
+import { PackSizeUnknownModal } from "@/components/PackSizeUnknownModal";
 import { useProduct } from "@/lib/api/products";
 import { roundMoney } from "@routeflow/pricing";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
@@ -125,7 +129,7 @@ function RecordPaymentModal({
       open={isOpen}
       onClose={onClose}
       title="Record Payment"
-      description="Log a payment made against this vendor bill."
+      description="Log a payment made against this supplier bill."
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
@@ -744,6 +748,10 @@ export default function VendorBillDetailPage() {
   const [variantSplitPool, setVariantSplitPool] = React.useState(0);
   const { data: variantSplitProduct } = useProduct(variantSplitProductId ?? "");
   const [unlinkedConfirm, setUnlinkedConfirm] = React.useState<UnlinkedItemsError | null>(null);
+  // B743: the PACK_SIZE_UNKNOWN refusal, and whether the attempt it refused had already
+  // acknowledged unlinked lines (the loose-pieces retry must keep that acknowledgement).
+  const [packSizeConfirm, setPackSizeConfirm] = React.useState<PackSizeUnknownError | null>(null);
+  const [lastAckUnlinked, setLastAckUnlinked] = React.useState(false);
   // The per-line quantities chosen in the receive modal — kept so the
   // UNLINKED_ITEMS confirm retry re-sends the same partial plan.
   const [pendingReceiveItems, setPendingReceiveItems] = React.useState<
@@ -794,9 +802,9 @@ export default function VendorBillDetailPage() {
   if (isError || !bill) {
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
-        <p className="text-base font-medium text-navy">Vendor bill not found.</p>
+        <p className="text-base font-medium text-navy">Supplier bill not found.</p>
         <Button variant="secondary" href="/vendor-bills">
-          Back to Vendor Bills
+          Back to Supplier Bills
         </Button>
       </div>
     );
@@ -831,12 +839,18 @@ export default function VendorBillDetailPage() {
 
   // ── Action handlers ──────────────────────────────────────────────────────────
 
-  const handleReceive = (acknowledgeUnlinked = false, items?: ReceiveVendorBillLine[]) => {
+  const handleReceive = (
+    acknowledgeUnlinked = false,
+    items?: ReceiveVendorBillLine[],
+    acknowledgePackSizeUnknown = false,
+  ) => {
+    setLastAckUnlinked(acknowledgeUnlinked);
     receiveBill.mutate(
-      { id: bill.id, acknowledgeUnlinked, items },
+      { id: bill.id, acknowledgeUnlinked, acknowledgePackSizeUnknown, items },
       {
         onSuccess: (updated) => {
           setUnlinkedConfirm(null);
+          setPackSizeConfirm(null);
           setIsReceiveOpen(false);
           setPendingReceiveItems(undefined);
           const partial = updated?.status === "PARTIAL";
@@ -879,6 +893,13 @@ export default function VendorBillDetailPage() {
           }
         },
         onError: (err: any) => {
+          // B743: lines of a case-sold product with no units per case → an explicit choice.
+          const packUnknown = getPackSizeUnknownError(err);
+          if (packUnknown) {
+            setUnlinkedConfirm(null);
+            setPackSizeConfirm(packUnknown);
+            return;
+          }
           // Unmapped lines → show the confirm dialog listing what gets skipped
           const unlinked = getUnlinkedItemsError(err);
           if (unlinked) {
@@ -990,7 +1011,7 @@ export default function VendorBillDetailPage() {
       {
         onSuccess: () => {
           setIsPaymentOpen(false);
-          savePrefs.mutate({ "payment.lastMethod": data.method });
+          savePrefs.mutate({ [PREF.paymentLastMethod]: data.method });
           toast({
             title: "Payment recorded",
             description: `Payment of ${fmt(parseFloat(data.amount))} recorded.`,
@@ -1024,7 +1045,7 @@ export default function VendorBillDetailPage() {
         className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
-        Vendor Bills
+        Supplier Bills
       </Link>
 
       {/* Header */}
@@ -1292,7 +1313,7 @@ export default function VendorBillDetailPage() {
             ) : (
               <div className="border-t border-surface-border pt-4">
                 <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                  <p className="overline">Line Items</p>
+                  <p className="eyebrow-label">Line Items</p>
                   <span className="text-xs text-navy/70">
                     unlinked lines don&apos;t update stock or costs until mapped
                   </span>
@@ -1553,7 +1574,7 @@ export default function VendorBillDetailPage() {
         onRecord={handleRecordPayment}
         balance={balance}
         isPending={recordPayment.isPending}
-        defaultMethod={(prefs?.["payment.lastMethod"] as PaymentFormState["method"]) ?? "ACH"}
+        defaultMethod={(prefs?.[PREF.paymentLastMethod] as PaymentFormState["method"]) ?? "ACH"}
       />
 
       <VoidConfirmModal
@@ -1587,6 +1608,22 @@ export default function VendorBillDetailPage() {
         payload={unlinkedConfirm}
         onClose={() => setUnlinkedConfirm(null)}
         onConfirm={() => handleReceive(true, pendingReceiveItems)}
+        isPending={receiveBill.isPending}
+      />
+
+      <PackSizeUnknownModal
+        payload={packSizeConfirm}
+        onClose={() => setPackSizeConfirm(null)}
+        onFixCaseSizes={
+          status === "DRAFT"
+            ? () => {
+                setPackSizeConfirm(null);
+                setIsReceiveOpen(false);
+                startEditing();
+              }
+            : null
+        }
+        onReceiveLoose={() => handleReceive(lastAckUnlinked, pendingReceiveItems, true)}
         isPending={receiveBill.isPending}
       />
 

@@ -20,14 +20,93 @@ import {
   ChangeRequestType,
   NotificationEvent,
   Prisma,
+  type PriceType,
   UserRole,
   UserStatus,
 } from "@prisma/client";
+import { assertSellableLines } from "../products/sellable-lines";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import {
   ChangeRequestResolveAction,
   ResolveChangeRequestDto,
 } from "./dto/resolve-change-request.dto";
+import { assertDriverMayEditOrder, underOrderLockForDriver } from "./driver-edit-access";
+import { throwIfWithCarrierChangeRequest } from "./order-carrier-guard";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * B673: reconcile a next-delivery ADD_ITEM's FILED box split against the product's LIVE pack.
+ *
+ * A driver's door add is filed as `{ qty: total pieces, boxes, pieces }`. The pack at filing is not
+ * stored, but it is fixed by the payload itself: `(qty - pieces) / boxes`. The split is handed to
+ * create() unchanged when that pack still matches the live one; otherwise the approval is REFUSED,
+ * naming both packs, so the operator can re-quote. Re-splitting against a changed pack would change
+ * either the price or the quantity the customer agreed to, and falling back to the bare `qty` is
+ * the 12x overcharge itself (create() reads a bare qty on a boxed product as a BOX count).
+ * An inconsistent split is refused as INVALID_LINE_SPLIT — never reinterpreted.
+ *
+ * Every refusal is thrown before any write, so the change request stays PENDING. The message
+ * points the operator at DECLINE + a fresh add on the next order — never at approve-at-stop: the
+ * item was not on the truck, approve-at-stop fails once the stop is done, and on an order holding
+ * an old box-unaware line its merge re-prices at 12x (B753(a): $520 for $80). Revisit once B753
+ * is fixed.
+ */
+export function reconcileFiledAddSplit(args: {
+  qty: number;
+  boxes: unknown;
+  pieces: unknown;
+  liveUnitsPerBox: number;
+  productName: string;
+}): { boxes: number; pieces: number } {
+  const { qty, liveUnitsPerBox: liveUpb, productName } = args;
+  const b = args.boxes ?? 0;
+  const p = args.pieces ?? 0;
+  const invalid = (message: string) =>
+    new BadRequestException({ code: API_ERROR_CODES.INVALID_LINE_SPLIT, message });
+
+  if (
+    typeof b !== "number" ||
+    typeof p !== "number" ||
+    !Number.isInteger(b) ||
+    !Number.isInteger(p) ||
+    b < 0 ||
+    p < 0
+  ) {
+    throw invalid("boxes and pieces must be non-negative whole numbers");
+  }
+  if (b === 0 && p === 0) throw invalid("a split of 0 boxes and 0 pieces adds nothing");
+  if (!Number.isFinite(qty) || p > qty) {
+    throw invalid(`${plural(p, "loose piece", "loose pieces")} exceed the request's qty (${qty})`);
+  }
+
+  const filed = `${plural(b, "box", "boxes")} + ${plural(p, "piece", "pieces")}`;
+  const refuse = (reason: string) =>
+    new BadRequestException({
+      code: API_ERROR_CODES.CHANGE_REQUEST_PACK_CHANGED,
+      message: `Change request filed as ${filed}${reason}. Decline it and re-add the item to the next order.`,
+    });
+
+  if (b === 0) {
+    // Loose pieces only: no filed pack to compare, but the qty must be exactly those pieces.
+    if (qty !== p) throw invalid(`qty (${qty}) does not match ${plural(p, "piece", "pieces")}`);
+    if (liveUpb <= 1) throw refuse(`, but ${productName} is no longer sold by the box`);
+    return { boxes: 0, pieces: p };
+  }
+
+  const filedUpb = (qty - p) / b;
+  if (!Number.isInteger(filedUpb) || filedUpb <= 1) {
+    throw invalid(`qty (${qty}) is not ${filed} of any whole pack size`);
+  }
+  if (liveUpb <= 1) {
+    throw refuse(` at ${filedUpb} per box, but ${productName} is no longer sold by the box`);
+  }
+  if (filedUpb !== liveUpb) {
+    throw refuse(` at ${filedUpb} per box, but ${productName} now sells at ${liveUpb} per box`);
+  }
+  return { boxes: b, pieces: p };
+}
 
 /**
  * P5-09: post-dispatch change-request lifecycle (G6/G7).
@@ -71,8 +150,13 @@ export class ChangeRequestsService {
 
     // G7 inverse gate: change requests exist ONLY where direct editing ended.
     if (order.routeRun == null || order.routeRun.status === "SCHEDULED") {
+      // B1135: a with-carrier order never reaches a route run and its lines are frozen (SA-696).
+      await throwIfWithCarrierChangeRequest(
+        { featureConfig: this.ordersService.featureConfig, prisma: this.prisma },
+        order,
+      );
       throw new ConflictException({
-        code: "EDIT_WINDOW_OPEN",
+        code: API_ERROR_CODES.EDIT_WINDOW_OPEN,
         message: "This order is still directly editable — use PATCH /orders/:id/items.",
       });
     }
@@ -81,7 +165,7 @@ export class ChangeRequestsService {
       !["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(order.status)
     ) {
       throw new ConflictException({
-        code: "CHANGE_WINDOW_CLOSED",
+        code: API_ERROR_CODES.CHANGE_WINDOW_CLOSED,
         message: "This order's delivery run is no longer active.",
       });
     }
@@ -96,10 +180,12 @@ export class ChangeRequestsService {
         if (!dto.productId || !dto.qty) {
           throw new BadRequestException("ADD_ITEM requires productId and qty");
         }
-        const product = await this.prisma
-          .forTenant()
-          .product.findFirst({ where: { id: dto.productId }, select: { id: true, name: true } });
+        const product = await this.prisma.forTenant().product.findFirst({
+          where: { id: dto.productId },
+          select: { id: true, name: true, kind: true },
+        });
         if (!product) throw new BadRequestException("Product not found");
+        assertSellableLines([product]); // WS8: refuse at filing time, not only at approval
         productId = product.id;
         payload = {
           productId: product.id,
@@ -204,6 +290,11 @@ export class ChangeRequestsService {
   }
 
   async resolve(orderId: string, crId: string, dto: ResolveChangeRequestDto, user: JwtPayload) {
+    // SA-434: a DRIVER may resolve only on an order of their own IN_PROGRESS run with a PENDING or
+    // IN_PROGRESS stop (the SA-429 predicate, the order's own stop chain) — FIRST, before the change
+    // request and order reads, so an unassigned driver learns nothing. Re-derived under the Order
+    // lock at every claim below.
+    await assertDriverMayEditOrder(this.prisma.forTenant(), orderId, user);
     const cr = await this.prisma
       .forTenant()
       .changeRequest.findFirst({ where: { id: crId, orderId } });
@@ -214,20 +305,15 @@ export class ChangeRequestsService {
     });
     if (!order) throw new NotFoundException("Order not found");
 
-    // G6 authority: a DRIVER may resolve only if they are the run's assigned
-    // driver (driver-at-stop). Operators/TENANT_ADMIN act as "the office" and
-    // may resolve only while PENDING — which the atomic claim enforces anyway.
-    if (user.role === UserRole.DRIVER) {
-      const driver = await this.prisma
-        .forTenant()
-        .driver.findFirst({ where: { userId: user.sub } });
-      if (!driver || order.routeRun?.driverId !== driver.id) {
-        throw new ForbiddenException("Only the run's assigned driver can resolve at the stop");
-      }
-    }
+    // G6 authority: the DRIVER check is SA-434's predicate above (it replaced the order-level
+    // routeRun.driverId compare, which read no run or stop status). Operators/TENANT_ADMIN act as
+    // "the office" and may resolve only while PENDING — which the atomic claim enforces anyway.
     // Fast-path (the atomic claim in each branch remains authoritative).
     if (cr.status !== ChangeRequestStatus.PENDING) {
-      throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED", status: cr.status });
+      throw new ConflictException({
+        code: API_ERROR_CODES.CHANGE_REQUEST_ALREADY_RESOLVED,
+        status: cr.status,
+      });
     }
 
     switch (dto.action) {
@@ -253,20 +339,23 @@ export class ChangeRequestsService {
   /** Decline — atomic claim (G6 first-resolution-wins), then notify with reason. */
   private async decline(cr: any, order: any, reason: string | undefined, user: JwtPayload) {
     if (!reason?.trim()) throw new BadRequestException("A decline reason is required");
-    const claimed = await this.prisma.forTenant().changeRequest.updateMany({
-      where: { id: cr.id, status: ChangeRequestStatus.PENDING },
-      data: {
-        status: ChangeRequestStatus.DECLINED,
-        resolution: "DECLINED",
-        resolutionReason: reason.trim(),
-        resolvedById: user.sub || null,
-        resolvedByName: user.username || null,
-        resolvedByRole: user.role ?? null,
-        resolvedAt: new Date(),
-      },
-    });
+    // SA-434: claimed under the Order lock with the driver predicate re-derived (CAS on PENDING).
+    const claimed = await underOrderLockForDriver(this.prisma, order.id, user, (tx) =>
+      tx.changeRequest.updateMany({
+        where: { id: cr.id, status: ChangeRequestStatus.PENDING },
+        data: {
+          status: ChangeRequestStatus.DECLINED,
+          resolution: "DECLINED",
+          resolutionReason: reason.trim(),
+          resolvedById: user.sub || null,
+          resolvedByName: user.username || null,
+          resolvedByRole: user.role ?? null,
+          resolvedAt: new Date(),
+        },
+      }),
+    );
     if (claimed.count !== 1) {
-      throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED" });
+      throw new ConflictException({ code: API_ERROR_CODES.CHANGE_REQUEST_ALREADY_RESOLVED });
     }
     await this.notifyRequester(cr, order, "declined", `Reason: ${reason.trim()}`);
     return this.prisma.forTenant().changeRequest.findUnique({ where: { id: cr.id } });
@@ -303,9 +392,27 @@ export class ChangeRequestsService {
     // delta is in PIECES and needs the pack size to split. Left null otherwise.
     let boxes: number | null = null;
     let pieces: number | null = null;
+    // D-20 (#1808, SA-330): the SOURCE line's denomination for a CHANGE_QTY rollover — its price ALWAYS, its pack
+    // only when box-aware — carried onto the draft line so a repack or a price change since the sale cannot re-split
+    // or re-quote the copy (see orders/source-line.ts). ADD_ITEM has no source line: a new sale at today's price.
+    let sourceItem: {
+      unitPrice: unknown;
+      priceType: PriceType;
+      originalPrice: unknown;
+      overrideReason: string | null;
+      overriddenBy: string | null;
+    } | null = null;
+    let sourceUpb: number | null = null;
+    // B673: an ADD_ITEM filed WITH a box split (a driver's door add: qty = total pieces, plus
+    // boxes/pieces) is reconciled against the LIVE pack below. A bare qty (the buyer portal's
+    // selling-unit count, stored with boxes/pieces null) is passed to create() untouched.
+    let filedSplit: { boxes: unknown; pieces: unknown } | null = null;
     if (cr.type === ChangeRequestType.ADD_ITEM) {
       productId = cr.productId ?? payload.productId;
       qty = Number(payload.qty);
+      if (payload.boxes != null || payload.pieces != null) {
+        filedSplit = { boxes: payload.boxes, pieces: payload.pieces };
+      }
     } else if (cr.type === ChangeRequestType.CHANGE_QTY) {
       const li = await this.prisma
         .forTenant()
@@ -317,11 +424,12 @@ export class ChangeRequestsService {
       const delta = Number(payload.newQty) - Number(li.qty);
       if (delta <= 0) {
         throw new BadRequestException({
-          code: "INVALID_RESOLUTION_FOR_TYPE",
+          code: API_ERROR_CODES.INVALID_RESOLUTION_FOR_TYPE,
           message: "Only a qty increase can roll to the next delivery",
         });
       }
       productId = li.productId;
+      sourceItem = li; // the price is carried ALWAYS; the pack (sourceUpb) only when the line is box-aware
 
       // B655: an EXISTING line's rewrite never re-derives its factor from the LIVE product (SA
       // ruling) — only the line's own stored shape decides how the delta is read.
@@ -354,10 +462,11 @@ export class ChangeRequestsService {
         }
         if (upb == null) {
           throw new BadRequestException({
-            code: "LINE_PACK_UNDERIVABLE",
+            code: API_ERROR_CODES.LINE_PACK_UNDERIVABLE,
             message: `Order line ${li.id} has no derivable pack size — it can't be rolled to the next delivery.`,
           });
         }
+        sourceUpb = upb;
         const split = normalizeBoxesPieces({ qty: delta, unitsPerBox: upb });
         qty = split.qty;
         boxes = split.boxes;
@@ -367,7 +476,7 @@ export class ChangeRequestsService {
       }
     } else {
       throw new BadRequestException({
-        code: "INVALID_RESOLUTION_FOR_TYPE",
+        code: API_ERROR_CODES.INVALID_RESOLUTION_FOR_TYPE,
         message: "Only ADD_ITEM / CHANGE_QTY-increase requests can roll to the next delivery",
       });
     }
@@ -377,6 +486,22 @@ export class ChangeRequestsService {
       select: { id: true, trackedCategoryId: true },
     });
     if (!product) throw new BadRequestException("Product no longer exists");
+    if (filedSplit) {
+      // The live pack is read ONLY for an ADD_ITEM that carries a filed split — a new draft line's
+      // correct contract. CHANGE_QTY never reads it (B655's SA ruling: an existing line's rewrite
+      // uses only what the line itself stored), so the shared product read above stays as it was.
+      const liveProduct = await this.prisma.forTenant().product.findFirst({
+        where: { id: productId },
+        select: { unitsPerBox: true, name: true },
+      });
+      ({ boxes, pieces } = reconcileFiledAddSplit({
+        qty,
+        boxes: filedSplit.boxes,
+        pieces: filedSplit.pieces,
+        liveUnitsPerBox: Number(liveProduct?.unitsPerBox ?? 0),
+        productName: liveProduct?.name ?? payload.productName ?? "this product",
+      }));
+    }
     // Regulated license guard re-runs on approval (G6).
     await this.authGuard.assertAuthorizedOrThrow({
       customerId: order.customerId,
@@ -399,11 +524,13 @@ export class ChangeRequestsService {
       type: "BUYER",
     } as JwtPayload;
 
-    // This split is handed to create() for a NEW draft line — create() re-splits it against the
-    // LIVE product's pack (its own, correct, contract for a new sale line: unlike the rewrite
-    // above, a new line has no existing snapshot to preserve). If the pack changed since the
-    // original line was sold, the boxes/pieces intent survives but the raw piece count can shift
-    // with it — inherent to that contract, not something this rollover can or should override.
+    // This split is handed to create() for a NEW draft line. For a CHANGE_QTY rollover the SOURCE line's price
+    // (always) and pack (when box-aware) ride along as `options.sourceLines` (orders/source-line.ts), so create()
+    // splits at the SOURCE pack and bills at the SOURCE's agreed price instead of re-splitting at the live pack
+    // and re-quoting; the subtotal is derived from that pack and price by computeLineSubtotal. An ADD_ITEM has no
+    // source line: create() re-splits its filed split against the LIVE pack and prices it today (a new sale).
+    // SA-434a: a locked re-derive BEFORE the draft is created, so a refused driver writes nothing.
+    await underOrderLockForDriver(this.prisma, order.id, user, async () => undefined);
     const draft = await this.ordersService.create(
       {
         items: [{ productId, qty, ...(boxes != null ? { boxes, pieces } : {}) }],
@@ -414,7 +541,25 @@ export class ChangeRequestsService {
       // B142/REG-B142-G: this draft moves an existing (possibly since
       // archived) line to the customer's next delivery — the archived-line
       // guard is for NEW interactive lines, not this internal draft path.
-      { skipAutoMerge: false, allowArchived: true },
+      {
+        skipAutoMerge: false,
+        allowArchived: true,
+        ...(sourceItem
+          ? {
+              sourceLines: {
+                [productId]: {
+                  unitsPerBox: sourceUpb,
+                  unitPrice: Number(sourceItem.unitPrice),
+                  priceType: sourceItem.priceType,
+                  originalPrice:
+                    sourceItem.originalPrice != null ? Number(sourceItem.originalPrice) : null,
+                  overrideReason: sourceItem.overrideReason ?? null,
+                  overriddenBy: sourceItem.overriddenBy ?? null,
+                },
+              },
+            }
+          : {}),
+      },
     );
 
     try {
@@ -425,22 +570,25 @@ export class ChangeRequestsService {
         draft.id,
         Number(draft.total),
       );
-      // G6 atomic claim — first resolution wins and locks.
-      const claimed = await this.prisma.forTenant().changeRequest.updateMany({
-        where: { id: cr.id, status: ChangeRequestStatus.PENDING },
-        data: {
-          status: ChangeRequestStatus.APPROVED,
-          resolution: "NEXT_DELIVERY",
-          resolutionReason: reason ?? null,
-          nextOrderId: draft.id,
-          resolvedById: user.sub || null,
-          resolvedByName: user.username || null,
-          resolvedByRole: user.role ?? null,
-          resolvedAt: new Date(),
-        },
-      });
+      // G6 atomic claim — first resolution wins and locks. SA-434a: under the Order lock with the
+      // driver predicate re-derived; a 403 or the 409 both fall to the compensation below.
+      const claimed = await underOrderLockForDriver(this.prisma, order.id, user, (tx) =>
+        tx.changeRequest.updateMany({
+          where: { id: cr.id, status: ChangeRequestStatus.PENDING },
+          data: {
+            status: ChangeRequestStatus.APPROVED,
+            resolution: "NEXT_DELIVERY",
+            resolutionReason: reason ?? null,
+            nextOrderId: draft.id,
+            resolvedById: user.sub || null,
+            resolvedByName: user.username || null,
+            resolvedByRole: user.role ?? null,
+            resolvedAt: new Date(),
+          },
+        }),
+      );
       if (claimed.count !== 1) {
-        throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED" });
+        throw new ConflictException({ code: API_ERROR_CODES.CHANGE_REQUEST_ALREADY_RESOLVED });
       }
     } catch (e) {
       // Compensation: never leave an orphan draft behind a failed approval.

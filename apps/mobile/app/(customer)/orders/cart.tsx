@@ -9,9 +9,15 @@ import { useCartStore } from "../../../store/cartStore";
 import { useBuyerCreateOrder, useBuyerPromotions } from "../../../lib/api/buyer";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import {
+  BUYER_ORDER_CONFLICT_COPY,
+  BUYER_ORDER_CONFLICT_NO_ID_COPY,
+  buyerOrderConflict,
+} from "../../../lib/buyer-order-conflict";
 import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { QtyTextInput } from "../../../components/QtyStepper";
+import { QTY_INPUT_WIDTH } from "../../../lib/row-layout";
 
 function formatDateInput(raw: string): string {
   const digits = raw.replace(/\D/g, "").slice(0, 8);
@@ -82,7 +88,24 @@ export default function CartScreen() {
           showToast("Order placed");
           router.replace(`/(customer)/orders/${order.id}`);
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => {
+          // The key already made an order: fixed copy, with an "Open order" action when its id is known.
+          const existing = buyerOrderConflict(e);
+          if (existing?.orderId) {
+            const id = existing.orderId;
+            // scan-ok: confirm-navigate — an info alert about a refused duplicate create; "Open order" is a shortcut to the order that already exists, not the confirmation of an action
+            confirm(
+              "Order already placed",
+              BUYER_ORDER_CONFLICT_COPY,
+              () => router.replace(`/(customer)/orders/${id}`),
+              { confirmText: "Open order" },
+            );
+          } else if (existing) {
+            showToast(BUYER_ORDER_CONFLICT_NO_ID_COPY);
+          } else {
+            showToast("Couldn't update your cart. Try again.");
+          }
+        },
       },
     );
   };
@@ -373,7 +396,15 @@ const styles = StyleSheet.create({
     minWidth: 18,
     textAlign: "center",
   },
-  qtyInputReset: { paddingVertical: 0, paddingHorizontal: 0 },
+  // #2727: a DEFINITE width (row-layout.ts) — on react-native-web the TextInput is an <input> with
+  // the UA `size=20` intrinsic width (~177px), which ballooned the stepper and squeezed the name
+  // column to "B…" at 390. `minWidth` (qtyText) is only a floor.
+  qtyInputReset: {
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    width: QTY_INPUT_WIDTH.buyerCart,
+    flexShrink: 0,
+  },
   itemTotal: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",

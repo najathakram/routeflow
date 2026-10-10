@@ -50,9 +50,9 @@ function sentForDayKey(sentForDay: Date | null): string | null {
 }
 
 /**
- * N4 — daily low-stock digest to tenant admins. The realtime `inventory.low.stock` socket
- * event (`routeflow.gateway.ts#emitLowStock`) is UNCHANGED and unrelated to this — this is a
- * separate, once-a-day SUMMARY email, deliberately not routed through MessagingService (that
+ * N4 — daily low-stock digest to tenant admins: the tenant's low-stock signal. (The realtime
+ * `inventory.low.stock` socket event never had a caller and was removed in the #2095 follow-up;
+ * a live low-stock push would be a new feature.) This is a once-a-day SUMMARY email, deliberately not routed through MessagingService (that
  * engine is customer/thread-shaped — `SendMessageInput.customerId` is required — and has no
  * concept of an internal tenant-admin recipient; the LOW_STOCK member of the
  * `NotificationEvent` enum stays wired to nothing, per

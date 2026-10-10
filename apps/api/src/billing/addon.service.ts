@@ -10,11 +10,22 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StripeService } from "./stripe.service";
 import { EntitlementsService } from "./entitlements.service";
 import { FeatureResolverService } from "./feature-resolver.service";
-import { PlanCatalogService } from "./plan-catalog.service";
-import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
+import { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
+import { LEGACY_ADDON_KEY_TO_SKU, addonSkuCode } from "./plan-catalog.constants";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
-import { ADDON_KEY_TO_REGISTRY_KEY } from "./feature-registry";
+import {
+  ADDON_KEY_TO_REGISTRY_KEY,
+  DEFAULT_GRANTED_ADDON_FEATURES,
+  defaultGrantRequirementKeys,
+  isDefaultGrantedAddon,
+} from "./feature-registry";
+import { FeatureOverrideService } from "./feature-override.service";
 import { EntitlementAuthority } from "./entitlement-authority.service";
+import { BillingEventService } from "./billing-event.service";
+import { emitAddonDelta, lockTenantForLedger } from "./addon-ledger";
+import { addonCodeOf, findAddonRow } from "./addon-row";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 
 /**
  * A Stripe `resource_missing` / 404 error means the item we tried to act on is
@@ -25,6 +36,14 @@ import { EntitlementAuthority } from "./entitlement-authority.service";
 export function isStripeResourceMissing(err: unknown): boolean {
   const e = err as { code?: string; statusCode?: number } | undefined;
   return e?.code === "resource_missing" || e?.statusCode === 404;
+}
+
+/** SA-693: the explicit comp choice of an admin enable (see `enableAddon`). */
+export interface EnableAddonOptions {
+  /** Grant free on purpose: isComp true, price 0, no Stripe item, nothing booked. */
+  comp?: boolean;
+  /** Internal: `uncompAddon`'s billed branch re-enters here to bill an active comp row. */
+  uncomp?: boolean;
 }
 
 /**
@@ -41,6 +60,17 @@ export function isStripeResourceMissing(err: unknown): boolean {
  * of logging and continuing, so a tenant is never billed for something disabled
  * only in our database, or granted something never billed in Stripe (B107).
  */
+/** SA-693: how an uncomp ended up billing the row, reported back so the audit row records what ACTUALLY happened. */
+export const UncompBilling = {
+  /** A Stripe subscription item now bills it. */
+  STRIPE: "STRIPE",
+  /** A manually-invoiced tenant: priced and booked, the owner invoices it by hand (notice raised). */
+  MANUAL: "MANUAL",
+  /** Only the flag flipped: still unbilled at 0 (no Stripe subscription, not manually invoiced). */
+  UNBILLED: "UNBILLED",
+} as const;
+export type UncompBillingMode = (typeof UncompBilling)[keyof typeof UncompBilling];
+
 @Injectable()
 export class AddonService {
   private readonly logger = new Logger(AddonService.name);
@@ -52,6 +82,8 @@ export class AddonService {
     private readonly catalog: PlanCatalogService,
     private readonly featureResolver: FeatureResolverService,
     private readonly authority: EntitlementAuthority,
+    private readonly events: BillingEventService,
+    private readonly featureOverrides: FeatureOverrideService,
   ) {}
 
   // ─── Check access ─────────────────────────────────────────────────────────
@@ -66,22 +98,96 @@ export class AddonService {
    *   }
    */
   async hasAddon(tenantId: string, addonKey: string): Promise<boolean> {
-    const addon = await this.prisma.tenantAddon.findUnique({
-      where: { tenantId_addonKey: { tenantId, addonKey } },
-      select: { active: true },
-    });
-    return addon?.active === true;
+    // #2188 / SA-385: resolves the add-on whichever way it was keyed (legacy key or SKU).
+    const addon = await findAddonRow(this.prisma, tenantId, addonCodeOf(addonKey));
+    // Any key that is not default-granted is decided by its row alone, exactly as before.
+    if (!DEFAULT_GRANTED_ADDON_FEATURES.some((f) => f.key === addonKey)) {
+      return addon?.active === true;
+    }
+    // Owner ruling 2026-09-28 / SA-540: effective = (preset ∪ default ∪ grants) − denies, in
+    // AddonGuard's own order, so a service-level check (InlineReturnsService.assertGranted) never
+    // disagrees with the guard in front of it: an override is absolute, then a held row, then
+    // the default rule (isDefaultGrantedAddon).
+    const override = await this.featureOverrides.get(tenantId, addonKey);
+    if (override === "DENY") return false;
+    if (override === "GRANT" || addon?.active === true) return true;
+    const rowKeys = await this.activeRowKeys(tenantId);
+    return (await this.defaultGrantedKeys(tenantId, rowKeys, [addonKey])).includes(addonKey);
   }
 
   /**
-   * Get all active add-ons for a tenant.
+   * Get all active add-ons for a tenant: its active TenantAddon rows plus every default-granted
+   * key it qualifies for (owner ruling 2026-09-28 / SA-540, `isDefaultGrantedAddon`). This is what
+   * AddonGuard and GET /tenants/me/addons read, so both see the default grant the same way.
+   * `onlyKeys` (AddonGuard passes its route's keys) limits the DEFAULT-grant work to those keys:
+   * a route gated on some other add-on never pays for it. Rows are always returned in full.
    */
-  async getActiveAddons(tenantId: string): Promise<string[]> {
+  async getActiveAddons(
+    tenantId: string,
+    opts?: { onlyKeys?: readonly string[] },
+  ): Promise<string[]> {
+    const rowKeys = await this.activeRowKeys(tenantId);
+    const defaults = await this.defaultGrantedKeys(tenantId, rowKeys, opts?.onlyKeys);
+    return defaults.length === 0 ? rowKeys : [...rowKeys, ...defaults];
+  }
+
+  private async activeRowKeys(tenantId: string): Promise<string[]> {
     const addons = await this.prisma.tenantAddon.findMany({
       where: { tenantId, active: true },
       select: { addonKey: true },
     });
     return addons.map((a) => a.addonKey);
+  }
+
+  /** Last fail-closed warn per tenant — the default-grant path runs on polled guard routes. */
+  private readonly defaultGrantWarnedAt = new Map<string, number>();
+
+  /**
+   * The default-granted add-on keys `tenantId` holds with no row: registry `defaultGranted`, no
+   * DENY override on the key, and `requires` met against its requirement set (rows ∪ ent.flags,
+   * with GRANT/DENY overrides applied — SA-540: a DENY on flag.returns removes inline returns
+   * too). If ENTITLEMENTS cannot be resolved it fails CLOSED (returns []), so that outage never
+   * widens access and a held row is never affected. Overrides follow the house contract instead:
+   * FeatureOverrideService fails open to an empty map on a DB error (as AddonGuard's own read
+   * does), so during an override-table outage a DENY is not seen here either.
+   */
+  private async defaultGrantedKeys(
+    tenantId: string,
+    rowKeys: string[],
+    onlyKeys?: readonly string[],
+  ): Promise<string[]> {
+    const rows = new Set(rowKeys);
+    const pending = DEFAULT_GRANTED_ADDON_FEATURES.filter(
+      (f) => !rows.has(f.key) && (!onlyKeys || onlyKeys.includes(f.key)),
+    );
+    if (pending.length === 0) return [];
+    try {
+      const [ent, overrides] = await Promise.all([
+        this.entitlements.resolve(tenantId),
+        this.featureOverrides.getMany(tenantId, [
+          ...pending.map((f) => f.key),
+          ...defaultGrantRequirementKeys(pending),
+        ]),
+      ]);
+      return pending
+        .filter(
+          (f) =>
+            overrides.get(f.key) !== "DENY" && isDefaultGrantedAddon(f, rows, ent.flags, overrides),
+        )
+        .map((f) => f.key);
+    } catch (err) {
+      const now = Date.now();
+      if (now - (this.defaultGrantWarnedAt.get(tenantId) ?? 0) > 60_000) {
+        // Bounded (lead nit n2): the throttle only needs recent tenants.
+        if (this.defaultGrantWarnedAt.size >= 1_000) this.defaultGrantWarnedAt.clear();
+        this.defaultGrantWarnedAt.set(tenantId, now);
+        this.logger.warn(
+          `default-granted add-ons skipped for tenant ${tenantId} (fail closed): ` +
+            `${(err as Error)?.message ?? err}`,
+        );
+      }
+      return [];
+    }
   }
 
   /**
@@ -138,7 +244,15 @@ export class AddonService {
     addonKey: string,
     stripePriceId?: string,
     acknowledgeUnmetRequires?: boolean,
+    opts?: EnableAddonOptions,
   ) {
+    // SA-693: `comp` is an EXPLICIT choice, never derived from "no Stripe item". A comp is granted free
+    // on purpose: no Stripe item even on a subscribed tenant (a price id that rides along is ignored),
+    // price 0, nothing booked. `uncomp` is the internal re-entry of `uncompAddon`'s billed branch: it
+    // may re-activate (bill) a row that is currently an ACTIVE comp, which a plain enable refuses.
+    const comp = opts?.comp === true;
+    const uncomp = opts?.uncomp === true;
+    if (comp) stripePriceId = undefined;
     // Check tenant exists — not part of the race (immutable for this call), so it stays
     // outside the lock.
     const tenant = await this.prisma.tenant.findUnique({
@@ -166,40 +280,64 @@ export class AddonService {
     // entitlement — admin on "tobacco_dealer", tenant on "REGULATED_ITEMS" — so the two paths
     // raced despite both holding a lock. An unbridged key has no tenant-path equivalent and
     // keys on itself.
-    const lockSku = LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey;
+    const lockSku = addonCodeOf(addonKey);
     const lockKey = `addon:${tenantId}:${lockSku}`;
     try {
       const result = await withAdvisoryLock(
         { family: "billing", key: lockKey, mode: "wait", waitMs: 10_000 },
         async () => {
-          // Check if add-on already exists
-          const existing = await this.prisma.tenantAddon.findUnique({
-            where: { tenantId_addonKey: { tenantId, addonKey } },
-          });
+          // Check if add-on already exists — keyed either way (#2188 / SA-385).
+          const existing = await findAddonRow(this.prisma, tenantId, lockSku);
 
-          if (existing?.active) {
+          if (existing?.active && !(uncomp && existing.isComp)) {
             throw new ConflictException(
               `Add-on "${addonKey}" is already active for tenant ${tenant.slug}`,
             );
           }
+          // SA-693: an uncomp only ever bills an ACTIVE comp, judged HERE under the lock. `uncompAddon`
+          // read the row before taking it, so a comp disabled (or already uncomped) in between must be
+          // refused, never re-activated and billed.
+          if (uncomp && !(existing?.active && existing.isComp)) {
+            throw new ConflictException(
+              `Add-on "${addonKey}" is no longer an active comp for tenant ${tenant.slug}`,
+            );
+          }
 
-          // Bridged legacy keys (tobacco_dealer, msrp, sales_agents, …) must resolve to a SKU
-          // that actually exists in the published catalog — otherwise the row activates but
-          // EntitlementsService.compute() can never turn it into a flag (see the silent-continue
-          // fix there), which is how the sales-agents "not available on your plan" outage
-          // happened. Unbridged legacy keys (e.g. developer_mode) have no SKU to check and are
-          // allowed unchanged — that is the documented client-only pattern.
-          const sku = LEGACY_ADDON_KEY_TO_SKU[addonKey];
-          if (sku) {
+          // SA-693 (M3): an uncomp keeps the comp's own quantity (a comp of 3 is billed as 3, never cut to
+          // 1); every other enable is a boolean grant whose Stripe item is quantity 1.
+          const qty = uncomp && existing?.isComp ? existing.quantity : 1;
+          const sku = LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey;
+          const isBridged = LEGACY_ADDON_KEY_TO_SKU[addonKey] !== undefined;
+
+          // Only fetch catalog if bridged (must validate SKU exists) or if billing (must validate SKU is priceable)
+          let skuDef: PlanVersionWithCatalog["addonSkus"][number] | null = null;
+          if (isBridged || stripePriceId) {
             const published = await this.catalog.getPublishedCatalog();
-            const skuIsPublished = published.addonSkus.some((s) => s.sku === sku);
-            if (!skuIsPublished) {
+            skuDef = published.addonSkus.find((s) => s.sku === sku) ?? null;
+
+            // Bridged keys must exist in catalog — otherwise EntitlementsService.compute() can never
+            // turn it into a flag, which is how the sales-agents "not available on your plan" outage happened.
+            if (isBridged && !skuDef)
               throw new BadRequestException(
                 `Addon '${addonKey}' maps to SKU '${sku}' which is not in the published catalog — ` +
                   `publish the catalog version that defines it first`,
               );
+
+            // B865 / SA-277: a billed add-on must be priceable from the catalog — fail closed BEFORE any Stripe write.
+            if (stripePriceId && !skuDef) {
+              throw new BadRequestException(
+                `Add-on "${addonKey}" has no catalog SKU to price — publish a catalog version defining "${sku}" before billing it`,
+              );
             }
           }
+
+          // FIX-865B finding #1: only write `sku` when it actually resolved to a catalog SKU
+          // (bridged legacy key, or an unbridged key whose SKU we looked up above). An
+          // unbridged key with no catalog entry (e.g. "developer_mode") must keep sku null —
+          // writing the raw addonKey there makes `addonSkuCode()` treat it as a real SKU,
+          // which leaks it into EntitlementsService.compute()'s `activeCodes` / `ent.addons`
+          // and the catalog-refetch warning, none of which the spec asked to change.
+          const skuToStore = isBridged || skuDef ? sku : null;
 
           // Add Stripe subscription item if configured. A price means this add-on is
           // billed — the entitlement and the Stripe item must move together, so any
@@ -225,7 +363,7 @@ export class AddonService {
               const item = await this.stripe.client.subscriptionItems.create({
                 subscription: sub.stripeSubId,
                 price: stripePriceId,
-                quantity: 1,
+                quantity: qty,
               });
               stripeItemId = item.id;
               this.logger.log(
@@ -242,21 +380,101 @@ export class AddonService {
             }
           }
 
-          // Upsert the add-on record
-          const addon = await this.prisma.tenantAddon.upsert({
-            where: { tenantId_addonKey: { tenantId, addonKey } },
-            create: {
+          // B865 / SA-277 FIX-5: a catalog price is only booked when a Stripe item was
+          // ACTUALLY created — Stripe not configured (or no stripePriceId) means the add-on
+          // is unbilled, so it is priced EXPLICITLY at 0 and books nothing (D1).
+          const priceSnapshot = stripeItemId && skuDef ? Number(skuDef.monthlyPrice) : 0;
+
+          // Upsert the add-on record and emit ledger delta in a transaction
+          const addon = await this.prisma.$transaction(async (tx) => {
+            // B865 / SA-277 FIX-2 (house lock order): tenant row lock FIRST, before any
+            // TenantAddon read or write, so this and every other add-on-ledger $transaction
+            // always take the SAME order and can never deadlock against each other.
+            await lockTenantForLedger(tx, tenantId);
+
+            // F2 (pre-merge review): `existing?.active` above was checked OUTSIDE this tx,
+            // before the Stripe item (if any) was even created — a concurrent subscribe()
+            // (subscription-mutation.service.ts, which holds no advisory lock against this
+            // admin path) can activate the SAME row at some quantity in the window between
+            // that check and here, in which case this call's {0,0}→{priceSnapshot,1} booking
+            // below would double the already-booked contribution. Re-check under the lock: if
+            // the row is now active, this call lost the race — refuse it exactly like the
+            // pre-check does, and best-effort delete the orphan Stripe item THIS call already
+            // created (mirroring disableAddon's own Stripe-cleanup handling) rather than leave
+            // a live item nothing points to.
+            const current = await findAddonRow(tx, tenantId, lockSku);
+            // SA-693: for an uncomp the lost race is "no longer an ACTIVE comp"; for any other enable it
+            // is "now active". Both clean up the orphan Stripe item below.
+            const lostRace = uncomp ? !(current?.active && current.isComp) : current?.active;
+            if (lostRace) {
+              if (stripeItemId) {
+                try {
+                  await this.stripe.client.subscriptionItems.del(stripeItemId);
+                } catch (err) {
+                  if (!isStripeResourceMissing(err)) {
+                    this.logger.error(
+                      `Add-on "${addonKey}" lost the activation race for tenant ${tenant.slug} ` +
+                        `and could not clean up the orphan Stripe item ${stripeItemId}: ` +
+                        `${(err as Error).message}`,
+                    );
+                  }
+                }
+              }
+              throw new ConflictException(
+                `Add-on "${addonKey}" is already active for tenant ${tenant.slug}`,
+              );
+            }
+
+            // #2188 / SA-385: an existing row — keyed by this legacy addonKey OR by the SKU a
+            // self-serve/subscribe path wrote — is re-activated IN PLACE, by its OWN addonKey;
+            // only when there is none is a new row created, under this path's (raw) key.
+            const row = await tx.tenantAddon.upsert({
+              where: { tenantId_addonKey: { tenantId, addonKey: current?.addonKey ?? addonKey } },
+              create: {
+                tenantId,
+                addonKey,
+                sku: skuToStore,
+                stripePriceId: stripePriceId ?? null,
+                stripeItemId,
+                active: true,
+                // The Stripe item (when one exists) carries `qty` — mirror it here so a stale
+                // quantity from a prior admin-only grant never survives a re-enable.
+                quantity: qty,
+                priceSnapshot,
+                isComp: comp,
+              },
+              update: {
+                active: true,
+                // SA-693: written on EVERY enable, so a re-activated row never keeps a stale flag
+                // (a billed enable of a disabled comp resets it; a comp enable sets it).
+                isComp: comp,
+                // FIX-865B finding #1 (r2): `skuToStore` is null whenever this enable is
+                // unbridged with no resolvable catalog SKU (e.g. a legacy key re-enabled by
+                // an admin with no stripePriceId) — that says nothing about whether the
+                // EXISTING row already has a correct sku from an earlier enable. `sku: null`
+                // here would overwrite that good value and make addonSkuCode() drop the
+                // add-on from entitlements even though the row is active. Fall through to
+                // `undefined` (leave the column untouched) instead of clobbering it; only the
+                // create branch below may legitimately write a fresh row's sku as null.
+                sku: skuToStore ?? undefined,
+                stripePriceId: comp ? null : (stripePriceId ?? undefined),
+                // SA-693: a comp never carries a Stripe item pointer, so a stale one is cleared.
+                stripeItemId: comp ? null : (stripeItemId ?? undefined),
+                // B865 / SA-277: the Stripe item carries `qty` — a stale quantity from an earlier
+                // grant must not survive a re-enable.
+                quantity: qty,
+                priceSnapshot,
+              },
+            });
+            // B865 / SA-277 FIX-1: the new before/after contract — a fresh grant always moves
+            // from {0,0} to {priceSnapshot, 1}; `emitAddonDelta` itself no-ops a zero delta.
+            await emitAddonDelta(tx, this.events, {
               tenantId,
-              addonKey,
-              stripePriceId: stripePriceId ?? null,
-              stripeItemId,
-              active: true,
-            },
-            update: {
-              active: true,
-              stripePriceId: stripePriceId ?? undefined,
-              stripeItemId: stripeItemId ?? undefined,
-            },
+              sku,
+              before: { priceSnapshot: 0, quantity: 0 },
+              after: { priceSnapshot, quantity: qty },
+            });
+            return row;
           });
 
           this.entitlements.invalidate(tenantId);
@@ -293,16 +511,165 @@ export class AddonService {
   }
 
   /**
+   * SA-693: turn an ACTIVE comp row back into a normal (non-comp) one. It NEVER silently starts billing:
+   *  - tenant WITHOUT a Stripe subscription: only the flag flips (the row stays unbilled, price 0, as it
+   *    was); the SA-690 checkout gate then treats it like any other unbilled self-serve row.
+   *  - tenant WITH a Stripe subscription: the normal BILLED enable path runs (a catalog price id is
+   *    required, a Stripe item is created, the price is booked) via `enableAddon(..., { uncomp: true })`.
+   *    It refuses 400 without a price id rather than leave an active unbilled row on a paying tenant. A
+   *    Stripe failure leaves the comp exactly as it was.
+   * Takes the SAME advisory key as enableAddon and the self-serve path. Disable is a different path and
+   * takes no lock (see `disableAddon`).
+   */
+  async uncompAddon(tenantId: string, addonKey: string, stripePriceId?: string) {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, slug: true, name: true },
+    });
+    if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
+
+    const lockSku = addonCodeOf(addonKey);
+    const row = await findAddonRow(this.prisma, tenantId, lockSku);
+    if (!row) throw new NotFoundException(`Add-on "${addonKey}" not found for tenant ${tenantId}`);
+    if (!row.active || !row.isComp) {
+      throw new ConflictException(
+        `Add-on "${addonKey}" is not an active comp for tenant ${tenant.slug}`,
+      );
+    }
+
+    const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
+    // A manually-invoiced tenant (externalPayment, no Stripe subscription): turning the comp off means
+    // the owner now invoices it by hand, exactly like a self-serve enable there. Priced at the catalog
+    // price and booked, with the same ADDON_MANUAL_INVOICE_DUE notice; without a catalog SKU it stays flag-only.
+    const manual = !sub?.stripeSubId && sub?.externalPayment === true;
+    const manualSkuDef = manual
+      ? ((await this.catalog.getPublishedCatalog()).addonSkus.find((k) => k.sku === lockSku) ??
+        null)
+      : null;
+    if (sub?.stripeSubId) {
+      // Without a configured Stripe the billed enable would write an ACTIVE, unbilled, non-comp row at 0
+      // on a tenant that has a subscription: the exact silent state this method must never create.
+      if (!this.stripe.isConfigured) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.ADDON_UNCOMP_STRIPE_UNAVAILABLE,
+          message:
+            `Stripe is not configured here, so "${addonKey}" cannot be billed for tenant ${tenant.slug} — ` +
+            `it stays a comp; uncomp it where Stripe is configured`,
+        });
+      }
+      if (!stripePriceId) {
+        throw new BadRequestException(
+          `Tenant ${tenant.slug} has a Stripe subscription — pass the add-on's stripePriceId to bill ` +
+            `"${addonKey}", or disable it; uncomping must never leave an active add-on unbilled`,
+        );
+      }
+      const billedRow = await this.enableAddon(tenantId, addonKey, stripePriceId, true, {
+        uncomp: true,
+      });
+      return { addon: billedRow, billing: UncompBilling.STRIPE };
+    }
+
+    try {
+      const result = await withAdvisoryLock(
+        { family: "billing", key: `addon:${tenantId}:${lockSku}`, mode: "wait", waitMs: 10_000 },
+        async () => {
+          const updated = await this.prisma.$transaction(async (tx) => {
+            await lockTenantForLedger(tx, tenantId);
+            const current = await findAddonRow(tx, tenantId, lockSku);
+            if (!current?.active || !current.isComp) {
+              throw new ConflictException(
+                `Add-on "${addonKey}" is not an active comp for tenant ${tenant.slug}`,
+              );
+            }
+            if (!manualSkuDef) {
+              return tx.tenantAddon.update({ where: { id: current.id }, data: { isComp: false } });
+            }
+            const price = Number(manualSkuDef.monthlyPrice);
+            const row = await tx.tenantAddon.update({
+              where: { id: current.id },
+              data: { isComp: false, priceSnapshot: price },
+            });
+            await emitAddonDelta(tx, this.events, {
+              tenantId,
+              sku: lockSku,
+              before: { priceSnapshot: 0, quantity: current.quantity },
+              after: { priceSnapshot: price, quantity: current.quantity },
+            });
+            await tx.auditLog.create({
+              data: {
+                tenantId,
+                userId: null,
+                action: AdminAuditAction.ADDON_MANUAL_INVOICE_DUE,
+                entityType: ADMIN_AUDIT_ENTITY,
+                entityId: tenantId,
+                meta: {
+                  platformAdmin: true,
+                  sku: lockSku,
+                  quantity: current.quantity,
+                  monthlyPrice: price,
+                  addonName: manualSkuDef.name,
+                  kind: "add",
+                  fromQty: 0,
+                  toQty: current.quantity,
+                  message: `Add-on ${manualSkuDef.name} comp removed for ${tenant.name ?? tenant.slug}: add to their next manual invoice`,
+                },
+              },
+            });
+            return row;
+          });
+          this.entitlements.invalidate(tenantId);
+          this.featureResolver.invalidate(tenantId);
+          this.logger.log(`Add-on "${addonKey}" uncomped (flag only) for tenant ${tenant.slug}`);
+          return {
+            addon: updated,
+            billing: manualSkuDef ? UncompBilling.MANUAL : UncompBilling.UNBILLED,
+          };
+        },
+      );
+      if (!result.acquired) {
+        throw new ServiceUnavailableException(
+          `Could not uncomp add-on "${addonKey}" for tenant ${tenant.slug} — lock unavailable`,
+        );
+      }
+      return result.value;
+    } catch (e) {
+      if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
+        throw new ServiceUnavailableException(
+          `Could not serialise uncomping add-on "${addonKey}" for tenant ${tenant.slug} — retry shortly`,
+        );
+      }
+      throw e;
+    }
+  }
+
+  /**
    * Disable an add-on for a tenant.
+   *
+   * SA-671d: this path takes NO advisory lock, and must never gain one. Business-profile confirm
+   * (`withConfirmLock`, #3199) calls it while already holding the add-on advisory keys, so a lock here
+   * would wait on a key its own caller holds and self-block the confirm. The row-level `FOR UPDATE` in
+   * the transaction below is the only serialisation. Pinned in addon.comp.sa693.spec.ts.
+   *
    * If the add-on has a Stripe subscription item, it must actually be removed
    * (or already gone) before the entitlement is turned off — a Stripe failure
    * other than "already deleted" refuses the call so we never keep billing for
    * an add-on the tenant no longer has.
    */
   async disableAddon(tenantId: string, addonKey: string) {
-    const addon = await this.prisma.tenantAddon.findUnique({
-      where: { tenantId_addonKey: { tenantId, addonKey } },
-    });
+    // Owner ruling 2026-09-28 / SA-540: a default-granted key is held with NO row, so disabling a
+    // row would report success and remove nothing. Only a DENY override removes it — say so.
+    if (DEFAULT_GRANTED_ADDON_FEATURES.some((f) => f.key === addonKey)) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: API_ERROR_CODES.ADDON_DEFAULT_GRANTED,
+        addonKey,
+        message:
+          `"${addonKey}" is granted to every eligible tenant by default, so disabling its add-on ` +
+          `row would not remove it. Add a DENY feature override for this tenant instead.`,
+      });
+    }
+    // #2188 / SA-385: finds the row whichever way it was keyed (legacy key or SKU).
+    const addon = await findAddonRow(this.prisma, tenantId, addonCodeOf(addonKey));
 
     if (!addon) {
       throw new NotFoundException(`Add-on "${addonKey}" not found for tenant ${tenantId}`);
@@ -334,9 +701,40 @@ export class AddonService {
       }
     }
 
-    const updated = await this.prisma.tenantAddon.update({
-      where: { tenantId_addonKey: { tenantId, addonKey } },
-      data: { active: false, stripeItemId: null },
+    // FIX-865B finding #0: `addon` above was read outside the transaction and before any
+    // lock, so two concurrent disables can both observe active=true and both emit a
+    // −snapshot×qty ledger delta (the Tenant FOR UPDATE lock inside `emitAddonDelta` only
+    // serialises the two transactions — it never re-checks `active`). Lock the row FIRST,
+    // then re-read it INSIDE the transaction and gate the update + emit on THAT read: the
+    // first transaction to acquire the lock sees active=true and proceeds; a concurrent
+    // second transaction blocks on the row lock until the first commits, then sees
+    // active=false already and no-ops instead of emitting a second delta.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // B865 / SA-277 FIX-2 (house lock order): tenant row lock FIRST, before the TenantAddon
+      // row lock below.
+      await lockTenantForLedger(tx, tenantId);
+      await tx.$queryRaw`SELECT id FROM "TenantAddon" WHERE id = ${addon.id} FOR UPDATE`;
+      const current = await tx.tenantAddon.findUnique({
+        where: { tenantId_addonKey: { tenantId, addonKey: addon.addonKey } },
+      });
+      if (!current?.active) {
+        // Already disabled by a concurrent call that won the race — nothing left to do.
+        return current ?? addon;
+      }
+      const row = await tx.tenantAddon.update({
+        where: { tenantId_addonKey: { tenantId, addonKey: addon.addonKey } },
+        data: { active: false, stripeItemId: null },
+      });
+      // B865 / SA-277 FIX-6: the event's sku is the CANONICAL code (bridges a legacy addonKey
+      // the same way subscription-mutation.service.ts's self-serve disable does), falling back
+      // to the legacy map / raw key when the row never resolved a catalog sku.
+      await emitAddonDelta(tx, this.events, {
+        tenantId,
+        sku: addonSkuCode(current) ?? addonCodeOf(addonKey),
+        before: { priceSnapshot: current.priceSnapshot, quantity: current.quantity },
+        after: { priceSnapshot: 0, quantity: 0 },
+      });
+      return row;
     });
 
     this.entitlements.invalidate(tenantId);

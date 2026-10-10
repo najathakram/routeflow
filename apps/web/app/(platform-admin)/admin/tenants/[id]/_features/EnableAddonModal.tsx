@@ -23,6 +23,9 @@ export interface EnableAddonModalProps {
    *  labels by the caller. Undefined/omitted = no unmet requirement (default; every other
    *  addon-row key is unaffected). */
   unmetRequirement?: string;
+  /** Opens the complimentary-override form for this key (the console's "Customise" action). When
+   *  given, the free-grant path links to it: a timed free grant is an override, not an add-on. */
+  onCustomise?: (featureKey: string) => void;
   /** Called after a successful enable so the console reloads effective state/badges. */
   onEnabled: () => void;
 }
@@ -38,6 +41,7 @@ export function EnableAddonModal({
   addonKey,
   addonLabel,
   unmetRequirement,
+  onCustomise,
   onEnabled,
 }: EnableAddonModalProps) {
   const [billing, setBilling] = React.useState<BillingCheck>({ status: "loading" });
@@ -88,6 +92,9 @@ export function EnableAddonModal({
         // ackUnmetRequirement starts false and there's no unmet requirement to acknowledge
         // otherwise, so this never sends `true` for a row with no warning.
         unmetRequirement ? ackUnmetRequirement : undefined,
+        // SA-693: a free grant is a COMP, said explicitly. Never left to the server to infer from
+        // "no price", or the row would be billable and a later trial-billing step would charge it.
+        effectiveChoice === "free",
       );
       onEnabled();
       onClose();
@@ -104,6 +111,26 @@ export function EnableAddonModal({
     }
   }
 
+  /** The free-grant path's pointer to the right tool for a free grant that should end. */
+  function renderOverrideLink() {
+    if (!onCustomise) return null;
+    return (
+      <p className="text-xs text-slate-400">
+        To give it free for a set time, add a complimentary override instead.{" "}
+        <button
+          type="button"
+          onClick={() => {
+            onClose();
+            onCustomise(addonKey);
+          }}
+          className="admin-inline text-indigo-400 underline hover:text-indigo-300"
+        >
+          Add Override
+        </button>
+      </p>
+    );
+  }
+
   function renderChoiceStep() {
     if (billing.status === "loading") {
       return <p className="text-sm text-slate-400">Checking billing configuration...</p>;
@@ -117,9 +144,12 @@ export function EnableAddonModal({
     }
     if (!billing.stripeConfigured) {
       return (
-        <p className="text-sm text-slate-300">
-          Stripe is not configured for this environment — this will be a free grant, not billed.
-        </p>
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-slate-300">
+            Stripe is not configured for this environment — this will be a free grant, not billed.
+          </p>
+          {renderOverrideLink()}
+        </div>
       );
     }
     return (
@@ -143,14 +173,22 @@ export function EnableAddonModal({
             Bill via Stripe
           </span>
           {choice === "stripe" && (
-            <input
-              type="text"
-              value={priceId}
-              onChange={(e) => setPriceId(e.target.value)}
-              placeholder="price_1234567890"
-              aria-label="Stripe price ID"
-              className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
-            />
+            <>
+              <input
+                type="text"
+                value={priceId}
+                onChange={(e) => setPriceId(e.target.value)}
+                placeholder="price_1234567890"
+                aria-label="Stripe price ID"
+                className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+              />
+              {/* SA-277b: the priced/free split is booked from THIS field (B865, addon.service.ts
+                  FIX-5) — a missing price (or Stripe not configured) books priceSnapshot 0. */}
+              <p className="text-xs text-slate-400">
+                Without a Stripe price (or with Stripe not configured) this is a free grant and adds
+                nothing to MRR.
+              </p>
+            </>
           )}
         </label>
         <label
@@ -166,6 +204,7 @@ export function EnableAddonModal({
           />
           Grant without billing
         </label>
+        {choice === "free" && renderOverrideLink()}
       </div>
     );
   }

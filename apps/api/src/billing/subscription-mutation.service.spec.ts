@@ -67,7 +67,8 @@ import {
 } from "@nestjs/common";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { ProrationService } from "./proration.service";
-import { BILLING_EVENTS } from "./plan-catalog.constants";
+import { BILLING_EVENTS, SELF_SERVICE_ADDON_SKUS } from "./plan-catalog.constants";
+import { fakeTenantAddonStore } from "../testing/fake-tenant-addon-store";
 
 beforeEach(() => {
   lockQueues.clear();
@@ -200,6 +201,28 @@ function catalogWithLite(): ReturnType<typeof catalog> {
   } as ReturnType<typeof catalog>;
 }
 
+/** A tenant billed through Stripe: self-serve add-ons go on its subscription (owner ruling 2026-10-03). */
+const BILLED_SUB = {
+  stripeSubId: "sub_1",
+  stripeCustomerId: "cus_1",
+  billingInterval: "month",
+  cycle: "MONTHLY",
+};
+
+/** Stripe module-boundary mock for the add-on item calls (no live Stripe). */
+function addonStripeClient() {
+  return {
+    products: { create: jest.fn().mockResolvedValue({ id: "prod_1" }) },
+    subscriptionItems: {
+      create: jest.fn().mockResolvedValue({ id: "si_1" }),
+      list: jest.fn().mockResolvedValue({ data: [] }),
+      update: jest.fn().mockResolvedValue({ id: "si_1" }),
+      del: jest.fn().mockResolvedValue({}),
+    },
+    invoiceItems: { list: jest.fn().mockResolvedValue({ data: [] }) },
+  };
+}
+
 interface Opts {
   catalog?: ReturnType<typeof catalog>;
   tenantStatus?: string;
@@ -212,9 +235,20 @@ interface Opts {
   stripe?: any;
   /** N3: override the BillingNotificationService mock instead of the shared default. */
   billingNotification?: any;
+  /** `Tenant.readOnlyReason` as both tenant reads see it (a lapsed trial is READ_ONLY + trial_expired / trial_cancelled). */
+  readOnlyReason?: string | null;
   priorAddons?: any[];
   existingAddon?: any;
   addonRow?: any;
+  /**
+   * B865 / SA-277: the STATUS `emitAddonDelta`'s tx-scoped `tenant.findUniqueOrThrow` reads —
+   * i.e. what the paying-set gate sees INSIDE the transaction, AFTER any write that tx makes.
+   * Defaults to ACTIVE (paying), which is correct for `subscribe()` (it unconditionally writes
+   * status ACTIVE before booking any add-on) — a test whose OWN method never changes status
+   * (enableAddon/disableAddon on a still-TRIAL tenant) sets this explicitly to keep the tx read
+   * consistent with the pre-tx `tenantStatus`.
+   */
+  txTenantStatus?: string;
   /** ACTIVE TENANT_ADMIN/OPERATOR/DRIVER count, as the DOWNGRADE seat warning reads it. */
   activeTeam?: number;
   /**
@@ -231,24 +265,77 @@ function make(opts: Opts = {}) {
       upsert: jest.fn().mockResolvedValue({}),
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // F1 (pre-merge review): `subscribe()`'s locked re-read — defaults to MIRROR the pre-tx
+      // `prisma.tenantSubscription.findUnique` fixture (opts.sub), so every existing test's
+      // wasPaying/oldPlanMonthly/fromKey come out identical to the pre-fix pre-tx read. A race
+      // test overrides this to diverge from `opts.sub` (a concurrent commit).
+      findUnique: jest.fn().mockResolvedValue(opts.sub ?? null),
     },
     tenant: {
       update: jest.fn().mockResolvedValue({}),
       // TRIAL-1: cancel()'s TRIAL branch is a compare-and-swap (updateMany) with a
       // re-read (findUnique) only when the CAS is lost — default to a clean win/no-race.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      findUnique: jest.fn().mockResolvedValue({ status: "ACTIVE" }),
+      // F1 (pre-merge review): `subscribe()`'s own locked re-read (tenant/sub/add-ons, taken
+      // right after `lockTenantForLedger`) also calls `tx.tenant.findUnique` — defaults to
+      // MIRROR the pre-tx `prisma.tenant.findUnique` fixture below (no concurrent write), so
+      // every existing subscribe() test computes the SAME wasPaying/oldPlanMonthly it did
+      // before the fix. A race test overrides this directly (`tx.tenant.findUnique
+      // .mockResolvedValueOnce(...)`) to simulate a concurrent commit between the pre-tx read
+      // and the lock.
+      findUnique: jest.fn().mockResolvedValue({
+        status: opts.tenantStatus ?? "TRIAL",
+        plan: opts.tenantPlan ?? null,
+        class: "PRODUCTION",
+        deletedAt: null,
+        readOnlyReason: opts.readOnlyReason ?? null,
+      }),
+      // B865 / SA-277 (D2 lock shape): the add-on ledger helper's paying-set read, under the
+      // tx lock. This tx-scoped default is ACTIVE (paying) even though the non-tx
+      // `prisma.tenant.findUnique` below still defaults to TRIAL (the `subscribe` tests rely
+      // on that) — `subscribe()` unconditionally writes status ACTIVE before booking any
+      // add-on, so its OWN tx-scoped read must reflect that write, never the pre-tx status.
+      // A test whose method never flips status (enableAddon/disableAddon on a still-TRIAL
+      // tenant) sets `opts.txTenantStatus` explicitly instead of relying on this default.
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        status: opts.txTenantStatus ?? "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: "TEAM" },
+      }),
     },
     tenantAddon: {
       upsert: jest.fn().mockResolvedValue({}),
       update: jest.fn().mockResolvedValue({}),
+      // #2188: findAddonRow reads via findFirst — delegate so each fixture's findUnique sequence still drives it.
+      findFirst: jest.fn(function (this: any, args: unknown) {
+        return this.findUnique(args);
+      }),
+      // FIX-864 r2 finding #0: disableAddon's in-tx re-read under the row lock (mirrors
+      // addon.service.ts's admin-path fix) — defaults to the same row `prisma.tenantAddon
+      // .findFirst` handed out pre-tx, so the existing disableAddon fixtures still see an
+      // active row and proceed.
+      findUnique: jest.fn().mockImplementation(() => Promise.resolve(opts.addonRow ?? null)),
+      // F1 (pre-merge review): `subscribe()`'s locked re-read of the tenant's ACTIVE add-ons —
+      // defaults to MIRROR the pre-tx `prisma.tenantAddon.findMany` fixture (opts.priorAddons).
+      // A race test overrides this to diverge from `opts.priorAddons` (a concurrent commit).
+      findMany: jest.fn().mockResolvedValue(opts.priorAddons ?? []),
     },
+    $queryRaw: jest.fn().mockResolvedValue([]),
   };
   const prisma = {
     tenant: {
-      findUnique: jest
-        .fn()
-        .mockResolvedValue({ status: opts.tenantStatus ?? "TRIAL", plan: opts.tenantPlan ?? null }),
+      // B865 / SA-277 FIX-4: `subscribe()` now also selects `class`/`deletedAt` here to compute
+      // `wasPaying` via `isPayingRow` — default PRODUCTION/not-deleted so every test that only
+      // sets `tenantStatus` still gets the SAME paying-set answer `isPayingRow` would give a
+      // real ACTIVE/PRODUCTION row (opts.tenantStatus is the only thing tests vary here).
+      findUnique: jest.fn().mockResolvedValue({
+        status: opts.tenantStatus ?? "TRIAL",
+        plan: opts.tenantPlan ?? null,
+        class: "PRODUCTION",
+        deletedAt: null,
+        readOnlyReason: opts.readOnlyReason ?? null,
+      }),
       // TRIAL-1: cancel() on a subscription-less trial/read-only tenant reads + writes the
       // tenant row directly (there is no TenantSubscription row to update).
       update: jest.fn().mockResolvedValue({}),
@@ -298,6 +385,7 @@ function make(opts: Opts = {}) {
     opts.stripe ??
     ({
       isConfigured: true,
+      client: addonStripeClient(),
       updateSubscription: jest.fn().mockResolvedValue({}),
       // CHANGE-1 (2026-09-13): the READ_ONLY cohort's cancel() branch now cancels the Stripe
       // subscription IMMEDIATELY (see cancelReadOnlyStripeSubImmediately) instead of scheduling
@@ -377,10 +465,192 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
   });
 
+  describe("SA-690 — a TRIAL keeps its add-ons across the plan pick", () => {
+    const trialRow = (sku: string, over: Record<string, unknown> = {}) => ({
+      id: `a-${sku}`,
+      addonKey: sku,
+      sku,
+      quantity: 2,
+      active: true,
+      priceSnapshot: 0, // a trial's add-on is unbilled: priced 0, no Stripe item
+      stripeItemId: null,
+      ...over,
+    });
+
+    it("the choose-plan call sends no add-ons — a trial's rows are NOT switched off (the card checkout bills them)", async () => {
+      const { svc, tx, events } = make({
+        tenantStatus: "TRIAL",
+        priorAddons: [trialRow("CUSTOMER_PACK_100"), trialRow("FORECASTING", { quantity: 1 })],
+      });
+
+      await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+      expect(tx.tenantAddon.update).not.toHaveBeenCalled(); // nothing deactivated, no pointer cleared
+      expect(emitted(events)).not.toContain(BILLING_EVENTS.ADDON_DISABLED);
+      // the crossing books the plan and the kept rows at their STORED price (0 each): no add-on event
+      expect(emitted(events)).toEqual([
+        BILLING_EVENTS.TRIAL_CONVERTED,
+        BILLING_EVENTS.PLAN_CHANGED,
+      ]);
+      expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(149);
+    });
+
+    it("a trial that was Stripe-linked early has no billed item removed either (nothing is dropped)", async () => {
+      const { svc, stripe } = make({
+        tenantStatus: "TRIAL",
+        priorAddons: [trialRow("CUSTOMER_PACK_100", { stripeItemId: "si_1", priceSnapshot: 12 })],
+      });
+
+      await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+      expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+    });
+
+    it("an ACTIVE tenant's omitted add-on is still dropped (only a trial is spared)", async () => {
+      const { svc, tx, events } = make({
+        tenantStatus: "ACTIVE",
+        sub: { planKey: "BUSINESS", cycle: "ANNUAL", basePriceSnapshot: 349 },
+        priorAddons: [trialRow("CUSTOMER_PACK_100", { priceSnapshot: 12 })],
+      });
+
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+
+      expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "a-CUSTOMER_PACK_100" },
+        data: { active: false, stripeItemId: null },
+      });
+      expect(emitted(events)).toContain(BILLING_EVENTS.ADDON_DISABLED);
+    });
+  });
+
+  describe("MUST-1: a LAPSED trial keeps its add-ons across the plan pick, exactly like a trial", () => {
+    const row = (sku: string, over: Record<string, unknown> = {}) => ({
+      id: `a-${sku}`,
+      addonKey: sku,
+      sku,
+      quantity: 2,
+      active: true,
+      priceSnapshot: 0,
+      stripeItemId: null,
+      ...over,
+    });
+
+    it.each(["trial_expired", "trial_cancelled"])(
+      "READ_ONLY + %s: subscribe({planKey, cycle}) keeps every unbilled add-on row — nothing is deactivated, no item is removed, no disable event",
+      async (readOnlyReason) => {
+        const { svc, tx, events, stripe } = make({
+          tenantStatus: "READ_ONLY",
+          readOnlyReason,
+          priorAddons: [row("CUSTOMER_PACK_100"), row("FORECASTING", { quantity: 1 })],
+        });
+
+        await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+        expect(tx.tenantAddon.update).not.toHaveBeenCalled();
+        expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+        expect(emitted(events)).not.toContain(BILLING_EVENTS.ADDON_DISABLED);
+        // the crossing books the plan; the kept rows are priced at their stored 0 (no add-on event)
+        expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(149);
+        // wasTrial's OTHER uses are untouched: a lapsed trial is not (re-)converted
+        expect(emitted(events)).not.toContain(BILLING_EVENTS.TRIAL_CONVERTED);
+      },
+    );
+
+    it.each(["trial_expired", "trial_cancelled"])(
+      "READ_ONLY + %s: a Stripe-linked row is not removed from Stripe pre-tx either (nothing is dropped)",
+      async (readOnlyReason) => {
+        const { svc, stripe, prisma } = make({
+          tenantStatus: "READ_ONLY",
+          readOnlyReason,
+          priorAddons: [row("CUSTOMER_PACK_100", { stripeItemId: "si_1", priceSnapshot: 12 })],
+        });
+
+        await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+        expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+        expect(prisma.tenantAddon.findMany).not.toHaveBeenCalled(); // the droppedBilled read is skipped
+      },
+    );
+
+    it.each([["subscription_cancelled"], [null], ["something_else"]])(
+      "READ_ONLY with reason %p is NOT a lapsed trial: an omitted add-on is still dropped",
+      async (readOnlyReason) => {
+        const { svc, tx, events } = make({
+          tenantStatus: "READ_ONLY",
+          readOnlyReason: readOnlyReason as string | null,
+          priorAddons: [row("CUSTOMER_PACK_100", { priceSnapshot: 12 })],
+        });
+
+        await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+        expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+          where: { id: "a-CUSTOMER_PACK_100" },
+          data: { active: false, stripeItemId: null },
+        });
+        expect(events.emit).toHaveBeenCalled(); // (a non-paying tenant's drop books no MRR delta: the row is what matters)
+      },
+    );
+
+    it("the locked re-read decides: a trial that lapsed between the pre-tx read and the lock keeps its add-ons", async () => {
+      const { svc, tx } = make({
+        tenantStatus: "TRIAL",
+        priorAddons: [row("CUSTOMER_PACK_100")],
+      });
+      tx.tenant.findUnique.mockResolvedValue({
+        status: "READ_ONLY",
+        plan: null,
+        class: "PRODUCTION",
+        deletedAt: null,
+        readOnlyReason: "trial_expired",
+      });
+
+      await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+      expect(tx.tenantAddon.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("SHOULD-2: the crossing books only BILLABLE add-ons — an admin comp is never booked as revenue", () => {
+    it("a trial's plan pick with a comp row that still carries a stale snapshot books the plan and the billable row only", async () => {
+      const { svc, events } = make({
+        tenantStatus: "TRIAL",
+        priorAddons: [
+          {
+            id: "a-pack",
+            addonKey: "CUSTOMER_PACK_100",
+            sku: "CUSTOMER_PACK_100",
+            quantity: 2,
+            active: true,
+            priceSnapshot: 12, // a billed row
+            stripeItemId: "si_1",
+            isComp: false,
+          },
+          {
+            id: "a-fc",
+            addonKey: "FORECASTING",
+            sku: "FORECASTING",
+            quantity: 1,
+            active: true,
+            priceSnapshot: 19, // WAS billed, then support made it a comp: the stored snapshot lingers
+            stripeItemId: null,
+            isComp: true,
+          },
+        ],
+      });
+
+      await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+
+      const adds = events.emit.mock.calls
+        .filter((c: any[]) => c[1] === BILLING_EVENTS.ADDON_ENABLED)
+        .map((c: any[]) => [c[2]?.sku, c[3]?.amountDelta]);
+      expect(adds).toEqual([["CUSTOMER_PACK_100", 24]]); // 12 × 2 — never FORECASTING's 19
+    });
+  });
+
   it("PIN T10: ACTIVE cycle switch to a LOWER plan (ANNUAL→MONTHLY) still nets a NEGATIVE plan delta and disables dropped add-ons — the B58 guard must NOT fire on a cycle switch", async () => {
     const { svc, tx, events } = make({
       tenantStatus: "ACTIVE",
-      sub: { planKey: "BUSINESS", cycle: "ANNUAL" },
+      sub: { planKey: "BUSINESS", cycle: "ANNUAL", basePriceSnapshot: 349 }, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
       priorAddons: [
         {
           id: "a1",
@@ -388,6 +658,9 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
           sku: "CUSTOMER_PACK_100",
           quantity: 1,
           active: true,
+          // B865 / SA-277: the STORED snapshot the toDisable booking now nets against (never a
+          // fresh catalog read) — without it the fixture would price this add-on at 0.
+          priceSnapshot: 12,
         },
       ],
     });
@@ -396,9 +669,250 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-12); // dropped CUSTOMER_PACK_100
     expect(tx.tenantAddon.update).toHaveBeenCalledWith({
       where: { id: "a1" },
-      data: { active: false },
+      data: { active: false, stripeItemId: null },
     });
     expect(emitted(events)).not.toContain(BILLING_EVENTS.TRIAL_CONVERTED);
+  });
+
+  describe("B1 — a billed self-serve add-on dropped by a subscribe()/cycle switch loses its Stripe item", () => {
+    const billedRow = {
+      id: "a1",
+      addonKey: "CUSTOMER_PACK_100",
+      sku: "CUSTOMER_PACK_100",
+      quantity: 2,
+      active: true,
+      priceSnapshot: 12,
+      stripeItemId: "si_1",
+    };
+    const activeAnnual = {
+      ...BILLED_SUB,
+      planKey: "BUSINESS",
+      cycle: "ANNUAL",
+      basePriceSnapshot: 349,
+    };
+
+    it("deletes the item (so it stops billing), clears the pointer, and books the MRR reversal", async () => {
+      const { svc, tx, events, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+
+      expect(stripe.client.subscriptionItems.del).toHaveBeenCalledTimes(1);
+      expect(stripe.client.subscriptionItems.del).toHaveBeenCalledWith("si_1", {
+        proration_behavior: "create_prorations",
+      });
+      expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "a1" },
+        data: { active: false, stripeItemId: null },
+      });
+      expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-24); // MRR matches: 12 x 2 gone
+    });
+
+    it("a re-enable after the cycle switch then creates ONE item, not a second (no double billing)", async () => {
+      const { svc, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+      // the row is now inactive with no item pointer: enabling creates exactly one new item
+      const again = make({
+        sub: { ...BILLED_SUB, planKey: "STARTER" },
+        addonRow: { ...billedRow, active: false, stripeItemId: null },
+      });
+      await again.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "u1");
+      expect(stripe.client.subscriptionItems.del).toHaveBeenCalledTimes(1);
+      expect(again.stripe.client.subscriptionItems.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("an add-on the caller KEEPS in addons[] keeps its item (no delete)", async () => {
+      const { svc, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      await svc.subscribe(
+        "t1",
+        {
+          planKey: "STARTER",
+          cycle: "MONTHLY",
+          addons: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+        },
+        "admin",
+      );
+      expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+    });
+
+    // SA-693: a comp is a platform grant, not the tenant's to drop. subscribe() reconciles the tenant's
+    // self-serve add-ons against the payload, and a /choose-plan cycle switch sends none: without the
+    // isComp exclusion every plan choice would silently remove a comp.
+    describe("SA-693 — comp rows survive subscribe()", () => {
+      const comp = {
+        ...billedRow,
+        quantity: 1,
+        priceSnapshot: 0,
+        stripeItemId: null,
+        isComp: true,
+      };
+
+      it("a cycle switch with no add-ons keeps the comp row: not disabled, no Stripe call, no ledger event for it", async () => {
+        const { svc, tx, events, stripe } = make({
+          tenantStatus: "ACTIVE",
+          sub: activeAnnual,
+          priorAddons: [comp],
+        });
+        await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+
+        expect(tx.tenantAddon.update).not.toHaveBeenCalled();
+        expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+        expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBeUndefined();
+      });
+
+      it("a NON-comp unbilled row is still dropped (the exclusion is the flag, not 'no Stripe item')", async () => {
+        const { svc, tx } = make({
+          tenantStatus: "ACTIVE",
+          sub: activeAnnual,
+          priorAddons: [{ ...comp, isComp: false }],
+        });
+        await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+
+        expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+          where: { id: "a1" },
+          data: { active: false, stripeItemId: null },
+        });
+      });
+
+      it("a comp row named in addons[] is left as it is: still comp, quantity and price untouched", async () => {
+        const { svc, tx } = make({
+          tenantStatus: "ACTIVE",
+          sub: activeAnnual,
+          priorAddons: [comp],
+        });
+        await svc.subscribe(
+          "t1",
+          {
+            planKey: "STARTER",
+            cycle: "MONTHLY",
+            addons: [{ sku: "CUSTOMER_PACK_100", quantity: 5 }],
+          },
+          "admin",
+        );
+
+        expect(tx.tenantAddon.upsert).not.toHaveBeenCalled();
+        expect(tx.tenantAddon.update).not.toHaveBeenCalled();
+      });
+    });
+
+    it("an item Stripe already removed counts as removed", async () => {
+      const { svc, tx, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      stripe.client.subscriptionItems.del.mockRejectedValueOnce(
+        Object.assign(new Error("No such subscription item"), { code: "resource_missing" }),
+      );
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+      expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "a1" },
+        data: { active: false, stripeItemId: null },
+      });
+    });
+
+    it("any OTHER Stripe failure refuses the whole subscribe with fixed copy and writes NOTHING", async () => {
+      const { svc, prisma, events, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      stripe.client.subscriptionItems.del.mockRejectedValueOnce(
+        new Error("api_connection_error: x"),
+      );
+      const err: any = await svc
+        .subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin")
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ServiceUnavailableException);
+      expect(String(err.message)).not.toMatch(/api_connection|si_1/);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it("SA F1: a dropped billed add-on while Stripe is NOT configured refuses the whole subscribe (handle kept, nothing written)", async () => {
+      const { svc, prisma, events } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+        stripe: { isConfigured: false, client: addonStripeClient() },
+      });
+      const err: any = await svc
+        .subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin")
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ServiceUnavailableException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it("(b) if the tx fails AFTER the Stripe deletes, a retry heals it (the second delete is resource_missing)", async () => {
+      const { svc, prisma, tx, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      prisma.$transaction.mockRejectedValueOnce(new Error("db down"));
+      await expect(
+        svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin"),
+      ).rejects.toThrow("db down");
+      expect(stripe.client.subscriptionItems.del).toHaveBeenCalledTimes(1);
+
+      // retry: the rows still point at the (already deleted) item; Stripe says it is gone
+      stripe.client.subscriptionItems.del.mockRejectedValueOnce(
+        Object.assign(new Error("No such subscription item"), { code: "resource_missing" }),
+      );
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+      expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "a1" },
+        data: { active: false, stripeItemId: null },
+      });
+    });
+
+    it("(c) a manually-invoiced tenant's dropped priced add-on raises a 'stop invoicing' platform notice", async () => {
+      const { svc, tx } = make({
+        tenantStatus: "ACTIVE",
+        sub: { ...activeAnnual, stripeSubId: null, stripeCustomerId: null, externalPayment: true },
+        priorAddons: [{ ...billedRow, stripeItemId: null }],
+      });
+      const auditLog = { create: jest.fn().mockResolvedValue({}) };
+      (tx as any).auditLog = auditLog;
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+      expect(auditLog.create).toHaveBeenCalledTimes(1);
+      const d = auditLog.create.mock.calls[0][0].data;
+      expect(d.action).toBe("ADDON_MANUAL_INVOICE_STOP");
+      expect(d.meta.message).toMatch(/Add-on Customer pack turned off for .*: stop invoicing it/);
+    });
+
+    it("an item that only appears under the lock (a concurrent enable) is never left billing: retryable refusal", async () => {
+      const { svc, tx, events } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [], // pre-tx read saw nothing to remove
+      });
+      tx.tenantAddon.findMany.mockResolvedValue([billedRow]); // ...but the locked re-read did
+      await expect(
+        svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin"),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  it("#2460: an ACTIVE subscribe() re-choice nets against the stored snapshot — NULL ⇒ the full new price", async () => {
+    const { svc, events } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "STARTER", cycle: "MONTHLY", basePriceSnapshot: null },
+    });
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(349); // never 349 − 59
   });
 
   it("reactivation from READ_ONLY (stale planKey retained) emits a full +base delta, not 0", async () => {
@@ -462,6 +976,95 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     });
     expect(tx.tenant.update.mock.calls[0][0].data).toMatchObject({ plan: "TEAM" });
   });
+
+  /**
+   * F1 (pre-merge review, 2026-09-25): `wasPaying`/`oldPlanMonthly`/the prior add-on snapshots
+   * used to come from a PRE-tx read, taken before `lockTenantForLedger`. A concurrent tx that
+   * commits in that window (e.g. platform-admin `activateManualSubscription`, which books the
+   * base plan AND an admin-only add-on) was invisible to that stale read — subscribe() would
+   * then re-book the base price in full (never netted) AND double-book the add-on. The fix
+   * re-reads the tenant/subscription/add-on rows UNDER the lock, inside the tx, so this
+   * committed write is visible before anything is priced.
+   */
+  it("F1: a concurrent activateManualSubscription commits between the pre-tx read and the lock — subscribe() must NOT double-book the base or the add-on", async () => {
+    const { svc, prisma, tx, events } = make({
+      // Pre-tx snapshot: still TRIAL, no subscription row yet — the state BEFORE the
+      // concurrent activation committed.
+      tenantStatus: "TRIAL",
+      sub: null,
+    });
+    // Locked re-read (tx, taken AFTER lockTenantForLedger): the concurrent
+    // activateManualSubscription already committed — tenant is ACTIVE/PRODUCTION on TEAM
+    // (149), with an admin-granted REGULATED_ITEMS add-on (snapshot 39) already active.
+    tx.tenant.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      plan: "TEAM",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    // #2460 / SA-464: the concurrent activation snapshotted what it booked (TEAM 149).
+    tx.tenantSubscription.findUnique.mockResolvedValue({ planKey: "TEAM", basePriceSnapshot: 149 });
+    tx.tenantAddon.findMany.mockResolvedValue([
+      {
+        id: "a1",
+        addonKey: "REGULATED_ITEMS",
+        sku: "REGULATED_ITEMS",
+        quantity: 1,
+        active: true,
+        priceSnapshot: 39,
+      },
+    ]);
+
+    // #2189 / SA-389 (2): the from-plan moved (none → TEAM) between the pre-read that fed
+    // prepare() and the lock, so the first attempt is refused retryably with NOTHING booked...
+    const first = await svc
+      .subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin")
+      .catch((e: any) => e);
+    // SA-389a (a): nothing written — no subscription/tenant write, no BillingEvent, no add-on
+    // ledger row (emitAddonDelta books through events.emit).
+    expect(first.getResponse()).toMatchObject({
+      code: "PLAN_CHANGED_DURING_SUBSCRIBE",
+      retryable: true,
+    });
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
+    expect(tx.tenantAddon.upsert).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+
+    // ...and the caller's retry re-reads (the committed activation is now the pre-tx state too)
+    // and nets against the locked TEAM (149), never the stale TRIAL/no-plan baseline (349).
+    prisma.tenant.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      plan: "TEAM",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    prisma.tenantSubscription.findUnique.mockResolvedValue({ planKey: "TEAM" });
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    // SA-389a (b): SA-277b's money assertion, moved to the retry — booked EXACTLY ONCE against
+    // the post-activation state, so the two calls together equal one clean subscribe on an
+    // already-paying row: one PLAN_CHANGED of 349 − 149, no TRIAL_CONVERTED, no add-on booking.
+    expect(emitted(events)).toEqual([BILLING_EVENTS.PLAN_CHANGED]);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(200); // 349 − 149
+    // REGULATED_ITEMS was already paying under the locked state, so the crossing helper nets
+    // it to a NO-OP — never a second +39 on top of what activateManualSubscription booked.
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.ADDON_ENABLED);
+    expect(deltaOf(events, BILLING_EVENTS.ADDON_ENABLED)).toBeUndefined();
+  });
+
+  it("SA-389a (c) control: no interleaving (pre-read == locked read) ⇒ one write, one PLAN_CHANGED, no 409", async () => {
+    const tenantRow = { status: "ACTIVE", plan: "TEAM", class: "PRODUCTION", deletedAt: null };
+    // #2460 / SA-464 (2): an ACTIVE row nets against its STORED snapshot, so the fixture carries it.
+    const sub = { planKey: "TEAM", cycle: "MONTHLY", periodEnd: null, basePriceSnapshot: 149 };
+    const { svc, prisma, tx, events } = make({ sub });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow);
+    tx.tenant.findUnique.mockResolvedValue(tenantRow);
+    tx.tenantSubscription.findUnique.mockResolvedValue(sub);
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    expect(tx.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
+    expect(emitted(events)).toEqual([BILLING_EVENTS.PLAN_CHANGED]);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(200); // 349 − 149
+  });
 });
 
 describe("SubscriptionMutationService.subscribe — A2b plan-transition hook", () => {
@@ -498,10 +1101,283 @@ describe("SubscriptionMutationService.subscribe — A2b plan-transition hook", (
   });
 });
 
+// #2223 / SA-444c: a negotiated fee survives EVERY snapshot write — subscribe() (cycle change or
+// re-subscribe) and the downgrade preview, not only upgrade(). A paying override row books Δ0; one
+// entering the paying set books the fee; catalog rows are unchanged.
+describe("#2223 SA-444c — subscribe() and the downgrade preview keep the override fee", () => {
+  it("subscribe() cycle change on a paying override row: both upsert branches write the fee, Δ0", async () => {
+    const { svc, tx, events } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        priceOverrideMonthly: 80,
+        basePriceSnapshot: 80,
+      },
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "STARTER",
+      priceOverrideMonthly: 80,
+      basePriceSnapshot: 80,
+    });
+    await svc.subscribe("t1", { planKey: "STARTER", cycle: "ANNUAL" }, "admin");
+    const arg = tx.tenantSubscription.upsert.mock.calls[0][0];
+    expect(arg.create.basePriceSnapshot).toBe(80);
+    expect(arg.update.basePriceSnapshot).toBe(80);
+    expect(arg.update).not.toHaveProperty("priceOverrideMonthly");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+  });
+
+  // SA-464b: a paying override row whose snapshot is NULL (not yet counted) — the cycle change writes
+  // the fee and books it in full, so snapshot MRR and ledger MRR re-agree.
+  it("SA-464b: subscribe() cycle change on a paying override row with a NULL snapshot writes the fee and books +fee", async () => {
+    const { svc, tx, events } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        priceOverrideMonthly: 80,
+        basePriceSnapshot: null,
+      },
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "STARTER",
+      priceOverrideMonthly: 80,
+      basePriceSnapshot: null,
+    });
+    await svc.subscribe("t1", { planKey: "STARTER", cycle: "ANNUAL" }, "admin");
+    const arg = tx.tenantSubscription.upsert.mock.calls[0][0];
+    expect(arg.update.basePriceSnapshot).toBe(80);
+    expect(arg.create.basePriceSnapshot).toBe(80);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(80);
+  });
+
+  it("subscribe() re-subscribe of an override row ENTERING the paying set books the fee", async () => {
+    const { svc, tx, events } = make({
+      tenantStatus: "READ_ONLY",
+      sub: { planKey: "BUSINESS", priceOverrideMonthly: 80, basePriceSnapshot: 80 },
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "BUSINESS",
+      priceOverrideMonthly: 80,
+      basePriceSnapshot: 80,
+    });
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    expect(tx.tenantSubscription.upsert.mock.calls[0][0].update.basePriceSnapshot).toBe(80);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(80);
+  });
+
+  it("subscribe()'s locked re-read selects the override it keeps", async () => {
+    const { svc, tx } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "STARTER", cycle: "MONTHLY" },
+    });
+    await svc.subscribe("t1", { planKey: "STARTER", cycle: "ANNUAL" }, "admin");
+    expect(tx.tenantSubscription.findUnique.mock.calls[0][0].select).toMatchObject({
+      priceOverrideMonthly: true,
+    });
+  });
+
+  it("the DOWNGRADE preview of an override row carries the custom-fee note", async () => {
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "BUSINESS",
+        cycle: "MONTHLY",
+        periodStart: new Date(Date.now() - 5 * 86400000),
+        periodEnd: new Date(Date.now() + 25 * 86400000),
+        priceOverrideMonthly: 80,
+      },
+    });
+    const preview: any = await svc.planChangePreview("t1", "STARTER", "MONTHLY");
+    expect(preview.action).toBe("DOWNGRADE");
+    expect(preview.warning).toContain("custom fee unchanged — adjust it in Pricing");
+  });
+});
+
 describe("SubscriptionMutationService.upgrade", () => {
+  // #2470 (Opus (3) on #2458): the optimistic guard also matches the negotiated fee it read, so a
+  // concurrent Pricing change makes the upgrade LOSE the race instead of writing a stale fee.
+  it("#2470: the optimistic guard matches the stored override the upgrade read", async () => {
+    const { svc, tx } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        priceOverrideMonthly: 80,
+        basePriceSnapshot: 80,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
+      planKey: "STARTER",
+      priceOverrideMonthly: 80,
+    });
+  });
+
+  // #2470 Opus fold (1): a Pricing change commits in TWO steps (fee, then reconcile's snapshot), so the
+  // guard also matches the snapshot the upgrade read — an upgrade reading between them loses the race.
+  it("#2470 fold: the guard also matches the stored snapshot the upgrade read", async () => {
+    const { svc, tx } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        priceOverrideMonthly: 120,
+        basePriceSnapshot: 80, // fee committed, reconcile not yet
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
+      planKey: "STARTER",
+      priceOverrideMonthly: 120,
+      basePriceSnapshot: 80,
+    });
+  });
+
+  it("#2470 fold: a guard miss is a 409 ConflictException (concurrency), not a 400", async () => {
+    const { svc, tx, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59,
+      },
+    });
+    tx.tenantSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
+    const err = await svc.upgrade("t1", "BUSINESS", "admin").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBeUndefined();
+  });
+
+  it("#2470: a catalog row's guard matches a NULL override (a fee set concurrently loses the race)", async () => {
+    const { svc, tx } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
+      planKey: "STARTER",
+      priceOverrideMonthly: null,
+    });
+  });
+
+  it("#2470: a free (override 0) row's upgrade keeps snapshot 0, quotes 0 with the note, books Δ0", async () => {
+    const { svc, tx, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        priceOverrideMonthly: 0,
+        basePriceSnapshot: 0,
+      },
+    });
+    const res: any = await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(res).toMatchObject({
+      proratedNow: 0,
+      note: "custom fee unchanged — adjust it in Pricing",
+    });
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].data).toMatchObject({
+      planKey: "BUSINESS",
+      basePriceSnapshot: 0,
+    });
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+  });
+
+  // #2460 / SA-464 (2): the ledger nets against what the MRR snapshot actually counted — the stored
+  // basePriceSnapshot, NULL ⇒ 0 — never the catalog price of the plan being left. A NULL-snapshot
+  // row (e.g. a manual activation before #2460) then books the FULL new price, and snapshot MRR and
+  // ledger MRR re-agree. The charge (proration) still nets against the catalog entitlement.
+  it("#2460: an ACTIVE catalog row with a NULL snapshot books the FULL new price", async () => {
+    const { svc, events } = make({
+      // #2583 / SA-513: a PAYING (ACTIVE) tenant — upgrade() now books on the shared predicate.
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: null,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(349); // 349 − 0, never 349 − 59
+  });
+
+  it("#2460: a consistent catalog row nets against its stored snapshot", async () => {
+    const { svc, events } = make({
+      // #2583 / SA-513: a PAYING (ACTIVE) tenant — upgrade() now books on the shared predicate.
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59,
+      },
+    });
+    await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(290);
+  });
+
+  it("#2223 / SA-444a: an override row upgrades the PLAN but not the price — quote 0 with the note, snapshot = the fee, delta 0", async () => {
+    const { svc, tx, events } = make({
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        priceOverrideMonthly: 80,
+        basePriceSnapshot: 80,
+      },
+    });
+    const res: any = await svc.upgrade("t1", "BUSINESS", "admin");
+    expect(res).toMatchObject({
+      proratedNow: 0,
+      note: "custom fee unchanged — adjust it in Pricing",
+    });
+    const data = tx.tenantSubscription.updateMany.mock.calls[0][0].data;
+    expect(data).toMatchObject({ planKey: "BUSINESS", basePriceSnapshot: 80 });
+    expect(data).not.toHaveProperty("priceOverrideMonthly");
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+  });
+
+  it("#2223 / SA-444a: the preview quotes an override row 0 and says why", async () => {
+    const { svc } = make({
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: new Date(Date.now() - 5 * 86400000),
+        periodEnd: new Date(Date.now() + 25 * 86400000),
+        priceOverrideMonthly: 80,
+      },
+    });
+    const preview: any = await svc.planChangePreview("t1", "BUSINESS", "MONTHLY");
+    expect(preview).toMatchObject({ action: "UPGRADE", proratedNow: 0 });
+    expect(preview.warning).toContain("custom fee unchanged — adjust it in Pricing");
+  });
+
   it("applies instantly (optimistic guard) with MRR delta = new − old", async () => {
     const { svc, tx, events } = make({
-      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+      // #2583 / SA-513: a PAYING (ACTIVE) tenant — upgrade() now books on the shared predicate.
+      tenantStatus: "ACTIVE",
+      sub: {
+        planKey: "STARTER",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 59, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
+      },
     });
     await svc.upgrade("t1", "BUSINESS", "admin");
     expect(tx.tenantSubscription.updateMany.mock.calls[0][0].where).toMatchObject({
@@ -596,7 +1472,7 @@ describe("SubscriptionMutationService.upgrade", () => {
   it("A2b: a lost optimistic-guard race still rejects (the hook's writes roll back with the tx)", async () => {
     const { svc, tx, planTransition } = make({ sub: { planKey: "STARTER", cycle: "MONTHLY" } });
     tx.tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
-    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(ConflictException);
     expect(planTransition.onPlanChange).toHaveBeenCalledTimes(1);
   });
 
@@ -616,7 +1492,7 @@ describe("SubscriptionMutationService.upgrade", () => {
   it("rejects a concurrent double-upgrade (updateMany matched 0 rows)", async () => {
     const { svc, tx } = make({ sub: { planKey: "STARTER", cycle: "MONTHLY" } });
     tx.tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
-    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.upgrade("t1", "BUSINESS")).rejects.toBeInstanceOf(ConflictException);
   });
 
   it("rejects a same/lower target", async () => {
@@ -813,11 +1689,14 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
   it("enableAddon charges the qty delta only (idempotent re-enable at same qty emits nothing)", async () => {
     // CUSTOMER_PACK_100, not SEAT_EXTRA — SEAT_EXTRA is seat-billing plumbing, never a
     // self-service toggle (see the SELF_SERVICE_ADDON_SKUS tests below).
-    const first = make();
+    const first = make({ sub: BILLED_SUB });
     await first.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
     expect(deltaOf(first.events, BILLING_EVENTS.ADDON_ENABLED)).toBe(24); // 12 × 2
 
-    const again = make({ existingAddon: { active: true, quantity: 2 } });
+    // B865 / SA-277: the existing-row read moved INSIDE the tx (FIX-3) — `addonRow` is what
+    // the tx-scoped `tenantAddon.findUnique` now returns, carrying the STORED priceSnapshot the
+    // before/after contract needs to net this re-enable to a true 0.
+    const again = make({ addonRow: { active: true, quantity: 2, priceSnapshot: 12 } });
     await again.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2);
     expect(emitted(again.events)).not.toContain(BILLING_EVENTS.ADDON_ENABLED); // no change → no MRR event
   });
@@ -830,14 +1709,63 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
         sku: "CUSTOMER_PACK_100",
         quantity: 2,
         active: true,
+        // B865 / SA-277 (P7 harness note): post-fix, disableAddon books −STORED snapshot, not
+        // −catalog — the fixture now carries its own priceSnapshot so this pin keeps its −24
+        // (12 × 2) regardless of what the catalog says.
+        priceSnapshot: 12,
       },
     });
     await svc.disableAddon("t1", "CUSTOMER_PACK_100");
     expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-24); // 12 × 2
     expect(tx.tenantAddon.update).toHaveBeenCalledWith({
       where: { id: "a1" },
-      data: { active: false },
+      data: { active: false, stripeItemId: null },
     });
+  });
+});
+
+// B865 / SA-277: the self-serve add-on paths emitted for ANY tenant status (a TRIAL tenant's
+// add-on booked immediately, then booked AGAIN at activation) and `disableAddon` credited the
+// LIVE catalog price instead of the row's own stored snapshot. Both sites now route through
+// the ONE add-on ledger helper (`emitAddonDelta`, `addon-ledger.ts`, FIX-865A/C) — see the
+// matching admin-path tests in `addon.service.spec.ts`.
+describe("SubscriptionMutationService.enableAddon/disableAddon — B865 ledger gating (SA-277)", () => {
+  it("REG-B865-SELF TRIAL tenant enabling CUSTOMER_PACK_100 ×2 books nothing (activation books it once)", async () => {
+    // SA-277: enableAddon() never changes tenant status, so the tx-scoped paying-set read
+    // must stay TRIAL here too (never the ACTIVE default `subscribe()`'s tests rely on).
+    const { svc, tx, events } = make({
+      tenantStatus: "TRIAL",
+      txTenantStatus: "TRIAL",
+      sub: BILLED_SUB,
+    });
+
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
+
+    expect(tx.tenantAddon.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ priceSnapshot: 12 }),
+        update: expect.objectContaining({ priceSnapshot: 12 }),
+      }),
+    );
+    const deltas = events.emit.mock.calls.map((c: any[]) => c[3]?.amountDelta);
+    expect(deltas).toEqual([]);
+  });
+
+  it("REG-B865-SELF disable books −stored snapshot, not −catalog", async () => {
+    const { svc, events } = make({
+      addonRow: {
+        id: "a1",
+        addonKey: "CUSTOMER_PACK_100",
+        sku: "CUSTOMER_PACK_100",
+        quantity: 2,
+        active: true,
+        priceSnapshot: 9, // catalog says 12 — the booked delta must come from THIS, not that.
+      },
+    });
+
+    await svc.disableAddon("t1", "CUSTOMER_PACK_100");
+
+    expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-18); // 9 × 2, not 12 × 2
   });
 });
 
@@ -876,7 +1804,13 @@ describe("SubscriptionMutationService — invite-only plans are never self-servi
     const { svc, tx, events } = make({
       catalog: catalogWithLite(),
       tenantStatus: "ACTIVE",
-      sub: { planKey: "LITE", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+      sub: {
+        planKey: "LITE",
+        cycle: "MONTHLY",
+        periodStart: null,
+        periodEnd: null,
+        basePriceSnapshot: 29, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
+      },
     });
     await svc.upgrade("t1", "STARTER", "admin");
     // Reached the write: the rank check passed (STARTER rank 1 > LITE rank 0) and the
@@ -909,11 +1843,13 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     // model — re-enabling at the same qty is documented, tested idempotent behaviour (see
     // "enableAddon charges the qty delta only" above), not a conflict. The lock must not
     // change that: this guard test pins it stays a no-op, not a new refusal.
-    const first = make();
+    const first = make({ sub: BILLED_SUB });
     await first.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
     expect(deltaOf(first.events, BILLING_EVENTS.ADDON_ENABLED)).toBe(24); // 12 × 2
 
-    const again = make({ existingAddon: { active: true, quantity: 2 } });
+    // B865 / SA-277: the existing-row read moved INSIDE the tx (FIX-3) — see the matching note
+    // on "enableAddon charges the qty delta only" above.
+    const again = make({ addonRow: { active: true, quantity: 2, priceSnapshot: 12 } });
     await expect(again.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2)).resolves.toBeDefined();
     expect(emitted(again.events)).not.toContain(BILLING_EVENTS.ADDON_ENABLED);
   });
@@ -925,18 +1861,44 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     // replicas. Before this fix (no lock at all) both calls read `null` here regardless of
     // order, which is precisely how F1 double-books: both compute deltaQty against a
     // priorQty of 0 and both emit the full delta.
-    let row: { active: boolean; quantity: number } | null = null;
+    let row: { active: boolean; quantity: number; priceSnapshot: unknown } | null = null;
     const tenantAddon = {
+      findMany: jest.fn().mockResolvedValue([]),
       findUnique: jest.fn(async () => (row ? { ...row } : null)),
+      // #2188: findAddonRow reads via findFirst — delegate so each fixture's findUnique sequence still drives it.
+      findFirst: jest.fn(function (this: any, args: unknown) {
+        return this.findUnique(args);
+      }),
       upsert: jest.fn(async ({ create, update }: any) => {
         const applied = row ? update : create;
-        row = { active: true, quantity: applied.quantity };
+        // B865 / SA-277: the STORED priceSnapshot must persist across the (serialised) second
+        // call too — without it, the second call's `before` prices at 0 regardless of the
+        // first call's committed row, and double-books the delta instead of netting to 0.
+        row = { active: true, quantity: applied.quantity, priceSnapshot: applied.priceSnapshot };
         return { id: "addon1", ...row };
       }),
     };
+    const raceStripeClient = addonStripeClient();
     const prisma = {
       tenantAddon,
-      $transaction: jest.fn(async (fn: any) => fn({ tenantAddon })),
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue(BILLED_SUB) },
+      $transaction: jest.fn(async (fn: any) =>
+        fn({
+          tenantAddon,
+          // B865 / SA-277 harness note: the race test builds its own tx — add the same two
+          // ledger-lock members `make()` adds, defaulting to a paying (ACTIVE/PRODUCTION) row
+          // so this test keeps proving the F1 lock, not the (separately-tested) B865 gate.
+          $queryRaw: jest.fn().mockResolvedValue([]),
+          tenant: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue({
+              status: "ACTIVE",
+              class: "PRODUCTION",
+              deletedAt: null,
+              subscription: { planKey: "TEAM" },
+            }),
+          },
+        }),
+      ),
     } as any;
     const cat = { getPublishedCatalog: jest.fn().mockResolvedValue(catalog()) } as any;
     const proration = {
@@ -948,7 +1910,7 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     const entitlements = { invalidate: jest.fn() } as any;
     const events = { emit: jest.fn().mockResolvedValue({}) } as any;
     const tenantStatus = { invalidate: jest.fn() } as any;
-    const stripe = { isConfigured: false } as any;
+    const stripe = { isConfigured: true, client: raceStripeClient } as any;
     const billingNotification = {
       notifyUpgradeConfirmed: jest.fn().mockResolvedValue(undefined),
       notifyDowngradeScheduled: jest.fn().mockResolvedValue(undefined),
@@ -981,6 +1943,8 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     );
     expect(enabledEmits).toHaveLength(1);
     expect(enabledEmits[0][3].amountDelta).toBe(12); // ONE delta of 1 × $12, never 24
+    // ... and ONE Stripe item: the second, serialised call sees the first call's row.
+    expect(raceStripeClient.subscriptionItems.create).toHaveBeenCalledTimes(1);
 
     // Structural pin: the lock actually wraps the critical section, keyed per (tenantId, sku)
     // — matching the admin path's key shape exactly so the two paths serialise against
@@ -1521,6 +2485,7 @@ describe("SubscriptionMutationService — one armed transition at a time (REG-B5
         cancelAtPeriodEnd: true,
         downgradeToPlanKey: "STARTER",
         downgradeEffectiveAt: periodEnd,
+        basePriceSnapshot: 59, // #2460: a consistent row carries its snapshot (the ledger nets against it, SA-464).
       },
     });
     await svc.upgrade("t1", "BUSINESS", "admin");
@@ -2482,5 +3447,370 @@ describe("STRIPE-CANCEL-2 — cancel() propagates to Stripe for a READ_ONLY tena
       data: { stripeSubId: null },
     });
     expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
+// #2189 / SA-389: the B58 guard and every pre-tx input prepare() consumed are re-checked UNDER
+// the tenant lock, before any write. Two-connection proof is the DB lane's (F2).
+describe("#2189 subscribe() re-checks under the lock (SA-389)", () => {
+  const source = require("fs").readFileSync(
+    require("path").join(__dirname, "subscription-mutation.service.ts"),
+    "utf8",
+  ) as string;
+
+  it("placement: the ONE guard runs pre-tx and again after lockTenantForLedger, before any write", () => {
+    const body = source.slice(
+      source.indexOf("async subscribe("),
+      source.indexOf("async planChangePreview("),
+    );
+    const calls = [...body.matchAll(/b58GuardRefusal\(/g)].map((m) => m.index!);
+    expect(calls).toHaveLength(2);
+    const lock = body.indexOf("await lockTenantForLedger(tx, tenantId)");
+    const tx = body.indexOf("this.prisma.$transaction(");
+    const firstWrite = body.indexOf("this.planTransition.onPlanChange(");
+    expect(calls[0]).toBeLessThan(tx); // fast refusal, pre-tx
+    expect(calls[1]).toBeGreaterThan(lock); // re-check under the lock
+    expect(calls[1]).toBeLessThan(firstWrite); // before anything is written
+    const stale = body.indexOf("PLAN_CHANGED_DURING_SUBSCRIBE");
+    expect(stale).toBeGreaterThan(lock);
+    expect(stale).toBeLessThan(firstWrite);
+    // SA-389 (3): one source for wasTrial — the locked tenant.
+    expect(body).not.toMatch(/const wasTrial = tenant\.status/);
+    expect(body).toMatch(/const wasTrial = lockedTenant\.status === "TRIAL"/);
+  });
+
+  it("a plan committed between the pre-read and the lock ⇒ 409 PLAN_CHANGED_DURING_SUBSCRIBE, nothing written, no event", async () => {
+    const { svc, tx, events, planTransition } = make({ tenantStatus: "TRIAL" });
+    tx.tenant.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      plan: "TEAM",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({
+      planKey: "BUSINESS",
+      cycle: "ANNUAL",
+      periodEnd: null,
+    });
+    const err = await svc
+      .subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin")
+      .catch((e: any) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: "PLAN_CHANGED_DURING_SUBSCRIBE",
+      retryable: true,
+    });
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(tx.tenant.update).not.toHaveBeenCalled();
+    expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("the locked row can make the B58 guard refuse even when the pre-read allowed it (no write)", async () => {
+    const sub = { planKey: "TEAM", cycle: "MONTHLY", periodEnd: null };
+    const { svc, tx, events } = make({ tenantStatus: "TRIAL", sub });
+    tx.tenant.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      plan: "TEAM",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue({
+      ...sub,
+      periodEnd: new Date(Date.now() + 20 * 24 * 3600 * 1000),
+    });
+    await expect(
+      svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin"),
+    ).rejects.toThrow("You are already on this plan — nothing to change");
+    expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("wasTrial comes from the LOCKED tenant: converted in between ⇒ no trialConvertedAt, no TRIAL_CONVERTED", async () => {
+    const sub = { planKey: "TEAM", cycle: "MONTHLY", periodEnd: null };
+    const { svc, tx, events } = make({ tenantStatus: "TRIAL", sub });
+    tx.tenant.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      plan: "TEAM",
+      class: "PRODUCTION",
+      deletedAt: null,
+    });
+    tx.tenantSubscription.findUnique.mockResolvedValue(sub);
+    await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+    const written = tx.tenantSubscription.upsert.mock.calls[0][0];
+    expect(written.create.trialConvertedAt).toBeNull();
+    expect(written.update.trialConvertedAt).toBeUndefined();
+    expect(events.emit.mock.calls.map((c: any[]) => c[1])).not.toContain(
+      BILLING_EVENTS.TRIAL_CONVERTED,
+    );
+  });
+});
+
+// #2188 / SA-385 (5), tenant side — a CONSTRUCTED path, UNIT pins only (SA-385b); the reachable
+// pairs are pinned in addon.service.spec.ts and on the DB lane. Today no legacy-mapped SKU (REGULATED_ITEMS, MSRP,
+// SALES_AGENTS, OCR_PACK_250) is self-service, so subscribe()/self-serve cannot yet meet an admin
+// legacy-keyed row; these pins widen SELF_SERVICE_ADDON_SKUS for MSRP inside the block only, so the
+// shared lookup is proven the day one becomes self-service. Admin-side pins: addon.service.spec.ts.
+describe("#2188 tenant paths find an admin legacy-keyed row (constructed path, SA-385b)", () => {
+  const selfService = SELF_SERVICE_ADDON_SKUS as unknown as string[];
+  beforeEach(() => selfService.push("MSRP"));
+  afterEach(() => selfService.splice(selfService.indexOf("MSRP"), 1));
+
+  const addonBooked = (events: any) =>
+    events.emit.mock.calls
+      .filter((c: any[]) =>
+        [BILLING_EVENTS.ADDON_ENABLED, BILLING_EVENTS.ADDON_DISABLED].includes(c[1]),
+      )
+      .reduce((sum: number, c: any[]) => sum + (c[3]?.amountDelta ?? 0), 0);
+  const withStore = (seed: Parameters<typeof fakeTenantAddonStore>[0], opts: Opts = {}) => {
+    const made = make(opts);
+    const store = fakeTenantAddonStore(seed);
+    made.prisma.tenantAddon = store;
+    made.tx.tenantAddon = store;
+    return { ...made, store };
+  };
+
+  it("self-serve enable re-activates the admin's legacy row IN PLACE and nets the ledger once", async () => {
+    // INACTIVE seed: an ACTIVE free row is never retro-billed by a re-enable (see
+    // subscription-mutation.addon-billing.spec.ts case 8); re-activation is the billed path.
+    const { svc, store, events } = withStore(
+      [{ addonKey: "msrp", sku: "MSRP", active: false, quantity: 1, priceSnapshot: 0 }],
+      { sub: BILLED_SUB },
+    );
+    await svc.enableAddon("t1", "MSRP", 1);
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0]).toMatchObject({ id: "row1", addonKey: "msrp", active: true });
+    expect(addonBooked(events)).toBe(20); // {0,1} → {20,1}: +X once, never +X on a second row
+  });
+
+  it("subscribe re-activates an INACTIVE admin legacy row instead of creating a second", async () => {
+    const { svc, store } = withStore(
+      [{ addonKey: "msrp", sku: "MSRP", active: false, quantity: 1, priceSnapshot: 20 }],
+      { tenantStatus: "TRIAL" },
+    );
+    await svc.subscribe(
+      "t1",
+      { planKey: "TEAM", cycle: "MONTHLY", addons: [{ sku: "MSRP", quantity: 1 }] },
+      "admin",
+    );
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0]).toMatchObject({ id: "row1", addonKey: "msrp", active: true });
+  });
+
+  it("self-serve disable finds the admin's legacy row and books −X once", async () => {
+    const { svc, store, events } = withStore(
+      [{ addonKey: "msrp", sku: "MSRP", active: true, quantity: 1, priceSnapshot: 20 }],
+      { txTenantStatus: "ACTIVE" },
+    );
+    await svc.disableAddon("t1", "MSRP");
+    expect(store.rows[0].active).toBe(false);
+    expect(addonBooked(events)).toBe(-20);
+  });
+});
+
+// #2551 / SA-503a (tier 1, lock-order conformance): every subscription writer takes the Tenant row
+// lock (lockTenantForLedger) as its FIRST statement after the plan-transition hook — before any
+// TenantSubscription write — so it can never hold the subscription row while waiting on a Tenant
+// lock held by reconcilePriceLedger/updatePlan/updateTenantPriceOverride (40P01).
+describe("#2551 lock-order conformance — Tenant lock before the subscription write", () => {
+  const trace = (tx: any, order: string[]) => {
+    tx.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      const sql = Array.from(strings).join("?");
+      if (/FROM "Tenant" WHERE id = \? FOR UPDATE/.test(sql)) order.push("tenant-lock");
+      return [];
+    });
+    for (const m of ["update", "updateMany", "upsert"] as const) {
+      const fn = tx.tenantSubscription[m];
+      if (!fn) continue;
+      const real = fn.getMockImplementation();
+      fn.mockImplementation(async (...a: any[]) => {
+        order.push("sub-write");
+        return real ? real(...a) : { count: 1 };
+      });
+    }
+  };
+
+  it("upgrade(): hook → Tenant lock → guarded subscription write", async () => {
+    const { svc, tx, planTransition } = make({
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    const order: string[] = [];
+    planTransition.onPlanChange.mockImplementation(async () => {
+      order.push("onPlanChange");
+      return { action: "none" };
+    });
+    trace(tx, order);
+
+    await svc.upgrade("t1", "BUSINESS", "admin");
+
+    expect(order.slice(0, 3)).toEqual(["onPlanChange", "tenant-lock", "sub-write"]);
+  });
+
+  it("cancel(): Tenant lock → subscription write (its second tx)", async () => {
+    const { periodEnd } = activePeriod();
+    const { svc, tx } = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd, stripeSubId: null },
+    });
+    const order: string[] = [];
+    trace(tx, order);
+
+    await svc.cancel("t1", "admin");
+
+    expect(order.slice(0, 2)).toEqual(["tenant-lock", "sub-write"]);
+  });
+
+  it("downgrade(): Tenant lock → subscription write (fold: it inserts a BillingEvent after)", async () => {
+    const { svc, tx } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodEnd: new Date("2026-08-01") },
+    });
+    const order: string[] = [];
+    trace(tx, order);
+
+    await svc.downgrade("t1", "STARTER", ["u1"], "admin");
+
+    expect(order.slice(0, 2)).toEqual(["tenant-lock", "sub-write"]);
+  });
+
+  it("resume(): Tenant lock → subscription write", async () => {
+    const { svc, tx } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", cancelAtPeriodEnd: true },
+    });
+    const order: string[] = [];
+    trace(tx, order);
+
+    await svc.resume("t1", "admin");
+
+    expect(order.slice(0, 2)).toEqual(["tenant-lock", "sub-write"]);
+  });
+});
+
+// #2583 / SA-513 (tier 1): subscribe() and upgrade() decide "paying" with the shared isPayingRow
+// (status ACTIVE + class PRODUCTION + not deleted + a planKey), read UNDER the Tenant lock:
+// Δ = after − before, a non-paying side counting 0. The snapshot is still WRITTEN for a non-paying
+// row (a later class flip rebases from it, SA-464 (2)); a deleted tenant is refused before the tx.
+describe("#2583 subscribe()/upgrade() book on the shared paying predicate", () => {
+  const tenantRow = (status: string, cls: string, deletedAt: Date | null = null) => ({
+    status,
+    plan: "STARTER",
+    class: cls,
+    deletedAt,
+  });
+  /** Pre-tx and under-lock reads return the same row unless `locked` differs (a race). */
+  const arrange = (h: ReturnType<typeof make>, pre: any, locked: any = pre) => {
+    h.prisma.tenant.findUnique.mockResolvedValue(pre);
+    h.tx.tenant.findUnique.mockResolvedValue(locked);
+  };
+
+  describe("upgrade() STARTER (snapshot 59) → BUSINESS (349)", () => {
+    const sub = (planKey: string | null, snapshot: number | null) => ({
+      planKey,
+      cycle: "MONTHLY",
+      periodStart: null,
+      periodEnd: null,
+      basePriceSnapshot: snapshot,
+      priceOverrideMonthly: null,
+    });
+    it.each([
+      ["ACTIVE PRODUCTION (control)", tenantRow("ACTIVE", "PRODUCTION"), sub("STARTER", 59), 290],
+      ["ACTIVE TEST class", tenantRow("ACTIVE", "TEST"), sub("STARTER", 59), 0],
+      ["ACTIVE DEMO class", tenantRow("ACTIVE", "DEMO"), sub("STARTER", 59), 0],
+      [
+        "READ_ONLY PRODUCTION (not paying either side)",
+        tenantRow("READ_ONLY", "PRODUCTION"),
+        sub("STARTER", 59),
+        0,
+      ],
+      [
+        "ACTIVE PRODUCTION, planKey NULL (enters the set)",
+        tenantRow("ACTIVE", "PRODUCTION"),
+        sub(null, null),
+        349,
+      ],
+      ["ACTIVE TEST, planKey NULL", tenantRow("ACTIVE", "TEST"), sub(null, null), 0],
+    ])("%s ⇒ the expected Δ; the snapshot is still written 349", async (_l, tenant, s, delta) => {
+      const h = make({ sub: s });
+      arrange(h, tenant);
+      await h.svc.upgrade("t1", "BUSINESS", "admin");
+      expect(deltaOf(h.events, BILLING_EVENTS.PLAN_CHANGED)).toBe(delta);
+      expect(h.tx.tenantSubscription.updateMany.mock.calls[0][0].data.basePriceSnapshot).toBe(349);
+    });
+
+    // SA-513a (b): the three older paying pins moved to ACTIVE; this keeps the TRIAL case explicit —
+    // a TRIAL tenant is outside the paying set, so its upgrade books Δ0 in exactly ONE plan.changed.
+    it("a TRIAL (non-paying) tenant's upgrade books Δ0 in exactly one plan.changed", async () => {
+      const h = make({ sub: sub("STARTER", 59) });
+      arrange(h, tenantRow("TRIAL", "PRODUCTION"));
+      await h.svc.upgrade("t1", "BUSINESS", "admin");
+      const planChanged = h.events.emit.mock.calls.filter(
+        (c: any[]) => c[1] === BILLING_EVENTS.PLAN_CHANGED,
+      );
+      expect(planChanged.map((c: any[]) => c[3]?.amountDelta)).toEqual([0]);
+    });
+
+    it("the class is read UNDER the Tenant lock: PRODUCTION pre-tx but TEST under the lock ⇒ Δ0", async () => {
+      const h = make({ sub: sub("STARTER", 59) });
+      arrange(h, tenantRow("ACTIVE", "PRODUCTION"), tenantRow("ACTIVE", "TEST"));
+      await h.svc.upgrade("t1", "BUSINESS", "admin");
+      expect(deltaOf(h.events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+    });
+
+    it("a deleted tenant is refused before the transaction", async () => {
+      const h = make({ sub: sub("STARTER", 59) });
+      arrange(h, tenantRow("ACTIVE", "PRODUCTION", new Date("2026-09-01")));
+      await expect(h.svc.upgrade("t1", "BUSINESS", "admin")).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(h.prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("subscribe() to BUSINESS (349) MONTHLY", () => {
+    it.each([
+      ["TRIAL PRODUCTION (control: enters the set)", tenantRow("TRIAL", "PRODUCTION"), null, 349],
+      ["TRIAL TEST class (never enters the set)", tenantRow("TRIAL", "TEST"), null, 0],
+      [
+        "ACTIVE TEST class re-choice (neither side paying)",
+        tenantRow("ACTIVE", "TEST"),
+        { planKey: "STARTER", cycle: "MONTHLY", periodEnd: null, basePriceSnapshot: 59 },
+        0,
+      ],
+      [
+        "ACTIVE PRODUCTION re-choice (control: nets the stored snapshot)",
+        tenantRow("ACTIVE", "PRODUCTION"),
+        { planKey: "STARTER", cycle: "MONTHLY", periodEnd: null, basePriceSnapshot: 59 },
+        290,
+      ],
+    ])("%s ⇒ the expected Δ", async (_l, tenant, s, delta) => {
+      const h = make({ sub: s });
+      arrange(h, tenant);
+      await h.svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" } as any, "admin");
+      expect(deltaOf(h.events, BILLING_EVENTS.PLAN_CHANGED)).toBe(delta);
+    });
+
+    it("the snapshot is still written for a non-paying (TEST) tenant", async () => {
+      const h = make({});
+      arrange(h, tenantRow("TRIAL", "TEST"));
+      await h.svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" } as any, "admin");
+      const up = h.tx.tenantSubscription.upsert.mock.calls[0][0];
+      expect(up.create.basePriceSnapshot).toBe(349);
+      expect(up.update.basePriceSnapshot).toBe(349);
+    });
+
+    it("the class is read UNDER the Tenant lock: PRODUCTION pre-tx but TEST under the lock ⇒ Δ0", async () => {
+      const h = make({});
+      arrange(h, tenantRow("TRIAL", "PRODUCTION"), tenantRow("TRIAL", "TEST"));
+      await h.svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" } as any, "admin");
+      expect(deltaOf(h.events, BILLING_EVENTS.PLAN_CHANGED)).toBe(0);
+    });
+
+    it("a deleted tenant is refused before the transaction", async () => {
+      const h = make({});
+      arrange(h, tenantRow("TRIAL", "PRODUCTION", new Date("2026-09-01")));
+      await expect(
+        h.svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" } as any, "admin"),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(h.prisma.$transaction).not.toHaveBeenCalled();
+    });
   });
 });

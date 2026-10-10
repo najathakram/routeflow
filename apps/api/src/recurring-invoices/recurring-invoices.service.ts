@@ -1,16 +1,26 @@
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
+import { CronExpression } from "@nestjs/schedule";
+import { blockedTemplateLines } from "./recurring-invoice-restrictions";
+import { calcNextRunAt } from "./recurring-schedule";
+import { NotificationsService } from "../notifications/notifications.service";
 import { CreateRecurringInvoiceDto } from "./dto/create-recurring-invoice.dto";
 import { UpdateRecurringInvoiceDto } from "./dto/update-recurring-invoice.dto";
 import { RecurringFrequency } from "@prisma/client";
+import { recurringLineSplit } from "./recurring-line-split";
+import { assertNsfLinesUntaxed, nsfSafeTaxRate } from "../invoices/nsf-line-tax-guard";
+import { assertSellableLines } from "../products/sellable-lines";
 
 /** REG-B106: RecurringInvoice.lastRunStatus values (schema comment: "SUCCESS" | "FAILED"). */
 export const RUN_STATUS_SUCCESS = "SUCCESS";
 export const RUN_STATUS_FAILED = "FAILED";
+/** F-05: the `lastError` prefix a selling-restriction suspension records (reactivation clears exactly that notice). */
+export const SUSPENDED_ERROR_PREFIX = "Suspended:";
 /** Provisional lastError stamped at claim time; overwritten by SUCCESS or the real failure. */
 export const RUN_INTERRUPTED_ERROR = "Generation was interrupted before the invoice was created";
 /**
@@ -29,6 +39,8 @@ export class RecurringInvoicesService {
     private readonly prisma: PrismaService,
     private readonly tenantCtx: TenantContextService,
     private readonly invoicesService: InvoicesService,
+    private readonly sellingRestrictions: SellingRestrictionsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ─── Next run calculation ──────────────────────────────────────────────────
@@ -39,48 +51,13 @@ export class RecurringInvoicesService {
     dayOfMonth?: number | null,
     from: Date = new Date(),
   ): Date {
-    if (frequency === RecurringFrequency.MONTHLY) {
-      // REG-B46: the old branch called d.setDate(1) BEFORE testing d.getDate() > dom, so
-      // the test was always `1 > dom` (false) and the month never advanced — the midnight
-      // cron re-selected every MONTHLY template nightly. Decide from `from` itself: the
-      // template's dayOfMonth in the earliest month whose occurrence is STRICTLY after
-      // `from`'s calendar day, re-applied from `dom` each month and clamped to that
-      // month's length (dom 31 → Feb 28 → Mar 31, no drift; Dec → Jan of next year).
-      // Clamp first: `dayOfMonth` is a nullable Int with no DB constraint and the PATCH was
-      // unvalidated until REG-B92, so a stored 0 or negative is reachable — and it would
-      // make the loop below never advance (occurrence(y, m) would land in month m-1 and
-      // come straight back to the same date), hanging the event loop and with it the cron
-      // and the whole API process. A corrupt row degrades to day 1, never to a hang.
-      const dom = Math.min(31, Math.max(1, Math.trunc(Number(dayOfMonth)) || 1));
-      const base = new Date(from);
-      base.setHours(0, 0, 0, 0);
-      const occurrence = (year: number, monthIndex: number): Date => {
-        const lastDay = new Date(year, monthIndex + 1, 0).getDate();
-        return new Date(year, monthIndex, Math.min(dom, lastDay));
-      };
-      let next = occurrence(base.getFullYear(), base.getMonth());
-      while (next.getTime() <= base.getTime()) {
-        next = occurrence(next.getFullYear(), next.getMonth() + 1);
-      }
-      return next;
-    }
-
-    const d = new Date(from);
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + 1); // always at least tomorrow
-
-    // WEEKLY or BIWEEKLY — find next occurrence of dayOfWeek   ← UNCHANGED from here down
-    const dow = dayOfWeek ?? 1; // default Monday
-    const current = d.getDay();
-    const daysUntil = (dow - current + 7) % 7 || 7;
-    d.setDate(d.getDate() + daysUntil);
-    if (frequency === RecurringFrequency.BIWEEKLY) d.setDate(d.getDate() + 7);
-    return d;
+    return calcNextRunAt(frequency, dayOfWeek, dayOfMonth, from);
   }
 
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
   async create(dto: CreateRecurringInvoiceDto) {
+    assertNsfLinesUntaxed(dto.items ?? []); // #2656: a template's NSF-described line is never taxed
     // REG-B131: a removed (soft-deleted) customer is not a recurring-invoice target — the sweep
     // already skips their schedules, so creating one would only schedule a silent no-op. Refuse
     // through the existing not-found branch so no customer state leaks.
@@ -88,6 +65,7 @@ export class RecurringInvoicesService {
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId, deletedAt: null } });
     if (!customer) throw new NotFoundException("Customer not found");
+    await this.assertNoFamilyLines(dto.items ?? []);
 
     return this.prisma.forTenant().recurringInvoice.create({
       data: {
@@ -117,6 +95,17 @@ export class RecurringInvoicesService {
     });
   }
 
+  /** WS8: a template line never names a FAMILY (the generated invoice line would). */
+  private async assertNoFamilyLines(items: ReadonlyArray<{ productId?: string | null }>) {
+    const ids = [...new Set(items.map((i) => i.productId).filter((id): id is string => !!id))];
+    if (ids.length === 0) return;
+    const products = await this.prisma.forTenant().product.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true, kind: true },
+    });
+    assertSellableLines(products);
+  }
+
   async findAll(customerId?: string) {
     return this.prisma.forTenant().recurringInvoice.findMany({
       where: customerId ? { customerId } : {},
@@ -135,6 +124,7 @@ export class RecurringInvoicesService {
   }
 
   async update(id: string, dto: UpdateRecurringInvoiceDto) {
+    assertNsfLinesUntaxed(dto.items ?? []); // #2656: 400 before any read or write
     await this.findOne(id);
     const include = { customer: { select: { id: true, businessName: true } }, items: true };
     const data = {
@@ -155,6 +145,7 @@ export class RecurringInvoicesService {
     // the re-create must never leave a template with no items.
     const tenantId = this.prisma.getTenantId();
     const items = dto.items;
+    await this.assertNoFamilyLines(items);
     return this.prisma.tenantTransaction(async (tx) => {
       await tx.recurringInvoiceItem.deleteMany({ where: { recurringInvoiceId: id } });
       return tx.recurringInvoice.update({
@@ -187,11 +178,64 @@ export class RecurringInvoicesService {
 
   /** Resume a paused template. Counterpart to deactivate() — the only path that
    *  sets isActive back to true (update() intentionally never maps isActive). */
-  async activate(id: string) {
-    await this.findOne(id);
-    return this.prisma
-      .forTenant()
-      .recurringInvoice.update({ where: { id }, data: { isActive: true } });
+  async activate(id: string, actorUserId: string | null = null) {
+    const ri = await this.findOne(id);
+    // Toggling an ACTIVE template is a no-op (a stale list, a double click): advancing its nextRunAt here would
+    // silently skip a cycle whose run FAILED, which is then never billed.
+    if (ri.isActive) return ri;
+    // F-05 (SA-247(b), SA-268): a resumed schedule bills from the NEXT occurrence — a cycle that fell inside ANY
+    // pause (a selling-restriction suspension or an admin pause) is billed only by an explicit "Run now". If
+    // nextRunAt has passed, the midnight run would otherwise issue a make-up for it, so reactivation moves it to
+    // the next occurrence after NOW in the same transaction and records the skipped cycle in the audit row.
+    // A nextRunAt still in the future is left untouched.
+    const now = new Date();
+    const stale = ri.nextRunAt != null && ri.nextRunAt.getTime() <= now.getTime();
+    // The suspension notice must not outlive the suspension (the card would show it on an active template).
+    const clearNotice = String(ri.lastError ?? "").startsWith(SUSPENDED_ERROR_PREFIX);
+    const nextRunAt = stale
+      ? this.calcNextRunAt(ri.frequency, ri.dayOfWeek, ri.dayOfMonth, now)
+      : undefined;
+    return this.prisma.tenantTransaction(async (tx: any) => {
+      // Conditional on the row still being inactive: a concurrent toggle makes this a no-op, never a second advance.
+      const { count } = await tx.recurringInvoice.updateMany({
+        where: { id, isActive: false },
+        data: {
+          isActive: true,
+          ...(nextRunAt ? { nextRunAt } : {}),
+          ...(clearNotice ? { lastRunStatus: null, lastError: null } : {}),
+        },
+      });
+      if (count === 0) return tx.recurringInvoice.findUnique({ where: { id } }); // a fresh read, never the stale row
+      // F-05: a reactivation is an explicit, audited act (it may follow a selling-restriction suspension)
+      await this.auditInTx(
+        tx,
+        "recurring-invoice.reactivated",
+        id,
+        actorUserId,
+        stale ? { skippedCycleDueAt: ri.nextRunAt!.toISOString(), resumedAt: nextRunAt } : {},
+      );
+      return tx.recurringInvoice.findUnique({ where: { id } });
+    });
+  }
+
+  /** F-05: an audit row committed in the SAME transaction as the change it records. */
+  private async auditInTx(
+    tx: any,
+    action: string,
+    entityId: string,
+    userId: string | null,
+    meta: Record<string, unknown>,
+  ): Promise<void> {
+    await tx.auditLog.create({
+      data: {
+        tenantId: this.prisma.getTenantId(),
+        userId,
+        action,
+        entityType: "recurring-invoices",
+        entityId,
+        meta: meta as any,
+      },
+    });
   }
 
   async runNow(id: string) {
@@ -200,7 +244,7 @@ export class RecurringInvoicesService {
       include: { items: true, customer: true },
     });
     if (!ri) throw new NotFoundException("Recurring invoice not found");
-    return this.generateInvoiceFromTemplate(ri);
+    return this.generateInvoiceFromTemplate(ri, false);
   }
 
   // ─── Core generation logic ────────────────────────────────────────────────
@@ -208,6 +252,63 @@ export class RecurringInvoicesService {
   /** B142: builds a one-line note when the template still references an
    *  archived product — never blocks generation, only makes the gap visible
    *  on the resulting invoice. Returns null when nothing is archived. */
+  private async suspendForSellingRestriction(
+    ri: {
+      id: string;
+      customerId: string;
+      frequency: RecurringFrequency;
+      dayOfWeek?: number | null;
+      dayOfMonth?: number | null;
+      nextRunAt?: Date | string | null;
+    },
+    reasons: Array<{ productName?: string | null; ruleId?: string | null }>,
+  ): Promise<void> {
+    const names = [...new Set(reasons.map((r) => r.productName).filter(Boolean))].join(", ");
+    // The skipped cycle is NEVER billed as a make-up: nextRunAt moves to the next occurrence AFTER now in
+    // the SAME update that suspends, so reactivation resumes from the schedule. The flag and its audit row
+    // commit together (AuditService swallows errors, so it cannot be the record of a state change).
+    const now = new Date();
+    const dueAt = ri.nextRunAt ? new Date(ri.nextRunAt) : now;
+    const nextRunAt = this.calcNextRunAt(
+      ri.frequency,
+      ri.dayOfWeek,
+      ri.dayOfMonth,
+      dueAt.getTime() > now.getTime() ? dueAt : now,
+    );
+    await this.prisma.tenantTransaction(async (tx: any) => {
+      await tx.recurringInvoice.update({
+        where: { id: ri.id },
+        data: {
+          isActive: false,
+          nextRunAt,
+          lastRunStatus: RUN_STATUS_FAILED,
+          lastError: `${SUSPENDED_ERROR_PREFIX} a line is under a selling restriction${names ? ` (${names})` : ""}. Fix the template and reactivate it; the skipped cycle is not billed.`,
+        },
+      });
+      await this.auditInTx(tx, "recurring-invoice.suspended", ri.id, null, {
+        reason: "SELLING_RESTRICTED",
+        ruleIds: [...new Set(reasons.map((r) => r.ruleId).filter(Boolean))],
+        skippedCycle: (ri.nextRunAt ? new Date(ri.nextRunAt) : now).toISOString(),
+      });
+    });
+    const operators = await this.prisma.user.findMany({
+      where: {
+        tenantId: this.prisma.getTenantId(),
+        role: { in: ["OPERATOR", "TENANT_ADMIN"] },
+        status: "ACTIVE",
+      },
+      select: { id: true },
+    });
+    for (const op of operators) {
+      await this.notifications
+        .sendToUser(op.id, {
+          title: "Recurring invoice suspended",
+          body: `A recurring invoice was not issued and is suspended: a line is under a selling restriction${names ? ` (${names})` : ""}. Fix the template and reactivate it.`,
+        })
+        .catch(() => {});
+    }
+  }
+
   private async buildArchivedItemsNote(productIds: string[]): Promise<string | null> {
     if (productIds.length === 0) return null;
     const products = await this.prisma.forTenant().product.findMany({
@@ -220,7 +321,53 @@ export class RecurringInvoicesService {
     return `Note: ${labels} ${archived.length > 1 ? "are" : "is"} archived; billed as scheduled.`;
   }
 
-  private async generateInvoiceFromTemplate(ri: any) {
+  /** B646: the boxed split of a template line; warns (findable later) when a boxed line's qty is not a whole number of pieces. */
+  private boxedSplitOrWarn(ri: any, item: any, livePack: number | null | undefined) {
+    const split = recurringLineSplit(item, livePack);
+    if (split) return { ...split, packSnapshot: Math.trunc(Number(livePack)) };
+    if (
+      !split &&
+      item.productId &&
+      !item.unitLabel &&
+      Number(livePack ?? 0) > 1 &&
+      Number(item.qty) > 0
+    ) {
+      this.logger.warn(
+        `Recurring invoice ${ri.id}: template line "${item.description}" (product ${item.productId}) qty ${item.qty} is not a whole number of pieces of a ${livePack}-pack; generated as today (qty stored in the pieces column)`,
+      );
+    }
+    return split;
+  }
+
+  /** #2656 / B142: billing never pauses — a legacy NSF template line's rate is billed at 0 and logged. */
+  private runLineTaxRate(ri: any, item: any): number {
+    const { taxRate, zeroed } = nsfSafeTaxRate(item);
+    if (zeroed)
+      this.logger.warn(
+        `Recurring invoice ${ri.id}: NSF fee line carried taxRate ${String(item.taxRate)}; billed at 0 (#2656)`,
+      );
+    return taxRate;
+  }
+
+  private async generateInvoiceFromTemplate(ri: any, unattended = true) {
+    // #2656 / SA-549e: "Run now" is an operator deciding — a template whose NSF line carries a rate is
+    // refused (400 NSF_LINE_UNTAXED) before the cycle is claimed, so nothing is issued or written.
+    // Only the UNATTENDED run bills that line at 0 and logs it (B142: billing never pauses).
+    if (!unattended) assertNsfLinesUntaxed(ri.items ?? []);
+    // F-05 (SA-205): a banned line refuses the whole document — it is never dropped so the rest issues, since
+    // that would change the invoice's money with nobody deciding. "Run now" is an operator deciding (409, the
+    // template is untouched); the unattended run skips the cycle BEFORE it is claimed, notifies once and
+    // SUSPENDS the template until a tenant admin reactivates it. A tenant-owned template sells as STAFF.
+    const blocked = await blockedTemplateLines(
+      this.sellingRestrictions,
+      requireRestrictionTenantId(this.prisma.getTenantId()),
+      ri,
+      unattended,
+    );
+    if (blocked) {
+      await this.suspendForSellingRestriction(ri, blocked);
+      return null;
+    }
     // Claim the cycle BEFORE creating anything (B9 — see the history in this comment's
     // previous version). REG-B106: the claim also stamps a PROVISIONAL outcome — until
     // the invoice exists this cycle has NOT succeeded, so a process crash between here
@@ -266,6 +413,18 @@ export class RecurringInvoicesService {
 
     let invoice: any;
     try {
+      // B646: the LIVE pack at generation time (generation is the sale), to store a boxed line's boxes.
+      // Read INSIDE the try, after the claim: a failed read records FAILED and gives the cycle back.
+      const packRows: any[] =
+        templateProductIds.length > 0
+          ? await this.prisma.forTenant().product.findMany({
+              where: { id: { in: templateProductIds } },
+              select: { id: true, unitsPerBox: true },
+            })
+          : [];
+      const packByProduct = new Map<string, number | null>(
+        (packRows ?? []).map((p: any) => [p.id, p.unitsPerBox ?? null]),
+      );
       invoice = await this.invoicesService.create({
         customerId: ri.customerId,
         discount: Number(ri.discount),
@@ -278,7 +437,10 @@ export class RecurringInvoicesService {
           qty: Number(item.qty),
           unitPrice: Number(item.unitPrice),
           discount: Number(item.discount),
-          taxRate: Number(item.taxRate),
+          taxRate: unattended ? this.runLineTaxRate(ri, item) : Number(item.taxRate),
+          // B646: a boxed pack count carries its split, so qty is stored in PIECES (boxes x pack), and
+          // SA-135: the pack it was split with rides along as packSnapshot (ONE read, never re-read).
+          ...this.boxedSplitOrWarn(ri, item, packByProduct.get(item.productId)),
         })),
       });
     } catch (err) {
@@ -430,8 +592,8 @@ export class RecurringInvoicesService {
 
         for (const ri of due) {
           try {
-            await this.generateInvoiceFromTemplate(ri);
-            totalSuccess++;
+            // null = skipped (cycle already claimed, or suspended by a selling restriction): not "generated"
+            if (await this.generateInvoiceFromTemplate(ri)) totalSuccess++;
           } catch (err) {
             totalFail++;
             this.logger.error(

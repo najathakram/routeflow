@@ -7,6 +7,8 @@ import {
   Param,
   Patch,
   Post,
+  Put,
+  Query,
   UseGuards,
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
@@ -17,6 +19,9 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { MessagingService } from "./messaging.service";
 import { MessagingConfigService } from "./messaging-config.service";
+import { MessagingDeliveriesService } from "./messaging-deliveries.service";
+import { EmailDeliveryStatus } from "@prisma/client";
+import { StaffEmailSettingsService } from "./staff-email-settings.service";
 import { SendMessageDto } from "./dto/send-message.dto";
 import { NotifyDto } from "./dto/notify.dto";
 import { UpdateRuleDto } from "./dto/update-rule.dto";
@@ -44,6 +49,8 @@ export class MessagingController {
   constructor(
     private readonly messaging: MessagingService,
     private readonly config: MessagingConfigService,
+    private readonly deliveries: MessagingDeliveriesService,
+    private readonly staffEmail: StaffEmailSettingsService,
   ) {}
 
   @Post("threads/:customerId/messages")
@@ -124,6 +131,35 @@ export class MessagingController {
     return this.config.getSettings();
   }
 
+  // ─── Email delivery log + health (WS4) ───────────────────────────────────
+
+  @Get("deliveries")
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  @ApiOperation({
+    summary:
+      "Email delivery log, last 30 days (addresses masked for OPERATOR, full for TENANT_ADMIN)",
+  })
+  listDeliveries(
+    @CurrentUser() user: { role: string },
+    @Query("status") status?: string,
+    @Query("page") page?: string,
+    @Query("pageSize") pageSize?: string,
+  ) {
+    const ok = (Object.values(EmailDeliveryStatus) as string[]).includes(status ?? "");
+    return this.deliveries.list(user.role, {
+      status: ok ? (status as EmailDeliveryStatus) : undefined,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Math.min(100, Number(pageSize)) : undefined,
+    });
+  }
+
+  @Get("delivery-health")
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Email delivery counts + fix keys for the last 7 days" })
+  deliveryHealth() {
+    return this.deliveries.health();
+  }
+
   @Patch("settings")
   @Roles(UserRole.TENANT_ADMIN)
   @ApiOperation({
@@ -131,5 +167,24 @@ export class MessagingController {
   })
   updateSettings(@Body() dto: UpdateMessagingSettingsDto) {
     return this.config.updateSettings(dto);
+  }
+
+  // ─── Staff order-email settings (WS4, SA-606) ────────────────────────────
+
+  @Get("staff-email-settings")
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  @ApiOperation({
+    summary:
+      "Staff order-email 'Also send to' list + read-only effective mode (masked for OPERATOR)",
+  })
+  getStaffEmailSettings(@CurrentUser() user: { role: string }) {
+    return this.staffEmail.get(user.role);
+  }
+
+  @Put("staff-email-settings")
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Replace the staff order-email 'Also send to' list (TENANT_ADMIN)" })
+  updateStaffEmailSettings(@Body() body: { staffCc: string[] }) {
+    return this.staffEmail.update(body);
   }
 }

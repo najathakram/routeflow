@@ -4,6 +4,7 @@ import * as WebBrowser from "expo-web-browser";
 import { BUYER_KEYS } from "./auth-keys";
 import { generateOAuthState, isValidReturnedState, OAUTH_STATE_KEY } from "./oauth-state";
 import { toSecureStoreKey } from "./secure-key";
+import { clearBuyerSubmitKey } from "./buyer-submit-key";
 
 // ─── Web-safe storage ─────────────────────────────────────────────────────────
 
@@ -236,6 +237,7 @@ export async function buyerLogout(): Promise<void> {
   await storage.del(BUYER_KEYS.accessToken);
   await storage.del(BUYER_KEYS.refreshToken);
   await storage.del(BUYER_KEYS.activeSeller);
+  clearBuyerSubmitKey(); // B1094: the next buyer on this device must not inherit this one's key
 }
 
 export async function buyerRefreshTokens(): Promise<BuyerAuthResponse | null> {
@@ -287,6 +289,18 @@ export async function getActiveSeller(): Promise<BuyerSeller | null> {
 
 export async function setActiveSeller(seller: BuyerSeller): Promise<void> {
   await storage.set(BUYER_KEYS.activeSeller, JSON.stringify(seller));
+  clearBuyerSubmitKey(); // B1094: the submit key is customer-scoped; never carried across sellers
+}
+
+/**
+ * B1094: WHO is submitting (buyer account id from the access token, expired or not, + the active
+ * seller's tenant id) — the scope the `POST /buyer/orders` Idempotency-Key is minted under.
+ */
+export async function getBuyerSubmitScope(): Promise<string> {
+  const token = await storage.get(BUYER_KEYS.accessToken);
+  const sub = token ? parseJwtPayload(token)?.sub : null;
+  const seller = await getActiveSeller();
+  return `${typeof sub === "string" ? sub : ""}|${seller?.tenant.id ?? ""}`;
 }
 
 function parseQueryFromUrl(url: string): Record<string, string> {
@@ -308,15 +322,21 @@ const GOOGLE_REDIRECT_URI = "routeflow://auth/callback";
  * Returns the buyer profile and how many sellers they are linked to.
  */
 export async function buyerLoginWithGoogle(): Promise<{ buyer: BuyerUser; sellerCount: number }> {
-  // Web (the mobile-web build) cannot use the native routeflow:// deep link — a
-  // browser can't open a custom URL scheme, so openAuthSessionAsync never resolves
-  // and sign-in silently hangs. Use the same full-page-redirect + one-time-code
-  // exchange the operator web login (lib/auth.ts) uses: omit mobile=1 so the API
-  // redirects to ${WEB_URL}/auth/google/callback?code=…, handled by
-  // app/(auth)/auth/google/callback.tsx (which persists BUYER tokens by type).
+  // Web (this Expo mobile-web build) cannot use the native routeflow:// deep
+  // link — a browser can't open a custom URL scheme, so openAuthSessionAsync
+  // never resolves and sign-in silently hangs. Use the same full-page-redirect
+  // + one-time-code exchange the operator web login (lib/auth.ts) uses: omit
+  // mobile=1 so it's the browser exchange-code flow, and pass OUR OWN origin
+  // as `return_origin` (B825) so the API's callback redirects back HERE
+  // instead of always landing on the Next web app — validated server-side
+  // against an exact allow-list (WEB_URL/MOBILE_WEB_URL), never trusted as-is.
+  // Handled by app/(auth)/auth/google/callback.tsx (persists BUYER tokens by type).
   if (Platform.OS === "web") {
     const { data: web } = await axios.get<{ url: string }>(`${BASE_URL}/api/v1/auth/google`, {
-      params: { context: "buyer-standalone" }, // no mobile=1 → web exchange-code flow
+      params: {
+        context: "buyer-standalone", // no mobile=1 → web exchange-code flow
+        return_origin: typeof window !== "undefined" ? window.location.origin : undefined,
+      },
     });
     if (!web?.url) throw new Error("google_unavailable");
     if (typeof window !== "undefined") window.location.assign(web.url);

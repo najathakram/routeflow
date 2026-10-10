@@ -391,6 +391,47 @@ describe("TenantMirrorService (TP-B)", () => {
     });
   });
 
+  describe("upsert(tenantId) — formula-led admin username (B964-1)", () => {
+    it("falls contactName back to the (already guarded) tenant.name and never throws when the first admin's username is formula-led", async () => {
+      mockTenant({ ...TENANT_T1, users: [{ username: "=HYPERLINK(1)", email: "x@acme.test" }] });
+      prisma.customer.findUnique.mockResolvedValue(null);
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({ id: "u-2" } as any);
+      prisma.customer.create.mockResolvedValue({ id: "cust-2" } as any);
+
+      await expect(service.upsert("t-1")).resolves.toBeUndefined();
+
+      expect(prisma.customer.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ contactName: "Acme Wholesale" }),
+        }),
+      );
+    });
+
+    it("an ordinary username is still used as the contactName", async () => {
+      mockTenant({ ...TENANT_T1, users: [{ username: "acme_owner", email: "o@acme.test" }] });
+      prisma.customer.findUnique.mockResolvedValue(null);
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({ id: "u-2" } as any);
+      prisma.customer.create.mockResolvedValue({ id: "cust-2" } as any);
+      await service.upsert("t-1");
+      expect(prisma.customer.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ contactName: "acme_owner" }) }),
+      );
+    });
+
+    it("the mirrored ContactPerson never carries a formula-led username as its firstName", async () => {
+      mockTenant({ ...TENANT_T1, users: [{ username: "+cmd", email: "ops@acme.test" }] });
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", tenantId: HOUSE_ID } as any);
+      prisma.customer.update.mockResolvedValue({ id: "cust-1" } as any);
+      ((prisma as any).contactPerson.findFirst as jest.Mock).mockResolvedValue(null);
+      await service.upsert("t-1");
+      expect((prisma as any).contactPerson.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ firstName: "Admin", email: "ops@acme.test" }),
+      });
+    });
+  });
+
   describe("upsert(tenantId) — ContactPerson sync (T13-7b: R14)", () => {
     it("creates one ContactPerson for each TENANT_ADMIN missing from the mirror, keyed idempotently by email", async () => {
       // R14's positive path: the DB lane (T13-9) deliberately dropped its ContactPerson

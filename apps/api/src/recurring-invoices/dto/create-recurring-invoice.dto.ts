@@ -18,6 +18,11 @@ import { RecurringFrequency } from "@prisma/client";
 export class RecurringInvoiceItemDto {
   @IsString() description: string;
   @IsOptional() @IsUUID() productId?: string;
+  /**
+   * B646 / SA-135: for a BOXED product (unitsPerBox > 1) `qty` counts BOXES and `unitPrice` is the
+   * per-box price (2.5 on a 12-pack = 2 boxes + 6 pieces). Generation stores the invoice line in
+   * pieces (qty 30). For any other product it counts units. The update DTO inherits this field.
+   */
   @IsNumber() @Min(0.001) qty: number;
   @IsNumber() @Min(0) unitPrice: number;
   @IsOptional() @IsNumber() @Min(0) discount?: number;

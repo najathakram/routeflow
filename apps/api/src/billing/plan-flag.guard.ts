@@ -1,26 +1,11 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  ForbiddenException,
-  Injectable,
-  Logger,
-} from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable, Logger } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { EntitlementsService } from "./entitlements.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import { REQUIRE_PLAN_FLAG_KEY } from "./require-plan-flag.decorator";
-import { buildPlanGateBody } from "./plan-gate";
-import { isDarkFlag } from "./plan-flag-policy";
+import { buildPlanFlagDenial } from "./plan-flag-denial";
 import { EntitlementAuthority } from "./entitlement-authority.service";
-
-/** No self-service fix exists for an admin override — an upgrade CTA would be misleading. */
-const NO_UPGRADE = {
-  planKey: null,
-  planMonthlyPrice: null,
-  addonSku: null,
-  addonMonthlyPrice: null,
-};
 
 /**
  * Re-exported for existing consumers/docs (CLAUDE.md's Entitlement gates section) that
@@ -75,33 +60,16 @@ export class PlanFlagGuard implements CanActivate {
     if (await this.authority.can(tenantId, flagKey)) return true;
 
     // Denial: reconstruct which branch fired, purely to shape the right 403 — can() already
-    // made the decision, this never changes it.
-    const override = await this.featureOverrides.get(tenantId, flagKey);
-    if (override === "DENY") {
-      if (isDarkFlag(flagKey)) {
-        this.logger.warn(
-          `plan flag gate override-denied on a dark flag: flag=${flagKey} tenant=${tenantId}`,
-        );
-      }
-      throw new ForbiddenException(buildPlanGateBody(flagKey, NO_UPGRADE));
-    }
-
-    try {
-      await this.entitlements.resolve(tenantId);
-    } catch (err) {
-      this.logger.error(`Entitlement resolution failed for tenant ${tenantId}`, err as Error);
-      throw new ForbiddenException({
-        code: "PLAN_GATE_UNAVAILABLE",
-        message: "Entitlements are temporarily unavailable. Please retry.",
-      });
-    }
-
-    const upgrade = await this.catalog.upgradeTargetForFlag(flagKey).catch(() => ({
-      planKey: null,
-      planMonthlyPrice: null,
-      addonSku: null,
-      addonMonthlyPrice: null,
-    }));
-    throw new ForbiddenException(buildPlanGateBody(flagKey, upgrade));
+    // made the decision, this never changes it. Shared with service-side gates (one shape).
+    throw await buildPlanFlagDenial(
+      {
+        featureOverrides: this.featureOverrides,
+        entitlements: this.entitlements,
+        catalog: this.catalog,
+        logger: this.logger,
+      },
+      tenantId,
+      flagKey,
+    );
   }
 }

@@ -1,0 +1,22 @@
+{
+  "task": {
+    "id": "RC-863",
+    "title": "confirm B863 cause",
+    "type": "root-cause",
+    "files": [],
+    "tests": [],
+    "dependsOn": [],
+    "risk": "HIGH",
+    "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RC-863/brief.md",
+    "rootCause": {
+      "reproduced": true,
+      "causeConfirmed": true,
+      "wrongValueObserved": "activateManualSubscription with billingPeriodDays 365: \"PROBE create.cycle = undefined update.cycle = undefined create.periodEnd-periodStart days = 365\". rollCycles on that row (cycle MONTHLY by schema default, externalPayment true, 2025-01-01 to 2026-01-01): \"PROBE select = {\"tenantId\":true,\"cycle\":true,\"periodEnd\":true} rolled periodStart = 2026-01-01T00:00:00.000Z periodEnd = 2026-02-01T00:00:00.000Z\", when it should be 2027-01-01T00:00:00.000Z.",
+      "note": "I reproduced the bug on the current tree with a throwaway Jest probe. It lives only in the scratchpad (scratchpad/rc863/probe.spec.ts) and I ran it with `--roots` pointed there. No repo files were changed.\n\nThe named cause is correct on both halves:\n1. **Activation never sets `cycle`.** Both branches of the `tenantSubscription.upsert` call in apps/api/src/platform-admin/platform-admin.service.ts (about lines 963-995) leave out `cycle`. I called the real `activateManualSubscription` with `billingPeriodDays: 365` and stubbed dependencies, then captured the upsert arguments: `create.cycle` and `update.cycle` were both `undefined`, and `periodEnd` minus `periodStart` was 365 days. The column defaults to MONTHLY (platform.prisma:47, `cycle BillingCycle @default(MONTHLY)`). So a prepaid annual row is stored as MONTHLY on create and keeps whatever cycle it already had on update.\n2. **The cron rolls by `cycle` only.** `rollCycles` in apps/api/src/billing/billing-cron.service.ts (about lines 484-498) selects only `{tenantId, cycle, periodEnd}`. It never reads `periodStart` or `externalPayment`, and it calls `addCycle(start, s.cycle)`, which adds 1 month unless the cycle is ANNUAL. Run on the real service, a 365-day external row (2025-01-01 to 2026-01-01) rolled to periodEnd 2026-02-01, one month instead of a year. That is exactly the wrong value test-plan T3 predicts.\n\nThe brief's own check doesn't work. `jest -t \"REG-ROLL-MANUAL-ANNUAL\"` can't be \"green today\" because no test by that name exists: grep for MANUAL-ANNUAL and manual-annual under apps/api/src returned nothing. The repro-test task has to write it as REG-B863-ROLL (per the test plan) rather than flip an existing test.\n\nIn the probe, `activateManualSubscription` threw after the upsert because my stub had no `findMany`. That doesn't affect the upsert arguments I captured, since they were recorded before the throw. I did not run the probe for 90- or 180-day periods; by the same code path they would also roll +1 month, but that is inferred, not observed."
+    },
+    "status": "complete",
+    "rounds": 0,
+    "clean": true
+  },
+  "progressLine": "Task RC-863: complete (review clean)"
+}

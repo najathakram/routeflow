@@ -1,11 +1,14 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import {
   PIECE_LABEL,
+  defaultSellingLabel,
   UnknownUnitError,
   resolveLadderLevel,
   type LadderProduct,
   type LadderUnit,
 } from "@routeflow/pricing";
+import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * THE one place an order/invoice line's pack factor is decided (units_v1, step 4).
@@ -50,7 +53,6 @@ const toFactor = (v: unknown): number => {
   const n = Math.trunc(Number(v));
   return Number.isFinite(n) && n >= 1 ? n : 0;
 };
-const norm = (s: string) => s.trim().toLowerCase();
 const kindOf = (label: string, factor: number): "piece" | "level" =>
   norm(label) === norm(PIECE_LABEL) || factor === 1 ? "piece" : "level";
 
@@ -64,16 +66,30 @@ const packLine = (product: LineUnitsProduct): ResolvedLineUnits => ({
 export function resolveLineUnits(
   product: LineUnitsProduct,
   units: readonly LadderUnit[],
-  requested?: { unitLabel?: string | null } | null,
+  requested?: { unitLabel?: string | null; boxes?: number | null; pieces?: number | null } | null,
   existing?: LineUnitsExisting | null,
+  /**
+   * #2784 / SA-601: a BUYER's plain qty on a NEW line (no unit requested, no existing line) resolves to the level flagged
+   * `isDefaultSelling`, else the pack. Off by default — the staff and driver arms stay exactly as SA-593g pinned.
+   * An explicit unit (incl. an explicit null/"" = the pack) always wins.
+   */
+  opts?: { honourDefaultSelling?: boolean },
 ): ResolvedLineUnits {
-  const explicit = requested?.unitLabel; // undefined = unchanged
+  let explicit = requested?.unitLabel; // undefined = unchanged
+  // SA-610: only a NEW line (no `existing`) takes the default — a held pack line (existing, unitLabel null) stays a pack.
+  // SA-610 B2 / SA-601(2): an explicit boxes/pieces split always wins — only a QTY-ONLY line takes the default.
+  const qtyOnly = requested?.boxes == null && requested?.pieces == null;
+  if (opts?.honourDefaultSelling && explicit === undefined && existing == null && qtyOnly) {
+    const dflt = defaultSellingLabel({ pricePerUnit: 0, ...product }, units);
+    if (dflt) explicit = dflt;
+  }
   const asked = (explicit ?? "").trim();
   const held = (existing?.unitLabel ?? "").trim();
   const ladderProduct: LadderProduct = { pricePerUnit: 0, ...product };
 
-  // Rule 2: a rewrite that leaves the unit unchanged (or re-sends the same one) keeps the line.
-  if (held && (explicit === undefined || (asked !== "" && norm(asked) === norm(held)))) {
+  // Rule 2: a rewrite that leaves the unit unchanged (or re-sends the same one) keeps the line —
+  // THE keep-held-unit rule (SA-070), shared with the restriction netting.
+  if (keepsHeldUnit(explicit, held)) {
     let factor = toFactor(existing?.unitsPerBox);
     if (factor === 0) {
       // Snapshot missing/corrupt: recover it from the ladder BY LABEL, never from the pack.
@@ -98,7 +114,11 @@ export function resolveLineUnits(
     level = resolveLadderLevel(ladderProduct, units, asked || null);
   } catch (e) {
     if (e instanceof UnknownUnitError) {
-      throw new BadRequestException(`"${e.unitLabel}" is not a unit of this product.`);
+      // #2277: the same code as a held unit the product no longer offers (unit-line-build.ts).
+      throw new BadRequestException({
+        code: API_ERROR_CODES.UNIT_NOT_OFFERED,
+        message: `"${e.unitLabel}" is not a unit of this product.`,
+      });
     }
     throw e;
   }

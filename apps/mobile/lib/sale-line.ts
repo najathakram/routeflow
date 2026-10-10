@@ -8,7 +8,7 @@
  * wiping the operator's price/note on a repeat scan or a +/- tap. Spreading
  * `...prev` fixes that and matches web's `{ ...li, qty: li.qty + 1 }`.
  */
-import { normalizeBoxesPieces } from "@routeflow/pricing";
+import { normalizeBoxesPieces, type SellLevel } from "@routeflow/pricing";
 
 export interface SaleLineQty {
   qty?: number;
@@ -84,6 +84,23 @@ export function incrementLinePiece<T extends SaleLineQty>(
 }
 
 /**
+ * #2717 M4a-1 (SA-580 R1/R4): add what a scan LANDED to the ONE line. The level comes from the
+ * scanned code: UNIT adds one loose piece (rolled into boxes by `normalizeBoxesPieces`), BOX adds
+ * one box. A unit-sold line (units_v1) steps its COUNT; a non-boxed product has no box/unit
+ * distinction (R4), so either level is today's plain +1. Every other field on the line survives.
+ */
+export function addScannedLevelToLine<T extends SaleLineQty & { unitLabel?: string | null }>(
+  prev: T,
+  level: SellLevel,
+  isBoxed: boolean,
+  unitsPerBox: number,
+): T & { qty: number; boxes?: number | null; pieces?: number | null } {
+  if (level === "UNIT" && !isUnitLine(prev)) return incrementLinePiece(prev, isBoxed, unitsPerBox);
+  // SA-085f one qty step: a unit line / BOX scan is exactly stepLineQty(+1) (never null for +1).
+  return stepLineQty(prev, 1, isBoxed, unitsPerBox) as T & { qty: number };
+}
+
+/**
  * Decrement a line by one unit (one piece, or one BOX for a boxed product),
  * preserving every other field (unitPrice / note / noteOpen). Returns null when
  * the line should be removed (reaches empty).
@@ -136,11 +153,15 @@ export function setLineQty<T extends SaleLineQty>(
  * A typed plain qty carries over as those loose pieces (REG-B194) instead of
  * being dropped. Returns null when the line reaches empty (0 boxes + 0 pieces).
  */
-export function setLineBoxes<T extends SaleLineQty>(
+export function setLineBoxes<T extends SaleLineQty & { unitLabel?: string | null }>(
   prev: T,
   boxes: number,
   unitsPerBox: number,
 ): (T & { qty: number; boxes: number; pieces: number }) | null {
+  // units_v1 (SA-085h MEDIUM): a unit-sold line REFUSES a box/piece split outright — its qty
+  // is a COUNT (stepLineQty's job), never pieces-in-a-box. Executable here, not a UI gate
+  // (CartRow.tsx's isBoxed/DraftItemCard's isBoxed are the ONLY reason this was safe before).
+  if (isUnitLine(prev)) return prev as T & { qty: number; boxes: number; pieces: number };
   const b = Math.max(0, Math.floor(boxes));
   const { pieces } = splitFromPrev(prev, unitsPerBox);
   const qty = b * unitsPerBox + pieces;
@@ -153,16 +174,53 @@ export function setLineBoxes<T extends SaleLineQty>(
  * A typed plain qty contributes its whole cases here (REG-B194) instead of
  * being dropped. Returns null when the line reaches empty (0 boxes + 0 pieces).
  */
-export function setLinePieces<T extends SaleLineQty>(
+export function setLinePieces<T extends SaleLineQty & { unitLabel?: string | null }>(
   prev: T,
   pieces: number,
   unitsPerBox: number,
 ): (T & { qty: number; boxes: number; pieces: number }) | null {
+  // units_v1 (SA-085h MEDIUM): see setLineBoxes — a unit-sold line refuses a piece split too.
+  if (isUnitLine(prev)) return prev as T & { qty: number; boxes: number; pieces: number };
   const pcs = Math.max(0, Math.floor(pieces));
   const { boxes } = splitFromPrev(prev, unitsPerBox);
   const qty = boxes * unitsPerBox + pcs;
   if (qty === 0) return null;
   return { ...prev, qty, boxes, pieces: pcs };
+}
+
+/** A unit-sold line (units_v1): `qty` is a COUNT of `unitLabel`, never pieces-in-a-box. */
+export function isUnitLine(line: { unitLabel?: string | null }): boolean {
+  return line.unitLabel != null && line.unitLabel !== "";
+}
+
+/**
+ * The ONE qty step for a line, unit-aware (SA-085f BLOCKER). Every ± writer on both sale
+ * builders (NewOrderScreen's addOne/removeOne + cart row, edit-items.tsx's incQty/decQty) must
+ * route through this instead of calling incrementLine/decrementLine directly.
+ *
+ * Root cause: once `unitLabel` is set, `qty` gained a second meaning — the unit COUNT (a Case
+ * line's qty:1 means "one Case," never "one piece of a 24-pack"). incrementLine/decrementLine's
+ * `isBoxed`/`unitsPerBox` params exist to fold a PACK's pieces into boxes; applied to a unit
+ * line they instead fold the unit count into "boxes" of the PACK's size, so tapping + on a
+ * Case line ({qty:1}, 24-pack) produced {qty:25, boxes:1, pieces:1} — a line that reads
+ * $229.17 on screen but bills qty×unitPrice = 25×220 = $5,500 server-side. A unit line's step
+ * is always a plain ±1 on the count, boxes/pieces left untouched (unset, as setUnitLabel leaves
+ * them) and `unitsPerBox`/`isBoxed` never consulted.
+ */
+export function stepLineQty<T extends SaleLineQty & { unitLabel?: string | null }>(
+  prev: T,
+  delta: 1 | -1,
+  isBoxed: boolean,
+  unitsPerBox: number,
+): (T & { qty: number; boxes?: number | null; pieces?: number | null }) | null {
+  if (isUnitLine(prev)) {
+    const qty = Math.max(0, Math.trunc(prev.qty ?? 0) + delta);
+    if (qty === 0) return null;
+    return { ...prev, qty };
+  }
+  return delta === 1
+    ? incrementLine(prev, isBoxed, unitsPerBox)
+    : decrementLine(prev, isBoxed, unitsPerBox);
 }
 
 /**
@@ -173,12 +231,24 @@ export function setLinePieces<T extends SaleLineQty>(
  * Returns null when the line reaches zero, matching decrementLine's remove signal.
  */
 export function setLineUnits<
-  T extends { qty: number; boxes?: number | null; pieces?: number | null },
+  T extends {
+    qty: number;
+    boxes?: number | null;
+    pieces?: number | null;
+    unitLabel?: string | null;
+  },
 >(
   prev: T,
   units: number,
   unitsPerBox: number,
-): (T & { qty: number; boxes: number; pieces: number }) | null {
+): (T & { qty: number; boxes?: number; pieces?: number }) | null {
+  // units_v1 (SA-085h MEDIUM): on a unit-sold line the typed total IS the new count — the
+  // same thing setQty/stepLineQty do, never a box/piece split.
+  if (isUnitLine(prev)) {
+    const qty = Math.max(0, Math.trunc(Number(units) || 0));
+    if (qty === 0) return null;
+    return { ...prev, qty, boxes: undefined, pieces: undefined };
+  }
   const upb = Math.trunc(Number(unitsPerBox));
   if (!(upb > 1)) return null;
   const total = Math.max(0, Math.trunc(Number(units) || 0));

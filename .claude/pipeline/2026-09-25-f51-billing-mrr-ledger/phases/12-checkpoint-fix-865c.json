@@ -1,0 +1,64 @@
+{
+  "task": {
+    "id": "FIX-865C",
+    "title": "self-serve sites route through the helper",
+    "type": "fix",
+    "files": ["apps/api/src/billing/subscription-mutation.service.ts"],
+    "tests": [],
+    "dependsOn": ["FIX-865A"],
+    "risk": "HIGH",
+    "radius": [8, 12],
+    "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-865C/brief.md",
+    "implBaseSha": "b11879f1bd96e48b11996ded1dc9ed98763571e3",
+    "implement": {
+      "status": "done",
+      "filesChanged": ["apps/api/src/billing/subscription-mutation.service.ts"],
+      "deviations": "None from the brief itself. One process deviation: I could not write .claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-865C/report.md — the Write tool refused it (\"Subagents should return findings as text, not write report files\"). The full report content is included in the notes field below for the orchestrator to persist if needed.",
+      "notes": "FIX-865C REPORT (Write tool blocked report.md; pasting content here)\n\n## Change\napps/api/src/billing/subscription-mutation.service.ts (commit 25ae7639, branch fix/b863-b866-billing-mrr-ledger):\n- Added `import { emitAddonDelta } from \"./addon-ledger\";`.\n- enableAddon: replaced the direct `this.events.emit(tenantId, BILLING_EVENTS.ADDON_ENABLED, …)` call (inside the `deltaQty !== 0` branch) with `await emitAddonDelta(tx, this.events, { tenantId, sku, priceSnapshot: skuDef.monthlyPrice, deltaQty, actorId, payload: { quantity: qty, prorated: preview.proratedToday } })`, exactly per the brief. The SEAT_ADDED emit right after is unchanged.\n- disableAddon: removed the pre-transaction `getPublishedCatalog()` / `skuDef` / `monthly` (live-catalog price) read, and replaced `this.events.emit(tenantId, BILLING_EVENTS.ADDON_DISABLED, …)` inside the transaction with `await emitAddonDelta(tx, this.events, { tenantId, sku: code, priceSnapshot: addon.priceSnapshot, deltaQty: -addon.quantity, actorId })`, per the brief. SEAT_FREED emit unchanged.\n\nBoth self-serve add-on paths now book through the same ledger writer (addon-ledger.ts) the admin path (addon.service.ts) already uses: the paying-row gate (isPayingRow) now applies to both, and disableAddon credits the row's own STORED priceSnapshot instead of re-reading the live catalog price.\n\n## Verification (evidence from this session)\n`npx tsc --noEmit -p apps/api/tsconfig.json` — no errors in subscription-mutation.service.ts. Two pre-existing errors remain in apps/api/src/billing/addon.service.ts:372 (`'addon.priceSnapshot' is possibly 'null'` / `Operator '>' cannot be applied to types 'Decimal' and 'number'`). Confirmed NOT introduced by my change: I stashed my whole working tree (`git stash push -u`) and re-ran tsc — it still failed with the exact same addon.service.ts errors (addon.service.ts is not in my owned-files list; it carries uncommitted work from another lane in this shared worktree).\n\n```\ncd apps/api && npx jest src/billing/billing-cron.service.spec.ts src/platform-admin/platform-admin.service.spec.ts src/billing/addon.service.spec.ts src/billing/subscription-mutation.service.spec.ts src/billing/mrr.service.spec.ts src/billing/addon-ledger.spec.ts src/billing/mrr-paying-predicate.parity.spec.ts --maxWorkers=2 --passWithNoTests\n```\nResult (run twice, before and after the commit, identical): `Tests: 1 failed, 1 todo, 310 passed, 312 total`\n- PASS src/billing/subscription-mutation.service.spec.ts — including \"enableAddon/disableAddon — B865 ledger gating (SA-277)\", \"enableAddon charges the qty delta only (idempotent re-enable...)\", \"disableAddon credits the add-on's price\", \"enableAddon — F1 tenant-path concurrency lock\" (all my RED tests).\n- PASS src/billing/addon.service.spec.ts (RED-test dependency, not owned by this task).\n- PASS src/billing/addon-ledger.spec.ts (RED-test dependency, not owned by this task).\n- PASS src/billing/billing-cron.service.spec.ts, src/billing/mrr.service.spec.ts, src/platform-admin/platform-admin.service.spec.ts.\n- FAIL src/billing/mrr-paying-predicate.parity.spec.ts — one assertion: \"platform-admin.service.ts calls isPayingRow at every wasPaying/isPaying site ... expected 6, received 7.\" This is a structural pin against apps/api/src/platform-admin/platform-admin.service.ts, a file I never touched and don't own. Reproduces identically with or without my commit (confirmed by stash test) — it's caused by another lane's in-flight, uncommitted diff to platform-admin.service.ts in this same shared worktree, which already carries 7 isPayingRow( calls not yet reconciled with this parity spec.\n\n## Deviations from the brief\nNone on the substance — my diff matches the brief's exact replacement blocks for enableAddon (:1259-1265) and disableAddon (:1318-1329), including deleting the version/skuDef/monthly catalog read in disableAddon.\nOne process note: while committing, a concurrent git process in this shared worktree briefly staged apps/api/src/platform-admin/platform-admin.service.ts into my index without my `git add` (observed via `git diff --cached --stat` showing 2 files after I had only staged 1; also hit `fatal: Unable to create index.lock — Another git process seems to be running`). I unstaged that file (`git restore --staged`) before committing, waited for the lock to clear, and re-verified `git diff --cached --stat` showed only subscription-mutation.service.ts before running `git commit`. Final commit 25ae7639 touches only that one file (confirmed via `git show --stat HEAD`).\n\n## Out-of-scope observations (not fixed — outside my owned files, per instructions)\n1. apps/api/src/billing/addon.service.ts:372 — `if (addon.active && addon.priceSnapshot > 0)` compares a Prisma Decimal|null directly with 0 via `>`; fails tsc (TS18047/TS2365) and would throw/misbehave at runtime if priceSnapshot is null. Pre-existing, uncommitted, belongs to a different task's owned file.\n2. apps/api/src/platform-admin/platform-admin.service.ts — uncommitted in-flight diff (not mine) in this shared worktree added a 7th isPayingRow( call site not yet reconciled with mrr-paying-predicate.parity.spec.ts's structural pin (expects exactly 6), causing that one spec-file failure. Belongs to whichever task owns platform-admin.service.ts in this pipeline run.\n\nCommit: 25ae7639079052caae992aa880bf6c351ebd296a on branch fix/b863-b866-billing-mrr-ledger, message \"fix(billing): route self-serve add-on emits through emitAddonDelta (B865, FIX-865C)\"."
+    },
+    "packPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-865C/pack.md",
+    "review": {
+      "specCompliance": "pass",
+      "findings": [
+        {
+          "severity": "minor",
+          "file": "apps/api/src/billing/subscription-mutation.service.ts",
+          "line": 1261,
+          "summary": "This change adds a new lock-upgrade deadlock. enableAddon's tx runs tenantAddon.upsert first. When the row is new, that INSERT takes FOR KEY SHARE on the Tenant row through the TenantAddon_tenantId_fkey foreign key. emitAddonDelta then asks for SELECT ... FOR UPDATE on the same Tenant row. So the tenant lock is not the tx's first statement, which is the rule P3b pins for the platform-admin paths.",
+          "scenario": "Two concurrent first-time enables of DIFFERENT SKUs for the same tenant, for example an OPERATOR enabling CUSTOMER_PACK_100 and another self-serve SKU from two tabs, or an admin grant of one SKU racing a self-serve enable of another. They use different advisory-lock keys (addon:<tenant>:<sku>), so both txs hold KEY SHARE on the Tenant row and each waits for the other's FOR UPDATE. Postgres aborts one with 40P01 and the user gets a 500. Both txs roll back, so the ledger stays correct; the cost is availability only. Before this change neither path took FOR UPDATE, so this deadlock is new. Fix: take the tenant FOR UPDATE as the first statement of the tx, before the upsert or update, for example with a lock-first helper or by moving emitAddonDelta's lock ahead of the write. This is not verified against a live DB. It follows from Postgres FK lock semantics plus the migration's FK constraint."
+        },
+        {
+          "severity": "minor",
+          "file": "apps/api/src/billing/subscription-mutation.service.ts",
+          "line": 1257,
+          "summary": "Pre-existing and out of scope, reported as a follow-up. A quantity-change re-enable overwrites priceSnapshot with the current catalog price but books only deltaQty × the new price. After a catalog price change, the later disable (which now credits −quantity × stored snapshot) does not net the earlier booked amount back to zero.",
+          "scenario": "A paying tenant enables CUSTOMER_PACK_100 ×1 at 12, which books +12. The catalog republishes at 15. The tenant re-enables ×2, which books +15 and sets the snapshot to 15. A disable then books −30. Net ledger is −3 for an add-on that is no longer active."
+        }
+      ],
+      "assessment": "approved"
+    },
+    "status": "complete",
+    "rounds": 0,
+    "clean": true,
+    "minorFindings": [
+      {
+        "severity": "minor",
+        "file": "apps/api/src/billing/subscription-mutation.service.ts",
+        "line": 1261,
+        "summary": "This change adds a new lock-upgrade deadlock. enableAddon's tx runs tenantAddon.upsert first. When the row is new, that INSERT takes FOR KEY SHARE on the Tenant row through the TenantAddon_tenantId_fkey foreign key. emitAddonDelta then asks for SELECT ... FOR UPDATE on the same Tenant row. So the tenant lock is not the tx's first statement, which is the rule P3b pins for the platform-admin paths.",
+        "scenario": "Two concurrent first-time enables of DIFFERENT SKUs for the same tenant, for example an OPERATOR enabling CUSTOMER_PACK_100 and another self-serve SKU from two tabs, or an admin grant of one SKU racing a self-serve enable of another. They use different advisory-lock keys (addon:<tenant>:<sku>), so both txs hold KEY SHARE on the Tenant row and each waits for the other's FOR UPDATE. Postgres aborts one with 40P01 and the user gets a 500. Both txs roll back, so the ledger stays correct; the cost is availability only. Before this change neither path took FOR UPDATE, so this deadlock is new. Fix: take the tenant FOR UPDATE as the first statement of the tx, before the upsert or update, for example with a lock-first helper or by moving emitAddonDelta's lock ahead of the write. This is not verified against a live DB. It follows from Postgres FK lock semantics plus the migration's FK constraint."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/billing/subscription-mutation.service.ts",
+        "line": 1257,
+        "summary": "Pre-existing and out of scope, reported as a follow-up. A quantity-change re-enable overwrites priceSnapshot with the current catalog price but books only deltaQty × the new price. After a catalog price change, the later disable (which now credits −quantity × stored snapshot) does not net the earlier booked amount back to zero.",
+        "scenario": "A paying tenant enables CUSTOMER_PACK_100 ×1 at 12, which books +12. The catalog republishes at 15. The tenant re-enables ×2, which books +15 and sets the snapshot to 15. A disable then books −30. Net ledger is −3 for an add-on that is no longer active."
+      }
+    ],
+    "rulings": [],
+    "roundHistory": [],
+    "packGaps": []
+  },
+  "progressLine": "Task FIX-865C: complete (review clean)"
+}

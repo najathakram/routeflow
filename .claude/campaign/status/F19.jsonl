@@ -1,4 +1,4 @@
-{"id":"B01","batch":"F19","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}
+{"id":"B01","batch":"F19","tier":"T1","state":"already-fixed","pr":2622,"proof":null,"evidence":"Merged 39c08826 (#2622, closes #1508): the decorative mobile Remember me checkbox that did nothing is removed from the login screen","roundSha":"2d0270fd"}
 {"id":"B02","batch":"F19","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}
 {"id":"B111","batch":"F19","tier":"T1","state":"done","pr":681,"proof":"REG-B111 relaunch reconciliation against existing artifact ids produces no duplicate append","evidence":"fixed via #681 (8de65863): sign-out teardown contract, user-stamped queue, persisted POD","roundSha":"0cd59277","buildPlan":null}
 {"id":"B136","batch":"F19","tier":"T1","state":"done","pr":681,"proof":"REG-B136 podStore persists and reconciles against existing artifact ids on relaunch","evidence":"fixed via #681 (8de65863): sign-out teardown contract, user-stamped queue, persisted POD","roundSha":"0b2c3a0a","buildPlan":null}

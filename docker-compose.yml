@@ -5,7 +5,7 @@
 #
 #   Full stack (API + Web in containers) — the pre-PR local test target:
 #       npm run local:up        # build + start postgres, redis, migrate, api, web
-#       npm run local:seed      # seed the approved `test` tenant (admin / Admin@123)
+#       npm run local:seed      # seed the approved `test` tenant (admin / Admin@123; tenant_admin / TenantAdmin1!)
 #       npm run local:validate  # smoke + post-deploy-check + drift check @ :3000
 #       npm run local:down
 #
@@ -20,6 +20,12 @@
 x-api-build: &api-build
   context: .
   dockerfile: apps/api/Dockerfile
+  # #2491: the commit the image was built from, stamped by `npm run local:up` / `local:build`
+  # (scripts/local-env.mjs --build-sha). `local-env.mjs --proof-stack` refuses a proof against an
+  # image whose build commit does not contain the commit under proof ("stale image").
+  labels: &build-sha-labels
+    org.routeflow.sha: ${ROUTEFLOW_BUILD_SHA:-unknown}
+    org.routeflow.dirty: ${ROUTEFLOW_BUILD_DIRTY:-unknown}
 
 services:
   # ─── PostgreSQL ─────────────────────────────────────────────────────────────
@@ -159,6 +165,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-pass}@postgres:5432/${POSTGRES_DB:-routeflow_dev}
       REDIS_URL: redis://redis:6379
       JWT_SECRET: local-dev-only-jwt-secret-change-me
+      ONBOARDING_TOKEN_SECRET: local-dev-only-onboarding-token-secret-change-me
       JWT_REFRESH_SECRET: local-dev-only-jwt-refresh-secret-change-me
       CORS_ORIGINS: http://localhost:3001,http://localhost:3000
       # pB10 / RF-160: local throwaway override — the Playwright lane + retries +
@@ -208,6 +215,7 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         NEXT_PUBLIC_API_URL: http://localhost:3000/api/v1
+      labels: *build-sha-labels
     image: routeflow-web:local
     container_name: routeflow_web
     restart: unless-stopped

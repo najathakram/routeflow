@@ -69,6 +69,7 @@ export const RETURN_HOLD_REASON_VALUES = [
   "CAPTURE_FAILED",
   "OVER_RETURN",
   "DRIVER_CAP",
+  "ALREADY_RETURNED",
   "UNREFERENCED",
 ] as const;
 export type ReturnHoldReason = (typeof RETURN_HOLD_REASON_VALUES)[number];
@@ -85,7 +86,7 @@ export type ReturnPriceSource = (typeof RETURN_PRICE_SOURCE_VALUES)[number];
 export const CREDIT_NOTE_STATUS_VALUES = ["ISSUED", "APPLIED", "VOID"] as const;
 export type CreditNoteStatus = (typeof CREDIT_NOTE_STATUS_VALUES)[number];
 
-export const REGULATED_FILING_STATUS_VALUES = ["GENERATED", "FAILED"] as const;
+export const REGULATED_FILING_STATUS_VALUES = ["GENERATED", "FAILED", "LOCKED"] as const;
 export type RegulatedFilingStatus = (typeof REGULATED_FILING_STATUS_VALUES)[number];
 
 export const INVOICE_TREATMENT_VALUES = [
@@ -153,6 +154,28 @@ export type PriceType = (typeof PRICE_TYPE_VALUES)[number];
 
 export const CHECK_STATUS_VALUES = ["RECORDED", "DEPOSITED", "CLEARED", "BOUNCED"] as const;
 export type CheckStatus = (typeof CHECK_STATUS_VALUES)[number];
+
+// #2169 (SA-395): a system-written InvoiceItem purpose marker — today only the NSF bounce-fee
+// line (the real Prisma enum: `InvoiceItemSystemKind.NSF_FEE`). NOTE: the API never value-imports
+// this array (apps/api/src/common/no-runtime-workspace-imports.spec.ts forbids it —
+// @routeflow/types ships raw TS, no build step, and would crash `node dist/main.js` at boot);
+// apps/api/src/invoices/nsf-line.ts instead value-imports the real generated `@prisma/client`
+// enum directly, and the one place that CANNOT do that either (the plain .mjs backfill script,
+// apps/api/scripts/backfill-2169-nsf-system-kind.mjs) hand-copies the single string as
+// `NSF_FEE_SYSTEM_KIND`, pinned there against the schema source in its own `--self-test`. This
+// array is the shared mirror for web/mobile (and this file's own enum-parity pin).
+export const INVOICE_ITEM_SYSTEM_KIND_VALUES = ["NSF_FEE"] as const;
+export type InvoiceItemSystemKind = (typeof INVOICE_ITEM_SYSTEM_KIND_VALUES)[number];
+
+// SA-436 (#2401): why a (credit note, invoice) pair is never re-applied automatically — the
+// CreditNoteApplyBlock row's reason. Mirrors the Prisma enum for the web/mobile "Applied credits"
+// panel (SA-436 PR-3).
+export const CREDIT_NOTE_APPLY_BLOCK_REASON_VALUES = [
+  "UNAPPLIED",
+  "UNTICKED",
+  "VOID_REVERSAL",
+] as const;
+export type CreditNoteApplyBlockReason = (typeof CREDIT_NOTE_APPLY_BLOCK_REASON_VALUES)[number];
 
 export const DOCUMENT_NUMBER_TYPE_VALUES = [
   "INVOICE",
@@ -393,3 +416,144 @@ export type RestrictionAddressPrecedence = (typeof RESTRICTION_ADDRESS_PRECEDENC
 /** Why a TenantFeatureConfigSnapshot was taken (Lane B A2): automatic on a downgrade, or by an admin. */
 export const SNAPSHOT_REASON_VALUES = ["DOWNGRADE", "MANUAL"] as const;
 export type SnapshotReasonValue = (typeof SNAPSHOT_REASON_VALUES)[number];
+
+// Order tracking (#2095): the three statuses the tracking payload (`./order-tracking.ts`) carries,
+// pinned set-equal to the generated Prisma `OrderStatus` / `RouteRunStatus` / `RouteRunStopStatus`
+// enums (see `enum-parity.spec.ts`'s `ENUM_TABLE` rows). The derived types are `…Value`, not the
+// bare names: `../index.ts` still exports hand-written legacy TS enums under `OrderStatus`,
+// `RouteRunStatus` and `RouteRunStopStatus` (its `OrderStatus` lacks DRAFT and
+// PARTIALLY_DELIVERED), and a local export silently shadows a same-named `export *`.
+export const ORDER_STATUS_VALUES = [
+  "DRAFT",
+  "PENDING",
+  "CONFIRMED",
+  "OUT_FOR_DELIVERY",
+  "PARTIALLY_DELIVERED",
+  "DELIVERED",
+  "CANCELLED",
+] as const;
+export type OrderStatusValue = (typeof ORDER_STATUS_VALUES)[number];
+
+/** Prisma `ItemStatus` — an order line's fulfilment status (#2703). */
+export const ITEM_STATUS_VALUES = [
+  "PENDING",
+  "CONFIRMED",
+  "PARTIAL",
+  "DELIVERED",
+  "CANCELLED",
+] as const;
+export type ItemStatus = (typeof ITEM_STATUS_VALUES)[number];
+
+/** Prisma `PaymentMethod` — an invoice payment's method (#2703). */
+export const PAYMENT_METHOD_VALUES = [
+  "CASH",
+  "CHECK",
+  "ACH",
+  "OTHER",
+  "CREDIT_NOTE",
+  "ADVANCE",
+  "CREDIT_CARD",
+  "ZELLE",
+] as const;
+export type PaymentMethod = (typeof PAYMENT_METHOD_VALUES)[number];
+
+export const ROUTE_RUN_STATUS_VALUES = [
+  "SCHEDULED",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "CANCELLED",
+] as const;
+export type RouteRunStatusValue = (typeof ROUTE_RUN_STATUS_VALUES)[number];
+
+export const ROUTE_RUN_STOP_STATUS_VALUES = [
+  "PENDING",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "SKIPPED",
+] as const;
+export type RouteRunStopStatusValue = (typeof ROUTE_RUN_STOP_STATUS_VALUES)[number];
+
+// #2717 M1 (SA-572a): the catalog role of a Product row. Constant default; NOT backfilled in
+// M1 and read by nothing in M1 (variant-ness stays parentProductId != null). Values beyond
+// STANDARD are M2+.
+export const PRODUCT_KIND_VALUES = ["STANDARD", "FAMILY", "VARIANT", "RECIPE"] as const;
+export type ProductKind = (typeof PRODUCT_KIND_VALUES)[number];
+
+// #2717 M1 (SA-572a): the packaging level a barcode or a ProductUnit sits at.
+export const PACKAGING_LEVEL_VALUES = [
+  "UNIT",
+  "INNER",
+  "BOX",
+  "CASE",
+  "DISPLAY",
+  "PALLET",
+] as const;
+export type PackagingLevel = (typeof PACKAGING_LEVEL_VALUES)[number];
+
+// #2717 M1 (SA-572a): the barcode symbology, inferred from the code
+// (apps/api/src/common/barcode-symbology.ts).
+export const BARCODE_SYMBOLOGY_VALUES = [
+  "UPC_A",
+  "UPC_E",
+  "EAN_8",
+  "EAN_13",
+  "GTIN_14",
+  "CODE128",
+  "OTHER",
+] as const;
+export type BarcodeSymbology = (typeof BARCODE_SYMBOLOGY_VALUES)[number];
+
+// #2717 M1 (SA-572a): ENTERED = a code someone entered or scanned for this level; COPIED = the
+// owner's rule "one barcode ⇒ the units share it": the unit row copied from the box row.
+export const BARCODE_ORIGIN_VALUES = ["ENTERED", "COPIED"] as const;
+export type BarcodeOrigin = (typeof BARCODE_ORIGIN_VALUES)[number];
+
+// #2717 M2 (SA-574): the lifecycle of one recipe version (a fixed mix of a family's variants sold
+// as one RECIPE product). DRAFT is editable; ACTIVE and RETIRED are immutable (I3).
+export const RECIPE_STATUS_VALUES = ["DRAFT", "ACTIVE", "RETIRED"] as const;
+export type RecipeStatus = (typeof RECIPE_STATUS_VALUES)[number];
+
+// SA-603: lifecycle of one outbound transactional email attempt (EmailDelivery.status).
+export const EMAIL_DELIVERY_STATUS_VALUES = [
+  "QUEUED",
+  "SENT",
+  "FAILED",
+  "BOUNCED",
+  "WOULD_SEND",
+  "OPTED_OUT",
+] as const;
+export type EmailDeliveryStatus = (typeof EMAIL_DELIVERY_STATUS_VALUES)[number];
+
+/** SA-138: the layer a tenant POLICY value applies to (PolicyValue.scopeType). */
+export const POLICY_SCOPE_TYPE_VALUES = ["TENANT", "CATEGORY", "CUSTOMER"] as const;
+export type PolicyScopeTypeValue = (typeof POLICY_SCOPE_TYPE_VALUES)[number];
+
+/** #2653 (SA-542b): which realm minted a sign-in handoff code (Prisma `HandoffRealm`). */
+export const HANDOFF_REALM_VALUES = ["STAFF", "BUYER"] as const;
+export type HandoffRealm = (typeof HANDOFF_REALM_VALUES)[number];
+
+// #2717 M3 (SA-572): how a document line was composed. NULL on the row = a plain single line
+// (SINGLE is never materialised); FIXED = a RECIPE product with frozen component snapshots; FLEX is
+// reserved for M3b.
+export const COMPOSITION_MODE_VALUES = ["SINGLE", "FIXED", "FLEX"] as const;
+export type CompositionMode = (typeof COMPOSITION_MODE_VALUES)[number];
+
+// SA-650 (counter sales): how an order is fulfilled (Prisma `FulfillPath`). PICKUP = counter sale /
+// in-store pickup; the API refuses it on every write DTO until the counter-sale API lands.
+export const FULFILL_PATH_VALUES = ["ROUTE", "SHIP", "PICKUP"] as const;
+export type FulfillPath = (typeof FULFILL_PATH_VALUES)[number];
+
+// Per-operator feature groups (Prisma `OperatorPermissionGroup`, `User.deniedPermissionGroups`). The
+// order here is the display order of the switches (see `PERMISSION_GROUPS` in ./permissions).
+export const OPERATOR_PERMISSION_GROUP_VALUES = [
+  "ORDERS",
+  "DISPATCH",
+  "CUSTOMERS",
+  "CATALOG",
+  "PRICING",
+  "REGULATED",
+  "FINANCE",
+  "NOTIFICATIONS",
+  "REPORTS",
+] as const;
+export type OperatorPermissionGroup = (typeof OPERATOR_PERMISSION_GROUP_VALUES)[number];

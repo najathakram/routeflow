@@ -10,6 +10,7 @@
 // One READ ONLY transaction; every statement is `SELECT count(*)`.
 import { pathToFileURL } from "node:url";
 import pg from "pg";
+import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 
 /** The 19 models the T6 audit left out of the guard migration because their writers were unproven. */
@@ -34,24 +35,23 @@ export const BACKFILL_TABLES = [
   "InboundTriage",
   "AiUsageEvent",
 ];
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "postgres", "db"]);
 
 async function main() {
   const local = process.argv.includes("--local");
   const asJson = process.argv.includes("--json");
   let url;
+  let localCfg = null; // --local: the explicit fields that were vetted are the ones dialled
   try {
     url = local ? process.env.DATABASE_URL : resolveDatabaseUrl(process.env);
     if (!url) throw new Error("--local requires DATABASE_URL");
     if (local) {
-      const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
-      if (!LOCAL_HOSTS.has(host)) throw new Error(`--local refuses non-local host ${host}`);
+      localCfg = requireLocalPgConfig(url);
     }
   } catch (e) {
     console.error(`t6-backfill-census: ${e.message}`);
     return 2;
   }
-  const client = new pg.Client({ connectionString: url });
+  const client = new pg.Client(localCfg ?? { connectionString: url });
   try {
     await client.connect();
     await client.query("BEGIN READ ONLY");

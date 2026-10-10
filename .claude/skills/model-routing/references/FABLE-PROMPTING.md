@@ -1,4 +1,4 @@
-# Prompting Fable 5.1 (and Opus 5) — snippets and the subagent template
+# Prompting Fable 5.1 (and Opus 5.5) — snippets and the subagent template
 
 The snippets are quoted from Anthropic's Fable 5.1 migration guidance (the `claude-api` skill,
 `shared/model-migration.md`). Use them by purpose; do not paste all of them into every prompt.

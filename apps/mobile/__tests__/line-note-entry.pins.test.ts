@@ -14,6 +14,7 @@
  */
 import { readFileSync } from "fs";
 import { join } from "path";
+import { readEditItemsSurface } from "./support/edit-items-source";
 
 const SCREEN_PATH = join(
   __dirname,
@@ -27,7 +28,7 @@ const SCREEN_PATH = join(
 );
 
 describe("pin: edit-items screen per-line flavor/note field", () => {
-  const src = readFileSync(SCREEN_PATH, "utf8");
+  const src = readEditItemsSurface(); // #2340: screen + sliced modules
 
   it("both draft cards declare an onSetNote prop", () => {
     const onSetNoteOccurrences = src.match(/onSetNote/g) ?? [];
@@ -51,7 +52,10 @@ describe("pin: edit-items screen per-line flavor/note field", () => {
   });
 
   it("wires both setters into their card's onSetNote at the two call sites", () => {
-    expect(src).toMatch(/onSetNote=\{\(notes\) => setLineNote\(it\.productId, notes\)\}/);
+    // B775: the catalog card's key is `it.lineId ?? it.productId` (never
+    // bare productId, so two same-product lines never collide) — threaded
+    // through the render loop as `key` and passed to every handler here.
+    expect(src).toMatch(/onSetNote=\{\(notes\) => setLineNote\(key, notes\)\}/);
     expect(src).toMatch(/onSetNote=\{\(notes\) => setUnlistedNote\(u\.id, notes\)\}/);
   });
 

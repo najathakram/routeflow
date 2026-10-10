@@ -43,6 +43,14 @@
  * Buffers end to end and assert on the values written to a mocked
  * PrismaService — never on `parse-import-number.ts` directly (it doesn't
  * exist yet on this tree).
+ *
+ * B858/B859 harness note (bug-test-plan.md): `ProductsService`/`AuditService` providers are added
+ * below so this module keeps compiling once FIX2 adds them to `ImportService`'s constructor. The
+ * REG-B98 `importProducts` assertion is re-pointed from `prisma.product.create` onto
+ * `productsService.create` because that write moves behind `ProductsService` (cause-ruling.md
+ * §2.B) — this is expected to go red until FIX2 lands, same as the B858/B859 red set.
+ * `importInventory`'s own `prisma.product.create` assertions are untouched: that importer is out
+ * of scope for this fix.
  */
 import { Test } from "@nestjs/testing";
 import { ConflictException } from "@nestjs/common";
@@ -55,12 +63,16 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
+import { ProductsService } from "../products/products.service";
+import { AuditService } from "../audit/audit.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("ImportService — import robustness (F17)", () => {
   let service: ImportService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let numbering: { reserveNext: jest.Mock };
   let externalRefs: { findLocalId: jest.Mock; record: jest.Mock };
+  let productsService: { create: jest.Mock; update: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -89,9 +101,29 @@ describe("ImportService — import robustness (F17)", () => {
         // idempotency for source-numberless rows). `findLocalId` → null is
         // "never imported before", the state every suite here assumes.
         { provide: ExternalRefService, useValue: externalRefs },
+        // B858/B859 harness note: not yet consumed by ImportService's constructor (RC1) — added
+        // here so this module keeps compiling once FIX2 wires them in.
+        {
+          provide: ProductsService,
+          useValue: {
+            create: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            update: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            emitCatalogBulkChanged: jest.fn(),
+            assertCanFlagTobacco: jest.fn().mockResolvedValue(undefined),
+            assertMsrpAllowed: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
     service = mod.get(ImportService);
+    productsService = mod.get(ProductsService);
   });
 
   describe("REG-B98 — comma-thousands and currency-symbol money parsing", () => {
@@ -175,9 +207,11 @@ describe("ImportService — import robustness (F17)", () => {
 
       const result = await service.importProducts(Buffer.from(csv), "user-1");
 
-      expect(prisma.product.create).toHaveBeenCalledTimes(1);
-      const data = (prisma.product.create.mock.calls[0][0] as any).data;
-      expect(data.pricePerUnit).toBe(4567.89);
+      // B858/B859 harness note: this write moves behind ProductsService (cause-ruling.md §2.B);
+      // red until FIX2 lands (see file-header note).
+      expect(productsService.create).toHaveBeenCalledTimes(1);
+      const dto = productsService.create.mock.calls[0]?.[0];
+      expect(dto?.pricePerUnit).toBe(4567.89);
       expect(result.imported).toBe(1);
     });
 
@@ -263,6 +297,30 @@ describe("ImportService — import robustness (F17)", () => {
     });
   });
 
+  describe("REG-B779 — the synthetic PAID/PARTIAL payment amount is rounded to the cent", () => {
+    it("REG-B779: a PARTIAL invoice's synthetic payment (total - balanceDue) is cent-exact, not a float artifact", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", businessName: "Acme Corp" });
+
+      // 100.10 - 55.33 === 44.769999999999996 in plain JS float subtraction —
+      // both operands are already individually cent-rounded by parseImportMoney,
+      // so this artifact comes ONLY from the subtraction itself.
+      const csv =
+        "Invoice Number,Customer Name,Total,Balance Due,Invoice Status\n" +
+        "INV-7791,Acme Corp,100.10,55.33,Overdue\n";
+
+      await service.importInvoices(Buffer.from(csv), "user-1");
+
+      expect(prisma.invoice.create).toHaveBeenCalledTimes(1);
+      const invoiceData = (prisma.invoice.create.mock.calls[0][0] as any).data;
+      expect(invoiceData.status).toBe(InvoiceStatus.PARTIAL);
+
+      expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1);
+      const paymentData = (prisma.invoicePayment.create.mock.calls[0][0] as any).data;
+      expect(paymentData.amount).toBe(44.77);
+      expect(paymentData.amount).not.toBe(44.769999999999996);
+    });
+  });
+
   describe("REG-B99 — payments dedupe with snapshot semantics", () => {
     it("REG-B99 (T-B99): a re-uploaded payments row (no InvoicePayment ID) dedupes against history without re-flipping statuses, while two identical rows in one file both import", async () => {
       // Stateful invoice fake so the post-loop status recalc really runs on BOTH
@@ -318,6 +376,13 @@ describe("ImportService — import robustness (F17)", () => {
       prisma.invoice.update.mockImplementation(async ({ where, data }: any) => {
         Object.assign(invoiceStore[where.id], data);
         return invoiceStore[where.id];
+      });
+      // SA-424 N2: the end sweep is a compare-and-set on the status it read.
+      prisma.invoice.updateMany.mockImplementation(async ({ where, data }: any) => {
+        const inv = invoiceStore[where.id];
+        if (!inv || inv.status !== where.status) return { count: 0 };
+        Object.assign(inv, data);
+        return { count: 1 };
       });
       const transaction = prisma.$transaction as unknown as jest.Mock;
       transaction.mockImplementation(async (ops: any) => Promise.all(ops));
@@ -463,6 +528,12 @@ describe("ImportService — import robustness (F17)", () => {
         Object.assign(invoice, data);
         return invoice;
       });
+      // SA-424 N2: the end sweep is a compare-and-set on the status it read.
+      prisma.invoice.updateMany.mockImplementation(async ({ where, data }: any) => {
+        if (invoice.status !== where.status) return { count: 0 };
+        Object.assign(invoice, data);
+        return { count: 1 };
+      });
       (prisma.$transaction as unknown as jest.Mock).mockImplementation(async (ops: any) =>
         Promise.all(ops),
       );
@@ -577,6 +648,13 @@ describe("ImportService — import robustness (F17)", () => {
         const inv = invoiceStore.find((i) => i.id === where.id)!;
         Object.assign(inv, data);
         return inv;
+      });
+      // SA-424 N2: the end sweep is a compare-and-set on the status it read.
+      prisma.invoice.updateMany.mockImplementation(async ({ where, data }: any) => {
+        const inv = invoiceStore.find((i) => i.id === where.id);
+        if (!inv || inv.status !== where.status) return { count: 0 };
+        Object.assign(inv, data);
+        return { count: 1 };
       });
       (prisma.$transaction as unknown as jest.Mock).mockImplementation(async (ops: any) =>
         Promise.all(ops),

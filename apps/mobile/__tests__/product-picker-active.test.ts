@@ -57,7 +57,8 @@ describe("ProductPickerSheet — archived products excluded from the tap list (B
 
   it("REG-B142-D order/invoice/standing-order callers pass activeOnly", () => {
     const orderCallers = [
-      "app/(operator)/(tabs)/orders/[id]/edit-items.tsx",
+      // #2340: the operator edit-items picker moved into its own module.
+      "components/edit-items/ProductPicker.tsx",
       "components/NewOrderScreen.tsx",
       "app/(operator)/(tabs)/invoices/new.tsx",
       "app/(operator)/(tabs)/invoices/[id]/edit.tsx",

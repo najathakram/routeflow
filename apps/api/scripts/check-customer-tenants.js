@@ -5,17 +5,13 @@
  * Usage:
  *   node apps/api/scripts/check-customer-tenants.js <tenantId>
  *
- * Requires DATABASE_URL in the environment (e.g. via
- * `railway run --service postgres node apps/api/scripts/check-customer-tenants.js <tenantId>`).
+ * Run via `railway run --service postgres node apps/api/scripts/check-customer-tenants.js <tenantId>`.
+ * The connection comes from scripts/lib/report-db-url.mjs (B768): Railway's TCP-proxy variables
+ * win, because under `railway run` DATABASE_URL is the unreachable *.railway.internal host.
  */
 const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
-
-if (!process.env.DATABASE_URL) {
-  console.error("DATABASE_URL not set. Run via: railway run --service postgres node <script>");
-  process.exit(1);
-}
 
 const tenantId = process.argv[2];
 if (!tenantId) {
@@ -23,11 +19,16 @@ if (!tenantId) {
   process.exit(1);
 }
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-const p = new PrismaClient({ adapter });
+let pool;
+let p;
 
 async function main() {
+  const { resolveReportDbUrl } = await import("./lib/report-db-url.mjs");
+  const url = resolveReportDbUrl("check-customer-tenants");
+  if (!url) process.exit(2);
+  pool = new Pool({ connectionString: url });
+  p = new PrismaClient({ adapter: new PrismaPg(pool) });
+
   // 1. How are zoho-imported customers distributed by tenantId?
   const dist = await p.$queryRawUnsafe(`
     SELECT c."tenantId", COUNT(*)::int as cnt
@@ -69,4 +70,4 @@ async function main() {
 
 main()
   .catch((e) => console.error("ERROR:", e.message))
-  .finally(() => pool.end());
+  .finally(() => pool?.end());

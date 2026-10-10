@@ -148,6 +148,118 @@ describe("CommissionEngineService", () => {
       db.invoice.findUnique.mockRejectedValue(new Error("boom"));
       await expect(service.syncInvoiceCommissionSafe("inv-1", db)).resolves.toBeUndefined();
     });
+
+    describe("#2201: a write conflict inside the CALLER's tx is rethrown, never swallowed", () => {
+      // The four shapes txConflictState reads (common/tx-retry.ts).
+      const conflicts: Array<[string, () => any]> = [
+        [
+          "40001 via meta.driverAdapterError",
+          () =>
+            Object.assign(new Error("could not serialize access"), {
+              meta: { driverAdapterError: { cause: { originalCode: "40001" } } },
+            }),
+        ],
+        [
+          "40P01 via cause.originalCode",
+          () => Object.assign(new Error("deadlock detected"), { cause: { originalCode: "40P01" } }),
+        ],
+        ["Prisma P2034", () => Object.assign(new Error("write conflict"), { code: "P2034" })],
+        [
+          "DriverAdapterError TransactionWriteConflict",
+          () =>
+            Object.assign(new Error("write conflict"), {
+              name: "DriverAdapterError",
+              cause: { kind: "TransactionWriteConflict" },
+            }),
+        ],
+      ];
+      // The real Prisma 7 shapes (#2201): a tx client has `$transaction` but not `$connect`
+      // (the runtime's itx deny-list); a base / forTenant() client has both.
+      const callerTx = () => ({ $executeRaw: jest.fn(), $transaction: jest.fn() });
+      const baseClient = () => ({ $connect: jest.fn(), $transaction: jest.fn() });
+
+      it.each(conflicts)("%s inside a caller tx rejects with that same error", async (_n, make) => {
+        const err = make();
+        jest.spyOn(service, "syncInvoiceCommission").mockRejectedValue(err);
+        await expect(service.syncInvoiceCommissionSafe("inv-1", callerTx())).rejects.toBe(err);
+      });
+
+      it.each(conflicts)("%s with no caller tx is still swallowed", async (_n, make) => {
+        jest.spyOn(service, "syncInvoiceCommission").mockRejectedValue(make());
+        await expect(service.syncInvoiceCommissionSafe("inv-1")).resolves.toBeUndefined();
+        await expect(
+          service.syncInvoiceCommissionSafe("inv-1", baseClient()),
+        ).resolves.toBeUndefined();
+      });
+
+      /** The SQL text of each $executeRaw tagged-template call, in order. */
+      const rawSql = (db: any) => db.$executeRaw.mock.calls.map((c: any[]) => c[0].join("?"));
+
+      it("SA-393: a clean sync in a caller tx runs under SAVEPOINT then RELEASE", async () => {
+        const tx = callerTx();
+        jest.spyOn(service, "syncInvoiceCommission").mockResolvedValue(undefined);
+        await service.syncInvoiceCommissionSafe("inv-1", tx);
+        expect(rawSql(tx)).toEqual([
+          "SAVEPOINT commission_sync",
+          "RELEASE SAVEPOINT commission_sync",
+        ]);
+      });
+
+      it("SA-393: a non-conflict error in a caller tx rolls back to the savepoint and is swallowed", async () => {
+        const tx = callerTx();
+        jest
+          .spyOn(service, "syncInvoiceCommission")
+          .mockRejectedValue(Object.assign(new Error("dup"), { code: "P2002" }));
+        await expect(service.syncInvoiceCommissionSafe("inv-1", tx)).resolves.toBeUndefined();
+        expect(rawSql(tx)).toEqual([
+          "SAVEPOINT commission_sync",
+          "ROLLBACK TO SAVEPOINT commission_sync",
+        ]);
+      });
+
+      it("SA-393: a conflict in a caller tx is rethrown WITHOUT a rollback-to", async () => {
+        const tx = callerTx();
+        const err = Object.assign(new Error("write conflict"), { code: "P2034" });
+        jest.spyOn(service, "syncInvoiceCommission").mockRejectedValue(err);
+        await expect(service.syncInvoiceCommissionSafe("inv-1", tx)).rejects.toBe(err);
+        expect(rawSql(tx)).toEqual(["SAVEPOINT commission_sync"]);
+      });
+
+      it("SA-393: a failed ROLLBACK TO is rethrown (the caller tx is unusable)", async () => {
+        const tx = callerTx();
+        const rollbackErr = new Error("rollback failed");
+        tx.$executeRaw
+          .mockResolvedValueOnce(0) // SAVEPOINT
+          .mockRejectedValueOnce(rollbackErr); // ROLLBACK TO
+        jest.spyOn(service, "syncInvoiceCommission").mockRejectedValue(new Error("boom"));
+        await expect(service.syncInvoiceCommissionSafe("inv-1", tx)).rejects.toBe(rollbackErr);
+      });
+
+      it("SA-393: a SAVEPOINT that cannot open propagates (the caller tx is already unusable)", async () => {
+        const tx = callerTx();
+        const openErr = new Error("current transaction is aborted");
+        tx.$executeRaw.mockRejectedValueOnce(openErr);
+        const sync = jest.spyOn(service, "syncInvoiceCommission");
+        await expect(service.syncInvoiceCommissionSafe("inv-1", tx)).rejects.toBe(openErr);
+        expect(sync).not.toHaveBeenCalled();
+      });
+
+      it("no caller tx: no SAVEPOINT is issued", async () => {
+        const base: any = { ...baseClient(), $executeRaw: jest.fn() };
+        jest.spyOn(service, "syncInvoiceCommission").mockRejectedValue(new Error("boom"));
+        await expect(service.syncInvoiceCommissionSafe("inv-1", base)).resolves.toBeUndefined();
+        expect(base.$executeRaw).not.toHaveBeenCalled();
+      });
+
+      it("a non-conflict error inside a caller tx is still swallowed", async () => {
+        jest
+          .spyOn(service, "syncInvoiceCommission")
+          .mockRejectedValue(Object.assign(new Error("boom"), { code: "P2002" }));
+        await expect(
+          service.syncInvoiceCommissionSafe("inv-1", callerTx()),
+        ).resolves.toBeUndefined();
+      });
+    });
   });
 
   describe("syncInvoiceCommission — creation and idempotency", () => {
@@ -304,6 +416,70 @@ describe("CommissionEngineService", () => {
       expect(created.baseAmount).toBe(1000);
       expect(created.accruedAmount).toBe(100);
       expect(created.payableAmount).toBe(100);
+    });
+
+    // #2169 (SA-395): the writer (invoices.service.ts setCheckStatus) now stamps
+    // `systemKind: "NSF_FEE"` on every NEW bounce-fee line; pre-existing lines carry only the
+    // description prefix until the backfill runs. The engine must read BOTH signals via the
+    // shared isNsfLine predicate (nsf-line.ts) so neither shape ever leaks into commission.
+    it("a systemKind NSF_FEE-stamped line with a NON-prefix description is still excluded from commission", async () => {
+      const invoice = baseInvoice({
+        subtotal: 1025,
+        total: 1025,
+        items: [
+          { description: "Returned check charge", systemKind: "NSF_FEE", qty: 1, unitPrice: 25 },
+          { description: "Widget line", qty: 2, unitPrice: 10 },
+        ],
+        payments: [{ id: "p1", amount: 1025, method: "CASH", status: "PAID" }],
+      });
+      const assignment = { agentId: "agent-1" };
+      const agentRates = [{ ratePct: 10, effectiveFrom: new Date("2026-01-01T00:00:00.000Z") }];
+      const { db } = buildFakeDb({ invoice, assignment, agentRates });
+      await service.syncInvoiceCommission("inv-1", db);
+      const created = db.commissionAccrual.create.mock.calls[0][0].data;
+      expect(created.baseAmount).toBe(1000);
+    });
+
+    it("a NULL-systemKind line with the prefix (pre-backfill, TRANSITION leg) is still excluded", async () => {
+      const invoice = baseInvoice({
+        subtotal: 1025,
+        total: 1025,
+        items: [
+          {
+            description: `${NSF_FEE_DESCRIPTION_PREFIX} CHK-1001`,
+            systemKind: null,
+            qty: 1,
+            unitPrice: 25,
+          },
+          { description: "Widget line", systemKind: null, qty: 2, unitPrice: 10 },
+        ],
+        payments: [{ id: "p1", amount: 1025, method: "CASH", status: "PAID" }],
+      });
+      const assignment = { agentId: "agent-1" };
+      const agentRates = [{ ratePct: 10, effectiveFrom: new Date("2026-01-01T00:00:00.000Z") }];
+      const { db } = buildFakeDb({ invoice, assignment, agentRates });
+      await service.syncInvoiceCommission("inv-1", db);
+      const created = db.commissionAccrual.create.mock.calls[0][0].data;
+      expect(created.baseAmount).toBe(1000);
+    });
+
+    it("a NULL-systemKind custom line WITHOUT the prefix is fully commissionable", async () => {
+      const invoice = baseInvoice({
+        subtotal: 1025,
+        total: 1025,
+        items: [
+          { description: "Custom handling fee", systemKind: null, qty: 1, unitPrice: 25 },
+          { description: "Widget line", systemKind: null, qty: 2, unitPrice: 10 },
+        ],
+        payments: [{ id: "p1", amount: 1025, method: "CASH", status: "PAID" }],
+      });
+      const assignment = { agentId: "agent-1" };
+      const agentRates = [{ ratePct: 10, effectiveFrom: new Date("2026-01-01T00:00:00.000Z") }];
+      const { db } = buildFakeDb({ invoice, assignment, agentRates });
+      await service.syncInvoiceCommission("inv-1", db);
+      const created = db.commissionAccrual.create.mock.calls[0][0].data;
+      // No line excluded: base = subtotal(1025) - discount(0) - nsfFees(0) = 1025.
+      expect(created.baseAmount).toBe(1025);
     });
   });
 
@@ -469,7 +645,9 @@ describe("CommissionEngineService", () => {
       // sync must therefore run inside its OWN transaction instead.
       const plain = buildFakeDb({ invoice: baseInvoice() });
       const tx = buildFakeDb({ invoice: baseInvoice() });
-      // A base / `$extends`ed client exposes `$transaction`; a Prisma tx client does not.
+      // A base / `$extends`ed client exposes `$connect` (and `$transaction`); a Prisma 7 tx
+      // client exposes `$transaction` too but NOT `$connect` (the runtime's itx deny-list, #2201).
+      plain.db.$connect = jest.fn();
       plain.db.$transaction = jest.fn();
       prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx.db));
 
@@ -483,7 +661,9 @@ describe("CommissionEngineService", () => {
     });
 
     it("REG-B73 T5b a transaction client is used as-is — no nested transaction is opened", async () => {
-      const { db } = buildFakeDb({ invoice: baseInvoice() }); // no `$transaction` => tx client
+      const { db } = buildFakeDb({ invoice: baseInvoice() });
+      // The REAL Prisma 7 itx shape (#2201): `$transaction` present, `$connect` absent.
+      db.$transaction = jest.fn();
 
       await service.syncInvoiceCommission("inv-1", db);
 

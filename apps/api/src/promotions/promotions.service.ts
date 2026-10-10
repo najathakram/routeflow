@@ -9,6 +9,8 @@ import {
 } from "@routeflow/pricing";
 import { CreatePromotionDto } from "./dto/create-promotion.dto";
 import { UpdatePromotionDto } from "./dto/update-promotion.dto";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { assertNoFamilyProducts } from "../products/sellable-lines";
 
 /**
  * The stored promotion fields the zero-price guard reads back. `value` is a Prisma
@@ -134,7 +136,7 @@ export class PromotionsService {
     throw new BadRequestException({
       statusCode: 400,
       error: "Bad Request",
-      code: "PROMOTION_ZERO_PRICE",
+      code: API_ERROR_CODES.PROMOTION_ZERO_PRICE,
       message: `${zeroPriceWarning(impact)} Lower the amount, narrow the scope, or resend with allowZeroPrice: true to confirm.`,
       zeroPriceCount: impact.count,
       inScopeCount: impact.inScope,
@@ -142,8 +144,21 @@ export class PromotionsService {
     });
   }
 
+  /** B1216: a FAMILY container is never promoted (its variants are): refuse any named product of that kind. */
+  private async refuseFamilyProducts(productIds: readonly string[] | undefined) {
+    if (!productIds || productIds.length === 0) return;
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("No tenant context");
+    const found = await this.prisma.forTenant().product.findMany({
+      where: { tenantId, id: { in: [...productIds] } },
+      select: { id: true, name: true, kind: true },
+    });
+    assertNoFamilyProducts(found, "promotion");
+  }
+
   async create(dto: CreatePromotionDto) {
     this.validateRule(dto);
+    if (dto.scope === PromotionScope.PRODUCTS) await this.refuseFamilyProducts(dto.productIds);
     await this.assertNoZeroPricedProducts(dto);
     const tenantId = this.prisma.getTenantId();
     return this.prisma.tenantTransaction(async (tx: any) => {
@@ -189,6 +204,7 @@ export class PromotionsService {
   async update(id: string, dto: UpdatePromotionDto) {
     const existing: StoredPromotion = await this.findOne(id); // tenant-scoped existence + 404
     this.validateRule(dto);
+    await this.refuseFamilyProducts(dto.productIds); // the set a PATCH replaces
     await this.assertNoZeroPricedProducts(dto, existing);
     const tenantId = this.prisma.getTenantId();
     return this.prisma.tenantTransaction(async (tx: any) => {

@@ -13,6 +13,7 @@ import type {
   QuoteInlineReturnItem,
   QuoteInlineReturnRequest,
   ReturnReason,
+  UserRole,
 } from "@routeflow/types";
 
 // ─── Step 1: line drafts ─────────────────────────────────────────────────────
@@ -34,6 +35,142 @@ export interface InlineReturnLineDraft {
   /** Per-item reason override — optional; falls back to the capture-level reason. */
   reason: ReturnReason | "";
   note: string;
+  /** #2695 (SA-557): a staff-only CREDIT price per selling unit (one box when boxed), as typed —
+   *  blank means none. Lower-only: the server refuses anything above its own default
+   *  (`RETURN_CREDIT_OVER_CAP`). Only rendered for {@link canOverrideReturnCredit} roles. */
+  creditUnitPrice?: string;
+  /** #2695: why — required with `creditUnitPrice`. */
+  overrideReason?: string;
+  /** B961 / SA-071c: staff-only reason for crediting goods the quote flagged "already returned or credited". Sent on the CAPTURE
+   *  only (the quote ignores it). */
+  alreadyReturnedReason?: string;
+}
+
+// ─── #2695: staff credit price override ─────────────────────────────────────────
+
+/** The roles the server lets override a return's credit price (SA-557). Every other caller
+ *  that sends the fields is refused with a 400, so the input is never offered to them. */
+// Checked against the shared `UserRole` enum at COMPILE time (a type-only import: `@routeflow/types`
+// is TypeScript source with no runtime build, so this package never imports it at runtime). A
+// typo or a renamed role is a type error here, not a silently-never-matching string.
+export const CREDIT_OVERRIDE_ROLES = [
+  "OPERATOR",
+  "TENANT_ADMIN",
+] as const satisfies readonly `${UserRole}`[];
+
+export function canOverrideReturnCredit(role: string | null | undefined): boolean {
+  return role != null && (CREDIT_OVERRIDE_ROLES as readonly string[]).includes(role);
+}
+
+export const CREDIT_OVERRIDE_REASON_MAX = 200;
+
+export type CreditOverrideParse =
+  | { kind: "none" }
+  | { kind: "ok"; creditUnitPrice: number; overrideReason: string }
+  | { kind: "invalid"; message: string };
+
+/** A line's override as the wire will carry it: none (both blank), ok, or why it can't be sent.
+ *  The quote and the capture both read THIS, so they always price the same chunks. */
+export function parseCreditOverride(
+  line: Pick<InlineReturnLineDraft, "creditUnitPrice" | "overrideReason">,
+): CreditOverrideParse {
+  const rawPrice = (line.creditUnitPrice ?? "").trim();
+  const reason = (line.overrideReason ?? "").trim();
+  if (rawPrice === "" && reason === "") return { kind: "none" };
+  if (rawPrice === "") {
+    return { kind: "invalid", message: "Enter a credit price, or clear the price reason." };
+  }
+  if (!/^\d+(\.\d{1,2})?$/.test(rawPrice)) {
+    return { kind: "invalid", message: "Enter the credit price as dollars and cents, like 4.50." };
+  }
+  if (reason === "") return { kind: "invalid", message: "Say why the credit price is lower." };
+  if (reason.length > CREDIT_OVERRIDE_REASON_MAX) {
+    return {
+      kind: "invalid",
+      message: `Keep the price reason to ${CREDIT_OVERRIDE_REASON_MAX} characters.`,
+    };
+  }
+  return { kind: "ok", creditUnitPrice: Number(rawPrice), overrideReason: reason };
+}
+
+/** The first problem that stops the lines' overrides being sent, named — null when every line is
+ *  sendable. A host disables "Get quote" on it (the server would refuse the same request with a
+ *  400). Only rows that WILL be sent are judged: a row with no quantity (boxes and pieces both
+ *  blank or 0) is filtered out of the request, so an untouched duplicate row, or an override typed
+ *  on a row with no quantity, never blocks the quote. Two kinds of problem:
+ *   - a sendable line whose own override is invalid (see {@link parseCreditOverride});
+ *   - TWO SENDABLE ROWS OF ONE PRODUCT with different overrides (one priced, one not, or two
+ *     different prices/reasons). The request merges same-product rows into ONE item that keeps the
+ *     first row's override (`mergeDuplicateProductItems`), so a second, different override would be
+ *     silently dropped — or would silently price the other row's pieces at the first row's price.
+ *     It is refused here, visibly, instead: one price per product. */
+export function creditOverrideProblem(
+  lines: Pick<
+    InlineReturnLineDraft,
+    "productId" | "productName" | "boxes" | "pieces" | "creditUnitPrice" | "overrideReason"
+  >[],
+): string | null {
+  const sendable = lines.filter(
+    (l) => parseNonNegativeInt(l.boxes) > 0 || parseNonNegativeInt(l.pieces) > 0,
+  );
+  for (const line of sendable) {
+    const parsed = parseCreditOverride(line);
+    if (parsed.kind === "invalid") return `${line.productName}: ${parsed.message}`;
+  }
+  const seen = new Map<string, { name: string; key: string }>();
+  for (const line of sendable) {
+    const parsed = parseCreditOverride(line);
+    const key =
+      parsed.kind === "ok" ? `${parsed.creditUnitPrice}|${parsed.overrideReason}` : "none";
+    const prior = seen.get(line.productId);
+    if (!prior) {
+      seen.set(line.productId, { name: line.productName, key });
+    } else if (prior.key !== key) {
+      return (
+        `${prior.name}: two rows of this product have different credit prices. ` +
+        "Use one credit price and reason for the product, or leave both blank."
+      );
+    }
+  }
+  return null;
+}
+
+/** A lowered credit, as the server priced it (`priceSource` MANUAL): the price, the default it
+ *  replaced, and why — null for every other chunk. `money` is the host's own formatter. A MANUAL
+ *  chunk's prices are per SELLING unit (one box when boxed), unlike a matched default's per-piece
+ *  `unitPrice`, so the host says which: `boxed` labels them "per box", else "each". */
+export function creditOverrideNote(
+  chunk: Pick<
+    InlineReturnQuoteChunk,
+    "priceSource" | "unitPrice" | "originalPrice" | "overrideReason"
+  >,
+  money: (n: number) => string,
+  boxed = false,
+): string | null {
+  if (chunk.priceSource !== "MANUAL") return null;
+  const per = boxed ? " per box" : " each";
+  return (
+    `Credit lowered to ${money(chunk.unitPrice ?? 0)}${per}` +
+    (chunk.originalPrice != null ? ` from ${money(chunk.originalPrice)}${per}` : "") +
+    (chunk.overrideReason ? ` — ${chunk.overrideReason}` : "")
+  );
+}
+
+/** The products a host should label "per box" in {@link creditOverrideNote}. */
+export function boxedProductIds(
+  lines: Pick<InlineReturnLineDraft, "productId" | "unitsPerBox">[],
+): Set<string> {
+  return new Set(lines.filter((l) => isBoxedProduct(l)).map((l) => l.productId));
+}
+
+function overrideFields(line: Pick<InlineReturnLineDraft, "creditUnitPrice" | "overrideReason">): {
+  creditUnitPrice?: number;
+  overrideReason?: string;
+} {
+  const parsed = parseCreditOverride(line);
+  return parsed.kind === "ok"
+    ? { creditUnitPrice: parsed.creditUnitPrice, overrideReason: parsed.overrideReason }
+    : {};
 }
 
 export function isBoxedProduct(line: Pick<InlineReturnLineDraft, "unitsPerBox">): boolean {
@@ -51,6 +188,36 @@ export function hasAnyQtyEntered(lines: InlineReturnLineDraft[]): boolean {
 }
 
 /**
+ * SA-101(2)/B3/B765 interim guard: merges request items that share a `productId` — BEFORE
+ * they reach the wire — by summing `boxes`/`pieces`. `lines` is keyed by `productId`
+ * throughout this dialog (`updateLine`/`removeLine`), so a source order with two lines of
+ * one product (a Case line and a pack line, say) can hydrate two draft rows for the same
+ * product; without this merge each would become its OWN request item, and the server's
+ * per-item allocation (`allocateReturnedPieces`) rebuilds its remaining-supply view fresh
+ * per item rather than decrementing a shared one — two items for the same product would
+ * each draw against the SAME undiminished supply, silently crediting it twice. Other
+ * per-item fields (a capture item's `reason`/`condition`) are kept from the FIRST
+ * occurrence — only quantities are summed. The durable fix (carrying the specific source
+ * line on the wire, so two lines of one product are never conflated into a single qty at
+ * all) is a later PR; this only stops the silent double-count.
+ */
+function mergeDuplicateProductItems<T extends { productId: string; boxes: number; pieces: number }>(
+  items: T[],
+): T[] {
+  const merged = new Map<string, T>();
+  for (const item of items) {
+    const existing = merged.get(item.productId);
+    if (existing) {
+      existing.boxes += item.boxes;
+      existing.pieces += item.pieces;
+    } else {
+      merged.set(item.productId, { ...item });
+    }
+  }
+  return [...merged.values()];
+}
+
+/**
  * Builds the quote request from Step 1's drafts. `boxes`/`pieces` are ALWAYS sent
  * explicitly (never a bare `qty`) — a bare `qty` on a boxed product means BOXES to the API
  * (SA-071a #3), so sending both fields explicitly for every line, boxed or not, removes the
@@ -64,15 +231,50 @@ export function buildQuoteRequest(
   lines: InlineReturnLineDraft[],
   routeRunStopId?: string,
 ): QuoteInlineReturnRequest {
-  const items: QuoteInlineReturnItem[] = lines
-    .map((l) => ({
-      productId: l.productId,
-      boxes: parseNonNegativeInt(l.boxes),
-      pieces: parseNonNegativeInt(l.pieces),
-    }))
-    .filter((i) => i.boxes > 0 || i.pieces > 0)
-    .map((i) => ({ productId: i.productId, qty: 1, boxes: i.boxes, pieces: i.pieces }));
+  const items: QuoteInlineReturnItem[] = mergeDuplicateProductItems(
+    lines
+      .map((l) => ({
+        productId: l.productId,
+        boxes: parseNonNegativeInt(l.boxes),
+        pieces: parseNonNegativeInt(l.pieces),
+        ...overrideFields(l),
+      }))
+      .filter((i) => i.boxes > 0 || i.pieces > 0)
+      .map((i) => ({ ...i, qty: 1 })),
+  ).map(({ productId, qty, boxes, pieces, creditUnitPrice, overrideReason }) => ({
+    productId,
+    qty,
+    boxes,
+    pieces,
+    ...(creditUnitPrice !== undefined ? { creditUnitPrice, overrideReason } : {}),
+  }));
   return routeRunStopId ? { customerId, items, routeRunStopId } : { customerId, items };
+}
+
+// ─── B961 / SA-071c: goods already returned or credited ────────────────────────
+
+/** The label of an over-return chunk of a product the customer DID buy and already returned/was credited for (NOT "Not on any invoice"). */
+export const ALREADY_RETURNED_LABEL = "Already returned or credited";
+export const ALREADY_RETURNED_NOTE =
+  "The records show every unit of this product on this customer's invoices was already returned or credited. Crediting it again needs a reason.";
+/** Shown to a DRIVER: their capture is held (nothing credited) until the office approves it with a reason. */
+export const ALREADY_RETURNED_DRIVER_NOTE =
+  "These goods were already returned or credited for this customer. Your return is recorded and held for the office to confirm; no credit is issued until staff approve it.";
+
+/** The products whose over-return chunk the quote flagged `alreadyReturned`. */
+export function alreadyReturnedProductIds(quote: InlineReturnQuoteResponse): Set<string> {
+  return new Set(quote.chunks.filter((c) => c.alreadyReturned).map((c) => c.productId));
+}
+
+/** Staff must type a reason for EVERY flagged product before confirming: the product ids still missing one. */
+export function missingAlreadyReturnedReasons(
+  lines: ReadonlyArray<Pick<InlineReturnLineDraft, "productId" | "alreadyReturnedReason">>,
+  quote: InlineReturnQuoteResponse,
+): string[] {
+  return [...alreadyReturnedProductIds(quote)].filter(
+    (id) =>
+      !lines.some((l) => l.productId === id && (l.alreadyReturnedReason ?? "").trim().length > 0),
+  );
 }
 
 // ─── Step 2: quote chunk grouping (display only — no money math) ───────────────
@@ -131,14 +333,66 @@ export function coveredPiecesByProduct(quote: InlineReturnQuoteResponse): Map<st
   return byProduct;
 }
 
+/**
+ * #2693: the plain-words reason option 3 is unavailable (owner's wording: "the retailer has not
+ * bought this item before"). Shown in place of the API's raw `items must contain at least 1
+ * elements`, which is all an empty re-quote ever produced.
+ */
+export const NOTHING_BOUGHT_BEFORE_MESSAGE =
+  "This customer hasn't bought these items before — there's no invoice to return them against.";
+
+/**
+ * #2693: option 3 is only possible when the quote matched at least one piece to an invoice line.
+ * With zero covered pieces `dropExcessAndRequote` would build an EMPTY request, so the option is
+ * disabled and the re-quote is never sent. The one predicate web and mobile both use.
+ */
+export function canReturnOnlyPurchased(quote: InlineReturnQuoteResponse): boolean {
+  for (const pieces of coveredPiecesByProduct(quote).values()) if (pieces > 0) return true;
+  return false;
+}
+
+/**
+ * #2693: the products option 3 would drop entirely (excess on the quote, nothing covered), named
+ * from the operator's own lines in line order, each once. For the "Not bought before: …" note
+ * shown when option 3 is still possible for the other products.
+ */
+export function notBoughtBeforeNames(
+  quote: InlineReturnQuoteResponse,
+  lines: ReadonlyArray<Pick<InlineReturnLineDraft, "productId" | "productName">>,
+): string[] {
+  const covered = coveredPiecesByProduct(quote);
+  const dropped = new Set(
+    quote.chunks
+      .filter(
+        (c) => c.sourceOrderId == null && c.pieces > 0 && !((covered.get(c.productId) ?? 0) > 0),
+      )
+      .map((c) => c.productId),
+  );
+  const names: string[] = [];
+  for (const line of lines) {
+    if (dropped.has(line.productId) && !names.includes(line.productName)) {
+      names.push(line.productName);
+    }
+  }
+  return names;
+}
+
 export function dropExcessAndRequote(
   customerId: string,
   quote: InlineReturnQuoteResponse,
   routeRunStopId?: string,
+  /** #2695: the lines the quote came from — a product's credit price override (its FIRST row's,
+   *  the same rule the request merge uses) carries into the re-quote, so the reduced quote and
+   *  the capture that follows price the same chunks. */
+  lines: Pick<InlineReturnLineDraft, "productId" | "creditUnitPrice" | "overrideReason">[] = [],
 ): QuoteInlineReturnRequest {
+  const firstLine = (productId: string) => lines.find((l) => l.productId === productId);
   const items: QuoteInlineReturnItem[] = [...coveredPiecesByProduct(quote).entries()]
     .filter(([, pieces]) => pieces > 0)
-    .map(([productId, pieces]) => ({ productId, qty: 1, boxes: 0, pieces }));
+    .map(([productId, pieces]) => {
+      const line = firstLine(productId);
+      return { productId, qty: 1, boxes: 0, pieces, ...(line ? overrideFields(line) : {}) };
+    });
   return routeRunStopId ? { customerId, items, routeRunStopId } : { customerId, items };
 }
 
@@ -154,9 +408,23 @@ export function applyCoveredPiecesToLines(
   quote: InlineReturnQuoteResponse,
 ): InlineReturnLineDraft[] {
   const covered = coveredPiecesByProduct(quote);
+  // SA-108b (Opus review of #1293): `covered` is keyed by PRODUCT, but this dialog can carry
+  // TWO rows for one product (see SA-108's lineKey fix — a source order with a Case line and
+  // a pack line, say). Giving EVERY row of that product the FULL covered total, then letting
+  // buildCaptureRequest's own (correct) productId merge sum them, doubled the credit — the
+  // first row alone gets the product's covered amount; every sibling row is zeroed, never
+  // duplicated. A row zeroed this way stays visible in the dialog (0 pieces) but drops out of
+  // the wire request on its own (buildQuoteRequest/buildCaptureRequest already filter out any
+  // item with boxes/pieces both 0).
+  const seenProduct = new Set<string>();
   return lines
     .filter((l) => (covered.get(l.productId) ?? 0) > 0)
-    .map((l) => ({ ...l, boxes: "0", pieces: String(covered.get(l.productId) ?? 0) }));
+    .map((l) => {
+      const isFirstForProduct = !seenProduct.has(l.productId);
+      seenProduct.add(l.productId);
+      const amount = isFirstForProduct ? (covered.get(l.productId) ?? 0) : 0;
+      return { ...l, boxes: "0", pieces: String(amount) };
+    });
 }
 
 // ─── Capture request ────────────────────────────────────────────────────────────
@@ -164,7 +432,9 @@ export function applyCoveredPiecesToLines(
 /**
  * Builds the capture request. THE CLIENT SENDS QUANTITIES ONLY (SA-071b item 5) —
  * boxes/pieces, reason codes, notes, `returnKey`. Never a price the quote displayed; the
- * server recomputes through the same pricing engine at capture time.
+ * server recomputes through the same pricing engine at capture time. The one price it may carry
+ * is a staff member's own typed credit override (#2695) — the same one its quote sent, and still
+ * capped server-side at the engine's default.
  */
 export function buildCaptureRequest(params: {
   customerId: string;
@@ -177,23 +447,30 @@ export function buildCaptureRequest(params: {
   notes?: string;
   routeRunStopId?: string;
 }): CaptureInlineReturnRequest {
-  const items: CaptureInlineReturnItem[] = params.lines
-    .map((l) => ({
-      productId: l.productId,
-      boxes: parseNonNegativeInt(l.boxes),
-      pieces: parseNonNegativeInt(l.pieces),
-      reason: l.reason || undefined,
-      condition: l.note.trim() || undefined,
-    }))
-    .filter((i) => i.boxes > 0 || i.pieces > 0)
-    .map((i) => ({
-      productId: i.productId,
-      qty: 1,
-      boxes: i.boxes,
-      pieces: i.pieces,
-      ...(i.reason ? { reason: i.reason } : {}),
-      ...(i.condition ? { condition: i.condition } : {}),
-    }));
+  const items: CaptureInlineReturnItem[] = mergeDuplicateProductItems(
+    params.lines
+      .map((l) => ({
+        productId: l.productId,
+        boxes: parseNonNegativeInt(l.boxes),
+        pieces: parseNonNegativeInt(l.pieces),
+        reason: l.reason || undefined,
+        condition: l.note.trim() || undefined,
+        alreadyReturnedReason: l.alreadyReturnedReason?.trim() || undefined,
+        ...overrideFields(l),
+      }))
+      .filter((i) => i.boxes > 0 || i.pieces > 0),
+  ).map((i) => ({
+    productId: i.productId,
+    qty: 1,
+    boxes: i.boxes,
+    pieces: i.pieces,
+    ...(i.reason ? { reason: i.reason } : {}),
+    ...(i.condition ? { condition: i.condition } : {}),
+    ...(i.alreadyReturnedReason ? { alreadyReturnedReason: i.alreadyReturnedReason } : {}),
+    ...(i.creditUnitPrice !== undefined
+      ? { creditUnitPrice: i.creditUnitPrice, overrideReason: i.overrideReason }
+      : {}),
+  }));
 
   return {
     customerId: params.customerId,
@@ -238,11 +515,61 @@ interface ApiErrorLike {
   };
 }
 
+// ─── Money display helpers (formatting only — no math) ─────────────────────────
+
+/**
+ * The capture response's `refundAmount` is a Prisma Decimal, which JSON carries as a STRING
+ * ("22.5000"); the shared type says `number`. A `typeof === "number"` check therefore never
+ * held and the credit amount never showed (#2097). Accept both, and return null for anything
+ * that is not a finite amount so the row is hidden rather than rendered as $NaN. Shared by
+ * RecordInlineReturnDialog's own result screen and OrderReturnsPanel (#2406) — never a second
+ * hand-rolled copy.
+ */
+export function refundAmountOf(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/** #2424: the capture key was reused with DIFFERENT items; the earlier return WAS recorded. */
+export const INLINE_RETURN_KEY_REUSED_CODE = "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS";
+
+/**
+ * #2647: the return the server says was ALREADY recorded under this capture key (its 409 body
+ * carries `returnId` / `returnNumber`), or null for any other error. Both clients use it to offer
+ * "Open RET-…" and clear the draft, so the same goods are never re-entered as a "new" return and
+ * credited twice. Shared by web and mobile: never a second hand-rolled copy.
+ */
+export function keyReusedReturnOf(
+  error: unknown,
+): { returnId: string; returnNumber: string | null } | null {
+  const body = (error as ApiErrorLike | undefined)?.response?.data as
+    { code?: string; returnId?: unknown; returnNumber?: unknown } | undefined;
+  if (body?.code !== INLINE_RETURN_KEY_REUSED_CODE) return null;
+  if (typeof body.returnId !== "string" || body.returnId === "") return null;
+  return {
+    returnId: body.returnId,
+    returnNumber: typeof body.returnNumber === "string" ? body.returnNumber : null,
+  };
+}
+
+/** B948: an inline return that would credit a source invoice line past its value (a credit note or an earlier return took part of it). */
+export const INLINE_RETURN_OVER_LINE_HEADROOM_CODE = "RETURN_REFUND_OVER_LINE_HEADROOM";
+export const INLINE_RETURN_OVER_LINE_HEADROOM_MESSAGE =
+  "This return would credit more than the invoice line is worth, because part of it was already credited (by a credit note or an earlier return). Lower the quantity, or issue the credit note manually.";
+
 export function extractRefusalMessage(error: unknown, fallback = "Something went wrong"): string {
   const body = (error as ApiErrorLike | undefined)?.response?.data;
   const status = (error as ApiErrorLike | undefined)?.response?.status;
   if (status === 403 && (body?.code == null || ENTITLEMENT_GATE_CODES.has(body.code))) {
     return RETURNS_NOT_ENABLED_MESSAGE;
+  }
+  // fixed copy by code, never the server message (house rule: no raw server strings in the UI)
+  if (body?.code === INLINE_RETURN_OVER_LINE_HEADROOM_CODE) {
+    return INLINE_RETURN_OVER_LINE_HEADROOM_MESSAGE;
   }
   if (!body?.message) return fallback;
   return Array.isArray(body.message) ? body.message.join(" ") : body.message;

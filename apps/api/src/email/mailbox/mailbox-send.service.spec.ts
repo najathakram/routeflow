@@ -41,9 +41,19 @@ describe("MailboxSendService", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(null),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
-    const service = new MailboxSendService(prisma, encryption, config);
+    // F-10a: a state change and its audit row are written in one transaction; the stub's
+    // transaction client is the stub itself.
+    prisma.auditLog ??= {
+      create: jest.fn().mockResolvedValue({}),
+      findFirst: jest.fn().mockResolvedValue(null),
+    };
+    prisma.$transaction ??= jest.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
+    const service = new MailboxSendService(prisma, encryption, config, {
+      decide: jest.fn().mockResolvedValue({ outcome: "granted", overrides: new Map() }),
+    } as any);
     return { service, prisma, encryption };
   }
 
@@ -54,6 +64,7 @@ describe("MailboxSendService", () => {
       tenantId: "tenant-a",
       provider: "GOOGLE",
       accountEmail: "owner@acme.test",
+      externalSubject: "google-sub-1",
       status: "CONNECTED",
       throttledUntil: null,
       refreshTokenCipher: enc.encrypt("real-refresh-token"),
@@ -71,6 +82,7 @@ describe("MailboxSendService", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {
@@ -100,6 +112,7 @@ describe("MailboxSendService", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockResolvedValue({ data: { id: "gmail-msg-1" } });
@@ -125,6 +138,7 @@ describe("MailboxSendService", () => {
           ),
         ),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {
@@ -140,12 +154,22 @@ describe("MailboxSendService", () => {
     });
 
     expect(res).toMatchObject({ delivered: true, transport: "mailbox" });
-    expect(prisma.mailboxConnection.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { tenantId: "tenant-a" },
-        data: expect.objectContaining({ status: "CONNECTED", throttledUntil: null }),
-      }),
-    );
+    // F-10a: pinned to the mailbox that sent it, and only CONNECTED or a THROTTLED row whose
+    // window has lapsed — never a concurrently REVOKED one, never an open throttle window.
+    expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledWith({
+      where: {
+        provider: "GOOGLE",
+        externalSubject: "google-sub-1",
+        id: "mc-1",
+        OR: [
+          { status: "CONNECTED" },
+          { status: "THROTTLED", throttledUntil: null },
+          { status: "THROTTLED", throttledUntil: { lte: expect.any(Date) } },
+        ],
+      },
+      data: expect.objectContaining({ status: "CONNECTED", throttledUntil: null }),
+    });
+    expect(prisma.mailboxConnection.update).not.toHaveBeenCalled();
   });
 
   it("no connection for the tenant: returns delivered:false without any HTTP call", async () => {
@@ -205,6 +229,7 @@ describe("MailboxSendService", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {
@@ -225,13 +250,17 @@ describe("MailboxSendService", () => {
     });
 
     expect(res).toEqual({ delivered: false, transport: "mailbox", error: "throttled" });
-    expect(prisma.mailboxConnection.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { tenantId: "tenant-a" },
-        data: expect.objectContaining({ status: "THROTTLED" }),
-      }),
-    );
-    const throttledUntil: Date = (prisma.mailboxConnection.update as jest.Mock).mock.calls[0][0]
+    // F-10a: a conditional transition — only from CONNECTED, pinned to the rate-limited mailbox.
+    expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledWith({
+      where: {
+        provider: "GOOGLE",
+        externalSubject: "google-sub-1",
+        id: "mc-1",
+        status: { in: ["CONNECTED"] },
+      },
+      data: expect.objectContaining({ status: "THROTTLED" }),
+    });
+    const throttledUntil: Date = (prisma.mailboxConnection.updateMany as jest.Mock).mock.calls[0][0]
       .data.throttledUntil;
     const deltaMs = throttledUntil.getTime() - before;
     expect(deltaMs).toBeGreaterThan(115_000);
@@ -248,6 +277,7 @@ describe("MailboxSendService", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(row),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {
@@ -267,9 +297,15 @@ describe("MailboxSendService", () => {
     });
 
     expect(res).toMatchObject({ delivered: false, transport: "mailbox", error: "reauth_required" });
-    expect(prisma.mailboxConnection.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: "REVOKED" }) }),
-    );
+    // F-10a: a conditional transition from CONNECTED/THROTTLED, pinned to the rejected grant.
+    expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledWith({
+      where: {
+        refreshTokenCipher: row.refreshTokenCipher,
+        id: "mc-1",
+        status: { in: ["CONNECTED", "THROTTLED"] },
+      },
+      data: expect.objectContaining({ status: "REVOKED" }),
+    });
     // Only the (failed) token refresh happened — never a Gmail send with no access token.
     expect(axios.post).toHaveBeenCalledTimes(1);
     expect((axios.post as jest.Mock).mock.calls[0][0]).toBe(GOOGLE_TOKEN_URL);
@@ -281,6 +317,7 @@ describe("MailboxSendService", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {

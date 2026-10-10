@@ -1,11 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type {
+  RegulatedFilingStatus,
   RegulatedLedgerResponse,
   RegulatedReportPreview,
   ReportTemplateDef,
 } from "@routeflow/types";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 export type {
+  RegulatedFilingStatus,
   RegulatedLedgerResponse,
   RegulatedLedgerRow,
   RegulatedReportColumn,
@@ -108,17 +111,19 @@ export function useTrackedCategory(id: string | undefined) {
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
-export function useCreateTrackedCategory() {
+export function useCreateTrackedCategory(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<TrackedCategory, Error, TrackedCategoryInput>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (dto) => apiClient.post("/tracked-categories", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
 
-export function useUpdateTrackedCategory() {
+export function useUpdateTrackedCategory(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<TrackedCategory, Error, { id: string; data: Partial<TrackedCategoryInput> }>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ id, data }) =>
       apiClient.patch(`/tracked-categories/${id}`, data).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
@@ -201,26 +206,28 @@ export function useTrackedSubcategories(categoryId: string | undefined) {
   });
 }
 
-export function useCreateSubcategory() {
+export function useCreateSubcategory(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     TrackedSubcategory,
     Error,
     { categoryId: string; name: string; active?: boolean }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ categoryId, ...body }) =>
       apiClient.post(`/tracked-categories/${categoryId}/subcategories`, body).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: SUBCAT_KEY }),
   });
 }
 
-export function useUpdateSubcategory() {
+export function useUpdateSubcategory(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     TrackedSubcategory,
     Error,
     { categoryId: string; subId: string; data: { name?: string; active?: boolean } }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ categoryId, subId, data }) =>
       apiClient
         .patch(`/tracked-categories/${categoryId}/subcategories/${subId}`, data)
@@ -230,9 +237,10 @@ export function useUpdateSubcategory() {
 }
 
 /** Flip active on/off. Deactivation keeps historic tagging intact (soft delete). */
-export function useToggleSubcategory() {
+export function useToggleSubcategory(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<TrackedSubcategory, Error, { categoryId: string; subId: string }>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ categoryId, subId }) =>
       apiClient
         .patch(`/tracked-categories/${categoryId}/subcategories/${subId}/toggle`)
@@ -242,8 +250,6 @@ export function useToggleSubcategory() {
 }
 
 // ─── Filings (W5b) ──────────────────────────────────────────────────────────────
-
-export type RegulatedFilingStatus = "GENERATED" | "FAILED";
 
 export interface RegulatedFiling {
   id: string;

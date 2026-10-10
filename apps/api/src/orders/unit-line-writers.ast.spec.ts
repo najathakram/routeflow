@@ -44,6 +44,29 @@ interface Row {
    * HYBRID one is checked on BOTH its `needs` call and every `alsoNeeds` call.
    */
   alsoNeeds?: string[];
+  /**
+   * B297 (SA-098a) — an opt-in, per-row list of acceptable proofs that a method which creates a
+   * line carrying `trackedCategoryId` also produces the rate trio (`categoryTaxType`/Rate/
+   * PriceIncludesTax), rather than leaving it null. Any ONE entry satisfies it: a call to a
+   * trio-deriving/copying helper (`categoryTaxSnapshotOf`, `copyCategoryTaxSnapshot`,
+   * `buildInvoiceItemData`, `buildManualInvoiceLines`, `categoryTaxForLine`),
+   * or — for a method that copies the trio inline rather than through a named helper — a direct
+   * reference to the `categoryTaxType` field name (existence only, EXACTLY the same permissiveness
+   * SAFE_COPY's own `needs` check already uses; not an ordering proof). Retires the file-count-pin
+   * `category-tax-trio-callsites.spec.ts` guard's per-row job for the rows listed here — that guard
+   * stays alive for its OTHER job (a global "no NEW categoryTaxAmount-writing site anywhere in
+   * apps/api/src goes unnoticed" count pin), which this opt-in list does not replicate. Only rows
+   * this session actually read and verified carry the field; an unmarked creator is not a claim
+   * that it's fine — it is simply out of THIS round's audited scope.
+   */
+  trioVia?: string[];
+  /**
+   * SA-100 hardening — the explicit, reasoned escape hatch: a row whose line-write literally sets
+   * `trackedCategoryId` (so the MANDATORY check below would otherwise demand `trioVia`) but never
+   * legitimately needs the trio, e.g. a literal `trackedCategoryId: null` constant on a line that
+   * can never be regulated. Required in place of `trioVia`, never both.
+   */
+  trioViaExempt?: string;
 }
 
 const G = "assertOrderEditAllowed";
@@ -53,25 +76,38 @@ const INVENTORY: Record<string, Row> = {
     kind: "CONVERTED",
     alsoNeeds: [G],
     why: "HYBRID (units_v1 A1): staff resolves+builds every unit-aware site via resolveLineUnits (resolved once, up front, into a map — unit-line-edit.ts); CUSTOMER/DRIVER stay refused by the narrowed assertOrderEditAllowed",
+    trioVia: ["categoryTaxSnapshotOf"],
   },
   "orders/orders.service.ts::OrdersService.approveChangeRequestAtStop": {
     kind: "GUARDED",
     needs: "assertChangeTargetAllowed",
     why: "CHANGE_QTY/ADD_ITEM match by productId at the live pack",
+    trioVia: ["categoryTaxSnapshotOf"],
   },
   "orders/orders.service.ts::OrdersService.forceConsolidateCustomer": {
     kind: "GUARDED",
     needs: "assertNoUnitAwareLines",
     why: "merge folds by productId",
+    // SA-124 (Opus review of B776): `trioVia: ["buildMergeLineWrites"]` (this method's earlier
+    // pin) passed even if the inline `categoryTaxType`/`categoryTaxRate`/`categoryPriceIncludesTax`
+    // keys were deleted from THIS method's own create() literal — `references()` only checks
+    // that the method mentions the name `buildMergeLineWrites` somewhere, not that the write
+    // literal it applies actually carries the trio. Named on the STAMP itself instead
+    // (`categoryTaxType`, a literal key AND a read of `write.data.categoryTaxType` in the
+    // create() call below), same as `InvoicesService.duplicate`'s inline-copy row.
+    trioVia: ["categoryTaxType"],
   },
   "orders/orders.service.ts::OrdersService.mergeAllPendingForCustomer": {
     kind: "GUARDED",
     needs: "isUnitAwareLine",
     why: "merge folds by productId; bails out when any candidate is unit-aware",
+    // SA-124: see forceConsolidateCustomer's note — named on the stamp, not the caller.
+    trioVia: ["categoryTaxType"],
   },
   "orders/orders.service.ts::OrdersService.create": {
     kind: "CONVERTED",
     why: "resolveLineUnits decides pack vs unit; buildUnitLine builds the unit line (4b-2b)",
+    trioVia: ["categoryTaxSnapshotOf"],
   },
   "orders/orders.service.ts::OrdersService.recomputeLineCategoryTaxes": {
     kind: "FIELD_ONLY",
@@ -92,6 +128,7 @@ const INVENTORY: Record<string, Row> = {
   "order-templates/order-templates.service.ts::OrderTemplatesService.createOrderFromTemplate": {
     kind: "PACK_ONLY_CREATE",
     why: "OrderTemplateItem has no unit column; creates pack lines",
+    trioVia: ["categoryTaxSnapshotOf"],
   },
   "routes/routes.service.ts::RoutesService.completeWithPayment": {
     kind: "FIELD_ONLY",
@@ -106,44 +143,58 @@ const INVENTORY: Record<string, Row> = {
     kind: "GUARDED",
     needs: "assertInvoiceRewriteAllowed",
     why: "delete-and-recreate re-split at the live pack",
+    trioVia: ["buildEditedLines"],
   },
   "invoices/invoices.service.ts::InvoicesService.duplicate": {
     kind: "GUARDED",
     needs: "assertNoUnitAwareLines",
     why: "the copy drops unitLabel/unitsPerBox",
+    // Copies the trio inline (verbatim, `categoryTaxType: (i as any).categoryTaxType ?? null`) —
+    // no named helper call to point at.
+    trioVia: ["categoryTaxType"],
   },
   "invoices/invoices.service.ts::InvoicesService.applyPriceAdjustment": {
     kind: "GUARDED",
     needs: "assertNoUnitAwareLines",
     why: "bulk scope keys a price by productId",
+    // Re-derives categoryTaxAmount for an EXISTING line's new price — never touches the trio
+    // fields (a price-only adjustment must preserve them, not a creator).
   },
   "invoices/invoices.service.ts::InvoicesService.create": {
     kind: "CONVERTED",
     why: "resolveLineUnits per item; buildManualInvoiceLines builds the unit line (4c-1)",
+    trioVia: ["buildManualInvoiceLines"],
   },
   "invoices/invoices.service.ts::InvoicesService.createSplitInvoices": {
     kind: "SAFE_COPY",
     needs: "buildInvoiceItemData",
     why: "copies the order line via the shared builder",
+    trioVia: ["buildInvoiceItemData"],
   },
   "invoices/invoices.service.ts::InvoicesService.reconcileOrderDraftInvoice": {
     kind: "SAFE_COPY",
     needs: "buildInvoiceItemData",
     why: "copies via the shared builder",
+    trioVia: ["buildInvoiceItemData"],
   },
   "invoices/invoices.service.ts::InvoicesService.rebuildSiblingDrafts": {
     kind: "SAFE_COPY",
     needs: "buildInvoiceItemData",
     why: "copies via the shared builder",
+    trioVia: ["buildInvoiceItemData"],
   },
   "invoices/invoices.service.ts::InvoicesService.createPartialFromOrder": {
     kind: "SAFE_COPY",
     needs: "buildInvoiceItemData",
     why: "copies via the shared builder",
+    trioVia: ["buildInvoiceItemData"],
   },
   "invoices/invoices.service.ts::InvoicesService.recomputeOrderFromInvoices": {
     kind: "SYNC_BACK",
     why: "reachable for a unit-aware line only through invoices.update (guarded) or a single-invoice re-price (multiplier from the line itself)",
+    // B767 (documented gap, not fixed here — owned by Lane F's #1274): its two write sites
+    // (an update() and a create()) carry categoryTaxAmount without trackedCategoryId, so no
+    // trioVia here either — deliberately unmarked, not an oversight.
   },
   "invoices/invoices.service.ts::InvoicesService.resyncOrderInvoicesForEdit": {
     kind: "FIELD_ONLY",
@@ -162,8 +213,8 @@ const INVENTORY: Record<string, Row> = {
     why: "removes the invoice's lines",
   },
   "estimates/estimates.service.ts::EstimatesService.convertToInvoice": {
-    kind: "PACK_ONLY_CREATE",
-    why: "EstimateItem has no unit columns; writes plain lines",
+    kind: "CONVERTED",
+    why: "unit-aware estimate lines are refused pre-flight (assertNoUnitAwareLines) before reserveNext; convertToInvoice stays CONVERTED — it still calls resolveLineUnits per line inside the tx, and buildManualInvoiceLines builds the invoice lines (B659)",
   },
   "import/import.service.ts::ImportService.importInvoices": {
     kind: "PACK_ONLY_CREATE",
@@ -178,7 +229,7 @@ const INVENTORY: Record<string, Row> = {
     kind: "DELETE_ONLY",
     why: "customer purge",
   },
-  "customers/customers.service.ts::CustomersService.deleteImportedCustomers": {
+  "customers/customers.service.ts::CustomersService.runImportedCustomersCleanup": {
     kind: "DELETE_ONLY",
     why: "customer purge",
   },
@@ -227,7 +278,7 @@ const INVENTORY: Record<string, Row> = {
     kind: "NOT_ORDER_INVOICE_LINE",
     why: "RecurringInvoiceItem",
   },
-  "returns/inline-returns.service.ts::InlineReturnsService.capture": {
+  "returns/inline-returns.service.ts::InlineReturnsService.captureInTx": {
     kind: "NOT_ORDER_INVOICE_LINE",
     why: "ReturnItem",
   },
@@ -250,6 +301,14 @@ const INVENTORY: Record<string, Row> = {
   "vendor-bills/vendor-bills.service.ts::VendorBillsService.revertToDraft": {
     kind: "NOT_ORDER_INVOICE_LINE",
     why: "VendorBillItem",
+  },
+  "vendor-bills/vendor-bills.service.ts::VendorBillsService.delete": {
+    kind: "NOT_ORDER_INVOICE_LINE",
+    why: "VendorBillItem: AP bill line delete only: no qty/unit/price write, no sellable product added",
+  },
+  "vendor-bills/vendor-bills.service.ts::VendorBillsService.bulkDelete": {
+    kind: "NOT_ORDER_INVOICE_LINE",
+    why: "VendorBillItem: AP bill line delete only: no qty/unit/price write, no sellable product added",
   },
 };
 
@@ -351,6 +410,46 @@ function lineWrites(node: ts.Node, sf: ts.SourceFile): string[] {
   };
   visit(node);
   return [...new Set(hits)];
+}
+
+/**
+ * SA-100 hardening — every line-write's own `data:` object literal (a direct `x.orderItem.create/
+ * update({ data: {...} })` call) that ALSO sets `key` as a property, i.e. "this write can touch a
+ * regulated line." Backs the MANDATORY trioVia check below: a row that writes `trackedCategoryId`
+ * has no excuse to skip declaring how it produces the trio.
+ *
+ * LIMIT (same class as this file's other documented limits): only DIRECT table calls are checked —
+ * a nested `lineItems`/`items` relation write is invisible here, same as `lineWrites` already
+ * documents for its own NULL-tenant/B635 blind spots. No currently-classified row relies on a
+ * nested write to set `trackedCategoryId`, so this is a real, not theoretical, narrowing.
+ */
+function writeDataLiteralsWithKey(node: ts.Node, sf: ts.SourceFile, key: string): ts.Node[] {
+  const hits: ts.Node[] = [];
+  const hasKey = (lit: ts.ObjectLiteralExpression) =>
+    lit.properties.some((p) => p.name && p.name.getText(sf) === key);
+  const visit = (n: ts.Node) => {
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
+      const table = n.expression.expression;
+      if (
+        WRITE_OPS.has(n.expression.name.text) &&
+        ts.isPropertyAccessExpression(table) &&
+        LINE_TABLES.has(table.name.text)
+      ) {
+        const arg = n.arguments[0];
+        const dataProp =
+          arg && ts.isObjectLiteralExpression(arg)
+            ? arg.properties.find(
+                (p): p is ts.PropertyAssignment =>
+                  ts.isPropertyAssignment(p) && p.name.getText(sf) === "data",
+              )
+            : undefined;
+        if (dataProp && objectLiterals(dataProp.initializer).some(hasKey)) hits.push(n);
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return hits;
 }
 
 const isFalseLiteral = (e: ts.Expression) => e.kind === ts.SyntaxKind.FalseKeyword;
@@ -487,6 +586,8 @@ describe("the scanner itself (so a silent no-match cannot pass the checks below)
       recovery() { try { work(); } catch (e) { unitAware.assertOrderEditAllowed(); } }
       late() { this.prisma.orderItem.update({}); unitAware.assertOrderEditAllowed(); }
       cond(c) { return this.prisma.order.update({ data: { lineItems: c ? { create: [] } : undefined } }); }
+      inlineTrio() { this.prisma.orderItem.create({ data: { trackedCategoryId: "cat-1", qty: 1 } }); }
+      spreadTrio() { const write = { data: { trackedCategoryId: "cat-1" } }; this.prisma.orderItem.create({ data: { ...write.data } }); }
     }`;
   const sf = parse("inline.ts", src);
   const m = classMethods(sf);
@@ -524,6 +625,19 @@ describe("the scanner itself (so a silent no-match cannot pass the checks below)
     );
     expect(references(m.get("A.commented")!, "assertOrderEditAllowed", { callOnly: true })).toBe(
       false,
+    );
+  });
+
+  it("SA-124: writeDataLiteralsWithKey detects an inline literal key but a spread hides it", () => {
+    // The MANDATORY trioVia check's whole premise — deleting the actual trackedCategoryId
+    // key must be visible to this detector; a `...write.data` spread carrying the SAME key
+    // at runtime is invisible to it (a SpreadAssignment has no `.name`), which is exactly why
+    // B776's merge-line-writes.ts create() calls were flattened to explicit inline keys.
+    expect(writeDataLiteralsWithKey(m.get("A.inlineTrio")!, sf, "trackedCategoryId")).toHaveLength(
+      1,
+    );
+    expect(writeDataLiteralsWithKey(m.get("A.spreadTrio")!, sf, "trackedCategoryId")).toHaveLength(
+      0,
     );
   });
 
@@ -570,6 +684,33 @@ describe("every order/invoice line writer is classified (units_v1)", () => {
         } else if (Math.min(...alsoPositions) > firstWrite) {
           failures.push(`${key} calls ${also} only AFTER its first line write`);
         }
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("B297 (SA-098a): every trioVia-marked row really references what it claims (AST, not text)", () => {
+    const failures: string[] = [];
+    for (const [key, row] of Object.entries(INVENTORY)) {
+      if (!row.trioVia || row.trioVia.length === 0) continue;
+      const { node } = methodNode(key);
+      const satisfied = row.trioVia.some((name) => references(node, name, { callOnly: false }));
+      if (!satisfied) {
+        failures.push(`${key} references none of: ${row.trioVia.join(", ")}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("SA-100: trioVia is MANDATORY (or an explicit, reasoned trioViaExempt) for any row whose line-write literally sets trackedCategoryId", () => {
+    const failures: string[] = [];
+    for (const [key, row] of Object.entries(INVENTORY)) {
+      const { node, sf } = methodNode(key);
+      const setters = writeDataLiteralsWithKey(node, sf, "trackedCategoryId");
+      if (setters.length === 0) continue;
+      if (row.trioViaExempt) continue;
+      if (!row.trioVia || row.trioVia.length === 0) {
+        failures.push(`${key} writes trackedCategoryId but declares no trioVia or trioViaExempt`);
       }
     }
     expect(failures).toEqual([]);

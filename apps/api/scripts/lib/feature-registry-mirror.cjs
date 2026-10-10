@@ -45,8 +45,11 @@
 //           addonGateState(), is derived from RequireAddon rows ONLY; a "guard" row like
 //           driver_payments always reads back "enforced" regardless of what its own state field
 //           says, because it was never in that projection to begin with).
-//   defaultGranted — FeatureDef.defaultGranted; consulted ONLY by the new/one-rule path
-//           (computeOldPathAll has no defaultGranted fallback at all — see its own source).
+//   defaultGranted — FeatureDef.defaultGranted. On a flag-keyed row it is consulted only by the
+//           new/one-rule path. On an ADD-ON-keyed row (RequireAddon/guard) it is consulted by BOTH
+//           paths since the owner ruling of 2026-09-28 ("On for everyone"): the real AddonGuard now
+//           holds such a key with no row when its `requires` are met — see
+//           isDefaultGrantedAddonMirror() and DEFAULT_GRANT_REQUIRES below.
 //   billingSkus — FeatureDef.billing.skus, verbatim. Added 2026-09-19 (N1): the ORIGINAL version
 //           of this file deliberately did NOT mirror billing.skus ("they don't change the
 //           effective boolean") — true for the pure old/new comparison, but no longer true once
@@ -71,7 +74,7 @@ const FEATURE_REGISTRY_MIRROR = [
   ["email.connected_mailbox", "RequireAddon", "dark", false, []],
   ["developer_mode", "RequireAddon", "enforced", false, []],
   ["driver_payments", "guard", "enforced", false, []],
-  ["orders_inline_returns", "RequireAddon", "enforced", false, []],
+  ["orders_inline_returns", "RequireAddon", "enforced", true, []],
   ["flag.msrp", "RequirePlanFlag", "enforced", false, ["MSRP"]],
   ["flag.sales_agents", "RequirePlanFlag", "enforced", false, ["SALES_AGENTS"]],
   ["flag.units_v1", "RequirePlanFlag", "enforced", false, []],
@@ -98,7 +101,10 @@ const FEATURE_REGISTRY_MIRROR = [
   ["metered_scans", "none", "none", false, []],
   ["metered_msgs", "none", "none", false, ["MSG_BUNDLE_500"]],
   ["catalog_varieties", "none", "none", true, []],
+  ["mixed_packs", "none", "none", false, []],
   ["routes_dispatch", "none", "none", true, []],
+  ["fulfilment_model", "none", "none", true, []],
+  ["counter_sales", "none", "none", true, []],
 ].map(([key, via, state, defaultGranted, billingSkus]) => ({
   key,
   via,
@@ -183,6 +189,29 @@ function findPlanDefinition(definitions, planKey) {
   if (!planKey) return undefined;
   const want = normalizePlanKey(planKey) ?? planKey;
   return definitions.find((d) => (normalizePlanKey(d.planKey) ?? d.planKey) === want);
+}
+
+/**
+ * Mirrors effectivePlanFlags (plan-catalog.constants.ts, #2700 / SA-559(2)): FEATURE FLAGS GAIN
+ * FORWARD — the pinned definition's featureFlags ∪ the PUBLISHED version's definition for the same
+ * normalized plan key; no union when pinned === published, nothing is published, or the published
+ * version has no such plan; never removes a flag. The ONE mirror every standalone script uses
+ * (audit-tenant-entitlements.mjs, report-addon-default-grant-flip.mjs, publish-and-repin.mjs);
+ * feature-registry-mirror.parity.spec.ts pins it to the TypeScript predicate.
+ */
+function effectivePlanFlagsMirror(pinnedDef, pinnedVersionId, published) {
+  const flags = [...new Set(pinnedDef.featureFlags)];
+  if (!published || published.id === pinnedVersionId) return flags;
+  const forward = findPlanDefinition(published.definitions, pinnedDef.planKey);
+  if (!forward) return flags;
+  const have = new Set(flags);
+  for (const flag of forward.featureFlags) {
+    if (!have.has(flag)) {
+      have.add(flag);
+      flags.push(flag);
+    }
+  }
+  return flags;
 }
 
 /** Mirrors planKeyFromEnum. */
@@ -292,7 +321,9 @@ function computeOldPathEffective(feature, ctx, env = process.env) {
 
   const isAddonKeyed = feature.via === "RequireAddon" || feature.via === "guard";
   if (isAddonKeyed) {
-    const active = ctx.activeAddonSet.has(feature.key);
+    const active =
+      ctx.activeAddonSet.has(feature.key) ||
+      isDefaultGrantedAddonMirror(feature, ctx.activeAddonSet, ctx.entFlags, ctx.overrides);
     // addonGateState() only ever returns "dark" for a RequireAddon row (ADDON_GATE_REGISTRY is
     // derived from RequireAddon rows only) — a "guard" row like driver_payments always reads back
     // "enforced", regardless of its own gate.state field, because it was never in that projection.
@@ -303,6 +334,34 @@ function computeOldPathEffective(feature, ctx, env = process.env) {
   return allowsFlag(ctx.planKey, ctx.entFlags, feature.key, env);
 }
 
+/**
+ * `requires` for the add-on-keyed rows that are defaultGranted — the only rows whose `requires`
+ * change an effective boolean (isDefaultGrantedAddonMirror). Pinned to FEATURE_REGISTRY by
+ * feature-registry-mirror.parity.spec.ts. Owner ruling 2026-09-28.
+ */
+const DEFAULT_GRANT_REQUIRES = {
+  orders_inline_returns: { allOf: ["flag.returns"] },
+};
+
+/**
+ * JS twin of feature-registry.ts `isDefaultGrantedAddon` (same semantics as checkFeatureRequires):
+ * the requirement set is (activeAddonSet ∪ entFlags ∪ GRANT overrides) − DENY overrides (SA-540).
+ */
+function isDefaultGrantedAddonMirror(feature, activeAddonSet, entFlags, overrides) {
+  if (!feature.defaultGranted) return false;
+  if (feature.via !== "RequireAddon" && feature.via !== "guard") return false;
+  const effective = new Set([...activeAddonSet, ...entFlags]);
+  for (const [k, effect] of overrides || []) {
+    if (effect === "GRANT") effective.add(k);
+    else effective.delete(k);
+  }
+  const requires = DEFAULT_GRANT_REQUIRES[feature.key];
+  const allOf = (requires && requires.allOf) || [];
+  const anyOf = requires && requires.anyOf;
+  const anyOfOk = !anyOf || anyOf.length === 0 || anyOf.some((k) => effective.has(k));
+  return allOf.every((k) => effective.has(k)) && anyOfOk;
+}
+
 /** Mirrors resolveOneKey's per-key branch (the one-rule answer), boolean-only (no source/detail —
  *  this report only needs effective true/false, never charged/term/sku). */
 function computeNewPathEffective(feature, ctx) {
@@ -311,7 +370,12 @@ function computeNewPathEffective(feature, ctx) {
   if (override === "DENY") return false;
 
   const isAddonKeyed = feature.via === "RequireAddon" || feature.via === "guard";
-  if (isAddonKeyed) return ctx.activeAddonSet.has(feature.key);
+  if (isAddonKeyed) {
+    return (
+      ctx.activeAddonSet.has(feature.key) ||
+      isDefaultGrantedAddonMirror(feature, ctx.activeAddonSet, ctx.entFlags, ctx.overrides)
+    );
+  }
 
   if (ctx.entFlags.includes(feature.key)) return true;
   return feature.defaultGranted === true;
@@ -319,6 +383,8 @@ function computeNewPathEffective(feature, ctx) {
 
 module.exports = {
   FEATURE_REGISTRY_MIRROR,
+  DEFAULT_GRANT_REQUIRES,
+  isDefaultGrantedAddonMirror,
   DARK_PLAN_FLAGS,
   PREPIN_DARK_FLAGS,
   ALWAYS_ENFORCED_PLAN_KEYS,
@@ -331,6 +397,7 @@ module.exports = {
   LEGACY_PLAN_KEY_ALIASES,
   normalizePlanKey,
   findPlanDefinition,
+  effectivePlanFlagsMirror,
   planKeyFromEnum,
   LEGACY_ADDON_KEY_TO_SKU,
   addonSkuCode,

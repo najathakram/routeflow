@@ -136,6 +136,12 @@ function useReturnTransition(action: Parameters<typeof returnTransition>[0]) {
       qc.invalidateQueries({ queryKey: ["returns"] });
       qc.invalidateQueries({ queryKey: ["returns", id] });
       qc.invalidateQueries({ queryKey: ["admin", "returns"] });
+      // #1528 (B86): only cancel moves stock (it undoes receive's restock) — refresh the stock views.
+      if (action === "cancel") {
+        qc.invalidateQueries({ queryKey: ["products"] });
+        qc.invalidateQueries({ queryKey: ["inventory"] });
+        qc.invalidateQueries({ queryKey: ["admin", "products"] }); // SA-543a: operator product lists
+      }
     },
   });
 }
@@ -169,6 +175,10 @@ export function useReceiveReturn() {
       qc.invalidateQueries({ queryKey: ["returns"] });
       qc.invalidateQueries({ queryKey: ["returns", id] });
       qc.invalidateQueries({ queryKey: ["admin", "returns"] });
+      // #1528 (B86): receive restocks server-side — refresh the stock views too.
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["admin", "products"] }); // SA-543a: operator product lists
     },
   });
 }

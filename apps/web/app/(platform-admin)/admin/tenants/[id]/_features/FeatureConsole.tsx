@@ -12,9 +12,18 @@ import {
   writeTenantFeatureConfig,
 } from "@/lib/platform-admin/features";
 import { BADGE_COLORS, BADGE_LABELS, deriveBadge } from "./badge";
-import { blockedReason, isOptionBlocked, selectableOptions, MIXED_LABEL } from "./mode-utils";
+import {
+  blockedReason,
+  explainModeSentence,
+  isOptionBlocked,
+  modeLabel,
+  modeSourceLabel,
+  selectableOptions,
+  MIXED_LABEL,
+} from "./mode-utils";
 import { PreviewDrawer } from "./PreviewDrawer";
 import { EnableAddonModal } from "./EnableAddonModal";
+import { currentRoleIsSuperAdmin } from "./super-admin";
 import type {
   EffectiveFeature,
   EntitlementsMode,
@@ -22,21 +31,6 @@ import type {
   FeaturePreviewResponse,
   FeatureRegistryRow,
 } from "./types";
-
-/** Best-effort client-side check — the real gate is the server + the route's SuperAdminGuard. */
-function currentRoleIsSuperAdmin(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    const token = window.localStorage.getItem("superAdminToken");
-    if (!token) return false;
-    const part = token.split(".")[1];
-    if (!part) return false;
-    const payload = JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/")));
-    return payload?.role === "SUPER_ADMIN";
-  } catch {
-    return false;
-  }
-}
 
 type PendingPreview =
   | { kind: "tier"; planKey: string; response: FeaturePreviewResponse }
@@ -277,7 +271,10 @@ export function FeatureConsole({
 
   if (loadError) {
     return (
-      <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
+      <div
+        role="alert"
+        className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700"
+      >
         {loadError}
       </div>
     );
@@ -363,6 +360,10 @@ export function FeatureConsole({
             {rows.map((row) => {
               const feature = effectiveByKey[row.key];
               const badge = feature ? deriveBadge(feature) : "unknown";
+              // A free configuration row (no plan flag or add-on gates it): its answer is the applied
+              // mode and where it came from, never on/off or "inherited from the plan" (B1132).
+              const appliedMode =
+                row.config && row.gate.via === "none" && feature?.mode ? feature.mode : null;
               const unmetRequirement = describeUnmetRequirement(
                 checkRequires(row.requires, effectiveKeys),
                 registryByKey,
@@ -377,12 +378,21 @@ export function FeatureConsole({
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-semibold text-white">{row.label}</span>
-                        <span
-                          data-testid="badge"
-                          className={`rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ${BADGE_COLORS[badge]}`}
-                        >
-                          {BADGE_LABELS[badge]}
-                        </span>
+                        {appliedMode ? (
+                          <span
+                            data-testid="applied-mode"
+                            className="rounded bg-indigo-900/40 px-1.5 py-0.5 text-[10px] font-medium text-indigo-200 ring-1 ring-indigo-600/30"
+                          >
+                            {modeLabel(row.config?.modes ?? [], appliedMode.effective)}
+                          </span>
+                        ) : (
+                          <span
+                            data-testid="badge"
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ${BADGE_COLORS[badge]}`}
+                          >
+                            {BADGE_LABELS[badge]}
+                          </span>
+                        )}
                         <span className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400">
                           {row.lifecycle}
                         </span>
@@ -391,13 +401,24 @@ export function FeatureConsole({
                             dark
                           </span>
                         )}
-                        <span
-                          className={
-                            feature?.serving ? "text-emerald-400 text-xs" : "text-slate-400 text-xs"
-                          }
-                        >
-                          {feature?.serving ? "On" : "Off"}
-                        </span>
+                        {appliedMode ? (
+                          <span
+                            data-testid="applied-mode-source"
+                            className="text-xs text-slate-400"
+                          >
+                            {modeSourceLabel(appliedMode)}
+                          </span>
+                        ) : (
+                          <span
+                            className={
+                              feature?.serving
+                                ? "text-emerald-400 text-xs"
+                                : "text-slate-400 text-xs"
+                            }
+                          >
+                            {feature?.serving ? "On" : "Off"}
+                          </span>
+                        )}
                       </div>
                       <p className="mt-1 text-xs text-slate-400">{row.description}</p>
                     </div>
@@ -441,8 +462,12 @@ export function FeatureConsole({
                       id={`why-panel-${row.key}`}
                       className="mt-3 rounded-lg bg-slate-900/50 p-3 text-xs text-slate-300 ring-1 ring-white/5"
                     >
-                      <p>{explainSentence(feature)}</p>
-                      {feature.resolver !== feature.serving && (
+                      <p>
+                        {appliedMode
+                          ? explainModeSentence(row.config?.modes ?? [], appliedMode)
+                          : explainSentence(feature)}
+                      </p>
+                      {!appliedMode && feature.resolver !== feature.serving && (
                         <p className="mt-2 text-amber-300">
                           Note: the new resolver disagrees — it would say this is{" "}
                           {feature.resolver ? "ON" : "OFF"}. Still in preview mode, so nothing
@@ -491,6 +516,7 @@ export function FeatureConsole({
         addonKey={enabling?.addonKey ?? ""}
         addonLabel={enabling?.label ?? ""}
         unmetRequirement={enabling?.unmetRequirement}
+        onCustomise={onCustomise}
         onEnabled={load}
       />
     </div>

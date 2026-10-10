@@ -25,27 +25,37 @@ blocked on B467 (DB-backed specs), see "Not yet built" below.
 --check` runs).
 - **`returns/returns-pieces.util.ts`** (new) — B4/m-6 shared accounting, used by both the
   STANDARD flow today and the (PR-1c/1d) INLINE capture flow:
-  - `soldPiecesForProduct(order, productId)` — sold pieces = the SUM of the product's
-    non-CANCELLED `OrderItem` lines (fixes the pre-fix bug: `create()` used to `.find()` a
-    single line, undercounting a product split across two lines on one order).
-  - `firstNonCancelledLine(order, productId)` — lowest `position`, nulls last; the axis a future
-    box/piece-aware DTO conversion would key off (unused by today's identity conversion).
-  - `standardReturnPieces(order, productId, qty)` — converts a STANDARD return DTO's `qty` to
-    pieces + a `toLineUnit` converter back, for refusal-message formatting. Identity today
-    (`ReturnItem.qty`/DTO `qty` is already pieces, like `OrderItem.qty` — see file header) — a
-    named seam so a future non-identity conversion changes one place, not every caller.
+  - `soldQtyForProduct(order, productId)` (was `soldPiecesForProduct`) — the SUM of the
+    product's non-CANCELLED `OrderItem` lines, in the line's own unit (fixes the pre-fix bug:
+    `create()` used to `.find()` a single line, undercounting a product split across two lines).
+  - `firstNonCancelledLine(order, productId)` — lowest `position`, nulls last; names "the line
+    this return is against"; not used by the pack conversion, which resolves per PRODUCT.
+  - `standardReturnPieces(...)` — **no longer an identity stub (#2044, 8be81b99; SA-158,
+    B650/B754/B671):** converts a STANDARD DTO's typed `qty` (line unit) to PIECES with the
+    product's pack factor, plus a `toLineUnit` converter back for refusal messages. The factor
+    comes from `standardPackBases` → `productPackBasis` (`returns-restock-pieces.ts`, shared with
+    the restock resolver's `resolvePackFactors`); `requirePackFactor` 409s an unknown or mixed
+    factor (never factor 1). `capBasis` (SA-161): `lineUnit` when EVERY live line is
+    unresolvable (legacy box-unaware; master's arithmetic), else `pieces`, else 409.
+    `ReturnItem.qty` on disk and every money figure stay in the line's own unit.
   - `returnedPiecesByProduct(tx, orderId)` — prior-returned pieces per product for a SOURCE
     order, summing STANDARD `Return` rows (`Return.orderId`) AND INLINE `ReturnItem` rows
     (`ReturnItem.sourceOrderId`) — kind-aware from day one, even though no INLINE row exists
     until PR-1c/1d. Replaces `returns.service.ts create()`'s old inline `existingReturns` read.
+    Since #2044 it returns `Map<productId, PriorReturned>`: `{ pieces }`, or `{ unknown, reason,
+    lineUnits, inlinePieces }` when the prior cannot be classified. STANDARD rows convert with the
+    pack factor, INLINE rows stay pieces (1 box of 12 + 5 pcs = 17). Per product and never throws
+    (SA-159): one product's unclassifiable prior blocks only that product, and only a prior INLINE
+    return refuses a legacy line-unit cap.
 - **`returns/returns.service.ts` — kind branching (M6/§2.3).** Every standard-path method
   (`create/findAll/findOne/cancel/reject/markInTransit/receive/processRefund/approve`) refuses an
   INLINE-kind return with `BadRequestException("INLINE_RETURN_USE_INLINE_ENDPOINTS")` — INLINE
   gets its own endpoints/state machine in PR-1c/1d, never these. `findAll`'s `where` always carries
   `kind: "STANDARD"`; `create()` always writes `kind: "STANDARD"` explicitly. `create()`'s per-item
-  validation loop now goes through `soldPiecesForProduct`/`standardReturnPieces`/
-  `returnedPiecesByProduct` instead of its old inline `.find()` + `existingReturns` read — refusal
-  message text is byte-identical (`toLineUnit` is the identity conversion today).
+  validation loop now goes through `soldQtyForProduct`/`standardReturnPieces`/
+  `returnedPiecesByProduct` instead of its old inline `.find()` + `existingReturns` read. Since
+  #2044 the cap, remaining and prior-returned sum compare in pieces (or in the line unit under
+  SA-161's legacy `capBasis`), and a mixed or unknown factor is a 409 with nothing written.
   `customers.service.ts`'s three bulk-delete `Return`/`ReturnItem` cleanup sites (`deleteCustomer`,
   `batchDelete`, `deleteImportedCustomers`) were reviewed and left kind-agnostic on purpose — a
   hard/soft customer delete removes every `Return` regardless of kind; nothing INLINE-specific to
@@ -82,14 +92,14 @@ blocked on B467 (DB-backed specs), see "Not yet built" below.
   split across two differently-priced lines could price the WHOLE pooled return at one line's rate
   and over-credit. Fixed by pooling qty/subtotal per product in that branch too (same pattern the
   invoiced branch already uses), with `refundQty = min(returned, sold)` as a second backstop.
-- **F2:** `soldPiecesForProduct`'s CANCELLED exclusion and `firstNonCancelledLine`'s `position` sort
+- **F2:** `soldQtyForProduct`'s CANCELLED exclusion and `firstNonCancelledLine`'s `position` sort
   were silently no-ops in production — none of the four `order.lineItems` selects in
   `returns.service.ts` (`create`/`findAll`/`processRefund`/`findOne`) fetched `status`/`position`.
   Added both fields to all four selects (and `subtotal` where F1's fix needed it, `create`'s select
   didn't have it before either). The existing "CANCELLED line doesn't count" test only passed
   because its MOCK supplied fields the real query never selected — a real coverage hole, not a real
   guarantee; the select fix is what actually closes it.
-- `findOne`'s `orderedQty` enrichment now also uses `soldPiecesForProduct` (was the same single-line
+- `findOne`'s `orderedQty` enrichment now also uses `soldQtyForProduct` (was the same single-line
   `.find()` as F1) so the operator UI's shown cap matches what `create()` actually enforces;
   `unitPrice` stays a single line's rate (display-only, no one line to attribute a pooled rate to).
 - `regulated-ledger.service.spec.ts`'s "two source orders" test was rewritten: the original used the

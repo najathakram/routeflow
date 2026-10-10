@@ -1,5 +1,6 @@
 import { MrrService } from "./mrr.service";
 import { FeatureOverrideService } from "./feature-override.service";
+import { roundMoney } from "@routeflow/pricing";
 
 function make() {
   const prisma = {
@@ -72,10 +73,10 @@ describe("MrrService.computeOverview", () => {
     expect(o.momDelta).toBe(50); // last 30 days
   });
 
-  it("breaks MRR down by plan, highest first, net of discounts", async () => {
+  it("T15 REG-B866-BYPLAN byPlan baseMrr is gross, highest first (flips :78 'net of discounts', SA-277)", async () => {
     const o = await make().svc.computeOverview();
     expect(o.byPlan).toEqual([
-      { planKey: "BUSINESS", tenants: 1, baseMrr: 339 }, // 349 − 10 discount
+      { planKey: "BUSINESS", tenants: 1, baseMrr: 349 }, // gross — same formula as the top-level baseMrr accumulator
       { planKey: "STARTER", tenants: 1, baseMrr: 59 },
     ]);
   });
@@ -88,6 +89,22 @@ describe("MrrService.computeOverview", () => {
     expect(where.active).toBe(true);
     expect(where.tenant.status).toBe("ACTIVE");
     expect(where.tenant.subscription).toEqual({ planKey: { not: null } });
+  });
+
+  // SA-693: a comp books 0 by construction (priceSnapshot 0), and both MRR reads also filter it out
+  // through the shared billableAddonWhere, so a comp row that ever carried a stale price still adds 0.
+  it("SA-693: neither MRR read counts a comp add-on (isComp: false in both where clauses)", async () => {
+    const { svc, prisma } = make();
+    await svc.computeOverview();
+    expect(prisma.tenantAddon.findMany.mock.calls[0][0].where.isComp).toBe(false);
+
+    prisma.tenantAddon.findMany.mockClear();
+    await svc.priceTenant("t-starter");
+    expect(prisma.tenantAddon.findMany.mock.calls[0][0].where).toMatchObject({
+      tenantId: "t-starter",
+      active: true,
+      isComp: false,
+    });
   });
 
   it("uses a fixed trailing 30-day window for momDelta (no month-overflow)", async () => {
@@ -232,9 +249,11 @@ describe("MrrService.computeOverview", () => {
 
     expect(o.mrr).toBe(59);
     expect(o.payingTenants).toBe(1);
+    // B866/SA-277: byPlan.baseMrr is gross (matches the top-level baseMrr accumulator), so
+    // GROWTH's fully-discounted row still contributes its $100 base and sorts ahead of STARTER.
     expect(o.byPlan).toEqual([
+      { planKey: "GROWTH", tenants: 0, baseMrr: 100 },
       { planKey: "STARTER", tenants: 1, baseMrr: 59 },
-      { planKey: "GROWTH", tenants: 0, baseMrr: 0 },
     ]);
   });
 
@@ -455,5 +474,72 @@ describe("MrrService — feature-override MRR exclusion oracle (brief B)", () =>
     const o = await mrr.computeOverview();
     expect(o.mrr).toBe(59); // unaffected by the override created above
     expect(prisma.tenantFeatureOverride.findMany).not.toHaveBeenCalled();
+  });
+});
+
+// Billing QA 2026-09-25 (local-assets/proofs/2026-09-25-billing-qa/TEST-PLAN.md) —
+// REG-MRR-ANNUAL (BD): a 6-tenant fixture pinning computeOverview()'s full aggregate output,
+// including that an ANNUAL-cycle subscriber's basePriceSnapshot is already the catalog MONTHLY
+// figure (never annual/12) — MrrService never even selects a `cycle` column, so it is naturally
+// indifferent to billing interval and prices every row the same way.
+describe("MrrService.computeOverview — REG-MRR-ANNUAL (6-tenant v11 fixture)", () => {
+  it("T16 REG-B866-BYPLAN prices A(STARTER 99) B(GROWTH 249+addons) C(SCALE 499 fully discounted) D(manual, unpriced) E(addon-rescued) F(SCALE ANNUAL, snapshot=monthly 499) (flips REG-MRR-ANNUAL, SA-277)", async () => {
+    const prisma = {
+      tenantSubscription: {
+        findMany: jest.fn().mockResolvedValue([
+          { tenantId: "A", planKey: "STARTER", basePriceSnapshot: 99, discount: 0 },
+          { tenantId: "B", planKey: "GROWTH", basePriceSnapshot: 249, discount: 0 },
+          // C: a real Stripe subscription (has a planKey + snapshot) fully discounted to $0.
+          { tenantId: "C", planKey: "SCALE", basePriceSnapshot: 499, discount: 499 },
+          // D: manual activation (activateManualSubscription never writes basePriceSnapshot —
+          // REG-B557-MANUAL) — planKey resolved, snapshot null, no add-ons to rescue it.
+          { tenantId: "D", planKey: "STARTER", basePriceSnapshot: null, discount: 0 },
+          // E: null snapshot rescued above $0 by add-on revenue alone (REG-743-F4 shape) — put
+          // on GROWTH so it never lands in the SCALE byPlan bucket this test also pins.
+          { tenantId: "E", planKey: "GROWTH", basePriceSnapshot: null, discount: 0 },
+          // F: ANNUAL-cycle subscriber — basePriceSnapshot is the catalog MONTHLY price (499),
+          // never annual/12; MrrService's select never even reads `cycle`.
+          { tenantId: "F", planKey: "SCALE", basePriceSnapshot: 499, discount: 0 },
+        ]),
+      },
+      tenantAddon: {
+        findMany: jest.fn().mockImplementation(({ where }: any) => {
+          const all = [
+            { tenantId: "B", priceSnapshot: 19, quantity: 1 }, // FORECASTING
+            { tenantId: "B", priceSnapshot: 50, quantity: 2 }, // CUSTOMER_PACK_100 × 2
+            { tenantId: "E", priceSnapshot: 39, quantity: 1 }, // REGULATED_ITEMS
+          ];
+          return Promise.resolve(
+            where?.tenantId ? all.filter((a) => a.tenantId === where.tenantId) : all,
+          );
+        }),
+      },
+      tenant: { count: jest.fn().mockResolvedValue(0) },
+      billingEvent: { aggregate: jest.fn().mockResolvedValue({ _sum: { amountDelta: 0 } }) },
+    } as any;
+
+    const o = await new MrrService(prisma).computeOverview();
+
+    expect(o.mrr).toBe(1005); // 99 + 368(B: 249+119) + 0(C) + 0(D) + 39(E) + 499(F)
+    expect(o.baseMrr).toBe(1346); // Σ raw basePriceSnapshot: 99+249+499+0+0+499 (never net of discount) — P8
+    expect(o.addonMrr).toBe(158); // B's 119 (19 + 50×2) + E's 39
+    expect(o.discountTotal).toBe(499); // C's full discount
+    expect(o.payingTenants).toBe(4); // A, B, E, F — each rowPrice > 0 — P8
+    expect(o.unpricedActiveTenants).toBe(1); // D — null snapshot, no add-ons to rescue it — P8
+    expect(o.zeroPricedActiveTenants).toBe(1); // C — has a snapshot, nets to $0 anyway — P8
+
+    // byPlan is gross — the SAME formula as the top-level baseMrr accumulator (SA-277, B866):
+    // for SCALE that's C(499) + F(499) = 998, not the pre-fix 499 (which wrongly subtracted
+    // each row's discount a second time, C(499-499=0) + F(499-0=499)).
+    expect(o.byPlan.find((p) => p.planKey === "SCALE")).toEqual({
+      planKey: "SCALE",
+      tenants: 1, // only F prices > 0; C nets to $0 and is excluded from the tenant count too
+      baseMrr: 998,
+    });
+
+    // Identity pinned by SA-277: mrr = Σ rowPrice = baseMrr(gross) − discountTotal + addonMrr,
+    // and byPlan's gross figures must sum back to the top-level gross baseMrr.
+    expect(o.mrr).toBe(roundMoney(o.baseMrr - o.discountTotal + o.addonMrr));
+    expect(o.byPlan.reduce((sum, p) => sum + p.baseMrr, 0)).toBe(o.baseMrr);
   });
 });

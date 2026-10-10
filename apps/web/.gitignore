@@ -37,3 +37,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# #2338 native-parity harness: parity buyer storage states (local test fixtures)
+e2e/native-parity/.auth/

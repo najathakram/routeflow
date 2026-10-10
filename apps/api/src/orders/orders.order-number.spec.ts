@@ -27,6 +27,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ForbiddenException, Logger } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -77,6 +78,7 @@ const customerPayload = {
   sub: "user-cust",
   username: "customer1",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -112,6 +114,7 @@ describe("OrdersService.create — B587 order-number generation", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -243,6 +246,10 @@ describe("OrdersService.create — B587 order-number generation", () => {
     trackedCategoryId: null,
     trackedSubcategoryId: null,
     isActive: true,
+    // a real Product row always carries these; the buyer gate (WS6) judges them, never defaults
+    kind: "STANDARD",
+    portalVisible: true,
+    parent: null,
   };
   const NEW_ORDER = {
     id: "ord-new",
@@ -262,9 +269,17 @@ describe("OrdersService.create — B587 order-number generation", () => {
     withQueryRaw(queryRawImpl);
   };
   // The transaction client the service receives carries its own $queryRaw — wire ours into it.
+  // B562 PR-2: the stock decrement is also a `$queryRaw` (UPDATE … RETURNING); it is answered with
+  // no rows here so `qr` sees only the order-number query this spec is about.
+  const isStockUpdate = (args: any[]) =>
+    JSON.stringify(args[0]?.sql ?? args[0] ?? "").includes("currentStock");
   const withQueryRaw = (qr: jest.Mock) =>
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
-      fn({ ...prisma, $queryRaw: qr, $executeRaw: jest.fn().mockResolvedValue(0) }),
+      fn({
+        ...prisma,
+        $queryRaw: (...args: any[]) => (isStockUpdate(args) ? Promise.resolve([]) : qr(...args)),
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      }),
     );
   const created = () => prisma.order.create.mock.calls.map((c: any) => c[0].data.orderNumber);
 

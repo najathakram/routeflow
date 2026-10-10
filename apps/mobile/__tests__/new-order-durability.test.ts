@@ -51,7 +51,7 @@ describe("NewOrderScreen scan accept guard (REG-NEWORDER-GUARD)", () => {
     // Order matters: the REG-B201 nonce is consumed FIRST so a parked attempt
     // cannot re-park on a later settle of the same attempt.
     expect(screen).toMatch(
-      /shouldAutoAdd\(code\)\)\s*return;[\s\S]{0,400}?if\s*\(!scanGuardRef\.current\.offer\(code,\s*match,\s*kind\)\)\s*return;/,
+      /shouldAutoAdd\(code\)\)\s*return;[\s\S]{0,400}?if\s*\(!scanGuardRef\.current\.offer\(code,\s*match,\s*level\)\)\s*return;/,
     );
     // The nonce itself must survive — a guard is not a reason to "simplify" it
     // away, and neither may a time window come back in its place.
@@ -181,26 +181,90 @@ describe("NewOrderScreen scan-tray price affordance (REG-NEWORDER-TRAYPRICE)", (
     const mount = (screen.match(/<LinePriceModal[\s\S]*?\/>/) ?? [""])[0];
     expect(mount).toBeTruthy();
     expect(mount).toMatch(/roundMoney\(value\)/);
-    expect(mount).toMatch(/setLinePrice\(target\.id, price\)/);
+    expect(mount).toMatch(/setLinePrice\(target\.id,/);
     expect(mount).toMatch(/updateUnlistedPrice\(target\.id, price\)/);
     // No line total is ever written here — the tray and footer re-derive it.
     expect(mount).not.toMatch(/lineTotal|\*\s*qty|qty\s*\*/);
+    // SA-085i(b): an untouched pre-fill (price === the resolved base) must never be stored as
+    // a redundant override. #2696(c): the save goes through decideTrayPrice (pricing's
+    // decideStaffOverride, value-tested in special-override-2696.test.ts), which CLEARS within
+    // half a cent of the base; the base is the unitPriceBase the target resolves (TRAYPRICE-E).
+    expect(mount).toMatch(/decideTrayPrice\(\{ typed: price, \.\.\.target\.rule, reason \}\)/);
+    expect(mount).toMatch(/d\.kind === "clear"\) setLinePrice\(target\.id, null\)/);
   });
 
-  it("REG-NEWORDER-TRAYPRICE-C: a SPECIAL-tier line refuses the edit", () => {
-    const handler = (screen.match(/const onTrayEditPrice = useCallback[\s\S]*?\}, \[\]\);/) ?? [
+  it("REG-NEWORDER-TRAYPRICE-E: the pre-fill and the tray's price both call the lib's price functions (SA-085i(b)), not tierPriceFor directly", () => {
+    const target = (screen.match(/const priceEditTarget = \(\(\)[\s\S]*?\}\)\(\);/) ?? [""])[0];
+    expect(target).toMatch(/priceEditorPrefill\(line, p, effectiveTierFor\(p\.id\)\)/);
+    expect(target).toMatch(/const line = items\[priceEditId\];/);
+    expect(target).toMatch(/base: unitPriceBase\(line \?\? \{\}, tierPriceFor\(p\)\)/);
+    const tray = (screen.match(/trayRowsFrom\(\{[\s\S]*?\}\),/) ?? [""])[0];
+    expect(tray).toMatch(/lineUnitFor\(items\[p\.id\], full, effectiveTierFor\(p\.id\)\)/);
+  });
+
+  it("REG-NEWORDER-TRAYPRICE-C (#2696(c)): a SPECIAL-tier line opens the editor — the reason is asked there", () => {
+    // B901: the handler lives in lib/use-scan-price-edit.ts (size ratchet); it no longer refuses.
+    const hook = readFileSync(join(__dirname, "..", "lib", "use-scan-price-edit.ts"), "utf8");
+    const handler = (hook.match(/const onTrayEditPrice = useCallback\([\s\S]*?\n {2}\);/) ?? [
       "",
     ])[0];
     expect(handler).toBeTruthy();
-    expect(handler).toMatch(/isSpecialLine\(id\)/);
-    expect(handler).toMatch(/return;/);
-    expect(screen).toMatch(/isSpecialLine:\s*\(id: string\) => \{[\s\S]{0,160}?isSpecialFor\(p\)/);
+    expect(handler).not.toMatch(/isSpecialLine/);
+    expect(hook).not.toMatch(/isSpecialLine/);
+    expect(screen).not.toMatch(/isSpecialLine/);
+    expect(screen).toMatch(/isSpecial: isSpecialFor\(p\)/);
   });
 
   it("REG-NEWORDER-TRAYPRICE-D: the camera pauses while the price sheet is over it", () => {
     expect(screen).toMatch(
       /paused=\{createCode != null \|\| pickCode != null \|\| priceEditId != null\}/,
     );
+  });
+});
+
+/**
+ * SA-085i: the catalog row (renderProduct) still passed the pack's tierPriceFor to
+ * ProductRow regardless of unitLabel — a Case line at $220 showed "$24.00 / each" in the
+ * catalog list next to its count, while the tray and footer already showed $440.
+ */
+describe("NewOrderScreen catalog row prices/labels a unit-sold line correctly (SA-085i)", () => {
+  it("renderProduct's price is lineUnitFor when a line exists, tierPriceFor only for an unadded product", () => {
+    const fn = (screen.match(/const renderProduct = useCallback\([\s\S]*?\n    \[/) ?? [""])[0];
+    expect(fn).toBeTruthy();
+    expect(fn).toMatch(
+      /const price = line \? lineUnitFor\(line, p, effectiveTierFor\(p\.id\)\) : tierPriceFor\(p\);/,
+    );
+  });
+
+  it("passes the line's unitLabel to ProductRow so it shows next to the price, never a bare unitSold boolean", () => {
+    const fn = (screen.match(/const renderProduct = useCallback\([\s\S]*?\n    \[/) ?? [""])[0];
+    expect(fn).toMatch(/unitLabel=\{line\?\.unitLabel\}/);
+    expect(fn).not.toMatch(/unitSold=/);
+  });
+});
+
+/**
+ * SA-085h LOW: a PIECE-barcode hit on a line already sold by a unit adds a whole unit
+ * (240 pieces for a Case, not one loose piece) — confirmed before committing rather than
+ * silently added.
+ */
+describe("NewOrderScreen piece-scan-on-a-unit-line confirm (SA-085h LOW)", () => {
+  it("gates a piece-kind accept on the line's unitLabel before calling addOne, via the confirm dialog", () => {
+    const fn = (screen.match(/const acceptScannedProduct\b[\s\S]*?\n  \};/) ?? [""])[0];
+    expect(fn).toBeTruthy();
+    // The gate is now the shared predicate (piece kind + the line's unitLabel + a real case size).
+    expect(fn).toMatch(/!needsUnitLabelConfirm\(level, product, label\)\) return finishAccept/);
+    expect(screen).toMatch(
+      /import \{ needsUnitLabelConfirm \} from "\.\.\/lib\/scan-unit-confirm";/,
+    );
+    expect(fn).toMatch(/confirm\(/);
+    // Declining does nothing: addOne only happens inside finishAccept, called from onYes.
+    expect(fn).not.toMatch(/^\s*addOne\(/m);
+  });
+
+  it("a non-unit line's piece scan is unaffected — no confirm, straight to finishAccept", () => {
+    const fn = (screen.match(/const acceptScannedProduct\b[\s\S]*?\n  \};/) ?? [""])[0];
+    expect(fn).toMatch(/return finishAccept\(product, level, ao\);/);
   });
 });
 
