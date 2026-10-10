@@ -57,6 +57,8 @@ interface Scenario {
   invoiceSubtotal?: string;
   payments?: Pay[];
   tendered?: string | null;
+  /** what the clerk typed at the till (the live screen's `enteredTender`); every other surface never sees it */
+  entered?: number | null;
   /** the order's lines, and the same lines as the live cart rang them (cart prices are NET; the default carries a $1.00 discount) */
   lines?: ReceiptOrderInput["lineItems"];
   live?: Parameters<typeof buildCounterReceipt>[0]["lines"];
@@ -167,7 +169,7 @@ function build(s: Scenario) {
   const live = buildCounterReceipt({
     receipt: response,
     lines: s.live ?? DEFAULT_LIVE,
-    enteredTender: null,
+    enteredTender: s.entered ?? null,
     profile: { businessName: BRANDING.businessName, timezone: ZONE },
     now: order.createdAt,
   });
@@ -274,6 +276,37 @@ describe("cash handed over: ONE change figure (the server's servedChange) on eve
     expect(s.response.change).toBeUndefined();
     for (const m of [s.reprint, s.emailModel, s.live]) expect(m.change).toBeNull();
     expect(moneyRows(s.emailModel)).toEqual(moneyRows(s.reprint));
+  });
+
+  it("an ENTERED tender never invents a Change the server did not serve: a card-first sale the clerk typed 50 on has no Change row", () => {
+    const s = cash({
+      entered: 50,
+      payments: [
+        { method: "CREDIT_CARD", amount: "20.00" },
+        { method: "CASH", amount: "17.25" },
+      ],
+    });
+    expect(s.response.cashTendered).toBe(50); // stored, and the server serves no change for it
+    expect(s.response.change).toBeUndefined();
+    expect(s.live.change).toBeNull();
+    expect(s.live.changeAsEntered).toBe(false);
+    expect(s.reprint.change).toBeNull();
+    expect(s.emailModel.change).toBeNull();
+  });
+
+  it("an entered tender on a partly paid sale shows no Change row either", () => {
+    const s = cash({ entered: 50, payments: [{ method: "CASH", amount: "20.00" }] });
+    expect(s.response.balanceDue).toBeGreaterThan(0);
+    expect(s.live.change).toBeNull();
+  });
+
+  it("the as-entered fallback survives only for a paid sale the server stored no tender for (a legacy or recovered cash sale)", () => {
+    const s = cash({ entered: 50, tendered: null });
+    expect(s.response.cashTendered).toBeUndefined();
+    expect(s.response.change).toBeUndefined();
+    expect(s.live.tendered).toBe(50);
+    expect(s.live.change).toBe(12.75);
+    expect(s.live.changeAsEntered).toBe(true);
   });
 
   it("a partly paid cash sale serves no change anywhere", () => {

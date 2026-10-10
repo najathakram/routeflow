@@ -145,7 +145,9 @@ export function buildCounterReceipt(input: {
       tendered = roundMoney(receipt.paid + (serverChange ?? 0));
     } // card / check: exactly what was charged, which the Paid row already says
     if (serverChange != null) change = serverChange;
-    else if (enteredTender != null) {
+    // As-entered fallback ONLY for a paid sale the server stored no tender for (a recovered or legacy cash sale). A stored
+    // tender (`cashTendered`) or a balance still owing means the server's null IS the answer: no Change row.
+    else if (enteredTender != null && receipt.cashTendered == null && receipt.balanceDue <= 0) {
       const derived = roundMoney(enteredTender - receipt.paid);
       if (derived > 0) {
         change = derived;
