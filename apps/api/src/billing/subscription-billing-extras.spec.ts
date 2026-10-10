@@ -14,8 +14,6 @@ const SUB: any = {
   stripeSubId: "sub_1",
   cancelAtPeriodEnd: false,
   failedPaymentCount: 1,
-  cancelAtPeriodEnd: false,
-  failedPaymentCount: 1,
   periodEnd: new Date("2026-12-01T00:00:00Z"),
 };
 
