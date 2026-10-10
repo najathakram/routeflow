@@ -242,6 +242,23 @@ export async function markSaleDelivered(
 }
 
 /**
+ * Is the order gone, or did it ride a route stop (its columns are never touched)? A caller that already holds the
+ * order row under its lock (the void) passes `routeRunStopId` and saves the re-read; `undefined` reads it.
+ */
+async function ridesRouteStop(
+  tx: any,
+  orderId: string,
+  routeRunStopId: string | null | undefined,
+): Promise<boolean> {
+  if (routeRunStopId !== undefined) return !!routeRunStopId;
+  const order: { routeRunStopId: string | null } | null = await tx.order.findUnique({
+    where: { id: orderId },
+    select: { routeRunStopId: true },
+  });
+  return !order || !!order.routeRunStopId;
+}
+
+/**
  * The counter-sale void undoes the hand-over. A counter sale hands the goods over at the till, with no route and no
  * evidence row, and the cancel unwind (cancelOrderInTx -> settleStockForEdit) keeps DELIVERED units booked: a line that
  * reads `deliveredQty = qty` would be cancelled with NOTHING restocked. Today's createSale stamps no deliveredQty
@@ -252,12 +269,12 @@ export async function markSaleDelivered(
  * (`routeRunStopId`) is not touched at all. Only the counter-sale void imports it (the generic office cancel and the
  * demotion keep the stamp, structure-pinned in counter-sale-void-handover.structure.spec.ts). Returns the zeroed line ids.
  */
-export async function clearUnevidencedDelivered(tx: any, orderId: string): Promise<string[]> {
-  const order: { routeRunStopId: string | null } | null = await tx.order.findUnique({
-    where: { id: orderId },
-    select: { routeRunStopId: true },
-  });
-  if (!order || order.routeRunStopId) return [];
+export async function clearUnevidencedDelivered(
+  tx: any,
+  orderId: string,
+  routeRunStopId?: string | null,
+): Promise<string[]> {
+  if (await ridesRouteStop(tx, orderId, routeRunStopId)) return [];
   const handed: Array<{ id: string }> = await tx.orderItem.findMany({
     where: { orderId, deliveredQty: { gt: 0 }, status: { not: "CANCELLED" } },
     select: { id: true },
@@ -281,13 +298,10 @@ export async function clearUnevidencedDelivered(tx: any, orderId: string): Promi
 export async function unevidencedDeliveredFloor(
   tx: any,
   orderId: string,
+  routeRunStopId?: string | null,
 ): Promise<Map<string, number>> {
   const floor = new Map<string, number>();
-  const order: { routeRunStopId: string | null } | null = await tx.order.findUnique({
-    where: { id: orderId },
-    select: { routeRunStopId: true },
-  });
-  if (!order || order.routeRunStopId) return floor;
+  if (await ridesRouteStop(tx, orderId, routeRunStopId)) return floor;
   const handed: Array<{ id: string; deliveredQty: unknown }> = await tx.orderItem.findMany({
     where: { orderId, deliveredQty: { gt: 0 }, status: { not: "CANCELLED" } },
     select: { id: true, deliveredQty: true },

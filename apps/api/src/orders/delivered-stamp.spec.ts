@@ -86,6 +86,16 @@ describe("clearUnevidencedDelivered", () => {
     expect(gone.orderItem.updateMany).not.toHaveBeenCalled();
   });
 
+  it("a routeRunStopId handed in by the caller (the void's locked row) saves the order re-read", async () => {
+    const t = tx({ handed: ["l1"] });
+    await expect(clearUnevidencedDelivered(t, "o1", null)).resolves.toEqual(["l1"]);
+    expect(t.order.findUnique).not.toHaveBeenCalled();
+    const route = tx({ handed: ["l1"] });
+    await expect(clearUnevidencedDelivered(route, "o1", "stop-1")).resolves.toEqual([]);
+    expect(route.order.findUnique).not.toHaveBeenCalled();
+    expect(route.orderItem.findMany).not.toHaveBeenCalled();
+  });
+
   it("every handed line has evidence: no write", async () => {
     const t = tx({
       handed: ["l1"],

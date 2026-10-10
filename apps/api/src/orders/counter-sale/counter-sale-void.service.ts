@@ -142,6 +142,7 @@ export class CounterSaleVoidService {
         status: true,
         counterSale: true,
         createdAt: true,
+        routeRunStopId: true,
       },
     });
     if (!order || order.counterSale !== true) throw saleNotFound();
@@ -241,8 +242,8 @@ export class CounterSaleVoidService {
     // undelivered, so the cancel below restocks it in full (see delivered-stamp.ts). Order lock held (step 1).
     // SA-763r: the units still booked out for those lines (stock books max(qty, delivered), and an office cut can leave
     // qty below delivered) are read first, so the cancel's credit returns every one of them.
-    const bookedFloor = await unevidencedDeliveredFloor(tx, orderId);
-    await clearUnevidencedDelivered(tx, orderId);
+    const bookedFloor = await unevidencedDeliveredFloor(tx, orderId, order.routeRunStopId);
+    await clearUnevidencedDelivered(tx, orderId, order.routeRunStopId);
 
     // 10. The office cancel's unwind (stock back, credits and wallet released, every live invoice VOID, lines
     // CANCELLED) from DELIVERED; its inner lock no longer sees a non-VOID tender (step 8 ran first).
