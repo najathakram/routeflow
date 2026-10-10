@@ -5,15 +5,18 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { AddonGuard } from "../billing/addon.guard";
 import { RequireAddon } from "../billing/require-addon.decorator";
 import { RegulatedService } from "./regulated.service";
 import { RegulatedFilingService } from "./regulated-filing.service";
 import { RegulatedReportService } from "./regulated-report.service";
+import { ParkedReversalResolutionService } from "./parked-reversal-resolution.service";
 import { ListLedgerDto } from "./dto/list-ledger.dto";
 import { ListFilingsDto } from "./dto/list-filings.dto";
 import { PrepareFilingDto } from "./dto/prepare-filing.dto";
 import { ReportQueryDto } from "./dto/report-query.dto";
+import { ResolveParkedReversalDto } from "./dto/resolve-parked-reversal.dto";
 import { REPORT_TEMPLATES } from "./template-registry";
 
 // Categorization stays free; the LEDGER/FILINGS/REPORTS surfaces are the
@@ -28,6 +31,7 @@ export class RegulatedController {
     private readonly regulated: RegulatedService,
     private readonly filings: RegulatedFilingService,
     private readonly reports: RegulatedReportService,
+    private readonly parkedReversals: ParkedReversalResolutionService,
   ) {}
 
   @Get("ledger")
@@ -92,5 +96,28 @@ export class RegulatedController {
   @RequireAddon("tobacco_dealer")
   downloadPdf(@Param("id") id: string) {
     return this.filings.downloadUrl(id, "pdf");
+  }
+
+  // ─── Parked reversals (SA-089/B660 PR B) ────────────────────────────────────
+  // A return's regulated-ledger reversal that couldn't be classified box/piece-axis at
+  // capture time (B681/SA-067(3)) blocks its period's filing until an operator resolves it
+  // with the sold line's actual pack. Mirrors returns.controller.ts's parked-restocks routes.
+
+  @Get("parked-reversals")
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  @RequireAddon("tobacco_dealer")
+  listParkedReversals() {
+    return this.parkedReversals.list();
+  }
+
+  @Post("parked-reversals/:id/resolve")
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  @RequireAddon("tobacco_dealer")
+  resolveParkedReversal(
+    @Param("id") id: string,
+    @Body() dto: ResolveParkedReversalDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parkedReversals.resolve(id, dto.pack, dto.reason, { id: user.sub });
   }
 }

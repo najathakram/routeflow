@@ -8,13 +8,13 @@ without a Plane API key, a network call, or a write budget.
 
 Same shape as the bug registry: **the file is proof, Plane is a view.**
 
-| Layer | Role |
-|---|---|
-| `waves.json` | Authoritative task lists, ordering, dependencies, gates. Edit here. |
-| `docs/superpowers/plans/2026-09-13-backoffice-waves.md` | The narrative: diagnosis, ordering rule, execution model. Read once, for the *why*. |
-| `docs/superpowers/plans/2026-09-12-backoffice-phase-0-truth.md` | Wave W2's own 15-task implementation plan. Not duplicated here. |
-| `.claude/campaign/bugs.jsonl` | The registry rows a wave's `ref` fields point at. Not duplicated here. |
-| Plane ROAD items | **Pointers only.** A ROAD item names its wave and links here; it never holds a second copy of the task list. |
+| Layer                                                           | Role                                                                                                         |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `waves.json`                                                    | Authoritative task lists, ordering, dependencies, gates. Edit here.                                          |
+| `docs/superpowers/plans/2026-09-13-backoffice-waves.md`         | The narrative: diagnosis, ordering rule, execution model. Read once, for the _why_.                          |
+| `docs/superpowers/plans/2026-09-12-backoffice-phase-0-truth.md` | Wave W2's own 15-task implementation plan. Not duplicated here.                                              |
+| `.claude/campaign/bugs.jsonl`                                   | The registry rows a wave's `ref` fields point at. Not duplicated here.                                       |
+| Plane ROAD items                                                | **Pointers only.** A ROAD item names its wave and links here; it never holds a second copy of the task list. |
 
 **Never hand-edit a wave's tasks in Plane.** A Plane item that disagrees with this file is stale by
 definition — fix the file, and let the pointer stand.

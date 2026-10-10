@@ -597,3 +597,53 @@ export const NORMALIZE_BOXES_PIECES_FIXTURES: NormalizeBoxesPiecesFixture[] = [
     expected: { boxes: null, pieces: null, qty: 0 },
   },
 ];
+
+// ─── #2717 pre-M3: mixed-pack helpers (hand-worked decimals) ─────────────────
+
+export interface Round4Fixture {
+  label: string;
+  input: number;
+  expected: number;
+}
+
+export const ROUND4_FIXTURES: Round4Fixture[] = [
+  { label: "1.23456 rounds to 1.2346", input: 1.23456, expected: 1.2346 },
+  { label: "half at the 4th dp goes up: 2.13545 -> 2.1355", input: 2.13545, expected: 2.1355 },
+  { label: "half away from zero: -0.00145 -> -0.0015", input: -0.00145, expected: -0.0015 },
+  { label: "NaN is 0", input: NaN, expected: 0 },
+];
+
+export interface ComponentUnitPrice4Fixture {
+  label: string;
+  subtotal: number;
+  pieces: number;
+  expected: number | null;
+}
+
+export const COMPONENT_UNIT_PRICE4_FIXTURES: ComponentUnitPrice4Fixture[] = [
+  { label: "50.00 over 40 pieces", subtotal: 50, pieces: 40, expected: 1.25 },
+  { label: "43.75 over 6 pieces", subtotal: 43.75, pieces: 6, expected: 7.2917 },
+  { label: "net basis, one box free: 30.00 over 48", subtotal: 30, pieces: 48, expected: 0.625 },
+  { label: "24.99 over 200 (half at 4th dp)", subtotal: 24.99, pieces: 200, expected: 0.125 },
+  { label: "zero pieces is null", subtotal: 10, pieces: 0, expected: null },
+  { label: "negative subtotal is null", subtotal: -1, pieces: 6, expected: null },
+];
+
+export interface LargestRemainderFixture {
+  label: string;
+  total: number;
+  weights: number[];
+  expected: number[];
+}
+
+export const LARGEST_REMAINDER_FIXTURES: LargestRemainderFixture[] = [
+  { label: "10.00 over [1,1,1]", total: 10, weights: [1, 1, 1], expected: [3.34, 3.33, 3.33] },
+  { label: "7.00 over [10,7,7]", total: 7, weights: [10, 7, 7], expected: [2.92, 2.04, 2.04] },
+  { label: "50.00 over [16,12,12]", total: 50, weights: [16, 12, 12], expected: [20, 15, 15] },
+  {
+    label: "tie-break 0.02 over [1,2,1]",
+    total: 0.02,
+    weights: [1, 2, 1],
+    expected: [0.01, 0.01, 0],
+  },
+];

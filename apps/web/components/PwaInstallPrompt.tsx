@@ -4,6 +4,7 @@ import * as React from "react";
 import { Download, X } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import { BRAND_MARK_SRC } from "./brand";
+import { isInShell } from "@/lib/in-shell";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -70,7 +71,8 @@ export function PwaInstallPrompt({
     setDeferredPrompt(null);
   };
 
-  if (installed || dismissed) return null;
+  // #2653 sim proof F3: inside the app shell the user already has the app — never offer install.
+  if (installed || dismissed || isInShell()) return null;
 
   // Chrome/Android install banner
   if (deferredPrompt) {

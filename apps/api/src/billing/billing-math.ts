@@ -57,6 +57,17 @@ export function prorateDaily(monthly: number, daysRemaining: number, daysInCycle
   return roundMoney((monthly * d) / daysInCycle);
 }
 
+/**
+ * How many MONTHLY charges a non-annual billing period covers (SA-383, #2187):
+ * `max(1, round(days / (365.25 / 12)))`. A 90-day manual row is 3 months, 180 is 6;
+ * any 28–31-day period or calendar month is 1, so monthly proration is unchanged.
+ * The ANNUAL cycle never uses this — it is priced by {@link annualPrice} (10-for-12).
+ */
+export function periodMonths(start: Date, end: Date): number {
+  const days = (end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000);
+  return Math.max(1, Math.round(days / (365.25 / 12)));
+}
+
 /** Whole-day count between two instants (UTC), never negative. */
 export function daysBetween(from: Date, to: Date): number {
   const ms = to.getTime() - from.getTime();

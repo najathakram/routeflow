@@ -365,10 +365,12 @@ describe("ReturnsService receive() and cancel() (B665)", () => {
         }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      product: { update: jest.fn() },
+      // B562 PR-2: update() returns the written row — the reversing movement reads its counter.
+      product: { update: jest.fn().mockResolvedValue({ currentStock: 4, averageCost: 2 }) },
       stockMovement: {
         findMany: jest.fn().mockResolvedValue([{ productId: "p1", quantity: 36 }]),
         deleteMany: jest.fn(),
+        create: jest.fn().mockResolvedValue({ id: "mv-rev" }),
       },
       returnParkedRestock: { deleteMany: jest.fn() },
       $executeRaw: jest.fn().mockResolvedValue(0),
@@ -390,6 +392,11 @@ describe("ReturnsService receive() and cancel() (B665)", () => {
       where: { id: "p1" },
       data: { currentStock: { decrement: 36 } },
     });
+    // B562 PR-2: the 36 pieces are reversed by an APPENDED RETURN row, never a delete.
+    expect(tx.stockMovement.deleteMany).not.toHaveBeenCalled();
+    const rev = tx.stockMovement.create.mock.calls[0][0].data;
+    expect(rev).toMatchObject({ type: "RETURN", reference: "RET-ret-1234", stockAfter: 4 });
+    expect(rev.quantity.toString()).toBe("-36");
     expect(tx.returnParkedRestock.deleteMany).toHaveBeenCalledWith({
       where: { returnId: "ret-12345678", resolvedAt: null },
     });

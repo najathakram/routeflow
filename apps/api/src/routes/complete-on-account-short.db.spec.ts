@@ -52,11 +52,13 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -126,6 +128,10 @@ describeDb("B663 on-account short/refused completion — real Postgres", () => {
       providers: [
         RoutesService,
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         EstimatesService,
         NumberingService,
         { provide: PrismaService, useValue: prisma },
@@ -150,6 +156,13 @@ describeDb("B663 on-account short/refused completion — real Postgres", () => {
         { provide: CreditNotesService, useValue: mockCreditNotes },
         { provide: MessagingService, useValue: mockMessaging },
         { provide: StorageService, useValue: mockStorage },
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         { provide: EntitlementsService, useValue: mockEntitlements },
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
       ],

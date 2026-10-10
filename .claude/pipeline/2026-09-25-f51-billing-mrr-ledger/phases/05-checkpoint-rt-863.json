@@ -1,0 +1,68 @@
+{
+  "task": {
+    "id": "RT-863",
+    "title": "repro tests T1-T5, P1, P2",
+    "type": "repro-test",
+    "files": [],
+    "tests": [
+      "apps/api/src/platform-admin/platform-admin.service.spec.ts",
+      "apps/api/src/billing/billing-cron.service.spec.ts"
+    ],
+    "dependsOn": ["RC-863"],
+    "risk": "HIGH",
+    "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RT-863/brief.md",
+    "redRun": {
+      "ran": true,
+      "results": [
+        {
+          "command": "cd apps/api && npx jest src/billing/billing-cron.service.spec.ts src/platform-admin/platform-admin.service.spec.ts -t \"REG-B863\"",
+          "exitCode": 1,
+          "output": "FAIL src/platform-admin/platform-admin.service.spec.ts\n  ✕ PlatformAdminService — audit provenance › activateManualSubscription — B557 books a compensating delta on activation › REG-B863-CYCLE 30 → MONTHLY\n    expect(received).toBe(expected) // Object.is equality\n    Expected: \"MONTHLY\"\n    Received: undefined\n      at platform-admin/platform-admin.service.spec.ts:2272:38\n\n  ✕ PlatformAdminService — audit provenance › activateManualSubscription — B557 books a compensating delta on activation › REG-B863-CYCLE 365 → ANNUAL\n    expect(received).toBe(expected)\n    Expected: \"ANNUAL\"\n    Received: undefined\n      at platform-admin/platform-admin.service.spec.ts:2292:38\n\nFAIL src/billing/billing-cron.service.spec.ts\n  ✕ BillingCronService › REG-B863-ROLL 365-day external row rolls +365d (flips REG-ROLL-MANUAL-ANNUAL, SA-277)\n    expect(received).toBe(expected)\n    Expected: \"2027-01-01T00:00:00.000Z\"\n    Received: \"2026-02-01T00:00:00.000Z\"\n      at billing/billing-cron.service.spec.ts:874:42\n\n  ✕ BillingCronService › REG-B863-ROLL 90-day external row rolls +90d\n    expect(received).toBe(expected)\n    Expected: \"2026-04-01T00:00:00.000Z\"\n    Received: \"2026-02-01T00:00:00.000Z\"\n      at billing/billing-cron.service.spec.ts:892:42\n\n  ✕ BillingCronService › REG-B863-ROLL 180-day external row rolls +180d\n    expect(received).toBe(expected)\n    Expected: \"2026-06-30T00:00:00.000Z\"\n    Received: \"2026-02-01T00:00:00.000Z\"\n      at billing/billing-cron.service.spec.ts:905:42\n\nTest Suites: 2 failed, 2 total\nTests:       5 failed, 120 skipped, 125 total\nSnapshots:   0 total\nTime:        0.924 s, estimated 1 s"
+        },
+        {
+          "command": "cd apps/api && npx jest src/billing/billing-cron.service.spec.ts src/platform-admin/platform-admin.service.spec.ts (full file run, no -t filter, to prove pins pass)",
+          "exitCode": 1,
+          "output": "Test Suites: 2 failed, 2 total\nTests:       5 failed, 1 todo, 119 passed, 125 total\nSnapshots:   0 total\nTime:        2.213 s\n\nThe 5 failing tests are exactly the 5 REG-B863-* tests above (T1-T5). All other 119 tests pass, including both new pins: \"rollCycles still rolls a Stripe/catalog row (externalPayment: false) by addCycle +1 month\" (P1) and \"rollCycles falls back to addCycle for an external row with periodStart: null\" (P2)."
+        }
+      ]
+    },
+    "redAudit": {
+      "structurallyRed": true,
+      "tests": [
+        {
+          "test": "REG-B863-CYCLE 30 → MONTHLY",
+          "outcome": "assertion-failure",
+          "note": "Expected cycle field to be \"MONTHLY\" but received undefined (line 2272 of platform-admin.service.spec.ts). The test correctly captures that activateManualSubscription() is not deriving and writing the cycle field from billingPeriodDays."
+        },
+        {
+          "test": "REG-B863-CYCLE 365 → ANNUAL",
+          "outcome": "assertion-failure",
+          "note": "Expected cycle field to be \"ANNUAL\" but received undefined (line 2292 of platform-admin.service.spec.ts). The test correctly captures the same bug as above with billingPeriodDays: 365."
+        },
+        {
+          "test": "REG-B863-ROLL 365-day external row rolls +365d (flips REG-ROLL-MANUAL-ANNUAL, SA-277)",
+          "outcome": "assertion-failure",
+          "note": "Expected periodEnd \"2027-01-01T00:00:00.000Z\" (+365 days from 2026-01-01) but received \"2026-02-01T00:00:00.000Z\" (line 874 of billing-cron.service.spec.ts). The test correctly captures that rollCycles() is not computing the observed period span (periodEnd - periodStart) for external rows and is defaulting to 1-month roll instead."
+        },
+        {
+          "test": "REG-B863-ROLL 90-day external row rolls +90d",
+          "outcome": "assertion-failure",
+          "note": "Expected periodEnd \"2026-04-01T00:00:00.000Z\" (+90 days from 2026-01-01) but received \"2026-02-01T00:00:00.000Z\" (line 892 of billing-cron.service.spec.ts). Same bug as above: external rows are always rolling by 1 month regardless of their actual period span."
+        },
+        {
+          "test": "REG-B863-ROLL 180-day external row rolls +180d",
+          "outcome": "assertion-failure",
+          "note": "Expected periodEnd \"2026-06-30T00:00:00.000Z\" (+180 days from 2026-01-01) but received \"2026-02-01T00:00:00.000Z\" (line 905 of billing-cron.service.spec.ts). Same bug: external rows defaulting to 1-month roll instead of calculated period span."
+        }
+      ],
+      "blockers": [],
+      "remediation": ""
+    },
+    "redAttempts": 1,
+    "behaviorallyRed": true,
+    "status": "complete",
+    "rounds": 0,
+    "clean": true
+  },
+  "progressLine": "Task RT-863: complete (review clean)"
+}

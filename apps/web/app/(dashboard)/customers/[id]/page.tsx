@@ -1,11 +1,14 @@
 "use client";
 
 import * as React from "react";
+import { AccountStatusControls, type CustomerStatus } from "../_components/walk-in-protection";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import * as Tabs from "@radix-ui/react-tabs";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
+import { contactPersonPayload } from "@/lib/contact-person-payload";
 import {
   ArrowLeft,
   Star,
@@ -18,7 +21,6 @@ import {
   Clock,
   Pencil,
   Trash2,
-  Zap,
   TrendingDown,
   CheckCircle2,
   DollarSign,
@@ -64,8 +66,14 @@ import { useAuth } from "@/lib/auth-context";
 import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/portal-approvals";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { AuthorizationsTab } from "../_components/AuthorizationsTab";
-import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
-import { getTierPrice, computeMarginFraction, classifyMargin } from "@routeflow/pricing";
+import { fmt, fmtCalendarDate, fmtDate, displayEmail } from "@/lib/formatting";
+import { statementMoney } from "@/lib/customer-statement-display";
+import {
+  isSpecialTier,
+  getTierPrice,
+  computeMarginFraction,
+  classifyMargin,
+} from "@routeflow/pricing";
 import {
   SELECTABLE_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
@@ -122,9 +130,13 @@ import {
   type CustomerComment,
 } from "@/lib/api/customers";
 import { useUndo } from "@/lib/undo";
-import { useProducts } from "@/lib/api/products";
+import { useProduct } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
+import { CustomerPriceProductSearch } from "./customer-price-product-search";
 import { useHasAddon } from "@/lib/api/tobacco";
-import { MSRP_ADDON, SALES_AGENTS_ADDON, useRoutesAccess } from "@/lib/api/addons";
+import { MSRP_ADDON, SALES_AGENTS_ADDON, useFleetAccess, useRoutesAccess } from "@/lib/api/addons";
+import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { AssignedRoutesCard } from "./_components/AssignedRoutesCard";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
 import {
   useCustomerCurrentAgent,
@@ -143,12 +155,14 @@ import {
   type OrderTemplate,
 } from "@/lib/api/order-templates";
 import { StandingOrderModal } from "./StandingOrderModal";
-import { LedgerTruncationNote } from "./ledger-truncation-note";
+import { CustomerStatementCard } from "./customer-statement-card";
 import { CreditLimitPanel } from "./credit-limit-panel";
+import { GenerateOrderNowButton } from "./generate-order-button";
+import { CustomerOversellOverride } from "./customer-oversell-override";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
-import { BrandMark } from "@/components/brand";
+import { focusRefusedContactField } from "@/lib/refused-text-field";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -180,7 +194,12 @@ const orderColumns: ColumnDef<ApiOrder, unknown>[] = [
     accessorKey: "status",
     header: "Status",
     enableSorting: false,
-    cell: ({ row }) => <Badge status={row.original.status as BadgeStatus} />,
+    cell: ({ row }) => (
+      <OrderStatusBadge
+        status={row.original.status as BadgeStatus}
+        fulfillPath={row.original.fulfillPath as string | undefined}
+      />
+    ),
   },
   {
     accessorKey: "createdAt",
@@ -809,23 +828,21 @@ function ContactPersonModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.firstName.trim()) return;
-    const payload = {
-      customerId,
-      salutation: form.salutation || undefined,
-      firstName: form.firstName.trim(),
-      lastName: form.lastName.trim() || undefined,
-      email: form.email.trim() || undefined,
-      phone: form.phone.trim() || undefined,
-      mobile: form.mobile.trim() || undefined,
-      isPrimary: form.isPrimary,
-    };
+    // #3206 follow-up: on edit an emptied optional field that was stored is an explicit null.
     if (editingContact) {
       updateContact.mutate(
-        { ...payload, contactId: editingContact.id },
-        { onSuccess: () => onClose() },
+        {
+          customerId,
+          ...contactPersonPayload(form, editingContact),
+          contactId: editingContact.id,
+        },
+        { onSuccess: () => onClose(), onError: focusRefusedContactField },
       );
     } else {
-      addContact.mutate(payload, { onSuccess: () => onClose() });
+      addContact.mutate(
+        { customerId, ...contactPersonPayload(form, null) },
+        { onSuccess: () => onClose(), onError: focusRefusedContactField },
+      );
     }
   };
 
@@ -865,12 +882,14 @@ function ContactPersonModal({
               </select>
             </div>
             <Input
+              id="contact-first-name"
               label="First Name *"
               placeholder="John"
               value={form.firstName}
               onChange={handleChange("firstName") as any}
             />
             <Input
+              id="contact-last-name"
               label="Last Name"
               placeholder="Doe"
               value={form.lastName}
@@ -950,8 +969,6 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   // Their price vs cost now — the Price Memory margin column (pos-cost-roles §1).
   const { data: marginConfig } = useMarginConfig();
   const marginFloor = marginConfig?.defaultMarginFloor ?? 0.15;
-  const { data: productsData } = useProducts({ isActive: true, limit: 200 });
-  const allProducts: any[] = productsData?.data ?? [];
 
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [editingPrice, setEditingPrice] = React.useState<CustomerPrice | null>(null);
@@ -963,24 +980,23 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const [selectedTier, setSelectedTier] = React.useState<number | null>(null);
   const [msrpInput, setMsrpInput] = React.useState("");
   const [notes, setNotes] = React.useState("");
-  const [productDropdownOpen, setProductDropdownOpen] = React.useState(false);
-
-  const filteredProducts = allProducts.filter(
-    (p: any) =>
-      p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-      (p.sku ?? "").toLowerCase().includes(productSearch.toLowerCase()),
-  );
+  // The product picked from the server-side search (its tier ladder feeds the price preview);
+  // an EDITED row has no pick yet, so its product is fetched by id.
+  const [pickedProduct, setPickedProduct] = React.useState<any>(null);
+  const { data: fetchedProduct } = useProduct(selectedProductId);
 
   // Get selected product for price preview
-  const selectedProduct = allProducts.find((p: any) => p.id === selectedProductId);
+  const selectedProduct: any =
+    pickedProduct?.id === selectedProductId ? pickedProduct : fetchedProduct;
 
   // An unset tier column (0/null) inherits the list price at checkout — label it.
   const tierUnset = (product: any, tier: number) =>
-    !!product && tier !== 1 && !(Number(product[`priceTier${tier}`]) > 0);
+    !!product && isSpecialTier(tier) && !(Number(product[`priceTier${tier}`]) > 0);
 
   const openAdd = () => {
     setEditingPrice(null);
     setSelectedProductId("");
+    setPickedProduct(null);
     setProductSearch("");
     setSelectedTier(null);
     setMsrpInput("");
@@ -991,7 +1007,8 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const openEdit = (cp: CustomerPrice) => {
     setEditingPrice(cp);
     setSelectedProductId(cp.productId);
-    setProductSearch(cp.product?.name ?? "");
+    setPickedProduct(null);
+    setProductSearch(cp.product ? displayProductName(cp.product) : "");
     setSelectedTier(cp.pricingTier ?? null);
     setMsrpInput(cp.msrp != null ? String(cp.msrp) : "");
     setNotes(cp.notes ?? "");
@@ -1359,40 +1376,15 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
         <div className="space-y-4">
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">Product</label>
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Search by name or SKU…"
-                value={productSearch}
-                onChange={(e) => {
-                  setProductSearch(e.target.value);
-                  setProductDropdownOpen(true);
-                }}
-                onFocus={() => setProductDropdownOpen(true)}
-                className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-              {productDropdownOpen && productSearch.length > 0 && filteredProducts.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
-                  <ul className="max-h-40 overflow-y-auto">
-                    {filteredProducts.slice(0, 20).map((p: any) => (
-                      <li key={p.id}>
-                        <button
-                          className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
-                          onClick={() => {
-                            setSelectedProductId(p.id);
-                            setProductSearch(p.name);
-                            setProductDropdownOpen(false);
-                          }}
-                        >
-                          <span className="text-sm font-medium text-navy">{p.name}</span>
-                          {p.sku && <span className="font-mono text-xs text-navy/70">{p.sku}</span>}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
+            <CustomerPriceProductSearch
+              value={productSearch}
+              onValueChange={setProductSearch}
+              onPick={(p) => {
+                setSelectedProductId(p.id);
+                setPickedProduct(p);
+                setProductSearch(displayProductName(p));
+              }}
+            />
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">
@@ -1908,9 +1900,6 @@ function DocumentsTab({ customerId }: { customerId: string }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-const STATUS_CYCLE = ["ACTIVE", "INACTIVE", "SUSPENDED"] as const;
-type CustomerStatus = (typeof STATUS_CYCLE)[number];
-
 /** "Outstanding" spans four statuses, but ListInvoicesDto validates `status` as a
  *  single enum value (a comma-list 400s) — so it's filtered client-side. */
 const OUTSTANDING_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
@@ -1927,6 +1916,8 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   // /routes 403s without a dispatch addon, so hide the entry point and keep the
   // modal's query off (this page is not behind the shell's RouteGuard).
   const { enabled: routesAccess } = useRoutesAccess();
+  const { fleet } = useFleetAccess(); // no fleet module: no route assignment surfaces
+  const statusLabel = useOrderStatusLabel();
   const currentAgent = useCustomerCurrentAgent(id, { enabled: hasSalesAgents });
   const [agentModalOpen, setAgentModalOpen] = React.useState(false);
   const closeAssignment = useCloseAssignment();
@@ -1952,12 +1943,12 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   const { data: customer, isLoading } = useCustomer(id);
   const { data: tierLabels } = useTierLabels();
   const { data: ordersResult, isError: ordersError } = useCustomerOrders<ApiOrder>(id);
-  const { data: customerRoutes } = useCustomerRoutes(id);
+  const { data: customerRoutes } = useCustomerRoutes(id, { enabled: fleet });
   const { data: orderTemplates } = useOrderTemplates(id);
   const updateStatus = useUpdateCustomerStatus();
   const updateCustomer = useUpdateCustomer();
-  const addAddress = useAddCustomerAddress();
-  const updateAddress = useUpdateCustomerAddress();
+  const addAddress = useAddCustomerAddress({ localErrorToast: true });
+  const updateAddress = useUpdateCustomerAddress({ localErrorToast: true });
   const deleteAddress = useDeleteCustomerAddress();
   const updateTemplate = useUpdateOrderTemplate();
   const deleteTemplate = useDeleteOrderTemplate();
@@ -2227,10 +2218,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             setIsAddAddressOpen(false);
             setEditingAddress(null);
           },
-          onError: (err: any) =>
+          onError: (err: unknown) =>
             toast({
               title: "Update failed",
-              description: err?.response?.data?.message ?? "",
+              description: safeTextErrorCopy(err) ?? "Please check the address and try again.",
               variant: "error",
             }),
         },
@@ -2243,10 +2234,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             toast({ title: "Address added", variant: "success" });
             setIsAddAddressOpen(false);
           },
-          onError: (err: any) =>
+          onError: (err: unknown) =>
             toast({
               title: "Couldn't add address",
-              description: err?.response?.data?.message ?? "",
+              description: safeTextErrorCopy(err) ?? "Please check the address and try again.",
               variant: "error",
             }),
         },
@@ -2448,13 +2439,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
               />
               <StatCard
                 label="Open Balance"
-                value={fmt(statement?.outstandingAmount ?? 0)}
+                value={statementMoney(statement, statementFailed, (x) => x.outstandingAmount, fmt)}
                 icon={<TrendingDown className="h-5 w-5" />}
                 className={(statement?.outstandingAmount ?? 0) > 0 ? "border-danger/40" : undefined}
               />
               <StatCard
                 label="Advance Balance"
-                value={fmt(statement?.advanceBalance ?? 0)}
+                value={statementMoney(statement, statementFailed, (x) => x.advanceBalance, fmt)}
                 icon={<DollarSign className="h-5 w-5" />}
               />
             </div>
@@ -2467,7 +2458,9 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     {customer.displayName && (
                       <InfoRow icon={User} label="Display Name" value={customer.displayName} />
                     )}
-                    {customer.email && <InfoRow icon={Mail} label="Email" value={customer.email} />}
+                    {displayEmail(customer.email) && (
+                      <InfoRow icon={Mail} label="Email" value={customer.email} />
+                    )}
                     {customer.mobile && (
                       <InfoRow icon={Phone} label="Mobile" value={customer.mobile} />
                     )}
@@ -2613,6 +2606,8 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                       </p>
                     )}
                   </div>
+
+                  <CustomerOversellOverride customerId={id} />
 
                   {/* Credit limit (D6/B462 + B576): from the statement, the same figure the
                       server's hard block is checked against. */}
@@ -2924,47 +2919,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   </div>
                 </Card>
 
-                <Card title="Assigned Routes">
-                  <div className="space-y-3">
-                    {(customerRoutes ?? []).length === 0 ? (
-                      <p className="text-sm text-navy/70">Not assigned to any routes yet.</p>
-                    ) : (
-                      <ul className="-mx-6 divide-y divide-surface-border">
-                        {(customerRoutes as any[]).map((r) => (
-                          <li key={r.id} className="flex items-center gap-3 px-6 py-3">
-                            <Route className="h-4 w-4 shrink-0 text-navy/70" />
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium text-navy">{r.name}</p>
-                              {r.driverName && (
-                                <p className="text-xs text-navy/70">Driver: {r.driverName}</p>
-                              )}
-                            </div>
-                            <span
-                              className={cn(
-                                "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
-                                r.isActive
-                                  ? "bg-success-bg text-success"
-                                  : "bg-surface-raised text-navy/70",
-                              )}
-                            >
-                              {r.isActive ? "Active" : "Inactive"}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {routesAccess && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        leftIcon={<Plus className="h-4 w-4" />}
-                        onClick={() => setIsAssignRouteOpen(true)}
-                      >
-                        Assign to Route
-                      </Button>
-                    )}
-                  </div>
-                </Card>
+                {fleet && (
+                  <AssignedRoutesCard
+                    routes={customerRoutes ?? []}
+                    canAssign={routesAccess}
+                    onAssign={() => setIsAssignRouteOpen(true)}
+                  />
+                )}
               </div>
 
               <div className="space-y-5">
@@ -3048,50 +3009,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                       </Button>
                     </div>
                   ) : (
-                    <div className="flex flex-col gap-4">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm text-navy/70">Current status</p>
-                        <Badge status={currentStatus} />
-                      </div>
-                      <div className="space-y-2">
-                        {STATUS_CYCLE.map((s) => (
-                          <button
-                            key={s}
-                            onClick={() => handleStatusChange(s)}
-                            disabled={updateStatus.isPending}
-                            className={cn(
-                              "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
-                              currentStatus === s
-                                ? "border-brand-500 bg-brand-50 text-brand-700"
-                                : "border-surface-border text-navy/70 hover:border-navy/30 hover:text-navy",
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                "h-2 w-2 rounded-full",
-                                s === "ACTIVE"
-                                  ? "bg-success"
-                                  : s === "INACTIVE"
-                                    ? "bg-navy/30"
-                                    : "bg-danger",
-                              )}
-                            />
-                            {s.charAt(0) + s.slice(1).toLowerCase()}
-                          </button>
-                        ))}
-                      </div>
-                      {currentStatus === "SUSPENDED" && (
-                        <div className="border-t border-surface-border pt-4">
-                          <button
-                            onClick={() => setIsDeleteOpen(true)}
-                            className="flex w-full items-center gap-2 rounded-lg border border-danger/30 px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger/5"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            Remove customer
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                    <AccountStatusControls
+                      isWalkIn={customer.isWalkIn}
+                      currentStatus={currentStatus}
+                      pending={updateStatus.isPending}
+                      onChange={handleStatusChange}
+                      onRemove={() => setIsDeleteOpen(true)}
+                    />
                   )}
                 </Card>
 
@@ -3136,7 +3060,9 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                       {portalStatus?.status === "ACTIVE" && portalStatus.buyerAccount && (
                         <div className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/70">
                           <p className="font-medium">{portalStatus.buyerAccount.name}</p>
-                          <p>{portalStatus.buyerAccount.email}</p>
+                          {displayEmail(portalStatus.buyerAccount.email) && (
+                            <p>{portalStatus.buyerAccount.email}</p>
+                          )}
                         </div>
                       )}
 
@@ -3290,7 +3216,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     { value: "", label: "All Statuses" },
                     { value: "PENDING", label: "Pending" },
                     { value: "CONFIRMED", label: "Confirmed" },
-                    { value: "OUT_FOR_DELIVERY", label: "Out for Delivery" },
+                    {
+                      value: "OUT_FOR_DELIVERY",
+                      label: statusLabel("OUT_FOR_DELIVERY", "Out for Delivery"),
+                    },
                     { value: "COMPLETED", label: "Completed" },
                     { value: "CANCELLED", label: "Cancelled" },
                   ]}
@@ -3574,20 +3503,14 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                             {tmpl.isActive ? "\u23f8" : "\u25b6"}
                           </span>
                         </button>
-                        <button
-                          title="Generate order now"
-                          className={cn(
-                            TAP_TARGET,
-                            "rounded p-1.5 text-navy/70 transition-colors hover:bg-brand-50 hover:text-brand-600",
-                          )}
-                          onClick={() =>
+                        <GenerateOrderNowButton
+                          pending={generateOrder.isPending}
+                          onGenerate={() =>
                             generateOrder.mutate(tmpl.id, {
                               onSuccess: () => window.alert(`Order generated for "${tmpl.name}"!`),
                             })
                           }
-                        >
-                          <Zap className="h-4 w-4" />
-                        </button>
+                        />
                         <button
                           title="Edit template"
                           className={cn(
@@ -3637,6 +3560,18 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             // whole open set), never a count over this tab's 50-row page.
             const outstandingTotal = statement?.outstandingAmount ?? 0;
             const overdueTotal = statement?.overdueAmount ?? 0;
+            const outstandingText = statementMoney(
+              statement,
+              statementFailed,
+              (x) => x.outstandingAmount,
+              fmt,
+            );
+            const overdueText = statementMoney(
+              statement,
+              statementFailed,
+              (x) => x.overdueAmount,
+              fmt,
+            );
             return (
               <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-3">
                 <Card>
@@ -3646,7 +3581,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   <p
                     className={`mt-1 text-xl font-bold ${outstandingTotal > 0 ? "text-danger" : "text-success"}`}
                   >
-                    {fmt(outstandingTotal)}
+                    {outstandingText}
                   </p>
                 </Card>
                 <Card>
@@ -3656,7 +3591,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   <p
                     className={`mt-1 text-xl font-bold ${overdueTotal > 0 ? "text-danger" : "text-navy"}`}
                   >
-                    {fmt(overdueTotal)}
+                    {overdueText}
                   </p>
                 </Card>
                 <Card>
@@ -3792,7 +3727,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   <p
                     className={`text-2xl font-bold ${(statement?.outstandingAmount ?? 0) > 0 ? "text-danger" : "text-success"}`}
                   >
-                    {fmt(statement?.outstandingAmount ?? 0)}
+                    {statementMoney(statement, statementFailed, (x) => x.outstandingAmount, fmt)}
                   </p>
                   <p className="text-xs text-navy/70">Amount currently owed on invoices</p>
                   <Button
@@ -3814,7 +3749,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     <DollarSign className="h-4 w-4 text-success" />
                   </div>
                   <p className="text-2xl font-bold text-success">
-                    {fmt(statement?.advanceBalance ?? 0)}
+                    {statementMoney(statement, statementFailed, (x) => x.advanceBalance, fmt)}
                   </p>
                   <p className="text-xs text-navy/70">Pre-paid credit available to apply</p>
                   <Button
@@ -3864,208 +3799,11 @@ function CustomerDetailPageInner({ id }: { id: string }) {
               )}
             </div>
 
-            <div className="space-y-4 lg:col-span-2">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-base font-semibold text-navy">Statement of Accounts</h3>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => window.print()}
-                    className="flex items-center gap-1.5 rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy/70 transition-colors hover:bg-surface-raised"
-                  >
-                    Print
-                  </button>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-surface-border bg-white p-8 shadow-[0_2px_12px_0_rgb(0,0,0,0.06)]">
-                <div className="mb-6 flex items-start justify-between">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <BrandMark size={28} />
-                      <span className="text-base font-bold text-navy">RouteFlow</span>
-                    </div>
-                    <p className="mt-0.5 text-xs text-navy/70">Austin, TX · routeflow.io</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-lg font-bold uppercase tracking-wide text-navy">
-                      Statement of Accounts
-                    </p>
-                    <p className="mt-0.5 text-xs text-navy/70">
-                      As of{" "}
-                      {new Date().toLocaleDateString("en-US", {
-                        month: "long",
-                        day: "numeric",
-                        year: "numeric",
-                      })}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mb-6 border-t border-surface-border pt-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">To</p>
-                  <p className="mt-1 text-sm font-semibold text-navy">{customer.businessName}</p>
-                  {customer.contactName && (
-                    <p className="text-sm text-navy/70">{customer.contactName}</p>
-                  )}
-                  {customer.address && (
-                    <p className="mt-0.5 whitespace-pre-line text-xs text-navy/70">
-                      {customer.address}
-                    </p>
-                  )}
-                </div>
-
-                <div className="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-surface-border bg-surface-border sm:grid-cols-4">
-                  {[
-                    {
-                      label: "Opening Balance",
-                      value: fmt(0),
-                      valueClass: "text-navy",
-                    },
-                    {
-                      // B110/M1: lifetime totals come from the server's
-                      // DB-side aggregate over the WHOLE invoice/payment
-                      // history, never a reduce over the capped `transactions`
-                      // ledger below (which stops at one page).
-                      label: "Invoiced Amount",
-                      value: fmt(statement?.lifetimeInvoiced ?? 0),
-                      valueClass: "text-navy",
-                    },
-                    {
-                      label: "Amount Received",
-                      value: fmt(statement?.lifetimeReceived ?? 0),
-                      valueClass: "text-success",
-                    },
-                    {
-                      label: "Balance Due",
-                      value: fmt(statement?.outstandingAmount ?? 0),
-                      valueClass:
-                        (statement?.outstandingAmount ?? 0) > 0 ? "text-danger" : "text-success",
-                    },
-                  ].map((item) => (
-                    <div
-                      key={item.label}
-                      className="flex flex-col items-center gap-1 bg-white px-4 py-3 text-center"
-                    >
-                      <span className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                        {item.label}
-                      </span>
-                      <span className={cn("text-base font-bold", item.valueClass)}>
-                        {item.value}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                <LedgerTruncationNote truncated={statement?.transactionsTruncated} />
-
-                {!statement || statement.transactions.length === 0 ? (
-                  <p className="text-sm text-navy/70">No transactions on record.</p>
-                ) : (
-                  <div className="-mx-8 overflow-x-auto">
-                    <table className="w-full min-w-[640px] text-sm">
-                      <thead>
-                        <tr className="bg-[#1B3A5C]">
-                          <th className="px-8 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">
-                            Date
-                          </th>
-                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">
-                            Type
-                          </th>
-                          <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">
-                            Details
-                          </th>
-                          <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
-                            Amount
-                          </th>
-                          <th className="px-8 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
-                            Remaining
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-surface-border">
-                        {statement.transactions.map((tx, i) => {
-                          // Server rows: INVOICE / CREDIT_NOTE / ADVANCE_PAYMENT
-                          // (payments fold into invoices). `runningBalance` is
-                          // per-row remaining: owed / unused / in wallet.
-                          const isInvoice = tx.type === "INVOICE";
-                          const meta = isInvoice
-                            ? { label: "Invoice", cls: "bg-blue-100 text-blue-700" }
-                            : tx.type === "CREDIT_NOTE"
-                              ? { label: "Credit note", cls: "bg-green-100 text-green-700" }
-                              : { label: "Advance", cls: "bg-purple-100 text-purple-700" };
-                          const remainingLabel = isInvoice
-                            ? "owed"
-                            : tx.type === "CREDIT_NOTE"
-                              ? "unused"
-                              : "in wallet";
-                          return (
-                            <tr
-                              key={tx.id ?? i}
-                              className={i % 2 === 0 ? "bg-white" : "bg-gray-50/60"}
-                            >
-                              <td className="px-8 py-2.5 text-xs text-navy/70">
-                                {new Date(tx.date).toLocaleDateString("en-US", {
-                                  month: "short",
-                                  day: "numeric",
-                                  year: "numeric",
-                                })}
-                              </td>
-                              <td className="px-4 py-2.5">
-                                <span
-                                  className={cn(
-                                    "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold",
-                                    meta.cls,
-                                  )}
-                                >
-                                  {meta.label}
-                                </span>
-                              </td>
-                              <td className="px-4 py-2.5 text-sm text-navy">
-                                <span className="text-xs text-navy/70">{tx.description}</span>
-                              </td>
-                              <td className="px-4 py-2.5 text-right text-sm">
-                                <span
-                                  className={cn(
-                                    "font-medium",
-                                    isInvoice ? "text-navy" : "text-success",
-                                  )}
-                                >
-                                  {fmt(Math.abs(tx.amount))}
-                                </span>
-                              </td>
-                              <td className="px-8 py-2.5 text-right text-sm">
-                                <span className="font-semibold text-navy">
-                                  {fmt(Math.abs(tx.runningBalance))}
-                                </span>
-                                <span className="ml-1 text-xs text-navy/50">{remainingLabel}</span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                      <tfoot>
-                        <tr className="border-t-2 border-surface-border bg-gray-50">
-                          <td colSpan={3} className="px-8 py-3 text-sm font-bold text-navy">
-                            Balance Due
-                          </td>
-                          <td />
-                          <td
-                            className={cn(
-                              "px-8 py-3 text-right text-sm font-bold",
-                              (statement?.outstandingAmount ?? 0) > 0
-                                ? "text-danger"
-                                : "text-success",
-                            )}
-                          >
-                            {fmt(statement?.outstandingAmount ?? 0)}
-                          </td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
+            <CustomerStatementCard
+              customerId={id}
+              statement={statement}
+              statementFailed={statementFailed}
+            />
           </div>
 
           {isRecordPaymentOpen && (

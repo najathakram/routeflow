@@ -95,7 +95,7 @@ describe("multer field-parser limits (CVE-2026-82333)", () => {
       new SentryExceptionFilter(app.getHttpAdapter()),
       new MulterExceptionFilter(),
     );
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {
@@ -177,8 +177,11 @@ import { EmailService } from "../email/email.service";
 import { AddonService } from "../billing/addon.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import { PolicyService } from "../policy/policy.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 
 describe("a shipped upload route receives its file (silent-skip oracle)", () => {
   let app: INestApplication;
@@ -205,6 +208,8 @@ describe("a shipped upload route receives its file (silent-skip oracle)", () => 
         { provide: AddonService, useValue: {} },
         { provide: FeatureOverrideService, useValue: {} },
         { provide: EntitlementAuthority, useValue: {} },
+        { provide: PolicyService, useValue: {} },
+        { provide: FeatureConfigService, useValue: {} },
       ],
     })
       // Auth is not what this proves; the multipart body is.
@@ -215,7 +220,7 @@ describe("a shipped upload route receives its file (silent-skip oracle)", () => 
       .compile();
 
     app = moduleRef.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {

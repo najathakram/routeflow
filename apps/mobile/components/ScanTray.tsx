@@ -37,6 +37,8 @@ export interface ScanTrayProps {
    * when omitted the row renders exactly as before (subtotal is plain text).
    */
   onEditPrice?: (id: string) => void;
+  /** #2694: rows carry no price (returns scanning) — hide the per-row money. Default: shown. */
+  hideMoney?: boolean;
   ListEmptyComponent?: React.ComponentProps<typeof FlatList>["ListEmptyComponent"];
 }
 
@@ -73,6 +75,7 @@ interface RowProps {
   onRemove: (id: string) => void;
   /** Present only when the tray was given `onEditPrice`. */
   onEditPrice?: (id: string) => void;
+  hideMoney?: boolean;
 }
 
 const TrayRowItem = React.memo(function TrayRowItem({
@@ -87,6 +90,7 @@ const TrayRowItem = React.memo(function TrayRowItem({
   onIncrement,
   onDecrement,
   onRemove,
+  hideMoney,
   onEditPrice,
 }: RowProps) {
   const anim = React.useRef(new Animated.Value(0)).current;
@@ -123,7 +127,7 @@ const TrayRowItem = React.memo(function TrayRowItem({
         <Text style={styles.name} numberOfLines={2}>
           {name}
         </Text>
-        {onEditPrice ? (
+        {hideMoney ? null : onEditPrice ? (
           <Pressable
             onPress={() => onEditPrice(id)}
             hitSlop={8}
@@ -178,7 +182,17 @@ const TrayRowItem = React.memo(function TrayRowItem({
  * or every row re-renders on each scan.
  */
 export const ScanTray = React.forwardRef<ScanTrayHandle, ScanTrayProps>(function ScanTray(
-  { rows, flash, onChangeQty, onIncrement, onDecrement, onRemove, onEditPrice, ListEmptyComponent },
+  {
+    rows,
+    flash,
+    onChangeQty,
+    onIncrement,
+    onDecrement,
+    onRemove,
+    onEditPrice,
+    hideMoney,
+    ListEmptyComponent,
+  },
   ref,
 ) {
   const listRef = React.useRef<FlatList<TrayRow>>(null);
@@ -207,9 +221,10 @@ export const ScanTray = React.forwardRef<ScanTrayHandle, ScanTrayProps>(function
         onDecrement={onDecrement}
         onRemove={onRemove}
         onEditPrice={onEditPrice}
+        hideMoney={hideMoney}
       />
     ),
-    [flash, reduceMotion, onChangeQty, onIncrement, onDecrement, onRemove, onEditPrice],
+    [flash, reduceMotion, onChangeQty, onIncrement, onDecrement, onRemove, onEditPrice, hideMoney],
   );
 
   return (

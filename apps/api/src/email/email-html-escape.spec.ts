@@ -35,7 +35,9 @@ function makeService(): EmailService {
   const mailboxSend = {
     trySend: jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" }),
   } as any;
-  return new EmailService(config, prisma, { decrypt: (v: string) => v } as any, mailboxSend);
+  return new EmailService(config, prisma, { decrypt: (v: string) => v } as any, mailboxSend, {
+    record: jest.fn(),
+  } as any);
 }
 
 /** The HTML of every send() the service makes, with delivery stubbed out. */
@@ -119,6 +121,21 @@ describe("B807 — each tenant/buyer field is HTML-escaped in its email (REG-B80
     jest.spyOn(svc as any, "getTenantBusinessName").mockResolvedValue(XSS);
     await svc.sendTestEmail("owner@example.com");
     expectEscaped(htmls[0]);
+  });
+
+  it("mailbox revoked notice (F-10a): the connected mailbox address and the admin's username", async () => {
+    const svc = makeService();
+    const htmls = captureHtml(svc);
+    await svc.sendMailboxRevokedNotice({
+      to: "owner@example.com",
+      username: XSS,
+      accountEmail: XSS,
+      provider: "GOOGLE",
+      hasFallback: true,
+    });
+    expectEscaped(htmls[0]);
+    // 4 escaped copies: the greeting + the three paragraphs that name the mailbox.
+    expect(htmls[0].split(ESCAPED)).toHaveLength(5);
   });
 });
 

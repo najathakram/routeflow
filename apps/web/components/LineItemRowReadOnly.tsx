@@ -1,9 +1,16 @@
 "use client";
 
 import * as React from "react";
+import { BACKORDER_TAG_LABEL, type LineComponentView } from "@routeflow/types";
+import { ComponentSubLines } from "./ComponentSubLines";
 import { Package } from "lucide-react";
 import { Badge, cn, type BadgeStatus } from "@routeflow/ui/web";
-import { computeLineSubtotal, formatQtySplit } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  formatQtySplit,
+  invoiceLineQtyText,
+  normalizeBoxesPieces,
+} from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { splitProductName } from "@/lib/product-display";
@@ -55,6 +62,10 @@ export interface LineItemRowReadOnlyProps {
   note?: string | null;
   /** An ad-hoc (unlisted, non-catalog) line — shows the "Custom" pill the table shows. */
   custom?: boolean;
+  /** #2717 M3: frozen components of a composed (mixed-pack) line, shown as "(included)" sub-lines. */
+  components?: ReadonlyArray<LineComponentView> | null;
+  /** SA-714: pieces sold past stock (staff-only); > 0 shows the "Backorder" tag. Display only. */
+  backorderPieces?: number;
   className?: string;
 }
 
@@ -86,6 +97,8 @@ export function LineItemRowReadOnly({
   showDeliveryProgress,
   note,
   custom,
+  components,
+  backorderPieces,
   className,
 }: LineItemRowReadOnlyProps) {
   const [imageFailed, setImageFailed] = React.useState(false);
@@ -116,7 +129,21 @@ export function LineItemRowReadOnly({
       ? // A stored boxes/pieces split but no known pack size: keep the split the operator entered
         // (priced per piece by `computeLineSubtotal`, so the price reads per unit).
         `${formatQtySplit({ qty, boxes, pieces, unitLabel, boxLabel })} × ${formatMoney(unitPrice)}`
-      : `${formatQtySplit({ qty })} × ${formatMoney(unitPrice)}`;
+      : // #2049: a factor-1 units_v1 line (no split) still carries its own selling-unit name — the
+        // caller maps the stored `li.unitLabel` into THIS component's `boxLabel` prop (same as the
+        // boxed branch above uses), never its `unitLabel` prop (a different, loose-pieces label).
+        // invoiceLineQtyText falls back to formatQtySplit(qty) byte-identical when it's empty.
+        `${invoiceLineQtyText({ qty, unitLabel: boxLabel })} × ${formatMoney(unitPrice)}`;
+  // `qty` and `deliveredQty` are both PIECES; a boxed line shows its quantity as boxes + pieces, so
+  // progress must read in the same units ("0 of 2 boxes + 3 pcs", never "0 of 51").
+  const progressText = (n: number) =>
+    boxed
+      ? formatQtySplit({
+          ...normalizeBoxesPieces({ qty: n, unitsPerBox }),
+          unitLabel,
+          boxLabel,
+        })
+      : formatQtySplit({ qty: n });
   const delivered = deliveredQty == null ? null : Number(deliveredQty);
   const priceTag = linePriceTag({ priceType, originalPrice, unitPrice });
   const freeCount = Math.max(0, Math.trunc(Number(freeUnits ?? 0) || 0));
@@ -165,6 +192,15 @@ export function LineItemRowReadOnly({
           {anchor}
         </p>
         {sku && <p className="mt-0.5 font-mono text-xs text-navy/60">SKU {sku}</p>}
+        {backorderPieces != null && backorderPieces > 0 && (
+          <span
+            data-testid="line-backorder-tag"
+            title={`${backorderPieces} pcs sold past stock`}
+            className="mt-1 inline-flex rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200"
+          >
+            {BACKORDER_TAG_LABEL}
+          </span>
+        )}
         {custom && (
           <span className="mt-1 inline-flex rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
             Custom
@@ -200,14 +236,15 @@ export function LineItemRowReadOnly({
         {freeCount > 0 && (
           <p className="text-[10px] font-medium text-amber-700">{freeCount} free</p>
         )}
-        {showDeliveryProgress && delivered != null && delivered < qty && (
+        {showDeliveryProgress && !cancelled && delivered != null && delivered < qty && (
           <p className="text-xs text-navy/70">
-            {formatQtySplit({ qty: delivered })} of {formatQtySplit({ qty })} delivered
+            {progressText(delivered)} of {progressText(qty)} delivered
           </p>
         )}
         {note?.trim() && (
           <p className="mt-1 whitespace-pre-line text-xs italic text-navy/70">{note.trim()}</p>
         )}
+        <ComponentSubLines components={components} />
         {lineStatus && (
           <div className="mt-1.5">
             <Badge status={lineStatus} />

@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type { CreateReturnItemDto } from "@routeflow/types";
-export type { CreateReturnItemDto } from "@routeflow/types";
+import type { CreateReturnItemDto, ReturnKind, UnbilledReturnItem } from "@routeflow/types";
+export type { CreateReturnItemDto, UnbilledReturnItem } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,6 +42,8 @@ export type RefundMethod = "CREDIT_NOTE" | "EXTERNAL_REFUND";
 export interface Return {
   id: string;
   returnNumber: string;
+  /** #2406: STANDARD (post-delivery RMA) or INLINE (captured during order edit/create). */
+  kind: ReturnKind;
   customerId: string;
   customer?: { id: string; businessName: string; contactName?: string };
   orderId: string;
@@ -64,7 +66,9 @@ export interface Return {
    * box-price-safe figure processRefund would mint/record. Always present so the
    * resolve modal can show the amount before the operator commits to a method.
    */
-  refundEstimate?: number;
+  /** #2406: null on an INLINE row — its money is `refundAmount`, resolved at capture, never
+   *  re-priced (see `refundEstimateReason` below). */
+  refundEstimate?: number | null;
   /**
    * Why `refundEstimate` is 0 when the basis is not creditable (nothing billed,
    * no headroom left on the order's invoices). `null` on a genuine $0, so a
@@ -87,6 +91,12 @@ export function useReturns(params?: {
   search?: string;
   page?: number;
   limit?: number;
+  /** #2406: scope to one order's returns — backs the order-detail "Returns on this order"
+   *  panel (OrderReturnsPanel). The API's GET /returns already supports this filter. */
+  orderId?: string;
+  /** #2406: STANDARD (default, unchanged) | INLINE | ALL. The order-detail panel passes
+   *  "ALL" so a captured INLINE return (every return that flow records) shows up. */
+  kind?: "STANDARD" | "INLINE" | "ALL";
 }) {
   return useQuery<PaginatedResponse<Return>>({
     queryKey: ["returns", params],
@@ -171,6 +181,9 @@ export function useMarkReturnReceived() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["returns"] });
       qc.invalidateQueries({ queryKey: ["returns", id] });
+      // #1528 (B86): the server restocks / un-stocks here — refresh the stock views too.
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
     },
   });
 }
@@ -181,9 +194,11 @@ export interface ProcessRefundDto {
   method?: RefundMethod;
 }
 
+export type ProcessRefundResult = Return & { unbilledItems?: UnbilledReturnItem[] };
+
 export function useProcessRefund() {
   const qc = useQueryClient();
-  return useMutation<Return, Error, ProcessRefundDto>({
+  return useMutation<ProcessRefundResult, Error, ProcessRefundDto>({
     mutationFn: ({ id, ...data }) =>
       apiClient.post(`/returns/${id}/refund`, data).then((r) => r.data),
     onSuccess: (_, { id }) => {
@@ -201,6 +216,9 @@ export function useCancelReturn() {
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["returns"] });
       qc.invalidateQueries({ queryKey: ["returns", id] });
+      // #1528 (B86): the server restocks / un-stocks here — refresh the stock views too.
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
     },
   });
 }

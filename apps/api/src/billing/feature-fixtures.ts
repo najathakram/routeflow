@@ -202,6 +202,9 @@ export function mockCollaborators(fixture: FeatureFixture, flagsOverride?: strin
   const catalog = {
     getVersionForTenant: jest.fn().mockResolvedValue(catalogVersion),
     getPublishedCatalog: jest.fn().mockResolvedValue(catalogVersion),
+    // #2700: the flags-gain-forward read (only taken when the pinned version is not PUBLISHED).
+    // Same version by default, so no fixture sees a union unless a test overrides this.
+    getPublishedVersion: jest.fn().mockResolvedValue(catalogVersion),
   };
 
   return { entitlements, featureOverrides, catalog, prisma };

@@ -1,5 +1,6 @@
 import { ConflictException, type Logger } from "@nestjs/common";
 import { classifyBillLinePack, knownPackHint, type PackLadderProduct } from "./bill-line-pack";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * Opus review (B743 PR A, finding 5): PLAN_FLAG_ENFORCEMENT — an env var
@@ -118,7 +119,7 @@ export function assertPackSizeKnownOrLog(
   }
   if (acknowledged) return;
   throw new ConflictException({
-    code: "PACK_SIZE_UNKNOWN",
+    code: API_ERROR_CODES.PACK_SIZE_UNKNOWN,
     message:
       unknown.length === 1
         ? `"${unknown[0].description || unknown[0].productName}" doesn't state units per case, and this product is normally sold by the case — confirm before it's recorded as loose pieces.`

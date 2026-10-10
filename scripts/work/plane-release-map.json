@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "note": "Human-curated bridge between GitHub (najathakram/routeflow milestones R1/R1.1/R2/R3 + kind:feature issues) and Plane's ROAD project, until a Plane work item carries external_source/external_id back to GitHub (plane-apply's `update` op has no field to stamp those yet). Releases are matched AUTOMATICALLY at runtime by scripts/work/plane-release-sync.mjs's autoMatchReleaseRef() — a milestone titled exactly 'R<N>' is matched against a ROAD top-level item named 'Release <N> ...'; `releaseOverrides` below only pins one when that auto-match is wrong, ambiguous, or the milestone title carries a suffix (R1.1/R2/R3 all do, and have no 'Release <N>' item yet). `features` maps a GitHub issue NUMBER (not its F-NN label, which can be renumbered) to the ROAD ref that already covers the same work. Verified 2026-09-24 by reading each ROAD-97..103 item's own description against its matching GitHub issue's title/body — every entry below is a content match a human checked, never a guess. Add an entry here (or run this tool again once a new release's Plane item exists) rather than letting the tool invent one.",
+  "releaseOverrides": {},
+  "features": {
+    "1367": {
+      "road": "ROAD-98",
+      "key": "F-01",
+      "note": "Sell and edit orders by unit == '1b. Units of measure (U1)'"
+    },
+    "1368": {
+      "road": "ROAD-99",
+      "key": "F-02",
+      "note": "Purchase orders: edit, receive, raise from a scanned bill == '1c. Purchase orders (U2)'"
+    },
+    "1369": {
+      "road": "ROAD-100",
+      "key": "F-03",
+      "note": "Scanner redesign == '1d. Scanner redesign (S1)'"
+    },
+    "1370": {
+      "road": "ROAD-101",
+      "key": "F-04",
+      "note": "New order screen == '1e. Order screen redesign (S2)'"
+    },
+    "1371": {
+      "road": "ROAD-102",
+      "key": "F-05",
+      "note": "Category labels and jurisdiction selling rules == '1f. Category labels + jurisdiction selling bans (R1)'"
+    },
+    "1372": {
+      "road": "ROAD-103",
+      "key": "F-06",
+      "note": "Backoffice usability and entitlement protection == '1g-1h. Backoffice/entitlements (A1-A3) + mobile'"
+    },
+    "1373": {
+      "road": "ROAD-97",
+      "key": "F-07",
+      "note": "Money integrity for boxed units == '1a. Money-bug family (boxes/pieces/units math) — release gate'"
+    },
+    "1374": {
+      "road": "ROAD-96",
+      "key": "F-08",
+      "note": "Release 1 ship gate == the Release 1 tracking item"
+    },
+    "2009": {
+      "road": "ROAD-100",
+      "key": "F-03",
+      "note": "poor-signal retry queue (scanner/driver offline) == scanner redesign item"
+    },
+    "2012": {
+      "road": "ROAD-103",
+      "key": "F-06",
+      "note": "config-snapshot admin UI (A2c gap 2) == backoffice/entitlements"
+    },
+    "2090": {
+      "road": "ROAD-109",
+      "key": "-",
+      "note": "R1.3 item"
+    },
+    "2159": {
+      "road": "ROAD-108",
+      "key": "-",
+      "note": "onboarding epic"
+    },
+    "2400": {
+      "road": "ROAD-107",
+      "key": "-",
+      "note": "credit notes you see and control"
+    },
+    "2804": {
+      "road": "ROAD-110",
+      "key": "-",
+      "note": "owner feature gaps 2026-09-30 (sellability) epic"
+    },
+    "2805": {
+      "road": "ROAD-99",
+      "key": "-",
+      "note": "Purchase Orders sidebar/route (gap 01-A)"
+    },
+    "2806": {
+      "road": "ROAD-99",
+      "key": "-",
+      "note": "purchase order detail page (gap 01-B)"
+    },
+    "2820": {
+      "road": "ROAD-102",
+      "key": "-",
+      "note": "portal rules: Show in buyer portal (owner gaps 09-30 #15)"
+    }
+  }
+}

@@ -15,7 +15,7 @@ does that). Push with SKIP_VERIFY=1 SKIP_VERIFY_REASON="…" if the local verify
 chain is the blocker; never --no-verify. Ask the lead for any bug registry id —
 B525 is taken, B526 is next free; never mint your own. Check free disk before any
 full verify or build run (a full run filled the disk twice on 2026-09-17).
-Approved test tenants only: test, e2e-routeflow, routeflow-demo, qa-*, e2e-*,
+Approved test tenants only: test, e2e-routeflow, routeflow-demo, qa-_, e2e-_,
 ux-audit-*. Never a live tenant.
 
 Owner: Lane C (this session). Started as a fleet-lead wind-down handoff (98% context), then
@@ -90,6 +90,7 @@ applied at each call site — never a per-component one-off. Where the control m
 visually smaller than 44px, grow the hit area with padding, not the icon itself.
 
 **What this session found before running out of time:**
+
 - No existing shared mechanism for this in the codebase. Checked: `packages/ui/src/web/Button.tsx`
   (the shared `Button`, sizes sm/md/lg — 28/34/40px, none reach 44, and it has no icon-only
   variant); `packages/ui/src/web/utils.ts` (has `cn()` — the merge/clsx helper everything
@@ -102,7 +103,7 @@ visually smaller than 44px, grow the hit area with padding, not the icon itself.
   exists.
 - **Planned, not yet written:** a small exported constant next to `cn()` in
   `packages/ui/src/web/utils.ts`, e.g. `export const TAP_TARGET = "min-h-[44px]
-  min-w-[44px] flex items-center justify-center"`, composed at each icon-button call site via
+min-w-[44px] flex items-center justify-center"`, composed at each icon-button call site via
   `cn(TAP_TARGET, existingClasses)`. Not yet validated against the codebase's actual icon-button
   call sites in `apps/web/app/(dashboard)/**` — that inventory (which controls are currently
   under 44px, there are likely many beyond the two found above) is the next session's first

@@ -14,6 +14,7 @@
  */
 import { readFileSync } from "fs";
 import { join } from "path";
+import { readEditItemsSurface } from "./support/edit-items-source";
 
 const SCREEN_PATH = join(
   __dirname,
@@ -27,7 +28,7 @@ const SCREEN_PATH = join(
 );
 
 describe("pin: edit-items screen per-line flavor/note field", () => {
-  const src = readFileSync(SCREEN_PATH, "utf8");
+  const src = readEditItemsSurface(); // #2340: screen + sliced modules
 
   it("both draft cards declare an onSetNote prop", () => {
     const onSetNoteOccurrences = src.match(/onSetNote/g) ?? [];

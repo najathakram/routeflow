@@ -54,6 +54,7 @@ jest.mock("../common/db-locks", () => {
   };
 });
 
+import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { UserRole } from "@prisma/client";
 import { BuyerController } from "./buyer.controller";
@@ -113,6 +114,7 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
+        oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: {} },
         { provide: BuyerDashboardService, useValue: {} },
@@ -190,6 +192,25 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     });
   });
 
+  it("M2: the post-create sweep folds only the NEW order's path (focusOrderId), so it returns that order", async () => {
+    ordersService.findActiveOrder.mockResolvedValue(null);
+    await controller.createOrder({ items: [{ productId: "p1", qty: 1 }] } as any, MOCK_CTX as any);
+    expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledWith(
+      MOCK_CTX.customerId,
+      { buyerInitiated: true, focusOrderId: "order-fresh" },
+      expect.anything(),
+    );
+  });
+
+  it("the buyer's active-order search passes mergeAs for the buyer audience (portal path rules)", async () => {
+    ordersService.findActiveOrder.mockResolvedValue(null);
+    await controller.createOrder({ items: [{ productId: "p1", qty: 1 }] } as any, MOCK_CTX as any);
+    expect(ordersService.findActiveOrder).toHaveBeenCalledWith(
+      MOCK_CTX.customerId,
+      expect.objectContaining({ forMerge: true, mergeAs: { audience: "buyer" } }),
+    );
+  });
+
   it("REG-B47 (T14 companion): a BARE-qty incoming add folds against the stored line in SELLING UNITS — 2 + 2 = a plain qty 4, never 2 boxes + 2 loose pieces", async () => {
     // The other half of the denomination convention. `foldMergeItems` reads a bare
     // incoming `{productId, qty}` as loose PIECES (right for the staff scan path),
@@ -225,7 +246,10 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     const [, updateDto] = ordersService.updateOrderItems.mock.calls[0];
     // toEqual, not toMatchObject: a boxes/pieces key appearing here at all is the
     // bug — it flips the line into box-split denomination server-side.
-    expect(updateDto.items).toEqual([{ productId: "prod-boxed", qty: 4 }]);
+    // SA-124f: sourceLineId rides along (kept for R2's R-PRICE; unconsumed under R1).
+    expect(updateDto.items).toEqual([
+      { productId: "prod-boxed", qty: 4, sourceLineId: "li-boxed-unaware" },
+    ]);
   });
 
   it("REG-B47 (T14 companion): a BARE-qty incoming add against a box-SPLIT stored line expands to boxes — 2 boxes + 2 = {qty:48, boxes:4}, never {qty:26, boxes:2, pieces:2}", async () => {
@@ -260,7 +284,19 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     await controller.createOrder(dto as any, MOCK_CTX as any);
 
     const [, updateDto] = ordersService.updateOrderItems.mock.calls[0];
-    expect(updateDto.items).toEqual([{ productId: "prod-boxed", qty: 48, boxes: 4, pieces: 0 }]);
+    // SA-124e(1): the fold's output still carries the bucket's own resolved pack (kept for
+    // R2's R-PRICE — R1's guard reads it too) plus sourceLineId (also kept, unconsumed by R1's
+    // reverted rebuild).
+    expect(updateDto.items).toEqual([
+      {
+        productId: "prod-boxed",
+        qty: 48,
+        boxes: 4,
+        pieces: 0,
+        unitsPerBox: 12,
+        sourceLineId: "li-boxed-split",
+      },
+    ]);
   });
 
   // ─── REG-B78 (T14): header fields forwarded, ordered before the sibling sweep ──

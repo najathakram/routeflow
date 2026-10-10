@@ -44,6 +44,7 @@ import { AddonGuard } from "../billing/addon.guard";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 
 import { ProductsController } from "../products/products.controller";
+import { ProductsExportService } from "../products/products-export.service";
 import { ProductsService } from "../products/products.service";
 import { CustomersController } from "../customers/customers.controller";
 import { CustomersService } from "../customers/customers.service";
@@ -63,6 +64,7 @@ import { BookkeepingController } from "../bookkeeping/bookkeeping.controller";
 import { BookkeepingService } from "../bookkeeping/bookkeeping.service";
 import { ImportController } from "../import/import.controller";
 import { ImportService } from "../import/import.service";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const request = require("supertest");
@@ -115,7 +117,7 @@ async function bootstrap(
     .compile();
 
   const app = moduleRef.createNestApplication();
-  await app.init();
+  await listenOnLoopback(app);
   return app;
 }
 
@@ -144,6 +146,7 @@ describe("POST /products/:id/images", () => {
 
   beforeAll(async () => {
     app = await bootstrap(ProductsController, [
+      { provide: ProductsExportService, useValue: {} },
       {
         provide: ProductsService,
         useValue: {

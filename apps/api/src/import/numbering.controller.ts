@@ -1,4 +1,13 @@
-import { BadRequestException, Body, Controller, Get, Param, Put, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Put,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { DocumentNumberType, UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -9,7 +18,10 @@ import { UpdateNumberingDto } from "./dto/update-numbering.dto";
 /**
  * Tenant-facing numbering-continuity settings (spec §1). Lives in the import
  * module so it can be surfaced on the import page and reused by the migration
- * hub. TENANT_ADMIN satisfies @Roles(OPERATOR).
+ * hub. TENANT_ADMIN satisfies @Roles(OPERATOR). SA-274: the card covers only
+ * the three year-scoped types (INVOICE/ESTIMATE/CREDIT_NOTE) — PAYMENT is
+ * dropped (Q6), so `:docType` = "PAYMENT" 400s via `parseDocType` below same
+ * as any other unknown type; its own counter is unaffected and untouched.
  */
 @Controller("import/numbering")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -17,13 +29,33 @@ import { UpdateNumberingDto } from "./dto/update-numbering.dto";
 export class NumberingController {
   constructor(private readonly numbering: NumberingService) {}
 
-  /** All four document-type sequences with current config + a live preview. */
+  /**
+   * The three document-type sequences with current config + a live preview.
+   * Once a row is saved it IS that doc type's live series (SA-274 Q1) — the
+   * preview is the true next number that would be minted, not a static
+   * default.
+   */
   @Get()
   getSettings() {
     return this.numbering.getSettings();
   }
 
-  /** Edit one sequence (prefix / next number / padding). */
+  /**
+   * B1188: preview what a prefix change would mint next, and the version token the save must
+   * echo (`expectedNextNumber`). Read-only.
+   */
+  @Get(":docType/preview")
+  previewPrefix(@Param("docType") docType: string, @Query("prefix") prefix: string) {
+    return this.numbering.previewPrefix(this.parseDocType(docType), prefix);
+  }
+
+  /**
+   * Edit one sequence (prefix / next number / padding). `expectedNextNumber`
+   * is the optimistic-concurrency token (SA-274 Q3): pass the `nextNumber`
+   * the card loaded to get a 409 instead of clobbering a save that landed in
+   * between. A `nextNumber` at or below an existing document of this type is
+   * refused with a 400 naming it (Q2) — never silently raised.
+   */
   @Put(":docType")
   updateSettings(@Param("docType") docType: string, @Body() dto: UpdateNumberingDto) {
     return this.numbering.updateSettings(this.parseDocType(docType), dto);

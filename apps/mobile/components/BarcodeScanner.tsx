@@ -1,11 +1,22 @@
 import * as React from "react";
-import { StyleSheet, View, Text, TouchableOpacity, Dimensions } from "react-native";
+import { AppState, StyleSheet, View, Text, TouchableOpacity, Dimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { ScanOutcome, ScanFeedback } from "../lib/scan-loop";
+import { shouldDecode } from "@routeflow/scanning";
 import { ScanCamera, useScanCameraPermission } from "./ScanCamera";
+import { useScanMode } from "../lib/scan-mode-store";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const WINDOW_SIZE = SCREEN_WIDTH * 0.7;
+// The EXACT rect the "Clear scan window" box below renders at. It is ScanCamera's enforced aimBox when `aimAssist` is on, so
+// the drawing and the enforcement are ONE source: this window sits 40dp above centre (room for the feedback pill / hint),
+// and an enforced box that merely "looked" the same would reject a scan the operator can see is correctly aligned.
+const AIM_BOX = {
+  x: (SCREEN_WIDTH - WINDOW_SIZE) / 2,
+  y: (SCREEN_HEIGHT - WINDOW_SIZE) / 2 - 40,
+  width: WINDOW_SIZE,
+  height: WINDOW_SIZE,
+};
 
 interface Props {
   /**
@@ -29,6 +40,11 @@ interface Props {
    * of tearing the camera down. Defaults `true`.
    */
   active?: boolean;
+  /**
+   * OPT-IN (default false): enforce the drawn scan window as an aim box and require a steady read before a code counts.
+   * Only the driver screen passes it; every other caller of this shared scanner is unchanged.
+   */
+  aimAssist?: boolean;
 }
 
 /** Full-screen scanning overlay: permission UI, viewfinder chrome and feedback
@@ -39,7 +55,20 @@ export function BarcodeScanner({
   continuous = false,
   paused = false,
   active = true,
+  aimAssist = false,
 }: Props) {
+  // Hold to scan (owner ruling 2026-09-24) rides the aimAssist opt-in: a default caller is always Continuous and never reads
+  // the stored mode. In Hold mode the camera stays live but decodes are ignored unless the round button is held.
+  const [scanMode, setScanMode] = useScanMode(aimAssist);
+  const holdMode = aimAssist && scanMode === "hold";
+  const [holding, setHolding] = React.useState(false);
+  // The hold ends when the app is backgrounded: the press-out would never arrive.
+  React.useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") setHolding(false);
+    });
+    return () => sub.remove();
+  }, []);
   // Swallow codes while paused rather than unmounting the camera.
   const guardedScan = React.useCallback(
     (code: string) => (paused ? undefined : onScanned(code)),
@@ -95,6 +124,9 @@ export function BarcodeScanner({
         onOutcome={handleOutcome}
         continuous={continuous}
         active={active && !paused}
+        decode={shouldDecode(holdMode ? "hold" : "continuous", holding)}
+        aimAssist={aimAssist}
+        aimBox={aimAssist ? AIM_BOX : undefined}
       />
 
       {/* Dark surround */}
@@ -102,9 +134,21 @@ export function BarcodeScanner({
         {/* Top dark */}
         <View style={[styles.dark, { height: (SCREEN_HEIGHT - WINDOW_SIZE) / 2 - 40 }]}>
           {feedback ? (
-            <View style={[styles.feedback, feedback.kind === "error" && styles.feedbackError]}>
+            <View
+              style={[
+                styles.feedback,
+                feedback.kind === "error" && styles.feedbackError,
+                feedback.kind === "info" && styles.feedbackInfo,
+              ]}
+            >
               <Ionicons
-                name={feedback.kind === "added" ? "checkmark-circle" : "alert-circle"}
+                name={
+                  feedback.kind === "added"
+                    ? "checkmark-circle"
+                    : feedback.kind === "info"
+                      ? "information-circle"
+                      : "alert-circle"
+                }
                 size={18}
                 color="#fff"
               />
@@ -135,11 +179,48 @@ export function BarcodeScanner({
 
         {/* Bottom dark */}
         <View style={[styles.dark, { flex: 1 }]}>
+          {aimAssist ? (
+            <View style={styles.modeRow}>
+              {(["continuous", "hold"] as const).map((m) => (
+                <TouchableOpacity
+                  key={m}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    m === "hold" ? "Scan mode: Hold to scan" : "Scan mode: Continuous"
+                  }
+                  accessibilityState={{ selected: scanMode === m }}
+                  onPress={() => {
+                    setHolding(false);
+                    setScanMode(m);
+                  }}
+                  style={[styles.modeChip, scanMode === m && styles.modeChipOn]}
+                >
+                  <Text style={styles.modeChipText}>
+                    {m === "hold" ? "Hold to scan" : "Continuous"}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
           <Text style={styles.hint}>
-            {continuous
-              ? "Scan items one after another — tap Done when finished"
-              : "Align barcode within the box"}
+            {holdMode
+              ? "Hold the button while the barcode is in the box"
+              : continuous
+                ? "Scan items one after another — tap Done when finished"
+                : "Align barcode within the box"}
           </Text>
+          {holdMode ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Hold to scan"
+              accessibilityHint="Press and hold while the barcode is in the box. Hold mode needs a sustained press; use Continuous mode with a screen reader."
+              accessibilityState={{ selected: holding }}
+              activeOpacity={1}
+              onPressIn={() => setHolding(true)}
+              onPressOut={() => setHolding(false)}
+              style={[styles.holdButton, holding && styles.holdButtonOn]}
+            />
+          ) : null}
           {continuous ? (
             <TouchableOpacity style={styles.doneButton} onPress={onClose}>
               <Text style={styles.doneButtonText}>Done</Text>
@@ -173,6 +254,27 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.8)",
     borderRadius: 12,
   },
+  modeRow: { flexDirection: "row", gap: 8, marginTop: 8 },
+  modeChip: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    justifyContent: "center",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.4)",
+  },
+  modeChipOn: { backgroundColor: "rgba(255,255,255,0.25)", borderColor: "#fff" },
+  modeChipText: { color: "#fff", fontSize: 12, fontWeight: "600" },
+  holdButton: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    marginTop: 12,
+    borderWidth: 4,
+    borderColor: "rgba(255,255,255,0.9)",
+    backgroundColor: "rgba(59,130,246,0.7)",
+  },
+  holdButtonOn: { backgroundColor: "rgba(59,130,246,1)", transform: [{ scale: 0.94 }] },
   hint: {
     color: "rgba(255,255,255,0.75)",
     fontSize: 14,
@@ -190,6 +292,9 @@ const styles = StyleSheet.create({
   },
   feedbackError: {
     backgroundColor: "rgba(220,38,38,0.92)",
+  },
+  feedbackInfo: {
+    backgroundColor: "rgba(51,65,85,0.92)",
   },
   feedbackText: {
     color: "#fff",

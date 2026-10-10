@@ -28,9 +28,10 @@ export type ScanCue = "accepted" | "rejected" | "none";
  * Everything else cues "none" — nothing observable happened for the
  * operator to be told about: a `void`/`undefined` outcome (still scanning,
  * no banner shown), a `{close}`-only outcome (a hand-off, not an
- * accept/reject), or a `{}` outcome carrying neither field. `ScanFeedback`
- * has exactly two `kind`s today; the `default` branch is a total fallback,
- * not evidence a third kind exists.
+ * accept/reject), or a `{}` outcome carrying neither field. `"info"` (a
+ * confirm/picker prompt is open — neither accept nor reject) also cues "none":
+ * the screen fires its own neutral haptic. `ScanFeedback` has exactly three
+ * `kind`s today; the `default` branch is a total fallback.
  */
 export function cueForOutcome(outcome: ScanOutcome): ScanCue {
   const feedback = outcome?.feedback;
@@ -40,6 +41,8 @@ export function cueForOutcome(outcome: ScanOutcome): ScanCue {
       return "accepted";
     case "error":
       return "rejected";
+    case "info":
+      return "none";
     default:
       return "none";
   }

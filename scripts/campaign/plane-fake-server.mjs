@@ -116,6 +116,8 @@ function makeUuidFactory() {
  *   workItemTypesEnvelope boolean   serve work-item-types/ as the old
  *                            {results, ...} envelope instead of the live
  *                            bare-array shape (Defect 1 negative twin)
+ *   workItemTypes402 boolean  every work-item-types/ GET answers 402 Payment required,
+ *                            like a free-tier workspace
  *   failFirstCreate boolean  first POST .../work-items/ on ANY project 429s
  *                            once, with x-ratelimit-reset = now+1s (v1 behavior)
  *   omitDescriptionStripped boolean  list responses drop description_stripped
@@ -224,6 +226,7 @@ export function startFakePlane(seed = {}) {
   let createFailuresLeft = seed.failFirstCreate ? 1 : 0;
   const intake404 = Boolean(seed.intake404);
   const workItemTypesEnvelope = Boolean(seed.workItemTypesEnvelope);
+  const workItemTypes402 = Boolean(seed.workItemTypes402);
   const omitDescriptionStripped = Boolean(seed.omitDescriptionStripped);
   let nextCommentId = 1;
   let nextLinkId = 1;
@@ -297,6 +300,7 @@ export function startFakePlane(seed = {}) {
         // Defect 1: bare array on the live API by default; `seed.
         // workItemTypesEnvelope` opts one test into the OLD enveloped shape
         // to prove listAll tolerates it too (T17's negative twin).
+        if (workItemTypes402) return send(402, { error: "Payment required" });
         return workItemTypesEnvelope
           ? send(200, { results: types[identifier], next_cursor: null, next_page_results: false })
           : send(200, types[identifier]);

@@ -59,6 +59,9 @@ export class SettingsController {
     let state = all["settings.state"] ?? "";
     let zip = all["settings.zip"] ?? "";
     let phone = all["settings.phone"] ?? "";
+    // The business's own IANA zone (TenantConfig.timezone, default America/New_York): the web uses it
+    // to place "this week" (Sunday 00:00 local) for the shipping cards and the orders week view.
+    let timezone = "America/New_York";
 
     if (tenantId) {
       const config = await this.prisma.tenantConfig.findUnique({
@@ -74,8 +77,10 @@ export class SettingsController {
           phone: true,
           invoiceNotes: true,
           invoiceTerms: true,
+          timezone: true,
         },
       });
+      if (config?.timezone) timezone = config.timezone;
       if (config?.businessName) businessName = config.businessName;
       if (config?.ownerName) ownerName = config.ownerName;
       if (config?.customerEmail) customerEmail = config.customerEmail;
@@ -114,11 +119,24 @@ export class SettingsController {
       logoUrl: all["settings.logoUrl"] ?? null,
       invoiceNotes,
       invoiceTerms,
+      timezone,
     };
   }
 
   @Patch()
   async updateSettings(@Body() dto: Record<string, unknown>) {
+    // B1188: these two used to be accepted here and silently dropped (neither is stored by this
+    // endpoint). Refuse them loudly, before ANY write, naming where each really lives.
+    if (dto.invoicePrefix !== undefined) {
+      throw new BadRequestException(
+        "invoicePrefix is not saved by PATCH /settings. Change the invoice prefix in Settings > Invoicing > Invoice Numbering (PUT /import/numbering/INVOICE).",
+      );
+    }
+    if (dto.paymentDueDays !== undefined) {
+      throw new BadRequestException(
+        "paymentDueDays is not saved by PATCH /settings. Payment terms are the invoice default terms: set defaultTerms via PATCH /settings/invoice (Due on Receipt, Net 15, Net 30, Net 45, Net 60).",
+      );
+    }
     // taxRate is stored as a PERCENT (0-100); a direct API call can otherwise
     // bypass the web form's min(0).max(100) and store an out-of-range value
     // that later gets divided by 100 into a fraction (see common/tax-rate.ts).
@@ -488,6 +506,9 @@ export class SettingsController {
   @Patch("route")
   @UsePipes(new ValidationPipe({ whitelist: true }))
   async updateRouteSettings(@Body() dto: UpdateRouteSettingsDto) {
+    if ((dto.depotLat === undefined) !== (dto.depotLng === undefined)) {
+      throw new BadRequestException("depotLat and depotLng must be provided together");
+    }
     if (dto.averageSpeedKmh !== undefined) {
       await this.svc.set("route.averageSpeedKmh", String(dto.averageSpeedKmh));
     }
@@ -496,6 +517,10 @@ export class SettingsController {
     }
     if (dto.defaultStartTime !== undefined) {
       await this.svc.set("route.defaultStartTime", dto.defaultStartTime);
+    }
+    if (dto.depotLat !== undefined && dto.depotLng !== undefined) {
+      await this.svc.set("route.defaultDepotLat", String(dto.depotLat));
+      await this.svc.set("route.defaultDepotLng", String(dto.depotLng));
     }
     return this.getRouteSettings();
   }
@@ -508,6 +533,14 @@ export class SettingsController {
     const hideOriginalPriceRaw = await this.svc.get("invoice.hideOriginalPrice");
     const depositDefaultPercentRaw = await this.svc.get("invoice.depositDefaultPercent");
     const depositCollectAtOrderRaw = await this.svc.get("invoice.depositCollectAtOrder");
+    // SA-436 (#2401): lives on TenantConfig (the send tx reads it there); no row reads as OFF.
+    const tenantId = this.prisma.getTenantId();
+    const cfg = tenantId
+      ? await this.prisma.tenantConfig.findUnique({
+          where: { tenantId },
+          select: { creditAutoApplyOnSend: true },
+        })
+      : null;
     return {
       defaultTerms: defaultTerms ?? "Net 30",
       hideOriginalPrice: hideOriginalPriceRaw === "true",
@@ -518,6 +551,7 @@ export class SettingsController {
           ? Number(depositDefaultPercentRaw)
           : null,
       depositCollectAtOrder: depositCollectAtOrderRaw === "true",
+      creditAutoApplyOnSend: cfg?.creditAutoApplyOnSend ?? false,
     };
   }
 
@@ -538,6 +572,14 @@ export class SettingsController {
     }
     if (dto.depositCollectAtOrder !== undefined) {
       await this.svc.set("invoice.depositCollectAtOrder", String(dto.depositCollectAtOrder));
+    }
+    const tenantId = this.prisma.getTenantId();
+    if (dto.creditAutoApplyOnSend !== undefined && tenantId) {
+      await this.prisma.tenantConfig.upsert({
+        where: { tenantId },
+        create: { tenantId, creditAutoApplyOnSend: dto.creditAutoApplyOnSend },
+        update: { creditAutoApplyOnSend: dto.creditAutoApplyOnSend },
+      });
     }
     return this.getInvoiceSettings();
   }

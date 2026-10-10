@@ -52,7 +52,11 @@ import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
 import { alertInfo, confirm, chooseAction } from "../../../../lib/confirm";
-import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../../lib/invoice-line-display";
+import {
+  invoiceLineSubLines,
+  invoiceLineUnitNoun,
+  usesUnitDisplay,
+} from "../../../../lib/invoice-line-display";
 import { invoiceLineQtyText } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
@@ -63,6 +67,7 @@ import {
   type PdfSharePhase,
 } from "../../../../lib/invoice-send-logic";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
+import { shipmentForDisplay } from "../../../../lib/shipment-display";
 
 // admin.ts's AdminInvoice.payments doesn't declare the image fields even
 // though the API already returns them (findOne's `payments` include has no
@@ -202,6 +207,7 @@ export default function InvoiceDetailScreen() {
   // Computed BEFORE canSend: a pending mirror is locked server-side, so Send has
   // to know about it or it offers a guaranteed 400.
   const pendingMirror = isPendingOrderMirror({
+    pendingMirror: invoice.pendingMirror,
     orderId: invoice.orderId,
     deliveryBatchId: invoice.deliveryBatchId,
     orderStatus: invoice.order?.status,
@@ -890,6 +896,11 @@ export default function InvoiceDetailScreen() {
                           {it.notes}
                         </Text>
                       ) : null}
+                      {invoiceLineSubLines(it).map((text, i) => (
+                        <Text key={i} style={styles.itemSub} testID="line-component-sub-line">
+                          {text}
+                        </Text>
+                      ))}
                       {it.priceType === "MANUAL" &&
                       it.originalPrice != null &&
                       Number(it.unitPrice) > Number(it.originalPrice) ? (
@@ -943,7 +954,10 @@ export default function InvoiceDetailScreen() {
               the section (mirrors web's invoice detail gate). */}
           {!isVoid &&
           (!invoice.orderId || invoice.shippingCarrier || invoice.shippingTrackingNumber) ? (
-            <ShipmentSection shipment={invoice} onEdit={() => setShipmentModal(true)} />
+            <ShipmentSection
+              shipment={shipmentForDisplay(invoice, invoice.order?.status)}
+              onEdit={() => setShipmentModal(true)}
+            />
           ) : null}
 
           {/* Payments */}

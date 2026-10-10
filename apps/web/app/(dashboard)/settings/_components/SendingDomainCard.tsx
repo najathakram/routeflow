@@ -4,7 +4,8 @@ import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { Card, Button, Input, Badge, useToast } from "@routeflow/ui/web";
-import { CheckCircle2, Copy, RefreshCw, Trash2, Globe, AlertTriangle } from "lucide-react";
+import { CheckCircle2, RefreshCw, Trash2, Globe, AlertTriangle } from "lucide-react";
+import { CopyButton } from "@/components/CopyButton";
 
 type DomainRecord = {
   record: string;
@@ -31,29 +32,6 @@ type Action =
   | { type: "remove" };
 
 const KEY = ["settings", "email-domain"] as const;
-
-function CopyBtn({ value }: { value: string }) {
-  const [copied, setCopied] = React.useState(false);
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        navigator.clipboard?.writeText(value);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1200);
-      }}
-      className="inline-flex items-center gap-1 rounded-ctl border border-surface-border px-2 py-1 text-xs text-navy/70 transition-colors hover:border-brand-400 hover:text-brand-600"
-      aria-label="Copy value"
-    >
-      {copied ? (
-        <CheckCircle2 className="h-3.5 w-3.5 text-success" />
-      ) : (
-        <Copy className="h-3.5 w-3.5" />
-      )}
-      {copied ? "Copied" : "Copy"}
-    </button>
-  );
-}
 
 /**
  * Per-tenant sending-domain verification (Resend). Lets a business send invoices from
@@ -211,7 +189,7 @@ export function SendingDomainCard() {
                     </td>
                     <td className="px-3 py-2 text-navy/70">{r.priority ?? "—"}</td>
                     <td className="px-3 py-2 text-right">
-                      <CopyBtn value={r.value} />
+                      <CopyButton value={r.value} />
                     </td>
                   </tr>
                 ))}

@@ -1,0 +1,86 @@
+{
+  "data": {
+    "deployments": {
+      "edges": [
+        {
+          "node": {
+            "id": "dep-w3",
+            "status": "FAILED",
+            "createdAt": "2026-01-12T09:00:00Z",
+            "service": {
+              "name": "@routeflow/web"
+            },
+            "meta": {
+              "commitHash": "d64b1a27de09bb1ed0035a8a468c011aa9c0311b"
+            }
+          }
+        },
+        {
+          "node": {
+            "id": "dep-a2",
+            "status": "SUCCESS",
+            "createdAt": "2026-01-12T08:00:00Z",
+            "service": {
+              "name": "@routeflow/api"
+            },
+            "meta": {
+              "commitHash": "48b53440a207b2d10cbf58baa6ced81908f6be0c"
+            }
+          }
+        },
+        {
+          "node": {
+            "id": "dep-w1",
+            "status": "SUCCESS",
+            "createdAt": "2026-01-11T12:00:00Z",
+            "service": {
+              "name": "@routeflow/web"
+            },
+            "meta": {
+              "commitHash": "6ea21ebae9f57048d30d63fbd281032f3e5e8701"
+            }
+          }
+        },
+        {
+          "node": {
+            "id": "dep-a3",
+            "status": "BUILDING",
+            "createdAt": "2026-01-12T09:30:00Z",
+            "service": {
+              "name": "@routeflow/api"
+            },
+            "meta": {
+              "commitHash": "107cd8b2b4526ecc4b1779ca8aee608f0cedc553"
+            }
+          }
+        },
+        {
+          "node": {
+            "id": "dep-a1",
+            "status": "REMOVED",
+            "createdAt": "2026-01-10T08:00:00Z",
+            "service": {
+              "name": "@routeflow/api"
+            },
+            "meta": {
+              "commitHash": "01a6644860261f9bebffb9997a9b2314ad5029a6"
+            }
+          }
+        },
+        {
+          "node": {
+            "id": "dep-w0",
+            "status": "REMOVED",
+            "createdAt": "2026-01-09T08:00:00Z",
+            "service": {
+              "name": "@routeflow/web"
+            },
+            "meta": {
+              "commitHash": "2226c6c54a58c1ff06aff944606165f8e0b5b4df"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

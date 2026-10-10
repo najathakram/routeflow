@@ -4,10 +4,12 @@ import { EstimatesService } from "./estimates.service";
 import * as EstimatesServiceModule from "./estimates.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { computeLineSubtotal } from "@routeflow/pricing";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 // B8: accept() had no status guard and convertToInvoice() was a read-then-write
 // with no transaction, so a double-click (re-accept a CONVERTED estimate, or two
@@ -47,8 +49,19 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
     const mod = await Test.createTestingModule({
       providers: [
         EstimatesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         // flag.msrp defaults OFF so convertToInvoice's MSRP snapshot is a no-op.
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         {
           provide: EntitlementsService,
           useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
@@ -276,10 +289,59 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       });
       prisma.invoice.create.mockRejectedValue({
         code: "P2002",
-        message: "Unique constraint failed on the fields: (`invoiceNumber`)",
+        // the pg driver adapter's shape (B1186): no meta.target, the index rides in the cause
+        meta: {
+          driverAdapterError: {
+            cause: { constraint: { index: "Invoice_tenantId_invoiceNumber_key" } },
+          },
+        },
       });
 
       await expect(service.convertToInvoice("est-2")).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    // B1186: the convert's own link constraint (one estimate, one invoice) is the same coded 409; any
+    // OTHER unique violation propagates untouched instead of reading as an invoice-number conflict.
+    describe("B1186 convertToInvoice P2002 goes through the shared reader", () => {
+      const arrange = (err: unknown) => {
+        prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
+        prisma.estimate.findUnique.mockResolvedValue({
+          id: "est-2",
+          status: "ACCEPTED",
+          customerId: "cust-1",
+          subtotal: 100,
+          taxAmount: 10,
+          discount: 0,
+          total: 110,
+          notes: null,
+          terms: null,
+          items: [],
+        });
+        prisma.invoice.create.mockRejectedValue(err);
+      };
+      it("Estimate_invoiceId_key (adapter shape) => 409", async () => {
+        arrange({
+          code: "P2002",
+          // the pg driver adapter's shape (B1186): no meta.target, the index rides in the cause
+          meta: {
+            driverAdapterError: { cause: { constraint: { index: "Estimate_invoiceId_key" } } },
+          },
+        });
+        await expect(service.convertToInvoice("est-2")).rejects.toBeInstanceOf(ConflictException);
+      });
+      it("a native field-array target (no constraint NAME) is not claimed: exact names only", async () => {
+        arrange({ code: "P2002", meta: { target: ["tenantId", "invoiceNumber"] } });
+        await expect(service.convertToInvoice("est-2")).rejects.toMatchObject({ code: "P2002" });
+      });
+      it("another constraint propagates untouched", async () => {
+        const err = {
+          code: "P2002",
+          // the pg driver adapter's shape (B1186): no meta.target, the index rides in the cause
+          meta: { driverAdapterError: { cause: { constraint: { index: "Tenant_slug_key" } } } },
+        };
+        arrange(err);
+        await expect(service.convertToInvoice("est-2")).rejects.toBe(err);
+      });
     });
 
     // B100/F16b pin (P5, cause-ruling.md §2 D3): convertToInvoice calls
@@ -333,7 +395,14 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
       prisma.estimate.create.mockRejectedValue({
         code: "P2002",
-        message: "Unique constraint failed on the fields: (`estimateNumber`)",
+        message:
+          "Unique constraint failed on the constraint: `Estimate_tenantId_estimateNumber_key`",
+        // the pg driver adapter's shape (B1186): no meta.target, the index rides in the cause
+        meta: {
+          driverAdapterError: {
+            cause: { constraint: { index: "Estimate_tenantId_estimateNumber_key" } },
+          },
+        },
       });
 
       await expect(

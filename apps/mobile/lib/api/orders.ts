@@ -1,18 +1,32 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest } from "./change-requests";
+import { creditsPendingFromError } from "../order-credits-pending";
 import type {
+  ActiveOrderSummary,
+  BatchShipRequest,
+  BatchShipResult,
+  PackingSlipsRequest,
+  PackingSlipsResult,
+  CancelImpact,
+  CustomerPriceHistory,
+  LineComponentView,
+  OrderTrackingResponse,
+  UnitAwareLineInput,
+} from "@routeflow/types";
+export type {
   ActiveOrderSummary,
   CancelImpact,
   CustomerPriceHistory,
-  UnitAwareLineInput,
+  OrderTracking,
 } from "@routeflow/types";
-export type { ActiveOrderSummary, CancelImpact, CustomerPriceHistory } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface OrderItem {
   id: string;
+  /** #2717 M3: frozen sub-lines of a composed (mixed-pack) line; absent on a plain line. */
+  components?: LineComponentView[];
   /** Null for an unlisted (ad-hoc, non-catalog) line — `name` carries the label instead. */
   productId: string | null;
   /** Free-text label for an unlisted line (productId null, priceType "MANUAL"). */
@@ -69,6 +83,8 @@ export interface OrderItem {
    * recompute MUST pass them to `computeLineSubtotal` or it over-charges.
    */
   promoFreeUnits?: number | null;
+  /** SA-714: pieces sold past stock (staff-only, display only). The API serialises a Decimal, so a string. */
+  backorderedPieces?: number | string | null;
   /** Cumulative qty already covered by issued invoices for this item. */
   invoicedQty?: number;
   /** Cumulative qty already delivered — gates at-door adjustability (server: LINE_ALREADY_DELIVERED). */
@@ -174,6 +190,8 @@ export type CreateOrderItemInput =
       pieces?: number;
       /** One-time discounted price override (per catalog unit; box price for boxed). */
       unitPrice?: number;
+      /** #2696(c): required by the server when unitPrice moves off a special (tier) price. */
+      overrideReason?: string;
       /** Optional per-line note — carried onto the invoice line (buyer-visible). */
       notes?: string;
     })
@@ -357,6 +375,8 @@ export type CreateSaleItemInput =
       boxes?: number;
       pieces?: number;
       unitPrice?: number;
+      /** #2696(c) SA-558e: required when unitPrice moves off a special (tier) price. */
+      overrideReason?: string;
       notes?: string;
     }
   | { name: string; qty: number; unitPrice: number; notes?: string };
@@ -434,6 +454,13 @@ export function useCreateOrderAsDriver() {
         )
         .then((r) => r.data),
     onSuccess: (_, vars) => {
+      if (vars.routeRunId) qc.invalidateQueries({ queryKey: ["route-runs", vars.routeRunId] });
+      invalidateOrderCaches(qc);
+      invalidateOrderMoneySideEffects(qc);
+    },
+    // B1205: 503 ORDER_SAVED_CREDITS_PENDING means the order WAS saved - refresh like a success.
+    onError: (err, vars) => {
+      if (!creditsPendingFromError(err)) return;
       if (vars.routeRunId) qc.invalidateQueries({ queryKey: ["route-runs", vars.routeRunId] });
       invalidateOrderCaches(qc);
       invalidateOrderMoneySideEffects(qc);
@@ -654,23 +681,34 @@ export function useDeleteOrder() {
 
 // ─── Tracking ─────────────────────────────────────────────────────────────────
 
-export interface OrderTracking {
-  runId: string;
-  routeName: string | null;
-  driverName: string | null;
-  runStatus: string;
-  stopNumber: number;
-  stopStatus: string;
-  stopsAhead: number;
-  estimatedArrivalWindow: { start: string | null; end: string | null };
-}
-
+// `OrderTracking` is the shared wire shape (#2095), re-exported at the top of this file.
 export function useOrderTracking(orderId: string, orderStatus?: string) {
-  return useQuery<{ status: string; tracking: OrderTracking | null }>({
+  return useQuery<OrderTrackingResponse>({
     queryKey: ["orders", orderId, "tracking"],
     queryFn: () => apiClient.get(`/orders/${orderId}/tracking`).then((r) => r.data),
     enabled: !!orderId && orderStatus === "OUT_FOR_DELIVERY",
     refetchInterval: 30_000,
     staleTime: 20_000,
+  });
+}
+
+// ─── Batch ship + packing slips (#3168) — mirrors web's hooks. Online-only (not offline-queued). ───
+
+/** Mark several carrier orders shipped in one request. Always 200 with a per-order outcome. */
+export function useBatchShipOrders() {
+  const qc = useQueryClient();
+  return useMutation<BatchShipResult, Error, BatchShipRequest>({
+    mutationFn: (req) => apiClient.post("/orders/batch-ship", req).then((r) => r.data),
+    onSettled: () => invalidateOrderCaches(qc),
+  });
+}
+
+/** One PDF, a packing slip page per carrier order; `url` is null when nothing was includable. */
+export function usePackingSlips() {
+  return useMutation<PackingSlipsResult, Error, string[]>({
+    mutationFn: (orderIds) =>
+      apiClient
+        .post("/orders/packing-slips", { orderIds } satisfies PackingSlipsRequest)
+        .then((r) => r.data),
   });
 }

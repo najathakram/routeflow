@@ -161,11 +161,12 @@ export function useCreateAuthorizationOverride(customerId: string) {
  * Operator: the tenant's licenses expiring within 30 days or already expired.
  * Polled for the header expiry bell (the backend has no in-app notification store).
  */
-export function useExpiringAuthorizations() {
+export function useExpiringAuthorizations(options?: { enabled?: boolean }) {
   return useQuery<ExpiringAuthorization[]>({
     queryKey: ["authorizations", "expiring"],
     queryFn: () => apiClient.get("/authorizations/expiring-soon").then((r) => r.data),
     staleTime: 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
+    ...options,
   });
 }

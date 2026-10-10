@@ -20,7 +20,7 @@ import {
   GitBranch,
   Layers,
 } from "lucide-react";
-import { PageHeader, Table, Badge, Button, Select, cn, EmptyState } from "@routeflow/ui/web";
+import { PageHeader, Table, Button, Select, cn, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
@@ -42,10 +42,25 @@ import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
+import {
+  PortalBulkButtons,
+  PortalHiddenBadge,
+  PortalHiddenFilter,
+} from "./_components/PortalVisibilityControls";
+import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visibility-ui";
+import { NewFamilyButton } from "@/components/family/NewFamilyButton";
+import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
+import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
+import { ProductsExportButton } from "./_components/ProductsExportButton";
+import {
+  STOCK_FILTER_CHIPS,
+  ProductStatusBadge,
+  getProductStatus,
+  stockFilterParams,
+  type ProductStockFilter,
+} from "./_components/product-status";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-type StockStatus = "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
 
 interface ApiProduct {
   id: string;
@@ -73,6 +88,8 @@ interface ApiProduct {
   variantName?: string | null;
   variants?: ApiProduct[];
   parent?: ApiProduct | null;
+  /** Buyer-portal flag (hidden products never reach buyers). */
+  portalVisible?: boolean;
   isFeatured?: boolean;
   isNew?: boolean;
   isDeal?: boolean;
@@ -87,9 +104,11 @@ interface ApiProduct {
 
 // Merchandising badge row (P5-01) — reused by grid card + table cell.
 function MerchBadges({ product }: { product: ApiProduct }) {
-  if (!product.isFeatured && !product.isNew && !product.isDeal) return null;
+  if (!product.isFeatured && !product.isNew && !product.isDeal && !portalBadge(product))
+    return null;
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
+      <PortalHiddenBadge product={product} />
       {product.isFeatured && (
         <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-brand-50 text-brand-700 ring-1 ring-brand-200">
           Featured
@@ -111,21 +130,6 @@ function MerchBadges({ product }: { product: ApiProduct }) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function getStockStatus(p: ApiProduct): StockStatus {
-  if (!p.isActive) return "OUT_OF_STOCK";
-  if (p.currentStock <= 0) return "OUT_OF_STOCK";
-  if (p.currentStock <= 5) return "LOW";
-  return "IN_STOCK";
-}
-
-// ─── Stock badge ──────────────────────────────────────────────────────────────
-
-function StockBadge({ status }: { status: StockStatus }) {
-  if (status === "OUT_OF_STOCK") return <Badge variant="danger" label="Out of Stock" />;
-  if (status === "LOW") return <Badge variant="warning" label="Low Stock" />;
-  return <Badge variant="success" label="In Stock" />;
-}
-
 // ─── Product grid card ────────────────────────────────────────────────────────
 
 function ProductCard({
@@ -145,14 +149,14 @@ function ProductCard({
   onAddVariant?: (parentId: string) => void;
   sectionNameById: Map<string, string>;
 }) {
-  const status = getStockStatus(product);
+  const status = getProductStatus(product);
   return (
     <div
       className={cn(
         "relative flex flex-col overflow-hidden rounded-lg border bg-white text-left shadow-card transition-shadow hover:shadow-dropdown cursor-pointer",
         status === "LOW" && "border-warning/40",
         status === "OUT_OF_STOCK" && "border-danger/40",
-        status === "IN_STOCK" && "border-surface-border",
+        (status === "IN_STOCK" || status === "INACTIVE") && "border-surface-border",
         selected && "ring-2 ring-brand-500 border-brand-500",
       )}
       onClick={selectionMode ? onSelect : onClick}
@@ -181,7 +185,7 @@ function ProductCard({
           "relative flex h-28 w-full items-center justify-center overflow-hidden",
           status === "LOW" && "bg-warning-bg",
           status === "OUT_OF_STOCK" && "bg-danger-bg",
-          status === "IN_STOCK" && "bg-surface-raised",
+          (status === "IN_STOCK" || status === "INACTIVE") && "bg-surface-raised",
         )}
         onClick={selectionMode ? undefined : onClick}
       >
@@ -200,7 +204,7 @@ function ProductCard({
               "h-10 w-10",
               status === "LOW" && "text-warning/40",
               status === "OUT_OF_STOCK" && "text-danger/40",
-              status === "IN_STOCK" && "text-navy/20",
+              (status === "IN_STOCK" || status === "INACTIVE") && "text-navy/20",
             )}
           />
         )}
@@ -236,7 +240,7 @@ function ProductCard({
           <p className="text-[10px] text-navy/70 truncate">{product.parent.name}</p>
         )}
         <div className="flex items-center gap-1.5">
-          <StockBadge status={status} />
+          <ProductStatusBadge status={status} />
           <MerchBadges product={product} />
           {product.trackedCategoryId && (
             <span
@@ -416,7 +420,7 @@ function makeTableColumns(
       header: "Product",
       cell: ({ row }) => {
         const p = row.original;
-        const status = getStockStatus(p);
+        const status = getProductStatus(p);
         return (
           <div className="flex items-center gap-3">
             <div
@@ -678,10 +682,10 @@ function makeTableColumns(
       accessorKey: "currentStock",
       header: "Stock",
       cell: ({ row }) => {
-        const status = getStockStatus(row.original);
+        const status = getProductStatus(row.original);
         return (
           <div className="flex items-center gap-2">
-            <StockBadge status={status} />
+            <ProductStatusBadge status={status} />
             {/* `currentStock` is a PIECE count system-wide, so it must never be printed
                 next to `unit` (the box/case noun) — `unitsLabel` keeps that noun only
                 for unboxed products and shows a box+piece split otherwise. */}
@@ -725,7 +729,7 @@ export default function ProductsPage() {
 
   const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [categoryFilter, setCategoryFilter] = React.useState("");
-  const [stockFilter, setStockFilter] = React.useState("");
+  const [stockFilter, setStockFilter] = React.useState<ProductStockFilter>("");
   // Regulated-section filter is the one deep-linkable filter (?section=) — the
   // Compliance hub's per-section KPI links here.
   const [urlFilters, setUrlFilter] = useUrlFilters({ section: "" });
@@ -739,6 +743,11 @@ export default function ProductsPage() {
   const [showGroupAsVariants, setShowGroupAsVariants] = React.useState(false);
   const [showAssignToSection, setShowAssignToSection] = React.useState(false);
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = React.useState(false);
+  // What the last bulk delete refused and why (#3323): shown in a dialog, not buried in a toast.
+  const [skipReport, setSkipReport] = React.useState<SkippedProduct[]>([]);
+  // Names of the products in the last bulk delete, taken before the selection clears, for the skip report.
+  const [skipNames, setSkipNames] = React.useState<ReadonlyMap<string, string>>(new Map());
+  const [hiddenOnly, setHiddenOnly] = React.useState(false);
   const [page, setPage] = useUrlPage();
   const [pageSize, setPageSize] = React.useState(50);
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
@@ -1015,6 +1024,7 @@ export default function ProductsPage() {
     stockFilter,
     sectionFilter,
     pageSize,
+    hiddenOnly,
   ]);
 
   // REG-B154: the selection Set used to accumulate across page/search/category/
@@ -1030,7 +1040,7 @@ export default function ProductsPage() {
     setShowBulkDeleteConfirm(false);
     setShowAssignToSection(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize]);
+  }, [page, debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize, hiddenOnly]);
 
   const {
     data: result,
@@ -1039,8 +1049,9 @@ export default function ProductsPage() {
   } = useProducts({
     search: debouncedSearch,
     category: categoryFilter || undefined,
-    stockStatus: (stockFilter || undefined) as any,
+    ...stockFilterParams(stockFilter),
     section: sectionFilter || undefined,
+    ...portalVisibleFilterParam(hiddenOnly),
     page,
     limit: pageSize, // 0 = all
     includeVariants: true,
@@ -1101,6 +1112,7 @@ export default function ProductsPage() {
       // R1's server contract is {deleted, softDeleted, skipped[]} (vendor-bills'
       // processed-vs-skipped shape); the hook merges those three across chunks.
       const res = await bulkDelete.mutateAsync(ids);
+      setSkipNames(new Map(ids.map((id) => [id, productById.get(id)?.name ?? ""])));
       setSelected(new Set());
       const { softDeleted, skipped } = res;
       const parts = [`${res.deleted} deleted`];
@@ -1108,11 +1120,11 @@ export default function ProductsPage() {
       if (skipped.length > 0) parts.push(`${skipped.length} skipped`);
       toast({
         title: parts.join(", "),
-        description: skipped.length > 0 ? skipped.map((s) => s.reason).join("; ") : undefined,
         variant: res.deleted > 0 || softDeleted > 0 ? "success" : "error",
       });
-    } catch {
-      toast({ title: "Failed to delete products", variant: "error" });
+      if (skipped.length > 0) setSkipReport(skipped);
+    } catch (err) {
+      if (!isReadOnlyRefusal(err)) toast(deactivateFailureToast(err, "Failed to delete products"));
     }
   };
 
@@ -1174,7 +1186,7 @@ export default function ProductsPage() {
             : "Manage your product catalog"
         }
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="secondary"
               leftIcon={
@@ -1198,6 +1210,18 @@ export default function ProductsPage() {
             >
               {quickEditMode ? "Exit Quick Edit" : "Quick Edit"}
             </Button>
+            <ProductsExportButton
+              total={totalItems}
+              loading={isLoading}
+              filters={{
+                search: debouncedSearch,
+                category: categoryFilter,
+                ...stockFilterParams(stockFilter),
+                ...portalVisibleFilterParam(hiddenOnly),
+                section: sectionFilter,
+              }}
+            />
+            <NewFamilyButton />
             <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowCreate(true)}>
               New Product
             </Button>
@@ -1273,14 +1297,11 @@ export default function ProductsPage() {
         )}
 
         {/* Stock status filter chips */}
-        {[
-          { value: "", label: "All" },
-          { value: "IN_STOCK", label: "In Stock" },
-          { value: "LOW", label: "Low Stock" },
-          { value: "OUT_OF_STOCK", label: "Out of Stock" },
-        ].map((o) => (
+        {STOCK_FILTER_CHIPS.map((o) => (
           <button
             key={o.value || "all"}
+            type="button"
+            aria-pressed={stockFilter === o.value}
             onClick={() => setStockFilter(o.value)}
             className={cn(
               "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
@@ -1311,6 +1332,8 @@ export default function ProductsPage() {
             onChange={(e) => setCategoryFilter(e.target.value)}
           />
         </div>
+
+        <PortalHiddenFilter checked={hiddenOnly} onChange={setHiddenOnly} />
 
         {/* Per-page selector */}
         <div className="w-36">
@@ -1383,6 +1406,7 @@ export default function ProductsPage() {
                 Assign to type…
               </Button>
             )}
+            <PortalBulkButtons selected={selected} onDone={() => setSelected(new Set())} />
             <Button
               variant="danger"
               leftIcon={<Trash2 className="h-4 w-4" />}
@@ -1429,6 +1453,12 @@ export default function ProductsPage() {
         }}
       />
 
+      <BulkDeleteSkipReport
+        skipped={skipReport}
+        onClose={() => setSkipReport([])}
+        nameById={skipNames}
+      />
+
       {/* Bulk delete confirmation */}
       <ConfirmDialog
         open={showBulkDeleteConfirm}
@@ -1473,6 +1503,7 @@ export default function ProductsPage() {
                     setSearch("");
                     setCategoryFilter("");
                     setStockFilter("");
+                    setHiddenOnly(false);
                     setUrlFilter("section", "");
                   }}
                 >

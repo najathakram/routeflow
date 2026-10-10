@@ -10,8 +10,8 @@
 > reviews and implements HIGH-risk tasks, Sonnet reviews and implements routine ones, Opus is kept only
 > as `CFG.fallbackModel` for a Fable refusal. See `## 2026-09-12 — task-loop rebuild` below.
 
-Downstream the engine fixes the rest: **Sonnet** authors tests, implementation and mechanical fixes; **Opus 5**
-(`claude-opus-5`) runs the review lenses, refuters, red-gate audit, UI verification, mutation probes, judgment fixes
+Downstream the engine fixes the rest: **Sonnet** authors tests, implementation and mechanical fixes; **Opus 5.5**
+(`claude-opus-5-5`) runs the review lenses, refuters, red-gate audit, UI verification, mutation probes, judgment fixes
 and the re-check; **Haiku** at `effort: 'low'` runs the baseline gate, manifest, grounding, gates, red-run and
 checksums. **Fable helps the Opus review at exactly two built-in points** (`CFG.tieBreakModel` /
 `CFG.finalPassModel`), scope-limited so the strongest model reads the least text that still carries the risk: a
@@ -443,7 +443,7 @@ by Haiku agents, slice the plan/test-plan/findings into per-task artifacts under
 reviewer, HIGH-risk implementer (first pass) and executor, fix designer from round 3, final read on
 HIGH-risk files; Sonnet 5 = test author, routine implementer, routine reviewer, fix-round 1-2 executor,
 re-reviewer on routine files; Haiku 4.5 = baseline gates, the three scripts, the RED check, checkpoints,
-the result writer. **Opus 5 is kept only as `CFG.fallbackModel`** for a Fable refusal — it no longer
+the result writer. **Opus 5.5 is kept only as `CFG.fallbackModel`** for a Fable refusal — it no longer
 runs a review lens, the red-gate audit, or a fix by default (task loop: Fable, Opus fallback).
 
 **Profiles** (`CFG.profiles`, `args.profile` overrides): `lean` = superpowers parity — the implementer

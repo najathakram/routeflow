@@ -19,10 +19,16 @@ import {
   useBusinessSettings,
   type AdminProduct,
 } from "../../../../../lib/api/admin";
+import { resolveScanSellLevel } from "@routeflow/scanning";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import { decideScanResult, promptText, runScanDecision } from "../../../../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../../../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../../../../lib/use-scan-match-picker";
+import { levelsForScan } from "../../../../../lib/wedge-scan";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
+import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../../lib/loose-units";
 import { useUpdateInvoice } from "../../../../../lib/api/invoices";
-import { alertInfo } from "../../../../../lib/confirm";
+import { alertInfo, confirm } from "../../../../../lib/confirm";
 import { ISO_DATE } from "../../../../../lib/invoice-terms";
 import {
   computeInvoiceTotals,
@@ -32,7 +38,13 @@ import {
 } from "../../../../../lib/invoice-totals";
 import { isPendingOrderMirror } from "../../../../../lib/invoices-logic";
 import { hasUnitLine, unitLabelsOf } from "../../../../../lib/invoice-line-unit";
-import { computeLineSubtotal } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  isNsfLine,
+  packFromOwnSplit,
+  type SellLevel,
+} from "@routeflow/pricing";
+import { scanHaptic } from "../../../../../lib/haptics";
 import { showToast } from "../../../../../lib/toast";
 import {
   hasUnsavedInvoiceLineEdits,
@@ -54,8 +66,19 @@ import { hydratedLineTax } from "../../../../../lib/invoice-edit-tax";
 
 type EditLine = {
   key: string;
+  /** Stored row id (SA-186) — sent back so the server matches THIS row. Absent on new lines. */
+  id?: string;
+  /** SA-184/189: a stored box line whose pack can't be recovered — read-only until the
+   *  operator sets the pack. `storedBoxes/Pieces` are re-sent verbatim (line stays untouched). */
+  locked?: boolean;
+  storedBoxes?: number;
+  storedPieces?: number;
+  /** Operator-attested pack (integer >= 2) from unlocking; the only `unitsPerBox` ever sent. */
+  attestedPack?: number;
   productId: string | null;
   description: string;
+  /** #2656: carried so the NSF fee line's Taxable toggle stays locked off (the API refuses > 0). */
+  systemKind?: string | null;
   /** Total pieces (boxes × unitsPerBox + pieces when split). */
   qty: number;
   boxes: number | null;
@@ -105,6 +128,8 @@ export default function EditInvoiceScreen() {
   const [notes, setNotes] = useState("");
   const [terms, setTerms] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [scanPromptOpen, setScanPromptOpen] = useState(false);
+  const matchPicker = useScanMatchPicker<AdminProduct>();
 
   // Hydrate once per invoice id — refetches must not clobber in-progress edits.
   const hydratedFor = useRef<string | null>(null);
@@ -119,12 +144,31 @@ export default function EditInvoiceScreen() {
     const lineTax = hydratedLineTax(invoice);
     const hydratedLines = (invoice.items ?? []).map((it, i) => ({
       key: newKey(),
+      id: it.id,
+      ...(it.boxes != null &&
+      !(
+        Number(
+          it.unitsPerBox ??
+            packFromOwnSplit({ qty: Number(it.qty), boxes: it.boxes, pieces: it.pieces }) ??
+            0,
+        ) > 1
+      )
+        ? { locked: true, storedBoxes: Number(it.boxes), storedPieces: Number(it.pieces ?? 0) }
+        : {}),
       productId: it.productId ?? null,
       description: it.description,
+      systemKind: it.systemKind ?? null,
       qty: Number(it.qty),
       boxes: it.boxes ?? null,
       pieces: it.boxes != null ? (it.pieces ?? 0) : null,
-      unitsPerBox: it.unitsPerBox ?? null,
+      // B674/SA-144: a legacy line (boxes stored, unitsPerBox never snapshotted) recovers its
+      // pack from its OWN split via packFromOwnSplit — web's exact fix. Without this, a legacy
+      // line hydrated here with unitsPerBox null failed isSplit's upb > 1 check below, so the
+      // case/piece stepper never rendered and a save re-priced the line as loose pieces.
+      unitsPerBox:
+        it.unitsPerBox ??
+        packFromOwnSplit({ qty: Number(it.qty), boxes: it.boxes, pieces: it.pieces }) ??
+        null,
       unitPrice: Number(it.unitPrice),
       discount: it.discount != null && Number(it.discount) > 0 ? Number(it.discount) : null,
       ...lineTax[i],
@@ -181,19 +225,23 @@ export default function EditInvoiceScreen() {
     patch(l.key, { pieces: p, qty: (l.boxes ?? 0) * upb + p });
   };
 
-  const addCatalogLine = (p: AdminProduct) => {
+  // `level` is what a SCAN carried (SA-580 R1/R2): UNIT on a boxed product is one loose piece
+  // (0 boxes + 1 piece — both shown by the line's case/loose steppers), BOX one case. A tapped pick
+  // passes none: a case, as before. upb <= 1 has no distinction (R4).
+  const addCatalogLine = (p: AdminProduct, level: SellLevel = "BOX") => {
     setPickerOpen(false);
     const upb = Number(p.unitsPerBox ?? 0);
     const boxed = upb > 1;
+    const loose = boxed && level === "UNIT";
     setLines((ls) => [
       ...ls,
       {
         key: newKey(),
         productId: p.id,
         description: p.name,
-        qty: boxed ? upb : 1,
-        boxes: boxed ? 1 : null,
-        pieces: boxed ? 0 : null,
+        qty: loose ? 1 : boxed ? upb : 1,
+        boxes: boxed ? (loose ? 0 : 1) : null,
+        pieces: boxed ? (loose ? 1 : 0) : null,
         unitsPerBox: boxed ? upb : null,
         unitPrice: Number(p.pricePerUnit) || 0,
         discount: null,
@@ -224,9 +272,22 @@ export default function EditInvoiceScreen() {
       if (result.archived) {
         return { feedback: { kind: "error", text: archivedMessage(result.product) } };
       }
-      if (!result.notFound) {
-        addCatalogLine(result.product);
-        return { feedback: { kind: "added", text: `${result.product.name} added` } };
+      const decision = decideScanResult(result, "add");
+      // B1220: a lone fuzzy match asks first, 2+ matches open a list; neither adds unprompted.
+      if (
+        runScanDecision(
+          decision,
+          (p) => addCatalogLine(p, resolveScanSellLevel(p, levelsForScan(trimmed, p))),
+          confirm,
+          { pick: matchPicker.open, onPromptChange: setScanPromptOpen },
+        )
+      ) {
+        if (decision.kind === "add") {
+          return { feedback: { kind: "added", text: `${decision.product.name} added` } };
+        }
+        // A confirm/picker prompt is not a failure: neutral haptic, not the error buzz.
+        scanHaptic("info");
+        return { feedback: { kind: "info", text: promptText(decision) } };
       }
     } catch {
       // network error → fall through to the toast
@@ -354,8 +415,12 @@ export default function EditInvoiceScreen() {
         terms,
         referenceNumber,
         subject,
-        items: lines.map((l) =>
-          invoiceLineDto(
+        items: lines.map((l) => ({
+          ...(l.id ? { id: l.id } : {}),
+          ...(l.locked ? { boxes: l.storedBoxes ?? 0, pieces: l.storedPieces ?? 0 } : {}),
+          // SA-189: only an operator-attested pack is ever sent.
+          ...(l.attestedPack ? { unitsPerBox: l.attestedPack } : {}),
+          ...invoiceLineDto(
             {
               description: l.description.trim(),
               productId: l.productId,
@@ -365,13 +430,14 @@ export default function EditInvoiceScreen() {
               pieces: l.pieces,
               unitsPerBox: l.unitsPerBox,
               discount: l.discount ?? undefined,
-              taxable: l.taxable,
+              taxable: l.taxable && !isNsfLine(l), // #2656: the NSF fee line is never taxed
               notes: l.note,
               promoFreeUnits: editedLineFreeUnits(l),
             },
             rateFor(l),
           ),
-        ),
+          ...(l.locked ? { boxes: l.storedBoxes ?? 0, pieces: l.storedPieces ?? 0 } : {}),
+        })),
       },
       {
         onSuccess: () => {
@@ -418,6 +484,7 @@ export default function EditInvoiceScreen() {
   }
   if (
     isPendingOrderMirror({
+      pendingMirror: invoice.pendingMirror,
       orderId: invoice.orderId,
       deliveryBatchId: invoice.deliveryBatchId,
       orderStatus: invoice.order?.status,
@@ -568,7 +635,8 @@ export default function EditInvoiceScreen() {
           onSelect={addCatalogLine}
         />
       </FormSheet>
-      <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} />
+      <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} paused={scanPromptOpen} />
+      <ScanMatchPickerSheet {...matchPicker.props} />
     </>
   );
 }
@@ -608,6 +676,9 @@ function LineCard({
 }) {
   const upb = Number(line.unitsPerBox ?? 0);
   const isSplit = line.boxes != null && upb > 1;
+  // #2698 (SA-564a): one unit sold — loose units are opt-in, the same rule as CartRow.
+  const [looseUnitsOpen, setLooseUnitsOpen] = useState(false);
+  const showLoose = looseUnitsVisible(looseUnitsOpen, line.pieces);
   const freeUnits = editedLineFreeUnits(line);
   const lineTotal = Math.max(
     0,
@@ -650,56 +721,129 @@ function LineCard({
         ) : null}
       </View>
 
-      <View style={styles.fieldRow}>
-        <Text style={styles.fieldLabel}>Price{isSplit ? " / case" : ""}</Text>
-        <View style={styles.fieldInputWrap}>
-          <Text style={styles.fieldCurrency}>$</Text>
-          <MoneyTextInput
-            style={styles.fieldMoneyInput}
-            value={line.unitPrice}
-            onChangeValue={(v) => onPatch({ unitPrice: v })}
-            placeholder="0.00"
-            returnKeyType="done"
-          />
+      {line.locked ? (
+        <View testID="locked-line">
+          <Text style={styles.fieldHint}>
+            {line.storedBoxes} case · {line.storedPieces} loose · $
+            {Number(line.unitPrice ?? 0).toFixed(2)}
+            {" — set the box and piece count for this line to edit it."}
+          </Text>
+          <View style={styles.fieldRow}>
+            <Text style={styles.fieldLabel}>Units per case</Text>
+            <TextInput
+              keyboardType="number-pad"
+              placeholder="e.g. 12"
+              placeholderTextColor={ios.label3}
+              onChangeText={(t) => {
+                const n = Number(t);
+                if (Number.isInteger(n) && n >= 2) {
+                  onPatch({
+                    locked: false,
+                    unitsPerBox: n,
+                    attestedPack: n,
+                    qty: (line.storedBoxes ?? 0) * n + (line.storedPieces ?? 0),
+                  });
+                }
+              }}
+              style={styles.fieldMoneyInput}
+            />
+          </View>
         </View>
-      </View>
-
-      {isSplit ? (
+      ) : (
         <>
           <View style={styles.fieldRow}>
-            <Text style={styles.fieldLabel}>Cases</Text>
-            <QtyStepper value={line.boxes ?? 0} onChangeQty={onSetBoxes} />
-          </View>
-          <View style={styles.fieldRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.fieldLabel}>Loose units</Text>
-              <Text style={styles.fieldHint}>{upb} per case</Text>
+            <Text style={styles.fieldLabel}>Price{isSplit ? " / case" : ""}</Text>
+            <View style={styles.fieldInputWrap}>
+              <Text style={styles.fieldCurrency}>$</Text>
+              <MoneyTextInput
+                style={styles.fieldMoneyInput}
+                value={line.unitPrice}
+                onChangeValue={(v) => onPatch({ unitPrice: v })}
+                placeholder="0.00"
+                returnKeyType="done"
+              />
             </View>
-            <QtyStepper value={line.pieces ?? 0} onChangeQty={onSetPieces} max={upb - 1} />
+          </View>
+
+          {isSplit ? (
+            <>
+              <View style={styles.fieldRow}>
+                <Text style={styles.fieldLabel}>Cases</Text>
+                <QtyStepper value={line.boxes ?? 0} onChangeQty={onSetBoxes} />
+              </View>
+              {showLoose ? (
+                <View style={styles.fieldRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fieldLabel}>Extra loose units</Text>
+                    <Text style={styles.fieldHint}>{upb} per case</Text>
+                  </View>
+                  <QtyStepper value={line.pieces ?? 0} onChangeQty={onSetPieces} max={upb - 1} />
+                  {canRemoveLooseUnits(line.boxes) ? (
+                    <Pressable
+                      onPress={() => {
+                        onSetPieces(0);
+                        setLooseUnitsOpen(false);
+                      }}
+                      hitSlop={8}
+                      style={styles.looseRemove}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove extra units"
+                    >
+                      <Ionicons name="close" size={16} color={ios.label2} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : (
+                <Pressable
+                  onPress={() => setLooseUnitsOpen(true)}
+                  hitSlop={8}
+                  style={styles.looseAdd}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add extra loose units"
+                >
+                  <Text style={styles.looseAddText}>+ units</Text>
+                </Pressable>
+              )}
+            </>
+          ) : (
+            <View style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>Qty</Text>
+              <QtyStepper value={line.qty} onChangeQty={onSetQty} />
+            </View>
+          )}
+
+          <View style={styles.fieldRow}>
+            <Text style={styles.fieldLabel}>Discount</Text>
+            <View style={styles.fieldInputWrap}>
+              <Text style={styles.fieldCurrency}>−$</Text>
+              <MoneyTextInput
+                style={[
+                  styles.fieldMoneyInput,
+                  (line.discount ?? 0) > 0 && styles.fieldMoneyActive,
+                ]}
+                value={line.discount}
+                onChangeValue={(v) => onPatch({ discount: v != null && v > 0 ? v : null })}
+                placeholder="0.00"
+                returnKeyType="done"
+              />
+            </View>
           </View>
         </>
-      ) : (
-        <View style={styles.fieldRow}>
-          <Text style={styles.fieldLabel}>Qty</Text>
-          <QtyStepper value={line.qty} onChangeQty={onSetQty} />
-        </View>
       )}
 
-      <View style={styles.fieldRow}>
-        <Text style={styles.fieldLabel}>Discount</Text>
-        <View style={styles.fieldInputWrap}>
-          <Text style={styles.fieldCurrency}>−$</Text>
-          <MoneyTextInput
-            style={[styles.fieldMoneyInput, (line.discount ?? 0) > 0 && styles.fieldMoneyActive]}
-            value={line.discount}
-            onChangeValue={(v) => onPatch({ discount: v != null && v > 0 ? v : null })}
-            placeholder="0.00"
-            returnKeyType="done"
-          />
-        </View>
-      </View>
-
-      {showTax && rate > 0 ? (
+      {showTax && rate > 0 && isNsfLine(line) ? (
+        // #2656 / SA-549: the NSF fee line is never taxed — the toggle is locked off (API refuses > 0).
+        <Pressable
+          style={[styles.taxRow, { opacity: 0.5 }]}
+          disabled
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: false, disabled: true }}
+          accessibilityLabel="Not taxed: the NSF fee is never taxed"
+        >
+          <View style={styles.checkbox} />
+          <Text style={styles.taxLabel}>Not taxed (NSF fee)</Text>
+        </Pressable>
+      ) : showTax && rate > 0 ? (
         <Pressable
           style={styles.taxRow}
           onPress={() => onPatch({ taxable: !line.taxable })}
@@ -741,6 +885,27 @@ function LineCard({
 }
 
 const styles = StyleSheet.create({
+  // #2698: the opt-in loose-units control (dashed, small) and its remove button — as CartRow.
+  looseRemove: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: ios.fill,
+    marginLeft: 6,
+  },
+  looseAdd: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    minHeight: 32,
+    justifyContent: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: ios.separator,
+  },
+  looseAddText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
   guardCard: {
     backgroundColor: ios.bgElev,
     borderRadius: 14,

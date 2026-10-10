@@ -2,6 +2,8 @@ import type { ProductUnitLevel } from "@routeflow/types";
 import { resolveUnitPrice } from "@routeflow/pricing";
 import {
   buildUnitOptions,
+  defaultStartOption,
+  defaultUnitValue,
   marginFactorFor,
   unitLineSubtotal,
   unitOptionText,
@@ -158,5 +160,51 @@ describe("unitPriceBase — the price-comparison-baseline fix (same shape as B46
 
   it("falls back to catalogPrice when unitBasePrice is unset (a line loaded already unit-aware this session hasn't touched) — documented, unchanged pre-existing behaviour", () => {
     expect(unitPriceBase({ unitLabel: "Case", unitBasePrice: undefined }, 42)).toBe(42);
+  });
+});
+
+describe("defaultUnitValue (#2784) — mirrors web's, both on @routeflow/pricing's defaultSellingLabel", () => {
+  it("is the level flagged isDefaultSelling, else the pack", () => {
+    expect(defaultUnitValue(product, [CASE, PALLET])).toBe("");
+    expect(defaultUnitValue(product, [CASE, { ...PALLET, isDefaultSelling: true }])).toBe("Pallet");
+  });
+
+  it("never names a label the picker does not offer", () => {
+    expect(
+      defaultUnitValue(product, [
+        level({ label: "box", factorToBase: 12, isDefaultSelling: true }),
+      ]),
+    ).toBe("");
+    expect(
+      defaultUnitValue(product, [
+        level({ label: "Piece", factorToBase: 1, isDefaultSelling: true }),
+      ]),
+    ).toBe("Piece");
+  });
+
+  it("skips a corrupt flagged row and takes the next valid one", () => {
+    expect(
+      defaultUnitValue(product, [
+        level({ label: "Bad", factorToBase: 0, isDefaultSelling: true }),
+        { ...PALLET, isDefaultSelling: true },
+      ]),
+    ).toBe("Pallet");
+  });
+});
+
+describe("defaultStartOption (#2784): the option a NEW line starts on", () => {
+  const FLAGGED = { ...CASE, isDefaultSelling: true };
+
+  it("is the flagged default level's option", () => {
+    expect(defaultStartOption(product, [FLAGGED], 1, { hasUnit: false })?.value).toBe("Case");
+  });
+
+  it("is null when nothing is flagged, the line already holds a unit, or the price was typed", () => {
+    expect(defaultStartOption(product, [CASE], 1, { hasUnit: false })).toBeNull();
+    expect(defaultStartOption(product, [FLAGGED], 1, { hasUnit: true })).toBeNull();
+    expect(
+      defaultStartOption(product, [FLAGGED], 1, { hasUnit: false, priceEdited: true }),
+    ).toBeNull();
+    expect(defaultStartOption(product, [], 1, { hasUnit: false })).toBeNull();
   });
 });

@@ -119,9 +119,15 @@ async function main() {
                     AND col.column_name='tenantId')
     ORDER BY 1`);
 
+  // Platform-level tables whose `tenantId` is LEGITIMATELY null: a row there is not an orphan and
+  // not an RLS blast-radius row, so it must never move the orphans-zero baseline.
+  //   OnboardingCase (#2159 S1): a case exists before its workspace; tenantId is set at Activate.
+  const PLATFORM_NULL_TENANT_TABLES = new Set(["OnboardingCase"]);
+
   const affected = [];
   let unknown = 0;
   for (const { t, est_rows } of tenantTables) {
+    if (PLATFORM_NULL_TENANT_TABLES.has(t)) continue;
     try {
       const r = await q(`SELECT count(*)::bigint AS c FROM public."${t}" WHERE "tenantId" IS NULL`);
       const c = Number(r[0].c);

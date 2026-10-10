@@ -10,6 +10,7 @@ import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { GoogleIcon, startGoogleSignIn } from "@/lib/google-oauth";
 import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
 import { AuthShell } from "@/components/auth";
+import { isInShell } from "@/lib/in-shell";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -75,6 +76,8 @@ function BuyerLoginInner() {
 
   // Standalone Google sign-in — no seller context required
   const handleGoogleSignIn = async () => {
+    // #2653 / SA-542 Q3: never start Google inside the app shell (the CSS hides it; this guards it).
+    if (isInShell()) return;
     setGoogleLoading(true);
     setGoogleError(null);
     const result = await startGoogleSignIn({ context: "buyer-standalone" });
@@ -164,35 +167,40 @@ function BuyerLoginInner() {
         </Button>
       </form>
 
-      {/* Divider */}
-      <div className="my-4 flex items-center gap-3">
-        <div className="h-px flex-1 bg-surface-border" />
-        <span className="text-xs text-navy/70">or</span>
-        <div className="h-px flex-1 bg-surface-border" />
-      </div>
+      {/* #2653: the whole Google block hides inside the app shell (app/shell.css). */}
+      <div data-google-signin>
+        {/* Divider */}
+        <div className="my-4 flex items-center gap-3">
+          <div className="h-px flex-1 bg-surface-border" />
+          <span className="text-xs text-navy/70">or</span>
+          <div className="h-px flex-1 bg-surface-border" />
+        </div>
 
-      {/* Google sign-in button */}
-      {googleError && (
-        <p className="mb-3 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{googleError}</p>
-      )}
-      <button
-        type="button"
-        onClick={handleGoogleSignIn}
-        disabled={googleLoading}
-        className="rf-btn secondary flex w-full items-center justify-center gap-3"
-      >
-        {googleLoading ? (
-          <>
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
-            <span>Redirecting to Google...</span>
-          </>
-        ) : (
-          <>
-            <GoogleIcon className="h-4 w-4" />
-            <span>Continue with Google</span>
-          </>
+        {/* Google sign-in button */}
+        {googleError && (
+          <p className="mb-3 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
+            {googleError}
+          </p>
         )}
-      </button>
+        <button
+          type="button"
+          onClick={handleGoogleSignIn}
+          disabled={googleLoading}
+          className="rf-btn secondary flex w-full items-center justify-center gap-3"
+        >
+          {googleLoading ? (
+            <>
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-navy/30 border-t-navy/70" />
+              <span>Redirecting to Google...</span>
+            </>
+          ) : (
+            <>
+              <GoogleIcon className="h-4 w-4" />
+              <span>Continue with Google</span>
+            </>
+          )}
+        </button>
+      </div>
 
       <div className="mt-4 text-center">
         <p className="text-sm text-navy/70">

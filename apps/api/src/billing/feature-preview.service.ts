@@ -4,7 +4,7 @@ import { EntitlementsService } from "./entitlements.service";
 import { FeatureOverrideService, FeatureOverrideEffect } from "./feature-override.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { FEATURE_REGISTRY, FeatureDef } from "./feature-registry";
-import { findPlanDefinition } from "./plan-catalog.constants";
+import { effectivePlanFlags, findPlanDefinition } from "./plan-catalog.constants";
 import { resolveOneKey, toEffectiveFeature, ResolveContext } from "./feature-resolver.service";
 import type {
   FeaturePreviewRequest,
@@ -67,13 +67,18 @@ export class FeaturePreviewService {
     const activeAddonKeys = activeAddonRows.map((a) => a.addonKey);
     const version = await this.catalog.getVersionForTenant(ent.planVersionId);
     const currentDef = findPlanDefinition(version.definitions, ent.planKey);
+    // #2700 (SA-559d): before AND after read the plan's flags through the ONE flags-gain-forward
+    // predicate, as compute/apply do — a gained-forward flag is never previewed as lost.
+    const currentPlanFlags = currentDef
+      ? effectivePlanFlags(currentDef, version.id, publishedCatalog)
+      : [];
     const activeAddonSet = new Set(activeAddonKeys);
     const activeSkuSet = new Set(ent.addons);
 
     const beforeCtx: ResolveContext = {
       overrides: currentOverrides,
       activeAddonSet,
-      planFeatureFlags: new Set(currentDef?.featureFlags ?? []),
+      planFeatureFlags: new Set(currentPlanFlags),
       entFlags: ent.flags,
       activeSkuSet,
     };
@@ -102,12 +107,17 @@ export class FeaturePreviewService {
       const meta = pinnedSkuByCode.get(code) ?? publishedSkuByCode.get(code);
       if (meta) for (const flag of meta.grantsFlags) addonGrantedFlags.add(flag);
     }
-    const afterEntFlags = [...new Set([...(afterDef?.featureFlags ?? []), ...addonGrantedFlags])];
+    const afterPlanFlags = isSwap
+      ? afterDef
+        ? effectivePlanFlags(afterDef, afterCatalogVersionId, publishedCatalog)
+        : []
+      : currentPlanFlags;
+    const afterEntFlags = [...new Set([...afterPlanFlags, ...addonGrantedFlags])];
 
     const afterCtx: ResolveContext = {
       overrides: afterOverrides,
       activeAddonSet,
-      planFeatureFlags: new Set(afterDef?.featureFlags ?? []),
+      planFeatureFlags: new Set(afterPlanFlags),
       entFlags: afterEntFlags,
       activeSkuSet,
     };

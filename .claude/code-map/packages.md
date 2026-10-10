@@ -201,6 +201,12 @@ string` (B20 — free-form intake note, e.g. "DAMAGED_BOX") and its `restock?` d
 
 ### `@routeflow/pricing` (`packages/pricing`)
 
+> **2026-09-22 additions** — `build-line.ts` (`buildLine`, the strict two-axis line builder,
+> PR-1 #1167), `legacy-line-pieces.ts` (`legacyLinePieces` classifier for a boxes-null line,
+> #1202) and `po-line.ts` (`buildPOLine`/`derivedCaseCost`; **`resolvePOLineAmounts(...).totalCost`
+> is the only PO total — re-deriving it over-charges**, #1199). Signatures in
+> [`api/catchup-2026-09-22-units-money.md`](api/catchup-2026-09-22-units-money.md).
+
 **Compiled** workspace package — the ONE copy of RouteFlow money math, replacing the four
 `pricing.ts` copies (api `src/common` + `src/utils`, web `lib`, mobile `lib`). Entry `src/index.ts`
 → `pricing.ts` (`computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`, `prorateLineSubtotal`,
@@ -397,3 +403,115 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 - **Modified `packages/types/`:** `api/products.ts` (unit prices `string|null`; `PutProductUnitsPayload` -> `CreateProductUnitPayload`/`UpdateProductUnitPayload`, #947); `api/us-states.ts` (comment only: AA/AE/AP/FM/MH/PW/UM out of scope); `index.ts` (+4 re-exports).
 - **Modified `packages/pricing/src/unit-levels.ts`:** `resolveUnitPrice` now delegates to new `resolveLevelPrice(input: ResolveLevelPriceInput)`; new `Numeric` type accepts Decimal/string; explicit price = positive number only; zero packPrice guard (#943/#947).
 - **Modified `packages/ui/src/web/`:** `Badge.tsx` (`children` now rendered, #946); `Modal.tsx` (+`scroll` 92vh cap, `onOpenAutoFocus`, `onCloseAutoFocus`, #1062/#1115). ui + eslint-config `package.json`: dep bumps (#972).
+
+## Landed 2026-10-01 (w12-w27)
+
+> Drift `e23a8b035` -> HEAD, packages side only; each entry checked against the file at HEAD. Mobile consumers: [`mobile/landing-2026-10-01-w12-w27.md`](mobile/landing-2026-10-01-w12-w27.md).
+
+### `@routeflow/scanning` (`packages/scanning`) — scan level, aim box, steady-read, Hold mode
+
+- `src/scan-level.ts` (#2764 M4a-1) — the ONE pure scan-level resolver: the CODE decides the level (unit-only code -> UNIT, box-only -> BOX, shared code -> `defaultSellLevel({unitsPerBox})`). Exports `ScanBarcodeRow{code,level}`, `ScanLevelProduct`, `resolveScanSellLevel(product, levels)`, `levelsForScannedCode(code, product): SellLevel[]`, `scanMatchIsForCode(code, matchCode)`. Imports `@routeflow/pricing` (new `dependencies` entry; `@routeflow/types` added to devDependencies in `package.json`).
+- `src/barcode-symbology.ts` (#2764) — `inferBarcodeSymbology(code): BarcodeSymbology`. Specs `barcode-symbology.spec.ts`, `scan-level.spec.ts`, `no-second-scan-normaliser.spec.ts` (guards a second scan normaliser), `package-shape.spec.ts`.
+- `src/aim-box.ts` (#2899) — `AimBoxRect`, `BarcodeBoundsLike`, `isWithinAimBox(bounds, aimBox)`: centre of the decoded bounds inside the box; missing/zero-size geometry is allowed (fail open). Bounds are view pixels, no scaling.
+- `src/steady-read.ts` (#2899) — N-consecutive-frame confirmation: `STEADY_READ_MIN_FRAMES=3`, `STEADY_READ_MAX_GAP_MS=700`, `STEADY_READ_SLOTS=4`, `SteadyReadSlot/State/Result`, `createSteadyReadState()`, `trackSteadyRead(state, code, now, absent)`, `clearAfterAbsence(state, code, candidatesOf?)`.
+- `src/scan-mode.ts` (#2913) — `ScanMode = "continuous" | "hold"`, `SCAN_MODE_STORAGE_KEY="routeflow.scanMode"`, `parseScanMode(raw)` (only exact `"hold"` opts in), `shouldDecode(mode, holding)` (first gate a frame passes).
+- `src/scan-loop.ts` (#2899) — adds `NEVER_ACCEPTED`, `STEADY_ABSENCE_GAP_MS=800`, `touchSeen(state, code, now, candidatesOf?)`, `isTrackedByGate`, `isAbsentFromGate`; `gateScan` gains `afterAbsence` and `absenceGapMs` params (defaults keep old behaviour).
+- `src/scan-engine.ts` (#2899/#2913) — adds `ContinuousScanState{...ScanEngineState, steady}`, `createContinuousScanState()`, `ContinuousFrameOptions{bounds?, aimBox?, candidatesOf?}`, `continuousFrameScanned(state, code, now, opts)` (aim box -> steady-read -> gate -> buffer; out-of-box frames only `touchSeen`), `resetSteadyRead(state)`. Specs `scan-engine.continuous.spec.ts`, `scan-mode.spec.ts`, `scan-loop.spec.ts`, `aim-box.spec.ts`, `steady-read.spec.ts`.
+- `src/index.ts` — barrel now also `export *` from barcode-symbology, scan-level, aim-box, steady-read, scan-mode.
+
+### `@routeflow/pricing`
+
+- `src/sell-level.ts` (#2764) — `SELL_LEVEL_VALUES=["BOX","UNIT"]`, `SellLevel`, `defaultSellLevel({unitsPerBox})` (upb > 1 -> BOX else UNIT; scan-level resolution only). Spec `sell-level.spec.ts`.
+- `src/unit-levels.ts` (#2853 #2784 PR-1) — `defaultSellingLabel(product: LadderProduct, units: readonly LadderUnit[]): string | null`, the ONE "default selling unit" resolver (first valid level flagged `isDefaultSelling` that the ladder really sells at its own factor; web `defaultUnitValue` and `resolveLineUnits` delegate). Spec `unit-levels.spec.ts`.
+- `src/component-pieces.ts` (#2857) — prettier only.
+
+- `src/pending-unit.ts` (#2865 #2784 PR-2) — the ONE definition of a pending order line, shared by web and mobile (no mirror): `PendingUnitFacts{startOnDefaultUnit?, qty?, shaped?, operatorPrice?}`, `isUnitPending(facts)`, `PendingEditIntent = "qty"|"price"|"unit"|"increment"|"tap"`, `refusesPendingEdit(line, intent)` (only a `tap` is allowed on a pending line), `PendingScanDecision = "add"|"tap"|"refuse"`, `pendingScanDecision(line, {mapsToDefault})`, `pendingTapCount(taps, fallback)`, `PendingBlockReason`, `PendingResolvePlan`, `pendingResolvePlan({isStaff, unitsEnabled, unitsKnown, unlisted?, productKnown?})`, `PendingStatus`, `pendingStatus(pending, {reason?, subscriptionFailed?})`, `mayMergeResolved({cur, curCount, beforeCount, changed})`, `refreshUnitsAnswer(deps, refetch, unitsFlag)`, `undoPendingTap(taps)`, `pendingResolveKey(entries)`, `packQtyForTaps(taps, unitsPerBox?)` (built on `normalizeBoxesPieces`). `src/index.ts` adds `export * from "./pending-unit"`. Pin: `src/pending-unit.spec.ts`. Mobile consumers: `mobile/landing-2026-10-01-w12-w27.md`.
+
+### `@routeflow/types`
+
+- `api/credit-notes.ts` (#2801, #2864) — NEW: `CreditNoteVoidPreview{refusal, refusalCode: CreditNoteErrorCode|null, restoresTotal, invoices[]}`, `ReissueCreditNoteInput{amount, items?, reason?, expiresAt?}`, `ReissueCreditNoteResult<T>{voided, creditNote, unapplied[]}`.
+- `api/error-codes.ts` (#2864, #2878, #2876, #2920) — +13 `CREDIT_NOTE_*` codes and `CREDIT_NOTE_ERROR_CODES`/`CreditNoteErrorCode` (closed set; UI maps to fixed copy), `RETURN_REFUND_OVER_LINE_HEADROOM`, `CUSTOMER_NOT_LINKED`, `BILL_STATE_CHANGED`, `BILL_VOID`.
+- `api/preferences.ts` (#2792, #2866) — NEW: `PREF` const, `PREFERENCE_KEYS`, `PreferenceKey`, `PreferencePatch` (the one allow-list for `PATCH /users/me/preferences`; +`staffOrderEmail`, `staffBuyerChangeEmail`).
+- `api/settings-registry.ts` (#2866) — NEW: `SettingHome/Kind/Status`, `SettingRow`, `SETTINGS_REGISTRY`, `LEGACY_SYSTEM_CONFIG_BEHAVIOUR(_KEYS)`, `CREDIT_LIMIT_MOVING_KEYS`, `OFF_HUB_SCREENS`, `isRegisteredSettingKey`, `validateSettingsRegistry`.
+- `api/purchase-orders.ts` (#2898) — +`PurchaseOrderReceipt{kind: "RECEIPT"|"REVERSAL", ...}`, `PurchaseOrderBillLink` (PO detail page).
+- `api/products.ts` (#2764) — +`ScanMatchView{code, levels: PackagingLevel[]}` (additive on the scan-lookup response). `api/enums.ts` (#2765) — +`HANDOFF_REALM_VALUES`/`HandoffRealm`.
+- `internal-email.ts` (#2873) — NEW: `isInternalEmail` (unwraps `Name <x@y>` recipients), `NO_EMAIL_COPY`, `displayEmail`; web `lib/formatting.ts` and mobile `lib/internal-email.ts` re-export it.
+- `index.ts` — +re-exports of internal-email, purchase-orders, credit-notes, preferences, settings-registry.
+
+- `api/error-codes.ts` (#2975, `49f9f8aa1`): +`API_ERROR_CODES.TEXT_CELL_FORMULA_LEAD`, the `body.code` of the 400 a customer / tenant NAME write answers when the name starts with a formula lead (B956); `body.field` names the field (`businessName`, `contactName`, `displayName`); clients show fixed copy with a human field label, never the server message. Mirrors `apps/api/src/common/api-error-codes.ts`; pinned by `apps/api/src/common/api-error-codes-parity.spec.ts`.
+
+- `api/error-codes.ts` (#3029 B982, `c994e7803`): +25 codes the API threw as hand-typed literals (`PLAN_GATE`, `PLAN_GATE_UNAVAILABLE`, `READ_ONLY`, `INSUFFICIENT_STOCK`, the `INLINE_RETURN_*` family, `UNIT_AWARE_LINE`, `MERGE_PACK_MISMATCH`, `ORDER_CHANGED_DURING_EDIT`, `CONCURRENT_UPDATE`, `MERGE_IN_PROGRESS`, `LOCK_UNAVAILABLE`, `PO_ALREADY_BILLED`, `BILL_EXCEEDS_PO`, `INVOICE_HAS_UNSPENT_CREDIT`, `HANDOFF_CODE_INVALID`; value == key) and the exported `PLAN_GATE_FLAG_KEYS` (`METER_CUSTOMERS`, the `flag` of a count-gating PLAN_GATE body, not an error code). `READ_ONLY` is also a tenant status value. Pin: `apps/api/src/common/api-error-codes-parity.spec.ts`.
+
+- `api/error-codes.ts` (#3051 B987-A, `ccf10b1dd`): +21 codes (value == key): the change-request family (`CHANGE_REQUEST_*`, `CHANGE_WINDOW_CLOSED`, `EDIT_WINDOW_OPEN`, `INVALID_LINE_SPLIT`, `INVALID_RESOLUTION_FOR_TYPE`, `LINE_PACK_UNDERIVABLE`), order guards (`LINE_ALREADY_DELIVERED`, `ORDER_BELOW_RETURN_CREDIT`, `CREDIT_LIMIT_EXCEEDED`, `MERGE_CHOICE_REQUIRED`, `SOURCE_LINE_AMBIGUOUS`, `SOURCE_LINE_INVALID`, `UNIT_AWARE_LINE_UNVERIFIABLE`, `UNIT_NOT_OFFERED`), route dispatch (`FEATURE_MODE`, `RUN_ALREADY_SETTLED`, `STOP_ALREADY_COMPLETED`, `STOP_SKIPPED`) and `SELLING_RESTRICTED` / `SELLING_RESTRICTIONS_NOT_READY`. `SELLING_RESTRICTED` is also a suspension reason value (data). Pin: `apps/api/src/common/api-error-codes-parity.spec.ts`.
+
+- `api/error-codes.ts` (#3053 B987-B, `b7ed4206d`): +15 codes (value == key): `PO_LINK_CONFLICT`, `PO_LINK_BROKEN`, `SCAN_ALREADY_POSTED`, `AI_KEY_INVALID`, `AI_SCAN_REJECTED`, `AI_UNAVAILABLE`, `AI_PARSE_FAILED`, `INSUFFICIENT_UNASSIGNED`, `PO_LOT_PARTIALLY_CONSUMED`, `PO_HAS_LINKED_BILL`, `INVENTORY_LEDGER_GAP`, `ALLOCATIONS_EXCEED_PAYMENT`, `INVOICE_CHANGED_DURING_EDIT`, `EMAIL_NOT_CONFIGURED`, `EMAIL_SEND_FAILED`. Pin: `apps/api/src/common/api-error-codes-parity.spec.ts`.
+
+- `api/error-codes.ts` + `api/finance.ts` (#3058 B987-C, `8a0740d63`): `error-codes.ts` +26 codes (value == key): billing (`ADDON_DEFAULT_GRANTED`, `EXPIRES_AT_MUST_BE_FUTURE`, `FEATURE_KEY_UNKNOWN`, `FEATURE_MODE_REQUIRES`, `FEATURE_REQUIRES_UNMET`, `PLAN_CHANGED_DURING_SUBSCRIBE`), `FEATURES_UNAVAILABLE`, `HANDOFF_NOT_CONFIGURED`, `HANDOFF_ROLE_NOT_ALLOWED`, `REGULATED_AUTH_REQUIRED`, `WALLET_LOCK_BUSY`, `PROMOTION_ZERO_PRICE`, `UNEXPLAINED_DIFFS` and the `INTAKE_*` / `ONBOARDING_*` case and intake refusals. `finance.ts`: the AI scan-failure code union is now derived from `typeof API_ERROR_CODES.AI_KEY_INVALID | AI_SCAN_REJECTED | AI_UNAVAILABLE | AI_PARSE_FAILED` instead of string literals. `ONBOARDING_STEP_WAIVED` is also an audit action key (data). Pin: `apps/api/src/common/api-error-codes-parity.spec.ts`.
+
+- **`@routeflow/types` enums and policy contract (#2855 `0544b5329`, #2889 `d08796736`):** `api/enums.ts` adds `EMAIL_DELIVERY_STATUS_VALUES` (+ `EmailDeliveryStatus`) and `POLICY_SCOPE_TYPE_VALUES` (+ `PolicyScopeTypeValue`), pinned to the Prisma enums by `apps/api/src/common/enum-parity.spec.ts`. New `api/policies.ts` (barrel-exported from `index.ts`): `PolicyKindValue`, `PolicyJsonValue`, `PolicyValueRow`, `PolicyDescriptor`, `PoliciesResponse`, `SetPolicyRequest`, `ClearPolicyRequest`, `PolicyWriteResponse`, `PolicyHistoryResponse` (the `/policies` wire shapes). `api/features.ts` documents that the features `modes` map also carries the TENANT-scope effective policy values.
+
+- **`@routeflow/types` product reuse and family contracts (#2860 `f4b21744d`, #2881 `29a9b2fbb`):** `api/error-codes.ts` adds `CODE_TAKEN`, `NAME_TAKEN`, `HOLDERS_CHANGED`, `CODES_CHANGED`, `CATALOG_TOO_LARGE_FOR_CLEAR_ALL`, `FAMILY_NOT_SELLABLE`, `FAMILY_ROWS_CONFLICT`, `FAMILY_NOT_FOUND`, `FAMILY_COPY_PRICE_REQUIRED`. `api/products.ts` adds `ProductReactivationHolder`, `ProductCodeTakenError`, `ProductNameTakenError`, `ProductHoldersChangedError` (reuse 409 bodies) and `FamilyVariantInput`, `CreateFamilyRequest`, `FamilyRowConflict`, `FamilyRowsConflictError`, `FamilyNotSellableError`, `UpdateFamilyVariantsRequest` (families API).
+
+- **`@routeflow/types` email delivery and staff order-email contracts (#2872 `c1bcc7c32`):** new `api/messaging-delivery.ts` (`DELIVERY_FIX_KEY_VALUES`/`DeliveryFixKey`, `EMAIL_KIND_VALUES`/`EmailKind`, `DeliveryRow`, `DeliveryList`, `DeliveryHealth`) and `api/staff-order-email.ts` (`STAFF_ORDER_EMAIL_MODE_VALUES`/`StaffOrderEmailMode`, `STAFF_CC_MAX`, `StaffEmailSettings`, `UpdateStaffEmailSettingsRequest`, `STAFF_CC_INVALID_REASON_VALUES`, `StaffCcInvalidDetails`), both re-exported from `index.ts`; `api/settings-registry.ts` registers `notifications.staffCc`; `api/error-codes.ts` adds `STAFF_CC_INVALID`, `TENANT_CONTEXT_REQUIRED`.
+
+- **`@routeflow/types` inventory settings contract (#2927 `3abca2a46`):** new `api/inventory-settings.ts` (re-exported from `index.ts`): `INVENTORY_BUYER_OVERSELL_MODES = ["off","backorder"] as const`, `InventoryBuyerOversellMode`, `InventorySettings{buyerOversell, customerOverrides}`, `UpdateInventorySettingsRequest{buyerOversell, reason?}`. The API keeps its own literal list (`BUYER_OVERSELL_MODES` in `policy/policy-registry.ts`). `api/error-codes.ts` adds `INVENTORY_SETTING_INVALID` (the 400 of `PATCH /settings/inventory`, `details.field` names the field), mirroring `apps/api/src/common/api-error-codes.ts`; pinned by `apps/api/src/common/api-error-codes-parity.spec.ts`.
+
+
+- **`@routeflow/types` money/POD/parked-reversal codes and one warning-code list (#3068 B987-D, `01b7eaa52`):** `api/error-codes.ts` +`MONEY_INVARIANT`, `PARKED_REVERSALS_UNRESOLVED`, `PARKED_REVERSAL_UNRESOLVABLE`, `REGULATED_POD_REQUIRED` (value == key; pricing's `MoneyInvariantError` keeps its own literal because pricing may not value-import this package). `api/regulated.ts`: `RegulatedReportWarningCode` is now derived from the new exported `REGULATED_REPORT_WARNING_CODES` const (adds `PARKED_REVERSALS`, which the API already sent), pinned to the API's `REPORT_WARNING_CODES` by `apps/api/src/regulated/report-warning-codes-parity.spec.ts`. `api/onboarding.ts`, `api/products.ts`, `api/restrictions.ts` replace string-literal `code`/`reason` types and the ONBOARDING/INTAKE code arrays with `API_ERROR_CODES.*` (`typeof API_ERROR_CODES.X` in types; `onboarding.ts` imports it as a value), no wire change.
+
+### `@routeflow/ui`
+
+- `src/shell-handoff.ts` (#2765, #2653) — NEW, exported as `@routeflow/ui/shell-handoff`: `HANDOFF_ENTRY_PATH="/handoff"`, `HandoffWebRealm`, `HANDOFF_MINT_PATH`, `HANDOFF_EXCHANGE_PATH`, `HANDOFF_DEVICE_ID`, `buildHandoffFragment({code, realm, seller?})`, `parseHandoffLocation(hash, search)` -> `ParsedHandoff` (code only in the URL fragment).
+- `src/shell-bridge.ts` (#2793) — +`SHELL_UA_PATTERN` (regex source shared with the web pre-paint head script); `isShellUserAgent` uses it.
+- `src/web/ScrollShadow.tsx` (#2876) — NEW `ScrollShadow({...}: ScrollShadowProps)`; `Table.tsx` now wraps its scroller in it; both exported from `web/index.ts`.
+
+## Landed 2026-10-04 (window 1)
+
+### `@routeflow/types`
+
+- `api/fulfilment.ts` (#3188) — NEW: `FULFILMENT_MODE_VALUES`/`FulfilmentMode`, `COUNTER_SALES_MODE_VALUES`/`CounterSalesMode`, `FulfilmentMethod`, `FulfilmentCapability`, `TenantCapabilities`; `api/features.ts` imports `TenantCapabilities` for the `capabilities` field of the effective-features response; `api/error-codes.ts` +`FULFILMENT_MODE_NEEDS_FLEET`.
+- `api/price-history.ts` (#3192) — NEW: `PriceHistorySource`, `PriceHistoryRow`, `PriceHistorySummary`, `PriceHistoryResponse`. Both files are re-exported from `index.ts`.
+
+## Landed 2026-10-05 (window 6)
+
+### `@routeflow/types`
+
+- `api/profiles.ts` (#3199) — NEW: `BUSINESS_PROFILE_KEYS`/`BusinessProfileKey`, `BusinessProfileSummary`, `BusinessProfileListResponse`, `BusinessProfilePlan`, `ApplyBusinessProfileRequest`, `ConfirmBusinessProfileRequest` (adds `planFingerprint`), `BusinessProfilePreviewResponse` (extends `FeaturePreviewResponse`), `BusinessProfileApplyResponse`; re-exported from `index.ts`.
+- `api/fulfilment.ts` (#3199) — +`FLEET_MODULE_KEYS` (for the web's setup copy; the api keeps its own `FLEET_KEYS` literal, pinned by `fleet-keys-parity.spec.ts`).
+- `api/error-codes.ts` — +`PRICE_ADJUSTMENT_PARTIAL` (#3161) and +`BUSINESS_PROFILE_UNKNOWN`, `BUSINESS_PROFILE_UNAVAILABLE`, `BUSINESS_PROFILE_BILLING_FAILED`, `PROFILE_PLAN_CHANGED` (#3199); mirrored in `apps/mobile/__tests__/__mocks__/@routeflow/types.js`.
+- `api/error-codes.ts` — +`ADDON_ANNUAL_NOT_SUPPORTED`, `ADDON_INCLUDED_IN_PLAN`, `ADDON_BILLING_PENDING_CHECKOUT` (#3129); +`ORDER_WITH_CARRIER_NO_REDUCE`, `INVOICE_WITH_CARRIER_NO_LINE_CHANGE` (#3219); both batches mirrored in the mobile types mock.
+- `api/order-cancel.ts` (#3219) — NEW: `OrderCancelBlockedReason` (`"WITH_CARRIER"`), `OrderCancelBlockedField`; re-exported from `index.ts`.
+- `api/error-codes.ts` + `api/invoices.ts` (#3225) — +`PRICE_ADJUSTMENT_OVERPAYS`, `PRICE_ADJUSTMENT_REFUSED` (mirrored in the mobile types mock); `invoices.ts` +`PriceAdjustmentOverpaidInvoice`, `PriceAdjustmentOverpaysBody`, `PriceAdjustmentPartialBody` (`applied`, one of `refused` / `syncFailed`, `skipped`). Used by `invoices/price-adjustment-ledger.ts` and web `lib/price-adjustment-failure.ts`.
+
+## Landed 2026-10-06 (windows 4 to 10)
+
+### `@routeflow/types`
+
+- `api/error-codes.ts` — +`FULFIL_METHOD_NOT_OFFERED` (#3210, :242), +`ORDER_INVOICES_NEED_REVIEW` (#3216, :172, with a doc comment at :19), +`ADDON_COMP_MANAGED_BY_SUPPORT` and `ADDON_UNCOMP_STRIPE_UNAVAILABLE` (#3231, :299-300), +`ORDER_WITH_CARRIER_NO_CHANGE_REQUEST` (#3238, :246); each mirrored in `apps/api/src/common/api-error-codes.ts` (parity spec) and in the mobile types mock.
+- `api/fulfilment.ts` (#3210) — +`UNSET_FULFILMENT_CAPABILITIES` (:57): the ONE copy of "no fulfilment mode set" (ROUTE and SHIP offered, `staffDefault` ROUTE, `fleet` true); the API's `deriveFulfilmentCapability` is pinned to it and the web's unset check reads it.
+- `api/orders.ts` (#3233) — +`OrderInvoicesNeedReview` (:37): `{ flagged, reason?, flaggedAtStop?: { by, at } }`, a STAFF-ONLY field of `GET /orders/:id`; web `lib/api/orders.ts` `Order.invoicesNeedReview`.
+- `api/order-suggestions.ts` (#3218) — NEW: `OrderSuggestionProduct`, `UsuallyBuysItem`, `RecentOrderLine`, `RecentOrderSummary`, `OrderSuggestionsResponse`; re-exported from `index.ts` (:176). No price field by design.
+- `api/billing.ts` (#3224) — +`AddonBillingMode` (`"STRIPE" | "MANUAL" | "UNBILLED"`, a type only) and `EnableAddonResult` (`proratedNow`, `billing`, `subscription`); the API aliases `AddonBilling` with `import type` only (L-261).
+
+## Landed 2026-10-06 (window 12 and pending)
+
+- `api/ship-state.ts` (#3223) — NEW: `SHIPPED_ORDER_STATUSES`, `ShippedOrderStatus`, `isShippedOrderStatus(status)`; re-exported from `index.ts`; pinned to the api's shipped statuses by `orders/shipped-statuses-parity.spec.ts`.
+- `api/buyer.ts` (#3235, B1122) — NEW `BuyerInvoiceListItem` (`total`, `balanceDue`, `paidAmount`, `creditApplied`, `advanceApplied`, `isOverdue`, `customer`); contract spec `buyer/buyer-shared-types.contract.spec.ts`.
+- `api/error-codes.ts` (#3226) — +`ADDON_CHECKOUT_ITEM_UNREADABLE`, `ADDON_CHECKOUT_ITEM_MISSING`; `api/billing.ts` addon rows gain optional `trial` (the add-on runs free on the trial, billed when the card is added).
+
+## Landed 2026-10-06 (windows 13 to 16)
+
+- `api/fulfilment.ts` (#3200) — NEW `BuyerSellerCapability` (a `Pick` of the seller capability; the `GET /buyer/capabilities` payload).
+- `api/counter-sale.ts` (#3211) — NEW `COUNTER_SALE_PAYMENT_METHOD_VALUES`, `CounterSalePaymentMethod`, `CounterSaleItem`, `CounterSalePayment`, `CounterSaleRequest`, `CounterSaleResponse`; re-exported from `index.ts`. `api/routes.ts` gains the pickup-stop fields.
+- `api/error-codes.ts` (#3211, #3244) — +`ORDER_WITH_CARRIER_NO_ADD`; counter-sale family `COUNTER_SALES_DISABLED`, `COUNTER_TENDER_SHORT`, `COUNTER_CHECK_NUMBER_REQUIRED`, `COUNTER_PAYMENT_EXCEEDS_TOTAL`, `COUNTER_PAYMENT_NOT_RECORDED`, `COUNTER_SALE_{ORDER_CHANGED,KEY_CONFLICT,NOT_FOUND,INCOMPLETE,VOIDED,CHANGED,METHOD_INVALID}`, the `WALK_IN_*` codes, and `IDEMPOTENCY_KEY_{OTHER_ORDER,CART_MISMATCH,REQUIRED}`. API literals are pinned by the parity spec (L-261).
+
+## Landed 2026-10-06 (W16 train)
+
+- `api/counter-sale.ts` (#3239) — pickup-complete request and response types added beside the #3211 counter-sale ones.
+- `api/error-codes.ts` (#3250, #3239) — batch-ship and pickup-complete codes added (API literals pinned by the parity spec, L-261).
+- `api/orders.ts` (#3250) — batch-ship and packing-slip request and result types.
+- `api/buyer.ts` (#3215) — buyer response shapes narrowed to the customer-facing fields.
+
+## Landed 2026-10-07 (W17)
+
+- `api/error-codes.ts` (#3256) — `IDEMPOTENCY_KEY_DRAFT_MISMATCH` added (API literal pinned by the parity spec, `master b22689aa8`).

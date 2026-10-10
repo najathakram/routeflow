@@ -16,9 +16,10 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "http://192.168.4.25:3000",
+        "EXPO_PUBLIC_WEB_URL": "http://192.168.4.25:3001",
+        "EXPO_PUBLIC_WEB_SHELL": "on",
         "HUSKY": "0",
-        "npm_config_engine_strict": "false",
-        "NODE_PATH": "/home/expo/workingdir/build/apps/mobile/node_modules"
+        "npm_config_engine_strict": "false"
       },
       "node": "24.14.0"
     },
@@ -29,9 +30,10 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "http://192.168.4.25:3000",
+        "EXPO_PUBLIC_WEB_URL": "http://192.168.4.25:3001",
+        "EXPO_PUBLIC_WEB_SHELL": "on",
         "HUSKY": "0",
-        "npm_config_engine_strict": "false",
-        "NODE_PATH": "/home/expo/workingdir/build/apps/mobile/node_modules"
+        "npm_config_engine_strict": "false"
       },
       "node": "24.14.0"
     },
@@ -42,9 +44,10 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://routeflowapi-production.up.railway.app",
+        "EXPO_PUBLIC_WEB_URL": "https://www.routeflow.info",
+        "EXPO_PUBLIC_WEB_SHELL": "on",
         "HUSKY": "0",
-        "npm_config_engine_strict": "false",
-        "NODE_PATH": "/home/expo/workingdir/build/apps/mobile/node_modules"
+        "npm_config_engine_strict": "false"
       },
       "node": "24.14.0",
       "channel": "staging"
@@ -53,15 +56,21 @@
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_API_URL": "https://routeflowapi-production.up.railway.app",
+        "EXPO_PUBLIC_WEB_URL": "https://www.routeflow.info",
+        "EXPO_PUBLIC_WEB_SHELL": "on",
         "HUSKY": "0",
-        "npm_config_engine_strict": "false",
-        "NODE_PATH": "/home/expo/workingdir/build/apps/mobile/node_modules"
+        "npm_config_engine_strict": "false"
       },
       "node": "24.14.0",
       "channel": "production"
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "android": {
+        "serviceAccountKeyPath": "./secrets/google-play-service-account.json",
+        "track": "internal"
+      }
+    }
   }
 }

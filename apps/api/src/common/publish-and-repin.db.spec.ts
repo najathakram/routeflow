@@ -7,24 +7,40 @@
  * `--apply --live` is a no-op, that every refusal path writes nothing, and that no PII reaches
  * stdout.
  *
- * Two fixture tenants, both pinned directly to a throwaway PlanVersion this spec seeds (no
+ * Fixture tenants, all pinned directly to a throwaway DRAFT PlanVersion this spec seeds (no
  * TenantSubscription row needed — Tenant.plan alone resolves via planKeyFromEnum, which
- * identity-maps SCALE/LITE). Every case runs under the SCRIPT'S DEFAULT (--plan-flag-enforcement
+ * identity-maps STARTER/SCALE/LITE). Every case runs under the SCRIPT'S DEFAULT (--plan-flag-enforcement
  * defaults to "off" — the real, current production value per
  * project_entitlements_one_rule_2026-09-17.md: the 2026-09-17 P0 was the ON flip, reverted the
- * same morning and never re-enabled), matching what a real prod run actually computes:
- *   - the "loss" tenant: SCALE, whose plan definition matches feature-fixtures.ts's
- *     V11_PIN_FIXTURE (flag.msrp/flag.sales_agents/flag.reports/flag.returns only), no addons.
- *     EXPECTED_LOSS_KEYS (15, shown by --report): while enforcement is off, the legacy dark-flag
- *     courtesy allow is NOT limited to PREPIN_DARK_FLAGS — it covers all 13 DARK_PLAN_FLAGS keys,
- *     11 of which this tenant's plan doesn't already hold; the 3 RequireAddon-dark keys with no
- *     active addon — ocr/crm_gohighlevel/email.connected_mailbox (a SEPARATE courtesy mechanism,
- *     addon-gate state, which has no env kill switch at all and is unaffected by
- *     PLAN_FLAG_ENFORCEMENT); and flag.credit_limits (see below). EXPECTED_APPLICABLE_LOSS_KEYS
- *     (12 = 15 − 3): what --apply actually WRITES by default — it excludes the 3
- *     addon-gate-courtesy keys, because a permanent blanket GRANT would defeat those add-ons' own,
- *     separate, still-in-progress rollout process (design.md: "addon-gate-registry ... left
- *     alone, not an entitlement source").
+ * same morning and never re-enabled), matching what a real prod run actually computes.
+ *
+ * #2700 (SA-559b, "flags gain forward"): because the pin is a non-PUBLISHED version, the script
+ * resolves each tenant's flags as the pinned definition's ∪ the PUBLISHED same-plan definition's.
+ * The published catalog here is the real v12 (a fresh DB: ensurePublishedBaseline publishes it)
+ * or v13 (a seeded DB: `local:seed` publishes it). v13 differs from v12 ONLY in LITE's flags, so
+ * the published STARTER and SCALE are identical on both, and every expected set below is the SAME
+ * on a fresh and a seeded database (SA-559h). Derivation, for the reader; the counts are asserted:
+ *   - published STARTER = flag.returns + v12's five (estimates, recurring_invoices, credit_notes,
+ *     suppliers, messaging); published SCALE additionally carries every other DARK_PLAN_FLAGS key
+ *     and flag.credit_limits.
+ *   - the "loss" tenant (and the later "keys" tenant): STARTER, pinned to flag.msrp/
+ *     flag.sales_agents/flag.reports — deliberately WITHOUT flag.returns — no addons.
+ *     Without the union it would show 16 losses (the 13 DARK_PLAN_FLAGS keys minus flag.reports,
+ *     i.e. 12, + flag.credit_limits + the 3 addon-gate keys); the union removes the six the
+ *     published STARTER carries (flag.returns among them — the no-false-loss pin), leaving EXPECTED_LOSS_KEYS (10): analytics, ap_bills,
+ *     import_integrations, forecasting, pricing_tiers, addon.buyer_portal, flag.credit_limits
+ *     (see the zero tenant below), and the 3 RequireAddon-dark keys with no active addon —
+ *     ocr/crm_gohighlevel/email.connected_mailbox (a SEPARATE courtesy mechanism, addon-gate state,
+ *     which has no env kill switch at all and is unaffected by PLAN_FLAG_ENFORCEMENT). Each of the
+ *     10 is absent from BOTH the pinned and the published STARTER definition: a REAL loss.
+ *     EXPECTED_APPLICABLE_LOSS_KEYS (7 = 10 − 3): what --apply actually WRITES by default — it
+ *     excludes the 3 addon-gate-courtesy keys, because a permanent blanket GRANT would defeat those
+ *     add-ons' own, separate, still-in-progress rollout process (design.md: "addon-gate-registry
+ *     ... left alone, not an entitlement source").
+ *   - the "scale" tenant (D1b): SCALE, pinned to feature-fixtures.ts's V11_PIN_FIXTURE flags
+ *     (flag.msrp/flag.sales_agents/flag.reports/flag.returns). Before the union it showed the same
+ *     15 losses the loss tenant used to; the published SCALE carries all 12 plan-flag keys among
+ *     them, so it now shows ONLY the 3 addon-gate keys — the false losses SA-559b removes.
  *   - the "zero" tenant: LITE (always-enforced — feature-fixtures.ts's LITE_FIXTURE), plus
  *     flag.credit_limits ADDED to its plan definition. LITE alone would still show exactly one
  *     loss while enforcement is off: orders.service.ts's real isCreditLimitCheckEnabled() returns
@@ -34,18 +50,23 @@
  *     explicitly closes that one exception too, so it is a genuine zero-loss tenant — "a fixture
  *     tenant whose access is fully explained by preset/grants" in the literal, no-exceptions sense.
  *
- * The whole-database report/apply totals are NOT asserted exactly — a shared compose database may
- * carry other PRODUCTION-class tenants (the seeded `test` tenant, at minimum). Every assertion
- * instead keys off this spec's own tenants by their redacted `#<ordinal> (<8-hex hash>)` tag,
- * computed here with the SAME sha256 the script uses, and read `n`/count values back from the
- * tool's own preceding output rather than hard-coding them (same principle
- * backfill-legacy-tenant-ids.db.spec.ts uses for its BACKFILL <n> ROWS phrase).
+ * B824: every CLI call this file makes is scoped with `--only-tenants` (runCli's own doc comment)
+ * to exactly this spec's own (up to 4) fixture tenants, so the report/apply totals below are this
+ * spec's totals, full stop — not a whole-database scan filtered after the fact. Before this fix, a
+ * shared compose database's OTHER PRODUCTION-class tenants (sibling `*.db.spec.ts` files' own
+ * fixtures, at minimum) could tip `--only-test-tenants`'s refusal or receive/contribute writes
+ * from an unscoped `--apply --live`; every assertion still additionally keys off this spec's own
+ * tenants by their redacted `#<ordinal> (<8-hex hash>)` tag (computed here with the SAME sha256
+ * the script uses) as defense in depth, and reads `n`/count values back from the tool's own
+ * preceding output rather than hard-coding them (same principle backfill-legacy-tenant-ids.db.spec.ts
+ * uses for its BACKFILL <n> ROWS phrase).
  *
- * SAFETY. Every row this file creates lives inside two throwaway `e2e-pr0b-*` tenants
- * (assertTestTenant) plus one fixture PlanVersion/PlanDefinition pair; teardown deletes exactly
- * those, in FK order. `--apply --live` here always passes --only-test-tenants, so a compose
- * database carrying any OTHER non-test-tenant PRODUCTION row with a loss fails this spec (exit 3,
- * offending slug printed) instead of silently granting something.
+ * SAFETY. Every row this file creates lives inside four throwaway `qa-pr0b-*` tenants
+ * (assertTestTenant) plus one fixture DRAFT PlanVersion and its three PlanDefinitions; teardown
+ * deletes exactly those, in FK order. No PUBLISHED PlanVersion is ever demoted or modified (SA-559h). `--apply --live` here always passes --only-test-tenants too, so even if the
+ * `--only-tenants` scope above were ever widened by mistake, an offending non-test-tenant row with
+ * a loss still fails this spec (exit 3, offending slug printed) instead of silently granting
+ * something.
  *
  * Collected only by jest.db.config.js (`.db.spec.ts$`) — run via `npm run local:test:db`.
  */
@@ -65,58 +86,68 @@ const API_DIR = path.resolve(__dirname, "../..");
 const CLI = path.resolve(API_DIR, "scripts/publish-and-repin.mjs");
 
 const RUN_SUFFIX = randomUUID().slice(0, 8);
-const ID_PREFIX = `e2e-pr0b-${RUN_SUFFIX}-`;
+const ID_PREFIX = `qa-pr0b-${RUN_SUFFIX}-`;
 
 const TENANT_LOSS_ID = `${ID_PREFIX}tenant-loss`;
 const TENANT_LOSS_SLUG = assertTestTenant(
-  `e2e-pr0b-${RUN_SUFFIX}-loss`,
+  `qa-pr0b-${RUN_SUFFIX}-loss`,
   "publish-and-repin.db.spec.ts",
 );
 const TENANT_ZERO_ID = `${ID_PREFIX}tenant-zero`;
 const TENANT_ZERO_SLUG = assertTestTenant(
-  `e2e-pr0b-${RUN_SUFFIX}-zero`,
+  `qa-pr0b-${RUN_SUFFIX}-zero`,
   "publish-and-repin.db.spec.ts",
 );
 // A THIRD, independent tenant for --include-addon-keys — kept separate from TENANT_LOSS so its
 // exact-override-count assertions (D6/D8/D9) are never disturbed by a key-scoped grant landing
-// mid-sequence. Same SCALE fixture plan def as TENANT_LOSS, so it starts with the identical 3
-// addon-gate-courtesy losses (ocr/crm_gohighlevel/email.connected_mailbox).
+// mid-sequence. Same STARTER fixture plan def as TENANT_LOSS, so it starts with the identical 10
+// losses, the 3 addon-gate-courtesy ones (ocr/crm_gohighlevel/email.connected_mailbox) among them.
 const TENANT_KEYS_ID = `${ID_PREFIX}tenant-keys`;
 const TENANT_KEYS_SLUG = assertTestTenant(
-  `e2e-pr0b-${RUN_SUFFIX}-keys`,
+  `qa-pr0b-${RUN_SUFFIX}-keys`,
   "publish-and-repin.db.spec.ts",
 );
+// A FOURTH tenant for D1b (SA-559b): SCALE, pinned to the V11_PIN_FIXTURE SCALE definition — the
+// shape whose 12 plan-flag "losses" the union shows were never losses.
+const TENANT_SCALE_ID = `${ID_PREFIX}tenant-scale`;
+const TENANT_SCALE_SLUG = assertTestTenant(
+  `qa-pr0b-${RUN_SUFFIX}-scale`,
+  "publish-and-repin.db.spec.ts",
+);
+// B824: every CLI call this file makes is scoped to exactly these 4 slugs (--only-tenants,
+// baked into runCli below) — see runCli's own doc comment for the flake this fixes.
+const ALL_SPEC_SLUGS = [TENANT_LOSS_SLUG, TENANT_ZERO_SLUG, TENANT_KEYS_SLUG, TENANT_SCALE_SLUG];
 const PLAN_VERSION_ID = `${ID_PREFIX}planversion`;
+const PLAN_DEF_STARTER_ID = `${ID_PREFIX}plandef-starter`;
 const PLAN_DEF_SCALE_ID = `${ID_PREFIX}plandef-scale`;
 const PLAN_DEF_LITE_ID = `${ID_PREFIX}plandef-lite`;
 // Wide random range: a numeric PlanVersion.version collision with a concurrent lane is
 // astronomically unlikely, and this row is deleted by id (not by version) in afterAll regardless.
 const VERSION_NUM = 900000 + Math.floor(Math.random() * 90000);
 
+// Deliberately WITHOUT flag.returns: the published STARTER carries it, so it must NOT read as a
+// loss (the no-false-loss pin, SA-559h (4)).
+const STARTER_PINNED_FLAGS = ["flag.msrp", "flag.sales_agents", "flag.reports"];
 const SCALE_FLAGS = ["flag.msrp", "flag.sales_agents", "flag.reports", "flag.returns"];
 const LITE_ZERO_LOSS_FLAGS = ["flag.credit_limits"];
 const ADDON_GATE_COURTESY_KEYS = ["ocr", "crm_gohighlevel", "email.connected_mailbox"];
-// All 15 — what --report shows for the loss tenant (enforcement=off, the script's default).
+// All 10 — what --report shows for the STARTER loss tenant (enforcement=off, the script's
+// default). Each is absent from BOTH the pinned and the published STARTER definition (header).
 const EXPECTED_LOSS_KEYS = [
   "flag.analytics",
   "flag.ap_bills",
   "flag.import_integrations",
   "flag.forecasting",
   "flag.pricing_tiers",
-  "flag.estimates",
-  "flag.recurring_invoices",
-  "flag.credit_notes",
-  "flag.suppliers",
-  "flag.messaging",
   "addon.buyer_portal",
   ...ADDON_GATE_COURTESY_KEYS,
   "flag.credit_limits",
 ].sort();
-// 12 — what --apply actually WRITES by default (excludes the 3 addon-gate-courtesy keys).
+// 7 — what --apply actually WRITES by default (excludes the 3 addon-gate-courtesy keys).
 const EXPECTED_APPLICABLE_LOSS_KEYS = EXPECTED_LOSS_KEYS.filter(
   (k) => !ADDON_GATE_COURTESY_KEYS.includes(k),
 ).sort();
-// N1, owner ruling 2026-09-19: of the 12 applicable keys, these three carry a real billing SKU
+// N1, owner ruling 2026-09-19: of the 7 applicable keys, these three carry a real billing SKU
 // (flag.analytics AND flag.forecasting both -> FORECASTING, addon.buyer_portal -> BUYER_PORTAL)
 // and get a 90-day expiresAt instead of a permanent grant; every other applicable key stays
 // non-expiring. Matches feature-registry-mirror.parity.spec.ts's darkBillablePlanFlagKeys pin.
@@ -132,6 +163,7 @@ function tag(tenantId: string) {
 const HASH_LOSS = tag(TENANT_LOSS_ID);
 const HASH_ZERO = tag(TENANT_ZERO_ID);
 const HASH_KEYS = tag(TENANT_KEYS_ID);
+const HASH_SCALE = tag(TENANT_SCALE_ID);
 
 interface Diff {
   mode: string;
@@ -148,13 +180,35 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
   let db: Client;
   let databaseUrl: string;
 
+  /**
+   * B824: every call this file makes is scoped to exactly this spec's own (up to 3) fixture
+   * tenants via `--only-tenants`, baked in here so no call site can forget it. Before this,
+   * every CLI invocation computed its diff over the WHOLE shared database (every PRODUCTION-class
+   * tenant, `publish-and-repin.mjs`'s own, correct design for a real prod run) — under
+   * `--maxWorkers=2`, sibling `*.db.spec.ts` files seeding their own PRODUCTION-class fixture
+   * tenants made that scan see foreign tenants mid-flight, which could both (a) trip
+   * `--only-test-tenants`'s refusal (exit 3, unretried — see applyLiveWithRetry's doc comment,
+   * which handles a DIFFERENT symptom, a stale whole-database COUNT, not this) on a tenant that
+   * was never ours, and (b) let an unscoped `--apply --live` (D6/D8/D9/K3, via
+   * applyLiveWithRetry, which passes no tenant filter) grant overrides to a concurrent sibling's
+   * own fixture tenant, or have ITS OWN fixture mutated by a sibling's equally-unscoped apply —
+   * three observed occurrences, a different leaked/affected key subset each time, always drawn
+   * from this file's own applicable-loss vocabulary (flag.estimates/forecasting/
+   * import_integrations/messaging/pricing_tiers/recurring_invoices/suppliers), consistent with
+   * cross-contamination between concurrent runs rather than one fixed culprit (B824, diagnosed on
+   * #938). `--only-tenants` (same PR) narrows computeDiff()'s own Tenant query to a slug allowlist
+   * — scoping every call here makes this file's reads and writes fully independent of whatever
+   * else is running against the shared compose database, without serializing the lane. A slug
+   * that doesn't exist yet (TENANT_KEYS, created only after D9) is simply absent from the
+   * scoped result — harmless on the earlier D-numbered calls.
+   */
   function runCli(args: string[], extraEnv: Record<string, string> = {}) {
     const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
     for (const key of Object.keys(env)) {
       if (key.startsWith("RAILWAY_") || key.startsWith("POSTGRES_")) delete env[key];
     }
     env.DATABASE_URL = databaseUrl;
-    return spawnSync(process.execPath, [CLI, ...args], {
+    return spawnSync(process.execPath, [CLI, ...args, "--only-tenants", ALL_SPEC_SLUGS.join(",")], {
       cwd: API_DIR,
       encoding: "utf8",
       env,
@@ -179,21 +233,16 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
   }
 
   /**
-   * D6/D8/D9 confirm a --live apply using a whole-database loss count `n` read from a PRECEDING,
-   * separate CLI invocation's preview, then pass `GRANT ${n} OVERRIDES` to a LATER, separate
-   * `--live` invocation that independently recomputes its own current `n` and compares. On a
-   * quiet database those two reads agree. But `jest.db.config.js` sets no maxWorkers/runInBand,
-   * so this file runs as ONE of many PARALLEL jest workers against the SAME shared Postgres —
-   * several of the other 27 `.db.spec.ts` files seed their own fixture tenants without bothering
-   * to set `Tenant.class` away from its schema default, `'PRODUCTION'`, so this script's
-   * (correct, safe) whole-database scan can see the total shift between the two calls. That is
-   * the confirmation phrase doing exactly its job — refusing to act on a stale count, exit 3,
-   * zero writes — not a bug in the script; a real operator hitting this would just re-run. This
-   * is why a single-file `npx jest publish-and-repin.db.spec.ts` run is 100% stable (no sibling
-   * workers touching the database) while the full `jest --config jest.db.config.js` lane (CI's
-   * "Replay migrations on a fresh database" job runs exactly this) can catch it — a difference in
-   * concurrency the earlier version of this file didn't account for, not in what the script does.
-   * Retries with a fresh preview on a `phrase-mismatch` refusal only; any other refusal reason is
+   * D6/D8/D9/K3 confirm a --live apply using a loss count `n` read from a PRECEDING, separate CLI
+   * invocation's preview, then pass `GRANT ${n} OVERRIDES` to a LATER, separate `--live`
+   * invocation that independently recomputes its own current `n` and compares. Since B824, every
+   * call runCli makes is scoped with `--only-tenants` to exactly this spec's own tenants (see
+   * runCli's doc comment), so a sibling `*.db.spec.ts` file's own fixture tenants — this file runs
+   * as ONE of many PARALLEL jest workers against the SAME shared Postgres (`jest.db.config.js`
+   * sets no maxWorkers/runInBand) — can no longer shift `n` between the two calls. This retry loop
+   * is kept anyway as defense in depth (e.g. two independent CLI round-trips against our own
+   * tenants racing a driver bug would still show up as a mismatch rather than a wrong write) —
+   * retries with a fresh preview on a `phrase-mismatch` refusal only; any other refusal reason is
    * returned immediately rather than masked.
    */
   async function applyLiveWithRetry(
@@ -295,15 +344,34 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
        VALUES ($1, $2, 'LITE', 'Fixture Lite', 200, $3::text[], 1)`,
       [PLAN_DEF_LITE_ID, PLAN_VERSION_ID, LITE_ZERO_LOSS_FLAGS],
     );
+    await db.query(
+      `INSERT INTO "PlanDefinition"
+         ("id", "planVersionId", "planKey", "name", "msgsIncluded", "featureFlags", "sortOrder")
+       VALUES ($1, $2, 'STARTER', 'Fixture Starter', 200, $3::text[], 2)`,
+      [PLAN_DEF_STARTER_ID, PLAN_VERSION_ID, STARTER_PINNED_FLAGS],
+    );
 
-    // The "loss" tenant: SCALE, pinned to the fixture version above — feature-fixtures.ts's
-    // V11_PIN_FIXTURE shape. No addons, no overrides: today's courtesy allow (flag AND addon) is
-    // the ONLY reason any of EXPECTED_LOSS_KEYS would show effective for it.
+    // The "loss" tenant: STARTER, pinned to the fixture DRAFT version above. No addons, no
+    // overrides: today's courtesy allow (flag AND addon) is the ONLY reason any of
+    // EXPECTED_LOSS_KEYS would show effective for it.
+    await db.query(
+      `INSERT INTO "Tenant"
+         ("id", "slug", "name", "status", "plan", "class", "planVersionId", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, 'ACTIVE', 'STARTER'::"TenantPlan", 'PRODUCTION', $4, now(), now())`,
+      [TENANT_LOSS_ID, TENANT_LOSS_SLUG, `PR-0b spec loss tenant ${RUN_SUFFIX}`, PLAN_VERSION_ID],
+    );
+    // The "scale" tenant (D1b): SCALE, pinned to the same DRAFT — feature-fixtures.ts's
+    // V11_PIN_FIXTURE shape.
     await db.query(
       `INSERT INTO "Tenant"
          ("id", "slug", "name", "status", "plan", "class", "planVersionId", "createdAt", "updatedAt")
        VALUES ($1, $2, $3, 'ACTIVE', 'SCALE'::"TenantPlan", 'PRODUCTION', $4, now(), now())`,
-      [TENANT_LOSS_ID, TENANT_LOSS_SLUG, `PR-0b spec loss tenant ${RUN_SUFFIX}`, PLAN_VERSION_ID],
+      [
+        TENANT_SCALE_ID,
+        TENANT_SCALE_SLUG,
+        `PR-0b spec scale tenant ${RUN_SUFFIX}`,
+        PLAN_VERSION_ID,
+      ],
     );
     // The "zero" tenant: LITE (always-enforced) — feature-fixtures.ts's LITE_FIXTURE shape.
     await db.query(
@@ -316,10 +384,9 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
 
   afterAll(async () => {
     if (!db) return;
-    await db.query('DELETE FROM "TenantFeatureOverride" WHERE "tenantId" = ANY($1)', [
-      [TENANT_LOSS_ID, TENANT_ZERO_ID],
-    ]);
-    await db.query('DELETE FROM "Tenant" WHERE "id" = ANY($1)', [[TENANT_LOSS_ID, TENANT_ZERO_ID]]);
+    const specTenants = [TENANT_LOSS_ID, TENANT_ZERO_ID, TENANT_SCALE_ID];
+    await db.query('DELETE FROM "TenantFeatureOverride" WHERE "tenantId" = ANY($1)', [specTenants]);
+    await db.query('DELETE FROM "Tenant" WHERE "id" = ANY($1)', [specTenants]);
     await db.query('DELETE FROM "PlanDefinition" WHERE "planVersionId" = $1', [PLAN_VERSION_ID]);
     await db.query('DELETE FROM "PlanVersion" WHERE "id" = $1', [PLAN_VERSION_ID]);
     if (baselineVersion !== null) {
@@ -336,7 +403,7 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     await db.end();
   }, 120_000);
 
-  it("D1 --report: the loss tenant shows all 15 EXPECTED_LOSS_KEYS as LOSSES; the zero tenant shows none", () => {
+  it("D1 --report: the STARTER loss tenant shows exactly the 10 EXPECTED_LOSS_KEYS (7 applicable) as LOSSES — flag.returns is NOT one; the zero tenant shows none", async () => {
     const report = runReportJson();
     // the default — matches the real, current production value (see the file header)
     expect(report.planFlagEnforcementAssumed).toBe("off");
@@ -345,7 +412,26 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
       .filter((l) => l.tenant.includes(HASH_LOSS))
       .map((l) => l.key)
       .sort();
+    expect(EXPECTED_LOSS_KEYS).toHaveLength(10);
+    expect(EXPECTED_APPLICABLE_LOSS_KEYS).toHaveLength(7);
     expect(ourLosses).toEqual(EXPECTED_LOSS_KEYS);
+
+    // SA-559h (4), the DB-level no-false-loss pin: the tenant's PINNED (DRAFT) STARTER definition
+    // lacks flag.returns — read back from the database, not assumed — while the PUBLISHED STARTER
+    // carries it, so flags-gain-forward explains it and it is NOT a loss. Without the union this
+    // key reads as a loss (flag.returns is a DARK_PLAN_FLAGS courtesy key).
+    const pinned = await db.query(`SELECT "featureFlags" FROM "PlanDefinition" WHERE "id" = $1`, [
+      PLAN_DEF_STARTER_ID,
+    ]);
+    expect(pinned.rows[0].featureFlags).not.toContain("flag.returns");
+    const published = await db.query(
+      `SELECT d."featureFlags" FROM "PlanDefinition" d
+         JOIN "PlanVersion" v ON v."id" = d."planVersionId"
+        WHERE v."status" = 'PUBLISHED' AND d."planKey" = 'STARTER'`,
+    );
+    expect(published.rowCount).toBe(1);
+    expect(published.rows[0].featureFlags).toContain("flag.returns");
+    expect(ourLosses).not.toContain("flag.returns");
     // every addon-gate-courtesy loss is labeled as such (report shows the FULL set — the
     // apply-time exclusion is a write-path decision, not a report-time one)
     const addonGateLosses = report.losses.filter(
@@ -357,7 +443,14 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     expect(zeroLosses).toEqual([]);
   });
 
-  it("D2 --apply preview (no --live): shows the same 15 losses (unfiltered), writes nothing", async () => {
+  it("D1b --report (SA-559b): the SCALE tenant pinned to the V11_PIN_FIXTURE shape shows EXACTLY the 3 addon-gate keys and no plan flag — the published SCALE carries the other 12, so they are not losses", () => {
+    const report = runReportJson();
+    const scaleLosses = report.losses.filter((l) => l.tenant.includes(HASH_SCALE));
+    expect(scaleLosses.map((l) => l.key).sort()).toEqual([...ADDON_GATE_COURTESY_KEYS].sort());
+    expect(scaleLosses.every((l) => l.mechanism === "addon-gate-courtesy")).toBe(true);
+  });
+
+  it("D2 --apply preview (no --live): shows the same 10 losses (unfiltered), writes nothing", async () => {
     const preview = runJson(["--apply"]);
     const ourLosses = preview.losses
       .filter((l) => l.tenant.includes(HASH_LOSS))
@@ -370,8 +463,8 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
   });
 
   it("D2b no PII: neither tenant's slug or name reaches stdout, in prose or --json, for report or apply preview", () => {
-    // Runs here, BEFORE D6 applies our grants — our tenant has its full 15 losses at this point,
-    // 12 of which appear in --apply's "WOULD GRANT" section and 3 (addon-gate-courtesy) in its
+    // Runs here, BEFORE D6 applies our grants — our tenant has its full 10 losses at this point,
+    // 7 of which appear in --apply's "WOULD GRANT" section and 3 (addon-gate-courtesy) in its
     // separate "EXCLUDED" section, which is what makes the "the redacted tag IS expected to
     // appear" check below meaningful for the --apply preview calls too.
     const proseReport = runCli(["--report"]);
@@ -425,12 +518,14 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
 
   it("D6 --apply --live with the correct phrase: writes one GRANT/GRANDFATHER override per APPLICABLE loss, excluding addon-gate-courtesy ones", async () => {
     // See applyLiveWithRetry's own doc comment: n is read fresh on each attempt (mirrors
-    // backfill-legacy-tenant-ids.db.spec.ts's "read n from the tool's own output" pattern) and
-    // retried only on a whole-database count drift from a concurrent sibling worker, never
+    // backfill-legacy-tenant-ids.db.spec.ts's "read n from the tool's own output" pattern), never
     // hard-coded. n is the APPLICABLE count (excludedAddonGateLosses subtracted) — what --apply
     // --live actually writes and what the typed confirmation phrase is computed from.
     const { res, n } = await applyLiveWithRetry([]);
-    expect(n).toBeGreaterThanOrEqual(EXPECTED_APPLICABLE_LOSS_KEYS.length); // at least our own 12
+    // SA-559h (5): the GRANT set EQUALS the applicable set — nothing more. Scoped to this spec's
+    // own tenants (B824), n is exactly the loss tenant's 7; the scale and zero tenants have no
+    // applicable loss (the scale tenant's 3 are all addon-gate-courtesy, excluded by default).
+    expect(n).toBe(EXPECTED_APPLICABLE_LOSS_KEYS.length);
     expect(res.status).toBe(0);
     const result = JSON.parse(res.stdout) as Diff;
     expect(result.applied?.inserted).toBe(n);
@@ -460,8 +555,9 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
         expect(row.expiresAt).toBeNull();
       }
     }
-    // the zero tenant received nothing
+    // the zero and scale tenants received nothing
     expect(await activeOverrides(TENANT_ZERO_ID)).toEqual([]);
+    expect(await activeOverrides(TENANT_SCALE_ID)).toEqual([]);
   }, 60_000); // applyLiveWithRetry may spawn up to 8 CLI round-trips under real drift
 
   it("D7 --report after D6: the loss tenant shows ONLY the 3 excluded addon-gate-courtesy keys — --apply's grants explain everything else, but those were deliberately never granted", () => {
@@ -475,9 +571,9 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     expect(zeroLosses).toEqual([]);
   });
 
-  it("D8 --apply --live again: idempotent — inserts nothing new, our tenant's 12 rows are untouched", async () => {
+  it("D8 --apply --live again: idempotent — inserts nothing new, our tenant's 7 rows are untouched", async () => {
     const before = await activeOverrides(TENANT_LOSS_ID);
-    expect(before).toHaveLength(12);
+    expect(before).toHaveLength(EXPECTED_APPLICABLE_LOSS_KEYS.length);
 
     // Check the "nothing to grant" path with its own fresh preview first — a separate read from
     // applyLiveWithRetry's own, so this branch isn't itself racing the preview inside the helper.
@@ -489,9 +585,9 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
       expect(res.status).toBe(0);
       expect(result.applied).toBeNull();
     } else {
-      // Something else in the shared database still shows a loss (not ours) — apply live again
-      // (retrying on a whole-database count drift, see applyLiveWithRetry) and prove OUR rows
-      // specifically are untouched, whatever total n the run reports.
+      // Scoped to our own tenants (B824), previewN should always be 0 here — D6 already granted
+      // everything applicable. Kept as a defensive branch: apply live again and prove OUR rows
+      // specifically are untouched, whatever n this run reports.
       const { res } = await applyLiveWithRetry([]);
       expect(res.status).toBe(0);
     }
@@ -510,7 +606,7 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
       .map((l) => l.key)
       .sort();
     // with --include-addon-gates, nothing is excluded — our tenant now shows exactly the 3
-    // remaining addon-gate keys (the other 12 already have active overrides from D6, so no
+    // remaining addon-gate keys (the other 7 already have active overrides from D6, so no
     // diff remains for them regardless of the flag).
     expect(ourLosses).toEqual([...ADDON_GATE_COURTESY_KEYS].sort());
     expect(preview.excludedAddonGateLosses ?? 0).toBe(0);
@@ -520,12 +616,17 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     // count drift from a concurrent sibling worker's own fixture tenants rather than assuming
     // the count read here would still match a few hundred milliseconds later.
     const { res, n } = await applyLiveWithRetry(["--include-addon-gates"]);
+    // Exactly the 3 addon-gate keys for each of the loss and scale tenants — nothing more.
+    expect(n).toBe(2 * ADDON_GATE_COURTESY_KEYS.length);
     expect(res.status).toBe(0);
     const result = JSON.parse(res.stdout) as Diff;
     expect(result.applied?.inserted).toBe(n);
+    expect((await activeOverrides(TENANT_SCALE_ID)).map((r) => r.featureKey).sort()).toEqual(
+      [...ADDON_GATE_COURTESY_KEYS].sort(),
+    );
 
     const rows = await activeOverrides(TENANT_LOSS_ID);
-    expect(rows).toHaveLength(15); // the original 12 (D6) + these 3
+    expect(rows).toHaveLength(EXPECTED_LOSS_KEYS.length); // the original 7 (D6) + these 3
     for (const key of ADDON_GATE_COURTESY_KEYS) {
       const row = rows.find((r) => r.featureKey === key);
       expect(row).toBeDefined();
@@ -551,12 +652,12 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
     // --live` writes — those grant every applicable loss for every PRODUCTION tenant, not just
     // TENANT_LOSS, so a tenant seeded any earlier would already be fully explained (zero losses)
     // by the time these tests run. Creating it in its own nested beforeAll, scheduled after D9's
-    // `it`, is what keeps it a genuine 15-loss fixture for K3.
+    // `it`, is what keeps it a genuine 10-loss fixture for K3.
     beforeAll(async () => {
       await db.query(
         `INSERT INTO "Tenant"
            ("id", "slug", "name", "status", "plan", "class", "planVersionId", "createdAt", "updatedAt")
-         VALUES ($1, $2, $3, 'ACTIVE', 'SCALE'::"TenantPlan", 'PRODUCTION', $4, now(), now())`,
+         VALUES ($1, $2, $3, 'ACTIVE', 'STARTER'::"TenantPlan", 'PRODUCTION', $4, now(), now())`,
         [TENANT_KEYS_ID, TENANT_KEYS_SLUG, `PR-0b spec keys tenant ${RUN_SUFFIX}`, PLAN_VERSION_ID],
       );
     }, 120_000);
@@ -589,11 +690,13 @@ describeDb("publish-and-repin.mjs — real Postgres (report / apply / refusals /
         "--include-addon-keys",
         "ocr,email.connected_mailbox",
       ]);
+      // The keys tenant's 7 applicable losses + the 2 listed addon-gate keys, nothing more.
+      expect(n).toBe(EXPECTED_APPLICABLE_LOSS_KEYS.length + 2);
       expect(res.status).toBe(0);
       const result = JSON.parse(res.stdout) as Diff;
       expect(result.applied?.inserted).toBe(n);
 
-      // the default (unfiltered) 12 plan-flag-courtesy losses land too — --include-addon-keys
+      // the default (unfiltered) 7 plan-flag-courtesy losses land too — --include-addon-keys
       // only narrows which addon-gate-courtesy rows join that same applicable set, the same code
       // path --include-addon-gates already uses — plus the two listed addon-gate keys;
       // crm_gohighlevel is the only one held back.

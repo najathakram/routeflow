@@ -3,9 +3,9 @@ export const meta = {
   description: 'Bounded-work loop: ground the brief, build, pack, review, fix, re-check, close out.',
   phases: [
     { title: 'Baseline', detail: 'host-contention preflight + brief grounding' },
-    { title: 'Implement', detail: 'one Sonnet builder per package' },
+    { title: 'Implement', detail: 'one Sonnet 5.5 builder per package' },
     { title: 'Gate & Review', detail: 'review pack + correctness lens (two lenses if spansSkillAndRepo)' },
-    { title: 'Fix', detail: 'Fable fix plan, Sonnet/Opus executors' },
+    { title: 'Fix', detail: 'Opus 5.5 fix plan, Sonnet 5.5/Opus executors' },
     { title: 'Final pass', detail: 'pack refresh + one Opus re-check, up to maxFixRounds' },
   ],
 }
@@ -37,11 +37,15 @@ const PHASE_ORDER = [
   'Verify', 'UI verify', 'Mutation probe', 'Fix', 'Final pass',
 ]
 
+// OWNER RULING 2026-09-29 (Sonnet 5.5 builds, Opus 5.5 plans and reviews every task): builders are
+// Sonnet 5.5 at medium (never low for code), the reviewer is Opus 5.5 (medium routine / high HIGH-risk),
+// and the fix plan that used to run on Fable runs on Opus 5.5 at high. MODEL.fable stays defined for
+// owner-requested use only; nothing in this script calls it.
 // Full model ids only — never a bare alias (model-routing/references/ROUTING-PLAN.md §1).
 const MODEL = {
   fable: 'claude-fable-5-1',
-  opus: 'claude-opus-5',
-  sonnet: 'claude-sonnet-5',
+  opus: 'claude-opus-5-5',
+  sonnet: 'claude-sonnet-5-5',
   haiku: 'claude-haiku-4-5',
 }
 
@@ -52,16 +56,16 @@ const MODEL = {
 const PHASE_MODELS = {
   Baseline: MODEL.haiku,
   Implement: `${MODEL.sonnet} (medium; high for a HIGH-risk package)`,
-  'Gate & Review': `${MODEL.sonnet} (pack) + ${MODEL.opus} (review lens(es))`,
-  Fix: `${MODEL.sonnet} (fix-brief, mechanical/designed-low executors) + ${MODEL.fable} (fix-plan; ${MODEL.opus} fallback) + ${MODEL.opus} (HIGH-risk executors)`,
+  'Gate & Review': `${MODEL.sonnet} (pack) + ${MODEL.opus} (review lens(es); medium routine, high HIGH-risk)`,
+  Fix: `${MODEL.sonnet} (fix-brief, mechanical/designed-low executors) + ${MODEL.opus} (fix-plan; xhigh retry if it returns nothing) + ${MODEL.sonnet} at high (HIGH-risk executors; Opus decides only)`,
   'Final pass': `${MODEL.sonnet} (pack refresh) + ${MODEL.opus} (recheck) + ${MODEL.haiku} (result)`,
 }
 const PHASE_EFFORTS = {
   Baseline: 'low',
   Implement: 'medium (high for a HIGH-risk package)',
-  'Gate & Review': 'low pack / high review',
-  Fix: 'low fix-brief / high fix-plan (xhigh fallback) / low-medium-high executors by tier',
-  'Final pass': 'low pack refresh / high recheck / low result',
+  'Gate & Review': 'low pack / medium review (high on HIGH-risk)',
+  Fix: 'low fix-brief / high fix-plan (xhigh retry) / medium-medium-high executors by tier',
+  'Final pass': 'low pack refresh / medium recheck (high on HIGH-risk) / low result',
 }
 
 // FABLE BRIEF CAP (F5, owner ruling 2026-09-11; mirrors pipeline.js's
@@ -102,9 +106,8 @@ function capFableBrief(promptText) {
 
 // OPUS TOOL-CALL CAP (F8, owner ruling 2026-09-11; mirrors pipeline.js's
 // opusCapped()/CFG.caps.opusToolCalls). Applied to the Opus re-check reader
-// and any Opus-tier fix executor -- both open source files freely, so both
-// need the budget clause. The Fable fix-planner's Opus FALLBACK
-// (fix-plan:fallback) stays EXEMPT: it decides from the brief text alone,
+// (since 2026-09-29 no Opus executor exists -- executors are Sonnet 5.5). The
+// Opus fix-planner and its retry (fix-plan, fix-plan:fallback) stay EXEMPT: it decides from the brief text alone,
 // zero repo access, so a tool-call cap is moot for it.
 const OPUS_TOOL_CALL_CAP = 12
 function withOpusCap(promptText) {
@@ -129,7 +132,16 @@ const concurrentEditors = !!_args.concurrentEditors
 // brief-authoring bug, never inferred here from a path prefix.
 const isolationMode = _args.isolation === 'shared' ? 'shared' : 'worktree'
 const spansSkillAndRepo = !!_args.spansSkillAndRepo
-const maxFixRounds = Number.isInteger(_args.maxFixRounds) && _args.maxFixRounds > 0 ? _args.maxFixRounds : 2
+// SS3 (2026-09-16 redesign): the LANE this loop is running, from
+// route-task.mjs's own `lane` field (surgical | standard). The light loop is
+// now the DEFAULT execution path for everything that is not HIGH-risk, so it
+// needs to distinguish a one-bounded-change run from ordinary work.
+const lane = _args.lane === 'surgical' ? 'surgical' : 'standard'
+// surgical -> ONE fix round. A bounded change whose single review round did
+// not resolve it is a change that wants a human decision, not a second
+// automated attempt.
+const defaultFixRounds = lane === 'surgical' ? 1 : 2
+const maxFixRounds = Number.isInteger(_args.maxFixRounds) && _args.maxFixRounds > 0 ? _args.maxFixRounds : defaultFixRounds
 // Only meaningful when concurrentEditors is also true -- see buildOnePackage/executeOneFix.
 const wantWorktree = concurrentEditors && isolationMode === 'worktree'
 
@@ -169,8 +181,74 @@ const TAG = (phase, label) => `PHASE: ${phase} · LABEL: ${label}`
 // Every prompt opens with RUN_PREFIX(), then the tag, then role/task -- so the
 // tag never breaks the shared byte-prefix agents in one wave rely on for the
 // cache. Every call site below goes through this, never bare agent().
+// ---------- SS3: hard agent-call ceiling, enforced in code ----------------
+// The 2026-09-14 cost investigation measured agent COUNT as the dominant cost
+// driver (cache read+write is 78-98% of spend and compounds per agent), and
+// the incident that started this redesign was a 108-agent / 7.43M-token run
+// that nothing stopped. So this loop carries a real ceiling, not a prose one.
+//
+// WHAT IS COUNTED, and why these numbers: every agent call except `warmup`
+// (cache priming, already documented as "never counted as a phase agent").
+// The redesign plan wrote this cap as "surgical ~2 calls, standard ~4" -- that
+// is the number of WORK agents the light-loop shape has (build / review / fix
+// / re-check), not a whole-run total: a total of 4 would halt the run during
+// Ground, before it did any work at all. The ceilings below are therefore
+// sized from the loop's real structure -- a healthy surgical run is ~15 calls
+// end to end (preflight, ground, build, pack, review, one fix round, re-check,
+// checkpoints, result) and a healthy standard run with two packages, two
+// lenses and two rounds is ~26 -- with headroom, so the cap fires on a RUNAWAY
+// and never on a healthy run. `workAgentCalls` counts the 2-4 substantive
+// agents the plan actually cares about and is reported in the result, so these
+// numbers get retuned from ledger evidence, never from taste.
+const AGENT_CEILINGS = { surgical: 20, standard: 32 }
+const maxAgentCalls = Number.isInteger(_args.maxAgentCalls) && _args.maxAgentCalls > 0 ? _args.maxAgentCalls : AGENT_CEILINGS[lane]
+// Mechanical/bookkeeping labels: cheap script-runners and writers. Counted
+// against the ceiling (they are real agents and cost real tokens) but excluded
+// from workAgentCalls, which is the "how many substantive agents did this run
+// actually need" signal the retro reads.
+const MECHANICAL_LABEL = /^(preflight|ground|pack|fix-brief|result|checkpoint:)/
+let agentCalls = 0
+let workAgentCalls = 0
+let warmupCalls = 0
+// Set immediately before the halt/close-out path, which must still be able to
+// write its checkpoint and result.json after the ceiling has been hit --
+// otherwise breaching the cap would also destroy the evidence of breaching it.
+let closeoutMode = false
+// P2-9 fix (Opus review 2026-09-16): set synchronously the instant a breach
+// is DECIDED, before the throw unwinds -- so it survives even if something
+// between here and the halt handler swallows the exception. `parallel()` is
+// a Workflow-provided primitive this script does not control (pipeline.js's
+// own E8 comment notes the same thing), and per that primitive's real
+// behavior a rejected thunk can come back as a null slot rather than
+// propagate -- which would otherwise get filed as an ordinary "agent returned
+// nothing" finding instead of halting the run. checkCeiling(), called after
+// every parallel() fan-out below, re-throws from this flag so a breach
+// swallowed mid-fan-out still halts on the next check.
+let ceilingBreached = false
+function agentCapError() {
+  const e = new Error(`light-loop: agent-call ceiling reached (${agentCalls} > ${maxAgentCalls}, lane ${lane}) -- halting with a checkpoint instead of continuing`)
+  e.agentCap = true
+  return e
+}
+function checkCeiling() {
+  if (ceilingBreached) throw agentCapError()
+}
+
 function askAgent(prompt, opts) {
   const o = opts || {}
+  if (o.label === 'warmup') {
+    warmupCalls += 1
+  } else if (!closeoutMode) {
+    agentCalls += 1
+    if (!MECHANICAL_LABEL.test(String(o.label || ''))) workAgentCalls += 1
+    if (agentCalls > maxAgentCalls) {
+      // Never a silent re-spawn and never a silent continue: the flow unwinds
+      // to the halt path below, which checkpoints and closes the run out with
+      // haltedAt:'agent-cap' so the owner gets an explicit handoff.
+      ceilingBreached = true
+      throw agentCapError()
+    }
+  }
   return agent(`${RUN_PREFIX()}\n${TAG(o.phase, o.label)}\n${prompt}`, o)
 }
 // One lightweight call per (model, effort) pair before a wave that shares it,
@@ -207,10 +285,25 @@ const PREFLIGHT_SCHEMA = {
     contended: { type: 'boolean', description: 'true if the host is too busy to run this loop reliably right now (process/CPU contention)' },
     treeClean: { type: 'boolean' },
     resumeWritten: { type: 'boolean' },
+    // SS7 (2026-09-16): the same toolchain facts pipeline.js's preflight now
+    // reports -- the host being free says nothing about the toolchain being
+    // able to prove anything.
+    nodeVersion: { type: 'string' },
+    npmVersion: { type: 'string' },
+    testDiscovery: { type: 'number', description: 'number of test FILES the repo runner lists without running them; -1 = no such runner / could not be determined; 0 = the runner ran and found nothing' },
+    packagesResolved: { type: 'boolean' },
+    missingPackages: { type: 'array', items: { type: 'string' } },
     note: { type: 'string' },
   },
   required: ['contended', 'treeClean', 'resumeWritten', 'note'],
 }
+// SS7: packages this run needs to resolve before it is worth starting. Empty
+// by default -- this script is project-agnostic, so the CALLER names them
+// (RouteFlow passes ['@routeflow/pricing']).
+const preflightPackages = Array.isArray(_args.preflightPackages) ? _args.preflightPackages.filter((p) => typeof p === 'string' && p) : []
+// SS7: module-level so closeOut() can report the toolchain this run ran
+// against. runLoop() owns the only write, right after the contention gate.
+let preflightFacts = null
 const GROUND_SCHEMA = {
   type: 'object',
   properties: {
@@ -282,7 +375,7 @@ const FIX_PLAN_SCHEMA = {
           design: { type: 'string' },
           invariant: { type: 'string' },
           testPin: { type: 'string', description: 'the test that pins this fix, or empty when none is runnable' },
-          executorTier: { type: 'string', enum: ['mechanical', 'sonnet', 'opus'], description: 'mechanical = fully determined once named; sonnet = a designed LOW-risk change; opus = a HIGH-risk file or a judgment call the executor still has to make' },
+          executorTier: { type: 'string', enum: ['mechanical', 'sonnet', 'opus'], description: 'mechanical = fully determined once named; sonnet = a designed LOW-risk change; opus = a HIGH-risk file or a judgment call the executor still has to make (executed by Sonnet 5.5 at high; Opus only decides)' },
         },
         required: ['findingRef', 'action', 'design', 'invariant', 'testPin', 'executorTier'],
       },
@@ -323,6 +416,13 @@ const checkpoints = []
 const confirmedByPhase = {}
 for (const t of PHASE_ORDER) confirmedByPhase[t] = 0
 let findings = [] // remaining open findings, across the whole run
+// P2-8 fix (Opus review 2026-09-16): module-scoped (not runLoop()-local) so
+// the agent-cap halt handler -- which lives OUTSIDE runLoop(), catching what
+// it throws -- can see how many rounds genuinely completed instead of always
+// reporting 0. A run that finished two real fix rounds and only tripped the
+// cap on its FINAL result write was recording rounds:0/fixRounds:0 -- the
+// exact fields pipeline-ledger.mjs buildRow() and closeout.mjs read.
+let rounds = 0
 let ckSeq = 0
 // F5: true once any Fable brief this run needed truncation at the cap --
 // never reset, exactly like pipeline.js's own fixPlanBriefTruncated, so a
@@ -365,7 +465,12 @@ async function checkpoint(alias, payload) {
   let result = null
   try {
     result = await askAgent(prompt, { label: `checkpoint:${alias}`, phase: alias, model: MODEL.haiku, effort: 'low', schema: CHECKPOINT_SCHEMA })
-  } catch (e) { result = null }
+  } catch (e) {
+    // P2-9 fix (Opus review 2026-09-16): a ceiling breach must still halt the
+    // run, never be filed as an ordinary dead-agent note.
+    if (e && e.agentCap) throw e
+    result = null
+  }
   checkpoints.push({ seq: ckSeq, phase: alias, path, written: !!(result && result.written), note: (result && result.note) || (result ? '' : 'checkpoint agent died or returned nothing -- non-fatal, run continues') })
 }
 // A null/declined agent return is itself a finding -- never silently "clean".
@@ -384,7 +489,14 @@ function preflightPrompt(attempt) {
     `1. Check host contention: count running node/npm/docker processes and current CPU load using whatever command this OS supports (Windows: \`tasklist\`; POSIX: \`ps\`/\`uptime\`). Count ONLY build-tool work: processes whose command line names jest, tsc, next, turbo, vitest, playwright, webpack, esbuild, docker, matlab, or npm run / npm test. Claude Code sessions and their MCP servers are node processes too (about 8 per open session) and do NOT count -- inspect command lines (Windows: PowerShell Get-CimInstance Win32_Process, or wmic process get commandline), never a bare tasklist count. Treat the host as contended only if more than 6 such build-tool processes are running, or CPU load looks pegged (>90% sustained across two samples a few seconds apart). Use judgment -- this is a heuristic, not a hard threshold from a config file.`,
     `2. Run \`git status --short\` -- treeClean is true only if it prints nothing.`,
     `3. Write "${runDir}/RESUME.md" (create the directory first if needed) with: the brief path "${briefPath}", this runId "${runId}", startedAt "${startedAt || 'unknown'}", and a one-line "mode: light-loop, scale: unknown-until-Ground". Set resumeWritten=true only if the write actually succeeded.`,
-    `Report contended, treeClean, resumeWritten, and note (one line).`,
+    // SS7: extends the EXISTING prompt/schema -- no new mechanism, no extra
+    // agent call.
+    `4. Report nodeVersion (\`node --version\`) and npmVersion (\`npm --version\`) verbatim, or the empty string if the command is unavailable.`,
+    `5. Run this repo's test discovery WITHOUT running any test -- e.g. \`npx jest --listTests\` (or the equivalent for whatever runner this repo uses) -- and report testDiscovery = the number of test FILES it listed. Report -1, never 0, when this repo has no such runner or the command cannot be run at all; 0 means the runner ran and genuinely found nothing.`,
+    preflightPackages.length
+      ? `6. Confirm each of these packages resolves from the repo root: ${JSON.stringify(preflightPackages)}. Report packagesResolved (true only if every one resolved) and missingPackages (the ones that did not).`
+      : `6. No packages were named for this run: report packagesResolved true and missingPackages [].`,
+    `Report contended, treeClean, resumeWritten, nodeVersion, npmVersion, testDiscovery, packagesResolved, missingPackages, and note (one line).`,
   ].join('\n')
 }
 // No checkpoint call here: on contention this returns straight to the abort
@@ -414,6 +526,11 @@ async function runGround() {
 }
 
 // ═══════════ Phase 2: Build (alias Implement) ══════════════════════════════
+// Owner ruling 2026-09-29: Anthropic's verification paragraph, VERBATIM, on every code-writing role.
+const VERIFY_NOTE = 'When you change code that can be run, built, or type-checked, run a real check that exercises the change before reporting it done: the project\'s tests, type-checker, or build, or the changed command itself. A syntax-only check, or a check command that failed to start, does not count; if all that is missing is the project\'s declared dependencies, install them with its own package manager (e.g. npm install, pip install -r requirements.txt) unless told not to. Only if no real check can run here, say which one you did not run and why instead of reporting the change as done.'
+// Reviewer effort (ruling 2026-09-29): Opus reviews every task -- high when any package is HIGH-risk, else medium.
+let anyHighRiskPackage = false // set by runLoop once the grounded packages are known
+function reviewEffort() { return anyHighRiskPackage ? 'high' : 'medium' }
 function buildPrompt(pkg) {
   return [
     `You are the BUILDER for ONE package. Implement it completely; do not improvise beyond the brief -- a departure is a deviation, report it, never silently substitute your own design.`,
@@ -421,6 +538,7 @@ function buildPrompt(pkg) {
     `Files this package owns: ${JSON.stringify(pkg.files || [])}. Touch only these unless the brief names more.`,
     `Run whatever scoped gates this repo has for these files (typecheck, lint, the touched suites) and report each as {command, pass, summary}.`,
     `Report packageId, filesChanged, gates, findings (anything wrong you noticed but did not fix because it is out of this package's scope), and deviations (anything you did that the brief did not ask for, with why).`,
+    VERIFY_NOTE,
   ].join('\n')
 }
 async function buildOnePackage(pkg) {
@@ -441,6 +559,9 @@ async function runBuild(packages) {
     const pairs = [...new Set(packages.map((p) => [MODEL.sonnet, p.risk === 'HIGH' ? 'high' : 'medium'].join('|')))].map((s) => s.split('|'))
     await warmUpWave(pairs, 'Implement')
     results = await parallel(packages.map((p) => () => buildOnePackage(p)))
+    // P2-9 fix: a ceiling breach swallowed inside one fan-out slot must still
+    // halt -- never get mapped into an ordinary dead-agent finding below.
+    checkCeiling()
     results = results.map((r, i) => r || { packageId: packages[i].id, filesChanged: [], gates: [], findings: [deadAgentFinding('Implement', `build:${packages[i].id}`)], deviations: [] })
   } else {
     results = []
@@ -488,13 +609,14 @@ async function runReview() {
       { name: 'engine/scripts', focus: 'the Workflow scripts and skill engine files in scope' },
       { name: 'docs/repo', focus: 'the skill docs, references, and any repo (non-engine) files in scope' },
     ]
-    await warmUp(MODEL.opus, 'high', alias)
-    const results = await parallel(lenses.map((lens) => () => askAgent(reviewPrompt(lens), { label: `review:${lens.name}`, phase: alias, model: MODEL.opus, effort: 'high', schema: REVIEW_SCHEMA })))
+    await warmUp(MODEL.opus, reviewEffort(), alias)
+    const results = await parallel(lenses.map((lens) => () => askAgent(reviewPrompt(lens), { label: `review:${lens.name}`, phase: alias, model: MODEL.opus, effort: reviewEffort(), schema: REVIEW_SCHEMA })))
+    checkCeiling()
     const safe = results.map((r, i) => r || { claims: [], findings: [deadAgentFinding(alias, `review:${lenses[i].name}`)], verdict: 'BLOCK' })
     recordPhase(alias, true, safe.length, '', safe.reduce((n, r) => n + (r.findings ? r.findings.length : 0), 0))
     return safe
   }
-  const result = await askAgent(reviewPrompt(null), { label: 'review:correctness', phase: alias, model: MODEL.opus, effort: 'high', schema: REVIEW_SCHEMA })
+  const result = await askAgent(reviewPrompt(null), { label: 'review:correctness', phase: alias, model: MODEL.opus, effort: reviewEffort(), schema: REVIEW_SCHEMA })
   const safeResult = result || { claims: [], findings: [deadAgentFinding(alias, 'review:correctness')], verdict: 'BLOCK' }
   recordPhase(alias, true, 1, '', (safeResult.findings || []).length)
   return [safeResult]
@@ -532,7 +654,7 @@ async function runFixBrief(openFindings) {
   return { items: carriedItems, note: 'fix-brief agent returned nothing -- openFindings carried forward unchanged' }
 }
 
-// ═══════════ Phase 6: Fix plan (alias Fix) — Fable rules, zero repo access ═
+// ═══════════ Phase 6: Fix plan (alias Fix) — Opus 5.5 rules (ruling 2026-09-29), zero repo access ═
 function fixPlanPrompt(brief) {
   return [
     `You are the FIX PLANNER. You read NOTHING from the repo -- only the brief text below. For each item, decide fix / dispute / defer; for every "fix" write the design (the exact invariant and edit), the test that pins it (testPin -- empty string if none is runnable), and the executor tier: "mechanical" (fully determined once named), "sonnet" (a designed LOW-risk change), or "opus" (a HIGH-risk file, or a judgment call the executor still has to make).`,
@@ -554,15 +676,14 @@ async function runFixPlan(brief) {
   // reads it (mirrors pipeline.js's capFableBrief() call sites exactly).
   const capped = capFableBrief(fixPlanPrompt(brief))
   if (capped.truncated) fixPlanBriefTruncated = true
-  let result = await askAgent(capped.text, { label: 'fix-plan', phase: alias, model: MODEL.fable, effort: 'high', schema: FIX_PLAN_SCHEMA })
+  let result = await askAgent(capped.text, { label: 'fix-plan', phase: alias, model: MODEL.opus, effort: 'high', schema: FIX_PLAN_SCHEMA })
   if (!result) {
-    // Fable's safety classifiers can decline outright -- retry once on Opus
-    // at the effort the read deserves (FABLE-PROMPTING.md "Refusals and
-    // fallbacks"). This Opus call stays EXEMPT from the F8 tool-call cap: it
+    // Ruling 2026-09-29: the planner is Opus 5.5 @ high (was Fable). A dead/declined call retries
+    // once on Opus at xhigh, the effort a re-read deserves. This retry call stays EXEMPT from the F8 tool-call cap: it
     // decides from the brief text alone, zero repo access.
     result = await askAgent(capped.text, { label: 'fix-plan:fallback', phase: alias, model: MODEL.opus, effort: 'xhigh', schema: FIX_PLAN_SCHEMA })
   }
-  return result || { fixes: [], deferred: (brief.items || []).map((it) => `#${it.index}: planner declined on both Fable and the Opus fallback`), note: 'fix planner produced nothing' }
+  return result || { fixes: [], deferred: (brief.items || []).map((it) => `#${it.index}: planner returned nothing on both the high and the xhigh Opus call`), note: 'fix planner produced nothing' }
 }
 
 // ═══════════ Phase 7: Execute (alias Fix) ══════════════════════════════════
@@ -574,21 +695,22 @@ function executePrompt(fix, item) {
     `Invariant: ${fix.invariant}`,
     fix.testPin ? `Pin this with the test: ${fix.testPin} -- it must go from failing to passing.` : `No runnable test pins this fix; report your gate command and result anyway if one applies.`,
     `Report findingRef=${fix.findingRef}, status, filesChanged, gate ({command, pass, summary}) if you ran one, and note.`,
+    VERIFY_NOTE,
   ].join('\n')
 }
 function executorModelEffort(tier) {
-  if (tier === 'opus') return [MODEL.opus, 'high']
+  // Ruling 2026-09-29: Opus DECIDES (the fix plan), Sonnet 5.5 WRITES. The 'opus' tier (a HIGH-risk file or a judgment call the
+  // plan flagged) means Sonnet 5.5 at high; no Opus executor writes code.
+  if (tier === 'opus') return [MODEL.sonnet, 'high']
   if (tier === 'sonnet') return [MODEL.sonnet, 'medium']
-  return [MODEL.sonnet, 'low']
+  return [MODEL.sonnet, 'medium'] // Sonnet 5.5 never runs at low for code (ruling 2026-09-29)
 }
 async function executeOneFix(fix, item) {
   const [model, effort] = executorModelEffort(fix.executorTier)
   const opts = { label: `execute:${fix.findingRef}`, phase: 'Fix', model, effort, schema: EXECUTE_SCHEMA }
   if (wantWorktree) opts.isolation = 'worktree'
-  // F8: an Opus-tier executor opens source files freely -- it gets the same
-  // 12-tool-call budget clause the re-check reader carries. Mechanical/sonnet
-  // tiers stay uncapped (their designs are already fully determined).
-  const promptText = fix.executorTier === 'opus' ? withOpusCap(executePrompt(fix, item)) : executePrompt(fix, item)
+  // Every executor is Sonnet 5.5 (ruling 2026-09-29), so none carries the Opus tool-call cap.
+  const promptText = executePrompt(fix, item)
   const result = await askAgent(promptText, opts)
   return result || { findingRef: fix.findingRef, status: 'blocked', filesChanged: [], note: 'executor agent returned nothing' }
 }
@@ -602,6 +724,7 @@ async function runExecute(plan, briefItems) {
     const pairs = [...new Set(toFix.map((f) => executorModelEffort(f.executorTier).join('|')))].map((s) => s.split('|'))
     await warmUpWave(pairs, alias)
     results = await parallel(toFix.map((f) => () => executeOneFix(f, itemByIndex.get(f.findingRef))))
+    checkCeiling()
     results = results.map((r, i) => r || { findingRef: toFix[i].findingRef, status: 'blocked', filesChanged: [], note: 'executor agent returned nothing' })
   } else {
     results = []
@@ -629,7 +752,7 @@ function recheckPrompt() {
 async function runRecheck(executeResults) {
   const alias = 'Final pass'
   await runPack(alias, executeResults.map((r) => ({ filesChanged: r.filesChanged || [] })))
-  const result = await askAgent(recheckPrompt(), { label: 'recheck', phase: alias, model: MODEL.opus, effort: 'high', schema: REVIEW_SCHEMA })
+  const result = await askAgent(recheckPrompt(), { label: 'recheck', phase: alias, model: MODEL.opus, effort: reviewEffort(), schema: REVIEW_SCHEMA })
   const safeResult = result || { claims: [], findings: [deadAgentFinding(alias, 'recheck')], verdict: 'BLOCK' }
   // Final pass is an AUTHORING phase (pipeline-ledger.mjs AUTHORING_PHASES) --
   // its rawFindings signal is this round's fresh findings count.
@@ -658,7 +781,7 @@ async function runResult(payload) {
 // Builds the terminal payload and closes the run out via the Result agent --
 // used by both the ground-check early exit and the normal end of the run, so
 // every path that returns from here is equally closeable by closeout.mjs.
-async function closeOut(rounds, clean) {
+async function closeOut(rounds, clean, haltedAt) {
   // F3: 'Final pass' always fires here -- Result (phase 9) and, when a fix
   // round ran, the round's own recheck are both folded into this alias, and
   // every terminating path (ground failure, clean end, cap-out) reaches
@@ -667,7 +790,47 @@ async function closeOut(rounds, clean) {
   // F2: fixRounds is the field pipeline-ledger.mjs buildRow() and
   // closeout.mjs both actually read (`rounds` is kept too, for any caller
   // still reading the old field name -- never a breaking rename).
-  const payload = { mode: 'light-loop', scale: 'small', runId, startedAt, endedAt: null, rounds, fixRounds: rounds, clean, remainingFindings: findings, confirmedByPhase, phaseReport, checkpoints }
+  // SS3/SS3b: the lane, the real agent-call telemetry the ceiling counted, and
+  // the unconditional pre-merge-review handoff travel in result.json so
+  // closeout.mjs / pipeline-ledger.mjs / the session all read the same facts.
+  const payload = {
+    mode: 'light-loop',
+    scale: 'small',
+    lane,
+    runId,
+    startedAt,
+    endedAt: null,
+    rounds,
+    fixRounds: rounds,
+    maxFixRounds,
+    clean,
+    haltedAt: haltedAt || null,
+    // SS7: what toolchain this run actually ran against (null only when the
+    // run never got past the contention gate).
+    preflight: preflightFacts,
+    agentCalls,
+    workAgentCalls,
+    warmupCalls,
+    maxAgentCalls,
+    // SS3b -- the one NET-NEW gate this redesign adds. `pre-merge-review` is
+    // the only stage the 2026-09-14 cost investigation found with a measured
+    // catch rate distinct from in-lane review (13 defects / 12 PRs / 36h), and
+    // a grep of dev-pipeline and bug-pipeline on 2026-09-16 found it wired to
+    // NEITHER engine's close-out -- it ran only when a landing coordinator
+    // remembered it. It is now a required close-out step for EVERY lane, and
+    // this field is how a run that skipped it is visible rather than silent.
+    // ran:false is the honest value here: this script cannot invoke a Skill,
+    // so the session that launched the loop owns actually running it.
+    preMergeReview: {
+      required: true,
+      ran: false,
+      note: 'REQUIRED before the PR for this run enters a merge window: invoke the `pre-merge-review` skill on the PR diff. It is independent of the in-lane review above and catches what an embedded reviewer structurally cannot see.',
+    },
+    remainingFindings: findings,
+    confirmedByPhase,
+    phaseReport,
+    checkpoints,
+  }
   // The "+1" checkpoint: one more durable copy after every per-phase
   // checkpoint above, so `checkpoints.length === ranPhases + 1` always --
   // pipeline.js's own P1 invariant, carried over unchanged.
@@ -677,6 +840,10 @@ async function closeOut(rounds, clean) {
   return payload
 }
 
+// SS3: the whole flow runs inside runLoop() so the agent-call ceiling has one
+// place to unwind to. Every normal path still returns through closeOut()
+// exactly as before; only a cap breach takes the halt path below.
+async function runLoop() {
 log('light-loop: preflight')
 phase('Baseline')
 const preflight = await runPreflight()
@@ -697,8 +864,29 @@ if (!ground || !ground.ok) {
   findings.push(ground ? { severity: 'blocker', file: briefPath, phase: 'Baseline', summary: 'brief names files/scripts/shas that do not exist', evidence: (ground.missing || []).join(', '), scenario: 'Build would implement against a brief citing non-existent inputs' } : deadAgentFinding('Baseline', 'ground'))
   return closeOut(0, false)
 }
+// SS7: record what toolchain this run is about to trust, then raise the two
+// facts that would make its gates meaningless. testDiscovery -1 (no runner)
+// is a real, legitimate case and is deliberately NOT flagged; 0 means the
+// runner ran and found nothing, which is the same false-green the engine's
+// gateProblem() reds at the other end of a run -- caught here, before the
+// budget is spent, instead of after.
+preflightFacts = {
+  treeClean: !!preflight.treeClean,
+  nodeVersion: preflight.nodeVersion || '',
+  npmVersion: preflight.npmVersion || '',
+  testDiscovery: typeof preflight.testDiscovery === 'number' ? preflight.testDiscovery : null,
+  packagesResolved: preflight.packagesResolved === false ? false : true,
+  missingPackages: Array.isArray(preflight.missingPackages) ? preflight.missingPackages : [],
+}
+if (preflight.testDiscovery === 0) {
+  findings.push({ severity: 'major', file: briefPath, phase: 'Baseline', summary: 'test discovery found ZERO test files before this run started', evidence: `preflight note: ${preflight.note || '(none)'}`, scenario: 'every gate this run reports would pass without executing anything' })
+}
+if (preflight.packagesResolved === false) {
+  findings.push({ severity: 'major', file: briefPath, phase: 'Baseline', summary: `a required package does not resolve: ${(preflight.missingPackages || []).join(', ') || '(unnamed)'}`, evidence: 'args.preflightPackages named it as a prerequisite', scenario: 'whatever imports it is running against something else, or not running at all' })
+}
 recordPhase('Baseline', true, 2, preflight.treeClean ? '' : 'tree not clean at preflight', 0)
 const packages = ground.packages || []
+anyHighRiskPackage = packages.some((p) => p && p.risk === 'HIGH')
 
 log('light-loop: build')
 phase('Implement')
@@ -716,7 +904,6 @@ await checkpoint('Gate & Review', { reviewResults })
 findings = findings.concat(reviewResults.flatMap((r) => (r.findings || []).map((f) => ({ ...f, phase: f.phase || 'Gate & Review' }))))
 const anyBlock = reviewResults.some((r) => r.verdict === 'BLOCK')
 
-let rounds = 0
 let clean = false
 // F7: a BLOCK review verdict is a hard stop INTO the fix pipeline, never a
 // bypass of it -- whenever there are findings to act on, Fix runs (rounds
@@ -761,3 +948,27 @@ if (findings.length) {
 }
 
 return closeOut(rounds, clean)
+}
+
+try {
+  return await runLoop()
+} catch (e) {
+  if (!(e && e.agentCap)) throw e
+  // SS3 halt path: a checkpoint plus an explicit handoff, never a silent
+  // re-spawn and never a silent continue. closeoutMode lets the halt's own
+  // checkpoint and result.json write land after the ceiling was hit.
+  log(String(e.message))
+  closeoutMode = true
+  findings.push({
+    severity: 'blocker',
+    file: briefPath,
+    phase: 'Final pass',
+    summary: `light-loop halted at its agent-call ceiling (${agentCalls} calls, lane ${lane}, cap ${maxAgentCalls})`,
+    evidence: e.message,
+    scenario: 'This run was still making agent calls after its lane budget was spent. Re-scope the brief into smaller packages, raise args.maxAgentCalls deliberately, or escalate to the HIGH-risk lane -- do NOT relaunch the same brief unchanged.',
+  })
+  await checkpoint('agent-cap', { step: 'halt', agentCalls, workAgentCalls, warmupCalls, maxAgentCalls, lane })
+  // P2-8 fix: report the rounds this run actually completed before the cap
+  // hit, not a hardcoded 0.
+  return closeOut(rounds, false, 'agent-cap')
+}

@@ -16,7 +16,10 @@ export interface PasswordInputProps extends Omit<
 export const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
   ({ className, label, error, register, id, ...props }, ref) => {
     const [visible, setVisible] = React.useState(false);
-    const inputId = id ?? label?.toLowerCase().replace(/\s+/g, "-");
+    // B891: a unique default id (React.useId), never one derived from the label — two fields with the
+    // same label (a repeated row) collided, so every label targeted the FIRST input. An explicit id wins.
+    const autoId = React.useId();
+    const inputId = id ?? autoId;
 
     return (
       <div className="flex flex-col gap-1">

@@ -160,6 +160,8 @@ export interface InventoryMovement {
   unitCost?: number;
   reference?: string;
   notes?: string;
+  /** B562: the accounting date (a backdated purchase's effective date); `createdAt` is insertion time. */
+  effectiveAt?: string;
   createdAt: string;
 }
 

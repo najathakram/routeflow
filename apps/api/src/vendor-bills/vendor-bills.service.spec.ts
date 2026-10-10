@@ -84,6 +84,7 @@ const storage = {
 
 const inventory = {
   recomputeProductInTx: jest.fn(),
+  lockProducts: jest.fn(),
   fireStockAlerts: jest.fn(),
   createDraftPurchaseOrderInTx: jest.fn(),
 };
@@ -115,6 +116,11 @@ describe("VendorBillsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // receive() re-reads the bill inside its transaction (B285 row lock): repeat the last bill read
+    prisma.vendorBill.findUnique.mockImplementation(
+      () =>
+        prisma.vendorBill.findUnique.mock.results.filter((r) => r.type === "return").at(-1)?.value,
+    );
     invoiceScan = graftInvoiceScan(prisma);
     dupMatch.findVendorBillDuplicate.mockReset();
     dupMatch.findVendorBillDuplicate.mockResolvedValue(null);
@@ -306,7 +312,9 @@ describe("VendorBillsService", () => {
       await service.receive("bill-1", undefined, "user-1");
 
       const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
-      expect(movementArgs.createdAt).toEqual(new Date("2026-06-01"));
+      // B562: the bill date is the accounting date (effectiveAt); createdAt stays write-once.
+      expect(movementArgs.effectiveAt).toEqual(new Date("2026-06-01"));
+      expect(movementArgs.createdAt).toBeUndefined();
       const lotArgs = prisma.stockLot.create.mock.calls[0][0].data;
       expect(lotArgs.purchaseDate).toEqual(new Date("2026-06-01"));
     });
@@ -320,8 +328,11 @@ describe("VendorBillsService", () => {
 
       // throwOnGap:false — a gap on this line must flag it, never abort the
       // whole (possibly multi-line) bill transaction. See B562 tests below.
+      // B562 PR-3: the correction a backdated bill causes is referenced RECOMPUTE:BILL:<billId>.
       expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(expect.anything(), "prod-1", {
         throwOnGap: false,
+        trigger: "BILL:bill-1",
+        performedById: "user-1",
       });
       expect(inventory.fireStockAlerts).toHaveBeenCalledWith(["prod-1"]);
     });
@@ -429,13 +440,13 @@ describe("VendorBillsService", () => {
         expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(
           expect.anything(),
           "prod-clean",
-          { throwOnGap: false },
+          expect.objectContaining({ throwOnGap: false, trigger: "BILL:bill-1" }),
         );
         // The gapped product's replay was also attempted non-throwing...
         expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(
           expect.anything(),
           "prod-gapped",
-          { throwOnGap: false },
+          expect.objectContaining({ throwOnGap: false, trigger: "BILL:bill-1" }),
         );
         // ...and it alone is reported, same per-line shape as recomputeCosts's gapsDetected.
         expect((result as any).gapsDetected).toEqual([
@@ -995,31 +1006,105 @@ describe("VendorBillsService", () => {
       expect(items[1]).toMatchObject({ sku: null, packSize: null, lineTotal: null });
     });
 
-    it("marks the originating scan POSTED and links it to the new bill", async () => {
-      prisma.vendorBill.create.mockResolvedValue(bill({ id: "bill-77" }));
-
-      await service.create({
-        requireSupplier: false,
-        scanId: "scan-5",
-        items: [{ description: "A", qty: 1, unitCost: 10 }],
-      });
-
-      expect(invoiceScan.updateMany).toHaveBeenCalledWith({
-        where: { id: "scan-5" },
-        data: { status: "POSTED", vendorBillId: "bill-77" },
-      });
-    });
-
-    it("still returns the bill when the scan link fails — the bill is already written", async () => {
-      invoiceScan.updateMany.mockRejectedValue(new Error("scan gone"));
-
-      await expect(
+    // ── B710: a scan backs at most one live bill; the claim is in the bill's transaction ──
+    describe("create — claiming the originating scan (B710)", () => {
+      const post = () =>
         service.create({
           requireSupplier: false,
           scanId: "scan-5",
           items: [{ description: "A", qty: 1, unitCost: 10 }],
-        }),
-      ).resolves.toMatchObject({ id: "bill-1" });
+        });
+
+      /** Records whether each scan claim ran INSIDE tenantTransaction. */
+      const trackTx = () => {
+        const run = prisma.tenantTransaction.getMockImplementation()!;
+        const inTx: boolean[] = [];
+        let open = false;
+        prisma.tenantTransaction.mockImplementation(async (fn: any) => {
+          open = true;
+          try {
+            return await run(fn);
+          } finally {
+            open = false;
+          }
+        });
+        invoiceScan.updateMany.mockImplementation(async () => {
+          inTx.push(open);
+          return { count: 1 };
+        });
+        return inTx;
+      };
+
+      it("claims a fresh scan with a guarded update inside the bill's transaction", async () => {
+        prisma.vendorBill.create.mockResolvedValue(bill({ id: "bill-77" }));
+        const inTx = trackTx();
+
+        await post();
+
+        expect(invoiceScan.updateMany).toHaveBeenCalledWith({
+          where: { id: "scan-5", OR: [{ status: { not: "POSTED" } }, { vendorBillId: null }] },
+          data: { status: "POSTED", vendorBillId: "bill-77" },
+        });
+        expect(inTx).toEqual([true]);
+      });
+
+      it("REG-B710: a second post of a scan whose bill is live is refused, not a second bill", async () => {
+        invoiceScan.updateMany.mockResolvedValue({ count: 0 });
+        invoiceScan.findFirst.mockResolvedValue({
+          vendorBillId: "bill-1",
+          vendorBill: { billNumber: "BILL-2026-0001", status: "DRAFT" },
+        });
+
+        await expect(post()).rejects.toMatchObject({
+          response: {
+            code: "SCAN_ALREADY_POSTED",
+            vendorBillId: "bill-1",
+            billNumber: "BILL-2026-0001",
+          },
+        });
+      });
+
+      it("PIN: a scan whose bill was VOIDed can be posted again (compare-and-swap on the void bill)", async () => {
+        prisma.vendorBill.create.mockResolvedValue(bill({ id: "bill-78" }));
+        invoiceScan.updateMany
+          .mockResolvedValueOnce({ count: 0 })
+          .mockResolvedValueOnce({ count: 1 });
+        invoiceScan.findFirst.mockResolvedValue({
+          vendorBillId: "bill-old",
+          vendorBill: { billNumber: "BILL-2026-0003", status: "VOID" },
+        });
+
+        await expect(post()).resolves.toMatchObject({ id: "bill-78" });
+        expect(invoiceScan.updateMany).toHaveBeenLastCalledWith({
+          where: { id: "scan-5", status: "POSTED", vendorBillId: "bill-old" },
+          data: { status: "POSTED", vendorBillId: "bill-78" },
+        });
+      });
+
+      it("PIN: the loser of two concurrent re-posts after a void is refused", async () => {
+        invoiceScan.updateMany.mockResolvedValue({ count: 0 });
+        invoiceScan.findFirst.mockResolvedValue({
+          vendorBillId: "bill-old",
+          vendorBill: { billNumber: "BILL-2026-0003", status: "VOID" },
+        });
+
+        await expect(post()).rejects.toMatchObject({
+          response: { code: "SCAN_ALREADY_POSTED" },
+        });
+      });
+
+      it("PIN: a bad or foreign scanId still never fails the bill (kept, unlinked)", async () => {
+        invoiceScan.updateMany.mockResolvedValue({ count: 0 });
+        invoiceScan.findFirst.mockResolvedValue(null);
+
+        await expect(post()).resolves.toMatchObject({ id: "bill-1" });
+      });
+
+      it("PIN: a claim that errors fails the post; it cannot prove this is not a second one", async () => {
+        invoiceScan.updateMany.mockRejectedValue(new Error("scan gone"));
+
+        await expect(post()).rejects.toThrow("scan gone");
+      });
     });
 
     // ── B743: raising a PO from the bill's own lines becomes the stock-mover ──
@@ -1806,7 +1891,7 @@ describe("VendorBillsService", () => {
             sku: null,
             barcode: null,
             parentProductId: "parent-1",
-            parent: { name: "Big Red Chewing Gum" },
+            parent: { name: "Big Red Chewing Gum", tenantId: "test-tenant" },
           },
         },
       ]);
@@ -1842,6 +1927,63 @@ describe("VendorBillsService", () => {
         confidence: "high",
       });
       expect(result.items[0].candidates).toBeUndefined();
+    });
+
+    it("never composes a name from a parent that belongs to another tenant (B1211)", async () => {
+      prisma.productMapping.findMany.mockResolvedValue([
+        {
+          supplierName: "Acme Foods",
+          rawDescription: "cinnamon",
+          productId: "prod-9",
+          product: {
+            id: "prod-9",
+            name: "Cinnamon",
+            sku: null,
+            barcode: null,
+            parentProductId: "parent-1",
+            parent: { name: "Foreign Family", tenantId: "other-tenant" },
+          },
+        },
+      ]);
+      prisma.product.findMany.mockResolvedValue([
+        {
+          id: "prod-8",
+          name: "Mint",
+          sku: null,
+          barcode: null,
+          parentProductId: "parent-2",
+          parent: { name: "Foreign Family", tenantId: "other-tenant" },
+        },
+      ]);
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              supplier: "Acme Foods",
+              items: [
+                { extractedName: "Cinnamon", qty: 1, unitCost: 3 },
+                { extractedName: "Mint", qty: 1, unitCost: 3 },
+              ],
+            }),
+          },
+        ],
+      });
+
+      const result = await service.scanInvoice([jpegPage]);
+
+      expect(JSON.stringify(result)).not.toContain("Foreign Family");
+      expect(result.items[0]).toMatchObject({
+        matchedProductId: "prod-9",
+        matchedProductName: "Cinnamon",
+      });
+      const selects = [
+        prisma.product.findMany.mock.calls[0][0].select,
+        prisma.productMapping.findMany.mock.calls[0][0].include.product.select,
+      ];
+      for (const sel of selects) {
+        expect(sel.parent).toEqual({ select: { name: true, tenantId: true } });
+      }
     });
 
     // ── matching tiers + supplier resolution (2026-08-18: scanner memory) ────

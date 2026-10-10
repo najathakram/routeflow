@@ -16,6 +16,7 @@ import {
 } from "../../../lib/api/returns";
 import { returnActionFlags, returnPillFor } from "../../../lib/returns-logic";
 import { showToast } from "../../../lib/toast";
+import { refundErrorMessage } from "../../../lib/credit-note-error-copy";
 import { chooseAction, confirm } from "../../../lib/confirm";
 
 function fmtQty(v: number | string | null | undefined): string {
@@ -60,7 +61,10 @@ export default function ReturnDetailScreen() {
       {
         onSuccess: () =>
           showToast(method === "CREDIT_NOTE" ? "Store credit issued" : "Refund recorded"),
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) =>
+          showToast(
+            refundErrorMessage(e, e?.response?.data?.message) ?? e?.message ?? "Try again.",
+          ),
       },
     );
   };
@@ -106,7 +110,7 @@ export default function ReturnDetailScreen() {
     );
   }
 
-  const pill = returnPillFor(ret.status);
+  const pill = returnPillFor(ret.status, ret);
   const flags = returnActionFlags(ret.status);
   const anyPending =
     approveMut.isPending ||

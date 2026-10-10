@@ -14,6 +14,7 @@ import { AddonGuard } from "../../billing/addon.guard";
 import { AddonService } from "../../billing/addon.service";
 import { EntitlementsService } from "../../billing/entitlements.service";
 import { FeatureOverrideService } from "../../billing/feature-override.service";
+import { listenOnLoopback } from "../../common/testing/listen-loopback";
 
 /**
  * HTTP-level, real-guard-chain tests for MailboxController (security review fix round —
@@ -36,9 +37,14 @@ describe("MailboxController — real guard chain over HTTP", () => {
     getStatus: jest.Mock;
     startConnect: jest.Mock;
     startConnectMicrosoft: jest.Mock;
+    previewConnect: jest.Mock;
     confirmConnect: jest.Mock;
+    discardPendingGrant: jest.Mock;
     disconnect: jest.Mock;
   };
+  const SECRET_HEADER = "X-Mailbox-Connect-Secret";
+  const PREVIEW = "/settings/email/mailbox/confirm/pending-grant-token/preview";
+  const CANCEL = "/settings/email/mailbox/confirm/cancel";
 
   function signToken(payload: {
     sub: string;
@@ -59,22 +65,39 @@ describe("MailboxController — real guard chain over HTTP", () => {
   beforeAll(async () => {
     mailboxConnection = {
       getStatus: jest.fn().mockResolvedValue({ configured: true, connected: false }),
-      startConnect: jest
-        .fn()
-        .mockResolvedValue("https://accounts.google.com/o/oauth2/v2/auth?mock=1"),
-      startConnectMicrosoft: jest
-        .fn()
-        .mockResolvedValue("https://login.microsoftonline.com/common/oauth2/v2.0/authorize?mock=1"),
-      // Simulates the REAL confirmConnect identity rule (unit-tested for real in
-      // mailbox-connection.service.spec.ts) — proves the controller passes the CALLER's own
-      // JWT identity through, not a hardcoded/omitted one.
-      confirmConnect: jest.fn(async (state: string, userId: string, tenantId: string) => {
-        if (state === "already-used-token") throw new BadRequestException("state_invalid");
-        if (userId !== "admin-1" || tenantId !== "tenant-a") {
-          throw new ForbiddenException("mailbox_confirm_identity_mismatch");
-        }
-        return { configured: true, connected: true, accountEmail: "owner@acme.test" };
+      startConnect: jest.fn().mockResolvedValue({
+        url: "https://accounts.google.com/o/oauth2/v2/auth?mock=1",
+        connectSecret: "g-secret",
       }),
+      startConnectMicrosoft: jest.fn().mockResolvedValue({
+        url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?mock=1",
+        connectSecret: "ms-secret",
+      }),
+      // Simulate the REAL holder rule (tested for real in mailbox.controller.connect-binding
+      // .spec.ts and the service specs): proves the controller passes the CALLER's own JWT
+      // identity and the header's connect secret through, not a hardcoded/omitted one.
+      previewConnect: jest.fn(
+        async (token: string, secret: unknown, userId: string, tenantId: string) => {
+          if (userId !== "admin-1" || tenantId !== "tenant-a") {
+            throw new ForbiddenException("mailbox_confirm_identity_mismatch");
+          }
+          if (secret !== "tab-secret")
+            throw new ForbiddenException("mailbox_connect_secret_mismatch");
+          return { provider: "GOOGLE", accountEmail: "owner@acme.test" };
+        },
+      ),
+      confirmConnect: jest.fn(
+        async (state: string, secret: unknown, userId: string, tenantId: string) => {
+          if (state === "already-used-token") throw new BadRequestException("state_invalid");
+          if (userId !== "admin-1" || tenantId !== "tenant-a") {
+            throw new ForbiddenException("mailbox_confirm_identity_mismatch");
+          }
+          if (secret !== "tab-secret")
+            throw new ForbiddenException("mailbox_connect_secret_mismatch");
+          return { configured: true, connected: true, accountEmail: "owner@acme.test" };
+        },
+      ),
+      discardPendingGrant: jest.fn().mockResolvedValue(undefined),
       disconnect: jest.fn().mockResolvedValue({ deleted: true }),
     };
 
@@ -114,7 +137,7 @@ describe("MailboxController — real guard chain over HTTP", () => {
 
     jwtService = moduleRef.get(JwtService);
     app = moduleRef.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {
@@ -133,7 +156,11 @@ describe("MailboxController — real guard chain over HTTP", () => {
       .post("/settings/email/mailbox/confirm")
       .send({ state: "x" })
       .expect(401);
+    await request(app.getHttpServer()).get(PREVIEW).set(SECRET_HEADER, "tab-secret").expect(401);
+    await request(app.getHttpServer()).post(CANCEL).send({ state: "x" }).expect(401);
     await request(app.getHttpServer()).delete("/settings/email/mailbox").expect(401);
+    expect(mailboxConnection.previewConnect).not.toHaveBeenCalled();
+    expect(mailboxConnection.discardPendingGrant).not.toHaveBeenCalled();
   });
 
   // ── non-admin (RolesGuard) ─────────────────────────────────────────────────
@@ -159,11 +186,23 @@ describe("MailboxController — real guard chain over HTTP", () => {
       .send({ state: "x" })
       .expect(403);
     await request(app.getHttpServer())
+      .get(PREVIEW)
+      .set("Authorization", `Bearer ${token}`)
+      .set(SECRET_HEADER, "tab-secret")
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(CANCEL)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ state: "x" })
+      .expect(403);
+    await request(app.getHttpServer())
       .delete("/settings/email/mailbox")
       .set("Authorization", `Bearer ${token}`)
       .expect(403);
 
     expect(mailboxConnection.confirmConnect).not.toHaveBeenCalled();
+    expect(mailboxConnection.previewConnect).not.toHaveBeenCalled();
+    expect(mailboxConnection.discardPendingGrant).not.toHaveBeenCalled();
   });
 
   // ── TENANT_ADMIN happy path (guard chain lets it through) ─────────────────
@@ -184,9 +223,109 @@ describe("MailboxController — real guard chain over HTTP", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     await request(app.getHttpServer())
+      .get(PREVIEW)
+      .set("Authorization", `Bearer ${token}`)
+      .set(SECRET_HEADER, "tab-secret")
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(CANCEL)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ state: "pending-grant-token" })
+      .expect(204);
+    await request(app.getHttpServer())
       .delete("/settings/email/mailbox")
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
+  });
+
+  // ── #2115: /start hands the tab its connect secret; preview/confirm take it from the header ──
+
+  it("start returns the provider URL AND the tab's connect secret", async () => {
+    const token = signToken({ sub: "admin-1", role: "TENANT_ADMIN", tenantId: "tenant-a" });
+
+    const google = await request(app.getHttpServer())
+      .get("/settings/email/mailbox/google/start")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    const microsoft = await request(app.getHttpServer())
+      .get("/settings/email/mailbox/microsoft/start")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+
+    expect(google.body).toEqual({
+      url: "https://accounts.google.com/o/oauth2/v2/auth?mock=1",
+      connectSecret: "g-secret",
+    });
+    expect(microsoft.body).toEqual({
+      url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?mock=1",
+      connectSecret: "ms-secret",
+    });
+  });
+
+  it("preview and confirm take the connect secret ONLY from its header: a secret in the query string or the body never reaches the service", async () => {
+    const token = signToken({ sub: "admin-1", role: "TENANT_ADMIN", tenantId: "tenant-a" });
+
+    await request(app.getHttpServer())
+      .get(`${PREVIEW}?connectSecret=tab-secret`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(403);
+    await request(app.getHttpServer())
+      .post("/settings/email/mailbox/confirm")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ state: "pending-grant-token", connectSecret: "tab-secret" })
+      .expect(403);
+
+    expect(mailboxConnection.previewConnect).toHaveBeenCalledWith(
+      "pending-grant-token",
+      undefined,
+      "admin-1",
+      "tenant-a",
+    );
+    expect(mailboxConnection.confirmConnect).toHaveBeenCalledWith(
+      "pending-grant-token",
+      undefined,
+      "admin-1",
+      "tenant-a",
+    );
+  });
+
+  it("preview passes the caller's own JWT identity and the header's secret through", async () => {
+    const otherAdminToken = signToken({
+      sub: "admin-2",
+      role: "TENANT_ADMIN",
+      tenantId: "tenant-a",
+    });
+
+    await request(app.getHttpServer())
+      .get(PREVIEW)
+      .set("Authorization", `Bearer ${otherAdminToken}`)
+      .set(SECRET_HEADER, "tab-secret")
+      .expect(403);
+
+    expect(mailboxConnection.previewConnect).toHaveBeenCalledWith(
+      "pending-grant-token",
+      "tab-secret",
+      "admin-2",
+      "tenant-a",
+    );
+  });
+
+  it("cancel hands the service the token from the body, and 400s on a missing state before reaching it", async () => {
+    const token = signToken({ sub: "admin-1", role: "TENANT_ADMIN", tenantId: "tenant-a" });
+
+    await request(app.getHttpServer())
+      .post(CANCEL)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ state: "pending-grant-token" })
+      .expect(204);
+    await request(app.getHttpServer())
+      .post(CANCEL)
+      .set("Authorization", `Bearer ${token}`)
+      .send({})
+      .expect(400);
+
+    expect(mailboxConnection.discardPendingGrant).toHaveBeenCalledTimes(1);
+    expect(mailboxConnection.discardPendingGrant).toHaveBeenCalledWith("pending-grant-token");
   });
 
   // ── confirm: identity mismatch -> 403, replay -> 400 (the HIGH fix itself) ─
@@ -201,11 +340,13 @@ describe("MailboxController — real guard chain over HTTP", () => {
     await request(app.getHttpServer())
       .post("/settings/email/mailbox/confirm")
       .set("Authorization", `Bearer ${otherAdminToken}`)
+      .set(SECRET_HEADER, "tab-secret")
       .send({ state: "pending-grant-token" })
       .expect(403);
 
     expect(mailboxConnection.confirmConnect).toHaveBeenCalledWith(
       "pending-grant-token",
+      "tab-secret",
       "admin-2",
       "tenant-a",
     );
@@ -221,26 +362,39 @@ describe("MailboxController — real guard chain over HTTP", () => {
     await request(app.getHttpServer())
       .post("/settings/email/mailbox/confirm")
       .set("Authorization", `Bearer ${crossTenantToken}`)
+      .set(SECRET_HEADER, "tab-secret")
       .send({ state: "pending-grant-token" })
       .expect(403);
 
     expect(mailboxConnection.confirmConnect).toHaveBeenCalledWith(
       "pending-grant-token",
+      "tab-secret",
       "admin-1",
       "tenant-b",
     );
   });
 
-  it("confirm: the matching TENANT_ADMIN succeeds", async () => {
+  it("confirm: the matching TENANT_ADMIN with the tab's connect secret succeeds", async () => {
     const rightToken = signToken({ sub: "admin-1", role: "TENANT_ADMIN", tenantId: "tenant-a" });
 
     const res = await request(app.getHttpServer())
       .post("/settings/email/mailbox/confirm")
       .set("Authorization", `Bearer ${rightToken}`)
+      .set(SECRET_HEADER, "tab-secret")
       .send({ state: "pending-grant-token" })
       .expect(200);
 
     expect(res.body).toMatchObject({ connected: true, accountEmail: "owner@acme.test" });
+  });
+
+  it("confirm: the matching TENANT_ADMIN WITHOUT the secret (another tab or browser) gets 403", async () => {
+    const rightToken = signToken({ sub: "admin-1", role: "TENANT_ADMIN", tenantId: "tenant-a" });
+
+    await request(app.getHttpServer())
+      .post("/settings/email/mailbox/confirm")
+      .set("Authorization", `Bearer ${rightToken}`)
+      .send({ state: "pending-grant-token" })
+      .expect(403);
   });
 
   it("confirm: a replayed/already-consumed state gets 400", async () => {
@@ -249,6 +403,7 @@ describe("MailboxController — real guard chain over HTTP", () => {
     await request(app.getHttpServer())
       .post("/settings/email/mailbox/confirm")
       .set("Authorization", `Bearer ${rightToken}`)
+      .set(SECRET_HEADER, "tab-secret")
       .send({ state: "already-used-token" })
       .expect(400);
   });

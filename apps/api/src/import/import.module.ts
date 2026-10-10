@@ -26,6 +26,8 @@ import { EntitlementsModule } from "../billing/entitlements.module";
 // Supplies AddonGuard + AddonService for BatchController's @RequireAddon("ocr") scan gate
 // (EntitlementsModule does not export them).
 import { BillingModule } from "../billing/billing.module";
+// F-05 (#2093): ImportService.importInvoices flags (never blocks) restricted catalog lines.
+import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
 
 @Module({
   imports: [
@@ -36,6 +38,7 @@ import { BillingModule } from "../billing/billing.module";
     CustomersModule,
     EntitlementsModule,
     BillingModule,
+    SellingRestrictionsModule,
     // B100/F16b: NumberingService now lives in its own module (numbering.module.ts)
     // so InvoicesModule/EstimatesModule can consume it without importing ImportModule.
     NumberingModule,

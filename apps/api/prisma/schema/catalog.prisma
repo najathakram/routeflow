@@ -38,6 +38,43 @@ enum LabelMode {
   EXCLUDE
 }
 
+/// #2717 M1 (SA-572a): the catalog role of a Product row. Constant default; NOT backfilled in M1 and read by nothing in
+/// M1 (variant-ness stays parentProductId != null). Values beyond STANDARD are M2+.
+enum ProductKind {
+  STANDARD
+  FAMILY
+  VARIANT
+  RECIPE
+}
+
+/// #2717 M1: the packaging level a barcode or a ProductUnit sits at (unit → inner → box → case → display → pallet).
+enum PackagingLevel {
+  UNIT
+  INNER
+  BOX
+  CASE
+  DISPLAY
+  PALLET
+}
+
+/// #2717 M1: the barcode symbology, inferred from the code (apps/api/src/common/barcode-symbology.ts).
+enum BarcodeSymbology {
+  UPC_A
+  UPC_E
+  EAN_8
+  EAN_13
+  GTIN_14
+  CODE128
+  OTHER
+}
+
+/// #2717 M1 (SA-572a): ENTERED = a code someone entered or scanned for this level; COPIED = the owner's rule "one
+/// barcode ⇒ the units share it": the unit row copied from the box row (copiedFromLevel says from which).
+enum BarcodeOrigin {
+  ENTERED
+  COPIED
+}
+
 model Product {
   id                   String        @id @default(uuid())
   name                 String
@@ -46,6 +83,17 @@ model Product {
   // Optional retail-unit (inner piece) code; NULL ⇒ unit shares the case `sku`.
   // Read sites use `unitSku ?? sku`.
   unitSku              String?
+  // Spec 06: hide a product from the buyer portal; independent of selling restrictions.
+  portalVisible        Boolean       @default(true)
+  // SA-603: the codes released on deactivate (legacy column -> retired*); the full uniques are unchanged.
+  retiredSku           String?
+  retiredBarcode       String?
+  retiredUnitSku       String?
+  // Units rebuild P0a: null baseUnitLabel = "Piece"; null packLabel = legacy (unit text, else "Box");
+  // null invoiceLineCode = follow the tenant policy (see INVOICE_LINE_CODE_MODES).
+  baseUnitLabel        String?
+  packLabel            String?
+  invoiceLineCode      String?
   unit                 String
   pricePerUnit         Decimal       @db.Decimal(10, 2)
   priceTier2           Decimal       @default(0) @db.Decimal(10, 2)
@@ -103,6 +151,14 @@ model Product {
   updatedAt            DateTime      @updatedAt
   tenantId             String?
 
+  // #2717 M1 (SA-572a): additive, constant defaults, nothing reads them in M1.
+  kind        ProductKind @default(STANDARD)
+  flexEnabled Boolean     @default(false)
+  flexStep    Int?
+
+  // #2717 M2 (Q3): FIXED-recipe products may keep their own tiers while the family propagates.
+  familyPriceOverride Boolean @default(false)
+
   tenant                Tenant?                @relation(fields: [tenantId], references: [id])
   orderItems            OrderItem[]
   deliveryMutations     DeliveryMutation[]
@@ -131,19 +187,27 @@ model Product {
   supplierProducts      SupplierProduct[]
   categoryLabels        ProductCategoryLabel[]
   sellingRestrictions   SellingRestriction[]
+  barcodes              ProductBarcode[]
+  images                ProductImage[]
+  recipesAsProduct      Recipe[]               @relation("RecipeProduct")
+  recipesAsFamily       Recipe[]               @relation("RecipeFamily")
+  recipeComponents      RecipeComponent[]
+  orderItemComponents   OrderItemComponent[]
+  invoiceItemComponents InvoiceItemComponent[]
 
   @@unique([tenantId, sku])
   @@unique([tenantId, barcode])
   @@unique([tenantId, unitSku])
-  // Name uniqueness is enforced via two raw-SQL PARTIAL unique indexes
-  // (see migrations/20260504000000_variant_name_per_parent/migration.sql):
-  //   - (tenantId, name)                    WHERE parentProductId IS NULL
-  //       → standalone catalog stays flat-unique (no two parents named "X")
-  //   - (tenantId, parentProductId, name)   WHERE parentProductId IS NOT NULL
-  //       → variant names unique WITHIN their parent only
-  //         ("Strawberry" can be a flavor under both Geek Next 50K and Geek Bar)
-  // Prisma can't declare partial unique indexes; left here as a plain index
-  // for name-search query speed only.
+  // Name uniqueness among ACTIVE products is enforced by two raw-SQL PARTIAL unique indexes, created
+  // in migrations/20260929220000_sitting_b_bundle/migration.sql (SA-603b):
+  //   - Product_tenant_root_name_active_key:   (tenantId, name)
+  //       WHERE parentProductId IS NULL AND isActive
+  //       -> the standalone catalog stays flat-unique (no two active parents named "Acme Parent A")
+  //   - Product_tenant_parent_name_active_key: (tenantId, parentProductId, name)
+  //       WHERE parentProductId IS NOT NULL AND isActive
+  //       -> variant names unique WITHIN their parent only
+  //          ("Acme Flavor" can be a flavor under both "Acme Parent A" and "Acme Parent B")
+  // Prisma can't declare partial unique indexes; the plain index below is for name-search speed only.
   @@index([tenantId, name])
   @@index([category])
   @@index([isActive])
@@ -229,13 +293,18 @@ model StockMovement {
   quantity      Decimal      @db.Decimal(10, 3)
   unitCost      Decimal?     @db.Decimal(10, 4)
   // Running snapshots: product state AFTER this movement was applied.
-  // Point-in-time average cost = avgCostAfter of the latest movement <= T.
+  // Point-in-time average cost = avgCostAfter of the latest movement with effectiveAt <= T.
   avgCostAfter  Decimal?     @db.Decimal(10, 4)
   stockAfter    Decimal?     @db.Decimal(10, 3)
   supplierId    String?
   reference     String?
   notes         String?
   performedById String?
+  // B562 (SA-136 §3): the ACCOUNTING date of the movement — a backdated purchase/adjustment/bill
+  // receive carries its effective date here. `createdAt` is write-once insertion time and is only
+  // a tiebreaker. Replay, point-in-time cost and every "when did this happen" read order/filter by
+  // (effectiveAt, createdAt, id).
+  effectiveAt   DateTime     @default(now())
   createdAt     DateTime     @default(now())
   tenantId      String?
 
@@ -247,6 +316,7 @@ model StockMovement {
   @@index([productId])
   @@index([type])
   @@index([createdAt])
+  @@index([effectiveAt])
   @@index([supplierId])
   @@index([tenantId])
 }
@@ -302,6 +372,8 @@ model PurchaseOrderItem {
   @@index([poId])
   @@index([productId])
   @@index([tenantId])
+  // Units rebuild P0a: sale-time unit-name snapshots (null = legacy line).
+  baseLabel String?
 }
 
 // ─── Multi-level units + purchase-order supplier mapping (2026-09-19) ─────────
@@ -332,11 +404,152 @@ model ProductUnit {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  tenant  Tenant? @relation(fields: [tenantId], references: [id])
+  // #2717 M1: the packaging level this unit sits at, and its optional parent in the ladder.
+  level        PackagingLevel?
+  parentUnitId String?
+
+  // Units rebuild P0a: the tenant-wide unit name this level uses, the entered chain count
+  // (parentUnitId already exists), and this level's own sku (retiredSku = released on deactivate).
+  tenantUnitId String?
+  perParent    Int?
+  sku          String?
+  retiredSku   String?
+
+  product    Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tenant     Tenant?          @relation(fields: [tenantId], references: [id])
+  tenantUnit TenantUnit?      @relation(fields: [tenantUnitId], references: [id], onDelete: SetNull)
+  barcodes   ProductBarcode[]
+  parent   ProductUnit?  @relation("ProductUnitParent", fields: [parentUnitId], references: [id], onDelete: SetNull)
+  children ProductUnit[] @relation("ProductUnitParent")
 
   @@unique([productId, label])
   @@unique([productId, factorToBase])
+  @@index([tenantId])
+  @@index([tenantUnitId])
+  @@index([tenantId, sku])
+}
+
+/// Units rebuild P0a: a tenant-wide unit name ("Case", "Pack", ...). `nameKey` = lower(trim(name)), set by the service.
+model TenantUnit {
+  id         String    @id @default(uuid())
+  tenantId   String
+  name       String
+  nameKey    String
+  plural     String?
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+  productUnits ProductUnit[]
+
+  @@unique([tenantId, nameKey])
+  @@index([tenantId])
+}
+
+/// #2717 M1 (SA-572a/b): a product's barcodes BY PACKAGING LEVEL. The same code may be BOTH the BOX and the UNIT row of
+/// the SAME product (two rows). Cross-product uniqueness is a SERVICE invariant (409 BARCODE_TAKEN under an xact advisory
+/// lock), not a constraint. One primary per (product, level) via the nullable `primaryFor` + @@unique (no partial
+/// indexes, SA-572 A4). M1 mirrors Product.barcode (dual write); readers fall back to the legacy column.
+model ProductBarcode {
+  id              String           @id @default(uuid())
+  tenantId        String
+  productId       String
+  // NULL = released on deactivate/reuse; NULLs are distinct under @@unique([tenantId, code, level]).
+  code            String?
+  retiredCode     String?
+  symbology       BarcodeSymbology
+  level           PackagingLevel
+  origin          BarcodeOrigin    @default(ENTERED)
+  copiedFromLevel PackagingLevel?
+  primaryFor      PackagingLevel?
+  // Units rebuild P0a: the ladder level this barcode belongs to (nullable; legacy rows use `level`).
+  productUnitId   String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  product     Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productUnit ProductUnit? @relation(fields: [productUnitId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, code, level])
+  @@unique([productId, primaryFor])
+  @@index([productId, level])
+  @@index([productUnitId])
+  @@index([tenantId, code])
+}
+
+/// #2717 M1: product photos as rows (M1 mirrors Product.imageKeys; focal parsed from the key's `-fp{x}x{y}` suffix).
+/// productId NULL = the "Unassigned" tray (no M1 writer uses it).
+model ProductImage {
+  id           String   @id @default(uuid())
+  tenantId     String
+  productId    String?
+  storageKey   String
+  originalName String?
+  mimeType     String?
+  focalX       Int?
+  focalY       Int?
+  sortOrder    Int      @default(0)
+  isPrimary    Boolean  @default(false)
+  altText      String?
+  uploadedById String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, storageKey])
+  @@index([productId, sortOrder])
+}
+
+enum RecipeStatus {
+  DRAFT
+  ACTIVE
+  RETIRED
+}
+
+/// #2717 M2 (SA-572 A4): a versioned fixed mix of a family's variants sold as one RECIPE product.
+/// One ACTIVE recipe per recipe product = nullable-unique activeFor (set to productId while ACTIVE,
+/// NULL otherwise) — no partial index. Documents never JOIN this table (I11).
+model Recipe {
+  id              String       @id @default(uuid())
+  tenantId        String
+  productId       String
+  familyProductId String
+  version         Int
+  unitsPerPack    Int
+  status          RecipeStatus @default(DRAFT)
+  activeFor       String?
+  effectiveFrom   DateTime?
+  retiredAt       DateTime?
+  createdById     String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  product    Product           @relation("RecipeProduct", fields: [productId], references: [id], onDelete: Restrict)
+  family     Product           @relation("RecipeFamily", fields: [familyProductId], references: [id], onDelete: Restrict)
+  components RecipeComponent[]
+
+  @@unique([productId, version])
+  @@unique([activeFor])
+  @@index([tenantId])
+  @@index([familyProductId])
+}
+
+model RecipeComponent {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  recipeId           String
+  componentProductId String
+  qty                Int
+  position           Int      @default(0)
+  createdAt          DateTime @default(now())
+
+  recipe           Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  componentProduct Product @relation(fields: [componentProductId], references: [id], onDelete: Restrict)
+
+  @@unique([recipeId, componentProductId])
+  @@index([componentProductId])
   @@index([tenantId])
 }
 
@@ -397,20 +610,20 @@ model ProductCategory {
 // (ProductLabelsService.effectiveLabels) — never snapshotted, so nothing here
 // goes stale when a parent's labels change later.
 model ProductCategoryLabel {
-  id            String    @id @default(uuid())
-  tenantId      String
-  productId     String
-  categoryId    String
-  mode          LabelMode
-  reason        String?
+  id                     String    @id @default(uuid())
+  tenantId               String
+  productId              String
+  categoryId             String
+  mode                   LabelMode
+  reason                 String?
   // The variant's CURRENT parent at the moment an EXCLUDE (opt-out) was written — set by the write
   // side on EVERY EXCLUDE write and never touched by reparenting, so an opt-out approved against one
   // parent can never ride along to another. The engine treats an EXCLUDE whose pin is null or is not
   // the variant's current parent as INERT (fail closed). Always null on INCLUDE rows and on legacy rows.
   parentProductIdAtWrite String?
-  createdById   String?
-  createdByName String?
-  createdAt     DateTime  @default(now())
+  createdById            String?
+  createdByName          String?
+  createdAt              DateTime  @default(now())
 
   product  Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
   category ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)

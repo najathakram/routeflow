@@ -46,6 +46,7 @@ Exit codes:
 
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
+const { localConnectionConfig } = require("./lib/local-db-target.cjs");
 
 // Argument parsing runs BEFORE prisma is resolved below: --help must work even when
 // prisma isn't installed (require.resolve would otherwise throw first), and it must
@@ -83,7 +84,6 @@ if (underTest) {
 
 // --local exists because a shell that has run `railway run` keeps POSTGRES_*/RAILWAY_TCP_PROXY_*
 // exported: the normal resolution order would then silently diff PRODUCTION from a local command.
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "postgres", "db"]);
 
 let url;
 if (localOnly) {
@@ -92,18 +92,18 @@ if (localOnly) {
     console.error("schema-drift: --local requires DATABASE_URL to be set (Railway vars ignored)");
     process.exit(1);
   }
-  let host;
-  try {
-    // WHATWG URL brackets IPv6 hosts ("[::1]"); strip them before the lookup.
-    host = new URL(url).hostname.replace(/^\[|\]$/g, "");
-  } catch {
-    console.error("schema-drift: --local could not parse DATABASE_URL as a URL");
-    process.exit(1);
-  }
-  if (!LOCAL_HOSTS.has(host)) {
+  // The prisma CLI dials DATABASE_URL itself, so a hostname allowlist can be walked past with ?host=; require a
+  // provably-local target (same parser pg uses) instead (#2204).
+  if (!localConnectionConfig(url)) {
+    let named = "";
+    try {
+      named = ` ${new URL(url).hostname}`; // the host only, never the credentials
+    } catch {
+      /* unparseable: nothing to name */
+    }
     console.error(
-      `schema-drift: --local refuses non-local database host ${host} — ` +
-        `allowed hosts are ${[...LOCAL_HOSTS].join(", ")}`,
+      `schema-drift: --local refuses a target that is not provably local (database host${named}; ` +
+        "host/hostaddr/service overrides, multi-host and socket targets are refused too)",
     );
     process.exit(1);
   }

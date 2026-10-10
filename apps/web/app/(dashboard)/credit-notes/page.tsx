@@ -509,7 +509,7 @@ function StatTile({
 }) {
   return (
     <div className="rounded-lg border border-surface-border bg-white p-4 shadow-card">
-      <span className="overline block">{label}</span>
+      <span className="eyebrow-label block">{label}</span>
       <span
         className={cn(
           "mt-1.5 block text-2xl text-navy",
@@ -717,7 +717,7 @@ export default function CreditNotesPage() {
                 setDateFrom(e.target.value);
                 setPage(1);
               }}
-              className="h-8 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-8 w-32 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               title="Issue date from"
             />
             <span className="text-navy/70">–</span>
@@ -729,7 +729,7 @@ export default function CreditNotesPage() {
                 setDateTo(e.target.value);
                 setPage(1);
               }}
-              className="h-8 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-8 w-32 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               title="Issue date to"
             />
             {(dateFrom || dateTo) && (
@@ -774,7 +774,9 @@ export default function CreditNotesPage() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Source</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Amount</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Applied To</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">
+                  Issued against
+                </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
                 <th className="w-10 px-3 py-3" />
               </tr>
@@ -852,7 +854,7 @@ export default function CreditNotesPage() {
                           {cn.invoice?.invoiceNumber ?? cn.invoiceId}
                         </span>
                       ) : (
-                        <span className="text-xs text-navy/40">next invoice (auto)</span>
+                        <span className="text-xs text-navy/40">—</span>
                       )}
                     </td>
                     <td className="px-4 py-3">

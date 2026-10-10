@@ -20,7 +20,22 @@ import { join, relative, sep } from "path";
  * named variable (`row.unitsPerBox`) is invisible. Code review + the 4b/4c conversion PRs cover it.
  */
 const BASELINE: Record<string, number> = {
-  "orders/orders.service.ts": 20,
+  // SA-124g/h R1: the replaceAll rebuild is reverted to master byte-for-byte (SA-124e's HIGH 2
+  // resolver — which had retired 4 of these 20 reads — is R2 scope now), restoring the original
+  // 20 reads, plus ONE new read feeding `assertReplaceAllPackMatchesLive`'s live-pack guard (21).
+  // Round-4 prefactor (SA-124h, absorbing origin/master's unrelated growth under the size
+  // ratchet): the per-item price/data builder moved verbatim to replace-all-line-build.ts,
+  // taking 5 of these reads with it — 21 -> 16.
+  "orders/orders.service.ts": 16,
+  // Round-4 prefactor (SA-124h): buildReplaceAllLineData, moved verbatim out of
+  // orders.service.ts's replaceAll rebuild (see that file's own comment above) — same 5 reads,
+  // same behavior, only relocated.
+  "orders/replace-all-line-build.ts": 5,
+  // #2717 M3: ONE read of a COMPONENT product's pack (`p.unitsPerBox`) in buildComponentSnapshots,
+  // feeding synthesizeLegacyBarcodes for a held tenant's legacy unit barcode. It is a barcode
+  // synthesis input, never a line-factor decision (the line's own snapshot is planFixedComposition's
+  // input). Retires if the synthesis moves to a named non-line helper.
+  "orders/line-composition.ts": 1,
   // Three reads today (B717/SA-077 lowered this from 6; SA-068b's earlier note predicted 5, which
   // the hoist overtook — four reads in update()'s mapper became one). Do not read that history as
   // a forecast; what is left, and what retires each:
@@ -34,14 +49,26 @@ const BASELINE: Record<string, number> = {
   //   3. `applyPriceAdjustment`'s `unitsPerBoxByProduct` map — a regulated BASIS lookup, never a
   //      line-factor decision. Retired by moving it to a named non-line helper (SA-047 shape).
   // The number may only go DOWN. The target is still zero.
-  "invoices/invoices.service.ts": 3, // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
+  // Merge of master into #2083: item 2 moved to invoice-edit-plan.ts (SA-184) and item 3 moved to
+  // price-adjustment-ledger.ts (B662), so only item 1 (buildInvoiceItemData) is left here.
+  "invoices/invoices.service.ts": 1,
+  "invoices/invoice-edit-plan.ts": 1, // the moved read: a NEW line's live-pack last resort (SA-077); a stored line never reads it
+  // 4c-1 prefactor: create()'s line builder moved (3 reads) to:
   // B659: two direct read sites in this file (box-split branch's `item.packSnapshot ??
   // product?.unitsPerBox`, and the no-split branch's `upbForPieces` gaining the same fallback per
   // review finding 2). Verified by running the scanner's own regex directly against the file, not
   // carried forward from the stale pre-B717/B681 draft this commit was originally cut against.
   "invoices/manual-invoice-lines.ts": 2,
+  "invoices/invoice-restriction-lines.ts": 1, // F-05: a READ-ONLY piece count for the sell check on an edit; never derives or stores a line pack
+  // B662: `applyPriceAdjustment`'s `unitsPerBoxByProduct` lookup (item 3 above) moved here with its
+  // extraction (loadPriceAdjustmentReference): still a regulated BASIS lookup, never a line factor.
+  "invoices/price-adjustment-ledger.ts": 1,
   "estimates/estimates.service.ts": 1,
   "order-templates/order-templates.service.ts": 1,
+  // B646: generation is a NEW sale, so the recurring generator reads the LIVE pack at generation time (the
+  // Senior Architect buildLine contract) to store a boxed template line in pieces; the split lives in
+  // recurring-invoices/recurring-line-split.ts.
+  "recurring-invoices/recurring-invoices.service.ts": 1,
   "returns/inline-returns-quote.service.ts": 3,
   "buyer/buyer.controller.ts": 1,
   "buyer/replenishment.service.ts": 1,
@@ -82,6 +109,21 @@ const NON_WRITERS = new Set([
   // the conversion itself (lineInventoryDelta) still reads packSize from the bill line alone; this
   // module never supplies the missing number, it only decides whether to ask.
   "vendor-bills/bill-line-pack.ts",
+  // #2118: read-only analytics, writes no line. Reads the live pack for the product DTO's
+  // "at the current pack" display and as salePackOf's GATE (is a no-snapshot line on a product
+  // boxed today?) — never a multiplier; selling units come from each line's own snapshot.
+  "sales-facts/product-insights.service.ts",
+  // B948: reads the live pack ONLY as the LAST fallback to express an inline return's PIECES on a legacy
+  // line's own qty axis (the same fallback order the inline pricing uses); writes no line, snapshots nothing.
+  "credit-notes/line-credit-headroom.ts",
+  // Price-history popover (step 2A): read-only. Reads the live pack ONLY as salePackOf's GATE for a
+  // no-snapshot line (is the product boxed today?), exactly as product-insights does; every row's unit
+  // and pack come from the line's own snapshot. Writes no line.
+  "customers/customer-price-history.service.ts",
+  // "Usually buys" / "Order again" (staff New Order): read-only. Passes the product's CURRENT catalog columns
+  // (incl. unitsPerBox) through to the order builder, which prices every added line through its own add-line
+  // path; a past line's own snapshot (unitsPerBox/unitLabel) is returned as ordered. Writes no line.
+  "customers/customer-order-suggestions.service.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

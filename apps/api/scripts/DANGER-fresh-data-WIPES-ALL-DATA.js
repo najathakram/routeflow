@@ -1,6 +1,9 @@
-// PRODUCTION GUARD — must be first executable code
+// PRODUCTION GUARD — runs below, before the first database connection, on the URL resolved
+// from apps/api/.env / DATABASE_URL (#2206: the old top-of-file call checked a URL this script
+// never used when apps/api/.env set one).
 const { productionGuard } = require("./lib/production-guard");
-productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { assertNoLiveProtectedTenants } = require("./lib/live-target-guard.cjs");
 
 /**
  * Fresh data population script.
@@ -60,7 +63,9 @@ const manifest = {
 // Load DATABASE_URL from the API's .env file so TRUNCATE runs against the
 // same database the API server is connected to.
 function loadEnvDatabaseUrl() {
-  const envPath = path.join(__dirname, "../.env");
+  // ROUTEFLOW_API_DOTENV only picks WHICH .env is read (production-guard-script.spec.ts points it
+  // at a fixture); the guard below still judges whatever URL comes out (#2421).
+  const envPath = process.env.ROUTEFLOW_API_DOTENV || path.join(__dirname, "../.env");
   if (fs.existsSync(envPath)) {
     const content = fs.readFileSync(envPath, "utf8");
     const match = content.match(/^DATABASE_URL\s*=\s*["']?([^"'\r\n]+)["']?/m);
@@ -69,7 +74,15 @@ function loadEnvDatabaseUrl() {
   return process.env.DATABASE_URL || "postgresql://user:pass@localhost:5432/routeflow_dev";
 }
 
-const pool = new Pool({ connectionString: loadEnvDatabaseUrl() });
+// #2206: guard the URL this script actually dials, and dial exactly what was checked.
+// Row 195: productionGuard trusts a host allow-list a tunnel can fake, so this wipe ALSO refuses a database
+// that holds a protected non-test tenant (paying, Stripe-linked or PROTECTED_TENANT_SLUGS).
+const protectedSlugs = loadProtectedSlugs(process.env, loadEnvDatabaseUrl());
+const target = productionGuard({
+  requireFlag: "--i-know-this-deletes-everything",
+  dbUrl: loadEnvDatabaseUrl(),
+});
+const pool = new Pool(target);
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
@@ -1207,6 +1220,7 @@ async function createReturnsAndTemplates(orders, products) {
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
+  await assertNoLiveProtectedTenants(prisma, protectedSlugs);
   console.log("🚀 RouteFlow Fresh Data Script");
   console.log("================================");
   console.log(`   Tenant: ${TENANT_SLUG}`);

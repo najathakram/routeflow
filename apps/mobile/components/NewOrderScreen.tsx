@@ -1,15 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
   FlatList,
-  Modal,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -17,19 +14,20 @@ import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
-import { apiClient } from "../lib/api-client";
 import { unitPriceBase, type UnitOption } from "../lib/unit-options";
-import { toNumber, type LineState, type Product } from "../lib/cart-line-state";
+import {
+  rememberedPricePrefill,
+  toNumber,
+  type LineState,
+  type Product,
+} from "../lib/cart-line-state";
 import {
   computeOrderTotal,
   lineUnitFor,
   priceEditorPrefill,
-  priceEditorSaveOverride,
   type UnlistedTotalLine,
 } from "../lib/cart-order-total";
-import { CartRow } from "./CartRow";
-import { CartStepperRow } from "./CartStepperRow";
-import { useAdminCustomers } from "../lib/api/admin";
+import { decideTrayPrice } from "../lib/staff-price-override";
 import { useProductCategories } from "../lib/api/products";
 import { useProductSearch } from "../lib/use-product-search";
 import { mergeProductIndex } from "../lib/paged-rows";
@@ -39,26 +37,44 @@ import {
   useActiveOrderForCustomer,
   useCustomerPriceHistory,
   type CreateOrderItemInput,
-  type CustomerPriceHistory,
 } from "../lib/api/orders";
-import { useCreditNotes, useCreateCreditNote, type CreditNote } from "../lib/api/credit-notes";
+import { useCreditNotes, type CreditNote } from "../lib/api/credit-notes";
 import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
+import { FAMILY_ADD_MESSAGE, isFamilyProduct } from "../lib/sellable-products";
+import {
+  applyUnitOption,
+  isStaffRole,
+  mergeResolvedDefaults,
+  refusesLineEdit,
+} from "../lib/default-unit-line";
+import {
+  anyLineLoading,
+  applyAddToItems,
+  editItemLine,
+  refusedScanOutcome,
+  reserveAdd,
+  settleBeforeConfirm,
+  UNITS_BLOCKED_MESSAGE,
+} from "../lib/pending-unit-adapter";
+import { useDefaultUnitResolver } from "../hooks/useDefaultUnitResolver";
 import { classifyMutationError } from "../lib/offline-errors";
 import { resolveProductByCode } from "../lib/barcode-resolve";
-import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../lib/wedge-scan";
-import { makeScanHandler, runWedgeSubmit } from "../lib/scan-ladder";
+import { resolveScanSellLevel } from "@routeflow/scanning";
+import type { SellLevel } from "@routeflow/pricing";
+import { findExactScanMatch, levelsForScan, looksLikeScanCode } from "../lib/wedge-scan";
+import {
+  makeScanHandler,
+  runWedgeSubmit,
+  scanAcceptOpts,
+  type ScanLadderDeps,
+} from "../lib/scan-ladder";
 import { createScanAttempt, createWedgeSubmitHandler } from "../lib/wedge-submit";
 import { createScanAcceptGuard } from "../lib/scan-accept-guard";
+import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
-import {
-  computeLineSubtotal,
-  effectiveQty,
-  getTierPrice,
-  normalizeBoxesPieces,
-  roundMoney,
-} from "@routeflow/pricing";
+import { effectiveQty, getTierPrice, isSpecialTier, roundMoney } from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
 import { useTrackedCategories } from "../lib/api/tracked-categories";
 import {
@@ -67,14 +83,10 @@ import {
   type InvoiceSplitLineInput,
   type InvoiceSplitPreview,
 } from "../lib/invoice-split";
-import { MoneyTextInput } from "./MoneyTextInput";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import { ProductPickerSheet } from "./ProductPickerSheet";
 import { BoxedQtyBand } from "./BoxedQtyBand";
-import { QtyStepper } from "./QtyStepper";
 import type { CreatedProduct } from "../lib/api/products";
-import { sanitizeIntInput } from "../lib/qty";
-import { MONEY_INPUT_MAX_WIDTH } from "../lib/row-layout";
 import { useAuthStore } from "../lib/auth-store";
 // chooseAction + alertInfo render the same dialogs cross-platform — RN's
 // Alert.alert silently no-ops 3-button alerts on Expo Web (the user's
@@ -84,7 +96,6 @@ import { InlineToast, useInlineToast } from "./InlineToast";
 import { ProductRow } from "./ProductRow";
 import { ScanOrderSheet } from "./ScanOrderSheet";
 import {
-  incrementLinePiece,
   isUnitLine,
   setLineBoxes,
   setLinePieces,
@@ -97,7 +108,6 @@ import { BlockedLinesModal } from "./BlockedLinesModal";
 import { parseSellingRestricted } from "../lib/selling-restricted";
 import type { BlockedLine } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "../lib/api/authorizations";
-import { ScanOutcome } from "../lib/scan-loop";
 import { bumpScanOrder, nextFlash, trayRowsFrom, type ScanFlash } from "../lib/scan-tray";
 import {
   NO_PENDING_SCROLL,
@@ -107,9 +117,14 @@ import {
 } from "../lib/pending-scroll";
 import { isCatalogHeader, visibleCatalogRows, type CatalogRow } from "../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../lib/unlisted-affordance";
-import { decideResumeLine, orderSubmitGate } from "../lib/order-draft-logic";
+import {
+  orderSubmitGate,
+  resolveResumeLinePricing,
+  resolveResumeLineBoxes,
+  decideResumeHydrationStart,
+} from "../lib/order-draft-logic";
+import { hydrateParkedLine } from "../lib/resume-draft-hydration";
 import { getOrderSubmitKey, resetOrderSubmitKey } from "../lib/order-submit-key";
-import { fmtCalendarDate } from "../lib/format-date";
 // Parked drafts (PR-3): NewOrderScreen resolves ?resumeDraft= and hydrates
 // only the customer; ProductPickView (it owns all other parkable state) binds
 // the autosave hook and drives create/update/delete of the SAME draft.
@@ -118,13 +133,25 @@ import {
   toOrderDraftPayload,
   fromOrderDraftPayload,
   draftParkable,
-  unitLineRefusal,
   type OrderDraftPayload,
   type DraftBuilderState,
   type DraftCatalogLine,
 } from "../lib/drafts-payload";
 import { useDraftAutosave, type DraftRowMeta } from "../lib/use-draft-autosave";
 import { useStopCartStore } from "../store/stopCartStore";
+import { CartModal } from "./new-order/CartModal";
+import { CreateCreditNoteSheet } from "./new-order/CreateCreditNoteSheet";
+import { CustomerPickerView } from "./new-order/CustomerPickerView";
+import { LinePriceModal } from "./new-order/LinePriceModal";
+import { useScanPriceEdit } from "../lib/use-scan-price-edit";
+import { UnlistedItemModal } from "./new-order/UnlistedItemModal";
+import { styles } from "./new-order/styles";
+import type { UnlistedLine } from "./new-order/types";
+import {
+  savedOrderDestination,
+  creditsPendingFromError,
+  creditsPendingFromOrder,
+} from "../lib/order-credits-pending";
 
 export interface NewOrderScreenProps {
   /** When present, customer is locked (e.g. invoked from a specific stop). */
@@ -160,21 +187,6 @@ export interface NewOrderScreenProps {
    */
   resumeDraftId?: string;
 }
-
-/**
- * An ad-hoc, non-catalog ("unlisted") line. Has a free-text name + a required
- * per-piece price; never boxed. Serialised as `{ name, qty, unitPrice }` on
- * submit (no productId). Keyed locally by a synthetic id.
- */
-type UnlistedLine = {
-  id: string;
-  name: string;
-  unitPrice: number;
-  qty: number;
-  /** Optional per-line note — carried onto the invoice line (buyer-visible). */
-  note?: string;
-  noteOpen?: boolean;
-};
 
 function newLocalId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -375,86 +387,6 @@ export function NewOrderScreen({
 
 // ─────────────────────── Customer picker ───────────────────────
 
-function CustomerPickerView({
-  backLabel,
-  onBack,
-  onPick,
-}: {
-  backLabel?: string;
-  onBack: () => void;
-  onPick: (id: string, name: string) => void;
-}) {
-  const [search, setSearch] = useState("");
-  const { data, isLoading } = useAdminCustomers({
-    search: search.trim() || undefined,
-    limit: 50,
-  });
-  const customers = data?.data ?? [];
-
-  return (
-    <>
-      <NavBar
-        inlineTitle="Choose customer"
-        leading={<NavBackButton label={backLabel ?? "Back"} onPress={onBack} />}
-      />
-      <SearchBar placeholder="Search customers…" value={search} onChangeText={setSearch} />
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {isLoading ? (
-          <View style={styles.center}>
-            <ActivityIndicator color={ios.brand} />
-          </View>
-        ) : customers.length === 0 ? (
-          <View style={styles.center}>
-            <Text style={styles.emptyText}>
-              {search ? "No customers match that search." : "No customers yet."}
-            </Text>
-          </View>
-        ) : (
-          <View style={styles.list}>
-            {customers.map((c, i) => (
-              <Pressable
-                key={c.id}
-                style={[
-                  styles.customerRow,
-                  i > 0 && {
-                    borderTopWidth: StyleSheet.hairlineWidth,
-                    borderTopColor: ios.separator,
-                  },
-                ]}
-                onPress={() => onPick(c.id, c.businessName)}
-              >
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>
-                    {c.businessName
-                      .split(/\s+/)
-                      .filter(Boolean)
-                      .slice(0, 2)
-                      .map((w) => w[0]?.toUpperCase() ?? "")
-                      .join("") || "?"}
-                  </Text>
-                </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.customerName} numberOfLines={1}>
-                    {c.businessName}
-                  </Text>
-                  {c.contactName || c.phone ? (
-                    <Text style={styles.customerSub} numberOfLines={1}>
-                      {[c.contactName, c.phone].filter(Boolean).join(" · ")}
-                    </Text>
-                  ) : null}
-                </View>
-                <Ionicons name="chevron-forward" size={16} color={ios.gray[3]} />
-              </Pressable>
-            ))}
-          </View>
-        )}
-      </ScrollView>
-    </>
-  );
-}
-
-// ─────────────────────── Product pick + save ───────────────────────
-
 function ProductPickView({
   customerId,
   customerName,
@@ -487,7 +419,7 @@ function ProductPickView({
   const router = useRouter();
   const userRole = useAuthStore((s) => s.user?.role);
   // Backdating an order is a books-affecting edit — staff only, never drivers.
-  const isStaff = userRole === "OPERATOR" || userRole === "TENANT_ADMIN";
+  const isStaff = isStaffRole(userRole);
   const canCreateProducts = isStaff;
   // Cost eye: every SELLER role (drivers negotiate at the stop; the operator
   // endpoints already return cost to them). Buyers never reach this screen.
@@ -528,6 +460,8 @@ function ProductPickView({
   // parked productId against the LIVE catalog, so a stale/removed product or
   // price can never render, let alone autosave back to the server.
   const [items, setItems] = useState<Record<string, LineState>>({});
+  const itemsRef = useRef(items); // the latest committed lines, for the pending-line scan/tap decision in addOne
+  itemsRef.current = items;
   // Ad-hoc (non-catalog) lines need no live-product check — DraftUnlistedLine
   // is field-for-field the same shape as this screen's UnlistedLine, so the
   // seed drops in directly.
@@ -542,7 +476,15 @@ function ProductPickView({
   // Prices shown/summed/submitted use getTierPrice(product, effectiveTier), not
   // the raw list price — so a tier-N customer sees the price the server bills.
   const { data: customerDetail } = useCustomer(customerId);
-  const { data: customerPrices } = useCustomerPrices(customerId);
+  const {
+    data: customerPrices,
+    isFetched: fetched,
+    isError: errored,
+    isFetching: fetching,
+    error: pricesError,
+    refetch: refetchPrices,
+  } = useCustomerPrices(customerId);
+  const pricesSettled = (fetched || errored) && !fetching;
   // Tenant margin config for the live cost/margin hint in the cart rows.
   const { data: marginConfig } = useMarginConfig();
   // Lines the operator explicitly acked as "sell anyway" below the margin
@@ -574,7 +516,7 @@ function ProductPickView({
   /** The customer's effective per-selling-unit (box) price for a product. */
   const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
   /** SPECIAL (tier≠1) lines are the customer's permanent price — never overridable. */
-  const isSpecialFor = (p: Product) => effectiveTierFor(p.id) !== 1;
+  const isSpecialFor = (p: Product) => isSpecialTier(effectiveTierFor(p.id));
   const [scanOpen, setScanOpen] = useState(false);
   /** Tray line (catalog id or unlisted local id) whose price is being edited. */
   const [priceEditId, setPriceEditId] = useState<string | null>(null);
@@ -705,100 +647,82 @@ function ProductPickView({
   const [hydrating, setHydrating] = useState<boolean>(
     () => !!draftSeed && draftSeed.items.length > 0,
   );
-  // Bumped by the retry action below to re-run a hydration that failed for a
-  // reason other than "the product is gone" (flaky connection, 5xx).
+  // Bumped by the retry action below to re-run a hydration that failed for a non-404 reason.
   const [hydrateAttempt, setHydrateAttempt] = useState(0);
   // The alert offering that retry is dismissible (backdrop tap on web,
   // `cancelable` on native), and nothing else re-triggers the effect — so the
   // retry ALSO lives in the spinner view itself, never only in the dialog.
   const [hydrateFailed, setHydrateFailed] = useState(false);
-  // A draft this screen can't hold (a line sold by a unit, B638) is refused whole, untouched.
-  const [hydrateRefusal, setHydrateRefusal] = useState<string | null>(null);
   const retryHydrate = useCallback(() => {
     setHydrateFailed(false);
+    void refetchPrices(); // SA-165: hydrateAttempt alone never re-fires the prices query
     setHydrateAttempt((n) => n + 1);
-  }, []);
+  }, [refetchPrices]);
   const hydrationStartedRef = useRef(false);
+  const failHydration = useCallback(() => {
+    hydrationStartedRef.current = false;
+    setHydrateFailed(true);
+    chooseAction(
+      "Couldn't restore your order",
+      "Some items couldn't be loaded. Check your connection and try again.",
+      [
+        { label: "Go back", style: "cancel", onPress: onBack },
+        { label: "Retry", onPress: retryHydrate },
+      ],
+    );
+  }, [onBack, retryHydrate]);
   useEffect(() => {
     if (!hydrating || hydrationStartedRef.current) return;
+    const status = (pricesError as { response?: { status?: number } })?.response?.status;
+    const gate = decideResumeHydrationStart(!!customerDetail, fetched, errored, fetching, status);
+    if (gate !== "start") return gate === "failed" && !hydrateFailed ? failHydration() : undefined;
     hydrationStartedRef.current = true;
     const parkedLines: DraftCatalogLine[] = draftSeed?.items ?? [];
-    const refusal = unitLineRefusal(parkedLines);
-    if (refusal) return setHydrateRefusal(refusal); // `hydrating` stays true: no autosave, draft intact
     let cancelled = false;
     (async () => {
-      const results = await Promise.all(
-        parkedLines.map(async (li) => {
-          try {
-            const { data } = await apiClient.get<Product>(`/products/${li.productId}`);
-            // findOne returns an archived product too (unlike the catalog list,
-            // which filters isActive:true) — and it is KEPT: the ladder resolves
-            // archived products, so dropping one here deleted a line the
-            // operator had just scanned in and parked (REG-B195). The row flags
-            // itself as archived instead. Only a 404 drops a line; a timeout or
-            // 5xx aborts the whole hydration rather than truncating the cart.
-            return { li, ...decideResumeLine<Product>({ ok: true, product: data }) };
-          } catch (err) {
-            const status = (err as { response?: { status?: number } })?.response?.status;
-            return { li, ...decideResumeLine<Product>({ ok: false, status }) };
-          }
-        }),
-      );
+      // Archived products are KEPT (row flags itself instead, REG-B195); only a 404 drops a
+      // line. B747 (SA-085a) also fetches a unit-sold line's live ladder. See
+      // lib/resume-draft-hydration.ts for the fetch/drop/abort rules.
+      const results = await Promise.all(parkedLines.map((li) => hydrateParkedLine(li)));
       if (cancelled) return;
-      if (results.some((r) => r.failed)) {
-        // Abort the whole hydration: `hydrating` stays true, so the builder
-        // keeps its spinner and — money-critical — autosave stays disabled and
-        // the server draft is left exactly as parked.
-        hydrationStartedRef.current = false;
-        setHydrateFailed(true);
-        chooseAction(
-          "Couldn't restore your order",
-          "Some items couldn't be loaded. Check your connection and try again.",
-          [
-            { label: "Go back", style: "cancel", onPress: onBack },
-            { label: "Retry", onPress: retryHydrate },
-          ],
-        );
-        return;
-      }
+      // Money-critical: `hydrating` stays true, so autosave stays disabled until resolved.
+      if (results.some((r) => r.failed)) return failHydration();
       const nextItems: Record<string, LineState> = {};
       const nextScanned: Record<string, Product> = {};
       const droppedNames: string[] = [];
-      for (const { li, product } of results) {
+      for (const { li, product, units } of results) {
         if (!product) {
           droppedNames.push(li.productName || li.productId);
           continue;
         }
         nextScanned[li.productId] = product;
-        const liveUpb = Number(product.unitsPerBox ?? 0);
-        const parkedUpb = Number(li.unitsPerBox ?? 0);
-        let boxes = li.boxes;
-        let pieces = li.pieces;
-        let qty = li.qty;
-        // unitsPerBox changed on the live product: keep the parked PHYSICAL
-        // counts (boxes/pieces) and re-derive qty with the LIVE packaging —
-        // never keep the stale qty, which would silently over/under-charge.
-        // Every direction of the change has to go through the helper, not just
-        // case→case: a line that LOST its packaging must shed boxes/pieces
-        // (otherwise effectiveQty reads `boxes*0 + pieces`), and a plain-qty
-        // line whose product GAINED packaging must gain the split (otherwise
-        // computeLineSubtotal charges the new CASE price per piece).
-        if (liveUpb !== parkedUpb) {
-          const n = normalizeBoxesPieces({ boxes, pieces, qty, unitsPerBox: liveUpb });
-          boxes = n.boxes ?? undefined;
-          pieces = n.pieces ?? undefined;
-          qty = n.qty;
-        }
+        // Pack-changed re-split (W/N: never for a unit-labeled line) — order-draft-logic.ts.
+        const { boxes, pieces, qty } = resolveResumeLineBoxes(li, Number(product.unitsPerBox ?? 0));
         const line: LineState = { qty };
         if (boxes != null) line.boxes = boxes;
         if (pieces != null) line.pieces = pieces;
         if (li.note) line.note = li.note;
-        // Pin the parked price ONLY for a genuine operator override — every
-        // other line re-derives from the LIVE tier price (lineUnitFor below),
-        // matching submitOrder's own override rule; the server owns tier/promo
-        // pricing, so a stale tier/list price is never allowed to stick.
-        if (li.priceType === "MANUAL" && li.unitPrice != null) {
-          line.unitPrice = li.unitPrice;
+        // B747/B755: re-resolve unit/override pricing off LIVE data, never the parked price.
+        // R2: the per-product tier (effectiveTierFor), never the bare header customerTier.
+        const pricing = resolveResumeLinePricing(
+          li,
+          product,
+          units,
+          effectiveTierFor(li.productId),
+        );
+        if (pricing.fallbackWarning) {
+          // eslint-disable-next-line no-console
+          console.warn(pricing.fallbackWarning);
+        } else {
+          if (pricing.unitLabel !== undefined) line.unitLabel = pricing.unitLabel;
+          if (pricing.unitBasePrice !== undefined) line.unitBasePrice = pricing.unitBasePrice;
+          // W/N: restore the piece factor CartRow's marginFactorFor needs (else falls back to 1).
+          if (pricing.unitFactor !== undefined) line.unitFactor = pricing.unitFactor;
+          if (pricing.unitPrice !== undefined) {
+            line.unitPrice = pricing.unitPrice;
+            line.priceSource = "operator";
+            if (pricing.overrideReason) line.overrideReason = pricing.overrideReason;
+          }
         }
         nextItems[li.productId] = line;
       }
@@ -814,9 +738,12 @@ function ProductPickView({
     })();
     return () => {
       cancelled = true;
+      // SA-136b: a dep-triggered re-run (customerDetail/customerPrices below) must be able to
+      // start fresh, or the top guard's hydrationStartedRef strands `hydrating` at true forever.
+      hydrationStartedRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrating, hydrateAttempt]);
+  }, [hydrating, hydrateAttempt, customerDetail, customerPrices, pricesSettled]);
 
   /**
    * Debounced, server-filtered, 50-rows-at-a-time. This used to be a single
@@ -861,42 +788,35 @@ function ProductPickView({
    * Add 1 box (boxed product) or 1 piece (non-boxed) to the cart line for
    * `id`. If the product isn't yet known to the screen, the caller passes
    * the resolved Product so we can stash it for the totals/cart UI.
-   * `kind === "piece"` (a PIECE-barcode scan — the product's unitSku) adds
-   * one LOOSE piece instead of a box, rolling over at unitsPerBox.
+   * `level` is the level the scanned CODE carries (SA-580 R1/R2, from the shared resolver):
+   * "UNIT" adds one LOOSE piece instead of a box, rolling over at unitsPerBox. A "+1" tap or a
+   * catalog pick passes no level and adds a box, as before.
    */
-  const addOne = (id: string, productSnapshot?: Product, kind: "case" | "piece" = "case") => {
-    const p = productSnapshot ?? productById.get(id);
+  const addOne = (
+    id: string,
+    snap?: Product,
+    level: SellLevel = "BOX",
+    dflt?: boolean,
+    viaRow?: boolean,
+    code?: string,
+  ): boolean => {
+    const p = snap ?? productById.get(id);
+    // A FAMILY container is never a line (scan, tap or restored draft): refuse at this one choke point.
+    if (isFamilyProduct(p as { kind?: "FAMILY" } | undefined)) {
+      showToast(FAMILY_ADD_MESSAGE);
+      return false;
+    }
     const upb = Number(p?.unitsPerBox ?? 0);
-    const isBoxed = upb > 1;
-    // Conditional remembered-price pre-fill (mirrors web CreateOrderModal): only
-    // a genuine one-time DISCOUNT (below the tier price) or UPSELL (above list)
-    // pre-fills — never over a SPECIAL tier price, which is already the customer's
-    // permanent price. Equal-to-tier remembered prices don't pre-fill (strict <>).
-    const histEntry = priceHistory?.[id];
-    const listPrice = p ? toNumber(p.pricePerUnit) : 0;
-    const tierPrice = p ? tierPriceFor(p) : 0;
-    const isSpecial = effectiveTierFor(id) !== 1;
-    const prefill =
-      !isSpecial &&
-      histEntry != null &&
-      (histEntry.lastPrice < tierPrice || histEntry.lastPrice > listPrice)
-        ? histEntry.lastPrice
-        : undefined;
-    setItems((m) => {
-      const isNew = !m[id];
-      const prev: LineState = m[id] ?? { qty: 0 };
-      // Spread prev inside incrementLine so a repeat scan / +1 keeps the operator's
-      // unitPrice override + note (previously wiped on every increment).
-      // A unit-sold line (re-scanned or "+1"-ed) always steps its COUNT via
-      // stepLineQty, regardless of scan kind — "piece" only means something for a
-      // PACK's own barcode split (SA-085f BLOCKER: box math on a unit line).
-      const line =
-        kind === "piece" && !isUnitLine(prev)
-          ? incrementLinePiece(prev, isBoxed, upb)
-          : stepLineQty(prev, 1, isBoxed, upb)!;
-      if (isNew && prefill != null) line.unitPrice = prefill;
-      return { ...m, [id]: line };
-    });
+    const prefill = rememberedPricePrefill(
+      priceHistory?.[id],
+      p ? toNumber(p.pricePerUnit) : 0,
+      p ? tierPriceFor(p) : 0,
+      isSpecialTier(effectiveTierFor(id)),
+    );
+    // #2865: the add decision is the pure `applyAddToItems` (lib/pending-unit-adapter): refused while the line is pending -> false.
+    const input = { id, level, dflt, viaRow, code, role: userRole, upb, prefill };
+    if (!reserveAdd(itemsRef, input)) return false; // moves the ref forward: a same-render second add sees this one (B992)
+    setItems((m) => applyAddToItems(m, input));
     // Retain a snapshot for EVERY added line, not just scanned ones.
     //
     // This used to be gated on `productSnapshot`, which is only passed by the
@@ -911,72 +831,35 @@ function ProductPickView({
     if (p) {
       setScannedById((m) => (id in m ? m : { ...m, [id]: p }));
     }
+    return true;
   };
 
-  const removeOne = (id: string) => {
-    const p = productById.get(id);
-    const upb = Number(p?.unitsPerBox ?? 0);
-    const isBoxed = upb > 1;
-    setItems((m) => {
-      const prev = m[id];
-      if (!prev) return m;
-      const line = stepLineQty(prev, -1, isBoxed, upb);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
-  };
+  const upbNum = (id: string) => Number(productById.get(id)?.unitsPerBox ?? 0);
+  const removeOne = (id: string) =>
+    setItems((m) =>
+      m[id]
+        ? editItemLine(m, id, "increment", (prev) =>
+            stepLineQty(prev, -1, upbNum(id) > 1, upbNum(id)),
+          )
+        : m,
+    );
 
   const setBoxes = (id: string, boxes: number) =>
-    setItems((m) => {
-      const p = productById.get(id);
-      const upb = Number(p?.unitsPerBox ?? 0);
-      const prev = m[id] ?? { qty: 0 };
-      const line = setLineBoxes(prev, boxes, upb);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
+    setItems((m) => editItemLine(m, id, "qty", (prev) => setLineBoxes(prev, boxes, upbNum(id))));
 
   const setPieces = (id: string, pieces: number) =>
-    setItems((m) => {
-      const p = productById.get(id);
-      const upb = Number(p?.unitsPerBox ?? 0);
-      const prev = m[id] ?? { qty: 0 };
-      const line = setLinePieces(prev, pieces, upb);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
+    setItems((m) => editItemLine(m, id, "qty", (prev) => setLinePieces(prev, pieces, upbNum(id))));
 
   /** Unit mode: the operator types a TOTAL unit count; normalize it back into
    *  cases + loose (7 units of a 6-pack -> 1 case + 1 loose). Price is unchanged
    *  either way because computeLineSubtotal's proration is linear. */
   const setUnits = (id: string, units: number) =>
-    setItems((m) => {
-      const p = productById.get(id);
-      const upb = Number(p?.unitsPerBox ?? 0);
-      const prev = m[id] ?? { qty: 0 };
-      const line = setLineUnits(prev, units, upb);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
+    setItems((m) => editItemLine(m, id, "unit", (prev) => setLineUnits(prev, units, upbNum(id))));
 
   const setSellBy = (id: string, sellBy: "case" | "unit") =>
-    setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], sellBy } } : m));
+    setItems((m) =>
+      m[id] && !refusesLineEdit(m[id], "unit") ? { ...m, [id]: { ...m[id], sellBy } } : m,
+    );
 
   /**
    * units_v1: apply a `UnitPickerRow` choice. `qty` resets to 1 (a fresh unit assignment, never
@@ -987,38 +870,16 @@ function ProductPickView({
    * one. "" (the pack option) clears both `unitLabel` and `unitBasePrice`, restoring the plain
    * pack behaviour byte for byte.
    */
+  const upbOf = (id: string) => productById.get(id)?.unitsPerBox;
   const setUnitLabel = (id: string, option: UnitOption) =>
-    setItems((m) => {
-      const prev = m[id];
-      if (!prev) return m;
-      const isPack = option.value === "";
-      return {
-        ...m,
-        [id]: {
-          ...prev,
-          unitLabel: isPack ? undefined : option.value,
-          unitBasePrice: isPack ? undefined : option.price,
-          unitFactor: isPack ? undefined : option.factorToBase,
-          qty: 1,
-          boxes: undefined,
-          pieces: undefined,
-          unitPrice: undefined,
-        },
-      };
-    });
+    setItems((m) => (m[id] ? { ...m, [id]: applyUnitOption(m[id], option, upbOf(id)) } : m));
+  // SA-626c: a flagged line holds its default unit from the moment it is added, never only once a sheet mounts.
+  const { resolveBeforeSubmit: resolveDefaultUnits, statusFor: unitStatusFor } =
+    useDefaultUnitResolver(items, setItems, isStaff, (id) => productById.get(id), effectiveTierFor);
+  const anyUnitLoading = anyLineLoading(items, unitStatusFor); // Confirm is disabled only while a line is LOADING (#2865)
 
   const setQty = (id: string, qty: number) =>
-    setItems((m) => {
-      const prev = m[id] ?? { qty: 0 };
-      // Plain qty path — setLineQty clears boxes/pieces so server doesn't try to recompute
-      const line = setLineQty(prev, qty);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
+    setItems((m) => editItemLine(m, id, "qty", (prev) => setLineQty(prev, qty))); // clears boxes/pieces (plain qty path)
 
   const removeLine = (id: string) =>
     setItems((m) => {
@@ -1034,15 +895,23 @@ function ProductPickView({
 
   // Set (or clear) a one-time price override for a line. Empty/invalid clears it
   // so the line falls back to the catalog price.
-  const setLinePrice = (id: string, value: number | null) =>
+  const setLinePrice = (id: string, value: number | null, overrideReason?: string) =>
     setItems((m) => {
       const prev = m[id];
       if (!prev) return m;
+      if (refusesLineEdit(prev, "price")) return m; // #2865 (SA-632 H1): a typed price would settle a pending line as cases
       if (value == null || value < 0) {
-        const { unitPrice: _drop, ...rest } = prev;
+        const { unitPrice: _drop, priceSource: _dropSource, ...rest } = prev;
+        delete rest.overrideReason;
         return { ...m, [id]: rest };
       }
-      return { ...m, [id]: { ...prev, unitPrice: value } };
+      // B755: the ONE place an operator types a price on a catalog line — tagged "operator"
+      // so a resume never mistakes it for a history pre-fill (addOne) and re-prices it away.
+      // #2696(c): the reason rides with it (required on a special line — decideTrayPrice).
+      const next: LineState = { ...prev, unitPrice: value, priceSource: "operator" };
+      if (overrideReason) next.overrideReason = overrideReason;
+      else delete next.overrideReason;
+      return { ...m, [id]: next };
     });
 
   // ── Unlisted (ad-hoc, non-catalog) line helpers ──────────────────────────
@@ -1102,12 +971,13 @@ function ProductPickView({
   };
   const scanGuardRef = useRef(createScanAcceptGuard<Product>());
 
-  const finishAccept = (product: Product, unitKind: "case" | "piece"): ScanOutcome => {
-    addOne(product.id, product, unitKind);
+  const finishAccept: ScanLadderDeps<Product>["accept"] = (product, level, opts) => {
+    if (!addOne(product.id, product, level, opts?.startOnDefault, false, opts?.code))
+      return refusedScanOutcome(scanOpen); // a refused scan: not counted, not "Added", ONE message
     bumpScanned(product.id);
     clearSearch();
     const label =
-      unitKind === "piece" && Number(product.unitsPerBox ?? 0) > 1
+      level === "UNIT" && Number(product.unitsPerBox ?? 0) > 1
         ? `Added 1 loose · ${displayName(product)}`
         : `Added ${displayName(product)}`;
     if (scanOpen) return; // the tray row is the confirmation
@@ -1118,14 +988,11 @@ function ProductPickView({
 
   // units_v1 (SA-085h LOW): a PIECE-barcode hit on an already unit-sold line would add a
   // whole unit, not one loose piece — confirm rather than silently adding a large jump.
-  const acceptScannedProduct = (
-    product: Product,
-    unitKind: "case" | "piece" = "case",
-  ): ScanOutcome => {
+  const acceptScannedProduct: ScanLadderDeps<Product>["accept"] = (product, level, ao) => {
     const label = items[product.id]?.unitLabel;
-    if (unitKind !== "piece" || !label) return finishAccept(product, unitKind);
+    if (!needsUnitLabelConfirm(level, product, label)) return finishAccept(product, level, ao);
     const onYes = () => {
-      const o = finishAccept(product, unitKind);
+      const o = finishAccept(product, level, ao);
       if (o?.feedback?.kind === "added") showInline(o.feedback.text);
     };
     confirm(`Add 1 ${label}?`, `${displayName(product)} is sold by ${label}.`, onYes, {
@@ -1219,13 +1086,13 @@ function ProductPickView({
     const { match } = findExactScanMatch(code, products);
     if (!match) return;
     if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
-    const kind = scanUnitKind(code, match);
+    const level = resolveScanSellLevel(match, levelsForScan(code, match));
     // Consume the nonce FIRST (above), then offer: a match parked on an open
     // ladder claim must not re-park on a later settle of the same attempt. A
     // false answer means the ladder owns this label and will redeem the match
     // itself if its own lookup comes back empty.
-    if (!scanGuardRef.current.offer(code, match, kind)) return;
-    const outcome = acceptScannedProduct(match, kind);
+    if (!scanGuardRef.current.offer(code, match, level)) return;
+    const outcome = acceptScannedProduct(match, level, scanAcceptOpts(code, match));
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);
@@ -1357,7 +1224,7 @@ function ProductPickView({
    * always holds the current render's closures behind that stable identity.
    */
   const rowActions = {
-    add: addOne,
+    add: (id: string) => addOne(id, undefined, "BOX", true, true),
     remove: removeOne,
     setQty,
     setBoxes,
@@ -1366,14 +1233,6 @@ function ProductPickView({
     removeLine,
     isUnlisted: (id: string) => unlisted.some((u) => u.id === id),
     unlistedQty: (id: string) => unlisted.find((u) => u.id === id)?.qty ?? 0,
-    // SPECIAL (tier ≠ 1) lines are the customer's permanent price and are
-    // never overridable — the same rule submit already enforces by stripping a
-    // lingering override before it posts. The tray must not offer an edit that
-    // would be silently discarded.
-    isSpecialLine: (id: string) => {
-      const p = productById.get(id);
-      return p ? isSpecialFor(p) : false;
-    },
     showInline,
     updateUnlistedQty,
     removeUnlisted,
@@ -1442,18 +1301,13 @@ function ProductPickView({
     if (a.isUnlisted(id)) a.removeUnlisted(id);
     else a.removeLine(id);
   }, []);
-  // Reprice without leaving the camera. Until now the only price editor on
-  // this surface lived in CartModal, reachable only by leaving scan mode —
-  // while the order EDIT screen has had a one-tap edit under its scanner for
-  // two releases.
-  const onTrayEditPrice = useCallback((id: string) => {
-    const a = actionsRef.current;
-    if (!a.isUnlisted(id) && a.isSpecialLine(id)) {
-      a.showInline("Contract price — not editable on this order");
-      return;
-    }
-    setPriceEditId(id);
-  }, []);
+  // Reprice without leaving the camera (B901 sequencing lives in the hook).
+  // #2696(c): a SPECIAL (tier) line too — moving off it takes a reason in LinePriceModal.
+  const { onTrayEditPrice, handleScanSheetDismiss, closePriceEdit } = useScanPriceEdit({
+    scanOpen,
+    setScanOpen,
+    setPriceEditId,
+  });
   // Resolved lazily (two map lookups) rather than memoized: it is null on every
   // render but the handful where the sheet is open.
   const priceEditTarget = ((): {
@@ -1461,18 +1315,27 @@ function ProductPickView({
     name: string;
     unitPrice: number;
     unlisted: boolean;
+    /** #2696(c): the one-rule inputs (catalog lines only) — see decideTrayPrice. */
+    rule?: { base: number; listPrice: number; isSpecial: boolean; reason?: string };
   } | null => {
     if (!priceEditId) return null;
     const u = unlisted.find((x) => x.id === priceEditId);
     if (u) return { id: u.id, name: u.name, unitPrice: u.unitPrice, unlisted: true };
     const p = productById.get(priceEditId);
     if (!p) return null;
+    const line = items[priceEditId];
     return {
       id: priceEditId,
       name: displayName(p, products),
       // SA-085i(b): the override if set, else what's billed today — never the pack's price.
-      unitPrice: priceEditorPrefill(items[priceEditId], p, effectiveTierFor(p.id)),
+      unitPrice: priceEditorPrefill(line, p, effectiveTierFor(p.id)),
       unlisted: false,
+      rule: {
+        base: unitPriceBase(line ?? {}, tierPriceFor(p)),
+        listPrice: toNumber(p.pricePerUnit),
+        isSpecial: isSpecialFor(p),
+        reason: line?.overrideReason,
+      },
     };
   })();
 
@@ -1571,10 +1434,21 @@ function ProductPickView({
       const special = isSpecialFor(p);
       const tierPrice = tierPriceFor(p);
       const listPrice = toNumber(p.pricePerUnit);
+      // B747: a unit-sold line's comparison base is its OWN resolved price, never the pack's
+      // tier price — same fix as lineUnitFor/computeOrderTotal (lib/cart-order-total.ts). Before
+      // this, a parked unit line was written to the wire as a plain STANDARD/pack line (no
+      // unitLabel at all), so this screen's own drafts never actually carried the field the old
+      // whole-draft resume refusal keyed on — that refusal only ever fired for a draft parked by
+      // a different client.
+      const priceBase = unitPriceBase(line, tierPrice);
       // Mobile has no separate "permanent discount" concept — any explicit
       // override the operator set is tagged MANUAL (never DISCOUNTED), which
       // is exactly what the resume-hydration pin rule above checks for.
-      const hasOverride = !special && line.unitPrice != null && line.unitPrice !== tierPrice;
+      // #2696(c): a special line's override parks only WITH its reason (as submit sends it).
+      const hasOverride =
+        (!special || !!line.overrideReason?.trim()) &&
+        line.unitPrice != null &&
+        line.unitPrice !== priceBase;
       lines.push({
         productId,
         productName: displayName(p),
@@ -1582,12 +1456,15 @@ function ProductPickView({
         listPrice,
         ...(special ? { specialPrice: tierPrice } : {}),
         ...(hasOverride ? { discountedPrice: line.unitPrice } : {}),
-        unitPrice: special ? tierPrice : hasOverride ? line.unitPrice! : listPrice,
-        priceType: special ? "SPECIAL" : hasOverride ? "MANUAL" : "STANDARD",
+        ...(hasOverride && line.overrideReason ? { overrideReason: line.overrideReason } : {}),
+        unitPrice: hasOverride ? line.unitPrice! : priceBase,
+        priceType: hasOverride ? "MANUAL" : special ? "SPECIAL" : "STANDARD",
         qty,
         ...(p.unitsPerBox ? { unitsPerBox: Number(p.unitsPerBox) } : {}),
         ...(line.boxes != null ? { boxes: line.boxes } : {}),
         ...(line.pieces != null ? { pieces: line.pieces } : {}),
+        ...(line.unitLabel ? { unitLabel: line.unitLabel } : {}),
+        ...(hasOverride && line.priceSource ? { priceSource: line.priceSource } : {}),
         ...(p.averageCost != null
           ? { unitCost: toNumber(p.averageCost) }
           : p.standardCost != null
@@ -1869,7 +1746,15 @@ function ProductPickView({
     // discarded from web) would otherwise abort submitOrder before `mutate`,
     // leaving Confirm a dead button with no error shown.
     await flushDraftQuietly();
-    const catalogPayload: CreateOrderItemInput[] = Object.entries(items)
+    const settled = await settleBeforeConfirm(items, resolveDefaultUnits);
+    if (settled.kind === "blocked") {
+      showToast(UNITS_BLOCKED_MESSAGE);
+      return endSubmit();
+    }
+    const lines = settled.lines;
+    setItems((cur) => mergeResolvedDefaults(cur, items, lines)); // keeps edits made while this waited
+    if (settled.kind === "stop") return endSubmit(); // #2865 case d: the retry press only settles; a second press submits
+    const catalogPayload: CreateOrderItemInput[] = Object.entries(lines)
       .map(([productId, line]): CreateOrderItemInput => {
         const p = productById.get(productId);
         const qty = effectiveQty(line, p?.unitsPerBox);
@@ -1880,11 +1765,17 @@ function ProductPickView({
         // units_v1: see lib/unit-options.ts#unitPriceBase — the comparison base is the ACTIVE
         // unit's own resolved price, never the pack's `tierPriceFor`.
         const catalog = unitPriceBase(line, p ? tierPriceFor(p) : 0);
-        // SPECIAL lines drop any lingering override (e.g. from an old draft) —
-        // web can't produce one there, and the server owns the tier price.
+        // #2696(c): a SPECIAL line's override is sent only WITH its reason (the server refuses
+        // one without); a lingering reasonless one (e.g. an old draft) is dropped, as before.
+        const specialOk = p != null && (!isSpecialFor(p) || !!line.overrideReason?.trim());
         const override =
-          p != null && !isSpecialFor(p) && line.unitPrice != null && line.unitPrice !== catalog
-            ? { unitPrice: line.unitPrice }
+          specialOk && line.unitPrice != null && line.unitPrice !== catalog
+            ? {
+                unitPrice: line.unitPrice,
+                ...(line.overrideReason?.trim()
+                  ? { overrideReason: line.overrideReason.trim() }
+                  : {}),
+              }
             : {};
         const note = line.note?.trim() ? { notes: line.note.trim() } : {};
         const unitLabel = line.unitLabel?.trim() || undefined;
@@ -1969,6 +1860,16 @@ function ProductPickView({
           // The parked draft has become a real order (or a formal DRAFT
           // order, or was merged) — either way it's no longer needed.
           await finalizeBoundDraft();
+          // B1205: a lost-response replay of a create whose credits were never applied (read-only
+          // hint): same copy as web, then open the saved order.
+          const hint = creditsPendingFromOrder(order);
+          if (hint) {
+            showToast(hint.message);
+            // Drivers have no operator order route: back to the stop.
+            if (savedOrderDestination(userRole) === "stop") onBack();
+            else router.replace(`/(operator)/orders/${hint.orderId}` as any);
+            return;
+          }
           onSaved(order.orderNumber);
         },
         onError: async (err: Error) => {
@@ -1993,6 +1894,19 @@ function ProductPickView({
             await finalizeBoundDraft();
             showToast("Offline — order queued and will sync when you reconnect");
             onBack();
+            return;
+          }
+          // B1205: 503 ORDER_SAVED_CREDITS_PENDING - the order WAS saved, only its credits are
+          // pending. Not a failed save: wind the cart down like success (never retry/resubmit) and
+          // open the saved order, where the credits are applied.
+          const pending = creditsPendingFromError(err);
+          if (pending) {
+            resetOrderSubmitKey(customerId);
+            clearStopCartSnapshot();
+            await finalizeBoundDraft();
+            showToast(pending.message);
+            if (savedOrderDestination(userRole) === "stop") onBack();
+            else router.replace(`/(operator)/orders/${pending.orderId}` as any);
             return;
           }
           // Release the latch on EVERY failure branch below — each of them
@@ -2059,7 +1973,9 @@ function ProductPickView({
                     // the bound draft before navigating away.
                     resetOrderSubmitKey(customerId);
                     void finalizeBoundDraft();
-                    router.replace(`/(operator)/orders/${heldOrderId}` as any);
+                    // Drivers have no operator order route: back to the stop.
+                    if (savedOrderDestination(userRole) === "stop") onBack();
+                    else router.replace(`/(operator)/orders/${heldOrderId}` as any);
                   },
                 },
               ],
@@ -2167,26 +2083,21 @@ function ProductPickView({
           }
         />
         <View style={styles.hydrateState}>
-          {hydrateFailed || hydrateRefusal ? (
+          {hydrateFailed ? (
             <>
-              <Text style={styles.hydrateFailTitle}>
-                {hydrateRefusal ? "Open this draft on the web" : "Couldn't restore your order"}
-              </Text>
+              <Text style={styles.hydrateFailTitle}>Couldn't restore your order</Text>
               <Text style={styles.hydrateFailText}>
-                {hydrateRefusal ??
-                  "Some items couldn't be loaded. Check your connection and try again."}
+                Some items couldn't be loaded. Check your connection and try again.
               </Text>
-              {!hydrateRefusal && (
-                <Pressable
-                  style={styles.hydrateRetryBtn}
-                  onPress={retryHydrate}
-                  accessibilityRole="button"
-                  accessibilityLabel="Retry restoring your parked order"
-                >
-                  <Ionicons name="refresh" size={16} color={ios.brand} />
-                  <Text style={styles.hydrateRetryText}>Retry</Text>
-                </Pressable>
-              )}
+              <Pressable
+                style={styles.hydrateRetryBtn}
+                onPress={retryHydrate}
+                accessibilityRole="button"
+                accessibilityLabel="Retry restoring your parked order"
+              >
+                <Ionicons name="refresh" size={16} color={ios.brand} />
+                <Text style={styles.hydrateRetryText}>Retry</Text>
+              </Pressable>
             </>
           ) : (
             <>
@@ -2413,11 +2324,11 @@ function ProductPickView({
           <Pressable
             style={[
               styles.confirmBtn,
-              (!canSave || createOrder.isPending) && styles.confirmBtnDisabled,
+              (!canSave || createOrder.isPending || anyUnitLoading) && styles.confirmBtnDisabled,
             ]}
-            disabled={!canSave}
+            disabled={!canSave || anyUnitLoading}
             onPress={() => onSave()}
-            accessibilityState={{ disabled: !canSave }}
+            accessibilityState={{ disabled: !canSave || anyUnitLoading, busy: anyUnitLoading }}
           >
             <Text style={styles.confirmBtnText} numberOfLines={1}>
               {createOrder.isPending || submitting ? "Saving…" : "Confirm"}
@@ -2470,6 +2381,7 @@ function ProductPickView({
         onDecrement={onTrayDecrement}
         onRemove={onTrayRemove}
         onEditPrice={onTrayEditPrice}
+        onDismiss={handleScanSheetDismiss}
         onReview={() => {
           setScanOpen(false);
           setCartOpen(true);
@@ -2488,7 +2400,7 @@ function ProductPickView({
         onClose={() => setPickCode(null)}
         onSelect={(p: { id: string }) => {
           setPickCode(null);
-          acceptScannedProduct(p as unknown as Product);
+          acceptScannedProduct(p as unknown as Product, "BOX", { startOnDefault: true });
         }}
       />
 
@@ -2540,20 +2452,22 @@ function ProductPickView({
         open={priceEditTarget != null}
         name={priceEditTarget?.name ?? ""}
         unitPrice={priceEditTarget?.unitPrice ?? null}
-        onClose={() => setPriceEditId(null)}
-        onSave={(value) => {
+        rule={priceEditTarget?.rule}
+        onClose={closePriceEdit}
+        onSave={(value, reason) => {
           const target = priceEditTarget;
-          setPriceEditId(null);
+          closePriceEdit();
           if (!target) return;
           // Money discipline: round every monetary write. The line TOTAL is never written
           // here — the tray/footer re-derive it through computeLineSubtotal from this price.
           const price = value == null ? null : roundMoney(value);
-          if (target.unlisted) return updateUnlistedPrice(target.id, price);
-          // SA-085i(b): write an override ONLY when it diverges from the base (same comparison
-          // submit/park make) — saving the pre-fill UNTOUCHED must never store one.
-          const p = productById.get(target.id);
-          const base = p ? unitPriceBase(items[target.id] ?? {}, tierPriceFor(p)) : null;
-          setLinePrice(target.id, base != null ? priceEditorSaveOverride(price, base) : price);
+          if (target.unlisted || !target.rule) return updateUnlistedPrice(target.id, price);
+          // #2696(c): the server's rule A (decideTrayPrice → pricing's decideStaffOverride) —
+          // within ½¢ of the base clears (SA-085i(b): saving the pre-fill never stores an
+          // override); a special line's change carries its reason (the modal refuses without).
+          const d = decideTrayPrice({ typed: price, ...target.rule, reason });
+          if (d.kind === "set") setLinePrice(target.id, d.price, d.overrideReason);
+          else if (d.kind === "clear") setLinePrice(target.id, null);
         }}
       />
 
@@ -2656,1423 +2570,3 @@ function ProductPickView({
 }
 
 // ─────────────────────── Cart review modal ───────────────────────
-
-/** Order-level fields, owned by ProductPickView and edited inside the cart. */
-interface OrderOptions {
-  urgent: boolean;
-  onToggleUrgent: () => void;
-  deliveryDate: string;
-  onChangeDeliveryDate: (v: string) => void;
-  /** Business date of the order (YYYY-MM-DD); blank = today. */
-  orderDate: string;
-  onChangeOrderDate: (v: string) => void;
-  /** Staff only — drivers must never see the backdate field. */
-  canBackdate: boolean;
-  discountRaw: string;
-  onChangeDiscount: (v: string) => void;
-  shippingFeeRaw: string;
-  onChangeShippingFee: (v: string) => void;
-  notes: string;
-  onChangeNotes: (v: string) => void;
-  /** Ad-hoc trips (plan §WP11): ROUTE (default) or SHIP (carrier-shipped). */
-  fulfillPath: "ROUTE" | "SHIP";
-  onChangeFulfillPath: (v: "ROUTE" | "SHIP") => void;
-}
-
-interface CreditPicker {
-  rows: CreditNote[];
-  selectedIds: string[];
-  onToggle: (id: string) => void;
-  onCreateNew: () => void;
-}
-
-/** Collapsed-by-default disclosure inside the cart sheet. */
-function CartSection({
-  icon,
-  title,
-  summary,
-  children,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  title: string;
-  summary?: string;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <View style={styles.cartSection}>
-      <Pressable
-        style={styles.optionsHeader}
-        onPress={() => setOpen((o) => !o)}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: open }}
-      >
-        <Ionicons name={icon} size={16} color={ios.brand} />
-        <Text style={styles.optionsTitle}>{title}</Text>
-        <Text style={styles.optionsSummary} numberOfLines={1}>
-          {open ? "" : (summary ?? "")}
-        </Text>
-        <Ionicons name={open ? "chevron-up" : "chevron-down"} size={16} color={ios.label3} />
-      </Pressable>
-      {open ? <View style={styles.optionsBody}>{children}</View> : null}
-    </View>
-  );
-}
-
-function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
-  const summary = [
-    o.urgent ? "Urgent" : null,
-    // ROUTE is the default majority — only call it out when it isn't.
-    o.fulfillPath === "SHIP" ? "Ship via carrier" : null,
-    o.orderDate ? `Dated ${o.orderDate}` : null,
-    o.deliveryDate ? `Deliver ${o.deliveryDate}` : null,
-    parseFloat(o.discountRaw) > 0 ? `-$${parseFloat(o.discountRaw).toFixed(2)}` : null,
-    parseFloat(o.shippingFeeRaw) > 0
-      ? `+$${parseFloat(o.shippingFeeRaw).toFixed(2)} shipping`
-      : null,
-    o.notes.trim() ? "Notes" : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  return (
-    <CartSection icon="options-outline" title="Order options" summary={summary}>
-      <Pressable style={styles.optionRow} onPress={o.onToggleUrgent}>
-        <Ionicons
-          name={o.urgent ? "flame" : "flame-outline"}
-          size={18}
-          color={o.urgent ? ios.system.orange : ios.label2}
-        />
-        <Text style={styles.optionLabel}>Urgent</Text>
-        <View style={[styles.toggle, o.urgent && styles.toggleOn]}>
-          <View style={[styles.toggleDot, o.urgent && styles.toggleDotOn]} />
-        </View>
-      </Pressable>
-      <View style={styles.optionField}>
-        <Text style={styles.optionLabel}>Fulfillment</Text>
-        <View style={styles.fulfillRow}>
-          <Pressable
-            style={[styles.fulfillBtn, o.fulfillPath === "ROUTE" && styles.fulfillBtnActive]}
-            onPress={() => o.onChangeFulfillPath("ROUTE")}
-            accessibilityRole="button"
-            accessibilityLabel="Delivery route"
-            accessibilityState={{ selected: o.fulfillPath === "ROUTE" }}
-          >
-            <Text
-              style={[
-                styles.fulfillBtnText,
-                o.fulfillPath === "ROUTE" && styles.fulfillBtnTextActive,
-              ]}
-            >
-              Delivery route
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[styles.fulfillBtn, o.fulfillPath === "SHIP" && styles.fulfillBtnActive]}
-            onPress={() => o.onChangeFulfillPath("SHIP")}
-            accessibilityRole="button"
-            accessibilityLabel="Ship via carrier"
-            accessibilityState={{ selected: o.fulfillPath === "SHIP" }}
-          >
-            <Text
-              style={[
-                styles.fulfillBtnText,
-                o.fulfillPath === "SHIP" && styles.fulfillBtnTextActive,
-              ]}
-            >
-              Ship via carrier
-            </Text>
-          </Pressable>
-        </View>
-        {o.fulfillPath === "SHIP" ? (
-          <Text style={styles.optionHelp}>
-            Ships via carrier — won't appear on delivery routes.
-          </Text>
-        ) : null}
-      </View>
-      {o.canBackdate ? (
-        <View style={styles.optionField}>
-          <Text style={styles.optionLabel}>Order date (backdate)</Text>
-          <TextInput
-            value={o.orderDate}
-            onChangeText={o.onChangeOrderDate}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor={ios.label3}
-            keyboardType="numbers-and-punctuation"
-            style={styles.optionInput}
-          />
-          <Text style={styles.optionHelp}>
-            The day the order actually happened. Leave blank for today.
-          </Text>
-        </View>
-      ) : null}
-      <View style={styles.optionField}>
-        <Text style={styles.optionLabel}>Delivery date</Text>
-        <TextInput
-          value={o.deliveryDate}
-          onChangeText={o.onChangeDeliveryDate}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor={ios.label3}
-          keyboardType="numbers-and-punctuation"
-          style={styles.optionInput}
-        />
-      </View>
-      <View style={styles.optionField}>
-        <Text style={styles.optionLabel}>Order discount ($)</Text>
-        <TextInput
-          value={o.discountRaw}
-          onChangeText={o.onChangeDiscount}
-          placeholder="0.00"
-          placeholderTextColor={ios.label3}
-          keyboardType="decimal-pad"
-          style={styles.optionInput}
-        />
-      </View>
-      <View style={styles.optionField}>
-        <Text style={styles.optionLabel}>Shipping fee ($)</Text>
-        <TextInput
-          value={o.shippingFeeRaw}
-          onChangeText={o.onChangeShippingFee}
-          placeholder="0.00 (optional)"
-          placeholderTextColor={ios.label3}
-          keyboardType="decimal-pad"
-          style={styles.optionInput}
-        />
-      </View>
-      <View style={styles.optionField}>
-        <Text style={styles.optionLabel}>Notes</Text>
-        <TextInput
-          value={o.notes}
-          onChangeText={o.onChangeNotes}
-          placeholder="Delivery / handling notes…"
-          placeholderTextColor={ios.label3}
-          multiline
-          style={[styles.optionInput, { minHeight: 60, textAlignVertical: "top" }]}
-        />
-      </View>
-    </CartSection>
-  );
-}
-
-/**
- * Open credit notes for this customer. Toggle only (no amount input on mobile);
- * a null amount means "up to the credit's remaining balance", resolved server-side.
- */
-function ApplyCreditSection({ credits: c }: { credits: CreditPicker }) {
-  const summary = c.selectedIds.length
-    ? `${c.selectedIds.length} selected`
-    : c.rows.length
-      ? `${c.rows.length} available`
-      : "None open";
-
-  return (
-    <CartSection icon="pricetag-outline" title="Apply credit" summary={summary}>
-      {c.rows.length === 0 ? (
-        <Text style={styles.optionsSummary}>No open credits for this customer.</Text>
-      ) : (
-        c.rows.map((cn) => {
-          const remaining = Math.max(0, cn.amount - (cn.amountUsed ?? 0));
-          const checked = c.selectedIds.includes(cn.id);
-          return (
-            <Pressable key={cn.id} style={styles.optionRow} onPress={() => c.onToggle(cn.id)}>
-              <Ionicons
-                name={checked ? "checkbox" : "square-outline"}
-                size={20}
-                color={checked ? ios.brand : ios.label2}
-              />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.optionLabel} numberOfLines={1}>
-                  {cn.creditNoteNumber}
-                  {cn.reason ? ` · ${cn.reason}` : ""}
-                </Text>
-                {cn.expiresAt ? (
-                  <Text style={styles.optionsSummary}>Expires {fmtCalendarDate(cn.expiresAt)}</Text>
-                ) : null}
-              </View>
-              <Text style={styles.optionLabel}>${remaining.toFixed(2)}</Text>
-            </Pressable>
-          );
-        })
-      )}
-      <Pressable onPress={c.onCreateNew} hitSlop={6} style={styles.newCreditBtn}>
-        <Ionicons name="add-circle-outline" size={14} color={ios.brand} />
-        <Text style={styles.newCreditText}>New credit note</Text>
-      </Pressable>
-    </CartSection>
-  );
-}
-
-/**
- * Slide-up sheet that lets the operator inspect every added line, tweak
- * box/piece counts (or qty for non-boxed), remove rows, and finally save.
- * The footer total/Confirm action stays in sync with this list because both
- * read from the same `items` + `productById` state in the parent.
- */
-function CartModal({
-  open,
-  items,
-  productById,
-  priceHistory,
-  tierPriceFor,
-  isSpecialFor,
-  tierForProductId,
-  marginFloorFor,
-  unlisted,
-  total,
-  totalItems,
-  invoiceSplit,
-  saving,
-  onClose,
-  onChangeBoxes,
-  onChangePieces,
-  onChangeUnits,
-  onChangeSellBy,
-  onChangeUnit,
-  onChangeQty,
-  onChangePrice,
-  onChangeNote,
-  onToggleNote,
-  showCostEye,
-  floorAcked,
-  onSellAnyway,
-  onIncrement,
-  onDecrement,
-  onRemove,
-  onChangeUnlistedQty,
-  onChangeUnlistedPrice,
-  onChangeUnlistedNote,
-  onToggleUnlistedNote,
-  onRemoveUnlisted,
-  onAddUnlisted,
-  onScanMore,
-  options,
-  credits,
-  onSave,
-}: {
-  open: boolean;
-  items: Record<string, LineState>;
-  productById: Map<string, Product>;
-  priceHistory?: CustomerPriceHistory;
-  tierPriceFor: (p: Product) => number;
-  /** SPECIAL (tier≠1) lines lock the price input — it's the customer's permanent price. */
-  isSpecialFor: (p: Product) => boolean;
-  /** units_v1: the EFFECTIVE numeric tier (1-5) for a product — `UnitPickerRow` resolves the
-   *  ladder price at this tier, same source as `isSpecialFor`/`tierPriceFor`. */
-  tierForProductId: (productId: string) => number;
-  /** The customer's effective margin floor (fraction) for a product's category. */
-  marginFloorFor: (p: Product) => number;
-  unlisted: UnlistedLine[];
-  total: number;
-  totalItems: number;
-  invoiceSplit: InvoiceSplitPreview;
-  saving: boolean;
-  onClose: () => void;
-  onChangeBoxes: (id: string, n: number) => void;
-  onChangePieces: (id: string, n: number) => void;
-  /** Unit mode: total unit count, routed through setLineUnits. */
-  onChangeUnits: (id: string, n: number) => void;
-  onChangeSellBy: (id: string, sellBy: "case" | "unit") => void;
-  /** units_v1: a `UnitPickerRow` choice, routed through setUnitLabel. */
-  onChangeUnit: (id: string, option: UnitOption) => void;
-  onChangeQty: (id: string, n: number) => void;
-  onChangePrice: (id: string, value: number | null) => void;
-  onChangeNote: (id: string, text: string) => void;
-  onToggleNote: (id: string) => void;
-  /** Whether this role may reveal cost/margin (seller roles only). */
-  showCostEye: boolean;
-  /** Product ids acked as "sell anyway" below the margin floor. */
-  floorAcked: Set<string>;
-  onSellAnyway: (id: string) => void;
-  onIncrement: (id: string) => void;
-  onDecrement: (id: string) => void;
-  onRemove: (id: string) => void;
-  onChangeUnlistedQty: (id: string, n: number) => void;
-  onChangeUnlistedPrice: (id: string, value: number | null) => void;
-  onChangeUnlistedNote: (id: string, text: string) => void;
-  onToggleUnlistedNote: (id: string) => void;
-  onRemoveUnlisted: (id: string) => void;
-  onAddUnlisted: () => void;
-  /** Leave the cart for scan mode. Symmetric with ScanOrderSheet's onReview. */
-  onScanMore: () => void;
-  /** Order-level fields; state stays in the parent so the payload is unchanged. */
-  options: OrderOptions;
-  credits: CreditPicker;
-  onSave: () => void;
-}) {
-  // R2: preserve SCAN order. `items` is a UUID-keyed Record whose insertion order
-  // is first-scan order (a repeat scan updates the existing key in place, a new
-  // scan appends), so iterate Object.entries as-is — no alphabetical re-sort, which
-  // previously made scanned lines hard to verify against the (scan-ordered) invoice.
-  const rows = useMemo(() => {
-    const list: { id: string; product: Product; line: LineState }[] = [];
-    for (const [id, line] of Object.entries(items)) {
-      const product = productById.get(id);
-      if (!product) continue;
-      list.push({ id, product, line });
-    }
-    return list;
-  }, [items, productById]);
-
-  return (
-    <Modal visible={open} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.cartBackdrop}>
-        <View style={styles.cartSheet}>
-          {/* Header with close + title */}
-          <View style={styles.cartHeader}>
-            <Pressable onPress={onClose} hitSlop={8} style={styles.cartHeaderBtn}>
-              <Ionicons name="chevron-down" size={22} color={ios.label2} />
-            </Pressable>
-            <Text style={styles.cartTitle}>Review order</Text>
-            <Text style={styles.cartHeaderCount}>
-              {totalItems} item{totalItems === 1 ? "" : "s"}
-            </Text>
-          </View>
-
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16, gap: 10 }}
-            showsVerticalScrollIndicator={false}
-          >
-            {rows.length === 0 && unlisted.length === 0 ? (
-              <View style={[styles.center, { paddingVertical: 40 }]}>
-                <Text style={styles.emptyText}>Cart is empty.</Text>
-              </View>
-            ) : (
-              <>
-                {rows.map(({ id, product, line }) => (
-                  <CartRow
-                    key={id}
-                    product={product}
-                    line={line}
-                    catalogPrice={tierPriceFor(product)}
-                    isSpecial={isSpecialFor(product)}
-                    tier={tierForProductId(product.id)}
-                    marginFloor={marginFloorFor(product)}
-                    historyPrice={priceHistory?.[id]?.lastPrice}
-                    onChangeBoxes={(n) => onChangeBoxes(id, n)}
-                    onChangePieces={(n) => onChangePieces(id, n)}
-                    onChangeUnits={(n) => onChangeUnits(id, n)}
-                    onChangeSellBy={(v) => onChangeSellBy(id, v)}
-                    onChangeUnit={(opt) => onChangeUnit(id, opt)}
-                    onChangeQty={(n) => onChangeQty(id, n)}
-                    onChangePrice={(raw) => onChangePrice(id, raw)}
-                    onChangeNote={(t) => onChangeNote(id, t)}
-                    onToggleNote={() => onToggleNote(id)}
-                    showCostEye={showCostEye}
-                    acked={floorAcked.has(id)}
-                    onSellAnyway={() => onSellAnyway(id)}
-                    onIncrement={() => onIncrement(id)}
-                    onDecrement={() => onDecrement(id)}
-                    onRemove={() => onRemove(id)}
-                  />
-                ))}
-                {unlisted.map((u) => (
-                  <UnlistedCartRow
-                    key={u.id}
-                    line={u}
-                    onChangeQty={(n) => onChangeUnlistedQty(u.id, n)}
-                    onChangePrice={(raw) => onChangeUnlistedPrice(u.id, raw)}
-                    onChangeNote={(t) => onChangeUnlistedNote(u.id, t)}
-                    onToggleNote={() => onToggleUnlistedNote(u.id)}
-                    onRemove={() => onRemoveUnlisted(u.id)}
-                  />
-                ))}
-              </>
-            )}
-            {invoiceSplit.willSplit ? (
-              <View style={styles.splitBanner}>
-                <Text style={styles.splitBannerHeader}>
-                  SPLITS INTO {invoiceSplit.groups.length} INVOICES
-                </Text>
-                {invoiceSplit.groups.map((g, i) => (
-                  <View key={g.label} style={styles.splitGroupRow}>
-                    <Text style={styles.splitGroupLabel} numberOfLines={1}>
-                      Invoice {i + 1} — {g.label} ({g.count} {g.count === 1 ? "item" : "items"})
-                    </Text>
-                    <Text style={styles.splitGroupAmount}>${g.subtotal.toFixed(2)}</Text>
-                  </View>
-                ))}
-                <Text style={styles.splitFootnote}>
-                  Regulated categories are billed on their own invoice. Amounts shown are pre-tax
-                  subtotals.
-                </Text>
-              </View>
-            ) : null}
-            {/* Two ways back to adding items. "Scan more" is the exact inverse
-                of ScanOrderSheet's "Review" — no nested modals, no new state. */}
-            <View style={styles.cartAddRow}>
-              <Pressable style={styles.cartAddUnlisted} onPress={onAddUnlisted} hitSlop={4}>
-                <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
-                <Text style={styles.cartAddUnlistedText} numberOfLines={1}>
-                  Add unlisted item
-                </Text>
-              </Pressable>
-              <Pressable
-                style={styles.cartAddUnlisted}
-                onPress={onScanMore}
-                hitSlop={4}
-                accessibilityRole="button"
-                accessibilityLabel="Scan more items"
-              >
-                <Ionicons name="barcode-outline" size={16} color={ios.brand} />
-                <Text style={styles.cartAddUnlistedText} numberOfLines={1}>
-                  Scan more
-                </Text>
-              </Pressable>
-            </View>
-
-            <OrderOptionsSection options={options} />
-            <ApplyCreditSection credits={credits} />
-          </ScrollView>
-
-          {/* Sticky footer: total + actions */}
-          <View style={styles.cartFooter}>
-            <View style={styles.cartFooterRow}>
-              <View>
-                <Text style={styles.footerEyebrow}>ORDER TOTAL</Text>
-                <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
-              </View>
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                <Pressable style={styles.cartContinueBtn} onPress={onClose} hitSlop={6}>
-                  <Text style={styles.cartContinueText}>Keep adding</Text>
-                </Pressable>
-                <Pressable
-                  style={[
-                    styles.confirmBtn,
-                    (totalItems === 0 || saving) && styles.confirmBtnDisabled,
-                  ]}
-                  disabled={totalItems === 0 || saving}
-                  onPress={onSave}
-                  accessibilityState={{ disabled: totalItems === 0 || saving }}
-                >
-                  <Text style={styles.confirmBtnText}>{saving ? "Saving…" : "Save order"}</Text>
-                  <Ionicons name="checkmark" size={14} color="#fff" />
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-/** Cart row for an ad-hoc (unlisted) line: editable price + qty, "Custom" tag, no image. */
-function UnlistedCartRow({
-  line,
-  onChangeQty,
-  onChangePrice,
-  onChangeNote,
-  onToggleNote,
-  onRemove,
-}: {
-  line: UnlistedLine;
-  onChangeQty: (n: number) => void;
-  onChangePrice: (value: number | null) => void;
-  onChangeNote: (text: string) => void;
-  onToggleNote: () => void;
-  onRemove: () => void;
-}) {
-  const lineTotal = computeLineSubtotal({ unitPrice: line.unitPrice, qty: line.qty });
-  return (
-    <View style={styles.cartRow}>
-      <View style={styles.cartRowHeader}>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <View style={styles.unlistedTagRow}>
-            <Text style={styles.cartRowName} numberOfLines={2}>
-              {line.name || "Unlisted item"}
-            </Text>
-            <View style={styles.customTag}>
-              <Text style={styles.customTagText}>Custom</Text>
-            </View>
-          </View>
-        </View>
-        <Pressable onPress={onRemove} hitSlop={8} style={styles.cartRowRemove}>
-          <Ionicons name="trash-outline" size={18} color={ios.system.redInk} />
-        </Pressable>
-      </View>
-
-      <View style={styles.cartPriceRow}>
-        <Text style={styles.cartPriceLabel}>Price</Text>
-        <View style={styles.cartPriceInputWrap}>
-          <Text style={styles.cartPriceCurrency}>$</Text>
-          <MoneyTextInput
-            style={[styles.cartPriceInput, styles.cartPriceInputActive]}
-            value={line.unitPrice || null}
-            onChangeValue={onChangePrice}
-            placeholder="0.00"
-            returnKeyType="done"
-          />
-        </View>
-      </View>
-
-      <CartStepperRow
-        label="Qty"
-        value={line.qty}
-        onChange={onChangeQty}
-        onIncrement={() => onChangeQty(line.qty + 1)}
-        onDecrement={() => onChangeQty(Math.max(0, line.qty - 1))}
-      />
-
-      {/* Per-line note — carried onto the invoice line (buyer-visible). */}
-      {line.noteOpen || line.note?.trim() ? (
-        <TextInput
-          value={line.note ?? ""}
-          onChangeText={onChangeNote}
-          placeholder="Flavor or note for this item (prints on invoice)"
-          placeholderTextColor={ios.label3}
-          maxLength={2000}
-          multiline
-          style={styles.cartNoteInput}
-        />
-      ) : (
-        <Pressable onPress={onToggleNote} hitSlop={6} style={styles.cartNoteAdd}>
-          <Ionicons name="create-outline" size={14} color={ios.brand} />
-          <Text style={styles.cartNoteAddText}>Add flavor / note</Text>
-        </Pressable>
-      )}
-
-      <View style={styles.cartRowFooter}>
-        <Text style={styles.cartRowFooterLabel}>Line total</Text>
-        <Text style={styles.cartRowFooterValue}>${lineTotal.toFixed(2)}</Text>
-      </View>
-    </View>
-  );
-}
-
-/**
- * Reprice ONE line from the scan tray, without tearing the camera down.
- *
- * The create surface's only price editor used to be inside CartModal, i.e.
- * behind "Review" — so fixing a price mid-scan meant leaving scan mode and
- * coming back, while the order EDIT screen has offered a one-tap edit under
- * its scanner since B263. This is the create-side counterpart.
- *
- * Deliberately thin: it collects a number and hands it back. Rounding, the
- * SPECIAL-tier lock and the catalog-vs-unlisted split all live with the
- * caller, which already owns those rules.
- */
-function LinePriceModal({
-  open,
-  name,
-  unitPrice,
-  onClose,
-  onSave,
-}: {
-  open: boolean;
-  name: string;
-  /** The price in force for this line right now. */
-  unitPrice: number | null;
-  onClose: () => void;
-  /** `null` clears the override, so the line falls back to the catalog price. */
-  onSave: (value: number | null) => void;
-}) {
-  const [value, setValue] = useState<number | null>(null);
-
-  // Re-seed on every open — a different line each time.
-  useEffect(() => {
-    if (open) setValue(unitPrice);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  return (
-    <Modal visible={open} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.unlistedOverlay} onPress={onClose}>
-        <Pressable style={styles.unlistedCard} onPress={(e) => e.stopPropagation()}>
-          <Text style={styles.unlistedTitle} numberOfLines={2}>
-            {name || "Edit price"}
-          </Text>
-          <Text style={styles.unlistedSub}>Price for this order only.</Text>
-
-          <Text style={styles.unlistedFieldLabel}>Unit price</Text>
-          <MoneyTextInput
-            style={styles.unlistedInput}
-            value={value}
-            onChangeValue={setValue}
-            placeholder="0.00"
-            placeholderTextColor={ios.label3}
-            returnKeyType="done"
-            autoFocus
-          />
-
-          <View style={[styles.modalBtns, { marginTop: 4 }]}>
-            <Pressable style={styles.modalBtnGhost} onPress={onClose}>
-              <Text style={styles.modalBtnGhostText}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              style={styles.modalBtnFill}
-              onPress={() => onSave(value)}
-              accessibilityRole="button"
-              accessibilityLabel="Save price"
-            >
-              <Text style={styles.modalBtnFillText}>Save</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-}
-
-/**
- * Small modal to compose a new unlisted line: free-text name, unit price
- * (required), integer qty. Mirrors the PriceOverrideModal styling.
- */
-function UnlistedItemModal({
-  open,
-  initialName,
-  onClose,
-  onAdd,
-}: {
-  open: boolean;
-  /** Prefills the name — the search term that matched no catalog product. */
-  initialName?: string;
-  onClose: () => void;
-  onAdd: (name: string, unitPrice: number, qty: number) => void;
-}) {
-  const [name, setName] = useState("");
-  const [priceText, setPriceText] = useState("");
-  const [qtyText, setQtyText] = useState("1");
-
-  // Reset fields whenever the modal is (re)opened.
-  useEffect(() => {
-    if (open) {
-      setName(initialName ?? "");
-      setPriceText("");
-      setQtyText("1");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  const price = parseFloat(priceText);
-  const qty = parseInt(qtyText || "0", 10);
-  const valid = name.trim() !== "" && Number.isFinite(price) && price > 0 && qty > 0;
-
-  return (
-    <Modal visible={open} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.unlistedOverlay} onPress={onClose}>
-        <Pressable style={styles.unlistedCard} onPress={(e) => e.stopPropagation()}>
-          <Text style={styles.unlistedTitle}>Add unlisted item</Text>
-          <Text style={styles.unlistedSub}>A one-off line that isn't in your catalog.</Text>
-
-          <Text style={styles.unlistedFieldLabel}>Item name</Text>
-          <TextInput
-            style={styles.unlistedInput}
-            value={name}
-            onChangeText={setName}
-            placeholder="e.g. Delivery surcharge"
-            placeholderTextColor={ios.label3}
-            autoFocus
-            returnKeyType="next"
-          />
-
-          <View style={{ flexDirection: "row", gap: 10 }}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.unlistedFieldLabel}>Unit price</Text>
-              <TextInput
-                style={styles.unlistedInput}
-                value={priceText}
-                onChangeText={setPriceText}
-                placeholder="0.00"
-                placeholderTextColor={ios.label3}
-                keyboardType="decimal-pad"
-                selectTextOnFocus
-              />
-            </View>
-            <View style={{ width: 96 }}>
-              <Text style={styles.unlistedFieldLabel}>Qty</Text>
-              <TextInput
-                style={styles.unlistedInput}
-                value={qtyText}
-                onChangeText={(t) => setQtyText(sanitizeIntInput(t))}
-                placeholder="1"
-                placeholderTextColor={ios.label3}
-                keyboardType="number-pad"
-                maxLength={5}
-                selectTextOnFocus
-              />
-            </View>
-          </View>
-
-          <View style={[styles.modalBtns, { marginTop: 4 }]}>
-            <Pressable style={styles.modalBtnGhost} onPress={onClose}>
-              <Text style={styles.modalBtnGhostText}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.modalBtnFill, !valid && styles.modalBtnDisabled]}
-              onPress={() => valid && onAdd(name.trim(), price, qty)}
-              disabled={!valid}
-            >
-              <Text style={styles.modalBtnFillText}>Add to order</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-}
-
-/**
- * Compact inline "New credit note" sheet, opened from the Apply-credit
- * section when the operator needs a credit that doesn't exist yet — a
- * standalone credit for this order's customer (no invoice link). Mirrors
- * the compact-sheet structure of InlineCreateProductSheet.tsx.
- */
-function CreateCreditNoteSheet({
-  visible,
-  customerId,
-  onClose,
-  onCreated,
-}: {
-  visible: boolean;
-  customerId: string;
-  onClose: () => void;
-  onCreated: (created: CreditNote) => void;
-}) {
-  const createMut = useCreateCreditNote();
-  const [amount, setAmount] = useState<number | null>(null);
-  const [reason, setReason] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  // Reset fields whenever the sheet is (re)opened.
-  useEffect(() => {
-    if (visible) {
-      setAmount(null);
-      setReason("");
-      setError(null);
-    }
-  }, [visible]);
-
-  const valid = amount != null && amount > 0 && reason.trim() !== "";
-
-  const submit = () => {
-    if (!valid) return;
-    setError(null);
-    createMut.mutate(
-      { customerId, amount: amount!, reason: reason.trim() },
-      {
-        onSuccess: (created) => onCreated(created),
-        onError: (e: unknown) => {
-          const err = e as { response?: { data?: { message?: string } }; message?: string };
-          setError(err?.response?.data?.message ?? err?.message ?? "Couldn't create credit note.");
-        },
-      },
-    );
-  };
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.unlistedOverlay} onPress={onClose}>
-        <Pressable style={styles.unlistedCard} onPress={(e) => e.stopPropagation()}>
-          <Text style={styles.unlistedTitle}>New credit note</Text>
-          <Text style={styles.unlistedSub}>A standalone store credit for this customer.</Text>
-
-          {error ? (
-            <Text style={{ color: ios.system.redInk, fontSize: 12, marginBottom: 8 }}>{error}</Text>
-          ) : null}
-
-          <Text style={styles.unlistedFieldLabel}>Amount</Text>
-          <MoneyTextInput
-            style={styles.unlistedInput}
-            value={amount}
-            onChangeValue={setAmount}
-            placeholder="0.00"
-            placeholderTextColor={ios.label3}
-            autoFocus
-          />
-
-          <Text style={styles.unlistedFieldLabel}>Reason</Text>
-          <TextInput
-            style={styles.unlistedInput}
-            value={reason}
-            onChangeText={setReason}
-            placeholder="e.g. Damaged goods"
-            placeholderTextColor={ios.label3}
-          />
-
-          <View style={[styles.modalBtns, { marginTop: 4 }]}>
-            <Pressable style={styles.modalBtnGhost} onPress={onClose}>
-              <Text style={styles.modalBtnGhostText}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              style={[
-                styles.modalBtnFill,
-                (!valid || createMut.isPending) && styles.modalBtnDisabled,
-              ]}
-              onPress={submit}
-              disabled={!valid || createMut.isPending}
-            >
-              <Text style={styles.modalBtnFillText}>
-                {createMut.isPending ? "Creating…" : "Create"}
-              </Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-}
-
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: ios.bgElev },
-  center: { padding: 40, alignItems: "center" },
-  emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2 },
-  // Resume-hydration screen: spinner, or the failed state's inline retry.
-  hydrateState: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    paddingHorizontal: 32,
-  },
-  hydrateFailTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: ios.label },
-  hydrateFailText: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-    textAlign: "center",
-  },
-  hydrateRetryBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    marginTop: 4,
-    minHeight: 44,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    backgroundColor: ios.brandWash,
-  },
-  hydrateRetryText: { color: ios.brand, fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  list: {
-    marginHorizontal: 16,
-    backgroundColor: ios.bgElev,
-    borderRadius: 12,
-    overflow: "hidden",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.separator,
-  },
-  customerRow: {
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 999,
-    backgroundColor: ios.brandWash,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: { color: ios.brand, fontSize: 13, fontFamily: "Inter_700Bold" },
-  customerName: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
-  customerSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 1 },
-  customerChipWrap: {
-    paddingHorizontal: 16,
-    paddingTop: 10,
-  },
-  cartSection: { marginTop: 4 },
-  optionsHeader: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 44 },
-  optionsTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
-  optionsSummary: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
-  optionsBody: {
-    backgroundColor: ios.bgElev,
-    borderRadius: 12,
-    padding: 12,
-    gap: 12,
-    marginBottom: 4,
-  },
-  optionRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  optionField: { gap: 6 },
-  optionLabel: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
-  optionHelp: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3 },
-  optionInput: {
-    backgroundColor: ios.fill3,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 15,
-    fontFamily: "Inter_400Regular",
-    color: ios.label,
-  },
-  toggle: {
-    width: 44,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: ios.fill3,
-    padding: 3,
-    justifyContent: "center",
-  },
-  toggleOn: { backgroundColor: ios.brand },
-  toggleDot: { width: 20, height: 20, borderRadius: 10, backgroundColor: "#fff" },
-  toggleDotOn: { alignSelf: "flex-end" },
-  fulfillRow: { flexDirection: "row", gap: 8 },
-  fulfillBtn: {
-    flex: 1,
-    minHeight: 44,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    backgroundColor: ios.fill3,
-  },
-  fulfillBtnActive: { backgroundColor: ios.brand },
-  fulfillBtnText: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    textAlign: "center",
-  },
-  fulfillBtnTextActive: { color: "#fff" },
-  customerChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: ios.brandWash,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    alignSelf: "flex-start",
-    maxWidth: "100%",
-  },
-  customerChipText: {
-    fontSize: 14,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.brand,
-    flexShrink: 1,
-  },
-  customerChipChange: {
-    fontSize: 12,
-    fontFamily: "Inter_500Medium",
-    color: ios.brand,
-    opacity: 0.65,
-    marginLeft: 6,
-  },
-  browseBar: { flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 12 },
-  browseClose: { padding: 6 },
-  catalogList: { flex: 1 },
-  listContent: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, flexGrow: 1 },
-  rowSpacer: { height: 10 },
-  pageSpinner: { paddingVertical: 16, alignItems: "center" },
-  searchTrailing: { flexDirection: "row", alignItems: "center", gap: 10 },
-  emptyUnlistedBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 14,
-    minHeight: 44,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: ios.brandWash,
-  },
-  emptyUnlistedText: {
-    flexShrink: 1,
-    color: ios.brand,
-    fontSize: 14,
-    fontFamily: "Inter_600SemiBold",
-  },
-  // Tail of the catalog: the same escape hatch, quiet enough not to read as a
-  // second primary action next to the rows' Add buttons.
-  listUnlistedBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    minHeight: 44,
-    marginTop: 12,
-    paddingHorizontal: 14,
-  },
-  listUnlistedText: {
-    flexShrink: 1,
-    color: ios.brand,
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-  },
-  footer: {
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 16,
-    backgroundColor: ios.bgElev,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: ios.separator,
-  },
-  footerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  footerEyebrow: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    letterSpacing: 0.4,
-  },
-  footerTotal: {
-    fontSize: 24,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    letterSpacing: -0.6,
-    fontVariant: ["tabular-nums"],
-  },
-  splitBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    marginTop: 3,
-    alignSelf: "flex-start",
-    backgroundColor: ios.system.orangeWash,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  splitBadgeText: {
-    fontSize: 10,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.system.orangeInk,
-    letterSpacing: 0.2,
-  },
-  confirmBtn: {
-    backgroundColor: ios.brand,
-    borderRadius: 14,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  confirmBtnDisabled: { opacity: 0.35 },
-  confirmBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
-
-  newCreditBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    alignSelf: "flex-start",
-    minHeight: 44,
-  },
-  newCreditText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
-
-  // ── Footer extras ─────────────────────────────────────────────────────────
-  // The review entry point: a chip that LOOKS tappable. Residual flexShrink
-  // guard for very large totals at 320px, though Confirm is now the only
-  // sibling so the old overflow pressure is gone.
-  footerSummaryBtn: {
-    backgroundColor: ios.brandWash,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    flexShrink: 1,
-    minWidth: 0,
-  },
-  footerSummaryBtnDisabled: { backgroundColor: "transparent", paddingHorizontal: 0 },
-  footerSummaryEyebrowRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  footerHint: {
-    color: ios.label3,
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    flex: 1,
-  },
-  footerNotSaved: {
-    color: ios.system.redInk,
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    flex: 1,
-  },
-  footerSubRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    marginTop: 6,
-  },
-  footerDraftText: {
-    color: ios.brand,
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-  },
-
-  // ── Cart review modal ─────────────────────────────────────────────────────
-  // The total + actions already overflow a 375px viewport; let both give ground
-  // so "Confirm" degrades gracefully instead of being clipped off the edge.
-  cartBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    justifyContent: "flex-end",
-  },
-  cartSheet: {
-    backgroundColor: ios.bg,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    maxHeight: "92%",
-    minHeight: "55%",
-  },
-  cartHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: ios.separator,
-  },
-  cartHeaderBtn: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
-  cartTitle: {
-    flex: 1,
-    textAlign: "center",
-    fontSize: 16,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-  },
-  cartHeaderCount: {
-    width: 60,
-    textAlign: "right",
-    fontSize: 12,
-    fontFamily: "Inter_500Medium",
-    color: ios.label2,
-    marginRight: 6,
-  },
-  cartRow: {
-    backgroundColor: ios.bgElev,
-    borderRadius: 14,
-    padding: 12,
-    gap: 10,
-  },
-  cartRowHeader: { flexDirection: "row", gap: 8, alignItems: "flex-start" },
-  cartRowName: {
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label,
-    letterSpacing: -0.2,
-  },
-  cartRowRemove: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: ios.fill3,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cartPriceRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  cartPriceLabel: {
-    fontSize: 14,
-    fontFamily: "Inter_500Medium",
-    color: ios.label,
-  },
-  cartPriceInputWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    // Let the wrap give ground before the row overflows. Only binds when the
-    // row is already over-subscribed, which on a narrow phone it can be.
-    flexShrink: 1,
-    minWidth: 0,
-  },
-  cartPriceCurrency: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2 },
-  cartPriceInput: {
-    minWidth: 70,
-    // Caps the web intrinsic width (~177px) without capping native, where
-    // "99999.99" at 15px is ~84px and this never binds. Paired with
-    // flexShrink: 0 so the shrinkable wrap above can't collapse the field.
-    maxWidth: MONEY_INPUT_MAX_WIDTH,
-    flexShrink: 0,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.separator,
-    borderRadius: 8,
-    textAlign: "right",
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-  },
-  cartPriceInputActive: { borderColor: ios.brand, color: ios.brand },
-  cartNoteInput: {
-    backgroundColor: ios.fill3,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    fontSize: 13,
-    fontFamily: "Inter_400Regular",
-    color: ios.label,
-    marginBottom: 6,
-  },
-  cartRowFooter: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingTop: 6,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: ios.separator,
-  },
-  cartRowFooterLabel: {
-    fontSize: 12,
-    fontFamily: "Inter_500Medium",
-    color: ios.label2,
-  },
-  cartRowFooterValue: {
-    fontSize: 15,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-  },
-  cartNoteAdd: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingVertical: 4,
-  },
-  cartNoteAddText: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.brand },
-  splitBanner: {
-    marginTop: 4,
-    marginBottom: 4,
-    backgroundColor: ios.system.orangeWash,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.system.orange,
-    borderRadius: 12,
-    padding: 12,
-    gap: 4,
-  },
-  splitBannerHeader: {
-    fontSize: 11,
-    fontFamily: "Inter_700Bold",
-    color: ios.system.orangeInk,
-    letterSpacing: 0.5,
-    marginBottom: 2,
-  },
-  splitGroupRow: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
-  splitGroupLabel: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
-  splitGroupAmount: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-  },
-  splitFootnote: {
-    fontSize: 10,
-    fontFamily: "Inter_400Regular",
-    color: ios.label3,
-    marginTop: 2,
-  },
-  cartFooter: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 20,
-    backgroundColor: ios.bgElev,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: ios.separator,
-  },
-  cartFooterRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  cartContinueBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    borderRadius: 14,
-    backgroundColor: ios.fill3,
-  },
-  cartContinueText: {
-    color: ios.label,
-    fontSize: 14,
-    fontFamily: "Inter_600SemiBold",
-  },
-
-  // ── Unlisted item CTA + cart row + tag ────────────────────────────────────
-  cartAddRow: { flexDirection: "row", gap: 8 },
-  cartAddUnlisted: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    backgroundColor: ios.brandWash,
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    marginTop: 4,
-  },
-  cartAddUnlistedText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  unlistedTagRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
-  customTag: {
-    backgroundColor: ios.system.orangeWash,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  customTagText: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.system.orangeInk,
-    letterSpacing: 0.2,
-  },
-
-  // ── Unlisted item modal ───────────────────────────────────────────────────
-  unlistedOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
-  },
-  unlistedCard: {
-    backgroundColor: ios.bgElev,
-    borderRadius: 20,
-    padding: 20,
-    width: "100%",
-    maxWidth: 380,
-  },
-  unlistedTitle: {
-    fontSize: 17,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    letterSpacing: -0.3,
-    marginBottom: 2,
-  },
-  unlistedSub: {
-    fontSize: 13,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-    marginBottom: 12,
-  },
-  unlistedFieldLabel: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    letterSpacing: 0.3,
-    marginBottom: 6,
-  },
-  unlistedInput: {
-    backgroundColor: ios.fill3,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-    fontFamily: "Inter_500Medium",
-    color: ios.label,
-    marginBottom: 12,
-  },
-  modalBtns: { flexDirection: "row", gap: 10 },
-  modalBtnGhost: {
-    flex: 1,
-    paddingVertical: 13,
-    borderRadius: 12,
-    alignItems: "center",
-    backgroundColor: ios.fill3,
-  },
-  modalBtnGhostText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
-  modalBtnFill: {
-    flex: 1,
-    paddingVertical: 13,
-    borderRadius: 12,
-    alignItems: "center",
-    backgroundColor: ios.brand,
-  },
-  modalBtnDisabled: { opacity: 0.4 },
-  modalBtnFillText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
-});

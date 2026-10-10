@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Shield } from "lucide-react";
 import axios from "axios";
+import { isInShell } from "@/lib/in-shell";
 
 // ─── Google Icon (inline SVG, no external requests) ───────────────────────────
 function GoogleIcon({ className }: { className?: string }) {
@@ -47,6 +48,8 @@ export default function AdminLoginPage() {
   const [googleError, setGoogleError] = React.useState<string | null>(null);
 
   const handleGoogleSignIn = async () => {
+    // #2653 / SA-542 Q3: never start Google inside the app shell (the CSS hides it; this guards it).
+    if (isInShell()) return;
     setGoogleLoading(true);
     setGoogleError(null);
     try {
@@ -225,8 +228,8 @@ export default function AdminLoginPage() {
           </form>
         </div>
 
-        {/* Google Sign-In */}
-        <div className="mt-4">
+        {/* Google Sign-In — hidden inside the app shell (#2653, app/shell.css) */}
+        <div className="mt-4" data-google-signin>
           {/* Divider */}
           <div className="my-4 flex items-center gap-3">
             <div className="h-px flex-1 bg-white/15" />

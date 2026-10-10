@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import path from "path";
 import { requireBaseUrl } from "./lib/e2e-setup-guard";
+import { isLocalOnlyLane } from "./lib/local-fulfilment-guard";
 
 /**
  * Playwright configuration for full Chrome UI coverage against Railway.
@@ -188,6 +189,42 @@ export default defineConfig({
       },
     },
 
+    // ── Counter "Today's sales" sheet (POS-7b-2) ───────────────────────────────
+    // Mocked reads only (POS-7b-1 contract); 1440/768/390 + 80 mm print emulation.
+    {
+      name: "counter-todays-sales",
+      testMatch: /70-counter-todays-sales\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+    // ── Dashboard CLS (PKG-8) ──────────────────────────────────────────────────
+    // /dashboard layout shift with every read delayed 2 s; read-only.
+    {
+      name: "dashboard-cls",
+      testMatch: /69-dashboard-cls\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── CSV export then and there ──────────────────────────────────────────────
+    // Products export popover, per-card analytics CSVs, product insights export;
+    // every endpoint mocked. Self-skips on builds predating each control.
+    {
+      name: "csv-export",
+      testMatch: /63-csv-export\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // ── Search survives Back ───────────────────────────────────────────────────
     // Back-navigation restoration of a list search — the one behavior no other spec
     // covers (nothing else in the suite calls goBack). Read-only: it types in search
@@ -362,7 +399,7 @@ export default defineConfig({
       name: "migration-hub-gate",
       testMatch: /25-migration-hub\.spec\.ts/,
       dependencies: ["setup"],
-      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── Payments-import duplicate reporting (F17, spec 26) ─────────────────────
@@ -376,7 +413,7 @@ export default defineConfig({
       name: "import-duplicates",
       testMatch: /26-import-duplicates\.spec\.ts/,
       dependencies: ["setup"],
-      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── Order-edit pricing readiness gate (F06, spec 24) ───────────────────────
@@ -398,6 +435,25 @@ export default defineConfig({
     {
       name: "order-edit-pricing",
       testMatch: /24-order-edit-pricing\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── units_v1 deploy gate: order → edit → invoice lane (#2233, spec 53) ────
+    // SA-390: a Case line survives create (server truth in base pieces, SA-388),
+    // order-detail display ("3 Cases"), a price-only edit through the web UI
+    // (qty/boxes unchanged), and invoice-from-order (the invoice shows the unit
+    // too). Self-provisions via the API against the standing units_v1 fixture
+    // (`e2e-seed.js`'s `ensureUnitsFixture`, #2195) and the shared
+    // "E2E Fixture Deli Three" customer; a missing fixture is a hard failure,
+    // never a skip. Mutating but self-contained: leaves one PENDING order + one
+    // invoice on e2e-routeflow (same no-cleanup tolerance 21/22/24's own
+    // throwaway fixtures take — neither resource has an API delete).
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "units-order-lane",
+      testMatch: /53-units-order-lane\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
@@ -434,6 +490,39 @@ export default defineConfig({
       testMatch: /27-cancelled-edit-banner\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── PKG-6: dashboard shell skip link (no hash, one Back) + reduced-motion pin + shell no-regress (spec 66).
+    {
+      name: "shell-skip-link-motion",
+      testMatch: /66-shell-skip-link-motion\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── B1219: a single fuzzy scan match asks "Did you mean ...?" in Create Order (spec 70).
+    {
+      name: "scan-did-you-mean",
+      testMatch: /70-scan-did-you-mean\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).
+    {
+      name: "invoice-edit-pending-mirror",
+      testMatch: /64-invoice-edit-pending-mirror\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── B1188: Settings invoice-numbering card, preview + confirm copy (spec 67). READ-ONLY:
+    // never clicks Confirm; asserts no write request leaves the page.
+    {
+      name: "invoice-numbering-card",
+      testMatch: /67-invoice-numbering-card\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── Recurring-template edit + standing-order item edit (F13, spec 30) ──────
@@ -781,6 +870,38 @@ export default defineConfig({
       },
     },
 
+    // B743 PR B (spec 61): the PACK_SIZE_UNKNOWN dialog at 390/768/1440, with the 409 mocked by
+    // page.route (the server gate is dark). Operator storageState, like spec 51.
+    {
+      name: "vendor-bill-pack-size-unknown",
+      testMatch: /61-vendor-bill-pack-size-unknown\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Connected mailbox card (F-10b, #2078) ─────────────────────────────────
+    // Settings → Email → MailboxCard: every card state at 1440/768/390, Connect Gmail/Outlook,
+    // the confirm / error / admin-consent / Google-cancel returns, and Disconnect three ways.
+    // The provider is ALWAYS stubbed (page.route; a `.invalid` consent origin; a guard that
+    // fails the test on any real Google/Microsoft OAuth, Gmail or Graph request), and nothing
+    // is written server-side: the only real call is the read-only GET /tenants/me/addons.
+    // NOT in the local:e2e gate (LOCAL-LANE.md) yet: it was authored on a host with no container
+    // runtime and has never run. F2 runs it once against a compose slot, and a follow-up adds it
+    // to the gate after its first green run. WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see
+    // 08-create-order-escape's header for the precedent.
+    {
+      name: "mailbox-connect",
+      testMatch: /mailbox-connect\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "tenant-admin.json"),
+      },
+    },
+
     // Platform-admin mobile overflow (B559, spec 52) — proves no element on any
     // platform-admin screen exceeds the 390/768/1440 viewport width, across every
     // tab (tabs are React state, not distinct URLs, so a URL-only sweep never
@@ -800,5 +921,125 @@ export default defineConfig({
         navigationTimeout: 60_000,
       },
     },
+
+    // Create-order dialog mobile pan (#2080, P0): the dialog body's own
+    // scrollWidth/clientWidth stays 0 at 320/375/390/430 under a model of iOS
+    // WebKit's post-cascade date-input sizing (helpers/ios-date-input.ts), and
+    // the boxed line's cases/units content fits its grid track; and at
+    // 1440/768/390, on create AND a resumed draft with a long product name,
+    // typing a focused date never scrolls the document sideways, moves the
+    // dialog's left edge off screen, or pans the dialog body. Same
+    // setup/operator shape as "create-order-escape" (08). WITHOUT THIS ENTRY
+    // THE SPEC NEVER RUNS - see 08-create-order-escape's header.
+    {
+      name: "create-order-dialog-mobile-pan",
+      testMatch: /56-create-order-dialog-mobile-pan\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // #2080 follow-up: date inputs in narrow grid-cols-2/3 tracks (vendor-bills
+    // and estimates modals, invoices/new, invoices/[id]/edit) fit their cells
+    // at 320/375/390 under the same iOS model. Read-only (one API read).
+    {
+      name: "date-input-grid-overflow",
+      testMatch: /57-date-input-grid-overflow\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // Customers list UX (spec 65). Operator auth, same shape as "orders" et al.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent.
+    {
+      name: "customers-list-ux",
+      testMatch: /65-customers-list-ux\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // PageHeader action-slot wrap (B749/B770 shared root cause) — proves no
+    // page-level header action overflows the viewport at 390px across every
+    // affected list page. Operator auth, same shape as "orders" et al.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent.
+    {
+      name: "pageheader-action-wrap",
+      testMatch: /57-pageheader-action-wrap\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // Orders list mobile card layout + dock clearance (B823, spec 56). Read-only:
+    // the "parked draft" scenario mocks GET /drafts rather than creating one, so
+    // this never writes to the tenant and needs no cleanup. WITHOUT THIS ENTRY THE
+    // SPEC NEVER RUNS — see 08-create-order-escape's header for the precedent.
+    {
+      name: "orders-mobile-card-list",
+      testMatch: /56-orders-mobile-card-list\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+    // #3168: batch ship + packing slips. Every endpoint is mocked (no tenant writes); WITHOUT THIS
+    // ENTRY THE SPEC NEVER RUNS.
+    {
+      name: "batch-ship",
+      testMatch: /48-batch-ship\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+    // ── B1210: counter sale "Ship this order instead" parks the cart as an ORDER draft and resumes it (spec 71).
+    // LAST in the list on purpose (it changes the tenant's fulfilment config for its duration). LOCAL LANE ONLY: it rewrites (then restores) the tenant's fulfilment config. ci.yml / post-deploy / nightly run
+    // `npx playwright test` with no project filter, so the project is simply NOT REGISTERED unless the base URL is local
+    // and this is not GitHub Actions (the spec also refuses on its own: lib/local-fulfilment-guard.ts).
+    ...(isLocalOnlyLane(process.env)
+      ? [
+          {
+            name: "counter-ship-handoff",
+            testMatch: /71-counter-ship-handoff\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          {
+            name: "counter-pos-stack",
+            testMatch: /72-counter-pos-stack\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          {
+            name: "counter-register-look",
+            testMatch: /73-counter-register-look\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+        ]
+      : []),
   ],
 });

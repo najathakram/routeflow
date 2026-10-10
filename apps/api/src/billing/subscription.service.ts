@@ -11,6 +11,15 @@ import {
 } from "./plan-catalog.constants";
 import { computeServedFlags } from "./plan-flag-policy";
 import { FeatureOverrideService } from "./feature-override.service";
+import {
+  BILLING_EXPORT_INVOICE_FIELDS,
+  EXPORT_EXCLUDED_EVENT_TYPES,
+  deriveExportActor,
+  projectBillingEventForExport,
+  projectInvoiceForExport,
+  projectSubscriptionForExport,
+  projectUsageForExport,
+} from "./billing-export-fields";
 
 /**
  * Tenant self-service READ surface for settings-billing + choose-plan: the current
@@ -129,17 +138,47 @@ export class SubscriptionService {
       this.getSubscription(tenantId),
       this.getUsage(tenantId),
       this.prisma.billingEvent.findMany({
-        where: { tenantId },
+        where: { tenantId, type: { notIn: [...EXPORT_EXCLUDED_EVENT_TYPES] } },
         orderBy: { createdAt: "desc" },
         take: 500,
       }),
+      // B1187 / SA-718: select exactly the allowlist (ONE list, billing-export-fields.ts); never the whole row.
       this.prisma.rfInvoice.findMany({
         where: { tenantId },
+        select: Object.fromEntries(BILLING_EXPORT_INVOICE_FIELDS.map((f) => [f, true])) as Record<
+          (typeof BILLING_EXPORT_INVOICE_FIELDS)[number],
+          true
+        >,
         orderBy: { issuedAt: "desc" },
         take: 500,
       }),
     ]);
-    return { exportedAt: new Date().toISOString(), subscription, usage, billingEvents, invoices };
+    // B1187 / SA-718: both arrays are PROJECTED through the allowlists in billing-export-fields.ts;
+    // `actorId` becomes a derived label and is never exported.
+    const actorIds = [
+      ...new Set(billingEvents.map((e) => e.actorId).filter((id): id is string => !!id)),
+    ];
+    // Explicitly tenant-scoped: another tenant's (or platform staff's) user row is never read, so
+    // any actor not found here is labelled "RouteFlow support" by deriveExportActor.
+    const actors = actorIds.length
+      ? await this.prisma.user.findMany({
+          where: { tenantId, id: { in: actorIds } },
+          select: { id: true, role: true, tenantId: true },
+        })
+      : [];
+    const actorById = new Map(actors.map((u) => [u.id, u]));
+    return {
+      exportedAt: new Date().toISOString(),
+      subscription: projectSubscriptionForExport(subscription),
+      usage: projectUsageForExport(usage),
+      billingEvents: billingEvents.map((e) =>
+        projectBillingEventForExport(
+          e,
+          deriveExportActor(e.actorId, e.actorId ? actorById.get(e.actorId) : undefined, tenantId),
+        ),
+      ),
+      invoices: invoices.map((i) => projectInvoiceForExport(i)),
+    };
   }
 
   /**

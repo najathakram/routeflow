@@ -6,6 +6,8 @@
  * on an unresolved import. See test-plan.md T4.
  */
 
+import { NON_LOCAL_DB_URLS } from "../local-db-bypass-urls";
+
 describe("db-spec (T4, R6)", () => {
   let mod: any = {};
   try {
@@ -72,6 +74,17 @@ describe("db-spec (T4, R6)", () => {
       // normalise before the LOCAL_HOSTS lookup.
       const url = "postgresql://u:p@[::1]:5432/x";
       expect(requireLocalDatabaseUrl({ DATABASE_URL: url, RUN_DB_SPECS: "local" })).toBe(url);
+    });
+  });
+
+  describe("requireLocalDatabaseUrl(env): the shared bypass list (#2204)", () => {
+    it.each(NON_LOCAL_DB_URLS.map((r) => [...r]))("refuses %s", (_label, url) => {
+      expect(() => requireLocalDatabaseUrl({ DATABASE_URL: url })).toThrow();
+    });
+    it("refuses the retired host 'db' (nothing uses it; compose is 'postgres')", () => {
+      expect(() => requireLocalDatabaseUrl({ DATABASE_URL: "postgresql://u:p@db:5432/x" })).toThrow(
+        /not provably local/,
+      );
     });
   });
 

@@ -7,6 +7,7 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
+import { lockBillRows } from "./bill-locks";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -17,6 +18,7 @@ import { assertBillWithinPo, type BillLinePieces } from "./po-bill-match";
 import { assertPackSizeKnownOrLog } from "./pack-size-gate";
 import { roundMoney } from "@routeflow/pricing";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
+import { calendarFieldStamp } from "../common/calendar-date";
 import Anthropic from "@anthropic-ai/sdk";
 import sharp from "sharp";
 import { buildTokenWeights, composedProductName, matchLine } from "./product-matcher";
@@ -35,6 +37,9 @@ import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.d
 import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
 import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { assertSellableLines } from "../products/sellable-lines";
+import { tenantSafeParentView } from "../products/product-parent";
 
 /** What clients render when a bill is blocked as a duplicate. */
 export interface VendorBillDuplicatePayload {
@@ -189,7 +194,7 @@ export class VendorBillsService {
   private translateLinkRace(e: unknown, linking: boolean): unknown {
     if (linking && e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
       return new ConflictException({
-        code: "PO_LINK_CONFLICT",
+        code: API_ERROR_CODES.PO_LINK_CONFLICT,
         message:
           "Another bill or purchase order was created at the same moment — please try again.",
       });
@@ -230,7 +235,7 @@ export class VendorBillsService {
     });
     if (already) {
       throw new ConflictException({
-        code: "PO_ALREADY_BILLED",
+        code: API_ERROR_CODES.PO_ALREADY_BILLED,
         message: `Purchase order ${po.poNumber} already has bill ${already.billNumber}.`,
       });
     }
@@ -261,6 +266,67 @@ export class VendorBillsService {
       : new Prisma.Decimal(0);
   }
 
+  /**
+   * B285: serialise every writer of ONE bill's receipt (receive, revertToDraft, voidBill). Their
+   * guards and plans are computed from a read taken OUTSIDE the transaction, so two concurrent
+   * writers both passed them and both posted (a double receive doubled the stock; a revert racing
+   * a top-up left stock counted twice). Lock the bill row, then refuse, readably, if the receipt
+   * state the caller planned from is no longer the bill's.
+   */
+  private async lockBillAndAssertReceiptState(
+    tx: Prisma.TransactionClient,
+    bill: {
+      id: string;
+      status: string;
+      receivedDate: Date | null;
+      totalPaid?: unknown;
+      totalOwed?: unknown;
+      items: { id: string; qtyReceived: Prisma.Decimal | null }[];
+    },
+  ) {
+    await lockBillRows(tx, this.prisma.getTenantId(), [bill.id]);
+    const fresh = await tx.vendorBill.findUnique({
+      where: { id: bill.id },
+      select: {
+        status: true,
+        receivedDate: true,
+        totalPaid: true,
+        totalOwed: true,
+        items: { select: { id: true, qtyReceived: true } },
+      },
+    });
+    // The fingerprint of everything a bill writer plans from: status, receipt state, the money
+    // columns (a void or edit writes totalPaid/totalOwed back from its pre-tx read), and the lines.
+    const num = (v: unknown) => String(Number(v ?? 0));
+    const state = (b: {
+      status: string;
+      receivedDate: Date | null;
+      totalPaid?: unknown;
+      totalOwed?: unknown;
+      items: { id: string; qtyReceived: Prisma.Decimal | null }[];
+    }) =>
+      JSON.stringify([
+        b.status,
+        b.receivedDate?.getTime() ?? null,
+        num(b.totalPaid),
+        num(b.totalOwed),
+        (b.items ?? [])
+          .map((i) => [i.id, i.qtyReceived == null ? null : String(i.qtyReceived)])
+          .sort(),
+      ]);
+    if (!fresh || state(fresh) !== state(bill)) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.BILL_STATE_CHANGED,
+        message:
+          "This bill was just changed by someone else (received, reverted, voided, paid or edited) — reload it and try again.",
+      });
+    }
+  }
+
+  private productIdsOf(items: { productId: string | null }[]): string[] {
+    return items.flatMap((i) => (i.productId ? [i.productId] : []));
+  }
+
   private async nextBillNumber() {
     const year = new Date().getFullYear();
     const prefix = `BILL-${year}-`;
@@ -273,6 +339,8 @@ export class VendorBillsService {
   }
 
   async create(dto: any) {
+    // #2488: the literal calendar day, refused (400 naming the field) before any read or write.
+    const dueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : null;
     // supplierId is required when creating manually from the UI, but optional for import-created bills
     if (dto.requireSupplier !== false) {
       if (!dto.supplierId || typeof dto.supplierId !== "string" || dto.supplierId.trim() === "") {
@@ -384,7 +452,7 @@ export class VendorBillsService {
       if (match?.matchedBy === "number") {
         const duplicate = await this.toDuplicatePayload(match);
         throw new ConflictException({
-          code: "DUPLICATE_VENDOR_BILL",
+          code: API_ERROR_CODES.DUPLICATE_VENDOR_BILL,
           message: this.duplicateMessage(supplierInvoiceNumber, match),
           duplicate,
         });
@@ -459,7 +527,7 @@ export class VendorBillsService {
             taxAmount: this.moneyOrNull(dto.taxAmount),
             subtotal: this.moneyOrNull(dto.subtotal),
             billDate,
-            dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+            dueDate,
             // Persisted verbatim, never recomputed here — bills have no
             // due-date-computation machinery server side (see schema comment).
             termsLabel: dto.termsLabel ?? null,
@@ -469,6 +537,8 @@ export class VendorBillsService {
                 ? {
                     createMany: {
                       data: dto.items.map((item: any) => ({
+                        // Stamped explicitly: a nested write does not get the tenant extension's stamp.
+                        tenantId: this.prisma.getTenantId(),
                         productId: item.productId || null,
                         description: item.description || item.name || "",
                         qty: new Prisma.Decimal(item.qty || 1),
@@ -489,14 +559,16 @@ export class VendorBillsService {
           include: billInclude,
         });
 
+        // B710: the scan is claimed in THIS transaction, so a second post of one scan is refused
+        // (409) and rolls back its bill, PO and credit draws instead of writing a second restock.
+        if (dto.scanId) await this.claimScanInTx(tx, dto.scanId, created.id);
+
         if (!supplierId) return created;
         return this.applySupplierCreditToBill(tx, created, billInclude);
       })
       .catch((e: unknown) => {
         throw this.translateLinkRace(e, wantsPurchaseOrder || !!dto.purchaseOrderId);
       });
-
-    await this.markScanPosted(dto.scanId, bill.id);
 
     return bill;
   }
@@ -655,7 +727,7 @@ export class VendorBillsService {
     const match = await this.vendorBillMatchById(priorScan.vendorBillId, totalOwed);
     if (!match) return;
     throw new ConflictException({
-      code: "DUPLICATE_VENDOR_BILL",
+      code: API_ERROR_CODES.DUPLICATE_VENDOR_BILL,
       message: this.duplicateMessage(priorScan.supplierInvoiceNumber, match),
       duplicate: await this.toDuplicatePayload(match),
     });
@@ -720,20 +792,48 @@ export class VendorBillsService {
   }
 
   /**
-   * Close the loop from bill back to the document it came from. A bad or
-   * foreign scanId must not fail a bill that is already written — `updateMany`
-   * stays tenant-scoped and simply matches nothing.
+   * B710: close the loop from bill back to the scan it came from, inside the bill's own
+   * transaction, as a guarded claim. A scan backs at most one live bill: it is claimable while
+   * not yet POSTED, or once the bill it posted was deleted (the link is nulled) or VOIDed, since
+   * voiding is how an operator undoes a bad post. Each claim is a conditional `updateMany`, so two
+   * concurrent posts serialize on the row and the loser matches nothing: a 409 that rolls its
+   * whole transaction back. A bad or foreign scanId still never fails a bill: the tenant-scoped
+   * lookup finds nothing and the bill is kept, unlinked.
    */
-  private async markScanPosted(scanId: string | undefined, vendorBillId: string): Promise<void> {
-    if (!scanId) return;
-    try {
-      await this.prisma.forTenant().invoiceScan.updateMany({
-        where: { id: scanId },
-        data: { status: "POSTED", vendorBillId },
+  private async claimScanInTx(
+    tx: Prisma.TransactionClient,
+    scanId: string,
+    vendorBillId: string,
+  ): Promise<void> {
+    const data = { status: "POSTED" as const, vendorBillId };
+    const fresh = await tx.invoiceScan.updateMany({
+      where: { id: scanId, OR: [{ status: { not: "POSTED" } }, { vendorBillId: null }] },
+      data,
+    });
+    if (fresh.count > 0) return;
+
+    const scan = await tx.invoiceScan.findFirst({
+      where: { id: scanId },
+      select: { vendorBillId: true, vendorBill: { select: { billNumber: true, status: true } } },
+    });
+    if (!scan) return;
+    if (scan.vendorBill?.status === "VOID") {
+      // Compare-and-swap on the void bill's id: a concurrent re-post that won first moved it on.
+      const repost = await tx.invoiceScan.updateMany({
+        where: { id: scanId, status: "POSTED", vendorBillId: scan.vendorBillId },
+        data,
       });
-    } catch (e) {
-      this.logger.error(`create: failed to mark scan ${scanId} POSTED: ${(e as Error).message}`);
+      if (repost.count > 0) return;
     }
+    const billNumber = scan.vendorBill?.billNumber ?? null;
+    throw new ConflictException({
+      code: API_ERROR_CODES.SCAN_ALREADY_POSTED,
+      message: billNumber
+        ? `This scan was already posted as bill ${billNumber}. Void that bill to post the scan again.`
+        : "This scan was already posted. Refresh and check its bill before posting again.",
+      vendorBillId: scan.vendorBillId ?? null,
+      billNumber,
+    });
   }
 
   /**
@@ -819,7 +919,12 @@ export class VendorBillsService {
   }
 
   async update(id: string, dto: any) {
-    const bill = await this.prisma.forTenant().vendorBill.findUnique({ where: { id } });
+    // #2488: 400 (naming the field) before any read or write.
+    const dueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : null;
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({
+      where: { id },
+      include: { items: { select: { id: true, qtyReceived: true } } },
+    });
     if (!bill) throw new NotFoundException("Bill not found");
     if (bill.status !== "DRAFT") {
       throw new BadRequestException("Only DRAFT bills can be edited. Revert to draft first.");
@@ -864,6 +969,9 @@ export class VendorBillsService {
     };
 
     return this.prisma.tenantTransaction(async (tx) => {
+      // B285: the DRAFT check above ran outside this tx. Lock the bill first (the order receive,
+      // revert and void use) and refuse if it changed since we read it.
+      await this.lockBillAndAssertReceiptState(tx, bill);
       // A bill linked to a purchase order can't be edited past what the PO
       // authorised (checked before anything is deleted).
       if (bill.purchaseOrderId && Array.isArray(dto.items)) {
@@ -879,7 +987,7 @@ export class VendorBillsService {
         // Fail CLOSED: a link to a PO that no longer resolves can't be checked.
         if (!linkedPo) {
           throw new ConflictException({
-            code: "PO_LINK_BROKEN",
+            code: API_ERROR_CODES.PO_LINK_BROKEN,
             message: "The purchase order this bill is linked to could not be found.",
           });
         }
@@ -892,7 +1000,10 @@ export class VendorBillsService {
 
       // Delete existing items and recreate if items provided
       if (dto.items !== undefined) {
-        await tx.vendorBillItem.deleteMany({ where: { vendorBillId: id } });
+        // Parent-scoped, not `tx.vendorBillItem.deleteMany`: lines created nested by create() carry
+        // a NULL tenantId, so the tenant-scoped child delete cannot see them and the old line
+        // stayed beside the new one. The bill's own tenant scope makes this nested delete safe.
+        await tx.vendorBill.update({ where: { id }, data: { items: { deleteMany: {} } } });
       }
 
       // A DRAFT bill can already be carrying auto-applied supplier credit —
@@ -913,7 +1024,7 @@ export class VendorBillsService {
           ...(dto.billDate !== undefined && {
             billDate: dto.billDate ? new Date(dto.billDate) : null,
           }),
-          ...(dto.dueDate !== undefined && { dueDate: dto.dueDate ? new Date(dto.dueDate) : null }),
+          ...(dto.dueDate !== undefined && { dueDate }),
           ...(dto.termsLabel !== undefined && { termsLabel: dto.termsLabel }),
           ...(dto.notes !== undefined && { notes: dto.notes }),
           ...(dto.supplierInvoiceNumber !== undefined && {
@@ -930,6 +1041,7 @@ export class VendorBillsService {
                     // an edit used to silently drop sku/packSize/lineTotal,
                     // losing the case-size the receive conversion depends on.
                     data: dto.items.map((item: any) => ({
+                      tenantId: this.prisma.getTenantId(),
                       productId: item.productId || null,
                       description: item.description || item.name || "",
                       qty: new Prisma.Decimal(item.qty || 1),
@@ -961,6 +1073,13 @@ export class VendorBillsService {
       },
     });
     if (!bill) throw new NotFoundException("Bill not found");
+    // A voided bill is closed: receiving it would silently un-void it and post its stock.
+    if (bill.status === "VOID") {
+      throw new ConflictException({
+        code: API_ERROR_CODES.BILL_VOID,
+        message: "This bill is void and cannot be received.",
+      });
+    }
     // RF-084: idempotency guard — prevent double-receive doubling stock.
     // Guarded on receivedDate + per-line qtyReceived, NOT status: recordPayment
     // overwrites status to PAID/PARTIAL, so a status-only check let a paid bill
@@ -996,7 +1115,7 @@ export class VendorBillsService {
       (bill.items.length === 0 || unlinkedItems.length > 0)
     ) {
       throw new ConflictException({
-        code: "UNLINKED_ITEMS",
+        code: API_ERROR_CODES.UNLINKED_ITEMS,
         message:
           bill.items.length === 0
             ? "This bill has no line items, so receiving it will not update any inventory or costs."
@@ -1087,12 +1206,21 @@ export class VendorBillsService {
     });
 
     const updated = await this.prisma.tenantTransaction(async (tx) => {
+      await this.lockBillAndAssertReceiptState(tx, bill);
       // Sync inventory for each line in the plan. The whole block works in
       // INVENTORY denomination: lineInventoryDelta converts a case-priced line
       // (packSize > 1) to pieces + per-piece cost so Product.averageCost keeps
       // its per-PIECE contract (margins previously inflated by unitsPerBox²).
       const effectiveDate = bill.billDate ?? new Date();
       const restockedIds: string[] = [];
+      // B285: row-lock the products BEFORE the per-line read below. currentStock is written as
+      // an increment, but averageCost and the movement's stockAfter are derived from that read,
+      // so without the lock a concurrent PO receive (which takes the same locks, sorted) is a
+      // lost update on the average. Sorted ids inside lockProducts keep two writers deadlock-free.
+      await this.inventory.lockProducts(
+        tx,
+        plan.flatMap((p) => (p.item.productId ? [p.item.productId] : [])),
+      );
       // B562 follow-up: a bill is received in ONE transaction across every
       // line. If one product's ledger has a gap (see recomputeProductInTx),
       // that must not abort lines that are perfectly fine — receiving stock
@@ -1119,9 +1247,16 @@ export class VendorBillsService {
         // product compound correctly instead of using the pre-tx snapshot
         const product = await tx.product.findFirst({
           where: { id: item.productId },
-          select: { currentStock: true, averageCost: true, costingMethod: true },
+          select: {
+            name: true,
+            kind: true,
+            currentStock: true,
+            averageCost: true,
+            costingMethod: true,
+          },
         });
         if (!product) continue;
+        assertSellableLines([{ id: item.productId, ...product }]); // WS8: a FAMILY is never stocked
 
         const newAvgCost = nextAverageCost(
           product.currentStock,
@@ -1160,8 +1295,9 @@ export class VendorBillsService {
             performedById: performedById ?? null,
             // Stamp the movement at the BILL date, matching the lot — a
             // backdated bill's cost snapshot must sit at the right point in
-            // the ledger (the lot and the movement used to disagree).
-            createdAt: effectiveDate,
+            // the ledger (the lot and the movement used to disagree). B562:
+            // on effectiveAt (the accounting date); createdAt stays write-once.
+            effectiveAt: effectiveDate,
           },
         });
 
@@ -1173,16 +1309,18 @@ export class VendorBillsService {
           },
         });
 
-        // Backdated bill: later movements' snapshots (and possibly the
-        // average) are now stale — replay the product, like recordPurchase.
+        // Backdated bill: the average later rows imply may have moved — replay the
+        // product like recordPurchase (a dated COST_BASIS correction, SA-136 §4).
         // `throwOnGap: false` — a gap here must flag this ONE line, never
         // abort the whole bill (see the comment above the loop).
         const newer = await tx.stockMovement.count({
-          where: { productId: item.productId, createdAt: { gt: effectiveDate } },
+          where: { productId: item.productId, effectiveAt: { gt: effectiveDate } },
         });
         if (newer > 0) {
           const replay = await this.inventory.recomputeProductInTx(tx, item.productId, {
             throwOnGap: false,
+            trigger: `BILL:${id}`,
+            performedById: performedById ?? null,
           });
           if (replay?.gapDetected) {
             gapsDetected.push({
@@ -1264,6 +1402,9 @@ export class VendorBillsService {
     const movesStock = bill.purchaseOrderId == null;
 
     return this.prisma.tenantTransaction(async (tx) => {
+      await this.lockBillAndAssertReceiptState(tx, bill);
+      // B285: the reversal below read-modify-writes the product's average — lock it first.
+      await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
       // Reverse inventory for each product-linked item — in the SAME
       // inventory denomination receive() applied (case lines converted to
       // pieces + per-piece cost), and only the quantity ACTUALLY received
@@ -1380,6 +1521,8 @@ export class VendorBillsService {
       bill.purchaseOrderId == null;
     if (needsReversal) {
       return this.prisma.tenantTransaction(async (tx) => {
+        await this.lockBillAndAssertReceiptState(tx, bill);
+        await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
         for (const item of bill.items) {
           if (!item.productId || !item.product) continue;
           // Same inventory denomination receive() applied — see
@@ -1450,6 +1593,9 @@ export class VendorBillsService {
     // void land together — a void that took the credit back but failed to void
     // would be worse than either alone.
     return this.prisma.tenantTransaction(async (tx) => {
+      // B285: a first receive committing between our pre-read and this write would leave its
+      // stock on a VOID bill (nothing here reverses it) — lock and re-check like the branch above.
+      await this.lockBillAndAssertReceiptState(tx, bill);
       const refunded = await this.refundDrawnSupplierCredits(tx, id);
       return tx.vendorBill.update({
         where: { id },
@@ -1680,7 +1826,7 @@ export class VendorBillsService {
   ): Promise<{ supplierId: string | null; items: any[] }> {
     const supplierId = await this.resolveSupplierId(supplierRaw);
 
-    const [products, allMappings, aliasMap] = await Promise.all([
+    const [catalogRows, mappingRows, aliasMap] = await Promise.all([
       this.prisma.forTenant().product.findMany({
         select: {
           id: true,
@@ -1689,7 +1835,8 @@ export class VendorBillsService {
           barcode: true,
           unitSku: true,
           parentProductId: true,
-          parent: { select: { name: true } },
+          // tenantId only for the cross-tenant check below (B1211).
+          parent: { select: { name: true, tenantId: true } },
         },
       }),
       this.prisma.forTenant().productMapping.findMany({
@@ -1701,7 +1848,7 @@ export class VendorBillsService {
               sku: true,
               barcode: true,
               parentProductId: true,
-              parent: { select: { name: true } },
+              parent: { select: { name: true, tenantId: true } },
             },
           },
         },
@@ -1711,6 +1858,19 @@ export class VendorBillsService {
         items.map((item) => item.extractedName ?? ""),
       ),
     ]);
+
+    // B1211: a parent that belongs to another tenant never lends its name to a composed product name.
+    const tenantId = this.prisma.getTenantId();
+    const products = catalogRows.map((p) => ({
+      ...p,
+      parent: tenantSafeParentView(p.parent, tenantId),
+    }));
+    const allMappings = mappingRows.map((m) => ({
+      ...m,
+      product: m.product
+        ? { ...m.product, parent: tenantSafeParentView(m.product.parent, tenantId) }
+        : m.product,
+    }));
 
     // Build mapping index keyed by supplierName → rawDescription (lowercase)
     const mappingIndex: Record<
@@ -1921,7 +2081,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         throw new BadRequestException({
           message:
             "The Anthropic API key is invalid or expired. Go to Settings → AI & Integrations to update it.",
-          code: "AI_KEY_INVALID",
+          code: API_ERROR_CODES.AI_KEY_INVALID,
         });
       }
       // Non-transient 4xx (bad/oversized/corrupt image, malformed request) —
@@ -1931,12 +2091,12 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         throw new BadRequestException({
           message:
             "The scanner couldn't process this file. Try a clearer photo or re-export as JPEG.",
-          code: "AI_SCAN_REJECTED",
+          code: API_ERROR_CODES.AI_SCAN_REJECTED,
         });
       }
       throw new ServiceUnavailableException({
         message: "The AI scanner is temporarily unavailable. Try again in a minute.",
-        code: "AI_UNAVAILABLE",
+        code: API_ERROR_CODES.AI_UNAVAILABLE,
       });
     }
     const scanDurationMs = Date.now() - startedAt;
@@ -1955,7 +2115,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     if (content.type !== "text") {
       throw new UnprocessableEntityException({
         message: "The AI scanner returned an unexpected response. Try again.",
-        code: "AI_PARSE_FAILED",
+        code: API_ERROR_CODES.AI_PARSE_FAILED,
       });
     }
 
@@ -1975,7 +2135,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       this.logger.error(`scanInvoice: failed to parse AI response. Raw output:\n${content.text}`);
       throw new UnprocessableEntityException({
         message: "Couldn't read the scan result. Try again — a retry usually works.",
-        code: "AI_PARSE_FAILED",
+        code: API_ERROR_CODES.AI_PARSE_FAILED,
       });
     }
     // Disclose pages that were skipped (unreadable HEIC) in the result notes.
@@ -2196,24 +2356,47 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     // F10-004: reject non-positive amounts. A negative/zero payment would reduce
     // totalPaid and could flip the bill's status, corrupting AP balances. The
     // controller DTO (@IsPositive) covers HTTP; this guards direct callers too.
-    if (!(Number(dto.amount) > 0)) {
-      throw new BadRequestException("Payment amount must be greater than zero.");
+    if (!(roundMoney(Number(dto.amount)) > 0)) {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.SUPPLIER_PAYMENT_NOT_POSITIVE,
+        message: "Payment amount must be greater than zero.",
+      });
     }
     return this.prisma.tenantTransaction(async (tx) => {
+      // B285: lock the bill BEFORE reading its payments — two concurrent payments both read the
+      // same alreadyPaid, both passed the remaining-balance check, and one overwrote totalPaid;
+      // a void racing a payment un-voided the bill. Everything below reads fresh under the lock.
+      await lockBillRows(tx, this.prisma.getTenantId(), [id]);
       const bill = await tx.vendorBill.findUnique({ where: { id }, include: { payments: true } });
       if (!bill) throw new NotFoundException("Bill not found");
+      if (bill.status === "VOID") {
+        throw new ConflictException({
+          code: API_ERROR_CODES.BILL_VOID,
+          message: "This bill is void and can't take a payment.",
+        });
+      }
       const alreadyPaid = roundMoney(bill.payments.reduce((s, p) => s + Number(p.amount), 0));
       const remaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
-      if (remaining <= 0) throw new BadRequestException("Bill already fully paid");
-      if (Number(dto.amount) > remaining + 0.001) {
-        throw new BadRequestException(
-          `Payment amount exceeds the remaining balance of ${remaining.toFixed(2)}.`,
-        );
+      // `billId` is a REQUEST ECHO (SA-634 exception): the path id the caller sent, read from no row.
+      if (remaining <= 0) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.SUPPLIER_PAYMENT_FULLY_PAID,
+          message: "Bill already fully paid",
+          billId: id,
+        });
+      }
+      const amount = roundMoney(Number(dto.amount));
+      if (amount > remaining + 0.001) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.SUPPLIER_PAYMENT_OVER_BALANCE,
+          message: `Payment amount exceeds the remaining balance of ${remaining.toFixed(2)}.`,
+          remaining,
+        });
       }
       await tx.billPayment.create({
         data: {
           vendorBillId: id,
-          amount: dto.amount,
+          amount,
           method: dto.method as any,
           reference: dto.reference,
           // Was silently discarded here — the DTO accepted it but this create()
@@ -2221,7 +2404,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
           notes: dto.notes ?? null,
         },
       });
-      const newPaid = roundMoney(alreadyPaid + Number(dto.amount));
+      const newPaid = roundMoney(alreadyPaid + amount);
       const newStatus = newPaid >= Number(bill.totalOwed) - 0.001 ? "PAID" : "PARTIAL";
       return tx.vendorBill.update({
         where: { id },
@@ -2266,15 +2449,27 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
 
     const requestedTotal = roundMoney(dto.allocations.reduce((s, a) => s + Number(a.amount), 0));
     if (requestedTotal > dto.totalAmount + 0.001) {
-      throw new BadRequestException(
-        `Allocations total ${requestedTotal.toFixed(2)} exceed the payment amount of ${Number(dto.totalAmount).toFixed(2)}.`,
-      );
+      // SA-634: `allocatedTotal` is THIS pre-transaction `requestedTotal` (not the in-transaction accumulator of the same name
+      // further down), and `totalAmount` is the request's UNROUNDED value, so a half-cent overage stays visible.
+      throw new BadRequestException({
+        code: API_ERROR_CODES.SUPPLIER_ALLOCATIONS_EXCEED_PAYMENT,
+        message: `Allocations total ${requestedTotal.toFixed(2)} exceed the payment amount of ${Number(dto.totalAmount).toFixed(2)}.`,
+        allocatedTotal: requestedTotal,
+        totalAmount: Number(dto.totalAmount),
+      });
     }
 
     const paymentGroupId = randomUUID();
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
 
     return this.prisma.tenantTransaction(async (tx) => {
+      // B285: lock EVERY allocated bill (sorted) before reading any payments, so a recordPayment /
+      // voidBill racing this apply can't leave a stale alreadyPaid or a payment on a void bill.
+      await lockBillRows(
+        tx,
+        this.prisma.getTenantId(),
+        dto.allocations.map((a) => a.vendorBillId),
+      );
       const payments: any[] = [];
       const bills: { id: string; status: string; totalPaid: number }[] = [];
       let allocatedTotal = 0;
@@ -2291,9 +2486,12 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         // Highest-risk guard in this method: money must never land on another
         // supplier's bill. Checked per allocation, not once for the group.
         if (bill.supplierId !== dto.supplierId) {
-          throw new BadRequestException(
-            `Bill ${bill.billNumber} does not belong to the selected supplier.`,
-          );
+          throw new BadRequestException({
+            code: API_ERROR_CODES.SUPPLIER_ALLOCATION_WRONG_SUPPLIER,
+            message: `Bill ${bill.billNumber} does not belong to the selected supplier.`,
+            billId: bill.id,
+            billNumber: bill.billNumber,
+          });
         }
         // The ONE status comparison this method makes, and the only one it may:
         // VOID is unambiguous. A voided bill keeps its totalOwed and gets no
@@ -2304,7 +2502,12 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         // operator voids the bill between the modal loading it and submitting.
         // Mirrors bookkeeping.payBillFully and invoices' recordStandalonePayment.
         if (bill.status === "VOID") {
-          throw new BadRequestException(`Bill ${bill.billNumber} is void and cannot be paid.`);
+          throw new BadRequestException({
+            code: API_ERROR_CODES.SUPPLIER_ALLOCATION_BILL_VOID,
+            message: `Bill ${bill.billNumber} is void and cannot be paid.`,
+            billId: bill.id,
+            billNumber: bill.billNumber,
+          });
         }
 
         // The ledger, exactly as recordPayment does — never the denormalised
@@ -2314,9 +2517,14 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         );
         const remaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
         if (amount > remaining + 0.001) {
-          throw new BadRequestException(
-            `Allocation of ${amount.toFixed(2)} to bill ${bill.billNumber} exceeds its remaining balance of ${remaining.toFixed(2)}.`,
-          );
+          throw new BadRequestException({
+            code: API_ERROR_CODES.SUPPLIER_ALLOCATION_OVER_BALANCE,
+            message: `Allocation of ${amount.toFixed(2)} to bill ${bill.billNumber} exceeds its remaining balance of ${remaining.toFixed(2)}.`,
+            billId: bill.id,
+            billNumber: bill.billNumber,
+            amount,
+            remaining,
+          });
         }
 
         const payment = await tx.billPayment.create({
@@ -2482,7 +2690,10 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
   }
 
   async delete(id: string) {
-    const bill = await this.prisma.forTenant().vendorBill.findUnique({ where: { id } });
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({
+      where: { id },
+      include: { items: { select: { id: true, qtyReceived: true } } },
+    });
     if (!bill) throw new NotFoundException("Bill not found");
     if (bill.status === "RECEIVED" || bill.status === "PAID" || bill.status === "PARTIAL") {
       throw new BadRequestException(
@@ -2490,11 +2701,16 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       );
     }
     await this.prisma.tenantTransaction(async (tx) => {
+      // B285: same lock + re-check as receive — a receive committing after our DRAFT check would
+      // otherwise leave its stock behind a deleted bill.
+      await this.lockBillAndAssertReceiptState(tx, bill);
       // A DRAFT bill can legitimately carry auto-applied credit draws — give
       // that money back before its payment rows are destroyed with the bill.
       await this.refundDrawnSupplierCredits(tx, id);
       await tx.billPayment.deleteMany({ where: { vendorBillId: id } });
-      await tx.vendorBillItem.deleteMany({ where: { vendorBillId: id } });
+      // Parent-scoped like update() (consistency, and defensive: the FK already cascades, but a
+      // child-scoped delete would miss NULL-tenant legacy lines).
+      await tx.vendorBill.update({ where: { id }, data: { items: { deleteMany: {} } } });
       await tx.vendorBill.delete({ where: { id } });
     });
     return { success: true };
@@ -2502,33 +2718,41 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
 
   async bulkDelete(ids: string[]) {
     if (!ids || ids.length === 0) throw new BadRequestException("No IDs provided");
-    // Only delete DRAFT or VOID bills
-    const bills = await this.prisma.forTenant().vendorBill.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, status: true, billNumber: true },
-    });
-    const deletable = bills.filter((b) => b.status === "DRAFT" || b.status === "VOID");
-    const skipped = bills.filter((b) => b.status !== "DRAFT" && b.status !== "VOID");
-    if (deletable.length > 0) {
-      const deletableIds = deletable.map((b) => b.id);
-      await this.prisma.tenantTransaction(async (tx) => {
+    // Only DRAFT or VOID bills go. B285: decided INSIDE the tx, behind the bill row locks — a
+    // receive committing after a pre-tx status read would otherwise leave its stock behind a
+    // deleted bill.
+    return this.prisma.tenantTransaction(async (tx) => {
+      await lockBillRows(tx, this.prisma.getTenantId(), ids);
+      const bills = await tx.vendorBill.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, status: true, billNumber: true },
+      });
+      const deletable = bills.filter((b) => b.status === "DRAFT" || b.status === "VOID");
+      const skipped = bills.filter((b) => b.status !== "DRAFT" && b.status !== "VOID");
+      if (deletable.length > 0) {
+        const deletableIds = deletable.map((b) => b.id);
         // Same reason as delete(): auto-applied credit goes back before the
         // draw rows are destroyed. Already-VOID bills refunded nothing left.
         for (const billId of deletableIds) {
           await this.refundDrawnSupplierCredits(tx, billId);
         }
         await tx.billPayment.deleteMany({ where: { vendorBillId: { in: deletableIds } } });
-        await tx.vendorBillItem.deleteMany({ where: { vendorBillId: { in: deletableIds } } });
+        for (const billId of deletableIds) {
+          await tx.vendorBill.update({
+            where: { id: billId },
+            data: { items: { deleteMany: {} } },
+          });
+        }
         await tx.vendorBill.deleteMany({ where: { id: { in: deletableIds } } });
-      });
-    }
-    return {
-      deleted: deletable.length,
-      skipped: skipped.map((b) => ({
-        id: b.id,
-        billNumber: b.billNumber,
-        reason: "Cannot delete received/paid/partial bills",
-      })),
-    };
+      }
+      return {
+        deleted: deletable.length,
+        skipped: skipped.map((b) => ({
+          id: b.id,
+          billNumber: b.billNumber,
+          reason: "Cannot delete received/paid/partial bills",
+        })),
+      };
+    });
   }
 }

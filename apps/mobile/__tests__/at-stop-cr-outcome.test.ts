@@ -11,6 +11,8 @@ import { classifyAtStopResolveError } from "../lib/at-stop-cr-outcome";
 describe("classifyAtStopResolveError", () => {
   it("REG-B790: offline — no decline, no server error to key on", () => {
     expect(classifyAtStopResolveError({ isOfflineQueued: true })).toEqual({ action: "offline" });
+    // B923: the create step is online-only now; its refusal is an offline outcome, not a decline.
+    expect(classifyAtStopResolveError({ isOnlineRequired: true })).toEqual({ action: "offline" });
   });
 
   it("REG-B790: REGULATED_AUTH_REQUIRED — the deferred (not immediate) branch, blocked categories carried through", () => {
@@ -27,6 +29,26 @@ describe("classifyAtStopResolveError", () => {
   it("REG-B790: CHANGE_REQUEST_ALREADY_RESOLVED — the ONE case with no decline", () => {
     const e = { response: { status: 409, data: { code: "CHANGE_REQUEST_ALREADY_RESOLVED" } } };
     expect(classifyAtStopResolveError(e)).toEqual({ action: "already-resolved" });
+  });
+
+  it("REG-B795: ALREADY_RESOLVED carries the server's resolved status when present", () => {
+    const e = {
+      response: {
+        status: 409,
+        data: { code: "CHANGE_REQUEST_ALREADY_RESOLVED", status: "DECLINED" },
+      },
+    };
+    expect(classifyAtStopResolveError(e)).toEqual({
+      action: "already-resolved",
+      status: "DECLINED",
+    });
+  });
+
+  it("REG-B795: ALREADY_RESOLVED with no status omits the key entirely", () => {
+    const e = { response: { status: 409, data: { code: "CHANGE_REQUEST_ALREADY_RESOLVED" } } };
+    const out = classifyAtStopResolveError(e);
+    expect(out).toEqual({ action: "already-resolved" });
+    expect("status" in out).toBe(false);
   });
 
   it("REG-B790: CREDIT_LIMIT_EXCEEDED — declines, carries the server's own message as the reason", () => {

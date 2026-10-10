@@ -54,9 +54,11 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 const ORDER_ID = "ord-f07-settle-1";
 const INVOICE_ID = "inv-f07-settle-1";
@@ -128,6 +130,10 @@ describe("InvoicesService — send()/sendEmail() settle-before-sweep (TP-INV)", 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: { emitInvoiceUpdated: jest.fn() } },
         {
@@ -152,6 +158,13 @@ describe("InvoicesService — send()/sendEmail() settle-before-sweep (TP-INV)", 
           useValue: { notifyEvent: jest.fn().mockResolvedValue(undefined) },
         },
         { provide: StorageService, useValue: {} },
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         {
           provide: CommissionEngineService,

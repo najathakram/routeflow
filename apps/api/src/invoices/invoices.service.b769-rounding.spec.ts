@@ -23,9 +23,11 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
 import { BadRequestException } from "@nestjs/common";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 // B769: split into its own file rather than grown inline — invoices.service.spec.ts is
 // already at its size-ratchet ceiling (see common/size-ratchet.spec.ts).
@@ -40,6 +42,10 @@ describe("InvoicesService — B769 money rounding", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: { emitInvoiceUpdated: jest.fn() } },
         { provide: EmailService, useValue: { sendInvoice: jest.fn() } },
@@ -62,6 +68,13 @@ describe("InvoicesService — B769 money rounding", () => {
         },
         { provide: MessagingService, useValue: { notify: jest.fn(), notifyEvent: jest.fn() } },
         { provide: StorageService, useValue: { upload: jest.fn(), presignedUrl: jest.fn() } },
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         {
           provide: CommissionEngineService,

@@ -8,6 +8,7 @@ import {
 import { apiClient } from "../api-client";
 import { useAuthStore } from "../auth-store";
 import { useTenantStore } from "../tenant-store";
+import { inlineReturnsAddonState } from "../inline-return-screen";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 //
@@ -164,4 +165,22 @@ export function useDeliveryAccess(): { enabled: boolean; resolved: boolean } {
 export function useRoutesAccess(): { enabled: boolean; resolved: boolean } {
   const rr = useRecurringRoutes();
   return { enabled: rr.enabled, resolved: rr.resolved };
+}
+
+// ─── Inline returns (Returns Inside Order Creation) ───────────────────────────
+//
+// Mirror of web's `useHasAddon(ORDERS_INLINE_RETURNS_ADDON)` gate on RecordReturnAction. UX gate
+// only — every /returns/inline/* route independently 403s via AddonGuard. Same query/cache as
+// the other addon hooks; `resolved` is keyed off the DATA (see `inlineReturnsAddonState`).
+export function useInlineReturnsAddon(): { enabled: boolean; resolved: boolean } {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const tenantSlug = useTenantStore((s) => s.slug);
+  const query = useQuery<{ addons: string[] }>({
+    queryKey: ["tenant", tenantSlug, "addons"],
+    queryFn: () => apiClient.get("/tenants/me/addons").then((r) => r.data),
+    staleTime: 5 * 60_000,
+    retry: 2,
+    enabled: isAuthenticated,
+  });
+  return inlineReturnsAddonState(query.data);
 }

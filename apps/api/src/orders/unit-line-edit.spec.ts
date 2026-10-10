@@ -39,6 +39,7 @@ function makeCtx(): UnitWriteContext & {
 } {
   return {
     tx: { orderItem: { create: jest.fn(), update: jest.fn() } },
+    orderId: "ord-1", // #2577: every line rewrite is scoped to the edited order
     ladders: new Map([["p1", units]]),
     tenantId: "t1",
     tier: () => 1,

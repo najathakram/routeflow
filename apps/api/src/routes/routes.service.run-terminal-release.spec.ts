@@ -12,6 +12,7 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { mockRouteRefsInTenant } from "../testing/route-refs-mock";
 
 jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
 jest.mock("../storage/compress.util", () => ({
@@ -63,6 +64,10 @@ type Row = {
 // stop row the test did not pin has no status to contradict the predicate, so
 // the pre-existing table tests are unaffected. Reset per test.
 let stopStatus: Record<string, string> = {};
+
+// SA-706f: the release writes only Orders the tx locked FOR UPDATE first (a raw `SELECT id ... FOR
+// UPDATE`), so the tx mock answers that read with these ids. Table tests set it to their table's ids.
+let lockedFixture: string[] = ["B", "C"];
 
 function matches(row: Row, where: any): boolean {
   if (where.id?.in && !where.id.in.includes(row.id)) return false;
@@ -127,7 +132,6 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
       | "emitStopCompleted"
       | "emitOrderCreated"
       | "emitOrderStatusChanged"
-      | "emitLowStock"
       | "emitToDriver"
       | "emitDriverStatusUpdated"
     >
@@ -152,7 +156,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
       routeRunStop: {
         ...prisma.routeRunStop,
         findMany: jest.fn(),
-        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       order: {
         ...prisma.order,
@@ -170,13 +174,24 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
       invoicePayment: { ...prisma.invoicePayment, findMany: jest.fn().mockResolvedValue([]) },
       advancePayment: { ...prisma.advancePayment, findMany: jest.fn().mockResolvedValue([]) },
       $executeRaw: jest.fn().mockResolvedValue(0),
+      $queryRaw: jest.fn().mockImplementation(async () => lockedFixture.map((id) => ({ id }))),
       ...over,
     };
   }
 
   beforeEach(async () => {
     stopStatus = {};
+    lockedFixture = ["B", "C"];
     prisma = createMockPrisma();
+    // The default tx answers every raw query with []; the release's order lock needs the fixture.
+    (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
+      fn({
+        ...prisma,
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        $queryRaw: jest.fn().mockImplementation(async () => lockedFixture.map((id) => ({ id }))),
+      }),
+    );
+    mockRouteRefsInTenant(prisma, { a1: "c1", a2: "c2", a3: "c3" });
 
     invoicesService = {
       recordDeliveryPaymentInTx: jest
@@ -190,7 +205,6 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
       emitStopCompleted: jest.fn(),
       emitOrderCreated: jest.fn(),
       emitOrderStatusChanged: jest.fn(),
-      emitLowStock: jest.fn(),
       emitToDriver: jest.fn(),
       emitDriverStatusUpdated: jest.fn(),
     };
@@ -272,6 +286,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
       // That read runs on the tx too, under the SAME predicate minus `id`.
       expect(tx.order.findMany).toHaveBeenCalledWith({
         where: {
+          id: { in: ["B", "C"] },
           routeRunStopId: { in: ["s2", "s3"] },
           routeRunStop: { status: { not: "COMPLETED" } },
           status: { notIn: ["DELIVERED", "CANCELLED"] },
@@ -296,6 +311,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
       const calls = tx.order.updateMany.mock.calls;
       expect(calls[0][0]).toEqual({
         where: {
+          id: { in: ["B", "C"] },
           routeRunStopId: { in: ["s2", "s3"] },
           routeRunStop: { status: { not: "COMPLETED" } },
           status: "OUT_FOR_DELIVERY",
@@ -411,6 +427,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           fulfillPath: "ROUTE",
         },
       ];
+      lockedFixture = table.map((r) => r.id);
       // The SHARED mock (no explicit txMock) so the sweep's forTenant().order.updateMany
       // and the tx's order.updateMany both hit the same table.
       wireTable(table, prisma.order.updateMany);
@@ -768,6 +785,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           fulfillPath: "ROUTE",
         },
       ];
+      lockedFixture = table.map((r) => r.id);
       wireTable(table, prisma.order.updateMany);
       wireTableReads(table, prisma.order.findMany);
 
@@ -914,6 +932,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           fulfillPath: "ROUTE",
         },
       ];
+      lockedFixture = table.map((r) => r.id);
       prisma.routeRun.findUnique.mockResolvedValue({ ...RUN_FIXTURE, status: "CANCELLED" });
       const tx = makeTx();
       tx.routeRunStop.findMany.mockResolvedValue([{ id: "s2" }]);
@@ -974,6 +993,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           fulfillPath: "ROUTE",
         },
       ];
+      lockedFixture = table.map((r) => r.id);
       stopStatus = { s2: "PENDING", s3: "PENDING" };
 
       prisma.routeRun.findUnique.mockResolvedValue({ ...RUN_FIXTURE, status: "IN_PROGRESS" });
@@ -1069,6 +1089,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
           fulfillPath: "ROUTE",
         },
       ];
+      lockedFixture = table.map((r) => r.id);
       stopStatus = { s1: "COMPLETED", s2: "PENDING" };
 
       // A PENDING request on each. B's must be declined: once B is released it

@@ -35,7 +35,10 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { AfterCommit } from "../common/after-commit";
 
 describe("InvoicesService — B763", () => {
   let service: InvoicesService;
@@ -85,6 +88,10 @@ describe("InvoicesService — B763", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: mockGateway },
         { provide: EmailService, useValue: mockEmailService },
@@ -104,6 +111,13 @@ describe("InvoicesService — B763", () => {
         { provide: CreditNotesService, useValue: mockCreditNotes },
         { provide: MessagingService, useValue: mockMessaging },
         { provide: StorageService, useValue: mockStorage },
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         { provide: EntitlementsService, useValue: mockEntitlements },
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
         { provide: NumberingService, useValue: mockNumbering },
@@ -165,6 +179,12 @@ describe("InvoicesService — B763", () => {
       prisma.paymentCounter.upsert.mockResolvedValue({ next: 1 } as any);
       prisma.invoice.update.mockResolvedValue({} as any);
       prisma.advancePayment.create.mockResolvedValue({ id: "adv-1" } as any);
+      // SA-404f N1: the under-lock re-read sees each invoice as listed (nothing voided meanwhile).
+      prisma.invoice.findUnique.mockImplementation(async ({ where }: any) =>
+        ((await prisma.invoice.findMany.mock.results.at(-1)?.value) ?? []).find(
+          (r: any) => r.id === where.id,
+        ),
+      );
     });
 
     it("rounds the leftover excess before writing the AdvancePayment", async () => {
@@ -174,7 +194,13 @@ describe("InvoicesService — B763", () => {
       // Driver collects 100 against one $33.33 invoice: excess = 100 - 33.33 = 66.67, clean at
       // this scale, but the write must still go through roundMoney (defense against drift on a
       // larger, multi-invoice allocation loop -- see recordStandalonePayment's own pin above).
-      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+      await service.recordDeliveryPaymentInTx(
+        prisma as any,
+        new AfterCommit(),
+        ["ord-1"],
+        100,
+        "CASH",
+      );
 
       expect(prisma.advancePayment.create).toHaveBeenCalledWith(
         expect.objectContaining({

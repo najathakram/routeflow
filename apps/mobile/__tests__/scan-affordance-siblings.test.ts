@@ -46,7 +46,11 @@ describe("purchase-orders/record.tsx scan affordance (REG-B264)", () => {
     expect(onScannedBody).toMatch(/resolveProductByCode<AdminProduct>\(/);
     expect(onScannedBody).toMatch(/if \(result\.archived\)/);
     expect(onScannedBody).toMatch(/showToast\(archivedMessage\(result\.product\)\)/);
-    expect(onScannedBody).toMatch(/applyPickedProduct\(result\.product\)/);
+    // B1220: the hit reaches the SAME apply function via runScanDecision (which also gates
+    // fuzzy matches behind a confirm / picker).
+    expect(onScannedBody).toMatch(
+      /runScanDecision\(\s*decision,\s*\(p\) => applyPickedProduct\(p\)/,
+    );
 
     // Both the picker's onSelect and the scan handler call the SAME function
     // — never two independent copies of the field-fill logic.
@@ -116,7 +120,7 @@ describe("invoices/[id]/edit.tsx scan affordance (REG-B265)", () => {
     ) ?? [""])[0];
     expect(onScannedBody).toMatch(/resolveProductByCode<AdminProduct>\(/);
     expect(onScannedBody).toMatch(/if \(result\.archived\)/);
-    expect(onScannedBody).toMatch(/addCatalogLine\(result\.product\)/);
+    expect(onScannedBody).toMatch(/runScanDecision\([\s\S]*?addCatalogLine\(p,/);
     // The picker's own onSelect is the pre-existing addCatalogLine reference
     // (unchanged) — never a second, parallel line-adding function.
     expect(source).toMatch(/onSelect=\{addCatalogLine\}/);
@@ -178,7 +182,7 @@ describe("customers/[id]/standing-orders/new.tsx scan affordance (REG-B266)", ()
     ) ?? [""])[0];
     expect(onScannedBody).toMatch(/resolveProductByCode<AdminProduct>\(/);
     expect(onScannedBody).toMatch(/if \(result\.archived\)/);
-    expect(onScannedBody).toMatch(/addLine\(result\.product\)/);
+    expect(onScannedBody).toMatch(/runScanDecision\(decision, \(p\) => addLine\(p\)/);
 
     // Both the picker's onSelect and the scan handler call the SAME function
     // — the inline qty-increment-or-append logic was extracted into `addLine`

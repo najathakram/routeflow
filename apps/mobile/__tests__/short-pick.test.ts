@@ -261,7 +261,8 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
         },
       ],
     };
-    expect(shortPickLinesFromOrder(order)).toEqual([
+    // SA-367a: a first visit is served remaining == qty.
+    expect(shortPickLinesFromOrder(order, { "li-1": 10 })).toEqual([
       {
         orderItemId: "li-1",
         productId: "p-1",
@@ -272,6 +273,7 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
         unitLabel: null,
         unitsPerBox: 5,
         boxes: 1,
+        pieces: 5, // FIX 6 (SA-175): qty(10) − boxes(1)×unitsPerBox(5)
       },
     ]);
   });
@@ -283,7 +285,12 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
         { id: "li-2", productId: "p-2", status: "PENDING", qty: 5, subtotal: 50 },
       ],
     };
-    expect(shortPickLinesFromOrder(order).map((l) => l.orderItemId)).toEqual(["li-2"]);
+    // The server serves a cancelled line remaining 0 (SA-366).
+    expect(
+      shortPickLinesFromOrder(order, { "li-1": 0, "li-2": 5 }).map((l) => l.orderItemId),
+    ).toEqual(["li-2"]);
+    // And the status filter holds even where no remaining was served.
+    expect(shortPickLinesFromOrder(order, {}).map((l) => l.orderItemId)).toEqual(["li-2"]);
   });
 
   it("excludes a line already delivered (a reopened, partially-completed stop doesn't re-offer a settled line)", () => {
@@ -300,13 +307,20 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
         { id: "li-2", productId: "p-2", status: "PENDING", deliveredQty: 0, qty: 5, subtotal: 50 },
       ],
     };
-    expect(shortPickLinesFromOrder(order).map((l) => l.orderItemId)).toEqual(["li-2"]);
+    // Served: the settled line has remaining 0.
+    expect(
+      shortPickLinesFromOrder(order, { "li-1": 0, "li-2": 5 }).map((l) => l.orderItemId),
+    ).toEqual(["li-2"]);
+    // Older api (no remaining): the pre-B785 rule, and the surviving line awaits entry.
+    const legacy = shortPickLinesFromOrder(order, {});
+    expect(legacy.map((l) => l.orderItemId)).toEqual(["li-2"]);
+    expect(legacy[0]!.needsEntry).toBe(true);
   });
 
   it("null/undefined order or missing lineItems -> empty array, never throws", () => {
-    expect(shortPickLinesFromOrder(null)).toEqual([]);
-    expect(shortPickLinesFromOrder(undefined)).toEqual([]);
-    expect(shortPickLinesFromOrder({})).toEqual([]);
+    expect(shortPickLinesFromOrder(null, {})).toEqual([]);
+    expect(shortPickLinesFromOrder(undefined, {})).toEqual([]);
+    expect(shortPickLinesFromOrder({}, {})).toEqual([]);
   });
 
   it("feeds buildStopDeliveries directly for a real multi-order flow — no adapter needed", () => {
@@ -317,8 +331,12 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
       lineItems: [{ id: "li-2", productId: "p-2", status: "PENDING", qty: 6, subtotal: 60 }],
     };
     const out = buildStopDeliveries([
-      { orderId: "A", lines: shortPickLinesFromOrder(orderA), deliveredQtyById: {} },
-      { orderId: "B", lines: shortPickLinesFromOrder(orderB), deliveredQtyById: { "li-2": 0 } },
+      { orderId: "A", lines: shortPickLinesFromOrder(orderA, { "li-1": 4 }), deliveredQtyById: {} },
+      {
+        orderId: "B",
+        lines: shortPickLinesFromOrder(orderB, { "li-2": 6 }),
+        deliveredQtyById: { "li-2": 0 },
+      },
     ]);
     expect(out).toEqual([
       { orderItemId: "li-1", productId: "p-1", type: "DELIVERED", quantityDelivered: 4 },
@@ -340,7 +358,9 @@ describe("fallbackShortPickLines (SA-115: the un-landed-order fallback)", () => 
 
   it("a surviving (non-CANCELLED) line resolves to DELIVERED at full qty through deliveryTypeForQty — no BOGO netting", () => {
     const order = {
-      lineItems: [{ id: "li-1", productId: "p-1", status: "PENDING", qty: 8, subtotal: 80 }],
+      lineItems: [
+        { id: "li-1", productId: "p-1", status: "PENDING", qty: 8, subtotal: 80, remaining: 8 },
+      ],
     };
     const [line] = fallbackShortPickLines(order);
     expect(line).toEqual({
@@ -353,6 +373,7 @@ describe("fallbackShortPickLines (SA-115: the un-landed-order fallback)", () => 
       unitLabel: null,
       unitsPerBox: null,
       boxes: null,
+      pieces: null,
     });
     expect(deliveryTypeForQty(line!.orderedQty, line!.orderedQty)).toBe("DELIVERED");
   });
@@ -365,7 +386,9 @@ describe("fallbackShortPickLines (SA-115: the un-landed-order fallback)", () => 
 
   it("SA-115 required (2), the composition an un-landed vs. a landed order must produce: an un-landed order's fallback lines contribute their full-qty snapshot to buildStopDeliveries; a LANDED order with nothing adjustable (empty rich lines) contributes NO entries at all — never a re-claimed full delivery", () => {
     const unlandedSnapshot = {
-      lineItems: [{ id: "li-1", productId: "p-1", status: "PENDING", qty: 6, subtotal: 60 }],
+      lineItems: [
+        { id: "li-1", productId: "p-1", status: "PENDING", qty: 6, subtotal: 60, remaining: 6 },
+      ],
     };
     // A landed order whose shortPickLinesFromOrder came back empty (e.g.
     // every line already delivered on an earlier visit) — the caller must

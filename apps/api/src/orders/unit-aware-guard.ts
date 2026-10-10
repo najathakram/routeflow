@@ -1,4 +1,5 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * units_v1 — the fail-closed net under every path that REWRITES existing lines.
@@ -18,7 +19,7 @@ import { ConflictException, ForbiddenException } from "@nestjs/common";
  * Order create (4b-2b) and manual-invoice create (4c-1) now mint unit-aware lines (behind flag.units_v1);
  * every REWRITE path stays fenced here until it is converted.
  */
-export const UNIT_AWARE_LINE = "UNIT_AWARE_LINE";
+export const UNIT_AWARE_LINE = API_ERROR_CODES.UNIT_AWARE_LINE;
 
 interface LineLike {
   unitLabel?: string | null;
@@ -57,9 +58,90 @@ export function assertNoUnitAwareLines(
   });
 }
 
+interface EditItemLike {
+  id?: string | null;
+  action?: string | null;
+  productId?: string | null;
+  unitLabel?: string | null;
+  qty?: number;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitPrice?: number;
+  overrideReason?: string | null;
+  substituteProductId?: string | null;
+  name?: string | null;
+}
+
 interface EditDto {
   replaceAll?: boolean;
-  items?: Array<{ id?: string | null; action?: string | null }>;
+  items?: EditItemLike[];
+}
+
+/**
+ * SA-407 (#2272): is this CUSTOMER payload the ONE per-line diff a buyer may send an order that
+ * holds a unit line? Every item must be either
+ *   (a) `id` of a live UNIT line + that line's OWN stored `unitLabel` + a count in `qty` — a count
+ *       up, a count down (productId may ride along, but only the line's own); or
+ *   (b) `id` + `action` CANCEL/DELETE and nothing else — a removal.
+ * `"ok"` routes it through the staff per-line diff (updateUnitLine at the line's snapshot factor).
+ * A `conflict` names what the ruling REFUSES with 409 UNIT_AWARE_LINE: a unit switch, boxes/pieces on
+ * a unit line, a NEW unit line. `"shape"` is any other diff (pack-line edits, prices, substitutes):
+ * buyers still send those through the full replace, so the payload classifier keeps its 400.
+ */
+export type BuyerLineDiffVerdict = "ok" | "shape" | { conflict: string };
+
+export function buyerLineDiffVerdict(
+  lines: ReadonlyArray<LineLike & { id: string; productId?: string | null }>,
+  dto: EditDto,
+): BuyerLineDiffVerdict {
+  const items = dto.items ?? [];
+  if (dto.replaceAll !== false || items.length === 0) return "shape";
+  const byId = new Map(lines.map((l) => [l.id, l]));
+  let verdict: BuyerLineDiffVerdict = "ok";
+  for (const item of items) {
+    if (item.id == null) {
+      // A buyer adds pack lines only; choosing a unit is its own ruling (SA-407).
+      if ((item.unitLabel ?? "").trim() !== "")
+        return { conflict: "A new line can't be sold by a unit from here" };
+      verdict = "shape";
+      continue;
+    }
+    const removal = item.action === "CANCEL" || item.action === "DELETE";
+    const line = byId.get(item.id);
+    if (removal) {
+      // SA-507b: a removal names a line of THIS order — a foreign id is a 400 "shape" (one code, no
+      // existence oracle), never a bare-id write the merge branch would apply to another order.
+      if (!line) {
+        verdict = "shape";
+        continue;
+      }
+      const extra =
+        item.qty !== undefined ||
+        item.boxes != null ||
+        item.pieces != null ||
+        item.unitPrice !== undefined ||
+        item.substituteProductId != null;
+      if (extra) verdict = "shape";
+      continue;
+    }
+    if (!isUnitAwareLine(line)) {
+      verdict = "shape"; // a pack line: buyers edit those through the full replace
+      continue;
+    }
+    if (item.boxes != null || item.pieces != null)
+      return { conflict: `A line sold by the ${line!.unitLabel} takes a count, not boxes/pieces` };
+    if (item.unitLabel !== line!.unitLabel)
+      return { conflict: `This line is sold by the ${line!.unitLabel}; its unit can't be changed` };
+    const priced =
+      item.unitPrice !== undefined ||
+      item.overrideReason != null ||
+      item.substituteProductId != null ||
+      item.name != null ||
+      (item.action != null && item.action !== "UPDATE") ||
+      (item.productId != null && item.productId !== line!.productId);
+    if (priced || typeof item.qty !== "number") verdict = "shape";
+  }
+  return verdict;
 }
 
 /**
@@ -81,7 +163,10 @@ interface EditDto {
  * live product (see `unit-line-edit.ts`).
  */
 export async function assertOrderEditAllowed(
-  order: { customerId: string; lineItems: ReadonlyArray<LineLike> },
+  order: {
+    customerId: string;
+    lineItems: ReadonlyArray<LineLike & { id: string; productId?: string | null }>;
+  },
   dto: EditDto,
   user: { role?: string } | undefined,
   findOwner: () => Promise<{ id: string } | null>,
@@ -95,10 +180,21 @@ export async function assertOrderEditAllowed(
     dto.replaceAll === false &&
     items.length > 0 &&
     items.every((i) => i.id != null && (i.action === "CANCEL" || i.action === "DELETE"));
-  if (strikeOffOnly || !order.lineItems.some(isUnitAwareLine)) return;
-  if (user?.role === "CUSTOMER") {
+  const buyer = user?.role === "CUSTOMER";
+  const verdict = buyer ? buyerLineDiffVerdict(order.lineItems, dto) : "shape";
+  const hasUnitLine = order.lineItems.some(isUnitAwareLine);
+  if (strikeOffOnly || (!hasUnitLine && typeof verdict !== "object")) return;
+  if (buyer) {
+    // Ownership FIRST: a refusal names a unit on THIS order, which a non-owner must never learn.
     const owner = await findOwner();
     if (!owner || owner.id !== order.customerId) throw new ForbiddenException();
+    // SA-407: the buyer per-line diff of a unit line (count up/down, remove) is converted.
+    if (verdict === "ok") return;
+    if (typeof verdict === "object")
+      throw new ConflictException({
+        code: UNIT_AWARE_LINE,
+        message: `${verdict.conflict}. Edit it from the web order screen or ask the seller.`,
+      });
   }
   assertNoUnitAwareLines(order.lineItems, "edited");
 }
@@ -171,7 +267,7 @@ export async function assertInvoiceRewriteAllowed(
   // Fail CLOSED: a parent we cannot read (NULL-tenant / cross-tenant / vanished) proves nothing.
   if (!own || (invoice.orderId && !linked)) {
     throw new ConflictException({
-      code: "UNIT_AWARE_LINE_UNVERIFIABLE",
+      code: API_ERROR_CODES.UNIT_AWARE_LINE_UNVERIFIABLE,
       message: "This invoice's lines could not be verified, so it can't be edited. Ask an admin.",
     });
   }

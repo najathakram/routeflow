@@ -8,19 +8,28 @@ import {
   Patch,
   Post,
   Query,
+  Req,
+  Res,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
 import { FilesInterceptor } from "@nestjs/platform-express";
 import { memoryStorage } from "multer";
+import { Throttle } from "@nestjs/throttler";
+import type { Request, Response } from "express";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { ProductsService } from "./products.service";
+import { ProductsExportService } from "./products-export.service";
+import { streamCsv } from "./products-export.stream";
+import { ExportProductsDto } from "./dto/export-products.dto";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { ListProductsDto } from "./dto/list-products.dto";
@@ -33,12 +42,34 @@ import { MB, uploadLimits } from "../common/upload-limits";
 @Controller("products")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ProductsController {
-  constructor(private readonly productsService: ProductsService) {}
+  constructor(
+    private readonly productsService: ProductsService,
+    private readonly exporter: ProductsExportService,
+  ) {}
 
   @Get()
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findAll(@Query() query: ListProductsDto) {
     return this.productsService.findAll(query);
+  }
+
+  // Must be declared before :id to avoid route collision.
+  // The filtered catalog as a streamed CSV (never paged, capped, audit-logged). A refused window
+  // is a JSON 400 before the first byte; a later failure is reported inside the file itself.
+  @Get("export.csv")
+  @Roles(UserRole.OPERATOR)
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  async exportCsv(
+    @Query() query: ExportProductsDto,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { csv, filename } = await this.exporter.prepare(query, {
+      userId: user?.sub ?? null,
+      ip: req?.ip ?? null,
+    });
+    await streamCsv(res, filename, csv);
   }
 
   // Must be declared before :id to avoid route collision
@@ -63,8 +94,8 @@ export class ProductsController {
 
   @Post()
   @Roles(UserRole.OPERATOR)
-  create(@Body() dto: CreateProductDto) {
-    return this.productsService.create(dto);
+  create(@Body() dto: CreateProductDto, @CurrentUser() user: JwtPayload) {
+    return this.productsService.create(dto, { actorId: user.sub ?? null });
   }
 
   // Must be declared before :id to avoid route collision
@@ -121,14 +152,14 @@ export class ProductsController {
 
   @Patch(":id")
   @Roles(UserRole.OPERATOR)
-  update(@Param("id") id: string, @Body() dto: UpdateProductDto) {
-    return this.productsService.update(id, dto);
+  update(@Param("id") id: string, @Body() dto: UpdateProductDto, @CurrentUser() user: JwtPayload) {
+    return this.productsService.update(id, dto, { actorId: user.sub ?? null });
   }
 
   @Delete(":id")
   @Roles(UserRole.OPERATOR)
-  remove(@Param("id") id: string) {
-    return this.productsService.remove(id);
+  remove(@Param("id") id: string, @Query("confirmCascade") confirmCascade?: string) {
+    return this.productsService.remove(id, { confirmCascade: confirmCascade === "true" });
   }
 
   // ─── Image endpoints (declared after :id to avoid prefix collision) ──────────

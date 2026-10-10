@@ -1,10 +1,12 @@
 import { ServiceUnavailableException } from "@nestjs/common";
+import { holdsValues } from "./order-backsync-lines";
 import { Prisma } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { QTY_EPSILON } from "../orders/merge-idempotency";
 import { billableQtyFromBasis, type DeliveredBasis } from "./delivered-basis-by-line";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 export interface OrderRecomputeTotals {
   orderId: string;
@@ -94,13 +96,13 @@ export async function withOrderRecomputeLock<T>(
   } catch (e) {
     if (e instanceof LockTimeoutError) {
       throw new ServiceUnavailableException({
-        code: "LOCK_UNAVAILABLE",
+        code: API_ERROR_CODES.LOCK_UNAVAILABLE,
         message: "Another update to this order is in progress. Try again in a moment.",
       });
     }
     if (e instanceof LockUnavailableError) {
       throw new ServiceUnavailableException({
-        code: "LOCK_UNAVAILABLE",
+        code: API_ERROR_CODES.LOCK_UNAVAILABLE,
         message: "Order lock unavailable — retry shortly.",
       });
     }
@@ -108,7 +110,7 @@ export async function withOrderRecomputeLock<T>(
   }
   if (!result.acquired) {
     throw new ServiceUnavailableException({
-      code: "LOCK_UNAVAILABLE",
+      code: API_ERROR_CODES.LOCK_UNAVAILABLE,
       message: "Order lock unavailable — retry shortly.",
     });
   }
@@ -201,7 +203,7 @@ export async function checkOrderCoverage(params: {
   // Reuse merge-idempotency.ts's shouldSkipInPlaceResync tolerance/zero-qty rule exactly: `qty`
   // is Decimal(10,3), and Node's float math (0.7 + 0.1 === 0.7999999999999999) means a strict
   // `>=` never counts a fully-billed line as covered. A zero-billable-qty line (never billable
-  // at all, or refused on a DELIVERED order) can never block coverage either.
+  // at all, or an evidence row of 0 — a REFUSED delivery) can never block coverage either.
   const billableLines = activeLines.filter((li) => billableQtyOf(li) > QTY_EPSILON);
   const fullyCovered = billableLines.every((li) => {
     const agg = byTarget.get(`line:${li.id}`);
@@ -281,17 +283,17 @@ export async function checkOrderCoverage(params: {
  * fullyCovered gate excludes it), but an already-CANCELLED line with stale non-zero qty/subtotal
  * (a prior return, a prior recompute) still gets its numbers normalized to zero.
  *
- * SA-093a, round 6: a line with its OWN mutation row showing 0 delivered (a REFUSED delivery)
+ * SA-093a, round 6: a line with its OWN evidence row showing 0 delivered (a REFUSED delivery)
  * is ALSO cancelled once the order is fully covered — the pre-PR behaviour, restored on purpose
  * for this specific line: a refused line was never going to be billed at all, so once delivery
- * is done there is nothing left pending for it. This is keyed on THAT line's own mutation row,
- * never on order.status (see `delivered-basis-by-line.ts`) — a line with no mutation row of its
+ * is done there is nothing left pending for it. This is keyed on THAT line's own evidence row,
+ * never on order.status (see `delivered-basis-by-line.ts`) — a line with no evidence row of its
  * own is never "refused" by this rule, whatever the order's other lines or status say.
  */
 export async function finalizeOrderRecompute(params: {
   db: Prisma.TransactionClient;
   orderId: string;
-  order: { subtotal: unknown; tax: unknown };
+  order: { subtotal: unknown; tax: unknown; total?: unknown; shippingFee?: unknown };
   deliveredBasis: DeliveredBasis;
   /** Order lines no invoice line resolved to (the caller's existing-line loop already removed
    *  every line it matched). */
@@ -302,7 +304,7 @@ export async function finalizeOrderRecompute(params: {
 }): Promise<OrderRecomputeTotals> {
   const { db, orderId, order, deliveredBasis, unbilled, categoryTaxSum, invoices } = params;
 
-  // Cancel a genuine orphan (was billed, now removed), a line refused by its OWN mutation row,
+  // Cancel a genuine orphan (was billed, now removed), a line refused by its OWN evidence row,
   // and normalize an already-cancelled line's stale qty/subtotal. A line that was NEVER billed
   // and isn't refused/already-cancelled is left untouched — it should not appear here at all
   // while the caller's gate holds.
@@ -312,6 +314,16 @@ export async function finalizeOrderRecompute(params: {
     const deliveredForLine = deliveredBasis.byLineId.get(orphan.id);
     const refused = deliveredForLine !== undefined && deliveredForLine <= QTY_EPSILON;
     if (!wasBilled && !alreadyCancelled && !refused) continue;
+    // SA-235: a line that already holds exactly these values is not written (no updatedAt churn).
+    const cancelled: Array<[string, unknown]> = [
+      ["status", "CANCELLED"],
+      ["qty", 0],
+      ["subtotal", 0],
+      ["boxes", null],
+      ["pieces", null],
+      ["invoicedQty", 0],
+    ];
+    if (holdsValues(orphan, cancelled)) continue;
     await db.orderItem.update({
       where: { id: orphan.id },
       data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null, invoicedQty: 0 },
@@ -336,9 +348,18 @@ export async function finalizeOrderRecompute(params: {
     invoices.reduce((s: number, inv: any) => s + Number(inv.shippingFee ?? 0), 0),
   );
   const total = roundMoney(subtotal + tax + categoryTax + shippingFeeSum);
-  await db.order.update({
-    where: { id: orderId },
-    data: { subtotal, tax, total, shippingFee: shippingFeeSum },
-  });
+  // SA-235: the Order row is written only when a column it would write differs (an identical save moves no updatedAt).
+  const orderWrites: Array<[string, unknown]> = [
+    ["subtotal", subtotal],
+    ["tax", tax],
+    ["total", total],
+    ["shippingFee", shippingFeeSum],
+  ];
+  if (!holdsValues(order, orderWrites)) {
+    await db.order.update({
+      where: { id: orderId },
+      data: { subtotal, tax, total, shippingFee: shippingFeeSum },
+    });
+  }
   return { orderId, subtotal, tax, total, shippingFee: shippingFeeSum };
 }

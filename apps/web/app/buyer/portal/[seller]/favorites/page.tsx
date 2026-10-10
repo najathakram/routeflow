@@ -5,9 +5,14 @@ import { useParams, useRouter } from "next/navigation";
 import { Heart, Plus, Minus, Package, Loader2, Trash2, Store, AlertTriangle } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { useBuyerFavorites, useBuyerRemoveFavorite, type BuyerFavoriteItem } from "@/lib/api/buyer";
+import {
+  useBuyerFavorites,
+  useBuyerRemoveFavorite,
+  type BuyerFavoriteProduct,
+} from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { objectPositionForUrl } from "@/lib/image-focal";
+import { SHIPS_WHEN_RESTOCKED, canOrderOutOfStock, isOrderBlocked } from "@/lib/buyer-backorder";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -21,13 +26,32 @@ function FavoriteCard({
   onRemoveFavorite,
   isRemoving,
 }: {
-  item: BuyerFavoriteItem;
+  item: BuyerFavoriteProduct;
   cartQty: number;
   onAdd: () => void;
   onUpdateQty: (qty: number) => void;
   onRemoveFavorite: () => void;
   isRemoving: boolean;
 }) {
+  if (item.unavailable) {
+    // SA-606 M3: a product the tenant hid stays in the list as a stub: name, reason, remove. No price, no add.
+    return (
+      <div
+        className="flex flex-col gap-2 rounded-xl border border-dashed border-surface-border bg-white p-3"
+        data-testid="favorite-unavailable"
+      >
+        <h3 className="text-sm font-semibold text-navy line-clamp-2">{item.name}</h3>
+        <p className="text-xs text-navy/70">{item.unavailableText}</p>
+        <button
+          onClick={onRemoveFavorite}
+          disabled={isRemoving}
+          className="self-start text-xs font-medium text-danger hover:underline disabled:opacity-50"
+        >
+          Remove from favorites
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="group flex flex-col rounded-xl border border-surface-border bg-white overflow-hidden hover:shadow-md transition-shadow">
       {/* Image */}
@@ -63,6 +87,14 @@ function FavoriteCard({
         <div className="flex-1">
           <h3 className="text-sm font-semibold text-navy line-clamp-2">{item.name}</h3>
           {item.sku && <p className="text-[11px] text-navy/70 mt-0.5">SKU: {item.sku}</p>}
+          {canOrderOutOfStock(item) && (
+            <p
+              data-testid="favorite-ships-when-restocked"
+              className="mt-0.5 text-[11px] font-medium text-warning"
+            >
+              {SHIPS_WHEN_RESTOCKED}
+            </p>
+          )}
         </div>
 
         <div className="flex items-end justify-between gap-2">
@@ -89,6 +121,14 @@ function FavoriteCard({
                 <Plus className="h-3.5 w-3.5" />
               </button>
             </div>
+          ) : isOrderBlocked(item) ? (
+            // Same rule as the shop: an out-of-stock item this buyer cannot order is not addable.
+            <span
+              data-testid="favorite-out-of-stock"
+              className="rounded-lg bg-surface-muted px-3 py-2 text-xs font-semibold text-danger"
+            >
+              Out of stock
+            </span>
           ) : (
             <button
               onClick={onAdd}
@@ -176,6 +216,8 @@ export default function BuyerFavoritesPage() {
               item={item}
               cartQty={cart.getItemQty(item.productId)}
               onAdd={() =>
+                !item.unavailable &&
+                !isOrderBlocked(item) &&
                 cart.addItem({
                   productId: item.productId,
                   qty: 1,

@@ -13,6 +13,7 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { geocodeAddress } from "../common/geocode.util";
 import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { mockRouteRefsInTenant } from "../testing/route-refs-mock";
 
 jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
 jest.mock("../storage/compress.util", () => ({
@@ -42,11 +43,7 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
   let gateway: jest.Mocked<
     Pick<
       RouteFlowGateway,
-      | "emitStopCompleted"
-      | "emitOrderCreated"
-      | "emitOrderStatusChanged"
-      | "emitLowStock"
-      | "emitToDriver"
+      "emitStopCompleted" | "emitOrderCreated" | "emitOrderStatusChanged" | "emitToDriver"
     >
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
@@ -60,6 +57,7 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    mockRouteRefsInTenant(prisma, { a1: "c1", a2: "c2" });
 
     invoicesService = {
       recordDeliveryPaymentInTx: jest
@@ -73,7 +71,6 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
       emitStopCompleted: jest.fn(),
       emitOrderCreated: jest.fn(),
       emitOrderStatusChanged: jest.fn(),
-      emitLowStock: jest.fn(),
       emitToDriver: jest.fn(),
     };
 
@@ -126,7 +123,7 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
       ...prisma,
       routeRunStop: {
         ...prisma.routeRunStop,
-        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
       },
       routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
@@ -246,6 +243,6 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
       operatorPayload,
     );
 
-    expect(invoicesService.recordDeliveryPaymentInTx.mock.calls[0][1]).toEqual(["ord-2"]);
+    expect(invoicesService.recordDeliveryPaymentInTx.mock.calls[0][2]).toEqual(["ord-2"]); // [1] = #2175 queue
   });
 });

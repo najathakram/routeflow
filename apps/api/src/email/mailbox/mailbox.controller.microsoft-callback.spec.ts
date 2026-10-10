@@ -1,4 +1,4 @@
-import { BadRequestException, INestApplication } from "@nestjs/common";
+import { BadRequestException, INestApplication, Logger } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { JwtModule } from "@nestjs/jwt";
 import { PassportModule } from "@nestjs/passport";
@@ -14,6 +14,7 @@ import { AddonGuard } from "../../billing/addon.guard";
 import { AddonService } from "../../billing/addon.service";
 import { EntitlementsService } from "../../billing/entitlements.service";
 import { FeatureOverrideService } from "../../billing/feature-override.service";
+import { listenOnLoopback } from "../../common/testing/listen-loopback";
 
 /**
  * HTTP-level tests for `GET /settings/email/mailbox/microsoft/callback` (email-connect-microsoft
@@ -26,10 +27,13 @@ import { FeatureOverrideService } from "../../billing/feature-override.service";
  */
 describe("MailboxController — GET microsoft/callback", () => {
   let app: INestApplication;
-  let mailboxConnection: { handleMicrosoftCallback: jest.Mock };
+  let mailboxConnection: { handleMicrosoftCallback: jest.Mock; discardState: jest.Mock };
 
   beforeAll(async () => {
-    mailboxConnection = { handleMicrosoftCallback: jest.fn() };
+    mailboxConnection = {
+      handleMicrosoftCallback: jest.fn(),
+      discardState: jest.fn().mockResolvedValue(undefined),
+    };
 
     // The callback route itself is unguarded, but Nest still resolves every provider the
     // CONTROLLER'S OTHER routes reference via @UseGuards (JwtAuthGuard/RolesGuard/AddonGuard) —
@@ -67,7 +71,7 @@ describe("MailboxController — GET microsoft/callback", () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {
@@ -127,6 +131,92 @@ describe("MailboxController — GET microsoft/callback", () => {
       .expect(302);
 
     expect(res.headers.location).toBe("http://localhost:3001/settings?tab=email&mailbox_error=1");
+  });
+
+  describe("the connect state is consumed on every terminal outcome (#2115)", () => {
+    it("an error/cancel redirect burns its state before redirecting, never exchanging", async () => {
+      const res = await request(app.getHttpServer())
+        .get("/settings/email/mailbox/microsoft/callback")
+        .query({
+          error: "access_denied",
+          error_description: "AADSTS65004: User declined to consent to access the app.",
+          state: "state-1",
+        })
+        .expect(302);
+
+      expect(res.headers.location).toBe("http://localhost:3001/settings?tab=email&mailbox_error=1");
+      expect(mailboxConnection.discardState).toHaveBeenCalledWith("state-1");
+      expect(mailboxConnection.handleMicrosoftCallback).not.toHaveBeenCalled();
+    });
+
+    it("a failed exchange burns its state too", async () => {
+      mailboxConnection.handleMicrosoftCallback.mockRejectedValue(
+        new BadRequestException("microsoft_token_invalid"),
+      );
+
+      await request(app.getHttpServer())
+        .get("/settings/email/mailbox/microsoft/callback")
+        .query({ code: "code-1", state: "state-2" })
+        .expect(302);
+
+      expect(mailboxConnection.discardState).toHaveBeenCalledWith("state-2");
+    });
+
+    it("a successful exchange leaves the state to handleMicrosoftCallback, which consumed it itself", async () => {
+      mailboxConnection.handleMicrosoftCallback.mockResolvedValue({ confirmToken: "tok-9" });
+
+      await request(app.getHttpServer())
+        .get("/settings/email/mailbox/microsoft/callback")
+        .query({ code: "code-1", state: "state-3" })
+        .expect(302);
+
+      expect(mailboxConnection.discardState).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("attacker-controllable query values (the route is unauthenticated)", () => {
+    let warn: jest.SpyInstance;
+    beforeEach(() => {
+      warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    });
+    afterEach(() => warn.mockRestore());
+    const warnLines = () => warn.mock.calls.map((args) => String(args[0]));
+
+    it("logs the error code and the bare AADSTS code only, never the free-text description", async () => {
+      await request(app.getHttpServer())
+        .get("/settings/email/mailbox/microsoft/callback")
+        .query({
+          error: "access_denied",
+          error_description: "AADSTS65001: Jane Doe of Acme Corp has not consented.",
+        })
+        .expect(302);
+
+      expect(warnLines()).toEqual([
+        "Mailbox Microsoft callback denied: access_denied (AADSTS65001)",
+      ]);
+    });
+
+    it("a forged error carrying CR/LF is logged as a fixed placeholder, never raw", async () => {
+      const res = await request(app.getHttpServer())
+        .get("/settings/email/mailbox/microsoft/callback")
+        .query({ error: "access_denied\r\n[Nest] 1 - ERROR forged line" })
+        .expect(302);
+
+      expect(res.headers.location).toBe("http://localhost:3001/settings?tab=email&mailbox_error=1");
+      expect(warnLines()).toEqual(["Mailbox Microsoft callback denied: <malformed error>"]);
+      expect(mailboxConnection.handleMicrosoftCallback).not.toHaveBeenCalled();
+    });
+
+    it("a repeated error_description (Express hands it over as an array) still redirects, never 500s", async () => {
+      const res = await request(app.getHttpServer())
+        .get(
+          "/settings/email/mailbox/microsoft/callback?error=access_denied&error_description=a&error_description=b",
+        )
+        .expect(302);
+
+      expect(res.headers.location).toBe("http://localhost:3001/settings?tab=email&mailbox_error=1");
+      expect(mailboxConnection.handleMicrosoftCallback).not.toHaveBeenCalled();
+    });
   });
 
   it("a failed exchange with microsoft_admin_consent_required redirects to mailbox_admin_consent_required=1", async () => {

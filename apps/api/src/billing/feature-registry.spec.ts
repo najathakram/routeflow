@@ -44,6 +44,8 @@ const EXPECTED_LEGACY_REGISTRY = {
       "POST /regulated/filings/prepare",
       "GET /regulated/filings/:id/csv",
       "GET /regulated/filings/:id/pdf",
+      "GET /regulated/parked-reversals",
+      "POST /regulated/parked-reversals/:id/resolve",
       "ALL /tobacco/* (class-level)",
     ],
     grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "tobacco_dealer")',
@@ -112,7 +114,9 @@ const EXPECTED_LEGACY_REGISTRY = {
       "GET /settings/email/mailbox",
       "GET /settings/email/mailbox/google/start",
       "GET /settings/email/mailbox/microsoft/start",
+      "GET /settings/email/mailbox/confirm/:token/preview",
       "POST /settings/email/mailbox/confirm",
+      "POST /settings/email/mailbox/confirm/cancel",
       "DELETE /settings/email/mailbox",
     ],
     grantPath:
@@ -147,8 +151,14 @@ const EXPECTED_LEGACY_REGISTRY = {
       "POST /orders/:id/inline-returns (PR-1d)",
       "POST /returns/inline/:id/* (PR-1c/1d)",
     ],
-    grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "orders_inline_returns")',
-    backfill: "New feature 2026-09-16; zero existing users; nothing to backfill.",
+    // Owner ruling 2026-09-28 ("On for everyone"): default-granted; text re-pinned with it.
+    grantPath:
+      "Default-granted to every tenant whose plan carries flag.returns (owner ruling " +
+      '2026-09-28); remove per tenant with a DENY override (addonKey "orders_inline_returns")',
+    backfill:
+      'New feature 2026-09-16; zero existing users. Owner ruling 2026-09-28 ("On for ' +
+      'everyone"): defaultGranted, so no TenantAddon row is needed and none is backfilled — ' +
+      "isDefaultGrantedAddon() grants it at runtime; flag.returns still gates it (requires).",
   },
 };
 
@@ -320,7 +330,7 @@ describe("FEATURE_REGISTRY (feature grants PR-1)", () => {
 
   it("DARK_PLAN_FLAGS (plan-flag-policy.ts) parity: exactly the dark RequirePlanFlag keys", () => {
     // DARK_PLAN_FLAGS is DEFINED in plan-flag-policy.ts (split out of plan-flag.guard.ts for the
-    // 2026-08-23/Lite-L2 rollout, REMOVE by 2026-10-01) and RE-EXPORTED from plan-flag.guard.ts —
+    // 2026-08-23/Lite-L2 rollout, review by 2027-01-31) and RE-EXPORTED from plan-flag.guard.ts —
     // scan the file that actually declares the literal, not the re-export. Do not point this back
     // at plan-flag.guard.ts; it no longer contains the `new Set([...])` text.
     const policyText = fs.readFileSync(

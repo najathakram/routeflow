@@ -18,6 +18,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -56,6 +58,9 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
         },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        { provide: EntitlementAuthority, useValue: { can: jest.fn().mockResolvedValue(true) } },
+        // #2185: reorder gate (assertReorderAllowed) reads overrides + entitlements for its deny body.
+        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
         { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn() } },
         { provide: RouteFlowGateway, useValue: gateway },
@@ -186,9 +191,14 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
   });
 
   it("REG-PROD-EMIT-8 bulkAssignParent() over two assignments emits ONE coalesced 'bulk' event, not one per update()", async () => {
-    prisma.product.findFirst
-      .mockResolvedValueOnce({ id: "parent-1", parentProductId: null } as any) // parent lookup
-      .mockResolvedValue(null); // per-row name-uniqueness checks inside update()
+    // The parent is looked up up front AND again inside each row's update() (the one parent check), so
+    // answer by id; every other read (the per-row name-uniqueness checks) finds nothing.
+    prisma.product.findFirst.mockImplementation(((args: { where?: { id?: string } }) =>
+      Promise.resolve(
+        args?.where?.id === "parent-1"
+          ? { id: "parent-1", isActive: true, kind: "FAMILY", parentProductId: null }
+          : null,
+      )) as any);
     prisma.product.findUnique.mockResolvedValue(MOCK_PRODUCT as any);
     prisma.product.update.mockResolvedValue({ ...MOCK_PRODUCT } as any);
 
@@ -212,7 +222,12 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
   });
 
   it("REG-PROD-EMIT-9 bulkAssignParent() with every assignment failing emits NOTHING", async () => {
-    prisma.product.findFirst.mockResolvedValue({ id: "parent-1", parentProductId: null } as any);
+    prisma.product.findFirst.mockResolvedValue({
+      id: "parent-1",
+      isActive: true,
+      kind: "FAMILY",
+      parentProductId: null,
+    } as any);
     prisma.product.findUnique.mockRejectedValue(new Error("not found"));
 
     const result = await service.bulkAssignParent({
@@ -227,7 +242,12 @@ describe("ProductsService — product.updated emits (REG-PROD-EMIT)", () => {
 
   it("REG-PROD-EMIT-10 importFromZoho() over multiple created rows emits ONE coalesced 'bulk' event, never one per row", async () => {
     prisma.product.findFirst.mockResolvedValue(null); // no name/sku/barcode collisions
-    prisma.product.create.mockResolvedValue({} as any);
+    // #2717 M1: create()'s dual-write sync keys off the created row's id — a real Prisma create
+    // always returns one, so the mock needs one too (this test's own concern is emit coalescing).
+    let nextId = 0;
+    prisma.product.create.mockImplementation(() =>
+      Promise.resolve({ id: `zoho-${nextId++}` } as any),
+    );
 
     const result = await service.importFromZoho({
       items: [

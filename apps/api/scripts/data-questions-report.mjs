@@ -32,12 +32,12 @@ import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import pg from "pg";
+import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 
 const { QUESTIONS, assertReadOnly, parseOnly, execute } = createRequire(import.meta.url)(
   "./lib/data-questions.cjs",
 );
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "postgres", "db"]);
 const here = dirname(fileURLToPath(import.meta.url));
 
 function flag(args, name, dflt) {
@@ -48,6 +48,7 @@ function flag(args, name, dflt) {
 async function main(args = process.argv.slice(2)) {
   const local = args.includes("--local");
   let url, only, outPath;
+  let localCfg = null; // --local: the vetted explicit fields are the ones dialled
   const cap = Number(flag(args, "--cap", 100));
   const timeoutMs = Number(flag(args, "--timeout-ms", 30000));
   try {
@@ -61,8 +62,7 @@ async function main(args = process.argv.slice(2)) {
     url = local ? process.env.DATABASE_URL : resolveDatabaseUrl(process.env);
     if (!url) throw new Error("--local requires DATABASE_URL");
     if (local) {
-      const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
-      if (!LOCAL_HOSTS.has(host)) throw new Error(`--local refuses non-local host ${host}`);
+      localCfg = requireLocalPgConfig(url);
     }
     for (const q of QUESTIONS) q.stmts.forEach((st) => assertReadOnly(st.sql));
     outPath = resolve(
@@ -92,7 +92,7 @@ async function main(args = process.argv.slice(2)) {
     `data-questions-report: target ${redactUrl(url)} (READ ONLY; contains tenant ids: keep private)`,
   );
   console.log(`data-questions-report: target ${redactUrl(url)} (READ ONLY); detail -> ${outPath}`);
-  const client = new pg.Client({ connectionString: url });
+  const client = new pg.Client(localCfg ?? { connectionString: url });
   try {
     const summary = await execute(client, { only, cap, timeoutMs }, put);
     put("\ndata-questions-report: done (nothing was written to the database)");

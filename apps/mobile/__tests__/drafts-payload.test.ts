@@ -12,7 +12,6 @@ import {
   draftDeviceLabel,
   parkedAgo,
   draftSummary,
-  unitLineRefusal,
   type DraftBuilderState,
   type DraftCatalogLine,
   type DraftLineItem,
@@ -329,32 +328,39 @@ describe("structural round-trip: every key web parks on a line survives", () => 
         "note",
         "unitLabel",
         "packBase",
+        "priceSource",
       ].sort(),
     );
   });
 });
 
-describe("unitLineRefusal — mobile can't hold a unit, so a draft with a unit line is refused whole", () => {
-  const pack: DraftCatalogLine = fixture.items[0];
+describe("priceSource (B755) round-trips through the draft payload", () => {
+  it("toOrderDraftPayload -> fromOrderDraftPayload -> toOrderDraftPayload carries priceSource through intact", () => {
+    const withHistory: DraftBuilderState = {
+      ...fixture,
+      items: [{ ...fixture.items[0], priceType: "MANUAL", unitPrice: 39, priceSource: "history" }],
+    };
+    const payload = toOrderDraftPayload(withHistory);
+    expect(payload.lineItems[0].priceSource).toBe("history");
 
-  it("is null for a draft of pack lines (including one with no unit fields at all)", () => {
-    expect(unitLineRefusal([pack, { ...pack, productId: "prod-2" }])).toBeNull();
-    expect(unitLineRefusal([])).toBeNull();
+    const restored = fromOrderDraftPayload(payload);
+    expect(restored.items[0].priceSource).toBe("history");
+
+    const again = toOrderDraftPayload(restored);
+    expect(again.lineItems[0].priceSource).toBe("history");
   });
 
-  it("refuses when ANY line carries a non-pack unitLabel, and says where to open it", () => {
-    const reason = unitLineRefusal([pack, { ...pack, productId: "prod-2", unitLabel: "Case" }]);
-    expect(reason).toMatch(/web dashboard/i);
+  it('an operator override (priceSource: "operator") round-trips the same way', () => {
+    const withOperator: DraftBuilderState = {
+      ...fixture,
+      items: [{ ...fixture.items[0], priceType: "MANUAL", unitPrice: 39, priceSource: "operator" }],
+    };
+    const restored = fromOrderDraftPayload(toOrderDraftPayload(withOperator));
+    expect(restored.items[0].priceSource).toBe("operator");
   });
 
-  it("refuses the draft resumed from a web-parked unit line", () => {
-    expect(unitLineRefusal(fromOrderDraftPayload(webPayload([webUnitLine])).items)).not.toBeNull();
-  });
-
-  it("does not modify the lines it inspects (nothing is dropped — the web draft stays intact)", () => {
-    const items = fromOrderDraftPayload(webPayload([webUnitLine])).items;
-    const snapshot = JSON.stringify(items);
-    unitLineRefusal(items);
-    expect(JSON.stringify(items)).toBe(snapshot);
+  it("a legacy line with no priceSource at all round-trips as undefined, not defaulted to either value", () => {
+    const restored = fromOrderDraftPayload(toOrderDraftPayload(fixture));
+    expect(restored.items[0].priceSource).toBeUndefined();
   });
 });

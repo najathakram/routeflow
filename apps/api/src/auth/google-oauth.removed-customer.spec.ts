@@ -35,7 +35,7 @@ function buildService(prisma: ReturnType<typeof createMockPrisma>) {
     get: (key: string) => {
       if (key === "jwt")
         return {
-          secret: "s",
+          secret: "test-jwt-secret-0123456789-abcdefghijklmnop",
           refreshSecret: "rs",
           expiresIn: "15m",
           refreshExpiresIn: "30d",
@@ -57,11 +57,11 @@ function buildService(prisma: ReturnType<typeof createMockPrisma>) {
 }
 
 /**
- * The Google sign-in response's `sellerCount` selects a UI branch on mobile
- * (apps/mobile/app/(auth)/customer-login.tsx: sellerCount === 0 shows the
- * "not connected to any supplier" message, otherwise it opens the seller picker
- * built from GET /buyer/sellers). It must therefore agree with
- * BuyerService.getSellers about what counts as a usable seller.
+ * The Google sign-in response's `sellerCount` is the client-facing count of
+ * USABLE sellers (web reads it from the callback redirect). It must therefore
+ * agree with BuyerService.getSellers about what counts as a usable seller.
+ * Mobile no longer branches on it (#2546): customer-login reads
+ * GET /buyer/sellers and routes through postSignInStep.
  */
 describe("GoogleOAuthService — sellerCount excludes removed customers (B141)", () => {
   const profile = {

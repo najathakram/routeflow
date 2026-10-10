@@ -88,10 +88,15 @@ const ALLOWLIST: { file: string; count: number; note: string }[] = [
   },
   {
     file: "invoices/invoices.service.ts",
-    count: 5,
-    note: "buildInvoiceItemData + update() + duplicateInvoice stamp; recomputeOrderFromInvoices's 2 occurrences are the documented gap above",
+    count: 4,
+    note: "buildInvoiceItemData + duplicateInvoice stamp (update()'s moved to invoice-edit-plan.ts); recomputeOrderFromInvoices's 2 occurrences are the documented gap above",
   },
   { file: "invoices/manual-invoice-lines.ts", count: 1, note: "buildManualInvoiceLines — stamps" },
+  {
+    file: "invoices/invoice-edit-plan.ts",
+    count: 2,
+    note: "buildEditedLines stamp + inPlacePatch (writes only a CHANGED amount)",
+  },
   { file: "invoices/invoice-unit-line.ts", count: 1, note: "buildInvoiceUnitLine — stamps" },
 ];
 
@@ -132,8 +137,8 @@ describe("category tax trio callsites — every categoryTaxAmount writer enumera
     expect(offenders).toEqual([]);
   });
 
-  it("total categoryTaxAmount writes across apps/api/src is exactly 12", () => {
+  it("total categoryTaxAmount writes across apps/api/src is exactly 13", () => {
     const total = FILES.reduce((n, f) => n + writeCount(fs.readFileSync(f, "utf8")), 0);
-    expect(total).toBe(12);
+    expect(total).toBe(13);
   });
 });

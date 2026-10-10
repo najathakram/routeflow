@@ -16,6 +16,7 @@
  */
 import { readFileSync } from "fs";
 import { join } from "path";
+import { readEditItemsSurface } from "./support/edit-items-source";
 
 const SCREEN_PATH = join(
   __dirname,
@@ -27,7 +28,8 @@ const SCREEN_PATH = join(
   "[id]",
   "edit-items.tsx",
 );
-const source = readFileSync(SCREEN_PATH, "utf8");
+// #2340: the screen plus the modules it was sliced into.
+const source = readEditItemsSurface();
 
 describe("edit-items.tsx PriceOverrideModal — SPECIAL-tier reason required (B465)", () => {
   // Slice from the function's own start to the NEXT top-level `function`

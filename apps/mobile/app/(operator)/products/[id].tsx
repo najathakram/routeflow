@@ -23,16 +23,22 @@ import {
   useUploadProductImages,
   useDeleteProductImage,
 } from "../../../lib/api/products";
+import { getFamilyCascadePrompt } from "../../../lib/product-family-cascade";
 import { productImageFile } from "../../../lib/product-image";
-import { costPerSellingUnit, formatQtySplit } from "@routeflow/pricing";
+import { costPerSellingUnit } from "@routeflow/pricing";
 import { useInventoryMovements } from "../../../lib/api/inventory";
 import { useProductSales, type ProductSaleLine } from "../../../lib/api/product-sales";
-import { productSalesSummaryLine, productSaleRowTarget } from "../../../lib/product-sales-logic";
+import {
+  productSaleQtyLabel,
+  productSalesSummaryLine,
+  productSaleRowTarget,
+} from "../../../lib/product-sales-logic";
 import { useHasAddon, TOBACCO_ADDON } from "../../../lib/api/tobacco";
 import { showToast } from "../../../lib/toast";
 import { confirm, chooseAction } from "../../../lib/confirm";
 import { fmtCalendarDate } from "../../../lib/format-date";
 import { VariantSplitSheet } from "../../../components/VariantSplitSheet";
+import { ProductDemandCard } from "../../../components/ProductDemandCard";
 
 function fmtCurrency(n: number | string | undefined | null): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -166,21 +172,37 @@ export default function ProductDetailScreen() {
     );
   };
 
+  const runDelete = (confirmCascade?: boolean) => {
+    if (!id) return;
+    deleteMut.mutate(
+      { id, confirmCascade },
+      {
+        onSuccess: () => {
+          showToast("Product deleted");
+          router.back();
+        },
+        onError: (e: any) => {
+          // A family with active variants: ask once, then resend with confirmCascade (never auto-confirmed).
+          const cascade = getFamilyCascadePrompt(e);
+          if (cascade && !confirmCascade) {
+            confirm(cascade.title, cascade.body, () => runDelete(true), {
+              confirmText: cascade.confirmText,
+              destructive: true,
+            });
+            return;
+          }
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+        },
+      },
+    );
+  };
+
   const handleDelete = () => {
     if (!id) return;
-    confirm(
-      "Delete product?",
-      `${product.name} will be removed permanently.`,
-      () =>
-        deleteMut.mutate(id, {
-          onSuccess: () => {
-            showToast("Product deleted");
-            router.back();
-          },
-          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-        }),
-      { confirmText: "Delete", destructive: true },
-    );
+    confirm("Delete product?", `${product.name} will be removed permanently.`, () => runDelete(), {
+      confirmText: "Delete",
+      destructive: true,
+    });
   };
 
   return (
@@ -338,6 +360,8 @@ export default function ProductDetailScreen() {
             ) : null}
           </View>
 
+          <ProductDemandCard productId={product.id} unitsPerBox={product.unitsPerBox} />
+
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>Sales</Text>
@@ -364,7 +388,6 @@ export default function ProductDetailScreen() {
                     <SaleRow
                       key={`${line.invoiceId}-${line.customerId}-${i}`}
                       line={line}
-                      unitLabel={product.unit}
                       bordered={i > 0}
                       onPress={() => {
                         const target = productSaleRowTarget(line);
@@ -520,25 +543,18 @@ function Row({ label, value }: { label: string; value: string }) {
  *  else the invoice (`lib/product-sales-logic.ts` `productSaleRowTarget`). */
 function SaleRow({
   line,
-  unitLabel,
   bordered,
   onPress,
 }: {
   line: ProductSaleLine;
-  unitLabel?: string | null;
   bordered?: boolean;
   onPress: () => void;
 }) {
   const date = fmtCalendarDate(line.date, "short");
   // Never re-derive money — qty/unitPrice/lineTotal render exactly as the
   // server sent them; only the boxes+pieces split goes through the shared
-  // formatter (mobile mirror of computeLineSubtotal's proration).
-  const qtyLabel = formatQtySplit({
-    qty: line.qty,
-    boxes: line.boxes,
-    pieces: line.pieces,
-    unitLabel,
-  });
+  // formatter, never the product's selling unit as the piece noun (#2253).
+  const qtyLabel = productSaleQtyLabel(line);
   return (
     <Pressable style={[styles.saleRow, bordered ? styles.saleRowBordered : null]} onPress={onPress}>
       <View style={{ flex: 1, minWidth: 0 }}>

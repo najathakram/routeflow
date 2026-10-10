@@ -40,7 +40,7 @@ describe("createScanAcceptGuard — offer parks / settle redeems or discards", (
     const guard = createScanAcceptGuard<P>();
     const claim = guard.begin(CODE);
     const p1: P = { id: "p1" };
-    expect(guard.offer(CODE, p1, "case")).toBe(false);
+    expect(guard.offer(CODE, p1, "BOX")).toBe(false);
     expect(claim.settle("accepted")).toBeNull();
   });
 
@@ -48,16 +48,16 @@ describe("createScanAcceptGuard — offer parks / settle redeems or discards", (
     const guard = createScanAcceptGuard<P>();
     const claim = guard.begin(CODE);
     const p1: P = { id: "p1" };
-    expect(guard.offer(CODE, p1, "piece")).toBe(false);
-    expect(claim.settle("unresolved")).toEqual({ code: CODE, product: p1, unitKind: "piece" });
+    expect(guard.offer(CODE, p1, "UNIT")).toBe(false);
+    expect(claim.settle("unresolved")).toEqual({ code: CODE, product: p1, unitKind: "UNIT" });
   });
 
   it("REG-scanguard-h: settle is idempotent — a second call, and a call after redemption, both return null", () => {
     const guard = createScanAcceptGuard<P>();
     const claim = guard.begin(CODE);
     const p1: P = { id: "p1" };
-    guard.offer(CODE, p1, "case");
-    expect(claim.settle("unresolved")).toEqual({ code: CODE, product: p1, unitKind: "case" });
+    guard.offer(CODE, p1, "BOX");
+    expect(claim.settle("unresolved")).toEqual({ code: CODE, product: p1, unitKind: "BOX" });
     // Already settled once — a second call must not re-redeem the same match.
     expect(claim.settle("unresolved")).toBeNull();
     expect(claim.settle("accepted")).toBeNull();
@@ -66,7 +66,7 @@ describe("createScanAcceptGuard — offer parks / settle redeems or discards", (
   it("settle('refused') (archived) discards the parked match — a definite verdict must stand", () => {
     const guard = createScanAcceptGuard<P>();
     const claim = guard.begin(CODE);
-    guard.offer(CODE, { id: "p1" }, "case");
+    guard.offer(CODE, { id: "p1" }, "BOX");
     expect(claim.settle("refused")).toBeNull();
   });
 });
@@ -75,12 +75,12 @@ describe("createScanAcceptGuard — a different label is never blocked", () => {
   it("a DIFFERENT code in the box is never blocked", () => {
     const guard = createScanAcceptGuard<P>();
     guard.begin(CODE);
-    expect(guard.offer(OTHER_CODE, { id: "p2" }, "case")).toBe(true);
+    expect(guard.offer(OTHER_CODE, { id: "p2" }, "BOX")).toBe(true);
   });
 
   it("no open claim never blocks", () => {
     const guard = createScanAcceptGuard<P>();
-    expect(guard.offer(CODE, { id: "p1" }, "case")).toBe(true);
+    expect(guard.offer(CODE, { id: "p1" }, "BOX")).toBe(true);
   });
 });
 
@@ -89,19 +89,19 @@ describe("createScanAcceptGuard — superseding claims (REG-scanguard-g)", () =>
     const guard = createScanAcceptGuard<P>();
     const first = guard.begin(CODE);
     const p1: P = { id: "p1" };
-    guard.offer(CODE, p1, "case");
+    guard.offer(CODE, p1, "BOX");
     const second = guard.begin(CODE);
     // The stale claim is dead — it must not redeem the match a second time.
     expect(first.settle("unresolved")).toBeNull();
     // The new claim inherited the parked match.
-    expect(second.settle("unresolved")).toEqual({ code: CODE, product: p1, unitKind: "case" });
+    expect(second.settle("unresolved")).toEqual({ code: CODE, product: p1, unitKind: "BOX" });
   });
 
   it("REG-scanguard-m: a superseded begin() for a DIFFERENT label does NOT inherit the old deferral, and the orphaned claim still redeems its OWN match", () => {
     const guard = createScanAcceptGuard<P>();
     const first = guard.begin(CODE);
     const p1: P = { id: "p1" };
-    guard.offer(CODE, p1, "case");
+    guard.offer(CODE, p1, "BOX");
     const second = guard.begin(OTHER_CODE);
     // The new claim is for a different physical label — it must not redeem a
     // match found for CODE.
@@ -109,20 +109,20 @@ describe("createScanAcceptGuard — superseding claims (REG-scanguard-g)", () =>
     // …but CODE's own ladder invocation still ends, and the settled list DID
     // resolve CODE. Dropping it here is a false "No product for" pill for a
     // line the operator can see resolved.
-    expect(first.settle("unresolved")).toEqual({ code: CODE, product: p1, unitKind: "case" });
+    expect(first.settle("unresolved")).toEqual({ code: CODE, product: p1, unitKind: "BOX" });
   });
 
   it("REG-scanguard-m: an orphaned claim that ends 'accepted'/'refused' still DISCARDS its match — no resurrection after the ladder resolved", () => {
     const guard = createScanAcceptGuard<P>();
     const accepted = guard.begin(CODE);
-    guard.offer(CODE, { id: "p1" }, "case");
+    guard.offer(CODE, { id: "p1" }, "BOX");
     guard.begin(OTHER_CODE); // supersedes, different label
     expect(accepted.settle("accepted")).toBeNull();
     // And the discard is permanent — a later call cannot resurrect it.
     expect(accepted.settle("unresolved")).toBeNull();
 
     const refused = guard.begin(CODE);
-    guard.offer(CODE, { id: "p2" }, "case");
+    guard.offer(CODE, { id: "p2" }, "BOX");
     guard.begin(OTHER_CODE);
     expect(refused.settle("refused")).toBeNull();
     expect(refused.settle("unresolved")).toBeNull();
@@ -132,19 +132,19 @@ describe("createScanAcceptGuard — superseding claims (REG-scanguard-g)", () =>
     const guard = createScanAcceptGuard<P>();
     const first = guard.begin(CODE);
     const p1: P = { id: "p1" };
-    guard.offer(CODE, p1, "case");
+    guard.offer(CODE, p1, "BOX");
     const second = guard.begin(CODE); // takes the parked match
     expect(first.settle("unresolved")).toBeNull();
-    expect(second.settle("unresolved")).toEqual({ code: CODE, product: p1, unitKind: "case" });
+    expect(second.settle("unresolved")).toEqual({ code: CODE, product: p1, unitKind: "BOX" });
   });
 
   it("REG-scanguard-m: a same-label match is redeemed EXACTLY once — heir first, then donor", () => {
     const guard = createScanAcceptGuard<P>();
     const first = guard.begin(CODE);
     const p1: P = { id: "p1" };
-    guard.offer(CODE, p1, "case");
+    guard.offer(CODE, p1, "BOX");
     const second = guard.begin(CODE);
-    expect(second.settle("unresolved")).toEqual({ code: CODE, product: p1, unitKind: "case" });
+    expect(second.settle("unresolved")).toEqual({ code: CODE, product: p1, unitKind: "BOX" });
     expect(first.settle("unresolved")).toBeNull();
   });
 
@@ -152,8 +152,8 @@ describe("createScanAcceptGuard — superseding claims (REG-scanguard-g)", () =>
     const guard = createScanAcceptGuard<P>();
     const first = guard.begin(CODE);
     const p1: P = { id: "p1" };
-    guard.offer(CODE, p1, "case");
-    expect(first.settle("unresolved")).toEqual({ code: CODE, product: p1, unitKind: "case" });
+    guard.offer(CODE, p1, "BOX");
+    expect(first.settle("unresolved")).toEqual({ code: CODE, product: p1, unitKind: "BOX" });
     const second = guard.begin(CODE);
     expect(second.settle("unresolved")).toBeNull();
   });
@@ -170,11 +170,11 @@ describe("createScanAcceptGuard — never a code-history or time-window guard", 
     // Nothing survives the settle: offering the SAME code against the NEW
     // claim (simulating a deliberate re-scan) is not silently blocked by any
     // memory of the earlier one.
-    expect(guard.offer(CODE, { id: "p1" }, "case")).toBe(false); // parks on the OPEN (second) claim
+    expect(guard.offer(CODE, { id: "p1" }, "BOX")).toBe(false); // parks on the OPEN (second) claim
     expect(second.settle("unresolved")).toEqual({
       code: CODE,
       product: { id: "p1" },
-      unitKind: "case",
+      unitKind: "BOX",
     });
   });
 });

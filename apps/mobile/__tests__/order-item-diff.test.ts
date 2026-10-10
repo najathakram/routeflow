@@ -312,6 +312,49 @@ describe("buildOrderItemDiff", () => {
     expect(out).toEqual([{ id: "L1", action: "CANCEL" }]);
   });
 
+  it("B805 (Opus N1): a pendingDelete whose id is ALSO a surviving catalog line sends the line's own UPDATE only — never a DELETE alongside it", () => {
+    // The exact race: trash L1 (queues pendingDeletes: ["L1"]), then re-add
+    // the same product in the same batch — the draft record is keyed by
+    // lineId, so a rescan/reopened price-edit can repopulate draft["L1"]
+    // AFTER the trash click already queued "L1" here.
+    const out = run({
+      catalog: [cat({ lineId: "L1", qty: 7, unitPrice: 5 })], // qty changed 10 -> 7
+      originals: [origLine({ id: "L1", qty: 10, unitPrice: 5 })],
+      pendingDeletes: ["L1"],
+    });
+    expect(out).toEqual([{ id: "L1", action: "UPDATE", qty: 7 }]);
+  });
+
+  it("B805: the surviving line's own UNCHANGED state emits NOTHING (not a DELETE) when its id is also a stale pendingDelete", () => {
+    const out = run({
+      catalog: [cat({ lineId: "L1", qty: 10, unitPrice: 5 })], // byte-identical to original
+      originals: [origLine({ id: "L1", qty: 10, unitPrice: 5 })],
+      pendingDeletes: ["L1"],
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("B805: the same protection applies to pendingCancels — a surviving line's id is dropped from cancels, never CANCELled alongside its own UPDATE", () => {
+    const out = run({
+      catalog: [cat({ lineId: "L1", qty: 3, unitPrice: 5 })],
+      originals: [origLine({ id: "L1", qty: 10, unitPrice: 5 })],
+      pendingCancels: ["L1"],
+    });
+    expect(out).toEqual([{ id: "L1", action: "UPDATE", qty: 3 }]);
+  });
+
+  it("B805: a DIFFERENT line's own pendingDelete is unaffected by an unrelated surviving line", () => {
+    const out = run({
+      catalog: [cat({ lineId: "L1", qty: 10, unitPrice: 5 })], // L1 survives untouched
+      originals: [
+        origLine({ id: "L1", qty: 10, unitPrice: 5 }),
+        origLine({ id: "L2", productId: "P2", qty: 4, unitPrice: 3 }),
+      ],
+      pendingDeletes: ["L2"], // L2 was trashed and never came back
+    });
+    expect(out).toEqual([{ id: "L2", action: "DELETE" }]);
+  });
+
   it("auto-DELETEs a zeroed existing UNLISTED line too", () => {
     const out = run({
       unlisted: [], // U1 was zeroed away
@@ -409,6 +452,74 @@ describe("buildOrderItemDiff", () => {
     });
     expect(out).toEqual([{ id: "L1", action: "UPDATE", qty: 24, boxes: 2, pieces: 0 }]);
     expect(out[0]).not.toHaveProperty("unitLabel");
+  });
+
+  // ── B718: a unit-aware UPDATE must never send qty:0 (the API's @Min(1) refuses the WHOLE
+  // multi-line save, not just this line) ──────────────────────────────────────────────────
+
+  it("B718: a unit-aware line with a MEANINGLESS boxes:0 (the fresh-piece-scan leftover shape) still sends the real positive qty, never 0", () => {
+    // boxes:0/pieces:1 is exactly what applyPickToDraft (edit-items-draft.ts) leaves on a line
+    // scanned by its piece code BEFORE any unit was picked for it — if a unit gets picked
+    // without boxes/pieces ever normalizing away, `line.boxes ?? line.qty` would read the
+    // MEANINGLESS 0 as "the count", not the real qty.
+    const out = run({
+      catalog: [
+        cat({
+          lineId: "L1",
+          qty: 3, // the real unit count (3 Cases)
+          boxes: 0, // meaningless leftover — must NOT be read as "0 Cases"
+          pieces: 1,
+          unitPrice: 20,
+          basePrice: 20,
+          unitLabel: "Case",
+        }),
+      ],
+      originals: [origLine({ id: "L1", qty: 2, unitPrice: 20 })], // was 2 cases -> now 3
+    });
+    expect(out).toEqual([
+      { id: "L1", action: "UPDATE", qty: 3, unitLabel: "Case", productId: "P1" },
+    ]);
+    const qty = (out[0] as { qty: number }).qty;
+    expect(qty).toBeGreaterThan(0);
+  });
+
+  it("B718: a genuinely positive boxes count (the pack-piece storage shape, B707) is still preferred over qty — no regression from the boxes:0 fix", () => {
+    const out = run({
+      catalog: [
+        cat({
+          lineId: "L1",
+          qty: 1152, // piece-expanded total (4 cases * 288) — must NOT reach the wire
+          boxes: 4,
+          pieces: 0,
+          unitPrice: 20,
+          basePrice: 20,
+          unitLabel: "Case",
+        }),
+      ],
+      originals: [origLine({ id: "L1", qty: 864, unitPrice: 20 })],
+    });
+    expect(out).toEqual([
+      { id: "L1", action: "UPDATE", qty: 4, unitLabel: "Case", productId: "P1" },
+    ]);
+  });
+
+  it("B718 (property check): no UPDATE this function emits ever carries qty <= 0, across every unitLabel/boxes/pieces combination that survives the qty<=0 guard", () => {
+    const combos: Array<Partial<DiffCatalogLine>> = [
+      { unitLabel: "Case", qty: 5, boxes: 0, pieces: 0 },
+      { unitLabel: "Case", qty: 5, boxes: 0, pieces: null },
+      { unitLabel: "Case", qty: 5, boxes: null, pieces: 0 },
+      { unitLabel: "Case", qty: 2, boxes: 2, pieces: 0 },
+      { unitLabel: null, qty: 5, boxes: 0, pieces: 3 },
+    ];
+    for (const c of combos) {
+      const out = run({
+        catalog: [cat({ lineId: "L1", unitPrice: 20, basePrice: 20, ...c })],
+        originals: [origLine({ id: "L1", qty: 1, unitPrice: 999 })], // force a change every time
+      });
+      for (const entry of out) {
+        if ("qty" in entry) expect((entry as { qty: number }).qty).toBeGreaterThan(0);
+      }
+    }
   });
 
   // ── units_v1 (mobile unit picker): originating a brand-new unit-sold line ──

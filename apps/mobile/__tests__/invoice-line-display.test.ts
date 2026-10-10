@@ -1,5 +1,5 @@
 import { invoiceLineQtyText } from "@routeflow/pricing";
-import { invoiceLineUnitNoun, usesUnitDisplay } from "../lib/invoice-line-display";
+import { invoiceLineUnitNoun, priceUnitSuffix, usesUnitDisplay } from "../lib/invoice-line-display";
 
 /**
  * B653 (mobile piece) + #1275 review round: the operator invoice detail's per-line
@@ -34,6 +34,37 @@ describe("invoiceLineUnitNoun", () => {
     expect(invoiceLineUnitNoun({ unitLabel: null })).toBe("box");
     expect(invoiceLineUnitNoun({})).toBe("box");
     expect(invoiceLineUnitNoun({ unitLabel: "  " })).toBe("box");
+  });
+});
+
+describe("priceUnitSuffix (#2055)", () => {
+  // RED PIN: this is exactly the defect the review found in edit-items.tsx's own
+  // pre-fix ternary (`isBoxed ? " / box of ${upb}" : item.unitLabel ? ...`), where
+  // `isBoxed` itself excludes any line carrying a unitLabel — so a genuinely boxed
+  // units_v1 line (a real Case of 12) fell to the bare-unitLabel branch and lost the
+  // pack size entirely. A naive re-implementation of that same exclusion would fail
+  // this exact case.
+  it("REG-B757-edit-items: a boxed units_v1 line (Case, upb 12) names BOTH the noun and the pack size", () => {
+    expect(priceUnitSuffix({ unitLabel: "Case" }, 12)).toBe(" / Case of 12");
+  });
+
+  it("an ordinary boxed line (no unitLabel) still reads the plain 'box' noun, unchanged", () => {
+    expect(priceUnitSuffix({}, 12)).toBe(" / box of 12");
+    expect(priceUnitSuffix({ unitLabel: null }, 12)).toBe(" / box of 12");
+  });
+
+  it("a factor-1 unit line (upb <= 1, unitLabel set) reads its own label with no pack size", () => {
+    expect(priceUnitSuffix({ unitLabel: "Piece" }, 0)).toBe(" / Piece");
+    expect(priceUnitSuffix({ unitLabel: "Piece" }, 1)).toBe(" / Piece");
+  });
+
+  it("a plain non-boxed, non-unit line falls back to the product's own unit noun", () => {
+    expect(priceUnitSuffix({ unit: "ea" }, 1)).toBe(" / ea");
+  });
+
+  it("a plain non-boxed, non-unit, no-unit-noun line renders nothing", () => {
+    expect(priceUnitSuffix({}, 1)).toBe("");
+    expect(priceUnitSuffix({}, 0)).toBe("");
   });
 });
 

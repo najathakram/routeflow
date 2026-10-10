@@ -1,6 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
+import { lockBillRows } from "../vendor-bills/bill-locks";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { isOverdue, overdueCutoff, startOfCalendarDay } from "../common/calendar-date";
+import { computeDepositFields } from "../invoices/deposit-fields";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 import {
   CheckStatus,
   InvoiceStatus,
@@ -38,6 +42,7 @@ import {
   sumConfirmed,
 } from "../invoices/payment-predicates";
 import { settledDateFilter } from "../invoices/settled-date-filter";
+import { lockInvoicesForPayment } from "../invoices/invoice-send-guard";
 
 /**
  * Receipt-extraction model. Receipts are small documents where a misread line
@@ -190,6 +195,9 @@ export class BookkeepingService implements OnModuleInit {
 
   async recordPayment(id: string, dto: RecordPaymentDto) {
     return this.prisma.tenantTransaction(async (tx) => {
+      // SA-404f F1: FIRST lock (Order →) Invoice, so the status read below sees a committed VOID
+      // and refuses, instead of writing PAID/PARTIAL back over it.
+      await lockInvoicesForPayment(tx, [id]);
       const inv = await tx.invoice.findUnique({
         where: { id },
         // F03/R1: this sum ADVANCES invoice state (the status write below is
@@ -736,6 +744,9 @@ export class BookkeepingService implements OnModuleInit {
     paidAt: Date,
   ): Promise<{ ok: true; amount: number } | { ok: false; reason: string }> {
     return this.prisma.tenantTransaction(async (tx) => {
+      // B285: lock the bill before reading its payments (a concurrent payment/void otherwise
+      // leaves this write planning from a stale balance).
+      await lockBillRows(tx, this.prisma.getTenantId(), [billId]);
       const bill = await tx.vendorBill.findUnique({
         where: { id: billId },
         include: { payments: true },
@@ -1013,7 +1024,7 @@ export class BookkeepingService implements OnModuleInit {
    * revenue, L-119) so both sides of gross profit share a basis. Each line
    * is costed at qty × the product's point-in-time average cost at the
    * invoice's issueDate (invoice lines carry no cost of their own;
-   * `StockMovement type:"SALE"` rows are dead — see common/invoiced-sales.ts).
+   * `StockMovement type:"SALE"` rows are a stock-ledger record, not a COGS source — see common/invoiced-sales.ts).
    * COGS stays gross of restocked returns (FU-2, deliberate — not fixed
    * here). No tobacco exclusion here: accounting records always reflect real
    * financials. B456: `netProfit` also subtracts `badDebtExpense` — the
@@ -1137,6 +1148,7 @@ export class BookkeepingService implements OnModuleInit {
 
   async getSummary() {
     const now = new Date();
+    const tz = await tenantTimeZone(this.prisma); // SA-488: the tenant's due day
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const sevenDaysAgo = new Date(now);
     sevenDaysAgo.setDate(now.getDate() - 7);
@@ -1193,7 +1205,7 @@ export class BookkeepingService implements OnModuleInit {
                 InvoiceStatus.OVERDUE,
               ],
             },
-            dueDate: { lt: now },
+            dueDate: { lt: overdueCutoff(now, tz) },
           },
         }),
       ],
@@ -1305,6 +1317,7 @@ export class BookkeepingService implements OnModuleInit {
   // ── Finance Dashboard ──
   async getFinanceDashboard() {
     const now = new Date();
+    const tz = await tenantTimeZone(this.prisma); // SA-488: the tenant's due day
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const startOfWeek = new Date(startOfToday);
     startOfWeek.setDate(startOfToday.getDate() - startOfToday.getDay());
@@ -1339,7 +1352,7 @@ export class BookkeepingService implements OnModuleInit {
       const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
       const bal = Number(inv.total) - paid;
       if (bal <= 0) continue;
-      if (!inv.dueDate || inv.dueDate >= now) {
+      if (!inv.dueDate || !isOverdue(inv.dueDate, now, tz)) {
         arCurrent += bal;
         continue;
       }
@@ -1484,6 +1497,7 @@ export class BookkeepingService implements OnModuleInit {
 
   async getArAgingInvoices(intervalDays = 30) {
     const now = new Date();
+    const tz = await tenantTimeZone(this.prisma); // SA-488: the tenant's due day
     const interval = Math.max(1, intervalDays);
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
@@ -1516,10 +1530,22 @@ export class BookkeepingService implements OnModuleInit {
     const buckets: Record<string, any[]> = {};
     for (const key of bucketKeys) buckets[key] = [];
 
+    // #1529 / SA-517: the deposit's "today" is the tenant's day (the same zone the buckets age in).
+    const todayIso = startOfCalendarDay(now, tz).toISOString().slice(0, 10);
+    const depositOverdue = { count: 0, outstanding: 0 };
+
     for (const inv of invoices) {
       const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
       const balance = Number(inv.total) - paid;
       if (balance <= 0) continue;
+      // #1529: the deposit rides each row (the invoice list's own read-time math); the buckets
+      // below still age by dueDate, so an overdue deposit on a not-yet-due invoice stays CURRENT
+      // and is surfaced by these fields and the top-level summary instead.
+      const deposit = computeDepositFields(inv, paid, todayIso);
+      if (deposit.depositOverdue) {
+        depositOverdue.count += 1;
+        depositOverdue.outstanding += roundMoney((deposit.depositAmount ?? 0) - paid);
+      }
       const entry = {
         id: inv.id,
         invoiceNumber: inv.invoiceNumber,
@@ -1528,8 +1554,11 @@ export class BookkeepingService implements OnModuleInit {
         balance,
         dueDate: inv.dueDate,
         status: inv.status,
+        depositAmount: deposit.depositAmount,
+        depositDueDate: inv.depositDueDate ?? null,
+        depositOverdue: deposit.depositOverdue,
       };
-      if (!inv.dueDate || inv.dueDate >= now) {
+      if (!inv.dueDate || !isOverdue(inv.dueDate, now, tz)) {
         buckets[bucketKeys[0]].push(entry);
         continue;
       }
@@ -1547,8 +1576,11 @@ export class BookkeepingService implements OnModuleInit {
       grandTotal += totals[key];
     }
     totals.total = grandTotal;
+    depositOverdue.outstanding = roundMoney(depositOverdue.outstanding);
 
-    return { buckets, totals, intervalDays: interval };
+    // #1529: `depositOverdue` is its own top-level key, never a `totals` key (totals stay the AR
+    // buckets, agreeing with the finance dashboard).
+    return { buckets, totals, intervalDays: interval, depositOverdue };
   }
 
   async getSalesByCustomer(from?: string, to?: string) {
@@ -1672,6 +1704,7 @@ export class BookkeepingService implements OnModuleInit {
       }
     > = {};
     const now = new Date();
+    const tz = await tenantTimeZone(this.prisma); // SA-488: the tenant's due day
     const unpaidStatuses: Set<string> = new Set([
       InvoiceStatus.SENT,
       InvoiceStatus.VIEWED,
@@ -1704,7 +1737,7 @@ export class BookkeepingService implements OnModuleInit {
         const bal = Number(inv.total) - paid;
         byCustomer[key].invoiceCount++;
         byCustomer[key].balance += bal;
-        if (inv.dueDate && inv.dueDate < now) byCustomer[key].overdue += bal;
+        if (isOverdue(inv.dueDate, now, tz)) byCustomer[key].overdue += bal;
       }
     }
 

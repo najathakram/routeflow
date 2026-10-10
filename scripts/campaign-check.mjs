@@ -104,6 +104,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 import { normalizeEvidence } from "./campaign/normalize-evidence.mjs";
 import {
   REG_TOKEN_RE,
@@ -443,24 +444,9 @@ function main() {
   // confirmed by re-running the identical `git log` immediately after outside the hook and
   // getting the correct, older commit both times). Scrubbing this closes that class the same way
   // B420 closed it for validate-code-map.stamp.self-test.mjs.
-  function scrubGitEnv(extra = {}) {
-    const env = { ...process.env };
-    for (const key of [
-      "GIT_DIR",
-      "GIT_WORK_TREE",
-      "GIT_INDEX_FILE",
-      "GIT_COMMON_DIR",
-      "GIT_OBJECT_DIRECTORY",
-      "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-      "GIT_QUARANTINE_PATH",
-      "GIT_PREFIX",
-      "GIT_NAMESPACE",
-      "GIT_CEILING_DIRECTORIES",
-    ]) {
-      delete env[key];
-    }
-    return { ...env, ...extra };
-  }
+  // The ONE shared scrub (scripts/lib/scrubbed-git-env.cjs): drops every GIT_* variable, incl.
+  // GIT_CONFIG*, which the hand-kept list this replaced leaked.
+  const scrubGitEnv = (extra = {}) => ({ ...scrubbedGitEnv(), ...extra });
 
   // Git root for freshness lookups is derived from statusDir, not REPO_ROOT — REPO_ROOT is
   // this SCRIPT's own on-disk location (always the real monorepo), while statusDir may be a

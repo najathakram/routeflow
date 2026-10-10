@@ -15,7 +15,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
@@ -83,6 +83,7 @@ const customerPayload = {
   sub: "user-1",
   username: "customer",
   role: "CUSTOMER" as const,
+  tenantId: "test-tenant",
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -92,7 +93,7 @@ describe("CustomersService", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let meter: { read: jest.Mock };
   let catalog: { getPublishedVersion: jest.Mock };
-  let entitlements: { hasFlag: jest.Mock };
+  let authority: { can: jest.Mock };
   let configGet: jest.Mock;
   let ledger: { reverseInvoiceEntries: jest.Mock };
   let email: { send: jest.Mock };
@@ -131,7 +132,7 @@ describe("CustomersService", () => {
     // flip the flag ON and let assertMsrpAllowed return quietly; the stub catalog
     // has no upgradeTargetForFlag, so a flag-OFF msrp path would crash there and
     // mask the behaviour the test is actually about.
-    entitlements = { hasFlag: jest.fn().mockResolvedValue(false) };
+    authority = { can: jest.fn().mockResolvedValue(false) };
     email = { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -157,7 +158,7 @@ describe("CustomersService", () => {
         },
         { provide: MeterService, useValue: meter },
         { provide: PlanCatalogService, useValue: catalog },
-        { provide: EntitlementsService, useValue: entitlements },
+        { provide: EntitlementAuthority, useValue: authority },
         { provide: RegulatedLedgerService, useValue: ledger },
         { provide: EmailService, useValue: email },
       ],
@@ -2569,7 +2570,7 @@ describe("CustomersService", () => {
       // the stub — and the test would fail on a TypeError, unable to tell "the
       // driver wrote" from "the code crashed". Post-fix the hoisted role gate
       // short-circuits above this call and msrpSpy is never reached.
-      entitlements.hasFlag.mockResolvedValue(true);
+      authority.can.mockResolvedValue(true);
       const msrpSpy = jest.spyOn(service as any, "assertMsrpAllowed");
       prisma.customerPrice.findUnique.mockResolvedValue({ id: "cp-1", pricingTier: 3, msrp: 5 });
 
@@ -2612,101 +2613,9 @@ describe("CustomersService", () => {
     });
   });
 
-  // ─── credit-note deletes must clear order↔credit-note links first ─────────
-  // OrderCreditNote.creditNoteId has no onDelete (Restrict), so deleting a
-  // credit note that is still linked to an order aborts the whole transaction.
-  //
-  // GREEN BY DESIGN — R0's fix is cherry-picked onto this branch (94e98afe,
-  // retitled by d32a1fe5). The three REG-B189 describes below are ORDERING
-  // pins that protect the picked fix from a later edit to any of the three
-  // purge sites; they are NOT this batch's red, and a RED-gate run must not
-  // count them as proof of F02b's own behavior changes.
-
-  describe("REG-B189 deleteAllCustomers — order↔credit-note links", () => {
-    it("deletes orderCreditNote rows for the customers' credit notes before the notes", async () => {
-      prisma.customer.findMany.mockResolvedValue([
-        { id: "cust-1", userId: "user-1" },
-        { id: "cust-2", userId: "user-2" },
-      ]);
-      prisma.creditNote.findMany.mockResolvedValue([{ id: "cn-1" }, { id: "cn-2" }]);
-
-      const result = await service.deleteAllCustomers();
-
-      expect(result).toEqual({ deleted: 2 });
-      expect(prisma.creditNote.findMany).toHaveBeenCalledWith({
-        where: { customerId: { in: ["cust-1", "cust-2"] } },
-        select: { id: true },
-      });
-      expect(prisma.orderCreditNote.deleteMany).toHaveBeenCalledWith({
-        where: { creditNoteId: { in: ["cn-1", "cn-2"] } },
-      });
-      expect(prisma.creditNote.deleteMany).toHaveBeenCalledWith({
-        where: { customerId: { in: ["cust-1", "cust-2"] } },
-      });
-      const linkDelete = prisma.orderCreditNote.deleteMany.mock.invocationCallOrder[0];
-      const noteDelete = prisma.creditNote.deleteMany.mock.invocationCallOrder[0];
-      expect(linkDelete).toBeLessThan(noteDelete);
-    });
-
-    it("skips the link delete when the customers have no credit notes", async () => {
-      prisma.customer.findMany.mockResolvedValue([{ id: "cust-1", userId: "user-1" }]);
-      prisma.creditNote.findMany.mockResolvedValue([]);
-
-      await service.deleteAllCustomers();
-
-      expect(prisma.orderCreditNote.deleteMany).not.toHaveBeenCalled();
-      expect(prisma.creditNote.deleteMany).toHaveBeenCalledWith({
-        where: { customerId: { in: ["cust-1"] } },
-      });
-    });
-  });
-
-  // Green by design — R0's fix is cherry-picked (94e98afe); ordering pin, not this batch's red.
-  describe("REG-B189 deleteCustomer (hard delete) — order↔credit-note links", () => {
-    it("deletes orderCreditNote rows for the customer's credit notes before the notes", async () => {
-      prisma.customer.findUnique.mockResolvedValue({
-        ...MOCK_CUSTOMER,
-        user: { status: "ACTIVE" },
-      });
-      // No orders/invoices/returns → the hard-delete path is taken (counts default to 0).
-      prisma.creditNote.findMany.mockResolvedValue([{ id: "cn-9" }]);
-
-      const result = await service.deleteCustomer("cust-1");
-
-      expect(result).toEqual({ success: true });
-      expect(prisma.orderCreditNote.deleteMany).toHaveBeenCalledWith({
-        where: { creditNoteId: { in: ["cn-9"] } },
-      });
-      const linkDelete = prisma.orderCreditNote.deleteMany.mock.invocationCallOrder[0];
-      const noteDelete = prisma.creditNote.deleteMany.mock.invocationCallOrder[0];
-      expect(linkDelete).toBeLessThan(noteDelete);
-    });
-  });
-
-  // Green by design — R0's fix is cherry-picked (94e98afe); ordering pin, not this batch's red.
-  describe("REG-B189 deleteImportedCustomers — order↔credit-note links", () => {
-    it("deletes orderCreditNote rows for the imported customers' credit notes before the notes", async () => {
-      prisma.customer.findMany.mockResolvedValue([
-        { id: "cust-1", userId: "user-1", customerLink: null },
-        { id: "cust-2", userId: "user-2", customerLink: { status: "ACTIVE" } },
-      ]);
-      prisma.creditNote.findMany.mockResolvedValue([{ id: "cn-3" }]);
-
-      const result = await service.deleteImportedCustomers();
-
-      expect(result).toEqual({ deleted: 1, preserved: 1 });
-      expect(prisma.creditNote.findMany).toHaveBeenCalledWith({
-        where: { customerId: { in: ["cust-1"] } },
-        select: { id: true },
-      });
-      expect(prisma.orderCreditNote.deleteMany).toHaveBeenCalledWith({
-        where: { creditNoteId: { in: ["cn-3"] } },
-      });
-      const linkDelete = prisma.orderCreditNote.deleteMany.mock.invocationCallOrder[0];
-      const noteDelete = prisma.creditNote.deleteMany.mock.invocationCallOrder[0];
-      expect(linkDelete).toBeLessThan(noteDelete);
-    });
-  });
+  // REG-B189 (clear order↔credit-note links before deleting the notes) is superseded by #2587 /
+  // SA-516: a customer delete never deletes a credit note, so there are no links to clear. The
+  // pins live in customer-delete-money-records-2587.spec.ts.
 
   // ─── mergeCustomers: re-pointing + FK-violation guard (F02b R4 / B101) ─────────
   // createMockPrisma()'s tenantTransaction is a pass-through (`fn(models)`) and every
@@ -3227,4 +3136,7 @@ describe("CustomersService", () => {
       expect(email.send).not.toHaveBeenCalled();
     });
   });
+
+  // sendPortalInvite's sentinel-email coverage lives in
+  // customers.portal-invite.spec.ts (extracted — this file is at its size-ratchet baseline).
 });

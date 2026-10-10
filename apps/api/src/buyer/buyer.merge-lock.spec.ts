@@ -65,6 +65,7 @@ function requireDbLocksMock(): any {
   return require("../common/db-locks");
 }
 
+import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { BuyerController } from "./buyer.controller";
@@ -154,6 +155,7 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
+        oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: {} },
         { provide: BuyerDashboardService, useValue: {} },
@@ -347,7 +349,7 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
     expect(result).toEqual({ id: "order-fresh" });
     expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledWith(
       MOCK_CTX.customerId,
-      { buyerInitiated: true },
+      { buyerInitiated: true, focusOrderId: "order-fresh" },
       { lockMode: "try" },
     );
     expect(warn).toHaveBeenCalledTimes(1);

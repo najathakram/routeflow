@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Eye, Calendar, X, Loader2, Trash2, Search } from "lucide-react";
+import { Plus, Eye, Calendar, X, Loader2, Trash2, Search, ChevronRight } from "lucide-react";
 import {
   PageHeader,
   Button,
@@ -14,6 +14,7 @@ import {
   Badge,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { countNoun } from "@/lib/plural";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
@@ -25,7 +26,22 @@ import {
 } from "@/lib/api/estimates";
 import { useCustomers, useCustomerPrices } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
-import { computeLineSubtotal, getTierPrice } from "@routeflow/pricing";
+import { displayProductName } from "@/lib/product-display";
+import {
+  attachParent,
+  groupSearchRows,
+  isFamilyProduct,
+  isGroupExpanded,
+  pickerProductName,
+  sellableOnly,
+} from "@/lib/product-search-groups";
+import {
+  isSpecialTier,
+  computeInvoiceLineTotal,
+  computeInvoiceTotals,
+  getTierPrice,
+  type InvoiceTotalsLine,
+} from "@routeflow/pricing";
 import { apiClient } from "@/lib/api-client";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
@@ -103,6 +119,17 @@ interface EstimateLineItem {
   pieces?: number;
 }
 
+/** The pricing-helper view of a line: a boxed line prorates by its box split (BOX price). */
+function toTotalsLine(li: EstimateLineItem): InvoiceTotalsLine {
+  return {
+    unitPrice: li.unitPrice,
+    qty: li.qty,
+    boxes: li.boxes ?? null,
+    pieces: li.pieces ?? null,
+    unitsPerBox: li.unitsPerBox ?? null,
+  };
+}
+
 interface SelectedEstimateCustomer {
   id: string;
   businessName: string;
@@ -156,6 +183,8 @@ function CreateEstimateModal({
   const [productSearch, setProductSearch] = React.useState("");
   const [debouncedProductSearch, setDebouncedProductSearch] = React.useState("");
   const productSearchRef = React.useRef<HTMLInputElement>(null);
+  // The group last toggled in the dropdown ("" = closed it); null = not toggled yet.
+  const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
 
   // Line items
   const [lineItems, setLineItems] = React.useState<EstimateLineItem[]>([]);
@@ -196,10 +225,16 @@ function CreateEstimateModal({
     return (customersData?.data ?? []).slice(0, 8);
   }, [customersData, debouncedCustomerSearch]);
 
+  // Parents + standalones with variants nested, so an estimate can quote a variant. A variant that
+  // matched on its own gets its parent re-attached and opened (B1215 C6); a FAMILY is never a line (C7).
+  const productGroups = React.useMemo(
+    () => groupSearchRows<any>(productsData?.data ?? []),
+    [productsData],
+  );
   const filteredProducts = React.useMemo(() => {
     if (!debouncedProductSearch) return [];
-    return (productsData?.data ?? []).filter((p: any) => !p.parentProductId).slice(0, 10);
-  }, [productsData, debouncedProductSearch]);
+    return productGroups.rows.slice(0, 10);
+  }, [productGroups, debouncedProductSearch]);
 
   // Reset on open
   React.useEffect(() => {
@@ -220,6 +255,7 @@ function CreateEstimateModal({
 
   // Add line item (from search or barcode)
   const addLineItem = (product: any) => {
+    if (isFamilyProduct(product)) return; // a FAMILY is a container, never a line (B1215 C7)
     if (lineItems.some((li) => li.productId === product.id)) {
       setLineItems((prev) =>
         prev.map((li) => (li.productId === product.id ? { ...li, qty: li.qty + 1 } : li)),
@@ -235,13 +271,13 @@ function CreateEstimateModal({
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
     const tierPrice = getTierPrice(product, effectiveTier);
-    const priceType = effectiveTier !== 1 ? ("SPECIAL" as const) : ("STANDARD" as const);
+    const priceType = isSpecialTier(effectiveTier) ? ("SPECIAL" as const) : ("STANDARD" as const);
     setLineItems((prev) => [
       ...prev,
       {
         tempId: product.id + "-" + Date.now(),
         productId: product.id,
-        productName: product.name,
+        productName: displayProductName(product),
         unit: product.unit ?? "each",
         listPrice,
         tierPrice,
@@ -279,7 +315,7 @@ function CreateEstimateModal({
       const res = await apiClient
         .get("/products", { params: { search: code, limit: 10, isActive: true } })
         .then((r) => r.data);
-      const matches: any[] = res?.data ?? [];
+      const matches: any[] = sellableOnly<any>(res?.data ?? []);
       const skuMatch = matches.find((p: any) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
       const toAdd = skuMatch ?? matches[0];
       if (toAdd) {
@@ -330,18 +366,8 @@ function CreateEstimateModal({
     );
   };
 
-  const subtotal = lineItems.reduce(
-    (sum, li) =>
-      sum +
-      computeLineSubtotal({
-        unitPrice: li.unitPrice,
-        qty: li.qty,
-        boxes: li.boxes ?? null,
-        pieces: li.pieces ?? null,
-        unitsPerBox: li.unitsPerBox ?? null,
-      }),
-    0,
-  );
+  // Footer subtotal: boxed-aware per-line totals, summed and rounded once in pricing.
+  const { subtotal } = computeInvoiceTotals(lineItems.map(toTotalsLine));
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -518,7 +544,10 @@ function CreateEstimateModal({
                 type="text"
                 placeholder="Search by name, SKU, or scan barcode…"
                 value={productSearch}
-                onChange={(e) => setProductSearch(e.target.value)}
+                onChange={(e) => {
+                  setProductSearch(e.target.value);
+                  setExpandedParentId(null);
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
@@ -529,23 +558,95 @@ function CreateEstimateModal({
               />
               {filteredProducts.length > 0 && productSearch && (
                 <ul className="absolute left-0 right-0 top-full z-10 mt-1 max-h-48 overflow-y-auto rounded-lg border border-surface-border bg-white shadow-dropdown">
-                  {filteredProducts.map((p: any) => (
-                    <li key={p.id}>
-                      <button
-                        type="button"
-                        onClick={() => addLineItem(p)}
-                        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-surface-raised"
-                      >
-                        <div>
-                          <span className="font-medium text-navy">{p.name}</span>
-                          {p.sku && (
-                            <span className="ml-2 font-mono text-xs text-navy/70">{p.sku}</span>
-                          )}
-                        </div>
-                        <span className="text-xs text-navy/70">{fmt(Number(p.pricePerUnit))}</span>
-                      </button>
-                    </li>
-                  ))}
+                  {filteredProducts.map((p: any) => {
+                    const hasVariants = p.variants?.length > 0;
+                    const isExpanded = isGroupExpanded(
+                      expandedParentId,
+                      productGroups.expandedIds,
+                      p.id,
+                    );
+                    return (
+                      <React.Fragment key={p.id}>
+                        <li>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (hasVariants) setExpandedParentId(isExpanded ? "" : p.id);
+                              else addLineItem(p);
+                            }}
+                            className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-surface-raised"
+                          >
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              {hasVariants && (
+                                <ChevronRight
+                                  className={`h-3.5 w-3.5 shrink-0 text-navy/70 transition-transform ${
+                                    isExpanded ? "rotate-90" : ""
+                                  }`}
+                                />
+                              )}
+                              <span className="font-medium text-navy">{p.name}</span>
+                              {p.sku && (
+                                <span className="ml-2 font-mono text-xs text-navy/70">{p.sku}</span>
+                              )}
+                              {hasVariants && (
+                                <span className="shrink-0 text-[10px] text-navy/70">
+                                  {countNoun(p.variants.length, "variant")}
+                                </span>
+                              )}
+                            </div>
+                            {!hasVariants && (
+                              <span className="text-xs text-navy/70">
+                                {fmt(Number(p.pricePerUnit))}
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                        {hasVariants && isExpanded && !isFamilyProduct(p) && (
+                          // A non-family parent is itself a sellable product: it stays quotable (#3323).
+                          <li className="bg-surface-raised/50">
+                            <button
+                              type="button"
+                              onClick={() => addLineItem(p)}
+                              className="flex w-full items-center justify-between py-2 pl-8 pr-3 text-left text-sm hover:bg-surface-raised"
+                            >
+                              <span className="font-medium text-navy">Quote {p.name} itself</span>
+                              <span className="text-xs text-navy/70">
+                                {fmt(Number(p.pricePerUnit))}
+                              </span>
+                            </button>
+                          </li>
+                        )}
+                        {hasVariants &&
+                          isExpanded &&
+                          p.variants.map((v: any) => (
+                            <li key={v.id} className="bg-surface-raised/50">
+                              <button
+                                type="button"
+                                onClick={() => addLineItem(attachParent(v, p))}
+                                className="flex w-full items-center justify-between py-2 pl-8 pr-3 text-left text-sm hover:bg-surface-raised"
+                              >
+                                <div className="flex min-w-0 items-center gap-1.5">
+                                  <span className="font-medium text-navy">
+                                    {pickerProductName(v, p)}
+                                  </span>
+                                  {v.sku && (
+                                    <span className="ml-2 font-mono text-xs text-navy/70">
+                                      {v.sku}
+                                    </span>
+                                  )}
+                                  {v.unit && (
+                                    <span className="shrink-0 text-xs text-navy/70">{v.unit}</span>
+                                  )}
+                                </div>
+                                <span className="text-xs text-navy/70">
+                                  {fmt(Number(v.pricePerUnit))}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                      </React.Fragment>
+                    );
+                  })}
                 </ul>
               )}
             </div>
@@ -634,15 +735,7 @@ function CreateEstimateModal({
 
                   {/* Subtotal */}
                   <span className="w-20 text-right text-sm font-semibold text-navy">
-                    {fmt(
-                      computeLineSubtotal({
-                        unitPrice: li.unitPrice,
-                        qty: li.qty,
-                        boxes: li.boxes ?? null,
-                        pieces: li.pieces ?? null,
-                        unitsPerBox: li.unitsPerBox ?? null,
-                      }),
-                    )}
+                    {fmt(computeInvoiceLineTotal(toTotalsLine(li)))}
                   </span>
 
                   {/* Remove */}
@@ -825,7 +918,7 @@ export default function EstimatesPage() {
               setDateFrom(e.target.value);
               setPage(1);
             }}
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date from"
           />
           <span className="text-navy/70">–</span>
@@ -837,7 +930,7 @@ export default function EstimatesPage() {
               setDateTo(e.target.value);
               setPage(1);
             }}
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date to"
           />
           {(dateFrom || dateTo) && (
@@ -858,108 +951,114 @@ export default function EstimatesPage() {
 
       {/* Table */}
       <div className="overflow-hidden rounded-lg border border-surface-border">
-        <table className="w-full text-sm">
-          <thead className="border-b border-surface-border bg-surface-raised">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Estimate #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Issue Date</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Expiry Date</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Total</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
-              <th className="w-10 px-3 py-3" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-surface-border bg-white">
-            {isLoading ? (
+        {/* #2211: the bare table clipped at 320-430px; the inner wrapper scrolls it, the outer
+            div keeps overflow-hidden only for its rounded corners (same pattern as B750). */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-surface-border bg-surface-raised">
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
-                </td>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Estimate #</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Issue Date</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">
+                  Expiry Date
+                </th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Total</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
+                <th className="w-10 px-3 py-3" />
               </tr>
-            ) : isError ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-sm text-danger">
-                  Failed to load estimates. Please try again.
-                </td>
-              </tr>
-            ) : estimates.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="p-0">
-                  {search || statusFilter || dateFrom || dateTo ? (
-                    <EmptyState
-                      variant="invoices"
-                      title="No matching estimates"
-                      description="No estimates match your current search and filters."
-                      action={
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => {
-                            setSearch("");
-                            setStatusFilter("");
-                            setDateFrom("");
-                            setDateTo("");
-                            setPage(1);
-                          }}
-                        >
-                          Clear filters
-                        </Button>
-                      }
-                    />
-                  ) : (
-                    <EmptyState
-                      variant="invoices"
-                      title="No estimates yet"
-                      description="Create an estimate to quote a customer before converting it to an invoice."
-                      action={
-                        <Button size="sm" onClick={() => setIsCreateOpen(true)}>
-                          New estimate
-                        </Button>
-                      }
-                    />
-                  )}
-                </td>
-              </tr>
-            ) : (
-              estimates.map((est: Estimate) => (
-                <tr
-                  key={est.id}
-                  onClick={() => router.push(`/estimates/${est.id}`)}
-                  className="cursor-pointer transition-colors hover:bg-surface-raised"
-                >
-                  <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
-                    {est.estimateNumber}
-                  </td>
-                  <td className="px-4 py-3 font-medium text-navy">
-                    {est.customer?.businessName ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 text-navy">
-                    {fmtCalendarDate(est.issueDate ?? est.createdAt)}
-                  </td>
-                  <td className="px-4 py-3 text-navy">
-                    {fmtCalendarDate((est as any).expiresAt ?? (est as any).expiryDate)}
-                  </td>
-                  <td className="px-4 py-3 text-right font-medium text-navy">
-                    {fmt(Number(est.total))}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge status={est.status} />
-                  </td>
-                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      title="View estimate"
-                      onClick={() => router.push(`/estimates/${est.id}`)}
-                      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </button>
+            </thead>
+            <tbody className="divide-y divide-surface-border bg-white">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-12 text-center">
+                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : isError ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-12 text-center text-sm text-danger">
+                    Failed to load estimates. Please try again.
+                  </td>
+                </tr>
+              ) : estimates.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-0">
+                    {search || statusFilter || dateFrom || dateTo ? (
+                      <EmptyState
+                        variant="invoices"
+                        title="No matching estimates"
+                        description="No estimates match your current search and filters."
+                        action={
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => {
+                              setSearch("");
+                              setStatusFilter("");
+                              setDateFrom("");
+                              setDateTo("");
+                              setPage(1);
+                            }}
+                          >
+                            Clear filters
+                          </Button>
+                        }
+                      />
+                    ) : (
+                      <EmptyState
+                        variant="invoices"
+                        title="No estimates yet"
+                        description="Create an estimate to quote a customer before converting it to an invoice."
+                        action={
+                          <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                            New estimate
+                          </Button>
+                        }
+                      />
+                    )}
+                  </td>
+                </tr>
+              ) : (
+                estimates.map((est: Estimate) => (
+                  <tr
+                    key={est.id}
+                    onClick={() => router.push(`/estimates/${est.id}`)}
+                    className="cursor-pointer transition-colors hover:bg-surface-raised"
+                  >
+                    <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
+                      {est.estimateNumber}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-navy">
+                      {est.customer?.businessName ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 text-navy">
+                      {fmtCalendarDate(est.issueDate ?? est.createdAt)}
+                    </td>
+                    <td className="px-4 py-3 text-navy">
+                      {fmtCalendarDate((est as any).expiresAt ?? (est as any).expiryDate)}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-navy">
+                      {fmt(Number(est.total))}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge status={est.status} />
+                    </td>
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        title="View estimate"
+                        onClick={() => router.push(`/estimates/${est.id}`)}
+                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Pagination */}

@@ -1,3 +1,4 @@
+import { invoiceItem, invoicePayment } from "@/test-utils/buyer-invoice-fixtures";
 import * as React from "react";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import type { BuyerInvoiceDetail } from "@/lib/api/buyer";
@@ -29,7 +30,7 @@ function makeInvoice(overrides: Partial<BuyerInvoiceDetail> = {}): BuyerInvoiceD
     terms: null,
     orderId: null,
     items: [
-      {
+      invoiceItem({
         id: "item-1",
         description: "Mango Juice",
         productId: "p1",
@@ -39,8 +40,8 @@ function makeInvoice(overrides: Partial<BuyerInvoiceDetail> = {}): BuyerInvoiceD
         subtotal: 10,
         priceType: "STANDARD",
         notes: "Mango",
-      },
-      {
+      }),
+      invoiceItem({
         id: "item-2",
         description: "Orange Juice",
         productId: "p2",
@@ -50,7 +51,7 @@ function makeInvoice(overrides: Partial<BuyerInvoiceDetail> = {}): BuyerInvoiceD
         subtotal: 10,
         priceType: "STANDARD",
         notes: null,
-      },
+      }),
     ],
     payments: [],
     customer: { id: "cust-1", businessName: "Acme Foods" },
@@ -105,7 +106,7 @@ describe("buyer invoice detail — per-line note (R5.8)", () => {
     mockUseBuyerInvoice.mockReturnValue({
       data: makeInvoice({
         items: [
-          {
+          invoiceItem({
             id: "item-1",
             description: "Mango Juice",
             productId: "p1",
@@ -115,7 +116,7 @@ describe("buyer invoice detail — per-line note (R5.8)", () => {
             subtotal: 10,
             priceType: "STANDARD",
             notes: "Extra ice\nSide door\nCall on arrival",
-          },
+          }),
         ],
       }),
       isLoading: false,

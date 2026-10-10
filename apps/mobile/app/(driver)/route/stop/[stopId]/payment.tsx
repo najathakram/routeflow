@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -12,7 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { onlineManager, useQueryClient } from "@tanstack/react-query";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, SegmentedControl } from "@routeflow/ui/mobile/ios";
@@ -47,6 +48,7 @@ import {
   activeOrderSubtotal,
   orderAmountDue,
   reconciledAmountDue,
+  reconciledDoorDue,
   shortPickCategoryTax,
 } from "../../../../../lib/run-money";
 import {
@@ -55,18 +57,46 @@ import {
 } from "../../../../../lib/offline-errors";
 import {
   buildStopDeliveries,
+  deliveredSoFarByLine,
+  doorQuoteLines,
   fallbackShortPickLines,
+  linesAwaitingEntry,
   normalizeDeliveryPlan,
   planPendingButLinesNotLoaded,
   reconciledTotal,
+  remainingByLine,
   shortPickLinesFromOrder,
   type ShortPickLine,
 } from "../../../../../lib/short-pick";
 import { showToast } from "../../../../../lib/toast";
+import {
+  INVOICE_LATER_TOAST,
+  onPostDeliveryInvoiceFetchFailed,
+} from "../../../../../lib/post-delivery-invoice-fallback";
 import { regulatedPodGateError } from "../../../../../lib/pod-gating";
 import { openRouteInMaps } from "../../../../../components/openInMaps";
 import { useOfflineQueue } from "../../../../../store/offlineQueue";
+import { DRIVER_CRITICAL_NETWORK_MODE, isLiveOnline } from "../../../../../lib/live-online";
 import * as Location from "expo-location";
+import { postDeliveryInvoicePrompt, type InvoiceStatus } from "@routeflow/types";
+import { useInvoicePdf, useSendInvoice } from "../../../../../lib/api/invoices";
+import {
+  invoiceReadyMessage,
+  nextPdfSharePhase,
+  planWhatsAppSend,
+  preferredPhone,
+  smsUrl,
+  smtpFallbackNotice,
+  type PdfSharePhase,
+} from "../../../../../lib/invoice-send-logic";
+import {
+  ACTIVATION_BUDGET_MS,
+  canShareFilesHere,
+  openPdfInTab,
+  sharePdf,
+} from "../../../../../lib/share-pdf";
+import { SendInvoiceSheet } from "../../../../../components/SendInvoiceSheet";
+import { alertInfo } from "../../../../../lib/confirm";
 
 // Driver-vocabulary labels for the at-door SegmentedControl. Segments are
 // `flex: 1`, so with five of them each label gets ~60pt of text width on a
@@ -99,6 +129,11 @@ const EMPTY_DELIVERY_PLAN: Record<string, number> = {};
 // exempt customer's server-side reconcile zeroes BOTH tax terms.
 function fullOrderTotal(order: RouteRunOrder, isTaxExempt: boolean): number {
   return orderAmountDue(order, isTaxExempt);
+}
+
+function formatCurrency(n: number | string | undefined): string {
+  const v = typeof n === "string" ? Number(n) : (n ?? 0);
+  return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
 }
 
 export default function PaymentScreen() {
@@ -145,11 +180,18 @@ export default function PaymentScreen() {
   // lines already carry unitLabel/unitsPerBox/boxes (shortPickLinesFromOrder
   // threads them through), so a Case line reconciles correctly no matter
   // which order on the stop it belongs to.
+  // B785/SA-116: per-line pieces delivered at OTHER visits, off the stop's own run snapshot — a
+  // second visit reconciles (and sends explicit entries for) the REMAINING, never the full order.
+  // SA-367a: quantities come from the server's per-line `remaining`; soFar prices money only.
+  const soFarById = useMemo(() => deliveredSoFarByLine(stop?.orders), [stop]);
+  const remainingById = useMemo(() => remainingByLine(stop?.orders), [stop]);
   const richShortPickLinesByOrder: Record<string, ShortPickLine[]> = useMemo(() => {
     const map: Record<string, ShortPickLine[]> = {};
-    for (const id of stopOrderIds) map[id] = shortPickLinesFromOrder(ordersById[id]);
+    for (const id of stopOrderIds) {
+      map[id] = shortPickLinesFromOrder(ordersById[id], remainingById, soFarById);
+    }
     return map;
-  }, [stopOrderIds, ordersById]);
+  }, [stopOrderIds, ordersById, remainingById, soFarById]);
 
   // SA-094b (B762 adaptation item 3): the ONE normalized plan every reader
   // of deliveredQtyById must use, computed over EVERY order's lines — a raw
@@ -176,7 +218,12 @@ export default function PaymentScreen() {
   // multi-order stop charged in full instead of collecting only one order's
   // amount.
   const invoiceTotal = (stop?.orders ?? []).reduce((sum, o) => {
-    const shortPickLines = richShortPickLinesByOrder[o.id] ?? [];
+    // #2300: a later visit whose details haven't loaded prices its served remaining, never the full total.
+    const shortPickLines = doorQuoteLines(
+      o,
+      richShortPickLinesByOrder[o.id] ?? [],
+      !!ordersById[o.id],
+    );
     return (
       sum +
       (shortPickLines.length > 0
@@ -191,33 +238,49 @@ export default function PaymentScreen() {
           // `o.lineItems` to the category-tax half, or a cancelled/already-
           // delivered regulated line leaks its full category tax into the quote
           // while contributing zero subtotal (see run-money.ts#shortPickCategoryTax).
-          reconciledAmountDue({
-            drafts: o.invoices ?? [],
-            order: {
-              subtotal: o.subtotal,
-              tax: o.tax,
-              // B305 round 5: the no-draft fallback basis (this order's own
-              // discount/fee) when o.invoices is empty — the DEFAULT state
-              // pre-completion.
-              discountAmount: o.discountAmount,
-              shippingFee: o.shippingFee,
-            },
-            // SA-092b: the FULL active-line subtotal (ALL of o.lineItems,
-            // never the delivered-basis shortPickLines below) — gives the
-            // discount its own SEEDING share, distinct from the delivered
-            // share applied to regular tax. See run-money.ts's
-            // ReconciledAmountDueInput.activeSubtotal docstring.
-            activeSubtotal: activeOrderSubtotal({ lineItems: o.lineItems ?? [] }),
-            deliveredSubtotal: reconciledTotal(shortPickLines, normalizedPlan),
-            deliveredCategoryTax: shortPickCategoryTax(
-              o.lineItems ?? [],
-              shortPickLines,
-              normalizedPlan,
-            ),
-            // B305 round 3: an exempt customer's server-side reconcile zeroes
-            // BOTH tax terms — mirror that here (RUN_STOP_INCLUDE.customer
-            // projects the column; RouteRunStop.customer.isTaxExempt above).
-            isTaxExempt: stop?.customer?.isTaxExempt === true,
+          // B810/SA-130a: reconciledDoorDue is the ONE decision point for
+          // what to add to this visit's reconciledAmountDue estimate — an
+          // open draft's leftover payables, a deposit mirror restated and
+          // netted against what it already collected, or (a plain,
+          // already-finalized payable) nothing at all, since re-adding the
+          // estimate on top of it double-counts (see reconciledDoorDue's own
+          // docstring for the full three-way rule and the exact bug this
+          // fixes: a SENT $100 invoice, short-picked, used to quote ~$190).
+          reconciledDoorDue({
+            hasOpenDraft: (o.invoices?.length ?? 0) > 0,
+            reconciledEstimate: reconciledAmountDue({
+              drafts: o.invoices ?? [],
+              order: {
+                subtotal: o.subtotal,
+                tax: o.tax,
+                // B305 round 5: the no-draft fallback basis (this order's own
+                // discount/fee) when o.invoices is empty — the DEFAULT state
+                // pre-completion.
+                discountAmount: o.discountAmount,
+                shippingFee: o.shippingFee,
+              },
+              // SA-092b: the FULL active-line subtotal (ALL of o.lineItems,
+              // never the delivered-basis shortPickLines below) — gives the
+              // discount its own SEEDING share, distinct from the delivered
+              // share applied to regular tax. See run-money.ts's
+              // ReconciledAmountDueInput.activeSubtotal docstring.
+              activeSubtotal: activeOrderSubtotal({ lineItems: o.lineItems ?? [] }),
+              // B648/SA-094b: normalizedPlan (not the raw deliveredQtyById) —
+              // a unit-aware line's raw entry can be any leftover piece count;
+              // only the snapped map keeps this agreeing with reconciledTotal's
+              // own (already-snapped) subtotal.
+              deliveredSubtotal: reconciledTotal(shortPickLines, normalizedPlan),
+              deliveredCategoryTax: shortPickCategoryTax(
+                o.lineItems ?? [],
+                shortPickLines,
+                normalizedPlan,
+              ),
+              // B305 round 3: an exempt customer's server-side reconcile zeroes
+              // BOTH tax terms — mirror that here (RUN_STOP_INCLUDE.customer
+              // projects the column; RouteRunStop.customer.isTaxExempt above).
+              isTaxExempt: stop?.customer?.isTaxExempt === true,
+            }),
+            payableInvoices: o.payableInvoices ?? [],
           })
         : fullOrderTotal(o, stop?.customer?.isTaxExempt === true))
     );
@@ -228,7 +291,7 @@ export default function PaymentScreen() {
   // figure. B762: true once ANY order on the stop is reconciled, not just
   // the first.
   const anyOrderReconciled = (stop?.orders ?? []).some(
-    (o) => (richShortPickLinesByOrder[o.id]?.length ?? 0) > 0,
+    (o) => doorQuoteLines(o, richShortPickLinesByOrder[o.id] ?? [], !!ordersById[o.id]).length > 0,
   );
   const invoiceLabel = stop?.orders?.[0]?.orderNumber
     ? `ORDER ${stop.orders[0].orderNumber} · ${(stop.customer?.businessName ?? "Customer").toUpperCase()}${
@@ -256,6 +319,184 @@ export default function PaymentScreen() {
   const uploadImageMut = useUploadPaymentImage();
   const pod = usePodStore((s) => (stopId ? s.pods[stopId] : undefined));
   const clearPod = usePodStore((s) => s.clear);
+
+  // #2089 (owner ruling): "once a delivery completes, automatically open that
+  // order's invoice and ask whether to send it." Reuses the SAME shared
+  // decision (packages/types) and the SAME dumb send-options sheet
+  // (components/SendInvoiceSheet) the operator screen already opens on
+  // "any path into DELIVERED" — no second send dialog. `useCreateInvoiceFromOrder`
+  // is OPERATOR-only server-side, so this reads the order's EXISTING invoice
+  // (already created earlier in its lifecycle — see RouteRunOrder.invoiceId,
+  // populated before the driver ever reaches this screen) via a fresh
+  // orderQueryOptions fetch, rather than creating one.
+  const sendMut = useSendInvoice();
+  const pdfMut = useInvoicePdf();
+  const [sendSheet, setSendSheet] = useState<{
+    invoiceId: string;
+    invoiceNumber: string;
+    totalFmt: string;
+    issuePrompt: boolean;
+    customerPhone?: string;
+    customerEmail?: string;
+  } | null>(null);
+  const [whatsAppPhase, setWhatsAppPhase] = useState<PdfSharePhase>("idle");
+  const [pdfSharePhase, setPdfSharePhase] = useState<PdfSharePhase>("idle");
+  const whatsAppShareRef = useRef<Parameters<typeof sharePdf>[0] | null>(null);
+  const pdfShareRef = useRef<Parameters<typeof sharePdf>[0] | null>(null);
+  const [openPdfPending, setOpenPdfPending] = useState(false);
+  // The one navigation step every post-completion path funnels through —
+  // called immediately when there's no prompt to show, and from the sheet's
+  // onClose when there was one, so completion never dead-ends on a driver who
+  // dismisses the sheet without picking a channel.
+  const afterInvoicePromptRef = useRef<() => void>(() => {});
+  const closeSendSheet = () => {
+    setSendSheet(null);
+    setWhatsAppPhase("idle");
+    setPdfSharePhase("idle");
+    whatsAppShareRef.current = null;
+    pdfShareRef.current = null;
+    afterInvoicePromptRef.current();
+  };
+  const sendPhone = preferredPhone(sendSheet?.customerPhone, undefined);
+  const buildInvoiceMessage = () =>
+    sendSheet
+      ? invoiceReadyMessage(
+          stop?.customer?.businessName ?? "there",
+          sendSheet.invoiceNumber,
+          sendSheet.totalFmt,
+        )
+      : "";
+  const emailSending = sendMut.isPending && sendMut.variables?.email != null;
+  const markingSent = sendMut.isPending && sendMut.variables?.email == null;
+  const runPdfShare = (
+    ref: typeof whatsAppShareRef,
+    setPhase: (phase: PdfSharePhase) => void,
+    text: string | undefined,
+  ) => {
+    if (!sendSheet) return;
+    const cached = ref.current;
+    if (cached) {
+      ref.current = null;
+      setPhase("preparing");
+      sharePdf({ ...cached, budgetMs: ACTIVATION_BUDGET_MS })
+        .then((outcome) => {
+          if (outcome === "ready-await-tap") ref.current = cached;
+          setPhase(nextPdfSharePhase(outcome));
+        })
+        .catch(() => {
+          setPhase("idle");
+          showToast("Couldn't share the PDF.");
+        });
+      return;
+    }
+    const filename = `${sendSheet.invoiceNumber || "invoice"}.pdf`;
+    const dialogTitle = `Invoice ${sendSheet.invoiceNumber ?? ""}`.trim();
+    const startedAt = Date.now();
+    setPhase("preparing");
+    pdfMut.mutate(
+      { id: sendSheet.invoiceId, variant: "final" },
+      {
+        onSuccess: async (data) => {
+          if (!data?.url) {
+            setPhase("idle");
+            showToast("PDF is still generating, try again in a moment.");
+            return;
+          }
+          const remaining = ACTIVATION_BUDGET_MS - (Date.now() - startedAt);
+          const opts = {
+            url: data.url,
+            filename,
+            dialogTitle,
+            text,
+            budgetMs: remaining,
+            retapHandled: true,
+          };
+          try {
+            const outcome = await sharePdf(opts);
+            if (outcome === "ready-await-tap") ref.current = opts;
+            setPhase(nextPdfSharePhase(outcome));
+          } catch {
+            setPhase("idle");
+            showToast("Couldn't share the PDF.");
+          }
+        },
+        onError: () => {
+          setPhase("idle");
+          showToast("Couldn't share the PDF.");
+        },
+      },
+    );
+  };
+  const handleWhatsApp = () => {
+    if (!sendSheet || !sendPhone) return;
+    const plan = planWhatsAppSend({
+      phone: sendPhone,
+      message: buildInvoiceMessage(),
+      canShareFiles: canShareFilesHere(),
+    });
+    if (plan.mode === "share-file") {
+      runPdfShare(whatsAppShareRef, setWhatsAppPhase, plan.text);
+      return;
+    }
+    Linking.openURL(plan.url).catch(() => showToast("Couldn't open WhatsApp."));
+  };
+  const handleSms = () => {
+    if (!sendSheet || !sendPhone) return;
+    const sep = Platform.OS === "ios" ? "&" : "?";
+    Linking.openURL(smsUrl(sendPhone, buildInvoiceMessage(), sep)).catch(() =>
+      showToast("Couldn't open Messages."),
+    );
+  };
+  const handleEmailInvoice = () => {
+    if (!sendSheet || !sendSheet.customerEmail) return;
+    sendMut.mutate(
+      { id: sendSheet.invoiceId, email: sendSheet.customerEmail },
+      {
+        onSuccess: (res) => {
+          const notice = "warning" in res ? smtpFallbackNotice(res) : null;
+          if (notice) alertInfo("Invoice emailed", notice);
+          else showToast("Invoice emailed");
+          closeSendSheet();
+        },
+        onError: () => showToast("Couldn't email the invoice."),
+      },
+    );
+  };
+  const handleSharePdf = () => runPdfShare(pdfShareRef, setPdfSharePhase, undefined);
+  const handleOpenPdf = () => {
+    if (!sendSheet) return;
+    setOpenPdfPending(true);
+    pdfMut.mutate(
+      { id: sendSheet.invoiceId, variant: "final" },
+      {
+        onSuccess: (data) => {
+          setOpenPdfPending(false);
+          if (!data?.url) {
+            showToast("PDF is still generating, try again in a moment.");
+            return;
+          }
+          openPdfInTab(data.url);
+        },
+        onError: () => {
+          setOpenPdfPending(false);
+          showToast("Couldn't open the PDF.");
+        },
+      },
+    );
+  };
+  const handleMarkAsSent = () => {
+    if (!sendSheet) return;
+    sendMut.mutate(
+      { id: sendSheet.invoiceId },
+      {
+        onSuccess: () => {
+          showToast("Invoice marked as sent");
+          closeSendSheet();
+        },
+        onError: () => showToast("Couldn't mark the invoice as sent."),
+      },
+    );
+  };
 
   // `closing` spans the whole close sequence (POD attaches + completion), not
   // just the completion mutation — without it a second tap during the attach
@@ -362,15 +603,21 @@ export default function PaymentScreen() {
     // not a downgrade of an order that's already DELIVERED. Falling back to
     // the raw snapshot for that case would have re-claimed full delivery on
     // lines the driver's own loaded data says are already settled.
-    const deliveries = buildStopDeliveries(
-      (stop.orders ?? []).map((o) => ({
-        orderId: o.id,
-        lines: ordersById[o.id]
-          ? (richShortPickLinesByOrder[o.id] ?? [])
-          : fallbackShortPickLines(o),
-        deliveredQtyById: normalizedPlan,
-      })),
-    );
+    const stopPlans = (stop.orders ?? []).map((o) => ({
+      orderId: o.id,
+      lines: ordersById[o.id] ? (richShortPickLinesByOrder[o.id] ?? []) : fallbackShortPickLines(o),
+      deliveredQtyById: normalizedPlan,
+    }));
+    // SA-367a: a line the server served no remaining for has no default — the driver must enter
+    // it on the review screen first (buildStopDeliveries would refuse; say so readably instead).
+    const awaiting = stopPlans.flatMap((p) => linesAwaitingEntry(p.lines, deliveredQtyById));
+    if (awaiting.length > 0) {
+      setAmountError(
+        `Enter how many were delivered for ${awaiting.length === 1 ? "1 line" : `${awaiting.length} lines`} in Review delivery before closing.`,
+      );
+      return;
+    }
+    const deliveries = buildStopDeliveries(stopPlans);
 
     // NEW-m1-3: validate that at least one item is being delivered
     if (deliveries.length === 0) {
@@ -629,36 +876,107 @@ export default function PaymentScreen() {
     }
     showToast("Stop completed");
 
-    const remaining = (run?.stops ?? []).filter(
-      (s) => s.id !== stopId && (s.status === "PENDING" || s.status === "IN_PROGRESS"),
-    );
-
-    if (Platform.OS !== "web" && remaining.length > 0) {
-      // Native only: offer to re-launch Google Maps with remaining stops.
-      // Deep-links are fire-and-forget — relaunching is the only way to drop
-      // the completed stop and re-route to the next one.
-      Alert.alert(
-        "Continue in Google Maps?",
-        `${remaining.length} stop${remaining.length === 1 ? "" : "s"} left. Re-open Maps with the updated route from your current location?`,
-        [
-          {
-            text: "Stay in app",
-            style: "cancel",
-            onPress: () => router.replace("/(driver)/route"),
-          },
-          {
-            text: "Open Maps",
-            onPress: async () => {
-              const loc = await readDriverLocation();
-              openRouteInMaps(remaining, loc ? { originLat: loc.lat, originLng: loc.lng } : {});
-              router.replace("/(driver)/route");
-            },
-          },
-        ],
+    // The pre-#2089 nav flow — extracted so the invoice prompt below can defer
+    // it to the sheet's onClose without duplicating the Maps-relaunch dance.
+    const proceedToRoute = () => {
+      const remaining = (run?.stops ?? []).filter(
+        (s) => s.id !== stopId && (s.status === "PENDING" || s.status === "IN_PROGRESS"),
       );
+      if (Platform.OS !== "web" && remaining.length > 0) {
+        // Native only: offer to re-launch Google Maps with remaining stops.
+        // Deep-links are fire-and-forget — relaunching is the only way to drop
+        // the completed stop and re-route to the next one.
+        Alert.alert(
+          "Continue in Google Maps?",
+          `${remaining.length} stop${remaining.length === 1 ? "" : "s"} left. Re-open Maps with the updated route from your current location?`,
+          [
+            {
+              text: "Stay in app",
+              style: "cancel",
+              onPress: () => router.replace("/(driver)/route"),
+            },
+            {
+              text: "Open Maps",
+              onPress: async () => {
+                const loc = await readDriverLocation();
+                openRouteInMaps(remaining, loc ? { originLat: loc.lat, originLng: loc.lng } : {});
+                router.replace("/(driver)/route");
+              },
+            },
+          ],
+        );
+        return;
+      }
+      router.replace("/(driver)/route");
+    };
+
+    // #2089 (owner ruling): "automatically open the invoice, then ask if you
+    // want to send it." Offline is checked FIRST and unconditionally
+    // (postDeliveryInvoicePrompt's own contract) — no network round trip means
+    // no way to know whether an invoice even exists. W4: a mixed regulated
+    // order can return sibling invoices; prompt for the primary (first) order
+    // on the stop, same as web/operator.
+    const primaryOrderId = stop?.orders?.[0]?.id;
+    if (!primaryOrderId) {
+      proceedToRoute();
       return;
     }
-    router.replace("/(driver)/route");
+    // #2265: read connectivity LIVE here — the render-time `isOnline` is stale after the await.
+    const online = isLiveOnline({
+      browserOnline: onlineManager.isOnline(),
+      netInfoOnline: useOfflineQueue.getState().isOnline,
+    });
+    if (postDeliveryInvoicePrompt({ invoice: undefined, online }) === "offline-later") {
+      showToast(INVOICE_LATER_TOAST);
+      proceedToRoute();
+      return;
+    }
+    // `useCreateInvoiceFromOrder` is OPERATOR-only server-side — this order
+    // already has its invoice from earlier in its lifecycle (RouteRunOrder.
+    // invoiceId is populated before the driver ever reaches this screen), so a
+    // fresh GET (driver-accessible) reads its now-current post-completion
+    // status instead of creating one.
+    // staleTime: 0 — this order's query cache may still hold the PRE-completion
+    // snapshot (populated by the useQueries fan-out above); force a real
+    // network hit rather than risk reading it back unchanged.
+    // #2265: networkMode "always" — offline, fail fast into the fallback below instead of pausing.
+    qc.fetchQuery({
+      ...orderQueryOptions(primaryOrderId),
+      staleTime: 0,
+      networkMode: DRIVER_CRITICAL_NETWORK_MODE,
+    })
+      .then((fresh) => {
+        const inv = fresh?.invoices?.[0];
+        const outcome = postDeliveryInvoicePrompt({
+          invoice: inv ? { status: inv.status as InvoiceStatus } : null,
+          online: true,
+        });
+        if (!inv || outcome === "skip" || outcome === "offline-later") {
+          proceedToRoute();
+          return;
+        }
+        afterInvoicePromptRef.current = proceedToRoute;
+        setSendSheet({
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          totalFmt: formatCurrency(inv.total),
+          issuePrompt: outcome === "issue-and-send",
+          customerPhone: stop?.customer?.phone,
+          // Known gap (TO FILE): the driver stop payload carries no customer
+          // email today (RouteRunStop.customer has no `email` field) — the
+          // Email channel stays hidden here until that's threaded through;
+          // WhatsApp/SMS/Share PDF/Mark-as-sent cover it meanwhile.
+          customerEmail: undefined,
+        });
+      })
+      // #2251: never silent — log it, tell the driver in the offline path's words, move on.
+      .catch((err) =>
+        onPostDeliveryInvoiceFetchFailed(err, {
+          toast: showToast,
+          log: console.warn,
+          proceed: proceedToRoute,
+        }),
+      );
   };
 
   const press = (k: string) => {
@@ -798,6 +1116,28 @@ export default function PaymentScreen() {
           </Pressable>
         </View>
       </ScrollView>
+
+      <SendInvoiceSheet
+        open={sendSheet !== null}
+        onClose={closeSendSheet}
+        customerName={stop?.customer?.businessName ?? "Customer"}
+        invoiceNumber={sendSheet?.invoiceNumber ?? ""}
+        totalFmt={sendSheet?.totalFmt ?? ""}
+        phone={sendPhone}
+        email={sendSheet?.customerEmail}
+        emailSending={emailSending}
+        whatsAppPhase={whatsAppPhase}
+        pdfPhase={pdfSharePhase}
+        onWhatsApp={handleWhatsApp}
+        onSms={handleSms}
+        onEmail={handleEmailInvoice}
+        onSharePdf={handleSharePdf}
+        onOpenPdf={handleOpenPdf}
+        openPdfPending={openPdfPending}
+        onMarkAsSent={handleMarkAsSent}
+        markingSent={markingSent}
+        issuePrompt={sendSheet?.issuePrompt}
+      />
     </SafeAreaView>
   );
 }

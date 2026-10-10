@@ -8,6 +8,7 @@
  * proration) only when it doesn't. Pure — no React import — Jest-testable.
  */
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import type { InvoiceStatus } from "@routeflow/types";
 
 export interface RunMoneyLineItem {
   /** OrderItem id — the key `deliveredQtyById` (short-pick's `orderItemId`) uses. */
@@ -59,6 +60,30 @@ export interface RunMoneyInvoice {
   total: number | string | null;
 }
 
+/**
+ * B810: EVERY payable invoice (DRAFT/SENT/PARTIAL/OVERDUE — mirrors the
+ * server's own payment write path, recordDeliveryPaymentInTx), each carrying
+ * a server-computed `balanceDue` (B421's formula: total - confirmed
+ * payments). This is `orderAmountDue`'s basis now, not `RunMoneyInvoice`
+ * above (which stays `reconciledAmountDue`'s DRAFT-only reconcile basis,
+ * unchanged) — fixes a SENT/PARTIAL invoice reading the full order total
+ * instead of what's actually still owed. NEVER derive `balanceDue`
+ * client-side (B305's standing rule, extended here to every status).
+ */
+export interface RunMoneyPayableInvoice {
+  id: string;
+  status: InvoiceStatus;
+  total: number | string | null;
+  balanceDue: number | string | null;
+  /**
+   * SA-102's WP-D1 shape (server-computed, see run-invoice-balance.ts): true
+   * when this invoice IS the order's own live bill (its sole non-void
+   * invoice, no deliveryBatchId, carrying a deposit) rather than a
+   * separately-finalized one. Feeds `reconciledDoorDue`'s three-way rule.
+   */
+  isDepositMirror?: boolean;
+}
+
 export interface RunMoneyOrder {
   lineItems: RunMoneyLineItem[];
   /** Prisma Decimals — may arrive as strings over the wire. */
@@ -78,8 +103,12 @@ export interface RunMoneyOrder {
    */
   discountAmount?: number | string | null;
   shippingFee?: number | string | null;
-  /** ALL of the order's open draft invoices (RULING 1 — never just the first). */
+  /** ALL of the order's open draft invoices (RULING 1 — never just the first).
+   *  `reconciledAmountDue`'s own reconcile basis only — see `payableInvoices`
+   *  below for `orderAmountDue`'s basis (B810). */
   invoices?: RunMoneyInvoice[];
+  /** B810: see `RunMoneyPayableInvoice`'s own docstring. */
+  payableInvoices?: RunMoneyPayableInvoice[];
 }
 
 export interface RunMoneyStop {
@@ -136,13 +165,19 @@ export function sumStopOrders(stop: RunMoneyStop): number {
 }
 
 /**
- * REG-B305 round 2 (RULING 1): the driver "amount due" is the SUM of every
- * open draft invoice's total, as the server last computed each — a regulated
- * split order can have several (base + `-R#` siblings), and each is real
- * money the invoice bills. Only drafts with a finite `total` count; a
- * malformed one is skipped rather than poisoning the sum.
+ * B810: the driver "amount due" is the SUM of every PAYABLE invoice's
+ * server-computed `balanceDue` (DRAFT/SENT/PARTIAL/OVERDUE — mirrors
+ * recordDeliveryPaymentInTx's own predicate, the driver's actual payment
+ * write path) — not just open drafts (REG-B305 round 2's original basis).
+ * An order whose invoice has already progressed to SENT/PARTIAL used to fall
+ * through to the order-total formula below, showing the FULL order total and
+ * ignoring any payment already collected. Only entries with a finite
+ * `balanceDue` count; a malformed one is skipped rather than poisoning the
+ * sum (same defensive shape REG-B305 round 2 established for `total`).
  *
- *  (a) one or more drafts with a finite `total` -> Σ those totals, rounded;
+ *  (a) one or more payable invoices with a finite `balanceDue` -> Σ those
+ *      balances, rounded — DRAFT's own balanceDue reduces to its `total`
+ *      when it carries no payments, byte-identical to before B810;
  *  (b) else (B305 round 5 — the DEFAULT state for a route order: the server
  *      only creates/reconciles a draft at stop-completion time) the
  *      tax-inclusive quote over the order's own ACTIVE lines, mirroring
@@ -187,9 +222,9 @@ export function sumStopOrders(stop: RunMoneyStop): number {
  * this never returns NaN.
  */
 export function orderAmountDue(order: RunMoneyOrder, isTaxExempt?: boolean): number {
-  const drafts = order.invoices ?? [];
-  const finiteTotals = drafts
-    .map((d) => finiteOrNull(d.total))
+  const payable = order.payableInvoices ?? [];
+  const finiteTotals = payable
+    .map((i) => finiteOrNull(i.balanceDue))
     .filter((n): n is number => n != null);
   if (finiteTotals.length > 0) {
     return roundMoney(finiteTotals.reduce((sum, n) => sum + n, 0));
@@ -229,6 +264,109 @@ export function orderAmountDue(order: RunMoneyOrder, isTaxExempt?: boolean): num
   );
 
   return roundMoney(subtotal - discount + shippingFee + regularTax + categoryTax);
+}
+
+/**
+ * B810 (SA-125): the door figure while actively reconciling a visit is
+ * `reconciledAmountDue(...) + earlierVisitsRemaining(...)` — the fresh
+ * estimate for what THIS visit is delivering, plus whatever remains on
+ * invoices already issued on an EARLIER visit (a prior partial delivery of
+ * the same multi-visit order). Excludes DRAFT: a draft is what THIS visit's
+ * reconcile rebuilds/creates, so including it here would double-count with
+ * `reconciledAmountDue`'s own figure. Never scaled by the delivered share —
+ * each is already a fixed, previously-issued amount, not an estimate.
+ */
+export function earlierVisitsRemaining(payableInvoices: RunMoneyPayableInvoice[]): number {
+  const finite = payableInvoices
+    .filter((i) => i.status !== "DRAFT")
+    .map((i) => finiteOrNull(i.balanceDue))
+    .filter((n): n is number => n != null);
+  return roundMoney(finite.reduce((sum, n) => sum + n, 0));
+}
+
+/**
+ * SA-130a (Opus round on B810/SA-125): the SA-125 shape above
+ * (`reconciledAmountDue(...) + earlierVisitsRemaining(...)`, unconditionally
+ * added) double-counts once an order has NO open draft and its only payable
+ * is a plain, already-finalized invoice — a SENT $100 invoice with a 6-of-10
+ * short-pick re-derived `reconciledAmountDue` to ~$90 and then ADDED the
+ * invoice's own $100 on top (~$190), when the answer is simply $100: a
+ * previously-issued invoice doesn't retroactively change because a LATER
+ * visit short-picks. This function is the caller's ONE decision point,
+ * per order, on the reconciled (active short-pick) path:
+ *
+ *  (a) an open draft exists (`hasOpenDraft`) -> `reconciledEstimate` (already
+ *      computed by the caller from THIS order's own drafts, byte-identical
+ *      to the pre-SA-130a call) plus `earlierVisitsRemaining` over the
+ *      non-DRAFT payables — unchanged from SA-125, and also covers the case
+ *      of NO payable invoice at all yet (earlierVisitsRemaining is 0, so
+ *      this reduces to the bare estimate — the pre-B810 no-invoice shape).
+ *  (b) no open draft, and the ONLY payable is a deposit mirror
+ *      (`isDepositMirror`) -> the mirror IS this order's own bill, so it's
+ *      legitimate to restate it against the delivered share via
+ *      `reconciledEstimate` (computed by the caller the SAME way, with an
+ *      empty `drafts` — `reconciledAmountDue`'s own fallback basis), then
+ *      subtract whatever the mirror already collected
+ *      (`mirror.total - mirror.balanceDue`) so a part-paid deposit is never
+ *      re-billed in full.
+ *  (c) no open draft, a plain (non-mirror) payable -> Σ `balanceDue` ONLY,
+ *      no reconciled term at all — a finalized invoice is the bill, full
+ *      stop, regardless of what a later visit short-picks.
+ *
+ * `reconciledAmountDue` itself is UNCHANGED by this round — only this
+ * caller-side composition (payment.tsx) changes.
+ */
+/** total - balanceDue for one payable invoice — how much of it is already paid. Never negative-poisoning: a malformed field is treated as 0. */
+function alreadyPaidOn(inv: RunMoneyPayableInvoice): number {
+  return (finiteOrNull(inv.total) ?? 0) - (finiteOrNull(inv.balanceDue) ?? 0);
+}
+
+export function reconciledDoorDue(input: {
+  hasOpenDraft: boolean;
+  reconciledEstimate: number;
+  payableInvoices: RunMoneyPayableInvoice[];
+}): number {
+  const { hasOpenDraft, reconciledEstimate, payableInvoices } = input;
+  if (hasOpenDraft || payableInvoices.length === 0) {
+    // B822 (round 2): `reconciledEstimate` is re-derived from the order's own
+    // CURRENT line items — it has no idea a confirmed payment (e.g. an
+    // applied advance) already landed against THIS visit's own draft(s), so
+    // that must be subtracted here too, not just assumed away. With no
+    // payable invoice at all yet, both sums are 0, so this correctly reduces
+    // to the bare estimate — the pre-B810 no-invoice shape — rather than
+    // falling into case (c)'s pure-balance-sum (which would wrongly return 0
+    // instead of the estimate).
+    const draftAlreadyPaid = payableInvoices
+      .filter((i) => i.status === "DRAFT")
+      .reduce((sum, i) => sum + alreadyPaidOn(i), 0);
+    // Round 3: floor the draft-netted estimate at 0 BEFORE adding
+    // earlierVisitsRemaining — a draft overpayment (an advance exceeding
+    // what THIS visit's re-derived estimate says is owed) must never bleed
+    // negative into (and silently discount) an unrelated SENT balance from
+    // an earlier visit.
+    return roundMoney(
+      Math.max(0, reconciledEstimate - draftAlreadyPaid) + earlierVisitsRemaining(payableInvoices),
+    );
+  }
+  const soleMirror =
+    payableInvoices.length === 1 && payableInvoices[0]!.isDepositMirror
+      ? payableInvoices[0]!
+      : null;
+  if (soleMirror) {
+    // Round 2: floor at 0 — a mirror restated DOWN by a short-pick (a
+    // partial delivery billing less than what was already collected as a
+    // deposit) must never go negative; the excess is a refund/credit
+    // question for the office, not something this quote surfaces as a
+    // negative "amount due".
+    return roundMoney(Math.max(0, reconciledEstimate - alreadyPaidOn(soleMirror)));
+  }
+  // (c) round 2: sum EVERY payable's balanceDue, including a DRAFT one —
+  // `hasOpenDraft` is already false in this branch (from `o.invoices`, the
+  // separate DRAFT-only projection), so a DRAFT entry reaching here is not
+  // "this visit's own draft" being double-counted; excluding it via
+  // `earlierVisitsRemaining` (built for case (a)'s different semantics)
+  // would silently drop it from the total instead.
+  return roundMoney(payableInvoices.reduce((sum, i) => sum + (finiteOrNull(i.balanceDue) ?? 0), 0));
 }
 
 export function stopAmountDue(stop: RunMoneyStop): number {
@@ -294,12 +432,19 @@ export function deliveredCategoryTax(
  */
 export function shortPickCategoryTax(
   lineItems: RunMoneyLineItem[],
-  shortPickLines: ReadonlyArray<{ orderItemId: string }>,
+  shortPickLines: ReadonlyArray<{ orderItemId: string; needsEntry?: boolean }>,
   deliveredQtyById: Record<string, number>,
 ): number {
   const shortPickIds = new Set(shortPickLines.map((l) => l.orderItemId));
   const restricted = lineItems.filter((li) => li.id != null && shortPickIds.has(li.id));
-  return deliveredCategoryTax(restricted, deliveredQtyById);
+  // SA-367a: a line served no `remaining` and not yet entered has NO default — 0 here, exactly as
+  // its subtotal half (short-pick.ts#effectiveDeliveredQty) — never deliveredCategoryTax's
+  // "absent = fully delivered", which would quote its full excise against a $0 subtotal.
+  const plan = { ...deliveredQtyById };
+  for (const l of shortPickLines) {
+    if (l.needsEntry && plan[l.orderItemId] == null) plan[l.orderItemId] = 0;
+  }
+  return deliveredCategoryTax(restricted, plan);
 }
 
 export interface ReconciledAmountDueInput {

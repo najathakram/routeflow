@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { API_ERROR_CODES } from "./api-error-codes";
 
 /**
  * Phase 4 (W7b): regulated-delivery POD enforcement.
@@ -158,7 +159,7 @@ export function assertRegulatedDeliverySatisfied(args: {
   if (requiresAge || requiresId) {
     if (capture.safeDropEnabled === true) {
       throw new BadRequestException({
-        code: "REGULATED_POD_REQUIRED",
+        code: API_ERROR_CODES.REGULATED_POD_REQUIRED,
         reason: "SAFE_DROP_FORBIDDEN",
         message:
           "This is a regulated delivery — it must be handed to a verified recipient (no safe-drop).",
@@ -167,28 +168,28 @@ export function assertRegulatedDeliverySatisfied(args: {
     const signature = (capture.signatureUrl ?? args.existingSignatureUrl ?? "").trim();
     if (!signature) {
       throw new BadRequestException({
-        code: "REGULATED_POD_REQUIRED",
+        code: API_ERROR_CODES.REGULATED_POD_REQUIRED,
         reason: "SIGNATURE_REQUIRED",
         message: "A signature is required to complete a regulated delivery.",
       });
     }
     if (requiresAge && !ageVerified) {
       throw new BadRequestException({
-        code: "REGULATED_POD_REQUIRED",
+        code: API_ERROR_CODES.REGULATED_POD_REQUIRED,
         reason: "AGE_CHECK_REQUIRED",
         message: "Confirm the recipient meets the minimum age before completing this delivery.",
       });
     }
     if (requiresId && !identityVerified) {
       throw new BadRequestException({
-        code: "REGULATED_POD_REQUIRED",
+        code: API_ERROR_CODES.REGULATED_POD_REQUIRED,
         reason: "ID_CHECK_REQUIRED",
         message: "Verify the recipient's ID before completing this delivery.",
       });
     }
     if (requiresId && !identityType) {
       throw new BadRequestException({
-        code: "REGULATED_POD_REQUIRED",
+        code: API_ERROR_CODES.REGULATED_POD_REQUIRED,
         reason: "ID_TYPE_REQUIRED",
         message: "Record which type of ID was checked.",
       });

@@ -1,3 +1,4 @@
+import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test } from "@nestjs/testing";
 import { OrderTemplatesService } from "./order-templates.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -6,6 +7,8 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "../orders/orders.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { decrementStockForSale } from "../orders/order-stock";
 import { UserRole } from "@prisma/client";
@@ -62,6 +65,7 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
 
     const mod = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrderTemplatesService,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
@@ -77,6 +81,14 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
           useValue: {
             sendToCustomer: jest.fn().mockResolvedValue(1),
             sendToUser: jest.fn().mockResolvedValue(1),
+          },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
           },
         },
       ],
@@ -113,7 +125,7 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       expect(mockDecrementStockForSale).toHaveBeenCalledTimes(1);
       const [deps, , stockLines, isStaffRole] = mockDecrementStockForSale.mock.calls[0];
       expect(deps).toEqual(expect.objectContaining({ tenantId: "test-tenant" }));
-      expect(stockLines).toEqual([{ productId: "p1", qty: 3 }]);
+      expect(stockLines).toEqual([{ id: undefined, position: 0, productId: "p1", qty: 3 }]);
       // An unattended cron run must never abort on insufficient stock — the staff/operator
       // posture (warn + oversell), never the customer/driver hard-block.
       expect(isStaffRole).toBe(true);
@@ -143,8 +155,8 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       expect(mockDecrementStockForSale).toHaveBeenCalledTimes(1);
       const [, , stockLines] = mockDecrementStockForSale.mock.calls[0];
       expect(stockLines).toEqual([
-        { productId: "p1", qty: 2 },
-        { productId: "p2", qty: 4 },
+        { id: undefined, position: 0, productId: "p1", qty: 2 },
+        { id: undefined, position: 1, productId: "p2", qty: 4 },
       ]);
     });
 
@@ -156,11 +168,17 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
     it("the real decrementStockForSale folds two lines of the same product into one UPDATE with the summed qty", async () => {
       const { decrementStockForSale: real } = jest.requireActual("../orders/order-stock");
       const executeRaw = jest.fn().mockResolvedValue(0);
+      // B562 PR-2: the decrement is `UPDATE … RETURNING` via $queryRaw; it returns the new counter.
+      const queryRaw = jest.fn().mockResolvedValue([{ id: "p1", currentStock: 94 }]);
+      const create = jest.fn().mockResolvedValue({ id: "mv-1" });
       const fakeTx = {
         $executeRaw: executeRaw,
+        $queryRaw: queryRaw,
         product: {
           findMany: jest.fn().mockResolvedValue([{ id: "p1", name: "Widget", currentStock: 100 }]),
+          findFirst: jest.fn().mockResolvedValue({ costingMethod: "AVCO", averageCost: 2 }),
         },
+        stockMovement: { create },
       };
       // Two template lines for the SAME product — this is exactly the shape
       // generateOrder's stockLines array can carry (one entry per template line,
@@ -173,21 +191,36 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
           { productId: "p1", qty: 4 },
         ],
         true,
+        { orderId: "o1", notes: "TEMPLATE:t1", performedById: null },
       );
 
-      // Call 1 = the FOR UPDATE lock, call 2 = the aggregated UPDATE.
-      expect(executeRaw).toHaveBeenCalledTimes(2);
-      const updateValues = executeRaw.mock.calls[1][1]; // first interpolated value: the VALUES row
+      // $executeRaw = the FOR UPDATE lock; $queryRaw = the aggregated UPDATE … RETURNING.
+      expect(executeRaw).toHaveBeenCalledTimes(1);
+      expect(queryRaw).toHaveBeenCalledTimes(1);
+      const updateValues = queryRaw.mock.calls[0][1]; // first interpolated value: the VALUES row
       // Prisma.sql's join of a single-entry array yields ONE Sql fragment whose own
       // `values` carries [productId, qty] — qty must be the SUM (6), proving the fold,
       // never two separate rows of 2 and 4.
       expect(updateValues.values).toEqual(["p1", 6]);
+      // B562 PR-2: ONE SALE row for the folded product, carrying the counter the UPDATE returned.
+      expect(create).toHaveBeenCalledTimes(1);
+      const row = create.mock.calls[0][0].data;
+      expect(row).toMatchObject({
+        productId: "p1",
+        type: "SALE",
+        reference: "ORDER:o1",
+        notes: "TEMPLATE:t1",
+        performedById: null,
+      });
+      expect(row.quantity.toString()).toBe("-6");
+      expect(row.stockAfter.toString()).toBe("94");
     });
 
     it("never decrements a line skipped by the regulated license guard", async () => {
       const authGuard = { checkAuthorized: jest.fn() };
       const mod = await Test.createTestingModule({
         providers: [
+          oversellReaderOffProvider,
           OrderTemplatesService,
           { provide: PrismaService, useValue: prisma },
           { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
@@ -199,6 +232,14 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
             useValue: {
               sendToCustomer: jest.fn().mockResolvedValue(1),
               sendToUser: jest.fn().mockResolvedValue(1),
+            },
+          },
+          { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+          {
+            provide: SellingRestrictionsService,
+            useValue: {
+              assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+              checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
             },
           },
         ],
@@ -221,7 +262,7 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       await gatedService.generateOrder("t1");
 
       const [, , stockLines] = mockDecrementStockForSale.mock.calls[0];
-      expect(stockLines).toEqual([{ productId: "p-std", qty: 3 }]);
+      expect(stockLines).toEqual([{ id: undefined, position: 0, productId: "p-std", qty: 3 }]);
     });
   });
 

@@ -27,6 +27,15 @@
 // NOTHING IS WRITTEN without --execute, and --execute additionally requires
 // --confirm-tenant=<slug> typed back. Default output is a report to review.
 //
+// #2717 M1 (SA-572e, #2728 M1 follow-up): `Product.unitsPerBox` is mirrored into `ProductBarcode`
+// rows by the app's own dual-write (products.service.ts) and by the one-time backfill
+// (backfill-product-catalog-rows.ts) — those rows are a MIRROR of the legacy column, never a second
+// source of truth. Writing `unitsPerBox` here with raw SQL bypasses that sync, so this script clears
+// this product's `ProductBarcode` rows in the SAME transaction as the `unitsPerBox` write: the
+// product falls back to being row-less (read-model fallback = `synthesizeLegacyBarcodes`, planned
+// fresh from the just-written column) until the next backfill run re-mirrors it. Never leave a stale
+// row (planned from the OLD unitsPerBox) sitting next to a legacy column that has already moved on.
+//
 //   railway run --service postgres node apps/api/scripts/propose-pack-sizes.mjs
 //   ... --tenant=<slug>          scope to one tenant (default: all ACTIVE)
 //   ... --min-confidence=HIGH    only propose HIGH rows (default: HIGH)
@@ -41,7 +50,11 @@
 // behavioural change belongs in `packages/types/pack-size.ts` first, ported
 // here in step — never the other way around.
 import { createRequire } from "module";
-const { Client } = createRequire(import.meta.url)("pg");
+const req = createRequire(import.meta.url);
+const { Client } = req("pg");
+// Row 195: --execute writes through the protected-tenant guard (no override exists for this script).
+const { loadProtectedSlugs } = req("./lib/protected-slugs.cjs");
+const { assertWritableTenant, ProtectedTenantError } = req("./lib/live-target-guard.cjs");
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -171,13 +184,25 @@ function classify(p) {
   return null;
 }
 
+// Loaded once, from the URL this script dials, before connecting. Only a write needs it.
+let protectedSlugs = null;
+if (EXECUTE) {
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, url);
+  } catch (e) {
+    console.error(e.message);
+    process.exit(1);
+  }
+}
+
 const client = new Client({ connectionString: url });
 await client.connect();
 
 const { rows: tenants } = await client.query(
-  TENANT
-    ? `SELECT id, slug FROM "Tenant" WHERE slug = $1`
-    : `SELECT id, slug FROM "Tenant" WHERE status = 'ACTIVE' ORDER BY slug`,
+  `SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId"
+     FROM "Tenant" t LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
+    WHERE ${TENANT ? "t.slug = $1" : "t.status = 'ACTIVE'"}
+    ORDER BY t.slug`,
   TENANT ? [TENANT] : [],
 );
 if (!tenants.length) {
@@ -255,18 +280,42 @@ for (const t of tenants) {
       console.log(`   ⚠ SKIPPED WRITE: pass --confirm-tenant=${t.slug} to apply to this tenant.`);
       continue;
     }
+    // Row 195: a paying / Stripe-linked / PROTECTED_TENANT_SLUGS tenant is never written here.
+    try {
+      assertWritableTenant(t, t, protectedSlugs);
+    } catch (e) {
+      if (!(e instanceof ProtectedTenantError)) throw e;
+      console.log(`   ⚠ SKIPPED WRITE: ${e.message}`);
+      continue;
+    }
     const apply = [...tiers.HIGH, ...(MIN_CONFIDENCE === "MEDIUM" ? tiers.MEDIUM : [])];
     let n = 0;
     for (const r of apply) {
-      // Re-assert the precondition inside the write: never overwrite a pack size
-      // someone set between the report and the run.
-      const res = await client.query(
-        `UPDATE "Product" SET "unitsPerBox" = $1, "updatedAt" = now()
-          WHERE id = $2 AND "tenantId" = $3
-            AND ("unitsPerBox" IS NULL OR "unitsPerBox" <= 1)`,
-        [r.packSize, r.id, t.id],
-      );
-      n += res.rowCount;
+      // #2717 M1 (SA-572e): the unitsPerBox write and the mirror-clearing delete happen in ONE
+      // transaction on this same client — either both land or neither does, so the legacy column
+      // and its ProductBarcode mirror (or lack of one) can never observably disagree.
+      await client.query("BEGIN");
+      try {
+        // Re-assert the precondition inside the write: never overwrite a pack size
+        // someone set between the report and the run.
+        const res = await client.query(
+          `UPDATE "Product" SET "unitsPerBox" = $1, "updatedAt" = now()
+            WHERE id = $2 AND "tenantId" = $3
+              AND ("unitsPerBox" IS NULL OR "unitsPerBox" <= 1)`,
+          [r.packSize, r.id, t.id],
+        );
+        if (res.rowCount > 0) {
+          await client.query(
+            `DELETE FROM "ProductBarcode" WHERE "productId" = $1 AND "tenantId" = $2`,
+            [r.id, t.id],
+          );
+        }
+        await client.query("COMMIT");
+        n += res.rowCount;
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw e;
+      }
     }
     console.log(`   ✅ APPLIED pack size to ${n} product(s) on ${t.slug}.`);
   }

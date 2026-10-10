@@ -16,12 +16,10 @@
 
 // ─── Production guard ─────────────────────────────────────────────────────────
 const { productionGuard } = require("./lib/production-guard");
-// --all (broad TRUNCATE) requires explicit confirmation; targeted manifest mode does not
-if (process.argv.includes("--all")) {
-  productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
-} else {
-  productionGuard(); // block Railway env even in targeted mode
-}
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { assertNoLiveProtectedTenants } = require("./lib/live-target-guard.cjs");
+// Runs below, once the URL is resolved (#2206): --all (broad TRUNCATE) also requires explicit
+// confirmation; targeted manifest mode does not, but is still refused on any non-local target.
 
 const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
@@ -30,7 +28,9 @@ const path = require("path");
 const fs = require("fs");
 
 function loadEnvDatabaseUrl() {
-  const envPath = path.join(__dirname, "../.env");
+  // ROUTEFLOW_API_DOTENV only picks WHICH .env is read (production-guard-script.spec.ts points it
+  // at a fixture); the guard below still judges whatever URL comes out (#2421).
+  const envPath = process.env.ROUTEFLOW_API_DOTENV || path.join(__dirname, "../.env");
   if (fs.existsSync(envPath)) {
     const content = fs.readFileSync(envPath, "utf8");
     const match = content.match(/^DATABASE_URL\s*=\s*["']?([^"'\r\n]+)["']?/m);
@@ -42,7 +42,15 @@ function loadEnvDatabaseUrl() {
 const dbUrl = loadEnvDatabaseUrl();
 console.log(`\n🔗 Connecting to: ${dbUrl.replace(/:([^:@]+)@/, ":***@")}`);
 
-const pool = new Pool({ connectionString: dbUrl });
+// #2206: guard the URL this script actually dials, and dial exactly what was checked.
+// Row 195: productionGuard trusts a host allow-list a tunnel can fake, so this wipe ALSO refuses a database
+// that holds a protected non-test tenant (paying, Stripe-linked or PROTECTED_TENANT_SLUGS).
+const protectedSlugs = loadProtectedSlugs(process.env, dbUrl);
+const target = productionGuard({
+  requireFlag: process.argv.includes("--all") ? "--i-know-this-deletes-everything" : undefined,
+  dbUrl,
+});
+const pool = new Pool(target);
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
@@ -214,6 +222,7 @@ async function cleanupAll() {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
+  await assertNoLiveProtectedTenants(prisma, protectedSlugs);
   if (manifestPath) {
     await cleanupFromManifest(manifestPath);
   } else {

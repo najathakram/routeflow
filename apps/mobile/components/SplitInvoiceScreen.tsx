@@ -18,8 +18,16 @@ import { showToast } from "../lib/toast";
 // RN Alert.alert is a no-op for multi-button alerts on Expo Web; alertInfo
 // routes through the cross-platform confirm modal instead.
 import { alertInfo } from "../lib/confirm";
+import {
+  caseSizeOf,
+  defaultBillQty,
+  formatSplitQty,
+  halfBillQty,
+  remainderPieces,
+  stepBillQty,
+} from "../lib/split-invoice-cases";
 
-export interface SplitInvoiceItem {
+interface SplitInvoiceItem {
   id: string;
   productName: string;
   qty: number;
@@ -28,6 +36,9 @@ export interface SplitInvoiceItem {
   /** Stored line subtotal — prorated for the preview so boxed lines aren't over-charged. */
   subtotal?: number;
   unit?: string;
+  /** units_v1 selling unit ("Case") + its factor (pieces per Case) — drives Case guidance. */
+  unitLabel?: string | null;
+  unitsPerBox?: number | null;
 }
 
 /**
@@ -150,7 +161,7 @@ export function SplitInvoiceScreen({
       const qtyById: Record<string, string> = {};
       for (const it of billable) {
         const remaining = Math.max(0, it.qty - it.invoicedQty);
-        qtyById[it.id] = String(remaining);
+        qtyById[it.id] = String(defaultBillQty(remaining, caseSizeOf(it)));
       }
       return [{ ...first, qtyById }];
     });
@@ -385,10 +396,12 @@ export function SplitInvoiceScreen({
                   // into 5, it should show 5 more left."
                   const totalRemaining = it.qty - it.invoicedQty;
                   const globalLeft = remainingForItem(it.id);
+                  const caseSize = caseSizeOf(it);
+                  const loosePcs = remainderPieces(cap, caseSize);
                   return (
                     <View key={it.id} style={styles.itemRow}>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.itemName} numberOfLines={1}>
+                      <View style={styles.itemNameBlock}>
+                        <Text style={styles.itemName} numberOfLines={2}>
                           {it.productName}
                         </Text>
                         <Text style={styles.itemSub}>
@@ -398,9 +411,10 @@ export function SplitInvoiceScreen({
                               fontFamily: "Inter_700Bold",
                             }}
                           >
-                            {globalLeft}
+                            {formatSplitQty(globalLeft, it)}
                           </Text>{" "}
-                          of {totalRemaining} {it.unit ?? "ea"} left · ${it.unitPrice.toFixed(2)}/ea
+                          of {formatSplitQty(totalRemaining, it)} left
+                          {caseSize == null ? ` · $${it.unitPrice.toFixed(2)}/ea` : ""}
                         </Text>
                       </View>
                       <TextInput
@@ -415,6 +429,38 @@ export function SplitInvoiceScreen({
                         placeholderTextColor={ios.label3}
                       />
                       <View style={styles.quickRow}>
+                        {caseSize != null ? (
+                          <>
+                            <Pressable
+                              accessibilityLabel={`One fewer ${it.unitLabel}`}
+                              onPress={() => {
+                                const n = stepBillQty(numValue || 0, -1, cap, caseSize);
+                                updateDraft(draft.id, {
+                                  qtyById: { ...draft.qtyById, [it.id]: n > 0 ? String(n) : "" },
+                                });
+                              }}
+                              style={styles.quickBtn}
+                              hitSlop={4}
+                              disabled={created || !(numValue > 0)}
+                            >
+                              <Text style={styles.quickBtnText}>-1 {it.unitLabel}</Text>
+                            </Pressable>
+                            <Pressable
+                              accessibilityLabel={`One more ${it.unitLabel}`}
+                              onPress={() => {
+                                const n = stepBillQty(numValue || 0, 1, cap, caseSize);
+                                updateDraft(draft.id, {
+                                  qtyById: { ...draft.qtyById, [it.id]: n > 0 ? String(n) : "" },
+                                });
+                              }}
+                              style={styles.quickBtn}
+                              hitSlop={4}
+                              disabled={created || cap <= 0 || numValue >= cap}
+                            >
+                              <Text style={styles.quickBtnText}>+1 {it.unitLabel}</Text>
+                            </Pressable>
+                          </>
+                        ) : null}
                         <Pressable
                           onPress={() => {
                             updateDraft(draft.id, {
@@ -429,7 +475,7 @@ export function SplitInvoiceScreen({
                         </Pressable>
                         <Pressable
                           onPress={() => {
-                            const half = Math.ceil(cap / 2);
+                            const half = halfBillQty(cap, caseSize);
                             updateDraft(draft.id, {
                               qtyById: {
                                 ...draft.qtyById,
@@ -439,7 +485,7 @@ export function SplitInvoiceScreen({
                           }}
                           style={styles.quickBtn}
                           hitSlop={4}
-                          disabled={created || cap <= 0}
+                          disabled={created || halfBillQty(cap, caseSize) <= 0}
                         >
                           <Text style={styles.quickBtnText}>Half</Text>
                         </Pressable>
@@ -448,16 +494,35 @@ export function SplitInvoiceScreen({
                             updateDraft(draft.id, {
                               qtyById: {
                                 ...draft.qtyById,
-                                [it.id]: cap > 0 ? String(cap) : "",
+                                [it.id]:
+                                  defaultBillQty(cap, caseSize) > 0
+                                    ? String(defaultBillQty(cap, caseSize))
+                                    : "",
                               },
                             });
                           }}
                           style={styles.quickBtn}
                           hitSlop={4}
-                          disabled={created || cap <= 0}
+                          disabled={created || defaultBillQty(cap, caseSize) <= 0}
                         >
-                          <Text style={styles.quickBtnText}>All</Text>
+                          <Text style={styles.quickBtnText}>
+                            {caseSize != null ? "All Cases" : "All"}
+                          </Text>
                         </Pressable>
+                        {loosePcs > 0 ? (
+                          <Pressable
+                            onPress={() => {
+                              updateDraft(draft.id, {
+                                qtyById: { ...draft.qtyById, [it.id]: String(cap) },
+                              });
+                            }}
+                            style={styles.quickBtn}
+                            hitSlop={4}
+                            disabled={created}
+                          >
+                            <Text style={styles.quickBtnText}>Bill remaining {loosePcs} pcs</Text>
+                          </Pressable>
+                        ) : null}
                       </View>
                       <Text style={styles.lineTotal}>${lineTotal.toFixed(2)}</Text>
                     </View>
@@ -531,9 +596,7 @@ export function SplitInvoiceScreen({
                   <Text style={styles.unallocName} numberOfLines={1}>
                     {u.item.productName}
                   </Text>
-                  <Text style={styles.unallocQty}>
-                    {u.left} {u.item.unit ?? "ea"}
-                  </Text>
+                  <Text style={styles.unallocQty}>{formatSplitQty(u.left, u.item)}</Text>
                 </View>
               ))}
           </View>
@@ -629,6 +692,11 @@ const styles = StyleSheet.create({
     borderTopColor: ios.separator,
     flexWrap: "wrap",
   },
+  // #2660: the name block keeps a real minimum width. At 390 the qty input, None/Half/All and the
+  // line total (~270pt) no longer fit beside it, so the wrapping row drops them onto their own line
+  // under the name instead of squeezing the name to "Mixed …" (the same wrap #2084 gave quickRow).
+  // Wider screens still fit everything on one row. The name itself may use two lines.
+  itemNameBlock: { flexGrow: 1, flexShrink: 1, flexBasis: 180, minWidth: 180 },
   itemName: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
   itemSub: {
     fontSize: 11,
@@ -649,7 +717,9 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     fontVariant: ["tabular-nums"],
   },
-  quickRow: { flexDirection: "row", gap: 4 },
+  // #2084: bounded to the row so its OWN wrap engages — as a flex item of the wrapping itemRow it
+  // otherwise sized to all buttons on one line and a Case line's six clipped past the card at 390.
+  quickRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, flexShrink: 1, maxWidth: "100%" },
   quickBtn: {
     paddingHorizontal: 8,
     paddingVertical: 5,

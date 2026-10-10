@@ -1,4 +1,9 @@
-import { getTierPrice, normalizeBoxesPieces, type LadderProduct } from "@routeflow/pricing";
+import {
+  isSpecialTier,
+  getTierPrice,
+  normalizeBoxesPieces,
+  type LadderProduct,
+} from "@routeflow/pricing";
 import type { UnitOption } from "@/lib/unit-options";
 
 /**
@@ -71,14 +76,14 @@ export function applyLineUnit<T extends UnitLine>(
     // operator's one-time price (`discountedPrice`) is theirs to keep across the switch.
     if (packBase.discountedPrice == null && li.tierPrices) {
       const tierPrice = getTierPrice(li.tierPrices, ctx.tier);
-      const special = ctx.tier !== 1;
+      const special = isSpecialTier(ctx.tier);
       restored.unitPrice = tierPrice;
       restored.priceType = special ? "SPECIAL" : "STANDARD";
       restored.specialPrice = special ? tierPrice : undefined;
     }
     return restored;
   }
-  const special = ctx.tier !== 1;
+  const special = isSpecialTier(ctx.tier);
   return {
     ...li,
     packBase: base,

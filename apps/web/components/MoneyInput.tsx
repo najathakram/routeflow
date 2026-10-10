@@ -18,7 +18,7 @@ import { cn } from "@routeflow/ui/web";
  */
 
 /** Strip anything but digits + one dot (+ optional leading minus); clamp decimal places; "." → "0.". */
-export function sanitizeDecimalText(raw: string, decimals: number, allowNegative = false): string {
+function sanitizeDecimalText(raw: string, decimals: number, allowNegative = false): string {
   const negative = allowNegative && raw.trimStart().startsWith("-");
   let out = "";
   let seenDot = false;

@@ -1,0 +1,152 @@
+{
+  "runId": "wf_2026-09-25-f51-billing-mrr-ledger",
+  "fields": ["tasks", "checkpoints"],
+  "tasks": [
+    {
+      "id": "RC-863",
+      "title": "confirm B863 cause",
+      "type": "root-cause",
+      "files": [],
+      "tests": [],
+      "dependsOn": [],
+      "risk": "HIGH",
+      "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RC-863/brief.md",
+      "rootCause": {
+        "reproduced": true,
+        "causeConfirmed": true,
+        "wrongValueObserved": "activateManualSubscription with billingPeriodDays 365: \"PROBE create.cycle = undefined update.cycle = undefined create.periodEnd-periodStart days = 365\". rollCycles on that row (cycle MONTHLY by schema default, externalPayment true, 2025-01-01 to 2026-01-01): \"PROBE select = {\"tenantId\":true,\"cycle\":true,\"periodEnd\":true} rolled periodStart = 2026-01-01T00:00:00.000Z periodEnd = 2026-02-01T00:00:00.000Z\", when it should be 2027-01-01T00:00:00.000Z.",
+        "note": "I reproduced the bug on the current tree with a throwaway Jest probe. It lives only in the scratchpad (scratchpad/rc863/probe.spec.ts) and I ran it with `--roots` pointed there. No repo files were changed.\n\nThe named cause is correct on both halves:\n1. **Activation never sets `cycle`.** Both branches of the `tenantSubscription.upsert` call in apps/api/src/platform-admin/platform-admin.service.ts (about lines 963-995) leave out `cycle`. I called the real `activateManualSubscription` with `billingPeriodDays: 365` and stubbed dependencies, then captured the upsert arguments: `create.cycle` and `update.cycle` were both `undefined`, and `periodEnd` minus `periodStart` was 365 days. The column defaults to MONTHLY (platform.prisma:47, `cycle BillingCycle @default(MONTHLY)`). So a prepaid annual row is stored as MONTHLY on create and keeps whatever cycle it already had on update.\n2. **The cron rolls by `cycle` only.** `rollCycles` in apps/api/src/billing/billing-cron.service.ts (about lines 484-498) selects only `{tenantId, cycle, periodEnd}`. It never reads `periodStart` or `externalPayment`, and it calls `addCycle(start, s.cycle)`, which adds 1 month unless the cycle is ANNUAL. Run on the real service, a 365-day external row (2025-01-01 to 2026-01-01) rolled to periodEnd 2026-02-01, one month instead of a year. That is exactly the wrong value test-plan T3 predicts.\n\nThe brief's own check doesn't work. `jest -t \"REG-ROLL-MANUAL-ANNUAL\"` can't be \"green today\" because no test by that name exists: grep for MANUAL-ANNUAL and manual-annual under apps/api/src returned nothing. The repro-test task has to write it as REG-B863-ROLL (per the test plan) rather than flip an existing test.\n\nIn the probe, `activateManualSubscription` threw after the upsert because my stub had no `findMany`. That doesn't affect the upsert arguments I captured, since they were recorded before the throw. I did not run the probe for 90- or 180-day periods; by the same code path they would also roll +1 month, but that is inferred, not observed."
+      },
+      "status": "complete",
+      "rounds": 0,
+      "clean": true,
+      "reviewVerdict": null,
+      "reportPath": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RC-863/root-cause.md"
+    },
+    {
+      "id": "RC-864",
+      "title": "confirm B864 cause",
+      "type": "root-cause",
+      "files": [],
+      "tests": [],
+      "dependsOn": [],
+      "risk": "HIGH",
+      "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RC-864/brief.md",
+      "rootCause": {
+        "reproduced": true,
+        "causeConfirmed": true,
+        "wrongValueObserved": "PROBE upserts=[{\"priceOverrideMonthly\":1200,\"basePriceSnapshot\":1200}]\nPROBE emits=[{\"type\":\"plan.changed\",\"payload\":{\"toPlan\":\"SCALE\",\"platformAdmin\":true,\"priceOverrideBackfill\":true},\"amountDelta\":1200},{\"type\":\"plan.changed\",\"payload\":{\"fromPlan\":\"SCALE\",\"toPlan\":\"SCALE\",\"platformAdmin\":true,\"externalActivation\":true},\"amountDelta\":1200}] ledgerSum=2400",
+        "note": "I reproduced the bug on the current tree and the brief's named cause is what produces the wrong value. The source tree was not changed: git status shows only the pre-existing pipeline and doc changes.\n\n**How I reproduced it:** I copied `apps/api/src/platform-admin/platform-admin.service.spec.ts` into the session scratchpad at `rc864/rc864.spec.ts` and rewrote its relative imports as absolute ones. I then added one probe test inside the \"B557 books a compensating delta\" describe block and ran it with a temporary Jest config (`rc864/jest.json`) using the repo's own ts-jest. The probe test and the neighbouring B557 test both passed as tests; the wrong value is in the probe's printed output.\n\n**What the probe does:**\n- Step 1: a TRIAL, PRODUCTION tenant with planKey SCALE and basePriceSnapshot null calls `updateTenantPriceOverride({monthly:1200})`.\n- Result: the snapshot is back-filled to 1200 and PLAN_CHANGED is emitted with amountDelta 1200, even though the tenant is on TRIAL. That is the gate at `platform-admin.service.ts:1439-1440`, which reads no status or class and never calls `isPayingRow`, followed by the unconditional emit at :1455-1462.\n- Step 2: `activateManualSubscription` runs on the same tenant, which now has snapshot 1200.\n- Result: it sees wasPaying=false and isPaying=true, prices the contribution at 1200, and emits a second +1200 (lines 1001-1037). The ledger totals 2400 while the run-rate is 1200. Before the fix the expected result is a single +1200, at activation only.\n\n**Caveats:**\n- The mocks do not keep state between calls. I fed step 2 the post-override row by hand, `{status:TRIAL, subscription:{planKey:SCALE, basePriceSnapshot:1200, discount:0}}`, matching the upsert I saw in step 1.\n- I did not run `reconcilePriceLedger` (BillingService is mocked in this suite). The claim that it does nothing here is from reading the code only: `billing.service.ts` around lines 522-523 returns early when the old monthly equals the new one (1200 = 1200).\n- The brief's probe tag `REG-OVERRIDE-BACKFILL-TRIAL` does not exist yet; grep found nothing in `apps/api/src`. The existing test at spec lines 1144-1165 asserts `amountDelta:1200` without any tenant status, so it will have to change with the fix.\n\nUsed 11 of the 12 allowed tool calls."
+      },
+      "status": "complete",
+      "rounds": 0,
+      "clean": true,
+      "reviewVerdict": null,
+      "reportPath": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RC-864/root-cause.md"
+    },
+    {
+      "id": "RC-865",
+      "title": "confirm B865 cause",
+      "type": "root-cause",
+      "files": [],
+      "tests": [],
+      "dependsOn": [],
+      "risk": "HIGH",
+      "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RC-865/brief.md",
+      "rootCause": {
+        "reproduced": true,
+        "causeConfirmed": true,
+        "wrongValueObserved": "ADMIN stripe create calls: 1 | upsert.create.priceSnapshot: undefined | upsert.update.priceSnapshot: undefined | prisma models touched: [\"tenant\",\"tenantAddon\",\"tenantSubscription\"]  ||  SELF enable emits: [[\"addon.enabled\",24]] | prisma models touched: [\"tenantAddon\",\"$transaction\"]  ||  SELF disable emits (stored snapshot=10, catalog=12, qty=2): [[\"addon.disabled\",-24]]",
+        "note": "I reproduced the bug on the current tree (branch fix/b863-b866-billing-mrr-ledger) with a throwaway Jest probe. The probe lives only in the scratchpad (scratchpad/probe/rc865.spec.ts) and ran through `npx jest --roots <scratchpad>` from apps/api. I changed no repo files.\n\nAdmin path, apps/api/src/billing/addon.service.ts: I called enableAddon(\"t1\",\"msrp\",\"price_x\") with Stripe configured and stripeSubId \"sub_1\".\n- The Stripe subscription item was created (1 call), so the add-on is billed.\n- The upsert at :246-260 has priceSnapshot undefined in both create and update.\n- The only Prisma models the call touched were tenant, tenantAddon and tenantSubscription. There was no billingEvent and no $transaction.\n- The constructor takes 6 arguments (:48-55) and none of them is a BillingEventService.\n- The named cause is confirmed: no priceSnapshot, no emit, no transaction. With a null snapshot, MrrService prices the add-on at $0. That $0 is from the cause-brief (mrr.service.ts:237-239); this probe did not run MrrService.\n\nSelf-serve path, apps/api/src/billing/subscription-mutation.service.ts: I used FORECASTING, a self-service SKU, with catalog price 12 and quantity 2.\n- enableAddon emitted ADDON_ENABLED with amountDelta 24. The only models it read were tenantAddon and $transaction, so there is no tenant-status or isPayingRow check before the emit (:1259-1265). It would book for a TRIAL tenant too.\n- disableAddon on a row with stored priceSnapshot 10 booked -24, which is minus the catalog price (12×2), not -20 from the stored snapshot. This confirms :1322 prices from the catalog and :1324-1329 emits without a gate.\n- These match the test-plan wrong values [24] and -24 for T12/T13.\n\nDiscrepancy: the brief's probe `-t \"REG-ADMIN-ADDON-MRR\"` does not exist at HEAD. A grep of apps/ and packages/ found no match. The cause-brief attributes it to commit 7c3a5d61, which is not on this tree. So I could not run the named probe, and the scratch probe above stands in for it.\n\nNot verified: whether production has any admin add-on rows priced with a stripePriceId (the registry says latent). I did not run anything against a database."
+      },
+      "status": "complete",
+      "rounds": 0,
+      "clean": true,
+      "reviewVerdict": null,
+      "reportPath": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RC-865/root-cause.md"
+    },
+    {
+      "id": "RC-866",
+      "title": "confirm B866 cause",
+      "type": "root-cause",
+      "files": [],
+      "tests": [],
+      "dependsOn": [],
+      "risk": "HIGH",
+      "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RC-866/brief.md",
+      "rootCause": {
+        "reproduced": true,
+        "causeConfirmed": true,
+        "wrongValueObserved": "{\"baseMrr\":408,\"discountTotal\":10,\"mrr\":398,\"byPlan\":[{\"planKey\":\"BUSINESS\",\"tenants\":1,\"baseMrr\":339},{\"planKey\":\"STARTER\",\"tenants\":1,\"baseMrr\":59}],\"sumByPlanBaseMrr\":398}",
+        "note": "I reproduced the bug on the current tree. I wrote a scratch jest spec in the session scratchpad, ran it with `--roots <scratch> --roots <rootDir>` from apps/api, and deleted it afterwards. It fed MrrService.computeOverview two subscription rows: STARTER at base 59 with no discount, and BUSINESS at base 349 with a discount of 10. It had no add-ons. The output shows top-level baseMrr = 408, which is gross (349 + 59). BUSINESS in byPlan shows baseMrr = 339, which is net (349 - 10). The byPlan rows add up to 398. The gap between 408 and 398 is exactly the 10 discount.\n\nThis matches the cause the brief names. In apps/api/src/billing/mrr.service.ts, line 242 has `baseMrr += base;` and never subtracts the discount. Line 249, in the same loop, has `row.baseMrr = roundMoney(row.baseMrr + base - discount);`. Both lines read the same `base` and `discount` values from lines 235-236. No other term makes up the difference.\n\nThe existing tests in apps/api/src/billing/mrr.service.spec.ts still pass on this tree: \"computes MRR = ...\" expects baseMrr 408 and \"breaks MRR down by plan\" expects BUSINESS 339. The run shows 2 passed and 12 skipped. Together they lock in the inconsistency this bug describes.\n\nTwo things I did not do. A first attempt to run the probe with ts-node failed because `@routeflow/pricing/dist` is not built in this worktree, so I switched to jest, which has the moduleNameMapper. I also did not revert line 249 to test the cause by mutation. I tied the gap to that line by arithmetic only: 408 - 398 = 10, the only discount in the fixture. The repo has no changes from me. The git status is the same as the pre-existing snapshot."
+      },
+      "status": "complete",
+      "rounds": 0,
+      "clean": true,
+      "reviewVerdict": null,
+      "reportPath": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/RC-866/root-cause.md"
+    }
+  ],
+  "checkpoints": [
+    {
+      "seq": 2,
+      "alias": "checkpoint:RC-866",
+      "task": {
+        "id": "RC-866",
+        "title": "confirm B866 cause",
+        "type": "root-cause",
+        "files": [],
+        "tests": [],
+        "dependsOn": [],
+        "risk": "HIGH"
+      },
+      "path": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/phases/02-checkpoint-rc-866.json",
+      "written": true
+    },
+    {
+      "seq": 3,
+      "alias": "checkpoint:RC-864",
+      "task": {
+        "id": "RC-864",
+        "title": "confirm B864 cause",
+        "type": "root-cause",
+        "files": [],
+        "tests": [],
+        "dependsOn": [],
+        "risk": "HIGH"
+      },
+      "path": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/phases/02-checkpoint-rc-864.json",
+      "written": true
+    },
+    {
+      "seq": 4,
+      "alias": "checkpoint:RC-865",
+      "task": {
+        "id": "RC-865",
+        "title": "confirm B865 cause",
+        "type": "root-cause",
+        "files": [],
+        "tests": [],
+        "dependsOn": [],
+        "risk": "HIGH"
+      },
+      "path": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/phases/03-checkpoint-rc-865.json",
+      "written": true
+    },
+    {
+      "seq": 4,
+      "alias": "checkpoint:RC-863",
+      "task": {
+        "id": "RC-863",
+        "title": "confirm B863 cause",
+        "type": "root-cause",
+        "files": [],
+        "tests": [],
+        "dependsOn": [],
+        "risk": "HIGH"
+      },
+      "path": ".claude/pipeline/2026-09-25-f51-billing-mrr-ledger/phases/04-checkpoint-rc-863.json",
+      "written": true
+    }
+  ]
+}

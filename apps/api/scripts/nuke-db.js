@@ -1,6 +1,8 @@
-// PRODUCTION GUARD — must be first executable code
+// PRODUCTION GUARD — runs below on the URL this script dials (#2206: it prefers
+// DATABASE_PUBLIC_URL, which the old DATABASE_URL-only check never looked at).
 const { productionGuard } = require("./lib/production-guard");
-productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { assertNoLiveProtectedTenants } = require("./lib/live-target-guard.cjs");
 
 /**
  * Wipe all business data from the database (preserves operator/admin users).
@@ -27,11 +29,17 @@ const dbUrl =
   "postgresql://user:pass@localhost:5432/routeflow_dev";
 const deleteAllUsers = process.argv.includes("--all");
 
-const pool = new Pool({ connectionString: dbUrl });
+// #2206: guard the URL this script actually dials, and dial exactly what was checked.
+// Row 195: productionGuard trusts a host allow-list a tunnel can fake, so this wipe ALSO refuses a database
+// that holds a protected non-test tenant (paying, Stripe-linked or PROTECTED_TENANT_SLUGS).
+const protectedSlugs = loadProtectedSlugs(process.env, dbUrl);
+const target = productionGuard({ requireFlag: "--i-know-this-deletes-everything", dbUrl });
+const pool = new Pool(target);
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
+  await assertNoLiveProtectedTenants(prisma, protectedSlugs);
   console.log("🗑  RouteFlow Database Nuke");
   console.log(`   Database: ${dbUrl.replace(/:([^:@]+)@/, ":***@")}`);
   console.log(

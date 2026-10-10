@@ -101,7 +101,7 @@ const operatorPayload = {
   forcePasswordChange: false,
 };
 
-const buildController = (svc: any) => new OrdersController(svc, {} as any);
+const buildController = (svc: any) => new OrdersController(svc, {} as any, {} as any, {} as any);
 
 const activeOrderFixture = {
   id: "ord-active",
@@ -181,7 +181,12 @@ describe("OrdersController.create — staff merge refuses a unit-aware incoming 
     // foldMergeItems ALONE produces for a unit-labeled incoming item, with no guard in
     // front of it. This is exactly what orders.controller.ts called before this fix.
     const { foldMergeItems } = require("./merge-items");
-    const merged = foldMergeItems([], [{ productId: "prod-2", qty: 3, unitLabel: "Case" } as any]);
+    // foldMergeItems returns { items, livePackFallbackProductIds } (B776/SA-124, merged in
+    // alongside this test) -- was a plain array when this test was first written.
+    const { items: merged } = foldMergeItems(
+      [],
+      [{ productId: "prod-2", qty: 3, unitLabel: "Case" } as any],
+    );
 
     expect(merged).toHaveLength(1);
     // The bug, stated as a value: unitLabel never survives the fold, so

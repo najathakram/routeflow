@@ -21,7 +21,12 @@ export const PageHeader = React.forwardRef<HTMLDivElement, PageHeaderProps>(
         <h2 className="text-2xl font-bold text-navy whitespace-nowrap">{title}</h2>
         {subtitle && <p className="mt-1 text-sm text-navy/70">{subtitle}</p>}
       </div>
-      {action && <div className="shrink-0">{action}</div>}
+      {/* B749/B770: shrink-0 with no max-w-full meant this wrapper never actually shrank
+          below the action content's own natural width, so a caller's own `flex-wrap` on
+          that content never got a narrow-enough box to wrap INTO — the class was present
+          but inert. max-w-full lets the wrapper (and this row) actually narrow at a small
+          viewport, so wrap-enabled action content can wrap as its own classes intend. */}
+      {action && <div className="max-w-full shrink-0">{action}</div>}
     </div>
   ),
 );

@@ -1,4 +1,4 @@
-import { formatQtySplit } from "@routeflow/pricing";
+import { formatQtySplit, normalizeBoxesPieces, type SellLevel } from "@routeflow/pricing";
 
 /**
  * Pure logic behind "add a product to the order" in `CreateOrderModal` (quick-order extras,
@@ -30,6 +30,21 @@ export function newLineQty(
     : { qty: n, boxes: undefined, pieces: undefined };
 }
 
+/**
+ * #2717 M4a-1 (SA-580 R1/R4): the qty fields for a NEW line born from a scan that carried `level`.
+ * A UNIT scan on a boxed product (upb > 1) is ONE loose piece — `{qty:1, boxes:0, pieces:1}` — never
+ * a hidden case. Every other case (BOX, or upb <= 1 where there is no box/unit distinction) is
+ * today's `newLineQty`.
+ */
+export function newLineQtyForLevel(
+  unitsPerBox: number | undefined,
+  level: SellLevel,
+  n: number,
+): { qty: number; boxes?: number; pieces?: number } {
+  if (level === "UNIT" && unitsPerBox && unitsPerBox > 1) return { qty: n, boxes: 0, pieces: n };
+  return newLineQty(unitsPerBox, n);
+}
+
 interface QtyLine {
   qty: number;
   unitsPerBox?: number;
@@ -49,6 +64,20 @@ export function mergeQtyIntoLine<T extends QtyLine>(line: T, n: number): T {
     return { ...line, boxes, pieces, qty: boxes * line.unitsPerBox + pieces };
   }
   return { ...line, qty: line.qty + n };
+}
+
+/**
+ * Adds `n` loose PIECES to an existing line (a UNIT scan): pieces + n, rolled into boxes by
+ * `normalizeBoxesPieces` so `pieces < unitsPerBox` always holds and the line states boxes AND pieces.
+ * A non-boxed line (no pack, or upb <= 1) just gains `n`, exactly as `mergeQtyIntoLine` (R4).
+ */
+export function mergePieceIntoLine<T extends QtyLine>(line: T, n: number): T {
+  if (line.unitsPerBox && line.unitsPerBox > 1) {
+    const total = (line.boxes ?? 0) * line.unitsPerBox + (line.pieces ?? 0) + n;
+    const norm = normalizeBoxesPieces({ qty: total, unitsPerBox: line.unitsPerBox });
+    return { ...line, boxes: norm.boxes ?? 0, pieces: norm.pieces ?? 0, qty: norm.qty };
+  }
+  return mergeQtyIntoLine(line, n);
 }
 
 /** The toast body after a merge, e.g. "Sample Cola — now 3" / "Sample Cola — now 2 cases + 3 pcs". */

@@ -14,18 +14,29 @@
 //          payment counters, device tokens, refresh tokens, password reset
 //          tokens, driver locations.
 //
-// Usage:
-//   node apps/api/scripts/wipe-tenant-fresh-start.js <tenant-slug>
-//   node apps/api/scripts/wipe-tenant-fresh-start.js <tenant-slug> --execute
+// Usage (#2500, SA-481 — exactly ONE path flag; neither is a usage error, exit 2):
+//   Test tenant, local database (the only test-tenant path):
+//     node apps/api/scripts/wipe-tenant-fresh-start.js <test-slug> --local [--execute]
+//   Live tenant, client-requested fresh start — OWNER-RUN ONLY, Railway proxy only:
+//     railway run --service postgres node apps/api/scripts/backup-production.mjs pre-fresh-start-live
+//     railway run --service postgres node apps/api/scripts/wipe-tenant-fresh-start.js <slug> \
+//       --live-tenant-override --exclude-tenant <slug,...> [--execute --backup-taken]
 //
-// Without --execute the script prints row counts only (dry run).
-// With --execute the script requires the operator to type the slug back to confirm,
-// then runs all deletes inside one Prisma $transaction.
+// Dry run (row counts only) unless --execute. With --execute the operator types the slug back,
+// then every delete runs inside one Prisma $transaction.
 //
-// Test-tenant policy: only approved test tenants may be wiped. Wiping a live
-// tenant (e.g. a client requesting a fresh start before go-live) additionally
-// requires the explicit --live-tenant-override flag on top of the dry-run
-// default and the type-back confirmation.
+// PROTECTED targets (#2639, SA-547, row 195): a paying tenant (the MRR paying set), one whose
+// subscription is linked to Stripe, or one named in PROTECTED_TENANT_SLUGS is refused in EVERY mode
+// unless `--allow-protected <tenantId> --backup-taken` AND the operator types `ALLOW PROTECTED
+// <tenantId>` at a real terminal (stdin and stdout both a TTY; no argv/env form). The retired
+// --allow-paying-tenant flag is an unknown argument.
+//
+// ONE target: the database URL is resolved once (lib/fresh-start-target.mjs) and that same value
+// feeds the pg Pool, the redacted "DB:" banner (with its source) and the guard — the banner can
+// never name a different database than the one wiped. --local accepts only a provably-local target
+// (production-guard.js); --live-tenant-override dials only the Railway proxy variables, never a
+// stray DATABASE_URL. --exclude-tenant names tenants that are never wiped in any mode (supplied at
+// run time, never written into git) and is required on the live path.
 
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
@@ -34,34 +45,25 @@ const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 const { isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
+const { classifyDbTarget } = require("./lib/production-guard");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const {
+  assertWritableTenant,
+  confirmProtectedOverride,
+  ProtectedTenantError,
+} = require("./lib/live-target-guard.cjs");
 
-const dbUrl =
-  process.env.DATABASE_PUBLIC_URL ||
-  process.env.DATABASE_URL ||
-  "postgresql://user:pass@localhost:5432/routeflow_dev";
+const USAGE =
+  "Usage: node wipe-tenant-fresh-start.js <test-slug> --local [--execute]\n" +
+  "   or (owner-run, under railway run): <slug> --live-tenant-override --exclude-tenant <slug,...> " +
+  "[--execute --backup-taken]\n" +
+  "   A paying, Stripe-linked or PROTECTED_TENANT_SLUGS target is refused in every mode unless\n" +
+  "   --allow-protected <tenantId> --backup-taken at a real terminal (plus a typed phrase).";
 
-const pool = new Pool({ connectionString: dbUrl });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
-
-const slug = process.argv[2];
-const execute = process.argv.includes("--execute");
-const liveTenantOverride = process.argv.includes("--live-tenant-override");
-
-if (!slug) {
-  console.error("Missing tenant slug. Usage: node wipe-tenant-fresh-start.js <slug> [--execute]");
-  process.exit(1);
-}
-
-if (!isTestTenant(slug) && !liveTenantOverride) {
-  console.error(
-    `Test-tenant policy: "${slug}" is not an approved test tenant.\n` +
-      "Wiping a LIVE tenant requires the explicit --live-tenant-override flag\n" +
-      "(and still needs --execute plus the type-back confirmation).\n" +
-      'See CLAUDE.md "Test tenants & real-client data (policy)".',
-  );
-  process.exit(1);
-}
+// Assigned once main() has resolved THE target; nothing dials before that.
+let prisma;
+let slug;
+let execute;
 
 // Ordered children-first for explicit FK safety. Each entry is the Prisma model
 // name as it appears on the client (lowerCamel of the schema model name).
@@ -120,6 +122,9 @@ const NUKE_MODELS = [
 
   // 3. Master data the user explicitly wants gone.
   "customer",
+  // #2717 M2 (SA-594): Recipe/RecipeComponent hold RESTRICT FKs into Product — children first.
+  "recipeComponent",
+  "recipe",
   "product",
   "supplier",
   "expenseCategory",
@@ -173,11 +178,12 @@ function printCounts(rows) {
   return total;
 }
 
-async function confirm(slugToType) {
+async function confirm(slugToType, what = "the tenant slug") {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     rl.question(
-      `\nType the tenant slug "${slugToType}" exactly to proceed (or anything else to abort): `,
+      // A live tenant's slug is a client identifier: ask for it without echoing it back.
+      `\nType ${what}${isTestTenant(slugToType) ? ` "${slugToType}"` : ""} exactly to proceed (or anything else to abort): `,
       (answer) => {
         rl.close();
         resolve(answer.trim() === slugToType);
@@ -289,13 +295,98 @@ async function nuke(tenantId) {
 }
 
 (async () => {
-  const dbUrl = (process.env.DATABASE_URL || "").replace(/:\/\/[^@]*@/, "://***:***@");
-  console.log(`\nDB:     ${dbUrl}`);
-  console.log(`Tenant: ${slug}`);
+  const { parseFreshStartArgs, planFreshStart, checkExcludedTenants, checkProtectedTarget } =
+    await import("./lib/fresh-start-target.mjs");
+  const { resolveDatabaseUrl, redactUrl } = await import("./lib/railway-db-url.mjs");
+  const args = parseFreshStartArgs(process.argv.slice(2));
+  if (args.error) {
+    console.error(`${args.error}\n${USAGE}`);
+    process.exit(2);
+  }
+  // #2500: THE target — one resolution feeds the Pool, the banner and the guard below.
+  const target = planFreshStart(args, process.env, {
+    resolve: resolveDatabaseUrl,
+    redact: redactUrl,
+    classifyLocal: (url, env) => classifyDbTarget(url, env),
+    isTestTenant,
+  });
+  if (!target.ok) {
+    console.error(target.reason);
+    if (target.exit === 2) console.error(USAGE);
+    process.exit(target.exit);
+  }
+  // Row 195: the operator-named protected slugs, validated against the URL this run will dial.
+  let protectedSlugs;
+  try {
+    protectedSlugs = loadProtectedSlugs(process.env, target.url);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+  slug = args.slug;
+  execute = args.execute;
+  prisma = new PrismaClient({ adapter: new PrismaPg(new Pool(target.poolConfig)) });
+
+  console.log(`\n${target.banner}`);
+  if (target.backupCommand) console.log(`Backup: ${target.backupCommand}`);
+  // A slug is a client identifier: echo it only for an approved test tenant.
+  console.log(`Tenant: ${isTestTenant(slug) ? slug : "(live — see id below)"}`);
   console.log(`Mode:   ${execute ? "EXECUTE (DESTRUCTIVE)" : "DRY-RUN (counts only)"}\n`);
 
   const tenant = await getTenant();
-  console.log(`Resolved tenant: ${tenant.name} (id=${tenant.id})\n`);
+  // #2639 (lead's Opus HIGH-2): ids only in every output — a business name is a client identifier.
+  console.log(`Resolved tenant: id=${tenant.id}\n`);
+
+  // #2508 F1: every excluded slug must name a tenant in THIS database (same client), and the
+  // target is refused by id, all BEFORE any count or write.
+  const found = args.exclude.length
+    ? await prisma.tenant.findMany({
+        where: { slug: { in: args.exclude } },
+        select: { id: true, slug: true, name: true },
+      })
+    : [];
+  const exclusion = checkExcludedTenants({ exclude: args.exclude, found, tenant });
+  if (!exclusion.ok) {
+    console.error(exclusion.reason);
+    await prisma.$disconnect();
+    process.exit(1);
+  }
+  for (const line of exclusion.lines) console.log(line);
+  if (exclusion.lines.length) console.log("");
+
+  // #2639 / SA-547: a paying or Stripe-linked target is refused in EVERY mode unless
+  // --allow-paying-tenant — read from THIS database (same client), before any count or write.
+  const sub = await prisma.tenantSubscription.findUnique({
+    where: { tenantId: tenant.id },
+    select: { planKey: true, stripeSubId: true },
+  });
+  const guard = checkProtectedTarget({ tenant, sub, protectedSlugs });
+  let override = null;
+  if (guard.protected) {
+    try {
+      override = await confirmProtectedOverride({
+        tenantId: tenant.id,
+        argv: process.argv.slice(2),
+      });
+    } catch (err) {
+      console.error(guard.reason);
+      if (err instanceof ProtectedTenantError) console.error(err.message);
+      else console.error("override check failed");
+      await prisma.$disconnect();
+      process.exit(1);
+    }
+  }
+  try {
+    assertWritableTenant(tenant, sub, protectedSlugs, { allowProtected: override });
+  } catch (err) {
+    console.error(err.message);
+    await prisma.$disconnect();
+    process.exit(1);
+  }
+  if (guard.protected)
+    console.log(
+      `PROTECTED (${guard.arm}) — operator override confirmed for tenant ${tenant.id}.\n`,
+    );
 
   console.log("Row counts in nuke scope:");
   const rows = await countAll(tenant.id);
@@ -327,6 +418,6 @@ async function nuke(tenantId) {
   await prisma.$disconnect();
 })().catch(async (err) => {
   console.error("\nFATAL:", err);
-  await prisma.$disconnect();
+  if (prisma) await prisma.$disconnect();
   process.exit(99);
 });

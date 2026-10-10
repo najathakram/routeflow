@@ -128,6 +128,11 @@ function quoteResponse(chunks: InlineReturnQuoteChunk[]): InlineReturnQuoteRespo
     categoryTax: chunks.reduce((s, c) => s + c.categoryTax, 0),
     total: chunks.reduce((s, c) => s + c.subtotal + c.taxAmount + c.categoryTax, 0),
     productBreakdown: {},
+    canRefund: false,
+    paidInFull: false,
+    paidMethods: [],
+    paidWithStoreCredit: false,
+    customerIsWalkIn: false,
   };
 }
 
@@ -358,6 +363,65 @@ describe("RecordInlineReturnDialog — refusals render the API's own message (AC
     });
     await screen.findByText("A different return already used this capture key");
   });
+
+  // #2647: a key-reused 409 means the earlier capture WAS recorded: link it, clear the draft.
+  it("#2647: a key-reused 409 links the recorded return and starts a fresh attempt (new returnKey)", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("10");
+    resolveNextQuote(quoteResponse([chunk()]));
+    await screen.findByText(/issue credit note and receive goods/i);
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    const firstKey = captureMutate.mock.calls[0][0].returnKey;
+
+    rejectNextCapture({
+      response: {
+        status: 409,
+        data: {
+          code: "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+          returnId: "ret-9",
+          returnNumber: "RET-2026-0042",
+          message:
+            "Return RET-2026-0042 was already recorded with this capture key, with different items.",
+        },
+      },
+    });
+    const link = await screen.findByTestId("inline-return-recorded-link");
+    expect(link).toHaveTextContent("Open RET-2026-0042");
+    expect(link).toHaveAttribute("href", "/returns/ret-9");
+
+    // Back lands on a FRESH draft: the section re-seeded (no quote, the typed qty cleared).
+    fireEvent.click(screen.getByRole("button", { name: /back/i }));
+    expect(
+      screen.queryByRole("button", { name: /issue credit note and receive goods/i }),
+    ).toBeNull();
+    expect((screen.getByLabelText(/qty \(pieces\)/i) as HTMLInputElement).value).not.toBe("10");
+    // and a new attempt is a NEW capture key (the old one was spent on the recorded return)
+    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    resolveNextQuote(quoteResponse([chunk()]));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /issue credit note and receive goods/i }),
+    );
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(2));
+    expect(captureMutate.mock.calls[1][0].returnKey).not.toBe(firstKey);
+  });
+
+  it("#2647: any other 409 shows its message but no 'Open RET' link", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("10");
+    resolveNextQuote(quoteResponse([chunk()]));
+    await screen.findByText(/issue credit note and receive goods/i);
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    rejectNextCapture({
+      response: { status: 409, data: { code: "INLINE_RETURN_KEY_CONFLICT", message: "Taken" } },
+    });
+    await screen.findByText("Taken");
+    expect(screen.queryByTestId("inline-return-recorded-link")).toBeNull();
+  });
 });
 
 describe("RecordInlineReturnDialog — 403 copy (AC6)", () => {
@@ -510,5 +574,286 @@ describe("RecordInlineReturnDialog — office capture never sends routeRunStopId
     await screen.findByText(/return recorded/i);
     expect(screen.queryByText(/held/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/approve/i)).not.toBeInTheDocument();
+  });
+});
+
+// ─── #2097 — the result's credit amount, and the excess option across a re-quote ───────────
+
+const captureResult = (over: Record<string, unknown> = {}) => ({
+  id: "ret-1",
+  returnNumber: "R-1",
+  orderId: "order-1",
+  customerId: "cust-1",
+  creditNoteId: "cn-1",
+  status: "REFUNDED",
+  items: [],
+  ...over,
+});
+
+async function captureWith(result: unknown) {
+  await openToStep1();
+  await enterQtyAndGetQuote("10");
+  resolveNextQuote(quoteResponse([chunk()]));
+  await screen.findByText(/issue credit note and receive goods/i);
+  fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+  fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+  await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+  resolveNextCapture(result);
+  await screen.findByText(/return recorded/i);
+}
+
+describe("RecordInlineReturnDialog — the credit amount on the result (#2097)", () => {
+  it("shows the credit amount when refundAmount arrives as a Decimal STRING (what the API sends)", async () => {
+    await captureWith(captureResult({ refundAmount: "22.5000" }));
+    expect(screen.getByText("Amount")).toBeInTheDocument();
+    expect(screen.getByText("$22.50")).toBeInTheDocument();
+  });
+
+  it("still shows a numeric refundAmount", async () => {
+    await captureWith(captureResult({ refundAmount: 22 }));
+    expect(screen.getByText("$22.00")).toBeInTheDocument();
+  });
+
+  it.each([[null], [undefined], [""], ["not-a-number"]])(
+    "shows no Amount row for an absent or unparseable refundAmount (%p)",
+    async (refundAmount) => {
+      await captureWith(captureResult({ refundAmount }));
+      expect(screen.queryByText("Amount")).not.toBeInTheDocument();
+      expect(screen.queryByText("$NaN")).not.toBeInTheDocument();
+    },
+  );
+});
+
+describe("RecordInlineReturnDialog — the excess option resets on every re-quote (#2097)", () => {
+  it("after option 3, going Back and quoting again starts on 'credit at current price'", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("16");
+    const covered = chunk({ sourceOrderId: "order-newest", pieces: 10 });
+    const excess = chunk({
+      sourceOrderId: null,
+      sourceInvoiceItemId: null,
+      pieces: 6,
+      subtotal: 15,
+    });
+    resolveNextQuote(quoteResponse([covered, excess]));
+    await screen.findByText(/not on any invoice/i);
+
+    fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    resolveNextQuote(quoteResponse([covered]));
+    await waitFor(() => expect(screen.queryByText(/not on any invoice/i)).not.toBeInTheDocument());
+
+    // Back to the items, raise the quantity, quote again: the new quote credits the excess.
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+    await screen.findByText(/what came back/i);
+    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(3));
+    resolveNextQuote(
+      quoteResponse([
+        covered,
+        chunk({ sourceOrderId: null, sourceInvoiceItemId: null, pieces: 10, subtotal: 25 }),
+      ]),
+    );
+    await screen.findByText(/not on any invoice/i);
+
+    // The highlighted option must match what the quote does: it credits the excess.
+    expect(screen.getByRole("radio", { name: /credit at current price/i })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /return only what was bought/i })).not.toBeChecked();
+  });
+
+  it("picking option 3 sticks through the re-quote it triggers: still checked when that quote still shows an excess, and capture sends the covered pieces", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("16");
+    const covered = chunk({ sourceOrderId: "order-newest", pieces: 10 });
+    const excess = chunk({
+      sourceOrderId: null,
+      sourceInvoiceItemId: null,
+      pieces: 6,
+      subtotal: 15,
+    });
+    resolveNextQuote(quoteResponse([covered, excess]));
+    await screen.findByText(/not on any invoice/i);
+
+    fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    // The re-quote comes back still carrying a (smaller) excess, so the radios stay on screen: the
+    // pick must not have been reset by the re-quote it triggered.
+    resolveNextQuote(
+      quoteResponse([
+        covered,
+        chunk({ sourceOrderId: null, sourceInvoiceItemId: null, pieces: 2, subtotal: 5 }),
+      ]),
+    );
+    await screen.findByText(/not on any invoice/i);
+    expect(screen.getByRole("radio", { name: /return only what was bought/i })).toBeChecked();
+    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    expect(captureMutate.mock.calls[0][0].items).toEqual([
+      expect.objectContaining({ productId: "prod-1", pieces: 10 }),
+    ]);
+  });
+
+  it("a FAILED option-3 re-quote puts the pick back: Back shows the old quote with the excess AND 'credit at current price' checked", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("16");
+    const covered = chunk({ sourceOrderId: "order-newest", pieces: 10 });
+    const excess = chunk({
+      sourceOrderId: null,
+      sourceInvoiceItemId: null,
+      pieces: 6,
+      subtotal: 15,
+    });
+    resolveNextQuote(quoteResponse([covered, excess]));
+    await screen.findByText(/not on any invoice/i);
+
+    fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    rejectNextQuote({ response: { status: 500, data: { message: "Quote failed" } } });
+    await screen.findByText("Quote failed");
+
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+    await screen.findByText(/not on any invoice/i); // the old quote, excess still in
+    expect(screen.getByRole("radio", { name: /credit at current price/i })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /return only what was bought/i })).not.toBeChecked();
+  });
+
+  it("a FAILED Step-1 quote clears the old quote: Back returns to the items, never to a quote that no longer matches them", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("10");
+    resolveNextQuote(quoteResponse([chunk()]));
+    await screen.findByText(/issue credit note and receive goods/i);
+
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+    await screen.findByText(/what came back/i);
+    fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    rejectNextQuote({ response: { status: 500, data: { message: "Quote failed" } } });
+    await screen.findByText("Quote failed");
+
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+    await screen.findByText(/what came back/i);
+    expect(
+      screen.queryByRole("button", { name: /issue credit note and receive goods/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("RecordInlineReturnDialog — B735: a parked ledger reversal must be visible", () => {
+  async function captureToSuccess(response: unknown) {
+    await openToStep1();
+    await enterQtyAndGetQuote("10");
+    resolveNextQuote(quoteResponse([chunk()]));
+    await screen.findByText(/issue credit note and receive goods/i);
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    resolveNextCapture(response);
+    await screen.findByText(/return recorded/i);
+  }
+
+  it("REG-B735-web-dialog-parked-warning: a response carrying parkedReversals renders a visible warning naming the piece count, heading unchanged", async () => {
+    await captureToSuccess({
+      id: "ret-1",
+      returnNumber: "R-1",
+      orderId: "order-1",
+      customerId: "cust-1",
+      status: "RECEIVED",
+      parkedReversals: { count: 2, pieces: 5 },
+      items: [],
+    });
+
+    const warning = screen.getByTestId("inline-return-parked-warning");
+    expect(warning).toHaveTextContent(/parked/i);
+    expect(warning).toHaveTextContent("5");
+    // Operator words: what happened, why, the consequence, and the next step.
+    expect(warning).toHaveTextContent(/pack size is unknown/i);
+    expect(warning).toHaveTextContent(/cannot be filed until/i);
+    expect(warning).toHaveTextContent(/next step/i);
+    // Still the same heading and shape as any other success — this is additive, not a
+    // replacement UI (that distinction is what separates B735 from a DRIVER_CAP hold).
+    expect(screen.getByText(/return recorded/i)).toBeInTheDocument();
+  });
+
+  it("REG-B735-web-dialog-no-field-no-warning: a response with no parkedReversals field (or null) renders no warning", async () => {
+    await captureToSuccess({
+      id: "ret-1",
+      returnNumber: "R-1",
+      orderId: "order-1",
+      customerId: "cust-1",
+      status: "RECEIVED",
+      parkedReversals: null,
+      items: [],
+    });
+
+    expect(screen.queryByTestId("inline-return-parked-warning")).not.toBeInTheDocument();
+    expect(screen.queryByText(/parked/i)).not.toBeInTheDocument();
+  });
+
+  it("REG-B735-web-dialog-absent-field-no-claim: an ABSENT parkedReversals (server could not check) renders no warning and no 'clean' claim", async () => {
+    await captureToSuccess({
+      id: "ret-1",
+      returnNumber: "R-1",
+      orderId: "order-1",
+      customerId: "cust-1",
+      status: "RECEIVED",
+      items: [],
+    });
+
+    expect(screen.queryByTestId("inline-return-parked-warning")).not.toBeInTheDocument();
+    expect(screen.queryByText(/ledger|clean|reconciled/i)).not.toBeInTheDocument();
+  });
+
+  it("PIN-B735-web-dialog-replay-shows-warning-both-times: a retry of a parked capture must not lose the warning on the replay response", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("10");
+    resolveNextQuote(quoteResponse([chunk()]));
+    await screen.findByText(/issue credit note and receive goods/i);
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+
+    // First attempt: network failure AFTER the server actually committed and parked (the
+    // dialog never learns this — it only sees the dropped connection).
+    rejectNextCapture({ response: { status: 500, data: { message: "Network error" } } });
+    await screen.findByText("Network error");
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+    await screen.findByText(/issue credit note and receive goods/i);
+    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(2));
+
+    // The retry replays the SAME returnKey — the server's fresh-DB-read design (B735) means
+    // the replay response still carries the park, unlike a value threaded only through the
+    // original reversal call.
+    expect(captureMutate.mock.calls[1][0].returnKey).toBe(captureMutate.mock.calls[0][0].returnKey);
+    resolveNextCapture({
+      id: "ret-1",
+      returnNumber: "R-1",
+      orderId: "order-1",
+      customerId: "cust-1",
+      status: "RECEIVED",
+      parkedReversals: { count: 1, pieces: 3 },
+      items: [],
+    });
+    await screen.findByText(/return recorded/i);
+    expect(screen.getByTestId("inline-return-parked-warning")).toHaveTextContent("3");
+  });
+
+  it("PIN-B735-web-dialog-holdreason-still-plain: a DRIVER_CAP hold response with parkedReversals: null still shows plain success, no held/approve/parked text", async () => {
+    await captureToSuccess({
+      id: "ret-1",
+      returnNumber: "R-1",
+      orderId: "order-1",
+      customerId: "cust-1",
+      holdReason: "DRIVER_CAP",
+      heldAmount: 22,
+      status: "RECEIVED",
+      parkedReversals: null,
+      items: [],
+    });
+
+    expect(screen.queryByText(/held/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/approve/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("inline-return-parked-warning")).not.toBeInTheDocument();
   });
 });

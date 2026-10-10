@@ -33,6 +33,7 @@ import { StatementPdfService } from "../buyer/statement-pdf.service";
 import { PortalInviteDto } from "../buyer/dto/portal-invite.dto";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
+import { UpdateBuyerProfileDto } from "../buyer/dto/update-buyer-profile.dto";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
@@ -128,7 +129,7 @@ export class CustomersController {
 
   @Patch("me")
   @Roles(UserRole.CUSTOMER)
-  updateMyProfile(@CurrentUser() user: JwtPayload, @Body() dto: UpdateCustomerDto) {
+  updateMyProfile(@CurrentUser() user: JwtPayload, @Body() dto: UpdateBuyerProfileDto) {
     return this.customersService.updateMyProfile(user, dto);
   }
 
@@ -425,8 +426,12 @@ export class CustomersController {
   @Post(":id/restore")
   @Roles(UserRole.OPERATOR)
   @HttpCode(200)
-  restore(@Param("id") id: string, @Body() body?: { status?: string; username?: string }) {
-    return this.customersService.restoreCustomer(id, body?.status, body?.username);
+  restore(
+    @Param("id") id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() body?: { status?: string; username?: string },
+  ) {
+    return this.customersService.restoreCustomer(id, body?.status, body?.username, user.sub);
   }
 
   // ─── Suggest buyer account merge ──────────────────────────────────────────

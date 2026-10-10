@@ -17,20 +17,36 @@ const editItemsSrc = readFileSync(
 );
 // B775/SA-108: a re-scan's merge-into-existing-entry transform (applyPickToDraft)
 // moved out of this screen into the pure lib, so its unit-guard is pinned there.
+const adapterSrc = readFileSync(join(__dirname, "..", "lib", "pending-unit-adapter.ts"), "utf8"); // #2865: the add moved here
 const editItemsDraftSrc = readFileSync(join(__dirname, "..", "lib", "edit-items-draft.ts"), "utf8");
 
 describe("NewOrderScreen.tsx routes every +/- through stepLineQty (create flow)", () => {
-  it("addOne/removeOne call stepLineQty, never the raw pack box math", () => {
-    expect(newOrderSrc).toMatch(/stepLineQty\(prev, 1, isBoxed, upb\)/);
-    expect(newOrderSrc).toMatch(/stepLineQty\(prev, -1, isBoxed, upb\)/);
+  it("addOne/removeOne route through the unit-aware writers, never the raw pack box math", () => {
+    // addOne goes through addScannedLevelToLine (SA-580: the scanned level decides), which itself
+    // steps a unit line's COUNT — pinned in the next test.
+    expect(adapterSrc).toMatch(
+      /addScannedLevelToLine\(cur \?\? \{ qty: 0 \}, a\.level, a\.upb > 1, a\.upb\)/,
+    );
+    expect(newOrderSrc).toMatch(/stepLineQty\(prev, -1, upbNum\(id\) > 1, upbNum\(id\)\)/);
     // incrementLine/decrementLine are no longer imported or called directly anywhere in this
     // screen — every case a unit-aware line could reach them is gone, not just guarded.
     expect(newOrderSrc).not.toMatch(/[^.]\bincrementLine\(/);
     expect(newOrderSrc).not.toMatch(/\bdecrementLine\(/);
   });
 
-  it("the remaining incrementLinePiece call (a PIECE-barcode scan) is unit-guarded", () => {
-    expect(newOrderSrc).toMatch(/kind === "piece" && !isUnitLine\(prev\)/);
+  it("a scan's level goes through addScannedLevelToLine, which steps a unit line's COUNT (never box math)", () => {
+    expect(adapterSrc).toMatch(
+      /addScannedLevelToLine\(cur \?\? \{ qty: 0 \}, a\.level, a\.upb > 1, a\.upb\)/,
+    );
+    const src = readFileSync(join(__dirname, "..", "lib", "sale-line.ts"), "utf8");
+    const body = src.slice(
+      src.indexOf("export function addScannedLevelToLine"),
+      src.indexOf("export function decrementLine"),
+    );
+    // SA-085f one qty step: the unit-line/BOX branch IS stepLineQty(+1), never re-implemented inline.
+    expect(body).toMatch(/stepLineQty\(prev, 1, isBoxed, unitsPerBox\)/);
+    expect(body).not.toMatch(/\(prev\.qty \?\? 0\) \+ 1/);
+    expect(body).not.toMatch(/incrementLine\(/);
   });
 
   it("the tray sends a unit line's typed total through setQty, never setUnits", () => {
@@ -64,7 +80,7 @@ describe("edit-items.tsx routes every +/- through unit-aware helpers (edit flow)
   });
 
   it("a piece-code scan on an already unit-sold line confirms before committing (SA-085i)", () => {
-    expect(editItemsSrc).toMatch(/kind === "piece" && existingLabel/);
+    expect(editItemsSrc).toMatch(/level === "UNIT" && existingLabel/);
     expect(editItemsSrc).toMatch(/confirm\(/);
   });
 });

@@ -47,11 +47,7 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
   let gateway: jest.Mocked<
     Pick<
       RouteFlowGateway,
-      | "emitStopCompleted"
-      | "emitOrderCreated"
-      | "emitOrderStatusChanged"
-      | "emitLowStock"
-      | "emitToDriver"
+      "emitStopCompleted" | "emitOrderCreated" | "emitOrderStatusChanged" | "emitToDriver"
     >
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
@@ -78,7 +74,6 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
       emitStopCompleted: jest.fn(),
       emitOrderCreated: jest.fn(),
       emitOrderStatusChanged: jest.fn(),
-      emitLowStock: jest.fn(),
       emitToDriver: jest.fn(),
     };
 
@@ -131,7 +126,7 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
       ...prisma,
       routeRunStop: {
         ...prisma.routeRunStop,
-        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
       },
       routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
@@ -227,6 +222,18 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
     );
     prisma.driver.findFirst.mockResolvedValue(null);
     const tx = txFor();
+    // SA-345a: the recompute only rewrites a line that HAS rows (a legacy line's column is left
+    // alone), so give it the row a real completion leaves behind — this stop's own, hence
+    // excluded from delivered-so-far at the fit-check and counted by the recompute.
+    tx.deliveryMutation.findMany.mockResolvedValue([
+      {
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        routeRunStopId: "stop-1",
+        type: "DELIVERED",
+        quantityDelivered: 5,
+      },
+    ]);
     prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({ id: "stop-1", status: "COMPLETED" });
 
     for (const q of [5, 3]) {
@@ -265,7 +272,7 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
         operatorPayload,
       ),
     ).rejects.toThrow(BadRequestException);
-    expect(tx.routeRunStop.update).not.toHaveBeenCalled(); // refused before the FIRST write
+    expect(tx.routeRunStop.updateMany).not.toHaveBeenCalled(); // refused before the FIRST write
     expect(tx.deliveryMutation.create).not.toHaveBeenCalled();
   });
 
@@ -335,7 +342,7 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
     it("the foreign-stop and over-qty refusals name the offending item", async () => {
       arrange([
         { id: "oi-a", orderId: "ord-OTHER", qty: 5 },
-        { id: "oi-b", orderId: "ord-1", qty: 2 },
+        { id: "oi-b", orderId: "ord-1", qty: 2, product: { name: "Widget" } },
       ]);
       const foreign: any = await service
         .completeWithPayment(
@@ -347,6 +354,8 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
         .catch((e) => e);
       expect(foreign.message).toContain("oi-a");
 
+      // SA-151: the over-qty refusal is driver-readable now — it names the
+      // product, not the raw orderItemId (payment.tsx surfaces this verbatim).
       const over: any = await service
         .completeWithPayment(
           "run-1",
@@ -355,7 +364,8 @@ describe("RoutesService — delivery lines must belong to this stop and fit the 
           operatorPayload,
         )
         .catch((e) => e);
-      expect(over.message).toContain("oi-b");
+      expect(over.message).toContain("Widget");
+      expect(over.message).toContain("2 left");
     });
   });
 });

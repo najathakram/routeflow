@@ -81,3 +81,33 @@ describe("CaptureInlineReturnDto — SA-128/B814: boxes/pieces required, bare qt
     expect(errors).toHaveLength(0);
   });
 });
+
+describe("#2695: the credit price override fields", () => {
+  const withOverride = (item: Record<string, unknown>) => ({
+    ...VALID_BASE,
+    items: [{ ...VALID_BASE.items[0], ...item }],
+  });
+
+  it("accepts whole-cent prices that are inexact in floats (19.99, 1.10, 0.07)", async () => {
+    for (const creditUnitPrice of [19.99, 1.1, 0.07, 0]) {
+      expect(await errorsFor(withOverride({ creditUnitPrice, overrideReason: "x" }))).toHaveLength(
+        0,
+      );
+    }
+  });
+
+  it("trims the reason BEFORE the 200-char limit, and stores it trimmed", async () => {
+    const padded = `  ${"x".repeat(200)}  `;
+    expect(
+      await errorsFor(withOverride({ creditUnitPrice: 1, overrideReason: padded })),
+    ).toHaveLength(0);
+    expect(
+      await errorsFor(withOverride({ creditUnitPrice: 1, overrideReason: "x".repeat(201) })),
+    ).not.toHaveLength(0);
+    const dto = plainToInstance(
+      CaptureInlineReturnDto,
+      withOverride({ creditUnitPrice: 1, overrideReason: " dented " }),
+    );
+    expect((dto.items[0] as { overrideReason?: string }).overrideReason).toBe("dented");
+  });
+});

@@ -59,6 +59,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { AddonService } from "./addon.service";
+import { fakeTenantAddonStore } from "../testing/fake-tenant-addon-store";
 
 beforeEach(() => {
   lockQueues.clear();
@@ -81,17 +82,40 @@ interface Opts {
    *  `entitlement-authority.requires.spec.ts`, so this suite only needs to prove AddonService
    *  calls the shared check with the right (translated) key and surfaces its rejection. */
   assertFeatureRequiresMet?: jest.Mock;
+  /** B865 / SA-277: the tenant row `emitAddonDelta` reads INSIDE the tx to decide whether an
+   *  enable/disable books a ledger delta (status/class/deletedAt/subscription.planKey — the
+   *  `isPayingRow` shape). Defaults to a paying (ACTIVE/PRODUCTION) row so the pre-existing
+   *  priced-enable pins (T8/T9/T15, B342) keep booking unless a test overrides it. */
+  tenantRow?: any;
 }
 
 function make(opts: Opts = {}) {
   const prisma = {
-    tenant: { findUnique: jest.fn().mockResolvedValue({ id: "t1", slug: "acme" }) },
+    tenant: {
+      findUnique: jest.fn().mockResolvedValue({ id: "t1", slug: "acme" }),
+      // B865 / SA-277 (D2 lock shape): the ledger helper's paying-set read, under the tx lock.
+      findUniqueOrThrow: jest.fn().mockResolvedValue(
+        opts.tenantRow ?? {
+          status: "ACTIVE",
+          class: "PRODUCTION",
+          deletedAt: null,
+          subscription: { planKey: "SCALE" },
+        },
+      ),
+    },
     tenantAddon: {
       findUnique: jest.fn().mockResolvedValue(opts.existingAddon ?? null),
+      // #2188: findAddonRow reads via findFirst — delegate so each fixture's findUnique sequence still drives it.
+      findFirst: jest.fn(function (this: any, args: unknown) {
+        return this.findUnique(args);
+      }),
       upsert: jest.fn().mockResolvedValue({ id: "addon1", active: true }),
       update: jest.fn().mockResolvedValue({ id: "addon1", active: false }),
     },
     tenantSubscription: { findUnique: jest.fn().mockResolvedValue(opts.subscription ?? null) },
+    // B865 / SA-277: enableAddon/disableAddon now write + book through the SAME tx.
+    $transaction: jest.fn(async (fn: any) => fn(prisma)),
+    $queryRaw: jest.fn().mockResolvedValue([]),
   } as any;
   const stripe = opts.stripe ?? ({ isConfigured: false, client: {} } as any);
   const entitlements = { invalidate: jest.fn() } as any;
@@ -103,9 +127,23 @@ function make(opts: Opts = {}) {
     assertFeatureRequiresMet:
       opts.assertFeatureRequiresMet ?? jest.fn().mockResolvedValue(undefined),
   } as any;
-  const svc = new AddonService(prisma, stripe, entitlements, catalog, featureResolver, authority);
-  return { svc, prisma, entitlements, catalog, stripe, featureResolver, authority };
+  // B865 / SA-277: 7th ctor arg, the ledger's BillingEventService — cast the class to bypass
+  // the (not-yet-updated) 6-arg constructor type until FIX-865B lands.
+  const events = { emit: jest.fn().mockResolvedValue({}) } as any;
+  const svc = new (AddonService as any)(
+    prisma,
+    stripe,
+    entitlements,
+    catalog,
+    featureResolver,
+    authority,
+    events,
+  );
+  return { svc, prisma, entitlements, catalog, stripe, featureResolver, authority, events };
 }
+
+const deltasOf = (events: any, type: string) =>
+  events.emit.mock.calls.filter((c: any[]) => c[1] === type).map((c: any[]) => c[3]?.amountDelta);
 
 describe("AddonService.enableAddon", () => {
   it("400s a bridged key whose SKU is missing from the published catalog, and writes nothing", async () => {
@@ -368,30 +406,62 @@ describe("AddonService.enableAddon — B342 concurrency lock", () => {
     let row: { active: boolean; stripeItemId: string | null } | null = null;
     const tenantAddon = {
       findUnique: jest.fn(async () => (row ? { ...row } : null)),
+      // #2188: findAddonRow reads via findFirst — delegate so each fixture's findUnique sequence still drives it.
+      findFirst: jest.fn(function (this: any, args: unknown) {
+        return this.findUnique(args);
+      }),
       upsert: jest.fn(async ({ create }: any) => {
         row = { active: true, stripeItemId: create.stripeItemId };
         return { id: "addon1", ...row };
       }),
       update: jest.fn(),
     };
-    const prisma = {
-      tenant: { findUnique: jest.fn().mockResolvedValue({ id: "t1", slug: "acme" }) },
+    const prisma: any = {
+      tenant: {
+        findUnique: jest.fn().mockResolvedValue({ id: "t1", slug: "acme" }),
+        // B865 / SA-277: the ledger helper's paying-set read under the tx lock (harness note).
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          status: "ACTIVE",
+          class: "PRODUCTION",
+          deletedAt: null,
+          subscription: { planKey: "SCALE" },
+        }),
+      },
       tenantAddon,
       tenantSubscription: { findUnique: jest.fn().mockResolvedValue({ stripeSubId: "sub_1" }) },
-    } as any;
+      $queryRaw: jest.fn().mockResolvedValue([]),
+    };
+    prisma.$transaction = jest.fn(async (fn: any) => fn(prisma));
     let nextItemId = 0;
     const create = jest.fn(async () => ({ id: `si_${++nextItemId}` }));
     const stripe = { isConfigured: true, client: { subscriptionItems: { create } } } as any;
     const entitlements = { invalidate: jest.fn() } as any;
-    // "ai_scanning" is not in LEGACY_ADDON_KEY_TO_SKU, so the catalog is never consulted.
-    const catalog = { getPublishedCatalog: jest.fn() } as any;
+    // B865 / SA-277 harness note: a priced enable now looks up the catalog UNCONDITIONALLY
+    // (not only for a bridged legacy key), so this race test moved off the unbridged
+    // "ai_scanning" (whose catalog stub used to be a bare `jest.fn()`, deliberately never
+    // resolved) onto "msrp" — bridged to the published "MSRP" SKU — so a priced enable can
+    // still resolve a `skuDef` and reach the Stripe/upsert race this test exists to prove.
+    const catalog = {
+      getPublishedCatalog: jest
+        .fn()
+        .mockResolvedValue({ addonSkus: [{ sku: "MSRP", name: "MSRP", monthlyPrice: 10 }] }),
+    } as any;
     const featureResolver = { invalidate: jest.fn() } as any;
     const authority = { assertFeatureRequiresMet: jest.fn().mockResolvedValue(undefined) } as any;
-    const svc = new AddonService(prisma, stripe, entitlements, catalog, featureResolver, authority);
+    const events = { emit: jest.fn().mockResolvedValue({}) } as any;
+    const svc = new (AddonService as any)(
+      prisma,
+      stripe,
+      entitlements,
+      catalog,
+      featureResolver,
+      authority,
+      events,
+    );
 
     const [a, b] = await Promise.allSettled([
-      svc.enableAddon("t1", "ai_scanning", "price_1"),
-      svc.enableAddon("t1", "ai_scanning", "price_1"),
+      svc.enableAddon("t1", "msrp", "price_1"),
+      svc.enableAddon("t1", "msrp", "price_1"),
     ]);
 
     const fulfilled = [a, b].filter((r) => r.status === "fulfilled");
@@ -405,11 +475,52 @@ describe("AddonService.enableAddon — B342 concurrency lock", () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(tenantAddon.upsert).toHaveBeenCalledTimes(1);
 
-    // Structural pin: the lock actually wraps the critical section, keyed per (tenantId, addonKey).
+    // Structural pin: the lock actually wraps the critical section, keyed per (tenantId, SKU) —
+    // "msrp" bridges to "MSRP" (same lock-key shape as the pre-edit "addon:t1:ai_scanning").
     expect(mockWithAdvisoryLock).toHaveBeenCalledWith(
-      expect.objectContaining({ key: "addon:t1:ai_scanning", mode: "wait" }),
+      expect.objectContaining({ key: "addon:t1:MSRP", mode: "wait" }),
       expect.any(Function),
     );
+  });
+});
+
+/**
+ * F2 (pre-merge review, 2026-09-25): the pre-check `existing?.active` (line ~179) runs OUTSIDE
+ * the tx, before the Stripe item is even created — `SubscriptionMutationService.enableAddon`
+ * (the tenant self-serve path, `subscription-mutation.service.ts`) holds NO advisory lock
+ * against this admin path (its own lock is keyed per its own call, not shared), so it can
+ * activate the SAME row between this admin's pre-check and its tx. Before the fix, the tx
+ * always booked `before: {0,0}` unconditionally — double-booking the add-on's contribution on
+ * top of whatever the concurrent subscribe() already booked. The fix re-checks under the lock,
+ * INSIDE the tx, and refuses (+ best-effort deletes the now-orphaned Stripe item) instead.
+ */
+describe("AddonService.enableAddon — F2 activation race with the tenant self-serve path", () => {
+  it("F2: the row is already active by the time the lock is held — refuses instead of double-booking, and cleans up the orphan Stripe item", async () => {
+    const del = jest.fn().mockResolvedValue({});
+    const create = jest.fn().mockResolvedValue({ id: "si_orphan" });
+    const { svc, prisma, events } = make({
+      publishedSkus: ["MSRP"],
+      stripe: { isConfigured: true, client: { subscriptionItems: { create, del } } },
+      subscription: { stripeSubId: "sub_1" },
+    });
+    // Pre-check (outside the tx): not active yet — passes. Locked re-read (inside the tx,
+    // after `lockTenantForLedger`): a concurrent subscribe() already activated it at qty 2.
+    prisma.tenantAddon.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: "addon1",
+      active: true,
+      quantity: 2,
+      priceSnapshot: 10,
+    });
+
+    await expect(svc.enableAddon("t1", "msrp", "price_1")).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+
+    // The orphan Stripe item THIS call created is cleaned up best-effort.
+    expect(del).toHaveBeenCalledWith("si_orphan");
+    // No double-booked ledger event, and no row write from the losing call.
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
   });
 });
 
@@ -445,5 +556,220 @@ describe("AddonService.enableAddon — B524 requires enforcement (delegates to E
     const { svc, prisma } = make();
     await svc.enableAddon("t1", "driver_payments");
     expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
+  });
+});
+
+// B865 / SA-277: the admin add-on path wrote no `priceSnapshot` and never booked a ledger
+// delta at all — see cause-ruling.md SA-277. `enableAddon`/`disableAddon` now route through
+// the ONE add-on ledger helper (`emitAddonDelta`, `addon-ledger.ts`, FIX-865A): the row is
+// upserted inside a tx, the STORED snapshot is written explicitly (0 for a free grant — D1),
+// and the emit is gated on `isPayingRow` read under the tenant lock inside the SAME tx.
+describe("AddonService.enableAddon/disableAddon — B865 ledger (SA-277)", () => {
+  it("REG-B865-ADMIN priced enable writes priceSnapshot and books +10 for a paying tenant (flips REG-ADMIN-ADDON-MRR, SA-277)", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "si_9" });
+    const { svc, prisma, events } = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+      subscription: { stripeSubId: "sub_1" },
+      publishedSkus: ["REGULATED_ITEMS"],
+      tenantRow: {
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: "SCALE" },
+      },
+    });
+
+    await svc.enableAddon("t1", "REGULATED_ITEMS", "price_x");
+
+    expect(prisma.tenantAddon.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ priceSnapshot: 10 }),
+        update: expect.objectContaining({ priceSnapshot: 10 }),
+      }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      "t1",
+      "addon.enabled",
+      expect.anything(),
+      expect.objectContaining({ amountDelta: 10 }),
+    );
+  });
+
+  it("REG-B865-ADMIN priced enable on a TRIAL tenant writes the snapshot but books nothing", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "si_9" });
+    const { svc, prisma, events } = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+      subscription: { stripeSubId: "sub_1" },
+      publishedSkus: ["REGULATED_ITEMS"],
+      tenantRow: {
+        status: "TRIAL",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: "SCALE" },
+      },
+    });
+
+    await svc.enableAddon("t1", "REGULATED_ITEMS", "price_x");
+
+    expect(prisma.tenantAddon.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ priceSnapshot: 10 }) }),
+    );
+    expect(deltasOf(events, "addon.enabled")).toEqual([]);
+  });
+
+  it("REG-B865-ADMIN disable books −priceSnapshot×qty from the STORED snapshot", async () => {
+    const { svc, events } = make({
+      existingAddon: {
+        id: "addon1",
+        addonKey: "REGULATED_ITEMS",
+        active: true,
+        priceSnapshot: 10,
+        quantity: 2,
+        stripeItemId: null,
+      },
+      tenantRow: {
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: "SCALE" },
+      },
+    });
+
+    await svc.disableAddon("t1", "REGULATED_ITEMS");
+
+    expect(deltasOf(events, "addon.disabled")).toEqual([-20]);
+  });
+
+  it("REG-B865-ADMIN a stripePriceId whose key has no catalog SKU is a 400 before Stripe", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "si_9" });
+    const { svc, prisma } = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+      subscription: { stripeSubId: "sub_1" },
+      publishedSkus: [],
+    });
+
+    await expect(svc.enableAddon("t1", "not_in_catalog", "price_x")).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(create).not.toHaveBeenCalled();
+    expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
+  });
+
+  it("PIN P5 (SA-277a D1): a free grant (no stripePriceId) of a published SKU writes priceSnapshot 0 explicitly and books nothing", async () => {
+    const { svc, prisma, events } = make({
+      publishedSkus: ["REGULATED_ITEMS"],
+      tenantRow: {
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: "SCALE" },
+      },
+    });
+
+    await svc.enableAddon("t1", "REGULATED_ITEMS");
+
+    expect(prisma.tenantAddon.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ priceSnapshot: 0 }),
+        update: expect.objectContaining({ priceSnapshot: 0 }),
+      }),
+    );
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("PIN P6: an unbridged key with no SKU and no price (developer_mode) still resolves, no emit", async () => {
+    const { svc, prisma, events } = make({
+      tenantRow: {
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: { planKey: "SCALE" },
+      },
+    });
+
+    await expect(svc.enableAddon("t1", "developer_mode")).resolves.toBeDefined();
+    expect(prisma.tenantAddon.upsert).toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
+// #2188 / SA-385 (5): an add-on keyed two ways must never become two rows or a doubled ledger.
+// A stateful store proves ROW COUNTS; the DB lane (F2) proves the same on real Postgres.
+describe("#2188 one add-on row whichever way it is keyed (SA-385)", () => {
+  const booked = (events: any) =>
+    events.emit.mock.calls.reduce((sum: number, c: any[]) => sum + (c[3]?.amountDelta ?? 0), 0);
+  const priced = (seed: Parameters<typeof fakeTenantAddonStore>[0]) => {
+    const create = jest.fn().mockResolvedValue({ id: "si_1" });
+    const del = jest.fn().mockResolvedValue({});
+    const made = make({
+      stripe: { isConfigured: true, client: { subscriptionItems: { create, del } } },
+      subscription: { stripeSubId: "sub_1" },
+      publishedSkus: ["MSRP"],
+    });
+    const store = fakeTenantAddonStore(seed);
+    made.prisma.tenantAddon = store;
+    return { ...made, store, create };
+  };
+
+  it("SA-385b (a): legacy key then SKU key — refused, still ONE row, booked once", async () => {
+    const { svc, store, events, create } = priced([]);
+    await svc.enableAddon("t1", "msrp", "price_msrp");
+    await expect(svc.enableAddon("t1", "MSRP", "price_msrp")).rejects.toThrow(ConflictException);
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0]).toMatchObject({ addonKey: "msrp", sku: "MSRP", active: true });
+    expect(create).toHaveBeenCalledTimes(1); // one Stripe item
+    expect(booked(events)).toBe(10); // +X once
+  });
+
+  it("SA-385b (a) reverse: SKU key then legacy key — refused, still ONE row, booked once", async () => {
+    const { svc, store, events, create } = priced([]);
+    await svc.enableAddon("t1", "MSRP", "price_msrp");
+    await expect(svc.enableAddon("t1", "msrp", "price_msrp")).rejects.toThrow(ConflictException);
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0]).toMatchObject({ addonKey: "MSRP", sku: "MSRP", active: true });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(booked(events)).toBe(10);
+  });
+
+  // SA-385b (b): the row subscribe() writes is SKU-keyed (addonKey = sku = code); seeded in that
+  // exact shape, then an admin legacy-key enable must find it. (subscribe() itself only accepts
+  // SELF_SERVICE_ADDON_SKUS today, none legacy-mapped — the shape is the reachable part.)
+  it("SA-385b (b): a subscribe()-shaped SKU row, then admin enable by the legacy key — one row, no second booking", async () => {
+    const { svc, store, events } = priced([
+      { addonKey: "MSRP", sku: "MSRP", active: true, priceSnapshot: 10 },
+    ]);
+    await expect(svc.enableAddon("t1", "msrp", "price_msrp")).rejects.toThrow(ConflictException);
+    expect(store.rows).toHaveLength(1);
+    expect(booked(events)).toBe(0);
+  });
+
+  it("SA-385b (c): disable by EITHER key finds the row and books −X once", async () => {
+    for (const key of ["msrp", "MSRP"]) {
+      const { svc, store, events } = priced([
+        { addonKey: "MSRP", sku: "MSRP", active: true, priceSnapshot: 10 },
+      ]);
+      await svc.disableAddon("t1", key);
+      expect(store.rows).toHaveLength(1);
+      expect(store.rows[0].active).toBe(false);
+      expect(booked(events)).toBe(-10);
+    }
+  });
+
+  it("SA-385b (c): re-enable after disable re-activates the SAME row in place (still one row)", async () => {
+    const { svc, store, events } = priced([
+      { addonKey: "msrp", sku: "MSRP", active: false, priceSnapshot: 10 },
+    ]);
+    await svc.enableAddon("t1", "MSRP", "price_msrp");
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0]).toMatchObject({ id: "row1", addonKey: "msrp", active: true });
+    expect(booked(events)).toBe(10);
+  });
+
+  it("hasAddon resolves the add-on after either path wrote it", async () => {
+    for (const seedKey of ["msrp", "MSRP"]) {
+      const { svc } = priced([{ addonKey: seedKey, sku: "MSRP", active: true }]);
+      await expect(svc.hasAddon("t1", "msrp")).resolves.toBe(true);
+      await expect(svc.hasAddon("t1", "MSRP")).resolves.toBe(true);
+    }
   });
 });

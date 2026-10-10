@@ -79,7 +79,9 @@ http://localhost:3000/api/docs · **Health** http://localhost:3000/api/v1/health
 `npm run local:reset` stops **and wipes** the Postgres/Redis volumes for a clean DB.
 Added a Prisma migration mid-session? Re-run `npm run local:migrate` before re-validating.
 `npm run local:drift` runs the read-only schema-drift gate against the compose DB.
-`npm run local:test:db` runs the `*.db.spec.ts` lane (DB-backed specs) against it.
+`npm run local:test:db` runs the `*.db.spec.ts` lane (DB-backed specs) on its **own fresh database**
+(`scripts/local-db-specs.mjs`: creates `rf_dbspec_*` on the compose Postgres, `migrate deploy`, runs the
+lane serially, drops it; never `routeflow_dev`, which the live api shares — #2183). Needs `db:up` only.
 `npm run local:e2e` is the third gate tier, for UI changes — a pre-PR Playwright pass against
 this stack (allow-listed money/guard projects, ≤ 10 min; `npm run local:e2e:all` runs every
 project as a report, not a gate). Hosted staging is still deferred, so E2E remains

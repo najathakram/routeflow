@@ -16,7 +16,10 @@
     "test": "jest --config jest.config.js"
   },
   "dependencies": {
+    "@expo-google-fonts/instrument-serif": "^0.4.1",
     "@expo-google-fonts/inter": "^0.4.2",
+    "@expo-google-fonts/spline-sans": "^0.4.2",
+    "@expo-google-fonts/spline-sans-mono": "^0.4.2",
     "@expo/metro-runtime": "^55.0.12",
     "@hookform/resolvers": "^5.9.1",
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -25,6 +28,7 @@
     "@react-navigation/native": "^7.1.33",
     "@react-navigation/stack": "^7.11.1",
     "@routeflow/pricing": "*",
+    "@routeflow/returns": "*",
     "@routeflow/scanning": "*",
     "@routeflow/types": "*",
     "@sentry/react": "^10.75.0",
@@ -71,6 +75,7 @@
     "react-native-screens": "~4.24.0",
     "react-native-svg": "15.15.3",
     "react-native-web": "^0.21.2",
+    "react-native-webview": "13.16.0",
     "react-native-worklets": "0.7.4",
     "socket.io-client": "^4.8.3",
     "zod": "^3.25.76",

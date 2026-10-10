@@ -49,7 +49,7 @@ interface Row {
    * line carrying `trackedCategoryId` also produces the rate trio (`categoryTaxType`/Rate/
    * PriceIncludesTax), rather than leaving it null. Any ONE entry satisfies it: a call to a
    * trio-deriving/copying helper (`categoryTaxSnapshotOf`, `copyCategoryTaxSnapshot`,
-   * `collectMergeLines`, `buildInvoiceItemData`, `buildManualInvoiceLines`, `categoryTaxForLine`),
+   * `buildInvoiceItemData`, `buildManualInvoiceLines`, `categoryTaxForLine`),
    * or — for a method that copies the trio inline rather than through a named helper — a direct
    * reference to the `categoryTaxType` field name (existence only, EXACTLY the same permissiveness
    * SAFE_COPY's own `needs` check already uses; not an ordering proof). Retires the file-count-pin
@@ -88,16 +88,21 @@ const INVENTORY: Record<string, Row> = {
     kind: "GUARDED",
     needs: "assertNoUnitAwareLines",
     why: "merge folds by productId",
-    // SA-100: named on the actual STAMP call inside the create() write, not collectMergeLines
-    // (called earlier, for an unrelated purpose — deleting the create()'s spread wouldn't have
-    // removed the ONLY reference to that name in this method, so it couldn't catch a regression).
-    trioVia: ["copyCategoryTaxSnapshot"],
+    // SA-124 (Opus review of B776): `trioVia: ["buildMergeLineWrites"]` (this method's earlier
+    // pin) passed even if the inline `categoryTaxType`/`categoryTaxRate`/`categoryPriceIncludesTax`
+    // keys were deleted from THIS method's own create() literal — `references()` only checks
+    // that the method mentions the name `buildMergeLineWrites` somewhere, not that the write
+    // literal it applies actually carries the trio. Named on the STAMP itself instead
+    // (`categoryTaxType`, a literal key AND a read of `write.data.categoryTaxType` in the
+    // create() call below), same as `InvoicesService.duplicate`'s inline-copy row.
+    trioVia: ["categoryTaxType"],
   },
   "orders/orders.service.ts::OrdersService.mergeAllPendingForCustomer": {
     kind: "GUARDED",
     needs: "isUnitAwareLine",
     why: "merge folds by productId; bails out when any candidate is unit-aware",
-    trioVia: ["copyCategoryTaxSnapshot"],
+    // SA-124: see forceConsolidateCustomer's note — named on the stamp, not the caller.
+    trioVia: ["categoryTaxType"],
   },
   "orders/orders.service.ts::OrdersService.create": {
     kind: "CONVERTED",
@@ -138,7 +143,7 @@ const INVENTORY: Record<string, Row> = {
     kind: "GUARDED",
     needs: "assertInvoiceRewriteAllowed",
     why: "delete-and-recreate re-split at the live pack",
-    trioVia: ["categoryTaxSnapshotOf"],
+    trioVia: ["buildEditedLines"],
   },
   "invoices/invoices.service.ts::InvoicesService.duplicate": {
     kind: "GUARDED",
@@ -224,7 +229,7 @@ const INVENTORY: Record<string, Row> = {
     kind: "DELETE_ONLY",
     why: "customer purge",
   },
-  "customers/customers.service.ts::CustomersService.deleteImportedCustomers": {
+  "customers/customers.service.ts::CustomersService.runImportedCustomersCleanup": {
     kind: "DELETE_ONLY",
     why: "customer purge",
   },
@@ -273,7 +278,7 @@ const INVENTORY: Record<string, Row> = {
     kind: "NOT_ORDER_INVOICE_LINE",
     why: "RecurringInvoiceItem",
   },
-  "returns/inline-returns.service.ts::InlineReturnsService.capture": {
+  "returns/inline-returns.service.ts::InlineReturnsService.captureInTx": {
     kind: "NOT_ORDER_INVOICE_LINE",
     why: "ReturnItem",
   },
@@ -296,6 +301,14 @@ const INVENTORY: Record<string, Row> = {
   "vendor-bills/vendor-bills.service.ts::VendorBillsService.revertToDraft": {
     kind: "NOT_ORDER_INVOICE_LINE",
     why: "VendorBillItem",
+  },
+  "vendor-bills/vendor-bills.service.ts::VendorBillsService.delete": {
+    kind: "NOT_ORDER_INVOICE_LINE",
+    why: "VendorBillItem: AP bill line delete only: no qty/unit/price write, no sellable product added",
+  },
+  "vendor-bills/vendor-bills.service.ts::VendorBillsService.bulkDelete": {
+    kind: "NOT_ORDER_INVOICE_LINE",
+    why: "VendorBillItem: AP bill line delete only: no qty/unit/price write, no sellable product added",
   },
 };
 
@@ -573,6 +586,8 @@ describe("the scanner itself (so a silent no-match cannot pass the checks below)
       recovery() { try { work(); } catch (e) { unitAware.assertOrderEditAllowed(); } }
       late() { this.prisma.orderItem.update({}); unitAware.assertOrderEditAllowed(); }
       cond(c) { return this.prisma.order.update({ data: { lineItems: c ? { create: [] } : undefined } }); }
+      inlineTrio() { this.prisma.orderItem.create({ data: { trackedCategoryId: "cat-1", qty: 1 } }); }
+      spreadTrio() { const write = { data: { trackedCategoryId: "cat-1" } }; this.prisma.orderItem.create({ data: { ...write.data } }); }
     }`;
   const sf = parse("inline.ts", src);
   const m = classMethods(sf);
@@ -610,6 +625,19 @@ describe("the scanner itself (so a silent no-match cannot pass the checks below)
     );
     expect(references(m.get("A.commented")!, "assertOrderEditAllowed", { callOnly: true })).toBe(
       false,
+    );
+  });
+
+  it("SA-124: writeDataLiteralsWithKey detects an inline literal key but a spread hides it", () => {
+    // The MANDATORY trioVia check's whole premise — deleting the actual trackedCategoryId
+    // key must be visible to this detector; a `...write.data` spread carrying the SAME key
+    // at runtime is invisible to it (a SpreadAssignment has no `.name`), which is exactly why
+    // B776's merge-line-writes.ts create() calls were flattened to explicit inline keys.
+    expect(writeDataLiteralsWithKey(m.get("A.inlineTrio")!, sf, "trackedCategoryId")).toHaveLength(
+      1,
+    );
+    expect(writeDataLiteralsWithKey(m.get("A.spreadTrio")!, sf, "trackedCategoryId")).toHaveLength(
+      0,
     );
   });
 

@@ -11,20 +11,25 @@
  * `CartRow` moved to its own file (`components/CartRow.tsx`) in the units_v1
  * picker work (size-ratchet prefactor) — this pin now reads both files
  * instead of assuming a single source, since `UnlistedCartRow` stayed behind
- * in NewOrderScreen.tsx and `CartRow` did not.
+ * in NewOrderScreen.tsx and `CartRow` did not. #2339 then moved `UnlistedCartRow`
+ * (with CartModal) to `components/new-order/CartModal.tsx`, so the pin reads that file too.
  */
 import { readFileSync } from "fs";
 import { join } from "path";
 
 const SCREEN_PATH = join(__dirname, "..", "components", "NewOrderScreen.tsx");
 const CART_ROW_PATH = join(__dirname, "..", "components", "CartRow.tsx");
+const CART_MODAL_PATH = join(__dirname, "..", "components", "new-order", "CartModal.tsx");
 
 function countOccurrences(source: string, needle: string): number {
   return source.split(needle).length - 1;
 }
 
 describe("pin: mobile new-order line-note copy (R5.1)", () => {
-  const src = readFileSync(SCREEN_PATH, "utf8") + readFileSync(CART_ROW_PATH, "utf8");
+  const src =
+    readFileSync(SCREEN_PATH, "utf8") +
+    readFileSync(CART_ROW_PATH, "utf8") +
+    readFileSync(CART_MODAL_PATH, "utf8");
 
   it('shows the new toggle label "Add flavor / note" for both CartRow and UnlistedCartRow', () => {
     expect(countOccurrences(src, ">Add flavor / note<")).toBe(2);

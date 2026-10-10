@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -14,6 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { RetryableImage } from "../../../components/RetryableImage";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBar } from "@routeflow/ui/mobile/ios";
 import {
@@ -35,6 +35,7 @@ import {
 import { useCartStore } from "../../../store/cartStore";
 import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
 import { QtyTextInput } from "../../../components/QtyStepper";
+import { QTY_INPUT_WIDTH } from "../../../lib/row-layout";
 import type { PromotionRule } from "@routeflow/pricing";
 import {
   alertIdSet,
@@ -44,6 +45,7 @@ import {
   deriveTilePrice,
   stockLabel,
   tileCta,
+  backorderNote,
 } from "../../../lib/catalog-tile-logic";
 
 function formatCurrency(n: number | string | null | undefined): string {
@@ -320,7 +322,12 @@ function ProductCard({
   return (
     <View style={styles.productCard}>
       {thumb ? (
-        <Image source={{ uri: thumb }} style={styles.thumb} resizeMode="cover" />
+        <RetryableImage
+          staleQueryKey={["buyer-products"]}
+          source={{ uri: thumb }}
+          style={styles.thumb}
+          resizeMode="cover"
+        />
       ) : (
         <View style={[styles.thumb, styles.thumbPlaceholder]}>
           <Ionicons name="cube-outline" size={22} color={ios.label3} />
@@ -358,6 +365,9 @@ function ProductCard({
           {behavior ? `${behavior} · ` : ""}
           <Text style={{ color: TONE_COLORS[stock.tone] }}>{stock.label}</Text>
         </Text>
+        {backorderNote(product) ? (
+          <Text style={styles.backorderNote}>{backorderNote(product)}</Text>
+        ) : null}
       </View>
 
       {cta === "add" ? (
@@ -367,7 +377,7 @@ function ProductCard({
             add({
               productId: product.id,
               name: product.name,
-              unitPrice: Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0,
+              unitPrice: product.buyerPrice,
               unit: product.unit,
               unitsPerBox: product.unitsPerBox ?? null,
               category: product.category ?? null,
@@ -565,6 +575,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flexShrink: 0,
   },
+  backorderNote: { fontSize: 12, fontWeight: "600", color: "#b45309", marginTop: 2 },
   notifyBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -598,7 +609,14 @@ const styles = StyleSheet.create({
     minWidth: 20,
     textAlign: "center",
   },
-  qtyInputReset: { paddingVertical: 0, paddingHorizontal: 0 },
+  // #2727: a DEFINITE width (row-layout.ts), as in the cart — the web <input>'s UA intrinsic
+  // ~177px otherwise balloons this flexShrink:0 stepper row.
+  qtyInputReset: {
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    width: QTY_INPUT_WIDTH.buyerCatalog,
+    flexShrink: 0,
+  },
   // A horizontal ScrollView's base style is `{ flexGrow: 1, flexShrink: 1 }`, so
   // beside the `flex: 1` product grid it would otherwise both eat the spare space
   // on a short grid and collapse to nothing on a long one. Same guard as

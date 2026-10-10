@@ -5,6 +5,8 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import { assertNotWalkIn } from "../customers/walk-in-protected";
+import { assertMayChangeAccount } from "./admin-account-protection";
 import { ConfigService } from "@nestjs/config";
 import { User, UserRole } from "@prisma/client";
 import * as crypto from "crypto";
@@ -16,9 +18,7 @@ import { ListUsersDto } from "./dto/list-users.dto";
 import { CreateOperatorDto } from "./dto/create-operator.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { ChangeUserStatusDto } from "./dto/change-user-status.dto";
-
-/** How long a staff invite / admin-reset set-password link stays valid (NOTIFY-SPEC N2). */
-const SET_PASSWORD_TOKEN_TTL_MS = 72 * 60 * 60 * 1000;
+import { issueSetPasswordLink } from "./set-password-token";
 
 @Injectable()
 export class UsersService {
@@ -30,12 +30,6 @@ export class UsersService {
     private readonly configService: ConfigService<AppConfig>,
   ) {}
 
-  /** Hash a raw token with SHA-256 for storage — same shape as auth.service.ts's and
-   *  buyer-auth.service.ts's own copies (no shared helper exists in this codebase yet). */
-  private hashToken(token: string): string {
-    return crypto.createHash("sha256").update(token).digest("hex");
-  }
-
   /**
    * Creates a single-use, 72h PasswordResetToken (the same model/consuming endpoint as
    * self-service password reset — POST /auth/reset-password) and emails a set-password
@@ -45,22 +39,13 @@ export class UsersService {
    */
   private async sendSetPasswordInvite(userId: string, to: string, username: string): Promise<void> {
     try {
-      const rawToken = crypto.randomBytes(32).toString("hex");
-      const tokenHash = this.hashToken(rawToken);
-      const expiresAt = new Date(Date.now() + SET_PASSWORD_TOKEN_TTL_MS);
-
-      await this.prisma.passwordResetToken.deleteMany({
-        where: { userId, usedAt: null, expiresAt: { gt: new Date() } },
-      });
-      await this.prisma.passwordResetToken.create({ data: { userId, tokenHash, expiresAt } });
-
       const urls = this.configService.get<AppConfig["urls"]>("urls")!;
-      const setPasswordUrl = `${urls.web}/reset-password?token=${rawToken}`;
+      const link = await issueSetPasswordLink(this.prisma, userId, urls.web);
       const result = await this.email.sendSetPasswordEmail({
         to,
         username,
-        setPasswordUrl,
-        expiryHours: SET_PASSWORD_TOKEN_TTL_MS / (60 * 60 * 1000),
+        setPasswordUrl: link.url,
+        expiryHours: link.expiryHours,
       });
       if (!result.delivered) {
         this.logger.error(
@@ -119,20 +104,35 @@ export class UsersService {
     return matches.length === 1 ? matches[0] : null;
   }
 
-  async findById(
-    id: string,
-  ): Promise<
-    (Omit<User, "password" | "googleId"> & { googleLinked: boolean; hasPassword: boolean }) | null
+  async findById(id: string): Promise<
+    | (Omit<User, "password" | "googleId" | "deniedPermissionGroups" | "permissionsVersion"> & {
+        googleLinked: boolean;
+        hasPassword: boolean;
+      })
+    | null
   > {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id } });
     if (!user) return null;
-    const { password, googleId, ...rest } = user;
+    // The feature-group columns are reported by the admin listing and GET /users/me/permissions only.
+    const {
+      password,
+      googleId,
+      deniedPermissionGroups: _deniedPermissionGroups,
+      permissionsVersion: _permissionsVersion,
+      ...rest
+    } = user;
     return { ...rest, googleLinked: !!googleId, hasPassword: !!password };
   }
 
-  async findAll(query: ListUsersDto) {
+  /**
+   * `callerRole` decides whether each row carries the feature-group columns: an account admin (or the
+   * platform super admin) gets `deniedPermissionGroups` + `permissionsVersion`, every other caller does not.
+   */
+  async findAll(query: ListUsersDto, callerRole?: UserRole) {
     const { search, status, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
+    const includePermissions =
+      callerRole === UserRole.TENANT_ADMIN || callerRole === UserRole.SUPER_ADMIN;
     const where: any = {
       role: { not: UserRole.CUSTOMER },
     };
@@ -157,6 +157,7 @@ export class UsersService {
           isAdmin: true,
           canActAsDriver: true,
           createdAt: true,
+          ...(includePermissions ? { deniedPermissionGroups: true, permissionsVersion: true } : {}),
         },
         skip,
         take: limit,
@@ -202,9 +203,11 @@ export class UsersService {
     return { user, tempPassword };
   }
 
-  async changeStatus(userId: string, dto: ChangeUserStatusDto) {
+  async changeStatus(userId: string, dto: ChangeUserStatusDto, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    assertMayChangeAccount(user, callerRole);
+    await this.assertNotWalkInAccount(userId);
     return this.prisma.forTenant().user.update({
       where: { id: userId },
       data: { status: dto.status },
@@ -212,9 +215,28 @@ export class UsersService {
     });
   }
 
-  async updateUser(userId: string, dto: UpdateUserDto, changedByUsername?: string) {
+  async updateUser(
+    userId: string,
+    dto: UpdateUserDto,
+    changedByUsername: string | undefined,
+    callerRole: UserRole,
+  ) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    // Only an ACTUAL change of the sign-in identity (email or username) on an admin account is guarded: the
+    // edit form always sends both, so an unchanged value must pass.
+    // ONE normalized comparison drives the guard, the write and every email side effect below.
+    const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : dto.email;
+    const emailEdit =
+      !!normalizedEmail && normalizedEmail !== (user.email ?? "").trim().toLowerCase();
+    // Login matches usernames EXACTLY (findByUsername), so only padding is normalized: trim, never lowercase.
+    const normalizedUsername = dto.username !== undefined ? dto.username.trim() : undefined;
+    const usernameEdit =
+      normalizedUsername !== undefined && normalizedUsername !== (user.username ?? "").trim();
+    if (emailEdit || usernameEdit) assertMayChangeAccount(user, callerRole);
+    if (emailEdit || usernameEdit || (dto.role && dto.role !== user.role)) {
+      await this.assertNotWalkInAccount(userId);
+    }
 
     // Prevent changing role of TENANT_ADMIN users
     if (user.role === UserRole.TENANT_ADMIN && dto.role && dto.role !== UserRole.TENANT_ADMIN) {
@@ -231,21 +253,23 @@ export class UsersService {
       throw new BadRequestException("Users can only be assigned OPERATOR or DRIVER roles.");
     }
 
-    // N2 review fix: normalize BEFORE compare and write — a case-only edit
-    // ("Acme@Example.com" -> "acme@example.com") must not read as a change (it
-    // fires both notices for nothing) and must not persist inconsistently with
-    // every other email lookup in this codebase, which is case-sensitive as
-    // stored.
-    const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : dto.email;
-
+    // N2 review fix: a case-only or padding-only edit ("Acme@Example.com" -> "acme@example.com")
+    // is not a change: it fires no notices and does not rewrite the stored email.
     const previousEmail = user.email;
     const previousRole = user.role;
-    const emailChanged = !!normalizedEmail && normalizedEmail !== previousEmail;
+    const emailChanged = emailEdit;
     const roleChanged = !!dto.role && dto.role !== previousRole;
 
+    // Email and username keys are omitted unless they actually changed; a change writes the normalized value.
+    const { email: _ignoredEmail, username: _ignoredUsername, ...dtoRest } = dto;
+    const data = {
+      ...dtoRest,
+      ...(emailChanged ? { email: normalizedEmail } : {}),
+      ...(usernameEdit ? { username: normalizedUsername } : {}),
+    };
     const updated = await this.prisma.forTenant().user.update({
       where: { id: userId },
-      data: { ...dto, email: normalizedEmail },
+      data,
       select: {
         id: true,
         username: true,
@@ -357,9 +381,18 @@ export class UsersService {
     }
   }
 
-  async unlockUser(userId: string) {
+  /** The walk-in customer's login account stays as it is: refuse before any write (WALK_IN_PROTECTED). */
+  private async assertNotWalkInAccount(userId: string) {
+    const customer = await this.prisma
+      .forTenant()
+      .customer.findFirst({ where: { userId }, select: { id: true, isWalkIn: true } });
+    assertNotWalkIn(customer);
+  }
+
+  async unlockUser(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    assertMayChangeAccount(user, callerRole);
     await this.prisma.forTenant().user.update({
       where: { id: userId },
       data: { failedLoginAttempts: 0, lockedUntil: null },
@@ -367,9 +400,11 @@ export class UsersService {
     return { id: userId, unlocked: true };
   }
 
-  async resetPassword(userId: string) {
+  async resetPassword(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    assertMayChangeAccount(user, callerRole);
+    await this.assertNotWalkInAccount(userId);
     const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
     await this.prisma.forTenant().user.update({
@@ -411,9 +446,10 @@ export class UsersService {
     });
   }
 
-  async toggleDriverPermit(userId: string) {
+  async toggleDriverPermit(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    assertMayChangeAccount(user, callerRole);
     if (user.role !== UserRole.OPERATOR && user.role !== UserRole.TENANT_ADMIN) {
       throw new BadRequestException("Driver permit can only be assigned to operators.");
     }

@@ -17,7 +17,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { EntitlementsService } from "../billing/entitlements.service";
 
 const JWT_CONFIG = {
-  secret: "test-secret",
+  secret: "test-jwt-secret-0123456789-abcdefghijklmnop",
   refreshSecret: "test-refresh-secret",
   expiresIn: "15m",
   refreshExpiresIn: "7d",
@@ -281,9 +281,13 @@ describe("AuthService", () => {
       tenantId: "tenant-1",
       deletedAt: null,
       password: "hashed",
+      lastLoginAt: null,
+      createdAt: new Date("2026-10-01T00:00:00Z"),
     };
 
     beforeEach(() => {
+      prisma.refreshToken.count.mockResolvedValue(0);
+      prisma.user.updateMany.mockResolvedValue({ count: 1 });
       jwtService.verify.mockReturnValue({
         sub: "user-1",
         type: "email_verify",
@@ -295,25 +299,25 @@ describe("AuthService", () => {
 
     it("activates an INACTIVE user and logs them in", async () => {
       prisma.user.findUnique.mockResolvedValue(INACTIVE_USER as any);
-      prisma.user.update.mockResolvedValue({ ...INACTIVE_USER, status: "ACTIVE" } as any);
 
       const result = await service.verifyEmailAndLogin("valid.jwt.token");
 
-      expect(prisma.user.update).toHaveBeenCalledWith({
-        where: { id: "user-1" },
+      expect(prisma.user.updateMany).toHaveBeenCalledWith({
+        where: { id: "user-1", status: "INACTIVE", lastLoginAt: null },
         data: { status: "ACTIVE" },
       });
       expect(result).toHaveProperty("accessToken");
       expect(result.user.id).toBe("user-1");
     });
 
-    it("clicking the link twice is smooth — an already-ACTIVE user just logs in, no update call", async () => {
+    it("an already-ACTIVE user is refused: no session, no status change", async () => {
       prisma.user.findUnique.mockResolvedValue({ ...INACTIVE_USER, status: "ACTIVE" } as any);
 
-      const result = await service.verifyEmailAndLogin("valid.jwt.token");
-
+      await expect(service.verifyEmailAndLogin("valid.jwt.token")).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
       expect(prisma.user.update).not.toHaveBeenCalled();
-      expect(result).toHaveProperty("accessToken");
+      expect(prisma.user.updateMany).not.toHaveBeenCalled();
     });
 
     it("REFUSES to reactivate a SUSPENDED user, even with a still-valid unexpired token", async () => {

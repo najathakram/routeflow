@@ -21,6 +21,7 @@ jest.mock("../notifications/notifications.service", () => ({
   NotificationsService: jest.fn().mockImplementation(() => ({})),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
@@ -91,6 +92,7 @@ describe("updateOrderItems — operator diff branch reads the locked line, not t
     prisma = createMockPrisma();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -201,6 +203,7 @@ describe("updateOrderItems — operator diff branch reads the locked line, not t
   it("DELETE is judged on the locked line's invoicedQty: a line an invoice now bills is struck off, never hard-deleted", async () => {
     // T2 (createInvoiceFromOrder) billed the line while T1 waited.
     lockedLines([{ ...SNAPSHOT_LINE, invoicedQty: 2 }]);
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 1 });
 
     await service.updateOrderItems(
       "ord-1",
@@ -208,10 +211,11 @@ describe("updateOrderItems — operator diff branch reads the locked line, not t
       operator,
     );
 
-    expect(prisma.orderItem.delete).not.toHaveBeenCalled();
-    expect(prisma.orderItem.update).toHaveBeenCalledWith(
+    expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+    // #2563: the strike-off is scoped to THIS order.
+    expect(prisma.orderItem.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "li-1" },
+        where: { id: "li-1", orderId: "ord-1" },
         data: expect.objectContaining({ status: "CANCELLED" }),
       }),
     );

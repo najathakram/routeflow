@@ -151,6 +151,7 @@ model Tenant {
   creditNotes              CreditNote[]
   creditNoteItems          CreditNoteItem[]
   orderCreditNotes         OrderCreditNote[]
+  creditNoteApplyBlocks    CreditNoteApplyBlock[]
   estimates                Estimate[]
   estimateItems            EstimateItem[]
   vendorBills              VendorBill[]
@@ -173,6 +174,7 @@ model Tenant {
   inboundTriages           InboundTriage[]
   customerPrices           CustomerPrice[]
   systemConfigs            SystemConfig[]
+  policyValues             PolicyValue[]
   customerLinks            CustomerLink[]
   stripeConnect            TenantStripeConnect?
   buyerPaymentRequests     BuyerPaymentRequest[]
@@ -200,6 +202,7 @@ model Tenant {
   supplierStatementScans   SupplierStatementScan[]
   // ─── Units/PO minimal + multi-category labels (2026-09-19) ───
   productUnits             ProductUnit[]
+  tenantUnits              TenantUnit[]
   supplierProducts         SupplierProduct[]
   productCategories        ProductCategory[]
   productCategoryLabels    ProductCategoryLabel[]
@@ -217,6 +220,9 @@ model Tenant {
   commissionPayouts        CommissionPayout[]
   crmConnection            CrmConnection?
   mailboxConnection        MailboxConnection?
+  onboardingCase           OnboardingCase?
+
+  emailDeliveries EmailDelivery[]
 
   @@index([slug])
   @@index([status])
@@ -264,6 +270,10 @@ model TenantConfig {
   // checksDigestSentForDay above, read/written by
   // inventory/low-stock-digest.service.ts's inventory.sendLowStockDigest job.
   lowStockDigestSentForDay DateTime? @db.Date
+  // SA-436 (#2401): whether sending an invoice sweeps the customer's open credit notes onto it
+  // oldest-first (credit-notes.service autoApplyOldestCreditsInTx). OFF by default (owner ruling):
+  // a send then applies nothing automatically; an order's hand-picked credit intents still settle.
+  creditAutoApplyOnSend    Boolean   @default(false)
   updatedAt                DateTime  @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -282,6 +292,19 @@ model TenantGoogleOAuth {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
+/// Per-operator feature groups. Mirrored in packages/types/api/enums.ts (OPERATOR_PERMISSION_GROUP_VALUES).
+enum OperatorPermissionGroup {
+  ORDERS
+  DISPATCH
+  CUSTOMERS
+  CATALOG
+  PRICING
+  REGULATED
+  FINANCE
+  NOTIFICATIONS
+  REPORTS
+}
+
 // ─── Models (tenancy) ───────────────────────────────────────────────────────────────────
 
 model User {
@@ -290,6 +313,7 @@ model User {
   username            String
   password            String?
   googleId            String?
+  appleId             String? // #2309 (SA-418): Apple's stable `sub`, scoped per tenant like googleId.
   role                UserRole
   status              UserStatus @default(ACTIVE)
   forcePasswordChange Boolean    @default(false)
@@ -297,6 +321,12 @@ model User {
   canActAsDriver      Boolean    @default(false)
   failedLoginAttempts Int        @default(0)
   lockedUntil         DateTime?
+  /// Last successful interactive sign-in (#2159 S1 — the onboarding "drivers have logged in" check).
+  lastLoginAt         DateTime?
+  /// Feature groups switched OFF for this user. [] = every group. Read for OPERATOR accounts only.
+  deniedPermissionGroups OperatorPermissionGroup[] @default([])
+  /// Bumped on every write to deniedPermissionGroups (compare-and-set token).
+  permissionsVersion  Int        @default(0)
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
   deletedAt           DateTime?
@@ -307,6 +337,7 @@ model User {
   driver               Driver?
   deviceTokens         DeviceToken[]
   refreshTokens        RefreshToken[]
+  authHandoffCodes     AuthHandoffCode[]
   stockMovements       StockMovement[]
   stockCountsStarted   StockCountSession[]  @relation("StockCountStarted")
   stockCountsCommitted StockCountSession[]  @relation("StockCountCommitted")
@@ -321,6 +352,7 @@ model User {
   @@unique([tenantId, email])
   @@unique([tenantId, username])
   @@unique([tenantId, googleId])
+  @@unique([tenantId, appleId])
   @@index([tenantId])
   @@index([role])
   @@index([status])
@@ -417,6 +449,11 @@ model BuyerAccount {
   phone               String?
   mobile              String?
   googleId            String?            @unique
+  appleId             String?            @unique // #2309 (SA-418): Apple's stable `sub`.
+  // #2309 (SA-418): AES-256-GCM ciphertext of the Apple refresh token (common/encryption.service.ts),
+  // obtained by exchanging authorizationCode at first sign-in — used to call Apple's /auth/revoke
+  // on account deletion.
+  appleRefreshTokenEnc String?
   status              BuyerAccountStatus @default(ACTIVE)
   emailVerified       Boolean            @default(false)
   failedLoginAttempts Int                @default(0)
@@ -428,6 +465,7 @@ model BuyerAccount {
 
   customerLinks            CustomerLink[]
   refreshTokens            BuyerRefreshToken[]
+  authHandoffCodes         AuthHandoffCode[]
   passwordResetTokens      BuyerPasswordResetToken[]
   emailVerificationTokens  BuyerEmailVerificationToken[]
   mergeRequestsAsPrimary   BuyerMergeRequest[]           @relation("MergeAsPrimary")
@@ -478,6 +516,32 @@ model BuyerRefreshToken {
 
   buyerAccount BuyerAccount @relation(fields: [buyerAccountId], references: [id], onDelete: Cascade)
 
+  @@index([buyerAccountId])
+  @@index([expiresAt])
+}
+
+/// #2653: which realm minted a sign-in handoff code (decided by the minting endpoint, never by a JWT).
+enum HandoffRealm {
+  STAFF
+  BUYER
+}
+
+/// #2653 (SA-542a/b): a one-time in-app sign-in handoff code. Only sha256(code) is stored; a row
+/// lives 60 s and is deleted when consumed. Exactly one of userId (STAFF) / buyerAccountId (BUYER).
+model AuthHandoffCode {
+  tokenHash      String        @id
+  realm          HandoffRealm
+  userId         String?
+  user           User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  buyerAccountId String?
+  buyerAccount   BuyerAccount? @relation(fields: [buyerAccountId], references: [id], onDelete: Cascade)
+  /// The user's tenant for STAFF (enforced on exchange); NULL for BUYER (an account spans sellers).
+  tenantId       String?
+  deviceId       String
+  expiresAt      DateTime
+  createdAt      DateTime      @default(now())
+
+  @@index([userId])
   @@index([buyerAccountId])
   @@index([expiresAt])
 }

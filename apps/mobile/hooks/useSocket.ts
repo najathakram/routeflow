@@ -172,11 +172,6 @@ export function useSocket() {
         void qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
       });
 
-      socket.on("inventory.low.stock", () => {
-        void qc.invalidateQueries({ queryKey: ["admin", "products"] });
-        void qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
-      });
-
       socket.on("return.created", () => {
         void qc.invalidateQueries({ queryKey: ["admin", "returns"] });
       });

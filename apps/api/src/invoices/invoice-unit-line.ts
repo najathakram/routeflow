@@ -7,6 +7,7 @@ import {
   roundMoney,
   type CategoryTaxType,
 } from "@routeflow/pricing";
+import { assertUnitLineSplit } from "../orders/unit-line-split";
 import type { ResolvedLineUnits } from "../products/line-units";
 import { MAX_LINE_QTY, MAX_LINE_SUBTOTAL } from "../orders/unit-line-build";
 import type { CreateInvoiceItemDto } from "./dto/create-invoice.dto";
@@ -68,44 +69,47 @@ export function buildInvoiceUnitLine(input: {
       `This line's total is over the ${MAX_LINE_SUBTOTAL} one line can hold.`,
     );
   }
-  return {
-    description: item.description,
-    productId: item.productId,
-    qty,
-    unitPrice,
-    discount: item.discount ?? 0,
-    taxRate: item.taxRate ?? 0,
-    subtotal: lineSub,
-    boxes,
-    pieces,
-    unitsPerBox: factor,
-    unitLabel: label,
-    promoFreeUnits: null as number | null,
-    trackedCategoryId: product.trackedCategoryId ?? null,
-    trackedSubcategoryId: product.trackedSubcategoryId ?? null,
-    // regulated category tax on the NET sale, per-unit levies on the BASE piece count
-    categoryTaxAmount: category
-      ? computeCategoryTax({
-          taxType: category.taxType as CategoryTaxType,
-          rate: Number(category.rate),
-          unitBasisQty: qty,
-          lineSubtotal: lineSub,
-          priceIncludesTax: category.priceIncludesTax,
-        })
-      : 0,
-    // B297 (SA-088): the rate trio categoryTaxAmount above was computed from.
-    ...categoryTaxSnapshotOf(
-      category
-        ? {
+  return assertUnitLineSplit(
+    {
+      description: item.description,
+      productId: item.productId,
+      qty,
+      unitPrice,
+      discount: item.discount ?? 0,
+      taxRate: item.taxRate ?? 0,
+      subtotal: lineSub,
+      boxes,
+      pieces,
+      unitsPerBox: factor,
+      unitLabel: label,
+      promoFreeUnits: null as number | null,
+      trackedCategoryId: product.trackedCategoryId ?? null,
+      trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+      // regulated category tax on the NET sale, per-unit levies on the BASE piece count
+      categoryTaxAmount: category
+        ? computeCategoryTax({
             taxType: category.taxType as CategoryTaxType,
-            rate: category.rate as number | string,
+            rate: Number(category.rate),
+            unitBasisQty: qty,
+            lineSubtotal: lineSub,
             priceIncludesTax: category.priceIncludesTax,
-          }
-        : null,
-    ),
-    notes: item.notes ?? null,
-    // MSRP snapshot — set by applyMsrpSnapshots (null when flag.msrp is off).
-    msrp: null as number | null,
-    tenantId, // nested creates bypass forTenant()
-  };
+          })
+        : 0,
+      // B297 (SA-088): the rate trio categoryTaxAmount above was computed from.
+      ...categoryTaxSnapshotOf(
+        category
+          ? {
+              taxType: category.taxType as CategoryTaxType,
+              rate: category.rate as number | string,
+              priceIncludesTax: category.priceIncludesTax,
+            }
+          : null,
+      ),
+      notes: item.notes ?? null,
+      // MSRP snapshot — set by applyMsrpSnapshots (null when flag.msrp is off).
+      msrp: null as number | null,
+      tenantId, // nested creates bypass forTenant()
+    },
+    "buildInvoiceUnitLine",
+  );
 }

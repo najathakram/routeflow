@@ -2,14 +2,14 @@ import { create } from "zustand";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type ItemDeliveryStatus = "UNRESOLVED" | "DELIVERED" | "PARTIAL" | "REFUSED";
+type ItemDeliveryStatus = "UNRESOLVED" | "DELIVERED" | "PARTIAL" | "REFUSED";
 
-export interface ItemResolution {
+interface ItemResolution {
   status: ItemDeliveryStatus;
   partialQty?: number;
 }
 
-export interface AddedItem {
+interface AddedItem {
   id: string;
   productId: string;
   name: string;
@@ -105,31 +105,3 @@ export const useRouteStore = create<RouteState>((set) => ({
 
   reset: () => set({ activeRunId: null, itemResolutions: {}, stopNotes: {}, addedItems: {} }),
 }));
-
-// ─── Selectors ────────────────────────────────────────────────────────────────
-
-/** Stable empty object returned when a stop has no resolutions yet.
- *  Using a module-level constant avoids creating a new `{}` on every call,
- *  which would break Zustand's `useSyncExternalStore` tearing check and cause
- *  "Maximum update depth exceeded" for stops with no resolutions (e.g. PENDING). */
-const EMPTY_RESOLUTIONS: Record<string, ItemResolution> = {};
-
-export function selectStopResolutions(state: RouteState, stopId: string) {
-  return state.itemResolutions[stopId] ?? EMPTY_RESOLUTIONS;
-}
-
-export function selectAllItemsResolved(
-  state: RouteState,
-  stopId: string,
-  orderItemIds: string[],
-): boolean {
-  const resolutions = state.itemResolutions[stopId] ?? {};
-  const addedItems = state.addedItems[stopId] ?? [];
-  const allOriginalResolved = orderItemIds.every(
-    (id) => resolutions[id] && resolutions[id].status !== "UNRESOLVED",
-  );
-  const allAddedResolved = addedItems.every(
-    (item) => resolutions[item.id] && resolutions[item.id].status !== "UNRESOLVED",
-  );
-  return allOriginalResolved && allAddedResolved;
-}

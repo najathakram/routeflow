@@ -1,0 +1,191 @@
+{
+  "task": {
+    "id": "FIX-865B",
+    "title": "admin AddonService routes through the helper",
+    "type": "fix",
+    "files": ["apps/api/src/billing/addon.service.ts"],
+    "tests": [],
+    "dependsOn": ["FIX-865A"],
+    "risk": "HIGH",
+    "radius": [8, 12],
+    "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/apps/api/src/billing/addon.service.ts",
+    "implBaseSha": "b11879f1bd96e48b11996ded1dc9ed98763571e3",
+    "implement": {
+      "status": "done",
+      "filesChanged": ["apps/api/src/billing/addon.service.ts"],
+      "deviations": "Could not write the requested report.md at .claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-865B/report.md — the Write tool refused it (\"Subagents should return findings as text, not write report files\"). Full report content is included below in `notes` instead. Also: found a pre-existing, out-of-scope test failure in src/billing/mrr-paying-predicate.parity.spec.ts (platform-admin.service.ts now has 7 isPayingRow( call sites vs the spec's expected 6, from commit 89ca4d85 which predates this task and touches a file I don't own) — reported as a follow-up, not fixed, per task instructions to report rather than fix out-of-scope issues.",
+      "notes": "STARTING STATE: addon.service.ts already carried almost all of the FIX-865A/SA-277 ledger wiring (emitAddonDelta import/call, 7th `events` ctor arg, tx-wrapped upsert/update) from an earlier round — git status showed it already modified before I started, and all three target spec files (addon.service.spec.ts, subscription-mutation.service.spec.ts, addon-ledger.spec.ts) were already passing at Jest runtime.\n\nTHE ACTUAL RED SIGNAL was `npx tsc --noEmit -p apps/api/tsconfig.json`:\n  apps/api/src/billing/addon.service.ts(372,27): error TS18047: 'addon.priceSnapshot' is possibly 'null'.\n  apps/api/src/billing/addon.service.ts(372,27): error TS2365: Operator '>' cannot be applied to types 'Decimal' and 'number'.\nTenantAddon.priceSnapshot is `Decimal? @db.Decimal(10, 2)` (apps/api/prisma/schema/platform.prisma:106); disableAddon's ledger-emit guard (`addon.priceSnapshot > 0`) neither null-checked nor coerced the Prisma Decimal (Jest's mocks use plain numbers so this didn't surface at test runtime).\n\nFIX (1 line, apps/api/src/billing/addon.service.ts:372):\n  - if (addon.active && addon.priceSnapshot > 0) {\n  + if (addon.active && addon.priceSnapshot != null && Number(addon.priceSnapshot) > 0) {\nMinimal change; no assertion weakened; runtime behavior for null/zero/positive cases was already correct, only the type was wrong.\n\nFILES CHANGED (owned): apps/api/src/billing/addon.service.ts (1 line).\n\nGREEN EVIDENCE:\n- `npx tsc --noEmit -p apps/api/tsconfig.json` → clean, no output (re-verified after commit).\n- `cd apps/api && npx jest src/billing/billing-cron.service.spec.ts src/platform-admin/platform-admin.service.spec.ts src/billing/addon.service.spec.ts src/billing/subscription-mutation.service.spec.ts src/billing/mrr.service.spec.ts src/billing/addon-ledger.spec.ts src/billing/mrr-paying-predicate.parity.spec.ts --maxWorkers=2 --passWithNoTests` (re-verified after commit) →\n  Test Suites: 1 failed, 6 passed, 7 total\n  Tests: 1 failed, 1 todo, 310 passed, 312 total\n  All three of this task's owned RED tests (addon.service.spec.ts, subscription-mutation.service.spec.ts, addon-ledger.spec.ts) are GREEN, as are billing-cron.service.spec.ts, mrr.service.spec.ts, and platform-admin.service.spec.ts.\n\nFOLLOW-UP (not fixed, out of scope): src/billing/mrr-paying-predicate.parity.spec.ts fails one pin: 'platform-admin.service.ts calls isPayingRow at every wasPaying/isPaying site' expects 6 occurrences of `isPayingRow(` in platform-admin.service.ts, actual is 7 (grep-confirmed at lines 569, 570, 795, 796, 1008, 1009, 1479). The 7th call was added at line 1479 by commit 89ca4d85 'fix(billing): gate override backfill emit on isPayingRow (B864, SA-277)', which predates this task and touches a file (platform-admin.service.ts) I don't own — git status shows it unmodified in this worktree. Either the parity spec's expected count needs bumping to 7, or activateManualSubscription's backfill-emit path needs review against the spec's intent — flagging for whoever owns platform-admin.service.ts / that spec.\n\nCOMMIT: 28ee9b6d \"fix(billing): guard nullable Decimal priceSnapshot in disableAddon (FIX-865B)\" — apps/api/src/billing/addon.service.ts only, scoped commit as requested."
+    },
+    "packPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-865B/pack.md",
+    "review": {
+      "specCompliance": "partial",
+      "findings": [
+        {
+          "severity": "important",
+          "file": "apps/api/src/billing/addon.service.ts",
+          "line": 372,
+          "summary": "The admin disableAddon checks `addon.active` on a row it read outside the transaction and before the lock, then does an unconditional update and emits. Two concurrent disables both book −snapshot×qty.",
+          "scenario": "An admin double-clicks Disable on a paying tenant's REGULATED_ITEMS row (priceSnapshot 10, qty 1). Both requests read active=true. The second Stripe del returns resource_missing, which the code treats as success. Both transactions then run emitAddonDelta. The Tenant FOR UPDATE lock only serialises them; nothing re-checks `active`. The ledger records −20 where it should record −10, and MRR drifts below the stored truth. Fix: inside the tx, use `updateMany({ where: { tenantId, addonKey, active: true } })` and emit only when count === 1, or re-read the row after the lock. The self-serve disableAddon in subscription-mutation.service.ts:1311 has the same read-outside-tx shape, so it needs the same fix as a sibling."
+        },
+        {
+          "severity": "important",
+          "file": "apps/api/src/billing/addon.service.ts",
+          "line": 263,
+          "summary": "The upsert now writes `sku` for every key, including unbridged keys with no catalog SKU (developer_mode). This changes the entitlements output, which nothing in the spec asked for.",
+          "scenario": "enableAddon('t1','developer_mode') now stores sku='developer_mode' where it used to store null. addonSkuCode(row) then returns 'developer_mode' instead of null. EntitlementsService.compute (entitlements.service.ts:224-245) pushes it into activeCodes, so `ent.addons` now contains 'developer_mode'. compute also fetches the published catalog again and logs a 'granting nothing' warning on every compute for that tenant. `ent.addons` feeds feature-resolver.service.ts:104, feature-preview.service.ts:71/101, subscription.service.ts:200 and platform-admin.service.ts:1754. That breaks P6 ('unbridged key … still resolves, no snapshot') and acceptance item 5's intent. The P6 pin only asserts 'no emit', so it misses this. Fix: write `sku` only when `isBridged || skuDef` (otherwise leave it undefined/null). I did not check whether any of those consumers change a user-visible gate as a result."
+        },
+        {
+          "severity": "minor",
+          "file": "apps/api/src/billing/addon.service.ts",
+          "line": 222,
+          "summary": "When a stripePriceId is passed but Stripe is not configured, priceSnapshot is still set to the catalog price and revenue is booked, even though no Stripe item exists. That contradicts D1 ('only a Stripe-billed enable carries revenue').",
+          "scenario": "With this.stripe.isConfigured=false, enableAddon('t1','tobacco_dealer','price_x') on an ACTIVE tenant skips the Stripe block, writes priceSnapshot=catalog price and emits +price to the ledger. Nothing is actually billed."
+        },
+        {
+          "severity": "minor",
+          "file": "apps/api/src/billing/addon.service.ts",
+          "line": 195,
+          "summary": "`let skuDef: any` gives up the catalog's type. eslint reports no-unsafe-* warnings (0 errors), and `Number(skuDef.monthlyPrice)` goes unchecked.",
+          "scenario": "If the catalog's addonSkus field is renamed (e.g. monthlyPrice becomes price), this still compiles and produces priceSnapshot NaN, which Prisma rejects at runtime. Type it as `(typeof published.addonSkus)[number] | undefined`."
+        },
+        {
+          "severity": "minor",
+          "file": "apps/api/src/billing/addon.service.ts",
+          "line": 258,
+          "summary": "The Stripe subscription item is created before the transaction. The transaction now also takes the Tenant FOR UPDATE lock, runs findUniqueOrThrow and emits, so there are more ways for it to fail and leave a billed Stripe item with no local row.",
+          "scenario": "The Stripe create succeeds, then the tx throws (for example a lock timeout or an emit failure). The tenant is billed by Stripe for an add-on whose TenantAddon row never activated, and no compensating subscriptionItems.del runs. The Stripe-before-upsert ordering already existed; this change widens the failure window."
+        },
+        {
+          "severity": "minor",
+          "file": "apps/api/src/billing/addon.service.spec.ts",
+          "line": 571,
+          "summary": "No test covers the FIX-865B change itself. A disable of a row with priceSnapshot null, or of an already-inactive row, should emit nothing, and no spec checks that.",
+          "scenario": "If someone reverts the `addon.priceSnapshot != null && Number(...) > 0` guard to `Number(addon.priceSnapshot) > 0`, or drops `addon.active`, the suite stays green. I ran the suite and all 25 tests pass. The only disable test uses priceSnapshot 10 on an active row."
+        },
+        {
+          "severity": "minor",
+          "file": "apps/api/src/billing/addon.service.ts",
+          "line": 375,
+          "summary": "The disable path derives the ledger sku from `LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey` and ignores the stored row.sku. The self-serve path uses addonSkuCode(addon) (stored sku first).",
+          "scenario": "If a row's stored sku differs from the one the legacy map derives, the enable event and the disable event record different sku payloads for the same add-on. Any per-SKU ledger breakdown then fails to net to zero."
+        },
+        {
+          "severity": "important",
+          "file": "apps/api/src/billing/addon.service.ts",
+          "line": 280,
+          "summary": "The update branch of the upsert now writes `sku: null` whenever the key is unbridged and has no stripePriceId. That wipes a correct `sku` already stored on an existing row, which master never did because its update branch did not touch sku. The update should use `sku: skuToStore ?? undefined`.",
+          "scenario": "A tenant self-enables FORECASTING. subscription-mutation.service.ts:1248-1256 writes addonKey='FORECASTING', sku='FORECASTING'. The tenant then disables it. Later a platform admin re-enables it with POST tenants/:id/addons/enable {addonKey:'FORECASTING'} and no stripePriceId. isBridged is false because FORECASTING is not a key in LEGACY_ADDON_KEY_TO_SKU (plan-catalog.constants.ts:397-405). With no stripePriceId the catalog is never read, so skuDef is null and skuToStore is null. The upsert then runs the update branch with sku: null. The row is now active=true with sku=null, so addonSkuCode (plan-catalog.constants.ts:409) returns null, and EntitlementsService.compute drops FORECASTING from ent.addons. The admin sees the add-on 'enabled', but the tenant has lost the feature. On master (update branch had no sku) and on the r0 diff (sku='FORECASTING'), the entitlement survived. I did not check whether EnableAddonDto restricts addonKey to legacy keys, which would block this path."
+        }
+      ],
+      "assessment": "needs-fixes"
+    },
+    "status": "complete",
+    "rounds": 2,
+    "clean": true,
+    "minorFindings": [
+      {
+        "severity": "minor",
+        "file": "apps/api/src/billing/addon.service.ts",
+        "line": 222,
+        "summary": "When a stripePriceId is passed but Stripe is not configured, priceSnapshot is still set to the catalog price and revenue is booked, even though no Stripe item exists. That contradicts D1 ('only a Stripe-billed enable carries revenue').",
+        "scenario": "With this.stripe.isConfigured=false, enableAddon('t1','tobacco_dealer','price_x') on an ACTIVE tenant skips the Stripe block, writes priceSnapshot=catalog price and emits +price to the ledger. Nothing is actually billed."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/billing/addon.service.ts",
+        "line": 195,
+        "summary": "`let skuDef: any` gives up the catalog's type. eslint reports no-unsafe-* warnings (0 errors), and `Number(skuDef.monthlyPrice)` goes unchecked.",
+        "scenario": "If the catalog's addonSkus field is renamed (e.g. monthlyPrice becomes price), this still compiles and produces priceSnapshot NaN, which Prisma rejects at runtime. Type it as `(typeof published.addonSkus)[number] | undefined`."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/billing/addon.service.ts",
+        "line": 258,
+        "summary": "The Stripe subscription item is created before the transaction. The transaction now also takes the Tenant FOR UPDATE lock, runs findUniqueOrThrow and emits, so there are more ways for it to fail and leave a billed Stripe item with no local row.",
+        "scenario": "The Stripe create succeeds, then the tx throws (for example a lock timeout or an emit failure). The tenant is billed by Stripe for an add-on whose TenantAddon row never activated, and no compensating subscriptionItems.del runs. The Stripe-before-upsert ordering already existed; this change widens the failure window."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/billing/addon.service.spec.ts",
+        "line": 571,
+        "summary": "No test covers the FIX-865B change itself. A disable of a row with priceSnapshot null, or of an already-inactive row, should emit nothing, and no spec checks that.",
+        "scenario": "If someone reverts the `addon.priceSnapshot != null && Number(...) > 0` guard to `Number(addon.priceSnapshot) > 0`, or drops `addon.active`, the suite stays green. I ran the suite and all 25 tests pass. The only disable test uses priceSnapshot 10 on an active row."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/billing/addon.service.ts",
+        "line": 375,
+        "summary": "The disable path derives the ledger sku from `LEGACY_ADDON_KEY_TO_SKU[addonKey] ?? addonKey` and ignores the stored row.sku. The self-serve path uses addonSkuCode(addon) (stored sku first).",
+        "scenario": "If a row's stored sku differs from the one the legacy map derives, the enable event and the disable event record different sku payloads for the same add-on. Any per-SKU ledger breakdown then fails to net to zero."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/billing/addon.service.ts",
+        "line": 386,
+        "summary": "The new race-loser branch has no test: re-read under the row lock sees active=false, so no update and no emit. The race fix for finding #0 is therefore unpinned.",
+        "scenario": "Someone later removes the `if (!current?.active) return` guard, or moves the findUnique before the FOR UPDATE. Every existing disable test still passes because the tx mock returns an active row and $queryRaw resolves []. The double −snapshot×qty booking from finding #0 would come back without any test failing."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/platform-admin/platform-admin.service.ts",
+        "line": 1454,
+        "summary": "updateTenantPriceOverride's in-tx re-read does not include basePriceSnapshot, so `backfillBase` is still decided from the pre-tx `existing` read, contrary to the comment and the P3 pin's stated guarantee.",
+        "detail": "Lines 1454-1462 say 'Re-read the subscription UNDER the lock: backfillBase must be decided from the locked row, not from `existing`', but `row` selects only status/class/deletedAt/subscription.planKey, and `backfillBase` (line 1446) is still `existing.basePriceSnapshot == null` from the read at line 1430, outside the tx. Only paying-ness is decided under the lock. Race: an admin `updatePlan` (Tenant lock at :483; writes basePriceSnapshot at :826/:832 and books its delta) commits between the :1430 read and this tx. This tx then sees backfillBase=true (stale), overwrites the snapshot with dto.monthly (:1469) and books +dto.monthly on top of updatePlan's booking. activateManualSubscription does NOT write basePriceSnapshot (verified :938-1010), so the P3 test's scenario is safe; the updatePlan race is the one the code does not cover. Fix: add `basePriceSnapshot: true` to the `subscription` select in `row` and compute backfillBase from `row.subscription` inside the tx; extend the P3 pin to assert the snapshot read happens after the lock. Narrow admin-vs-admin race on one tenant, hence minor.",
+        "source": "holistic-read"
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/billing/addon.service.ts",
+        "line": 289,
+        "summary": "Admin enableAddon books `priceSnapshot × row.quantity` while the Stripe item it just created is quantity 1; the upsert update branch never resets `quantity`, so a stale quantity > 1 would book N× what Stripe bills.",
+        "detail": "Line 249 creates the Stripe subscription item with `quantity: 1`; line 289 emits `deltaQty: row.quantity ?? 1`, where `row` is the upserted TenantAddon whose update branch (lines 280-286) leaves an existing `quantity` untouched. Today this is hard to reach over HTTP: rows with quantity > 1 are self-serve rows keyed by uppercase SKU (subscription-mutation.service.ts:1248-1256), and the platform-admin EnableAddonDto regex `^[a-z][a-z0-9_]*$` (apps/api/src/billing/dto/manage-addon.dto.ts:12) rejects uppercase keys, so an admin cannot address them. Note this same regex also blocks the HTTP path of recorded finding #7 (FORECASTING via admin re-enable); the `sku: skuToStore ?? undefined` fix there is still right, but the scenario is service-level only. To close this latent mismatch make the ledger and Stripe agree: either emit `deltaQty: 1` for the admin path or set `quantity: 1` in the update branch.",
+        "source": "holistic-read"
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/billing/subscription-mutation.service.ts",
+        "line": 1258,
+        "summary": "A self-serve quantity bump rewrites the stored priceSnapshot to the current catalog price while booking only `newPrice × deltaQty`; with disable now booking −storedSnapshot × qty (D1), the enable/disable pair no longer nets when the catalog price changed in between.",
+        "detail": "Sequence: enable qty 2 at catalog 10 → books +20, snapshot 10. Catalog re-published at 12. Bump to qty 3 → deltaQty 1, books +12 (line 1261-1268), and the update branch at line 1258 rewrites snapshot to 12. Disable → `emitAddonDelta` books −12 × 3 = −36 (line 1323-1329). Net −4 for an add-on that is fully gone. Pre-existing rewrite (the base update branch already did it), but this change is what makes disable depend on the stored snapshot, so the asymmetry now lives entirely inside the ledger writer the change introduced. Fix options: on a bump of an already-active row keep the existing snapshot (write priceSnapshot only on create / re-activation of an inactive row), or book the re-price `(newPrice − oldSnapshot) × priorQty` alongside the quantity delta. Report-as-follow-up is acceptable if the round wants to keep FIX-865B scoped.",
+        "source": "holistic-read"
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/billing/addon.service.spec.ts",
+        "summary": "No spec pins the r2 behavior. Nothing checks that the enableAddon upsert update branch leaves an existing sku alone (update.sku is undefined, not null) when skuToStore is null. Commit 3d357d46 touches only addon.service.ts, and the uncommitted spec diff has no case for it.",
+        "scenario": "If someone later changes line 289 back to `sku: skuToStore`, a platform-admin re-enable of a self-serve-enabled unbridged key (FORECASTING, no stripePriceId) nulls the stored sku again. The add-on then silently drops out of ent.addons, and no test goes red. The fix is one test: mock an existing row with sku='FORECASTING', re-enable with no stripePriceId, and assert that upsert's update arg has no sku value, or has undefined."
+      }
+    ],
+    "rulings": [],
+    "roundHistory": [
+      {
+        "round": 1,
+        "plan": { "model": "claude-sonnet-5", "effort": "medium", "designer": false },
+        "design": null,
+        "exec": {
+          "status": "done",
+          "filesChanged": ["apps/api/src/billing/addon.service.ts"],
+          "deviations": "Finding #0's suggested updateMany + count===1 approach was rejected in favor of the doc's other offered alternative (\"re-read the row after the lock\") because the pinned addon.service.spec.ts tests (PIN T11, PIN T14, and the disable-invalidates test) assert prisma.tenantAddon.update is called with specific args, and their mock tx client doesn't implement updateMany -- those tests are outside this task's owned files (addon.service.ts only), so I kept them green. Implemented instead: SELECT ... FOR UPDATE row lock + re-read via tx.tenantAddon.findUnique inside the transaction, gating the .update() call and emitAddonDelta on that fresh read's active flag. Finding #0 also flagged the self-serve disableAddon in subscription-mutation.service.ts:1311 as needing the same fix (\"sibling\"), but that file is not in this task's owned-files list, so I left it untouched and am reporting it as a follow-up in notes.",
+          "notes": "Follow-up (out of scope for this task): subscription-mutation.service.ts's disableAddon (~line 1311) has the same read-outside-tx-then-unconditional-update shape as the bug fixed here in addon.service.ts's disableAddon, per finding #0's own note. It should get the same lock+re-read treatment in whichever task owns that file.\n\nVerification performed: npx tsc --noEmit -p apps/api/tsconfig.json clean (both before and after the commit's lint-staged/prettier pass). npx jest src/billing/billing-cron.service.spec.ts src/platform-admin/platform-admin.service.spec.ts src/billing/addon.service.spec.ts src/billing/subscription-mutation.service.spec.ts src/billing/mrr.service.spec.ts src/billing/addon-ledger.spec.ts src/billing/mrr-paying-predicate.parity.spec.ts --maxWorkers=2 --passWithNoTests run twice (before and after commit): 311/313 tests pass, 1 todo, 1 failure. The one failure is in mrr-paying-predicate.parity.spec.ts, pinning `grep -c isPayingRow(` on apps/api/src/platform-admin/platform-admin.service.ts to 6; the file already has 7 occurrences from a prior commit (89ca4d85) on this branch, before I made any change -- confirmed via `git log --oneline -1 -- apps/api/src/platform-admin/platform-admin.service.ts` and a grep count, and by re-running the full suite unchanged after my commit (same single failure, same count). I never touched platform-admin.service.ts. Not in this task's owned files; not fixed here.\n\nCommitted as 7943c884 on branch fix/b863-b866-billing-mrr-ledger, scoped to apps/api/src/billing/addon.service.ts only (lint-staged/prettier ran automatically on commit, no manual reformatting done)."
+        },
+        "fixBaseSha": "28ee9b6d3bf079631cffd9b5339807c54d9bea55",
+        "headAfter": "7943c8844fc142aeb3f17b643eb771acf9cb3978"
+      },
+      {
+        "round": 2,
+        "plan": { "model": "claude-sonnet-5", "effort": "medium", "designer": false },
+        "design": null,
+        "exec": {
+          "status": "done",
+          "filesChanged": ["apps/api/src/billing/addon.service.ts"],
+          "deviations": "Finding #0 (disableAddon read-outside-tx/no re-check-active) was already fixed by round 1 (commit 7943c884): the row is now locked with SELECT...FOR UPDATE, re-read inside the tx, and the update+emitAddonDelta are gated on that fresh `current.active` read — matches the finding's prescribed fix exactly. Verified by reading the current file (apps/api/src/billing/addon.service.ts:370-397) and the r1 diff; no further change was needed there. Only finding #1 required a code change this round. The finding also names subscription-mutation.service.ts:1311 as a sibling needing the same fix, but that file is outside this task's owned-files list (apps/api/src/billing/addon.service.ts only), so it was left untouched — flagging as a follow-up.",
+          "notes": "Fix for #1: apps/api/src/billing/addon.service.ts:280 — enableAddon's upsert `update` branch now writes `sku: skuToStore ?? undefined` instead of `sku: skuToStore`, so an unresolved sku (unbridged key, no stripePriceId) leaves the existing column untouched instead of overwriting a good stored value with null. Create branch unchanged (null is correct there — no prior value to protect).\n\nVerification: `npx tsc --noEmit -p apps/api/tsconfig.json` — clean, no errors. Targeted jest run (billing-cron, platform-admin, addon.service, subscription-mutation, mrr.service, addon-ledger, mrr-paying-predicate.parity specs) — 311 passed, 1 pre-existing failure unrelated to this change: `mrr-paying-predicate.parity.spec.ts` expects exactly 6 `isPayingRow(` call sites in platform-admin.service.ts but finds 7 — this is in a file this task does not own/touch and the diff here is confined to addon.service.ts, so this is a pre-existing/out-of-scope failure, not a regression from this fix. Flagging as a follow-up for whoever owns platform-admin.service.ts / that parity spec.\n\nFollow-up (not fixed, out of scope for this task's owned files): subscription-mutation.service.ts:~1311 has the same read-outside-tx/no-active-recheck shape in its self-serve disableAddon as FIX-865B finding #0 described — the finding names it as a sibling that needs the identical fix (lock + re-read inside tx, gate on the fresh read).\n\nCommitted as 3d357d46 on branch fix/b863-b866-billing-mrr-ledger."
+        },
+        "fixBaseSha": "a325fbab041114731bcc0d4c6cbba83e29d0df31",
+        "headAfter": "3d357d464842a16d7f7ccba104a311cd5ce366db"
+      }
+    ],
+    "packGaps": []
+  },
+  "progressLine": "Task FIX-865B: complete (2 fix round(s), review clean)"
+}

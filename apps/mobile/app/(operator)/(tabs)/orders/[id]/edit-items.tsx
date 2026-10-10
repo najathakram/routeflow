@@ -2,15 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
-  Modal,
-  PanResponder,
   Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
-  TextInput,
-  useWindowDimensions,
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -18,35 +13,27 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
+import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
 import { UnitPickerRow } from "../../../../../components/UnitPickerRow";
-import { unitPriceBase, type UnitOption } from "../../../../../lib/unit-options";
-import {
-  useCreditNotes,
-  useCreateCreditNote,
-  type CreditNote,
-} from "../../../../../lib/api/credit-notes";
+import { OrderAppliedCredits } from "../../../../../components/OrderAppliedCredits";
+import type { UnitOption } from "../../../../../lib/unit-options";
+import { useCreditNotes, type CreditNote } from "../../../../../lib/api/credit-notes";
 import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib/api/orders";
 import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers";
-import { useProductSearch } from "../../../../../lib/use-product-search";
 import { showToast } from "../../../../../lib/toast";
+import { FAMILY_ADD_MESSAGE, isFamilyProduct } from "../../../../../lib/sellable-products";
 import { confirm } from "../../../../../lib/confirm";
 import {
-  classifyMargin,
   computeLineSubtotal,
-  computeMarginFraction,
   effectiveQty,
   getTierPrice,
-  perUnitPrice,
-  priceForMarginFloor,
-  roundMoney,
+  isSpecialTier,
+  type SellLevel,
 } from "@routeflow/pricing";
-import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
+import { marginFloorPrice } from "../../../../../lib/margin-floor-price";
 import { isUnitLine, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
-import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../../lib/wedge-scan";
-import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { useMarginConfig, floorForCategory } from "../../../../../lib/api/margin";
 import {
   draftFreeUnits,
@@ -60,48 +47,28 @@ import {
   hasUnsavedWork,
   hydrateFromOrder,
   isSnapshotStale,
-  ladderProductFor,
   makeEditItemsSnapshot,
   newLocalId,
   orderOriginals,
-  pickerTrayExpandedHeight,
+  repairBlockedLines,
   resolvePickTarget,
+  resolveDraftKeyForPick,
   serializeEditItemsSnapshot,
   shouldRehydrateFromOrder,
   snapshotBaseline,
   stagedDiffItems,
   EDIT_ITEMS_AUTOSAVE_DEBOUNCE_MS,
-  PICKER_TRAY_HANDLE_HEIGHT,
   type DraftItem,
   type BaselineOrderLike,
   type EditItemsSnapshot,
   type StagedEdit,
   type UnlistedDraft,
 } from "../../../../../lib/edit-items-draft";
-import {
-  bumpScanOrder,
-  nextFlash,
-  type ScanFlash,
-  type TrayRow,
-} from "../../../../../lib/scan-tray";
+import { bumpScanOrder, nextFlash, type ScanFlash } from "../../../../../lib/scan-tray";
 import { ScanTray } from "../../../../../components/ScanTray";
-import { createScanAcceptGuard } from "../../../../../lib/scan-accept-guard";
-import { sanitizeIntInput } from "../../../../../lib/qty";
-import { QTY_INPUT_WIDTH } from "../../../../../lib/row-layout";
-import { resolveProductByCode } from "../../../../../lib/barcode-resolve";
 import { applyPriceOverride } from "../../../../../lib/price-override";
-import { BarcodeScanner } from "../../../../../components/BarcodeScanner";
 import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { scanFabHidden } from "../../../../../lib/scan-fab-visibility";
-import { ProductPickerSheet } from "../../../../../components/ProductPickerSheet";
-import { InlineCreateProductSheet } from "../../../../../components/InlineCreateProductSheet";
-import { InlineToast, useInlineToast } from "../../../../../components/InlineToast";
-import { makeScanHandler, runWedgeSubmit } from "../../../../../lib/scan-ladder";
-import { createScanAttempt, createWedgeSubmitHandler } from "../../../../../lib/wedge-submit";
-// Shared with NewOrderScreen — edit-items' old local copy had a borderless
-// fill3 track; the canonical version uses bgElev + hairline (QtyStepper pill).
-import { SellByToggle } from "../../../../../components/SellByToggle";
-import { MoneyTextInput } from "../../../../../components/MoneyTextInput";
 import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
 import { BlockedLinesModal } from "../../../../../components/BlockedLinesModal";
 import { parseSellingRestricted } from "../../../../../lib/selling-restricted";
@@ -117,6 +84,16 @@ import {
 } from "../../../../../lib/credit-limit-error";
 import { useAuthStore } from "../../../../../lib/auth-store";
 import { fmtCalendarDate } from "../../../../../lib/format-date";
+import { useEditItemsDraft } from "../../../../../hooks/useEditItemsDraft";
+import { DraftItemCard } from "../../../../../components/edit-items/DraftItemCard";
+import { PriceOverrideModal } from "../../../../../components/edit-items/PriceOverrideModal";
+import {
+  UnlistedDraftCard,
+  UnlistedItemModal,
+} from "../../../../../components/edit-items/UnlistedDraft";
+import { CreateCreditNoteModal } from "../../../../../components/edit-items/CreateCreditNoteModal";
+import { ProductPicker } from "../../../../../components/edit-items/ProductPicker";
+import { styles } from "../../../../../components/edit-items/styles";
 
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
@@ -176,11 +153,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     return m;
   }, [customerPrices]);
   const effectiveTierFor = (productId: string) => cpMap.get(productId) ?? customerTier ?? 1;
-  /** SPECIAL (tier!==1) lines are the customer's permanent price — never overridable
+  /** SPECIAL (a tier other than 1) lines are the customer's permanent price — never overridable
    *  (the create surface's own rule, components/NewOrderScreen.tsx:627). Mobile's
    *  editor contradicted mobile's builder until this landed; the api-side gate is
    *  still the owner's call, so this is a CLIENT gate only (RULINGS R2/R9). */
-  const isSpecialFor = (productId: string) => effectiveTierFor(productId) !== 1;
+  const isSpecialFor = (productId: string) => isSpecialTier(effectiveTierFor(productId));
   const userRole = useAuthStore((s) => s.user?.role);
   const userId = useAuthStore((s) => s.user?.id);
   // Customer accounts shouldn't reach this screen, but defend anyway —
@@ -200,14 +177,9 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // session-local, keyed by the SAME draft key as `draft` itself (SA-108).
   const [floorAcked, setFloorAcked] = useState<Set<string>>(new Set());
 
-  // SA-108: keyed by the line's own identity, never productId (hydrateFromOrder).
-  const [draft, setDraft] = useState<Record<string, DraftItem>>({});
-  // SA-108d (E44 correction of SA-108a): a manually-kept-fresh mirror of
-  // `draft` for React's eager-dispatch gap — see resolvePickTarget/
-  // applyPickToDraft's doc comment (lib/edit-items-draft.ts) for the full
-  // synchronization contract this ref exists to satisfy.
-  const draftRef = useRef<Record<string, DraftItem>>({});
-  draftRef.current = draft;
+  // B805: the stateful draft/draftRef/updateDraft trio lives in this shared
+  // hook now — see its own doc comment for the SA-108/SA-108d rationale.
+  const { draft, setDraft, draftRef, updateDraft } = useEditItemsDraft();
   // New + existing ad-hoc lines (productId null). Kept separate from `draft`
   // and diffed on save so they aren't dropped.
   const [unlisted, setUnlisted] = useState<UnlistedDraft[]>([]);
@@ -366,7 +338,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     );
     setCreditsTouched(false);
     setJustCreatedCredits([]);
-  }, [order, id]);
+    // setDraft: stable useState setter, forwarded through useEditItemsDraft.
+  }, [order, id, setDraft]);
 
   // The snapshot key resolves SYNCHRONOUSLY from the store (unlike
   // lib/user-scoped-storage.ts's async key, whose extra hop that module's own
@@ -428,7 +401,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     setCreditsTouched(restored.creditsTouched);
     setFloorAcked(new Set(restored.floorAcked));
     setRestoreState("applied");
-  }, [order, baselineOrder, restored, restoreState]);
+  }, [order, baselineOrder, restored, restoreState, setDraft]);
 
   // Live total mirrors the server math (BOX-price proration when split).
   const total = useMemo(() => {
@@ -578,7 +551,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // ── Per-line helpers ──────────────────────────────────────────────────────
 
   const setQty = (id: string, qty: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
       const q = Math.max(0, Math.floor(qty));
@@ -598,12 +571,12 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     return next;
   };
   const setBoxes = (id: string, boxes: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       return cur ? commitLine(d, id, applyBoxEdit(cur, boxes, Number(cur.unitsPerBox ?? 0))) : d;
     });
   const setPieces = (id: string, pieces: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       return cur ? commitLine(d, id, applyPieceEdit(cur, pieces, Number(cur.unitsPerBox ?? 0))) : d;
     });
@@ -611,7 +584,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   /** Unit mode: the operator types a TOTAL unit count; normalize it back into
    *  cases + loose (7 units of a 6-pack -> 1 case + 1 loose) via setLineUnits. */
   const setUnits = (id: string, units: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
       const upb = Number(cur.unitsPerBox ?? 0);
@@ -623,12 +596,12 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     });
 
   const setSellBy = (id: string, sellBy: "case" | "unit") =>
-    setDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], sellBy } } : d));
+    updateDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], sellBy } } : d));
 
   // units_v1: apply a `UnitPickerRow` choice — see lib/edit-items-draft.ts#applyUnitPick
   // (pack-restore tier price, the current-selling-unit-factor convention; size-ratchet extraction).
   const setUnitLabel = (id: string, option: UnitOption) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
       const packTierPrice = cur.packLadder
@@ -640,14 +613,14 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // "Set to floor" one-tap fix (P10-POS-1) — same price-write path as the
   // price-override modal, minus the reason (the ack itself is the record).
   const setLinePrice = (id: string, unitPrice: number) =>
-    setDraft((d) => {
+    updateDraft((d) => {
       const cur = d[id];
       if (!cur) return d;
       return { ...d, [id]: { ...cur, unitPrice } };
     });
 
   const setLineNote = (id: string, notes: string) =>
-    setDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], notes } } : d));
+    updateDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], notes } } : d));
 
   // units_v1 (SA-085i(c)): a unit line steps its COUNT via setQty; a non-unit line delegates
   // to setBoxes/setQty exactly like master did.
@@ -662,7 +635,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
 
   /**
    * Add a picked/scanned product to the draft (shared by tap-pick and
-   * add-and-stay). `kind === "piece"` rolls one loose unitSku piece into a
+   * add-and-stay). `level === "UNIT"` (from the scanned code, SA-580) rolls one loose piece into a
    * box. Returns the draft KEY (B775: never `p.id`) for callers tracking
    * "the last thing added" (the picker's price-edit affordance).
    */
@@ -678,11 +651,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       unit?: string;
       unitsPerBox?: number | null;
     },
-    kind: "case" | "piece" = "case",
+    level: SellLevel = "BOX",
   ): string => {
     const catalogPrice = tierPriceFor(p);
     const listPrice = toNumber(p.pricePerUnit);
-    const isSpecial = (cpMap.get(p.id) ?? customerTier ?? 1) !== 1;
+    const isSpecial = isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1);
     const upbRaw = p.unitsPerBox;
     const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
     // Fresh-add starting price — only a genuine discount (below tier) or
@@ -692,22 +665,25 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       !isSpecial && hist != null && (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
         ? hist.lastPrice
         : catalogPrice;
+    // A FAMILY container is never a line (search pick or scan): no line added.
+    if (isFamilyProduct(p as { kind?: "FAMILY" })) {
+      showToast(FAMILY_ADD_MESSAGE);
+      return resolveDraftKeyForPick(draftRef.current, p.id, null);
+    }
     // Key resolution + the pure `apply(d)` updater: resolvePickTarget (lib/edit-items-draft.ts).
     const { key, existingLabel, apply } = resolvePickTarget(draftRef.current, {
       productId: p.id,
       name: p.name,
       unit: p.unit,
       unitsPerBox,
-      kind,
+      level,
       startPrice,
       catalogPrice,
       packLadder: buildPackLadder({ ...p, unitsPerBox }),
     });
-    const commit = () => {
-      draftRef.current = apply(draftRef.current);
-      setDraft(apply);
-    };
-    if (kind === "piece" && existingLabel) {
+    // B805: the pick commits through updateDraft like every other writer.
+    const commit = () => updateDraft(apply);
+    if (level === "UNIT" && existingLabel) {
       confirm(`Add 1 ${existingLabel}?`, `${p.name} is sold by ${existingLabel}.`, commit, {
         confirmText: `Add 1 ${existingLabel}`,
       });
@@ -726,17 +702,28 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     else setQty(id, Math.max(0, (cur.qty ?? 0) - 1));
   };
 
-  const removeLine = (id: string) =>
-    setDraft((d) => {
-      const cur = d[id];
-      // An existing (already-saved) line must be explicitly DELETE'd in the diff
-      // — otherwise the incremental merge would leave it untouched on the order.
-      if (cur?.lineId)
-        setPendingDeletes((prev) => (prev.includes(cur.lineId!) ? prev : [...prev, cur.lineId!]));
+  const removeLine = (id: string) => {
+    // B805: the pendingDeletes append is a SIDE EFFECT, so it must run
+    // OUTSIDE the pure fn handed to updateDraft (which may run twice — see
+    // updateDraft's own comment). Read from draftRef.current, the same
+    // synchronously-accurate mirror updateDraft itself maintains, not the
+    // component-level `draft` state (which could be a render behind inside
+    // a same-tick burst). If a later action in the same batch re-adds this
+    // SAME lineId (a rescan, or the price modal), order-item-diff.ts's
+    // `buildOrderItemDiff` drops a pendingDelete whose id survives as a live
+    // catalog entry — the surviving state wins, never a DELETE alongside
+    // that entry's own UPDATE.
+    const cur = draftRef.current[id];
+    if (cur?.lineId) {
+      const lineId = cur.lineId;
+      setPendingDeletes((prev) => (prev.includes(lineId) ? prev : [...prev, lineId]));
+    }
+    updateDraft((d) => {
       const next = { ...d };
       delete next[id];
       return next;
     });
+  };
 
   // ── The picker's pull-out drawer ──────────────────────────────────────────
   // Rows come from the ONE tray derivation the sale builders use
@@ -813,6 +800,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     // trash-button set. The whole mapping lives in lib/edit-items-draft.ts so
     // the dirty check and this payload are ONE derivation.
     const items = stagedDiffItems({ draft, unlisted, pendingDeletes }, originals);
+    const repair = repairBlockedLines(draft, originals); // #2231: LOCKED unit line, send nothing
+    if (repair.length) return showToast(`${repair.join(", ")} needs repair — not saved.`);
 
     if (items.length === 0 && !creditsTouched) {
       // Nothing changed — mirror web: just leave the editor, don't error.
@@ -986,7 +975,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             // SA-108: write back to priceEditItem's OWN stored key — a new
             // row has no lineId, so re-deriving one would double-CREATE it.
             const key = priceEditItem.key;
-            setDraft((d) => ({
+            updateDraft((d) => ({
               ...d,
               [key]: {
                 ...priceEditItem.item,
@@ -1065,6 +1054,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           // the order's (SPECIAL-tier lock + web's edit window, RULINGS R2/R9).
           canEditPrice={lastAddedLine ? canEditPriceFor(lastAddedLine.productId) : false}
           isSpecialTierFor={isSpecialFor}
+          priceFor={isDriver ? undefined : tierPriceFor}
           initialScanOpen={pickerScanIntent}
           // Add-and-stay (scans + wedge input): the picker stays open so N
           // items scan with zero taps — closes web's long-standing edit-screen
@@ -1072,9 +1062,9 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           onPickAndStay={
             substituteFor
               ? undefined
-              : (p, kind) => {
+              : (p, level) => {
                   // B775: track the draft KEY (addPickedToDraft's return), not p.id.
-                  const key = addPickedToDraft(p, kind);
+                  const key = addPickedToDraft(p, level);
                   setLastScannedId(key);
                   setScanOrder((o) => bumpScanOrder(o, key));
                   setTrayFlash((f) => nextFlash(f, key));
@@ -1113,7 +1103,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           onEditPrice={(_item, price, reason) => {
             const key = lastScannedId;
             if (!key) return;
-            setDraft((d) => {
+            updateDraft((d) => {
               const cur = d[key];
               if (!cur) return d;
               return {
@@ -1128,11 +1118,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           // an add made with the camera shut (a wedge scanner, a typed code).
           // Only the row flash, which belongs to the camera session, is cleared.
           onScanSessionEnd={() => setTrayFlash(null)}
-          onPick={(p, kind) => {
+          onPick={(p, level) => {
             if (substituteFor) {
               const tierPrice = tierPriceFor(p);
               const listPrice = toNumber(p.pricePerUnit);
-              setDraft((d) => {
+              updateDraft((d) => {
                 const next = { ...d };
                 const old = next[substituteFor];
                 // Re-denominates the inherited piece count against the
@@ -1152,7 +1142,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               setSubstituteFor(null);
             } else {
               // B775: track the draft KEY, not p.id — see the onPickAndStay note above.
-              const key = addPickedToDraft(p, kind);
+              const key = addPickedToDraft(p, level);
               setScanOrder((o) => bumpScanOrder(o, key));
               setTrayFlash((f) => nextFlash(f, key));
             }
@@ -1228,6 +1218,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             </View>
           ) : null}
           <ScrollView showsVerticalScrollIndicator={false}>
+            {!isDriver && order ? <OrderAppliedCredits order={order as any} /> /* #2404 */ : null}
             {/* Apply credit — mirrors NewOrderScreen. Driver-gated off: drivers
                 don't manage credits. Gated on the customer alone (not credit
                 COUNT) so the operator can create one right here when none
@@ -1424,1913 +1415,6 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     </SafeAreaView>
   );
 }
-
-/**
- * B263 (review round) — the ONE margin-floor derivation both price-edit
- * surfaces read: the list row's below-floor guard and the picker's
- * last-added strip. Same helper, same arguments (`averageCost` per piece,
- * the line's category floor, `unitsPerBox`), so a price the row flags is
- * flagged identically on the scan surface. Null when the product has no
- * known cost — no cost, no floor, no ack.
- */
-function marginFloorPrice(item: DraftItem, marginFloor: number): number | null {
-  const pieceCost = item.averageCost != null ? toNumber(item.averageCost) : null;
-  if (pieceCost == null || !Number.isFinite(pieceCost)) return null;
-  const marginFrac = computeMarginFraction(item.unitPrice, pieceCost, item.unitsPerBox);
-  if (classifyMargin(marginFrac, marginFloor) == null) return null;
-  return priceForMarginFloor(pieceCost, marginFloor, item.unitsPerBox);
-}
-
-// ─── Per-row card ────────────────────────────────────────────────────────────
-
-/**
- * Draft line as a card with three zones:
- *   ┌─────────────────────────────────────────────┐
- *   │ Name                            $line total │  ← header
- *   │ $unit · per box of N · SKU                  │  ← meta
- *   ├─────────────────────────────────────────────┤
- *   │ Boxes  [- 2 +]    Loose pieces  [- 3 +]     │  ← editor (boxed)
- *   │   or                                        │
- *   │ Qty    [- 4 +]                              │  ← editor (loose)
- *   ├─────────────────────────────────────────────┤
- *   │ [Sub]  [Override]  [trash]                  │  ← actions
- *   └─────────────────────────────────────────────┘
- *
- * The previous design crammed everything into one row + tiny trash + tiny
- * stepper, which the user called out as ugly and missing the box/piece
- * controls. This stacked layout gives each function room to breathe.
- */
-function DraftItemCard({
-  item,
-  canSplitBoxes,
-  canEditPrice,
-  pricingReady,
-  tier,
-  marginFloor,
-  acked,
-  onSetToFloor,
-  onSellAnyway,
-  onIncQty,
-  onDecQty,
-  onSetQty,
-  onSetBoxes,
-  onSetPieces,
-  onSetUnits,
-  onSetSellBy,
-  onSetUnit,
-  onSetNote,
-  onPressPrice,
-  onPressSubstitute,
-  onRemove,
-}: {
-  item: DraftItem;
-  canSplitBoxes: boolean;
-  /** Price / discount editing is offered while the order is editable (DRAFT/PENDING/CONFIRMED). */
-  canEditPrice: boolean;
-  /** units_v1: the EFFECTIVE numeric tier for `UnitPickerRow` to resolve the ladder price at. */
-  tier: number;
-  /** B62 (REG-B62): false while the customer/customer-price queries are in
-   *  flight — gates Substitute, which prices (and SENDS) the replacement line
-   *  off the tier that isn't known yet. */
-  pricingReady: boolean;
-  /** Category margin floor (fraction) for the live cost/margin hint. */
-  marginFloor: number;
-  /** Whether this line was already acked as "sell anyway" below the floor. */
-  acked: boolean;
-  onSetToFloor: (price: number) => void;
-  onSellAnyway: () => void;
-  onIncQty: () => void;
-  onDecQty: () => void;
-  onSetQty: (n: number) => void;
-  onSetBoxes: (n: number) => void;
-  onSetPieces: (n: number) => void;
-  /** Unit mode: total unit count, routed through setLineUnits. */
-  onSetUnits: (n: number) => void;
-  onSetSellBy: (sellBy: "case" | "unit") => void;
-  /** units_v1: a `UnitPickerRow` choice, routed through setUnitLabel. */
-  onSetUnit: (option: UnitOption) => void;
-  onSetNote: (notes: string) => void;
-  onPressPrice: () => void;
-  onPressSubstitute: () => void;
-  onRemove: () => void;
-}) {
-  const [noteOpen, setNoteOpen] = useState(Boolean(item.notes?.trim()));
-  // units_v1: while a unit is active, `unitBasePrice` (that unit's own resolved tier price,
-  // set alongside `unitPrice` by setUnitLabel) is the correct override-comparison base —
-  // `catalogPrice` is the PACK's price, which a Case's price always differs from regardless of
-  // any operator override — see lib/unit-options.ts#unitPriceBase.
-  const priceBase = unitPriceBase(item, item.catalogPrice);
-  const isOverridden = item.unitPrice !== priceBase;
-  const isUpsell = item.unitPrice > priceBase;
-  // Green for an upsell (sold above catalog), orange for a discount.
-  const overrideColor = isUpsell ? ios.system.greenInk : ios.system.orangeInk;
-  const upb = Number(item.unitsPerBox ?? 0);
-  // units_v1: a unit-sold line is never boxed UI — see CartRow's identical gate.
-  const isBoxed = upb > 1 && canSplitBoxes && !item.unitLabel;
-  const sellBy = item.sellBy ?? "case";
-  const qty = effectiveQty(item, item.unitsPerBox);
-  const freeUnits = draftFreeUnits(item);
-  const freeLabel = freeUnitsLabel(freeUnits);
-  const lineTotal = computeLineSubtotal({
-    unitPrice: item.unitPrice,
-    qty,
-    boxes: item.boxes ?? null,
-    pieces: item.pieces ?? null,
-    unitsPerBox: item.unitsPerBox ?? null,
-    freeUnits,
-  });
-
-  // Live cost/margin hint (P10-POS-1) — hides entirely when cost is unknown
-  // (product never sold yet). Mirrors NewOrderScreen's CartRow.
-  const pieceCost = item.averageCost != null ? toNumber(item.averageCost) : null;
-  const hasCost = pieceCost != null && Number.isFinite(pieceCost);
-  const marginFrac = hasCost
-    ? computeMarginFraction(item.unitPrice, pieceCost, item.unitsPerBox)
-    : null;
-  const marginClass = classifyMargin(marginFrac, marginFloor);
-  // Same derivation the picker's last-added strip reads (one helper, two
-  // surfaces) — unchanged behaviour: `classifyMargin` is null exactly when
-  // the cost is unknown, which is exactly when `hasCost` is false.
-  const floorPrice = marginFloorPrice(item, marginFloor);
-  const below = marginClass === "belowCost" || marginClass === "belowFloor";
-  // Display-only per-unit hint on the case price — never fed back into math.
-  const perUnitHint = isBoxed ? perUnitPrice(item.unitPrice, upb) : null;
-
-  return (
-    <View style={styles.card}>
-      {/* Header: name + line total */}
-      <View style={styles.cardHeader}>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.cardName} numberOfLines={2}>
-            {item.name}
-          </Text>
-          {/* Meta line: unit price + box hint + override badge.
-              Editable (tappable) on DRAFT/PENDING/CONFIRMED; read-only otherwise. */}
-          <View style={styles.cardMetaRow}>
-            {canEditPrice ? (
-              <Pressable onPress={onPressPrice} style={styles.priceTap} hitSlop={6}>
-                {isOverridden && !isUpsell ? (
-                  <Text style={styles.priceStrike}>${priceBase.toFixed(2)}</Text>
-                ) : null}
-                <Text
-                  style={[styles.cardMeta, isOverridden && { color: overrideColor }]}
-                  numberOfLines={2}
-                >
-                  ${item.unitPrice.toFixed(2)}
-                  {isBoxed
-                    ? ` / box of ${upb}`
-                    : item.unitLabel
-                      ? ` / ${item.unitLabel}`
-                      : item.unit
-                        ? ` / ${item.unit}`
-                        : ""}
-                  {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
-                </Text>
-                {isUpsell ? (
-                  <Text style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}>
-                    Upsell
-                  </Text>
-                ) : null}
-                <Ionicons
-                  name="pencil-outline"
-                  size={11}
-                  color={isOverridden ? overrideColor : ios.label3}
-                />
-              </Pressable>
-            ) : (
-              <View style={styles.priceTap}>
-                {isOverridden && !isUpsell ? (
-                  <Text style={styles.priceStrike}>${priceBase.toFixed(2)}</Text>
-                ) : null}
-                <Text
-                  style={[styles.cardMeta, isOverridden && { color: overrideColor }]}
-                  numberOfLines={2}
-                >
-                  ${item.unitPrice.toFixed(2)}
-                  {isBoxed
-                    ? ` / box of ${upb}`
-                    : item.unitLabel
-                      ? ` / ${item.unitLabel}`
-                      : item.unit
-                        ? ` / ${item.unit}`
-                        : ""}
-                  {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
-                </Text>
-                {isUpsell ? (
-                  <Text style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}>
-                    Upsell
-                  </Text>
-                ) : null}
-              </View>
-            )}
-          </View>
-          {/* BUY_N_GET_M: name the free units, or the reduced line total reads
-              as a pricing error (mirrors web's order/invoice line rows). */}
-          {freeLabel ? <Text style={styles.freeLabel}>{freeLabel}</Text> : null}
-        </View>
-        <Text style={styles.cardTotal}>${lineTotal.toFixed(2)}</Text>
-      </View>
-
-      {/* Live margin hint (pos-cost-roles-spec §1) — margin on the current
-          unit price vs. the product's cost. */}
-      {marginFrac != null ? (
-        <Text
-          style={[
-            styles.marginHint,
-            marginClass === "belowCost" || marginClass === "belowFloor"
-              ? { color: ios.system.red }
-              : marginClass === "warn"
-                ? { color: ios.system.orange }
-                : { color: ios.label2 },
-          ]}
-        >
-          {marginClass === "belowCost"
-            ? `Below cost (${Math.round(marginFrac * 100)}%)`
-            : marginClass === "belowFloor"
-              ? `Below floor · ${Math.round(marginFrac * 100)}% margin`
-              : `${Math.round(marginFrac * 100)}% margin`}
-        </Text>
-      ) : null}
-
-      {/* Below-floor one-tap fix + ack — only while price editing is allowed. */}
-      {canEditPrice && below && !acked && floorPrice != null ? (
-        <View style={{ flexDirection: "row", gap: 10, marginTop: -4 }}>
-          <Pressable onPress={() => onSetToFloor(floorPrice!)} style={styles.floorFixBtn}>
-            <Text style={styles.floorFixBtnText}>Set to floor ${floorPrice.toFixed(2)}</Text>
-          </Pressable>
-          <Pressable onPress={onSellAnyway} hitSlop={6}>
-            <Text style={styles.sellAnywayText}>Sell anyway</Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      {/* Editor — a Cases/Units segmented control switches entry mode. Cases
-          mode dials Boxes and Loose units independently; Units mode is a
-          single uncapped total-unit stepper routed through setLineUnits. */}
-      <UnitPickerRow
-        line={{
-          productId: item.productId,
-          unitPrice: item.unitPrice,
-          unitLabel: item.unitLabel,
-        }}
-        product={ladderProductFor(item)}
-        tier={tier}
-        onChange={onSetUnit}
-        style={{ marginBottom: isBoxed ? 2 : 8 }}
-      />
-
-      {isBoxed ? (
-        <View style={{ gap: 8 }}>
-          <SellByToggle value={sellBy} onChange={onSetSellBy} />
-          {sellBy === "unit" ? (
-            <StepperRow
-              label={`Total ${item.unit ? `${item.unit}s` : "units"}`}
-              value={qty}
-              onChange={onSetUnits}
-              hint={`${upb} per case`}
-            />
-          ) : (
-            <>
-              <StepperRow label="Cases" value={item.boxes ?? 0} onChange={onSetBoxes} />
-              <StepperRow
-                label={`Loose ${item.unit ?? "units"}`}
-                value={item.pieces ?? 0}
-                onChange={onSetPieces}
-                max={upb - 1}
-                hint={`${upb} per case`}
-              />
-            </>
-          )}
-        </View>
-      ) : (
-        <StepperRow
-          label={`Qty${item.unitLabel ? ` (${item.unitLabel})` : item.unit ? ` (${item.unit})` : ""}`}
-          value={item.qty}
-          onChange={onSetQty}
-          onIncrement={onIncQty}
-          onDecrement={onDecQty}
-        />
-      )}
-
-      {/* Flavor / note (R5.2) */}
-      {noteOpen || item.notes?.trim() ? (
-        <TextInput
-          value={item.notes ?? ""}
-          onChangeText={onSetNote}
-          placeholder="Flavor or note for this item (prints on invoice)"
-          placeholderTextColor={ios.label3}
-          maxLength={2000}
-          multiline
-          style={styles.cartNoteInput}
-        />
-      ) : (
-        <Pressable onPress={() => setNoteOpen(true)} hitSlop={6} style={styles.cartNoteAdd}>
-          <Ionicons name="create-outline" size={14} color={ios.brand} />
-          <Text style={styles.cartNoteAddText}>Add flavor / note</Text>
-        </Pressable>
-      )}
-
-      {/* Actions */}
-      <View style={styles.cardActions}>
-        <Pressable
-          style={[styles.actionChip, !pricingReady && styles.actionChipDisabled]}
-          onPress={onPressSubstitute}
-          disabled={!pricingReady}
-          hitSlop={4}
-        >
-          <Ionicons name="swap-horizontal-outline" size={14} color={ios.brand} />
-          <Text style={styles.actionChipText}>Substitute</Text>
-        </Pressable>
-        {canEditPrice ? (
-          <Pressable
-            style={[styles.actionChip, isOverridden && styles.actionChipActive]}
-            onPress={onPressPrice}
-            hitSlop={4}
-          >
-            <Ionicons
-              name="pricetag-outline"
-              size={14}
-              color={isOverridden ? ios.system.orangeInk : ios.brand}
-            />
-            <Text style={[styles.actionChipText, isOverridden && { color: ios.system.orangeInk }]}>
-              {isOverridden ? "Price overridden" : "Override price"}
-            </Text>
-          </Pressable>
-        ) : null}
-        <View style={{ flex: 1 }} />
-        <Pressable style={styles.deleteBtn} onPress={onRemove} hitSlop={6}>
-          <Ionicons name="trash-outline" size={16} color={ios.system.redInk} />
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-// ─── Reusable stepper row (Boxes/Pieces/Qty) ─────────────────────────────────
-
-function StepperRow({
-  label,
-  value,
-  onChange,
-  onIncrement,
-  onDecrement,
-  max,
-  hint,
-}: {
-  label: string;
-  value: number;
-  onChange: (n: number) => void;
-  onIncrement?: () => void;
-  onDecrement?: () => void;
-  max?: number;
-  hint?: string;
-}) {
-  // Local draft so the user can clear the input without it snapping back to 0.
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => {
-    setDraft(String(value));
-  }, [value]);
-
-  const dec = () => {
-    if (onDecrement) onDecrement();
-    else onChange(Math.max(0, value - 1));
-  };
-  const inc = () => {
-    if (onIncrement) onIncrement();
-    else {
-      const next = max != null ? Math.min(max, value + 1) : value + 1;
-      onChange(next);
-    }
-  };
-
-  return (
-    <View style={styles.stepperRow}>
-      <View style={{ flex: 1 }}>
-        {/* Clamped: unclamped, a squeezed column renders the label one letter
-            per line on react-native-web. See lib/row-layout.ts. */}
-        <Text style={styles.stepperLabel} numberOfLines={1}>
-          {label}
-        </Text>
-        {hint ? (
-          <Text style={styles.stepperHint} numberOfLines={1}>
-            {hint}
-          </Text>
-        ) : null}
-      </View>
-      <View style={styles.stepper}>
-        <Pressable style={styles.stepBtn} onPress={dec} hitSlop={6}>
-          <Text style={styles.stepText}>−</Text>
-        </Pressable>
-        <TextInput
-          style={styles.qtyInput}
-          value={draft}
-          onChangeText={(txt) => {
-            // Integer-only: strip non-digits + leading zeros live (no "05", no
-            // decimals even when Android shows a decimal key); allow empty mid-edit.
-            const clean = sanitizeIntInput(txt);
-            setDraft(clean);
-            if (clean === "") return;
-            const n = parseInt(clean, 10);
-            if (Number.isFinite(n)) {
-              const clamped = max != null ? Math.min(max, n) : n;
-              onChange(clamped);
-            }
-          }}
-          onBlur={() => {
-            if (draft === "") onChange(0);
-            setDraft(String(value));
-          }}
-          keyboardType="number-pad"
-          returnKeyType="done"
-          maxLength={5}
-          selectTextOnFocus
-        />
-        <Pressable style={styles.stepBtn} onPress={inc} hitSlop={6}>
-          <Text style={styles.stepText}>+</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-// ─── Price override modal ────────────────────────────────────────────────────
-
-function PriceOverrideModal({
-  item,
-  onSave,
-  onCancel,
-  isSpecial = false,
-}: {
-  item: DraftItem;
-  onSave: (newPrice: number, reason: string) => void;
-  onCancel: () => void;
-  /** B465: this customer's documented contract price for the product — a
-   *  reason is REQUIRED to override it here, never optional like a plain
-   *  line. `canEditPriceFor` already hides this modal's own trigger for a
-   *  SPECIAL line today; this is defense-in-depth for any path that reaches
-   *  it, mirroring the server's own refusal and the web reference. */
-  isSpecial?: boolean;
-}) {
-  // units_v1: see lib/unit-options.ts#unitPriceBase — same reasoning as the card's own priceBase.
-  const priceBase = unitPriceBase(item, item.catalogPrice);
-  const [priceText, setPriceText] = useState(item.unitPrice.toFixed(2));
-  // "$ off / unit" is a lens over (priceBase - newPrice); the two inputs stay in sync.
-  const [offText, setOffText] = useState(
-    item.unitPrice < priceBase ? roundMoney(priceBase - item.unitPrice).toFixed(2) : "",
-  );
-  const [reason, setReason] = useState(item.overrideReason ?? "");
-  const newPrice = toNumber(priceText);
-  const reasonMissing = isSpecial && reason.trim() === "";
-  const valid = newPrice > 0 && !reasonMissing;
-
-  const onChangePrice = (raw: string) => {
-    setPriceText(raw);
-    const parsed = parseFloat(raw);
-    if (raw.trim() === "" || isNaN(parsed)) {
-      setOffText("");
-      return;
-    }
-    setOffText(parsed < priceBase ? roundMoney(priceBase - parsed).toFixed(2) : "");
-  };
-
-  const onChangeOff = (raw: string) => {
-    setOffText(raw);
-    const off = parseFloat(raw);
-    if (raw.trim() === "" || isNaN(off) || off <= 0) {
-      setPriceText(priceBase.toFixed(2));
-      return;
-    }
-    setPriceText(roundMoney(Math.max(0, priceBase - off)).toFixed(2));
-  };
-
-  return (
-    <Modal transparent animationType="fade" onRequestClose={onCancel}>
-      <Pressable style={styles.modalOverlay} onPress={onCancel}>
-        <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
-          <Text style={styles.modalTitle}>Override price</Text>
-          <Text style={styles.modalSub}>{item.name}</Text>
-          <Text style={styles.modalLabel}>List price: ${priceBase.toFixed(2)}</Text>
-
-          <Text style={styles.modalFieldLabel}>New unit price</Text>
-          <TextInput
-            style={styles.modalInput}
-            value={priceText}
-            onChangeText={onChangePrice}
-            keyboardType="decimal-pad"
-            selectTextOnFocus
-            autoFocus
-            placeholder="0.00"
-            placeholderTextColor={ios.label3}
-          />
-
-          <Text style={styles.modalFieldLabel}>Amount off / unit</Text>
-          <TextInput
-            style={styles.modalInput}
-            value={offText}
-            onChangeText={onChangeOff}
-            keyboardType="decimal-pad"
-            selectTextOnFocus
-            placeholder="0.00"
-            placeholderTextColor={ios.label3}
-          />
-
-          <Text style={styles.modalFieldLabel}>
-            {isSpecial ? "Reason (required)" : "Reason (optional)"}
-          </Text>
-          <TextInput
-            style={[
-              styles.modalInput,
-              { marginBottom: 16 },
-              reasonMissing ? styles.modalInputError : null,
-            ]}
-            value={reason}
-            onChangeText={setReason}
-            placeholder={isSpecial ? "e.g. manager approved" : "e.g. daily market price"}
-            placeholderTextColor={reasonMissing ? ios.system.red : ios.label3}
-          />
-
-          <View style={styles.modalBtns}>
-            <Pressable style={styles.modalBtnGhost} onPress={onCancel}>
-              <Text style={styles.modalBtnGhostText}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.modalBtnFill, !valid && styles.modalBtnDisabled]}
-              onPress={() => valid && onSave(newPrice, reason)}
-              disabled={!valid}
-            >
-              <Text style={styles.modalBtnFillText}>Apply</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-}
-
-// ─── Unlisted draft card ─────────────────────────────────────────────────────
-
-/**
- * Card for an ad-hoc (unlisted) line: editable free-text name + price + qty,
- * a "Custom" tag, and no product image (it isn't in the catalog).
- */
-function UnlistedDraftCard({
-  line,
-  onSetName,
-  onSetNote,
-  onSetPrice,
-  onSetQty,
-  onRemove,
-}: {
-  line: UnlistedDraft;
-  onSetName: (name: string) => void;
-  onSetNote: (notes: string) => void;
-  onSetPrice: (value: number | null) => void;
-  onSetQty: (n: number) => void;
-  onRemove: () => void;
-}) {
-  const [noteOpen, setNoteOpen] = useState(Boolean(line.notes?.trim()));
-  const lineTotal = computeLineSubtotal({ unitPrice: line.unitPrice, qty: line.qty });
-  return (
-    <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <View style={styles.unlistedTagRow}>
-            <View style={styles.customTag}>
-              <Text style={styles.customTagText}>Custom</Text>
-            </View>
-          </View>
-          <TextInput
-            style={styles.unlistedNameInput}
-            value={line.name}
-            onChangeText={onSetName}
-            placeholder="Item name"
-            placeholderTextColor={ios.label3}
-          />
-          <View style={styles.unlistedPriceRow}>
-            <Text style={styles.cardMeta}>$</Text>
-            <MoneyTextInput
-              style={styles.unlistedPriceInput}
-              value={line.unitPrice || null}
-              onChangeValue={onSetPrice}
-              placeholder="0.00"
-              placeholderTextColor={ios.label3}
-            />
-            <Text style={styles.cardMeta}>/ unit</Text>
-          </View>
-        </View>
-        <Text style={styles.cardTotal}>${lineTotal.toFixed(2)}</Text>
-      </View>
-
-      <StepperRow
-        label="Qty"
-        value={line.qty}
-        onChange={onSetQty}
-        onIncrement={() => onSetQty(line.qty + 1)}
-        onDecrement={() => onSetQty(Math.max(0, line.qty - 1))}
-      />
-
-      {/* Flavor / note (R5.3) */}
-      {noteOpen || line.notes?.trim() ? (
-        <TextInput
-          value={line.notes ?? ""}
-          onChangeText={onSetNote}
-          placeholder="Flavor or note for this item (prints on invoice)"
-          placeholderTextColor={ios.label3}
-          maxLength={2000}
-          multiline
-          style={styles.cartNoteInput}
-        />
-      ) : (
-        <Pressable onPress={() => setNoteOpen(true)} hitSlop={6} style={styles.cartNoteAdd}>
-          <Ionicons name="create-outline" size={14} color={ios.brand} />
-          <Text style={styles.cartNoteAddText}>Add flavor / note</Text>
-        </Pressable>
-      )}
-
-      <View style={styles.cardActions}>
-        <View style={{ flex: 1 }} />
-        <Pressable style={styles.deleteBtn} onPress={onRemove} hitSlop={6}>
-          <Ionicons name="trash-outline" size={16} color={ios.system.redInk} />
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-// ─── Unlisted item modal ─────────────────────────────────────────────────────
-
-function UnlistedItemModal({
-  open,
-  onClose,
-  onAdd,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onAdd: (name: string, unitPrice: number, qty: number) => void;
-}) {
-  const [name, setName] = useState("");
-  const [priceText, setPriceText] = useState("");
-  const [qtyText, setQtyText] = useState("1");
-
-  useEffect(() => {
-    if (open) {
-      setName("");
-      setPriceText("");
-      setQtyText("1");
-    }
-  }, [open]);
-
-  const price = parseFloat(priceText);
-  const qty = parseInt(qtyText || "0", 10);
-  const valid = name.trim() !== "" && Number.isFinite(price) && price > 0 && qty > 0;
-
-  if (!open) return null;
-
-  return (
-    <Modal transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.modalOverlay} onPress={onClose}>
-        <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
-          <Text style={styles.modalTitle}>Add unlisted item</Text>
-          <Text style={styles.modalSub}>A one-off line that isn't in your catalog.</Text>
-
-          <Text style={styles.modalFieldLabel}>Item name</Text>
-          <TextInput
-            style={styles.modalInput}
-            value={name}
-            onChangeText={setName}
-            placeholder="e.g. Delivery surcharge"
-            placeholderTextColor={ios.label3}
-            autoFocus
-          />
-
-          <View style={{ flexDirection: "row", gap: 10 }}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.modalFieldLabel}>Unit price</Text>
-              <TextInput
-                style={styles.modalInput}
-                value={priceText}
-                onChangeText={setPriceText}
-                placeholder="0.00"
-                placeholderTextColor={ios.label3}
-                keyboardType="decimal-pad"
-                selectTextOnFocus
-              />
-            </View>
-            <View style={{ width: 96 }}>
-              <Text style={styles.modalFieldLabel}>Qty</Text>
-              <TextInput
-                style={styles.modalInput}
-                value={qtyText}
-                onChangeText={(t) => setQtyText(sanitizeIntInput(t))}
-                placeholder="1"
-                placeholderTextColor={ios.label3}
-                keyboardType="number-pad"
-                maxLength={5}
-                selectTextOnFocus
-              />
-            </View>
-          </View>
-
-          <View style={styles.modalBtns}>
-            <Pressable style={styles.modalBtnGhost} onPress={onClose}>
-              <Text style={styles.modalBtnGhostText}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.modalBtnFill, !valid && styles.modalBtnDisabled]}
-              onPress={() => valid && onAdd(name.trim(), price, qty)}
-              disabled={!valid}
-            >
-              <Text style={styles.modalBtnFillText}>Add to order</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-}
-
-// ─── Inline "New credit note" create modal ───────────────────────────────────
-
-/**
- * Compact inline credit-note create sheet, opened from the Apply-credit
- * section when the operator needs one that doesn't exist yet — a standalone
- * credit for this order's customer (no invoice link).
- */
-function CreateCreditNoteModal({
-  open,
-  customerId,
-  onClose,
-  onCreated,
-}: {
-  open: boolean;
-  customerId: string;
-  onClose: () => void;
-  onCreated: (created: CreditNote) => void;
-}) {
-  const createMut = useCreateCreditNote();
-  const [amount, setAmount] = useState<number | null>(null);
-  const [reason, setReason] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (open) {
-      setAmount(null);
-      setReason("");
-      setError(null);
-    }
-  }, [open]);
-
-  const valid = amount != null && amount > 0 && reason.trim() !== "";
-
-  const submit = () => {
-    if (!valid) return;
-    setError(null);
-    createMut.mutate(
-      { customerId, amount: amount!, reason: reason.trim() },
-      {
-        onSuccess: (created) => onCreated(created),
-        onError: (e: unknown) => {
-          const err = e as { response?: { data?: { message?: string } }; message?: string };
-          setError(err?.response?.data?.message ?? err?.message ?? "Couldn't create credit note.");
-        },
-      },
-    );
-  };
-
-  if (!open) return null;
-
-  return (
-    <Modal transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.modalOverlay} onPress={onClose}>
-        <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
-          <Text style={styles.modalTitle}>New credit note</Text>
-          <Text style={styles.modalSub}>A standalone store credit for this customer.</Text>
-
-          {error ? (
-            <Text style={{ color: ios.system.redInk, fontSize: 12, marginBottom: 8 }}>{error}</Text>
-          ) : null}
-
-          <Text style={styles.modalFieldLabel}>Amount</Text>
-          <MoneyTextInput
-            style={styles.modalInput}
-            value={amount}
-            onChangeValue={setAmount}
-            placeholder="0.00"
-            placeholderTextColor={ios.label3}
-            autoFocus
-          />
-
-          <Text style={styles.modalFieldLabel}>Reason</Text>
-          <TextInput
-            style={styles.modalInput}
-            value={reason}
-            onChangeText={setReason}
-            placeholder="e.g. Damaged goods"
-            placeholderTextColor={ios.label3}
-          />
-
-          <View style={styles.modalBtns}>
-            <Pressable style={styles.modalBtnGhost} onPress={onClose}>
-              <Text style={styles.modalBtnGhostText}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              style={[
-                styles.modalBtnFill,
-                (!valid || createMut.isPending) && styles.modalBtnDisabled,
-              ]}
-              onPress={submit}
-              disabled={!valid || createMut.isPending}
-            >
-              <Text style={styles.modalBtnFillText}>
-                {createMut.isPending ? "Creating…" : "Create"}
-              </Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-}
-
-// ─── Product picker ──────────────────────────────────────────────────────────
-
-interface PickedProduct {
-  id: string;
-  name: string;
-  pricePerUnit: number | string;
-  priceTier2?: number | string | null;
-  priceTier3?: number | string | null;
-  priceTier4?: number | string | null;
-  priceTier5?: number | string | null;
-  unit?: string;
-  unitsPerBox?: number | null;
-}
-
-function ProductPicker({
-  title = "Add product",
-  onPick,
-  onPickAndStay,
-  onClose,
-  canCreateProducts = false,
-  initialScanOpen,
-  lastAdded,
-  lastAddedFloor,
-  lastAddedAcked = false,
-  marginFloor,
-  onEditPrice,
-  onSetToFloor,
-  canEditPrice = false,
-  isSpecialTierFor,
-  onScanSessionStart,
-  onScanSessionEnd,
-  trayRows,
-  trayFlash,
-  trayItemCount,
-  trayTotal,
-  onTrayChangeQty,
-  onTrayIncrement,
-  onTrayDecrement,
-  onTrayRemove,
-}: {
-  title?: string;
-  /** Single pick — the caller closes the picker (tap rows, substitutions). */
-  onPick: (p: PickedProduct, kind?: "case" | "piece") => void;
-  /**
-   * Add WITHOUT closing — scans and wedge input use this so N items go in
-   * with zero taps (closes the long-standing divergence from web's edit
-   * screen, which re-focuses its scan input after every add). Absent in
-   * substitute mode, where the contract is exactly one pick.
-   */
-  onPickAndStay?: (p: PickedProduct, kind: "case" | "piece") => void;
-  onClose: () => void;
-  /** Staff may create a product from a miss; drivers get a plain "not found". */
-  canCreateProducts?: boolean;
-  /** B246: mount already scanning — the line-list scan FAB's entry point. */
-  initialScanOpen?: boolean;
-  /**
-   * B263 D3: the parent's draft line for the most recent scan-add, so the
-   * picker can show a "last added" strip with an inline price edit without
-   * leaving the scan surface. Null before any scan-add this picker session,
-   * and in substitute mode (no `onPickAndStay`).
-   */
-  lastAdded?: DraftItem | null;
-  /**
-   * `lastAdded`'s margin floor, derived by the parent with the SAME helper
-   * (`marginFloorPrice`) and arguments the line list's below-floor guard
-   * uses. Null when the product has no known cost — then there is no floor
-   * and the strip shows no below-floor affordance.
-   */
-  lastAddedFloor?: number | null;
-  /**
-   * Whether the operator already tapped "Sell anyway" on `lastAdded` in the
-   * line list. `floorAcked` keeps exactly ONE writer (that tap): the strip
-   * reads the ack, never stamps it.
-   */
-  lastAddedAcked?: boolean;
-  /**
-   * `lastAdded`'s category margin floor FRACTION (e.g. 0.15) — the same
-   * `floorForCategory(marginConfig, category)` call the list row's own
-   * `marginFloor` prop is built from (`:983`). Lets the strip classify
-   * `lastAdded` with the EXACT same two calls the row uses
-   * (`computeMarginFraction` -> `classifyMargin`), so "below cost" vs
-   * "below floor" can never read differently on the two surfaces for the
-   * same line (finding B263-H).
-   */
-  marginFloor: number;
-  /**
-   * Applies an already-computed price override (rounded, `overrideReason`
-   * set) to `lastAdded` in the parent's draft — the same `setDraft` write the
-   * list branch uses.
-   */
-  onEditPrice: (item: DraftItem, unitPrice: number, overrideReason: string | undefined) => void;
-  /**
-   * The list row's one-tap "Set to floor" writer, threaded verbatim, so the
-   * strip's fix writes the price through exactly the same path.
-   */
-  onSetToFloor: (item: DraftItem, unitPrice: number) => void;
-  /**
-   * The list branch's PER-LINE price gate for `lastAdded`, threaded verbatim
-   * (`canEditPriceFor(lastAddedLine.productId)`): a price override from the
-   * picker is reachable exactly when that line's price chip is — never for a
-   * DRIVER, never outside the order's edit window, never on a SPECIAL-tier
-   * line (RULINGS R2/R9). Defaults to false.
-   */
-  canEditPrice?: boolean;
-  /**
-   * B465: the list branch's `isSpecialFor`, threaded verbatim so the picker's
-   * own `PriceOverrideModal` requires a reason on a SPECIAL-tier line exactly
-   * like the list branch's modal does — defense-in-depth for any path that
-   * reaches it, since `canEditPrice` above already excludes SPECIAL lines
-   * from the picker's price-edit affordance entirely. Absent in a caller that
-   * has no tier context; treated as "not special" (never requires a reason).
-   */
-  isSpecialTierFor?: (productId: string) => boolean;
-  /** A camera session is opening — the parent clears its "last scan-added" line. */
-  onScanSessionStart?: () => void;
-  /** A camera session ended. Does NOT clear the last-added line (RULINGS R5). */
-  onScanSessionEnd?: () => void;
-  /**
-   * The pull-out drawer: everything added so far, newest-scanned first, from
-   * the parent's ONE tray derivation (`draftTrayRows`). The drawer renders
-   * money it is handed; it never derives any.
-   */
-  trayRows: TrayRow[];
-  trayFlash: ScanFlash | null;
-  /** The footer's own count/total — never a second derivation for the drawer. */
-  trayItemCount: number;
-  trayTotal: number;
-  /** ScanTray hands a TOTAL UNIT count (components/ScanTray.tsx). */
-  onTrayChangeQty: (id: string, units: number) => void;
-  onTrayIncrement: (id: string) => void;
-  onTrayDecrement: (id: string) => void;
-  onTrayRemove: (id: string) => void;
-}) {
-  const [scanOpen, setScanOpen] = useState(initialScanOpen ?? false);
-  // The drawer's own open/closed state and the window it must not cover.
-  const [trayExpanded, setTrayExpanded] = useState(false);
-  const win = useWindowDimensions();
-  // Drag the handle to open/close, in the BarcodeFab shape (core RN
-  // PanResponder — do NOT wire react-native-gesture-handler for this).
-  // `onStartShouldSetPanResponder: false` lets a plain tap reach the Pressable.
-  const trayPan = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 8,
-      onPanResponderRelease: (_, g) => setTrayExpanded(g.dy < 0),
-    }),
-  ).current;
-  // Owner ask (2026-09-14): the catalogue loads only when the operator asks —
-  // a term, a wedge-scanned code, or a deliberate "Browse catalogue" tap.
-  // Latches on for the life of the picker; Cancel is the exit.
-  const [browsing, setBrowsing] = useState(false);
-  // B263 D3: the just-scanned line open for a price edit, stacked over the
-  // scanner. The camera stays mounted but paused (`active={!pickerPriceEditItem}`)
-  // — the same "keep it mounted" contract `paused` already uses below.
-  const [pickerPriceEditItem, setPickerPriceEditItem] = useState<DraftItem | null>(null);
-  // This picker is a scan BURST surface (wedge auto-add + miss sinks below all
-  // go through `showToast`), so it owns an `<InlineToast>`: mounting it
-  // registers this screen as the iOS toast host (lib/toast-host.ts), which is
-  // what keeps a burst from firing one blocking `Alert` per scan on iOS
-  // (REG-B151). `show` stays unused — the sinks call `showToast`, which routes
-  // here on iOS and to ToastAndroid on Android.
-  const { toast: scanToast, dismiss: dismissScanToast } = useInlineToast();
-  // Codes handed off to a sheet stacked OVER the paused camera, so choosing or
-  // creating costs one tap and scanning resumes — instead of the old dead end
-  // that closed the scanner and dumped a toast.
-  const [pickCode, setPickCode] = useState<string | null>(null);
-  const [createCode, setCreateCode] = useState<string | null>(null);
-  // Debounced + paged, replacing the `limit: 0` fetch-all. See
-  // lib/use-product-search.ts.
-  const {
-    search,
-    setSearch,
-    searchTerm,
-    products: pagedProducts,
-    isLoading,
-    isSearching,
-    isPlaceholder,
-    idle,
-    hasNextPage,
-    fetchNextPage,
-    isFetchingNextPage,
-  } = useProductSearch<{ id: string }>({ browsing });
-  const products = pagedProducts as unknown as Array<
-    PickedProduct & { sku?: string; barcode?: string | null; unitSku?: string | null }
-  >;
-  // The CURRENT search term, readable from an async scan path. `setSearch("")`
-  // only takes effect on the next render, so a submit dispatched in between
-  // would still read the stale term and re-scan it; `clearSearch` writes the
-  // ref SYNCHRONOUSLY, which is what makes runWedgeSubmit no-op there.
-  const searchTermRef = useRef("");
-  searchTermRef.current = searchTerm;
-  const clearSearch = () => {
-    searchTermRef.current = "";
-    setSearch("");
-  };
-
-  /**
-   * Scan handler. With `onPickAndStay` the scanner runs CONTINUOUS (items add
-   * while the camera stays up — the in-overlay banner is the confirmation);
-   * substitute mode stays single-shot ("return one product").
-   *
-   * Runs the SHARED ladder (lib/scan-ladder), which is what brings this editor
-   * up to the builders: a local fast-path over the rows already loaded, a
-   * picker on an ambiguous hit, and create-on-miss. Previously an ambiguous
-   * code closed the scanner and seeded the search box, and a miss offered
-   * nothing at all.
-   */
-  // F30: one physical scan, one add. The camera/ladder path and the settled
-  // search effect below both resolve the SAME code independently; this claim
-  // is what links them (lib/scan-accept-guard.ts) so neither double-adds nor
-  // reports a false "No product for X" for a line that is already on the order.
-  const scanGuardRef =
-    useRef(createScanAcceptGuard<PickedProduct & { unitsPerBox?: number | null }>());
-  const onScanned = makeScanHandler<PickedProduct & { unitsPerBox?: number | null }>({
-    products: () => products,
-    acceptGuard: scanGuardRef.current,
-    accept: (product, kind) => {
-      if (onPickAndStay) {
-        onPickAndStay(product, kind);
-        // The code that produced this add is spent: drop it so the settled
-        // effect can't re-fire on it and the next scan starts from an empty
-        // box. Gated on `looksLikeScanCode` so a typed product NAME (and the
-        // filtered list the operator is reading) survives — the same rule
-        // createWedgeSubmitHandler applies at wedge-submit.ts:77.
-        if (looksLikeScanCode(searchTermRef.current)) clearSearch();
-        const loose = kind === "piece" && Number(product.unitsPerBox ?? 0) > 1 ? "1 loose · " : "";
-        return { feedback: { kind: "added", text: `Added ${loose}${product.name}` } };
-      }
-      // Substitute mode: exactly one pick, so the scanner closes behind it.
-      setScanOpen(false);
-      onPick(product, kind);
-      return { close: true };
-    },
-    // Forward the ladder's abort signal — without it a lookup that blows the
-    // scan deadline keeps running and still adds the line (F30 / R2).
-    resolve: (c, signal) =>
-      resolveProductByCode<PickedProduct & { unitsPerBox?: number | null }>(c, signal),
-    onAmbiguous: setPickCode,
-    onCreate: canCreateProducts ? setCreateCode : undefined,
-  });
-
-  // Wedge-scanner path on the picker's search box — mirrors the builders (see
-  // NewOrderScreen): Enter-as-scan + settled exact-match auto-add, digit codes
-  // only, single exact match only.
-  // Wedge-submit: the search field is cleared SYNCHRONOUSLY on every SCAN
-  // submit (never on a typed name) — mirrors NewOrderScreen (see its comment)
-  // — and a burst arriving mid-resolve
-  // is buffered, never dropped, never concatenated (REG-B193). The handler's
-  // busy/queue state has to survive re-renders, so it's built ONCE via a ref; a
-  // "latest deps" ref keeps it pointed at the current onScanned/searchTerm
-  // closures instead of the ones captured on the render that built it.
-  const wedgeDepsRef = useRef<{ scan: (code: string) => Promise<void>; clearSearch: () => void }>({
-    scan: async () => undefined,
-    clearSearch: () => undefined,
-  });
-  wedgeDepsRef.current = {
-    scan: (code) =>
-      runWedgeSubmit({
-        term: code,
-        scan: onScanned,
-        clearSearch,
-        showInline: showToast,
-      }),
-    clearSearch,
-  };
-  const wedgeSubmitRef = useRef(
-    createWedgeSubmitHandler({
-      scan: (code) => wedgeDepsRef.current.scan(code),
-      clearSearch: () => wedgeDepsRef.current.clearSearch(),
-    }),
-  );
-  const handleSearchSubmit = () => {
-    if (!onPickAndStay) return Promise.resolve();
-    // The REF, never the render-scope term: a burst's second Enter arrives
-    // before the clear has re-rendered, and the stale term would be re-scanned.
-    return wedgeSubmitRef.current(searchTermRef.current);
-  };
-
-  // Settled exact-match auto-add (no-terminator scanners): a per-scan ATTEMPT
-  // — not a time window — decides whether a settle may fire (REG-B201); see
-  // NewOrderScreen's comment for why a window can't tell "already added" from
-  // "a background refetch re-settled", and why the attempt has to END when the
-  // field clears (otherwise a deliberate re-scan of the same item is eaten).
-  const autoAddAttemptRef = useRef(createScanAttempt());
-  useEffect(() => {
-    if (!onPickAndStay) return;
-    const code = searchTerm.trim();
-    if (!looksLikeScanCode(code)) {
-      autoAddAttemptRef.current.end();
-      return;
-    }
-    if (isSearching) return;
-    const { match } = findExactScanMatch(code, products);
-    if (!match) return;
-    if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
-    const kind = scanUnitKind(code, match);
-    // Consume the attempt FIRST (above), then offer: a match parked on an open
-    // ladder claim must not re-park on a later settle. `offer` returns false
-    // when it was parked — the ladder redeems it if and only if it ends
-    // unresolved, so this code adds exactly once (lib/scan-accept-guard.ts).
-    if (!scanGuardRef.current.offer(code, match, kind)) return;
-    onPickAndStay(match, kind);
-    clearSearch();
-    const loose = kind === "piece" && Number(match.unitsPerBox ?? 0) > 1 ? "1 loose · " : "";
-    showToast(`Added ${loose}${match.name}`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchTerm, products, isSearching]);
-
-  // Finding B263-H: the strip's own margin classification, using the EXACT
-  // same primitives as the list row's `marginClass` (`DraftItemCard`,
-  // `computeMarginFraction` -> `classifyMargin` around `:1198-1201`), fed
-  // `lastAdded`'s already-rounded `unitPrice` and the parent's `marginFloor`
-  // (same `floorForCategory` call the row itself is built from). Never a
-  // price-only comparison — two independent derivations of "which state is
-  // this line in" is exactly how the strip's label drifted from the row's.
-  const lastAddedPieceCost =
-    lastAdded?.averageCost != null ? toNumber(lastAdded.averageCost) : null;
-  const marginFrac =
-    lastAdded && lastAddedPieceCost != null
-      ? computeMarginFraction(lastAdded.unitPrice, lastAddedPieceCost, lastAdded.unitsPerBox)
-      : null;
-  const marginClass = classifyMargin(marginFrac, marginFloor);
-
-  return (
-    <>
-      <NavBar inlineTitle={title} leading={<NavBackButton label="Cancel" onPress={onClose} />} />
-      <SearchBar
-        placeholder="Scan or search products…"
-        value={search}
-        onChangeText={setSearch}
-        // A hardware WEDGE scanner types into whatever currently holds focus,
-        // so without this the picker opens with nothing focused and the first
-        // wedge scan is dropped on the floor. Gated to the add-and-stay
-        // surface: substitute mode (no `onPickAndStay`) is a one-pick browse,
-        // and a camera-first mount (`initialScanOpen`, the B246 scan FAB) must
-        // not pop the keyboard over the viewfinder.
-        autoFocus={!!onPickAndStay && !initialScanOpen}
-        onSubmitEditing={onPickAndStay ? () => void handleSearchSubmit() : undefined}
-        trailing={
-          <Pressable
-            onPress={() => {
-              onScanSessionStart?.();
-              setScanOpen(true);
-            }}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel="Scan a barcode"
-          >
-            <Ionicons name="barcode-outline" size={20} color={ios.brand} />
-          </Pressable>
-        }
-      />
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        scrollEventThrottle={200}
-        onScroll={({ nativeEvent: e }) => {
-          // Page in as the operator nears the bottom. `isPlaceholder` guards
-          // against paging a stale query key while the next search lands.
-          const nearBottom =
-            e.layoutMeasurement.height + e.contentOffset.y >= e.contentSize.height - 400;
-          if (!nearBottom || isPlaceholder || !hasNextPage || isFetchingNextPage) return;
-          fetchNextPage();
-        }}
-      >
-        {isLoading ? (
-          <View style={styles.center}>
-            <ActivityIndicator color={ios.brand} />
-          </View>
-        ) : idle ? (
-          // Nothing has been asked for yet — so this is NOT "no products
-          // match", which would be a lie about a catalogue that was never
-          // queried. The Browse tap is the deliberate way into the full list.
-          <View style={styles.center}>
-            <Text style={styles.empty}>Scan or search to add items.</Text>
-            <Pressable
-              onPress={() => setBrowsing(true)}
-              style={styles.browseBtn}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="Browse the full catalogue"
-            >
-              <Text style={styles.browseBtnText}>Browse catalogue</Text>
-            </Pressable>
-          </View>
-        ) : products.length === 0 ? (
-          <View style={styles.center}>
-            <Text style={styles.empty}>{isSearching ? "Searching…" : "No products match."}</Text>
-          </View>
-        ) : (
-          <View
-            style={{
-              paddingHorizontal: 16,
-              gap: 6,
-              // Clear the collapsed drawer handle so the last row stays tappable.
-              paddingBottom: 24 + PICKER_TRAY_HANDLE_HEIGHT,
-            }}
-          >
-            {products.map((p) => {
-              const upb = Number(p.unitsPerBox ?? 0);
-              return (
-                <Pressable key={p.id} style={styles.pickRow} onPress={() => onPick(p)}>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.cardName} numberOfLines={1}>
-                      {p.name}
-                    </Text>
-                    <Text style={styles.cardMeta} numberOfLines={2}>
-                      {p.sku ? `SKU ${p.sku} · ` : ""}${toNumber(p.pricePerUnit).toFixed(2)}
-                      {upb > 1 ? ` / box of ${upb}` : p.unit ? ` / ${p.unit}` : ""}
-                    </Text>
-                  </View>
-                  <Ionicons name="add-circle" size={22} color={ios.brand} />
-                </Pressable>
-              );
-            })}
-          </View>
-        )}
-        {isFetchingNextPage ? (
-          <View style={styles.center}>
-            <ActivityIndicator color={ios.brand} />
-          </View>
-        ) : null}
-      </ScrollView>
-
-      {/* Inline full-screen swap, not a Modal — absoluteFill covers the screen. */}
-      {scanOpen ? (
-        <BarcodeScanner
-          onScanned={onScanned}
-          onClose={() => {
-            setScanOpen(false);
-            onScanSessionEnd?.();
-          }}
-          continuous={!!onPickAndStay}
-          // Stop decoding while a hand-off sheet is up, but keep the camera
-          // mounted so dismissing it resumes scanning instantly.
-          paused={pickCode !== null || createCode !== null}
-          // B263 D1/D3: pause the decode loop (camera stays mounted) while
-          // the price-edit sheet below is stacked over it.
-          active={!pickerPriceEditItem}
-        />
-      ) : null}
-
-      {/* B263 D3: the last-added line, with an inline price edit that never
-          leaves the picker or tears the camera down.
-
-          RULINGS R5: the guard is `lastAdded` ALONE — `scanOpen` is the camera
-          -session flag, but `lastScannedId` is set by EVERY add-and-stay path,
-          including a hardware wedge typing into the search box and a typed code
-          plus Enter, neither of which ever opens the camera. Gating on
-          `scanOpen` is exactly what made the price affordance unreachable after
-          those adds. `!trayExpanded` only keeps it from being buried under the
-          open drawer, which shows the same line and its price anyway. */}
-      {lastAdded && !trayExpanded ? (
-        <View style={styles.pickerLastAdded} pointerEvents="box-none">
-          <View style={styles.pickerLastAddedRow}>
-            <Text style={styles.pickerLastAddedText} numberOfLines={1}>
-              Added {lastAdded.name} · ${lastAdded.unitPrice.toFixed(2)}
-            </Text>
-            {canEditPrice ? (
-              <Pressable
-                onPress={() => setPickerPriceEditItem(lastAdded)}
-                style={styles.pickerLastAddedBtn}
-                hitSlop={8}
-                accessibilityRole="button"
-              >
-                <Text style={styles.pickerLastAddedBtnText}>Edit price</Text>
-              </Pressable>
-            ) : null}
-          </View>
-          {/* Review round: a below-floor price is flagged on THIS surface too
-              — same guard as the line row. No ack control here: acknowledging
-              stays a line-list tap, so `floorAcked` keeps exactly one writer.
-              Finding B263-H: the label ALSO reads `marginClass` (same
-              `classifyMargin` call the row uses) so "Below cost" vs "Below
-              floor" can't disagree with the row for the same line.
-              B280: this gate used to be `needsMarginAck` — a SEPARATE,
-              cent-rounded price comparison against `lastAddedFloor`
-              (`priceForMarginFloor`'s rounded output) — while the row's own
-              gate (`below`, DraftItemCard) and this same strip's label above
-              both classify by the EXACT fraction (`classifyMargin`). At the
-              half-cent boundary the two bases disagree, so the strip could
-              flag/not-flag a line the row disagreed with. Gate on
-              `marginClass` (the exact-fraction classification already
-              computed above for the label) instead — one basis, both
-              surfaces, never disagree. */}
-          {canEditPrice &&
-          lastAddedFloor != null &&
-          !lastAddedAcked &&
-          (marginClass === "belowCost" || marginClass === "belowFloor") ? (
-            <View style={styles.pickerLastAddedRow}>
-              <Text style={styles.pickerLastAddedBelow}>
-                {marginClass === "belowCost"
-                  ? `Below cost (${Math.round(marginFrac! * 100)}%)`
-                  : `Below floor · ${Math.round(marginFrac! * 100)}% margin`}
-              </Text>
-              <Pressable
-                onPress={() => onSetToFloor(lastAdded, lastAddedFloor)}
-                style={styles.pickerLastAddedBtn}
-                hitSlop={8}
-                accessibilityRole="button"
-              >
-                <Text style={styles.pickerLastAddedBtnText}>
-                  Set to floor ${lastAddedFloor.toFixed(2)}
-                </Text>
-              </Pressable>
-            </View>
-          ) : null}
-        </View>
-      ) : null}
-
-      {canEditPrice && pickerPriceEditItem ? (
-        <PriceOverrideModal
-          item={pickerPriceEditItem}
-          isSpecial={isSpecialTierFor ? isSpecialTierFor(pickerPriceEditItem.productId) : false}
-          onSave={(price, reason) => {
-            // Same money path as the list branch (B263 D2): round + recompute
-            // through the shared helper, never write the raw typed price.
-            const updated = applyPriceOverride(pickerPriceEditItem, {
-              unitPrice: price,
-              reason: reason || undefined,
-            });
-            onEditPrice(pickerPriceEditItem, updated.unitPrice, updated.overrideReason);
-            setPickerPriceEditItem(null);
-          }}
-          onCancel={() => setPickerPriceEditItem(null)}
-        />
-      ) : null}
-
-      {/* After the camera so scan feedback layers OVER it, never behind. */}
-      <InlineToast toast={scanToast} onDismiss={dismissScanToast} bottom={48} />
-
-      {/* Ambiguous scan → choose from the matches, over the paused camera. */}
-      <ProductPickerSheet
-        visible={pickCode !== null}
-        title="Which product?"
-        activeOnly
-        initialSearch={pickCode ?? undefined}
-        onClose={() => setPickCode(null)}
-        onSelect={(prod) => {
-          setPickCode(null);
-          const picked = prod as unknown as PickedProduct & { unitsPerBox?: number | null };
-          if (onPickAndStay) onPickAndStay(picked, "case");
-          else {
-            setScanOpen(false);
-            onPick(picked, "case");
-          }
-        }}
-      />
-
-      {/* Miss → create it inline and drop it straight on the order. */}
-      <InlineCreateProductSheet
-        visible={createCode !== null}
-        initialCode={createCode ?? undefined}
-        onClose={() => setCreateCode(null)}
-        onCreated={(prod) => {
-          setCreateCode(null);
-          const picked = prod as unknown as PickedProduct & { unitsPerBox?: number | null };
-          if (onPickAndStay) onPickAndStay(picked, "case");
-          else {
-            setScanOpen(false);
-            onPick(picked, "case");
-          }
-        }}
-      />
-
-      {/* The pull-out drawer of everything added. LAST child of the fragment,
-          so it paints over the camera (which is a plain absoluteFill overlay)
-          and under the two sheets above (which portal through <Modal/>). Its
-          expanded height is derived from BarcodeScanner's own viewfinder
-          geometry, so it can never cover the window the operator scans into. */}
-      <View
-        style={[
-          styles.pickerTray,
-          { height: trayExpanded ? pickerTrayExpandedHeight(win) : PICKER_TRAY_HANDLE_HEIGHT },
-        ]}
-      >
-        <Pressable
-          style={styles.pickerTrayHandle}
-          onPress={() => setTrayExpanded((v) => !v)}
-          accessibilityRole="button"
-          accessibilityLabel={trayExpanded ? "Hide added items" : "Show added items"}
-          {...trayPan.panHandlers}
-        >
-          <View style={styles.pickerTrayGrabber} />
-          <Text style={styles.pickerTraySummary} numberOfLines={1}>
-            {trayItemCount} item{trayItemCount === 1 ? "" : "s"} · ${trayTotal.toFixed(2)}
-          </Text>
-          <Ionicons
-            name={trayExpanded ? "chevron-down" : "chevron-up"}
-            size={18}
-            color={ios.label2}
-          />
-        </Pressable>
-        {trayExpanded ? (
-          <ScanTray
-            rows={trayRows}
-            flash={trayFlash}
-            onChangeQty={onTrayChangeQty}
-            onIncrement={onTrayIncrement}
-            onDecrement={onTrayDecrement}
-            onRemove={onTrayRemove}
-            ListEmptyComponent={
-              <Text style={styles.empty}>Nothing added yet — scan or tap a product.</Text>
-            }
-          />
-        ) : null}
-      </View>
-    </>
-  );
-}
-
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: ios.bg },
-  center: { padding: 40, alignItems: "center" },
-  empty: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2 },
-
-  // ── Card ───────────────────────────────────────────────────────────────────
-  card: {
-    backgroundColor: ios.bgElev,
-    borderRadius: 14,
-    padding: 14,
-    gap: 12,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 10,
-  },
-  cardName: {
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label,
-    letterSpacing: -0.2,
-  },
-  cardMetaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 3 },
-  cardMeta: {
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-    fontVariant: ["tabular-nums"],
-  },
-  priceTap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  priceStrike: {
-    fontSize: 11,
-    fontFamily: "Inter_400Regular",
-    color: ios.label3,
-    textDecorationLine: "line-through",
-  },
-  cardTotal: {
-    fontSize: 15,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-  },
-
-  // ── Margin hint (P10-POS-1) ───────────────────────────────────────────────
-  marginHint: {
-    fontSize: 11,
-    fontFamily: "Inter_500Medium",
-  },
-  freeLabel: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.brand,
-    marginTop: 2,
-  },
-  floorFixBtn: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.system.red,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  floorFixBtnText: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.system.redInk,
-  },
-  sellAnywayText: {
-    fontSize: 11,
-    fontFamily: "Inter_500Medium",
-    color: ios.label2,
-    textDecorationLine: "underline",
-  },
-
-  // ── Stepper row ───────────────────────────────────────────────────────────
-  stepperRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  stepperLabel: {
-    fontSize: 13,
-    fontFamily: "Inter_500Medium",
-    color: ios.label,
-  },
-  stepperHint: {
-    fontSize: 11,
-    fontFamily: "Inter_400Regular",
-    color: ios.label3,
-    marginTop: 1,
-  },
-  stepper: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: ios.fill3,
-    borderRadius: 10,
-    padding: 3,
-  },
-  stepBtn: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
-  stepText: { color: ios.brand, fontSize: 18 },
-  qtyInput: {
-    // Definite width, not minWidth — see lib/row-layout.ts. This is a
-    // hand-rolled copy of QtyStepper; it needs the same bound.
-    width: QTY_INPUT_WIDTH.edit,
-    flexShrink: 0,
-    paddingHorizontal: 4,
-    textAlign: "center",
-    fontSize: 16,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-    paddingVertical: 2,
-  },
-
-  // ── Card actions ──────────────────────────────────────────────────────────
-  cardActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingTop: 4,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: ios.separator,
-  },
-  actionChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: ios.brandWash,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  actionChipActive: {
-    backgroundColor: ios.system.orangeWash,
-  },
-  actionChipDisabled: { opacity: 0.5 },
-  actionChipText: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.brand,
-  },
-  deleteBtn: {
-    width: 32,
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: ios.system.redWash,
-    borderRadius: 8,
-  },
-
-  // ── Per-line note (R5.2/R5.3, mirrors NewOrderScreen's cartNote*) ────────
-  cartNoteAdd: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingVertical: 4,
-  },
-  cartNoteAddText: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.brand },
-  cartNoteInput: {
-    backgroundColor: ios.fill3,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    fontSize: 13,
-    fontFamily: "Inter_400Regular",
-    color: ios.label,
-    marginBottom: 6,
-  },
-
-  // ── Add product CTA ───────────────────────────────────────────────────────
-  addBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    backgroundColor: ios.brandWash,
-    borderRadius: 12,
-    paddingVertical: 14,
-    marginTop: 4,
-  },
-  addBtnDisabled: { opacity: 0.5 },
-  addBtnText: { color: ios.brand, fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  addUnlistedBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    backgroundColor: ios.brandWash,
-    borderRadius: 12,
-    paddingVertical: 14,
-  },
-
-  // ── Unlisted draft card ──────────────────────────────────────────────────
-  unlistedTagRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
-  customTag: {
-    backgroundColor: ios.system.orangeWash,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  customTagText: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.system.orangeInk,
-    letterSpacing: 0.2,
-  },
-  unlistedNameInput: {
-    backgroundColor: ios.fill3,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label,
-  },
-  unlistedPriceRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 8 },
-  unlistedPriceInput: {
-    minWidth: 70,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.brand,
-    borderRadius: 8,
-    textAlign: "right",
-    fontSize: 14,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.brand,
-    fontVariant: ["tabular-nums"],
-  },
-
-  // ── Product picker rows ───────────────────────────────────────────────────
-  pickRow: {
-    backgroundColor: ios.bgElev,
-    borderRadius: 10,
-    padding: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-
-  // ── Picker idle state (lazy catalogue) ────────────────────────────────────
-  browseBtn: {
-    marginTop: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.brand,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  browseBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.brand },
-
-  // ── Picker pull-out drawer ────────────────────────────────────────────────
-  pickerTray: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: ios.bgElev,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: ios.separator,
-    overflow: "hidden",
-  },
-  pickerTrayHandle: {
-    height: PICKER_TRAY_HANDLE_HEIGHT,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 16,
-  },
-  pickerTrayGrabber: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: ios.fill3,
-  },
-  pickerTraySummary: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-  },
-
-  // ── Restore banner (staged-edit autosave) ─────────────────────────────────
-  restoreBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginHorizontal: 16,
-    marginTop: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: ios.bgElev,
-  },
-  restoreText: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
-  restoreAction: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
-
-  // ── Picker "last added" strip (B263 D3) ─────────────────────────────────────
-  pickerLastAdded: {
-    position: "absolute",
-    left: 20,
-    right: 20,
-    bottom: 96,
-    gap: 8,
-    backgroundColor: "rgba(0,0,0,0.72)",
-    borderRadius: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-  },
-  pickerLastAddedRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  pickerLastAddedBelow: {
-    flex: 1,
-    color: ios.system.red,
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-  },
-  pickerLastAddedText: {
-    flex: 1,
-    color: "#fff",
-    fontSize: 13,
-    fontFamily: "Inter_500Medium",
-  },
-  pickerLastAddedBtn: {
-    minHeight: 32,
-    justifyContent: "center",
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    backgroundColor: "rgba(255,255,255,0.22)",
-  },
-  pickerLastAddedBtnText: {
-    color: "#fff",
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-  },
-
-  // ── Footer ────────────────────────────────────────────────────────────────
-  footer: {
-    padding: 16,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    backgroundColor: ios.bgElev,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: ios.separator,
-  },
-  footerEyebrow: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    letterSpacing: 0.4,
-  },
-  footerTotal: {
-    fontSize: 24,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-  },
-  saveBtn: {
-    backgroundColor: ios.brand,
-    borderRadius: 14,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-  },
-  saveBtnDisabled: { opacity: 0.5 },
-  saveBtnText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
-
-  // ── Price override modal ──────────────────────────────────────────────────
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
-  },
-  modalCard: {
-    backgroundColor: ios.bgElev,
-    borderRadius: 20,
-    padding: 20,
-    width: "100%",
-    maxWidth: 380,
-  },
-  modalTitle: {
-    fontSize: 17,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    letterSpacing: -0.3,
-    marginBottom: 2,
-  },
-  modalSub: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-    marginBottom: 8,
-  },
-  modalLabel: {
-    fontSize: 13,
-    fontFamily: "Inter_400Regular",
-    color: ios.label2,
-    marginBottom: 14,
-  },
-  modalFieldLabel: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    letterSpacing: 0.3,
-    marginBottom: 6,
-  },
-  modalInput: {
-    backgroundColor: ios.fill3,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-    fontFamily: "Inter_500Medium",
-    color: ios.label,
-    marginBottom: 12,
-  },
-  // B465: a SPECIAL-tier override's reason field reads as required, not
-  // optional — a thin red ring, mirroring the web reference's danger styling.
-  modalInputError: {
-    borderWidth: 1,
-    borderColor: ios.system.red,
-  },
-  modalBtns: { flexDirection: "row", gap: 10 },
-  modalBtnGhost: {
-    flex: 1,
-    paddingVertical: 13,
-    borderRadius: 12,
-    alignItems: "center",
-    backgroundColor: ios.fill3,
-  },
-  modalBtnGhostText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
-  modalBtnFill: {
-    flex: 1,
-    paddingVertical: 13,
-    borderRadius: 12,
-    alignItems: "center",
-    backgroundColor: ios.brand,
-  },
-  modalBtnDisabled: { opacity: 0.4 },
-  modalBtnFillText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
-
-  // ── Apply credit (mirrors NewOrderScreen) ─────────────────────────────────
-  optionsWrap: { marginHorizontal: 16, marginTop: 10 },
-  optionsHeader: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 },
-  optionsTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
-  optionsSummary: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
-  optionsBody: {
-    backgroundColor: ios.bgElev,
-    borderRadius: 12,
-    padding: 12,
-    gap: 12,
-    marginBottom: 4,
-  },
-  optionRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  optionLabel: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
-  newCreditText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.brand },
-});
 
 // Default export = the operator route (reads the [id] param). The named export
 // above is reused by the driver route (R1e).

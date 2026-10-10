@@ -1,6 +1,7 @@
 // PRODUCTION GUARD — must be first executable code
 const { productionGuard } = require("./lib/production-guard");
-productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { assertNoLiveProtectedTenants } = require("./lib/live-target-guard.cjs");
 
 /**
  * Reset database (keep operator users) and seed fresh demo data.
@@ -12,11 +13,23 @@ const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 const bcrypt = require("../../../node_modules/bcrypt");
 
-const pool = new Pool({ connectionString: "postgresql://user:pass@localhost:5432/routeflow_dev" });
+// #2206: guard the URL this script actually dials, and dial exactly what was checked.
+// Row 195: productionGuard trusts a host allow-list a tunnel can fake, so this wipe ALSO refuses a database
+// that holds a protected non-test tenant (paying, Stripe-linked or PROTECTED_TENANT_SLUGS).
+const protectedSlugs = loadProtectedSlugs(
+  process.env,
+  "postgresql://user:pass@localhost:5432/routeflow_dev",
+);
+const target = productionGuard({
+  requireFlag: "--i-know-this-deletes-everything",
+  dbUrl: "postgresql://user:pass@localhost:5432/routeflow_dev",
+});
+const pool = new Pool(target);
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
+  await assertNoLiveProtectedTenants(prisma, protectedSlugs);
   console.log("🗑  Clearing existing data (keeping operator users)...");
 
   // TRUNCATE all data tables with CASCADE

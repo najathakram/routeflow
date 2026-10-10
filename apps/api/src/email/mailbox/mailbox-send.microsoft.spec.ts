@@ -22,6 +22,17 @@ const MS_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token
  * rotated refresh token is persisted, 429 throttles (Retry-After honoured), 401/403 revoke, and
  * REVOKED/THROTTLED/no-connection short-circuit before any HTTP call — same as Gmail.
  */
+/** Every status any write tried to set — through update() OR updateMany(). A status now moves
+ *  only through updateMany (F-10a), so a check over update() alone would pass vacuously. */
+function statusWritesOf(prisma: any): string[] {
+  return [
+    ...(prisma.mailboxConnection.update as jest.Mock).mock.calls,
+    ...(prisma.mailboxConnection.updateMany as jest.Mock).mock.calls,
+  ]
+    .map((c) => c[0].data.status)
+    .filter((s) => s !== undefined);
+}
+
 describe("MailboxSendService — Microsoft/Graph", () => {
   function realEncryption(): EncryptionService {
     const config = {
@@ -43,9 +54,19 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(null),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
-    const service = new MailboxSendService(prisma, encryption, config);
+    // F-10a: a state change and its audit row are written in one transaction; the stub's
+    // transaction client is the stub itself.
+    prisma.auditLog ??= {
+      create: jest.fn().mockResolvedValue({}),
+      findFirst: jest.fn().mockResolvedValue(null),
+    };
+    prisma.$transaction ??= jest.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
+    const service = new MailboxSendService(prisma, encryption, config, {
+      decide: jest.fn().mockResolvedValue({ outcome: "granted", overrides: new Map() }),
+    } as any);
     return { service, prisma, encryption };
   }
 
@@ -56,6 +77,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       tenantId: "tenant-a",
       provider: "MICROSOFT",
       accountEmail: "owner@acme.test",
+      externalSubject: "ms-oid-1",
       status: "CONNECTED",
       throttledUntil: null,
       refreshTokenCipher: enc.encrypt("real-ms-refresh-token"),
@@ -73,6 +95,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {
@@ -110,6 +133,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockResolvedValue({ data: "", status: 202 });
@@ -136,6 +160,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
             ),
           ),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockResolvedValue({ data: "", status: 202 });
@@ -148,12 +173,22 @@ describe("MailboxSendService — Microsoft/Graph", () => {
     });
 
     expect(res).toMatchObject({ delivered: true, transport: "mailbox" });
-    expect(prisma.mailboxConnection.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { tenantId: "tenant-a" },
-        data: expect.objectContaining({ status: "CONNECTED", throttledUntil: null }),
-      }),
-    );
+    // F-10a: pinned to the mailbox that sent it, and only CONNECTED or a THROTTLED row whose
+    // window has lapsed — never a concurrently REVOKED one, never an open throttle window.
+    expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledWith({
+      where: {
+        provider: "MICROSOFT",
+        externalSubject: "ms-oid-1",
+        id: "mc-1",
+        OR: [
+          { status: "CONNECTED" },
+          { status: "THROTTLED", throttledUntil: null },
+          { status: "THROTTLED", throttledUntil: { lte: expect.any(Date) } },
+        ],
+      },
+      data: expect.objectContaining({ status: "CONNECTED", throttledUntil: null }),
+    });
+    expect(prisma.mailboxConnection.update).not.toHaveBeenCalled();
   });
 
   it("no connection for the tenant: returns delivered:false without any HTTP call", async () => {
@@ -215,6 +250,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {
@@ -235,13 +271,17 @@ describe("MailboxSendService — Microsoft/Graph", () => {
     });
 
     expect(res).toEqual({ delivered: false, transport: "mailbox", error: "throttled" });
-    expect(prisma.mailboxConnection.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { tenantId: "tenant-a" },
-        data: expect.objectContaining({ status: "THROTTLED" }),
-      }),
-    );
-    const throttledUntil: Date = (prisma.mailboxConnection.update as jest.Mock).mock.calls[0][0]
+    // F-10a: a conditional transition — only from CONNECTED, pinned to the rate-limited mailbox.
+    expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledWith({
+      where: {
+        provider: "MICROSOFT",
+        externalSubject: "ms-oid-1",
+        id: "mc-1",
+        status: { in: ["CONNECTED"] },
+      },
+      data: expect.objectContaining({ status: "THROTTLED" }),
+    });
+    const throttledUntil: Date = (prisma.mailboxConnection.updateMany as jest.Mock).mock.calls[0][0]
       .data.throttledUntil;
     const deltaMs = throttledUntil.getTime() - before;
     expect(deltaMs).toBeGreaterThan(85_000);
@@ -252,10 +292,12 @@ describe("MailboxSendService — Microsoft/Graph", () => {
 
   it("401 from Graph sets REVOKED and falls through — never retried automatically", async () => {
     const encryption = realEncryption();
+    const row = connectedRow({}, encryption);
     const prisma = {
       mailboxConnection: {
-        findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
+        findUnique: jest.fn().mockResolvedValue(row),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {
@@ -275,9 +317,15 @@ describe("MailboxSendService — Microsoft/Graph", () => {
     });
 
     expect(res).toEqual({ delivered: false, transport: "mailbox", error: "revoked" });
-    expect(prisma.mailboxConnection.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: "REVOKED" }) }),
-    );
+    // F-10a: a conditional transition, pinned to the access token Graph actually rejected.
+    expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledWith({
+      where: {
+        accessTokenCipher: row.accessTokenCipher,
+        id: "mc-1",
+        status: { in: ["CONNECTED", "THROTTLED"] },
+      },
+      data: expect.objectContaining({ status: "REVOKED" }),
+    });
   });
 
   it("a 403 with NO error code falls through without revoking (superseded by the refined 403 handling below — only a token-type CODE revokes)", async () => {
@@ -286,6 +334,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {
@@ -305,9 +354,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
     });
 
     expect(res).toEqual({ delivered: false, transport: "mailbox", error: "graph_send_forbidden" });
-    const statusWrites = (prisma.mailboxConnection.update as jest.Mock).mock.calls
-      .map((c) => c[0].data.status)
-      .filter((s) => s !== undefined);
+    const statusWrites = statusWritesOf(prisma);
     expect(statusWrites).not.toContain("REVOKED");
   });
 
@@ -323,6 +370,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(row),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {
@@ -360,6 +408,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(row),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {
@@ -379,9 +428,15 @@ describe("MailboxSendService — Microsoft/Graph", () => {
     });
 
     expect(res).toMatchObject({ delivered: false, transport: "mailbox", error: "reauth_required" });
-    expect(prisma.mailboxConnection.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: "REVOKED" }) }),
-    );
+    // F-10a: a conditional transition from CONNECTED/THROTTLED, pinned to the rejected grant.
+    expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledWith({
+      where: {
+        refreshTokenCipher: row.refreshTokenCipher,
+        id: "mc-1",
+        status: { in: ["CONNECTED", "THROTTLED"] },
+      },
+      data: expect.objectContaining({ status: "REVOKED" }),
+    });
     expect(axios.post).toHaveBeenCalledTimes(1);
     expect((axios.post as jest.Mock).mock.calls[0][0]).toBe(MS_TOKEN_URL);
   });
@@ -392,6 +447,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {
@@ -417,6 +473,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {
@@ -439,7 +496,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
     });
 
     expect(res).toEqual({ delivered: false, transport: "mailbox", error: "revoked" });
-    expect(prisma.mailboxConnection.update).toHaveBeenCalledWith(
+    expect(prisma.mailboxConnection.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: "REVOKED" }) }),
     );
   });
@@ -450,6 +507,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {
@@ -480,9 +538,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       }),
     );
     // Never flipped to REVOKED — reconnecting would not fix a mailbox-configuration error.
-    const statusWrites = (prisma.mailboxConnection.update as jest.Mock).mock.calls
-      .map((c) => c[0].data.status)
-      .filter((s) => s !== undefined);
+    const statusWrites = statusWritesOf(prisma);
     expect(statusWrites).not.toContain("REVOKED");
   });
 
@@ -492,6 +548,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     (axios.post as jest.Mock).mockImplementation((url: string) => {
@@ -518,9 +575,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       transport: "mailbox",
       error: "MailboxNotEnabledForRESTAPI",
     });
-    const statusWrites = (prisma.mailboxConnection.update as jest.Mock).mock.calls
-      .map((c) => c[0].data.status)
-      .filter((s) => s !== undefined);
+    const statusWrites = statusWritesOf(prisma);
     expect(statusWrites).not.toContain("REVOKED");
   });
 
@@ -532,6 +587,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       mailboxConnection: {
         findUnique: jest.fn().mockResolvedValue(connectedRow({}, encryption)),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     const { service } = buildService({ prisma });
@@ -550,9 +606,7 @@ describe("MailboxSendService — Microsoft/Graph", () => {
       expect.anything(),
       expect.anything(),
     );
-    const statusWrites = (prisma.mailboxConnection.update as jest.Mock).mock.calls
-      .map((c) => c[0].data.status)
-      .filter((s) => s !== undefined);
+    const statusWrites = statusWritesOf(prisma);
     expect(statusWrites).toHaveLength(0);
   });
 });

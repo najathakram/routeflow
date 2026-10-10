@@ -22,9 +22,14 @@ import { ProductPickerSheet } from "../../../../../components/ProductPickerSheet
 import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { useCreateOrderTemplate } from "../../../../../lib/api/order-templates";
 import { ISO_DAY_OPTIONS, validateTemplateForm } from "../../../../../lib/order-templates-logic";
+import { scanHaptic } from "../../../../../lib/haptics";
 import { showToast } from "../../../../../lib/toast";
 import { hasUnsavedStandingOrder } from "../../../../../lib/discard-guard";
 import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import { confirm } from "../../../../../lib/confirm";
+import { decideScanResult, promptText, runScanDecision } from "../../../../../lib/scan-suggestion";
+import { ScanMatchPickerSheet } from "../../../../../components/ScanMatchPickerSheet";
+import { useScanMatchPicker } from "../../../../../lib/use-scan-match-picker";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import type { AdminProduct } from "../../../../../lib/api/admin";
 
@@ -45,6 +50,8 @@ export default function NewStandingOrderScreen() {
   const [lines, setLines] = useState<Line[]>([]);
   const [notes, setNotes] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [scanPromptOpen, setScanPromptOpen] = useState(false);
+  const matchPicker = useScanMatchPicker<AdminProduct>();
 
   const toggleDay = (value: number) =>
     setDays((prev) =>
@@ -58,6 +65,10 @@ export default function NewStandingOrderScreen() {
         .filter((l) => l.qty > 0),
     );
 
+  // #2717 M4a-1 (SA-580): a template line carries `qty` ONLY (no boxes/pieces split, no level in
+  // the template DTO), so a scanned level cannot be represented here yet - every hit is one
+  // selling unit, as before. Flagged in the M4a-1 scan-caller table as a follow-up (needs an
+  // API/DTO field), not silently mapped.
   // Shared by the picker's onSelect and the scan FAB (B266) so a scanned
   // product adds/increments a line exactly like a tapped one.
   const addLine = (product: AdminProduct) =>
@@ -87,9 +98,20 @@ export default function NewStandingOrderScreen() {
       if (result.archived) {
         return { feedback: { kind: "error", text: archivedMessage(result.product) } };
       }
-      if (!result.notFound) {
-        addLine(result.product);
-        return { feedback: { kind: "added", text: `${result.product.name} added` } };
+      const decision = decideScanResult(result, "add");
+      // B1220: a lone fuzzy match asks first, 2+ matches open a list; neither adds unprompted.
+      if (
+        runScanDecision(decision, (p) => addLine(p), confirm, {
+          pick: matchPicker.open,
+          onPromptChange: setScanPromptOpen,
+        })
+      ) {
+        if (decision.kind === "add") {
+          return { feedback: { kind: "added", text: `${decision.product.name} added` } };
+        }
+        // A confirm/picker prompt is not a failure: neutral haptic, not the error buzz.
+        scanHaptic("info");
+        return { feedback: { kind: "info", text: promptText(decision) } };
       }
     } catch {
       // network error → fall through to the toast
@@ -229,7 +251,8 @@ export default function NewStandingOrderScreen() {
           title="Add product"
         />
       </FormSheet>
-      <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} />
+      <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} paused={scanPromptOpen} />
+      <ScanMatchPickerSheet {...matchPicker.props} />
     </>
   );
 }

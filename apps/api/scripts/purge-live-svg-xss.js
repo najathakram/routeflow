@@ -17,6 +17,15 @@
  * DO NOT RUN until the new allowlist code has been deployed.
  * Run from repo root:
  *   node apps/api/scripts/purge-live-svg-xss.js
+ *
+ * #2717 M1 (SA-572e, #2728 M1 follow-up): `Product.imageKeys` is mirrored into `ProductImage` rows
+ * by the app's own dual-write (products.service.ts) and by the one-time backfill
+ * (backfill-product-catalog-rows.ts) — those rows are a MIRROR of the legacy column, never a second
+ * source of truth. Writing `imageKeys` here with raw SQL bypasses that sync, so this script clears
+ * this product's `ProductImage` rows in the SAME transaction as the `imageKeys` write: the product
+ * falls back to being row-less (read-model fallback = the mirrorableImageKeys-driven synthesis)
+ * until the next backfill run re-mirrors it. Never leave a stale row (still naming a just-deleted
+ * SVG key) sitting next to a legacy column that has already moved on.
  */
 
 "use strict";
@@ -122,9 +131,25 @@ async function main() {
       }
     }
 
-    // Update imageKeys to remove the svg entries.
+    // Update imageKeys to remove the svg entries, and clear this product's ProductImage mirror rows
+    // in the SAME transaction (see the header comment) — a stale row naming a just-deleted SVG key
+    // must never survive next to a legacy column that has already moved on.
     const remaining = (row.imageKeys || []).filter((k) => !isSvgKey(k));
-    await client.query(`UPDATE "Product" SET "imageKeys" = $1 WHERE id = $2`, [remaining, row.id]);
+    await client.query("BEGIN");
+    try {
+      await client.query(`UPDATE "Product" SET "imageKeys" = $1 WHERE id = $2`, [
+        remaining,
+        row.id,
+      ]);
+      await client.query(`DELETE FROM "ProductImage" WHERE "productId" = $1 AND "tenantId" = $2`, [
+        row.id,
+        tenantId,
+      ]);
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw e;
+    }
     console.log(
       `[purge-svg-xss] Product ${row.id}: removed ${svgKeys.length} SVG key(s): ${svgKeys.join(", ")}`,
     );

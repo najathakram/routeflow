@@ -11,7 +11,7 @@ dependency files.
 
 1. **Create/open** a Claude Design project for RouteFlow web (e.g. "RouteFlow Web — Unified").
 2. **Attach the dependencies** (below) so Claude Design can read the detailed spec. Easiest path:
-   copy the whole `docs/web-inventory/` folder into the Claude Design project (or upload/paste the
+   copy the whole `docs/history/archive-2026-09-30/web-inventory/` folder into the Claude Design project (or upload/paste the
    files). If you can only paste text, this prompt alone still enumerates every screen + feature.
 3. **Paste "THE PROMPT"** section (everything under that heading) as your instruction.
 4. Claude Design will first return a **visual-system proposal + 3 hero screens** — review the
@@ -53,7 +53,7 @@ apps" (three unrelated auth screens, four+ token systems). Your job is to make e
 unmistakably the same product, while preserving every feature and flow.
 
 ## Division of labor (important)
-- **The attached `docs/web-inventory/` files define WHAT each screen does** — data, actions,
+- **The attached `docs/history/archive-2026-09-30/web-inventory/` files define WHAT each screen does** — data, actions,
   states, flows, business rules. Treat them as the source of truth. **Read all of them before
   designing.** Do not invent flows or drop features; if something's ambiguous, ask.
 - **You own the APPEARANCE** — typography, corner/shape language, elevation, spacing rhythm,

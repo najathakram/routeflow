@@ -21,8 +21,10 @@ import {
   buyerLoginWithGoogle,
   getBuyerSellers,
   type BuyerSeller,
+  type BuyerUser,
 } from "../../lib/buyer-auth";
 import { useBuyerSessionStore } from "../../lib/buyer-session-store";
+import { PENDING_LANDING, SELLERLESS_LANDING, postSignInStep } from "../../lib/buyer-route-guard";
 import { GoogleButton } from "@routeflow/ui/mobile/ios";
 
 export default function CustomerLoginScreen() {
@@ -46,6 +48,7 @@ export default function CustomerLoginScreen() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingSellers, setPendingSellers] = useState<BuyerSeller[]>([]);
+  const [pendingBuyer, setPendingBuyer] = useState<BuyerUser | null>(null);
   const [sellerPickerOpen, setSellerPickerOpen] = useState(false);
 
   const onLogin = async () => {
@@ -63,26 +66,7 @@ export default function CustomerLoginScreen() {
 
     try {
       const res = await buyerLogin(email.trim().toLowerCase(), password);
-      setBuyer(res.buyer);
-
-      const sellers = await getBuyerSellers();
-
-      if (sellers.length === 0) {
-        setError(
-          "Your account is not connected to any supplier. Ask your supplier to send you a portal invite.",
-        );
-        setLoading(false);
-        return;
-      }
-
-      if (sellers.length === 1) {
-        await storeSetSeller(sellers[0]!);
-        router.replace(postLoginTarget);
-        return;
-      }
-
-      // Multiple sellers — show picker
-      showSellerPicker(sellers);
+      await finishSignIn(res.buyer, await getBuyerSellers());
     } catch (e: any) {
       // BUG-OPS1-5: friendly message for the 429 throttle response.
       if (e?.response?.status === 429) {
@@ -105,23 +89,10 @@ export default function CustomerLoginScreen() {
     setError(null);
     setGoogleLoading(true);
     try {
-      const { buyer, sellerCount } = await buyerLoginWithGoogle();
-      setBuyer(buyer);
-
-      if (sellerCount === 0) {
-        setError(
-          "Your account is not connected to any supplier. Ask your supplier to send you a portal invite.",
-        );
-        return;
-      }
-
-      const sellers = await getBuyerSellers();
-      if (sellers.length === 1) {
-        await storeSetSeller(sellers[0]!);
-        router.replace(postLoginTarget);
-        return;
-      }
-      showSellerPicker(sellers);
+      // #2546: always read the links — the server's sellerCount counts ACTIVE links
+      // only, and a pending-only buyer must land on the seller list, not connect.
+      const { buyer } = await buyerLoginWithGoogle();
+      await finishSignIn(buyer, await getBuyerSellers());
     } catch (e: any) {
       const code = (e as Error)?.message ?? "";
       if (code === "cancelled") return;
@@ -137,9 +108,33 @@ export default function CustomerLoginScreen() {
     }
   };
 
-  const showSellerPicker = (sellers: BuyerSeller[]) => {
-    setPendingSellers(sellers);
-    setSellerPickerOpen(true);
+  // #2341: publish the buyer to the session store only once the seller outcome
+  // is known. The route guards read "buyer set, no seller" as the 0-seller
+  // state and send it to sellers/connect, so setting the buyer before the
+  // seller would bounce a 1-seller login or a mid-pick picker to connect.
+  // #2546: only an ACTIVE link may become the active seller (postSignInStep).
+  const finishSignIn = async (buyer: BuyerUser, sellers: BuyerSeller[]) => {
+    const step = postSignInStep(sellers);
+    switch (step.kind) {
+      case "connect":
+      case "list":
+        // Mirrors web's /buyer/portal: no usable seller yet — connect one, or
+        // wait on the seller list while a request is pending.
+        setBuyer(buyer);
+        router.replace((step.kind === "connect" ? SELLERLESS_LANDING : PENDING_LANDING) as any);
+        return;
+      case "open":
+        await storeSetSeller(step.seller);
+        setBuyer(buyer);
+        router.replace(postLoginTarget);
+        return;
+      case "pick":
+        // Several ACTIVE sellers — hold the buyer until one is picked.
+        setPendingBuyer(buyer);
+        setPendingSellers(step.sellers);
+        setSellerPickerOpen(true);
+        return;
+    }
   };
 
   const onSelectSeller = async (sellerId: string) => {
@@ -147,6 +142,7 @@ export default function CustomerLoginScreen() {
     if (!seller) return;
     setSellerPickerOpen(false);
     await storeSetSeller(seller);
+    if (pendingBuyer) setBuyer(pendingBuyer);
     router.replace("/(customer)/(tabs)/home");
   };
 

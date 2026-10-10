@@ -8,7 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -46,7 +46,7 @@ describe("CustomersService — B769 money rounding", () => {
         },
         { provide: MeterService, useValue: { read: jest.fn() } },
         { provide: PlanCatalogService, useValue: { getPublishedVersion: jest.fn() } },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn() } },
+        { provide: EntitlementAuthority, useValue: { can: jest.fn() } },
         { provide: RegulatedLedgerService, useValue: { reverseInvoiceEntries: jest.fn() } },
         { provide: EmailService, useValue: { send: jest.fn() } },
       ],

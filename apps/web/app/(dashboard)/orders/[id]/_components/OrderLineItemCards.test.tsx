@@ -35,6 +35,53 @@ function many(n: number): OrderItem[] {
   );
 }
 
+describe("a unit-aware line names its own unit (units_v1)", () => {
+  const caseLine = (over: Record<string, unknown> = {}) =>
+    line({
+      qty: 36,
+      boxes: 3,
+      pieces: 0,
+      unitsPerBox: 12,
+      unitLabel: "Case",
+      unitPrice: 30,
+      subtotal: 90,
+      ...over,
+    });
+
+  it("maps the line's unitLabel onto the row's box label", () => {
+    expect(lineRowProps(caseLine(), "CONFIRMED").boxLabel).toBe("Case");
+    expect(lineRowProps(line(), "CONFIRMED").boxLabel).toBeNull();
+  });
+
+  it("a 3-Case line reads '3 Cases', priced per Case — not '3 boxes'", () => {
+    render(<OrderLineItemCards lineItems={[caseLine()]} orderStatus="CONFIRMED" total={90} />);
+    expect(screen.getByText("3 Cases · $30.00 / Case of 12")).toBeInTheDocument();
+    expect(screen.queryByText(/box/i)).not.toBeInTheDocument();
+  });
+
+  it("delivery progress uses the same noun", () => {
+    render(
+      <OrderLineItemCards
+        lineItems={[caseLine({ deliveredQty: 12 })]}
+        orderStatus="PARTIALLY_DELIVERED"
+        total={90}
+      />,
+    );
+    expect(screen.getByText("1 Case of 3 Cases delivered")).toBeInTheDocument();
+  });
+
+  it("a line with no unitLabel still reads 'boxes'", () => {
+    render(
+      <OrderLineItemCards
+        lineItems={[caseLine({ unitLabel: null })]}
+        orderStatus="CONFIRMED"
+        total={90}
+      />,
+    );
+    expect(screen.getByText("3 boxes · $30.00 / box of 12")).toBeInTheDocument();
+  });
+});
+
 describe("lineRowProps — order line → read-only row", () => {
   it("maps name, sku, money fields and the derived status", () => {
     const p = lineRowProps(line({ notes: "leave at dock" }), "CONFIRMED");

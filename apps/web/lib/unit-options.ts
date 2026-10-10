@@ -1,6 +1,7 @@
 import {
   PIECE_LABEL,
   computeLineSubtotal,
+  defaultSellingLabel,
   resolveLadderLevel,
   resolveUnitPrice,
   roundMoney,
@@ -115,7 +116,8 @@ export function defaultUnitValue(
   units: readonly ProductUnitLevel[],
   tier: number | string = 1,
 ): string {
-  const flagged = units.find((u) => u.isDefaultSelling)?.label;
+  // #2784: the ONE resolver (@routeflow/pricing) — the server's buyer-qty default reads the same function.
+  const flagged = defaultSellingLabel(product, units.map(toLadderUnit));
   if (!flagged) return "";
   const offered = buildUnitOptions(product, units, tier).find(
     (o) => o.kind !== "pack" && norm(o.value) === norm(flagged),

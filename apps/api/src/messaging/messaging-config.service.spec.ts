@@ -217,6 +217,71 @@ describe("MessagingConfigService (P6-6)", () => {
     });
   });
 
+  describe("getMatrix — #1965 audience / hasTrigger / channelStatus", () => {
+    async function matrix() {
+      const { rules, templates } = buildFullSeed();
+      prisma.notificationRule.findMany.mockResolvedValue(rules);
+      prisma.messageTemplate.findMany.mockResolvedValue(templates);
+      prisma.messagingSettings.findUnique.mockResolvedValue(null);
+      return service.getMatrix();
+    }
+
+    it("REG-1965 T2: every event carries an audience — order events CUSTOMER, internal alerts STAFF", async () => {
+      const result = await matrix();
+      const by = (k: NotificationEvent) => result.events.find((e) => e.eventKey === k)!;
+      expect(by(NotificationEvent.ORDER_CONFIRMED).audience).toBe("CUSTOMER");
+      expect(by(NotificationEvent.LOW_STOCK).audience).toBe("STAFF");
+      expect(result.events.every((e) => e.audience === "CUSTOMER" || e.audience === "STAFF")).toBe(
+        true,
+      );
+    });
+
+    it("REG-1965 T1: hasTrigger mirrors NOTIFICATION_TRIGGERS — PAYMENT_REMINDER and the internal five are false, ORDER_CONFIRMED true", async () => {
+      const result = await matrix();
+      const by = (k: NotificationEvent) => result.events.find((e) => e.eventKey === k)!;
+      expect(by(NotificationEvent.ORDER_CONFIRMED).hasTrigger).toBe(true);
+      expect(by(NotificationEvent.PAYMENT_REMINDER).hasTrigger).toBe(false);
+      expect(by(NotificationEvent.LOW_STOCK).hasTrigger).toBe(false);
+    });
+
+    it("REG-1965 T1c: PAYMENT_REMINDER's cells are NO_TRIGGER/disabled (the lying Email switch is gone) and setRuleEnabled refuses it", async () => {
+      const result = await matrix();
+      const pr = result.events.find((e) => e.eventKey === NotificationEvent.PAYMENT_REMINDER)!;
+      for (const cell of pr.channels) {
+        expect(cell).toMatchObject({ unavailable: "NO_TRIGGER", enabled: false });
+      }
+      const emailCell = pr.channels.find((c) => c.channel === MessageChannel.EMAIL)!;
+      prisma.notificationRule.findFirst.mockResolvedValue({
+        id: emailCell.ruleId,
+        eventKey: NotificationEvent.PAYMENT_REMINDER,
+        channel: MessageChannel.EMAIL,
+        enabled: false,
+      });
+      await expect(service.setRuleEnabled(emailCell.ruleId!, true)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it("REG-1965 T3: channelStatus is top level — EMAIL LIVE, WHATSAPP/SMS/PORTAL NOT_BUILT (provider transports email only)", async () => {
+      provider.transports.mockImplementation((c: MessageChannel) => c === MessageChannel.EMAIL);
+      const result = await matrix();
+      expect(result.channelStatus).toEqual({
+        EMAIL: "LIVE",
+        WHATSAPP: "NOT_BUILT",
+        SMS: "NOT_BUILT",
+        PORTAL: "NOT_BUILT",
+      });
+    });
+
+    it("REG-1965 T4: a full-seed read writes nothing — stored rules are untouched", async () => {
+      await matrix();
+      expect(prisma.notificationRule.update).not.toHaveBeenCalled();
+      expect(prisma.notificationRule.updateMany).not.toHaveBeenCalled();
+      expect(prisma.notificationRule.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.notificationRule.createMany).not.toHaveBeenCalled();
+    });
+  });
+
   describe("setRuleEnabled", () => {
     // F23 harness fix: DELIVERED:PORTAL was the original fixture here, but PORTAL has no
     // real transport (StubProvider declares none — cause-ruling.md §2) and no customer-facing
@@ -347,7 +412,7 @@ describe("MessagingConfigService (P6-6)", () => {
 
       // Every INTERNAL event today is also a NO_TRIGGER event, so the `channel !== INTERNAL`
       // exemption in unavailabilityReason is currently unreachable — this pins that fact.
-      // When the first INTERNAL event gains a firing site (leaves NO_TRIGGER_EVENTS), this
+      // When the first INTERNAL event gains a firing site (is added to NOTIFICATION_TRIGGERS), this
       // assertion fails and the exemption needs a real NO_TRANSPORT test.
       const internalCells = result.events.flatMap((e) =>
         e.channels.filter((c) => c.channel === MessageChannel.INTERNAL),
@@ -380,6 +445,7 @@ describe("MessagingConfigService (P6-6)", () => {
       });
       prisma.messageTemplate.update.mockResolvedValue({
         id: "tpl-1",
+        eventKey: NotificationEvent.CANCELLED, // a real row always carries it (B1127: the view reads it)
         body: "Hi {{name}}, order {{orderNumber}}",
         variables: ["name", "orderNumber"],
         waTemplateName: null,

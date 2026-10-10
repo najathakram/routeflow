@@ -55,12 +55,25 @@ on:
       # lives here, proven only by recompute-order-partial.db.spec.ts -- an edit to this file
       # ALONE (not invoices.service.ts) must still run this lane.
       - "apps/api/src/invoices/finalize-order-recompute.ts"
+      # #1274 round 7 (SA-093a/SA-113b): the evidence-keyed delivered basis these two modules
+      # compute is proven only by recompute-order-partial.db.spec.ts's real-Postgres pins -- a
+      # solo edit to either (not invoices.service.ts or finalize-order-recompute.ts) must still
+      # run this lane.
+      - "apps/api/src/invoices/delivered-basis-by-line.ts"
+      - "apps/api/src/invoices/order-item-provenance.ts"
       - "apps/api/src/estimates/estimates.service.ts"
       # B660a: reverseReturnEntries's box/piece axis math is proven for real by
       # returns/return-reversal-unit-axis.db.spec.ts, not by any mocked-Prisma
       # spec — a PR touching this file must run this lane even when it doesn't
       # touch the .db.spec.ts itself.
       - "apps/api/src/regulated/regulated-ledger.service.ts"
+      # #2095 / #2142: the buyer socket rooms, the shared buyer-link predicate (portal guard and
+      # gateway alike) and the tracking read are proven against real SQL only by
+      # gateways/buyer-rooms.db.spec.ts; an edit to any of them alone must run this lane.
+      - "apps/api/src/gateways/routeflow.gateway.ts"
+      - "apps/api/src/buyer/buyer-link-scope.ts"
+      - "apps/api/src/buyer/guards/buyer-seller-context.guard.ts"
+      - "apps/api/src/orders/order-tracking.ts"
       - "apps/api/.squawk.toml"
       - "scripts/lint-migrations.mjs"
       - ".github/workflows/db-migrations.yml"

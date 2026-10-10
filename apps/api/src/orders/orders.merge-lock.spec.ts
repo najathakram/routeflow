@@ -68,6 +68,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: MockLockUnavailableError,
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -118,6 +119,7 @@ describe("OrdersService merge paths — customer advisory lock (T3, R3)", () => 
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
@@ -316,7 +318,13 @@ describe("OrdersService merge paths — customer advisory lock (T3, R3)", () => 
       const result = await service.sweepAllPendingOrders();
 
       expect(merge).toHaveBeenCalledTimes(2);
-      expect(result).toEqual({ customers: 2, merged: 1, skipped: 0 });
+      expect(result).toEqual({
+        customers: 2,
+        merged: 1,
+        skipped: 0,
+        packMismatches: 0,
+        livePackFallbacks: 0,
+      });
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("cust-A"));
     });
 
@@ -356,7 +364,13 @@ describe("OrdersService merge paths — customer advisory lock (T3, R3)", () => 
       // An exhausted lock pool is contention too: skip that customer this hour and
       // keep sweeping, rather than abandoning every customer after the first.
       expect(merge).toHaveBeenCalledTimes(2);
-      expect(result).toEqual({ customers: 2, merged: 1, skipped: 0 });
+      expect(result).toEqual({
+        customers: 2,
+        merged: 1,
+        skipped: 0,
+        packMismatches: 0,
+        livePackFallbacks: 0,
+      });
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("cust-A"));
     });
 

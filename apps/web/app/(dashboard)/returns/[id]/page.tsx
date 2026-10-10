@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { Button, Card, Modal, cn, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { refundSuccessToast } from "@/lib/refund-toast";
+import { refundErrorMessage } from "@/lib/credit-note-error-copy";
 import {
   useReturn,
   useApproveReturn,
@@ -88,6 +90,8 @@ function fmtMoney(n: number | null | undefined): string {
 // line rather than leaking SCREAMING_SNAKE at the operator.
 const REFUND_ESTIMATE_REASON_LABELS: Record<string, string> = {
   NOTHING_CREDITABLE: "Nothing billed on this order can be refunded.",
+  NOTHING_BILLED:
+    "None of the returned items were billed on this order, so there is nothing to refund.",
 };
 
 function refundEstimateReasonText(reason: string): string {
@@ -356,9 +360,12 @@ export default function ReturnDetailPage() {
   }
 
   const status = ret.status;
-  const canCancel = (["PENDING", "APPROVED", "IN_TRANSIT", "RECEIVED"] as ReturnStatus[]).includes(
-    status,
-  );
+  // #2406: an INLINE return (captured inside an order write) takes none of the standard-path
+  // actions — the server refuses them all (INLINE_RETURN_USE_INLINE_ENDPOINTS).
+  const isInline = ret.kind === "INLINE";
+  const canCancel =
+    !isInline &&
+    (["PENDING", "APPROVED", "IN_TRANSIT", "RECEIVED"] as ReturnStatus[]).includes(status);
 
   // ── Action handlers ──────────────────────────────────────────────────────────
 
@@ -472,16 +479,9 @@ export default function ReturnDetailPage() {
     processRefund.mutate(
       { id: ret.id, method },
       {
-        onSuccess: () => {
+        onSuccess: (res) => {
           setIsRefundOpen(false);
-          toast({
-            title: method === "CREDIT_NOTE" ? "Store credit issued" : "Refund recorded",
-            description:
-              method === "CREDIT_NOTE"
-                ? "A credit note has been minted for the customer."
-                : "The return has been marked as refunded outside RouteFlow.",
-            variant: "success",
-          });
+          toast({ ...refundSuccessToast(method, res), variant: "success" });
         },
         // The refund path can refuse permanently (nothing billed is refundable, no
         // headroom left on the order's invoices, or a named invoice is out of room).
@@ -493,7 +493,7 @@ export default function ReturnDetailPage() {
             ?.message;
           toast({
             title: "Failed to resolve return",
-            description: message ?? "Please try again.",
+            description: refundErrorMessage(err, message) ?? "Please try again.",
             variant: "error",
           });
         },
@@ -521,7 +521,9 @@ export default function ReturnDetailPage() {
 
         {/* Actions based on status */}
         <div className="flex flex-wrap items-center gap-2">
-          {status === "PENDING" && (
+          {/* #2406: an INLINE return has its own capture/approve flow (PR-1c/1d) — never
+              the STANDARD approve/reject actions, even if it were ever PENDING. */}
+          {status === "PENDING" && !isInline && (
             <>
               <Button
                 size="sm"
@@ -542,7 +544,7 @@ export default function ReturnDetailPage() {
             </>
           )}
 
-          {status === "APPROVED" && (
+          {status === "APPROVED" && !isInline && (
             <>
               <Button
                 size="sm"
@@ -564,7 +566,7 @@ export default function ReturnDetailPage() {
             </>
           )}
 
-          {status === "IN_TRANSIT" && (
+          {status === "IN_TRANSIT" && !isInline && (
             <>
               <Button
                 size="sm"
@@ -586,7 +588,7 @@ export default function ReturnDetailPage() {
             </>
           )}
 
-          {status === "RECEIVED" && (
+          {status === "RECEIVED" && !isInline && (
             <Button
               size="sm"
               leftIcon={<RefreshCw className="h-4 w-4" />}

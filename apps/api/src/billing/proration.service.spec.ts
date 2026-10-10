@@ -167,3 +167,51 @@ describe("ProrationService.prorationPreview", () => {
     expect(p.proratedToday).toBeLessThanOrEqual(12);
   });
 });
+
+// #2187 (SA-383): since B863 a 90/180-day manual row is stored as cycle MONTHLY. Both
+// proration paths spread a MONTHLY price over that whole period — a 3×/6× under-quote. The
+// non-ANNUAL quote is monthly × periodMonths × remaining / period; ANNUAL is untouched.
+describe("#2187 manual rows with a 90/180-day period (SA-383)", () => {
+  const NOW = new Date("2026-10-10T00:00:00Z");
+  const row = (elapsedDays: number, periodDays: number, cycle = "MONTHLY") => ({
+    cycle,
+    periodStart: new Date(NOW.getTime() - elapsedDays * DAY),
+    periodEnd: new Date(NOW.getTime() + (periodDays - elapsedDays) * DAY),
+  });
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(NOW);
+  });
+  afterEach(() => jest.useRealTimers());
+
+  it("a 30-day row is unchanged: the delta over its own period", () => {
+    expect(makeService().proratedDiff(row(10, 30), 30)).toBe(20);
+  });
+
+  it("the calendar-month fallback is unchanged (22 of October's 31 days left)", () => {
+    const noPeriod = { cycle: "MONTHLY", periodStart: null, periodEnd: null };
+    expect(makeService().proratedDiff(noPeriod, 30)).toBe(21.29);
+  });
+
+  it.each([
+    [0, 90, 90], // 90-day row at term start ⇒ 3 × delta
+    [45, 90, 45], // day 45 of 90 ⇒ 1.5 × delta
+    [0, 180, 180], // 180-day row at term start ⇒ 6 × delta
+    [150, 180, 30], // 30 days left of 180 ⇒ 1 × delta
+  ])("proratedDiff: %i days into a %i-day row quotes %p for a $30 delta", (e, d, want) => {
+    expect(makeService().proratedDiff(row(e, d), 30)).toBe(want);
+  });
+
+  it("ANNUAL is unchanged: annualPrice (×10) over the remaining year", () => {
+    expect(makeService().proratedDiff(row(10, 365, "ANNUAL"), 30)).toBe(291.78);
+  });
+
+  it("add-on preview on a 90-day row: monthly × 3 × remaining / period, charged at period end", async () => {
+    const r = row(10, 90);
+    const p = await makeService(r).prorationPreview("t1", "SEAT_EXTRA");
+    expect(p.monthly).toBe(12);
+    expect(p.proratedToday).toBe(32); // 12 × 3 × 80 / 90
+    expect(p.nextChargeAt).toBe(r.periodEnd.toISOString());
+  });
+});

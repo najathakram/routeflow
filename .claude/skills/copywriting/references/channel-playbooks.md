@@ -5,6 +5,7 @@ hand. Every playbook assumes the doctrine (`sales-doctrine.md`) and the pattern 
 (`ai-style-avoidance.md`) are already in force.
 
 Contents:
+
 1. Homepage
 2. Landing Page
 3. Pricing Page
@@ -26,6 +27,7 @@ Goal: route the right visitor to the right next step in seconds, while making th
 obvious to a stranger.
 
 Structure (five steps, compressed):
+
 - **Hero (Greet + value in one breath).** Headline states the outcome or names the buyer's
   situation in their words. Subheadline adds the mechanism or the differentiator. Primary
   CTA immediately visible, assumptive verb. A homepage hero that describes the company
@@ -49,6 +51,7 @@ the primary CTA.
 Goal: one traffic source, one audience, one offer, one action.
 
 Rules:
+
 - Message match: the headline continues the exact promise of the ad or email that sent
   them. Any seam loses the click.
 - One CTA, repeated. Remove navigation and every competing exit.
@@ -67,6 +70,7 @@ Rules:
 Goal: let the buyer choose with confidence, anchored high, never apologizing for the number.
 
 Rules:
+
 - Present the premium option proudly and early. Move up, not down: the premium tier builds
   value for every tier below it. Never lead with the cheapest.
 - Three options beat one (give, give, give). Name tiers by outcome or buyer, not by
@@ -86,6 +90,7 @@ Rules:
 Goal: take a cold or problem-aware reader through the full five steps in one sitting.
 
 Order:
+
 1. Greet: name the situation or outcome in the reader's words; earn the scroll.
 2. Problem: mirror the pain in customer language, agreement stance, no shaming.
 3. Shift: the mechanism or insight that reframes the problem (why past attempts failed,
@@ -109,6 +114,7 @@ formatting. If it reads like documentation, rewrite.
 Goal: start a real conversation with a stranger for a real reason.
 
 Single-email rules:
+
 - The reason for contact is the email. Something true and specific about them (their
   launch, their posting, their stack, their venue) connected to something you can do about
   it. If no real reason exists, do not fake one; write a straight, honest pitch instead.
@@ -120,6 +126,7 @@ Single-email rules:
   clickbait that the body cannot cash.
 
 Sequence rules (massive action doctrine):
+
 - Six to twelve touches over three to eight weeks, then a long-tail cadence.
 - Every touch gives something new: a relevant idea, a case, a resource, an answer to a
   silent objection, a date option. Never "just following up", never "bumping this".
@@ -136,6 +143,7 @@ Goal: stay known, stay valuable, and surface buyers when they become ready. Obsc
 more sales than price.
 
 Rules:
+
 - Give-to-ask ratio heavily toward giving, but every send still contains a doorway (a
   soft proposal, a booking link, a reply prompt with a reason). Value-only sequences that
   never ask violate the close doctrine just as hard as pitch-only ones violate service.
@@ -151,6 +159,7 @@ Rules:
 Goal: stop the right person and hand them one clear promise the landing page will keep.
 
 Rules:
+
 - Hook from the idea, not a template: a specific result, a specific scene, a specific
   contrast that is real. The first line does the whole job on feed placements.
 - One promise per ad. The landing page must repeat it word-for-word-close.
@@ -168,6 +177,7 @@ Rules:
 Goal: be known and thought of by the power base and its edges, sounding like a person.
 
 Rules:
+
 - Social is a party, not a podium: mostly genuine social value (the story, the detail, the
   useful thing), with who-you-are and what-you-sell woven through naturally. Direct offers
   are welcome sometimes; make them clean and confident when they appear.
@@ -185,6 +195,7 @@ Rules:
 Goal: let the buyer feel the outcome and trust the specifics, fast.
 
 Rules:
+
 - First line: the hole, not the drill. What this makes possible or solves, for whom.
 - Then the concrete: materials, dimensions, process, compatibility, care, delivery, in
   plain scannable form. Specifics are the trust engine at this length.
@@ -200,6 +211,7 @@ Rules:
 Goal: a written proposal that closes, because everything important is on paper.
 
 Rules:
+
 - Always get to figures. A proposal without numbers is a brochure.
 - Structure: their situation restated in their words (proves step 2 happened), the
   recommended option and why it fits them, the full value stack itemized, the price, the
@@ -215,6 +227,7 @@ Rules:
 Goal: turn a problem into public proof of service.
 
 Rules:
+
 - Agree first, always, even when the reviewer is wrong on facts: agree with the
   frustration, the experience, the expectation. Never argue publicly, never correct
   defensively, never suggest wrongdoing.

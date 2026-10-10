@@ -1,8 +1,14 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as ts from "typescript";
+import type { Prisma } from "@prisma/client";
 import { checkOrderCoverage, finalizeOrderRecompute } from "./finalize-order-recompute";
 import type { DeliveredBasis } from "./delivered-basis-by-line";
+
+/** These test doubles only ever implement the couple of `db.orderItem`/`db.order` methods
+ *  each test exercises — cast past the full `Prisma.TransactionClient` shape rather than
+ *  building one out in full. */
+const asTx = (db: unknown) => db as unknown as Prisma.TransactionClient;
 
 // SA-093a (round 6): no DeliveryMutation rows at all -- the order behaves as undelivered,
 // whatever its status (delivered-basis-by-line.ts's own rule).
@@ -36,7 +42,7 @@ describe("checkOrderCoverage", () => {
       },
     };
     const result = await checkOrderCoverage({
-      db: dbNeverCalled,
+      db: asTx(dbNeverCalled),
       orderId: "o1",
       order: { subtotal: 8, tax: 0, total: 8, shippingFee: 0, lineItems: [li] },
       byTarget: new Map([["line:li1", { qty: aggQty }]]),
@@ -50,7 +56,7 @@ describe("checkOrderCoverage", () => {
   it("a line genuinely short (more than the tolerance) is NOT fully covered", async () => {
     const li = { id: "li1", qty: 10, invoicedQty: 0, status: "PENDING" };
     const result = await checkOrderCoverage({
-      db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
+      db: asTx({ orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } }),
       orderId: "o1",
       order: {
         subtotal: 100,
@@ -83,7 +89,7 @@ describe("checkOrderCoverage", () => {
       },
     };
     const result = await checkOrderCoverage({
-      db: dbNeverCalled,
+      db: asTx(dbNeverCalled),
       orderId: "o1",
       order: {
         subtotal: 40,
@@ -106,7 +112,7 @@ describe("checkOrderCoverage", () => {
   it("an unmatched line billed for only PART of its qty is NOT covered (falls through to partial)", async () => {
     const li = { id: "li1", qty: 10, invoicedQty: 4, status: "PENDING" }; // billed 4 of 10, now unmatched
     const result = await checkOrderCoverage({
-      db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
+      db: asTx({ orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } }),
       orderId: "o1",
       order: {
         subtotal: 100,
@@ -126,7 +132,7 @@ describe("checkOrderCoverage", () => {
   it("an unmatched line billed to its FULL qty IS covered (the genuine orphan case)", async () => {
     const li = { id: "li1", qty: 10, invoicedQty: 10, status: "PENDING" }; // billed in full, now removed
     const result = await checkOrderCoverage({
-      db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
+      db: asTx({ orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } }),
       orderId: "o1",
       order: {
         subtotal: 100,
@@ -154,7 +160,7 @@ describe("checkOrderCoverage", () => {
     const blockingLine = { id: "li3", qty: 5, invoicedQty: 0, status: "PENDING" }; // keeps order partial
     const writes: any[] = [];
     const result = await checkOrderCoverage({
-      db: { orderItem: { update: async (args: any) => writes.push(args) } },
+      db: asTx({ orderItem: { update: async (args: any) => writes.push(args) } }),
       orderId: "o1",
       order: {
         subtotal: 90,
@@ -183,7 +189,7 @@ describe("checkOrderCoverage", () => {
     const blockingLine = { id: "li3", qty: 5, invoicedQty: 0, status: "PENDING" }; // keeps order partial
     const writes: any[] = [];
     const result = await checkOrderCoverage({
-      db: { orderItem: { update: async (args: any) => writes.push(args) } },
+      db: asTx({ orderItem: { update: async (args: any) => writes.push(args) } }),
       orderId: "o1",
       order: {
         subtotal: 150,
@@ -211,7 +217,7 @@ describe("checkOrderCoverage", () => {
     it("a line delivered short of its ordered qty (mutation row present) IS covered at the delivered qty", async () => {
       const li = { id: "li1", qty: 10, invoicedQty: 0, status: "PENDING" };
       const result = await checkOrderCoverage({
-        db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
+        db: asTx({ orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } }),
         orderId: "o1",
         order: { subtotal: 100, tax: 0, total: 100, shippingFee: 0, lineItems: [li] },
         byTarget: new Map([["line:li1", { qty: 6 }]]), // billed exactly what was delivered
@@ -225,7 +231,7 @@ describe("checkOrderCoverage", () => {
     it("the SAME line with NO mutation rows at all is NOT covered (round 4's rule, unconstrained qty)", async () => {
       const li = { id: "li1", qty: 10, invoicedQty: 0, status: "PENDING" };
       const result = await checkOrderCoverage({
-        db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
+        db: asTx({ orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } }),
         orderId: "o1",
         order: { subtotal: 100, tax: 0, total: 100, shippingFee: 0, lineItems: [li] },
         byTarget: new Map([["line:li1", { qty: 6 }]]),
@@ -240,7 +246,7 @@ describe("checkOrderCoverage", () => {
       const refused = { id: "li1", qty: 5, invoicedQty: 0, status: "PENDING" };
       const billed = { id: "li2", qty: 4, invoicedQty: 0, status: "PENDING" };
       const result = await checkOrderCoverage({
-        db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
+        db: asTx({ orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } }),
         orderId: "o1",
         order: { subtotal: 40, tax: 0, total: 40, shippingFee: 0, lineItems: [refused, billed] },
         byTarget: new Map([["line:li2", { qty: 4 }]]),
@@ -264,7 +270,7 @@ describe("checkOrderCoverage", () => {
       const touched = { id: "li1", qty: 6, invoicedQty: 0, status: "PENDING" };
       const untouched = { id: "li2", qty: 10, invoicedQty: 0, status: "PENDING" };
       const result = await checkOrderCoverage({
-        db: { orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } },
+        db: asTx({ orderItem: { update: async () => ({}) }, order: { update: async () => ({}) } }),
         orderId: "o1",
         order: {
           subtotal: 160,
@@ -290,10 +296,10 @@ describe("checkOrderCoverage", () => {
       const writes: any[] = [];
       const refused = { id: "li1", status: "PENDING", invoicedQty: 0 };
       await finalizeOrderRecompute({
-        db: {
+        db: asTx({
           orderItem: { update: async (args: any) => writes.push(args) },
           order: { update: async () => ({}) },
-        },
+        }),
         orderId: "o1",
         order: { subtotal: 40, tax: 0 },
         deliveredBasis: { hasMutations: true, byLineId: new Map([["li1", 0]]) },
@@ -311,10 +317,10 @@ describe("checkOrderCoverage", () => {
       const writes: any[] = [];
       const neverBilled = { id: "li1", status: "PENDING", invoicedQty: 0 };
       await finalizeOrderRecompute({
-        db: {
+        db: asTx({
           orderItem: { update: async (args: any) => writes.push(args) },
           order: { update: async () => ({}) },
-        },
+        }),
         orderId: "o1",
         order: { subtotal: 40, tax: 0 },
         deliveredBasis: NO_DELIVERY,

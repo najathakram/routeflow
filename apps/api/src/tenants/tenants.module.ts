@@ -9,12 +9,14 @@ import { TenantGoogleOAuthService } from "./tenant-google-oauth.service";
 import { EmailModule } from "../email/email.module";
 import { StorageModule } from "../storage/storage.module";
 import { BillingModule } from "../billing/billing.module";
+import { PolicyModule } from "../policy/policy.module";
 
 @Module({
   imports: [
     EmailModule,
     StorageModule,
     BillingModule,
+    PolicyModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

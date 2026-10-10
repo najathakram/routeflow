@@ -1,7 +1,17 @@
+import { NON_LOCAL_DB_URLS } from "./local-db-bypass-urls";
+
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { isLocalDbTarget } = require("../../scripts/lib/local-db-target.cjs") as {
-  isLocalDbTarget: (url: unknown) => boolean;
-};
+const { isLocalDbTarget, localConnectionConfig } =
+  require("../../scripts/lib/local-db-target.cjs") as {
+    isLocalDbTarget: (url: unknown) => boolean;
+    localConnectionConfig: (url: unknown) => {
+      host: string;
+      port: number;
+      user?: string;
+      password?: string;
+      database: string;
+    } | null;
+  };
 
 // The approved-buyer fixture plants a GLOBAL BuyerAccount with a committed password, so the seed
 // may run it only against a provably local database. Anything unclassifiable must be NOT local.
@@ -16,16 +26,7 @@ describe("isLocalDbTarget (e2e-seed approved-buyer gate)", () => {
     expect(isLocalDbTarget(url)).toBe(true);
   });
 
-  it.each([
-    ["a Railway TCP proxy URL", "postgresql://u:p@roundhouse.proxy.rlwy.net:12345/railway"],
-    ["a *.railway.internal URL", "postgresql://u:p@postgres.railway.internal:5432/railway"],
-    ["an unknown remote host", "postgresql://u:p@db.example.com:5432/app"],
-    ["a custom proxy host with no railway marker", "postgresql://u:p@pg.internal-proxy.net:5432/x"],
-    ["a lookalike host", "postgresql://u:p@localhost.evil.com:5432/x"],
-    ["localhost only in the userinfo", "postgresql://localhost@evil.com:5432/x"],
-    ["an empty string", ""],
-    ["an unparseable value", "not a url"],
-  ])("is NOT local: %s", (_label, url) => {
+  it.each(NON_LOCAL_DB_URLS.map((r) => [...r]))("is NOT local: %s", (_label, url) => {
     expect(isLocalDbTarget(url)).toBe(false);
   });
 
@@ -33,5 +34,23 @@ describe("isLocalDbTarget (e2e-seed approved-buyer gate)", () => {
     expect(isLocalDbTarget(undefined)).toBe(false);
     expect(isLocalDbTarget(null)).toBe(false);
     expect(isLocalDbTarget(42)).toBe(false);
+  });
+});
+
+describe("localConnectionConfig (the fields pg is built from)", () => {
+  it("returns explicit, decoded fields for a local URL", () => {
+    expect(
+      localConnectionConfig("postgresql://us%40er:p%2Fw@LOCALHOST:55432/routeflow_dev"),
+    ).toEqual({
+      host: "localhost",
+      port: 55432,
+      user: "us@er",
+      password: "p/w",
+      database: "routeflow_dev",
+    });
+  });
+  it("defaults the port and is null for anything not provably local", () => {
+    expect(localConnectionConfig("postgresql://u:p@[::1]/x")?.port).toBe(5432);
+    expect(localConnectionConfig("postgresql://u:p@localhost:5432/x?host=evil.com")).toBeNull();
   });
 });

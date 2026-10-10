@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { Paperclip, Wallet } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import {
@@ -12,7 +13,7 @@ import {
 } from "@/lib/api/invoices";
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { fmt } from "@/lib/formatting";
-import { roundMoney } from "@routeflow/pricing";
+import { clampAllocationInput } from "@/lib/payment-allocation";
 import {
   SELECTABLE_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
@@ -38,26 +39,6 @@ interface AllocRow {
   amount: string;
 }
 
-/**
- * B313: mobile's record.tsx caps each row at the invoice's balance ("Cap at the invoice's
- * balance — the server would happily over-pay it"); this modal edited the raw string with no
- * cap at all, so an operator could type more than an invoice's `amountDue` here while mobile
- * silently clamped the same input. Blank/unparseable input passes through untouched so the
- * field stays editable (matching mobile's `value == null` passthrough).
- *
- * Opus review (F39): an EARLIER version of this reformatted every keystroke through
- * `roundMoney`/`String`, which rewrites "12.50" to "12.5" mid-type — an in-range value now
- * passes through EXACTLY as typed (decimal in progress, trailing zero and all); only an
- * out-of-range value gets replaced, and only then with a clean rounded string.
- */
-export function clampAllocationInput(raw: string, amountDue: number): string {
-  const parsed = parseFloat(raw);
-  if (raw === "" || Number.isNaN(parsed)) return raw;
-  if (parsed < 0) return "0";
-  if (parsed > amountDue) return String(roundMoney(amountDue));
-  return raw;
-}
-
 export interface CustomerRecordPaymentModalProps {
   customerId: string;
   customerName?: string;
@@ -74,9 +55,6 @@ export interface CustomerRecordPaymentModalProps {
  * the waterfall/clamp/remainder math with the AP modal via
  * `@/lib/api/supplier-payments`, rather than re-deriving either. Only the
  * customer picker is gone — `customerId` is a fixed prop here.
- *
- * (finance/payments/page.tsx itself is out of scope for this change — it
- * keeps its own copy of this same UI, unchanged.)
  */
 export function CustomerRecordPaymentModal({
   customerId,
@@ -200,8 +178,11 @@ export function CustomerRecordPaymentModal({
       onSuccess?.();
       onClose();
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
-      toast({ title: msg ?? "Failed to record payment", variant: "error" });
+      toast({
+        title: "Failed to record payment",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
     }
   };
 
