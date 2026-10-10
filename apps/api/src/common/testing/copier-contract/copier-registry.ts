@@ -49,6 +49,14 @@ export const INFRA: Record<Model, string> = {
   CreditNoteItem: "id tenantId creditNoteId createdAt",
 };
 
+/**
+ * Units rebuild P0a: the sale-time unit-name snapshot columns exist (nullable) but no copier writes them
+ * yet; the units PRs that start writing them move each from gaps to carried (the contract goes red the
+ * moment a gap is written).
+ */
+const P0A_LABELS: Record<string, GapRef> = { baseLabel: "unfiled", packLabel: "unfiled" };
+const P0A_LABELS_LINECODE: Record<string, GapRef> = { ...P0A_LABELS, lineCode: "unfiled" };
+
 const ORDER_FRESH = "deliveredQty invoicedQty overrideReason overriddenBy status";
 const MERGE = {
   file: "orders/orders.service.ts",
@@ -66,6 +74,7 @@ const MERGE = {
   components: "rederived" as const,
   na: "deliveredQty invoicedQty",
   gaps: {
+    ...P0A_LABELS,
     // B776/SA-124a (#938): buildMergeLineWrites now carries the contributing line's OWN
     // snapshot pack through every write (the whole point of the fix — never re-split at the
     // live product's CURRENT pack) — unitsPerBox moved to carried above, gap closed.
@@ -92,6 +101,7 @@ export const COPIERS: Copier[] = [
     reset: "discount",
     // #2169 (SA-395): built from a request line, never a copy of a system-stamped source line.
     na: "systemKind",
+    gaps: { ...P0A_LABELS_LINECODE },
   },
   {
     id: "C2",
@@ -107,6 +117,7 @@ export const COPIERS: Copier[] = [
     // unit lines are refused (409); order-linked invoices are refused (RF-011), and composed lines exist only on those
     na: "unitLabel orderItemId compositionMode recipeId recipeVersion",
     components: "na",
+    gaps: { ...P0A_LABELS_LINECODE },
   },
   {
     id: "C4",
@@ -116,7 +127,10 @@ export const COPIERS: Copier[] = [
     anchor: { via: "prop", name: "items" },
     carried:
       "description productId qty unitPrice subtotal priceType originalPrice boxes pieces unitsPerBox",
-    gaps: { unitLabel: "unfiled" },
+    gaps: {
+      ...P0A_LABELS,
+      unitLabel: "unfiled",
+    },
   },
   // C5 (estimate -> invoice). Since B659 (#1279) convertToInvoice writes `items: { create: itemsData }`
   // from the SHARED builder, so the entry anchors on the builder and classifies it FROM THE ESTIMATE
@@ -139,7 +153,11 @@ export const COPIERS: Copier[] = [
     // #2169 (SA-395): an estimate line, never a copy of a system-stamped source line.
     na: "promoFreeUnits notes orderItemId unitLabel systemKind compositionMode recipeId recipeVersion",
     components: "na",
-    gaps: { priceType: "unfiled", originalPrice: "unfiled" },
+    gaps: {
+      ...P0A_LABELS_LINECODE,
+      priceType: "unfiled",
+      originalPrice: "unfiled",
+    },
   },
   {
     id: "C6",
@@ -155,6 +173,7 @@ export const COPIERS: Copier[] = [
     na: "originalPrice priceType promoFreeUnits notes orderItemId systemKind compositionMode recipeId recipeVersion", // RecurringInvoiceItem has none of these columns
     components: "na",
     gaps: {
+      ...P0A_LABELS_LINECODE,
       boxes: "B646",
       pieces: "B646",
       unitsPerBox: "B646",
@@ -179,6 +198,7 @@ export const COPIERS: Copier[] = [
     components: "rederived", // #2717 M3: syncOrderLineCompositions plans a RECIPE line from the ACTIVE recipe, mode-gated
     na: ORDER_FRESH,
     gaps: {
+      ...P0A_LABELS,
       boxes: "B647",
       pieces: "B647",
       unitsPerBox: "B647",
@@ -208,6 +228,7 @@ export const COPIERS: Copier[] = [
     components: "rederived", // #2717 M3: written by OrdersService.create, which syncs compositions in its tx
     na: "deliveredQty invoicedQty status", // overrideReason/overriddenBy ride viaOptions (D-20)
     gaps: {
+      ...P0A_LABELS,
       unitLabel: "unfiled",
       notes: "unverified",
     },
@@ -232,6 +253,7 @@ export const COPIERS: Copier[] = [
     carried: "productId qty reason restock condition notes",
     na: "unitPrice subtotal taxAmount categoryTax priceSource originalPrice overrideReason overriddenBy", // priced later by priceReturn
     gaps: {
+      ...P0A_LABELS,
       boxes: "B665",
       pieces: "B665",
       unitsPerBox: "B665",
@@ -249,7 +271,13 @@ export const COPIERS: Copier[] = [
     carried:
       "productId reason restock condition sourceOrderId sourceInvoiceItemId sourceOrderItemId unitPrice subtotal taxAmount categoryTax priceSource originalPrice overrideReason overriddenBy",
     rederived: "qty", // TRUE pieces, unlike C11 (B660)
-    gaps: { boxes: "B660", pieces: "B660", unitsPerBox: "B660", notes: "unverified" },
+    gaps: {
+      ...P0A_LABELS,
+      boxes: "B660",
+      pieces: "B660",
+      unitsPerBox: "B660",
+      notes: "unverified",
+    },
   },
   {
     id: "C14",
@@ -262,6 +290,7 @@ export const COPIERS: Copier[] = [
     // #2169 (SA-395): an imported CSV line, never a copy of a system-stamped source line.
     na: "originalPrice msrp priceType boxes pieces unitsPerBox promoFreeUnits notes orderItemId trackedCategoryId trackedSubcategoryId categoryTaxAmount unitLabel categoryTaxType categoryTaxRate categoryPriceIncludesTax systemKind compositionMode recipeId recipeVersion",
     components: "na",
+    gaps: { ...P0A_LABELS_LINECODE },
   }, // CSV: per-piece by construction
   // C17 (not in R-ui's first table: the discovery pass found it; R-ui then verified it, invoices.service.ts
   // 2273-2420, callers 3540/3601/6342 = invoice edit and status flows). It UPDATES an existing order line, and
@@ -286,6 +315,7 @@ export const COPIERS: Copier[] = [
     components: "rederived", // #2717 M3: syncOrderLineCompositions runs right after the back-sync loop
     na: "deliveredQty overrideReason overriddenBy",
     gaps: {
+      ...P0A_LABELS,
       trackedCategoryId: "B767", // CREATE carries categoryTaxAmount without its category attribution
       originalPrice: "unfiled",
       notes: "unfiled",

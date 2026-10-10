@@ -252,7 +252,7 @@ describe("UsersService: admin account protection", () => {
     });
     it("controller + service: a non-admin caller on the driver-permit route is refused", async () => {
       prisma.user.findUnique.mockResolvedValue({ ...ADMIN_TARGET, canActAsDriver: false } as any);
-      const controller = new UsersController(service as any);
+      const controller = new UsersController(service as any, {} as any);
       await expect(
         controller.toggleDriverPermit("t1", {
           sub: "op1",

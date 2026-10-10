@@ -16,6 +16,8 @@
 
 // ─── Production guard ─────────────────────────────────────────────────────────
 const { productionGuard } = require("./lib/production-guard");
+const { loadProtectedSlugs } = require("./lib/protected-slugs.cjs");
+const { assertNoLiveProtectedTenants } = require("./lib/live-target-guard.cjs");
 // Runs below, once the URL is resolved (#2206): --all (broad TRUNCATE) also requires explicit
 // confirmation; targeted manifest mode does not, but is still refused on any non-local target.
 
@@ -41,6 +43,9 @@ const dbUrl = loadEnvDatabaseUrl();
 console.log(`\n🔗 Connecting to: ${dbUrl.replace(/:([^:@]+)@/, ":***@")}`);
 
 // #2206: guard the URL this script actually dials, and dial exactly what was checked.
+// Row 195: productionGuard trusts a host allow-list a tunnel can fake, so this wipe ALSO refuses a database
+// that holds a protected non-test tenant (paying, Stripe-linked or PROTECTED_TENANT_SLUGS).
+const protectedSlugs = loadProtectedSlugs(process.env, dbUrl);
 const target = productionGuard({
   requireFlag: process.argv.includes("--all") ? "--i-know-this-deletes-everything" : undefined,
   dbUrl,
@@ -217,6 +222,7 @@ async function cleanupAll() {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
+  await assertNoLiveProtectedTenants(prisma, protectedSlugs);
   if (manifestPath) {
     await cleanupFromManifest(manifestPath);
   } else {

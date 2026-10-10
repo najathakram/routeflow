@@ -347,6 +347,26 @@ describe("refund flow", () => {
     expect(quoteMutate).toHaveBeenCalledTimes(1);
   });
 
+  it("row 182: after a 409 carrying the server amount the quote's Total shows that figure too, not the stale one", async () => {
+    refundReturn.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "REFUND_AMOUNT_CHANGED", amount: 10 } },
+    });
+    await refundFlow();
+    expect(screen.getByText("Total").parentElement).toHaveTextContent("$12.40");
+    expect(screen.getByText("Subtotal")).toBeInTheDocument();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByRole("button", { name: /^return & refund \$10\.00$/i });
+    await waitFor(() =>
+      expect(screen.getByText("Total").parentElement).toHaveTextContent("$10.00"),
+    );
+    expect(screen.getByText("Total").parentElement).not.toHaveTextContent("$12.40");
+    // the old breakdown would no longer add up to the new total: it is hidden, never left contradicting it
+    expect(screen.queryByText("Subtotal")).toBeNull();
+    expect(screen.queryByText("Tax")).toBeNull();
+  });
+
   it("a second 409 with a different amount updates the confirm again, still without a re-quote", async () => {
     const changed = (amount: number) => ({
       response: { status: 409, data: { code: "REFUND_AMOUNT_CHANGED", amount } },
