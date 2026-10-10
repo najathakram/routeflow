@@ -9,6 +9,10 @@
  * and the mocks, not off a fake that says so. Mocked at the module boundary: Prisma (tenant,
  * add-on table), Stripe, the billing events, the entitlement authority, the advisory locks.
  *
+ * NOTE on counts: the ruling text says "3 fleet rows + driver_payments" and "master today: 4 GRANT overrides". That is
+ * an arithmetic slip: FLEET_KEYS = recurring_routes, order_delivery, so PROFILE_MODULE_KEYS has THREE modules and a
+ * delivery profile writes THREE comp rows (master wrote three GRANT overrides). These specs assert three.
+ *
  * The lock mock is a real keyed mutex: `withAdvisoryLocks` (the confirm's multi-key lock) holds its
  * keys until the callback ends, and a single-key `withAdvisoryLock` on a HELD key times out like the
  * real 10 s wait would. So a comp enable that tried to re-take a key its own confirm holds would
@@ -74,6 +78,8 @@ jest.mock("../common/db-locks", () => {
 });
 
 import "reflect-metadata";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { ConflictException, Logger } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { PlatformAdminController } from "./platform-admin.controller";
@@ -168,9 +174,14 @@ function world(
   const writes: string[] = [];
   const featureOverrides = {
     list: jest.fn(async () => overrideRows.filter((r) => r.tenantId === T)),
+    // like the real service: revoked and EXPIRED rows are not active
     allActive: jest.fn(
       async () =>
-        new Map(overrideRows.filter((r) => !r.revokedAt).map((r) => [r.featureKey, r.effect])),
+        new Map(
+          overrideRows
+            .filter((r) => !r.revokedAt && (!r.expiresAt || r.expiresAt.getTime() > Date.now()))
+            .map((r) => [r.featureKey, r.effect]),
+        ),
     ),
     get: jest.fn(async (_t: string, key: string) => activeOverride(key)?.effect ?? null),
     getMany: jest.fn(async () => new Map()),
@@ -338,11 +349,39 @@ describe("SA-769 red row 1: a profile applied to a tenant holding nothing COMPS 
     expect(w.writes).toEqual(["mode fulfilment_model=delivery"]);
   });
 
-  it("no comp row has an end date: the row has no expiry column and no override carries one", async () => {
+  it("no expiry: a stale EXPIRED override does not hold the module, and the comp is written WITHOUT any end date", async () => {
     const w = world();
+    w.overrideRows.push({
+      id: "stale",
+      tenantId: T,
+      featureKey: "order_delivery",
+      effect: "GRANT",
+      revokedAt: null,
+      expiresAt: new Date(Date.now() - 86_400_000),
+    });
+
     await w.apply("delivery_distributor");
-    for (const r of w.activeRows()) expect(r).not.toHaveProperty("expiresAt");
-    expect(w.overrideRows.some((o) => o.expiresAt)).toBe(false);
+
+    // the expired GRANT holds nothing, so order_delivery is comped like the rest
+    expect(w.activeRows().map((r) => r.addonKey)).toEqual(MODULES);
+    expect(w.featureOverrides.create).not.toHaveBeenCalled();
+    for (const call of w.store.upsert.mock.calls) {
+      for (const data of [call[0].create, call[0].update] as Array<Record<string, unknown>>) {
+        expect(Object.keys(data).filter((k) => /expir|end|until|valid|trial/i.test(k))).toEqual([]);
+        expect(Object.values(data).some((v) => v instanceof Date)).toBe(false);
+      }
+    }
+    // and the table cannot hold one: its only DateTime columns are createdAt / updatedAt
+    const schema = fs.readFileSync(
+      path.resolve(__dirname, "../../prisma/schema/platform.prisma"),
+      "utf8",
+    );
+    const from = schema.indexOf("model TenantAddon {");
+    const model = schema.slice(from, schema.indexOf("\n}", from));
+    expect([...model.matchAll(/^\s+(\w+)\s+DateTime/gm)].map((m) => m[1])).toEqual([
+      "createdAt",
+      "updatedAt",
+    ]);
   });
 
   it("audits stay: one ADDON_COMPED per comp (reason names the profile), one BUSINESS_PROFILE_APPLIED listing the comp rows", async () => {
@@ -518,7 +557,7 @@ describe("SA-769 red row 4: applying a fleet:false profile afterwards switches t
     expect(w.store.rows.every((r) => r.active === false)).toBe(true);
   });
 
-  it("a fleet:false profile on a tenant holding no add-on row still DENYs through the override path (single caller kept)", async () => {
+  it("a fleet:false profile over a GRANT override (no add-on row) revokes it and DENYs through the override path (single caller kept)", async () => {
     const w = world({
       overrides: { order_delivery: "GRANT" },
       modes: { fulfilment_model: "delivery" },
@@ -529,6 +568,30 @@ describe("SA-769 red row 4: applying a fleet:false profile afterwards switches t
       "revoke GRANT order_delivery",
       "override DENY order_delivery",
     ]);
+    expect(w.stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+  });
+
+  it("a fleet:false profile on a tenant holding NO add-on row and NO override writes no DENY: nothing is held, the planner skips (ruling 6 says DENY; the planner has always skipped an unheld module)", async () => {
+    const w = world({ modes: { fulfilment_model: "delivery" } });
+    const preview = await w.controller.previewBusinessProfile(T, {
+      profile: "shipping_wholesaler",
+    } as any);
+    expect(preview.plan.overrides.every((o) => o.action === "skip")).toBe(true);
+    expect(preview.plan.comps).toEqual([]);
+    expect(preview.plan.billing).toEqual([]);
+    await w.apply("shipping_wholesaler");
+    expect(w.featureOverrides.create).not.toHaveBeenCalled();
+    expect(w.writes).toEqual(["mode fulfilment_model=ship"]);
+  });
+
+  it("a fleet:false profile over an UNPRICED non-comp row (isComp false) DENYs it with an override and does not disable it", async () => {
+    const w = world({
+      rows: [{ ...paidRow("recurring_routes"), priceSnapshot: 0, stripeItemId: null }],
+    });
+    await w.apply("shipping_wholesaler");
+    expect(w.writes).toContain("override DENY recurring_routes");
+    expect(w.store.rows[0]).toMatchObject({ active: true });
+    expect(w.stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
   });
 });
 
