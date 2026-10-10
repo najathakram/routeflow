@@ -290,6 +290,24 @@ describe("CounterSaleVoidService: a same-day cash + card sale (test 4)", () => {
     });
   });
 
+  it("the invoice.updated events voidPaymentInTx queues (SENT/OVERDUE) are dropped: the invoices end VOID, only the order event goes out", async () => {
+    const b = await build();
+    const invoiceGateway = { emitInvoiceUpdated: jest.fn() };
+    // like the real voidPaymentInTx: it queues an invoice.updated on the AfterCommit it is handed
+    b.invoices.voidPaymentInTx.mockImplementation(
+      async (_tx: unknown, after: any, invoiceId: string) => {
+        after
+          .defer(invoiceGateway)
+          .emitInvoiceUpdated("test-tenant", { invoiceId, status: "SENT" });
+        return { success: true };
+      },
+    );
+    await run(b);
+    expect(b.invoices.voidPaymentInTx).toHaveBeenCalledTimes(2);
+    expect(invoiceGateway.emitInvoiceUpdated).not.toHaveBeenCalled();
+    expect(b.gateway.emitOrderStatusChanged).toHaveBeenCalledTimes(1);
+  });
+
   it("a PENDING check leg is voided but hands nothing back; a split leg per invoice is each voided", async () => {
     const pending = pay({
       id: "pay-3",

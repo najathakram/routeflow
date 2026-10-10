@@ -228,7 +228,13 @@ export class CounterSaleVoidService {
 
     // 8. Void the counter tender rows with the one payment-void writer (split legs each voided).
     const tender = payments.filter((p) => isCounterTenderRow(orderId, p));
-    for (const p of tender) await this.invoices.voidPaymentInTx(tx, after, p.invoiceId, p.id, tz);
+    // voidPaymentInTx queues an invoice.updated with the status the payment void leaves (SENT / OVERDUE). Every invoice
+    // of this sale ends VOID in this same transaction, so that event would tell operators AND the customer room about a
+    // state that never lasts: it is handed a queue that is never flushed. (The order's CANCELLED event, queued on
+    // `after` below, is what the dashboards refresh on; the office invoice void emits no invoice event either.)
+    const discardedInvoiceEvents = new AfterCommit();
+    for (const p of tender)
+      await this.invoices.voidPaymentInTx(tx, discardedInvoiceEvents, p.invoiceId, p.id, tz);
     const handBack = handBackOf(tender);
 
     // 9. The void undoes the hand-over: a line that reads delivered with no DeliveryMutation row behind it goes back to
