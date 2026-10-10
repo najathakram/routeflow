@@ -471,3 +471,142 @@ describe("SubscriptionService.getSubscription", () => {
     });
   });
 });
+
+// SA-733r6 (B4): the view carries the dunning facts + the extras the banner needs, so the web renders from ONE read.
+describe("SubscriptionService.getSubscription - B4 banner fields", () => {
+  function build(sub: any, extrasOut: any) {
+    const catalog = {
+      getVersionForTenant: jest.fn().mockResolvedValue({ definitions: DEFS, addonSkus: [] }),
+    } as any;
+    const entitlements = {
+      resolve: jest.fn().mockResolvedValue({
+        planKey: "TEAM",
+        planName: "Team",
+        status: "READ_ONLY",
+        planVersionId: "v7",
+        trialEndsAt: null,
+        readOnlyReason: "payment_overdue",
+      }),
+    } as any;
+    const prisma = {
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue(sub) },
+      tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+    } as any;
+    const extras = { read: jest.fn().mockResolvedValue(extrasOut) } as any;
+    const svc = new SubscriptionService(
+      prisma,
+      catalog,
+      entitlements,
+      {} as any,
+      undefined,
+      extras,
+    );
+    return { svc, extras };
+  }
+
+  it("returns pastDueSince, pastDueInvoiceId, billingContactName, openInvoiceAmount, card and next charge", async () => {
+    const sub = {
+      cycle: "MONTHLY",
+      periodEnd: new Date("2026-12-01T00:00:00Z"),
+      pastDueSince: new Date("2026-11-01T14:00:00Z"),
+      pastDueInvoiceId: "in_1",
+      pausedAt: new Date("2026-11-08T09:00:00Z"),
+      stripeCustomerId: "cus_1",
+      stripeSubscriptionId: "sub_1",
+    };
+    const extrasOut = {
+      billingContactName: "Dana",
+      openInvoiceAmount: 149,
+      paymentMethodSummary: { brand: "visa", last4: "4242", expMonth: 10, expYear: 2026 },
+      nextCharge: { amount: 149, date: "2026-12-01T00:00:00.000Z" },
+    };
+    const { svc, extras } = build(sub, extrasOut);
+
+    const view = await svc.getSubscription("t1");
+
+    expect(view.pastDueSince).toEqual(new Date("2026-11-01T14:00:00Z"));
+    expect(view.pastDueInvoiceId).toBe("in_1");
+    expect(view.billingContactName).toBe("Dana");
+    expect(view.openInvoiceAmount).toBe(149);
+    expect(view.paymentMethodSummary).toEqual(extrasOut.paymentMethodSummary);
+    expect(view.nextCharge).toEqual(extrasOut.nextCharge);
+    expect(extras.read).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({ pastDueInvoiceId: "in_1" }),
+    );
+  });
+
+  it("a tenant that never failed a payment has null dunning fields (an old shape sees the autopay card only)", async () => {
+    const { svc } = build(
+      { cycle: "MONTHLY", periodEnd: null, pastDueSince: null, pastDueInvoiceId: null },
+      {
+        billingContactName: "Dana",
+        openInvoiceAmount: null,
+        paymentMethodSummary: null,
+        nextCharge: null,
+      },
+    );
+    const view = await svc.getSubscription("t1");
+    expect(view.pastDueSince).toBeNull();
+    expect(view.pastDueInvoiceId).toBeNull();
+    expect(view.openInvoiceAmount).toBeNull();
+  });
+
+  it("without the extras collaborator the new fields are null (the 5-arg form keeps working)", async () => {
+    const catalog = {
+      getVersionForTenant: jest.fn().mockResolvedValue({ definitions: DEFS, addonSkus: [] }),
+    } as any;
+    const prisma = {
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue(null) },
+      tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+    } as any;
+    const svc = new SubscriptionService(
+      prisma,
+      catalog,
+      {
+        resolve: jest
+          .fn()
+          .mockResolvedValue({ planKey: "TEAM", status: "ACTIVE", planVersionId: "v7" }),
+      } as any,
+      {} as any,
+    );
+    const view = await svc.getSubscription("t1");
+    expect(view.billingContactName).toBeNull();
+    expect(view.openInvoiceAmount).toBeNull();
+    expect(view.paymentMethodSummary).toBeNull();
+  });
+});
+
+describe("SubscriptionService.openInvoiceUrl", () => {
+  it("is the hosted URL of the pastDueInvoiceId invoice, null when nothing is owed", async () => {
+    const extras = {
+      hostedInvoiceUrl: jest.fn().mockResolvedValue("https://invoice.example/i/1"),
+    } as any;
+    const prismaOwed = {
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue({ pastDueInvoiceId: "in_1" }) },
+    } as any;
+    const owed = new SubscriptionService(
+      prismaOwed,
+      {} as any,
+      {} as any,
+      {} as any,
+      undefined,
+      extras,
+    );
+    expect(await owed.openInvoiceUrl("t1")).toBe("https://invoice.example/i/1");
+    expect(extras.hostedInvoiceUrl).toHaveBeenCalledWith("in_1");
+
+    const prismaNone = {
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue({ pastDueInvoiceId: null }) },
+    } as any;
+    const none = new SubscriptionService(
+      prismaNone,
+      {} as any,
+      {} as any,
+      {} as any,
+      undefined,
+      extras,
+    );
+    expect(await none.openInvoiceUrl("t1")).toBeNull();
+  });
+});
