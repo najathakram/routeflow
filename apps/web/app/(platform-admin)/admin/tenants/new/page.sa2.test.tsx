@@ -404,6 +404,74 @@ describe("SA-2 chain and partial failure", () => {
     expect(banner).toHaveTextContent("Receipt scanning");
   });
 
+  it("SA-769: an add-on the profile already comped is not enabled again, and is not reported as failed", async () => {
+    mockApplyProfile.mockResolvedValue({
+      summary: [],
+      plan: { overrides: [], comps: [{ featureKey: "driver_payments" }], modes: [], billing: [] },
+    });
+    await renderPage();
+    fireEvent.click(screen.getByRole("radio", { name: /Delivery/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /At-door payment collection/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Receipt scanning/ }));
+    fillForm();
+    await createThroughSheet();
+    await waitFor(() => expect(urls()).toContain("/platform-admin/tenants/t1/addons/enable"));
+    const enabled = post.mock.calls
+      .filter((c) => c[0] === "/platform-admin/tenants/t1/addons/enable")
+      .map((c) => (c[1] as { addonKey: string }).addonKey);
+    expect(enabled).toEqual(["ocr"]); // driver_payments is on already: the profile comped it
+    expect(screen.queryByTestId("partial-banner")).not.toBeInTheDocument();
+  });
+
+  it("SA-769: a 409 already-active on a comp add-on is success (the module is on), other failures still name the add-on", async () => {
+    setPost({
+      "/platform-admin/tenants/t1/addons/enable": (body) =>
+        (body as { addonKey: string }).addonKey === "driver_payments"
+          ? httpError(409, { message: "Add-on is already active" })
+          : httpError(500, {}),
+    });
+    await renderPage();
+    fireEvent.click(await screen.findByRole("checkbox", { name: /At-door payment collection/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Receipt scanning/ }));
+    fillForm();
+    await createThroughSheet();
+    const banner = await screen.findByTestId("partial-banner");
+    expect(banner).toHaveTextContent("Receipt scanning");
+    expect(banner).not.toHaveTextContent("At-door payment collection");
+  });
+
+  it("SA-769: after the billing-stop review, the comped add-ons are skipped too", async () => {
+    mockPreviewProfile.mockResolvedValueOnce({
+      profile: "shipping_wholesaler",
+      plan: {
+        overrides: [],
+        comps: [],
+        modes: [],
+        billing: [{ featureKey: "driver_payments", action: "disable", manual: false }],
+      },
+      summary: [],
+      changes: [],
+      planFingerprint: "e".repeat(64),
+    });
+    mockApplyProfile.mockResolvedValue({
+      summary: [],
+      plan: { overrides: [], comps: [{ featureKey: "driver_payments" }], modes: [], billing: [] },
+    });
+    await renderPage();
+    fireEvent.click(screen.getByRole("radio", { name: /Shipping only/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /At-door payment collection/ }));
+    fillForm();
+    await createThroughSheet();
+    await screen.findByText("Billing stops as soon as you confirm.");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(mockApplyProfile).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByText("Billing stops as soon as you confirm.")).toBeNull(),
+    );
+    expect(urls()).not.toContain("/platform-admin/tenants/t1/addons/enable");
+    expect(screen.queryByTestId("partial-banner")).not.toBeInTheDocument();
+  });
+
   it("the success banner links to the tenant's Overview", async () => {
     await renderPage();
     fillForm();
