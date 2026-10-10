@@ -2269,9 +2269,13 @@ describe("redactAddresses — masks IP literals AND email addresses (keeps the d
 
   it("finishes fast on a hostile 50k string with no @ (no quadratic backtracking)", () => {
     const hostile = "a".repeat(50_000);
-    const started = Date.now();
+    const c0 = process.cpuUsage();
     const out = redactAddresses(hostile);
-    expect(Date.now() - started).toBeLessThan(500);
+    const c = process.cpuUsage(c0);
+    const cpuMs = (c.user + c.system) / 1000;
+    // L-165: CPU time (process.cpuUsage), not wall time: wall stretches 3-10x under host load, a
+    // ReDoS blowup costs seconds of CPU. Quiet-host max ~80 ms (15 ms tick); budget ~10x.
+    expect(cpuMs).toBeLessThan(800);
     expect(out.length).toBeLessThanOrEqual(4096);
   });
 
@@ -2283,9 +2287,13 @@ describe("redactAddresses — masks IP literals AND email addresses (keeps the d
       "x@".repeat(25_000),
       `${"a".repeat(49_000)}@`,
     ]) {
-      const started = Date.now();
+      const c0 = process.cpuUsage();
       redactAddresses(hostile);
-      expect(Date.now() - started).toBeLessThan(500);
+      const c = process.cpuUsage(c0);
+      const cpuMs = (c.user + c.system) / 1000;
+      // L-165: CPU time (process.cpuUsage), not wall time: wall stretches 3-10x under host load, a
+      // ReDoS blowup costs seconds of CPU. Quiet-host max ~80 ms (15 ms tick); budget ~10x.
+      expect(cpuMs).toBeLessThan(800);
     }
   });
 
