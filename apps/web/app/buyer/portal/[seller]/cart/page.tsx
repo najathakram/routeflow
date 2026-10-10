@@ -42,6 +42,10 @@ import {
 import { buyerBlockedMessage, parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { BUYER_INSUFFICIENT_STOCK_COPY } from "@/lib/buyer-backorder";
+import {
+  SellerUnavailableLine,
+  useSellerAcceptingOrders,
+} from "@/components/SellerUnavailableLine";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -70,6 +74,8 @@ export default function BuyerCartPage() {
   // Order ahead: the seller's offer from the ONE buyer capability source (GET /buyer/capabilities).
   // Loading / error / 503 => no data => no choice and no fulfillPath (the server default applies).
   const { data: capability } = useBuyerSellerCapabilities();
+  // SA-733r6: a paused seller takes no online orders; the quiet line above says so and Checkout is disabled.
+  const sellerAccepting = useSellerAcceptingOrders();
   const choice = buyerFulfilmentChoice(capability);
   const [pickedMethod, setPickedMethod] = React.useState<FulfilmentMethod | null>(null);
   const fulfillPath =
@@ -696,11 +702,13 @@ export default function BuyerCartPage() {
 
           {/* Actions */}
           <div className="space-y-2">
+            <SellerUnavailableLine className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/80" />
             <Button
               className="w-full bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
               onClick={handlePlaceOrder}
               loading={createOrder.isPending}
-              disabled={createOrder.isPending}
+              disabled={createOrder.isPending || !sellerAccepting}
+              aria-describedby={sellerAccepting ? undefined : "seller-unavailable-line"}
             >
               {willMerge ? "Add to existing order" : "Place Order"}
             </Button>

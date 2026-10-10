@@ -95,6 +95,7 @@ import { useAuth } from "@/lib/auth-context";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
+import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -243,9 +244,13 @@ function WhatsNextBanner({
             <strong>Invoice has been sent.</strong> Record payment as soon as you receive it.
           </p>
         </div>
-        <Button size="sm" onClick={onRecordPayment} leftIcon={<CreditCard className="h-4 w-4" />}>
+        <WriteButton
+          size="sm"
+          onClick={onRecordPayment}
+          leftIcon={<CreditCard className="h-4 w-4" />}
+        >
           Record Payment
-        </Button>
+        </WriteButton>
       </div>
     );
   }
@@ -259,9 +264,13 @@ function WhatsNextBanner({
             <strong>Partial payment received.</strong> Follow up for the remaining balance.
           </p>
         </div>
-        <Button size="sm" onClick={onRecordPayment} leftIcon={<CreditCard className="h-4 w-4" />}>
+        <WriteButton
+          size="sm"
+          onClick={onRecordPayment}
+          leftIcon={<CreditCard className="h-4 w-4" />}
+        >
           Record Payment
-        </Button>
+        </WriteButton>
       </div>
     );
   }
@@ -275,7 +284,7 @@ function WhatsNextBanner({
             <strong>This invoice is overdue.</strong> Contact your customer for payment.
           </p>
         </div>
-        <Button
+        <WriteButton
           size="sm"
           variant="secondary"
           onClick={onRecordPayment}
@@ -283,7 +292,7 @@ function WhatsNextBanner({
           className="border-orange-300 text-orange-700 hover:bg-orange-100"
         >
           Record Payment
-        </Button>
+        </WriteButton>
       </div>
     );
   }
@@ -1373,6 +1382,7 @@ function DropdownMenu({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function InvoiceDetailPage() {
+  const readOnlyGate = useReadOnlyGate();
   const params = useParams();
   const id = params.id as string;
   const router = useRouter();
@@ -2124,7 +2134,22 @@ export default function InvoiceDetailPage() {
           )}
 
           {/* Record Payment dropdown */}
-          {canRecordPayment && (
+          {canRecordPayment && readOnlyGate.readOnly && (
+            <div>
+              <button
+                type="button"
+                disabled
+                aria-describedby={readOnlyGate.hintId}
+                data-testid="record-payment-trigger"
+                className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card opacity-50"
+              >
+                <CreditCard className="h-3.5 w-3.5" />
+                Record Payment
+              </button>
+              <ReadOnlyHint />
+            </div>
+          )}
+          {canRecordPayment && !readOnlyGate.readOnly && (
             <DropdownMenu
               trigger={
                 <button

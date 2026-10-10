@@ -91,6 +91,7 @@ import { useCounterSaleScan } from "./useCounterSaleScan";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
+import { ReadOnlyHint, useReadOnlyGate } from "@/lib/read-only-gate";
 
 interface PickedCustomer {
   id: string;
@@ -110,6 +111,7 @@ export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
 const RECEIPT_BTN = "min-h-[44px] min-w-[44px] focus-visible:ring-2 focus-visible:ring-navy";
 
 export function CounterSaleScreen() {
+  const readOnlyGate = useReadOnlyGate();
   const router = useRouter();
   const gate = useCounterSaleGate();
   const createSale = useCreateCounterSale();
@@ -1255,6 +1257,8 @@ export function CounterSaleScreen() {
             </p>
           ) : null}
 
+          {/* SA-733r6: read-only keeps the cart; Charge is disabled and says why - above the bar, so the bar's box never moves. */}
+          <ReadOnlyHint className="text-sm text-slate-700" />
           <div
             className="sticky bottom-0 z-20 space-y-2 border-t bg-white py-2 md:static md:border-t-0 md:py-0"
             data-testid="counter-checkout-bar"
@@ -1282,8 +1286,14 @@ export function CounterSaleScreen() {
               <Button
                 className="min-h-[44px]"
                 onClick={() => void completeSale(false)}
+                aria-describedby={readOnlyGate.readOnly ? readOnlyGate.hintId : undefined}
                 disabled={
-                  salePosting || createDraft.isPending || locked || scanBusy || reprice.blocked
+                  readOnlyGate.readOnly ||
+                  salePosting ||
+                  createDraft.isPending ||
+                  locked ||
+                  scanBusy ||
+                  reprice.blocked
                 }
               >
                 Complete &amp; show receipt
@@ -1292,8 +1302,14 @@ export function CounterSaleScreen() {
                 className="min-h-[44px]"
                 variant="secondary"
                 onClick={() => void completeSale(true)}
+                aria-describedby={readOnlyGate.readOnly ? readOnlyGate.hintId : undefined}
                 disabled={
-                  salePosting || createDraft.isPending || locked || scanBusy || reprice.blocked
+                  readOnlyGate.readOnly ||
+                  salePosting ||
+                  createDraft.isPending ||
+                  locked ||
+                  scanBusy ||
+                  reprice.blocked
                 }
               >
                 Complete &amp; next sale

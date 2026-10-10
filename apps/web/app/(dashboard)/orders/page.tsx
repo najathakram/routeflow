@@ -43,6 +43,7 @@ import { CreateOrderModal } from "./_components/CreateOrderModal";
 import { BatchShipActions } from "./_components/BatchShipActions";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Saved view definitions ───────────────────────────────────────────────────
 
@@ -692,11 +693,11 @@ export default function OrdersPage() {
               {selectMode ? "Cancel" : "Select"}
             </Button>
             {counterGate.showButton ? (
-              <Button variant="secondary" onClick={() => router.push("/orders/counter-sale")}>
+              <WriteButton variant="secondary" onClick={() => router.push("/orders/counter-sale")}>
                 Counter sale
-              </Button>
+              </WriteButton>
             ) : null}
-            <Button
+            <WriteButton
               onClick={() =>
                 counterGate.opensAsCounter
                   ? router.push("/orders/counter-sale")
@@ -704,7 +705,8 @@ export default function OrdersPage() {
               }
             >
               New Order
-            </Button>
+            </WriteButton>
+            <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
           </div>
         }
       />

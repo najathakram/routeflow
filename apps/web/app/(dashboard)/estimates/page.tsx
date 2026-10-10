@@ -46,6 +46,7 @@ import { apiClient } from "@/lib/api-client";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── KPI chip ─────────────────────────────────────────────────────────────────
 
@@ -830,9 +831,15 @@ export default function EstimatesPage() {
       <PageHeader
         title="Estimates"
         action={
-          <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
-            New Estimate
-          </Button>
+          <div className="flex flex-col items-end">
+            <WriteButton
+              leftIcon={<Plus className="h-4 w-4" />}
+              onClick={() => setIsCreateOpen(true)}
+            >
+              New Estimate
+            </WriteButton>
+            <ReadOnlyHint />
+          </div>
         }
       />
 
@@ -1011,9 +1018,9 @@ export default function EstimatesPage() {
                         title="No estimates yet"
                         description="Create an estimate to quote a customer before converting it to an invoice."
                         action={
-                          <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                          <WriteButton size="sm" onClick={() => setIsCreateOpen(true)}>
                             New estimate
-                          </Button>
+                          </WriteButton>
                         }
                       />
                     )}
