@@ -373,3 +373,59 @@ describe("BillingNotificationService", () => {
     });
   });
 });
+
+describe("BillingNotificationService - dunning notices (SA-733r7 PR-B3)", () => {
+  const extra = { payUrl: "https://pay.example.test/i/in_1" };
+
+  it("claims (tenant, milestone, invoiceId): the same milestone for the same invoice sends once", async () => {
+    const { svc, sendPlatform, create } = makeService({ createImpl: realUniqueConstraintImpl() });
+    expect((await svc.notifyDunning("t1", "DUNNING_D3", "in_1", "d3", extra)).status).toBe("sent");
+    expect((await svc.notifyDunning("t1", "DUNNING_D3", "in_1", "d3", extra)).status).toBe(
+      "skipped",
+    );
+    expect(sendPlatform).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledWith({
+      data: { tenantId: "t1", milestone: "DUNNING_D3", key: "in_1" },
+    });
+  });
+
+  it("a NEW invoice failing later gets its own d0 / d3 / d6 run", async () => {
+    const { svc, sendPlatform } = makeService({ createImpl: realUniqueConstraintImpl() });
+    await svc.notifyDunning("t1", "DUNNING_D0", "in_1", "d0", extra);
+    await svc.notifyDunning("t1", "DUNNING_D0", "in_2", "d0", extra);
+    expect(sendPlatform).toHaveBeenCalledTimes(2);
+  });
+
+  it("a send nobody accepted releases the claim so the next sweep retries", async () => {
+    const { svc, delete: del } = makeService({
+      sendPlatformImpl: async () => ({ delivered: false }),
+    });
+    expect((await svc.notifyDunning("t1", "DUNNING_D0", "in_1", "d0", extra)).status).toBe(
+      "failed",
+    );
+    expect(del).toHaveBeenCalledTimes(1);
+  });
+
+  it("the copy is truthful per kind: d6 names no date, final names the local date, paused says read-only now", async () => {
+    const { svc, sendPlatform } = makeService();
+    await svc.notifyDunning("t1", "DUNNING_D6", "in_1", "d6", extra);
+    expect(sendPlatform.mock.calls[0][0].html).not.toMatch(/read-only/i);
+    await svc.notifyDunning("t1", "DUNNING_FINAL", "in_1", "final", {
+      ...extra,
+      readOnlyOn: "Nov 9, 2026",
+    });
+    expect(sendPlatform.mock.calls[1][0].text).toContain("read-only on Nov 9, 2026");
+    await svc.notifyDunning("t1", "DUNNING_PAUSED", "in_1", "paused", extra);
+    expect(sendPlatform.mock.calls[2][0].subject).toContain("now read-only");
+    // every notice links to the invoice's hosted page
+    for (const c of sendPlatform.mock.calls) expect(c[0].text).toContain(extra.payUrl);
+  });
+
+  it("recordDunningMilestone is the claim alone: no email", async () => {
+    const { svc, sendPlatform, create } = makeService({ createImpl: realUniqueConstraintImpl() });
+    expect(await svc.recordDunningMilestone("t1", "DUNNING_FINAL", "in_1")).toBe(true);
+    expect(await svc.recordDunningMilestone("t1", "DUNNING_FINAL", "in_1")).toBe(false);
+    expect(sendPlatform).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+});
