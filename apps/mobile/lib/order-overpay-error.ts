@@ -1,4 +1,5 @@
 import { roundMoney } from "@routeflow/pricing";
+import { fmtCurrency } from "../utils/format";
 
 /**
  * P-4: `409 ORDER_EDIT_WOULD_OVERPAY {invoiceId, paid, projectedTotal, excess}` on an order edit save. Pure (no RN imports).
@@ -28,12 +29,13 @@ export function parseOrderEditWouldOverpay(err: unknown): OrderOverpayInfo | nul
 
 export const ORDER_OVERPAY_TITLE = "This change would overpay the invoice";
 
-export function orderOverpayCopy(info: OrderOverpayInfo): string {
+export function orderOverpayCopy(info: OrderOverpayInfo, canRecordReturn = false): string {
   const lead =
     info.excess !== null && roundMoney(info.excess) > 0
-      ? `This change would leave the customer $${roundMoney(info.excess).toFixed(2)} overpaid on the invoice.`
+      ? `This change would leave the customer ${fmtCurrency(roundMoney(info.excess))} overpaid on the invoice.`
       : "This change would leave the customer overpaid on the invoice.";
-  return `${lead} Keep the order total at or above what has been paid, or record a return for the difference.`;
+  const exit = canRecordReturn ? ", or record a return for the difference" : "";
+  return `${lead} Keep the order total at or above what has been paid${exit}.`;
 }
 
 /** The existing operator inline-return screen for this order (it takes customerId / orderId / customerName). */

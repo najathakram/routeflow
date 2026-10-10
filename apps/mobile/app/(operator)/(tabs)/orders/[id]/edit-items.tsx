@@ -21,6 +21,7 @@ import { OrderAppliedCredits } from "../../../../../components/OrderAppliedCredi
 import type { UnitOption } from "../../../../../lib/unit-options";
 import { useCreditNotes, type CreditNote } from "../../../../../lib/api/credit-notes";
 import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib/api/orders";
+import { useInlineReturnsAddon } from "../../../../../lib/api/addons";
 import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers";
 import { showToast } from "../../../../../lib/toast";
 import { FAMILY_ADD_MESSAGE, isFamilyProduct } from "../../../../../lib/sellable-products";
@@ -122,6 +123,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // select) — the cast is the existing `(order as any)` habit, scoped.
   const baselineOrder = order as unknown as BaselineOrderLike | undefined;
   const customerId = (order as any)?.customerId as string | undefined;
+  const canRecordReturn = useInlineReturnsAddon().enabled;
   // Remembered per-customer prices — pre-fill a newly added line's price so a
   // prior discount carries forward (operator can still change it).
   const { data: priceHistory } = useCustomerPriceHistory(customerId);
@@ -875,9 +877,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             return;
           }
           const customerName = (order as any)?.customer?.businessName;
-          if (
-            handleOrderOverpay(e, { id, customerId, customerName }, (r) => router.push(r as never))
-          )
+          if (handleOrderOverpay(e, { id, customerId, customerName, canRecordReturn }, router))
             return;
           showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
         },

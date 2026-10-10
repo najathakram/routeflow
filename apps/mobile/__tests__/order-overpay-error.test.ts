@@ -48,6 +48,11 @@ describe("orderOverpayCopy", () => {
     const t = orderOverpayCopy({ invoiceId: null, paid: null, projectedTotal: null, excess: null });
     expect(t).not.toContain("$");
   });
+  it("names record a return only when the caller can open it", () => {
+    const info = { invoiceId: "i", paid: 100, projectedTotal: 80, excess: 20 };
+    expect(orderOverpayCopy(info)).not.toMatch(/return/i);
+    expect(orderOverpayCopy(info, true)).toMatch(/record a return/);
+  });
 });
 
 describe("orderOverpayReturnRoute", () => {

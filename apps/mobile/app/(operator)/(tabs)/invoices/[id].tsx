@@ -15,7 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill, SegmentedControl } from "@routeflow/ui/mobile/ios";
-import { useAdminInvoice, useAdminInvoices } from "../../../../lib/api/admin";
+import { useAdminInvoice, useAdminInvoices, useBusinessSettings } from "../../../../lib/api/admin";
 import {
   useDeleteInvoice,
   useDuplicateInvoice,
@@ -126,6 +126,7 @@ export default function InvoiceDetailScreen() {
   }, [isCreateAlias, router]);
 
   const { data: invoice, isLoading, refetch } = useAdminInvoice(isCreateAlias ? "" : (id ?? ""));
+  const tenantZone = useBusinessSettings().data?.timezone;
   // REG-5: sibling invoices from the same regulated sale-split. No dedicated
   // "list siblings" endpoint exists — GET /invoices already returns
   // invoiceGroupId as a raw scalar on every row (verified: findAll's `include`
@@ -624,8 +625,10 @@ export default function InvoiceDetailScreen() {
             <Pill variant={s.variant} dot>
               {s.label}
             </Pill>
-            {revisedBadgeText(invoice.revisedAt) ? (
-              <Text style={styles.headerMeta}>{revisedBadgeText(invoice.revisedAt)}</Text>
+            {revisedBadgeText(invoice.revisedAt, tenantZone) ? (
+              <Text style={styles.headerMeta}>
+                {revisedBadgeText(invoice.revisedAt, tenantZone)}
+              </Text>
             ) : null}
             {overpaidText(invoice.overpaidBy) ? (
               <Text style={styles.headerMeta}>{overpaidText(invoice.overpaidBy)}</Text>

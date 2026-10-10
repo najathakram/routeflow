@@ -1178,6 +1178,8 @@ export interface BusinessSettings {
   city?: string;
   zip?: string;
   taxRate?: number;
+  /** IANA zone of the business (GET /settings). */
+  timezone?: string | null;
 }
 
 export interface AppUser {
