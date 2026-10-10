@@ -16,6 +16,7 @@ export const RECEIPT_EMAIL_COPY = {
   failed: "Couldn't send. Try again.",
   orderLimit: "This receipt reached its email limit.",
   dayLimit: "Today's email limit is reached. Print instead.",
+  unavailable: "This sale can't be emailed any more.",
   offline: "You're offline. Print it, or send it later from Today's sales.",
   sent: (to: string) => `Sent to ${to}.`,
 } as const;
@@ -47,12 +48,18 @@ export function receiptEmailPrefill(
 }
 
 /** How a failed send is told. Anything that is not a limit is "failed": the cashier can try again. */
-export type ReceiptEmailFailure = "orderLimit" | "dayLimit" | "failed";
+export type ReceiptEmailFailure = "orderLimit" | "dayLimit" | "unavailable" | "failed";
+
+/** The phases no retry can fix: a limit, or a sale voided after the view opened. No Send / Try again control is shown for them. */
+export function isFinalReceiptEmailPhase(phase: string): boolean {
+  return phase === "orderLimit" || phase === "dayLimit" || phase === "unavailable";
+}
 
 export function receiptEmailFailureOf(err: unknown): ReceiptEmailFailure {
   const data = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
     ?.data;
   if (data?.code === API_ERROR_CODES.RECEIPT_EMAIL_ORDER_LIMIT) return "orderLimit";
   if (data?.code === API_ERROR_CODES.RECEIPT_EMAIL_DAY_LIMIT) return "dayLimit";
+  if (data?.code === API_ERROR_CODES.RECEIPT_NOT_AVAILABLE) return "unavailable";
   return "failed";
 }

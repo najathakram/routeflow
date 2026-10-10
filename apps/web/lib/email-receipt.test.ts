@@ -1,6 +1,7 @@
 import { API_ERROR_CODES } from "@routeflow/types";
 import {
   RECEIPT_EMAIL_COPY,
+  isFinalReceiptEmailPhase,
   isValidReceiptEmail,
   receiptEmailFailureOf,
   receiptEmailPrefill,
@@ -19,6 +20,7 @@ describe("RECEIPT_EMAIL_COPY (the UX brief's words, exactly)", () => {
     expect(RECEIPT_EMAIL_COPY.failed).toBe("Couldn't send. Try again.");
     expect(RECEIPT_EMAIL_COPY.orderLimit).toBe("This receipt reached its email limit.");
     expect(RECEIPT_EMAIL_COPY.dayLimit).toBe("Today's email limit is reached. Print instead.");
+    expect(RECEIPT_EMAIL_COPY.unavailable).toBe("This sale can't be emailed any more.");
     expect(RECEIPT_EMAIL_COPY.offline).toBe(
       "You're offline. Print it, or send it later from Today's sales.",
     );
@@ -77,10 +79,21 @@ describe("receiptEmailFailureOf (an error is told by its code, never its text)",
     );
     expect(receiptEmailFailureOf(err(API_ERROR_CODES.RECEIPT_EMAIL_DAY_LIMIT))).toBe("dayLimit");
   });
+  it("a sale voided after the view opened (RECEIPT_NOT_AVAILABLE) is final: it can never be sent, so it is not a retryable failure", () => {
+    expect(receiptEmailFailureOf(err(API_ERROR_CODES.RECEIPT_NOT_AVAILABLE, "x"))).toBe(
+      "unavailable",
+    );
+    expect(isFinalReceiptEmailPhase("unavailable")).toBe(true);
+  });
+  it("only the limits and 'unavailable' are final phases", () => {
+    for (const p of ["orderLimit", "dayLimit", "unavailable"] as const)
+      expect(isFinalReceiptEmailPhase(p)).toBe(true);
+    for (const p of ["idle", "sending", "sent", "failed"] as const)
+      expect(isFinalReceiptEmailPhase(p)).toBe(false);
+  });
   it("everything else is a plain failure the cashier can retry", () => {
     for (const e of [
       err(API_ERROR_CODES.RECEIPT_EMAIL_NOT_SENT),
-      err(API_ERROR_CODES.RECEIPT_NOT_AVAILABLE),
       err(undefined),
       { response: { status: 500 } },
       new Error("Network Error"),

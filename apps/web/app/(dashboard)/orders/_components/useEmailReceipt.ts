@@ -4,6 +4,7 @@ import * as React from "react";
 import { sendOrderReceiptEmail } from "@/lib/api/receipts";
 import {
   isValidReceiptEmail,
+  isFinalReceiptEmailPhase,
   receiptEmailFailureOf,
   type ReceiptEmailFailure,
 } from "@/lib/email-receipt";
@@ -70,14 +71,13 @@ export function useEmailReceipt({ orderId, prefill }: { orderId: string; prefill
 
   const close = React.useCallback(() => {
     setOpen(false);
-    setPhase((p) => (p === "orderLimit" || p === "dayLimit" ? p : "idle"));
+    setPhase((p) => (isFinalReceiptEmailPhase(p) ? p : "idle"));
     setBlurred(false);
     buttonRef.current?.focus();
   }, []);
 
   const send = React.useCallback(async () => {
-    if (sendingRef.current || !valid || !online || phase === "orderLimit" || phase === "dayLimit")
-      return;
+    if (sendingRef.current || !valid || !online || isFinalReceiptEmailPhase(phase)) return;
     const to = trimmed;
     sendingRef.current = true;
     setPhase("sending");
@@ -109,8 +109,8 @@ export function useEmailReceipt({ orderId, prefill }: { orderId: string; prefill
     sentTo,
     sentOnce,
     online,
-    /** a limit is final for this order / today: no retry control is shown */
-    atLimit: phase === "orderLimit" || phase === "dayLimit",
+    /** a limit, or a sale voided since the view opened, is final: no retry control is shown */
+    atLimit: isFinalReceiptEmailPhase(phase),
     buttonRef,
     inputRef,
     sendRef,

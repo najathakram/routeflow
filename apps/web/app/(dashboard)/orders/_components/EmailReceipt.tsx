@@ -135,6 +135,11 @@ export function EmailReceiptRow({ email: e }: { email: EmailReceiptState }) {
           {COPY.dayLimit}
         </p>
       ) : null}
+      {e.phase === "unavailable" ? (
+        <p role="alert" className="text-sm text-red-700">
+          {COPY.unavailable}
+        </p>
+      ) : null}
     </div>
   );
 }

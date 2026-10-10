@@ -293,6 +293,25 @@ describe("Email receipt: failures", () => {
     expect(screen.queryByRole("button", { name: /Send|Try again/ })).toBeNull();
   });
 
+  it("a sale voided after the view opened: its fixed copy, NO retry control (not Send, not Try again), and Enter cannot send", async () => {
+    post.mockRejectedValueOnce(refuse(API_ERROR_CODES.RECEIPT_NOT_AVAILABLE, 409));
+    renderWithProviders(<Harness prefill="buyer@example.com" />);
+    openRow();
+    fireEvent.click(sendButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This sale can't be emailed any more.",
+    );
+    expect(screen.queryByRole("button", { name: /^(Send|Send again|Try again)$/ })).toBeNull();
+    expect(field()).toHaveAttribute("readonly");
+    fireEvent.submit(field().closest("form")!);
+    expect(post).toHaveBeenCalledTimes(1);
+    // still final after the row is closed and reopened
+    fireEvent.keyDown(field(), { key: "Escape" });
+    openRow();
+    expect(screen.getByRole("alert")).toHaveTextContent("This sale can't be emailed any more.");
+    expect(screen.queryByRole("button", { name: /Send|Try again/ })).toBeNull();
+  });
+
   it("a limit stays after the row is closed and reopened (it is about the order, not the attempt)", async () => {
     post.mockRejectedValueOnce(refuse(API_ERROR_CODES.RECEIPT_EMAIL_ORDER_LIMIT));
     renderWithProviders(<Harness prefill="buyer@example.com" />);
