@@ -27,6 +27,7 @@ import { RemittanceConfigDto } from "./dto/remittance-config.dto";
 import { PricingTierLabelsDto } from "./dto/pricing-tier-labels.dto";
 import { ClearFinancialDataDto } from "./dto/clear-financial-data.dto";
 import { sanitizeReceiptFooter } from "./receipt-footer";
+import { QuickKeysSettingsService } from "./quick-keys-settings.service";
 
 // RF-213: serve under both /settings and /tenant/settings so the frontend
 // calling the latter doesn't get a 404 while the operator app uses /settings.
@@ -39,6 +40,7 @@ export class SettingsController {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly quickKeys: QuickKeysSettingsService,
   ) {}
 
   @Get()
@@ -123,6 +125,8 @@ export class SettingsController {
       invoiceNotes,
       invoiceTerms,
       timezone,
+      // SA-747: the counter quick keys (pins, hides, window, cap), defaults filled; a corrupt value is the defaults.
+      quickKeys: this.quickKeys.fromAll(all),
     };
   }
 
@@ -161,6 +165,10 @@ export class SettingsController {
       }
       receiptFooter = sanitizeReceiptFooter(dto.receiptFooter);
     }
+    // SA-747: `quickKeys` is validated (shape, caps, and that every id is this tenant's product) BEFORE any
+    // write of this request, so a bad value rejects the whole request and nothing is half-applied.
+    const quickKeys =
+      dto.quickKeys !== undefined ? await this.quickKeys.prepare(dto.quickKeys) : undefined;
 
     // businessName and email are NOT editable by tenant admin (set by super admin).
     // taxRate and logoUrl stay in SystemConfig (no dedicated TenantConfig column for them yet).
@@ -171,6 +179,8 @@ export class SettingsController {
         .map((k) => this.svc.set(`settings.${k}`, String(dto[k]))),
     );
     if (receiptFooter !== undefined) await this.svc.set("settings.receiptFooter", receiptFooter);
+
+    if (quickKeys) await this.quickKeys.save(quickKeys);
 
     // ownerName, customerEmail, and address fields are stored in TenantConfig
     const tenantId = this.prisma.getTenantId();

@@ -43,5 +43,10 @@
     "folder": "20260928230000_2717_m1_catalog_barcodes_images",
     "sha256": "c40a80d41b6d4c2a544e82a387b466b2b2695fce83a621f7824027f815da6509",
     "reason": "applied on prod; rewriting changes the recorded checksum; SA-582a / B896"
+  },
+  {
+    "folder": "20261008120000_invoice_payment_tenant_paid_at_index",
+    "sha256": "96126691516570c739b69541a61c64a508ec3409dc6e54ec5bce4b7c47d83c2f",
+    "reason": "applied on prod at the 2026-10-08 sitting; rewriting changes the recorded checksum; SA-582a / B896"
   }
 ]
