@@ -50,8 +50,8 @@ import {
   checkoutAddonItems,
   listedCheckoutAddonSkus,
   checkoutAddonLineItem,
-  toCents,
 } from "./stripe-addon-items";
+import { toCents } from "@routeflow/pricing";
 
 const CATALOG = {
   addonSkus: [

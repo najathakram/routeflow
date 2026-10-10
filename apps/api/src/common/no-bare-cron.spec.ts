@@ -21,6 +21,7 @@ const EXPECTED_NAMES = [
   "billing-cron.expireTrials",
   "billing-cron.expireGrace",
   "billing-cron.applyScheduledDowngrades",
+  "billing-cron.pushUpcomingDowngradePrices",
   "billing-cron.applyScheduledCancellations",
   "billing-cron.rollCycles",
   "billing-cron.warnTrialsEnding",

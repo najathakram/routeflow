@@ -788,6 +788,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         {} as any,
         {} as any,
         planTransitionStub(flagOn),
+        {} as any, // stripe — no stripeSubId, so no plan-change push
       );
     const activateManually = (flagOn: boolean, tenantId: string) =>
       platformAdmin(flagOn).activateManualSubscription(
@@ -1350,6 +1351,8 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         stub(),
         stub(),
         planTransitionStub(false),
+        stub(), // stripe — rollCycles never downgrades
+        stub(), // scheduledPrice
       ).rollCycles();
     };
 

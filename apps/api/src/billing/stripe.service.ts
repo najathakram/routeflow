@@ -183,8 +183,15 @@ export class StripeService implements OnModuleInit {
     return this.client.checkout.sessions.retrieve(sessionId);
   }
 
-  async updateSubscription(subId: string, params: any): Promise<any> {
-    return this.client.subscriptions.update(subId, params);
+  /** `options.idempotencyKey` makes a retried update a replay, never a second application. */
+  async updateSubscription(
+    subId: string,
+    params: any,
+    options?: { idempotencyKey?: string },
+  ): Promise<any> {
+    return options
+      ? this.client.subscriptions.update(subId, params, options)
+      : this.client.subscriptions.update(subId, params);
   }
 
   /**
