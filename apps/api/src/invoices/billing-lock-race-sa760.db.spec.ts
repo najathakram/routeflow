@@ -318,8 +318,8 @@ describeDb("billing-state writers lock the Order row first (SA-760 R-1)", () => 
         [partialId, s.tenantId, s.customerId, s.orderId, `INV-SA760P-${partialId.slice(0, 8)}`],
       );
       await t2.query(
-        `INSERT INTO "InvoiceItem" (id, "tenantId", "invoiceId", "orderItemId", "productId", description, qty, "unitPrice", subtotal)
-         VALUES ($1, $2, $3, $4, $5, 'partial', 10, 10, 100)`,
+        `INSERT INTO "InvoiceItem" (id, "tenantId", "invoiceId", "orderItemId", "productId", description, qty, "unitPrice", subtotal, "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, 'partial', 10, 10, 100, now())`,
         [randomUUID(), s.tenantId, partialId, s.orderItemId, s.productId],
       );
     });

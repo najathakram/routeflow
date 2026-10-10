@@ -277,12 +277,16 @@ describe("order-lock callers: every order<->invoice billing-state writer takes t
     expect(callSites("rebuildSiblingDrafts")).toEqual(
       [
         `${IS}#reconcileOrderDeliveredInvoicesLocked`,
-        `${IS}#reconcileSplitOrderDrafts`,
+        `${IS}#splitDeps`,
+        `${IS}#projectEditedInvoiceTotals`, // planOnly: the overpay judge's read-only projection
+        // the deps-injected extraction (split-draft-reconcile.ts): its interface member and its one call
+        "invoices/split-draft-reconcile.ts#rebuildSiblingDrafts",
+        "invoices/split-draft-reconcile.ts#reconcileSplitOrderDrafts",
         `${IS}#rebuildIssuedDepositMirrorOnDelivery`,
         `${IS}#resyncOrderInvoicesForEdit`,
       ].sort(),
     );
-    expect(callSites("reconcileSplitOrderDrafts")).toEqual([
+    expect(callPrefixes("reconcileSplitOrderDrafts").map((c) => c.site)).toEqual([
       `${IS}#reconcileOrderDraftInvoiceLocked`,
     ]);
     expect(callSites("reconcileOrderDraftInvoiceLocked")).toEqual([

@@ -98,7 +98,7 @@ export class SplitInvoiceFakeDb {
   private hydrate(inv: Row, include?: Row): Row {
     const out = clone(inv);
     out.items = clone(this.invoiceItems.filter((it) => it.invoiceId === inv.id));
-    out.payments = [];
+    out.payments = clone(inv.payments ?? []); // SA-763r P-3: a spec seeds payments on the row
     out.customer = include?.customer ? { id: inv.customerId, businessName: "Acme" } : undefined;
     return out;
   }
@@ -199,6 +199,9 @@ export class SplitInvoiceFakeDb {
       this.applyItemWrites(inv.id, items);
       return this.hydrate(inv, args.include);
     });
+    p.invoice.count.mockImplementation(
+      async (args: Row) => this.invoices.filter((i) => matches(i, args?.where)).length,
+    );
     p.invoice.aggregate.mockImplementation(async (args: Row) => ({
       _sum: {
         shippingFee: this.invoices
@@ -210,6 +213,12 @@ export class SplitInvoiceFakeDb {
     p.invoiceItem.findMany.mockImplementation(async (args: Row) =>
       clone(this.invoiceItems.filter((it) => matches(it, args.where))),
     );
+    p.invoiceItem.update.mockImplementation(async (args: Row) => {
+      const it = this.invoiceItems.find((x) => matches(x, args.where));
+      if (!it) throw new Error("invoiceItem.update: not found");
+      Object.assign(it, args.data);
+      return clone(it);
+    });
     p.invoiceItem.deleteMany.mockImplementation(async (args: Row) => {
       const keep = this.invoiceItems.filter((it) => !matches(it, args.where));
       const count = this.invoiceItems.length - keep.length;
