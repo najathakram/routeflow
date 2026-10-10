@@ -50,6 +50,12 @@ export interface CounterSaleResponse {
   total: number;
   paid: number;
   balanceDue: number;
+  /**
+   * Cash handed back. Server-owned: on the POST and on GET .../by-key/:key it is the STORED `cashTendered` less the sale's
+   * own original CASH tender rows (so a same-key replay reads the stored amount's change). Omitted (not null) unless the
+   * sale's first stored tender is CASH, nothing is left to pay, and a non-negative change is stored (a legacy CASH sale
+   * with no stored `cashTendered` serves none).
+   */
   change?: number;
   paymentId?: string;
   /**
@@ -63,6 +69,11 @@ export interface CounterSaleResponse {
    */
   paymentRecorded: boolean;
   paymentErrorCode?: string;
+  /**
+   * The cash handed over, as stored on the order. Optional because it is OMITTED (never null) when nothing was stored
+   * (card / check / on account / a sale rung before it was stored); the Today's-sales row carries `number | null`.
+   */
+  cashTendered?: number;
   /** true when this response is a replay of an earlier request carrying the same Idempotency-Key. */
   replayed?: boolean;
 }
@@ -164,11 +175,20 @@ export interface TodaysSaleRow {
   paid: number;
   balanceDue: number;
   methods: Array<{ method: TodaysSaleMethod; amount: number }>;
-  /** SA-764: the cash handed over (null on a legacy or non-cash sale) */
-  cashTendered?: number | null;
-  /** SA-764: the sale's single stored tax rate in percent (8.25 = 8.25%); null when mixed or none */
-  taxRatePercent?: number | null;
   paymentState: TodaysSalePaymentState;
+  /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
+  cashTendered: number | null;
+  /**
+   * Server-owned, the same value and gate as `CounterSaleResponse.change`: the stored `cashTendered` minus the sale's own
+   * original counter-tender CASH rows (credit-note, advance and voided rows never count), served only for a CASH sale with
+   * nothing left to pay; null otherwise (card / check / on account, partly paid, nothing tendered, or a negative result).
+   */
+  change: number | null;
+  /**
+   * The sale's single stored tax rate as a percent (0.0825 -> 8.25, 3 dp): the one distinct non-zero line rate on its live
+   * invoices; null when the lines carry several rates or none.
+   */
+  taxRatePercent: number | null;
   returned: {
     amount: number;
     state: TodaysSaleReturnState;

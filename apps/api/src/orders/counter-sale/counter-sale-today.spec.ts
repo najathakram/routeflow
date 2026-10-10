@@ -366,6 +366,7 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
     expect(args.include).toBeUndefined();
     expect(Object.keys(args.select).sort()).toEqual(
       [
+        "counterCashTendered",
         "createdAt",
         "customer",
         "customerId",
@@ -377,5 +378,12 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
         "total",
       ].sort(),
     );
+  });
+
+  it("the per-invoice payments select is ordered oldest first (the first stored tender is decided by it)", async () => {
+    const { prisma, call } = setup([]);
+    await call({}, NOW);
+    const args = prisma.order.findMany.mock.calls[0][0];
+    expect(args.select.invoices.select.payments.orderBy).toEqual({ createdAt: "asc" });
   });
 });
