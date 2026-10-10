@@ -19,8 +19,11 @@ import {
   receiptModelFromOrder,
   type ReceiptBusinessProfile,
 } from "@/lib/counter-receipt";
+import { receiptEmailPrefill } from "@/lib/email-receipt";
 import { CounterReceiptView } from "./CounterReceiptView";
 import { CounterReturnAction } from "./CounterReturnAction";
+import { EmailReceiptButton, EmailReceiptRow } from "./EmailReceipt";
+import { useEmailReceipt } from "./useEmailReceipt";
 
 const METHOD_LABEL: Record<TodaysSaleMethod, string> = {
   CASH: "Cash",
@@ -133,6 +136,11 @@ function Reprint({
     queryKey: ["settings"],
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
   });
+  // SA-751r: Email receipt beside Print. A walk-in opens empty; a named customer's address is the suggestion, never an auto-send.
+  const email = useEmailReceipt({
+    orderId: row.orderId,
+    prefill: row.isWalkIn ? "" : receiptEmailPrefill(order?.customer),
+  });
   const model =
     order && row.invoiceId && row.invoiceNumber
       ? receiptModelFromOrder({
@@ -155,10 +163,12 @@ function Reprint({
         <Button className="min-h-11" onClick={() => window.print()} disabled={!model}>
           Print
         </Button>
+        <EmailReceiptButton email={email} disabled={!model} />
         <Button className="min-h-11" variant="secondary" onClick={onBack}>
           Back to sales
         </Button>
       </div>
+      <EmailReceiptRow email={email} />
       {model ? (
         <CounterReceiptView
           model={model}
@@ -297,6 +307,8 @@ export function CounterTodaysSales() {
           // Escape closes only the top layer: the reprint view goes back to the list first
           if (!reprint) return;
           e.preventDefault();
+          // ...and an open Email receipt row is above the reprint view: Escape closes that row (its own handler) and nothing else
+          if ((e.target as Element | null)?.closest?.("[data-email-receipt-row]")) return;
           setRefocusId(reprint.orderId);
           setReprint(null);
         }}

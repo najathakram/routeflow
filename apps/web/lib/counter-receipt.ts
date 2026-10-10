@@ -2,6 +2,8 @@ import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 import type {
   CounterSalePaymentMethod,
   CounterSaleResponse,
+  ReceiptLine,
+  ReceiptModel,
   TodaysSaleMethod,
 } from "@routeflow/types";
 import { displayProductName } from "@/lib/product-display";
@@ -42,50 +44,13 @@ export interface ReceiptBusinessProfile {
   timezone?: string | null;
 }
 
-export interface CounterReceiptLine {
-  key: string;
-  name: string;
-  /** "3 × $2.50" or "1 box + 3 pcs × $12.00 per box" */
-  detail: string;
-  /** trimmed per-line note, or null */
-  note: string | null;
-  total: number;
-  /**
-   * POS-5: the line total at the system price, only for a LOWERED line (struck on the receipt); else null. A raised or
-   * unchanged price prints plain: the customer never sees a system price below what they were charged.
-   */
-  original: number | null;
-  /** POS-5: money taken off a lowered line (0 for every other line) */
-  discount: number;
-}
-
-export interface CounterReceiptModel {
-  header: { name: string | null; addressLines: string[]; phone: string | null };
-  orderNumber: string;
-  invoiceNumber: string;
-  invoiceId: string;
-  dateLabel: string;
-  lines: CounterReceiptLine[];
-  cashier: string | null;
-  /** the lines at their system prices: net lines plus `discounts`, so Subtotal - Discounts + adjustment = Total */
-  subtotal: number;
-  /** POS-5: the sum of the edited lines' discounts (0 = no `Discounts` row) */
-  discounts: number;
-  /** server total minus the client subtotal (tax, a re-price, a credit): 0 = hide the row */
-  adjustment: number;
-  total: number;
-  paid: number;
-  balanceDue: number;
-  onAccount: boolean;
-  paymentNotRecorded: boolean;
-  showPaid: boolean;
-  showBalance: boolean;
-  methodLabel: string | null;
-  tendered: number | null;
-  tenderedAsEntered: boolean;
-  change: number | null;
-  changeAsEntered: boolean;
-}
+/**
+ * The receipt line and model are the SHARED ones (`packages/types/api/receipt.ts`, SA-751r): the print view and the email
+ * renderer (`apps/api/src/documents`) render the same type, so a figure can never be in one and not the other. The optional
+ * Day-0 fields (customerName, tax, taxRatePercent, footer, cashTendered) are left out here until a builder has them.
+ */
+export type CounterReceiptLine = ReceiptLine;
+export type CounterReceiptModel = ReceiptModel;
 
 /** Sign first: a downward reprice reads "-$1.00", never "$-1.00". */
 export const formatReceiptMoney = (n: number): string =>

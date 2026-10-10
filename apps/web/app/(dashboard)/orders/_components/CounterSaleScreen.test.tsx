@@ -2110,3 +2110,102 @@ describe("CounterSaleScreen: the live cart survives a refresh (SA-748 section 1)
     });
   });
 });
+
+/**
+ * SA-751r on the live receipt: Email receipt right after Print, a closed inline row, a walk-in opens empty, a named customer's
+ * address is only a suggestion, and the next sale is never gated by it.
+ */
+describe("digital receipt on the live receipt (SA-751r)", () => {
+  const { apiClient: api } = jest.requireMock("@/lib/api-client") as {
+    apiClient: { post: jest.Mock };
+  };
+  const finishCashSale = async () => {
+    await scan("012345678905");
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() => expect(screen.getByTestId("counter-sale-receipt")).toBeInTheDocument());
+  };
+  beforeEach(() => {
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { channel: "email", to: "x" } });
+  });
+
+  it("the receipt's row reads Print · Email receipt · New sale, and the email row is closed", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await finishCashSale();
+    const root = screen.getByTestId("counter-sale-receipt");
+    const names = Array.from(root.querySelectorAll("button")).map((b) => b.textContent);
+    expect(names).toEqual(["Print", "Email receipt", "New sale"]);
+    expect(screen.queryByRole("textbox", { name: "Email address" })).toBeNull();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("a walk-in sale: the row opens empty and focused; typing an address and pressing Enter posts to this sale's order", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CounterSaleScreen />);
+    await finishCashSale();
+    fireEvent.click(screen.getByRole("button", { name: "Email receipt" }));
+    const input = screen.getByRole("textbox", { name: "Email address" }) as HTMLInputElement;
+    expect(input.value).toBe("");
+    expect(input).toHaveFocus();
+    await user.type(input, "someone@example.com{Enter}");
+    expect(await screen.findByText("Sent to someone@example.com.")).toBeInTheDocument();
+    expect(api.post).toHaveBeenCalledWith("/orders/o1/receipt", {
+      channel: "email",
+      to: "someone@example.com",
+    });
+    // only the receipt endpoint was written: the typed address never reaches a customer
+    expect(api.post.mock.calls.map((c) => c[0])).toEqual(["/orders/o1/receipt"]);
+  });
+
+  it("a named customer: their address is pre-filled with Send focused, and nothing is sent until the cashier presses it", async () => {
+    customersFor = [
+      { id: "c1", businessName: "Acme Co", email: "buyer@example.com", fulfillPath: "ROUTE" },
+    ];
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+    await finishCashSale();
+    fireEvent.click(screen.getByRole("button", { name: "Email receipt" }));
+    expect((screen.getByRole("textbox", { name: "Email address" }) as HTMLInputElement).value).toBe(
+      "buyer@example.com",
+    );
+    expect(screen.getByRole("button", { name: "Send" })).toHaveFocus();
+    expect(api.post).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Sent to buyer@example.com.")).toBeInTheDocument();
+    expect(api.post).toHaveBeenCalledTimes(1); // 2 presses from the receipt: Email receipt, Send
+  });
+
+  it("New sale stays enabled while the email is still sending, and starts a fresh walk-in sale", async () => {
+    let resolve!: (v: unknown) => void;
+    api.post.mockReturnValue(new Promise((r) => (resolve = r)));
+    customersFor = [
+      { id: "c1", businessName: "Acme Co", email: "buyer@example.com", fulfillPath: "ROUTE" },
+    ];
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+    await finishCashSale();
+    fireEvent.click(screen.getByRole("button", { name: "Email receipt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByRole("button", { name: "Sending…" });
+    expect(screen.getByRole("button", { name: "New sale" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "New sale" }));
+    expect(screen.getByText("Walk-in customer")).toBeInTheDocument();
+    expect(screen.queryByTestId("counter-sale-receipt")).toBeNull();
+    resolve({ data: {} });
+  });
+
+  it("Print is still the receipt's one primary action and still prints once", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await finishCashSale();
+    printSpy.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Print" }));
+    expect(printSpy).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Email receipt" }).className).not.toBe(
+      screen.getByRole("button", { name: "Print" }).className,
+    );
+  });
+});
