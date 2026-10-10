@@ -437,6 +437,43 @@ describe("a failed push is never replayed by the NEXT request (per-apply nonce)"
   });
 });
 
+describe("isDowngradePricePushed (what the plan-price fan-out asks, under the lock)", () => {
+  it("true only when the live base item already bills the downgrade target's price", async () => {
+    expect(
+      await make([row()], [baseItem({ unit_amount: 5900 })]).svc.isDowngradePricePushed("t1"),
+    ).toBe(true);
+    // Scheduled but not pushed yet: Stripe still bills the current plan's price.
+    expect(await make([row()], [baseItem()]).svc.isDowngradePricePushed("t1")).toBe(false);
+  });
+
+  it("false when there is nothing to protect: no schedule, no Stripe subscription, or a custom fee that never moved", async () => {
+    expect(
+      await make(
+        [row({ downgradeToPlanKey: null, downgradeEffectiveAt: null })],
+        [baseItem({ unit_amount: 5900 })],
+      ).svc.isDowngradePricePushed("t1"),
+    ).toBe(false);
+    expect(
+      await make(
+        [row({ stripeSubId: null })],
+        [baseItem({ unit_amount: 5900 })],
+      ).svc.isDowngradePricePushed("t1"),
+    ).toBe(false);
+    expect(
+      await make(
+        [row({ priceOverrideMonthly: 200 })],
+        [baseItem({ unit_amount: 20000 })],
+      ).svc.isDowngradePricePushed("t1"),
+    ).toBe(false);
+  });
+
+  it("an unreadable Stripe answers true: the fan-out leaves it alone rather than revert blind", async () => {
+    const { svc, stripe } = make();
+    stripe.getSubscription.mockRejectedValueOnce(new Error("stripe down"));
+    expect(await svc.isDowngradePricePushed("t1")).toBe(true);
+  });
+});
+
 describe("restoreIfPushedLocked (the caller holds the lock and is about to prorate)", () => {
   const kept = (over: Partial<SubRow> = {}) => row({ ...over });
 

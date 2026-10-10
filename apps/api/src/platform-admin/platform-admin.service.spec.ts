@@ -2599,6 +2599,11 @@ describe("PlatformAdminService — audit provenance", () => {
         },
       ]);
 
+      // The decision is made under each tenant's lock, from a FRESH read of the row.
+      (prisma as any).tenantSubscription.findUnique.mockImplementation(async ({ where }: any) => ({
+        downgradeToPlanKey: where.tenantId === "tenant-b" ? "STARTER" : null,
+      }));
+
       const out = await service.updatePlanPrices("GROWTH", { monthly: 150 } as any, ADMIN_ID);
 
       expect(billingServiceMock.syncStripeSubscriptionPrice.mock.calls.map((c) => c[0])).toEqual([
@@ -2626,8 +2631,122 @@ describe("PlatformAdminService — audit provenance", () => {
       const out = await service.updatePlanPrices("GROWTH", { monthly: 150 } as any, ADMIN_ID);
 
       expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
-      expect(out).toMatchObject({ synced: 0, failed: 0, skippedDowngrade: 1 });
+      // A tenant skipped under its lock is not "updated" (review nit 2).
+      expect(out).toMatchObject({ updated: 0, synced: 0, failed: 0, skippedDowngrade: 1 });
       (prisma as any).tenantSubscription.findUnique.mockReset();
+    });
+
+    // Review: a tenant with a downgrade scheduled but NOT yet pushed must still get the catalog edit, or a
+    // downgrade cancelled later leaves Stripe on the pre-update price.
+    describe("a scheduled downgrade that is not yet pushed", () => {
+      const NEW_CENTS = 29900;
+      const scheduledRow = {
+        planKey: "GROWTH",
+        planVersionId: "v-9",
+        stripeSubId: "sub_1",
+        priceOverrideMonthly: null,
+        priceOverrideAnnual: null,
+        downgradeToPlanKey: "STARTER" as string | null,
+      };
+      const arrange = (stripeCents: number) => {
+        setup();
+        const stripe = fakeStripeSubscription([
+          {
+            id: "si_base",
+            quantity: 1,
+            price: {
+              unit_amount: stripeCents,
+              currency: "usd",
+              recurring: { interval: "month" },
+              product: "prod_growth",
+            },
+          },
+        ]);
+        const row = { ...scheduledRow };
+        (prisma as any).tenantSubscription.findMany.mockResolvedValue([
+          {
+            tenantId: "tenant-b",
+            planKey: "GROWTH",
+            downgradeToPlanKey: "STARTER",
+            tenant: { plan: "GROWTH" },
+          },
+        ]);
+        (prisma as any).tenantSubscription.findUnique.mockImplementation(async () => ({ ...row }));
+        (prisma as any).tenantAddon.findMany.mockResolvedValue([]);
+        const scheduled = new ScheduledPriceChangeService(
+          prisma as any,
+          stripe as any,
+          {
+            // the catalog edit has landed: GROWTH is now 299 (it was 249); STARTER is 59
+            getVersionForTenant: jest.fn().mockResolvedValue({
+              id: "v-9",
+              definitions: [
+                { planKey: "GROWTH", name: "Growth", monthlyPrice: 299, annualPrice: null },
+                { planKey: "STARTER", name: "Starter", monthlyPrice: 59, annualPrice: null },
+              ],
+              addonSkus: [],
+            }),
+            getPublishedVersion: jest.fn().mockResolvedValue(null),
+          } as any,
+        );
+        (service as any).scheduledPrice = scheduled;
+        // The real sync pushes the resolved catalog price onto the Stripe item; model exactly that.
+        billingServiceMock.syncStripeSubscriptionPrice.mockImplementation(async () => {
+          await stripe.updateSubscription(
+            "sub_1",
+            {
+              items: [
+                {
+                  id: "si_base",
+                  price_data: {
+                    currency: "usd",
+                    unit_amount: NEW_CENTS,
+                    recurring: { interval: "month" },
+                    product: "prod_growth",
+                  },
+                },
+              ],
+              proration_behavior: "none",
+            },
+            { idempotencyKey: `fanout-${stripe.updateSubscription.mock.calls.length}` },
+          );
+          return { synced: true };
+        });
+        return { stripe, row, scheduled };
+      };
+
+      it("is synced (Stripe moves to the NEW price), and when the downgrade is then CANCELLED Stripe stays on the new price", async () => {
+        const { stripe, row, scheduled } = arrange(24900); // the OLD price: the early push has not happened
+
+        const out = await service.updatePlanPrices("GROWTH", { monthly: 299 } as any, ADMIN_ID);
+
+        expect(billingServiceMock.syncStripeSubscriptionPrice).toHaveBeenCalledWith("tenant-b");
+        expect(out).toMatchObject({ updated: 1, synced: 1, skippedDowngrade: 0 });
+        expect(stripe.amountOf("si_base")).toBe(NEW_CENTS);
+
+        // The tenant now keeps its plan: the cancel path's restore finds nothing of ours to undo.
+        row.downgradeToPlanKey = null;
+        await scheduled.restoreAfterScheduleCleared("tenant-b", "STARTER");
+        expect(stripe.amountOf("si_base")).toBe(NEW_CENTS); // ends on the NEW price, not the pre-update one
+      });
+
+      it("whose lower price is ALREADY pushed to Stripe is still skipped (the fan-out must not revert it)", async () => {
+        const { stripe } = arrange(5900); // the pre-renewal push put the downgrade target's price here
+
+        const out = await service.updatePlanPrices("GROWTH", { monthly: 299 } as any, ADMIN_ID);
+
+        expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
+        expect(out).toMatchObject({ updated: 0, synced: 0, skippedDowngrade: 1 });
+        expect(stripe.amountOf("si_base")).toBe(5900);
+      });
+
+      it("an unreadable Stripe leaves it alone (never revert blind)", async () => {
+        const { stripe } = arrange(24900);
+        stripe.getSubscription.mockRejectedValue(new Error("stripe down"));
+        const out = await service.updatePlanPrices("GROWTH", { monthly: 299 } as any, ADMIN_ID);
+        expect(billingServiceMock.syncStripeSubscriptionPrice).not.toHaveBeenCalled();
+        expect(out.skippedDowngrade).toBe(1);
+      });
     });
   });
 
