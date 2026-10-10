@@ -44,6 +44,10 @@ export interface DunningDeps {
   logger: Pick<Logger, "log" | "warn" | "error" | "debug">;
   transition: StatusTransition;
   mode: () => BillingPauseMode;
+  /** True the FIRST time `key` is seen by this process: keeps a repeating condition to one log line. */
+  once: (key: string) => boolean;
+  /** Process-local rotation cursors of the periodic sweeps (see dunning-paging.ts); empty after a restart. */
+  cursors: Map<string, number>;
 }
 
 /** The subscription + tenant columns every dunning decision reads. */
@@ -60,17 +64,26 @@ export const DUNNING_ROW_SELECT = {
 
 export type DunningRow = Prisma.TenantSubscriptionGetPayload<{ select: typeof DUNNING_ROW_SELECT }>;
 
-/** Stripe invoice statuses that still owe money (`uncollectible` stays owed, SA-733r3). */
-const OWED_STATUSES = new Set(["open", "uncollectible"]);
-
 /** Cents still owed on an invoice, from the facts (never a float). */
 export function remainingCents(f: InvoiceFacts): number {
   return f.amountRemaining ?? Math.max(0, f.amountDue - f.amountPaid);
 }
 
-/** SA-733r M8: only an invoice Stripe still shows as owed may be stamped, mailed or paused over. */
+/**
+ * "Owed" (SA-733r M2, r7 r-note 2): a Stripe invoice with status `open` and `amount_remaining > 0` - NOTHING else.
+ * `uncollectible` is the owner's write-off and `void` is cancelled: neither starts, keeps or moves a clock. ONE
+ * predicate shared by the stamp, the resume, the clock move and discovery. (SA-733r M8: only an invoice Stripe still
+ * shows as owed may be stamped, mailed or paused over.)
+ */
 export function isOwed(f: InvoiceFacts): boolean {
-  return !!f.status && OWED_STATUSES.has(f.status) && remainingCents(f) > 0;
+  return f.status === "open" && remainingCents(f) > 0;
+}
+
+/** The same predicate for a row of a Stripe invoice LIST (the lists are `open`-only; a stray status never counts). */
+export function isOwedInvoice(i: any): boolean {
+  return (
+    !!i?.id && (i.status === undefined || i.status === "open") && (i.amount_remaining ?? 0) > 0
+  );
 }
 
 /** True when the dunning machinery may touch this row at all (D10: Stripe-billed, not manual-pay, no catch-up claim). */

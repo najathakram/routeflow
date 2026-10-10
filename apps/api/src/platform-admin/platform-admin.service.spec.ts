@@ -94,6 +94,8 @@ describe("PlatformAdminService — audit provenance", () => {
   let tenantMirror: { upsert: jest.Mock };
   // SA-733r7 PR-B3: every exit from a dunning pause clears Stripe pause_collection after its commit.
   let dunning: { clearPauseAfterCommit: jest.Mock };
+  // the owed-invoice re-read of the PAYMENT_OVERDUE guard
+  let stripeMock: { isConfigured: boolean; getInvoiceFacts: jest.Mock };
 
   const ADMIN_ID = "super-1";
   const TENANT_ID = "tenant-1";
@@ -209,6 +211,20 @@ describe("PlatformAdminService — audit provenance", () => {
     // R18: the mirror call sites are best-effort — tests that care override upsert to reject.
     tenantMirror = { upsert: jest.fn().mockResolvedValue(undefined) };
     dunning = { clearPauseAfterCommit: jest.fn().mockResolvedValue(undefined) };
+    stripeMock = {
+      isConfigured: false,
+      getInvoiceFacts: jest.fn().mockResolvedValue({
+        status: "open",
+        amountPaid: 0,
+        amountDue: 4900,
+        amountRemaining: 4900,
+        paymentProcessing: false,
+        nextPaymentAttempt: null,
+        attemptCount: 2,
+        subscriptionId: "sub_1",
+        hostedInvoiceUrl: "https://pay.example.test/i/in_1",
+      }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -230,7 +246,7 @@ describe("PlatformAdminService — audit provenance", () => {
         { provide: TenantMirrorService, useValue: tenantMirror },
         { provide: FeatureOverrideService, useValue: featureOverrides },
         { provide: PlanTransitionConfigService, useValue: planTransition },
-        { provide: StripeService, useValue: { isConfigured: false } },
+        { provide: StripeService, useValue: stripeMock },
         { provide: DunningService, useValue: dunning },
       ],
     }).compile();
@@ -4395,8 +4411,9 @@ describe("PlatformAdminService — audit provenance", () => {
 
       await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
 
-      expect(prisma.tenant.updateMany.mock.calls.at(-1)?.[0]).toMatchObject({
-        where: { id: TENANT_ID },
+      // the first CAS: the row LEAVING a non-ACTIVE state (the second only keeps an already-ACTIVE row's plan current)
+      expect(prisma.tenant.updateMany.mock.calls[0]?.[0]).toMatchObject({
+        where: { id: TENANT_ID, status: { not: "ACTIVE" } },
         data: { status: "ACTIVE", plan: "PROFESSIONAL", readOnlyReason: null },
       });
     });
@@ -4964,6 +4981,169 @@ describe("PlatformAdminService — audit provenance", () => {
       const call = billingEventService.emit.mock.calls.find((c: any) => c[1] === "plan.changed")!;
       expect(call[3].tx).toBeDefined();
       expect(call[2]).toMatchObject({ fromPlan: "STARTER", toPlan: "GROWTH" });
+    });
+  });
+
+  // ─── SA-733r7 fold: the B1 admin plan change is a plan-mutation entry point too ─────────────────────────────
+  describe("PR-B3 fold: updatePlan (B1 admin plan change) is refused while an invoice is owed", () => {
+    const saved = process.env.BILLING_PAUSE_MODE;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.BILLING_PAUSE_MODE;
+      else process.env.BILLING_PAUSE_MODE = saved;
+    });
+    const owed = () => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
+        class: "PRODUCTION",
+        deletedAt: null,
+      } as any);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValueOnce({
+        pastDueInvoiceId: "in_1",
+      });
+    };
+
+    it("a READ_ONLY tenant with an owed invoice: 409 PAYMENT_OVERDUE (with the pay link), nothing written, in every mode", async () => {
+      for (const mode of ["dark", "enforced"]) {
+        process.env.BILLING_PAUSE_MODE = mode;
+        owed();
+        const err = await service
+          .updatePlan(TENANT_ID, { plan: "SCALE" } as any, ADMIN_ID)
+          .catch((e) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).getResponse()).toMatchObject({
+          code: "PAYMENT_OVERDUE",
+          hosted_invoice_url: "https://pay.example.test/i/in_1",
+        });
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(billingEventService.emit).not.toHaveBeenCalled();
+      }
+    });
+
+    it("an ACTIVE tenant in enforced is refused too; in dark it is allowed through with a would-refuse log naming admin_plan_change", async () => {
+      process.env.BILLING_PAUSE_MODE = "enforced";
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "ACTIVE",
+        class: "PRODUCTION",
+        deletedAt: null,
+      } as any);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValueOnce({
+        pastDueInvoiceId: "in_1",
+      });
+      const err = await service
+        .updatePlan(TENANT_ID, { plan: "SCALE" } as any, ADMIN_ID)
+        .catch((e) => e);
+      expect((err as ConflictException).getResponse()).toMatchObject({ code: "PAYMENT_OVERDUE" });
+
+      process.env.BILLING_PAUSE_MODE = "dark";
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValueOnce({
+        pastDueInvoiceId: "in_1",
+      });
+      const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+      const out = await service
+        .updatePlan(TENANT_ID, { plan: "SCALE" } as any, ADMIN_ID)
+        .catch((e) => e);
+      // not refused by the guard (it then trips on this harness's bare catalog stubs, which is the point)
+      expect(out instanceof ConflictException ? (out.getResponse() as any).code : null).not.toBe(
+        "PAYMENT_OVERDUE",
+      );
+      expect(
+        warn.mock.calls.some((c: any[]) =>
+          String(c[0]).startsWith(
+            `billing.dunning.would_refuse code=PAYMENT_OVERDUE tenant=${TENANT_ID} entryPoint=admin_plan_change`,
+          ),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe("PR-B3 fold: leaving a pause by any admin route clears payment_overdue and the Stripe pause", () => {
+    it("extendTrial from a pause also nulls readOnlyReason (it writes TRIAL outside the ACTIVE helper)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "TRIAL",
+        trialEndsAt: new Date("2026-11-01T00:00:00.000Z"),
+      } as any);
+      prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        catchupState: null,
+        pausedAt: new Date("2026-11-08T09:00:00.000Z"),
+        stripeSubId: "sub_1",
+      });
+      await service.extendTrial(TENANT_ID, 14, ADMIN_ID);
+      expect(prisma.tenant.updateMany.mock.calls[0][0].data).toMatchObject({
+        status: "TRIAL",
+        readOnlyReason: null,
+      });
+    });
+
+    it("updateStatus to SUSPENDED on a PAUSED tenant clears local pausedAt (and payment_overdue) and unpauses Stripe after commit; the owed marker stays", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "SUSPENDED",
+      } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        pausedAt: new Date("2026-11-08T09:00:00.000Z"),
+        stripeSubId: "sub_1",
+      });
+      await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update).toHaveBeenCalledWith({
+        where: { id: TENANT_ID },
+        data: { status: "SUSPENDED", readOnlyReason: null },
+      });
+      // only pausedAt is cleared: the clock / marker stay (the invoice is still owed)
+      expect((prisma as any).tenantSubscription.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: TENANT_ID },
+        data: { pausedAt: null },
+      });
+      expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith({
+        tenantId: TENANT_ID,
+        stripeSubId: "sub_1",
+        exitAt: expect.any(Date),
+      });
+    });
+
+    it("updateStatus on a tenant that was NOT paused for payment touches no subscription row and unpauses nothing", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        status: "SUSPENDED",
+      } as any);
+      prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+        status: "ACTIVE",
+        readOnlyReason: null,
+        class: "PRODUCTION",
+        deletedAt: null,
+        subscription: null,
+      } as any);
+      await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+      expect(prisma.tenant.update).toHaveBeenCalledWith({
+        where: { id: TENANT_ID },
+        data: { status: "SUSPENDED" },
+      });
+      expect((prisma as any).tenantSubscription.updateMany).not.toHaveBeenCalled();
+      expect(dunning.clearPauseAfterCommit).toHaveBeenCalledWith(null);
     });
   });
 });

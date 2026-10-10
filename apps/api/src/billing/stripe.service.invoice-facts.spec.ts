@@ -41,6 +41,18 @@ describe("StripeService.getInvoiceFacts (dahlia shape)", () => {
       nextPaymentAttempt: null,
       attemptCount: 2,
       subscriptionId: "sub_1",
+      // SA-733r7: the 409 PAYMENT_OVERDUE body carries the hosted pay page; amount_remaining is read when present
+      hostedInvoiceUrl: null,
+    });
+  });
+
+  it("reads amount_remaining and hosted_invoice_url when Stripe sends them (the PAYMENT_OVERDUE guard and its pay link)", async () => {
+    const { svc } = make(
+      invoice({ amount_remaining: 14900, hosted_invoice_url: "https://pay.example.test/i/in_1" }),
+    );
+    expect(await svc.getInvoiceFacts("in_1")).toMatchObject({
+      amountRemaining: 14900,
+      hostedInvoiceUrl: "https://pay.example.test/i/in_1",
     });
   });
 

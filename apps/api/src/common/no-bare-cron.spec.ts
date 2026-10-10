@@ -31,6 +31,7 @@ const EXPECTED_NAMES = [
   "billing.reconcileParkedCheckouts",
   "billing.catchupSweep",
   "billing.dunningSweep",
+  "billing.dunningDiscovery",
   "billing.pauseReconcile",
   "billing.pauseReconcileFirst",
   "order-templates.generateDailyOrders",
@@ -127,7 +128,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("has exactly 33 `@LeaderCron(` sites, every one of them well-formed", () => {
+  it("has exactly 34 `@LeaderCron(` sites, every one of them well-formed", () => {
     const declared = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON), 0);
     const wellFormed = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON_SITE), 0);
 
@@ -144,8 +145,8 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     // B1158 added billing.reconcileParkedCheckouts (parked ACH/SEPA checkouts), 27 -> 28.
     // R1 option B added billing-cron.pushUpcomingDowngradePrices (the pre-renewal downgrade price push), 28 -> 29.
     // SA-733r3 N2 added billing.catchupSweep (the October catch-up claim sweep), 29 -> 30.
-    // SA-733r7 PR-B3 added billing.dunningSweep, billing.pauseReconcile and billing.pauseReconcileFirst, 30 -> 33.
-    expect(declared).toBe(33);
+    // SA-733r7 PR-B3 added billing.dunningSweep, billing.pauseReconcile and billing.pauseReconcileFirst, 30 -> 33; the daily billing.dunningDiscovery (SA-733r M2) made it 34.
+    expect(declared).toBe(34);
     // A site that does not match the full `(expr, "name")` shape would be invisible to the name
     // assertions below, so pin the two counts together.
     expect(wellFormed).toBe(declared);
@@ -179,7 +180,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     });
   });
 
-  it("registers the 33 expected job names, all unique", () => {
+  it("registers the 34 expected job names, all unique", () => {
     const names: string[] = [];
     for (const s of sources) {
       const re = new RegExp(LEADER_CRON_SITE.source, "g");

@@ -338,7 +338,7 @@ export class BillingNotificationService {
     milestone: string,
     invoiceId: string,
     kind: DunningEmailKind,
-    extra: { payUrl: string | null; readOnlyOn?: string },
+    extra: { payUrl: string | null; readOnlyOn?: string; byDate?: string },
   ): Promise<RfInvoiceSendResult> {
     return this.sendIfClaimed(tenantId, milestone, invoiceId, (admin, businessName) =>
       dunningTemplate({
@@ -347,6 +347,7 @@ export class BillingNotificationService {
         adminName: admin.name,
         payUrl: extra.payUrl,
         readOnlyOn: extra.readOnlyOn,
+        byDate: extra.byDate,
       }),
     );
   }

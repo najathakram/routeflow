@@ -26,9 +26,12 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanTransitionConfigService } from "../billing/plan-transition-config.service";
 import { gateVia } from "../billing/feature-registry";
 import { BillingEventService } from "../billing/billing-event.service";
+import { PAYMENT_OVERDUE_REASON, READ_ONLY_STATUS } from "../billing/dunning-config";
 import { DunningService } from "../billing/dunning.service";
+import { assertTenantNotPaymentOverdue } from "../billing/payment-overdue";
 import {
   clearDunningTx,
+  releasePauseTx,
   transitionToActiveTx,
   type PauseExit,
 } from "../billing/transition-to-active";
@@ -638,6 +641,7 @@ export class PlatformAdminService {
           slug: true,
           plan: true,
           status: true,
+          readOnlyReason: true,
           class: true,
           deletedAt: true,
           subscription: {
@@ -666,7 +670,22 @@ export class PlatformAdminService {
       const updated =
         dto.status === "ACTIVE"
           ? { ...before, status: dto.status }
-          : await tx.tenant.update({ where: { id }, data: { status: dto.status } });
+          : await tx.tenant.update({
+              where: { id },
+              data: {
+                status: dto.status,
+                // leaving READ_ONLY(payment_overdue) by any admin route: the reason must not outlive the pause
+                ...(before.readOnlyReason === PAYMENT_OVERDUE_REASON
+                  ? { readOnlyReason: null }
+                  : {}),
+              },
+            });
+      // Same exit, local side: a PAUSED tenant moved to SUSPENDED / CANCELLED / TRIAL / ... by an admin loses its
+      // `pausedAt` and Stripe's pause_collection is cleared after commit (otherwise Stripe would keep voiding invoices
+      // for a tenant the pause no longer describes). The owed clock / marker STAY: the invoice is still owed.
+      if (dto.status !== "ACTIVE" && before.status === READ_ONLY_STATUS) {
+        exitBox.exit = await releasePauseTx(tx, id);
+      }
 
       // B556: a tenant that reaches ACTIVE with no resolved planKey is the exact "shown as
       // paying, contributes $0 forever" shape B556 reports — the historically confirmed
@@ -793,6 +812,14 @@ export class PlatformAdminService {
       select: { id: true, slug: true, plan: true, status: true, class: true, deletedAt: true },
     });
     if (!before) throw new NotFoundException(`Tenant ${id} not found`);
+
+    // SA-733r7 r-note (1): the B1 admin plan change is a plan-mutation entry point like the tenant's own - 409
+    // PAYMENT_OVERDUE while an invoice is owed (enforced), or a would-refuse log in dark.
+    await assertTenantNotPaymentOverdue(
+      { prisma: this.prisma, stripe: this.stripe, logger: this.logger },
+      id,
+      "admin_plan_change",
+    );
 
     // Resolve the target plan against the currently PUBLISHED PlanVersion so this write
     // stays consistent with SubscriptionMutationService.subscribe()
@@ -1260,7 +1287,10 @@ export class PlatformAdminService {
 
         // SA-733r2 N5: the ONE path to ACTIVE. It nulls readOnlyReason (RO-1 ships it to the client; a lapsed
         // trial's "trial_expired" must not outlive the READ_ONLY it explained) and clears the dunning clock + pause.
-        const toActive = await transitionToActiveTx(tx, id, { data: { plan: dto.plan } });
+        const toActive = await transitionToActiveTx(tx, id, {
+          data: { plan: dto.plan },
+          clearDunning: true, // a manual-pay activation supersedes card dunning, even on an already-ACTIVE row
+        });
         exitBox.exit = toActive.exit;
         // The row after the write above, known without another read: the activation's own plan, status ACTIVE.
         const updated = { id, slug: before.slug, status: "ACTIVE" as const, plan: dto.plan };
@@ -2229,6 +2259,8 @@ export class PlatformAdminService {
         data: {
           trialEndsAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
           status: "TRIAL",
+          // leaving a dunning pause: a TRIAL tenant must not keep reading as payment_overdue
+          readOnlyReason: null,
         },
       });
       if (count === 1) exitBox.exit = await clearDunningTx(tx, id);

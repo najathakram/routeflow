@@ -23,16 +23,24 @@ import {
   isOwed,
   type StatusTransition,
 } from "./dunning-core";
+import {
+  type DiscoveryOptions,
+  type DiscoveryOutcome,
+  discoverUnstamped,
+} from "./dunning-discovery";
+import { clockStartFor, logClockStarted } from "./dunning-clock";
 import { runMilestones } from "./dunning-milestones";
 import {
   clearPauseCollection,
   pauseTenantTx,
+  type ReconcileOptions,
   type ReconcileOutcome,
   reconcilePauseCollection,
   setPauseCollection,
 } from "./dunning-pause";
 import { resolveClockInvoice, type ResolveOutcome } from "./dunning-resolve";
 import { hoursSince, pauseHourReached } from "./dunning-time";
+import { stampClock } from "./dunning-stamp";
 import { dunningZone } from "./dunning-zone";
 import { stripeInvoiceSubscriptionId } from "./stripe-period";
 import { StripeService } from "./stripe.service";
@@ -64,6 +72,10 @@ type ClockedRow = DunningRow & { pastDueInvoiceId: string };
 export class DunningService {
   private readonly logger = new Logger(DunningService.name);
   private transition: StatusTransition | null = null;
+  /** Keys already logged by this process (a repeating hourly condition logs once). Bounded. */
+  private readonly seen = new Set<string>();
+  /** Process-local rotation cursors for the periodic sweeps (an empty map after a restart is fine). */
+  private readonly cursors = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -89,7 +101,16 @@ export class DunningService {
           throw new Error("DunningService: BillingService has not bound its status transition");
         }),
       mode: () => billingPauseMode(),
+      once: (key) => this.once(key),
+      cursors: this.cursors,
     };
+  }
+
+  private once(key: string): boolean {
+    if (this.seen.has(key)) return false;
+    if (this.seen.size >= 5000) this.seen.clear();
+    this.seen.add(key);
+    return true;
   }
 
   // ─── invoice.payment_failed: stamp the clock once per invoice ─────────────
@@ -113,23 +134,27 @@ export class DunningService {
     const facts = await this.stripe.getInvoiceFacts(invoiceId);
     if (!isOwed(facts) || facts.paymentProcessing) return "not_owed";
 
-    const stamped = await this.prisma.$transaction(async (tx) => {
-      await lockTenantForLedger(tx, row.tenantId);
-      const r = await tx.tenantSubscription.updateMany({
-        // The older clock wins: a second invoice failing while one is owed leaves it where it is.
-        where: { tenantId: row.tenantId, pastDueInvoiceId: null, catchupState: null },
-        data: { pastDueSince: now, pastDueInvoiceId: invoiceId },
-      });
-      return r.count === 1;
-    });
+    // one full runway: the stamp time, unless this invoice's d0 already went out (r7 r-note 2)
+    const since = await clockStartFor(this.deps(), row.tenantId, invoiceId, now);
+    const stamped = await stampClock(this.deps(), row.tenantId, invoiceId, since);
     if (!stamped) return "unchanged";
     this.logger.warn(`billing.dunning.stamped tenant=${row.tenantId} invoice=${invoiceId}`);
+    const finalizedSec = invoice?.status_transitions?.finalized_at;
+    logClockStarted(this.deps(), {
+      tenantId: row.tenantId,
+      invoiceId,
+      via: "payment_failed",
+      stampAt: now,
+      since,
+      finalizedAt: typeof finalizedSec === "number" ? new Date(finalizedSec * 1000) : null,
+      firstFailureAt: now,
+    });
 
     // The d0 notice goes out now (this replaces B410's direct email); a failure never fails the webhook.
     try {
       await runMilestones(
         this.deps(),
-        { tenantId: row.tenantId, pastDueInvoiceId: invoiceId, pastDueSince: now },
+        { tenantId: row.tenantId, pastDueInvoiceId: invoiceId, pastDueSince: since },
         facts,
         now,
       );
@@ -161,7 +186,10 @@ export class DunningService {
       outcome = await resolveClockInvoice(this.deps(), row, invoiceId, subId, now);
       if (outcome === "resumed") this.tenantStatusGuard.invalidate(row.tenantId);
     }
-    // SA-733r4 F4 #6: EVERY delivery (a CAS loser too) clears a stale Stripe pause when local `pausedAt` is null.
+    // SA-733r4 F4 #6: EVERY delivery (a CAS loser too) heals a stale Stripe pause when local `pausedAt` is null.
+    // COST, deliberately accepted: this is one extra `subscriptions.retrieve` on EVERY subscription invoice.paid,
+    // including a healthy tenant's routine renewal, and a Stripe error fails the webhook so it is redelivered.
+    // `off` skips it; `dark` only LOGS the would-unpause (a hand-set dashboard pause must survive the first deploy).
     if (viaSub && billingPauseMode() !== "off") {
       await this.healPauseCollection(row.tenantId, subId as string, now);
     }
@@ -180,6 +208,14 @@ export class DunningService {
     if (local?.pausedAt) return; // locally paused: Stripe is meant to be paused
     const stripeSub = await this.stripe.getSubscription(stripeSubId); // an error throws: redelivery
     if (!stripeSub?.pause_collection || stripeSub.status === "canceled") return;
+    if (billingPauseMode() !== "enforced") {
+      if (this.once(`would_unpause:${tenantId}:${Math.floor(now.getTime() / 86_400_000)}`)) {
+        this.logger.warn(
+          `billing.dunning.would_unpause tenant=${tenantId} sub=${stripeSubId} (BILLING_PAUSE_MODE=${billingPauseMode()}: Stripe pause_collection is set and local state does not know it; not removed)`,
+        );
+      }
+      return;
+    }
     await clearPauseCollection(
       this.deps(),
       { tenantId, stripeSubId, exitAt: now },
@@ -239,9 +275,16 @@ export class DunningService {
     // M8: re-read Stripe before any email or pause. Paid / void / unknown = the clock is stale: resolve it.
     const facts = await this.stripe.getInvoiceFacts(invoiceId);
     if (!isOwed(facts)) {
-      const r = await resolveClockInvoice(deps, row, invoiceId, row.stripeSubId, now);
-      if (r === "resumed") this.tenantStatusGuard.invalidate(row.tenantId);
-      return "resolved";
+      if (facts.status === "paid") {
+        // the invoice.paid path, self-healing a missed webhook
+        const r = await resolveClockInvoice(deps, row, invoiceId, row.stripeSubId, now);
+        if (r === "resumed") this.tenantStatusGuard.invalidate(row.tenantId);
+        return "resolved";
+      }
+      // void / uncollectible (the owner's write-off) / gone: it never keeps a clock, but there is NO new resume path
+      // here - an ACTIVE tenant's clock is cleared or moved by the daily discovery, a PAUSED tenant exits through
+      // admin activation (or invoice.paid of the clocked invoice).
+      return "noop";
     }
     if (facts.paymentProcessing) return "noop"; // N6: a bank debit in flight is not a failure
 
@@ -259,9 +302,12 @@ export class DunningService {
     if (!pauseHourReached(now, zone)) return "noop";
 
     if (mode === "dark") {
-      this.logger.log(
-        `billing.dunning.would_pause tenant=${row.tenantId} invoice=${invoiceId} (BILLING_PAUSE_MODE=dark: no status change)`,
-      );
+      // once per tenant and invoice, not every hourly sweep
+      if (this.once(`would_pause:${row.tenantId}:${invoiceId}`)) {
+        this.logger.log(
+          `billing.dunning.would_pause tenant=${row.tenantId} invoice=${invoiceId} (BILLING_PAUSE_MODE=dark: no status change)`,
+        );
+      }
       return "would_pause";
     }
     // enforced: the final notice must be >= 24 h old (a flip pauses nobody in hour one).
@@ -298,6 +344,20 @@ export class DunningService {
     return "paused";
   }
 
+  // ─── the daily discovery sweep ────────────────────────────────────────────
+
+  /** SA-733r M2: open invoices Stripe never attempted raise no payment_failed; stamp them once a day at 04:00. */
+  @LeaderCron("0 4 * * *", "billing.dunningDiscovery")
+  async dunningDiscovery(): Promise<void> {
+    await this.discover(new Date());
+  }
+
+  discover(now: Date, opts: DiscoveryOptions = {}): Promise<DiscoveryOutcome> {
+    if (!this.stripe.isConfigured)
+      return Promise.resolve({ tenants: 0, stamped: 0, failed: 0, cleared: 0, moved: 0 });
+    return discoverUnstamped(this.deps(), now, opts);
+  }
+
   // ─── pause_collection reconciler ──────────────────────────────────────────
 
   @LeaderCron(CronExpression.EVERY_HOUR, "billing.pauseReconcile")
@@ -314,9 +374,9 @@ export class DunningService {
     await this.reconcile(new Date());
   }
 
-  reconcile(runAt: Date): Promise<ReconcileOutcome> {
+  reconcile(runAt: Date, opts: ReconcileOptions = {}): Promise<ReconcileOutcome> {
     if (!this.stripe.isConfigured) return Promise.resolve({ checked: 0, corrected: 0, failed: 0 });
-    return reconcilePauseCollection(this.deps(), runAt);
+    return reconcilePauseCollection(this.deps(), runAt, opts);
   }
 
   // ─── exits ────────────────────────────────────────────────────────────────

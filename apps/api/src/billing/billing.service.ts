@@ -58,7 +58,7 @@ import { checkoutAnchorParams, planCheckoutAnchor } from "./checkout-anchor";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { DunningService } from "./dunning.service";
 import type { TransitionOpts } from "./dunning-core";
-import { assertNotPaymentOverdue } from "./payment-overdue";
+import { assertTenantNotPaymentOverdue } from "./payment-overdue";
 import { transitionToActiveTx, type PauseExit } from "./transition-to-active";
 import { claimRefusal, isCatchupSession, isCatchupSubscription } from "./catchup-claim";
 import { armNeedsReconcile, clearNeedsReconcile } from "./needs-reconcile";
@@ -523,7 +523,11 @@ export class BillingService {
     const held = claimRefusal(existingSub?.catchupState);
     if (held) throw held;
     // SA-733r M1 (PR-B3): a tenant that owes an overdue invoice cannot buy its way out through a new checkout.
-    await assertNotPaymentOverdue({ prisma: this.prisma, stripe: this.stripe }, tenantId);
+    await assertTenantNotPaymentOverdue(
+      { prisma: this.prisma, stripe: this.stripe, logger: this.logger },
+      tenantId,
+      "checkout",
+    );
     // Ruling (item 8): a manual-pay (externalPayment) tenant completes card setup ONLY through the catch-up flow,
     // which prices the unpaid periods and voids exactly what it bills. No ordinary checkout for them.
     if (existingSub?.externalPayment === true && !existingSub.stripeSubId) {
@@ -2367,6 +2371,18 @@ export class BillingService {
     ) {
       this.logger.warn(
         `STRIPE-CANCEL-1: invoice.payment_succeeded for tenant ${sub.tenantId} while cancelAtPeriodEnd is armed and tenant.status is ${sub.tenant.status} (stripeSubId ${sub.stripeSubId ?? "none"}) — not reinstating; the provider subscription was not cancelled at period end. Needs manual reconciliation.`,
+      );
+      return;
+    }
+
+    // SA-733r3 N1 (r4 #1 text): the legacy reinstatement needs the invoice's subscription to EQUAL the row's NON-NULL
+    // stripeSubId (dahlia has no `invoice.subscription`; the id lives where stripeInvoiceSubscriptionId reads it).
+    // Customer-wide matching let a late payment on an old / other subscription (or a one-off invoice) reinstate a
+    // SUSPENDED or lapsed-trial tenant, book +MRR and wipe a live dunning clock. The count reset above still applies.
+    const invoiceSubId = stripeInvoiceSubscriptionId(invoice);
+    if (!sub.stripeSubId || invoiceSubId !== sub.stripeSubId) {
+      this.logger.log(
+        `payment_succeeded for tenant ${sub.tenantId}: invoice subscription ${invoiceSubId ?? "none"} is not the tenant's own - no reinstatement`,
       );
       return;
     }

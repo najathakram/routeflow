@@ -425,6 +425,8 @@ describe("BillingService x dunning wiring (SA-733r7 PR-B3)", () => {
         logged,
       });
       const dunning = h.dunning as DunningService;
+      // the post-commit pause_collection set re-reads pausedAt under the lock: the pause just stamped NOW
+      h.tx.tenantSubscription.findUnique.mockResolvedValue({ ...clocked, pausedAt: NOW });
 
       const out = await dunning.sweep(NOW);
       expect(out.paused).toBe(1);
@@ -456,6 +458,10 @@ describe("BillingService x dunning wiring (SA-733r7 PR-B3)", () => {
       h.tx.tenantSubscription.findUnique.mockResolvedValue({
         ...clocked,
         pausedAt: NOW,
+      });
+      h.tx.tenant.findUnique.mockResolvedValue({
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
       });
       await h.svc.handleWebhookEvent(invoiceEvent("invoice.paid"));
       const resumed = eventsOfType(h.events, BILLING_EVENTS.SUBSCRIPTION_RESUMED);

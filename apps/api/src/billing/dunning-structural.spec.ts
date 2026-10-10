@@ -56,31 +56,118 @@ describe("SA-733r7 PR-B3 structural pins", () => {
       expect([...ALLOWED].every((f) => fs.existsSync(f))).toBe(true);
     });
 
-    it('no Tenant write outside the helper puts status: "ACTIVE" in its data', () => {
+    /**
+     * Every `status:` value a Tenant write can put in its data. A string literal that is not ACTIVE is fine. Anything
+     * that MENTIONS ACTIVE (`"ACTIVE"`, `'ACTIVE'`, `TenantStatus.ACTIVE`, `"ACTIVE" as const`) or is a non-literal
+     * expression is an offender unless it is one of the reviewed sites below (each one is guarded so that it can never
+     * carry ACTIVE). Raw SQL that sets a Tenant status to ACTIVE is an offender with no exception.
+     */
+    const REVIEWED_NON_LITERALS: { file: RegExp; expr: string; guard: RegExp }[] = [
+      {
+        // transitionAndEmit's non-ACTIVE branch: the ACTIVE branch above it goes through the helper
+        file: /billing[\\/]billing\.service\.ts$/,
+        expr: "toStatus",
+        guard: /if \(toStatus === "ACTIVE"\) \{[\s\S]*?transitionToActiveTx\([\s\S]*?\} else \{/,
+      },
+      {
+        // admin updateStatus: the ACTIVE target is written by the helper; only other targets reach this update
+        file: /platform-admin[\\/]platform-admin\.service\.ts$/,
+        expr: "dto.status",
+        guard: /dto\.status === "ACTIVE"\s*\?\s*\{ \.\.\.before/,
+      },
+    ];
+
+    /** The scanner, parameterised on a file list so the vacuity check can run it over PLANTED files. */
+    function scanActiveWrites(
+      fileList: string[],
+      base: string,
+      allowed = new Set<string>(),
+    ): string[] {
       const offenders: string[] = [];
-      for (const f of files) {
-        if (ALLOWED.has(f)) continue;
-        const src = code(read(f));
-        const re = /\.tenant\.(update|updateMany|upsert|create)\(/g;
+      for (const f of fileList) {
+        if (allowed.has(f)) continue;
+        const raw = read(f);
+        const src = code(raw);
+        const rel = path.relative(base, f);
+        const re = /\.tenant\.(update|updateMany|upsert|create|createMany)\(/g;
         let m: RegExpExecArray | null;
         while ((m = re.exec(src))) {
           const args = balanced(src, m.index + m[0].length - 1);
-          const dm = /\bdata\s*:\s*\{/.exec(args);
+          const dm = /\bdata\s*:\s*(\{)?/.exec(args);
+          const shorthand = /\bdata\s*[,}]/.test(args) && !dm;
+          if (shorthand || (dm && !dm[1])) {
+            offenders.push(`${rel}: Tenant write with a non-literal data object`);
+            continue;
+          }
           if (!dm) continue;
           const data = balanced(args, dm.index + dm[0].length - 1);
-          if (
-            /\bstatus\s*:\s*["']ACTIVE["']/.test(data) ||
-            /\bstatus\s*:\s*toStatus\b/.test(data)
-          ) {
-            // transitionAndEmit's non-ACTIVE branch writes `status: toStatus` AFTER the ACTIVE branch went
-            // through the helper; that single site is the only allowed spelling.
-            if (/billing\.service\.ts$/.test(f) && /toStatus/.test(data) && !/"ACTIVE"/.test(data))
-              continue;
-            offenders.push(path.relative(SRC, f));
+          const vre = /\bstatus\s*:\s*([^,}\n]+)/g;
+          let v: RegExpExecArray | null;
+          while ((v = vre.exec(data))) {
+            const expr = v[1].trim();
+            if (/^["'`](?!ACTIVE["'`])\w+["'`]$/.test(expr)) continue; // another status, spelled out
+            const reviewed = REVIEWED_NON_LITERALS.find(
+              (r) => r.file.test(f) && r.expr === expr && r.guard.test(src),
+            );
+            if (!reviewed) offenders.push(`${rel}: status: ${expr}`);
+          }
+        }
+        // raw SQL: UPDATE "Tenant" ... SET ... status ... ACTIVE
+        for (const t of raw.matchAll(/UPDATE\s+(?:"public"\.)?"Tenant"[\s\S]{0,400}/g)) {
+          if (/status[\s\S]{0,80}ACTIVE/i.test(t[0].split(/WHERE/i)[0])) {
+            offenders.push(`${rel}: raw SQL sets Tenant.status = ACTIVE`);
           }
         }
       }
-      expect(offenders).toEqual([]);
+      return offenders;
+    }
+
+    it("no Tenant write outside the helper can write ACTIVE: literal, TenantStatus.ACTIVE, an unreviewed expression, or raw SQL", () => {
+      expect(scanActiveWrites(files, SRC, ALLOWED)).toEqual([]);
+    });
+
+    it("the pin is not vacuous: the SAME file walker and scanner flag each planted spelling and skip spec files", () => {
+      const os = require("os") as typeof import("os");
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "active-pin-"));
+      try {
+        const dir = path.join(root, "billing");
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(
+          path.join(dir, "planted.ts"),
+          [
+            'await tx.tenant.updateMany({ where: { id }, data: { status: "ACTIVE" } });',
+            "await tx.tenant.update({ where: { id }, data: { status: TenantStatus.ACTIVE } });",
+            "await tx.tenant.update({ where: { id }, data: { status: dto.status } });",
+            'await tx.tenant.update({ where: { id }, data: { status: "ACTIVE" as const } });',
+            "await tx.tenant.update({ where: { id }, data });",
+            'await tx.$executeRaw`UPDATE "Tenant" SET "status" = \'ACTIVE\' WHERE id = ${id}`;',
+            'await tx.tenant.update({ where: { id }, data: { status: "TRIAL" } });', // fine
+          ].join("\n"),
+        );
+        fs.writeFileSync(
+          path.join(dir, "planted.spec.ts"),
+          'await tx.tenant.update({ where: {}, data: { status: "ACTIVE" } });',
+        );
+        const walked = walk(root);
+        expect(walked.map((f) => path.basename(f))).toEqual(["planted.ts"]); // the walker skips specs
+        const found = scanActiveWrites(walked, root);
+        expect(found).toEqual(
+          [
+            'billing/planted.ts: status: "ACTIVE"',
+            "billing/planted.ts: status: TenantStatus.ACTIVE",
+            "billing/planted.ts: status: dto.status",
+            'billing/planted.ts: status: "ACTIVE" as const',
+            "billing/planted.ts: Tenant write with a non-literal data object",
+            "billing/planted.ts: raw SQL sets Tenant.status = ACTIVE",
+          ].map((x) => x.replace(/\//g, path.sep === "\\" ? "\\" : "/")),
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+      // and the real tree is not empty-scanned
+      expect(walk(path.join(SRC, "billing")).some((f) => f.endsWith("billing.service.ts"))).toBe(
+        true,
+      );
     });
 
     it("transitionAndEmit routes toStatus === ACTIVE through transitionToActiveTx", () => {
@@ -101,7 +188,7 @@ describe("SA-733r7 PR-B3 structural pins", () => {
 
   describe("PAYMENT_OVERDUE guard on every plan-mutation entry point", () => {
     const mutation = code(read(path.join(SRC, "billing", "subscription-mutation.service.ts")));
-    const firstLines = (name: string, signature: RegExp) => {
+    const firstLines = (signature: RegExp) => {
       const m = signature.exec(mutation);
       expect(m).not.toBeNull();
       const body = mutation.slice(m!.index, m!.index + 900);
@@ -111,25 +198,97 @@ describe("SA-733r7 PR-B3 structural pins", () => {
 
     it.each([
       ["subscribe", /async subscribe\(/],
-      ["upgradeLocked", /private async upgradeLocked\(/],
+      ["upgrade", /private async upgradeLocked\(/],
       ["downgrade", /async downgrade\(/],
       ["resume", /async resume\(/],
-    ])("%s calls the guard as its first statement", (name, sig) => {
-      expect(firstLines(name, sig as RegExp)).toMatch(/await this\.assertNotOverdue\(tenantId\)/);
+    ])("%s calls the guard as its first statement, naming itself", (name, sig) => {
+      expect(firstLines(sig as RegExp)).toContain(
+        `await this.assertNotOverdue(tenantId, "${name}")`,
+      );
     });
 
-    it("checkout (BillingService.createCheckoutSession) calls the same guard", () => {
+    // The pin LISTS every call site. A new plan-mutation entry point that does not call the one helper (or a
+    // call site that is dropped) is a red build: the set of entry-point names is closed.
+    const EXPECTED_ENTRY_POINTS = [
+      "admin_plan_change",
+      "checkout",
+      "downgrade",
+      "resume",
+      "subscribe",
+      "upgrade",
+    ];
+    const callSites = () => {
+      const found: string[] = [];
+      for (const f of walk(SRC)) {
+        const src = code(read(f));
+        for (const m of src.matchAll(/assertNotOverdue\(\s*tenantId,\s*"(\w+)"\s*\)/g))
+          found.push(m[1]);
+        for (const m of src.matchAll(
+          /assertTenantNotPaymentOverdue\(\s*\{[^}]*\},\s*\w+,\s*"(\w+)"/g,
+        ))
+          found.push(m[1]);
+      }
+      return found.sort();
+    };
+
+    it("the closed list of entry points (each exactly once): subscribe / upgrade / downgrade / resume / checkout / the B1 admin plan change", () => {
+      expect(callSites()).toEqual(EXPECTED_ENTRY_POINTS);
+    });
+
+    it("checkout (BillingService.createCheckoutSession) and the admin plan change (updatePlanLocked) call the same helper", () => {
       const billing = code(read(path.join(SRC, "billing", "billing.service.ts")));
       const i = billing.indexOf("async createCheckoutSession(");
-      expect(billing.slice(i, i + 4500)).toMatch(/await assertNotPaymentOverdue\(/);
+      expect(billing.slice(i, i + 4500)).toMatch(/await assertTenantNotPaymentOverdue\(/);
+      const admin = code(read(path.join(SRC, "platform-admin", "platform-admin.service.ts")));
+      const j = admin.indexOf("private async updatePlanLocked(");
+      expect(admin.slice(j, j + 1200)).toMatch(
+        /await assertTenantNotPaymentOverdue\([\s\S]*"admin_plan_change"/,
+      );
     });
 
-    it("the guard answers with API_ERROR_CODES, never a bare string", () => {
+    it("the guard answers with API_ERROR_CODES, never a bare string, and dark logs a would-refuse line", () => {
       const src = code(read(path.join(SRC, "billing", "payment-overdue.ts")));
       expect(src).toMatch(/API_ERROR_CODES\.PAYMENT_OVERDUE/);
       expect(src).toMatch(/API_ERROR_CODES\.PAYMENT_STATE_UNKNOWN/);
       expect(src).toMatch(/hosted_invoice_url/);
+      expect(src).toMatch(
+        /billing\.dunning\.would_refuse code=\$\{API_ERROR_CODES\.PAYMENT_OVERDUE\}/,
+      );
     });
+  });
+
+  describe("deliberately UNGUARDED plan/price paths (explicit exclusion list)", () => {
+    // These change a plan or price but are SYSTEM or PRICE actions on ACTIVE tenants, not a tenant (or admin) buying its
+    // way out of an overdue invoice. Adding the overdue guard to one of them must be a deliberate edit of THIS list.
+    const UNGUARDED = [
+      {
+        file: "billing/billing-cron.service.ts",
+        method: "async applyScheduledDowngrades(",
+        reason: "cron: applies a downgrade the tenant scheduled earlier, on ACTIVE tenants only",
+      },
+      {
+        file: "billing/scheduled-price-change.ts",
+        method: "async applyDue(",
+        reason: "cron: pushes an already-scheduled lower price to Stripe before the renewal",
+      },
+      {
+        file: "platform-admin/platform-admin.service.ts",
+        method: "async updateTenantPriceOverride(",
+        reason:
+          "a negotiated PRICE for the next cycle, not a plan change; owners need it to settle disputes",
+      },
+    ];
+
+    it.each(UNGUARDED.map((u) => [u.file, u.method, u.reason]))(
+      "%s %s stays unguarded: %s",
+      (file, method) => {
+        const src = code(read(path.join(SRC, file)));
+        const i = src.indexOf(method);
+        expect(i).toBeGreaterThan(-1); // a rename must re-point this list, not silently drop out of it
+        const body = src.slice(i, i + 2500);
+        expect(body).not.toMatch(/assertNotOverdue|assertTenantNotPaymentOverdue/);
+      },
+    );
   });
 
   describe("Stripe pause_collection", () => {
@@ -157,6 +316,7 @@ describe("SA-733r7 PR-B3 structural pins", () => {
     it("the sweep and the reconcilers are @LeaderCron with the gate's job names", () => {
       expect(svc).toMatch(/@LeaderCron\(CronExpression\.EVERY_HOUR, "billing\.dunningSweep"\)/);
       expect(svc).toMatch(/@LeaderCron\(CronExpression\.EVERY_HOUR, "billing\.pauseReconcile"\)/);
+      expect(svc).toMatch(/@LeaderCron\("0 4 \* \* \*", "billing\.dunningDiscovery"\)/);
       expect(svc).toMatch(/@LeaderCron\("0 11 1 \* \*", "billing\.pauseReconcileFirst"\)/);
     });
 
@@ -186,6 +346,14 @@ describe("SA-733r7 PR-B3 structural pins", () => {
       expect(templates).not.toMatch(
         /\b(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP|CREATE|GRANT|COPY)\b/i,
       );
+    });
+
+    it("states what it cannot see and names the log signals (it never calls Stripe)", () => {
+      expect(script).toMatch(/discoveryPopulation/);
+      expect(script).toMatch(/billing\.dunning\.would_unpause/);
+      expect(script).toMatch(/billing\.dunning\.would_refuse/);
+      expect(script).toMatch(/cannot call Stripe/);
+      expect(script).not.toMatch(/require\(["']stripe/i);
     });
 
     it("never hardcodes a tenant or a connection string", () => {

@@ -241,6 +241,20 @@ const LIVE_SUB = {
   stripeCustomerId: "cus_1",
 };
 const SUB_EVT = { id: "sub_1", customer: "cus_1" };
+// SA-733r3 N1: the reinstatement needs the invoice's subscription to equal the row's stripeSubId.
+// a Stripe-billed paying row whose own subscription is sub_1 (the default make() sub has no stripeSubId)
+const STRIPE_PAYER = {
+  tenantId: "t1",
+  planKey: "BUSINESS",
+  basePriceSnapshot: 349,
+  discount: 0,
+  stripeSubId: "sub_1",
+  stripeCustomerId: "cus_1",
+};
+const OWN_INVOICE = {
+  customer: "cus_1",
+  parent: { subscription_details: { subscription: "sub_1" } },
+};
 
 describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
   describe("onSubscriptionDeleted (→ CANCELLED)", () => {
@@ -420,10 +434,86 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
     });
   });
 
+  // SA-733r3 N1 / r7 r-note: the legacy reinstatement needs the invoice's subscription to EQUAL the row's non-null
+  // stripeSubId. A late payment on an old or other subscription (or a one-off invoice) must never reinstate a tenant,
+  // book +MRR, or wipe a live dunning clock - customer-wide matching is what made that possible.
+  describe("N1: payment_succeeded reinstates only for the row's OWN subscription", () => {
+    const sub = (id: string | null) => ({
+      customer: "cus_1",
+      ...(id ? { parent: { subscription_details: { subscription: id } } } : {}),
+    });
+    const row = (tenant: Record<string, unknown>, over: Record<string, unknown> = {}) => ({
+      ...LIVE_SUB,
+      failedPaymentCount: 0,
+      tenant: { status: "SUSPENDED", readOnlyReason: null, ...tenant },
+      ...over,
+    });
+    const writesNothingToTheTenant = (tx: any, events: any) => {
+      expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+      // no clock wipe: the dunning-clear is a tenantSubscription.updateMany
+      expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
+    };
+
+    it("control: the invoice of the row's own subscription reinstates a SUSPENDED tenant (+MRR once)", async () => {
+      const { svc, events } = make({ transitionCount: 1, sub: row({}) });
+      await (svc as any).onPaymentSucceeded(sub("sub_1"));
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
+    });
+
+    it("another subscription's invoice paid by a SUSPENDED tenant: no reinstatement, 0 delta, no clock wipe", async () => {
+      const { svc, tx, events } = make({ transitionCount: 1, sub: row({}) });
+      await (svc as any).onPaymentSucceeded(sub("sub_OLD"));
+      writesNothingToTheTenant(tx, events);
+    });
+
+    it("a late payment on an old subscription by a READ_ONLY(trial_expired) tenant: no reinstatement", async () => {
+      const { svc, tx, events } = make({
+        transitionCount: 1,
+        sub: row({ status: "READ_ONLY", readOnlyReason: "trial_expired" }),
+      });
+      await (svc as any).onPaymentSucceeded(sub("sub_OLD"));
+      writesNothingToTheTenant(tx, events);
+    });
+
+    it("READ_ONLY(trial_cancelled) paying another subscription's invoice: no reinstatement", async () => {
+      const { svc, tx, events } = make({
+        transitionCount: 1,
+        sub: row({ status: "READ_ONLY", readOnlyReason: "trial_cancelled" }),
+      });
+      await (svc as any).onPaymentSucceeded(sub("sub_OLD"));
+      writesNothingToTheTenant(tx, events);
+    });
+
+    it("an invoice with NO subscription (a one-off) reinstates nothing", async () => {
+      const { svc, tx, events } = make({ transitionCount: 1, sub: row({}) });
+      await (svc as any).onPaymentSucceeded(sub(null));
+      writesNothingToTheTenant(tx, events);
+    });
+
+    it("a row with a NULL stripeSubId (released by a cancel) is never reinstated, even by an invoice that names a subscription", async () => {
+      const { svc, tx, events } = make({
+        transitionCount: 1,
+        sub: row({}, { stripeSubId: null }),
+      });
+      await (svc as any).onPaymentSucceeded(sub("sub_1"));
+      writesNothingToTheTenant(tx, events);
+    });
+
+    it("the failed-payment count still resets (a payment did land) even when nothing is reinstated", async () => {
+      const { svc, prisma } = make({ transitionCount: 1, sub: row({}, { failedPaymentCount: 2 }) });
+      await (svc as any).onPaymentSucceeded(sub("sub_OLD"));
+      expect(prisma.tenantSubscription.update).toHaveBeenCalledWith({
+        where: { tenantId: "t1" },
+        data: { failedPaymentCount: 0 },
+      });
+    });
+  });
+
   describe("onPaymentSucceeded (SUSPENDED → ACTIVE)", () => {
     it("re-adds a POSITIVE delta via a non-ACTIVE→ACTIVE CAS on reinstatement", async () => {
-      const { svc, tx, events } = make({ transitionCount: 1 });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      const { svc, tx, events } = make({ transitionCount: 1, sub: STRIPE_PAYER });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
         where: { id: "t1", status: { not: "ACTIVE" } },
         data: { status: "ACTIVE" },
@@ -432,8 +522,8 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
     });
 
     it("R3 an ACTIVE transition's CAS write also clears a stale readOnlyReason", async () => {
-      const { svc, tx } = make({ transitionCount: 1 });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      const { svc, tx } = make({ transitionCount: 1, sub: STRIPE_PAYER });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       expect(tx.tenant.updateMany.mock.calls[0][0].data).toEqual({
         status: "ACTIVE",
         readOnlyReason: null,
@@ -442,7 +532,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
 
     it("emits no delta on a renewal / lost race (CAS finds the tenant already ACTIVE)", async () => {
       const { svc, events } = make({ transitionCount: 0 });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
     });
 
@@ -466,7 +556,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
           tenant: { status: "READ_ONLY" },
         },
       });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       // The best-effort period-date refresh still runs (it happens before the check).
       expect(prisma.tenantSubscription.update).toHaveBeenCalledWith({
         where: { tenantId: "t1" },
@@ -491,11 +581,11 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
           planKey: "BUSINESS",
           basePriceSnapshot: 349,
           discount: 0,
-          stripeSubId: null,
+          stripeSubId: "sub_1",
           cancelAtPeriodEnd: false,
         },
       });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
         where: { id: "t1", status: { not: "ACTIVE" } },
         data: { status: "ACTIVE" },
@@ -523,7 +613,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
           tenant: { status: "SUSPENDED" },
         },
       });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
         where: { id: "t1", status: { not: "ACTIVE" } },
         data: { status: "ACTIVE" },
@@ -549,7 +639,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
           tenant: { status: "CANCELLED" },
         },
       });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(tx.tenant.updateMany).not.toHaveBeenCalled();
       expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
@@ -1420,7 +1510,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
     planKey: "BUSINESS",
     basePriceSnapshot: 349,
     discount: 0,
-    stripeSubId: null,
+    stripeSubId: "sub_1",
     stripeCustomerId: "cus_1",
     downgradeToPlanKey: "STARTER",
     downgradeEffectiveAt: new Date("2026-08-01T00:00:00.000Z"),
@@ -1444,7 +1534,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
 
   it("REG-B216 onPaymentSucceeded reinstatement (CAS won) leaves the armed downgrade ALONE and names it on the resume event", async () => {
     const { svc, prisma, events } = make({ sub: armedSub(), transitionCount: 1 });
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     // RED before the ruling: this wrote {downgradeToPlanKey: null, ...}.
     expect(disarmCall(prisma)).toBeUndefined();
     expect(resumedMeta(events)).toMatchObject({
@@ -1467,7 +1557,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
 
   it("REG-B216 a reinstatement with a live Stripe sub writes ONLY the period update — no schedule write at all", async () => {
     const { svc, prisma } = make({ sub: armedSub({ stripeSubId: "sub_1" }), transitionCount: 1 });
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     expect(
       prisma.tenantSubscription.update.mock.calls.map((c: any[]) => Object.keys(c[0].data).sort()),
     ).toEqual([["periodEnd", "periodStart"]]);
@@ -1478,7 +1568,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
       sub: armedSub({ downgradeToPlanKey: null, downgradeEffectiveAt: null }),
       transitionCount: 1,
     });
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     const meta = resumedMeta(events);
     expect(meta).not.toHaveProperty("downgradeLeftArmed");
     expect(meta).not.toHaveProperty("downgradeEffectiveAt");
@@ -1492,14 +1582,14 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
       sub: armedSub({ planKey: null, basePriceSnapshot: null }),
       transitionCount: 1,
     });
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
     expect(disarmCall(prisma)).toBeUndefined();
   });
 
   it("pin B216: an ordinary renewal (CAS count 0) leaves a scheduled downgrade armed", async () => {
     const { svc, prisma } = make({ sub: armedSub({ stripeSubId: "sub_1" }), transitionCount: 0 });
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     expect(disarmCall(prisma)).toBeUndefined();
   });
 
@@ -1511,7 +1601,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
 
   it("pin B216: a reinstatement emits SUBSCRIPTION_RESUMED exactly once (no resume() double emit)", async () => {
     const { svc, events } = make({ sub: armedSub(), transitionCount: 1 });
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     expect(
       emitted(events).filter((t: string) => t === BILLING_EVENTS.SUBSCRIPTION_RESUMED),
     ).toHaveLength(1);
@@ -2351,7 +2441,7 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
       },
     });
     stripe.getSubscription.mockResolvedValue(dahlia());
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     const periodWrite = prisma.tenantSubscription.update.mock.calls.find(
       (c: any[]) => c[0].data?.periodStart !== undefined,
     );
@@ -2628,7 +2718,7 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
 
     it("resets failedPaymentCount to 0 after a failure", async () => {
       const { svc, prisma } = make({ transitionCount: 0, sub: paying(2) });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       const reset = prisma.tenantSubscription.update.mock.calls.find(
         (c: any[]) => c[0].data?.failedPaymentCount !== undefined,
       );
@@ -2637,7 +2727,7 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
 
     it("writes no reset when the count is already 0", async () => {
       const { svc, prisma } = make({ transitionCount: 0, sub: paying(0) });
-      await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
       const reset = prisma.tenantSubscription.update.mock.calls.find(
         (c: any[]) => c[0].data?.failedPaymentCount !== undefined,
       );
@@ -2678,7 +2768,7 @@ describe("#2440 Opus nits on #2446 — period source and null-period warnings", 
     });
     prisma.tenantAddon.findMany.mockResolvedValue([{ stripeItemId: "si_addon" }]);
     stripe.getSubscription.mockResolvedValue(twoItems);
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     const periodWrite = prisma.tenantSubscription.update.mock.calls.find(
       (c: any[]) => c[0].data?.periodEnd !== undefined,
     );
@@ -2699,7 +2789,7 @@ describe("#2440 Opus nits on #2446 — period source and null-period warnings", 
     });
     stripe.getSubscription.mockResolvedValue({ status: "active" });
     const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
-    await (svc as any).onPaymentSucceeded({ customer: "cus_1" });
+    await (svc as any).onPaymentSucceeded(OWN_INVOICE);
     expect(warn.mock.calls.some((c: any[]) => /no billing period/.test(String(c[0])))).toBe(true);
   });
 

@@ -1,5 +1,11 @@
 import type { InvoiceFacts } from "./catchup-claim";
-import { DUNNING_D3_HOURS, DUNNING_D6_HOURS, DUNNING_MILESTONES, HOUR_MS } from "./dunning-config";
+import {
+  DUNNING_D3_HOURS,
+  DUNNING_D6_HOURS,
+  DUNNING_MILESTONES,
+  DUNNING_PAUSE_HOURS,
+  HOUR_MS,
+} from "./dunning-config";
 import type { DunningDeps } from "./dunning-core";
 import { hoursSince } from "./dunning-time";
 
@@ -34,30 +40,69 @@ export async function runMilestones(
   const elapsed = hoursSince(row.pastDueSince, now);
   const payUrl = facts.hostedInvoiceUrl ?? null;
 
-  const send = (milestone: string, kind: "d0" | "d3" | "d6" | "final", readOnlyOn?: string) =>
-    deps.notifications.notifyDunning(tenantId, milestone, invoiceId, kind, { payUrl, readOnlyOn });
+  const send = (
+    milestone: string,
+    kind: "d0" | "d3" | "d6" | "final",
+    dates: { readOnlyOn?: string; byDate?: string } = {},
+  ) => deps.notifications.notifyDunning(tenantId, milestone, invoiceId, kind, { payUrl, ...dates });
   const readOnlyOn = () =>
     deps.notifications.localDateLabel(tenantId, new Date(now.getTime() + 24 * HOUR_MS));
 
-  if (!sent.has(M.D0)) await send(M.D0, "d0");
-  if (elapsed >= DUNNING_D3_HOURS && !sent.has(M.D3)) await send(M.D3, "d3");
+  const warnUndeliverable = (res: { status: string }) => {
+    if (res.status === "no_recipients" && deps.once(`no_admin:${tenantId}:${invoiceId}`)) {
+      deps.logger.warn(
+        `billing.dunning.no_deliverable_admin tenant=${tenantId} invoice=${invoiceId} - no notice can be delivered, so the pause will never be due`,
+      );
+    }
+    return res;
+  };
+
+  // SAFETY NET (Opus re-review): ONLY the highest milestone that is due goes out in a sweep. A clock that carries an
+  // old time (a legacy backlog, a restored clock) must not mail d0 + d3 + d6 in one hour; the earlier ones are
+  // RECORDED as skipped so they never send later.
+  const dueAll = [
+    [M.D0, 0],
+    [M.D3, DUNNING_D3_HOURS],
+    [M.D6, DUNNING_D6_HOURS],
+  ] as const;
+  const unsent = dueAll.filter(([m, h]) => elapsed >= h && !sent.has(m)).map(([m]) => m);
+  const top = unsent[unsent.length - 1];
+  for (const skipped of unsent.slice(0, -1)) {
+    await deps.notifications.recordDunningMilestone(tenantId, skipped, invoiceId);
+    sent.set(skipped, now);
+  }
 
   let finalSentAt = sent.get(M.FINAL) ?? null;
-  if (elapsed >= DUNNING_D6_HOURS) {
+  if (top === M.D0) {
+    warnUndeliverable(await send(M.D0, "d0"));
+  } else if (top === M.D3) {
+    warnUndeliverable(await send(M.D3, "d3"));
+  } else if (top === M.D6) {
     if (mode === "dark") {
-      if (!sent.has(M.D6)) await send(M.D6, "d6");
-    } else if (!sent.has(M.D6)) {
+      // dark: nothing will happen, so the copy names no read-only date - only when to update the card by, never
+      // in the past: at least a day from now
+      const byDate = await deps.notifications.localDateLabel(
+        tenantId,
+        new Date(
+          Math.max(
+            row.pastDueSince.getTime() + DUNNING_PAUSE_HOURS * HOUR_MS,
+            now.getTime() + 24 * HOUR_MS,
+          ),
+        ),
+      );
+      warnUndeliverable(await send(M.D6, "d6", { byDate }));
+    } else {
       // enforced, first time: this d6 email is the final notice - record both.
-      const res = await send(M.D6, "final", await readOnlyOn());
+      const res = warnUndeliverable(await send(M.D6, "final", { readOnlyOn: await readOnlyOn() }));
       if (res.status === "sent" && !finalSentAt) {
         await deps.notifications.recordDunningMilestone(tenantId, M.FINAL, invoiceId);
         finalSentAt = now;
       }
-    } else if (!finalSentAt) {
-      // enforced after a dark d6: a separate final notice, then the 24 h lead starts.
-      const res = await send(M.FINAL, "final", await readOnlyOn());
-      if (res.status === "sent") finalSentAt = now;
     }
+  } else if (mode === "enforced" && elapsed >= DUNNING_D6_HOURS && !finalSentAt) {
+    // enforced after a dark d6: a separate final notice, then the 24 h lead starts.
+    const res = warnUndeliverable(await send(M.FINAL, "final", { readOnlyOn: await readOnlyOn() }));
+    if (res.status === "sent") finalSentAt = now;
   }
   return finalSentAt;
 }

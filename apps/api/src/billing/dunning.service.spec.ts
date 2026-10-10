@@ -50,6 +50,12 @@ function make(
     stripeSub?: any;
     openInvoices?: any[];
     localPausedAt?: Date | null;
+    /** When this invoice's d0 notice went out (BillingNotificationLog), if it did. */
+    d0?: Date | null;
+    /** The tenant row as the resume transaction re-reads it UNDER the Tenant lock. */
+    txTenant?: { status: string; readOnlyReason: string | null };
+    /** The owed marker as the resume transaction re-reads it under the lock (default: still in_1). */
+    txClock?: string | null;
   } = {},
 ) {
   const order: string[] = [];
@@ -59,7 +65,9 @@ function make(
       return [];
     }),
     tenant: {
-      findUnique: jest.fn().mockResolvedValue({ status: "ACTIVE" }),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue(opts.txTenant ?? { status: "ACTIVE", readOnlyReason: null }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     tenantSubscription: {
@@ -67,6 +75,7 @@ function make(
       findUnique: jest.fn().mockResolvedValue({
         pausedAt: opts.localPausedAt ?? null,
         stripeSubId: "sub_1",
+        pastDueInvoiceId: opts.txClock === undefined ? "in_1" : opts.txClock,
       }),
     },
   };
@@ -74,7 +83,19 @@ function make(
     getTenantId: () => null,
     tenantSubscription: {
       findFirst: jest.fn().mockResolvedValue(opts.row === undefined ? row() : opts.row),
-      findMany: jest.fn().mockResolvedValue(opts.sweepRows ?? []),
+      // a keyset-aware fake: the reconciler pages with { tenantId: { gt | lte }, take, skip }; the sweep passes none
+      findMany: jest.fn(async (args: any) => {
+        let rows: any[] = [...(opts.sweepRows ?? [])].sort((a, b) =>
+          a.tenantId < b.tenantId ? -1 : 1,
+        );
+        const w = args?.where?.tenantId;
+        if (w?.gt) rows = rows.filter((r) => r.tenantId > w.gt);
+        if (w?.lte) rows = rows.filter((r) => r.tenantId <= w.lte);
+        if (args?.skip) rows = rows.slice(args.skip);
+        if (args?.take) rows = rows.slice(0, args.take);
+        return rows;
+      }),
+      count: jest.fn(async () => (opts.sweepRows ?? []).length),
       findUnique: jest.fn().mockResolvedValue({ pausedAt: opts.localPausedAt ?? null }),
     },
     tenantConfig: {
@@ -82,7 +103,10 @@ function make(
         .fn()
         .mockResolvedValue({ timezone: opts.tz === undefined ? "UTC" : opts.tz }),
     },
-    billingNotificationLog: { findMany: jest.fn().mockResolvedValue(opts.logged ?? []) },
+    billingNotificationLog: {
+      findMany: jest.fn().mockResolvedValue(opts.logged ?? []),
+      findFirst: jest.fn().mockResolvedValue(opts.d0 ? { sentAt: opts.d0 } : null),
+    },
     $transaction: jest.fn(async (fn: any) => {
       const r = await fn(tx);
       order.push("commit");
@@ -160,6 +184,34 @@ describe("DunningService", () => {
       const e = make();
       expect(await e.svc.onPaymentFailed({ id: "in_9" }, now)).toBe("ignored");
       expect(e.prisma.tenantSubscription.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("re-stamping an invoice whose d0 already went out (clocked before, moved away, failed again) keeps its ORIGINAL time", async () => {
+      mode("dark");
+      const original = new Date("2026-10-20T00:00:00Z");
+      const d = make({ row: row({ pastDueInvoiceId: null, pastDueSince: null }), d0: original });
+      expect(await d.svc.onPaymentFailed(invoice(), now)).toBe("stamped");
+      expect(d.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: "t1", pastDueInvoiceId: null, catchupState: null },
+        data: { pastDueSince: original, pastDueInvoiceId: "in_1" },
+      });
+    });
+
+    it("logs the clock start once, with the finalization time and the first failure (for the blast-radius report)", async () => {
+      mode("dark");
+      const d = make({ row: row({ pastDueInvoiceId: null, pastDueSince: null }) });
+      const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
+      await d.svc.onPaymentFailed(
+        invoice({ status_transitions: { finalized_at: 1_700_000_000 } }),
+        now,
+      );
+      const line = String(
+        warn.mock.calls.map((c: any[]) => c[0]).find((l: string) => /clock_started/.test(l)),
+      );
+      expect(line).toContain("tenant=t1");
+      expect(line).toContain("invoice=in_1");
+      expect(line).toContain(`stampAt=${now.toISOString()}`);
+      expect(line).toContain(`firstFailureAt=${now.toISOString()}`);
     });
 
     it("is replay-idempotent: a second failure of the SAME invoice changes nothing and reads no Stripe", async () => {
@@ -268,14 +320,56 @@ describe("DunningService", () => {
       expect(sentMilestones(d)).toEqual([["DUNNING_D0", "in_1", "d0"]]);
     });
 
-    it("at +80 h d0 and d3 are due; d6 is not", async () => {
+    it("at +80 h d0 and d3 are both due, so ONLY d3 is sent; d0 is recorded as skipped so it never sends later", async () => {
       mode("dark");
       const d = make({ sweepRows: [row()] });
       await d.svc.sweep(at(80));
-      expect(sentMilestones(d)).toEqual([
-        ["DUNNING_D0", "in_1", "d0"],
-        ["DUNNING_D3", "in_1", "d3"],
-      ]);
+      expect(sentMilestones(d)).toEqual([["DUNNING_D3", "in_1", "d3"]]);
+      expect(d.notifications.recordDunningMilestone).toHaveBeenCalledWith(
+        "t1",
+        "DUNNING_D0",
+        "in_1",
+      );
+    });
+
+    // deploy day (Opus re-review): a clock that keeps an OLD finalization time (discovery, a moved clock) must not
+    // mail d0 + d3 + d6 in one sweep - only the highest milestone due goes out
+    it("deploy day, dark, 200 h clock and nothing logged: ONLY d6 is sent; d0 and d3 are recorded as skipped", async () => {
+      mode("dark");
+      const d = make({ sweepRows: [row()] });
+      await d.svc.sweep(at(200));
+      expect(sentMilestones(d)).toEqual([["DUNNING_D6", "in_1", "d6"]]);
+      const recorded = d.notifications.recordDunningMilestone.mock.calls
+        .map((c: any[]) => c[1])
+        .sort();
+      expect(recorded).toEqual(["DUNNING_D0", "DUNNING_D3"]);
+    });
+
+    it("deploy day, enforced, 200 h clock and nothing logged: ONE email (the final notice); d0/d3 skipped, dunning_final recorded", async () => {
+      mode("enforced");
+      const d = make({ sweepRows: [row()] });
+      const out = await d.svc.sweep(at(200));
+      expect(sentMilestones(d)).toEqual([["DUNNING_D6", "in_1", "final"]]);
+      const recorded = d.notifications.recordDunningMilestone.mock.calls
+        .map((c: any[]) => c[1])
+        .sort();
+      expect(recorded).toEqual(["DUNNING_D0", "DUNNING_D3", "DUNNING_FINAL"]);
+      expect(out.paused).toBe(0); // the 24 h lead still starts now
+    });
+
+    it("the by-date in dark's d6 is never in the past: clamped to now + 24 h", async () => {
+      mode("dark");
+      const d = make({ sweepRows: [row()] });
+      const now = at(200); // since + 168 h is 32 h ago
+      await d.svc.sweep(now);
+      const labelled = d.notifications.localDateLabel.mock.calls[0][1] as Date;
+      expect(labelled.getTime()).toBe(now.getTime() + 24 * 3_600_000);
+      // the milestone is due from 144 h, where since + 168 h == now + 24 h: the floor never lowers the date
+      const fresh = make({ sweepRows: [row()] });
+      await fresh.svc.sweep(at(145));
+      expect((fresh.notifications.localDateLabel.mock.calls[0][1] as Date).getTime()).toBe(
+        at(145).getTime() + 24 * 3_600_000,
+      );
     });
 
     it("at +150 h in dark: d6 names no date; there is no final notice and no pause", async () => {
@@ -290,6 +384,15 @@ describe("DunningService", () => {
       await d.svc.sweep(at(150));
       expect(sentMilestones(d)).toEqual([["DUNNING_D6", "in_1", "d6"]]);
       expect(d.notifications.recordDunningMilestone).not.toHaveBeenCalled();
+      // neutral copy, with the date the card should be updated by (pastDueSince + 168 h), and no read-only line
+      const extra = d.notifications.notifyDunning.mock.calls[0][4];
+      expect(extra.readOnlyOn).toBeUndefined();
+      expect(extra.byDate).toBe("Nov 9, 2026");
+      // the clamp: since + 168 h (Nov 8 00:00Z) is earlier than now + 24 h (Nov 8 06:00Z), so now + 24 h wins
+      expect(d.notifications.localDateLabel).toHaveBeenCalledWith(
+        "t1",
+        new Date(at(150).getTime() + 24 * 3_600_000),
+      );
     });
 
     it("an already-logged milestone is never re-sent (the sweep is hourly)", async () => {
@@ -424,6 +527,7 @@ describe("DunningService", () => {
         sweepRows: [row({ pastDueSince: since })],
         logged: fullLog(hoursBefore(25)),
         tz: "America/Chicago",
+        localPausedAt: NOW, // the pause just stamped it: the post-commit set re-reads it under the Tenant lock
       });
       const out = await d.svc.sweep(NOW);
       expect(out.paused).toBe(1);
@@ -621,6 +725,45 @@ describe("DunningService", () => {
       expect((await d.svc.sweep(NOW)).paused).toBe(0);
     });
 
+    it("the clocked invoice voided / marked uncollectible while the tenant is PAUSED: the sweep does nothing (no new resume path)", async () => {
+      mode("enforced");
+      for (const status of ["void", "uncollectible"]) {
+        const d = make({
+          sweepRows: [
+            row({
+              pastDueSince: since,
+              pausedAt: hoursBefore(5),
+              tenant: {
+                status: "READ_ONLY",
+                readOnlyReason: "payment_overdue",
+                deletedAt: null,
+                class: "PRODUCTION",
+              },
+            }),
+          ],
+          logged: fullLog(hoursBefore(30)),
+          facts: { ...OPEN_FACTS, status },
+        });
+        const out = await d.svc.sweep(NOW);
+        expect(out.paused).toBe(0);
+        expect(d.transition).not.toHaveBeenCalled();
+        expect(d.stripe.updateSubscription).not.toHaveBeenCalled();
+      }
+    });
+
+    it("an uncollectible clocked invoice is never emailed over or paused over (the owner wrote it off)", async () => {
+      mode("enforced");
+      const d = make({
+        sweepRows: [row({ pastDueSince: since })],
+        logged: fullLog(hoursBefore(30)),
+        facts: { ...OPEN_FACTS, status: "uncollectible" },
+      });
+      const out = await d.svc.sweep(NOW);
+      expect(out.paused).toBe(0);
+      expect(d.notifications.notifyDunning).not.toHaveBeenCalled();
+      expect(d.transition).not.toHaveBeenCalled();
+    });
+
     it("an invoice Stripe now shows paid is resolved (resumed) by the sweep, never paused over", async () => {
       mode("enforced");
       const d = make({
@@ -637,6 +780,7 @@ describe("DunningService", () => {
           }),
         ],
         facts: { ...OPEN_FACTS, status: "paid", amountPaid: 4900, amountRemaining: 0 },
+        txTenant: { status: "READ_ONLY", readOnlyReason: "payment_overdue" },
         exit: { tenantId: "t1", stripeSubId: "sub_1", exitAt: NOW },
       });
       const out = await d.svc.sweep(NOW);
@@ -649,11 +793,46 @@ describe("DunningService", () => {
       );
     });
 
+    it("the post-commit pause_collection set runs in a Tenant-lock tx and is SKIPPED when pausedAt was cleared meanwhile (a resume won)", async () => {
+      mode("enforced");
+      const d = make({
+        sweepRows: [row({ pastDueSince: since })],
+        logged: fullLog(hoursBefore(25)),
+        localPausedAt: null, // invoice.paid resumed between the pause commit and the set
+      });
+      const out = await d.svc.sweep(NOW);
+      expect(out.paused).toBe(1);
+      expect(d.stripe.updateSubscription).not.toHaveBeenCalled();
+      // ...and when it does run it is under the lock, before the Stripe call
+      const kept = make({
+        sweepRows: [row({ pastDueSince: since })],
+        logged: fullLog(hoursBefore(25)),
+        localPausedAt: NOW,
+      });
+      await kept.svc.sweep(NOW);
+      const locks = kept.tx.$queryRaw.mock.invocationCallOrder;
+      expect(locks[locks.length - 1]).toBeLessThan(
+        kept.stripe.updateSubscription.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("a pausedAt that is NOT the stamped one (re-paused since) is not overwritten either", async () => {
+      mode("enforced");
+      const d = make({
+        sweepRows: [row({ pastDueSince: since })],
+        logged: fullLog(hoursBefore(25)),
+        localPausedAt: new Date(NOW.getTime() + 3_600_000),
+      });
+      await d.svc.sweep(NOW);
+      expect(d.stripe.updateSubscription).not.toHaveBeenCalled();
+    });
+
     it("a failed pause_collection call never undoes the local pause", async () => {
       mode("enforced");
       const d = make({
         sweepRows: [row({ pastDueSince: since })],
         logged: fullLog(hoursBefore(25)),
+        localPausedAt: NOW,
       });
       d.stripe.updateSubscription.mockRejectedValue(new Error("stripe down"));
       const out = await d.svc.sweep(NOW);
@@ -662,10 +841,117 @@ describe("DunningService", () => {
     });
   });
 
+  // ─── fold round: quiet logs, copy by mode, the flip sequence ─────────────
+
+  describe("fold round (Opus review of 00801c8b3)", () => {
+    const since = new Date("2026-11-01T00:00:00Z");
+    const H = 3_600_000;
+
+    it("dark: would_pause is logged ONCE per tenant and invoice, not hourly", async () => {
+      mode("dark");
+      const d = make({
+        sweepRows: [row({ pastDueSince: since })],
+        logged: [
+          { milestone: "DUNNING_D0", sentAt: since },
+          { milestone: "DUNNING_D3", sentAt: since },
+          { milestone: "DUNNING_D6", sentAt: since },
+        ],
+      });
+      const log = jest.spyOn((d.svc as any).logger, "log").mockImplementation(() => undefined);
+      const t0 = new Date("2026-11-08T09:00:00Z");
+      await d.svc.sweep(t0);
+      await d.svc.sweep(new Date(t0.getTime() + H));
+      await d.svc.sweep(new Date(t0.getTime() + 2 * H));
+      const lines = log.mock.calls.filter((c: any[]) => /would_pause/.test(String(c[0])));
+      expect(lines).toHaveLength(1);
+    });
+
+    it("enforced: a tenant with no deliverable admin gets ONE warn (and is never paused), not one per hour", async () => {
+      mode("enforced");
+      const d = make({ sweepRows: [row({ pastDueSince: since })] });
+      d.notifications.notifyDunning.mockResolvedValue({ status: "no_recipients", recipients: 0 });
+      const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
+      const t0 = new Date("2026-11-08T09:00:00Z");
+      await d.svc.sweep(t0);
+      await d.svc.sweep(new Date(t0.getTime() + H));
+      const lines = warn.mock.calls.filter((c: any[]) => /no_deliverable_admin/.test(String(c[0])));
+      expect(lines).toHaveLength(1);
+      expect(d.transition).not.toHaveBeenCalled();
+    });
+
+    it("the flip sequence: dark d6 -> enforced sends a SEPARATE final notice; no pause until +24 h AND the 03:00-local sweep", async () => {
+      // America/Chicago, CST (UTC-6) from Nov 1 2026
+      const log: { milestone: string; sentAt: Date }[] = [];
+      const base = make({ sweepRows: [row({ pastDueSince: since })], tz: "America/Chicago" });
+      const d = base;
+      d.prisma.billingNotificationLog.findMany.mockImplementation(async () => [...log]);
+      let clock = new Date();
+      d.notifications.notifyDunning.mockImplementation(
+        async (_t: string, milestone: string, _i: string, kind: string) => {
+          log.push({ milestone, sentAt: clock });
+          sentKinds.push([milestone, kind]);
+          return { status: "sent", recipients: 1 };
+        },
+      );
+      d.notifications.recordDunningMilestone.mockImplementation(async (_t: string, m: string) => {
+        log.push({ milestone: m, sentAt: clock });
+        return true;
+      });
+      const sentKinds: [string, string][] = [];
+      const sweepAt = async (iso: string) => {
+        clock = new Date(iso);
+        return d.svc.sweep(clock);
+      };
+
+      // days 0-6 in DARK: d0, d3, d6 go out; the d6 copy names no read-only date
+      mode("dark");
+      await sweepAt("2026-11-07T20:00:00Z"); // +164 h: only the highest due milestone goes out
+      expect(sentKinds.map((k) => k[1])).toEqual(["d6"]);
+      expect(sentKinds.map((k) => k[0])).not.toContain("DUNNING_FINAL");
+
+      // the owner flips to ENFORCED at 2026-11-08 21:00Z (15:00 local): a separate final notice, NO pause now
+      mode("enforced");
+      const flip = await sweepAt("2026-11-08T21:00:00Z");
+      expect(sentKinds.at(-1)).toEqual(["DUNNING_FINAL", "final"]);
+      expect(flip.paused).toBe(0);
+
+      // +23 h (20:00Z next day, 14:00 local): still no pause
+      expect((await sweepAt("2026-11-09T20:00:00Z")).paused).toBe(0);
+      // +24 h exactly but 02:00 local the NEXT day is later still; first check +27 h = 2026-11-09T24:00 = 18:00 local: pause allowed?
+      // the final notice is >= 24 h old at 2026-11-09T21:00Z (15:00 local, hour >= 3): pause.
+      const out = await sweepAt("2026-11-09T21:00:00Z");
+      expect(out.paused).toBe(1);
+    });
+
+    it("the flip sequence honours 03:00 local: >= 24 h after the final notice but 02:59 local -> no pause; 03:00 -> pause", async () => {
+      const log = [
+        { milestone: "DUNNING_D0", sentAt: since },
+        { milestone: "DUNNING_D3", sentAt: since },
+        { milestone: "DUNNING_D6", sentAt: since },
+        { milestone: "DUNNING_FINAL", sentAt: new Date("2026-11-07T07:00:00Z") },
+      ];
+      mode("enforced");
+      const early = make({
+        sweepRows: [row({ pastDueSince: since })],
+        tz: "America/Chicago",
+        logged: log,
+      });
+      // 2026-11-08T08:59Z = 02:59 CST (>= 24 h after the final notice)
+      expect((await early.svc.sweep(new Date("2026-11-08T08:59:00Z"))).paused).toBe(0);
+      const on = make({
+        sweepRows: [row({ pastDueSince: since })],
+        tz: "America/Chicago",
+        logged: log,
+      });
+      expect((await on.svc.sweep(new Date("2026-11-08T09:00:00Z"))).paused).toBe(1);
+    });
+  });
+
   // ─── invoice.paid ─────────────────────────────────────────────────────────
 
   describe("invoice.paid: resume, or move the clock", () => {
     const now = new Date("2026-11-09T12:00:00Z");
+    const PAUSED = { status: "READ_ONLY", readOnlyReason: "payment_overdue" };
     const pausedRow = (o: Record<string, unknown> = {}) =>
       row({
         pausedAt: new Date("2026-11-08T09:00:00Z"),
@@ -681,17 +967,18 @@ describe("DunningService", () => {
     it("paying the clock invoice resumes: ACTIVE with +MRR once, the clock cleared, pause_collection cleared after", async () => {
       mode("enforced");
       const exit = { tenantId: "t1", stripeSubId: "sub_1", exitAt: now };
-      const d = make({ row: pausedRow(), exit });
+      const d = make({ row: pausedRow(), exit, txTenant: PAUSED });
       expect(await d.svc.onInvoicePaid(invoice(), now)).toBe("resumed");
       expect(d.transition).toHaveBeenCalledTimes(1);
       const a = d.transition.mock.calls[0];
       expect(a[0]).toBe("t1");
-      expect(a[1]).toEqual({
-        status: "READ_ONLY",
-        readOnlyReason: "payment_overdue",
-        subscription: { is: { pastDueInvoiceId: "in_1" } },
-      });
+      // the decision is taken UNDER the Tenant lock, in the same transaction as the resume (joined `tx`)
+      expect(a[1]).toEqual({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
       expect(a.slice(2, 5)).toEqual(["ACTIVE", 1, BILLING_EVENTS.SUBSCRIPTION_RESUMED]);
+      expect(a[6]).toEqual({ tx: d.tx, onExit: expect.any(Function) });
+      expect(d.tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        d.tx.tenant.findUnique.mock.invocationCallOrder[0],
+      );
       expect(d.stripe.updateSubscription).toHaveBeenCalledWith(
         "sub_1",
         { pause_collection: "" },
@@ -708,6 +995,7 @@ describe("DunningService", () => {
       const d = make({
         row: pausedRow(),
         exit: { tenantId: "t1", stripeSubId: "sub_1", exitAt: now },
+        txTenant: PAUSED,
       });
       d.stripe.updateSubscription.mockRejectedValue(new Error("stripe down"));
       await expect(d.svc.onInvoicePaid(invoice(), now)).rejects.toThrow("stripe down");
@@ -726,7 +1014,7 @@ describe("DunningService", () => {
       expect(d.transition).not.toHaveBeenCalled(); // still paused, no MRR
       expect(d.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
         where: { tenantId: "t1", pastDueInvoiceId: "in_2" },
-        data: { pastDueInvoiceId: "in_0", pastDueSince: new Date(1_700_000_000 * 1000) },
+        data: { pastDueInvoiceId: "in_0", pastDueSince: now },
       });
     });
 
@@ -766,7 +1054,7 @@ describe("DunningService", () => {
             class: "PRODUCTION",
           },
         }),
-        transitionResult: false, // the CAS requires readOnlyReason = payment_overdue
+        txTenant: { status: "READ_ONLY", readOnlyReason: "subscription_cancelled" },
       });
       // found by the owed marker alone: its stripeSubId was cleared by the cancel
       expect(await d.svc.onInvoicePaid(invoice(), now)).toBe("cleared");
@@ -781,8 +1069,9 @@ describe("DunningService", () => {
 
     it("dark (an ACTIVE tenant with a clock): paying clears the clock and changes no status", async () => {
       mode("dark");
-      const d = make({ row: row(), transitionResult: false });
+      const d = make({ row: row() }); // the locked re-read says ACTIVE
       expect(await d.svc.onInvoicePaid(invoice(), now)).toBe("cleared");
+      expect(d.transition).not.toHaveBeenCalled();
     });
 
     it("an unreadable Stripe throws before any local write", async () => {
@@ -818,6 +1107,86 @@ describe("DunningService", () => {
         localPausedAt: new Date("2026-11-08T09:00:00Z"),
       });
       await d.svc.onInvoicePaid(invoice(), now);
+      expect(d.stripe.updateSubscription).not.toHaveBeenCalled();
+    });
+
+    it("an UNCOLLECTIBLE sibling is the owner's write-off: it is not owed, so paying the newer failed invoice RESUMES", async () => {
+      mode("enforced");
+      const exit = { tenantId: "t1", stripeSubId: "sub_1", exitAt: now };
+      const d = make({
+        row: pausedRow(),
+        txTenant: PAUSED,
+        exit,
+        // even if a list ever handed back a non-open row, it must not count
+        openInvoices: [
+          { id: "in_9", status: "uncollectible", amount_remaining: 4900, created: 1_700_300_000 },
+        ],
+      });
+      expect(await d.svc.onInvoicePaid(invoice(), now)).toBe("resumed");
+      expect(d.transition).toHaveBeenCalledTimes(1);
+      expect(d.stripe.listOpenSubscriptionInvoices).toHaveBeenCalledWith("sub_1");
+      // no clock was started on the uncollectible invoice
+      expect(d.tx.tenantSubscription.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ pastDueInvoiceId: "in_9" }) }),
+      );
+    });
+
+    it("a clock moved onto a sibling whose d0 was NEVER sent restarts at the move time", async () => {
+      mode("enforced");
+      const d = make({
+        row: pausedRow({ pastDueInvoiceId: "in_2" }),
+        openInvoices: [
+          { id: "in_0", status: "open", amount_remaining: 4900, created: 1_700_000_000 },
+        ],
+        d0: null,
+      });
+      expect(await d.svc.onInvoicePaid(invoice({ id: "in_1" }), now)).toBe("moved");
+      expect(d.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: "t1", pastDueInvoiceId: "in_2" },
+        data: { pastDueInvoiceId: "in_0", pastDueSince: now },
+      });
+    });
+
+    it("moved back onto an invoice whose d0 already went out: it keeps its original time", async () => {
+      mode("enforced");
+      const original = new Date("2026-10-20T00:00:00Z");
+      const d = make({
+        row: pausedRow({ pastDueInvoiceId: "in_2" }),
+        openInvoices: [
+          { id: "in_0", status: "open", amount_remaining: 4900, created: 1_700_000_000 },
+        ],
+        d0: original,
+      });
+      await d.svc.onInvoicePaid(invoice({ id: "in_1" }), now);
+      expect(d.prisma.billingNotificationLog.findFirst).toHaveBeenCalledWith({
+        where: { tenantId: "t1", milestone: "DUNNING_D0", key: "in_0" },
+        select: { sentAt: true },
+      });
+      expect(d.tx.tenantSubscription.updateMany.mock.calls[0][0].data.pastDueSince).toEqual(
+        original,
+      );
+    });
+
+    it("dark: the stale-pause heal only LOGS the would-unpause (it must not remove a hand-set dashboard pause)", async () => {
+      mode("dark");
+      const d = make({
+        row: row({ pastDueInvoiceId: null }),
+        stripeSub: { status: "active", pause_collection: { behavior: "void" } },
+        localPausedAt: null,
+      });
+      const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
+      await d.svc.onInvoicePaid(invoice(), now);
+      expect(d.stripe.updateSubscription).not.toHaveBeenCalled();
+      expect(
+        warn.mock.calls.some((c: any[]) => /would_unpause tenant=t1 sub=sub_1/.test(String(c[0]))),
+      ).toBe(true);
+    });
+
+    it("off: the heal does not even read Stripe", async () => {
+      mode("off");
+      const d = make({ row: row({ pastDueInvoiceId: null }) });
+      await d.svc.onInvoicePaid(invoice(), now);
+      expect(d.stripe.getSubscription).not.toHaveBeenCalled();
       expect(d.stripe.updateSubscription).not.toHaveBeenCalled();
     });
 
@@ -900,11 +1269,15 @@ describe("DunningService", () => {
 
   describe("the pause_collection reconciler", () => {
     const runAt = new Date("2026-11-10T10:00:00Z");
-    const subs = (n = 1) => ({
-      sweepRows: Array.from({ length: n }, () => ({ tenantId: "t1", stripeSubId: "sub_1" })),
-    });
+    const ids = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        tenantId: `t${i + 1}`,
+        stripeSubId: `sub_${i + 1}`,
+      }));
+    const subs = (n = 1) => ({ sweepRows: ids(n) });
 
     it("local paused + Stripe not paused: sets pause_collection, key (tenant, reconcile, runAt), under the Tenant lock", async () => {
+      mode("enforced");
       const d = make({
         ...subs(),
         stripeSub: { status: "active" },
@@ -927,7 +1300,8 @@ describe("DunningService", () => {
       expect(d.order.indexOf("stripe")).toBeLessThan(d.order.indexOf("commit"));
     });
 
-    it("local not paused + Stripe paused: clears it", async () => {
+    it("enforced, local not paused + Stripe paused: clears it", async () => {
+      mode("enforced");
       const d = make({
         ...subs(),
         stripeSub: { status: "active", pause_collection: { behavior: "void" } },
@@ -937,7 +1311,60 @@ describe("DunningService", () => {
       expect(d.stripe.updateSubscription.mock.calls[0][1]).toEqual({ pause_collection: "" });
     });
 
+    it.each(["off", "dark"])(
+      "%s: NEVER writes in the unpause direction (a hand-set dashboard pause survives the first deploy); it LOGS the would-unpause",
+      async (m) => {
+        mode(m);
+        const d = make({
+          ...subs(),
+          stripeSub: { status: "active", pause_collection: { behavior: "void" } },
+          localPausedAt: null,
+        });
+        const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
+        const out = await d.svc.reconcile(runAt);
+        expect(out.corrected).toBe(0);
+        expect(d.stripe.updateSubscription).not.toHaveBeenCalled();
+        expect(
+          warn.mock.calls.some((c: any[]) =>
+            /would_unpause tenant=t1 sub=sub_1/.test(String(c[0])),
+          ),
+        ).toBe(true);
+      },
+    );
+
+    it("would_unpause is logged ONCE per tenant per window, not every hourly run", async () => {
+      mode("dark");
+      const d = make({
+        ...subs(),
+        stripeSub: { status: "active", pause_collection: { behavior: "void" } },
+        localPausedAt: null,
+      });
+      const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
+      const lines = () =>
+        warn.mock.calls.filter((c: any[]) => /would_unpause/.test(String(c[0]))).length;
+      await d.svc.reconcile(runAt);
+      await d.svc.reconcile(new Date(runAt.getTime() + 3_600_000));
+      await d.svc.reconcile(new Date(runAt.getTime() + 2 * 3_600_000));
+      expect(lines()).toBe(1);
+      await d.svc.reconcile(new Date(runAt.getTime() + 26 * 3_600_000)); // the next day's window
+      expect(lines()).toBe(2);
+    });
+
+    it.each(["off", "dark"])(
+      "%s: still sets pause_collection for a tenant that IS locally paused (set direction is safe)",
+      async (m) => {
+        mode(m);
+        const d = make({
+          ...subs(),
+          stripeSub: { status: "active" },
+          localPausedAt: new Date("2026-11-08T09:00:00Z"),
+        });
+        expect((await d.svc.reconcile(runAt)).corrected).toBe(1);
+      },
+    );
+
     it("agreement makes no Stripe write", async () => {
+      mode("enforced");
       const both = make({
         ...subs(),
         stripeSub: { status: "active", pause_collection: { behavior: "void" } },
@@ -951,6 +1378,7 @@ describe("DunningService", () => {
     });
 
     it("a canceled Stripe subscription is out of scope", async () => {
+      mode("enforced");
       const d = make({ ...subs(), stripeSub: { status: "canceled" }, localPausedAt: new Date() });
       const out = await d.svc.reconcile(runAt);
       expect(out.checked).toBe(0);
@@ -960,7 +1388,7 @@ describe("DunningService", () => {
     it("selects Stripe-billed, non-manual rows only", async () => {
       const d = make({ sweepRows: [] });
       await d.svc.reconcile(runAt);
-      expect(d.prisma.tenantSubscription.findMany.mock.calls[0][0].where).toEqual({
+      expect(d.prisma.tenantSubscription.count.mock.calls[0][0].where).toEqual({
         stripeSubId: { not: null },
         externalPayment: false,
         tenant: { deletedAt: null },
@@ -968,6 +1396,7 @@ describe("DunningService", () => {
     });
 
     it("one tenant's Stripe error is counted and the run continues", async () => {
+      mode("enforced");
       const d = make({ ...subs(2), stripeSub: { status: "active" }, localPausedAt: null });
       d.stripe.getSubscription.mockRejectedValueOnce(new Error("boom"));
       const out = await d.svc.reconcile(runAt);
@@ -978,6 +1407,52 @@ describe("DunningService", () => {
       const d = make(subs());
       d.stripe.isConfigured = false;
       expect(await d.svc.reconcile(runAt)).toEqual({ checked: 0, corrected: 0, failed: 0 });
+    });
+
+    describe("pagination: a keyset cursor over the WHOLE population, rotating when over budget", () => {
+      const reached = (d: ReturnType<typeof make>) =>
+        d.stripe.getSubscription.mock.calls.map((c: any[]) => c[0] as string);
+
+      it("reads the population in bounded keyset batches until exhausted", async () => {
+        const d = make({ ...subs(5), stripeSub: { status: "active" } });
+        const out = await d.svc.reconcile(runAt, { maxRows: 100, batchSize: 2 });
+        expect(out.checked).toBe(5);
+        expect(reached(d)).toEqual(["sub_1", "sub_2", "sub_3", "sub_4", "sub_5"]);
+        // 3 batches (2+2+1) plus the empty check is NOT needed: each batch is a keyset page
+        const pages = d.prisma.tenantSubscription.findMany.mock.calls.map((c: any[]) => c[0]);
+        expect(pages.every((p: any) => p.take <= 2)).toBe(true);
+        expect(pages.length).toBeGreaterThanOrEqual(3);
+        expect(pages[1].where.tenantId).toEqual({ gt: "t2" });
+      });
+
+      it("over budget: consecutive hourly runs rotate so EVERY row is reached across runs", async () => {
+        const seen = new Set<string>();
+        for (let h = 0; h < 3; h++) {
+          const d = make({ ...subs(5), stripeSub: { status: "active" } });
+          const at = new Date(runAt.getTime() + h * 3_600_000);
+          const out = await d.svc.reconcile(at, { maxRows: 2, batchSize: 2 });
+          expect(out.checked).toBe(2); // the row budget caps one run
+          for (const id of reached(d)) seen.add(id);
+        }
+        expect([...seen].sort()).toEqual(["sub_1", "sub_2", "sub_3", "sub_4", "sub_5"]);
+      });
+
+      it("the rotation wraps past the end of the keyset", async () => {
+        // pick an hour whose start offset lands on the last row: the run continues from the beginning
+        const total = 5;
+        const budget = 2;
+        let hit: Set<string> | null = null;
+        for (let h = 0; h < 6 && !hit; h++) {
+          const d = make({ ...subs(total), stripeSub: { status: "active" } });
+          await d.svc.reconcile(new Date(runAt.getTime() + h * 3_600_000), {
+            maxRows: budget,
+            batchSize: 2,
+          });
+          const ids2 = reached(d);
+          if (ids2.includes("sub_5") && ids2.includes("sub_1")) hit = new Set(ids2);
+        }
+        expect(hit).not.toBeNull();
+      });
     });
   });
 });
