@@ -173,6 +173,21 @@ describe("billing-notification.templates", () => {
       expect(t.text).toContain("$42.50");
     });
 
+    it("labels the local figure an ESTIMATE — Stripe computes the real proration (SA-733 D8)", () => {
+      const t = upgradeConfirmedTemplate({
+        businessName: "Acme Retail",
+        adminName: "Jamie",
+        fromPlanName: "Starter",
+        toPlanName: "Growth",
+        proratedAmount: 42.5,
+      });
+      expect(t.html).toContain("estimate");
+      expect(t.text).toContain("We estimate a prorated charge of $42.50");
+      expect(t.text).toContain("shown on your next invoice");
+      expect(t.html).not.toContain("has been applied");
+      expect(t.text).not.toContain("has been applied");
+    });
+
     it("formats a zero proration correctly (not blank, not omitted)", () => {
       const t = upgradeConfirmedTemplate({
         businessName: "Acme Retail",
@@ -181,7 +196,10 @@ describe("billing-notification.templates", () => {
         toPlanName: "Growth",
         proratedAmount: 0,
       });
-      expect(t.html).toContain("$0.00");
+      // No charge applies: the email must not claim a prorated charge of $0.00.
+      expect(t.html).toContain("No prorated charge applies now");
+      expect(t.text).toContain("No prorated charge applies now");
+      expect(t.html).not.toContain("estimate");
     });
   });
 

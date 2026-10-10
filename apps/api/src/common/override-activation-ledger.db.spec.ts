@@ -157,7 +157,14 @@ describeDb(
           noop, // jwtService — unused by the methods this spec exercises
           noop, // config
           noop, // emailService
-          { syncStripeSubscriptionPrice: jest.fn().mockResolvedValue(undefined) } as any, // billingService
+          {
+            // D8: Stripe-first push, then the ledger half — no live subscription, nothing to push.
+            pushResolvedPriceToStripe: jest
+              .fn()
+              .mockResolvedValue({ synced: false, reason: "no_active_stripe_subscription" }),
+            revertPricePush: jest.fn().mockResolvedValue(true),
+            syncStripeSubscriptionPrice: jest.fn().mockResolvedValue({ synced: false }),
+          } as any, // billingService
           { resolveTenantPricing: jest.fn().mockResolvedValue({}) } as any, // platformPricingService
           catalogReader,
           noop, // proration — unused by these two methods
@@ -170,6 +177,7 @@ describeDb(
           noop, // tenantMirror
           noop, // featureOverrides
           planTransitionStub,
+          noop, // stripe
         );
       platformAdmin = makeAdmin(catalog);
 
