@@ -12,11 +12,16 @@ describe("glob ReDoS guards", () => {
     expect(() => G.globToRegex("a*/b*/c*/d*/e*/f")).toThrow(/unsafe glob/);
     expect(() => G.globToRegex("**/*a*b")).not.toThrow();
   });
-  it("a 1,024-char path against **/*a*b completes < 50 ms", () => {
+  it("a 1,024-char path against **/*a*b completes within a small CPU budget", () => {
     const re = G.globToRegex("**/*a*b");
-    const t = performance.now();
-    re.test("a".repeat(1024));
-    expect(performance.now() - t).toBeLessThan(50);
+    const input = "a".repeat(1024);
+    const c0 = process.cpuUsage();
+    re.test(input);
+    const c = process.cpuUsage(c0);
+    const cpuMs = (c.user + c.system) / 1000;
+    // L-165: CPU time (process.cpuUsage), not wall time: wall stretches 3-10x under host load, a
+    // ReDoS blowup costs seconds of CPU. Quiet-host measured 0 ms (below the 15 ms CPU tick); budget 150 ms.
+    expect(cpuMs).toBeLessThan(150);
   });
   it("expand skips paths longer than 1,024 chars", () => {
     const long = "a".repeat(1025);
@@ -30,15 +35,19 @@ describe("glob ReDoS guards", () => {
 describe("glob round 2", () => {
   const path = "a/".repeat(512);
   const fast = (glob: string) => {
-    const t = performance.now();
+    const c0 = process.cpuUsage();
     try {
       G.globToRegex(glob).test(path);
     } catch (e) {
       expect(String(e)).toMatch(/unsafe glob/);
     }
-    expect(performance.now() - t).toBeLessThan(50);
+    const c = process.cpuUsage(c0);
+    const cpuMs = (c.user + c.system) / 1000;
+    // L-165: CPU time (process.cpuUsage), not wall time: wall stretches 3-10x under host load, a
+    // ReDoS blowup costs seconds of CPU. Quiet-host measured 0 ms (below the 15 ms CPU tick); budget 150 ms.
+    expect(cpuMs).toBeLessThan(150);
   };
-  it("stacked ** globs throw or finish < 50 ms", () => {
+  it("stacked ** globs throw or finish within a small CPU budget", () => {
     fast("**a/**a/**a/**b");
     fast("**/a/**/a/**/a/**/b");
   });
