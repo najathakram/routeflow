@@ -1,3 +1,4 @@
+import { READ_ONLY_STATUS } from "../billing/dunning-config";
 import { Controller, Get, UseGuards, UseInterceptors } from "@nestjs/common";
 import { ApiBearerAuth, ApiHeader, ApiOperation, ApiTags } from "@nestjs/swagger";
 import type { BuyerSellerCapability } from "@routeflow/types";
@@ -31,6 +32,6 @@ export class BuyerCapabilitiesController {
     // Exactly { portalMethods, portalDefault, fleet, acceptingOrders } — no staff fields. `acceptingOrders` is the
     // ONE thing a buyer learns about a paused seller (SA-733r6): no reason, nothing about billing.
     const capability = await this.fulfilmentCapability.forBuyer(ctx.tenantId);
-    return { ...capability, acceptingOrders: ctx.sellerStatus !== "READ_ONLY" };
+    return { ...capability, acceptingOrders: ctx.sellerStatus !== READ_ONLY_STATUS };
   }
 }

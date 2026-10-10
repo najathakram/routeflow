@@ -1,3 +1,4 @@
+import { READ_ONLY_STATUS } from "../../billing/dunning-config";
 import {
   BadRequestException,
   CanActivate,
@@ -8,6 +9,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { BLOCKED_SELLER_STATUSES, liveBuyerLinkWhere } from "../buyer-link-scope";
 import type { BuyerJwtPayload } from "../interfaces/buyer-jwt-payload.interface";
 
@@ -65,6 +67,17 @@ export class BuyerSellerContextGuard implements CanActivate {
         );
       }
       throw new ForbiddenException("No active connection to this seller");
+    }
+
+    // SA-733r6 (B4): a READ_ONLY seller (ANY reason) takes no buyer writes. The global TenantStatusGuard never sees a
+    // buyer (a buyer token has no tenantId claim), so THIS guard is the server's authority; the buyer UI line is a
+    // courtesy. Reads pass. Coded and neutral: a buyer is never told why, or anything about the seller's billing.
+    const method = String(req.method ?? "GET").toUpperCase();
+    if (tenant.status === READ_ONLY_STATUS && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+      throw new ForbiddenException({
+        code: API_ERROR_CODES.SELLER_UNAVAILABLE,
+        message: "This seller isn't taking online orders right now. Please check back soon.",
+      });
     }
 
     // Populate request for downstream handlers / BuyerTenantInterceptor

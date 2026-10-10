@@ -89,7 +89,7 @@ describe("TenantStatusGuard - READ_ONLY allow-list (B4 pin)", () => {
     ["POST", "/api/v1/billing/portal"],
     ["POST", "/api/v1/orders/counter-sale/day-close"],
     ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/reopen"],
-    ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/reclose"],
+    ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/report"],
     ["POST", "/api/v1/orders/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/receipt"],
   ];
   const BLOCKED: Array<[string, string]> = [
@@ -107,6 +107,13 @@ describe("TenantStatusGuard - READ_ONLY allow-list (B4 pin)", () => {
     ["POST", "/api/v1/orders/o1/receipt/extra"],
     ["POST", "/api/v1/orders/o1/receipts"],
     ["DELETE", "/api/v1/orders/counter-sale/day-close"],
+    // SA ruling: there is NO /reclose (the re-close is the same POST); the id is a UUID, nothing looser
+    ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/reclose"],
+    ["POST", "/api/v1/orders/counter-sale/day-close/not-a-uuid/reopen"],
+    ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab"],
+    // the plan-restore paths are POST-only (a read passes anyway); nothing else rides on the prefix
+    ["DELETE", "/api/v1/billing/subscription"],
+    ["PUT", "/api/v1/billing/subscription/cancel"],
   ];
 
   it.each(ALLOWED)("allows %s %s while READ_ONLY", async (method, path) => {
@@ -121,8 +128,18 @@ describe("TenantStatusGuard - READ_ONLY allow-list (B4 pin)", () => {
     expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
   });
 
-  it("exports the allow-list as data (exact entries) so a new entry is a reviewed one-line diff", () => {
-    expect(READ_ONLY_ALLOWED_MUTATIONS).toHaveLength(8);
+  it("pins the allow-list entries EXACTLY (anchored patterns; the day-close ones match nothing on bases without SA-750)", () => {
+    expect(READ_ONLY_ALLOWED_MUTATIONS.map((e) => [e.methods, e.pattern])).toEqual([
+      ["ANY", /^\/api\/v1\/auth\//],
+      [["POST"], /^\/api\/v1\/billing\/subscribe$/],
+      [["POST"], /^\/api\/v1\/billing\/quote$/],
+      [["POST"], /^\/api\/v1\/billing\/subscription(\/.*)?$/],
+      [["POST"], /^\/api\/v1\/billing\/portal$/],
+      [["POST"], /^\/api\/v1\/orders\/counter-sale\/day-close$/],
+      [["POST"], /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/reopen$/],
+      [["POST"], /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/report$/],
+      [["POST"], /^\/api\/v1\/orders\/[^/]+\/receipt$/],
+    ]);
   });
 });
 

@@ -68,10 +68,12 @@ const link = (
   },
 });
 
-function boot(rows: any[]) {
+function boot(rows: any[], opts: { tenantStatus?: string; method?: string } = {}) {
   const prisma = {
     tenant: {
-      findUnique: jest.fn().mockResolvedValue({ id: "tn-1", slug: "acme", status: "ACTIVE" }),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ id: "tn-1", slug: "acme", status: opts.tenantStatus ?? "ACTIVE" }),
     },
     customerLink: {
       findFirst: jest.fn(
@@ -80,7 +82,13 @@ function boot(rows: any[]) {
     },
   };
   const guard = new BuyerSellerContextGuard(prisma as any);
-  const req: any = { user: { sub: "b-1" }, headers: { "x-tenant-slug": "acme" } };
+  // The REAL buyer token shape (BuyerJwtPayload): `type: "BUYER"`, a sub, and NO tenantId / role claim - which is
+  // why the global TenantStatusGuard (it reads tenantId from the JWT) never sees a buyer.
+  const req: any = {
+    user: { sub: "b-1", email: "buyer@example.test", name: "Buyer", type: "BUYER" },
+    headers: { "x-tenant-slug": "acme" },
+    method: opts.method,
+  };
   const ctx: any = { switchToHttp: () => ({ getRequest: () => req }) };
   return { guard, req, ctx };
 }
@@ -151,5 +159,48 @@ describe("BuyerSellerContextGuard — the buyer's own account (#2142 R1)", () =>
     const { guard, req, ctx } = boot([link("ACTIVE", null, { status: "ACTIVE", deletedAt: null })]);
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
     expect(req.buyerCustomer.customerId).toBe("c-1");
+  });
+});
+
+// SA-733r6 (B4) B1: the SERVER refuses a buyer's write to a read-only seller. The buyer UI line is only a courtesy;
+// a real buyer token carries no tenantId, so the global TenantStatusGuard cannot do this - this guard can, because
+// it has just resolved the seller. One boolean-grade refusal: coded SELLER_UNAVAILABLE, neutral wording, never the
+// reason (payment_overdue, trial_expired, cancelled ... all look the same to a buyer).
+describe("BuyerSellerContextGuard - a read-only seller (B4)", () => {
+  const live = () => [link("ACTIVE", null)];
+
+  it.each(["POST", "PATCH", "PUT", "DELETE"])(
+    "%s to a READ_ONLY seller -> 403 SELLER_UNAVAILABLE with no billing wording",
+    async (method) => {
+      const { guard, req, ctx } = boot(live(), { tenantStatus: "READ_ONLY", method });
+      const err: any = await guard.canActivate(ctx).catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      const body = err.getResponse();
+      expect(body.code).toBe("SELLER_UNAVAILABLE");
+      expect(body.message).not.toMatch(/payment|billing|subscri|plan|overdue|trial|cancel/i);
+      expect(req.buyerCustomer).toBeUndefined();
+    },
+  );
+
+  it.each(["GET", "HEAD", "OPTIONS"])(
+    "%s to a READ_ONLY seller still passes (browse, view)",
+    async (method) => {
+      const { guard, req, ctx } = boot(live(), { tenantStatus: "READ_ONLY", method });
+      await expect(guard.canActivate(ctx)).resolves.toBe(true);
+      expect(req.buyerCustomer.customerId).toBe("c-1");
+    },
+  );
+
+  it("a POST to an ACTIVE or TRIAL seller passes", async () => {
+    for (const tenantStatus of ["ACTIVE", "TRIAL"]) {
+      const { guard, ctx } = boot(live(), { tenantStatus, method: "POST" });
+      await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    }
+  });
+
+  it("a buyer who is not linked still gets the ordinary refusal, not SELLER_UNAVAILABLE", async () => {
+    const { guard, ctx } = boot([], { tenantStatus: "READ_ONLY", method: "POST" });
+    const err: any = await guard.canActivate(ctx).catch((e) => e);
+    expect(err.getResponse().code).not.toBe("SELLER_UNAVAILABLE");
   });
 });

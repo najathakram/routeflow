@@ -22,7 +22,7 @@ const CACHE_TTL_MS = 60_000;
  * Anchored patterns, never substrings, so a neighbouring route cannot ride in. Route-scoped, never a role bypass.
  *  - the auth routes and the plan-restore paths (a tenant must be able to sign in and buy its way out);
  *  - the admin's billing portal (`@Roles(TENANT_ADMIN)` on the route);
- *  - the end-of-day close, its reopen and its re-close (housekeeping on cash already taken);
+ *  - the end-of-day close (also the re-close), its reopen and the Z-report re-send (housekeeping on cash already taken);
  *  - the e-mailed receipt of an EXISTING sale (it counts as print / export; only the send log is written).
  * Everything else (sales, orders, invoices, estimates, payments) stays refused with 403 READ_ONLY.
  * The day-close routes ship with SA-750; until they land the entries match nothing.
@@ -32,14 +32,20 @@ export const READ_ONLY_ALLOWED_MUTATIONS: ReadonlyArray<{
   pattern: RegExp;
 }> = [
   { methods: "ANY", pattern: /^\/api\/v1\/auth\// },
-  { methods: "ANY", pattern: /^\/api\/v1\/billing\/subscribe$/ },
-  { methods: "ANY", pattern: /^\/api\/v1\/billing\/quote$/ },
-  { methods: "ANY", pattern: /^\/api\/v1\/billing\/subscription(\/.*)?$/ },
+  { methods: ["POST"], pattern: /^\/api\/v1\/billing\/subscribe$/ },
+  { methods: ["POST"], pattern: /^\/api\/v1\/billing\/quote$/ },
+  { methods: ["POST"], pattern: /^\/api\/v1\/billing\/subscription(\/.*)?$/ },
   { methods: ["POST"], pattern: /^\/api\/v1\/billing\/portal$/ },
+  // SA-750r3 O1 (as built on feat/counter-day-close): the close AND the re-close are the same POST.
   { methods: ["POST"], pattern: /^\/api\/v1\/orders\/counter-sale\/day-close$/ },
   {
     methods: ["POST"],
-    pattern: /^\/api\/v1\/orders\/counter-sale\/day-close\/[^/]+\/(reopen|reclose)$/,
+    pattern: /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/reopen$/,
+  },
+  // The Z-report re-send (log-only).
+  {
+    methods: ["POST"],
+    pattern: /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/report$/,
   },
   { methods: ["POST"], pattern: /^\/api\/v1\/orders\/[^/]+\/receipt$/ },
 ];
