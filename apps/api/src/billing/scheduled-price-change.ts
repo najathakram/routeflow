@@ -11,7 +11,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { findPlanDefinition } from "./plan-catalog.constants";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { markNeedsReconcile } from "./needs-reconcile";
-import { PLAN_CHANGE_BILLING_FAILED } from "./plan-change-stripe";
+import { PLAN_CHANGE_BILLING_FAILED, type PlanChangeAudience } from "./plan-change-stripe";
 import { resolvePlanPrice } from "./plan-price";
 import { underTenantPriceLock } from "./price-lock";
 import { CHECKOUT_ADDON_EXPAND, stripeAddonItemIds } from "./stripe-addon-items";
@@ -48,6 +48,10 @@ import { StripeService } from "./stripe.service";
  */
 
 /** The backup sweep covers a downgrade whose period ends within this window. */
+/** N4: what a TENANT is told when the scheduled downgrade's price cannot be checked before its own change. */
+export const SCHEDULED_PRICE_TENANT_REFUSED =
+  "We couldn't change your plan right now. Nothing was changed. Please try again later or contact support.";
+
 export const SCHEDULED_PRICE_LEAD_MS = 48 * 60 * 60 * 1000;
 
 export type ScheduledPriceOutcome =
@@ -146,7 +150,7 @@ export class ScheduledPriceChangeService {
   async restoreIfPushedLocked(
     tenantId: string,
     scheduledTargetPlanKey: string,
-    opts: { mustBeCleared: boolean },
+    opts: { mustBeCleared: boolean; audience?: PlanChangeAudience },
   ): Promise<void> {
     const sub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
@@ -186,9 +190,12 @@ export class ScheduledPriceChangeService {
       if (!opts.mustBeCleared) {
         throw new BadRequestException({
           code: API_ERROR_CODES.SCHEDULED_PRICE_CHANGE_REFUSED,
+          // N4: a TENANT (the upgrade) sees fixed copy; an admin keeps the operator detail.
           message:
-            "The price of the scheduled downgrade cannot be resolved, so Stripe's current price cannot be " +
-            "verified before this change. Resolve the plan's price first.",
+            opts.audience === "admin"
+              ? "The price of the scheduled downgrade cannot be resolved, so Stripe's current price cannot be " +
+                "verified before this change. Resolve the plan's price first."
+              : SCHEDULED_PRICE_TENANT_REFUSED,
         });
       }
       return;

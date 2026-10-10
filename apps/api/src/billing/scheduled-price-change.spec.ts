@@ -31,7 +31,11 @@ jest.mock("../common/db-locks", () => ({
 
 import { BadRequestException, ConflictException, Logger } from "@nestjs/common";
 import { BillingService } from "./billing.service";
-import { ScheduledPriceChangeService, SCHEDULED_PRICE_LEAD_MS } from "./scheduled-price-change";
+import {
+  SCHEDULED_PRICE_TENANT_REFUSED,
+  ScheduledPriceChangeService,
+  SCHEDULED_PRICE_LEAD_MS,
+} from "./scheduled-price-change";
 import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
 
 const HOUR = 60 * 60 * 1000;
@@ -448,6 +452,29 @@ describe("restoreIfPushedLocked (the caller holds the lock and is about to prora
     expect(err).toBeInstanceOf(BadRequestException);
     expect(err.getResponse().code).toBe("SCHEDULED_PRICE_CHANGE_REFUSED");
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  it("N4: the refusal a TENANT sees (default audience) has no operator wording; an ADMIN keeps 'Resolve the plan's price first'", async () => {
+    const unresolvable = () => {
+      const m = make([kept()], [baseItem({ unit_amount: 5900 })]);
+      m.catalog.getVersionForTenant.mockResolvedValue({
+        ...CATALOG,
+        definitions: [{ planKey: "BUSINESS", name: "Business", monthlyPrice: null }],
+      });
+      return m.svc;
+    };
+    const tenantErr: any = await unresolvable()
+      .restoreIfPushedLocked("t1", "STARTER", { mustBeCleared: false })
+      .catch((e) => e);
+    expect(tenantErr.getResponse().code).toBe("SCHEDULED_PRICE_CHANGE_REFUSED");
+    expect(tenantErr.getResponse().message).toBe(SCHEDULED_PRICE_TENANT_REFUSED);
+    expect(tenantErr.getResponse().message).not.toMatch(/stripe|resolve|verified/i);
+
+    const adminErr: any = await unresolvable()
+      .restoreIfPushedLocked("t1", "STARTER", { mustBeCleared: false, audience: "admin" })
+      .catch((e) => e);
+    expect(adminErr.getResponse().code).toBe("SCHEDULED_PRICE_CHANGE_REFUSED");
+    expect(adminErr.getResponse().message).toContain("Resolve the plan's price first");
   });
 
   it("... but a best-effort caller (resume / cancel, already committed) just returns", async () => {

@@ -917,6 +917,7 @@ export class PlatformAdminService {
     if (priorSub?.stripeSubId && priorSub.downgradeToPlanKey && fromKey !== targetPlanKey) {
       await this.scheduledPrice?.restoreIfPushedLocked(id, priorSub.downgradeToPlanKey, {
         mustBeCleared: false,
+        audience: "admin",
       });
     }
     const flowArgs = planChangeArgs({
@@ -927,6 +928,7 @@ export class PlatformAdminService {
       proration: isUpgrade ? "create_prorations" : "none",
       retireAddons: retiresAddons,
       actorId: adminId,
+      audience: "admin",
     });
     const manual = await manualPayContext(this.prisma, id, this.stripe.isConfigured, priorSub);
     const flow = await beginStripeFirstPlanChange(
@@ -1796,6 +1798,7 @@ export class PlatformAdminService {
     if (existing?.stripeSubId && existing.downgradeToPlanKey) {
       await this.scheduledPrice?.restoreIfPushedLocked(id, existing.downgradeToPlanKey, {
         mustBeCleared: false,
+        audience: "admin",
       });
     }
 
@@ -2047,11 +2050,27 @@ export class PlatformAdminService {
           OR: [{ planVersionId: version.id }, { planVersionId: null }],
         },
       },
-      select: { tenantId: true, planKey: true, tenant: { select: { plan: true } } },
+      select: {
+        tenantId: true,
+        planKey: true,
+        downgradeToPlanKey: true,
+        tenant: { select: { plan: true } },
+      },
     });
-    const targets = candidates.filter(
+    const onPlan = candidates.filter(
       (c) => normalizePlanKey(c.planKey ?? c.tenant.plan) === planKey,
     );
+    // N3 (R1 Option B): a tenant with a scheduled DOWNGRADE has (or soon will have) the target's lower price
+    // pushed onto its Stripe base item BEFORE the renewal (ScheduledPriceChangeService). Syncing it here would
+    // price Stripe from the plan it is LEAVING and revert that push, so the renewal bills the old plan again.
+    // Skipped and logged; the scheduled push owns its price until the downgrade lands or is cancelled.
+    const targets = onPlan.filter((c) => !c.downgradeToPlanKey);
+    let skippedDowngrade = onPlan.length - targets.length;
+    for (const c of onPlan.filter((c) => c.downgradeToPlanKey)) {
+      this.logger.log(
+        `Plan price fan-out: tenant ${c.tenantId} skipped - a downgrade to ${c.downgradeToPlanKey} is scheduled (its price is owned by the scheduled push)`,
+      );
+    }
 
     let synced = 0;
     let failed = 0;
@@ -2059,10 +2078,22 @@ export class PlatformAdminService {
       try {
         // The same per-tenant price lock the override flow takes, so the fan-out cannot overwrite an
         // override Stripe update that has not committed yet.
-        const result = await underTenantPriceLock(target.tenantId, () =>
-          this.billingService.syncStripeSubscriptionPrice(target.tenantId),
-        );
-        if (result?.synced) synced++;
+        const result = await underTenantPriceLock(target.tenantId, async () => {
+          // Re-proved UNDER the lock: a downgrade scheduled since the scan above is skipped too.
+          const armed = await this.prisma.tenantSubscription.findUnique({
+            where: { tenantId: target.tenantId },
+            select: { downgradeToPlanKey: true },
+          });
+          if (armed?.downgradeToPlanKey) {
+            this.logger.log(
+              `Plan price fan-out: tenant ${target.tenantId} skipped - a downgrade to ${armed.downgradeToPlanKey} was scheduled meanwhile`,
+            );
+            return "skipped" as const;
+          }
+          return this.billingService.syncStripeSubscriptionPrice(target.tenantId);
+        });
+        if (result === "skipped") skippedDowngrade++;
+        else if (result?.synced) synced++;
       } catch (e) {
         failed++;
         this.logger.warn(
@@ -2085,6 +2116,7 @@ export class PlatformAdminService {
         updated: targets.length,
         synced,
         failed,
+        skippedDowngrade,
       },
     });
 
@@ -2095,6 +2127,7 @@ export class PlatformAdminService {
       updated: targets.length,
       synced,
       failed,
+      skippedDowngrade,
     };
   }
 

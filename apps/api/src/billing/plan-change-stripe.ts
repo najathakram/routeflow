@@ -45,6 +45,18 @@ export const PLAN_CHANGE_BILLING_FAILED =
   "We couldn't change the plan because billing didn't go through. Nothing was changed. Please try again.";
 
 /**
+ * N4: who reads an error. A plan change a TENANT asked for (the self-serve upgrade) must never show operator
+ * wording ("reconcile the subscription", "Stripe now bills $X"); an admin's own plan edit keeps the detail. The
+ * default is the tenant: forgetting to say so fails safe.
+ */
+export type PlanChangeAudience = "tenant" | "admin";
+
+/** Fixed tenant-facing copy for a plan change whose billing outcome is not settled yet - never a Stripe/internal detail. */
+export const PLAN_CHANGE_NEEDS_SUPPORT =
+  "We couldn't finish changing your plan. Our team has been notified and will sort it out shortly. " +
+  "Please don't try again - contact support if you have any questions.";
+
+/**
  * A subscription that is paused or incomplete cannot take a price change; retrying will not help. Says what to
  * do instead, never "try again".
  */
@@ -87,6 +99,8 @@ export interface PlanChangePushArgs {
   deleteItems: readonly DeletableAddonItem[];
   /** The local row's state, carried only into the needs-reconcile alert. */
   localState?: Record<string, unknown>;
+  /** Who reads an error from this push (default: the tenant). */
+  audience?: PlanChangeAudience;
 }
 
 interface PriceData {
@@ -343,8 +357,10 @@ export async function pushPlanChange(
       throw new BadGatewayException({
         code: API_ERROR_CODES.PLAN_CHANGE_STRIPE_AHEAD,
         message:
-          "We could not confirm whether Stripe applied the plan change - reconcile the subscription " +
-          "before changing the plan again.",
+          a.audience === "admin"
+            ? "We could not confirm whether Stripe applied the plan change - reconcile the subscription " +
+              "before changing the plan again."
+            : PLAN_CHANGE_NEEDS_SUPPORT,
       });
     }
     const liveItems: any[] = Array.isArray(live?.items?.data) ? live.items.data : [];
