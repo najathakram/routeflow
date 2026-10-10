@@ -14,7 +14,9 @@
  * REG-B864-DB-RACE: the tenant-row `FOR UPDATE` lock both methods take first (SA-163 shape)
  * serialises a concurrent `updateTenantPriceOverride` + `activateManualSubscription` pair no
  * matter which one wins the race — the ledger sum lands on the same $1200 either way (see the
- * per-branch reasoning in this file's test body).
+ * per-branch reasoning in this file's test body). The harness runs the REAL BillingService, so the
+ * override's ledger half (reconcilePriceLedger) is exercised; a stubbed sync would leave the
+ * activation-first order at the catalog price.
  *
  * REG-B865-DB: `SubscriptionMutationService.enableAddon()` books through the shared
  * `emitAddonDelta` ledger writer (`addon-ledger.ts`), which gates its own emit on the same
@@ -55,6 +57,8 @@ import { SubscriptionMutationService } from "../billing/subscription-mutation.se
 import { BillingEventService } from "../billing/billing-event.service";
 import { MrrService } from "../billing/mrr.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { PlatformPricingService } from "../billing/platform-pricing.service";
+import { BillingService } from "../billing/billing.service";
 import { ProrationService } from "../billing/proration.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -151,21 +155,33 @@ describeDb(
       const events = new BillingEventService(prisma as any);
       const mrr = new MrrService(prisma as any);
 
-      makeAdmin = (catalogReader: any) =>
-        new PlatformAdminService(
+      // B864: the override's ledger half (`syncStripeSubscriptionPrice` -> `reconcilePriceLedger`) is what
+      // books the difference when a manual activation committed BEFORE the override, so the REAL
+      // BillingService and PlatformPricingService run here; only Stripe is a stand-in (these tenants have no
+      // stripeSubId, so nothing is pushed).
+      makeAdmin = (catalogReader: any) => {
+        const pricing = new PlatformPricingService(prisma as any, catalogReader);
+        const billing = new BillingService(
+          prisma as any,
+          { isConfigured: false } as any, // stripe
+          { send: jest.fn().mockResolvedValue({}) } as any, // email
+          { invalidate: jest.fn() } as any, // tenantStatusGuard
+          events,
+          pricing,
+          { notifyCancelled: jest.fn(), notifySuspended: jest.fn() } as any, // billingNotification
+          planTransitionStub,
+          {
+            checkoutAddonLines: async () => ({ lineItems: [], skus: [] }),
+            adoptCheckoutAddons: async () => undefined,
+          } as any, // mutations
+        );
+        return new PlatformAdminService(
           prisma as any,
           noop, // jwtService — unused by the methods this spec exercises
           noop, // config
           noop, // emailService
-          {
-            // D8: Stripe-first push, then the ledger half — no live subscription, nothing to push.
-            pushResolvedPriceToStripe: jest
-              .fn()
-              .mockResolvedValue({ synced: false, reason: "no_active_stripe_subscription" }),
-            revertPricePush: jest.fn().mockResolvedValue(true),
-            syncStripeSubscriptionPrice: jest.fn().mockResolvedValue({ synced: false }),
-          } as any, // billingService
-          { resolveTenantPricing: jest.fn().mockResolvedValue({}) } as any, // platformPricingService
+          billing,
+          pricing,
           catalogReader,
           noop, // proration — unused by these two methods
           noop, // entitlementsService
@@ -179,6 +195,7 @@ describeDb(
           planTransitionStub,
           noop, // stripe
         );
+      };
       platformAdmin = makeAdmin(catalog);
 
       subscriptionMutation = new SubscriptionMutationService(
@@ -275,31 +292,58 @@ describeDb(
       expect(sub.cycle).toBe("ANNUAL");
     });
 
-    it("REG-B864-DB-RACE: a concurrent price-override + manual activation on the same tenant serialise through the tenant row lock and book exactly $1200 total, never $0 or $2400", async () => {
-      const tenantId = await makeTrialTenant("b864-race", "GROWTH");
+    it("REG-B864-DB-ORDER: a manual activation that commits BEFORE the price override leaves exactly $1200 on the ledger once the override's ledger half has run", async () => {
+      // The activation-first interleaving of the race below, forced deterministically. The activation crosses
+      // into the paying set against NO override yet, so it snapshots and books the catalog price; the override
+      // then finds the snapshot already set (no back-fill) and its ledger half
+      // (`syncStripeSubscriptionPrice` -> `reconcilePriceLedger`) books the difference.
+      const tenantId = await makeTrialTenant("b864-order", "GROWTH");
 
-      // Whichever of the two wins the tenant-row `FOR UPDATE` lock first fully commits before
-      // the other proceeds (both take the lock as their first statement inside their own
-      // transaction). If the price-override commits first, the activation reads the $1200
-      // snapshot and books it. If the activation commits first (against the still-null
-      // snapshot, contributing $0), the price-override's own backfill-gate re-reads the tenant
-      // row UNDER its lock — now ACTIVE/paying — and books the $1200 itself. Either interleaving
-      // nets to the same $1200; only the event that carries it differs.
-      await Promise.all([
-        platformAdmin.updateTenantPriceOverride(tenantId, { monthly: 1200 } as any, "admin-1"),
-        platformAdmin.activateManualSubscription(
-          tenantId,
-          {
-            plan: "STARTER",
-            paymentMethod: "ZELLE",
-            paymentRef: "ref-2",
-            billingPeriodDays: 365,
-          } as any,
-          "admin-1",
-        ),
-      ]);
+      await platformAdmin.activateManualSubscription(
+        tenantId,
+        {
+          plan: "STARTER",
+          paymentMethod: "ZELLE",
+          paymentRef: "ref-o",
+          billingPeriodDays: 365,
+        } as any,
+        "admin-1",
+      );
+      expect(await ledgerSum(tenantId)).toBe(starterPrice);
+
+      await platformAdmin.updateTenantPriceOverride(tenantId, { monthly: 1200 } as any, "admin-1");
 
       expect(await ledgerSum(tenantId)).toBe(1200);
+    });
+
+    it("REG-B864-DB-RACE: a concurrent price-override + manual activation on the same tenant serialise through the tenant row lock and book exactly $1200 total, never $0 or $2400", async () => {
+      for (let i = 0; i < 3; i++) {
+        const tenantId = await makeTrialTenant(`b864-race${i}`, "GROWTH");
+
+        // Whichever of the two wins the tenant-row `FOR UPDATE` lock first fully commits before
+        // the other proceeds. Override first: the activation reads the $1200 snapshot and books it.
+        // Activation first: it crosses against NO override yet, so it snapshots and books the catalog
+        // price (STARTER); the override finds that snapshot set (no back-fill) and its ledger half
+        // (`reconcilePriceLedger`) books the difference. Either way the sum is $1200. Which one wins
+        // depends on how much work each does before its transaction (the override now takes the
+        // `tenant-price` lock and a Stripe-first push first), so REG-B864-DB-ORDER pins the
+        // activation-first order deterministically and this test repeats the race.
+        await Promise.all([
+          platformAdmin.updateTenantPriceOverride(tenantId, { monthly: 1200 } as any, "admin-1"),
+          platformAdmin.activateManualSubscription(
+            tenantId,
+            {
+              plan: "STARTER",
+              paymentMethod: "ZELLE",
+              paymentRef: "ref-2",
+              billingPeriodDays: 365,
+            } as any,
+            "admin-1",
+          ),
+        ]);
+
+        expect(await ledgerSum(tenantId)).toBe(1200);
+      }
     });
 
     it("REG-B865-DB: a TRIAL tenant's unbilled self-serve add-on is priced 0 and books zero events; manual activation books the base once (plan.changed) and then prices the add-on and books its delta once (addon.enabled)", async () => {
