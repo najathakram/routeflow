@@ -96,10 +96,12 @@ import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { describeSaveError } from "@/lib/reason-copy";
 import { isInShell } from "@/lib/in-shell";
+import { TimeZoneDatalist } from "@/components/TimeZoneInput";
+import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
-const profileSchema = z.object({
+const profileShape = {
   businessName: z.string().min(1, "Required"),
   email: z.string().email("Enter a valid email"),
   ownerName: z.string().min(1, "Required"),
@@ -110,13 +112,26 @@ const profileSchema = z.object({
   state: z.string().optional(),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
   taxRate: z.coerce.number().min(0).max(100),
-});
-type ProfileFormValues = z.infer<typeof profileSchema>;
+};
+/** The zone is validated only when the viewer can edit it, so a hidden field can never block a save. */
+const profileSchemaFor = (canEditTimeZone: boolean) =>
+  z.object({
+    ...profileShape,
+    timezone: canEditTimeZone
+      ? z.string().refine((v) => isValidTimeZone(v), TIME_ZONE_REQUIRED_COPY)
+      : z.string().optional(),
+  });
+type ProfileFormValues = z.infer<ReturnType<typeof profileSchemaFor>>;
+
+const INVALID_ZONE_COPY = "That isn't a valid time zone. Pick one from the list.";
+const ZONE_FORBIDDEN_COPY = "Only an account admin can change the time zone.";
 
 function BusinessProfileTab() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { branding, refresh: refreshBranding } = useTenant();
+  // Only a tenant admin may change the time zone; everyone else sees it read-only.
+  const canEditTimeZone = useAuth().user?.role === "TENANT_ADMIN";
   const [logoPreview, setLogoPreview] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -126,7 +141,9 @@ function BusinessProfileTab() {
   });
 
   const saveSettings = useMutation({
-    mutationFn: (data: ProfileFormValues) => apiClient.patch("/settings", data).then((r) => r.data),
+    // `timezone` rides along only when an admin actually changed it.
+    mutationFn: (data: Omit<ProfileFormValues, "timezone"> & { timezone?: string }) =>
+      apiClient.patch("/settings", data).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({
@@ -135,7 +152,20 @@ function BusinessProfileTab() {
         variant: "success",
       });
     },
-    onError: () => toast({ title: "Failed to save settings", variant: "error" }),
+    onError: (err: unknown, sent) => {
+      const res = (err as { response?: { status?: number; data?: { code?: string } } })?.response;
+      // The server's own text is never shown: a refused zone and a refused role each get one fixed line.
+      if (res?.data?.code === "INVALID_TIME_ZONE") {
+        setError("timezone", { message: INVALID_ZONE_COPY });
+        toast({ title: INVALID_ZONE_COPY, variant: "error" });
+        return;
+      }
+      if (res?.status === 403 && sent.timezone) {
+        toast({ title: ZONE_FORBIDDEN_COPY, variant: "error" });
+        return;
+      }
+      toast({ title: "Failed to save settings", variant: "error" });
+    },
   });
 
   // Logo upload — POSTs the file to /tenants/me/config/branding/logo as
@@ -174,9 +204,10 @@ function BusinessProfileTab() {
     reset,
     watch,
     setValue,
-    formState: { errors, isSubmitting },
+    setError,
+    formState: { errors, isSubmitting, dirtyFields },
   } = useForm<ProfileFormValues>({
-    resolver: zodResolver(profileSchema),
+    resolver: zodResolver(profileSchemaFor(canEditTimeZone)),
     defaultValues: {
       businessName: "",
       email: "",
@@ -188,6 +219,7 @@ function BusinessProfileTab() {
       state: "",
       zip: "",
       taxRate: 0,
+      timezone: "",
     },
   });
 
@@ -204,6 +236,7 @@ function BusinessProfileTab() {
         state: savedSettings.state ?? "",
         zip: savedSettings.zip ?? "",
         taxRate: savedSettings.taxRate ?? 0,
+        ...(canEditTimeZone ? { timezone: savedSettings.timezone ?? "" } : {}),
       });
     }
   }, [savedSettings, reset]);
@@ -220,8 +253,13 @@ function BusinessProfileTab() {
     e.target.value = "";
   };
 
-  const onSubmit = async (data: ProfileFormValues) => {
-    await saveSettings.mutateAsync(data);
+  const onSubmit = async ({ timezone, ...rest }: ProfileFormValues) => {
+    const zone =
+      canEditTimeZone && dirtyFields.timezone && timezone ? canonicalTimeZone(timezone) : null;
+    // onError already told the user (fixed copy); the rejection must not also escape as an unhandled one.
+    await saveSettings
+      .mutateAsync(zone ? { ...rest, timezone: zone } : rest)
+      .catch(() => undefined);
   };
 
   return (
@@ -262,6 +300,37 @@ function BusinessProfileTab() {
               Used for invoices, order updates, and customer communications.
             </p>
           </div>
+        </div>
+        <div className="mt-4">
+          {canEditTimeZone ? (
+            <>
+              <Input
+                label="Time zone"
+                list="settings-timezone-zones"
+                autoComplete="off"
+                id="settings-timezone"
+                aria-describedby={`settings-timezone-help${errors.timezone ? " settings-timezone-error" : ""}`}
+                register={register("timezone", {
+                  onBlur: (e) => {
+                    // Tidy the spelling when the admin leaves the field; text that is not a zone stays for the save check.
+                    const zone = canonicalTimeZone(e.target.value);
+                    if (zone && zone !== e.target.value)
+                      setValue("timezone", zone, { shouldDirty: true, shouldValidate: true });
+                  },
+                })}
+                error={errors.timezone?.message}
+              />
+              <TimeZoneDatalist id="settings-timezone-zones" />
+            </>
+          ) : (
+            <dl>
+              <dt className="text-sm font-medium text-navy">Time zone</dt>
+              <dd className="text-sm text-navy">{savedSettings?.timezone ?? "—"}</dd>
+            </dl>
+          )}
+          <p id="settings-timezone-help" className="mt-1 text-xs text-navy/70">
+            Applies to receipts and today&apos;s sales from now on
+          </p>
         </div>
       </Card>
 
