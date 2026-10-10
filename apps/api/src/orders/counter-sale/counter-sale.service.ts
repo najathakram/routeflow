@@ -20,10 +20,10 @@ import { counterSaleGate } from "./capability-shape";
 import { resolveLineUnits, type LineUnitsProduct } from "../../products/line-units";
 import { saleChangedConflict, saleVoidedConflict, storedSaleState } from "../sale-replay-guard";
 import { toCounterOrderItem } from "./counter-sale-lines";
-import { canEditPrices } from "./can-edit-prices";
 import { resolveTierPrices } from "./counter-sale-tier-price";
 import { assertReplaySamePrices } from "./counter-sale-replay-price";
 import { AuditService } from "../../audit/audit.service";
+import { staffMay } from "../../auth/permissions/staff-capabilities";
 import { buildCounterSaleResponse, isTender, type InvoiceRow } from "./counter-sale-readback";
 import {
   FULFILMENT_CAPABILITY_READER,
@@ -147,7 +147,7 @@ export class CounterSaleService {
         counterSale: true,
         // POS-5: create() refuses a real price change from a caller who may not make one (403
         // PRICE_EDIT_NOT_PERMITTED), against its own server-resolved price and before any write.
-        priceEditAllowed: canEditPrices(user),
+        priceEditAllowed: staffMay(user.role, "EDIT_LINE_PRICE"),
         // B1209: a walk-in's tender is judged against the SERVER total inside create(), before anything is written.
         beforeWrite: walkIn
           ? ({ total }) => assertWalkInTenderCoversTotal(dto.payment, total)

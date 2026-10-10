@@ -86,6 +86,7 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   // ── systemConfig: settings controller writers ────────────────────────────────
   cfg("settings.taxRate", "/settings?tab=profile"),
   cfg("settings.logoUrl", "/settings?tab=profile"),
+  cfg("settings.receiptFooter", "/settings?tab=profile"),
   ...[
     "fromName",
     "fromEmail",
