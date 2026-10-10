@@ -1735,7 +1735,12 @@ export class BookkeepingService implements OnModuleInit {
         const bal = Number(inv.total) - paid;
         byCustomer[key].invoiceCount++;
         byCustomer[key].balance += bal;
-        if (isOverdue(inv.dueDate, now, tz)) byCustomer[key].overdue += bal;
+        // SA-770: an overpaid open invoice owes nothing, so it adds 0 (never a negative) to overdue.
+        if (isOverdue(inv.dueDate, now, tz)) {
+          byCustomer[key].overdue = roundMoney(
+            byCustomer[key].overdue + Math.max(0, roundMoney(bal)),
+          );
+        }
       }
     }
 
