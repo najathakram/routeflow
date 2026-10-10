@@ -27,7 +27,6 @@ import {
   X,
   MessageSquare,
   User,
-  Building2,
   Camera,
   ZoomIn,
   Upload,
@@ -2332,27 +2331,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 <Badge status={currentStatus} />
               )}
               <Badge
-                variant="info"
+                variant="neutral"
                 label={`${tierLabel(tierLabels, customer.pricingTier ?? 1)} pricing`}
               />
-              <span
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
-                  customer.customerType === "individual"
-                    ? "bg-purple-100 text-purple-700"
-                    : "bg-blue-100 text-blue-700",
-                )}
-              >
-                {customer.customerType === "individual" ? (
-                  <>
-                    <User className="h-3 w-3" /> Individual
-                  </>
-                ) : (
-                  <>
-                    <Building2 className="h-3 w-3" /> Business
-                  </>
-                )}
-              </span>
+              <Badge
+                variant="neutral"
+                label={customer.customerType === "individual" ? "Individual" : "Business"}
+              />
             </div>
             <p className="mt-1 text-sm text-navy/70">
               {[
