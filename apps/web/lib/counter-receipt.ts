@@ -200,7 +200,7 @@ export function buildCounterReceipt(input: {
     orderNumber: receipt.orderNumber,
     invoiceNumber: receipt.invoiceNumber,
     invoiceId: receipt.invoiceId,
-    dateLabel: formatSaleTime(now, profile?.timezone || undefined),
+    dateLabel: formatSaleTime(now, profile?.timezone || "UTC"),
     lines: rows,
     cashier: clean(input.cashier) || null,
     subtotal: roundMoney(netSubtotal + discounts),
@@ -270,8 +270,9 @@ const REPRINT_METHOD_LABEL: Record<ReprintTender, string> = {
 /**
  * "Oct 7, 2026, 11:15 AM" in the given zone (the sale's own zone, not the browser's). The tenant timezone is a free
  * string: a value Intl does not know would throw a RangeError and break the receipt, so it falls back to UTC.
+ * An absent zone is UTC too (never the browser's zone, SA-738).
  */
-export function formatSaleTime(at: string | Date, timeZone?: string): string {
+export function formatSaleTime(at: string | Date, timeZone: string = "UTC"): string {
   const d = at instanceof Date ? at : new Date(at);
   const format = (zone: string | undefined) =>
     new Intl.DateTimeFormat("en-US", {
