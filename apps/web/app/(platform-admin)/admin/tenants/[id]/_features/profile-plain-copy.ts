@@ -51,6 +51,12 @@ const PLAIN_PROFILES: Record<string, PlainProfile> = {
   },
 };
 
+/**
+ * SA-769: what the profile preview says next to each module the profile will turn on as a comp (a free add-on row,
+ * never billed, no end date). One string, so the modal and its tests cannot drift apart.
+ */
+export const INCLUDED_FREE_COPY = "Included free with this profile";
+
 export interface ProfilePlainCopy {
   /** The choice's name. */
   name: string;
