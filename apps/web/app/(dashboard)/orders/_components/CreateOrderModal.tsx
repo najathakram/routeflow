@@ -908,7 +908,11 @@ export function CreateOrderModal({
   for (const p of filteredProducts as any[]) {
     productRowIndex.set(p.id, productNavRows.length);
     productNavRows.push({ kind: "product", p });
-    if (p.variants?.length > 0 && expandedParentId === p.id) {
+    // Same expansion rule as the rendered list (B1215: a variant-only hit opens its family by itself).
+    if (
+      p.variants?.length > 0 &&
+      isGroupExpanded(expandedParentId, productGroups.expandedIds, p.id)
+    ) {
       for (const v of p.variants) {
         variantRowIndex.set(v.id, productNavRows.length);
         // The keyboard pick names the variant under its parent exactly like the click does (attachParent).
@@ -936,7 +940,9 @@ export function CreateOrderModal({
       if (row.kind === "create") return openCreateProduct();
       if (row.p.variants?.length > 0) {
         keepHighlightOnRow.current = productRowIndex.get(row.p.id) ?? null;
-        setExpandedParentId(expandedParentId === row.p.id ? null : row.p.id);
+        // Mirrors the header click: "" closes even an auto-opened family (null would re-open it).
+        const open = isGroupExpanded(expandedParentId, productGroups.expandedIds, row.p.id);
+        setExpandedParentId(open ? "" : row.p.id);
       } else {
         addPicked(row.p);
       }

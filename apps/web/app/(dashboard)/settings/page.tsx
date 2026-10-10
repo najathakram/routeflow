@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { z } from "zod";
 import {
   Upload,
@@ -162,7 +163,7 @@ function BusinessProfileTab() {
     onError: (err: unknown, sent) => {
       const res = (err as { response?: { status?: number; data?: { code?: string } } })?.response;
       // The server's own text is never shown: a refused zone and a refused role each get one fixed line.
-      if (res?.data?.code === "INVALID_TIME_ZONE") {
+      if (res?.data?.code === API_ERROR_CODES.INVALID_TIME_ZONE) {
         setError("timezone", { message: INVALID_ZONE_COPY });
         toast({ title: INVALID_ZONE_COPY, variant: "error" });
         return;

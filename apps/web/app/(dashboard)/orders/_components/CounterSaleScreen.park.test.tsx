@@ -696,7 +696,8 @@ describe("price edits on a resumed cart (the existing Complete-time check)", () 
     });
 
   it("a clerk who cannot edit prices is told, and Complete sends the edited price so the server's refusal shows its fixed copy", async () => {
-    mockUser = OPERATOR;
+    // SA-762r Ruling A: an OPERATOR may edit prices (staffMay EDIT_LINE_PRICE); SUPER_ADMIN is still outside the gate.
+    mockUser = { ...OPERATOR, role: "SUPER_ADMIN" };
     seed("a", { label: "Hold A" }, edited());
     renderScreen();
     await openList(1);
