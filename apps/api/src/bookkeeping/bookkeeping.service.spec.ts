@@ -367,7 +367,7 @@ describe("BookkeepingService", () => {
         { total: 300, payments: [{ amount: 100 }] },
       ]);
       prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 1500 } });
-      prisma.invoice.count.mockResolvedValue(3);
+      prisma.$queryRaw.mockResolvedValue([{ count: 3 }]); // SA-770: the overdue count is the balance-due SQL
 
       const result = await service.getSummary();
 
@@ -391,7 +391,7 @@ describe("BookkeepingService", () => {
       prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: null } });
       prisma.invoice.findMany.mockResolvedValue([]);
       prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: null } });
-      prisma.invoice.count.mockResolvedValue(0);
+      prisma.$queryRaw.mockResolvedValue([{ count: 0 }]);
 
       const result = await service.getSummary();
 
@@ -404,6 +404,75 @@ describe("BookkeepingService", () => {
         paymentsThisWeek: 0,
         overdueCount: 0,
       });
+    });
+
+    it("SA-770: overdueCount counts invoices with a BALANCE DUE � tenant-scoped, bound, never invoice.count", async () => {
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 0, taxAmount: 0 } });
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: 0 } });
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.getTenantId.mockReturnValue("tenant-acme");
+      // COUNT(*) comes back from Postgres as a bigint
+      prisma.$queryRaw.mockResolvedValue([{ count: BigInt(2) }]);
+
+      const result = await service.getSummary();
+
+      expect(result.overdueCount).toBe(2);
+      expect(prisma.invoice.count).not.toHaveBeenCalled(); // the status + due-date-only count was the bug
+      const { sql, values } = prisma.$queryRaw.mock.calls[0][0] as {
+        sql: string;
+        values: unknown[];
+      };
+      expect(values).toEqual(
+        expect.arrayContaining(["tenant-acme", "SENT", "VIEWED", "PARTIAL", "OVERDUE", "PAID"]),
+      );
+      expect(sql).not.toContain("tenant-acme");
+      expect(sql).toMatch(/"i"\."total"\s*-\s*COALESCE\(/); // the balance predicate is in the query
+    });
+  });
+
+  // ─── SA-770: an overpaid open invoice never makes an overdue figure negative ──
+  describe("getCustomerBalanceSummary — per-customer overdue is clamped (SA-770)", () => {
+    const PAST = new Date("2020-01-01T00:00:00.000Z");
+    const FUTURE = new Date("2099-01-01T00:00:00.000Z");
+    const customer = { id: "c1", businessName: "Acme", contactName: null, phone: null };
+    const inv = (id: string, total: number, paid: number, dueDate: Date, status = "SENT") => ({
+      id,
+      customerId: "c1",
+      customer,
+      status,
+      total,
+      dueDate,
+      payments: paid ? [{ amount: paid, status: "PAID" }] : [],
+    });
+    const run = async (rows: any[]) => {
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      prisma.invoice.findMany.mockResolvedValue(rows);
+      const res: any = await service.getCustomerBalanceSummary();
+      return res.data[0];
+    };
+
+    it("an overpaid open past-due invoice contributes 0, not a negative", async () => {
+      const row = await run([inv("over", 100, 110, PAST)]);
+      expect(row.overdue).toBe(0);
+    });
+
+    it("a mix: only the genuinely overdue invoice counts (before the fix: 50 - 10 = 40)", async () => {
+      const row = await run([inv("over", 100, 110, PAST), inv("owes", 50, 0, PAST, "OVERDUE")]);
+      expect(row.overdue).toBe(50);
+    });
+
+    it("overdue is the sum of the POSITIVE balances of open past-due invoices, in cents", async () => {
+      const row = await run([
+        inv("a", 0.1, 0, PAST),
+        inv("b", 0.2, 0, PAST),
+        inv("partial", 100, 40, PAST, "PARTIAL"),
+        inv("exact", 80, 80, PAST),
+        inv("over", 30, 90, PAST),
+        inv("not-due", 500, 0, FUTURE),
+      ]);
+      expect(row.overdue).toBe(60.3);
     });
   });
 

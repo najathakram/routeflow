@@ -431,6 +431,17 @@ export const API_ERROR_CODES = {
   PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
   /** 400 from PATCH /settings and create-tenant: `timezone` is not an IANA zone (SA-738). Nothing was written. */
   INVALID_TIME_ZONE: "INVALID_TIME_ZONE",
+  /**
+   * 422 from GET /invoices?isOverdue=true: more than 10 000 invoices owe a balance past their due day for the
+   * tenant (or the customer asked for), so the list is refused rather than silently truncated (SA-770).
+   * Narrow by customer and retry. Nothing was read.
+   */
+  OVERDUE_FILTER_TOO_BROAD: "OVERDUE_FILTER_TOO_BROAD",
+  /**
+   * 400 from POST /invoices/:id/send-reminder: the invoice has no balance due (exactly paid, overpaid or fully
+   * credited but not marked PAID), so there is nothing to remind about. Nothing was sent (SA-770).
+   */
+  REMINDER_NO_BALANCE_DUE: "REMINDER_NO_BALANCE_DUE",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

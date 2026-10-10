@@ -313,6 +313,9 @@ describe("genericToastCopy: codes users rely on", () => {
         /total below what is already paid or credited.*change the lines or discount/,
       ],
       ["FAMILY_NOT_PRICEABLE", /family can't be priced or promoted.*variants/],
+      // SA-770: the overdue list refuses past its id cap (422) and says how to narrow it.
+      ["OVERDUE_FILTER_TOO_BROAD", /Too many invoices are overdue.*customer/],
+      ["REMINDER_NO_BALANCE_DUE", /no balance due.*nothing to remind/],
     ])("%s", (c, re) => {
       const copy = genericToastCopy(code(c));
       expect(copy).toMatch(re);

@@ -1,6 +1,6 @@
-import { roundMoney } from "@routeflow/pricing";
-import { InvoiceStatus } from "@prisma/client";
+import { overdueCutoff } from "../common/calendar-date";
 import { computeDepositFields } from "./deposit-fields";
+import { classifyInvoiceBalance } from "./invoice-balance-classify";
 import { splitConfirmed } from "./payment-predicates";
 import { overpaidByOf } from "./invoice-status";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
@@ -12,28 +12,18 @@ import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
  */
 export function deriveInvoiceDetailFields(inv: any, now: Date = new Date()) {
   // F03/R1: CONFIRMED (PAID) payments only. VOID payments (manually voided OR
-  // bounced checks) must not count toward the paid amount — and neither must an
+  // bounced checks) must not count toward the paid amount - and neither must an
   // unconfirmed DRAFT one; every other paid-sum in this file matches.
   //
   // B421: paidAmount is CASH-ONLY; creditApplied/advanceApplied are separate
-  // — see findAll's matching comment for why balanceDue/deposit still use
+  // - see findAll's matching comment for why balanceDue/deposit still use
   // the full confirmed total.
   const { cash: paidAmount, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
   const totalConfirmed = paidAmount + creditApplied + advanceApplied;
-  const isSettled =
-    inv.status === InvoiceStatus.PAID ||
-    inv.status === InvoiceStatus.VOID ||
-    inv.status === InvoiceStatus.WRITTEN_OFF;
-  // B421 (review F3): roundMoney before the > 0 comparison — see findAll's
-  // matching comment (totalConfirmed sums three floats; a sub-cent remnant
-  // would otherwise render a red "Balance Due $0.00" on a settled invoice).
-  const balanceDue = isSettled ? 0 : Math.max(0, roundMoney(Number(inv.total) - totalConfirmed));
-  // RF-202: date-string comparison — invoice due today is NOT overdue.
-  const dueDateIso = inv.dueDate
-    ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate)).toISOString().slice(0, 10)
-    : null;
+  // SA-770: balance and overdue come from the ONE classifier (RF-202: invoice due today is NOT
+  // overdue; the cutoff is the UTC day of `now`, as this read has always judged it).
+  const { balanceDue, isOverdue } = classifyInvoiceBalance(inv, overdueCutoff(now));
   const todayIso = now.toISOString().slice(0, 10);
-  const isOverdue = !isSettled && balanceDue > 0 && dueDateIso != null && dueDateIso < todayIso;
   const { depositAmount, depositOverdue } = computeDepositFields(inv, totalConfirmed, todayIso);
   return {
     balanceDue,

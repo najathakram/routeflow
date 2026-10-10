@@ -456,7 +456,7 @@ export class CustomersService {
     const overdue = roundMoney(
       openInvoicesWithPaid
         .filter((i) => i.dueDate && new Date(i.dueDate) < new Date())
-        .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0),
+        .reduce((sum, i) => sum + Math.max(0, roundMoney(Number(i.total) - i.amountPaid)), 0),
     );
 
     // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
@@ -1203,7 +1203,7 @@ export class CustomersService {
     const overdue = roundMoney(
       openInvoicesWithPaid
         .filter((i) => i.dueDate && new Date(i.dueDate) < new Date())
-        .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0),
+        .reduce((sum, i) => sum + Math.max(0, roundMoney(Number(i.total) - i.amountPaid)), 0),
     );
 
     // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed

@@ -211,15 +211,24 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       prisma.tenantConfig.findUnique.mockImplementation(async (args: any) =>
         zones[args.where.tenantId] ? { timezone: zones[args.where.tenantId] } : null,
       );
-      prisma.invoice.updateMany.mockResolvedValue({ count: 1 });
-      prisma.invoice.count.mockResolvedValue(2);
+      // SA-770: the sweep's write is ONE raw UPDATE carrying the balance-due predicate ($executeRaw),
+      // and the dark count is the same predicate as a raw COUNT ($queryRaw).
+      prisma.$executeRaw.mockResolvedValue(1);
+      prisma.$queryRaw.mockResolvedValue([{ count: 2 }]);
       const svc = new OverdueSweepService(prisma as any, tenantCtx as any);
       const log = jest.spyOn((svc as any).logger, "log").mockImplementation(() => undefined);
       const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
       return { svc, tenantCtx, log, warn };
     };
+    const valuesOf = (c: any[]) => c[0].values as unknown[];
+    const callFor = (fn: jest.Mock, tenantId: string) =>
+      fn.mock.calls.find((c: any[]) => valuesOf(c).includes(tenantId))!;
     const cutoffFor = (fn: jest.Mock, tenantId: string) =>
-      fn.mock.calls.find((c: any[]) => c[0].where.tenantId === tenantId)![0].where.dueDate.lt;
+      new Date(
+        valuesOf(callFor(fn, tenantId)).find(
+          (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v),
+        ) as string,
+      );
 
     it("enforced: flips every billing-live tenant with an explicit tenant filter, each in its own zone", async () => {
       process.env.OVERDUE_SWEEP_MODE = "enforced";
@@ -228,23 +237,41 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       await svc.runScheduled();
       expect(prisma.tenant.findMany.mock.calls[0][0].where.status.in).toEqual(["TRIAL", "ACTIVE"]);
       expect(tenantCtx.run.mock.calls.map((c: any[]) => c[0])).toEqual(["t-chi", "t-tyo", "t-utc"]);
-      expect(prisma.invoice.count).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
       // An invoice due Oct 1: still grace in Chicago, overdue in Tokyo and in UTC.
       const due = new Date("2026-10-01T00:00:00.000Z");
-      expect(due < cutoffFor(prisma.invoice.updateMany, "t-chi")).toBe(false);
-      expect(due < cutoffFor(prisma.invoice.updateMany, "t-tyo")).toBe(true);
-      expect(due < cutoffFor(prisma.invoice.updateMany, "t-utc")).toBe(true);
-      // #2567: the write itself: one updateMany per tenant, and it sets OVERDUE and nothing else.
-      expect(prisma.invoice.updateMany).toHaveBeenCalledTimes(3);
-      for (const c of prisma.invoice.updateMany.mock.calls)
-        expect(c[0].data).toEqual({ status: "OVERDUE" });
+      expect(due < cutoffFor(prisma.$executeRaw, "t-chi")).toBe(false);
+      expect(due < cutoffFor(prisma.$executeRaw, "t-tyo")).toBe(true);
+      expect(due < cutoffFor(prisma.$executeRaw, "t-utc")).toBe(true);
+      // #2567: the write itself: one UPDATE per tenant, and it sets OVERDUE and nothing else.
+      expect(prisma.$executeRaw).toHaveBeenCalledTimes(3);
+      for (const c of prisma.$executeRaw.mock.calls) {
+        expect(valuesOf(c)).toContain("OVERDUE");
+        expect(c[0].sql).toMatch(
+          /^\s*UPDATE "Invoice"[\s\S]*SET "status"\s*=\s*\?::"InvoiceStatus",\s*"updatedAt"\s*=\s*NOW\(\)\s+WHERE/,
+        );
+      }
+    });
+
+    it("SA-770: the write carries the balance-due predicate, so a paid or overpaid invoice is never flipped", async () => {
+      process.env.OVERDUE_SWEEP_MODE = "enforced";
+      const { svc } = sweep();
+      await svc.markOverdue(now, "enforced");
+      for (const c of prisma.$executeRaw.mock.calls) {
+        // total - SUM(confirmed payments) > 0.005, decided by Postgres inside the one statement
+        expect(c[0].sql).toMatch(/"i"\."total"\s*-\s*COALESCE\(/);
+        expect(c[0].sql).toMatch(/,\s*0\)\s*>\s*0\.005/);
+        expect(valuesOf(c)).toContain("PAID"); // CONFIRMED_STATUS, bound
+      }
     });
 
     it("B2: only SENT and VIEWED are ever flipped (never PARTIAL)", async () => {
       const { svc } = sweep();
       await svc.markOverdue(now, "enforced");
-      for (const c of prisma.invoice.updateMany.mock.calls)
-        expect(c[0].where.status.in).toEqual(["SENT", "VIEWED"]);
+      for (const c of prisma.$executeRaw.mock.calls) {
+        expect(valuesOf(c)).toEqual(expect.arrayContaining(["SENT", "VIEWED"]));
+        expect(valuesOf(c)).not.toContain("PARTIAL");
+      }
     });
 
     it.each(["dark"])(
@@ -255,14 +282,14 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
         at(now.toISOString());
         const { svc, log } = sweep();
         await svc.runScheduled();
-        expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
-        expect(prisma.invoice.count).toHaveBeenCalledTimes(3);
-        for (const c of prisma.invoice.count.mock.calls)
-          expect(c[0].where).toEqual(
-            expect.objectContaining({ status: { in: ["SENT", "VIEWED"] } }),
-          );
+        expect(prisma.$executeRaw).not.toHaveBeenCalled();
+        expect(prisma.$queryRaw).toHaveBeenCalledTimes(3);
+        for (const c of prisma.$queryRaw.mock.calls) {
+          expect(valuesOf(c)).toEqual(expect.arrayContaining(["SENT", "VIEWED", "PAID"]));
+          expect(c[0].sql).toMatch(/COUNT\(\*\)/i);
+        }
         const due = new Date("2026-10-01T00:00:00.000Z");
-        expect(due < cutoffFor(prisma.invoice.count, "t-chi")).toBe(false);
+        expect(due < cutoffFor(prisma.$queryRaw, "t-chi")).toBe(false);
         expect(log).toHaveBeenCalledTimes(1);
         expect(String(log.mock.calls[0][0])).toBe(
           "markOverdue [dark]: 6 invoice(s) WOULD flip (nothing written) across 3 tenant(s), 0 failed; per tenant t-chi=2, t-tyo=2, t-utc=2",
@@ -275,8 +302,8 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       const { svc, log } = sweep();
       await svc.runScheduled();
       expect(prisma.tenant.findMany).not.toHaveBeenCalled();
-      expect(prisma.invoice.count).not.toHaveBeenCalled();
-      expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+      expect(prisma.$executeRaw).not.toHaveBeenCalled();
       expect(String(log.mock.calls[0][0])).toMatch(/\[off\].*ran no query/);
     });
 
@@ -285,8 +312,8 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       const { svc, warn } = sweep();
       await svc.runScheduled();
       expect(warn.mock.calls[0][0]).toMatch(/OVERDUE_SWEEP_MODE="true" is not off\|dark\|enforced/);
-      expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
-      expect(prisma.invoice.count).toHaveBeenCalledTimes(3);
+      expect(prisma.$executeRaw).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(3);
       expect(overdueSweepMode({ OVERDUE_SWEEP_MODE: " Enforced " }).mode).toBe("enforced");
     });
 
@@ -299,7 +326,7 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       await svc.runScheduled();
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn.mock.calls[0][0]).toMatch(/is not off\|dark\|enforced; running dark/);
-      expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
+      expect(prisma.$executeRaw).not.toHaveBeenCalled();
     });
 
     it("an unset value is the silent enforced default (owner 2026-10-10); dark-back is explicit", () => {
@@ -309,16 +336,14 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
 
     it("one tenant failing never stops the others", async () => {
       const { svc } = sweep();
-      prisma.invoice.updateMany
-        .mockRejectedValueOnce(new Error("boom"))
-        .mockResolvedValue({ count: 2 });
+      prisma.$executeRaw.mockRejectedValueOnce(new Error("boom")).mockResolvedValue(2);
       const res = await svc.markOverdue(now, "enforced");
       expect(res).toEqual({ mode: "enforced", tenants: 3, rows: 4, failed: 1 });
     });
 
     it("fails closed without a tenant id (never an unscoped sweep)", async () => {
       await expect(markOverdueForTenant(prisma as any, "", now)).rejects.toThrow(/tenant id/);
-      expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
+      expect(prisma.$executeRaw).not.toHaveBeenCalled();
     });
 
     it("is scheduled with @LeaderCron under a stable key, and InvoicesService no longer carries it", () => {

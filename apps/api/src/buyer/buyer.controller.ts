@@ -62,6 +62,9 @@ import {
   normalizeBoxUnawareSnapshots,
 } from "../orders/merge-items";
 import { withAdvisoryLock } from "../common/db-locks";
+import { overdueCutoff } from "../common/calendar-date";
+import { tenantTimeZone } from "../common/tenant-time-zone";
+import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import {
@@ -1175,33 +1178,24 @@ export class BuyerController {
     const totalSpend = allOrders.reduce((s, o) => s + Number(o.total), 0);
     const avgOrderValue = totalOrders > 0 ? totalSpend / totalOrders : 0;
 
-    // Invoice breakdown
+    // Invoice breakdown (SA-770 r-note): the staff rule - an open invoice that still owes a balance and
+    // whose due day has ended in THIS seller's zone is overdue; the total is BALANCE due, never gross.
     const invoices = await db.invoice.findMany({
       where: { customerId },
-      select: { status: true, total: true, dueDate: true },
+      select: {
+        status: true,
+        total: true,
+        dueDate: true,
+        payments: { select: { amount: true, status: true, method: true } },
+      },
     });
-    const now = new Date();
-    let paidCount = 0,
-      unpaidCount = 0,
-      overdueCount = 0,
-      unpaidTotal = 0;
-    for (const inv of invoices) {
-      if (inv.status === "PAID") {
-        paidCount++;
-      } else if (
-        inv.status === "SENT" ||
-        inv.status === "VIEWED" ||
-        inv.status === "PARTIAL" ||
-        inv.status === "OVERDUE"
-      ) {
-        if (inv.status === "OVERDUE" || (inv.dueDate && inv.dueDate < now)) {
-          overdueCount++;
-        } else {
-          unpaidCount++;
-        }
-        unpaidTotal += Number(inv.total);
-      }
-    }
+    const zone = await tenantTimeZone(this.prisma);
+    const {
+      settledCount: paidCount,
+      unpaidCount,
+      overdueCount,
+      unpaidTotal,
+    } = summarizeOpenInvoices(invoices, overdueCutoff(new Date(), zone));
 
     // Recent payments (last 20)
     const payments = await db.invoicePayment.findMany({

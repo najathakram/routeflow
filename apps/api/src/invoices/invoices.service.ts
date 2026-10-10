@@ -59,6 +59,8 @@ import {
   sumConfirmed,
 } from "./payment-predicates";
 import { PAYABLE } from "./invoice-status-sets";
+import { assertReminderOwes } from "./invoice-balance-sql";
+import { classifyInvoiceBalance, confirmedBalance } from "./invoice-balance-classify";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
 import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
@@ -112,6 +114,7 @@ import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import {
   applyInvoiceSearchAndDateFilters,
   applyInvoiceStatusFilters,
+  applyOverdueBalanceFilter,
   invoiceListOrderBy,
 } from "./invoice-list-query";
 import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
@@ -2913,6 +2916,9 @@ export class InvoicesService {
       where.customerId = customerId;
     }
     applyInvoiceSearchAndDateFilters(where, query);
+    // SA-770: overdue = past due AND a balance is owed (the one SQL predicate); no tenant, no list.
+    if (!(await applyOverdueBalanceFilter(where, query, this.prisma, this.prisma.getTenantId())))
+      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
     const orderBy = invoiceListOrderBy(sortBy, sortOrder);
 
     const [data, total] = await Promise.all([
@@ -2944,6 +2950,7 @@ export class InvoicesService {
       this.prisma.forTenant(),
       data.map((i) => i.id),
     );
+    const overdueBy = overdueCutoff(new Date());
     const computedData = data.map((inv) => {
       // F03/R1/T-B11s: CONFIRMED (PAID) payments only. An unconfirmed DRAFT
       // payment (e.g. a bulk bank-reconciliation entry an operator hasn't
@@ -2958,24 +2965,9 @@ export class InvoicesService {
       // balanceDue and the deposit check both use the full confirmed total.
       const { cash: paidAmount, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
       const totalConfirmed = paidAmount + creditApplied + advanceApplied;
-      const isSettled =
-        inv.status === InvoiceStatus.PAID ||
-        inv.status === InvoiceStatus.VOID ||
-        inv.status === InvoiceStatus.WRITTEN_OFF;
-      // B421 (review F3): roundMoney BEFORE the > 0 comparison/coloring below — totalConfirmed sums
-      // three separately-computed floats (cash + credit + advance), so an invoice fully settled by
-      // a mix of methods can leave a sub-cent float remnant (e.g. -2.8e-14) that Math.max(0, ...)
-      // doesn't catch, rendering a red "Balance Due $0.00" on an otherwise-settled invoice. fmt()
-      // rounds for DISPLAY but this raw value drives the color/isOverdue logic directly.
-      const balanceDue = isSettled
-        ? 0
-        : Math.max(0, roundMoney(Number(inv.total) - totalConfirmed));
-      const dueDateIso = inv.dueDate
-        ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
-            .toISOString()
-            .slice(0, 10)
-        : null;
-      const isOverdue = !isSettled && balanceDue > 0 && dueDateIso != null && dueDateIso < todayIso;
+      // SA-770: balanceDue + isOverdue come from the ONE classifier (B421 F3's roundMoney-before->0 rule and
+      // RF-202's "due today is not overdue" live there), judged on the UTC day as this list always has.
+      const { balanceDue, isOverdue } = classifyInvoiceBalance(inv, overdueBy);
       const { depositAmount, depositOverdue } = computeDepositFields(
         inv as any,
         totalConfirmed,
@@ -3679,7 +3671,7 @@ export class InvoicesService {
     // stays on the full confirmed total (sumConfirmed) — a credit note or
     // advance genuinely reduces what's still owed.
     const { cash: totalPaid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
-    const balanceDue = roundMoney(Math.max(0, Number(inv.total) - sumConfirmed(inv.payments)));
+    const balanceDue = confirmedBalance(inv.total, inv.payments);
     const creditNoteNumbers = Array.from(
       new Set(
         (inv.payments ?? [])
@@ -3810,10 +3802,7 @@ export class InvoicesService {
     if (!inv) throw new NotFoundException("Invoice not found");
     if (inv.status === InvoiceStatus.VOID || inv.status === InvoiceStatus.PAID)
       throw new BadRequestException("Cannot send reminder for a VOID or PAID invoice");
-    // SA-763r P-3 nit: reminders key on the balance due, never on the status alone. An overpaid invoice
-    // (held out of PAID by statusFromPayments, possibly past due) owes nothing: no dunning email.
-    if (roundMoney(Number(inv.total) - sumConfirmed(inv.payments)) <= 0.001)
-      throw new BadRequestException("Nothing is owing on this invoice, so no reminder was sent.");
+    assertReminderOwes(inv.total, inv.payments); // SA-770: an exactly-paid or overpaid SENT invoice owes nothing
 
     // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
     // filter them from BOTH the override (older clients echo the on-file address into
@@ -3852,7 +3841,7 @@ export class InvoicesService {
     // demand the true outstanding balance, never the DRAFT-inflated figure a
     // non-VOID sum would give. B421: totalPaid is cash-only, same as sendEmail.
     const { cash: totalPaid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
-    const balanceDue = roundMoney(Math.max(0, Number(inv.total) - sumConfirmed(inv.payments)));
+    const balanceDue = confirmedBalance(inv.total, inv.payments);
     const creditNoteNumbers = Array.from(
       new Set(
         (inv.payments ?? [])

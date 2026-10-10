@@ -43,6 +43,7 @@ import {
 } from "../invoices/payment-predicates";
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { lockInvoicesForPayment } from "../invoices/invoice-send-guard";
+import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
 
 /**
  * Receipt-extraction model. Receipts are small documents where a misread line
@@ -1195,18 +1196,15 @@ export class BookkeepingService implements OnModuleInit {
           },
           _sum: { amount: true },
         }),
-        this.prisma.forTenant().invoice.count({
-          where: {
-            status: {
-              in: [
-                InvoiceStatus.SENT,
-                InvoiceStatus.VIEWED,
-                InvoiceStatus.PARTIAL,
-                InvoiceStatus.OVERDUE,
-              ],
-            },
-            dueDate: { lt: overdueCutoff(now, tz) },
-          },
+        // SA-770 (row 294): overdue = past its due day AND a balance is owed (the one SQL predicate),
+        // so an overpaid or exactly-paid invoice that is not yet PAID is not counted.
+        overdueInvoiceCount(this.prisma, this.requireTenantId(), overdueCutoff(now, tz), {
+          statuses: [
+            InvoiceStatus.SENT,
+            InvoiceStatus.VIEWED,
+            InvoiceStatus.PARTIAL,
+            InvoiceStatus.OVERDUE,
+          ],
         }),
       ],
     );
@@ -1737,7 +1735,12 @@ export class BookkeepingService implements OnModuleInit {
         const bal = Number(inv.total) - paid;
         byCustomer[key].invoiceCount++;
         byCustomer[key].balance += bal;
-        if (isOverdue(inv.dueDate, now, tz)) byCustomer[key].overdue += bal;
+        // SA-770: an overpaid open invoice owes nothing, so it adds 0 (never a negative) to overdue.
+        if (isOverdue(inv.dueDate, now, tz)) {
+          byCustomer[key].overdue = roundMoney(
+            byCustomer[key].overdue + Math.max(0, roundMoney(bal)),
+          );
+        }
       }
     }
 
