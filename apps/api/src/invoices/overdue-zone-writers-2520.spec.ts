@@ -247,8 +247,8 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
         expect(c[0].where.status.in).toEqual(["SENT", "VIEWED"]);
     });
 
-    it.each([undefined, "dark"])(
-      "dark (mode %s — the default): the SAME where as a COUNT, one log line by tenant id, nothing written",
+    it.each(["dark"])(
+      "dark (mode %s — emergency dark-back): the SAME where as a COUNT, one log line by tenant id, nothing written",
       async (v) => {
         if (v === undefined) delete process.env.OVERDUE_SWEEP_MODE;
         else process.env.OVERDUE_SWEEP_MODE = v;
@@ -302,8 +302,9 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
     });
 
-    it("an unset value is the silent dark default", () => {
-      expect(overdueSweepMode({})).toEqual({ mode: "dark", unknown: null });
+    it("an unset value is the silent enforced default (owner 2026-10-10); dark-back is explicit", () => {
+      expect(overdueSweepMode({})).toEqual({ mode: "enforced", unknown: null });
+      expect(overdueSweepMode({ OVERDUE_SWEEP_MODE: "dark" }).mode).toBe("dark");
     });
 
     it("one tenant failing never stops the others", async () => {

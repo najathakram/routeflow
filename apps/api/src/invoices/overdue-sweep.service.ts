@@ -6,9 +6,11 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 
 /**
- * SA-506a (#2556, owner policy): the sweep ships DARK. One env var; a rename is this one line.
+ * SA-506a (#2556, owner policy): the sweep shipped DARK; the owner turned it ON on 2026-10-10
+ * (read-only count first: 16 live past-due invoices across 2 tenants; "overdue flag only", the
+ * flip is the ONLY effect). One env var.
  *   off       the sweep runs NO query; it logs one line that it is off.
- *   dark      (the default) COUNT the rows the sweep would flip, with the SAME per-tenant where,
+ *   dark      (emergency dark-back: set OVERDUE_SWEEP_MODE=dark) COUNT the rows the sweep would flip, with the SAME per-tenant where,
  *             and log ONE line per run: the aggregate plus per-tenant counts keyed by tenant id
  *             (never a slug or name). Nothing is written.
  *   enforced  write the flip. Turning it on is an OWNER action, after the read-only count
@@ -19,7 +21,10 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 export const OVERDUE_SWEEP_ENV = "OVERDUE_SWEEP_MODE";
 export const OVERDUE_SWEEP_MODES = ["off", "dark", "enforced"] as const;
 export type OverdueSweepMode = (typeof OVERDUE_SWEEP_MODES)[number];
-export const OVERDUE_SWEEP_DEFAULT: OverdueSweepMode = "dark";
+/** The mode when the variable is UNSET (owner 2026-10-10). */
+export const OVERDUE_SWEEP_DEFAULT: OverdueSweepMode = "enforced";
+/** The mode for a set-but-unrecognised value: never writes. */
+export const OVERDUE_SWEEP_FAIL_CLOSED: OverdueSweepMode = "dark";
 
 /** The mode, and whether the raw value was unrecognised (the caller warns). */
 export function overdueSweepMode(env: NodeJS.ProcessEnv = process.env): {
@@ -33,8 +38,9 @@ export function overdueSweepMode(env: NodeJS.ProcessEnv = process.env): {
   if ((OVERDUE_SWEEP_MODES as readonly string[]).includes(v))
     return { mode: v as OverdueSweepMode, unknown: null };
   // #2567: only an UNSET variable is the silent default; a set-but-blank value warns like any
-  // other unrecognised one.
-  return { mode: OVERDUE_SWEEP_DEFAULT, unknown: raw === undefined ? null : String(raw) };
+  // other unrecognised one, and fails closed (dark) rather than taking the enforced default.
+  if (raw === undefined) return { mode: OVERDUE_SWEEP_DEFAULT, unknown: null };
+  return { mode: OVERDUE_SWEEP_FAIL_CLOSED, unknown: String(raw) };
 }
 
 /** The tenant statuses whose open invoices are aged (billing-live tenants only). */
@@ -67,7 +73,7 @@ export class OverdueSweepService {
     private readonly tenantCtx: TenantContextService,
   ) {}
 
-  /** Hourly, one replica. Dark (count only) unless OVERDUE_SWEEP_MODE=enforced; off runs nothing. */
+  /** Hourly, one replica. Enforced unless OVERDUE_SWEEP_MODE says dark (count only) or off (no query). */
   @LeaderCron("5 * * * *", "invoices.markOverdue")
   async runScheduled(): Promise<void> {
     const { mode, unknown } = overdueSweepMode();
