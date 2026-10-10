@@ -6,7 +6,7 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import { roundMoney } from "@routeflow/pricing";
 import { addCalendarDays, overdueCutoff } from "../common/calendar-date";
 import { KPI_SUMMARY_EXCLUDED } from "./invoice-status-sets";
-import { sumConfirmed } from "./payment-predicates";
+import { confirmedBalance } from "./invoice-balance-classify";
 
 /**
  * Moved verbatim out of `invoices.service.ts` (size ratchet, SA-065). `InvoicesService.getKpiSummary`
@@ -149,7 +149,7 @@ export async function computeInvoiceKpiSummary(
   for (const inv of invoices) {
     // Same balance basis as findAll's enrichment above: CONFIRMED (PAID)
     // payments only reduce the outstanding figure.
-    const balance = Math.max(0, Number(inv.total) - sumConfirmed(inv.payments as any));
+    const balance = confirmedBalance(inv.total, inv.payments as any);
     totalOutstanding += balance;
     const dueDateIso = inv.dueDate
       ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))

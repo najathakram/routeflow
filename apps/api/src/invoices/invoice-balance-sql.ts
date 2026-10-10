@@ -1,8 +1,8 @@
 import { BadRequestException, UnprocessableEntityException } from "@nestjs/common";
 import { InvoiceStatus, Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { roundMoney } from "@routeflow/pricing";
-import { CONFIRMED_STATUS, sumConfirmed } from "./payment-predicates";
+import { confirmedBalance } from "./invoice-balance-classify";
+import { CONFIRMED_STATUS } from "./payment-predicates";
 
 /**
  * SA-770 (ACTION-ITEMS row 294): "overdue" means a BALANCE IS DUE. The `Invoice` model stores no balance
@@ -162,7 +162,7 @@ export function assertReminderOwes(
   total: unknown,
   payments: ReadonlyArray<{ amount: unknown; status?: string }> | null | undefined,
 ): void {
-  if (roundMoney(Number(total) - sumConfirmed(payments)) > 0) return;
+  if (confirmedBalance(total, payments) > 0) return;
   throw new BadRequestException({
     code: API_ERROR_CODES.REMINDER_NO_BALANCE_DUE,
     message: "This invoice has no balance due, so there is nothing to remind about.",
