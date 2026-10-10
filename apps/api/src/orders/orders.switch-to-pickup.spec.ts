@@ -75,6 +75,16 @@ describe("OrdersService.updateFulfillPath: switch to PICKUP", () => {
     expect(h.prisma.order.update).not.toHaveBeenCalled();
   });
 
+  it("the 403 carries the stable code POS_MODE_NOT_PERMITTED, for every role that may not switch", async () => {
+    open();
+    for (const user of [{ ...operatorPayload, role: "DRIVER" }, customerPayload, undefined]) {
+      await expect(toPickup(user)).rejects.toMatchObject({
+        status: 403,
+        response: expect.objectContaining({ code: "POS_MODE_NOT_PERMITTED" }),
+      });
+    }
+  });
+
   it.each(["SCHEDULED", "IN_PROGRESS"])(
     "an order on a %s run: refused like SHIP, nothing written",
     async (runStatus) => {

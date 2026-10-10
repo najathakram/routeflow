@@ -15,6 +15,7 @@
 
 import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { FulfillPath, OrderStatus, RouteRunStatus, UserRole } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { staffMay } from "../auth/permissions/staff-capabilities";
 import type { OrdersService } from "./orders.service";
@@ -100,7 +101,10 @@ export async function updateFulfillPathImpl(
 ) {
   // POS mode (SA-763r R3): switching an order to PICKUP is a hand-over at the till, a staff capability.
   if (dto.fulfillPath === FulfillPath.PICKUP && !staffMay(user?.role, "USE_POS_MODE")) {
-    throw new ForbiddenException("You don't have access to switch an order to pickup.");
+    throw new ForbiddenException({
+      code: API_ERROR_CODES.POS_MODE_NOT_PERMITTED,
+      message: "You don't have access to switch an order to pickup.",
+    });
   }
   // `findFirst`, NOT `findUnique`: forTenant()'s findUnique can only POST-filter
   // on the returned row's `tenantId`, and an exclusive `select` that omits it
