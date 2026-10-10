@@ -49,6 +49,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
+import { RESYNC_ITEM_SELECT } from "./resync-plan";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("SA-078(b) — reconcile rebuild carries the PRIOR InvoiceItem's unitsPerBox forward, never the live product", () => {
@@ -427,7 +428,11 @@ describe("B736 — every rebuildSiblingDrafts caller selects the fields the core
     if (offset === -1) throw new Error("itemsSubBlock: no items: key in this select block");
     const openBrace = selectBlock.indexOf("{", offset);
     const closeBrace = matchBrace(selectBlock, openBrace);
-    return selectBlock.slice(openBrace, closeBrace + 1);
+    // A caller may spell its items select as the shared RESYNC_ITEM_SELECT constant (resync-plan.ts);
+    // expand it to the constant's real keys so the field check still reads the fields actually selected.
+    return selectBlock
+      .slice(openBrace, closeBrace + 1)
+      .replace(/\bRESYNC_ITEM_SELECT\b/g, Object.keys(RESYNC_ITEM_SELECT).join(", "));
   }
 
   interface CallerCheck {
