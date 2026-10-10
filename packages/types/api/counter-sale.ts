@@ -74,6 +74,16 @@ export interface CounterSaleResponse {
    * (card / check / on account / a sale rung before it was stored); the Today's-sales row carries `number | null`.
    */
   cashTendered?: number;
+  /**
+   * The order's tax (`Order.tax`), server-owned: the counter receipt prints it as the Tax row and the remainder as
+   * Adjustments, exactly like the reprint and the emailed receipt. Omitted by an older server; then no Tax row prints.
+   */
+  tax?: number;
+  /**
+   * The sale's stored tax rate in percent (`@routeflow/pricing` `storedTaxRatePercent`), a CANDIDATE: the receipt names it
+   * only through `explainedTaxRatePercent`. null = mixed / none; omitted with `tax`.
+   */
+  taxRatePercent?: number | null;
   /** true when this response is a replay of an earlier request carrying the same Idempotency-Key. */
   replayed?: boolean;
 }

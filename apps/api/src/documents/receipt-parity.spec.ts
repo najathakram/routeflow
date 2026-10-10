@@ -294,3 +294,55 @@ describe("cash handed over: ONE change figure (the server's servedChange) on eve
     expect(s.reprint.change).toBe(32.75);
   });
 });
+
+describe("the live counter receipt splits Tax and Adjustments like the reprint and the email (row by row)", () => {
+  it("a clean taxed sale: every Tax / Adjustments / rate / total row equals the email's", () => {
+    const s = build({ total: "28.62", tax: "2.12" });
+    expect(s.response.tax).toBe(2.12);
+    expect(s.response.taxRatePercent).toBe(8);
+    for (const k of [
+      "tax",
+      "adjustments",
+      "taxRatePercent",
+      "total",
+      "paid",
+      "balanceDue",
+    ] as const)
+      expect(s.live[k]).toBe(s.emailModel[k]);
+  });
+
+  it("a sale with something left after tax: the live receipt prints Tax AND Adjustments, not the whole remainder as Adjustments", () => {
+    const s = build({ total: "29.62", tax: "2.12" });
+    expect(moneyRows(s.emailModel)).toEqual(moneyRows(s.reprint));
+    expect(s.emailModel).toMatchObject({ tax: 2.12, adjustments: 1, taxRatePercent: 8 });
+    expect(s.live).toMatchObject({ tax: 2.12, adjustments: 1, taxRatePercent: 8 });
+    for (const k of ["tax", "adjustments", "taxRatePercent", "total"] as const)
+      expect(s.live[k]).toBe(s.emailModel[k]);
+  });
+
+  it("a stored tax that no single rate reproduces: the live receipt prints plain Tax too", () => {
+    const s = build({ total: "29.00", tax: "2.50" });
+    expect(s.live).toMatchObject({ tax: 2.5, adjustments: 0, taxRatePercent: null });
+    expect(adjustmentLabel(s.live.taxRatePercent)).toBe("Tax");
+  });
+
+  it("a legacy all-zero-lines sale: the live receipt names the same rate", () => {
+    const s = build({ total: "28.62", tax: "2.12", rates: ["0", "0", "0"] });
+    expect(s.live.taxRatePercent).toBe(8);
+    expect(s.live.tax).toBe(2.12);
+  });
+
+  it("the settings tax rate is not a money source: a response with no tax figure prints no Tax row", () => {
+    const s = build({ total: "28.62", tax: "2.12" });
+    const bare = buildCounterReceipt({
+      receipt: { ...s.response, tax: undefined, taxRatePercent: undefined },
+      lines: DEFAULT_LIVE,
+      enteredTender: null,
+      profile: { businessName: BRANDING.businessName, taxRate: 8, timezone: ZONE },
+      now: new Date(),
+    });
+    expect(bare.tax).toBe(0);
+    expect(bare.taxRatePercent).toBeNull();
+    expect(bare.adjustments).toBe(2.12);
+  });
+});

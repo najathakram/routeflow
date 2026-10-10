@@ -181,15 +181,16 @@ export function buildCounterReceipt(input: {
   });
   const netSubtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
   const discounts = roundMoney(rows.reduce((sum, r) => sum + r.discount, 0));
-  // The response carries no tax figure, so the live receipt names the settings rate only when it explains the WHOLE
-  // difference between the server total and the lines (Tax (8.25%)); anything else prints as Adjustments, never as tax.
-  const difference = roundMoney(receipt.total - netSubtotal) || 0; // never -0
+  // Tax and the rate candidate are the SERVER's (the response's `tax` = Order.tax and `taxRatePercent`, from pricing's
+  // storedTaxRatePercent), exactly what the reprint and the emailed receipt use. Adjustments is whatever remains. The settings
+  // tax rate is not a money source here; an older server that sends no tax prints no Tax row.
+  const tax = roundMoney(receipt.tax ?? 0) || 0; // never -0
+  const adjustments = roundMoney(receipt.total - netSubtotal - tax) || 0; // never -0
   const namedRate = explainedTaxRatePercent({
     base: netSubtotal,
-    tax: difference,
-    ratePercent: profile?.taxRate,
+    tax,
+    ratePercent: receipt.taxRatePercent,
   });
-  const rateExplains = namedRate != null;
 
   return {
     header: receiptHeader(profile),
@@ -201,8 +202,8 @@ export function buildCounterReceipt(input: {
     cashier: clean(input.cashier) || null,
     subtotal: roundMoney(netSubtotal + discounts),
     discounts,
-    tax: rateExplains ? difference : 0,
-    adjustments: rateExplains ? 0 : difference,
+    tax,
+    adjustments,
     total: receipt.total,
     paid: receipt.paid,
     balanceDue: receipt.balanceDue,

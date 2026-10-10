@@ -1,5 +1,5 @@
 import { InternalServerErrorException } from "@nestjs/common";
-import { roundMoney, sumConfirmed } from "@routeflow/pricing";
+import { roundMoney, storedTaxRatePercent, sumConfirmed } from "@routeflow/pricing";
 import type { CounterSalePaymentMethod, CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { CounterSaleDto } from "./counter-sale.dto";
@@ -8,6 +8,10 @@ export type InvoiceRow = {
   id: string;
   invoiceNumber?: string;
   total: unknown;
+  /** the stored header and line rates the sale's tax rate is read from (`storedTaxRatePercent`) */
+  subtotal?: unknown;
+  taxAmount?: unknown;
+  items?: Array<{ taxRate?: unknown; categoryTaxAmount?: unknown }>;
   payments?: Array<{ id: string; amount: unknown; method?: string; status?: string }>;
 };
 
@@ -84,7 +88,13 @@ export function counterMethodOf(
  */
 export function buildCounterSaleResponse(input: {
   payment?: CounterSaleDto["payment"];
-  order: { id: string; orderNumber: string | null; counterCashTendered?: unknown } | null;
+  order: {
+    id: string;
+    orderNumber: string | null;
+    counterCashTendered?: unknown;
+    /** `Order.tax`: served with the rate so the live receipt splits Tax from Adjustments like the reprint */
+    tax?: unknown;
+  } | null;
   invoices: InvoiceRow[];
   replayed: boolean;
   planError?: string;
@@ -141,6 +151,19 @@ export function buildCounterSaleResponse(input: {
       : {}),
     ...(order.counterCashTendered != null
       ? { cashTendered: roundMoney(Number(order.counterCashTendered)) }
+      : {}),
+    // ONE home for the rate (pricing): the same candidate the Today's row and the emailed receipt use
+    ...(order.tax != null
+      ? {
+          tax: roundMoney(Number(order.tax)),
+          taxRatePercent: storedTaxRatePercent(
+            invoices.map((i) => ({
+              subtotal: i.subtotal,
+              taxAmount: i.taxAmount,
+              lines: i.items ?? [],
+            })),
+          ),
+        }
       : {}),
     ...(replayed ? { replayed: true } : {}),
   };
