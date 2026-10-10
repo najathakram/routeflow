@@ -5,25 +5,47 @@ import { writeAdminNotice } from "../manual-invoice-notice";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+export interface ActivationWindow {
+  windowStart: Date;
+  windowEnd: Date;
+  /** The OLDEST open invoice with a period that anchored the window; null when the window starts at now. */
+  blocking: { number: string; periodStart: Date; periodEnd: Date } | null;
+}
+
 /**
  * Owner ruling (option A): the prepaid window a Manual Activation records starts where the tenant's unpaid
  * RouteFlow billing starts, not at the click. With at least one OPEN invoice that has a period, windowStart is
  * the EARLIEST such invoice's periodStart and windowEnd = windowStart + the activation length; the subscription
  * period (and so the renewal the invoice issuer reads) is written from that window. With no OPEN invoice there
  * is nothing to anchor to, so windowStart = now (today's behaviour). PAID / VOID rows and rows with no period
- * never anchor. Call it inside the activation transaction, after the Tenant row lock.
+ * never anchor. The invoice issuer bills ahead (a 7-day lead), so the oldest OPEN invoice can start in the
+ * FUTURE: windowStart is then in the future too and the window is not "ended" (nothing is refused); the
+ * activation records a prepaid period that starts later than today, exactly the period that invoice asked for.
+ * Call it inside the activation transaction, after the Tenant row lock.
  */
 export async function resolveActivationWindow(
   tx: any,
   input: { tenantId: string; now: Date; days: number },
-): Promise<{ windowStart: Date; windowEnd: Date }> {
-  const earliest: { periodStart: Date | null } | null = await tx.rfInvoice.findFirst({
-    where: { tenantId: input.tenantId, status: "OPEN", periodStart: { not: null } },
-    orderBy: { periodStart: "asc" },
-    select: { periodStart: true },
-  });
+): Promise<ActivationWindow> {
+  const earliest: { number: string; periodStart: Date; periodEnd: Date | null } | null =
+    await tx.rfInvoice.findFirst({
+      where: { tenantId: input.tenantId, status: "OPEN", periodStart: { not: null } },
+      orderBy: { periodStart: "asc" },
+      select: { number: true, periodStart: true, periodEnd: true },
+    });
   const windowStart = earliest?.periodStart ?? input.now;
-  return { windowStart, windowEnd: new Date(windowStart.getTime() + input.days * DAY_MS) };
+  return {
+    windowStart,
+    windowEnd: new Date(windowStart.getTime() + input.days * DAY_MS),
+    blocking: earliest
+      ? {
+          number: earliest.number,
+          periodStart: earliest.periodStart,
+          // a row with a start but no end (legacy) is treated as ending at the window start: it never extends minDays
+          periodEnd: earliest.periodEnd ?? earliest.periodStart,
+        }
+      : null,
+  };
 }
 
 /**
@@ -31,12 +53,32 @@ export async function resolveActivationWindow(
  * clamped - the payment covers a period that is over, so recording it would leave the newer periods unbilled or
  * billed twice. 409 ACTIVATION_PERIOD_ALREADY_ENDED, thrown inside the activation transaction right after
  * `resolveActivationWindow` and BEFORE any write, so the transaction rolls back with nothing changed.
+ *
+ * The refusal NAMES the blocking invoice (the oldest OPEN one, which anchored the window) and the real fixes:
+ * mark it paid or void it in RouteFlow invoices, or activate for at least `minDays`. The body carries
+ * `invoiceNumber`, `endedOn` (ISO date the window ended) and `minDays` so the web builds its own copy.
+ * `minDays` is the smallest whole-day length whose window ends after `now` AND covers the blocking invoice's
+ * whole period (a shorter window would only flag it needsReview).
  */
-export function assertActivationWindowNotEnded(window: { windowEnd: Date }, now: Date): void {
+export function assertActivationWindowNotEnded(window: ActivationWindow, now: Date): void {
   if (window.windowEnd.getTime() > now.getTime()) return;
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const endedOn = iso(window.windowEnd);
+  const { blocking } = window;
+  const reachNow = Math.floor((now.getTime() - window.windowStart.getTime()) / DAY_MS) + 1;
+  const coverInvoice = blocking
+    ? Math.ceil((blocking.periodEnd.getTime() - window.windowStart.getTime()) / DAY_MS)
+    : 0;
+  const minDays = Math.max(reachNow, coverInvoice);
+  const message = blocking
+    ? `Invoice ${blocking.number} (${iso(blocking.periodStart)} to ${iso(blocking.periodEnd)}) is still open and this payment's window ended on ${endedOn}. Mark it paid or void it in RouteFlow invoices, or activate for at least ${minDays} days.`
+    : `This payment's window ended on ${endedOn}. Activate for at least ${minDays} days.`;
   throw new ConflictException({
     code: API_ERROR_CODES.ACTIVATION_PERIOD_ALREADY_ENDED,
-    message: `This payment covers an invoice period that already ended on ${window.windowEnd.toISOString().slice(0, 10)}. Activate for more days to reach today, or record the newer invoices first.`,
+    message,
+    ...(blocking ? { invoiceNumber: blocking.number } : {}),
+    endedOn,
+    minDays,
   });
 }
 

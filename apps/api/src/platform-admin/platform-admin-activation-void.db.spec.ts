@@ -58,7 +58,10 @@ const voidAudits = () =>
 const subRow = () => prisma.tenantSubscription.findUnique({ where: { tenantId } });
 
 /** An invoice for [start, start+30d) with the issuer's own periodKey (the period start, ISO). */
-async function monthlyInvoice(start: Date, status: "OPEN" | "PAID"): Promise<{ id: string }> {
+async function monthlyInvoice(
+  start: Date,
+  status: "OPEN" | "PAID",
+): Promise<{ id: string; number: string }> {
   const n = ++seq;
   return prisma.rfInvoice.create({
     data: {
@@ -71,7 +74,7 @@ async function monthlyInvoice(start: Date, status: "OPEN" | "PAID"): Promise<{ i
       periodKey: start.toISOString(),
       dueDate: start,
     },
-    select: { id: true },
+    select: { id: true, number: true },
   });
 }
 
@@ -411,7 +414,9 @@ describeDb("manual activation auto-void (DB)", () => {
     ).rejects.toMatchObject({
       response: {
         code: "ACTIVATION_PERIOD_ALREADY_ENDED",
-        message: expect.stringContaining("already ended on"),
+        message: expect.stringContaining("is still open and this payment's window ended on"),
+        invoiceNumber: stale.number,
+        minDays: expect.any(Number),
       },
     });
 

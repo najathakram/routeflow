@@ -2984,7 +2984,12 @@ describe("PlatformAdminService — audit provenance", () => {
       const DAY = 86_400_000;
       const ended = new Date(Date.now() - 40 * DAY);
       const endedOn = new Date(ended.getTime() + 30 * DAY).toISOString().slice(0, 10);
-      (prisma as any).rfInvoice.findFirst.mockResolvedValue({ periodStart: ended });
+      const invoiceEnd = new Date(ended.getTime() + 30 * DAY);
+      (prisma as any).rfInvoice.findFirst.mockResolvedValue({
+        number: "RF-2026-0042",
+        periodStart: ended,
+        periodEnd: invoiceEnd,
+      });
 
       const err = await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID).then(
         () => null,
@@ -2995,7 +3000,10 @@ describe("PlatformAdminService — audit provenance", () => {
       expect((err as ConflictException).getStatus()).toBe(409);
       expect((err as ConflictException).getResponse()).toEqual({
         code: "ACTIVATION_PERIOD_ALREADY_ENDED",
-        message: `This payment covers an invoice period that already ended on ${endedOn}. Activate for more days to reach today, or record the newer invoices first.`,
+        message: `Invoice RF-2026-0042 (${ended.toISOString().slice(0, 10)} to ${invoiceEnd.toISOString().slice(0, 10)}) is still open and this payment's window ended on ${endedOn}. Mark it paid or void it in RouteFlow invoices, or activate for at least 41 days.`,
+        invoiceNumber: "RF-2026-0042",
+        endedOn,
+        minDays: 41,
       });
       // refused before any write of the transaction
       expect(prisma.tenant.update).not.toHaveBeenCalled();

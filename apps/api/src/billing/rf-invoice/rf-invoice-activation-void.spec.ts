@@ -397,7 +397,18 @@ describe("an activation void keeps the period consumed (the issuer's catch-up mu
 describe("assertActivationWindowNotEnded (owner ruling: an ended window is refused, never clamped)", () => {
   const DAY_MS = 24 * 60 * 60 * 1000;
   const MESSAGE =
-    "This payment covers an invoice period that already ended on 2026-10-01. Activate for more days to reach today, or record the newer invoices first.";
+    "Invoice RF-2026-0001 (2026-09-01 to 2026-10-01) is still open and this payment's window ended on 2026-10-01. Mark it paid or void it in RouteFlow invoices, or activate for at least 37 days.";
+  const BLOCKING = {
+    number: "RF-2026-0001",
+    periodStart: D("2026-09-01"),
+    periodEnd: D("2026-10-01"),
+  };
+  const ended = (over: { windowEnd?: Date; blocking?: typeof BLOCKING | null } = {}) => ({
+    windowStart: D("2026-09-01"),
+    windowEnd: D("2026-10-01"),
+    blocking: BLOCKING as typeof BLOCKING | null,
+    ...over,
+  });
 
   const refusal = (fn: () => void): ConflictException => {
     try {
@@ -408,22 +419,54 @@ describe("assertActivationWindowNotEnded (owner ruling: an ended window is refus
     throw new Error("expected the activation window to be refused");
   };
 
-  it("windowEnd <= now -> 409 ACTIVATION_PERIOD_ALREADY_ENDED with the exact message", () => {
-    const err = refusal(() => assertActivationWindowNotEnded({ windowEnd: D("2026-10-01") }, NOW));
+  it("windowEnd <= now -> 409 ACTIVATION_PERIOD_ALREADY_ENDED naming the blocking invoice and the real fixes", () => {
+    const err = refusal(() => assertActivationWindowNotEnded(ended(), NOW));
     expect(err).toBeInstanceOf(ConflictException);
     expect(err.getStatus()).toBe(409);
     expect(err.getResponse()).toEqual({
       code: API_ERROR_CODES.ACTIVATION_PERIOD_ALREADY_ENDED,
       message: MESSAGE,
+      invoiceNumber: "RF-2026-0001",
+      endedOn: "2026-10-01",
+      minDays: 37,
     });
   });
 
+  it("minDays also covers the blocking invoice's whole period when that runs past the window", () => {
+    // OPEN [now-40d, now+20d), a 30-day activation ends 10 days ago: 41 days reach now, 60 cover the invoice.
+    const start = new Date(NOW.getTime() - 40 * DAY_MS);
+    const err = refusal(() =>
+      assertActivationWindowNotEnded(
+        {
+          windowStart: start,
+          windowEnd: new Date(start.getTime() + 30 * DAY_MS),
+          blocking: {
+            number: "RF-2026-0007",
+            periodStart: start,
+            periodEnd: new Date(start.getTime() + 60 * DAY_MS),
+          },
+        },
+        NOW,
+      ),
+    );
+    expect(err.getResponse()).toMatchObject({ invoiceNumber: "RF-2026-0007", minDays: 60 });
+  });
+
+  it("with no blocking invoice (never reached in practice) it still refuses with a plain message and endedOn/minDays", () => {
+    const err = refusal(() => assertActivationWindowNotEnded(ended({ blocking: null }), NOW));
+    const body = err.getResponse() as Record<string, unknown>;
+    expect(body.code).toBe(API_ERROR_CODES.ACTIVATION_PERIOD_ALREADY_ENDED);
+    expect(body).not.toHaveProperty("invoiceNumber");
+    expect(body).toMatchObject({ endedOn: "2026-10-01", minDays: 37 });
+    expect(body.message).toContain("2026-10-01");
+  });
+
   it("windowEnd exactly equal to now is refused; one millisecond later is allowed", () => {
-    expect(() => assertActivationWindowNotEnded({ windowEnd: NOW }, NOW)).toThrow(
+    expect(() => assertActivationWindowNotEnded(ended({ windowEnd: NOW }), NOW)).toThrow(
       ConflictException,
     );
     expect(() =>
-      assertActivationWindowNotEnded({ windowEnd: new Date(NOW.getTime() + 1) }, NOW),
+      assertActivationWindowNotEnded(ended({ windowEnd: new Date(NOW.getTime() + 1) }), NOW),
     ).not.toThrow();
   });
 
@@ -436,6 +479,7 @@ describe("assertActivationWindowNotEnded (owner ruling: an ended window is refus
     ];
     const w = await resolveActivationWindow(fakeTx(rows), { tenantId: TENANT, now: NOW, days: 30 });
     expect(w.windowEnd.getTime()).toBe(NOW.getTime() - 10 * DAY_MS); // the window is resolved unclamped ...
+    expect(w.blocking).toMatchObject({ number: "RF-2026-0001" }); // ... the oldest OPEN invoice is the blocker
     expect(() => assertActivationWindowNotEnded(w, NOW)).toThrow(ConflictException); // ... then refused
   });
 });
