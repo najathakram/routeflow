@@ -381,9 +381,13 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
         applyInvoiceStatusFilters(where, { isOverdue: true } as any, LA);
         expect(due < where.dueDate.lt).toBe(overdue);
         // 4. the overdue cron (#2520: per tenant, OverdueSweepService)
-        prisma.invoice.updateMany.mockResolvedValue({ count: 0 });
+        prisma.$executeRaw.mockResolvedValue(0);
         await markOverdueForTenant(prisma as any, "test-tenant", now);
-        expect(due < prisma.invoice.updateMany.mock.calls[0][0].where.dueDate.lt).toBe(overdue);
+        // SA-770: the sweep's UPDATE carries the cutoff as a bound ISO instant
+        const swept = (prisma.$executeRaw.mock.calls[0][0] as { values: unknown[] }).values.find(
+          (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v),
+        ) as string;
+        expect(due < new Date(swept)).toBe(overdue);
         // 5. the KPI summary buckets on the TENANT's today, whatever day the viewer sends
         prisma.invoice.findMany.mockResolvedValue([
           { id: "inv-due", total: 100, dueDate: due, status: "SENT", payments: [] },

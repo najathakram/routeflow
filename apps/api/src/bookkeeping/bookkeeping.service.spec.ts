@@ -367,7 +367,7 @@ describe("BookkeepingService", () => {
         { total: 300, payments: [{ amount: 100 }] },
       ]);
       prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 1500 } });
-      prisma.invoice.count.mockResolvedValue(3);
+      prisma.$queryRaw.mockResolvedValue([{ count: 3 }]); // SA-770: the overdue count is the balance-due SQL
 
       const result = await service.getSummary();
 
@@ -391,7 +391,7 @@ describe("BookkeepingService", () => {
       prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: null } });
       prisma.invoice.findMany.mockResolvedValue([]);
       prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: null } });
-      prisma.invoice.count.mockResolvedValue(0);
+      prisma.$queryRaw.mockResolvedValue([{ count: 0 }]);
 
       const result = await service.getSummary();
 
@@ -404,6 +404,31 @@ describe("BookkeepingService", () => {
         paymentsThisWeek: 0,
         overdueCount: 0,
       });
+    });
+
+    it("SA-770: overdueCount counts invoices with a BALANCE DUE � tenant-scoped, bound, never invoice.count", async () => {
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 0, taxAmount: 0 } });
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: 0 } });
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.getTenantId.mockReturnValue("tenant-acme");
+      // COUNT(*) comes back from Postgres as a bigint
+      prisma.$queryRaw.mockResolvedValue([{ count: BigInt(2) }]);
+
+      const result = await service.getSummary();
+
+      expect(result.overdueCount).toBe(2);
+      expect(prisma.invoice.count).not.toHaveBeenCalled(); // the status + due-date-only count was the bug
+      const { sql, values } = prisma.$queryRaw.mock.calls[0][0] as {
+        sql: string;
+        values: unknown[];
+      };
+      expect(values).toEqual(
+        expect.arrayContaining(["tenant-acme", "SENT", "VIEWED", "PARTIAL", "OVERDUE", "PAID"]),
+      );
+      expect(sql).not.toContain("tenant-acme");
+      expect(sql).toMatch(/"i"\."total"\s*-\s*COALESCE\(/); // the balance predicate is in the query
     });
   });
 
