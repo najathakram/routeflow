@@ -122,7 +122,7 @@ export async function loadResyncInputs(
       shippingFee: true,
       dueDate: true,
       items: { select: RESYNC_ITEM_SELECT }, // #2268: + the NSF-line reads
-      payments: { select: { amount: true, status: true } },
+      payments: { select: { amount: true, status: true, method: true } },
     },
   });
   if (invoices.length === 0) return null;

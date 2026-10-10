@@ -1668,7 +1668,7 @@ export class InvoicesService {
         totalBefore: Number(draft.total),
         totalAfter: total,
         linesChanged: countLinesChanged(priorItems, itemsData),
-        paid: sumConfirmed((draft as any).payments),
+        paid: splitConfirmed((draft as any).payments).cash, // external money only
       });
       await this.commissionEngine.syncInvoiceCommissionSafe(draft.id, db);
       const gateway = gatewayFor(opts.tx, opts.after, this.gateway, "reconcileOrderDraftInvoice");
@@ -1840,7 +1840,7 @@ export class InvoicesService {
         shippingFee: true,
         dueDate: true,
         items: { select: { orderItemId: true, unitsPerBox: true, qty: true, subtotal: true } },
-        payments: { select: { amount: true, status: true } },
+        payments: { select: { amount: true, status: true, method: true } },
       },
     });
     if (nonVoid.length !== 1) return null;
@@ -2110,7 +2110,7 @@ export class InvoicesService {
           totalBefore: Number(pd.draft.total),
           totalAfter: pd.total,
           linesChanged: countLinesChanged(pd.draft.items ?? [], pd.itemsData),
-          paid: sumConfirmed(pd.draft.payments),
+          paid: splitConfirmed(pd.draft.payments).cash, // external money only
         });
       // Re-sync the regulated-sales ledger to the rebuilt qty (no-op for non-regulated).
       await this.resyncInvoiceLedger(pd.draft.id, order.id, inv.items ?? [], db);

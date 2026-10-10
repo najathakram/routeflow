@@ -181,6 +181,31 @@ describe("SA-763r P-3: restating an issued invoice is audited and never shows an
     });
   });
 
+  describe("the overpaid row uses the external-cash split (credit-note money is re-settled, not overpaid)", () => {
+    const credit = (amount: number) => ({ amount, status: "PAID", method: "CREDIT_NOTE" });
+
+    it("site 1 (deposit mirror): a cut under a CREDIT_NOTE-paid total writes revised but no overpaid row", async () => {
+      seed("SENT", { depositPercent: 50, payments: [credit(ORDER_TOTAL)] });
+      cutLineInHalf();
+      await service.reconcileOrderDraftInvoice("ord-1", { basis: "order", actor: "user-1" });
+      expect(actions()).toEqual([AUDIT_ACTIONS.INVOICE_REVISED]);
+    });
+
+    it("site 2 (post-delivery re-sync): same", async () => {
+      seed("PAID", { payments: [credit(ORDER_TOTAL)] }, "DELIVERED");
+      cutLineInHalf();
+      await service.resyncOrderInvoicesForEdit("ord-1", undefined, undefined, "user-9");
+      expect(actions()).toEqual([AUDIT_ACTIONS.INVOICE_REVISED]);
+    });
+
+    it("cash plus credit: only the cash beyond the new total is reported (overpaidBy = cash - total)", async () => {
+      seed("PAID", { payments: [PAYMENT(100), credit(205.27)] }, "DELIVERED");
+      cutLineInHalf(); // new total 152.63; cash 100 < 152.63: not overpaid by cash
+      await service.resyncOrderInvoicesForEdit("ord-1", undefined, undefined, "user-9");
+      expect(actions()).toEqual([AUDIT_ACTIONS.INVOICE_REVISED]);
+    });
+  });
+
   describe("an open DRAFT is not a revision", () => {
     it("the pending mirror restated by an edit writes no audit row", async () => {
       seed("DRAFT");
