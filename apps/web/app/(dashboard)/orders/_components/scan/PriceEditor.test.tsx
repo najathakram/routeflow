@@ -7,7 +7,9 @@ import { PriceEditor, type PriceEditorProps } from "./PriceEditor";
 import { unitWords } from "@routeflow/pricing";
 
 // U-3a: the add-extra control is named by the default unit words.
-const ADD_EXTRA = `Add extra ${unitWords().base.lowerOther}`;
+// WCAG 2.5.3: the accessible name contains the visible "+ pieces" text.
+const ADD_EXTRA = `+ ${unitWords().base.lowerOther}: add extra ${unitWords().base.lowerOther}`;
+const REMOVE_EXTRA = `Remove extra ${unitWords().base.lowerOther}`;
 
 // MarginHint is the SAME component the row renders; stubbing it lets these tests assert it is wired
 // with the row's exact props (so the floor check cannot be bypassed by the sheet) without its
@@ -212,12 +214,12 @@ describe("PriceEditor", () => {
     it("SA-563: cases 0 + units n ⇒ no remove-extra-units control", () => {
       setup(boxed({ boxes: 0, pieces: 3 }));
       expect(screen.getByLabelText("Extra pieces")).toBeInTheDocument();
-      expect(screen.queryByLabelText("Remove extra pieces")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(REMOVE_EXTRA)).not.toBeInTheDocument();
     });
 
     it("SA-563: cases ≥ 1 + units n ⇒ remove sets units 0 and leaves cases alone", () => {
       const props = setup(boxed({ boxes: 2, pieces: 3 }));
-      fireEvent.click(screen.getByLabelText("Remove extra pieces"));
+      fireEvent.click(screen.getByLabelText(REMOVE_EXTRA));
       expect(props.onSetPieces).toHaveBeenCalledWith(0);
       expect(props.onSetBoxes).not.toHaveBeenCalled();
     });

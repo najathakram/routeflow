@@ -55,6 +55,13 @@ describe("PriceEditor unit words", () => {
     expect(screen.getByText(/1 box = 6 pcs/)).toHaveTextContent("13 pcs total");
   });
 
+  it("the + button's accessible name contains its visible text (WCAG 2.5.3)", () => {
+    setup(boxed({ boxes: 2, pieces: 0, qty: 12 }));
+    const btn = screen.getByRole("button", { name: /^\+ pieces/ });
+    expect(btn).toHaveTextContent("+ pieces");
+    expect(btn).toHaveAccessibleName("+ pieces: add extra pieces");
+  });
+
   it("a long tenant word shows 11 characters plus a dot in the pill, full word in aria-label", () => {
     setup(boxed({ packLabel: "Shrinkwrapped tray", baseLabel: "Sachet" }));
     const pill = screen.getByRole("button", { name: "Shrinkwrapped tray" });
@@ -68,5 +75,18 @@ describe("PriceEditor unit words", () => {
     expect(screen.getByText("Shrinkwrapped tray price")).toBeInTheDocument();
     const word = screen.getByTitle("Shrinkwrapped trays");
     expect(word.className).toContain("truncate");
+  });
+
+  it("Piece mode keeps 'Box price' and explains it: each piece is the box price ÷ N (computed by the pricing helper)", () => {
+    setup(boxed({ sellBy: "unit", unitPrice: 24, unitsPerBox: 6, boxes: 0, pieces: 2, qty: 2 }));
+    expect(screen.getByText("Box price")).toBeInTheDocument();
+    expect(screen.getByTestId("sell-mode-hint")).toHaveTextContent(
+      "Selling by the piece: each piece is the box price ÷ 6 ($4.00)",
+    );
+  });
+
+  it("case mode has no such hint", () => {
+    setup(boxed({ sellBy: "case" }));
+    expect(screen.queryByTestId("sell-mode-hint")).toBeNull();
   });
 });

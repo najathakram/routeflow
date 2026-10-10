@@ -151,7 +151,9 @@ export function CreatePOModal({
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">Product</th>
                     <th className="px-3 py-2 text-left font-medium w-24">Qty</th>
-                    <th className="px-3 py-2 text-left font-medium w-28">Cost ($)</th>
+                    <th className="px-3 py-2 text-left font-medium w-28">
+                      Cost per {UW.pack.lower} / {UW.base.lower}
+                    </th>
                     <th className="px-3 py-2 text-right font-medium w-24">Subtotal</th>
                     <th className="w-8" />
                   </tr>

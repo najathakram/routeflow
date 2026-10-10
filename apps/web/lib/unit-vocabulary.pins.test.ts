@@ -79,8 +79,13 @@ const FILES: Pin[] = [
       "Remove extra " + "units",
       "+ units\n",
       "1 case = {li.unitsPerBox} units",
+      "aria-label={`Add extra ${w.base.lowerOther}`}", // label-in-name: must contain "+ pieces"
+      'aria-label="Remove extra pieces"',
     ],
-    present: ["aria-label={`Add extra ${w.base.lowerOther}`}"],
+    present: [
+      "aria-label={`+ ${w.base.lowerOther}: add extra ${w.base.lowerOther}`}",
+      "aria-label={`Remove extra ${w.base.lowerOther}`}",
+    ],
   },
   {
     file: `${D}orders/_components/scan/PriceEditor.tsx`,
@@ -93,8 +98,13 @@ const FILES: Pin[] = [
       "+ units\n",
       "1 case = {li.unitsPerBox} units",
       '"Case price"',
+      "aria-label={`Add extra ${w.base.lowerOther}`}", // label-in-name: must contain "+ pieces"
+      'aria-label="Remove extra pieces"',
     ],
-    present: ["aria-label={`Add extra ${w.base.lowerOther}`}"],
+    present: [
+      "aria-label={`+ ${w.base.lowerOther}: add extra ${w.base.lowerOther}`}",
+      "aria-label={`Remove extra ${w.base.lowerOther}`}",
+    ],
   },
   {
     file: `${D}invoices/new/page.tsx`,
@@ -126,16 +136,40 @@ const FILES: Pin[] = [
   },
   {
     file: `${D}products/[id]/ProductUnitsCard.tsx`,
-    gone: ["· the pack (edit", "derived from the pack price", "per unit\n"],
+    gone: [
+      "· the pack (edit",
+      "derived from the pack price",
+      "per unit\n",
+      "Pieces per unit",
+      "Units per case",
+    ],
+    present: [
+      // The units-card factor field: visible label and aria-label both name the pieces-per-level.
+      "{w.base.other} per {unit.label.toLowerCase()}",
+      "aria-label={`${w.base.other} per ${unit.label}`}",
+      "the {w.pack.lower} (edit its price above)",
+    ],
   },
   {
     file: `${D}inventory/_components/PurchaseOrdersCreateModal.tsx`,
-    gone: [">Unit Cost ($)<", "Cost per unit", '"per unit"'],
+    gone: [">Unit Cost ($)<", "Cost per unit", '"per unit"', "Cost ($)"],
+    present: ["Cost per {UW.pack.lower} / {UW.base.lower}"],
     allow: ["boxes", "pieces"], // line-state field keys passed to updateLine, never shown
   },
   {
     file: `${D}inventory/_components/PurchaseOrderLinesTable.tsx`,
-    gone: ["Unit Cost ($)", "Cost per unit", '"per unit"', 'aria-label="Unit cost"'],
+    gone: [
+      "Unit Cost ($)",
+      "Cost per unit",
+      '"per unit"',
+      'aria-label="Unit cost"',
+      "Cost ($)",
+      "Unit cost ($)",
+    ],
+    present: [
+      "Cost per {UW.pack.lower} / {UW.base.lower}",
+      "Cost per {isBoxed ? UW.pack.lower : UW.base.lower}",
+    ],
   },
   {
     file: `${D}returns/_components/InlineReturnSection.tsx`,
@@ -143,12 +177,26 @@ const FILES: Pin[] = [
   },
   {
     file: `${D}products/[id]/page.tsx`,
-    gone: ['label="Units per case"', "} units`", "/ unit</p>", "(same as case code)"],
+    gone: [
+      'label="Units per case"',
+      "} units`",
+      "/ unit</p>",
+      "(same as case code)",
+      'placeholder="Same as case code"',
+      'placeholder="Leave blank if it matches the case code"',
+    ],
+    present: [
+      "placeholder={`Same as ${UW.pack.lower} code`}",
+      "placeholder={`Leave blank if it matches the ${UW.pack.lower} code`}",
+      "≈ ${pu.toFixed(2)} / {UW.base.short.one}",
+      "— (same as {UW.pack.lower} code)",
+      "<PiecesPerBoxValue",
+    ],
   },
   { file: `${D}products/page.tsx`, gone: ['header: "Units / case"'] },
   {
     file: `${W}components/ProductCreateModal.tsx`,
-    gone: ["Case code (SKU", ">Units per box<"],
+    gone: ["Case code (SKU", ">Units per box<", "matches the case code"],
   },
   { file: `${W}components/InlineCreateProductModal.tsx`, gone: [">Units per box<"] },
   { file: `${W}components/PackSizePrompt.tsx`, gone: ['aria-label="Units per box"'] },
