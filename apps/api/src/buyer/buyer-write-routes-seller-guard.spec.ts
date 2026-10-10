@@ -1,4 +1,6 @@
 import "reflect-metadata";
+import * as fs from "fs";
+import * as path from "path";
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
 import { RequestMethod } from "@nestjs/common";
 import { BuyerPaymentsController } from "../payment-requests/buyer-payments.controller";
@@ -49,8 +51,73 @@ function writeHandlers(ctrl: new (...a: any[]) => unknown) {
   return out;
 }
 
+/**
+ * Controllers that authenticate a BUYER but are not seller-scoped: they act on the buyer's own account, so they carry
+ * no BuyerSellerContextGuard by design. A NEW buyer controller must be classified here or be seller-scoped.
+ */
+const ACCOUNT_LEVEL_CONTROLLERS: Record<string, string> = {
+  BuyerAuthController:
+    "register, login, refresh, profile, password and session routes of the buyer's own account",
+  BuyerMergeController: "a buyer's request to merge their own accounts",
+};
+
+const SRC = path.resolve(__dirname, "..");
+
+/** Every controller source that uses BuyerJwtAuthGuard, wherever it lives (not a hard-coded list). */
+function buyerControllers(): {
+  file: string;
+  ctrl: new (...a: any[]) => unknown;
+  scoped: boolean;
+}[] {
+  const out: { file: string; ctrl: new (...a: any[]) => unknown; scoped: boolean }[] = [];
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (/\.controller\.ts$/.test(e.name)) {
+        const text = fs.readFileSync(full, "utf8");
+        if (!text.includes("BuyerJwtAuthGuard")) continue;
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const mod = require(full);
+        for (const exported of Object.values(mod)) {
+          if (
+            typeof exported === "function" &&
+            Reflect.getMetadata(PATH_METADATA, exported) !== undefined
+          ) {
+            out.push({
+              file: path.relative(SRC, full).split(path.sep).join("/"),
+              ctrl: exported as any,
+              scoped: text.includes("BuyerSellerContextGuard"),
+            });
+          }
+        }
+      }
+    }
+  };
+  walk(SRC);
+  return out;
+}
+
 describe("buyer write routes carry BuyerSellerContextGuard (B4 B1 sweep)", () => {
-  const all = [BuyerController, BuyerPaymentsController].flatMap((c) => writeHandlers(c as any));
+  const found = buyerControllers();
+  const all = found.filter((f) => f.scoped).flatMap((f) => writeHandlers(f.ctrl as any));
+
+  it("discovers the buyer controllers by source (not a hard-coded pair)", () => {
+    const names = found.map((f) => f.ctrl.name);
+    for (const n of ["BuyerController", "BuyerPaymentsController", "BuyerCapabilitiesController"]) {
+      expect(names).toContain(n);
+    }
+  });
+
+  it("every controller that uses BuyerJwtAuthGuard is seller-scoped or a reviewed account-level one", () => {
+    const unclassified = found
+      .filter((f) => !f.scoped && !(f.ctrl.name in ACCOUNT_LEVEL_CONTROLLERS))
+      .map((f) => f.ctrl.name);
+    expect(unclassified).toEqual([]);
+    for (const n of Object.keys(ACCOUNT_LEVEL_CONTROLLERS)) {
+      expect(found.some((f) => f.ctrl.name === n && !f.scoped)).toBe(true); // a stale entry must be deleted
+    }
+  });
 
   it("finds the write routes (the sweep is not vacuous)", () => {
     expect(all.length).toBeGreaterThanOrEqual(18);

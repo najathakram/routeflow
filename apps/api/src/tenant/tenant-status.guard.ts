@@ -51,6 +51,8 @@ export const READ_ONLY_ALLOWED_MUTATIONS: ReadonlyArray<{
     methods: ["POST"],
     pattern: /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/report$/,
   },
+  // The e-mailed receipt of an EXISTING sale (SA r-note, lead ruling 10-10). NO such route exists on this base: it
+  // ships with the counter receipt e-mail work (SA-751r; not on this base), so this entry matches nothing here.
   { methods: ["POST"], pattern: /^\/api\/v1\/orders\/[0-9a-fA-F-]{36}\/receipt$/ },
 ];
 
