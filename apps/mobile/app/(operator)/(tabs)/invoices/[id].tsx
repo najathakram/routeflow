@@ -61,6 +61,7 @@ import { invoiceLineQtyText } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
 import { printPdf } from "../../../../lib/print-pdf";
+import { overpaidText, revisedBadgeText } from "../../../../lib/invoice-revision";
 import {
   nextPdfSharePhase,
   smtpFallbackNotice,
@@ -623,6 +624,12 @@ export default function InvoiceDetailScreen() {
             <Pill variant={s.variant} dot>
               {s.label}
             </Pill>
+            {revisedBadgeText(invoice.revisedAt) ? (
+              <Text style={styles.headerMeta}>{revisedBadgeText(invoice.revisedAt)}</Text>
+            ) : null}
+            {overpaidText(invoice.overpaidBy) ? (
+              <Text style={styles.headerMeta}>{overpaidText(invoice.overpaidBy)}</Text>
+            ) : null}
             <Text style={styles.customer}>{invoice.customer?.businessName ?? "Customer"}</Text>
             {invoice.subject?.trim() ? (
               <Text style={styles.headerMeta} numberOfLines={2}>

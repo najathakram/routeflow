@@ -15,6 +15,7 @@ import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
+import { handleOrderOverpay } from "../../../../../lib/order-overpay-prompt";
 import { UnitPickerRow } from "../../../../../components/UnitPickerRow";
 import { OrderAppliedCredits } from "../../../../../components/OrderAppliedCredits";
 import type { UnitOption } from "../../../../../lib/unit-options";
@@ -873,6 +874,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
             setCreditBlock(creditInfo);
             return;
           }
+          const customerName = (order as any)?.customer?.businessName;
+          if (
+            handleOrderOverpay(e, { id, customerId, customerName }, (r) => router.push(r as never))
+          )
+            return;
           showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
         },
       },
