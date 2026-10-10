@@ -31,6 +31,7 @@ import { EntitlementsModule } from "./entitlements.module";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { CatchupCheckoutService } from "./catchup-checkout.service";
+import { DunningService } from "./dunning.service";
 
 @Module({
   // forwardRef: MailboxModule (imported by EmailModule for MailboxSendService) imports this
@@ -61,6 +62,8 @@ import { CatchupCheckoutService } from "./catchup-checkout.service";
     CatchupClaimService,
     // SA-733 D7: plan + open the October catch-up checkout (platform-admin CatchupAdminController).
     CatchupCheckoutService,
+    // SA-733r7 PR-B3: dunning (clock stamp, hourly pause sweep, invoice.paid resume, pause_collection reconciler).
+    DunningService,
     // Manual invoices due PR1 (DARK: RF_INVOICING_MODE defaults to off, the cron then does nothing).
     RfInvoiceBuilder,
     RfInvoiceIssuerService,
@@ -89,6 +92,8 @@ import { CatchupCheckoutService } from "./catchup-checkout.service";
     // The platform-admin RfInvoice queue refuses payments while a claim is held.
     CatchupClaimService,
     CatchupCheckoutService,
+    // Platform-admin activation / extendTrial clear a pause's Stripe pause_collection after their commit.
+    DunningService,
     BillingService,
     PlatformPricingService,
     AddonService,

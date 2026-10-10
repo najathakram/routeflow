@@ -56,6 +56,9 @@ import {
 import { addCycle, Cycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import { DunningService } from "./dunning.service";
+import { assertNotPaymentOverdue } from "./payment-overdue";
+import { transitionToActiveTx, type PauseExit } from "./transition-to-active";
 import { CUSTOM_FEE_UNCHANGED, priceOverrideOf, prorationAllowedFor } from "./price-override";
 import type { AddonBillingMode } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -258,9 +261,16 @@ export class SubscriptionMutationService {
     private readonly planTransition: PlanTransitionConfigService,
     // R1 option B: `resume()` undoes a pre-renewal downgrade price push.
     @Optional() private readonly scheduledPrice?: ScheduledPriceChangeService,
+    // SA-733r7 PR-B3: a paused tenant that cancels lands on READ_ONLY(subscription_cancelled); exits clear the pause.
+    @Optional() private readonly dunning?: DunningService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
+
+  /** SA-733r M1: a tenant that owes an overdue invoice gets 409 PAYMENT_OVERDUE on every plan-mutation entry point. */
+  private assertNotOverdue(tenantId: string): Promise<void> {
+    return assertNotPaymentOverdue({ prisma: this.prisma, stripe: this.stripe }, tenantId);
+  }
 
   /**
    * The plan the tenant is changing FROM. `TenantSubscription.planKey` is nullable — a
@@ -304,6 +314,7 @@ export class SubscriptionMutationService {
 
   /** Commit a subscription / convert a trial by picking a plan (+ optional add-ons). */
   async subscribe(tenantId: string, input: SubscribeInput, actorId?: string) {
+    await this.assertNotOverdue(tenantId);
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === input.planKey);
     if (!def) throw new BadRequestException(`Unknown plan "${input.planKey}"`);
@@ -420,6 +431,7 @@ export class SubscriptionMutationService {
     }
     const removedItemIds = new Set(droppedBilled.map((x: any) => x.row.stripeItemId as string));
 
+    const exitBox: { exit: PauseExit | null } = { exit: null };
     await this.prisma.$transaction(async (tx) => {
       // B865 / SA-277 FIX-2 (house lock order): tenant row lock FIRST, before any
       // subscription/add-on read or write in this tx.
@@ -591,17 +603,12 @@ export class SubscriptionMutationService {
           trialConvertedAt: wasTrial ? now : undefined,
         },
       });
-      await tx.tenant.update({
-        where: { id: tenantId },
-        data: {
-          status: "ACTIVE",
-          planVersionId: version.id,
-          plan: planKeyToEnum(input.planKey),
-          // An ACTIVE tenant otherwise keeps a stale "trial_cancelled"/"trial_expired" forever
-          // (RO-1 now ships this to the client) — subscribing clears it.
-          readOnlyReason: null,
-        },
+      // The ONE path to ACTIVE (SA-733r2 N5): it nulls the stale "trial_cancelled"/"trial_expired" reason (RO-1 ships
+      // it to the client) and clears the dunning clock + pause in this tx.
+      const toActive = await transitionToActiveTx(tx, tenantId, {
+        data: { planVersionId: version.id, plan: planKeyToEnum(input.planKey) },
       });
+      exitBox.exit = toActive.exit;
       for (const [code, qty] of desiredNow) {
         const meta = skuByCode.get(code)!;
         // #2188 / SA-385: re-activate the tenant's row for this SKU IN PLACE — including one
@@ -755,6 +762,7 @@ export class SubscriptionMutationService {
     this.planTransition.invalidateCaches(tenantId, preparedTransition);
     this.entitlements.invalidate(tenantId);
     this.tenantStatus.invalidate(tenantId);
+    await this.dunning?.clearPauseAfterCommit(exitBox.exit); // leaving a pause also leaves Stripe's pause_collection
     return { quote, subscription: await this.subscription.getSubscription(tenantId) };
   }
 
@@ -1027,6 +1035,7 @@ export class SubscriptionMutationService {
   }
 
   private async upgradeLocked(tenantId: string, planKey: string, actorId?: string) {
+    await this.assertNotOverdue(tenantId);
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === planKey);
     if (!def) throw new BadRequestException(`Unknown plan "${planKey}"`);
@@ -1244,6 +1253,7 @@ export class SubscriptionMutationService {
     retainedUserIds: string[],
     actorId?: string,
   ) {
+    await this.assertNotOverdue(tenantId);
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === targetPlanKey);
     if (!def) throw new BadRequestException(`Unknown plan "${targetPlanKey}"`);
@@ -1377,6 +1387,10 @@ export class SubscriptionMutationService {
         // `await this.propagateCancelToStripe(tenantId, sub.stripeSubId);`.
         await this.cancelReadOnlyStripeSubImmediately(tenantId, sub.stripeSubId);
       }
+      // SA-733r2 N1: a PAUSED tenant (payment_overdue) that cancels keeps its exports as READ_ONLY(
+      // subscription_cancelled), never CANCELLED; the overdue invoice stays owed (the marker is kept). A no-op for
+      // every other READ_ONLY reason. Local `pausedAt` clears; the immediate Stripe cancel supersedes the pause.
+      await this.dunning?.markCancelledWhilePaused(tenantId);
       return { cancelled: "already_read_only" as const };
     }
 
@@ -1483,6 +1497,7 @@ export class SubscriptionMutationService {
    * only self-service "keep my current plan"; it never touches planKey or the period.
    */
   async resume(tenantId: string, actorId?: string) {
+    await this.assertNotOverdue(tenantId);
     const sub = await this.prisma.tenantSubscription.findUnique({ where: { tenantId } });
     if (!sub) throw new NotFoundException("No subscription.");
 

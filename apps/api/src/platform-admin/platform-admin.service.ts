@@ -26,6 +26,12 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanTransitionConfigService } from "../billing/plan-transition-config.service";
 import { gateVia } from "../billing/feature-registry";
 import { BillingEventService } from "../billing/billing-event.service";
+import { DunningService } from "../billing/dunning.service";
+import {
+  clearDunningTx,
+  transitionToActiveTx,
+  type PauseExit,
+} from "../billing/transition-to-active";
 import { MrrService, isPayingRow } from "../billing/mrr.service";
 import { applyCouponStateTx } from "../billing/coupon-state";
 import { NO_COUPON } from "../billing/coupon-unbilled";
@@ -139,6 +145,8 @@ export class PlatformAdminService {
     private readonly stripe: StripeService,
     // R1 Option B: undoes an early downgrade price push before an admin plan change prorates from it.
     @Optional() private readonly scheduledPrice?: ScheduledPriceChangeService,
+    // SA-733r7 PR-B3: leaving a dunning pause (admin activation, extendTrial) also clears Stripe's pause_collection.
+    @Optional() private readonly dunning?: DunningService,
   ) {}
 
   /**
@@ -607,6 +615,7 @@ export class PlatformAdminService {
     // flipped the row). The old shape ran three separate, unserialized queries, so the schedule
     // this call reports could be one a concurrent downgrade() armed a moment later. One
     // transaction means the audit line describes the row as it stood at the transition.
+    const exitBox: { exit: PauseExit | null } = { exit: null };
     const { tenant, armedDowngrade } = await this.prisma.$transaction(async (tx) => {
       // SA-140: lock the row FIRST, before any read this transaction's decision depends on —
       // closes a race against a concurrent write to the SAME tenant from a different admin
@@ -625,6 +634,9 @@ export class PlatformAdminService {
       const before = await tx.tenant.findUniqueOrThrow({
         where: { id },
         select: {
+          id: true,
+          slug: true,
+          plan: true,
           status: true,
           class: true,
           deletedAt: true,
@@ -640,20 +652,21 @@ export class PlatformAdminService {
 
       let wasRealReactivation = false;
       if (dto.status === "ACTIVE") {
-        const { count } = await tx.tenant.updateMany({
-          where: { id, status: { not: "ACTIVE" } },
-          data: { status: dto.status },
-        });
-        wasRealReactivation = count === 1;
+        // SA-733r2 N5: the ONE path to ACTIVE - also nulls readOnlyReason and clears the dunning clock + pause.
+        const to = await transitionToActiveTx(tx, id, { where: { status: { not: "ACTIVE" } } });
+        wasRealReactivation = to.count === 1;
+        exitBox.exit = to.exit;
       }
       // Always followed by a plain update: `updateMany` doesn't return the row, and a lost CAS
       // (already ACTIVE) still needs the write for every other target status, so one path
       // covers both — it's an idempotent no-op re-write of the same value when the CAS already
       // won.
-      const updated = await tx.tenant.update({
-        where: { id },
-        data: { status: dto.status },
-      });
+      // ACTIVE was written (or already held) by transitionToActiveTx above, under the same row lock: the row as it
+      // stands is `before` with that status. Every other target is a plain status write.
+      const updated =
+        dto.status === "ACTIVE"
+          ? { ...before, status: dto.status }
+          : await tx.tenant.update({ where: { id }, data: { status: dto.status } });
 
       // B556: a tenant that reaches ACTIVE with no resolved planKey is the exact "shown as
       // paying, contributes $0 forever" shape B556 reports — the historically confirmed
@@ -742,6 +755,7 @@ export class PlatformAdminService {
 
     // Evict cached status so the guard picks up the change immediately
     this.tenantStatusGuard.invalidate(id);
+    await this.dunning?.clearPauseAfterCommit(exitBox.exit); // an exit from payment_overdue clears pause_collection
     const action =
       dto.status === "SUSPENDED"
         ? AdminAuditAction.TENANT_SUSPENDED
@@ -1168,6 +1182,7 @@ export class PlatformAdminService {
     // (house order: add-on lock, then the tenant row lock inside it); none to price, none taken.
     const addonSkusToPrice = await unbilledSelfServeSkus(this.prisma, id);
 
+    const exitBox: { exit: PauseExit | null } = { exit: null };
     const tenant = await withAddonLocks(id, addonSkusToPrice, () =>
       this.prisma.$transaction(async (tx) => {
         // B864 / SA-277 (D2): same tenant row lock as updateStatus/updateTenantClass/
@@ -1243,14 +1258,13 @@ export class PlatformAdminService {
               : null;
         const snapshotWrite = crossingIn || planSwitch ? { basePriceSnapshot: newBase } : {};
 
-        const [updated] = await Promise.all([
-          tx.tenant.update({
-            where: { id },
-            // readOnlyReason is cleared with the status (as every other ACTIVE write does): RO-1 ships it to
-            // the client, and a lapsed trial's "trial_expired" must not outlive the READ_ONLY it explained.
-            data: { status: "ACTIVE", plan: dto.plan, readOnlyReason: null },
-            select: { id: true, slug: true, status: true, plan: true },
-          }),
+        // SA-733r2 N5: the ONE path to ACTIVE. It nulls readOnlyReason (RO-1 ships it to the client; a lapsed
+        // trial's "trial_expired" must not outlive the READ_ONLY it explained) and clears the dunning clock + pause.
+        const toActive = await transitionToActiveTx(tx, id, { data: { plan: dto.plan } });
+        exitBox.exit = toActive.exit;
+        // The row after the write above, known without another read: the activation's own plan, status ACTIVE.
+        const updated = { id, slug: before.slug, status: "ACTIVE" as const, plan: dto.plan };
+        await Promise.all([
           tx.tenantSubscription.upsert({
             where: { tenantId: id },
             create: {
@@ -1436,6 +1450,7 @@ export class PlatformAdminService {
     this.planTransition.invalidateCaches(id, preparedTransition);
     // Invalidate cached tenant status so the guard picks up ACTIVE immediately
     this.tenantStatusGuard.invalidate(id);
+    await this.dunning?.clearPauseAfterCommit(exitBox.exit); // an exit from payment_overdue clears pause_collection
 
     await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_SUBSCRIPTION_ACTIVATED, {
       plan: tenant.plan,
@@ -2204,14 +2219,23 @@ export class PlatformAdminService {
     }
     // An ACTIVE tenant is a paying tenant: extending a "trial" would silently demote it. The status
     // predicate is part of the write itself (no read-then-write gap): count 0 = it is ACTIVE.
-    const { count } = await this.prisma.tenant.updateMany({
-      where: { id, status: { not: "ACTIVE" } },
-      data: {
-        trialEndsAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
-        status: "TRIAL",
-      },
+    // SA-733r4 F4 #7: TRIAL is written outside transitionToActiveTx, so a tenant leaving a dunning pause this way
+    // clears the clock + pause itself (same tx, Tenant lock first) and queues the Stripe unpause for after commit.
+    const exitBox: { exit: PauseExit | null } = { exit: null };
+    const count = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${id} FOR UPDATE`;
+      const { count } = await tx.tenant.updateMany({
+        where: { id, status: { not: "ACTIVE" } },
+        data: {
+          trialEndsAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
+          status: "TRIAL",
+        },
+      });
+      if (count === 1) exitBox.exit = await clearDunningTx(tx, id);
+      return count;
     });
     if (count === 0) throw activeTenantTrialRefusal();
+    await this.dunning?.clearPauseAfterCommit(exitBox.exit);
     const updated = await this.prisma.tenant.findUniqueOrThrow({
       where: { id },
       select: { id: true, slug: true, trialEndsAt: true, status: true },

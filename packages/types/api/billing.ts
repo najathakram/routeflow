@@ -59,7 +59,7 @@ export interface SubscriptionView<TDate = string> {
   downgradeEffectiveAt: TDate | null;
   trialEndsAt: TDate | null;
   /** Populated only when `status === "READ_ONLY"` — the enforcement reason the tenant-status
-   *  guard recorded (`"trial_expired"` | `"subscription_cancelled"` | `"trial_cancelled"`, or
+   *  guard recorded (`"trial_expired"` | `"subscription_cancelled"` | `"trial_cancelled"` | `"payment_overdue"` (SA-733r7: a dunning pause), or
    *  another server-defined string). `null`/absent renders the generic read-only copy. */
   readOnlyReason?: string | null;
   addons: Array<{ sku: string | null; name: string; quantity: number; monthly: number | null }>;

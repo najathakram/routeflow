@@ -305,8 +305,11 @@ export class DunningService {
     await this.reconcile(new Date());
   }
 
-  /** SA-733r4 F4 #6: the reconciler also runs at 11:00Z on the 1st (the renewal that a stale pause would void). */
-  @LeaderCron("0 11 1 * *", "billing.pauseReconcileFirst", { timeZone: "UTC" })
+  /**
+   * SA-733r4 F4 #6: the reconciler also runs at 11:00Z on the 1st (the renewal that a stale pause would void).
+   * Like every other cron here the schedule is in the process zone, which is UTC in production.
+   */
+  @LeaderCron("0 11 1 * *", "billing.pauseReconcileFirst")
   async pauseReconcileFirst(): Promise<void> {
     await this.reconcile(new Date());
   }

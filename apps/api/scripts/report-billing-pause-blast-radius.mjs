@@ -1,0 +1,156 @@
+/**
+ * READ-ONLY blast-radius report for the dunning pause (SA-733r7 PR-B3, `BILLING_PAUSE_MODE`).
+ *
+ * The owner reads this right before flipping `BILLING_PAUSE_MODE` from `dark` to `enforced`:
+ *
+ *   railway run --service postgres node apps/api/scripts/report-billing-pause-blast-radius.mjs
+ *   (add --json for machine-readable output)
+ *
+ * It answers "who would the pause touch the moment the mode flips?":
+ *   - ELIGIBLE: tenants the dunning sweep looks at - a Stripe subscription (`stripeSubId`), not manual-pay
+ *     (`externalPayment = false`), no held catch-up claim. There is no `couponFull` exemption.
+ *   - STAMPED: eligible tenants that already carry an overdue clock (`pastDueInvoiceId`), with the hours since
+ *     `pastDueSince`, the reminders already sent (`BillingNotificationLog`), and what `enforced` would do:
+ *       - "pause after final notice" - past 168 h: the first `enforced` sweep sends the final notice; the pause
+ *         follows 24 h later, at the first sweep at or after 03:00 tenant-local. NOBODY is paused in hour one.
+ *       - "countdown" - not yet 168 h.
+ *   - ALREADY PAUSED: tenants in READ_ONLY(`payment_overdue`) or with `pausedAt` set (should be 0 before the flip).
+ *   - OUT OF SCOPE (listed so nobody is surprised): ACTIVE tenants with no `stripeSubId`, manual-pay tenants, and
+ *     tenants whose catch-up claim is held. The sweep never sees them.
+ *
+ * SAFETY (this script must never be able to touch a client database):
+ *   - `default_transaction_read_only = on` is set on the session before any other query runs, so the server itself
+ *     rejects a write even if one slipped past review.
+ *   - `statement_timeout` caps every query.
+ *   - Only SELECT statements appear below; the connection is closed in `finally`.
+ *   - Tenant slugs land in the owner's terminal output only - never hardcoded here.
+ */
+import { createRequire } from "module";
+import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
+const { Client } = createRequire(import.meta.url)("pg");
+
+const PAUSE_HOURS = 168; // DUNNING_PAUSE_HOURS in src/billing/dunning-config.ts
+const HOUR_MS = 60 * 60 * 1000;
+
+const json = process.argv.slice(2).includes("--json");
+
+// Fail closed BEFORE any connection is attempted (B768: the redacted target goes to stderr).
+const databaseUrl = resolveReportDbUrl("report-billing-pause-blast-radius");
+if (!databaseUrl) process.exit(2);
+
+const client = new Client({ connectionString: databaseUrl });
+const q = async (sql, params) => (await client.query(sql, params)).rows;
+
+async function main() {
+  await client.connect();
+  // Hard read-only guarantee + query cap, before anything else runs.
+  await client.query("SET default_transaction_read_only = on");
+  await client.query("SET statement_timeout = '45s'");
+
+  const now = new Date();
+
+  const eligible = await q(
+    `SELECT t.id, t.slug, t.status, t."readOnlyReason", s."pastDueInvoiceId", s."pastDueSince", s."pausedAt"
+       FROM "TenantSubscription" s
+       JOIN "Tenant" t ON t.id = s."tenantId"
+      WHERE s."stripeSubId" IS NOT NULL
+        AND s."externalPayment" = false
+        AND s."catchupState" IS NULL
+        AND t."deletedAt" IS NULL
+      ORDER BY t.slug ASC`,
+  );
+
+  const stampedIds = eligible.filter((r) => r.pastDueInvoiceId).map((r) => r.id);
+  const logRows = stampedIds.length
+    ? await q(
+        `SELECT l."tenantId", l.milestone, l.key, l."sentAt"
+           FROM "BillingNotificationLog" l
+          WHERE l."tenantId" = ANY($1::text[])
+            AND l.milestone IN ('DUNNING_D0','DUNNING_D3','DUNNING_D6','DUNNING_FINAL','DUNNING_PAUSED')`,
+        [stampedIds],
+      )
+    : [];
+  const sentFor = (tenantId, invoiceId) =>
+    logRows
+      .filter((l) => l.tenantId === tenantId && l.key === invoiceId)
+      .map((l) => l.milestone.replace("DUNNING_", "").toLowerCase())
+      .sort();
+
+  const stamped = eligible
+    .filter((r) => r.pastDueInvoiceId)
+    .map((r) => {
+      const hours = r.pastDueSince ? (now - new Date(r.pastDueSince)) / HOUR_MS : null;
+      const paused = r.status === "READ_ONLY" && r.readOnlyReason === "payment_overdue";
+      const action = paused
+        ? "already paused"
+        : r.status !== "ACTIVE"
+          ? `status ${r.status}: not paused`
+          : hours != null && hours >= PAUSE_HOURS
+            ? "pause after final notice (>= 24 h after the flip)"
+            : "countdown";
+      return {
+        slug: r.slug,
+        status: r.status,
+        hoursOverdue: hours == null ? "n/a" : Math.floor(hours),
+        remindersSent: sentFor(r.id, r.pastDueInvoiceId).join(",") || "none",
+        onFlip: action,
+      };
+    });
+
+  const alreadyPaused = eligible.filter(
+    (r) => r.pausedAt || (r.status === "READ_ONLY" && r.readOnlyReason === "payment_overdue"),
+  );
+
+  const outOfScope = await q(
+    `SELECT t.slug,
+            CASE
+              WHEN s."catchupState" IS NOT NULL THEN 'catch-up claim held'
+              WHEN s."externalPayment" = true THEN 'manual-pay (externalPayment)'
+              ELSE 'no Stripe subscription'
+            END AS reason
+       FROM "Tenant" t
+       JOIN "TenantSubscription" s ON s."tenantId" = t.id
+      WHERE t.status = 'ACTIVE' AND t."deletedAt" IS NULL AND t.class = 'PRODUCTION'
+        AND (s."stripeSubId" IS NULL OR s."externalPayment" = true OR s."catchupState" IS NOT NULL)
+      ORDER BY t.slug ASC`,
+  );
+
+  const wouldPause = stamped.filter((r) => r.onFlip.startsWith("pause after")).length;
+  const summary = {
+    eligibleTenants: eligible.length,
+    stampedTenants: stamped.length,
+    pausedNow: alreadyPaused.length,
+    wouldReceiveFinalNoticeOnFlip: wouldPause,
+    outOfScopeActive: outOfScope.length,
+  };
+
+  if (json) {
+    console.log(JSON.stringify({ summary, stamped, outOfScope }, null, 2));
+    return;
+  }
+
+  console.log(`\n=== BILLING PAUSE BLAST RADIUS ===`);
+  console.log("    session is READ ONLY; no writes are possible\n");
+  console.table(summary);
+  if (stamped.length) {
+    console.log("\nStamped (overdue clock running):");
+    console.table(stamped);
+  } else {
+    console.log("\nNo tenant carries an overdue clock.");
+  }
+  if (outOfScope.length) {
+    console.log("\nACTIVE tenants the sweep never sees:");
+    console.table(outOfScope);
+  }
+  console.log(
+    `\n${wouldPause} tenant(s) would get the final notice on the first enforced sweep and be paused no sooner than 24 h later.\n`,
+  );
+  console.log("=== END - session was read-only; nothing was modified ===\n");
+}
+
+main()
+  .catch((e) => {
+    console.error("blast-radius report failed:", e.message);
+    process.exitCode = 1;
+  })
+  .finally(() => client.end());

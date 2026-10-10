@@ -43,7 +43,7 @@ export async function resolveClockInvoice(
 
   const open: any[] = subId ? await deps.stripe.listOpenSubscriptionInvoices(subId) : [];
   const others = open.filter(
-    (i) => i?.id && i.id !== paidInvoiceId && Number(i.amount_remaining ?? 0) > 0,
+    (i) => i?.id && i.id !== paidInvoiceId && (i.amount_remaining ?? 0) > 0,
   );
   if (others.length > 0) {
     const oldest = others[0];
