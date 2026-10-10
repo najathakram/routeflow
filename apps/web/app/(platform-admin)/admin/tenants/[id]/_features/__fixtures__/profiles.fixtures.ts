@@ -46,6 +46,16 @@ export const PROFILES_FIXTURE: BusinessProfileSummary[] = [
     grants: [],
     denies: FLEET,
   },
+  {
+    key: "delivery_pos",
+    label: "Delivery + POS",
+    description:
+      "Delivers on its own trucks and also sells over the counter: delivery routes on, counter sales on.",
+    available: true,
+    modes: { fulfilment_model: "delivery", counter_sales: "on" },
+    grants: FLEET,
+    denies: [],
+  },
 ];
 
 /** A `shipping_wholesaler` preview for a tenant that PAYS for two fleet add-ons (billing lines first, as the API orders them). */

@@ -314,6 +314,10 @@ describe("SA-2 review sheet", () => {
       "in_store_shipping_retailer",
       ["Counter sales on", "Orders are in-store pickup or carrier shipping", "Delivery routes off"],
     ],
+    [
+      "delivery_pos",
+      ["Counter sales on", "Orders go out on the business's own trucks", "Delivery routes on"],
+    ],
   ])("(5) the Setup lines for %s are derived from the profile list", async (key, lines) => {
     await renderPage();
     fillForm();

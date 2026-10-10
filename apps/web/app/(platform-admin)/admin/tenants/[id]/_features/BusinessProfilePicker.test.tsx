@@ -60,14 +60,14 @@ beforeEach(() => {
   });
 });
 
-describe("BusinessProfilePicker — the four profiles", () => {
-  it("lists all four profiles with their plain-English descriptions", async () => {
+describe("BusinessProfilePicker — the five profiles", () => {
+  it("lists all five profiles with their plain-English descriptions", async () => {
     await renderPicker();
     for (const p of PROFILES_FIXTURE) {
       const radio = screen.getByRole("radio", { name: new RegExp(p.label.replace("+", "\\+")) });
       expect(radio).toBeInTheDocument();
     }
-    expect(screen.getAllByRole("radio")).toHaveLength(4);
+    expect(screen.getAllByRole("radio")).toHaveLength(5);
   });
 
   it("shows the in-store profiles disabled, with no 'Available when counter sales launch' note (SA-1)", async () => {

@@ -15,6 +15,7 @@ export const BUSINESS_PROFILE_KEYS = [
   "shipping_wholesaler",
   "in_store_retailer",
   "in_store_shipping_retailer",
+  "delivery_pos",
 ] as const;
 export type BusinessProfileKey = (typeof BUSINESS_PROFILE_KEYS)[number];
 

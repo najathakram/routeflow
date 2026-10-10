@@ -66,6 +66,16 @@ export const BUSINESS_PROFILES: readonly BusinessProfileDef[] = [
     fleet: false,
     modes: { fulfilment_model: "pickup_ship", counter_sales: "on" },
   },
+  {
+    key: "delivery_pos",
+    label: "Delivery + POS",
+    // `delivery` (not `both`): `both` adds carrier shipping, and no registry mode offers delivery
+    // plus pickup. The counter is `counter_sales: "on"`, so it is optional beside the delivery runs.
+    description:
+      "Delivers on its own trucks and also sells over the counter: delivery routes on, counter sales on.",
+    fleet: true,
+    modes: { fulfilment_model: "delivery", counter_sales: "on" },
+  },
 ];
 
 export function businessProfileByKey(key: string): BusinessProfileDef | undefined {

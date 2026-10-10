@@ -47,12 +47,13 @@ function profile(key: string) {
 }
 
 describe("business profile registry", () => {
-  it("has exactly the four profiles, in picker order", () => {
+  it("has exactly the five profiles, in picker order", () => {
     expect(BUSINESS_PROFILES.map((p) => [p.key, p.label])).toEqual([
       ["delivery_distributor", "Delivery distributor"],
       ["shipping_wholesaler", "Shipping wholesaler"],
       ["in_store_retailer", "In-store retailer"],
       ["in_store_shipping_retailer", "In-store + shipping retailer"],
+      ["delivery_pos", "Delivery + POS"],
     ]);
   });
 
@@ -107,6 +108,12 @@ describe("business profile registry", () => {
         denies: FLEET_MODULES,
         modes: { fulfilment_model: "pickup_ship", counter_sales: "on" },
       },
+      {
+        key: "delivery_pos",
+        grants: FLEET_MODULES,
+        denies: [],
+        modes: { fulfilment_model: "delivery", counter_sales: "on" },
+      },
     ]);
   });
 
@@ -155,6 +162,7 @@ describe("business profile registry", () => {
       ["shipping_wholesaler", true],
       ["in_store_retailer", true],
       ["in_store_shipping_retailer", true],
+      ["delivery_pos", true],
     ]);
     expect(unavailableModes(profile("in_store_shipping_retailer"))).toEqual([]);
     expect(unavailableModes(profile("shipping_wholesaler"))).toEqual([]);
@@ -180,6 +188,8 @@ describe("no second resolver — the applied profile reads through deriveFulfilm
   it.each([
     ["delivery_distributor", { methods: ["ROUTE"], counter: "off", staffOpensAs: "order" }],
     ["shipping_wholesaler", { methods: ["SHIP"], counter: "off", staffOpensAs: "order" }],
+    // delivery + counter: ROUTE orders with an optional counter (not an in-store-only mode)
+    ["delivery_pos", { methods: ["ROUTE"], counter: "optional", staffOpensAs: "order" }],
   ])("%s lands on a consistent capability", (key, expected) => {
     const p = profile(key);
     const fleet = toBusinessProfileSummary(p).grants.length > 0;

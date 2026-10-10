@@ -49,6 +49,15 @@ const PLAIN_PROFILES: Record<string, PlainProfile> = {
       "No routes, delivery or driver payments",
     ],
   },
+  delivery_pos: {
+    name: "Delivery + POS",
+    line: "Delivers on its own trucks and also sells over the counter.",
+    bullets: [
+      "Routes, ad hoc delivery and at-door payments in the menu",
+      "Orders go out on the business's own trucks",
+      "Counter in the menu, optional beside delivery",
+    ],
+  },
 };
 
 export interface ProfilePlainCopy {
