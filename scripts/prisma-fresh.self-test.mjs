@@ -5,7 +5,8 @@
 //   F*: freshness (formatter-shaped copy passes; any real schema change is stale)
 //   M*: missing pieces give a clear reason
 //   P*: preflight decision (CI skipped, api-not-in-plan skipped, stale -> message with the fix)
-//   R1: the real checkout's own client is fresh (skipped when none generated / on CI)
+//   R1: the real checkout's own client is fresh (opt-in: RF_PRISMA_FRESH_REAL=1; an environment
+//       assertion, not a unit test - verify's own preflight enforces it)
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -328,8 +329,10 @@ check(
   [true, true, false],
 );
 
-// ---- R: the real checkout (never on CI; skipped when no client has been generated here)
-if (!process.env.CI) {
+// ---- R: the real checkout (opt-in only; skipped when no client has been generated here)
+if (process.env.RF_PRISMA_FRESH_REAL !== "1") {
+  console.log("skip R1 (set RF_PRISMA_FRESH_REAL=1 to check this checkout)");
+} else {
   const apiDir = join(dirname(fileURLToPath(import.meta.url)), "..", "apps", "api");
   const clientDir = resolveGeneratedClientDir(apiDir);
   if (clientDir) {
