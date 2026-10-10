@@ -574,6 +574,32 @@ for (const [name, over] of [
   check("I12 the holder's heartbeat advances while it works", moved, true);
 }
 {
+  // N2: a lease whose lock file is deleted warns exactly once, however many heartbeats follow.
+  const dir = mkTmp();
+  const logs = [];
+  await withHeavySlot(
+    {
+      label: "lost",
+      branch: "b",
+      dir,
+      env: {},
+      pollMs: 10,
+      heartbeatMs: 15,
+      log: (m) => logs.push(m),
+    },
+    async () => {
+      rmSync(lockFile(dir), { force: true });
+      await until(() => logs.length > 0);
+      await sleep(120); // many more 15 ms heartbeats with the lock still gone
+    },
+  );
+  check(
+    "I12b a lease whose lock vanished logs the warning exactly once across many heartbeats",
+    [logs.length, /WARNING our slot lock vanished/.test(logs[0] ?? "")],
+    [1, true],
+  );
+}
+{
   const dir = mkTmp();
   mkdirSync(dir, { recursive: true });
   writeFileSync(

@@ -477,6 +477,7 @@ async function acquire(cfg, state) {
 
 function makeLease(cfg, lock, index) {
   const file = lockPath(cfg.dir, index);
+  let warnedLost = false; // the warning is once per lease, not once per heartbeat
   const beat = setInterval(() => {
     const cur = readEntry(file);
     if (cur && !cur.unreadable && cur.token === lock.token) {
@@ -485,7 +486,8 @@ function makeLease(cfg, lock, index) {
       } catch {
         /* next beat */
       }
-    } else {
+    } else if (!warnedLost) {
+      warnedLost = true;
       cfg.log("heavy-slot: WARNING our slot lock vanished or was taken over; continuing unguarded");
     }
   }, cfg.heartbeatMs);

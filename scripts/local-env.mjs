@@ -231,14 +231,18 @@ async function runWrapped(ctx) {
   return res.status ?? 1;
 }
 
+// Label the hold by MODE so a waiting lane can tell what is ahead of it (not "local:docker").
+const heavyLabel = flags.has("--build-sha")
+  ? flags.has("--e2e")
+    ? "local:build+e2e"
+    : "local:build"
+  : "local:e2e";
+
 let code;
 try {
   code =
     flags.has("--build-sha") || flags.has("--e2e")
-      ? await withHeavySlot(
-          { label: `local:${command.trim().split(/\s+/)[0] || "cmd"}` },
-          runWrapped,
-        )
+      ? await withHeavySlot({ label: heavyLabel }, runWrapped)
       : await runWrapped();
 } catch (e) {
   console.error(e instanceof Error ? e.message : String(e));
