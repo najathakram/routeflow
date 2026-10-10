@@ -65,6 +65,8 @@ import { withAdvisoryLock } from "../common/db-locks";
 import { overdueCutoff } from "../common/calendar-date";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
+import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import {
@@ -1179,22 +1181,27 @@ export class BuyerController {
 
     // Invoice breakdown (SA-770 r-note): the staff rule - an open invoice that still owes a balance and
     // whose due day has ended in THIS seller's zone is overdue; the total is BALANCE due, never gross.
-    const invoices = await db.invoice.findMany({
-      where: { customerId },
-      select: {
-        status: true,
-        total: true,
-        dueDate: true,
-        payments: { select: { amount: true, status: true, method: true } },
-      },
-    });
-    const zone = await tenantTimeZone(this.prisma);
-    const {
-      settledCount: paidCount,
-      unpaidCount,
-      overdueCount,
-      unpaidTotal,
-    } = summarizeOpenInvoices(invoices, overdueCutoff(new Date(), zone));
+    // Bounded: PAID invoices are only counted, and only OPEN ones are fetched, each with just the
+    // confirmed payments (amount, status, method) the classifier nets.
+    const [paidInvoiceCount, openInvoices, zone] = await Promise.all([
+      db.invoice.count({ where: { customerId, status: "PAID" } }),
+      db.invoice.findMany({
+        where: { customerId, status: { in: [...OPEN_INVOICE_STATUSES] } },
+        select: {
+          status: true,
+          total: true,
+          dueDate: true,
+          payments: {
+            where: CONFIRMED_PAYMENT,
+            select: { amount: true, status: true, method: true },
+          },
+        },
+      }),
+      tenantTimeZone(this.prisma),
+    ]);
+    const summary = summarizeOpenInvoices(openInvoices, overdueCutoff(new Date(), zone));
+    const paidCount = paidInvoiceCount + summary.settledCount;
+    const { unpaidCount, overdueCount, unpaidTotal } = summary;
 
     // Recent payments (last 20)
     const payments = await db.invoicePayment.findMany({

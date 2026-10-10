@@ -7,7 +7,9 @@ import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-v
 import { firstSignableImageKey } from "../products/product-image-keys";
 import { overdueCutoff } from "../common/calendar-date";
 import { tenantTimeZone } from "../common/tenant-time-zone";
-import { OPEN_INVOICE_STATUSES, summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
+import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
+import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 
 @Injectable()
 export class BuyerDashboardService {
@@ -63,6 +65,7 @@ export class BuyerDashboardService {
       spend90d,
       spendAllTime,
       openInvoices,
+      sellerZone,
     ] = await Promise.all([
       // Recent orders (last 5)
       this.prisma.forTenant().order.findMany({
@@ -181,15 +184,16 @@ export class BuyerDashboardService {
           status: true,
           total: true,
           dueDate: true,
-          payments: { select: { amount: true, status: true, method: true } },
+          payments: {
+            where: CONFIRMED_PAYMENT,
+            select: { amount: true, status: true, method: true },
+          },
         },
       }),
+      // The seller's own due day (SA-488): an invoice is overdue once ITS tenant's day has ended.
+      tenantTimeZone(this.prisma),
     ]);
-    // The seller's own due day (SA-488): an invoice is overdue once ITS tenant's day has ended.
-    const unpaid = summarizeOpenInvoices(
-      openInvoices,
-      overdueCutoff(now, await tenantTimeZone(this.prisma)),
-    );
+    const unpaid = summarizeOpenInvoices(openInvoices, overdueCutoff(now, sellerZone));
 
     // Enrich frequently ordered products with product details + buyer pricing.
     // Unlisted (catalog-free) lines have no productId and can't be reordered.
