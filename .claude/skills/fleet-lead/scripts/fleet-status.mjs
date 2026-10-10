@@ -13,13 +13,10 @@
 // Usage:
 //   node .claude/skills/fleet-lead/scripts/fleet-status.mjs [--json] [--out <file>]
 
-import { execFileSync, execFile as execFileCb } from "node:child_process";
-import { promisify } from "node:util";
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-const execFile = promisify(execFileCb);
+import { makeProc } from "../../../../scripts/lib/proc.mjs";
 
 const args = process.argv.slice(2);
 const wantJson = args.includes("--json");
@@ -35,38 +32,8 @@ const BOARD_ISSUE = Number(process.env.FLEET_BOARD_ISSUE || 2554);
 
 const report = {}; // machine-readable accumulator for --json
 
-function run(cmd, cmdArgs, opts = {}) {
-  return execFileSync(cmd, cmdArgs, {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    maxBuffer: 1024 * 1024 * 32,
-    ...opts,
-  });
-}
-
-function tryRun(cmd, cmdArgs, opts = {}) {
-  try {
-    return { ok: true, out: run(cmd, cmdArgs, opts) };
-  } catch (err) {
-    const stderr = err.stderr ? String(err.stderr).trim().split("\n")[0] : err.message;
-    return { ok: false, error: stderr || String(err.message || err) };
-  }
-}
-
-async function tryRunAsync(cmd, cmdArgs, opts = {}) {
-  try {
-    const { stdout } = await execFile(cmd, cmdArgs, {
-      cwd: REPO_ROOT,
-      maxBuffer: 1024 * 1024 * 32,
-      ...opts,
-    });
-    return { ok: true, out: stdout };
-  } catch (err) {
-    const stderr = err.stderr ? String(err.stderr).trim().split("\n")[0] : err.message;
-    return { ok: false, error: stderr || String(err.message || err) };
-  }
-}
+// run / tryRun / tryRunAsync live in scripts/lib/proc.mjs (shared with scripts/lead-status.mjs).
+const { run, tryRun, tryRunAsync } = makeProc(REPO_ROOT);
 
 // Runs `fn(item)` over `items` with at most `limit` in flight at once.
 async function pooled(items, limit, fn) {

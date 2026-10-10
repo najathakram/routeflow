@@ -70,9 +70,9 @@ export function shippingPreviewWithBilling(
     summary: [
       "At-door payment collection will be switched off and its billing stopped",
       "Ad hoc order delivery will be switched off; remove it from their manual invoice",
-      "How orders reach customers: Own delivery → Ship by carrier",
+      "Where orders go: Own delivery → Ship by carrier",
     ],
-    changes: ["How orders reach customers: Own delivery → Ship by carrier"],
+    changes: ["Where orders go: Own delivery → Ship by carrier"],
     planFingerprint: "a".repeat(64),
     before: EFFECTIVE_FIXTURE,
     after: EFFECTIVE_FIXTURE,
