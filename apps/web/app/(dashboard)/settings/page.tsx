@@ -100,6 +100,8 @@ import { useInvalidFocus } from "@/lib/form-errors";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
+const RECEIPT_FOOTER_MAX_CHARS = 200;
+
 const profileSchema = z.object({
   businessName: z.string().min(1, "Required"),
   email: z.string().email("Enter a valid email"),
@@ -111,6 +113,10 @@ const profileSchema = z.object({
   state: z.string().optional(),
   zip: z.string().regex(/^\d{5}(-\d{4})?$/, "Enter a valid ZIP code"),
   taxRate: z.coerce.number().min(0).max(100),
+  // Plain text, counted in characters like the API does (SA-762r F6).
+  receiptFooter: z.string().refine((v) => Array.from(v).length <= RECEIPT_FOOTER_MAX_CHARS, {
+    message: `Keep the footer to ${RECEIPT_FOOTER_MAX_CHARS} characters or fewer`,
+  }),
 });
 type ProfileFormValues = z.infer<typeof profileSchema>;
 
@@ -136,7 +142,18 @@ function BusinessProfileTab() {
         variant: "success",
       });
     },
-    onError: () => toast({ title: "Failed to save settings", variant: "error" }),
+    onError: (err) => {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      toast(
+        status === 400
+          ? {
+              title: "Couldn't save the receipt footer",
+              description: `Use plain text of ${RECEIPT_FOOTER_MAX_CHARS} characters or fewer.`,
+              variant: "error",
+            }
+          : { title: "Failed to save settings", variant: "error" },
+      );
+    },
   });
 
   // Logo upload — POSTs the file to /tenants/me/config/branding/logo as
@@ -191,6 +208,7 @@ function BusinessProfileTab() {
       state: "",
       zip: "",
       taxRate: 0,
+      receiptFooter: "",
     },
   });
 
@@ -207,6 +225,7 @@ function BusinessProfileTab() {
         state: savedSettings.state ?? "",
         zip: savedSettings.zip ?? "",
         taxRate: savedSettings.taxRate ?? 0,
+        receiptFooter: savedSettings.receiptFooter ?? "",
       });
     }
   }, [savedSettings, reset]);
@@ -375,9 +394,19 @@ function BusinessProfileTab() {
       </Card>
 
       <Card title="Receipt">
-        {/* Not wired yet: stays disabled and unregistered, so a save never carries receiptFooter. */}
-        <Textarea label="Receipt footer" rows={3} disabled defaultValue="" />
-        <p className="mt-1 text-xs text-navy/70">Available soon</p>
+        {/* Plain text only: the footer is never rendered as HTML. */}
+        <Textarea
+          label="Receipt footer"
+          rows={3}
+          register={register("receiptFooter")}
+          error={errors.receiptFooter?.message}
+        />
+        <p className="mt-1 text-xs text-navy/70">
+          Printed at the bottom of counter receipts. Plain text.{" "}
+          <span aria-live="polite">
+            {Array.from(watch("receiptFooter") ?? "").length}/{RECEIPT_FOOTER_MAX_CHARS}
+          </span>
+        </p>
       </Card>
 
       <div className="flex justify-end">

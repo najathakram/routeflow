@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import SettingsPage from "./page";
 
 const searchParams = new URLSearchParams("tab=profile");
@@ -82,20 +82,51 @@ describe("Business profile — tax rate", () => {
   });
 });
 
-describe("Business profile — receipt footer (until the API lands)", () => {
-  it("is disabled with 'Available soon'", async () => {
+describe("Business profile — receipt footer", () => {
+  it("is enabled and seeded from GET /settings", async () => {
+    get.mockResolvedValue({ data: { ...SAVED, receiptFooter: "Thanks!" } });
     renderWithProviders(<SettingsPage />);
-    expect(await screen.findByLabelText("Receipt footer")).toBeDisabled();
-    expect(screen.getByText("Available soon")).toBeInTheDocument();
+    const footer = await screen.findByLabelText("Receipt footer");
+    await waitFor(() => expect(footer).toHaveValue("Thanks!"));
+    expect(footer).toBeEnabled();
+    expect(screen.getByText("7/200")).toBeInTheDocument();
   });
 
-  it("a profile save never carries a receiptFooter key", async () => {
+  it("persists in the PATCH /settings body", async () => {
     get.mockResolvedValue({ data: { ...SAVED, receiptFooter: "Thanks!" } });
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    const footer = await screen.findByLabelText("Receipt footer");
+    await waitFor(() => expect(footer).toHaveValue("Thanks!"));
+    await user.clear(footer);
+    await user.type(footer, "See you <b>soon</b>");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith(
+        "/settings",
+        expect.objectContaining({ receiptFooter: "See you <b>soon</b>" }),
+      ),
+    );
+  });
+
+  it("blocks a footer over 200 characters client-side", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    const footer = await screen.findByLabelText("Receipt footer");
+    await waitFor(() => expect(screen.getByLabelText("Default Tax Rate")).toHaveValue(8.25));
+    fireEvent.change(footer, { target: { value: "x".repeat(201) } });
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+    expect(await screen.findByText(/200 characters or fewer/)).toBeInTheDocument();
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("maps an API 400 to fixed copy", async () => {
+    patch.mockRejectedValue({ response: { status: 400, data: { message: "raw server text" } } });
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
     await waitFor(() => expect(screen.getByLabelText("Default Tax Rate")).toHaveValue(8.25));
     await user.click(screen.getByRole("button", { name: /save changes/i }));
-    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
-    expect(patch.mock.calls[0][1]).not.toHaveProperty("receiptFooter");
+    expect(await screen.findByText("Couldn't save the receipt footer")).toBeInTheDocument();
+    expect(screen.queryByText("raw server text")).not.toBeInTheDocument();
   });
 });
