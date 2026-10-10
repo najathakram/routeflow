@@ -134,7 +134,11 @@ export class ReceiptService {
             subtotal: true,
             taxAmount: true,
             items: { select: { taxRate: true, categoryTaxAmount: true } },
-            payments: { select: { method: true, amount: true, status: true } },
+            // in the order they were taken: the first stored tender decides whether change is served
+            payments: {
+              orderBy: { createdAt: "asc" },
+              select: { method: true, amount: true, status: true },
+            },
           },
         },
       },

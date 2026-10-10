@@ -256,6 +256,8 @@ export interface ReprintSaleFacts {
   createdAt: string | Date;
   /** cash handed over (the Today's-sales row's `cashTendered`); null/absent on a legacy sale: no Tendered / Change */
   cashTendered?: number | null;
+  /** the change due (the row's `change`, server-owned: servedChange); null/absent: no Change line prints */
+  change?: number | null;
   /** the sale's single stored tax rate in percent (the row's `taxRatePercent`); null/absent: no rate known */
   taxRatePercent?: number | null;
   /** the row's customer name; null/absent for a walk-in (the row's `isWalkIn`): no customer line prints */
@@ -350,9 +352,6 @@ export function receiptModelFromOrder(input: {
     tax,
     ratePercent: sale.taxRatePercent,
   });
-  const cashApplied = roundMoney(
-    sale.methods.filter((m) => m.method === "CASH").reduce((sum, m) => sum + m.amount, 0),
-  );
   const tendered = sale.cashTendered ?? null;
   return {
     header: receiptHeader(profile),
@@ -378,7 +377,8 @@ export function receiptModelFromOrder(input: {
       : null,
     tendered,
     tenderedAsEntered: false,
-    change: tendered == null ? null : Math.max(0, roundMoney(tendered - cashApplied)),
+    // the server's figure (the row's `change`, servedChange), shown as given: the client recomputes nothing
+    change: tendered == null ? null : (sale.change ?? null),
     changeAsEntered: false,
     taxRatePercent,
     customerName: clean(sale.customerName) || null,

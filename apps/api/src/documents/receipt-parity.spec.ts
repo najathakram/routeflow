@@ -223,3 +223,74 @@ describe("a legacy invoice whose lines all store a 0 rate: one rate on every sur
     expect(adjustmentLabel(legacy.emailModel.taxRatePercent)).toBe("Tax (8%)");
   });
 });
+
+describe("cash handed over: ONE change figure (the server's servedChange) on every surface", () => {
+  const net = [
+    {
+      id: "li-1",
+      name: "Water case",
+      status: "DELIVERED",
+      qty: "1",
+      unitPrice: "34.49",
+      unitsPerBox: null,
+      boxes: null,
+      pieces: null,
+      product: null,
+    },
+  ];
+  const liveNet = [{ tempId: "li-1", name: "Water case", unitPrice: 34.49, qty: 1 }];
+  const cash = (extra: Partial<Scenario> = {}) =>
+    build({
+      total: "37.25",
+      tax: "2.76",
+      invoiceSubtotal: "34.49",
+      rates: ["0.0800"],
+      lines: net,
+      live: liveNet,
+      payments: [{ method: "CASH", amount: "37.25" }],
+      tendered: "50.00",
+      ...extra,
+    });
+
+  it("CASH 50 on 37.25: change 12.75 on the row, the response, the reprint, the email and the live receipt", () => {
+    const s = cash();
+    expect(s.row.change).toBe(12.75);
+    expect(s.response.change).toBe(12.75);
+    for (const m of [s.reprint, s.emailModel, s.live]) {
+      expect(m.tendered).toBe(50);
+      expect(m.change).toBe(12.75);
+    }
+    expect(moneyRows(s.emailModel)).toEqual(moneyRows(s.reprint));
+  });
+
+  it("a card-first sale (cash only for part of it, tendered stored): no change on any surface", () => {
+    const s = cash({
+      payments: [
+        { method: "CREDIT_CARD", amount: "20.00" },
+        { method: "CASH", amount: "17.25" },
+      ],
+    });
+    expect(s.row.change).toBeNull();
+    expect(s.response.change).toBeUndefined();
+    for (const m of [s.reprint, s.emailModel, s.live]) expect(m.change).toBeNull();
+    expect(moneyRows(s.emailModel)).toEqual(moneyRows(s.reprint));
+  });
+
+  it("a partly paid cash sale serves no change anywhere", () => {
+    const s = cash({ payments: [{ method: "CASH", amount: "20.00" }] });
+    expect(s.row.change).toBeNull();
+    for (const m of [s.reprint, s.emailModel]) expect(m.change).toBeNull();
+  });
+
+  it("payments are read in the order they were taken: the first stored tender decides (cash first, card second)", () => {
+    const s = cash({
+      payments: [
+        { method: "CASH", amount: "17.25" },
+        { method: "CREDIT_CARD", amount: "20.00" },
+      ],
+    });
+    expect(s.row.change).toBe(32.75);
+    expect(s.emailModel.change).toBe(32.75);
+    expect(s.reprint.change).toBe(32.75);
+  });
+});

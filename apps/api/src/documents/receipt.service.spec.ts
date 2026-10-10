@@ -245,6 +245,13 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
       expect(select.invoices.select).toMatchObject({ subtotal: true, taxAmount: true });
     });
 
+    it("reads the payments in the order they were taken (the first stored tender decides whether change is served)", async () => {
+      const { prisma, send } = setup({});
+      await send();
+      const sel = prisma.order.findFirst.mock.calls[0][0].select.invoices.select;
+      expect(sel.payments.orderBy).toEqual({ createdAt: "asc" });
+    });
+
     it("emails the split money rows: Tax (8%) from the stored line rate, no Adjustments when nothing remains", async () => {
       const { email, send } = setup({});
       await send();

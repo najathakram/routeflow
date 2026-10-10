@@ -195,6 +195,7 @@ function Reprint({
             methods: row.methods,
             createdAt: row.createdAt,
             cashTendered: row.cashTendered,
+            change: row.change,
             customerName: row.isWalkIn ? null : row.customerName,
             taxRatePercent: row.taxRatePercent,
             timezone,
