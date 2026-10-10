@@ -287,6 +287,46 @@ describe("CounterTodaysSales", () => {
     expect(await screen.findByTestId("today-row-o1")).toBeInTheDocument();
   });
 
+  it("SA-764: a reprint with tendered 50 shows Tendered and the server's Change, not browser math", async () => {
+    // change 7.5 is deliberately NOT tendered - cash (27.5): the figure must be the row's, as given
+    serve({ 1: page1([row({ cashTendered: 50, change: 7.5 })]) });
+    await open();
+    fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+    const root = await screen.findByTestId("receipt-print-root");
+    expect(within(root).getByTestId("receipt-tendered")).toHaveTextContent("$50.00");
+    expect(within(root).getByTestId("receipt-change")).toHaveTextContent("$7.50");
+  });
+
+  it("SA-764: a legacy row (cashTendered and change null) shows neither line and no $0.00 change", async () => {
+    await open();
+    fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+    const root = await screen.findByTestId("receipt-print-root");
+    expect(within(root).queryByTestId("receipt-tendered")).toBeNull();
+    expect(within(root).queryByTestId("receipt-change")).toBeNull();
+    expect(root.textContent).not.toMatch(/Change|\$0\.00/);
+  });
+
+  it.each([
+    ["exactly", 1.86],
+    ["a cent off (per-line rounding)", 1.87],
+  ])(
+    "SA-764: the reprint labels the tax 'Tax (8.25%%)' when the stored tax is %s",
+    async (_n, tax) => {
+      const saved = { ...ORDER };
+      Object.assign(ORDER, { tax, total: 22.5 + tax });
+      try {
+        serve({ 1: page1([row({ taxRatePercent: 8.25, total: 22.5 + tax })]) });
+        await open();
+        fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+        const root = await screen.findByTestId("receipt-print-root");
+        expect(root.textContent).toContain("Tax (8.25%)");
+      } finally {
+        delete (ORDER as { tax?: number }).tax;
+        Object.assign(ORDER, saved);
+      }
+    },
+  );
+
   it("SA-762r: a reprint prints a named customer and the settings footer; a walk-in row prints no customer line", async () => {
     get.mockImplementation((url: string) =>
       url === "/orders/counter-sale/today"

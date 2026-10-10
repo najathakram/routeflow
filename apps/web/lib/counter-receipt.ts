@@ -302,7 +302,7 @@ export function formatSaleTime(at: string | Date, timeZone: string = "UTC"): str
 
 /**
  * The reprint's receipt model, built from the stored order. Same shape (and same line math) as `buildCounterReceipt`; the
- * differences are the facts that are never stored: no Tendered, no Change. The date is the sale's own time, not "now".
+ * differences are the facts that are never stored: Tendered and Change come from the sale row (server-owned). The date is the sale's own time, not "now".
  */
 export function receiptModelFromOrder(input: {
   order: ReprintOrderLike;
