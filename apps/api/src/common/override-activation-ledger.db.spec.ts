@@ -275,6 +275,30 @@ describeDb(
       expect(sub.cycle).toBe("ANNUAL");
     });
 
+    it("REG-B864-DB-ORDER: a manual activation that commits BEFORE the price override leaves exactly $1200 on the ledger once the override's ledger half has run", async () => {
+      // The activation-first interleaving of the race below, forced deterministically. The activation crosses
+      // into the paying set against NO override yet, so it snapshots and books the catalog price; the override
+      // then finds the snapshot already set (no back-fill) and its ledger half
+      // (`syncStripeSubscriptionPrice` -> `reconcilePriceLedger`) books the difference.
+      const tenantId = await makeTrialTenant("b864-order", "GROWTH");
+
+      await platformAdmin.activateManualSubscription(
+        tenantId,
+        {
+          plan: "STARTER",
+          paymentMethod: "ZELLE",
+          paymentRef: "ref-o",
+          billingPeriodDays: 365,
+        } as any,
+        "admin-1",
+      );
+      expect(await ledgerSum(tenantId)).toBe(starterPrice);
+
+      await platformAdmin.updateTenantPriceOverride(tenantId, { monthly: 1200 } as any, "admin-1");
+
+      expect(await ledgerSum(tenantId)).toBe(1200);
+    });
+
     it("REG-B864-DB-RACE: a concurrent price-override + manual activation on the same tenant serialise through the tenant row lock and book exactly $1200 total, never $0 or $2400", async () => {
       const tenantId = await makeTrialTenant("b864-race", "GROWTH");
 
