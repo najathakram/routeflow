@@ -308,7 +308,7 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
       invoices[0].status = "PAID";
       invoices[0].payments.push({ id: "p0", amount: 41.27, method: "CASH", status: "PAID" });
       const r = await ring({ method: "ON_ACCOUNT" });
-      keyed(50);
+      keyed(stored);
       const k = await service.byKey("k1", "ON_ACCOUNT");
       expect(k.change).toBe(8.73);
       expect(k.cashTendered).toBe(50);
@@ -340,12 +340,27 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
       invoices[0].status = "PAID";
       invoices[0].payments.push({ id: "p0", amount: 41.27, method: "CASH", status: "PAID" });
       const r = await ring({ method: "CARD", amount: 41.27 });
-      keyed(50);
+      keyed(stored);
       const k = await service.byKey("k1", "CARD");
       expect(r).toEqual(k);
       expect(r.change).toBe(8.73);
       expect(invoices[0].payments).toHaveLength(1);
-      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      wroteNothing();
+    });
+
+    it("(5) a failed CASH attempt (tendered stored, no CASH row) replayed as ON_ACCOUNT serves cashTendered, no change", async () => {
+      replay = true;
+      stored = 60;
+      const r = await ring({ method: "ON_ACCOUNT" });
+      keyed(stored);
+      const k = await service.byKey("k1", "ON_ACCOUNT");
+      expect(r).toEqual(k);
+      expect(r.cashTendered).toBe(60);
+      expect(r.change).toBeUndefined();
+      expect(r.paymentId).toBeUndefined();
+      expect(r.paymentRecorded).toBe(true);
+      expect(invoices[0].payments).toHaveLength(0);
+      wroteNothing();
     });
 
     it("(4) a CARD-first sale replayed as ON_ACCOUNT reads the same answer as by-key, and writes nothing", async () => {
