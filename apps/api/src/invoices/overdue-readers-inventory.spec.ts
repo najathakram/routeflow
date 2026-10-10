@@ -25,11 +25,23 @@ const USES_SQL_PREDICATE: Record<string, string> = {
     "the list filter -> applyOverdueBalanceFilter -> overdueInvoiceIds",
 };
 
+/**
+ * Files whose balance / overdue classification is the ONE TS classifier (invoice-balance-classify.ts).
+ * Each MUST import it (and carries no inline `total - sumConfirmed` copy of its own).
+ */
+const USES_CLASSIFIER: Record<string, string> = {
+  "invoices/invoice-detail-read.ts": "detail read: balanceDue / isOverdue",
+  "invoices/invoices.service.ts": "list enrichment (findAll), sendEmail and sendReminder balances",
+  "invoices/invoice-kpi-summary.ts": "KPI tiles: per-invoice balance (confirmedBalance)",
+  "buyer/buyer.controller.ts":
+    "getAnalytics: overdue / unpaid counts + BALANCE total (SA-770 r-note)",
+  "buyer/buyer-dashboard.service.ts":
+    "dashboard unpaid strip: BALANCE count + total (SA-770 r-note)",
+};
+
 /** Files that select by an overdue cutoff but are NOT a raw invoice-status reader, or already net the balance. */
 const OTHER_READERS: Record<string, string> = {
   "common/calendar-date.ts": "defines overdueCutoff / isOverdue (the date rule itself)",
-  "invoices/invoice-kpi-summary.ts":
-    "reads every open invoice with its payments and nets the CONFIRMED balance per row (balance 0 adds 0)",
   "platform-admin/rf-invoices.service.ts":
     "RouteFlow's own platform invoices (a different table, RfInvoice); not tenant AR",
   "invoices/invoice-balance-sql.ts": "the predicate itself",
@@ -41,10 +53,6 @@ const OTHER_READERS: Record<string, string> = {
  * with P-3: clamp with max(0, ...) or move onto one shared overdue rule.
  */
 const FOLLOW_UP_READERS: Record<string, string> = {
-  "buyer/buyer.controller.ts":
-    "getAnalytics (~:1196) classifies overdue by status/date and sums total, not balance; needs the gross-vs-balance SA ruling",
-  "buyer/buyer-dashboard.service.ts":
-    "dashboard unpaid strip (~:176) mirrors getAnalytics (gross total over the open statuses); same ruling",
   "import/import-payment-status.ts":
     "Zoho import status rule: OVERDUE only when nothing is confirmed-paid, paid >= total is PAID (already balance-aware)",
 };
@@ -114,6 +122,7 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
       ...Object.keys(OTHER_READERS),
       ...Object.keys(FOLLOW_UP_READERS),
       ...Object.keys(BALANCE_CLAMPED),
+      ...Object.keys(USES_CLASSIFIER),
     ]);
     const unknown = readers.filter((f) => !known.has(f));
     expect(unknown).toEqual([]); // route it through invoice-balance-sql.ts, or list it with a reason
@@ -132,6 +141,13 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
     if (rel.startsWith("customers/")) expect(src.match(c.clamp)).toHaveLength(2); // both statements
     // the raw, unclamped accumulations are gone
     expect(src).not.toMatch(/overdue\s*\+=\s*bal/);
+  });
+
+  it.each(Object.keys(USES_CLASSIFIER))("%s uses the one TS classifier", (rel) => {
+    const src = stripComments(fs.readFileSync(path.join(SRC_ROOT, rel), "utf8"));
+    expect(src).toMatch(/from\s+["'](\.\.?\/)+(invoices\/)?invoice-balance-classify["']/);
+    // the inline copies are gone: no hand-rolled `total - sumConfirmed(...)` balance in these readers
+    expect(src).not.toMatch(/Number\((inv|i)\.total\) - (sumConfirmed|totalConfirmed)/);
   });
 
   it.each(Object.keys(USES_SQL_PREDICATE))("%s imports the shared SQL predicate", (rel) => {

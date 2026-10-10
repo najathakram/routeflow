@@ -1,6 +1,6 @@
 /**
  * SA-770 (ACTION-ITEMS row 294) — DB-lane PARITY PIN for `balanceDueSql`: the SQL predicate and the
- * TypeScript `balanceDue` every invoice read shows (`deriveInvoiceDetailFields`, invoice-detail-read.ts)
+ * TypeScript classifier every invoice read shows (`classifyInvoiceBalance`, which `deriveInvoiceDetailFields` and the list use)
  * must agree row for row, on every shape of payment history. Plus the three readers built on the
  * predicate, against real rows: the overdue id list, the overdue count and the sweep's UPDATE.
  *
@@ -21,6 +21,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { deriveInvoiceDetailFields } from "./invoice-detail-read";
+import { classifyInvoiceBalance } from "./invoice-balance-classify";
 import {
   balanceDueSql,
   markInvoicesOverdue,
@@ -207,7 +208,13 @@ describeDb("balanceDueSql — SQL <-> TS parity (SA-770), real Postgres", () => 
         where: { id },
         include: { payments: true },
       });
-      const ts = deriveInvoiceDetailFields(row).balanceDue > 0;
+      // SA-770 r-note: the oracle is THE TS classifier (and the detail read, built on it, agrees)
+      const cutoff = overdueCutoff(new Date());
+      const ts = classifyInvoiceBalance(row, cutoff).balanceDue > 0;
+      expect({ label: f.label, detail: deriveInvoiceDetailFields(row).balanceDue > 0 }).toEqual({
+        label: f.label,
+        detail: ts,
+      });
       expect({ label: f.label, ts }).toEqual({ label: f.label, ts: f.due }); // the hand-checked oracle
       expect({ label: f.label, sql: sql.get(id) }).toEqual({ label: f.label, sql: ts }); // parity
     }
@@ -248,6 +255,19 @@ describeDb("balanceDueSql — SQL <-> TS parity (SA-770), real Postgres", () => 
     expect(ids).not.toContain(notDue);
     expect(ids).not.toContain(draft);
     expect(await overdueInvoiceCount(prisma, s.tenantId, cutoff, { statuses })).toBe(owes.size);
+
+    // the TS classifier's `isOverdue` selects exactly the same open invoices as the SQL reader
+    const rows = await prisma.invoice.findMany({
+      where: { tenantId: s.tenantId, status: { in: [...statuses] } },
+      include: { payments: true },
+    });
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect({ id: row.id, overdue: classifyInvoiceBalance(row, cutoff).isOverdue }).toEqual({
+        id: row.id,
+        overdue: ids.includes(row.id),
+      });
+    }
   });
 
   it("is tenant-scoped: another tenant's overdue invoices never appear", async () => {
