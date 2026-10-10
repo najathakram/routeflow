@@ -72,6 +72,8 @@ export interface ProductTileProps {
   isFavorite: boolean;
   onAdd: () => void;
   onUpdateQty: (qty: number) => void;
+  /** Puts the removed cart line back (the stepper's Undo); gets the pre-removal line. */
+  onRestore?: (line: CartItem) => void;
   onToggleFavorite: () => void;
   /** P5-03: Notify-me subscribed state + toggle. Only rendered when the tile is OOS and not in the cart. */
   isAlertSubscribed?: boolean;
@@ -90,6 +92,7 @@ export function ProductTile({
   isFavorite,
   onAdd,
   onUpdateQty,
+  onRestore,
   onToggleFavorite,
   isAlertSubscribed,
   onToggleStockAlert,
@@ -226,8 +229,10 @@ export function ProductTile({
           {cartItem ? (
             <QtyStepper
               qty={cartItem.qty}
+              name={product.name}
               onUpdate={onUpdateQty}
               onRemove={() => onUpdateQty(0)}
+              onRestore={onRestore ? () => onRestore(cartItem) : undefined}
               stack
             />
           ) : outOfStock && onToggleStockAlert ? (

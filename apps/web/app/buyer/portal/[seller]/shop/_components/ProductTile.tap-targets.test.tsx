@@ -1,5 +1,6 @@
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
+import { ToastProvider } from "@routeflow/ui/web";
 import type { BuyerProduct } from "@routeflow/types";
 import { ProductTile } from "./ProductTile";
 
@@ -100,20 +101,22 @@ describe("ProductTile tap targets and Notify me", () => {
     "with the item in the cart the stepper gets its OWN full-width row below sm (density %s)",
     (size) => {
       render(
-        <ProductTile
-          product={product()}
-          sellerSlug="acme"
-          cartItem={{ productId: "p1", qty: 3 } as never}
-          promoRules={[]}
-          onAdd={jest.fn()}
-          onUpdateQty={jest.fn()}
-          onToggleFavorite={jest.fn()}
-          onToggleStockAlert={jest.fn()}
-          isFavorite={false}
-          size={size}
-        />,
+        <ToastProvider>
+          <ProductTile
+            product={product()}
+            sellerSlug="acme"
+            cartItem={{ productId: "p1", qty: 3 } as never}
+            promoRules={[]}
+            onAdd={jest.fn()}
+            onUpdateQty={jest.fn()}
+            onToggleFavorite={jest.fn()}
+            onToggleStockAlert={jest.fn()}
+            isFavorite={false}
+            size={size}
+          />
+        </ToastProvider>,
       );
-      const plus = screen.getByRole("button", { name: "Increase quantity" });
+      const plus = screen.getByRole("button", { name: "Increase Widget" });
       // the stepper's own root is a full-width row below sm and inline again from sm
       const stepperRoot = plus.closest("[data-qty-stepper]") as HTMLElement;
       expect(stepperRoot).not.toBeNull();
@@ -122,8 +125,9 @@ describe("ProductTile tap targets and Notify me", () => {
       // the price row wraps so the stepper drops under the price instead of overshooting the tile
       expect(stepperRoot.parentElement!.className).toMatch(/\bflex-wrap\b/);
       expect(stepperRoot.parentElement!.className).toMatch(/\bsm:flex-nowrap\b/);
-      // the field flexes to fill the row
-      expect(screen.getByRole("spinbutton", { name: "Quantity" }).className).toMatch(/\bflex-1\b/);
+      // the grid's middle track (minmax(36px,1fr)) lets the field fill the row
+      expect(stepperRoot.className).toContain("grid-cols-[44px_minmax(36px,1fr)_44px]");
+      expect(screen.getByRole("textbox", { name: "Quantity" }).className).toMatch(/\bw-full\b/);
     },
   );
 
