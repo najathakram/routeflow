@@ -845,11 +845,21 @@ export class PlatformAdminController {
     const billingFailed = () => {
       const label = (k: string) => FEATURE_REGISTRY.find((f) => f.key === k)?.label ?? k;
       const done = alreadyDisabled.map(label).join(", ") || "none";
+      // SA-769: a COMP row has no billing to stop, so its copy says "switched off" only. The billing wording
+      // stays whenever a paid add-on is involved (a paid one was stopped, or is the one that failed).
+      const compOff = new Set(resolved.plan.billing.filter((b) => b.comp).map((b) => b.featureKey));
+      const billingWords =
+        alreadyDisabled.length > 0
+          ? alreadyDisabled.some((k) => !compOff.has(k))
+          : !compOff.has(current.key);
       const what =
         current.step === "billing"
-          ? `The profile was not applied: billing for ${label(current.key)} could not be stopped.`
+          ? compOff.has(current.key)
+            ? `The profile was not applied: ${label(current.key)} could not be switched off.`
+            : `The profile was not applied: billing for ${label(current.key)} could not be stopped.`
           : `The profile was only partly applied: the ${current.step} step for ` +
-            `${label(current.key)} failed after billing was stopped.`;
+            `${label(current.key)} failed after ` +
+            (billingWords ? "billing was stopped." : "the add-ons were switched off.");
       return new ServiceUnavailableException({
         statusCode: 503,
         code: API_ERROR_CODES.BUSINESS_PROFILE_BILLING_FAILED,
@@ -857,7 +867,7 @@ export class PlatformAdminController {
         alreadyDisabled: [...alreadyDisabled],
         failedStep: { ...current },
         message:
-          `${what} Already switched off with billing stopped: ${done}. ` +
+          `${what} Already switched off${billingWords ? " with billing stopped" : ""}: ${done}. ` +
           (current.step === "billing" ? "Nothing else was changed; " : "") +
           "retry to finish.",
       });
