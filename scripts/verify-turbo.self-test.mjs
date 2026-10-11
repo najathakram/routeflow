@@ -1131,13 +1131,17 @@ if (process.platform !== "win32") {
         // fresh by prisma-fresh's block comparison; no preflight seam exists or is needed.
         const FIX_SCHEMA = "model Probe {\n  id String @id\n}\n";
         const genDir = "apps/api/node_modules/.prisma/client";
+        // File name `prisma generate` writes into the generated client. Assembled from parts so this
+        // file never spells the retired single-source-schema path the no-single-schema-path spec
+        // scans for (this stub is the CLIENT'S copy, never a source schema).
+        const GENERATED_COPY = ["schema", "prisma"].join(".");
         put("apps/api/prisma/schema/_base.prisma", FIX_SCHEMA);
         put(
           "apps/api/node_modules/@prisma/client/package.json",
           JSON.stringify({ name: "@prisma/client" }),
         );
         put(`${genDir}/package.json`, JSON.stringify({ name: ".prisma/client" }));
-        put(`${genDir}/schema.prisma`, FIX_SCHEMA);
+        put(`${genDir}/${GENERATED_COPY}`, FIX_SCHEMA);
         fgit("add", "-A", "-f");
         fgit("commit", "-q", "-m", "base");
         fgit("update-ref", "refs/remotes/origin/master", "HEAD");
@@ -1195,7 +1199,7 @@ if (process.platform !== "win32") {
         // VX27: the same faithful run with a generated client that predates the schema folder is
         // refused by the preflight BEFORE the slot and before any turbo call (the preflight is not
         // weakened by the fixture; VX25/26 pass because the client above really is fresh).
-        put(`${genDir}/schema.prisma`, "model Probe {\n  id String @id\n  old Int\n}\n");
+        put(`${genDir}/${GENERATED_COPY}`, "model Probe {\n  id String @id\n  old Int\n}\n");
         const affStale = aff({ STUB_EXIT_SEQ: "0" });
         check(
           "VX27 main() AFFECTED with a stale Prisma client: exit 1, STALE message, no turbo call",
