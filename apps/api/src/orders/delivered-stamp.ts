@@ -193,8 +193,12 @@ export async function captureRecreatedCarry(
     held: held.map((h) => ({
       id: h.id,
       key: keyOf(h.productId),
-      // no evidence on this order (refused above): the units that left are the booked floor max(d, qty)
-      deliveredQty: Math.max(Number(h.deliveredQty ?? 0), Number(h.qty)),
+      // no evidence on this order (refused above): the units that left are the booked floor max(d, qty); a
+      // CANCELLED line was already returned to the shelf (never booked), so it keeps its stored value
+      deliveredQty:
+        h.status === "CANCELLED"
+          ? Number(h.deliveredQty ?? 0)
+          : Math.max(Number(h.deliveredQty ?? 0), Number(h.qty)),
     })),
   };
 }

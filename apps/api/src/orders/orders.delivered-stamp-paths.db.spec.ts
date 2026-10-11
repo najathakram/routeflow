@@ -68,7 +68,7 @@ describeDb("SA-763r — the delivered stamp through the real writers, real Postg
   async function seed(opts: {
     status: string;
     fulfillPath?: "ROUTE" | "PICKUP";
-    lines: Array<{ qty: number; d?: number; evidence?: number }>;
+    lines: Array<{ qty: number; d?: number; evidence?: number; status?: string }>;
   }) {
     n += 1;
     const order = await raw.order.create({
@@ -92,6 +92,7 @@ describeDb("SA-763r — the delivered stamp through the real writers, real Postg
           tenantId,
           qty: l.qty,
           deliveredQty: l.d ?? 0,
+          ...(l.status ? { status: l.status as never } : {}),
           unitPrice: 1,
           subtotal: l.qty,
         },
@@ -338,5 +339,21 @@ describeDb("SA-763r — the delivered stamp through the real writers, real Postg
     expect(await stock()).toBe(88);
     await voidLike(orderId);
     expect(await stock()).toBe(100);
+  });
+  it("a legacy CANCELLED row with qty > 0 does not inflate a replace-all carry, and the void does not over-restock", async () => {
+    const { orderId } = await seed({
+      status: "DELIVERED",
+      lines: [
+        { qty: 12, d: 0 },
+        { qty: 5, d: 0, status: "CANCELLED" }, // already returned to the shelf when it was cancelled
+      ],
+    });
+    await raw.product.update({ where: { id: productId }, data: { currentStock: 88 } });
+    await edit(orderId, { items: [{ productId, qty: 10 }], replaceAll: true });
+    const live = (await lines(orderId)).filter((r) => r.status !== "CANCELLED");
+    expect(live.map((r) => Number(r.deliveredQty))).toEqual([12]); // red before the guard: 17
+    expect(await stock()).toBe(88);
+    await voidLike(orderId);
+    expect(await stock()).toBe(100); // red before the guard: the extra 5 would be credited again
   });
 });
