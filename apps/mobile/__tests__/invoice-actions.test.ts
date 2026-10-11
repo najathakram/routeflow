@@ -96,12 +96,15 @@ describe("invoiceActionFlags", () => {
         invoiceActionFlags({ ...base, status: "OVERDUE", balanceDue: "12.50" }).canSendReminder,
       ).toBe(true);
     });
-    it.each([undefined, null, "n/a", Number.NaN])("an unknown balance %p → no", (balanceDue) => {
-      expect(
-        invoiceActionFlags({ ...base, status: "SENT", balanceDue: balanceDue as never })
-          .canSendReminder,
-      ).toBe(false);
-    });
+    it.each([undefined, null, "n/a", Number.NaN, Infinity, "Infinity"])(
+      "an unknown balance %p → no",
+      (balanceDue) => {
+        expect(
+          invoiceActionFlags({ ...base, status: "SENT", balanceDue: balanceDue as never })
+            .canSendReminder,
+        ).toBe(false);
+      },
+    );
     it.each(["DRAFT", "PAID", "VOID", "WRITTEN_OFF"])("%s never, even with a balance", (status) => {
       expect(invoiceActionFlags({ ...base, status, balanceDue: 100 }).canSendReminder).toBe(false);
     });
