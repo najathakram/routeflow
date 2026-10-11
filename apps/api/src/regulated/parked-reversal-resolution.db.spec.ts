@@ -687,6 +687,67 @@ describeDb(
       expect(Number(onRow2[0].unitBasisQty)).toBe(-36);
     }, 30_000);
 
+    it("B297 row 341: a park on a line RE-FILED to another category since resolves against the LIVE sale, never the dead one", async () => {
+      const f = await seedLegacyLine("refiled", {
+        qty: 5,
+        netSales: 50,
+        categoryTax: 10,
+        returnedPieces: 24,
+        livePack: 12,
+      });
+      const other = await raw.trackedCategory.create({
+        data: { name: `Cigars ${run}`, taxType: "NONE", tenantId },
+      });
+      // the draft swap's re-sync: REVERSAL of the dead sale (no returnId), then the live SALE under another category
+      await raw.regulatedSalesLedger.create({
+        data: {
+          tenantId,
+          trackedCategoryId: categoryId,
+          entryType: "REVERSAL",
+          orderId: f.orderId,
+          orderItemId: f.orderItemId,
+          invoiceId: f.invoiceId,
+          invoiceItemId: f.invoiceItemId,
+          qty: -5,
+          unitBasisQty: -5,
+          netSales: -50,
+          categoryTax: -10,
+          soldAt: new Date("2026-09-01T00:00:00Z"),
+          periodBucket: "2026-09",
+        },
+      });
+      await raw.regulatedSalesLedger.create({
+        data: {
+          tenantId,
+          trackedCategoryId: other.id,
+          entryType: "SALE",
+          orderId: f.orderId,
+          orderItemId: f.orderItemId,
+          invoiceId: f.invoiceId,
+          invoiceItemId: f.invoiceItemId,
+          qty: 5,
+          unitBasisQty: 60,
+          netSales: 50,
+          categoryTax: 10,
+          soldAt: new Date("2026-09-01T00:00:01Z"),
+          periodBucket: "2026-09",
+        },
+      });
+
+      const res = await resolveAs(f.parkedRowId, 12);
+      expect(res.outcome).toBe("booked");
+      const booked = await raw.regulatedSalesLedger.findMany({
+        where: { returnId: f.returnId, entryType: "REVERSAL" },
+      });
+      // the 24 pieces are filed under the LIVE category only; nothing on the dead sale's category
+      expect(
+        booked.map((r) => [
+          r.trackedCategoryId === other.id ? "live" : "dead",
+          Number(r.unitBasisQty),
+        ]),
+      ).toEqual([["live", -24]]);
+    }, 30_000);
+
     it("SA-170: a CANCELLED return cannot be resolved (404) and nothing is claimed or booked", async () => {
       const f = await seedLegacyLine("walk-cancelled", {
         qty: 5,

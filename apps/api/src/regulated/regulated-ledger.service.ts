@@ -891,6 +891,8 @@ export class RegulatedLedgerService {
         trackedCategoryId: true,
         trackedSubcategoryId: true,
         entryType: true,
+        returnId: true,
+        creditNoteId: true,
         qty: true,
         unitBasisQty: true,
         netSales: true,
@@ -911,7 +913,13 @@ export class RegulatedLedgerService {
     // return would be filed under the category the line used to be in. The per-ORDER-LINE remaining above
     // is unchanged: it still sums every row of the line.
     const squareKeys = new Set<string>();
-    for (const [key, held] of netHeldByLine([...sales, ...priorReversals], { keyOf: syncKey })) {
+    // Dead = square with return / credit-note reversals LEFT STANDING (`preserveReturns`, the netting the
+    // re-sync reversed the sale with): a key a return reduced BEFORE the re-file nets negative under the full
+    // sum and would otherwise stay a walk candidate, and the next return would file under the old category.
+    for (const [key, held] of netHeldByLine([...sales, ...priorReversals], {
+      keyOf: syncKey,
+      preserveReturns: true,
+    })) {
       if (isSquare(held)) squareKeys.add(key);
     }
 
@@ -1432,7 +1440,11 @@ export class RegulatedLedgerService {
     // SA-169: "closed" is a property of THIS row's line — nothing to correct or reverse on it —
     // but the parked pieces belong to the PRODUCT's return, so the walk below still carries them to
     // the order's other live rows (the SA-167 hole through a second door).
-    const rowClosed = Math.abs(remQtyBefore) <= EPS && Math.abs(remNetBefore) <= EPS;
+    // B297 row 341: a parked row whose booked line was re-filed since (its own key is dead) has nothing left
+    // to correct or reverse against: the whole parked quantity continues down the live walk.
+    const rowClosed =
+      (Math.abs(remQtyBefore) <= EPS && Math.abs(remNetBefore) <= EPS) ||
+      builtBefore.squareKeys.has(syncKey(saleRow) ?? "");
 
     let correctionEntryId: string | null = null;
     if (!rowClosed && verdict.state === "legacy") {
@@ -1868,6 +1880,8 @@ export class RegulatedLedgerService {
         orderItemId: true,
         trackedCategoryId: true,
         trackedSubcategoryId: true,
+        returnId: true,
+        creditNoteId: true,
         netSales: true,
         qty: true,
         unitBasisQty: true,
@@ -1876,7 +1890,7 @@ export class RegulatedLedgerService {
     });
     // B297 row 341: booked lines already square under their own key (a re-filed line's dead sale).
     const squareKeys = new Set<string>();
-    for (const [key, held] of netHeldByLine(lineRows, { keyOf: syncKey })) {
+    for (const [key, held] of netHeldByLine(lineRows, { keyOf: syncKey, preserveReturns: true })) {
       if (isSquare(held)) squareKeys.add(key);
     }
     // invoiceItemId → order line, so legacy REVERSAL rows with a null orderItemId can
@@ -1916,24 +1930,37 @@ export class RegulatedLedgerService {
     for (const it of items) {
       const live = liveSaleByItem.get(it.invoiceItemId ?? "");
       if (!live || live.net <= 0) continue; // SALE-existence guard — no naked reversal.
-      // B297 row 341: the subcategory / order line / invoice the reversal carries come from the line's LIVE
-      // booked key (the newest base SALE of the credited category that is not already square), never from
-      // whichever SALE of the item an unordered read returned first.
-      const metaRow = liveSaleRows
-        .filter(
-          (s: any) =>
-            s.invoiceItemId === it.invoiceItemId &&
-            !squareKeys.has(syncKey(s) ?? "") &&
-            (s.trackedCategoryId == null || s.trackedCategoryId === it.trackedCategoryId),
-        )
-        .sort((a: any, b: any) => +new Date(b.createdAt ?? 0) - +new Date(a.createdAt ?? 0))[0];
-      if (metaRow) {
-        live.orderId = metaRow.orderId ?? null;
-        live.orderItemId = metaRow.orderItemId ?? null;
-        live.invoiceId = metaRow.invoiceId ?? null;
-        live.trackedSubcategoryId = metaRow.trackedSubcategoryId ?? null;
-      }
-      const lk = live.orderItemId ?? it.invoiceItemId ?? "";
+      // B297 row 341: the subcategory / order line / invoice the reversal carries, and the pieces-per-unit
+      // ratio, come from the line's LIVE booked key (the newest base SALE of the credited category that is not
+      // dead), never from whichever SALE of the item an unordered read returned first or from the dead sale
+      // blended in. A LOCAL, so a second credit item on the same invoice item starts from `live` again.
+      const liveRows = liveSaleRows.filter(
+        (s: any) =>
+          s.invoiceItemId === it.invoiceItemId &&
+          !squareKeys.has(syncKey(s) ?? "") &&
+          (s.trackedCategoryId == null || s.trackedCategoryId === it.trackedCategoryId),
+      );
+      const metaRow = [...liveRows].sort(
+        (a: any, b: any) => +new Date(b.createdAt ?? 0) - +new Date(a.createdAt ?? 0),
+      )[0];
+      const meta = metaRow
+        ? {
+            orderId: metaRow.orderId ?? null,
+            orderItemId: metaRow.orderItemId ?? null,
+            invoiceId: metaRow.invoiceId ?? null,
+            trackedSubcategoryId: metaRow.trackedSubcategoryId ?? null,
+            qty: liveRows.reduce((n: number, r: any) => n + Number(r.qty), 0),
+            unitBasis: liveRows.reduce((n: number, r: any) => n + Number(r.unitBasisQty), 0),
+          }
+        : {
+            orderId: live.orderId,
+            orderItemId: live.orderItemId,
+            invoiceId: live.invoiceId,
+            trackedSubcategoryId: live.trackedSubcategoryId,
+            qty: live.qty,
+            unitBasis: live.unitBasis,
+          };
+      const lk = meta.orderItemId ?? it.invoiceItemId ?? "";
       const sale = saleByLine.get(lk) ?? emptyBag();
       if (sale.net <= 0) continue;
       const already = revByLine.get(lk) ?? emptyBag();
@@ -1978,7 +2005,7 @@ export class RegulatedLedgerService {
       // partials can never leave a residue — including a residue left by a pre-fix credit note. A
       // degenerate SALE (qty 0) has no ratio to scale by, so the line-unit value is carried through
       // unchanged — the pre-B661 behaviour.
-      let unitBasis = live.qty !== 0 ? qty * (live.unitBasis / live.qty) : qty;
+      let unitBasis = meta.qty !== 0 ? qty * (meta.unitBasis / meta.qty) : qty;
       if (closes) unitBasis = remUnitBasis;
       else if (unitBasis < remUnitBasis) unitBasis = remUnitBasis;
       const bookedNet = roundMoney(net);
@@ -1989,11 +2016,11 @@ export class RegulatedLedgerService {
         tenantId: it.tenantId,
         trackedCategoryId: it.trackedCategoryId,
         // RF-3: carry the SALE's reporting breakdown onto the REVERSAL (pure passthrough).
-        trackedSubcategoryId: live.trackedSubcategoryId ?? null,
+        trackedSubcategoryId: meta.trackedSubcategoryId ?? null,
         entryType: "REVERSAL" as const,
-        orderId: live.orderId,
-        orderItemId: live.orderItemId,
-        invoiceId: live.invoiceId,
+        orderId: meta.orderId,
+        orderItemId: meta.orderItemId,
+        invoiceId: meta.invoiceId,
         invoiceItemId: it.invoiceItemId,
         creditNoteId,
         qty: bookedQty,

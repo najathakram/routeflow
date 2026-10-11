@@ -95,6 +95,59 @@ describe("a return after a re-file (B297 row 341)", () => {
   });
 });
 
+describe("a return BEFORE the re-file leaves the dead key negative (review HIGH-1)", () => {
+  it("the next return still files under the LIVE category (the dead key is square with returns left standing)", async () => {
+    const rows = [
+      row({
+        id: "s1",
+        qty: 10,
+        unitBasisQty: 10,
+        netSales: 100,
+        categoryTax: 0.5,
+        createdAt: new Date("2026-10-01T00:00:00Z"),
+      }),
+      row({
+        id: "r1",
+        entryType: "REVERSAL",
+        returnId: "ret-0",
+        qty: -4,
+        unitBasisQty: -4,
+        netSales: -40,
+        categoryTax: -0.2,
+        createdAt: new Date("2026-10-01T12:00:00Z"),
+      }),
+      // the swap's re-sync reverses the SALE record only (return left standing), then re-books under cat-2
+      row({
+        id: "s1-rev",
+        entryType: "REVERSAL",
+        qty: -10,
+        unitBasisQty: -10,
+        netSales: -100,
+        categoryTax: -0.5,
+        createdAt: new Date("2026-10-02T00:00:00Z"),
+      }),
+      row({
+        id: "s2",
+        trackedCategoryId: "cat-2",
+        qty: 10,
+        unitBasisQty: 10,
+        netSales: 100,
+        categoryTax: 0.5,
+        createdAt: new Date("2026-10-02T00:00:01Z"),
+      }),
+    ];
+    const { db, written } = dbOver(rows);
+    await new RegulatedLedgerService({} as any).reverseReturnEntries({
+      returnId: "ret-1",
+      orderId: "o1",
+      returnedByProduct: new Map([["p1", 3]]),
+      returnedUnit: "LINE_UNIT",
+      db,
+    });
+    expect(written().map((r) => [r.trackedCategoryId, r.qty])).toEqual([["cat-2", -3]]);
+  });
+});
+
 describe("a credit note after a re-file (B297 row 341)", () => {
   it("carries the live key's subcategory, order line and invoice, not the first SALE read", async () => {
     const rows = [
@@ -151,5 +204,97 @@ describe("a credit note after a re-file (B297 row 341)", () => {
       invoiceId: "inv-1",
       creditNoteId: "cn-1",
     });
+  });
+});
+
+describe("credit-note ratio and metadata come from the live key only (review MED-3 / LOW-4)", () => {
+  it("a partial credit after a swap from a pack-1 product to a pack-12 product books -60 pieces for 5 units, not a blend", async () => {
+    const rows = [
+      row({
+        id: "s1",
+        qty: 10,
+        unitBasisQty: 10,
+        netSales: 100,
+        categoryTax: 0,
+        createdAt: new Date("2026-10-01T00:00:00Z"),
+      }),
+      row({
+        id: "s1-rev",
+        entryType: "REVERSAL",
+        qty: -10,
+        unitBasisQty: -10,
+        netSales: -100,
+        categoryTax: 0,
+        createdAt: new Date("2026-10-02T00:00:00Z"),
+      }),
+      row({
+        id: "s2",
+        trackedCategoryId: "cat-2",
+        qty: 10,
+        unitBasisQty: 120,
+        netSales: 100,
+        categoryTax: 0,
+        createdAt: new Date("2026-10-02T00:00:01Z"),
+      }),
+    ];
+    const { db, written } = dbOver(rows);
+    db.creditNoteItem.findMany.mockResolvedValue([
+      {
+        tenantId: "t1",
+        invoiceItemId: "ii-1",
+        trackedCategoryId: "cat-2",
+        amount: 50,
+        qty: 5,
+        categoryTax: 0,
+      },
+    ]);
+    await new RegulatedLedgerService({} as any).reverseCreditNoteEntries({
+      creditNoteId: "cn-2",
+      db,
+    });
+    expect(written()).toHaveLength(1);
+    expect(written()[0]).toMatchObject({ trackedCategoryId: "cat-2", qty: -5, unitBasisQty: -60 });
+  });
+
+  it("two credit items on one invoice item each take the live key's metadata (no carry-over between them)", async () => {
+    const rows = [
+      row({
+        id: "s2",
+        trackedCategoryId: "cat-2",
+        trackedSubcategoryId: "sub-b",
+        orderItemId: "oi-1",
+        qty: 10,
+        unitBasisQty: 10,
+        netSales: 100,
+        categoryTax: 0,
+      }),
+    ];
+    const { db, written } = dbOver(rows);
+    db.creditNoteItem.findMany.mockResolvedValue([
+      {
+        tenantId: "t1",
+        invoiceItemId: "ii-1",
+        trackedCategoryId: "cat-2",
+        amount: 20,
+        qty: 2,
+        categoryTax: 0,
+      },
+      {
+        tenantId: "t1",
+        invoiceItemId: "ii-1",
+        trackedCategoryId: "cat-2",
+        amount: 30,
+        qty: 3,
+        categoryTax: 0,
+      },
+    ]);
+    await new RegulatedLedgerService({} as any).reverseCreditNoteEntries({
+      creditNoteId: "cn-3",
+      db,
+    });
+    expect(written().map((r) => [r.trackedSubcategoryId, r.orderItemId, r.qty])).toEqual([
+      ["sub-b", "oi-1", -2],
+      ["sub-b", "oi-1", -3],
+    ]);
   });
 });
