@@ -21,6 +21,8 @@ jest.mock("../storage/compress.util", () => ({
   compressDocument: jest.fn(),
 }));
 import { Test } from "@nestjs/testing";
+import { spawnSync } from "child_process";
+import * as path from "path";
 import { randomUUID } from "crypto";
 import { Logger } from "@nestjs/common";
 import { InvoicesService } from "./invoices.service";
@@ -168,7 +170,15 @@ describeDb("B297 PR3 — invoice recompute reads the line's rate snapshot, real 
    * regulated line of 12 pieces at $10 whose excise was priced at the snapshot rate: 12 x 0.05 = 0.60. The
    * category rate is then RAISED to the live rate. `nullTrio` plants a legacy line with no stamped trio.
    */
-  async function seed(label: string, opts: { status?: "DRAFT" | "SENT"; nullTrio?: boolean } = {}) {
+  async function seed(
+    label: string,
+    opts: {
+      status?: "DRAFT" | "SENT";
+      nullTrio?: boolean;
+      exempt?: boolean;
+      noCategory?: boolean;
+    } = {},
+  ) {
     seq += 1;
     const slug = assertTestTenant(
       `qa-b297-${RUN}-${seq}-${label}`,
@@ -181,7 +191,13 @@ describeDb("B297 PR3 — invoice recompute reads the line's rate snapshot, real 
       data: { email: `${slug}@example.invalid`, username: slug, role: "CUSTOMER", tenantId },
     });
     const customer = await prisma.customer.create({
-      data: { userId: user.id, businessName: `c ${label}`, contactName: `c ${label}`, tenantId },
+      data: {
+        userId: user.id,
+        businessName: `c ${label}`,
+        contactName: `c ${label}`,
+        tenantId,
+        isTaxExempt: !!opts.exempt,
+      },
     });
     const category = await prisma.trackedCategory.create({
       data: {
@@ -197,7 +213,7 @@ describeDb("B297 PR3 — invoice recompute reads the line's rate snapshot, real 
         name: `p ${label}`,
         unit: "each",
         pricePerUnit: 10,
-        trackedCategoryId: category.id,
+        trackedCategoryId: opts.noCategory ? null : category.id,
       },
     });
     const invoice = await prisma.invoice.create({
@@ -222,14 +238,14 @@ describeDb("B297 PR3 — invoice recompute reads the line's rate snapshot, real 
         discount: 0,
         taxRate: 0,
         subtotal: 120,
-        trackedCategoryId: category.id,
-        categoryTaxAmount: 0.6,
-        categoryTaxType: opts.nullTrio ? null : "EXCISE_PER_UNIT",
-        categoryTaxRate: opts.nullTrio ? null : SNAPSHOT_RATE,
-        categoryPriceIncludesTax: opts.nullTrio ? null : false,
+        trackedCategoryId: opts.noCategory ? null : category.id,
+        categoryTaxAmount: opts.noCategory ? 4.2 : 0.6,
+        categoryTaxType: opts.nullTrio || opts.noCategory ? null : "EXCISE_PER_UNIT",
+        categoryTaxRate: opts.nullTrio || opts.noCategory ? null : SNAPSHOT_RATE,
+        categoryPriceIncludesTax: opts.nullTrio || opts.noCategory ? null : false,
       },
     });
-    if ((opts.status ?? "SENT") !== "DRAFT") {
+    if ((opts.status ?? "SENT") !== "DRAFT" && !opts.noCategory) {
       // The SALE row the invoice's issue wrote, at the snapshot rate: an issued invoice's price change books
       // an append-only CORRECTION against it (never a rewrite), so this is what the filing keeps reporting.
       const soldAt = new Date();
@@ -350,5 +366,50 @@ describeDb("B297 PR3 — invoice recompute reads the line's rate snapshot, real 
       rate: "0.0700",
     });
     expect(warnedAbout(s.itemId)).toBe(true);
+  });
+
+  it("PATCH /invoices/:id: a no-category row with a stored levy keeps it through a quantity edit, with a warn [L1]", async () => {
+    const s = await seed("patch-l1", { status: "DRAFT", noCategory: true });
+    await prisma.product.update({ where: { id: s.productId }, data: { trackedCategoryId: null } });
+    await patch(s, 6);
+    expect(await stored(s)).toMatchObject({ amount: "4.20", type: null, rate: null }); // master: 0.00
+    expect(warnedAbout(s.itemId)).toBe(true);
+  });
+
+  it("the sizing report counts the planted NULL-trio lines, keeps an exempt customer's line out of (b), and prints no identifier", async () => {
+    const stale = await seed("size-stale", { nullTrio: true }); // stored 0.60, live 0.07 x 12 = 0.84: would re-price
+    const exempt = await seed("size-exempt", { nullTrio: true, exempt: true });
+    await prisma.invoiceItem.update({
+      where: { id: exempt.itemId },
+      data: { categoryTaxAmount: 0 },
+    });
+    await prisma.invoiceItem.update({
+      where: { id: stale.itemId },
+      data: { createdAt: new Date() },
+    });
+    const script = path.resolve(__dirname, "../../scripts/report-b297-trio-sizing.mjs");
+    const res = spawnSync(process.execPath, [script, "--json", "--since", "2026-01-01"], {
+      encoding: "utf8",
+      env: { ...process.env },
+    });
+    expect(res.status).toBe(0);
+    const out = JSON.parse(res.stdout);
+    // qa-* tenants are the report's own `test` block; at least our two planted lines are in it
+    const inv = out.test.InvoiceItem;
+    expect(inv.nullTrio).toBeGreaterThanOrEqual(2);
+    expect(inv.nullTrioSince).toBeGreaterThanOrEqual(2);
+    expect(inv.mismatch).toBeGreaterThanOrEqual(1);
+    expect(inv.exempt).toBeGreaterThanOrEqual(1);
+    expect(res.stdout).not.toMatch(/qa-b297|example\.invalid|[0-9a-f]{8}-[0-9a-f]{4}-/);
+    // re-pricing the stale line away takes (b) down by exactly one: stamp it at the live rate
+    await prisma.invoiceItem.update({
+      where: { id: stale.itemId },
+      data: { categoryTaxAmount: 0.84 },
+    });
+    const again = JSON.parse(
+      spawnSync(process.execPath, [script, "--json"], { encoding: "utf8", env: { ...process.env } })
+        .stdout,
+    );
+    expect(again.test.InvoiceItem.mismatch).toBe(inv.mismatch - 1);
   });
 });

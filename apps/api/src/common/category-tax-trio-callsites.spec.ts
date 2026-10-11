@@ -78,8 +78,8 @@ const hasTrioSignal = (text: string) => TRIO_SIGNAL.test(strip(text));
 const ALLOWLIST: { file: string; count: number; note: string }[] = [
   {
     file: "orders/orders.service.ts",
-    count: 2,
-    note: "create() stamps; the unlisted-item branch legitimately doesn't (the recompute moved to recompute-line-category-taxes.ts, B297 PR3) — see header",
+    count: 3,
+    note: "create() stamps; the unlisted-item branch legitimately doesn't; the pack-line substitute writes categoryTaxAmount: 0 beside its re-stamped trio (B297 PR3; the recompute moved to recompute-line-category-taxes.ts) — see header",
   },
   {
     file: "orders/recompute-line-category-taxes.ts",
@@ -157,8 +157,8 @@ describe("category tax trio callsites — every categoryTaxAmount writer enumera
     expect(offenders).toEqual([]);
   });
 
-  it("total categoryTaxAmount writes across apps/api/src is exactly 22", () => {
+  it("total categoryTaxAmount writes across apps/api/src is exactly 23", () => {
     const total = FILES.reduce((n, f) => n + writeCount(fs.readFileSync(f, "utf8")), 0);
-    expect(total).toBe(22);
+    expect(total).toBe(23);
   });
 });

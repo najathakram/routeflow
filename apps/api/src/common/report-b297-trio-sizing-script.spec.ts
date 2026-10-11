@@ -81,20 +81,53 @@ describe("report-b297-trio-sizing", () => {
         percentIncl: r({ liveTaxType: "PERCENT_OF_SALE", liveRate: "0.0600", livePriceIncludesTax: true, categoryTaxAmount: "5.66" }),
         noCategory: r({ trackedCategoryId: null, categoryTaxAmount: "4.20" }),
         noCategoryZero: r({ trackedCategoryId: null, categoryTaxAmount: "0.00" }),
+        exempt: r({ liveRate: "0.0700", categoryTaxAmount: "0.00", exempt: true }),
         fullTrio: r({ categoryTaxType: "EXCISE_PER_UNIT", categoryTaxRate: "0.05", categoryPriceIncludesTax: false, liveRate: "0.0900" }),
       }));
     `);
-    expect(out.consistent).toEqual({ nullTrio: true, mismatch: false, noCategory: false });
-    expect(out.rateMoved).toEqual({ nullTrio: true, mismatch: true, noCategory: false });
+    expect(out.consistent).toEqual({
+      nullTrio: true,
+      mismatch: false,
+      noCategory: false,
+      exempt: false,
+    });
+    expect(out.rateMoved).toEqual({
+      nullTrio: true,
+      mismatch: true,
+      noCategory: false,
+      exempt: false,
+    });
     expect(out.partlyNull.nullTrio).toBe(true);
     expect(out.boxed.mismatch).toBe(false);
     expect(out.productPack.mismatch).toBe(false);
     expect(out.percent.mismatch).toBe(false);
     expect(out.percentIncl.mismatch).toBe(false);
-    expect(out.noCategory).toEqual({ nullTrio: false, mismatch: false, noCategory: true });
-    expect(out.noCategoryZero).toEqual({ nullTrio: false, mismatch: false, noCategory: false });
+    expect(out.noCategory).toEqual({
+      nullTrio: false,
+      mismatch: false,
+      noCategory: true,
+      exempt: false,
+    });
+    expect(out.noCategoryZero).toEqual({
+      nullTrio: false,
+      mismatch: false,
+      noCategory: false,
+      exempt: false,
+    });
+    // An exempt customer's invoice line is NULL-trio but never a re-price candidate: (b) can read 0.
+    expect(out.exempt).toEqual({
+      nullTrio: true,
+      mismatch: false,
+      noCategory: false,
+      exempt: true,
+    });
     // A line with a full trio is out of scope for (a) and (b), whatever the live rate says.
-    expect(out.fullTrio).toEqual({ nullTrio: false, mismatch: false, noCategory: false });
+    expect(out.fullTrio).toEqual({
+      nullTrio: false,
+      mismatch: false,
+      noCategory: false,
+      exempt: false,
+    });
   });
 
   it("aggregates anonymously, with exact counts, a test block and the --since split", () => {

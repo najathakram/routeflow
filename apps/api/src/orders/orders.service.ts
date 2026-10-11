@@ -3807,6 +3807,10 @@ export class OrdersService implements OnApplicationBootstrap {
                   trackedCategoryId: product.trackedCategoryId ?? null,
                   // RF-3: re-snapshot the reporting subcategory alongside the category.
                   trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                  // B297 PR3: the replaced product's levy must not outlive it. The recompute below prices a
+                  // regulated substitute at its stamped trio, but it KEEPS a stored excise on a line with no
+                  // category (L1), so a non-regulated substitute would otherwise inherit the old product's.
+                  categoryTaxAmount: 0,
                   // B297 (SA-098a): the product changed — re-stamp the trio from the
                   // NEW product's live category, same substance as updateUnitLine's
                   // isSubstitute:true arm.

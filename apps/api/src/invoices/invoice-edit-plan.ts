@@ -313,7 +313,13 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       keepsRow && row.trackedCategoryId && !hasNullTrio(row as any)
         ? (row.trackedCategoryId as string)
         : null;
-    const lineCategoryId = ownCategoryId ?? product?.trackedCategoryId ?? null;
+    // A kept row with a NULL trio is the row's OWN category's line (C), whatever its product's category is now:
+    // pricing it at the product's current category D would move the line to D.
+    const lineCategoryId =
+      ownCategoryId ??
+      (keepsRow && row.trackedCategoryId
+        ? (row.trackedCategoryId as string)
+        : (product?.trackedCategoryId ?? null));
     const category = lineCategoryId ? ctx.categoryMap.get(lineCategoryId) : null;
     // The levy basis reads the SAME resolved pack the money used (SA-180): never the live pack for a stored line.
     const basisPack = Number(unitsPerBox ?? ownPack ?? (row ? 0 : livePack) ?? 0);
@@ -457,4 +463,30 @@ export async function loadEditCatalog(
     productMap: new Map(products.map((p) => [p.id, p])),
     categoryMap: new Map(cats.map((c) => [c.id, c])),
   };
+}
+
+/**
+ * B297 PR3: the live category of every stored row that still has a NULL (or partly NULL) trio and is not in
+ * `categoryMap` yet. The plan prices such a kept row at ITS OWN category, which can differ from its product's
+ * current one; `loadEditCatalog` only reads the payload products' categories. Rows with a full trio are not
+ * read (A3). Returns `categoryMap` itself when nothing is missing.
+ */
+export async function withRowCategories(
+  db: any,
+  stored: StoredEditRow[],
+  categoryMap: Map<string, any>,
+): Promise<Map<string, any>> {
+  const missing = [
+    ...new Set(
+      stored
+        .filter(
+          (r) =>
+            r.trackedCategoryId && hasNullTrio(r as any) && !categoryMap.has(r.trackedCategoryId),
+        )
+        .map((r) => r.trackedCategoryId as string),
+    ),
+  ];
+  if (missing.length === 0) return categoryMap;
+  const cats: any[] = await db.trackedCategory.findMany({ where: { id: { in: missing } } });
+  return new Map([...categoryMap, ...cats.map((c): [string, any] => [c.id, c])]);
 }

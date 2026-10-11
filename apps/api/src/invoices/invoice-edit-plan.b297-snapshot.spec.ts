@@ -1,4 +1,9 @@
-import { buildEditedLines, matchEditLines, type StoredEditRow } from "./invoice-edit-plan";
+import {
+  buildEditedLines,
+  matchEditLines,
+  withRowCategories,
+  type StoredEditRow,
+} from "./invoice-edit-plan";
 
 /**
  * B297 PR3 (SA-734r2 R3 / L1): PATCH /invoices/:id re-prices a CHANGED matched row from the row's OWN rate
@@ -109,6 +114,44 @@ describe("invoice edit plan: a matched row re-prices at its own snapshot (B297 P
     });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toContain("row-1");
+  });
+
+  it("a NULL-trio row prices at ITS OWN category even when the product has moved to another (no move to D)", () => {
+    const { lines } = plan([item()], [row({ ...NULL_TRIO })], {
+      product: { id: "prod-1", unitsPerBox: null, trackedCategoryId: "cat-2" },
+      categories: [RAISED, OTHER],
+    });
+    expect(lines[0].data.trackedCategoryId).toBe("cat-1");
+    expect(lines[0].data.categoryTaxAmount).toBe(0.42); // cat-1 live (6 x 0.07), not cat-2's 10% of the subtotal
+    expect(lines[0].data.categoryTaxRate).toBe(0.07);
+  });
+
+  it("a NULL-trio row whose product lost its category still prices at the row's own category", () => {
+    const { lines } = plan([item()], [row({ ...NULL_TRIO })], {
+      product: { id: "prod-1", unitsPerBox: null, trackedCategoryId: null },
+    });
+    expect(lines[0].data.trackedCategoryId).toBe("cat-1");
+    expect(lines[0].data.categoryTaxAmount).toBe(0.42); // not the kept 0.60, not 0
+  });
+
+  it("withRowCategories reads only the categories of NULL-trio rows that the map lacks", async () => {
+    const db = { trackedCategory: { findMany: jest.fn().mockResolvedValue([OTHER]) } };
+    const map = new Map<string, any>([["cat-1", RAISED]]);
+    const out = await withRowCategories(
+      db,
+      [
+        row({ id: "a", trackedCategoryId: "cat-1", ...NULL_TRIO }), // already in the map
+        row({ id: "b", trackedCategoryId: "cat-2", ...NULL_TRIO }), // missing => read
+        row({ id: "c", trackedCategoryId: "cat-3" }), // full trio => not read
+        row({ id: "d", trackedCategoryId: null, ...NULL_TRIO }), // no category
+      ],
+      map,
+    );
+    expect(db.trackedCategory.findMany).toHaveBeenCalledWith({ where: { id: { in: ["cat-2"] } } });
+    expect([...out.keys()].sort()).toEqual(["cat-1", "cat-2"]);
+    const none = { trackedCategory: { findMany: jest.fn() } };
+    expect(await withRowCategories(none, [row()], map)).toBe(map);
+    expect(none.trackedCategory.findMany).not.toHaveBeenCalled();
   });
 
   it("a partly NULL trio is NULL: it stamps the full live trio", () => {

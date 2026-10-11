@@ -16,8 +16,13 @@
  *                    Counted whatever it reads: PR3 KEEPS those amounts (L1) and PR6 repairs the provable
  *                    ones (L2).
  *
- * `--since <ISO date>` additionally splits (a) by `createdAt >= since` (`nullTrioSince`): R2's hard =0
- * gate on rows created after PR-0 (B835) deploys that were not copied from a NULL source.
+ * A NULL-trio InvoiceItem of a TAX-EXEMPT customer is counted in (a) but NOT in (b): both invoice paths
+ * re-zero an exempt customer's levy (A4), so no live recompute would move it. It is reported in its own
+ * `exempt` count (NULL-trio, exempt customer) so the number is visible and the (b) gate can read 0.
+ *
+ * `--since <ISO date>` additionally splits (a) by `createdAt >= since` (`nullTrioSince`): R2's gate on rows
+ * created after PR-0 (B835) deploys. It counts every NULL-trio row since the cutoff, including any copied
+ * from a NULL source, so it can only over-count (the safe side).
  *
  * NEVER RUN FROM AN IMPLEMENTATION SESSION. The fleet lead / owner runs it under warn-then-approve
  * `railway run` authorization, from a checkout of the PR3 branch (the script needs the built
@@ -58,17 +63,27 @@ export const SCOPE_SQL = `((i."trackedCategoryId" IS NOT NULL
 /** One keyset page of in-scope lines, with what the live recompute needs. No input reaches the SQL. */
 export function pageSql(table) {
   if (!TABLES.includes(table)) throw new Error(`unknown table ${table}`);
+  // The order path ignores tax-exempt (A4); an invoice line of an exempt customer is re-zeroed by both invoice paths.
+  const exempt =
+    table === "InvoiceItem" ? `COALESCE(cu."isTaxExempt", false) AS "exempt"` : `false AS "exempt"`;
+  const exemptJoin =
+    table === "InvoiceItem"
+      ? `LEFT JOIN "Invoice" iv ON iv.id = i."invoiceId"
+  LEFT JOIN "Customer" cu ON cu.id = iv."customerId"`
+      : ``;
   return `SELECT i.id, i."tenantId", i."trackedCategoryId", i."createdAt",
        i."categoryTaxType", i."categoryTaxRate"::text AS "categoryTaxRate", i."categoryPriceIncludesTax",
        i.qty::text AS qty, i.boxes, i.pieces, i."unitsPerBox", i."unitLabel",
        i.subtotal::text AS subtotal, i."categoryTaxAmount"::text AS "categoryTaxAmount",
        p."unitsPerBox" AS "productUnitsPerBox",
        c."taxType" AS "liveTaxType", c.rate::text AS "liveRate", c."priceIncludesTax" AS "livePriceIncludesTax",
+       ${exempt},
        t.slug
   FROM "${table}" i
   LEFT JOIN "Product" p ON p.id = i."productId"
   LEFT JOIN "TrackedCategory" c ON c.id = i."trackedCategoryId"
   LEFT JOIN "Tenant" t ON t.id = i."tenantId"
+  ${exemptJoin}
  WHERE ${SCOPE_SQL}
    AND i.id > $1::text
  ORDER BY i.id
@@ -87,13 +102,14 @@ export function classifyLine(row) {
       nullTrio: false,
       mismatch: false,
       noCategory: cents(row.categoryTaxAmount) !== 0,
+      exempt: false,
     };
   }
   const nullTrio =
     row.categoryTaxType == null ||
     row.categoryTaxRate == null ||
     row.categoryPriceIncludesTax == null;
-  if (!nullTrio) return { nullTrio: false, mismatch: false, noCategory: false };
+  if (!nullTrio) return { nullTrio: false, mismatch: false, noCategory: false, exempt: false };
   // The page SQL only returns lines whose trio has a NULL, but a fixture may hand a full trio in.
   const pack =
     row.unitsPerBox != null ? Number(row.unitsPerBox) : Number(row.productUnitsPerBox ?? 0);
@@ -117,11 +133,13 @@ export function classifyLine(row) {
           priceIncludesTax: !!row.livePriceIncludesTax,
         });
   // A category that no longer resolves cannot be priced: count it as a mismatch (the PR3 helper keeps the stored amount).
-  const mismatch = live == null ? true : cents(row.categoryTaxAmount) !== cents(live);
-  return { nullTrio: true, mismatch, noCategory: false };
+  const differs = live == null ? true : cents(row.categoryTaxAmount) !== cents(live);
+  // An exempt customer's invoice line is re-zeroed by both invoice paths, so it is never re-priced: not (b).
+  if (row.exempt) return { nullTrio: true, mismatch: false, noCategory: false, exempt: true };
+  return { nullTrio: true, mismatch: differs, noCategory: false, exempt: false };
 }
 
-const zeroBlock = () => ({ nullTrio: 0, nullTrioSince: 0, mismatch: 0, noCategory: 0 });
+const zeroBlock = () => ({ nullTrio: 0, nullTrioSince: 0, mismatch: 0, noCategory: 0, exempt: 0 });
 
 /** Accumulator: { live|test: Map<table, Map<tenantId|null, { totals, cats: Map<categoryId, block> }>> }. */
 export function newAccumulator() {
@@ -154,6 +172,7 @@ export function addLine(
     }
     if (result.mismatch) b.mismatch += 1;
     if (result.noCategory) b.noCategory += 1;
+    if (result.exempt) b.exempt += 1;
   }
 }
 
@@ -246,13 +265,13 @@ export function selfTest() {
   // NULL trio, stored 0.60 = 12 x 0.05: consistent with today's rate.
   eq(
     classifyLine({ ...base }),
-    { nullTrio: true, mismatch: false, noCategory: false },
+    { nullTrio: true, mismatch: false, noCategory: false, exempt: false },
     "consistent",
   );
   // Same line after the category rate moved: would be re-priced.
   eq(
     classifyLine({ ...base, liveRate: "0.0700" }),
-    { nullTrio: true, mismatch: true, noCategory: false },
+    { nullTrio: true, mismatch: true, noCategory: false, exempt: false },
     "rate moved",
   );
   // A partly-NULL trio is NULL (R4).
@@ -263,7 +282,7 @@ export function selfTest() {
       categoryTaxRate: "0.05",
       categoryPriceIncludesTax: null,
     }),
-    { nullTrio: true, mismatch: false, noCategory: false },
+    { nullTrio: true, mismatch: false, noCategory: false, exempt: false },
     "partly null is null",
   );
   // PERCENT_OF_SALE reads the subtotal, not the quantity.
@@ -274,18 +293,18 @@ export function selfTest() {
       liveRate: "0.0600",
       categoryTaxAmount: "6.00",
     }),
-    { nullTrio: true, mismatch: false, noCategory: false },
+    { nullTrio: true, mismatch: false, noCategory: false, exempt: false },
     "percent of sale",
   );
   // The B767 shape: no category and a non-zero amount; zero amount is not counted.
   eq(
     classifyLine({ ...base, trackedCategoryId: null, categoryTaxAmount: "4.20" }),
-    { nullTrio: false, mismatch: false, noCategory: true },
+    { nullTrio: false, mismatch: false, noCategory: true, exempt: false },
     "no category",
   );
   eq(
     classifyLine({ ...base, trackedCategoryId: null, categoryTaxAmount: "0.00" }),
-    { nullTrio: false, mismatch: false, noCategory: false },
+    { nullTrio: false, mismatch: false, noCategory: false, exempt: false },
     "no category, zero amount",
   );
   // A category that no longer resolves cannot be priced.
@@ -296,6 +315,12 @@ export function selfTest() {
     "unresolvable category",
   );
 
+  // An exempt customer's NULL-trio invoice line: counted as NULL-trio and as exempt, never as a mismatch.
+  eq(
+    classifyLine({ ...base, liveRate: "0.0700", categoryTaxAmount: "0.00", exempt: true }),
+    { nullTrio: true, mismatch: false, noCategory: false, exempt: true },
+    "exempt customer",
+  );
   const acc = newAccumulator();
   const since = new Date("2026-10-11T00:00:00Z");
   foldPage(
@@ -361,7 +386,7 @@ function printBlock(name, byTable) {
   for (const [table, s] of Object.entries(byTable)) {
     console.log(
       `${name} ${table}: NULL-trio ${s.nullTrio} (since cutoff ${s.nullTrioSince}), would-reprice ${s.mismatch}, ` +
-        `no-category with amount ${s.noCategory} in ${s.tenants} tenant bucket(s)`,
+        `NULL-trio exempt (not re-priced) ${s.exempt}, no-category with amount ${s.noCategory} in ${s.tenants} tenant bucket(s)`,
     );
     for (const d of s.detail) {
       console.log(

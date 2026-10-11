@@ -46,6 +46,7 @@ import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
 import {
   buildEditedLines,
   loadEditCatalog,
+  withRowCategories,
   orderSyncLines,
   inPlacePatch,
   matchEditLines,
@@ -3137,7 +3138,7 @@ export class InvoicesService {
           stored: storedRows,
           matches,
           productMap,
-          categoryMap,
+          categoryMap: await withRowCategories(tx, storedRows, categoryMap),
           clampFreeUnits: (f, b, q) => this.clampLineFreeUnits(f, b, q),
           warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
         });

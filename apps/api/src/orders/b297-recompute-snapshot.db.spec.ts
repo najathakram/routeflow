@@ -427,6 +427,40 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
     expect(l1).toMatchObject({ amount: 0.42, rate: LIVE_RATE, includes: false });
   }, 120_000);
 
+  // ---- a substitute must not inherit the replaced product's levy ---------------------------------
+
+  it("a pack-line substitute to a non-regulated product drops the replaced product's excise", async () => {
+    const plain = await raw.product.create({
+      data: {
+        name: `Plain ${run}`,
+        unit: "each",
+        pricePerUnit: "1.00",
+        currentStock: 1000,
+        tenantId,
+      },
+    });
+    const id = await createOrder(12);
+    const [l0] = await lines(id);
+    expect(l0.amount).toBe(0.6);
+    await edit(id, {
+      replaceAll: false,
+      items: [{ id: l0.id, substituteProductId: plain.id, qty: 12 }],
+    });
+    const [l1] = await lines(id);
+    expect(l1).toMatchObject({ amount: 0, trackedCategoryId: null, rate: null }); // master: 0; without the fix the old 0.60 survives L1
+    // a regulated substitute is priced at its own (stamped-now) trio
+    const id2 = await createOrder(12);
+    const [m0] = await lines(id2);
+    await raiseCategoryRate(LIVE_RATE);
+    await edit(id2, {
+      replaceAll: false,
+      items: [{ id: m0.id, substituteProductId: productId, qty: 10 }],
+    });
+    const [m1] = await lines(id2);
+    expect(m1).toMatchObject({ amount: 0.7, rate: LIVE_RATE }); // a substitute is a new sale at the live rate
+    await raw.product.delete({ where: { id: plain.id } }).catch(() => undefined);
+  }, 120_000);
+
   // ---- L1: a line with no category keeps its stored excise -------------------------------------
 
   it("a no-category line with a stored excise keeps it through a quantity edit, with a warn [L1]", async () => {

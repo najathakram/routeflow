@@ -206,9 +206,9 @@ export async function createUnitLine(
  * columns are left untouched (Prisma only writes fields present in `data`). The amount still
  * prices from `product`'s own category either way (the unchanged product on a same-product edit,
  * the new one on a substitute) — harmless even for the same-product case, since
- * `recomputeLineCategoryTaxes` unconditionally overwrites every active line's amount from the
- * live category right after this transaction, same as it always has. Only the TRIO is the thing
- * this function must not touch on a same-product edit.
+ * `recomputeLineCategoryTaxes` re-derives every active line's amount from the line's OWN
+ * rate snapshot right after this transaction (B297 PR3; it was the live category before). Only the
+ * TRIO is the thing this function must not touch on a same-product edit.
  */
 export async function updateUnitLine(
   ctx: UnitWriteContext,
