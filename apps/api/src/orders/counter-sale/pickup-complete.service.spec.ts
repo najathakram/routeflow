@@ -45,6 +45,10 @@ import { OrdersService } from "../orders.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import { createMockPrisma } from "../../testing/prisma-mock";
+import { pickupTenderGroupId } from "./pickup-tender-group";
+
+/** SA-763r R7: every hand-over tender is written with the order's v5 group id, in the create. */
+const TENDER_GROUP = { paymentGroupId: pickupTenderGroupId("ord-1") };
 
 /**
  * POST /orders/:id/pickup-complete orchestration. Every collaborator is a mock: `changeStatus` (the
@@ -228,7 +232,7 @@ describe("PickupCompleteService.complete", () => {
         expect(recordPayment).toHaveBeenCalledWith(
           "inv-1",
           expect.objectContaining({ amount: 37.25, method: "CASH" }),
-          { tillLockHeld: true },
+          { ...TENDER_GROUP, tillLockHeld: true },
         );
         expect(res).toMatchObject({
           orderId: "ord-1",
@@ -249,7 +253,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 37.25 }),
-        { tillLockHeld: true },
+        { ...TENDER_GROUP, tillLockHeld: true },
       );
       expect(res).toMatchObject({
         paid: 37.25,
@@ -268,7 +272,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ method: "CREDIT_CARD", reference: "auth9" }),
-        { tillLockHeld: true },
+        { ...TENDER_GROUP, tillLockHeld: true },
       );
     });
     it("only DRAFT invoices are sent; an already-SENT one is not re-sent", async () => {
@@ -305,7 +309,7 @@ describe("PickupCompleteService.complete", () => {
         expect(recordPayment).toHaveBeenCalledWith(
           "inv-1",
           expect.objectContaining({ amount: 40, method: "CASH" }),
-          { tillLockHeld: true },
+          { ...TENDER_GROUP, tillLockHeld: true },
         );
         expect(first).toMatchObject({
           total: 50,
@@ -329,6 +333,7 @@ describe("PickupCompleteService.complete", () => {
       const res = await run(cash(50));
       expect(recordPayment).toHaveBeenCalledTimes(1);
       expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 40 }), {
+        ...TENDER_GROUP,
         tillLockHeld: true,
       });
       expect(res).toMatchObject({ paid: 50, balanceDue: 0, change: 10, alreadyPickedUp: true });
@@ -351,7 +356,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 27.25 }),
-        { tillLockHeld: true },
+        { ...TENDER_GROUP, tillLockHeld: true },
       );
       expect(res).toMatchObject({ total: 37.25, paid: 37.25, balanceDue: 0 });
     });
@@ -482,6 +487,7 @@ describe("PickupCompleteService.complete", () => {
       await run(cash(30)); // plan 30, 20 already stored for this hand-over
       expect(recordPayment).toHaveBeenCalledTimes(1);
       expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 10 }), {
+        ...TENDER_GROUP,
         tillLockHeld: true,
       });
     });
@@ -631,7 +637,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-2",
         expect.objectContaining({ amount: 12.5, method: "CASH" }),
-        { tillLockHeld: true },
+        { ...TENDER_GROUP, tillLockHeld: true },
       );
       expect(res).toMatchObject({ balanceDue: 0, paymentRecorded: true });
     });
@@ -691,7 +697,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 12.25, method: "CASH" }),
-        { tillLockHeld: true },
+        { ...TENDER_GROUP, tillLockHeld: true },
       );
       expect(res).toMatchObject({ balanceDue: 0, paymentRecorded: true, alreadyPickedUp: true });
     });
@@ -870,7 +876,7 @@ describe("PickupCompleteService.complete", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 37.25, method: "CASH" }),
-        { tillLockHeld: true },
+        { ...TENDER_GROUP, tillLockHeld: true },
       );
       expect(res).toMatchObject({ paymentRecorded: true, balanceDue: 0 });
     });

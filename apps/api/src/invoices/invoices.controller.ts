@@ -102,8 +102,8 @@ export class InvoicesController {
 
   @Post("payments/record")
   @Roles(UserRole.OPERATOR)
-  recordStandalonePayment(@Body() dto: StandalonePaymentDto) {
-    return this.invoicesService.recordStandalonePayment(dto);
+  recordStandalonePayment(@Body() dto: StandalonePaymentDto, @CurrentUser() user: JwtPayload) {
+    return this.invoicesService.recordStandalonePayment(dto, { actor: user?.sub ?? null });
   }
 
   @Get("payments/:paymentId")

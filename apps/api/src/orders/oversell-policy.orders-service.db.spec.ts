@@ -41,6 +41,7 @@ import { PolicyService } from "../policy/policy.service";
 import { PolicyOversellReader } from "./policy-oversell-reader";
 import { OrdersService } from "./orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -172,6 +173,7 @@ describeDb(
           findOpenOrderDraft: async () => null,
           revertLinkedInvoicesForOrderEdit: async () => undefined,
           resyncOrderInvoicesForEdit: async () => [],
+          ...INVOICE_EDIT_STUBS,
           reconcileOrderDraftInvoice: async () => undefined,
         },
         creditNotes: { settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }) },

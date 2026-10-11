@@ -196,6 +196,7 @@ export function createMockPrisma(): MockPrisma {
     creditNoteItem: modelProxy(),
     orderCreditNote: modelProxy(),
     creditNoteApplyBlock: modelProxy(), // SA-436 (#2401)
+    emailDelivery: modelProxy(), // SA-751r: the receipt send limits count SENT rows
     promotion: modelProxy(),
     promotionProduct: modelProxy(),
     // P6-1 (F0): messaging thread schema (message was previously missing).

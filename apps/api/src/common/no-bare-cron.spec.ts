@@ -124,7 +124,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("has exactly 29 `@LeaderCron(` sites, every one of them well-formed", () => {
+  it("has exactly 30 `@LeaderCron(` sites, every one of them well-formed", () => {
     const declared = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON), 0);
     const wellFormed = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON_SITE), 0);
 
@@ -175,7 +175,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     });
   });
 
-  it("registers the 29 expected job names, all unique", () => {
+  it("registers the 30 expected job names, all unique", () => {
     const names: string[] = [];
     for (const s of sources) {
       const re = new RegExp(LEADER_CRON_SITE.source, "g");

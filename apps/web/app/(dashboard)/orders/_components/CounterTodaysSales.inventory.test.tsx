@@ -55,11 +55,15 @@ const row = (over: Partial<TodaysSaleRow> = {}): TodaysSaleRow => ({
   methods: [{ method: "CASH", amount: 22.5 }],
   returned: { amount: 0, state: "NONE", returns: [] },
   voided: false,
+  cashTendered: null,
+  change: null,
+  taxRatePercent: null,
   ...over,
 });
 const SUMMARY: TodaysSalesSummary = {
   sales: { count: 1, total: 22.5 },
   moneyIn: { cash: 22.5, card: 0, check: 0, other: 0, total: 22.5 },
+  handOvers: { count: 0, total: 0 },
   storeCreditUsed: 0,
   onAccount: 0,
   refunds: { count: 0, cash: 0, card: 0, check: 0, other: 0, total: 0, tenderKnown: true },

@@ -18,6 +18,7 @@ describe("EMAIL_KINDS", () => {
       "INVOICE_SENT",
       "AUTH_OTHER",
       "Z_REPORT",
+      "RECEIPT",
     ]) {
       expect(kinds).toContain(k);
     }

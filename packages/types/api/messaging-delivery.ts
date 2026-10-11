@@ -23,6 +23,7 @@ export const EMAIL_KIND_VALUES = [
   "INVOICE_SENT",
   "AUTH_OTHER",
   "Z_REPORT",
+  "RECEIPT",
 ] as const;
 export type EmailKind = (typeof EMAIL_KIND_VALUES)[number];
 

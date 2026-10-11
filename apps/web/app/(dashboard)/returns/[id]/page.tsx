@@ -20,6 +20,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import type { InlineRefundTender } from "@routeflow/types";
 import { refundSuccessToast } from "@/lib/refund-toast";
 import { TENDER_OPTIONS } from "../_components/refund-copy";
+import { RefundSlipAction } from "../_components/RefundSlipAction";
 import { refundErrorMessage } from "@/lib/credit-note-error-copy";
 import {
   useReturn,
@@ -629,7 +630,10 @@ export default function ReturnDetailPage() {
           )}
 
           {status === "REFUNDED" && (
-            <span className="text-sm italic text-navy/70">Return fully processed.</span>
+            <>
+              <span className="text-sm italic text-navy/70">Return fully processed.</span>
+              <RefundSlipAction returnId={ret.id} />
+            </>
           )}
 
           {status === "REJECTED" && (

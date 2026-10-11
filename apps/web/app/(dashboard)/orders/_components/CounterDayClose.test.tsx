@@ -113,6 +113,7 @@ const stateOf = (
 const SUMMARY: TodaysSalesSummary = {
   sales: { count: 2, total: 45 },
   moneyIn: { cash: 30, card: 15, check: 0, other: 0, total: 45 },
+  handOvers: { count: 0, total: 0 },
   storeCreditUsed: 0,
   onAccount: 0,
   refunds: { count: 0, cash: 0, card: 0, check: 0, other: 0, total: 0, tenderKnown: true },

@@ -16,6 +16,7 @@ import { checkBadgeFor } from "../../../lib/check-badge";
 import { formatPaymentMethod, paymentRowFlags } from "../../../lib/buyer-payments-logic";
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { fmtCalendarDate } from "../../../lib/format-date";
+import { overpaidText, revisedBadgeText } from "../../../lib/invoice-revision";
 import { invoiceLineQtyText } from "@routeflow/pricing";
 import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../lib/invoice-line-display";
 
@@ -139,6 +140,12 @@ export default function CustomerInvoiceDetailScreen() {
                 <Text style={styles.issuedDate}>
                   Issued: {fmtCalendarDate(invoice.issueDate, "short")}
                 </Text>
+              ) : null}
+              {revisedBadgeText(invoice.revisedAt) ? (
+                <Text style={styles.issuedDate}>{revisedBadgeText(invoice.revisedAt)}</Text>
+              ) : null}
+              {overpaidText(invoice.overpaidBy) ? (
+                <Text style={styles.issuedDate}>{overpaidText(invoice.overpaidBy)}</Text>
               ) : null}
             </View>
             <Pill variant={p.variant} dot>

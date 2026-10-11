@@ -17,6 +17,7 @@ import {
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
 import { OrdersService } from "./orders.service";
+import { fulfilCaller } from "./fulfil-path-resolver";
 import { ChangeRequestsService } from "./change-requests.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -124,7 +125,7 @@ export class OrdersController {
 
     if (isStaff && dto.customerId) {
       // A merge target must share the incoming order's fulfil path (merge-candidates.ts).
-      const mergeAs = { explicit: dto.fulfillPath };
+      const mergeAs = { explicit: dto.fulfillPath, ...fulfilCaller(user) };
       const activeOrder = await this.ordersService.findActiveOrder(dto.customerId, {
         forMerge: true,
         mergeAs,
@@ -451,13 +452,18 @@ export class OrdersController {
     @Query("customerId") customerId: string,
     // The path the order being built is on: the preview looks for the SAME merge target create would
     // (merge-candidates.ts); omitted = the customer's own path.
-    @Query("fulfillPath") fulfillPath?: string,
+    @Query("fulfillPath") fulfillPath: string | undefined,
+    @CurrentUser() user: JwtPayload,
   ) {
     if (!customerId) return null;
-    const explicit = fulfillPath === "SHIP" || fulfillPath === "ROUTE" ? fulfillPath : undefined;
+    // Staff may ask for PICKUP (POS mode): the preview searches for the same target create would.
+    const explicit =
+      fulfillPath === "SHIP" || fulfillPath === "ROUTE" || fulfillPath === "PICKUP"
+        ? fulfillPath
+        : undefined;
     const order = await this.ordersService.findActiveOrder(customerId, {
       forMerge: true,
-      mergeAs: { explicit },
+      mergeAs: { explicit, ...fulfilCaller(user) },
     });
     if (!order) return null;
     return {

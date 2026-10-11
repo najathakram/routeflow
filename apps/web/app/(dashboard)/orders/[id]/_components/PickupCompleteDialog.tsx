@@ -48,6 +48,7 @@ export function PickupCompleteDialog({
   total,
   invoices,
   isWalkIn,
+  handOver = false,
   heldKey,
   storeKey = null,
 }: {
@@ -58,6 +59,8 @@ export function PickupCompleteDialog({
   total: number;
   invoices: ReadonlyArray<{ id: string; status: string }>;
   isWalkIn: boolean;
+  /** POS-mode order (PICKUP, not a counter sale): the confirm button reads "Hand over". Counter / portal keep "Picked up". */
+  handOver?: boolean;
   heldKey?: React.MutableRefObject<HeldPickupKey>;
   /** sessionStorage key (tenant + user + order) that keeps an UNKNOWN outcome's key across a reload. */
   storeKey?: string | null;
@@ -172,7 +175,7 @@ export function PickupCompleteDialog({
     <Modal
       open={open}
       onClose={onClose}
-      title={`Picked up${orderNumber ? ` — ${orderNumber}` : ""}`}
+      title={`${handOver ? "Hand over" : "Picked up"}${orderNumber ? ` — ${orderNumber}` : ""}`}
       className="max-w-md"
       footer={
         outcome ? (
@@ -218,7 +221,7 @@ export function PickupCompleteDialog({
                   loading={complete.isPending}
                   disabled={due === null}
                 >
-                  {nothingToCollect ? "Confirm picked up" : "Picked up"}
+                  {handOver ? "Hand over" : nothingToCollect ? "Confirm picked up" : "Picked up"}
                 </Button>
               </>
             )}

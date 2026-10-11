@@ -30,6 +30,7 @@ import {
   type CounterPaymentInput,
 } from "./counter-sale-payment";
 import { isHandOverTender, tenderFigures, type InvoiceRow } from "./pickup-tender";
+import { pickupTenderGroupId } from "./pickup-tender-group";
 import type { PickupCompleteDto } from "./pickup-complete.dto";
 import { counterCloseShared, counterTenderPaidAt } from "./counter-tender-window";
 
@@ -401,7 +402,8 @@ export class PickupCompleteService {
         : undefined;
       try {
         for (const { invoiceId, due } of writes) {
-          // SA-750r3: the shared close lock is already held on the pinned connection (tillLockHeld)
+          // SA-763r R7: the tender's group id is written IN the create, so Today's sales finds it. SA-750r3: the shared close
+          // lock is already held on the pinned connection (tillLockHeld).
           await this.invoices.recordPayment(
             invoiceId,
             {
@@ -410,7 +412,7 @@ export class PickupCompleteService {
               reference: payment.reference,
               ...(paidAt ? { paidAt } : {}),
             } as never,
-            { tillLockHeld: TILL_LOCK_HELD },
+            { paymentGroupId: pickupTenderGroupId(orderId), tillLockHeld: TILL_LOCK_HELD },
           );
         }
       } catch (e) {

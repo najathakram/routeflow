@@ -421,6 +421,7 @@ describe("foldSummary (tests 10 and 11)", () => {
     expect(s).toEqual({
       sales: { count: 0, total: 0 },
       moneyIn: { cash: 0, card: 0, check: 0, other: 0, total: 0 },
+      handOvers: { count: 0, total: 0 },
       storeCreditUsed: 0,
       onAccount: 0,
       // no refund in the window means no unknown tender in it: known (SA-740r2)

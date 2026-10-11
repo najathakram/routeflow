@@ -85,6 +85,8 @@ describe("CounterSaleService.ring", () => {
   let reader: { get: jest.Mock };
   let invoices: Inv[];
   let replay: boolean;
+  // SA-764: the Order.counterCashTendered column, which the CASH tender writes before paying and the read-back serves change from
+  let storedTendered: number | null;
   let replayOrder: { id: string; counterSale?: boolean };
 
   const inv = (id: string, total: number, payments: any[] = [], at = 1): Inv => ({
@@ -111,6 +113,7 @@ describe("CounterSaleService.ring", () => {
     prisma = createMockPrisma();
     invoices = [inv("inv-1", 37.25)];
     replay = false;
+    storedTendered = null;
     replayOrder = { id: "ord-1", counterSale: true };
     createSale = jest.fn(async (_dto: any, _u: any, sale: any) => {
       if (replay) sale?.onReplay?.(replayOrder);
@@ -139,7 +142,16 @@ describe("CounterSaleService.ring", () => {
     // SA-436: the tenant's send-time sweep switch. ON here so the open-credit guard specs mean something;
     // the OFF case is pinned on its own below.
     prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: true });
-    prisma.order.findFirst.mockResolvedValue({ id: "ord-1", orderNumber: "ORD-1" });
+    prisma.order.findFirst.mockImplementation(async () => ({
+      id: "ord-1",
+      orderNumber: "ORD-1",
+      counterCashTendered: storedTendered,
+    }));
+    prisma.order.updateMany.mockImplementation(async ({ where, data }: any) => {
+      if (where.counterCashTendered === null && storedTendered !== null) return { count: 0 };
+      storedTendered = data.counterCashTendered;
+      return { count: 1 };
+    });
     prisma.invoice.findMany.mockImplementation(async ({ where }: any = {}) =>
       invoices
         .filter((i) => !where?.status?.notIn?.includes(i.status))
@@ -542,6 +554,7 @@ describe("CounterSaleService.ring", () => {
         paid: 37.25,
         balanceDue: 0,
         change: 12.75,
+        cashTendered: 50,
         paymentId: "pay-inv-1",
         method: "CASH",
         paymentRecorded: true,
@@ -622,7 +635,8 @@ describe("CounterSaleService.ring", () => {
         tillLockHeld: true,
       });
       expect(r).toMatchObject({ total: 40, paid: 40, balanceDue: 0, paymentRecorded: true });
-      expect(r.change).toBeUndefined();
+      // a 30 cash tender on the 30 left after the credit: nothing handed back
+      expect(r.change).toBe(0);
     });
 
     it("mixed regulated order: sibling invoices are paid oldest-first from one tender", async () => {
@@ -965,16 +979,15 @@ describe("CounterSaleService.ring", () => {
       expect(walkIn.getOrCreateWalkIn).not.toHaveBeenCalled();
     });
 
-    it("matches what the POST replay returns for the same stored sale (modulo change, which needs the tender)", async () => {
+    it("matches what the POST replay returns for the same stored sale (change included: both serve it from storage)", async () => {
       invoices = [inv("inv-1", 37.25)];
       const first = await service.ring(
         named({ method: "CASH", amount: 37.25 }) as never,
         staff,
         "k",
       );
-      findReplayCandidateByKey.mockResolvedValue(sale);
-      const { change: _c, ...expected } = { ...first, replayed: true } as any;
-      expect(await service.byKey("k")).toEqual(expected);
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, counterCashTendered: storedTendered });
+      expect(await service.byKey("k")).toEqual({ ...first, replayed: true });
     });
 
     it("a PARTIAL stored tender (balance still owing) is NOT paymentRecorded: storage cannot tell an intended partial from an interrupted allocation, so the till must see money is owed", async () => {
@@ -1009,15 +1022,18 @@ describe("CounterSaleService.ring", () => {
       ["CARD", { method: "CARD" }, "CREDIT_CARD"],
       ["CHECK", { method: "CHECK", reference: "1042" }, "CHECK"],
     ])("a recovered %s sale", (label, payment, _prisma) => {
-      it("byKey body equals the POST body (except replayed:true and the cash-only change)", async () => {
+      it("byKey body equals the POST body (except replayed:true)", async () => {
         invoices = [inv("inv-1", 37.25)];
         const posted = await service.ring(
           { customerId: "cust-1", items: [item], payment } as never,
           staff,
           `k-${label}`,
         );
-        findReplayCandidateByKey.mockResolvedValue(sale);
-        const { change: _c, replayed: _r, ...expected } = posted as any;
+        findReplayCandidateByKey.mockResolvedValue({
+          ...sale,
+          counterCashTendered: storedTendered,
+        });
+        const { replayed: _r, ...expected } = posted as any;
         const recovered = await service.byKey(`k-${label}`);
         expect(recovered).toEqual({ ...expected, replayed: true });
         expect(recovered.method).toBe(label);

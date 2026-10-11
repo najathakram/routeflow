@@ -1,11 +1,12 @@
 import {
+  FulfillPath,
   InvoiceStatus,
   OrderStatus,
   PaymentStatus,
   ReturnStatus,
   type Prisma,
 } from "@prisma/client";
-import { roundMoney, sumConfirmed } from "@routeflow/pricing";
+import { roundMoney, storedTaxRatePercent, sumConfirmed } from "@routeflow/pricing";
 import type {
   TodaysSaleMethod,
   TodaysSalePaymentState,
@@ -16,9 +17,10 @@ import type {
   TodaysSalesSummary,
 } from "@routeflow/types";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
-import { counterMethodOf } from "./counter-sale-readback";
+import { counterMethodOf, servedChange } from "./counter-sale-readback";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
+import { pickupTenderGroupId } from "./pickup-tender-group";
 
 /**
  * Today's sales (GET /orders/counter-sale/today): the PURE half. Everything that decides a figure lives here
@@ -97,6 +99,59 @@ export function salePaymentsWhere(tenantId: string, w: DayWindow) {
 }
 
 /**
+ * HAND-OVERS (SA-763r R7): the PAID payments that CAME IN in the window on the tender of a POS-mode pickup
+ * hand-over: invoices of a PICKUP order that is NOT a counter sale (a counter sale is `salePaymentsWhere`'s,
+ * so the two sets are disjoint and nothing is counted twice). This is only the CANDIDATE query: whether a
+ * payment is the hand-over's own tender (not a deposit or a later payment on the same invoice) is the v5
+ * group id, which no SQL predicate can express, so `handOverPayments` filters in code. Bounded by the day's
+ * PICKUP payments.
+ */
+export function handOverCandidatesWhere(tenantId: string, w: DayWindow) {
+  return {
+    tenantId,
+    status: PaymentStatus.PAID,
+    paidAt: { gte: w.start, lt: w.end },
+    paymentGroupId: { not: null },
+    invoice: {
+      tenantId,
+      status: { notIn: DEAD_INVOICE_STATUSES },
+      order: { tenantId, fulfillPath: FulfillPath.PICKUP, counterSale: false },
+    },
+  };
+}
+
+export const handOverCandidateSelect = {
+  method: true,
+  amount: true,
+  paymentGroupId: true,
+  invoice: { select: { orderId: true } },
+} satisfies Prisma.InvoicePaymentSelect;
+
+/** One payment that is a hand-over's own tender. */
+export interface HandOverPayment {
+  method: string;
+  amount: unknown;
+  orderId: string;
+}
+
+/** The candidates whose group id IS the app-side `uuidv5(`${orderId}:pickup:0`, PICKUP_TENDER_NS)`. */
+export function handOverPayments(
+  rows: ReadonlyArray<{
+    method: string;
+    amount: unknown;
+    paymentGroupId: string | null;
+    invoice: { orderId: string | null } | null;
+  }>,
+): HandOverPayment[] {
+  return rows.flatMap((r) => {
+    const orderId = r.invoice?.orderId;
+    return orderId && r.paymentGroupId === pickupTenderGroupId(orderId)
+      ? [{ method: r.method, amount: r.amount, orderId }]
+      : [];
+  });
+}
+
+/**
  * Everything PAID, on any date, on the live invoices of the day's own live sales: what `onAccount` (the day's
  * sales still owed) is measured against. NOT money in (that is `salePaymentsWhere`, by paid date).
  */
@@ -168,6 +223,7 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
       total: true,
       createdAt: true,
       customerId: true,
+      counterCashTendered: true,
       customer: { select: { businessName: true, isWalkIn: true } },
       invoices: {
         orderBy: { createdAt: "asc" },
@@ -175,7 +231,14 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           id: true,
           invoiceNumber: true,
           status: true,
-          payments: { select: { method: true, amount: true, status: true } },
+          payments: {
+            orderBy: { createdAt: "asc" },
+            select: { method: true, amount: true, status: true },
+          },
+          // the stored header and line rates the sale's tax rate is read from (pricing's storedTaxRatePercent)
+          subtotal: true,
+          taxAmount: true,
+          items: { select: { taxRate: true, categoryTaxAmount: true } },
         },
       },
       returns: {
@@ -208,12 +271,19 @@ export interface TodayOrderRecord {
   total: unknown;
   createdAt: Date;
   customerId: string;
+  /** SA-764: the cash handed over (null = not a cash sale / rung before it was stored) */
+  counterCashTendered?: unknown;
   customer: { businessName: string | null; isWalkIn: boolean | null } | null;
   invoices: Array<{
     id: string;
     invoiceNumber: string | null;
     status: string;
     payments: Array<{ method: string; amount: unknown; status: string }>;
+    /** SA-764: the invoice header the legacy flat-rate fallback reads (`storedTaxRatePercent`) */
+    subtotal?: unknown;
+    taxAmount?: unknown;
+    /** SA-764: each line's stored tax rate (a fraction, 0.0825) */
+    items?: Array<{ taxRate: unknown; categoryTaxAmount?: unknown }>;
   }>;
   returns: Array<{
     id: string;
@@ -324,6 +394,12 @@ export function toTodaysSaleRow(o: TodayOrderRecord): TodaysSaleRow {
     balanceDue,
     methods,
     paymentState,
+    cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
+    change: servedChange(o.counterCashTendered, payments, balanceDue),
+    // ONE home for the rate (pricing): the receipt names it only through explainedTaxRatePercent
+    taxRatePercent: storedTaxRatePercent(
+      live.map((i) => ({ subtotal: i.subtotal, taxAmount: i.taxAmount, lines: i.items ?? [] })),
+    ),
     returned: { amount: returnedAmount, state: returnState, returns },
     voided,
   };
@@ -366,6 +442,8 @@ export function foldSummary(input: {
   /** everything paid (any date) on the day's own sales: the `onAccount` measure */
   paidOnSales: PaidAggregate;
   returns: readonly WindowReturn[];
+  /** the hand-over tenders that came in in the window (already filtered by `handOverPayments`) */
+  handOvers?: readonly HandOverPayment[];
 }): TodaysSalesSummary {
   const by: Record<TodaysSaleMethod, number> = {
     CASH: 0,
@@ -377,6 +455,14 @@ export function foldSummary(input: {
   for (const g of input.payments) {
     const m = todaysMethodOf(g.method);
     by[m] = roundMoney(by[m] + num(g._sum?.amount));
+  }
+  // SA-763r R7: a POS-mode hand-over's tender is money in and cash in the drawer, like a counter sale's.
+  const handOvers = input.handOvers ?? [];
+  let handOverTotal = 0;
+  for (const h of handOvers) {
+    const m = todaysMethodOf(h.method);
+    by[m] = roundMoney(by[m] + num(h.amount));
+    handOverTotal = roundMoney(handOverTotal + num(h.amount));
   }
   const moneyIn = {
     cash: by.CASH,
@@ -413,6 +499,7 @@ export function foldSummary(input: {
   return {
     sales: { count: countOf(input.sales._count), total: salesTotal },
     moneyIn,
+    handOvers: { count: new Set(handOvers.map((h) => h.orderId)).size, total: handOverTotal },
     storeCreditUsed: by.STORE_CREDIT,
     onAccount: Math.max(
       0,

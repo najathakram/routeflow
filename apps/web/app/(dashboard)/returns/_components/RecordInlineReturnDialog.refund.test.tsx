@@ -25,6 +25,11 @@ const ORDER = {
     },
   ],
 };
+jest.mock("./RefundSlipAction", () => ({
+  RefundSlipAction: (p: { returnId: string; autoPrint?: boolean }) => (
+    <div data-testid="slip-action" data-return-id={p.returnId} data-auto={String(!!p.autoPrint)} />
+  ),
+}));
 jest.mock("@/lib/api/orders", () => ({
   useOrder: () => ({ data: ORDER }),
   useOrders: () => ({ data: { data: [], meta: { total: 0, page: 1, limit: 25, totalPages: 0 } } }),
@@ -221,6 +226,30 @@ async function refundFlow(q = quote({ paidMethods: ["CARD"] })) {
 }
 
 describe("refund flow", () => {
+  it("Train 4: once the refund is confirmed the success screen offers the slip for THAT return (auto-print follows the device preference)", async () => {
+    refundReturn.mockResolvedValue({});
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund \$12\.40$/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByText(
+      "Refund recorded. Give $12.40 back on the customer's card at the terminal.",
+    );
+    const slip = await screen.findByTestId("slip-action");
+    expect(slip).toHaveAttribute("data-return-id", "ret-1");
+    expect(slip).toHaveAttribute("data-auto", "false"); // the auto-print preference is off by default
+  });
+
+  it("Train 4: no slip is offered while the refund is still pending (failed refund)", async () => {
+    refundReturn.mockRejectedValue({ response: { status: 500, data: {} } });
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund \$12\.40$/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await waitFor(() => expect(refundReturn).toHaveBeenCalled());
+    expect(screen.queryByTestId("slip-action")).toBeNull();
+  });
+
   it("captures with resolution REFUND then POSTs the refund with tender + expectedAmount", async () => {
     refundReturn.mockResolvedValue({});
     const { onRecorded } = await refundFlow();
