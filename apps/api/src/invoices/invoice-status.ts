@@ -1,9 +1,6 @@
 import { InvoiceStatus } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
+import { OVERPAID_EPSILON, roundMoney } from "@routeflow/pricing";
 import { isOverdue } from "../common/calendar-date";
-
-/** Paid beyond the total by more than this is an overpayment (half a cent). */
-const OVERPAID_TOLERANCE = 0.005;
 
 /**
  * What a caller wants when the confirmed payments exceed the total. `"NOT_PAID"` is the answer for every
@@ -19,7 +16,7 @@ export type OnOverpaid = "NOT_PAID" | "PAID";
  * terminal/deliberate and never overridden. SA-488 (#2493 item 3): OVERDUE only once the due day
  * has ENDED in `timeZone` (UTC when it is null), the shared `isOverdue` rule, never at 00:00Z of it.
  *
- * SA-763r P-3 [L-O1] (B1098): `totalPaid > total + 0.005` is never PAID (unless `onOverpaid` is `"PAID"`):
+ * SA-763r P-3 [L-O1] (B1098): `totalPaid > total + OVERPAID_EPSILON` is never PAID (unless `onOverpaid` is `"PAID"`):
  * OVERDUE once the due day has ended, else SENT (VIEWED falls back to SENT). The balance is then zero
  * and `overpaidBy` (below) carries the excess.
  */
@@ -42,7 +39,7 @@ export function statusFromPayments(
   ) {
     return currentStatus;
   }
-  if (onOverpaid === "NOT_PAID" && totalPaid > total + OVERPAID_TOLERANCE) {
+  if (onOverpaid === "NOT_PAID" && totalPaid > total + OVERPAID_EPSILON) {
     return isOverdue(dueDate, now, timeZone) ? InvoiceStatus.OVERDUE : InvoiceStatus.SENT;
   }
   if (totalPaid >= total - 0.001) return InvoiceStatus.PAID;
@@ -58,5 +55,5 @@ export function statusFromPayments(
  */
 export function overpaidByOf(total: unknown, externalPaid: number): number {
   const excess = roundMoney(externalPaid - Number(total));
-  return excess > OVERPAID_TOLERANCE ? excess : 0;
+  return excess > OVERPAID_EPSILON ? excess : 0;
 }
