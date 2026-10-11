@@ -550,7 +550,8 @@ describe("POS-5 price edit: a customer pick keeps the edited price (POS-2 surviv
     // row 322d: the struck figure is the LIST total (10.00), the receipt's reference, not the customer's tier total (8.00)
     expect(within(li).getByTestId("line-original-total")).toHaveTextContent("$10.00");
     expect(within(li).getByTestId("line-net-total")).toHaveTextContent("$5.00");
-    expect(within(li).getByTestId("line-price-chip")).toHaveTextContent("37.5% off");
+    // ...and the chip is measured from that same list: 5.00 is 50% off 10.00 (it was 37.5% off the tier's 8.00)
+    expect(within(li).getByTestId("line-price-chip")).toHaveTextContent(/^50% off$/);
     expect(within(lineOf("Juice")).queryByTestId("line-price-chip")).toBeNull();
     expect(screen.getByTestId("counter-reprice-note")).toHaveTextContent(
       "Prices updated for Acme Cafe (Tier 2). 1 edited price kept.",
@@ -579,17 +580,18 @@ describe("POS-5 price edit: a customer pick keeps the edited price (POS-2 surviv
     expect(total()).toHaveTextContent("$8.00");
   });
 
-  it("a kept net above the new tier price reads 'Price changed'", async () => {
+  it("a kept net above the new tier price but below the list is still struck from the list: 10.00 struck, 9.00 net, 10% off, Discounts 1.00", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     await editPrice("Cola", { mode: "Percent off", label: "Percent off", value: "10" }); // 9.00
-    await pickAcme(); // tier 2 price is 8.00: 9.00 is now ABOVE it
+    await pickAcme(); // tier 2 price is 8.00: 9.00 is now ABOVE it, but still below the 10.00 list
+    const li = lineOf("Cola");
     await waitFor(() =>
-      expect(within(lineOf("Cola")).getByTestId("line-price-chip")).toHaveTextContent(
-        "Price changed",
-      ),
+      expect(within(li).getByTestId("line-original-total")).toHaveTextContent("$10.00"),
     );
-    // row 322d: Discounts is measured from the LIST price (10.00) like the receipt: 9.00 is still 1.00 off it
+    expect(within(li).getByTestId("line-net-total")).toHaveTextContent("$9.00");
+    // struck -> net -> chip -> Discounts agree: 9.00 is 10% off the 10.00 list, which is 1.00 off
+    expect(within(li).getByTestId("line-price-chip")).toHaveTextContent(/^10% off$/);
     expect(screen.getByTestId("running-discounts")).toHaveTextContent("-$1.00");
     expect(total()).toHaveTextContent("$9.00");
   });

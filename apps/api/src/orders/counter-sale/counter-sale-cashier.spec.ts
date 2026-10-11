@@ -1,28 +1,10 @@
-import { cashierNameOf } from "./counter-sale-cashier";
 import { pageQuery, toTodaysSaleRow, type TodayOrderRecord } from "./counter-sale-today";
 
 /**
- * Row 317: who rang the sale. `Order.soldById` is stamped by the counter write; the read shows the staff user's
+ * Row 317: who rang the sale (the name rule itself, `cashierNameOf`, lives in @routeflow/pricing). `Order.soldById` is stamped by the counter write; the read shows the staff user's
  * display name (their `username`, the name every staff list prints), never an email, and is null-safe for old rows.
  * Placeholders only (acme).
  */
-describe("cashierNameOf: the ONE display name of the cashier", () => {
-  it("is the trimmed username", () => {
-    expect(cashierNameOf({ username: "  jane  " })).toBe("jane");
-  });
-
-  it("is null for an old row (no soldBy), a missing or blank username", () => {
-    expect(cashierNameOf(null)).toBeNull();
-    expect(cashierNameOf(undefined)).toBeNull();
-    expect(cashierNameOf({ username: null })).toBeNull();
-    expect(cashierNameOf({ username: "   " })).toBeNull();
-  });
-
-  it("never prints an email: an email-shaped username reads as no cashier", () => {
-    expect(cashierNameOf({ username: "jane@acme.test" })).toBeNull();
-  });
-});
-
 describe("Today's-sales row: cashierName", () => {
   const rec = (soldBy?: TodayOrderRecord["soldBy"]): TodayOrderRecord => ({
     id: "o-1",
@@ -39,6 +21,10 @@ describe("Today's-sales row: cashierName", () => {
 
   it("carries the cashier's name", () => {
     expect(toTodaysSaleRow(rec({ username: "jane" })).cashierName).toBe("jane");
+  });
+
+  it("is null when the stored name looks like an email (the shared rule)", () => {
+    expect(toTodaysSaleRow(rec({ username: "jane@acme.test" })).cashierName).toBeNull();
   });
 
   it("is null for a sale rung before soldById was stamped", () => {

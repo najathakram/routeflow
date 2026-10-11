@@ -146,6 +146,13 @@ describe("CounterReceiptBody", () => {
     expect(screen.queryByTestId("receipt-adjustment")).not.toBeInTheDocument();
   });
 
+  it("the live receipt names the cashier by the shared rule: an email-shaped username prints no Cashier line", () => {
+    authUser = { id: "u1", username: "pat@acme.test" };
+    show();
+    expect(screen.queryByTestId("receipt-cashier")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("pat@acme.test");
+  });
+
   it("a repriced sale adds up: Subtotal + Adjustments = the server total", () => {
     show({ ...RECEIPT, total: 24.75, paid: 24.75, change: undefined as never });
     expect(screen.getByTestId("receipt-subtotal")).toHaveTextContent("$22.50");

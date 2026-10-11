@@ -1,10 +1,17 @@
 import { buildCounterReceipt } from "./counter-receipt";
 
 /**
- * Row 322a: two cart lines of ONE product at different prices each take their OWN stored line (product + net unit price),
- * whatever order the server serves the stored lines in. Matching by product alone struck the wrong list price.
+ * Row 322a (review fold): a cart line is matched to the stored line it was sold as by product + net unit price, EXACT matches
+ * for every cart line first, and only then a fallback (the first unused stored line of the product) for a line whose price
+ * the server did not store (a re-priced tier). A fallback must never take the stored line a LATER cart line matches exactly.
  */
-const response = (lines: Array<Record<string, unknown>>) => ({
+type Stored = {
+  productId: string;
+  unitPrice: number;
+  originalPrice: number | null;
+  priceType: string;
+};
+const response = (lines: Stored[]) => ({
   orderId: "o1",
   orderNumber: "ORD-1",
   invoiceId: "i1",
@@ -14,59 +21,86 @@ const response = (lines: Array<Record<string, unknown>>) => ({
   balanceDue: 0,
   method: "CARD" as const,
   paymentRecorded: true,
-  lines: lines as never,
+  lines,
 });
-const cart = [
-  { tempId: "t1", productId: "pa", name: "Pc", unitPrice: 5, qty: 1 },
-  { tempId: "t2", productId: "pa", name: "Pc", unitPrice: 8, qty: 1 },
-];
-const build = (stored: Array<Record<string, unknown>>) =>
+const build = (stored: Stored[], cart: Array<{ unitPrice: number }>) =>
   buildCounterReceipt({
     receipt: response(stored),
-    lines: cart,
+    lines: cart.map((c, i) => ({
+      tempId: `t${i + 1}`,
+      productId: "pa",
+      name: "Pc",
+      qty: 1,
+      ...c,
+    })),
     enteredTender: null,
     profile: null,
     now: new Date("2026-10-07T15:15:00.000Z"),
   });
 
-describe("live receipt: duplicate products at different prices", () => {
-  const five = { productId: "pa", unitPrice: 5, originalPrice: 9, priceType: "DISCOUNTED" };
-  const eight = { productId: "pa", unitPrice: 8, originalPrice: 12, priceType: "DISCOUNTED" };
+// the real case: a STANDARD line with no original beside a DISCOUNTED line of the same product
+const plain: Stored = { productId: "pa", unitPrice: 5, originalPrice: null, priceType: "STANDARD" };
+const discounted: Stored = {
+  productId: "pa",
+  unitPrice: 8,
+  originalPrice: 12,
+  priceType: "DISCOUNTED",
+};
+const struck = (m: ReturnType<typeof build>) => m.lines.map((l) => l.original);
 
-  it("each cart line strikes its own list price when the stored lines arrive in cart order", () => {
-    const m = build([five, eight]);
-    expect(m.lines[0]).toMatchObject({ total: 5, original: 9, discount: 4 });
-    expect(m.lines[1]).toMatchObject({ total: 8, original: 12, discount: 4 });
+describe("live receipt: a STANDARD line beside a DISCOUNTED line of one product", () => {
+  it("each cart line takes its own stored line when the stored lines arrive in cart order", () => {
+    expect(struck(build([plain, discounted], [{ unitPrice: 5 }, { unitPrice: 8 }]))).toEqual([
+      null,
+      12,
+    ]);
   });
 
   it("...and when they arrive in the OTHER order", () => {
-    const m = build([eight, five]);
-    expect(m.lines[0]).toMatchObject({ total: 5, original: 9, discount: 4 });
-    expect(m.lines[1]).toMatchObject({ total: 8, original: 12, discount: 4 });
+    expect(struck(build([discounted, plain], [{ unitPrice: 5 }, { unitPrice: 8 }]))).toEqual([
+      null,
+      12,
+    ]);
+    expect(struck(build([discounted, plain], [{ unitPrice: 8 }, { unitPrice: 5 }]))).toEqual([
+      12,
+      null,
+    ]);
   });
 
-  it("two identical lines (same product, same price) still take one stored line each", () => {
+  it("a fallback never steals the line a LATER cart line matches exactly (server re-priced line A, line B DISCOUNTED)", () => {
+    // A was rung at 4.99 but stored at 5.00 (no exact match); B is the 8.00 DISCOUNTED line. B's stored line is served FIRST.
+    const m = build([discounted, plain], [{ unitPrice: 4.99 }, { unitPrice: 8 }]);
+    expect(struck(m)).toEqual([null, 12]);
+    expect(m.discounts).toBe(4);
+  });
+
+  it("...and with the exact line served last, the re-priced line still falls back to the OTHER stored line", () => {
+    const m = build([plain, discounted], [{ unitPrice: 4.99 }, { unitPrice: 8 }]);
+    expect(struck(m)).toEqual([null, 12]);
+  });
+
+  it("two identical lines (same product, same price) take one stored line each, in served order", () => {
+    const a = { ...plain, originalPrice: 9, priceType: "DISCOUNTED" };
+    const b = { ...plain, originalPrice: 7, priceType: "DISCOUNTED" };
+    expect(struck(build([a, b], [{ unitPrice: 5 }, { unitPrice: 5 }]))).toEqual([9, 7]);
+  });
+
+  it("a cart price the server did not store falls back to the first unused line of the product", () => {
+    const m = build(
+      [{ ...plain, originalPrice: 9, priceType: "DISCOUNTED" }],
+      [{ unitPrice: 4.99 }],
+    );
+    expect(struck(m)).toEqual([9]);
+  });
+
+  it("a line of a product the server did not store gets nothing struck", () => {
     const m = buildCounterReceipt({
-      receipt: response([five, { ...five, originalPrice: 7 }]),
-      lines: [
-        { tempId: "t1", productId: "pa", name: "Pc", unitPrice: 5, qty: 1 },
-        { tempId: "t2", productId: "pa", name: "Pc", unitPrice: 5, qty: 1 },
-      ],
+      receipt: response([plain]),
+      lines: [{ tempId: "t1", productId: "other", name: "X", unitPrice: 5, qty: 1 }],
       enteredTender: null,
       profile: null,
       now: new Date("2026-10-07T15:15:00.000Z"),
     });
-    expect(m.lines.map((l) => l.original)).toEqual([9, 7]);
-  });
-
-  it("a cart price the server did not store (a re-priced tier) falls back to the first unused line of the product", () => {
-    const m = buildCounterReceipt({
-      receipt: response([five]),
-      lines: [{ tempId: "t1", productId: "pa", name: "Pc", unitPrice: 4.99, qty: 1 }],
-      enteredTender: null,
-      profile: null,
-      now: new Date("2026-10-07T15:15:00.000Z"),
-    });
-    expect(m.lines[0]).toMatchObject({ original: 9 });
+    expect(m.lines[0].original).toBeNull();
   });
 });

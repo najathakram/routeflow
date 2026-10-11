@@ -29,10 +29,11 @@ jest.mock("@/lib/api-client", () => ({
 }));
 let addon = true;
 let role: string | undefined = "OPERATOR";
+let username = "pat";
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => addon }));
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
-  useOptionalAuth: () => ({ user: role ? { role, username: "pat" } : null }),
+  useOptionalAuth: () => ({ user: role ? { role, username } : null }),
 }));
 const ORDER = {
   id: "o1",
@@ -386,6 +387,20 @@ describe("CounterTodaysSales", () => {
     expect(
       within(await screen.findByTestId("today-row-o3")).queryByTestId("today-row-cashier"),
     ).toBeNull();
+  });
+
+  it("row 317: 'Reprinted by' follows the shared name rule: an email-shaped username is not printed", async () => {
+    const original = username;
+    username = "pat@acme.test";
+    try {
+      await open();
+      fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+      const root = await screen.findByTestId("receipt-print-root");
+      expect(within(root).queryByTestId("receipt-reprinted-by")).toBeNull();
+      expect(root.textContent).not.toContain("pat@acme.test");
+    } finally {
+      username = original;
+    }
   });
 
   it("row 317: the reprint of a sale with a stored cashier prints 'Cashier: <name>' beside who reprinted it", async () => {

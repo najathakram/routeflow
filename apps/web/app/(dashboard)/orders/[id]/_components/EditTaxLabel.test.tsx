@@ -27,7 +27,7 @@ describe("EditTaxLabel", () => {
     expect(screen.getByTestId("edit-tax-label")).not.toHaveTextContent("(8%)");
   });
 
-  it("reads plain Tax while the settings are loading and for an order with no invoice", async () => {
+  it("reads plain Tax while the settings are still loading, even with a stored rate on file", async () => {
     get.mockReturnValue(new Promise(() => {}));
     renderWithProviders(<EditTaxLabel order={order() as never} />);
     expect(screen.getByTestId("edit-tax-label")).toHaveTextContent(/^Tax$/);
@@ -35,6 +35,13 @@ describe("EditTaxLabel", () => {
 
   it("an order with no stored rate is plain Tax even though its tax divides out to 8.25%", async () => {
     renderWithProviders(<EditTaxLabel order={order({ invoices: [] }) as never} />);
+    await waitFor(() => expect(get).toHaveBeenCalled());
+    expect(screen.getByTestId("edit-tax-label")).toHaveTextContent(/^Tax$/);
+  });
+
+  it("an order read that carries no invoices at all (a buyer or an older server) is plain Tax", async () => {
+    const { invoices: _omitted, ...bare } = order() as Record<string, unknown>;
+    renderWithProviders(<EditTaxLabel order={bare as never} />);
     await waitFor(() => expect(get).toHaveBeenCalled());
     expect(screen.getByTestId("edit-tax-label")).toHaveTextContent(/^Tax$/);
   });
