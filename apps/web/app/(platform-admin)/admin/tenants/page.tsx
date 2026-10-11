@@ -310,9 +310,13 @@ export default function AdminTenantsPage() {
           className="h-9 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
         >
           <option value="">All Plans</option>
-          <option value="STARTER">{planLabel("STARTER")}</option>
-          <option value="PROFESSIONAL">{planLabel("PROFESSIONAL")}</option>
-          <option value="ENTERPRISE">{planLabel("ENTERPRISE")}</option>
+          {/* SA-1: the same plan list every other plan control offers (usePlanOptions); the server
+              filters on the real billing plan (subscription.planKey). */}
+          {withCurrentPlan(planOptions.planKeys, planFilter).map((p) => (
+            <option key={p} value={p}>
+              {planLabel(p)}
+            </option>
+          ))}
         </select>
         <button
           onClick={() => setShowDeleted((v) => !v)}

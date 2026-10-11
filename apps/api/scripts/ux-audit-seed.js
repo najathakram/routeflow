@@ -214,6 +214,7 @@ async function phase0_bootstrap() {
       adminEmail: `ux_admin_${ts}@ux-audit.test`,
       adminPassword: PASS.admin,
       plan: "PROFESSIONAL",
+      timezone: "America/New_York", // SA-738: create-tenant requires an IANA zone
     },
     saToken,
     { "X-Tenant-Slug": "" },

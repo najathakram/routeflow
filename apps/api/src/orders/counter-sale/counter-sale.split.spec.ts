@@ -24,7 +24,7 @@ import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../../audit/audit.service";
 import { createMockPrisma } from "../../testing/prisma-mock";
-import { legGroupId } from "./counter-sale-tender";
+import { legGroupId } from "./counter-tender-row";
 import { assertCashRefundWithinCap } from "../../returns/cash-refund-cap";
 
 /**

@@ -28,8 +28,24 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { resolveDatabaseUrl, redactUrl, scrubSecrets } from "./lib/railway-db-url.mjs";
-import { planRefundTenderBackfill, setRefundTender } from "./lib/refund-tender-backfill.mjs";
+import {
+  partitionByWritableTenants,
+  planRefundTenderBackfill,
+  setRefundTender,
+} from "./lib/refund-tender-backfill.mjs";
+import guard from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+
+// Row 195 / #3344: a run never writes a PROTECTED tenant (paying | Stripe-linked | PROTECTED_TENANT_SLUGS) unless the operator names
+// that one tenant (--allow-protected <id>, --backup-taken, a typed confirmation at a real terminal).
+const {
+  assertWritableTenant,
+  confirmProtectedOverride,
+  filterWritableTenants,
+  ProtectedTenantError,
+} = guard;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 let databaseUrl;
 
@@ -54,9 +70,12 @@ export function parseConfirmTenantId(argv) {
 /** The candidate read: the return plus the EARLIEST refund audit row of THAT return whose tenant is NULL or the return's own. */
 export const CANDIDATES_SQL = `
   SELECT r.id AS "returnId", r."tenantId", t.slug, r.status::text AS status, r."refundMethod",
-         r."refundTender"::text AS "refundTender", a."tenantId" AS "auditTenantId", a.meta
+         r."refundTender"::text AS "refundTender", a."tenantId" AS "auditTenantId", a.meta,
+         t.status::text AS "tenantStatus", t.class::text AS "tenantClass", t."deletedAt" AS "tenantDeletedAt",
+         s."planKey", s."stripeSubId"
     FROM "Return" r
     JOIN "Tenant" t ON t.id = r."tenantId"
+    LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
     JOIN LATERAL (
       SELECT al."tenantId", al.meta
         FROM "AuditLog" al
@@ -86,6 +105,16 @@ async function main() {
     console.error(err.message);
     process.exit(1);
   }
+  // Loaded ONCE, against the URL this script dials, before connecting. A dry run writes nothing.
+  let protectedSlugs = null;
+  if (apply) {
+    try {
+      protectedSlugs = loadProtectedSlugs(process.env, databaseUrl);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+  }
   console.log(`Resolved database host: ${redactUrl(databaseUrl)}`);
   if (tenantId) console.log(`Scoped to tenant: ${tenantId}`);
   const pool = new Pool({ connectionString: databaseUrl });
@@ -96,11 +125,30 @@ async function main() {
       if (tenantId) {
         const tenant = await prisma.tenant.findUnique({
           where: { id: tenantId },
-          select: { slug: true },
+          select: { id: true, slug: true, status: true, class: true, deletedAt: true },
         });
         if (!tenant) {
           console.error(`Tenant "${tenantId}" not found. Nothing was written.`);
           process.exit(1);
+        }
+        // A PROTECTED tenant (paying | Stripe-linked | listed) needs its own override: --allow-protected <id>, --backup-taken
+        // and the typed phrase at a real terminal. Anything else about a single tenant is unchanged.
+        const sub = await prisma.tenantSubscription.findFirst({
+          where: { tenantId },
+          select: { planKey: true, stripeSubId: true },
+        });
+        try {
+          assertWritableTenant(tenant, sub, protectedSlugs);
+        } catch (err) {
+          if (!(err instanceof ProtectedTenantError)) throw err;
+          try {
+            const token = await confirmProtectedOverride({ tenantId, argv: process.argv.slice(2) });
+            assertWritableTenant(tenant, sub, protectedSlugs, { allowProtected: token });
+          } catch (e) {
+            console.error(`${e.message}
+Nothing was written.`);
+            process.exit(1);
+          }
         }
         if (!isTestTenant(tenant.slug) && (!liveOverride || confirmTenantId !== tenantId)) {
           console.error(
@@ -145,10 +193,40 @@ async function main() {
       return;
     }
 
+    // All-tenants apply: protected tenants are HELD, never written (counts per arm only, never a slug).
+    let toWrite = plan;
+    if (!tenantId) {
+      const tenantsById = new Map();
+      const subsById = new Map();
+      for (const r of rows) {
+        if (!plan.some((p) => p.tenantId === r.tenantId)) continue;
+        tenantsById.set(r.tenantId, {
+          id: r.tenantId,
+          slug: r.slug,
+          status: r.tenantStatus,
+          class: r.tenantClass,
+          deletedAt: r.tenantDeletedAt,
+        });
+        subsById.set(r.tenantId, { planKey: r.planKey, stripeSubId: r.stripeSubId });
+      }
+      const { writable } = filterWritableTenants(
+        [...tenantsById.values()],
+        subsById,
+        protectedSlugs,
+      );
+      const split = partitionByWritableTenants(plan, writable);
+      toWrite = split.apply;
+      if (split.held.length > 0) {
+        console.log(
+          `${split.held.length} held: protected tenant, run per tenant with --allow-protected <tenantId> (TTY type-back) + --backup-taken`,
+        );
+      }
+    }
+
     let applied = 0;
     let raced = 0;
     let failed = 0;
-    for (const p of plan) {
+    for (const p of toWrite) {
       try {
         const written = await setRefundTender(prisma, {
           id: p.returnId,

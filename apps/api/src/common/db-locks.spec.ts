@@ -87,6 +87,8 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       // -> recordPayment window, keyed on the order id.
       // "fulfilment-settings" (2026-10-07, fulfilment toggle PR1, M2) backs the tenant Settings PATCH
       // and the Feature Console set()/clear() of the two fulfilment keys, keyed on the tenant id.
+      // "counter-park" (2026-10-10, SA-748) names the parked-cart cap's transaction-scoped
+      // `pg_advisory_xact_lock(hashtext('counter-park'), hashtext(tenantId))`; it opens no lock pool.
       expect(mod.LOCK_FAMILIES).toEqual([
         "order-merge",
         "cron",
@@ -97,6 +99,7 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
         "policy-write",
         "counter-tender",
         "fulfilment-settings",
+        "counter-park",
       ]);
     });
   });

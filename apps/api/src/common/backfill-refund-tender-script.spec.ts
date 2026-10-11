@@ -161,3 +161,68 @@ describe("the candidate read and the CLI gates", () => {
     expect(src).toContain("setRefundTender(prisma");
   });
 });
+
+describe("row 195 / #3344: the protected-tenant guard in the all-tenants apply path", () => {
+  const GUARD_HREF = pathToFileURL(path.resolve(API_DIR, "scripts/lib/live-target-guard.cjs")).href;
+
+  /** two tenants with a planned refund each: one env-listed (protected), one plain trial tenant */
+  const run = (extra: string): any =>
+    evalModule(`
+      import { planRefundTenderBackfill, partitionByWritableTenants } from "${LIB_HREF}";
+      import guard from "${GUARD_HREF}";
+      const rows = [
+        { returnId: "r1", tenantId: "t-prot", slug: "acme-live", status: "REFUNDED", refundMethod: "EXTERNAL_REFUND", refundTender: null, auditTenantId: "t-prot", meta: { tender: "CASH" } },
+        { returnId: "r2", tenantId: "t-open", slug: "other-live", status: "REFUNDED", refundMethod: "EXTERNAL_REFUND", refundTender: null, auditTenantId: "t-open", meta: { tender: "CARD" } },
+      ];
+      const { plan } = planRefundTenderBackfill(rows);
+      const tenants = [
+        { id: "t-prot", slug: "acme-live", status: "TRIAL", class: "STANDARD", deletedAt: null },
+        { id: "t-open", slug: "other-live", status: "TRIAL", class: "STANDARD", deletedAt: null },
+      ];
+      ${extra}
+      const logs = [];
+      const { writable } = guard.filterWritableTenants(tenants, subs, new Set(["acme-live"]), { log: (l) => logs.push(l) });
+      const out = partitionByWritableTenants(plan, writable);
+      console.log(JSON.stringify({ apply: out.apply.map((p) => p.returnId), held: out.held.map((p) => p.returnId), logs }));
+    `);
+
+  it("a protected tenant is NOT written in the all-tenants apply path (it is held), an unprotected one is", () => {
+    const out = run("const subs = new Map();");
+    expect(out.apply).toEqual(["r2"]);
+    expect(out.held).toEqual(["r1"]);
+    expect(out.logs.join(" ")).toMatch(/skipped 1 of 2/);
+    expect(JSON.stringify(out)).not.toContain("acme-live");
+  });
+
+  it("a Stripe-linked tenant is held too, through the subscription map", () => {
+    const out = run(
+      'const subs = new Map([["t-open", { planKey: "STARTER", stripeSubId: "sub_x" }]]);',
+    );
+    expect(out.apply).toEqual([]);
+    expect(out.held.sort()).toEqual(["r1", "r2"]);
+  });
+
+  describe("the script itself", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const script: string = require("node:fs").readFileSync(CLI, "utf8");
+
+    it("filters through filterWritableTenants BEFORE it writes, loading the protected slugs for the URL it dials", () => {
+      const filter = script.indexOf("filterWritableTenants(");
+      const write = script.indexOf("await setRefundTender(");
+      expect(filter).toBeGreaterThan(-1);
+      expect(write).toBeGreaterThan(filter);
+      expect(script).toContain("loadProtectedSlugs(process.env, databaseUrl)");
+    });
+
+    it("tells the operator how to write a held tenant: per tenant, with the override and a backup attestation", () => {
+      expect(script).toMatch(
+        /held: protected tenant, run per tenant with --allow-protected <tenantId> \(TTY type-back\) \+ --backup-taken/,
+      );
+    });
+
+    it("a single protected tenant needs the TTY override (confirmProtectedOverride + assertWritableTenant)", () => {
+      expect(script).toContain("confirmProtectedOverride(");
+      expect(script).toContain("assertWritableTenant(");
+    });
+  });
+});

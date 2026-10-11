@@ -314,7 +314,13 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
     expect(src).toMatch(/blockCredits: carrierLocked,/);
     expect(src).toMatch(/revisions: EDIT_REVISIONS/);
     // S5: the cancel transaction re-checks under its lock
-    expect(src).toMatch(/carrierGuard\.throwIfInTransitUnderLock\(carrier, lockedStatus\)/);
+    // (SA-762r F1: that body moved verbatim to order-cancel-tx.ts; changeStatus hands it the carrier guard)
+    const cancelTx = require("fs").readFileSync(
+      require("path").join(__dirname, "order-cancel-tx.ts"),
+      "utf8",
+    );
+    expect(cancelTx).toMatch(/throwIfInTransitUnderLock\(carrier, lockedStatus\)/);
+    expect(src).toMatch(/this\.cancelOrderInTx\(tx, order, \{[^}]*\bcarrier,/s);
     // D2: the edit's guard is computed once, BEFORE the un-tx'd invoice revert
     const editAt = src.indexOf("async updateOrderItems(");
     const guardAt = src.indexOf("carrierGuard.carrierEditGuard(this, order)", editAt);

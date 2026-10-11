@@ -1,6 +1,5 @@
 -- Sitting 3 (SA-741r2), folder 9/10: btree index on "Order" ("tenantId", "customerId", "createdAt").
--- CONDITIONAL: the owner decides at the sitting from the prod "Order" row count in the PR body. If it is dropped, remove
--- this folder AND the `@@index([tenantId, customerId, createdAt])` line from the Order model in sales.prisma.
+-- CONDITIONAL (G5a gate): keep only if the prod EXPLAIN (ANALYZE, BUFFERS) of the customer-orders query shows Order_customerId_idx + Sort/Filter over N rows; if dropped, remove this folder AND @@index([tenantId, customerId, createdAt]) from sales.prisma.
 -- Built on existing columns of a populated table: blocks writes to "Order" for the build. RUN OFF-PEAK.
 --
 -- LOCK PROFILE: `SET LOCAL lock_timeout = '5s'` applies PER STATEMENT inside the one transaction: a statement that

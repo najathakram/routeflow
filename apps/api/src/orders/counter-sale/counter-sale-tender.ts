@@ -1,6 +1,5 @@
 import { ConflictException } from "@nestjs/common";
 import {
-  TENDER_RULES,
   dollarsToCents,
   planTenderLegs,
   remainingCapacity,
@@ -8,9 +7,9 @@ import {
   type TenderPlacement,
 } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
-import { uuidv5 } from "../../common/uuidv5";
 import type { CounterLeg } from "./counter-sale-legs";
 import { toPrismaMethod } from "./counter-sale-payment";
+import { tenderSetOf } from "./counter-tender-row";
 
 export type InvoiceRow = {
   id: string;
@@ -38,11 +37,6 @@ export const isTender = (p: { method?: string; status?: string }) =>
  * request's legs place over the sale's invoices. No IO, no lock (the service owns the one counter-tender lock).
  */
 
-/** The server-built `paymentGroupId` of one leg: never in the DTO, never from the idempotency key. */
-export function legGroupId(orderId: string, legIndex: number): string {
-  return uuidv5(`${orderId}:${legIndex}`, TENDER_RULES.counter.groupNamespace);
-}
-
 export interface StoredLegRow {
   invoiceId: string;
   amountCents: number;
@@ -58,20 +52,23 @@ export interface StoredTender {
 }
 
 /**
- * A row is this sale's grouped tender only if its paymentGroupId is the uuidv5 of some leg index below the
- * counter's leg limit. With NO grouped row, every other tender row counts toward leg 0 (the rule before
- * split payments, so a held attempt from before the deploy never double-charges). Once ANY grouped row exists,
- * rows without this sale's group id (an office payment made later) are not part of the tender.
+ * A row is this sale's grouped tender only if its paymentGroupId is one of this order's leg ids
+ * (`tenderSetOf`, the SAME set-level rule the counter void's predicate reads, in counter-tender-row.ts). With NO
+ * grouped row, every other tender row counts toward leg 0 (the rule before split payments, so a held attempt from
+ * before the deploy never double-charges). Once ANY grouped row exists, rows without this sale's group id (an
+ * office payment made later) are not part of the tender.
  */
 export function readStoredTender(orderId: string, invoices: InvoiceRow[]): StoredTender {
-  const ids = new Map<string, number>();
-  for (let i = 0; i < TENDER_RULES.counter.maxLegs; i++) ids.set(legGroupId(orderId, i), i);
+  const set = tenderSetOf(
+    orderId,
+    invoices.flatMap((inv) => inv.payments ?? []),
+  );
   const all: Array<StoredLegRow & { leg: number | null }> = invoices.flatMap((inv) =>
     (inv.payments ?? []).filter(isTender).map((p) => ({
       invoiceId: inv.id,
       amountCents: dollarsToCents(roundMoney(Number(p.amount))),
       payment: p,
-      leg: p.paymentGroupId != null ? (ids.get(p.paymentGroupId) ?? null) : null,
+      leg: set.legOf(p.paymentGroupId),
     })),
   );
   const byLeg = new Map<number, StoredLegRow[]>();

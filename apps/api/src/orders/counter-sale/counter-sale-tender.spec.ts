@@ -1,9 +1,5 @@
-import {
-  legGroupId,
-  planSaleTender,
-  readStoredTender,
-  type InvoiceRow,
-} from "./counter-sale-tender";
+import { planSaleTender, readStoredTender, type InvoiceRow } from "./counter-sale-tender";
+import { legGroupId } from "./counter-tender-row";
 
 /** The pure half of the split tender: leg placement over the sale's invoices and row-to-leg attribution. */
 const inv = (id: string, total: number, payments: InvoiceRow["payments"] = []): InvoiceRow => ({
