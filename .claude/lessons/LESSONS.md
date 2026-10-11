@@ -12,6 +12,13 @@
 
 ## process
 
+### L-294 · 2026-10-11 · process · a review lists every writer of a row shape before it calls that shape anomalous
+
+- **Symptom:** a review flagged a stored row shape as an anomaly, when another legitimate writer produces exactly that shape.
+- **Root cause:** the reviewer counted only the writers it had read; a row shape is only anomalous relative to ALL the code paths that can write it (create, update, import, backfill, replay), and the finding never listed them.
+- **Lesson:** **Before calling a stored shape anomalous, search for every writer of that row (create, update, import, backfill, cron, replay) and list them in the finding. A shape one of them legitimately produces is not an anomaly; if none does, name the one that must have.**
+- **Guard:** none automatic; the review checklist. Cf. [[L-223]] (a sweep covers every emit site, not the named ones).
+
 ### L-290 · 2026-10-10 · process · a train member that is red on its own branch does not enter the train: read each member's own latest CI before merging it
 
 - **Symptom:** a member whose own branch had a red database spec was merged into Train 3 and had to be ejected after the train was assembled, costing a revert on the tip.
@@ -211,6 +218,13 @@
 
 ## tooling
 
+### L-293 · 2026-10-11 · tooling · a builder's local tsc that excludes specs misses spec type errors: hand back only after the repo's own check-types ratchet
+
+- **Symptom:** a spec type error passed the builder's local type-check and only failed later, in the ratchet and CI, after the work had been handed back.
+- **Root cause:** the builder's bare `tsc` used a config that excludes spec files, so spec errors never showed; the repo's check-types ratchet compiles specs. The abandoned approach was trusting the local tsc as the type gate.
+- **Lesson:** **Before handing work back, run the repo's own check-types ratchet (the one verify runs), never a bare local `tsc`; a green local tsc that skips specs proves nothing about the spec files you just wrote.**
+- **Guard:** the check-types ratchet in `npm run verify` and CI; none for the local habit beyond the hand-back checklist.
+
 ### L-291 · 2026-10-10 · tooling · never feed python a heredoc on Windows (`python3 -`): it hangs; write the script to a file or use node
 
 - **Symptom:** a lane's shell hung indefinitely on a `python3 - <<EOF` edit on a Windows machine.
@@ -372,14 +386,6 @@
 - **Guard:** none automated; a pre-build free-space check in the local runbook is the proposal.
 - **Recurrence (2026-10-08):** a deps-only `db:up` left for a one-off DB diagnostic kept the fixed-name postgres and redis containers, which blocked the next `local:up` and cost an 8.5 minute failed build. Run `db:down` in the same step that ran `db:up`.
 
-### L-274 · 2026-10-07 · tooling · a plain `npm ci` runs the root `prepare` (husky) and rewrites the SHARED hooksPath
-
-- **Symptom:** after `npm ci` in a worktree, `core.hooksPath` (shared by every worktree) turned relative and later pushes ran without the fleet shim's checks.
-- **Root cause:** the root `"prepare": "husky"` script runs on a plain `npm ci`, doing exactly what `npx husky` does: it rewrites the one repo-wide `core.hooksPath`.
-- **Lesson:** **In a worktree install with `npm ci --ignore-scripts`, never a plain `npm ci`. After any install, reset the absolute shim path, print `git config core.hooksPath`, and run `check-git-hooks` before committing or pushing.**
-- **Guard:** none automatic beyond `scripts/check-git-hooks.mjs`; the install order in [[L-254]].
-- **Recurrence (2026-10-08):** a second recurrence on the shared Mac mini of a plain `npm ci` rewriting `core.hooksPath`. `npm ci --ignore-scripts` plus a manual `prisma generate` avoids it.
-
 ### L-275 · 2026-10-07 · tooling · local stack image tags are shared across worktrees
 
 - **Symptom:** a proof run used an api image another worktree had built, and its result was reported as the branch's own.
@@ -395,6 +401,7 @@
 - **Root cause:** fixtures ran the real `main()` of a script and inherited `RF_VERIFY_MODE=fast` from the hook environment, so the hook (fast mode) and CI (full mode) exercised different code; the abandoned approach was re-running until the two agreed.
 - **Lesson:** **A fixture that runs a script's real `main()` scrubs the environment first, through one shared helper, so a mode variable inherited from the hook (`RF_VERIFY_MODE=fast`) cannot change what the spec exercises; any test that sets a process variable restores it afterwards. When the hook and CI disagree, diff the environment first.**
 - **Guard:** the shared environment scrub in the fixtures; a review check on any fixture that runs a real `main()` or writes `process.env`.
+- **Recurrence (2026-10-11, Release 4):** the same class with database state: a spec that seeds tenant settings (a tax rate, a preference) restores them in an after hook, or later specs in the same file inherit them and pass or fail by order.
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
 
@@ -581,13 +588,6 @@
   named query params on any new route.
 
 ## deploy
-
-### L-286 · 2026-10-08 · deploy · add a foreign key to a populated table inline on the new column, and state lock durations honestly
-
-- **Symptom:** recorded by the 2026-10-08 operating review from the sitting-3 migrations; the incident detail is in the lead's notes.
-- **Root cause:** Postgres skips the validation scan for a new column with no default only when the foreign key is declared inline. Inside one transaction an `ALTER TABLE` holds ACCESS EXCLUSIVE until COMMIT, so an index built later in the same file blocks reads as well as writes.
-- **Lesson:** **Declare the FK inline: `ADD COLUMN "x" TEXT CONSTRAINT "T_x_fkey" REFERENCES ...`, not a separate `ADD CONSTRAINT` (probe on 1M rows: 0.7 ms inline vs 33 ms separate; the constraint name is unchanged, so Prisma shows no drift). Write the real lock duration in the migration header.**
-- **Guard:** the sitting-3 migration headers; replay plus `apps/api/scripts/schema-drift.mjs`.
 
 ### L-282 · 2026-10-08 · deploy · a feature PR never adds or changes tenants or rows in the shared e2e seed that runs against production
 
