@@ -428,6 +428,21 @@ export class InlineReturnsService {
     const arHeld = alreadyReturned.held && priced.total > 0.001;
     const overCap = driverCap || arHeld;
 
+    // SA-773: a capture that is NOT held credits at once (store credit is minted next, or a refund is recorded), so it fits the
+    // goods' remainder first: the per-line headroom above never sees an amount-only (manual) credit note. The source Orders are
+    // locked and the source invoices written by now. A held capture reserves its goods instead (counted in the remainder).
+    if (!overCap)
+      await assertInlineReturnWithinRemainder(tx, tenantId, {
+        items: priced.chunks.map((c) => ({
+          productId: c.productId,
+          qty: c.pieces,
+          sourceInvoiceItemId: c.sourceInvoiceItemId,
+          subtotal: c.subtotal,
+          taxAmount: c.taxAmount,
+          categoryTax: c.categoryTax,
+        })),
+      });
+
     const year = new Date().getFullYear();
     const returnNumber = await this.numbering.reserveNext("RETURN", {
       year,

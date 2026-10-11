@@ -300,6 +300,53 @@ describeDb("SA-773 the refund paths read the refundable remainder - real Postgre
     expect((await row(mine.id)).status).toBe("RECEIVED");
   });
 
+  it("T10: a $50 amount-only credit note on a $50 invoice, then a counter return of all its goods as STORE CREDIT: 409 at capture, nothing minted (it used to mint $50 more)", async () => {
+    const s = await seed("t10", [{ lines: [{ product: "A", qty: 5, subtotal: 50 }] }]);
+    await addCreditNote(prisma, s, { number: cn(), invoice: 0, amount: 50 });
+    const err = await fail(
+      asTenant(s, () =>
+        inline.capture(
+          {
+            customerId: s.customerId,
+            orderId: s.orderId,
+            items: [{ productId: s.products.A, qty: 5, boxes: 0, pieces: 5 }],
+            returnKey: `t10-${RUN}-${++n}`,
+          },
+          staff(s),
+        ),
+      ),
+    );
+    expect(body(err)).toMatchObject({
+      code: "RETURN_EXCEEDS_REFUNDABLE",
+      invoiceId: s.invoices[0].id,
+      remainingValue: 0,
+    });
+    expect(await prisma.return.count({ where: { tenantId: s.tenantId } })).toBe(0);
+    expect(await prisma.creditNote.count({ where: { tenantId: s.tenantId } })).toBe(1); // only the seeded manual note
+  });
+
+  it("T11: the same goods with a $20 manual credit: the capture is refused with $30 left, and a return of the $30 worth of goods mints", async () => {
+    const s = await seed("t11", [{ lines: [{ product: "A", qty: 5, subtotal: 50 }] }]);
+    await addCreditNote(prisma, s, { number: cn(), invoice: 0, amount: 20 });
+    const capture = (pieces: number): Promise<any> =>
+      asTenant(s, () =>
+        inline.capture(
+          {
+            customerId: s.customerId,
+            orderId: s.orderId,
+            items: [{ productId: s.products.A, qty: pieces, boxes: 0, pieces }],
+            returnKey: `t11-${RUN}-${++n}`,
+          },
+          staff(s),
+        ),
+      );
+    const err = await fail(capture(5));
+    expect(body(err)).toMatchObject({ code: "RETURN_EXCEEDS_REFUNDABLE", remainingValue: 30 });
+    const ok = await capture(3); // $30
+    expect(ok.status).toBeDefined();
+    expect(await prisma.return.count({ where: { tenantId: s.tenantId } })).toBe(1);
+  });
+
   it("T6: the check is made under the invoice lock: a credit note the lock holder commits while the refund waits is seen", async () => {
     const s = await seed("t6", [{ lines: [{ product: "A", qty: 4, subtotal: 20 }] }]);
     const ret = await pendingRefund(s, [{ line: 0, qty: 4, subtotal: 20 }]);

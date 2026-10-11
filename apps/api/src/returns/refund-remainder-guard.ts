@@ -6,7 +6,7 @@
  * whole pool is held (the STANDARD claim already locks them all).
  */
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { lockRefundInvoices } from "./inline-return-refund";
+import { lockRefundInvoices, resolveRefundInvoiceIds } from "./inline-return-refund";
 import {
   assertWithinRefundable,
   creditNoteRequests,
@@ -17,22 +17,32 @@ import {
 } from "./refundable-remainder";
 import type { ProductPackBasis } from "./returns-restock-pieces";
 
-/** An INLINE return (refund or store credit instead): its stored items against the pools of its source invoices. */
+/** An INLINE return (a capture, a refund, or store credit instead): its items against the pools of its source invoices. */
 export async function assertInlineReturnWithinRemainder(
   tx: any,
   tenantId: string | null,
   args: {
-    returnId: string;
-    /** the invoices the returned lines sit on (already locked by the caller) */
-    invoiceIds: readonly string[];
+    /** the return being refunded; absent for a capture (its return does not exist yet) */
+    returnId?: string;
+    /** the invoices the returned lines sit on (already locked by the caller); resolved from the items' source lines when absent */
+    invoiceIds?: readonly string[];
     items: Parameters<typeof inlineReturnRequests>[1];
   },
 ): Promise<void> {
-  if (args.invoiceIds.length === 0) return;
-  // the pool is the order's whole creditable set: lock the siblings the source lines did not name (Order is already held)
-  const group = await creditableGroupInvoiceIds(tx, args.invoiceIds);
-  if (group.some((id) => !args.invoiceIds.includes(id)))
-    await lockRefundInvoices(tx, tenantId, group);
+  const invoiceIds =
+    args.invoiceIds ??
+    (
+      await resolveRefundInvoiceIds(tx, {
+        kind: "LINES",
+        sourceInvoiceItemIds: args.items.map((i) => i.sourceInvoiceItemId),
+      })
+    ).invoiceIds;
+  if (invoiceIds.length === 0) return;
+  // The pool is the order's whole creditable set: lock the siblings the source lines did not name. Taking them AFTER the source
+  // invoices is safe only because every locker of several invoices of one order takes the ORDER first (the caller holds it), so
+  // two value-givers on the pool queue on the Order and the id order across the two statements cannot cycle.
+  const group = await creditableGroupInvoiceIds(tx, invoiceIds);
+  if (group.some((id) => !invoiceIds.includes(id))) await lockRefundInvoices(tx, tenantId, group);
   const rem = await refundableRemainder(tx, { invoiceIds: group, excludeReturnId: args.returnId });
   assertWithinRefundable(
     rem,

@@ -143,6 +143,24 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
     },
   );
 
+  it("an inline capture that is not held asks the remainder before it creates the return or numbers it, and the order-create path goes through that capture before it mints", () => {
+    const capture = inlineSvc.get("captureInTx")!;
+    const check = firstPos(capture, "assertInlineReturnWithinRemainder");
+    expect(check).toBeGreaterThan(-1);
+    // after the source Orders are locked and the per-line headroom ran (which also writes the source invoice rows)
+    expect(firstPos(capture, "lockRefundOrders")).toBeLessThan(check);
+    expect(firstPos(capture, "assertWithinLineHeadroom")).toBeLessThan(check);
+    // before the number is burned and before the return row exists
+    expect(check).toBeLessThan(firstPos(capture, "reserveNext"));
+    for (const create of capture.calls.filter((c) => c.name === "create"))
+      expect(check).toBeLessThan(create.pos);
+    const orderCreate = inlineSvc.get("captureAndIssueInTx")!;
+    expect(firstPos(orderCreate, "captureInTx")).toBeGreaterThan(-1);
+    expect(firstPos(orderCreate, "captureInTx")).toBeLessThan(
+      firstPos(orderCreate, "issueCreditInTx"),
+    );
+  });
+
   it("a standalone credit note asks the remainder at BOTH exits of validateAndBuildCnItems, and create() and the reissue validate before they insert", () => {
     const validate = creditSvc.get("validateAndBuildCnItems")!;
     expect(positions(validate, "assertWithinRemainder")).toHaveLength(2);
@@ -205,8 +223,8 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
     expect(creditNoteWriters()).toEqual([
       // create() and the reissue: both validate (the remainder included) before this insert, pinned above
       "credit-notes/credit-notes.service.ts::insertCreditNoteInTx",
-      // the inline store-credit mint: runs under the Return row lock; its callers capture/issue/approve rely on the line headroom
-      // at capture and storeCreditInstead() asks the remainder explicitly (pinned above); the SA-773 open question lists capture
+      // the inline store-credit mint: runs under the Return row lock after a capture that asked the remainder (or a held one
+      // approve() releases); storeCreditInstead() asks it explicitly (all pinned above)
       "credit-notes/credit-notes.service.ts::mintStandaloneInTx",
     ]);
   });
@@ -214,7 +232,9 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
   it("the only writers of status REFUNDED on a return are the three claims", () => {
     expect(refundedWriters()).toEqual([
       // the STANDARD claim (store credit and recorded): pinned above
-      // the immediate store credit at capture / approve (see the open question: it relies on the capture-time line headroom)
+      // the store credit mint: its callers are captureAndIssueInTx / issueCredit (right after a capture that asked the remainder,
+      // pinned above) and approve() (a HELD return was never credited: it reserves its goods in the remainder, so a later
+      // value-giver is refused, and the capture it came from was held, not checked)
       "returns/inline-returns.service.ts::issueCreditInTx",
       // the inline cash refund: pinned above
       "returns/inline-returns.service.ts::refund",
