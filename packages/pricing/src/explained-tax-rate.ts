@@ -1,4 +1,3 @@
-import { inferredFlatRate } from "./inferred-flat-rate";
 import { roundMoney } from "./pricing";
 
 /**
@@ -25,17 +24,19 @@ export const taxRowLabel = (ratePercent: number | null | undefined): string =>
   ratePercent == null ? "Tax" : `Tax (${Number(ratePercent.toFixed(3))}%)`;
 
 /**
- * The single stored rate of a sale's live invoice lines, in percent, or null when there is none or it is mixed. Reads the
- * stored `InvoiceItem.taxRate` (a fraction: 0.0825); a legacy invoice whose lines all store 0 falls back to the flat rate its
- * header tax implies (`inferredFlatRate`, only when verified). The result is a CANDIDATE: pass it through
+ * The tax rate a receipt may NAME for a sale, in percent, or null (the row then prints plain "Tax").
+ *
+ * RULING: a receipt never prints a back-calculated rate. An order-derived invoice stamps its lines with `tax / subtotal` at 4
+ * dp (B294: the order stores no rate, only its tax), so a stored line rate is a SNAPSHOT of the tenant's rate only when it
+ * equals the tenant's configured rate; a derived 0.0827 on a sale taxed at 8.25% must never read "Tax (8.27%)". So this
+ * returns the single stored, non-zero line rate (a fraction: 0.0825) in percent ONLY when it equals `configuredPercent`
+ * (`settings.taxRate`) at the stored precision. It never infers a rate from a header tax (the legacy all-zero-lines case is
+ * plain "Tax"), and with no configured rate there is nothing to corroborate it. A CANDIDATE: pass it through
  * `explainedTaxRatePercent` before naming it.
  */
 export function storedTaxRatePercent(
-  invoices: ReadonlyArray<{
-    subtotal: unknown;
-    taxAmount: unknown;
-    lines: ReadonlyArray<{ taxRate?: unknown; categoryTaxAmount?: unknown }>;
-  }>,
+  invoices: ReadonlyArray<{ lines: ReadonlyArray<{ taxRate?: unknown }> }>,
+  configuredPercent: number | null | undefined,
 ): number | null {
   const rates = new Set<number>();
   for (const inv of invoices)
@@ -43,10 +44,10 @@ export function storedTaxRatePercent(
       const r = Number(l.taxRate ?? 0);
       if (r > 0) rates.add(r);
     }
-  if (rates.size === 1) return Number(([...rates][0] * 100).toFixed(4));
-  if (rates.size > 1) return null;
-  // every stored line rate is 0: a legacy flat-rate invoice, recoverable only for a single invoice
-  if (invoices.length !== 1) return null;
-  const guess = inferredFlatRate(invoices[0]);
-  return guess && guess.verified ? Number((guess.rate * 100).toFixed(4)) : null;
+  if (rates.size !== 1) return null;
+  if (configuredPercent == null || !(configuredPercent > 0)) return null;
+  const stored = [...rates][0];
+  // the column is Decimal(5, 4): compare at that precision, in basis points of the fraction
+  if (Math.round(stored * 10_000) !== Math.round((configuredPercent / 100) * 10_000)) return null;
+  return Number((stored * 100).toFixed(4));
 }

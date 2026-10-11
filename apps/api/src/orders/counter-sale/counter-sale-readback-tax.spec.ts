@@ -15,11 +15,12 @@ const inv = (items: Array<{ taxRate: string }>, over: Record<string, unknown> = 
   payments: [{ id: "p1", amount: "28.62", method: "CASH", status: "PAID" }],
   ...over,
 });
-const build = (tax: unknown, invoices: ReturnType<typeof inv>[]) =>
+const build = (tax: unknown, invoices: ReturnType<typeof inv>[], configured: number | null = 8) =>
   buildCounterSaleResponse({
     order: { id: "o1", orderNumber: "ORD-1", counterCashTendered: null, tax },
     invoices,
     replayed: false,
+    configuredTaxPercent: configured,
   });
 
 describe("counter-sale response: tax and taxRatePercent (SA-762r)", () => {
@@ -29,9 +30,14 @@ describe("counter-sale response: tax and taxRatePercent (SA-762r)", () => {
     expect(r.taxRatePercent).toBe(8);
   });
 
-  it("a legacy invoice whose lines all store 0 serves the flat rate its header tax implies", () => {
+  it("a legacy invoice whose lines all store 0 serves no rate (it is never inferred from the header tax)", () => {
     const r = build("2.12", [inv([{ taxRate: "0" }, { taxRate: "0" }])]);
-    expect(r.taxRatePercent).toBe(8);
+    expect(r.taxRatePercent).toBeNull();
+  });
+
+  it("RULING: a derived stored rate (0.0827) against a configured 8% is not served; with no configured rate nothing is", () => {
+    expect(build("2.12", [inv([{ taxRate: "0.0827" }])]).taxRatePercent).toBeNull();
+    expect(build("2.12", [inv([{ taxRate: "0.0800" }])], null).taxRatePercent).toBeNull();
   });
 
   it("mixed line rates serve a null candidate; no rate lines serve null", () => {

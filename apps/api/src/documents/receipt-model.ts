@@ -59,10 +59,8 @@ export interface ReceiptInvoiceInput {
   id: string;
   invoiceNumber: string | null;
   status: string;
-  /** the stored invoice header and lines the tax rate is read from; absent = no rate can be named */
-  subtotal?: unknown;
-  taxAmount?: unknown;
-  items?: ReadonlyArray<{ taxRate?: unknown; categoryTaxAmount?: unknown }>;
+  /** the stored line rates the tax rate is read from; absent = no rate can be named */
+  items?: ReadonlyArray<{ taxRate?: unknown }>;
 }
 
 export interface ReceiptPaymentInput {
@@ -82,6 +80,8 @@ export interface ReceiptBranding {
   phone?: string | null;
   /** SystemConfig `receiptFooter`: tenant text, at most 200 characters. HTML-escaped by the email template. */
   footer?: string | null;
+  /** the tenant's configured rate in percent (`settings.taxRate`): a stored line rate is named only when it equals this */
+  configuredTaxPercent?: number | null;
 }
 
 const DEAD_INVOICE_STATUSES: readonly string[] = [InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF];
@@ -214,8 +214,10 @@ export function buildReceiptModel(
   const taxRatePercent = explainedTaxRatePercent({
     base: subtotal,
     tax,
+    // a STORED line rate corroborated by the configured rate; never inferred from the tax (pricing)
     ratePercent: storedTaxRatePercent(
-      live.map((i) => ({ subtotal: i.subtotal, taxAmount: i.taxAmount, lines: i.items ?? [] })),
+      live.map((i) => ({ lines: i.items ?? [] })),
+      branding.configuredTaxPercent,
     ),
   });
   // Tendered is what was handed over; Change is the SERVER's figure, from the one gate the POST / by-key response and the

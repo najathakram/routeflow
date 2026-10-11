@@ -44,6 +44,8 @@ interface Scenario {
   tax: string;
   /** the stored `InvoiceItem.taxRate` of each line (a fraction); the invoice header carries the same tax */
   rates?: string[];
+  /** the tenant's configured rate in percent (`settings.taxRate`); default 8, what the fixture lines carry */
+  configured?: number | null;
   invoiceSubtotal?: string;
   payments?: Pay[];
   tendered?: string | null;
@@ -71,6 +73,7 @@ function build(s: Scenario) {
     counterCashTendered: s.tendered ?? null,
   });
   const order = s.lines ? { ...base, lineItems: s.lines } : base;
+  const configured = s.configured === undefined ? 8 : s.configured;
   const rates = s.rates ?? ["0.0800", "0.0800", "0.0800"];
   const payments = (s.payments ?? DEFAULT_PAYMENTS).map((p, i) => ({
     id: `pay-${i + 1}`,
@@ -83,9 +86,7 @@ function build(s: Scenario) {
     invoiceNumber: "INV-2001",
     status: "PAID",
     total: s.total,
-    subtotal: s.invoiceSubtotal ?? "26.50",
-    taxAmount: s.tax,
-    items: rates.map((taxRate) => ({ taxRate, categoryTaxAmount: "0.00" })),
+    items: rates.map((taxRate) => ({ taxRate })),
     payments,
   };
 
@@ -94,7 +95,7 @@ function build(s: Scenario) {
     order,
     [invoice],
     payments.map((p) => ({ ...p, invoiceId: "inv-1" })),
-    BRANDING,
+    { ...BRANDING, configuredTaxPercent: configured },
     ZONE,
   );
 
@@ -111,7 +112,7 @@ function build(s: Scenario) {
     invoices: [invoice],
     returns: [],
   } as unknown as TodayOrderRecord;
-  const row = toTodaysSaleRow(record);
+  const row = toTodaysSaleRow(record, configured);
   const reprint = receiptModelFromOrder({
     order: {
       orderNumber: "ORD-1001",
@@ -155,6 +156,7 @@ function build(s: Scenario) {
     },
     invoices: [invoice],
     replayed: false,
+    configuredTaxPercent: configured,
   } as unknown as Parameters<typeof buildCounterSaleResponse>[0]);
   const live = buildCounterReceipt({
     receipt: response,
@@ -200,19 +202,72 @@ describe("print / reprint / email carry one money model (SA-762r)", () => {
   });
 });
 
-describe("a legacy invoice whose lines all store a 0 rate: one rate on every surface (one home: pricing)", () => {
-  // an order-derived invoice stored before #725: every line rate 0, the header carries the real tax
-  const legacy = build({ total: "28.62", tax: "2.12", rates: ["0", "0", "0"] });
+describe("a receipt never prints a back-calculated rate (RULING): the same label on every surface", () => {
+  // the proof sale: Each 1 x 2.50 + a Pc product 2 x 10.00 = 22.50 net, 8.25% tax = 1.86, total 24.36
+  const line = (id: string, name: string, unitPrice: string, qty: string) => ({
+    id,
+    name,
+    status: "DELIVERED",
+    qty,
+    unitPrice,
+    unitsPerBox: null,
+    boxes: null,
+    pieces: null,
+    product: null,
+  });
+  const proof = (rates: string[], extra: Partial<Scenario> = {}) =>
+    build({
+      total: "24.36",
+      tax: "1.86",
+      configured: 8.25,
+      rates,
+      payments: [{ method: "CASH", amount: "24.36" }],
+      lines: [line("a", "Each", "2.50", "1"), line("b", "Pc", "10.00", "2")],
+      live: [
+        { tempId: "a", name: "Each", unitPrice: 2.5, qty: 1 },
+        { tempId: "b", name: "Pc", unitPrice: 10, qty: 2 },
+      ],
+      ...extra,
+    });
+  const surfaces = (s: ReturnType<typeof proof>) => [
+    s.row.taxRatePercent,
+    s.response.taxRatePercent,
+    s.emailModel.taxRatePercent,
+    s.reprint.taxRatePercent,
+    s.live.taxRatePercent,
+  ];
 
-  it("the Today's row names the flat rate its header tax implies, like the email", () => {
-    expect(legacy.row.taxRatePercent).toBe(8);
-    expect(legacy.emailModel.taxRatePercent).toBe(8);
+  it("lines stamped with the DERIVED rate (1.86 / 22.50 = 0.0827) against a configured 8.25%: plain Tax on every surface, never Tax (8.27%)", () => {
+    const s = proof(["0.0827", "0.0827"]);
+    expect(surfaces(s)).toEqual([null, null, null, null, null]);
+    for (const m of [s.reprint, s.emailModel, s.live]) {
+      expect(m.tax).toBe(1.86);
+      expect(adjustmentLabel(m.taxRatePercent)).toBe("Tax");
+    }
   });
 
-  it("email and reprint agree on the money rows and the Tax label", () => {
-    expect(moneyRows(legacy.emailModel)).toEqual(moneyRows(legacy.reprint));
-    expect(adjustmentLabel(legacy.reprint.taxRatePercent)).toBe("Tax (8%)");
-    expect(adjustmentLabel(legacy.emailModel.taxRatePercent)).toBe("Tax (8%)");
+  it("lines that store the configured 0.0825: Tax (8.25%) on every surface", () => {
+    const s = proof(["0.0825", "0.0825"]);
+    expect(surfaces(s)).toEqual([8.25, 8.25, 8.25, 8.25, 8.25]);
+    for (const m of [s.reprint, s.emailModel, s.live])
+      expect(adjustmentLabel(m.taxRatePercent)).toBe("Tax (8.25%)");
+    expect(moneyRows(s.emailModel)).toEqual(moneyRows(s.reprint));
+  });
+
+  it("a legacy invoice whose lines all store 0 is plain Tax on every surface: its rate is never inferred from the header tax", () => {
+    const s = proof(["0", "0"]);
+    expect(surfaces(s)).toEqual([null, null, null, null, null]);
+    expect(moneyRows(s.emailModel)).toEqual(moneyRows(s.reprint));
+  });
+
+  it("with no configured rate on file nothing is named", () => {
+    const s = proof(["0.0825", "0.0825"], { configured: null });
+    expect(surfaces(s)).toEqual([null, null, null, null, null]);
+  });
+
+  it("a configured rate that changed since the sale is not applied to it", () => {
+    const s = proof(["0.0825", "0.0825"], { configured: 9 });
+    expect(surfaces(s)).toEqual([null, null, null, null, null]);
   });
 });
 
@@ -349,9 +404,9 @@ describe("the live counter receipt splits Tax and Adjustments like the reprint a
     expect(adjustmentLabel(s.live.taxRatePercent)).toBe("Tax");
   });
 
-  it("a legacy all-zero-lines sale: the live receipt names the same rate", () => {
+  it("a legacy all-zero-lines sale: the live receipt names no rate, like every other surface", () => {
     const s = build({ total: "28.62", tax: "2.12", rates: ["0", "0", "0"] });
-    expect(s.live.taxRatePercent).toBe(8);
+    expect(s.live.taxRatePercent).toBeNull();
     expect(s.live.tax).toBe(2.12);
   });
 

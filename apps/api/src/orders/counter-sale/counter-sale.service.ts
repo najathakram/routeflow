@@ -11,6 +11,7 @@ import { FulfillPath } from "@prisma/client";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { configuredTaxRatePercent } from "../../common/tax-rate";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
@@ -234,6 +235,7 @@ export class CounterSaleService {
         // the tax as the tender left it (the invoice back-sync can move it)
         tax: tendered?.tax ?? order.tax,
       },
+      configuredTaxPercent: await configuredTaxRatePercent(this.prisma),
       invoices,
       replayed,
       planError,
@@ -427,6 +429,7 @@ export class CounterSaleService {
       order,
       invoices,
       replayed: true,
+      configuredTaxPercent: await configuredTaxRatePercent(this.prisma),
     });
   }
 
@@ -469,8 +472,8 @@ export class CounterSaleService {
       where: { orderId, status: { notIn: ["VOID", "WRITTEN_OFF"] } },
       include: {
         payments: { orderBy: { createdAt: "asc" } },
-        // the line rates the sale's tax rate is read from
-        items: { select: { taxRate: true, categoryTaxAmount: true } },
+        // the stored line rates the sale's tax rate is read from
+        items: { select: { taxRate: true } },
       },
       orderBy: { createdAt: "asc" },
     });

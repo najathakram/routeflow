@@ -232,7 +232,7 @@ describe("buildReceiptModel (stored rows -> the shared ReceiptModel)", () => {
     expect(noRows.taxRatePercent).toBeNull();
   });
 
-  it("a legacy invoice whose lines all store a 0 rate falls back to the flat rate its header tax implies", () => {
+  it("a legacy invoice whose lines all store a 0 rate names no rate (never inferred from the header tax)", () => {
     const legacy = buildReceiptModel(
       orderFixture(),
       [{ ...INVOICE, items: [{ taxRate: "0" }, { taxRate: "0" }, { taxRate: "0" }] }],
@@ -240,7 +240,7 @@ describe("buildReceiptModel (stored rows -> the shared ReceiptModel)", () => {
       BRANDING,
       ZONE,
     );
-    expect(legacy.taxRatePercent).toBe(8);
+    expect(legacy.taxRatePercent).toBeNull();
   });
 
   it("no tax at all: Tax 0 (row hidden) and no rate", () => {

@@ -14,6 +14,8 @@ export const BRANDING: ReceiptBranding = {
   zip: "62701",
   phone: "555-0100",
   footer: null,
+  /** the tenant rate the fixture invoice lines were stamped with (0.08) */
+  configuredTaxPercent: 8,
 };
 
 /** A counter sale: 3 x $2.50 (7.50) + 1 box and 3 pcs of a 12-pack at $12.00 a box (15.00) + a $4.00 line = 26.50, tax 2.12. */
@@ -84,8 +86,6 @@ export const INVOICE: ReceiptInvoiceInput = {
   id: "inv-1",
   invoiceNumber: "INV-2001",
   status: "PAID",
-  subtotal: "26.50",
-  taxAmount: "2.12",
   items: [{ taxRate: "0.0800" }, { taxRate: "0.0800" }, { taxRate: "0.0800" }],
 };
 

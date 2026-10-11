@@ -8,10 +8,8 @@ export type InvoiceRow = {
   id: string;
   invoiceNumber?: string;
   total: unknown;
-  /** the stored header and line rates the sale's tax rate is read from (`storedTaxRatePercent`) */
-  subtotal?: unknown;
-  taxAmount?: unknown;
-  items?: Array<{ taxRate?: unknown; categoryTaxAmount?: unknown }>;
+  /** the stored line rates the sale's tax rate is read from (`storedTaxRatePercent`) */
+  items?: Array<{ taxRate?: unknown }>;
   payments?: Array<{ id: string; amount: unknown; method?: string; status?: string }>;
 };
 
@@ -98,6 +96,8 @@ export function buildCounterSaleResponse(input: {
   invoices: InvoiceRow[];
   replayed: boolean;
   planError?: string;
+  /** the tenant's configured rate in percent: a stored line rate is named only when it equals this */
+  configuredTaxPercent?: number | null;
 }): CounterSaleResponse {
   const { payment, order, invoices, replayed, planError } = input;
   const first = invoices[0];
@@ -157,11 +157,8 @@ export function buildCounterSaleResponse(input: {
       ? {
           tax: roundMoney(Number(order.tax)),
           taxRatePercent: storedTaxRatePercent(
-            invoices.map((i) => ({
-              subtotal: i.subtotal,
-              taxAmount: i.taxAmount,
-              lines: i.items ?? [],
-            })),
+            invoices.map((i) => ({ lines: i.items ?? [] })),
+            input.configuredTaxPercent,
           ),
         }
       : {}),

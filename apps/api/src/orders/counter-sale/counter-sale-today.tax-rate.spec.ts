@@ -26,7 +26,7 @@ const rec = (over: Partial<TodayOrderRecord> = {}, rates: string[] = ["0.0825", 
 
 describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
   it("(d) all lines at 0.0825 -> 8.25, and the stored tendered is returned as a number", () => {
-    const row = toTodaysSaleRow(rec({ counterCashTendered: "50.00" }));
+    const row = toTodaysSaleRow(rec({ counterCashTendered: "50.00" }), 8.25);
     expect(row.taxRatePercent).toBe(8.25);
     expect(row.cashTendered).toBe(50);
   });
@@ -35,21 +35,22 @@ describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
     expect(toTodaysSaleRow(rec({})).cashTendered).toBeNull();
   });
 
-  it("the rate is pricing's storedTaxRatePercent over the live invoices' lines (its cases live in explained-tax-rate.spec.ts)", () => {
-    expect(toTodaysSaleRow(rec({}, ["0.0888"])).taxRatePercent).toBe(8.88);
-    expect(toTodaysSaleRow(rec({}, ["0.0825", "0.0600"])).taxRatePercent).toBeNull();
-    expect(toTodaysSaleRow(rec({}, ["0.0825", "0"])).taxRatePercent).toBe(8.25);
-    expect(toTodaysSaleRow(rec({}, [])).taxRatePercent).toBeNull();
+  it("the rate is pricing's storedTaxRatePercent over the live invoices' lines, corroborated by the configured rate", () => {
+    expect(toTodaysSaleRow(rec({}, ["0.0825", "0.0825"]), 8.25).taxRatePercent).toBe(8.25);
+    expect(toTodaysSaleRow(rec({}, ["0.0825", "0"]), 8.25).taxRatePercent).toBe(8.25);
+    expect(toTodaysSaleRow(rec({}, ["0.0825", "0.0600"]), 8.25).taxRatePercent).toBeNull();
+    expect(toTodaysSaleRow(rec({}, []), 8.25).taxRatePercent).toBeNull();
   });
 
-  it("a legacy invoice whose lines ALL store 0 names the flat rate its header tax implies (the fallback, from the header the page query now reads)", () => {
+  it("RULING: a derived stored rate (0.0827 on a sale taxed at the configured 8.25%) is never named", () => {
+    expect(toTodaysSaleRow(rec({}, ["0.0827"]), 8.25).taxRatePercent).toBeNull();
+    expect(toTodaysSaleRow(rec({}, ["0.0825"]), null).taxRatePercent).toBeNull();
+    expect(toTodaysSaleRow(rec({}, ["0.0825"])).taxRatePercent).toBeNull();
+  });
+
+  it("a legacy invoice whose lines ALL store 0 names nothing: no rate is inferred from the header tax", () => {
     const o = rec({}, ["0", "0"]);
-    o.invoices[0].subtotal = "100.00";
-    o.invoices[0].taxAmount = "8.25";
-    expect(toTodaysSaleRow(o).taxRatePercent).toBe(8.25);
-    // the same legacy lines with no header tax: nothing to name
-    o.invoices[0].taxAmount = "0.00";
-    expect(toTodaysSaleRow(o).taxRatePercent).toBeNull();
+    expect(toTodaysSaleRow(o, 8.25).taxRatePercent).toBeNull();
   });
 
   it("only LIVE invoices' lines count (a voided sibling's rate is ignored)", () => {
@@ -61,7 +62,7 @@ describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
       payments: [],
       items: [{ taxRate: "0.0600" }],
     });
-    expect(toTodaysSaleRow(o).taxRatePercent).toBe(8.25);
+    expect(toTodaysSaleRow(o, 8.25).taxRatePercent).toBe(8.25);
   });
 
   it("change is the stored tendered less the sale's own CASH rows (storedChange); null with none", () => {
@@ -105,13 +106,9 @@ describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
     expect(toTodaysSaleRow(o).change).toBeNull();
   });
 
-  it("the page query reads both in the ONE existing query: the column, each invoice's header and its line rates", () => {
+  it("the page query reads both in the ONE existing query: the column, each invoice's line rates", () => {
     const q = pageQuery("t1", { start: new Date(0), end: new Date(1) }, 1, 20);
     expect(q.select.counterCashTendered).toBe(true);
-    expect(q.select.invoices.select.items).toEqual({
-      select: { taxRate: true, categoryTaxAmount: true },
-    });
-    expect(q.select.invoices.select.subtotal).toBe(true);
-    expect(q.select.invoices.select.taxAmount).toBe(true);
+    expect(q.select.invoices.select.items).toEqual({ select: { taxRate: true } });
   });
 });

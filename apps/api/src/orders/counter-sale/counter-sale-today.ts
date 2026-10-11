@@ -235,10 +235,8 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
             orderBy: { createdAt: "asc" },
             select: { method: true, amount: true, status: true },
           },
-          // the stored header and line rates the sale's tax rate is read from (pricing's storedTaxRatePercent)
-          subtotal: true,
-          taxAmount: true,
-          items: { select: { taxRate: true, categoryTaxAmount: true } },
+          // the stored line rates the sale's tax rate is read from (pricing's storedTaxRatePercent)
+          items: { select: { taxRate: true } },
         },
       },
       returns: {
@@ -279,11 +277,8 @@ export interface TodayOrderRecord {
     invoiceNumber: string | null;
     status: string;
     payments: Array<{ method: string; amount: unknown; status: string }>;
-    /** SA-764: the invoice header the legacy flat-rate fallback reads (`storedTaxRatePercent`) */
-    subtotal?: unknown;
-    taxAmount?: unknown;
     /** SA-764: each line's stored tax rate (a fraction, 0.0825) */
-    items?: Array<{ taxRate: unknown; categoryTaxAmount?: unknown }>;
+    items?: Array<{ taxRate: unknown }>;
   }>;
   returns: Array<{
     id: string;
@@ -339,7 +334,11 @@ export function returnAmount(r: ReturnMoney): number {
   return credit > 0 ? credit : roundMoney(num(r.refundAmount));
 }
 
-export function toTodaysSaleRow(o: TodayOrderRecord): TodaysSaleRow {
+export function toTodaysSaleRow(
+  o: TodayOrderRecord,
+  /** the tenant's configured rate in percent (`settings.taxRate`): a stored line rate is named only when it equals this */
+  configuredTaxPercent: number | null = null,
+): TodaysSaleRow {
   const live = o.invoices.filter((i) => !isDeadInvoice(i.status));
   const voided = o.status === OrderStatus.CANCELLED || (o.invoices.length > 0 && live.length === 0);
   const payments = live.flatMap((i) => i.payments);
@@ -396,9 +395,10 @@ export function toTodaysSaleRow(o: TodayOrderRecord): TodaysSaleRow {
     paymentState,
     cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
     change: servedChange(o.counterCashTendered, payments, balanceDue),
-    // ONE home for the rate (pricing): the receipt names it only through explainedTaxRatePercent
+    // ONE home for the rate (pricing): a STORED line rate, corroborated by the configured rate; never inferred
     taxRatePercent: storedTaxRatePercent(
-      live.map((i) => ({ subtotal: i.subtotal, taxAmount: i.taxAmount, lines: i.items ?? [] })),
+      live.map((i) => ({ lines: i.items ?? [] })),
+      configuredTaxPercent,
     ),
     returned: { amount: returnedAmount, state: returnState, returns },
     voided,
