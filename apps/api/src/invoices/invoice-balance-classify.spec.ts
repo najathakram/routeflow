@@ -4,7 +4,9 @@
  * The SQL predicate (`balanceDueSql`) is pinned against it row for row by
  * invoice-balance-sql.parity.db.spec.ts.
  */
+import { InvoiceStatus } from "@prisma/client";
 import { overdueCutoff } from "../common/calendar-date";
+import { OPEN_INVOICE_STATUSES } from "./invoice-status-sets";
 import {
   classifyInvoiceBalance,
   confirmedBalance,
@@ -106,6 +108,28 @@ describe("classifyInvoiceBalance — balanceDue + isOverdue against a cutoff", (
     expect(classifyInvoiceBalance(dueOct1, chicago).isOverdue).toBe(false); // still its grace day
     expect(classifyInvoiceBalance(dueOct1, auckland).isOverdue).toBe(true); // the day has ended there
   });
+});
+
+/**
+ * Row 318b: overdue is a property of an ISSUED, unpaid invoice. The classifier treated only PAID / VOID /
+ * WRITTEN_OFF as not overdue, so a past-due DRAFT with a balance read isOverdue:true in the list enrichment
+ * and the detail DTO while the KPI tiles and the list filter (OPEN_INVOICE_STATUSES) excluded DRAFT.
+ */
+describe("classifyInvoiceBalance - only an issued (open-status) invoice can be overdue (row 318b)", () => {
+  it("a past-due DRAFT with a balance is NOT overdue, and keeps its balanceDue", () => {
+    expect(classifyInvoiceBalance(inv(100, [], "2020-01-01", "DRAFT"), CUTOFF)).toEqual({
+      balanceDue: 100,
+      isOverdue: false,
+    });
+  });
+
+  it.each(Object.values(InvoiceStatus))(
+    "%s past due with a balance is overdue iff it is an open status",
+    (status) => {
+      const { isOverdue } = classifyInvoiceBalance(inv(100, [], "2020-01-01", status), CUTOFF);
+      expect(isOverdue).toBe((OPEN_INVOICE_STATUSES as readonly string[]).includes(status));
+    },
+  );
 });
 
 describe("summarizeOpenInvoices — the buyer receivables figures", () => {

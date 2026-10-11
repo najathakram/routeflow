@@ -10,6 +10,10 @@ export type InvoiceRow = {
   total: unknown;
   /** the stored lines: the rate the tax rate is read from (`storedTaxRatePercent`) and the price facts a receipt strikes a list price from */
   items?: Array<{
+    id?: string;
+    createdAt?: Date | string;
+    /** the order line this invoice line came from: its scan `position` is the order the clerk rang the lines in */
+    orderItem?: { position?: number | null } | null;
     taxRate?: unknown;
     productId?: string | null;
     unitPrice?: unknown;
@@ -18,6 +22,29 @@ export type InvoiceRow = {
   }>;
   payments?: Array<{ id: string; amount: unknown; method?: string; status?: string }>;
 };
+
+type ScanOrdered = {
+  id?: string;
+  createdAt?: Date | string;
+  orderItem?: { position?: number | null } | null;
+};
+
+/**
+ * Row 322a: the stored lines in the order the clerk SCANNED them: by the order line's `position` (a legacy line with none
+ * comes after the positioned ones), then `createdAt`, then `id`. Lines created in one transaction share `createdAt` and the
+ * id is a random uuid, so the database order alone is repeatable but arbitrary; the web's "first unused stored line of the
+ * product" fallback is only meaningful against scan order. Stable: rows that tie keep the order they arrived in.
+ */
+export function inScanOrder<T extends ScanOrdered>(rows: readonly T[]): T[] {
+  const time = (r: T) => (r.createdAt == null ? 0 : new Date(r.createdAt).getTime());
+  return [...rows].sort((a, b) => {
+    const pa = a.orderItem?.position ?? Number.POSITIVE_INFINITY;
+    const pb = b.orderItem?.position ?? Number.POSITIVE_INFINITY;
+    if (pa !== pb) return pa < pb ? -1 : 1;
+    if (time(a) !== time(b)) return time(a) - time(b);
+    return (a.id ?? "") < (b.id ?? "") ? -1 : (a.id ?? "") > (b.id ?? "") ? 1 : 0;
+  });
+}
 
 /**
  * A payment the counter itself took (cash / card / check): not a credit-note or advance application.
@@ -169,14 +196,12 @@ export function buildCounterSaleResponse(input: {
         }
       : {}),
     // the stored lines' price facts, so the live receipt applies the invoices' own original-price rule (not the cart's tier price)
-    lines: invoices.flatMap((i) =>
-      (i.items ?? []).map((l) => ({
-        productId: l.productId ?? null,
-        unitPrice: roundMoney(Number(l.unitPrice ?? 0)),
-        originalPrice: l.originalPrice == null ? null : roundMoney(Number(l.originalPrice)),
-        priceType: l.priceType ?? "STANDARD",
-      })),
-    ),
+    lines: inScanOrder(invoices.flatMap((i) => i.items ?? [])).map((l) => ({
+      productId: l.productId ?? null,
+      unitPrice: roundMoney(Number(l.unitPrice ?? 0)),
+      originalPrice: l.originalPrice == null ? null : roundMoney(Number(l.originalPrice)),
+      priceType: l.priceType ?? "STANDARD",
+    })),
     ...(replayed ? { replayed: true } : {}),
   };
 }

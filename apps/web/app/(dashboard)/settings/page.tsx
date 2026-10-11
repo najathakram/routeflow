@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { z } from "zod";
@@ -214,6 +214,25 @@ function BusinessProfileTab() {
     },
   });
 
+  // Row 327: this is ONE form with one Save button, so validate only the fields the user changed. A counter shop
+  // that never filled in the owner, phone or address (the API stores them as empty strings) can still save its
+  // tax rate; a field the user edits, or clears, is still checked. With nothing edited, the whole form is checked.
+  const dirtyRef = React.useRef<Record<string, unknown>>({});
+  const profileResolver = React.useMemo<Resolver<ProfileFormValues>>(() => {
+    const schema = profileSchemaFor(canEditTimeZone);
+    return async (values, context, options) => {
+      const mask: Record<string, true> = {};
+      for (const key of Object.keys(schema.shape)) if (dirtyRef.current[key]) mask[key] = true;
+      // Nothing changed: Save has nothing to scope to, so check the whole profile and say what is missing.
+      if (Object.keys(mask).length === 0) return zodResolver(schema)(values, context, options);
+      const res = await zodResolver(schema.pick(mask as never))(values, context, options);
+      // The picked schema strips every other key, so hand back the whole form with the parsed fields on top.
+      return Object.keys(res.errors).length === 0
+        ? { values: { ...values, ...res.values }, errors: {} }
+        : res;
+    };
+  }, [canEditTimeZone]);
+
   const {
     register,
     handleSubmit,
@@ -223,7 +242,7 @@ function BusinessProfileTab() {
     setError,
     formState: { errors, isSubmitting, dirtyFields },
   } = useForm<ProfileFormValues>({
-    resolver: zodResolver(profileSchemaFor(canEditTimeZone)),
+    resolver: profileResolver,
     // onInvalidFocus (handleSubmit's second argument) is the single focus owner.
     shouldFocusError: false,
     defaultValues: {
@@ -241,6 +260,8 @@ function BusinessProfileTab() {
       receiptFooter: "",
     },
   });
+
+  dirtyRef.current = dirtyFields;
 
   React.useEffect(() => {
     if (savedSettings) {

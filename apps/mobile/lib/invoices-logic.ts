@@ -2,6 +2,7 @@
  * Pure invoice/payment gating helpers (no api-client/react-query imports so they
  * stay unit-testable in the node Jest env). Mirror the server's guards.
  */
+import { OPEN_INVOICE_STATUS_VALUES } from "@routeflow/types";
 
 /** An invoice can be written off only from these unpaid-but-live statuses. */
 export function canWriteOff(status: string): boolean {
@@ -36,6 +37,13 @@ export function isPaymentEditable(
   return true;
 }
 
+/** A known, finite balance above zero (same test as web's canSendReminder): unknown / NaN / Infinity is not. */
+function owesBalance(balanceDue: number | string | null | undefined): boolean {
+  if (balanceDue == null) return false;
+  const balance = Number(balanceDue);
+  return Number.isFinite(balance) && balance > 0;
+}
+
 export interface InvoiceActionInput {
   status: string;
   /** ALL payment rows INCLUDING VOID ones — the server's revert-to-draft gate is
@@ -44,13 +52,18 @@ export interface InvoiceActionInput {
    *  and gets a guaranteed error toast in that state; we mirror the server.) */
   paymentCount: number;
   isOrderLinked: boolean;
+  /**
+   * The server-derived balance (`balanceDue` on the invoice DTO). Row 318d: the reminder tile needs it, like web's
+   * `canSendReminder` and the API's REMINDER_NO_BALANCE_DUE refusal; absent / non-numeric hides the tile.
+   */
+  balanceDue?: number | string | null;
 }
 
 export interface InvoiceActionFlags {
   /** PATCH /invoices/:id items path — "Only DRAFT invoices can be edited". */
   canEdit: boolean;
-  /** Server blocks only VOID/PAID; surfaced on the "waiting on money" statuses
-   *  (DRAFT has Send already — a reminder there would be a second send control). */
+  /** The API refuses anything but an issued, unpaid invoice that still owes (SENT/VIEWED/PARTIAL/OVERDUE with a
+   *  balance due > 0). DRAFT has Send already, so a reminder there would be a second send control. */
   canSendReminder: boolean;
   /** RF-011: order-linked invoices can't be duplicated (server guard). */
   canDuplicate: boolean;
@@ -69,7 +82,8 @@ export function invoiceActionFlags(i: InvoiceActionInput): InvoiceActionFlags {
   const s = i.status;
   return {
     canEdit: s === "DRAFT",
-    canSendReminder: s === "SENT" || s === "VIEWED" || s === "OVERDUE" || s === "PARTIAL",
+    canSendReminder:
+      (OPEN_INVOICE_STATUS_VALUES as readonly string[]).includes(s) && owesBalance(i.balanceDue),
     canDuplicate: !i.isOrderLinked,
     canReopen: s === "PAID",
     canUnvoid: s === "VOID",

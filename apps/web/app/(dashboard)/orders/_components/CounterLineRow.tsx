@@ -6,7 +6,7 @@ import { cartTotals } from "@/lib/counter-sale";
 import { NOTE_MAX, isBoxedLine, lineQtyLabel, type TypedQty } from "./counter-sale-line-edit";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceEdit";
-import { editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
+import { cartStrikesList, editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
@@ -175,6 +175,7 @@ export function CounterLineRow({
   onPriceClosed,
   onNoteClosed,
   onQtyEnter,
+  hideOriginalPrice = false,
 }: {
   line: SaleLine;
   locked: boolean;
@@ -194,6 +195,8 @@ export function CounterLineRow({
   onNoteClosed?: () => void;
   /** Enter on a typed quantity: the screen hands focus back to the scan field. */
   onQtyEnter?: () => void;
+  /** The tenant's `invoice.hideOriginalPrice` (`GET /settings`): no struck catalogue price, as on the receipt. */
+  hideOriginalPrice?: boolean;
 }) {
   const [editing, setEditing] = React.useState(false);
   const noteAtOpenRef = React.useRef(""); // Escape puts the note back to what it was when the field opened
@@ -202,16 +205,16 @@ export function CounterLineRow({
     onNoteClosed?.();
   };
   const hasNote = !!l.note?.trim();
-  const edited = editedLineFigures(l);
+  const edited = editedLineFigures(l, hideOriginalPrice);
   return (
     <li className="flex flex-col gap-2 p-3 text-sm">
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0 break-words">
           {l.name} · {lineQtyLabel(l)}
           <span className="block text-xs text-navy/70">
-            {l.listPrice !== undefined && l.unitPrice < l.listPrice ? (
+            {cartStrikesList(l, hideOriginalPrice) ? (
               <s className="mr-1 tabular-nums text-navy/50" data-testid="line-unit-price-was">
-                {money(l.listPrice)}
+                {money(l.listPrice ?? l.unitPrice)}
               </s>
             ) : null}
             <span className="tabular-nums" data-testid="line-unit-price">
@@ -223,7 +226,7 @@ export function CounterLineRow({
           </span>
         </span>
         <span className="flex shrink-0 items-center gap-2">
-          {edited ? (
+          {edited?.original != null ? (
             <s className="text-xs text-navy/60" data-testid="line-original-total">
               {money(edited.original)}
             </s>

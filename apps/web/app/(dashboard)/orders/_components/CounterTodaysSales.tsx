@@ -5,6 +5,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { cashierNameOf } from "@routeflow/pricing";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 import { useOrder } from "@/lib/api/orders";
@@ -25,6 +26,7 @@ import {
   receiptModelFromOrder,
   type ReceiptBusinessProfile,
 } from "@/lib/counter-receipt";
+import { CounterDayClose } from "./CounterDayClose";
 import { receiptEmailPrefill } from "@/lib/email-receipt";
 import { CounterReceiptView } from "./CounterReceiptView";
 import { CounterReturnAction } from "./CounterReturnAction";
@@ -172,7 +174,7 @@ function Reprint({
     document.body.classList.add("counter-reprint-open");
     return () => document.body.classList.remove("counter-reprint-open");
   }, []);
-  const reprintedBy = useOptionalAuth()?.user?.username ?? null;
+  const reprintedBy = cashierNameOf(useOptionalAuth()?.user);
   const { data: order, isError, isLoading, refetch } = useOrder(row.orderId);
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
     queryKey: ["settings"],
@@ -187,6 +189,7 @@ function Reprint({
     order && row.invoiceId && row.invoiceNumber
       ? receiptModelFromOrder({
           order,
+          cashier: row.cashierName,
           profile: { ...settings, businessName: branding?.businessName || settings?.businessName },
           sale: {
             invoiceId: row.invoiceId,
@@ -372,6 +375,9 @@ function SaleRow({
       <p className="text-xs text-navy/70">
         {timeOf(row.createdAt, timezone)} · {who}
         {methods ? ` · ${methods}` : ""}
+        {row.cashierName ? (
+          <span data-testid="today-row-cashier"> · Cashier: {row.cashierName}</span>
+        ) : null}
       </p>
       <div className="flex flex-wrap gap-1">
         {row.voided ? (
@@ -519,6 +525,7 @@ export function CounterTodaysSales() {
                 Last 7 days
               </Button>
             </div>
+            {view === "week" ? null : <CounterDayClose />}
             {view === "week" && tenantDay ? <WeekReport today={tenantDay} /> : null}
             {view === "week" ? null : summary ? <Summary s={summary} /> : null}
             {view === "week" ? null : rows.length === 0 ? (
