@@ -277,7 +277,7 @@ export function buildReceiptModel(
     methodLabel: hasTender ? methods.map((m) => METHOD_LABEL[m]).join(" + ") : null,
     tendered,
     tenderedAsEntered: false,
-    change: servedChange(order.id, order.counterCashTendered, livePayments, total),
+    change: servedChange(order.id, order.counterCashTendered, livePayments),
     changeAsEntered: false,
   };
 }

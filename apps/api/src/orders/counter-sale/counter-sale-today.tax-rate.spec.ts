@@ -71,18 +71,18 @@ describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
       { method: "CASH", amount: "41.27", status: "PAID" },
       { method: "CREDIT_NOTE", amount: "5.00", status: "PAID" },
     ];
-    // the credit note covered 5.00 of the 41.27 total, so the cash took 36.27 and 50.00 handed over gives back 13.73
-    expect(toTodaysSaleRow(o).change).toBe(13.73);
+    // the change is measured against the stored CASH row (41.27), not the total less other methods
+    expect(toTodaysSaleRow(o).change).toBe(8.73);
     expect(toTodaysSaleRow(rec({ counterCashTendered: "50.00" })).change).toBeNull();
     expect(toTodaysSaleRow(rec()).change).toBeNull();
   });
 
-  it("(N3) a partly paid cash sale (all the cash handed over went in) serves no change", () => {
+  it("(N3) a partly paid cash sale (all the cash handed over went in) serves Change 0, no balance gate", () => {
     const o = rec({ counterCashTendered: "20.00" });
     o.invoices[0].payments = [{ method: "CASH", amount: "20.00", status: "PAID" }];
     const row = toTodaysSaleRow(o);
     expect(row.balanceDue).toBe(21.27);
-    expect(row.change).toBeNull();
+    expect(row.change).toBe(0);
   });
 
   it("(N3) a card sale with a stale stored tendered serves no change", () => {
@@ -97,13 +97,30 @@ describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
     expect(toTodaysSaleRow(o).change).toBe(8.73);
   });
 
-  it("(N2) a later CASH payment on the sale can not move the change (it is the tendered less the total)", () => {
+  it("(N2) a later CASH payment past the tendered never serves a negative change (0)", () => {
     const o = rec({ counterCashTendered: "50.00" });
     o.invoices[0].payments = [
       { method: "CASH", amount: "41.27", status: "PAID" },
       { method: "CASH", amount: "20.00", status: "PAID" },
     ];
-    expect(toTodaysSaleRow(o).change).toBe(8.73);
+    expect(toTodaysSaleRow(o).change).toBe(0);
+  });
+
+  it("(S1) a later total cut or a voided card row can not move a past sale's change", () => {
+    // $50 sale: card 30 + cash row 20, 40 handed over -> change 20
+    const base = rec({ counterCashTendered: "40.00", total: "50.00" });
+    base.invoices[0].payments = [
+      { method: "CREDIT_CARD", amount: "30.00", status: "PAID" },
+      { method: "CASH", amount: "20.00", status: "PAID" },
+    ];
+    expect(toTodaysSaleRow(base).change).toBe(20);
+    // the card payment is voided afterwards: the cash row still says 20 went in
+    base.invoices[0].payments[0].status = "VOID";
+    expect(toTodaysSaleRow(base).change).toBe(20);
+    // a single cash sale paid with 60 handed, the order total cut 50 -> 45 later: still 10
+    const cut = rec({ counterCashTendered: "60.00", total: "45.00" });
+    cut.invoices[0].payments = [{ method: "CASH", amount: "50.00", status: "PAID" }];
+    expect(toTodaysSaleRow(cut).change).toBe(10);
   });
 
   it("the page query reads both in the ONE existing query: the column, each invoice's line rates", () => {

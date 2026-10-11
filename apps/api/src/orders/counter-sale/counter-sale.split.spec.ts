@@ -251,7 +251,7 @@ describe("CounterSaleService.ring: split payments", () => {
         staff,
       );
       expect(r).toMatchObject({ paid: 40, balanceDue: 30, paymentRecorded: true });
-      expect(r.change).toBeUndefined();
+      expect(r.change).toBe(0); // all the cash handed over went in: Change 0, no balance gate
     });
 
     it("a split whose cash leg is rung first is still taken non-cash first (card before cash)", async () => {
@@ -885,7 +885,7 @@ describe("CounterSaleService.ring: split payments", () => {
         }),
         staff,
       );
-      expect(r.change).toBeUndefined();
+      expect(r.change).toBe(0); // the 10 handed over all went in: Change 0, no balance gate
       expect(r.payments).toEqual([
         { method: "CARD", amount: 30, paymentIds: ["pay-1"] },
         { method: "CASH", amount: 10, paymentIds: ["pay-2"] },
@@ -1093,6 +1093,45 @@ describe("CounterSaleService.ring: split payments", () => {
       // the anchored replay can only FILL a null (CAS on counterCashTendered: null)
       const last = tenderedWrites().at(-1);
       expect(last.where).toEqual({ id: "ord-1", counterCashTendered: null });
+    });
+
+    it("S1 by-key reads the stored cash row's change: a card payment voided later does not move it (20)", async () => {
+      invoices = [inv("inv-1", 50, 1)];
+      await service.ring(
+        walkInSale({
+          payments: [
+            { method: "CARD", amount: 30 },
+            { method: "CASH", amount: 40 },
+          ],
+        }),
+        staff,
+        "key-1",
+      );
+      invoices[0].payments.find((p) => p.method === "CREDIT_CARD")!.status = "VOID";
+      (service as any).orders.findReplayCandidateByKey.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        counterSale: true,
+        status: "DELIVERED",
+        counterCashTendered: storedTendered,
+      });
+      expect(await service.byKey("key-1")).toMatchObject({ cashTendered: 40, change: 20 });
+    });
+
+    it("N5 a replay with a DIFFERENT cash amount (100) keeps the first stored tendered (50) and its change (10)", async () => {
+      const legs = (cash: number) => [
+        { method: "CARD", amount: 30 },
+        { method: "CASH", amount: cash },
+      ];
+      await service.ring(walkInSale({ payments: legs(50) }), staff, "key-1");
+      expect(storedTendered).toBe(50);
+      replay = true;
+      const again = await service.ring(walkInSale({ payments: legs(100) }), staff, "key-1");
+      expect(storedTendered).toBe(50);
+      expect(again).toMatchObject({ replayed: true, cashTendered: 50, change: 10 });
+      // no second cash row, no overwrite: the only attempt to write is the NULL-only fill, which found it set
+      expect(recordPayment).toHaveBeenCalledTimes(2);
+      expect(tenderedWrites().at(-1).where).toEqual({ id: "ord-1", counterCashTendered: null });
     });
 
     it("a card-only sale stores no tendered and serves no change", async () => {

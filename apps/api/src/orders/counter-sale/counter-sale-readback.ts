@@ -22,27 +22,25 @@ type PayRow = {
 /**
  * SA-764 + SA-749r2: the change every surface shows, from STORAGE alone. The ONE gate shared by the POST / by-key
  * read-back, the Today's-sales row and the receipt document so they can not drift, and the formula is pricing's
- * `counterChange` (no second one anywhere): `tendered` is `Order.counterCashTendered`, the CASH LEG's handed-over
- * amount whichever leg index it is; the non-cash applied is everything PAID on the sale except the sale's own
- * counter-tender CASH rows (`counterTenderCashRows`, the set-level tender rule). null when nothing was tendered or the
- * sale has no cash tender row (a card-only sale). There is no "first tender" gate: a card-first split serves change.
- * A PARTLY paid sale whose handed-over cash all went in (change 0, balance owing) serves null, not a Change $0.00 row.
- * The cash APPLIED (a payment row) is what the till counts, never `tendered`.
+ * `counterChange` (no second one anywhere). `tendered` is `Order.counterCashTendered`, the CASH LEG's handed-over amount
+ * whichever leg index it is. The cash APPLIED is what the sale's own counter-tender CASH rows hold
+ * (`counterTenderCashRows`, the set-level tender rule, PAID rows only): that stored row, never `total - other methods`, so a
+ * card row voided later or a total cut later can not move a past sale's change. (That is `counterChange` with
+ * `nonCashApplied = total - cash rows`; the total cancels, so no surface needs to pick a total.) null when nothing was
+ * tendered or the sale has no cash tender row (a card-only sale). There is no first-tender gate (a card-first split serves
+ * change) and no "nothing left to pay" gate. The cash APPLIED (a payment row) is what the till counts, never `tendered`.
  */
 export function servedChange(
   orderId: string,
   tendered: unknown,
   payments: PayRow[],
-  total: number,
 ): number | null {
   if (tendered == null) return null;
   const cash = counterTenderCashRows(orderId, payments);
   if (cash.length === 0) return null;
-  const paid = roundMoney(sumConfirmed(payments));
-  const nonCashApplied = roundMoney(paid - roundMoney(sumConfirmed(cash)));
-  const { change } = counterChange({ total, nonCashApplied, tendered: Number(tendered) });
-  const balanceDue = Math.max(0, roundMoney(roundMoney(total) - paid));
-  return change === 0 && balanceDue > 0 ? null : change;
+  const cashApplied = roundMoney(sumConfirmed(cash));
+  return counterChange({ total: cashApplied, nonCashApplied: 0, tendered: Number(tendered) })
+    .change;
 }
 
 /** The counter method of a stored tender (Prisma CREDIT_CARD reads back as CARD); undefined for any other. */
@@ -128,7 +126,12 @@ export function buildCounterSaleResponse(input: {
 
   // Change comes from the STORED cash handed over and the sale's own cash rows (`servedChange`, pricing's
   // `counterChange`): the same figure the Today's-sales row and the receipt serve.
-  const change = servedChange(order.id, order.counterCashTendered, payments, total);
+  // The LIVE tender response (POST: `legs` present) never hands back money that is still owed: not when the payment was not
+  // recorded, and not a positive change while the stored balance is open (an interrupted tender's unrecorded part is
+  // owed, not change). A stored sale read later (by-key, Today's row, the receipt) reports the stored rows' change as it was.
+  const served = servedChange(order.id, order.counterCashTendered, payments);
+  const change =
+    legs && (!settled || (served != null && served > 0 && balanceDue > 0)) ? null : served;
 
   // Every leg of the tender in leg order, from STORAGE: the money RECORDED against it (change is not in it)
   // and the rows that hold it. A request leg that recorded nothing (refused, or ON_ACCOUNT) reads amount 0.
