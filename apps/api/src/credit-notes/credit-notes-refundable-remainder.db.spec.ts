@@ -182,4 +182,31 @@ describeDb("SA-773 standalone credit notes read the refundable remainder - real 
     expect(errs).toHaveLength(1);
     expect([400, 409]).toContain(errs[0]?.getStatus?.());
   });
+
+  it("C6 (SA S4): a REFUNDED return whose own credit note is VOID keeps its qty reserved but gives its value back: an item credit is refused on qty (full value reported left), an amount-only credit for the full value mints", async () => {
+    const s = await seed("c6", [{ lines: [{ product: "A", qty: 5, subtotal: 100 }] }]);
+    const own = await addCreditNote(prisma, s, {
+      number: cn(),
+      status: "VOID",
+      items: [{ line: 0, amount: 100, qty: 5 }],
+    });
+    await addStandardReturn(prisma, s, {
+      number: rtn(),
+      status: "REFUNDED",
+      items: [{ product: "A", qty: 5 }],
+      creditNoteId: own.id,
+      refundMethod: "CREDIT_NOTE",
+      refundAmount: 100,
+    });
+    const err = await fail(credit(s, 100));
+    expect(body(err)).toMatchObject({
+      code: "CREDIT_EXCEEDS_REFUNDABLE",
+      remainingQty: 0,
+      remainingValue: 100,
+    });
+    await credit(s, 100, false); // amount-only: no qty asked, the full value is available
+    expect(
+      await prisma.creditNote.count({ where: { tenantId: s.tenantId, status: { not: "VOID" } } }),
+    ).toBe(1);
+  });
 });

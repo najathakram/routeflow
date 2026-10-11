@@ -14,9 +14,9 @@
  *       a pending, approved or received return already reserves the goods). An INLINE return counts its stored item money
  *       (subtotal + taxAmount + categoryTax). A STANDARD return stores no item money, so its value is its qty at the pool's own
  *       gross average, the figure the goods are worth.
- *       LITERAL RULING PENDING SA ON S4: a return whose OWN credit note is VOID still reserves its goods (it is counted like
- *       any other live return). The earlier reading - a VOID return credit note releases them, as the per-line headroom does -
- *       is parked until the SA answers; it is one revertable commit away.
+ *       SA RULING S4 (split qty from value): a return whose OWN credit note is VOID reserves its QTY (the goods did come back, so
+ *       they cannot be returned again) but contributes 0 VALUE (nothing was given back). Re-processing that same return passes
+ *       `excludeReturnId` and gets its own qty back. A recorded refund (no credit note) reserves both.
  *   (b) standalone CreditNoteItem rows on the pool's lines whose credit note is not VOID and is not a counted Return's own credit
  *       note (that money is already in (a); never twice). Gross = amount + categoryTax + roundMoney(amount x the line's stored
  *       taxRate);
@@ -248,7 +248,7 @@ export async function refundableRemainder(
   const lineIds = [...lineById.keys()];
 
   // 2. (a) RETURNS of the order(s): STANDARD by Return.orderId, INLINE by the item's source order
-  // literal ruling pending SA on S4: EVERY return that is not REJECTED / CANCELLED counts, a VOID return credit note included
+  // SA ruling S4: every return that is not REJECTED / CANCELLED reserves its QTY; one whose own credit note is VOID reserves 0 VALUE
   const counted = (r: { id?: string; status?: string | null }): boolean =>
     !(r.status && DEAD.has(r.status)) && r.id !== excludeReturnId;
   const standard: Array<{
@@ -300,6 +300,23 @@ export async function refundableRemainder(
           },
         })
       : [];
+  const voidReturnNotes = new Set<string>();
+  const returnNoteIds = [
+    ...new Set(
+      [...standard, ...inlineItems.map((i) => i.return ?? {})]
+        .filter((r: any) => r.creditNoteId && counted(r))
+        .map((r: any) => r.creditNoteId as string),
+    ),
+  ];
+  if (returnNoteIds.length > 0) {
+    const notes: Array<{ id: string; status?: string | null }> = await tx.creditNote.findMany({
+      where: { id: { in: returnNoteIds } },
+      select: { id: true, status: true },
+    });
+    for (const n of notes) if (isVoidNote(n)) voidReturnNotes.add(n.id);
+  }
+  const valueGiven = (r: { creditNoteId?: string | null }): boolean =>
+    !(r.creditNoteId && voidReturnNotes.has(r.creditNoteId));
   const standardCounted = standard.filter((r) => r.kind !== "INLINE" && counted(r) && r.orderId);
 
   // STANDARD qty is in the order line's own unit: pieces through the order's pack basis (same reader the over-return cap uses)
@@ -323,7 +340,8 @@ export async function refundableRemainder(
       const factor = "factor" in f ? f.factor : poolUnitFactor(pool);
       const pieces = num(it.qty) * factor;
       pool.qtyOut += pieces;
-      pool.valueOut += pool.billedQty > 0 ? (pieces * pool.billedValue) / pool.billedQty : 0;
+      if (valueGiven(ret))
+        pool.valueOut += pool.billedQty > 0 ? (pieces * pool.billedValue) / pool.billedQty : 0;
       pool.items += 1;
     }
   }
@@ -333,7 +351,8 @@ export async function refundableRemainder(
     const pool = groupOfOrder.get(it.sourceOrderId)?.pools.get(it.productId);
     if (!pool) continue;
     pool.qtyOut += num(it.qty);
-    pool.valueOut += roundMoney(num(it.subtotal) + num(it.taxAmount) + num(it.categoryTax));
+    if (valueGiven(it.return ?? {}))
+      pool.valueOut += roundMoney(num(it.subtotal) + num(it.taxAmount) + num(it.categoryTax));
     pool.items += 1;
   }
 

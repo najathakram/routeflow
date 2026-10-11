@@ -594,7 +594,7 @@ describe("refundableRemainder (SA-773): the one formula", () => {
     ).toBeNull();
   });
 
-  it("LITERAL RULING PENDING SA ON S4: a return whose own credit note is VOID still reserves its goods (STANDARD and INLINE)", async () => {
+  it("SA ruling S4: a return whose own credit note is VOID keeps its QTY reserved but reserves 0 VALUE (STANDARD and INLINE)", async () => {
     const fixture: Fixture = {
       invoices: [invoice("i1", "o1", 100, [line("l1", "pA", 10, 100)])],
       standardReturns: [
@@ -642,8 +642,40 @@ describe("refundableRemainder (SA-773): the one formula", () => {
       ],
     };
     const rem = await refundableRemainder(fakeTx(fixture), { invoiceIds: ["i1"] });
-    // every return that is not REJECTED / CANCELLED counts: r1 (4), r2 (1), r3 (3), r4 (2) = 10 pieces, $40 + $10 + $30 + $20 = $100
-    expect(poolOf(rem, "i1", "pA")).toMatchObject({ qty: 0, value: 0 });
+    // qty: all four returns reserve their goods (4 + 1 + 3 + 2 = 10 of 10). value: r1 and r3 (VOID own notes) give 0, r2 gives $10 and r4 (a recorded refund) $20
+    expect(poolOf(rem, "i1", "pA")).toMatchObject({ qty: 0, value: 70 });
+  });
+
+  it("S4 halves, as requests: the voided return's goods cannot be taken again by qty, but its value is available", async () => {
+    const tx = fakeTx({
+      invoices: [invoice("i1", "o1", 100, [line("l1", "pA", 5, 100)])],
+      standardReturns: [
+        {
+          id: "r1",
+          orderId: "o1",
+          kind: "STANDARD",
+          status: "REFUNDED",
+          creditNoteId: "cnV",
+          items: [{ productId: "pA", qty: 5 }],
+        },
+      ],
+      notes: [{ id: "cnV", status: "VOID" }],
+    });
+    const rem = await refundableRemainder(tx, { invoiceIds: ["i1"] });
+    expect(poolOf(rem, "i1", "pA")).toMatchObject({ qty: 0, value: 100 });
+    // QTY: one more piece is refused, with the full value still reported as left
+    expect(refundableRefusal(rem, [{ invoiceId: "i1", productId: "pA", qty: 1 }])).toEqual({
+      invoiceId: "i1",
+      productId: "pA",
+      remainingQty: 0,
+      remainingValue: 100,
+    });
+    // VALUE: a value-only request inside the full pool value passes (no qty asked), and the invoice still has all of it
+    expect(refundableRefusal(rem, [{ invoiceId: "i1", productId: "pA", value: 100 }])).toBeNull();
+    expect(rem.byInvoice.get("i1")?.value).toBe(100);
+    // re-processing THAT return gets its own qty back
+    const again = await refundableRemainder(tx, { invoiceIds: ["i1"], excludeReturnId: "r1" });
+    expect(poolOf(again, "i1", "pA")).toMatchObject({ qty: 5, value: 100 });
   });
 
   it("a money guard reads plain: a client missing a model, or a query answering nothing, fails closed instead of reading as empty", async () => {
