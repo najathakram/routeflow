@@ -95,6 +95,10 @@ interface Group {
   amountOnlyItems: number;
 }
 
+/** A credit note row whose status is VOID (its credit was taken back: it holds no goods). */
+const isVoidNote = (note: { status?: string | null } | null | undefined): boolean =>
+  note?.status === "VOID";
+
 const poolUnitFactor = (pool: Pool): number => (pool.ppqs.size === 1 ? [...pool.ppqs][0] : 1);
 
 /** The gross value of one invoice line: its net subtotal, its regular tax at the line's stored rate, its category tax. */
@@ -384,10 +388,10 @@ export async function refundableRemainder(
         })) ?? [])
       : [];
   const liveItems = cnItems.filter(
-    (i) => i.creditNote?.status !== "VOID" && i.creditNoteId !== excludeCreditNoteId,
+    (row) => !isVoidNote(row.creditNote) && row.creditNoteId !== excludeCreditNoteId,
   );
   const liveAmountOnly = amountOnly.filter(
-    (c) => c.status !== "VOID" && c.id !== excludeCreditNoteId,
+    (note) => !isVoidNote(note) && note.id !== excludeCreditNoteId,
   );
   const cnIds = [
     ...new Set([...liveItems.map((i) => i.creditNoteId), ...liveAmountOnly.map((c) => c.id)]),
@@ -685,4 +689,27 @@ export async function creditNoteRequests(
     });
   }
   return requests;
+}
+
+/**
+ * What is still refundable for the SELECTED goods, in value: the sum of each distinct pool's remainder (never below 0), held to
+ * the remainder of its invoice group. This is the figure a quote's `cashRefundable` takes with the cash room:
+ * `min(cash room, selectedGoodsRemainder(...))`. Pure over a remainder the caller read under the locks.
+ */
+export function selectedGoodsRemainder(
+  rem: RefundableRemainder,
+  goods: ReadonlyArray<{ invoiceId: string; productId: string }>,
+): number {
+  const pools = new Set<PoolRemainder>();
+  const perInvoice = new Map<InvoiceRemainder, number>();
+  for (const g of goods) {
+    const pool = rem.byInvoiceProduct.get(poolKey(g.invoiceId, g.productId));
+    const inv = rem.byInvoice.get(g.invoiceId);
+    if (!pool || !inv || pools.has(pool)) continue;
+    pools.add(pool);
+    perInvoice.set(inv, (perInvoice.get(inv) ?? 0) + floor0(pool.value));
+  }
+  let total = 0;
+  for (const [inv, value] of perInvoice) total += Math.min(value, floor0(inv.value));
+  return roundMoney(total);
 }

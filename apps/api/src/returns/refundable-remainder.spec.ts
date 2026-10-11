@@ -1,4 +1,5 @@
 import {
+  selectedGoodsRemainder,
   lineGrossValue,
   poolKey,
   refundableRefusal,
@@ -699,5 +700,47 @@ describe("refundableRefusal: the check on a request", () => {
     expect(refundableRefusal(r, [{ invoiceId: "i1", productId: "pZ", qty: 99 }])).toBeNull();
     expect(refundableRefusal(r, [{ invoiceId: "i1", productId: "pA" }])).toBeNull();
     expect(refundableRefusal(r, [])).toBeNull();
+  });
+});
+
+describe("selectedGoodsRemainder: the figure a quote's cashRefundable takes with the cash room", () => {
+  it("cash room $30 and $12 left on the selected goods: the remainder is 12 (so min is 12)", async () => {
+    const tx = fakeTx({
+      invoices: [invoice("i1", "o1", 20, [line("l1", "pA", 4, 20)])],
+      cnItems: [
+        {
+          invoiceItemId: "l1",
+          creditNoteId: "cn1",
+          qty: 1.6,
+          amount: 8,
+          categoryTax: 0,
+          creditNote: { status: "ISSUED" },
+        },
+      ],
+    });
+    const rem = await refundableRemainder(tx, { invoiceIds: ["i1"] });
+    const left = selectedGoodsRemainder(rem, [{ invoiceId: "i1", productId: "pA" }]);
+    expect(left).toBe(12);
+    expect(Math.min(30, left)).toBe(12);
+  });
+
+  it("counts a pooled product once, never below 0 for an over-credited pool, and is held to the invoice-level figure", async () => {
+    const tx = fakeTx({
+      invoices: [
+        invoice("i1", "o1", 40, [line("l1", "pA", 4, 40)]),
+        invoice("i2", "o1", 60, [line("l2", "pA", 6, 60), line("l3", "pB", 5, 50)]),
+      ],
+      amountOnly: [{ id: "cnA", invoiceId: "i2", amount: 130, status: "ISSUED" }],
+    });
+    const rem = await refundableRemainder(tx, { invoiceIds: ["i1"] });
+    // the group bills $150 and $130 left as an amount-only credit: $20 at the invoice level, while the pools hold $100 and $50
+    expect(
+      selectedGoodsRemainder(rem, [
+        { invoiceId: "i1", productId: "pA" },
+        { invoiceId: "i2", productId: "pA" },
+        { invoiceId: "i2", productId: "pB" },
+      ]),
+    ).toBe(20);
+    expect(selectedGoodsRemainder(rem, [{ invoiceId: "i1", productId: "pZ" }])).toBe(0);
   });
 });

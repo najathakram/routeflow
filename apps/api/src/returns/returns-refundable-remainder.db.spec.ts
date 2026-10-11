@@ -214,7 +214,7 @@ describeDb("SA-773 the refund paths read the refundable remainder - real Postgre
     ]);
     // the invoice charged tax, so the captures price it at the line's stored rate
     await prisma.invoice.update({ where: { id: s.invoices[0].id }, data: { taxAmount: 2.75 } });
-    const capture = async (pieces: number) =>
+    const capture = async (pieces: number): Promise<any> =>
       asTenant(s, () =>
         inline.capture(
           {
