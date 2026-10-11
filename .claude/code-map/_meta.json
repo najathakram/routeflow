@@ -1,6 +1,6 @@
 {
-  "mappedSha": "3e7d8b9dd0b7f48b435ace82407fdee2e133a43a",
-  "generatedAt": "2026-10-09T19:00:00.000Z",
+  "mappedSha": "3ba0d16a97b47b0b2de3a5567b09b0c67854a13a",
+  "generatedAt": "2026-10-10T20:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 15,
-    "web": 11,
-    "mobile": 7,
+    "api": 16,
+    "web": 12,
+    "mobile": 8,
     "packages": 0
   },
-  "fileCount": 1053,
-  "notes": "**2026-10-09 \u2014 W21b #3347 (master `5584e2f4f`) and W22a-1 #3362 (master `3e7d8b9dd0b7f48b435ace82407fdee2e133a43a`, 13 PRs; docs-only bookkeeping).** New `api/`, `web/` and `mobile/landing-2026-10-09-w21b-w22a1.md` (counter price edit POS-5, cash-refund void/cancel guard, Today's sales by credit note, B1054 replay, B1157/B1158 parked-checkout reconcile, units P0a schema, invoice payment paidAt index, protected-tenant script guard, operator feature groups (report only), self-service audit and admin-account rule, variant rules B1211 to B1216, web leave guard / live-cart persist / discount re-apply / family-aware pickers, mobile Store credit pill and cascade confirm) and a W21b/W22a-1 section in `packages.md`. The oldest changelog bullet (train A, 2026-09-27) moved to `CHANGELOG-ARCHIVE.md` to stay at 30. `mappedSha` = `3e7d8b9dd0b7f48b435ace82407fdee2e133a43a`."
+  "fileCount": 1056,
+  "notes": "**2026-10-10 \u2014 W22a-2 #3373 (master `47f34cd22`) and W23 #3377 (master `3ba0d16a97b47b0b2de3a5567b09b0c67854a13a`, Train 3; docs-only bookkeeping).** New `api/`, `web/` and `mobile/landing-2026-10-10-w22a2-w23.md` (TOC row in each area file) and a W22a-2/W23 section in `packages.md`: sitting-3 schema bundle (dunning and coupon columns, `Return.refundTender`, cart fingerprint, import marker, auth link hardening, `CounterDayClose`, `CounterParkedCart`, `Order.registerKey/soldById/counterCashTendered`, indexes), counter quick keys (SA-747), create-business page and readiness card (SA-1/2/3), order-template cron and replay lock, tenant zone resolver and writers (SA-738), counter return attribution (source sale, `Return.refundTender`, cash-refund cap, counter-close lock), counter sale void and `staffMay` capability table (SA-762; `can-edit-prices.ts` deleted on api and web), receipt footer, counter park and resume (SA-748), B1043 one invoice-totals builder (`sumInvoiceTotals`), `unitWords()` (U-3a), create-order keyboard v2 and backdate link, shared anchored dropdown list, buyer `QtyStepper`, overdue sweep enforced by default. #3360 (billing B1) and #3364 (counter pass 2) were ejected and are not on master. Two older notes were corrected in place (price-edit gate, `REFUND_TENDER_KNOWN`). The oldest changelog bullet (trains B and C, 2026-09-27) moved to `CHANGELOG-ARCHIVE.md` to stay at 30. `mappedSha` = `3ba0d16a97b47b0b2de3a5567b09b0c67854a13a`."
 }
