@@ -325,7 +325,7 @@ export class InlineReturnsService {
     // unlocked dry run and locked in this same first statement (id-sorted with the rest), BEFORE any source invoice is written
     // and the order's sibling invoices are asked for: the order a credit note create (Order, then its invoices) takes. A dry
     // run that fails locks nothing extra; the priced chunks are re-checked under the locks just below.
-    const discovered = await this.discoverChunkSourceOrders(tx, dto, user);
+    const discovered = await this.discoverChunkSourceOrders(dto, user);
     const lockedOrders = new Set<string>([
       dto.orderId,
       ...(dto.sourceOrderId ? [dto.sourceOrderId] : []),
@@ -806,7 +806,6 @@ export class InlineReturnsService {
    * written). Any failure is "none found": the in-lock pricing is authoritative and refuses on its own.
    */
   private async discoverChunkSourceOrders(
-    tx: any,
     dto: CaptureInlineReturnDto,
     user: JwtPayload,
   ): Promise<string[]> {
@@ -819,7 +818,7 @@ export class InlineReturnsService {
           sourceOrderId: dto.sourceOrderId,
         },
         user,
-        tx,
+        this.prisma.forTenant(), // an unlocked read on its own connection, like the preflights
         { defaultSourceOrderId: dto.orderId },
       );
       return [
