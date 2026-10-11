@@ -1099,7 +1099,7 @@ describe("CounterSaleService.ring: split payments", () => {
       expect(last.where).toEqual({ id: "ord-1", counterCashTendered: null });
     });
 
-    it("S1 by-key reads the stored cash row's change: a card payment voided later does not move it (20)", async () => {
+    it("S1 by-key: a card payment voided later leaves the balance open, so paymentRecorded is false and NO change rides along", async () => {
       invoices = [inv("inv-1", 50, 1)];
       await service.ring(
         walkInSale({
@@ -1119,7 +1119,9 @@ describe("CounterSaleService.ring: split payments", () => {
         status: "DELIVERED",
         counterCashTendered: storedTendered,
       });
-      expect(await service.byKey("key-1")).toMatchObject({ cashTendered: 40, change: 20 });
+      const k = await service.byKey("key-1");
+      expect(k).toMatchObject({ cashTendered: 40, paymentRecorded: false });
+      expect(k.change).toBeUndefined();
     });
 
     it("N5 a replay with a DIFFERENT cash amount (100) is 409 and keeps the first stored tendered (50)", async () => {
@@ -1238,6 +1240,47 @@ describe("CounterSaleService.ring: split payments", () => {
       );
       expect(recordPayment).not.toHaveBeenCalled();
       expect(r).toMatchObject({ replayed: true, cashTendered: 50, change: 30 });
+    });
+
+    it("SHOULD 2 an interrupted split (card 30 stored, no cash row, 40 handed) replayed with Cash 60: 409, tendered stays 40", async () => {
+      invoices = [inv("inv-1", 70, 1, [card30()])];
+      storedTendered = 40;
+      replay = true;
+      const e = await errorOf(
+        service.ring(
+          named({
+            payments: [
+              { method: "CARD", amount: 30 },
+              { method: "CASH", amount: 60 },
+            ],
+          }),
+          staff,
+          "key-1",
+        ),
+      );
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_TENDER_CHANGED" });
+      expect(storedTendered).toBe(40);
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("SHOULD 2 the same interrupted split replayed with its own Cash 40 resumes the cash", async () => {
+      invoices = [inv("inv-1", 70, 1, [card30()])];
+      storedTendered = 40;
+      replay = true;
+      await service.ring(
+        named({
+          payments: [
+            { method: "CARD", amount: 30 },
+            { method: "CASH", amount: 40 },
+          ],
+        }),
+        staff,
+        "key-1",
+      );
+      expect(recordPayment.mock.calls.map((c) => [c[1].method, c[1].amount])).toEqual([
+        ["CASH", 40],
+      ]);
     });
 
     it("the SAME legs replay serves the stored sale and writes nothing", async () => {

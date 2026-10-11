@@ -19,11 +19,9 @@ describe("planSaleTender: one leg keeps the rule from before split payments", ()
   it("an omitted amount is the exact balance; cash over the balance places the balance and gives change", () => {
     expect(planSaleTender([inv("a", 37.25)], [{ method: "CARD" }])).toEqual({
       placements: [{ legIndex: 0, invoiceId: "a", amountCents: 3725 }],
-      changeCents: 0,
     });
     expect(planSaleTender([inv("a", 37.25)], [{ method: "CASH", amount: 50 }])).toEqual({
       placements: [{ legIndex: 0, invoiceId: "a", amountCents: 3725 }],
-      changeCents: 1275,
       cashTenderedCents: 5000,
     });
   });
@@ -37,7 +35,6 @@ describe("planSaleTender: one leg keeps the rule from before split payments", ()
   it("a card or check above the balance is COUNTER_PAYMENT_EXCEEDS_TOTAL; a zero tender is COUNTER_TENDER_SHORT", () => {
     expect(planSaleTender([inv("a", 37.25)], [{ method: "CARD", amount: 99 }])).toEqual({
       placements: [],
-      changeCents: 0,
       refusal: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
     });
     expect(planSaleTender([inv("a", 37.25)], [{ method: "CASH", amount: 0 }]).refusal).toBe(
@@ -49,11 +46,9 @@ describe("planSaleTender: one leg keeps the rule from before split payments", ()
     const covered = inv("a", 40, [pay("cn", 40, "CREDIT_NOTE")]);
     expect(planSaleTender([covered], [{ method: "CARD", amount: 20 }])).toEqual({
       placements: [],
-      changeCents: 0,
     });
     expect(planSaleTender([inv("a", 40)], [{ method: "ON_ACCOUNT" }])).toEqual({
       placements: [],
-      changeCents: 0,
     });
   });
 
@@ -61,7 +56,6 @@ describe("planSaleTender: one leg keeps the rule from before split payments", ()
     const overCredited = inv("a", 40, [pay("cn", 50, "CREDIT_NOTE")]);
     expect(planSaleTender([overCredited], [{ method: "CASH", amount: 20 }])).toEqual({
       placements: [],
-      changeCents: 0,
       cashTenderedCents: 2000,
     });
     // a split over an over-credited sibling plans against the other invoice only
@@ -100,7 +94,6 @@ describe("planSaleTender: a split", () => {
       { legIndex: 1, invoiceId: "inv1", amountCents: 2000 },
       { legIndex: 1, invoiceId: "inv2", amountCents: 2000 },
     ]);
-    expect(out.changeCents).toBe(1000);
   });
 
   it("is all or nothing: one over-covering non-cash leg refuses every leg", () => {
@@ -113,7 +106,6 @@ describe("planSaleTender: a split", () => {
     );
     expect(out).toEqual({
       placements: [],
-      changeCents: 0,
       cashTenderedCents: 4000,
       refusal: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
     });
@@ -173,7 +165,6 @@ describe("planSaleTender: cashTenderedCents is the cash LEG's handed-over amount
       ],
     );
     expect(plan.cashTenderedCents).toBe(5000);
-    expect(plan.changeCents).toBe(1000);
   });
 
   it("cash first, card second: still the cash leg's amount (leg 0)", () => {

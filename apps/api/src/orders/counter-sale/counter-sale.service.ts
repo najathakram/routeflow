@@ -222,9 +222,10 @@ export class CounterSaleService {
       }
     }
 
-    // SA-764: the stored tendered as the tender left it (the pre-tender read above may hold a stale figure).
-    // EVERY request method (row 290), so a CARD or ON_ACCOUNT replay on a sale first tendered in CASH serves
-    // what by-key serves. A new ON_ACCOUNT sale stores no tendered (null): nothing is served, nothing is written.
+    // SA-764: the stored tendered as the tender left it (the pre-tender read above may hold a stale figure), for every
+    // request method. A replay whose tender differs from the stored one never gets here (409 COUNTER_TENDER_CHANGED from
+    // the tender step); an ON_ACCOUNT replay of a CASH sale does, and serves what by-key serves. A new ON_ACCOUNT sale
+    // stores no tendered (null): nothing is served, nothing is written.
     const tendered = await this.prisma.forTenant().order.findFirst({
       where: { id: orderId },
       select: { counterCashTendered: true, tax: true },
