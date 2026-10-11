@@ -320,6 +320,16 @@ export class UsersService {
       }
     }
     if (roleChanged) {
+      // A role change burned the outstanding link above; a user who still has no password of their own (and is ACTIVE) must not
+      // be locked out by it. (The email branch already re-issued when the email moved in the same edit.)
+      if (
+        !emailChanged &&
+        updated.forcePasswordChange &&
+        updated.status === "ACTIVE" &&
+        updated.email
+      ) {
+        await this.sendSetPasswordInvite(userId, updated.email, updated.username);
+      }
       await this.notifyRoleChanged(
         userId,
         updated.email,

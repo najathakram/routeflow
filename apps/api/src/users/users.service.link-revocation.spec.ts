@@ -161,6 +161,67 @@ describe("UsersService — link revocation on standing changes", () => {
       expect(tx.events).toEqual(["write", "revoke"]);
     });
 
+    describe("a role change re-issues a link only when the user still needs one (forcePasswordChange and ACTIVE)", () => {
+      const withTxUser = (over: Record<string, unknown>) =>
+        (tx.user.update as jest.Mock).mockImplementation((args: any) => {
+          tx.events.push("write");
+          return Promise.resolve({
+            id: "u1",
+            username: "acme_op",
+            email: "old@acme.example",
+            role: args.data.role ?? "OPERATOR",
+            status: "ACTIVE",
+            forcePasswordChange: false,
+            ...over,
+          });
+        });
+
+      it("an invited user who has not set a password gets a fresh link after the role change", async () => {
+        prisma.user.findUnique.mockResolvedValue(existing() as any);
+        withTxUser({ forcePasswordChange: true });
+
+        await service.updateUser("u1", { role: "DRIVER" } as any, "admin", "TENANT_ADMIN" as any);
+
+        expect(burnedFor()).toEqual(["u1"]);
+        expect(email.sendSetPasswordEmail).toHaveBeenCalledTimes(1);
+        expect(email.sendSetPasswordEmail).toHaveBeenCalledWith(
+          expect.objectContaining({ to: "old@acme.example" }),
+        );
+      });
+
+      it("a user who already set a password gets no new link", async () => {
+        prisma.user.findUnique.mockResolvedValue(existing() as any);
+        withTxUser({ forcePasswordChange: false });
+
+        await service.updateUser("u1", { role: "DRIVER" } as any, "admin", "TENANT_ADMIN" as any);
+
+        expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
+      });
+
+      it("an INACTIVE user gets no new link (reactivation does not restore a burned link either)", async () => {
+        prisma.user.findUnique.mockResolvedValue(existing({ status: "INACTIVE" }) as any);
+        withTxUser({ forcePasswordChange: true, status: "INACTIVE" });
+
+        await service.updateUser("u1", { role: "DRIVER" } as any, "admin", "TENANT_ADMIN" as any);
+
+        expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
+      });
+
+      it("email AND role changed in one edit sends exactly one fresh link", async () => {
+        prisma.user.findUnique.mockResolvedValue(existing() as any);
+        withTxUser({ forcePasswordChange: true, email: "new@acme.example" });
+
+        await service.updateUser(
+          "u1",
+          { role: "DRIVER", email: "new@acme.example" } as any,
+          "admin",
+          "TENANT_ADMIN" as any,
+        );
+
+        expect(email.sendSetPasswordEmail).toHaveBeenCalledTimes(1);
+      });
+    });
+
     it("an edit that changes neither email nor role (same email re-sent, username only) burns nothing", async () => {
       prisma.user.findUnique.mockResolvedValue(existing() as any);
 
