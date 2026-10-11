@@ -1,5 +1,6 @@
 import {
   DAY_CLOSE_DENOMINATIONS,
+  dayCloseCashFromSales,
   dayCloseWindowIsEmpty,
   DAY_CLOSE_MAX_COUNT,
   sumDenominations,
@@ -123,5 +124,14 @@ describe("dayCloseWindowIsEmpty", () => {
     // a hand-over row is activity even when its amount is zero (the stored field is optional: older closes lack it)
     expect(dayCloseWindowIsEmpty({ ...empty, handOver: { count: 1 } })).toBe(false);
     expect(dayCloseWindowIsEmpty({ ...empty, handOver: { count: 0 } })).toBe(true);
+  });
+});
+
+describe("dayCloseCashFromSales", () => {
+  it("is the cash taken before the float and the cash refunds, rounded to cents", () => {
+    expect(dayCloseCashFromSales(130, 100, 0)).toBe(30);
+    expect(dayCloseCashFromSales(125, 100, 5)).toBe(30);
+    expect(dayCloseCashFromSales(100.3, 100, 0)).toBe(0.3);
+    expect(dayCloseCashFromSales(0.3, 0.1, 0)).toBe(0.2);
   });
 });

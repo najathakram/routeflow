@@ -121,3 +121,16 @@ export function dayCloseWindowIsEmpty(t: DayCloseWindowTotals): boolean {
     (t.handOver?.count ?? 0) === 0
   );
 }
+
+/**
+ * The Z report's "Cash from sales" line: the cash taken at the till in the window, before the float and before cash refunds.
+ * The stored close carries `expectedCash` (= openingFloat + tillCash - cashRefunds, computed by the server) and the refunds by
+ * tender, so the line is derived once, here, for the email and the screen alike: expectedCash - openingFloat + cash refunds.
+ */
+export function dayCloseCashFromSales(
+  expectedCash: number,
+  openingFloat: number,
+  cashRefunds: number,
+): number {
+  return roundMoney(expectedCash - openingFloat + cashRefunds);
+}
