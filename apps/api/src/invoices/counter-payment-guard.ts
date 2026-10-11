@@ -192,7 +192,8 @@ async function assertDatedOk(
   if (!scope) return given ?? new Date();
   if (!isTillCashRow(orderId ?? "", row, scope)) {
     // A CARD / CHECK / hand-over tender moves a close total too (moneyIn): its date may not sit inside a CLOSED window.
-    const when = given ?? new Date();
+    // no given date: "now" is the DATABASE clock the close reads its cutoff from, as in the cash branch below
+    const when = given ?? (await dbClockNow(tx));
     await assertOpen(tx, scope, { ...row, paidAt: when });
     return when;
   }
