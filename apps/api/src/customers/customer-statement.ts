@@ -9,6 +9,12 @@ import {
 } from "../invoices/payment-predicates";
 import { KPI_SUMMARY_EXCLUDED, LIFETIME_INVOICED_EXCLUDED } from "../invoices/invoice-status-sets";
 import { loadCreditExposure, OPEN_ORDER_STATUSES } from "../invoices/credit-exposure";
+import {
+  classifyInvoiceBalance,
+  type ClassifiableInvoice,
+} from "../invoices/invoice-balance-classify";
+import { overdueCutoff } from "../common/calendar-date";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 
 /**
  * The customer statement builds, moved verbatim out of `CustomersService` (size-ratchet headroom, no
@@ -17,6 +23,26 @@ import { loadCreditExposure, OPEN_ORDER_STATUSES } from "../invoices/credit-expo
  * `prisma.forTenant()` exactly as the service methods did; the service methods keep their public
  * signatures and delegate here (the operator route resolves the customer first, in the service).
  */
+
+/**
+ * Row 309 (SA-770 "one predicate"): the statement's overdue figure = Σ the POSITIVE balance of every open
+ * invoice the one classifier calls overdue: a balance is due AND the due DAY has ended in the statement's
+ * own tenant zone (RF-202: an invoice due today is NOT overdue; UTC when the tenant has no zone). The zone
+ * is resolved ONCE per statement by the caller. Each contribution is the classifier's
+ * clamped balance (max(0, roundMoney(total - confirmed))), so an overpaid open invoice adds 0.
+ */
+function statementOverdueAmount(
+  open: ReadonlyArray<ClassifiableInvoice>,
+  timeZone: string | null,
+): number {
+  const cutoff = overdueCutoff(new Date(), timeZone);
+  let sum = 0;
+  for (const inv of open) {
+    const { balanceDue, isOverdue } = classifyInvoiceBalance(inv, cutoff);
+    if (isOverdue) sum += balanceDue;
+  }
+  return roundMoney(sum);
+}
 
 /** The buyer's own statement: outstanding / overdue / credit / lifetime figures + the capped ledger. */
 export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) {
@@ -131,11 +157,7 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
     openInvoicesWithPaid.reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0),
   );
 
-  const overdue = roundMoney(
-    openInvoicesWithPaid
-      .filter((i) => i.dueDate && new Date(i.dueDate) < new Date())
-      .reduce((sum, i) => sum + Math.max(0, roundMoney(Number(i.total) - i.amountPaid)), 0),
-  );
+  const overdue = statementOverdueAmount(openInvoicesWithPaid, await tenantTimeZone(prisma));
 
   // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
   // (not face amount) prevents the double-count — a partial credit already sits on
@@ -362,11 +384,7 @@ export async function buildOperatorStatement(
     openInvoicesWithPaid.reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0),
   );
 
-  const overdue = roundMoney(
-    openInvoicesWithPaid
-      .filter((i) => i.dueDate && new Date(i.dueDate) < new Date())
-      .reduce((sum, i) => sum + Math.max(0, roundMoney(Number(i.total) - i.amountPaid)), 0),
-  );
+  const overdue = statementOverdueAmount(openInvoicesWithPaid, await tenantTimeZone(prisma));
 
   // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
   // (not face amount) prevents the double-count — a partial credit already sits on
