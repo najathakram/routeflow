@@ -259,75 +259,88 @@ export class InventoryService {
       explicitBoxed && unitsPerBox > 1 ? costDecimal(rawUnitCost.div(unitsPerBox)) : rawUnitCost;
 
     const qty = new Prisma.Decimal(qtyPieces);
-    const currentStock = product.currentStock;
     const effectiveDate = effectiveDateOf(dto.effectiveDate);
 
-    // New weighted average (used for AVCO; FIFO/LIFO still update for display)
-    const newAvgCost = nextAverageCost(currentStock, product.averageCost, qty, unitCost);
-    const updatesAverage = product.costingMethod !== CostingMethod.STANDARD;
-    const avgCostAfter = updatesAverage ? newAvgCost : (product.averageCost ?? null);
-
-    const result = await this.prisma.tenantTransaction(async (tx) => {
-      // Always create a StockLot for lot-tracking (used by FIFO/LIFO)
-      await tx.stockLot.create({
-        data: {
-          productId: dto.productId,
-          purchaseDate: effectiveDate,
-          qty,
-          remainingQty: qty,
-          unitCost,
-          reference: dto.reference,
-          notes: dto.notes,
-        },
-      });
-
-      // Update stock and cost based on costing method
-      const costUpdate: any = { currentStock: { increment: qty } };
-      if (updatesAverage) {
-        // For FIFO/LIFO we still store the running average in averageCost for reference
-        costUpdate.averageCost = newAvgCost;
-      }
-      // STANDARD: don't touch averageCost
-
-      // B562 PR-3: snapshots are write-once now (SA-136 §4), so `stockAfter` is the counter this
-      // update RETURNED (SA-136 §1), never the pre-transaction read — the row is written after it.
-      const updated = await tx.product.update({
-        where: { id: dto.productId },
-        data: costUpdate,
-        select: { currentStock: true },
-      });
-
-      const movement = await tx.stockMovement.create({
-        data: {
-          productId: dto.productId,
-          type: MovementType.PURCHASE,
-          quantity: qty,
-          unitCost,
-          avgCostAfter,
-          stockAfter: updated.currentStock,
-          supplierId: dto.supplierId,
-          reference: dto.reference,
-          notes: dto.notes,
-          performedById,
-          // B562: the effective date is the accounting date; createdAt stays write-once.
-          effectiveAt: effectiveDate,
-        },
-      });
-
-      // A backdated purchase can change the average every later row implies. Later snapshots stay
-      // as written (SA-136 §4); the replay appends one dated COST_BASIS correction if needed.
-      const newer = await tx.stockMovement.count({
-        where: { productId: dto.productId, effectiveAt: { gt: effectiveDate } },
-      });
-      if (newer > 0) {
-        await this.recomputeProductInTx(tx, dto.productId, {
-          trigger: `PURCHASE:${movement.id}`,
-          performedById,
+    // SA-767 L-2 (B286 / #2840): lock the product, THEN read the stock and average the blend comes
+    // from, inside the tx. The read above only validates (existence, sellable, pack size): a purchase
+    // committing in between would have its blend overwritten by an absolute value computed from it.
+    // The whole tx re-runs on a 40P01 / 40001 / P2034 (nothing is captured across attempts); the
+    // alert fires after the commit.
+    const result = await retryStockTx("inventory.recordPurchase", () =>
+      this.prisma.tenantTransaction(async (tx) => {
+        await this.lockProducts(tx, [dto.productId]);
+        const locked = await tx.product.findUnique({
+          where: { id: dto.productId },
+          select: { currentStock: true, averageCost: true, costingMethod: true },
         });
-      }
+        if (!locked) throw new NotFoundException("Product not found");
 
-      return movement;
-    });
+        // New weighted average (used for AVCO; FIFO/LIFO still update for display)
+        const newAvgCost = nextAverageCost(locked.currentStock, locked.averageCost, qty, unitCost);
+        const updatesAverage = locked.costingMethod !== CostingMethod.STANDARD;
+        const avgCostAfter = updatesAverage ? newAvgCost : (locked.averageCost ?? null);
+
+        // Always create a StockLot for lot-tracking (used by FIFO/LIFO)
+        await tx.stockLot.create({
+          data: {
+            productId: dto.productId,
+            purchaseDate: effectiveDate,
+            qty,
+            remainingQty: qty,
+            unitCost,
+            reference: dto.reference,
+            notes: dto.notes,
+          },
+        });
+
+        // Update stock and cost based on costing method
+        const costUpdate: any = { currentStock: { increment: qty } };
+        if (updatesAverage) {
+          // For FIFO/LIFO we still store the running average in averageCost for reference
+          costUpdate.averageCost = newAvgCost;
+        }
+        // STANDARD: don't touch averageCost
+
+        // B562 PR-3: snapshots are write-once now (SA-136 §4), so `stockAfter` is the counter this
+        // update RETURNED (SA-136 §1), never a read made before it — the row is written after it.
+        const updated = await tx.product.update({
+          where: { id: dto.productId },
+          data: costUpdate,
+          select: { currentStock: true },
+        });
+
+        const movement = await tx.stockMovement.create({
+          data: {
+            productId: dto.productId,
+            type: MovementType.PURCHASE,
+            quantity: qty,
+            unitCost,
+            avgCostAfter,
+            stockAfter: updated.currentStock,
+            supplierId: dto.supplierId,
+            reference: dto.reference,
+            notes: dto.notes,
+            performedById,
+            // B562: the effective date is the accounting date; createdAt stays write-once.
+            effectiveAt: effectiveDate,
+          },
+        });
+
+        // A backdated purchase can change the average every later row implies. Later snapshots stay
+        // as written (SA-136 §4); the replay appends one dated COST_BASIS correction if needed.
+        const newer = await tx.stockMovement.count({
+          where: { productId: dto.productId, effectiveAt: { gt: effectiveDate } },
+        });
+        if (newer > 0) {
+          await this.recomputeProductInTx(tx, dto.productId, {
+            trigger: `PURCHASE:${movement.id}`,
+            performedById,
+          });
+        }
+
+        return movement;
+      }),
+    );
 
     this.fireStockAlerts([dto.productId]);
     return result;
