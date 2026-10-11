@@ -1994,8 +1994,8 @@ function ProductPickView({
     asDraft = false,
   ) => {
     if (posMode) {
-      const a = posMergeAlert(!!orderDate.trim(), (c) => void submitOrder(c, asDraft));
-      return chooseAction(a.title, a.message, a.buttons);
+      const mergePrompt = posMergeAlert(!!orderDate.trim(), (c) => void submitOrder(c, asDraft));
+      return chooseAction(mergePrompt.title, mergePrompt.message, mergePrompt.buttons);
     }
     chooseAction(
       "Open order exists",
