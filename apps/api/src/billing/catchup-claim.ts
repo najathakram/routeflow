@@ -31,6 +31,9 @@ export const CATCHUP_ORPHAN_AFTER_MS = 25 * 60 * 60 * 1000;
  */
 export const CATCHUP_LATE_ALERT_DAYS = 3;
 
+/** Stripe retries a failed webhook delivery for up to this many days. */
+export const STRIPE_WEBHOOK_RETRY_DAYS = 3;
+
 /** The Stripe-side facts a claim is judged from. */
 export interface InvoiceFacts {
   status: string | null;

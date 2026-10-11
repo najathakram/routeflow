@@ -40,11 +40,15 @@ const novOpen = {
 };
 const octPaid = { ...octOpen, id: "inv_oct_paid", status: "PAID", periodKey: "x" };
 
+/** Every fixture session expires at a FIXED instant: nothing in this spec reads the real clock (c). */
+const SESSION_EXPIRES_AT = Math.floor(Date.parse("2026-10-10T10:00:00Z") / 1000);
+
 const sessionOf = (over: Record<string, unknown> = {}) => ({
   id: SESSION,
   customer: "cus_1",
   subscription: SUB,
   payment_status: "unpaid",
+  expires_at: SESSION_EXPIRES_AT,
   metadata: { tenantId: "t1", catchup: "2026-10", ...(over.metadata as object) },
   ...over,
 });
@@ -1140,39 +1144,64 @@ describe("Opus SHOULD-FIX 1: the prepaid stub item survives a redelivery", () =>
   });
 });
 
-describe("Opus item 10: the stub's automatically_finalizes_at is never in the past", () => {
-  it("12:00Z of the paid-through day, but at least now + 1 h (Stripe rejects a past timestamp)", async () => {
-    const past = Math.floor(Date.parse("2026-11-14T12:00:00Z") / 1000);
-    const sess = (finalizeAt: number) =>
-      sessionOf({
-        metadata: {
-          tenantId: "t1",
-          catchup: "prepaid",
-          catchup_shape: "trial",
-          catchup_stub_cents: "17567",
-          catchup_finalize_at: String(finalizeAt),
-        },
-      });
+describe("(c)/(d) the stub's automatically_finalizes_at is deterministic and never in the past", () => {
+  const WEBHOOK_RETRY_S = 3 * 24 * 3600;
+  const sess = (finalizeAt: number, expiresAt?: number) =>
+    sessionOf({
+      ...(expiresAt === undefined ? {} : { expires_at: expiresAt }),
+      metadata: {
+        tenantId: "t1",
+        catchup: "prepaid",
+        catchup_shape: "trial",
+        catchup_stub_cents: "17567",
+        catchup_finalize_at: String(finalizeAt),
+      },
+    });
+  const claimOpen = () =>
+    make({ stripeSubId: SUB, catchupState: "SESSION_OPEN", catchupSessionId: SESSION }, [octPaid]);
+  const finalizeAtOf = (h: ReturnType<typeof make>) =>
+    h.stripe.client.invoices.create.mock.calls[0][0].automatically_finalizes_at;
+  const sec = (iso: string) => Math.floor(Date.parse(iso) / 1000);
+
+  it("the planned time (12:00Z of the paid-through day) stands when it is after the floor", async () => {
+    const h = claimOpen();
+    await h.svc.onSessionCompleted(sess(sec("2026-11-14T12:00:00Z"))); // session expires Oct 10
+    expect(finalizeAtOf(h)).toBe(sec("2026-11-14T12:00:00Z"));
+  });
+
+  it("never earlier than the session's expiry + Stripe's 3-day webhook retry window + 1 h: valid on EVERY retry", async () => {
+    const expires = sec("2026-11-14T10:00:00Z");
+    const h = claimOpen();
+    await h.svc.onSessionCompleted(sess(sec("2026-11-14T12:00:00Z"), expires));
+    expect(finalizeAtOf(h)).toBe(expires + WEBHOOK_RETRY_S + 3600);
+  });
+
+  it("the SAME session yields the SAME timestamp at any wall-clock time (a retried create must not change its params)", async () => {
+    const nowSpy = jest.spyOn(Date, "now");
+    try {
+      const seen: number[] = [];
+      for (const wall of ["2026-10-09T10:00:00Z", "2026-10-10T09:00:00Z", "2030-01-01T00:00:00Z"]) {
+        nowSpy.mockReturnValue(Date.parse(wall));
+        const h = claimOpen();
+        await h.svc.onSessionCompleted(sess(sec("2026-10-12T12:00:00Z")));
+        seen.push(finalizeAtOf(h));
+      }
+      expect(new Set(seen).size).toBe(1);
+      expect(seen[0]).toBe(SESSION_EXPIRES_AT + WEBHOOK_RETRY_S + 3600);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("a session with no expiry (hand-built) falls back to now + 1 h, as before", async () => {
     const nowSpy = jest.spyOn(Date, "now");
     try {
       nowSpy.mockReturnValue(Date.parse("2026-11-14T15:00:00Z")); // after that day's 12:00Z
-      const a = make(
-        { stripeSubId: SUB, catchupState: "SESSION_OPEN", catchupSessionId: SESSION },
-        [octPaid],
-      );
-      await a.svc.onSessionCompleted(sess(past));
-      expect(a.stripe.client.invoices.create.mock.calls[0][0].automatically_finalizes_at).toBe(
-        Math.floor(Date.parse("2026-11-14T16:00:00Z") / 1000),
-      );
-      nowSpy.mockReturnValue(Date.parse("2026-10-09T10:00:00Z")); // well before: the planned time stands
-      const b = make(
-        { stripeSubId: SUB, catchupState: "SESSION_OPEN", catchupSessionId: SESSION },
-        [octPaid],
-      );
-      await b.svc.onSessionCompleted(sess(past));
-      expect(b.stripe.client.invoices.create.mock.calls[0][0].automatically_finalizes_at).toBe(
-        past,
-      );
+      const h = claimOpen();
+      const noExpiry = sess(sec("2026-11-14T12:00:00Z"));
+      delete (noExpiry as any).expires_at;
+      await h.svc.onSessionCompleted(noExpiry);
+      expect(finalizeAtOf(h)).toBe(sec("2026-11-14T16:00:00Z"));
     } finally {
       nowSpy.mockRestore();
     }

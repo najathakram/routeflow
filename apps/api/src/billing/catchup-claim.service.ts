@@ -13,6 +13,7 @@ import {
   CATCHUP_LATE_ALERT_DAYS,
   CATCHUP_META,
   CATCHUP_ORPHAN_AFTER_MS,
+  STRIPE_WEBHOOK_RETRY_DAYS,
   claimRefusal,
   invoiceDefinitivelyFailed,
   invoiceIsPaid,
@@ -382,12 +383,7 @@ export class CatchupClaimService {
     const stubCents = Number(meta[CATCHUP_META.stubCents] ?? 0);
     if (meta[CATCHUP_META.shape] === "trial" && Number.isInteger(stubCents) && stubCents > 0) {
       const sub = await this.stripe.getSubscription(subId);
-      // r3 N3: finalized at 12:00Z of the paid-through day - but Stripe rejects a past timestamp, so never earlier
-      // than one hour from now.
-      const finalizeAt = Math.max(
-        Number(meta[CATCHUP_META.finalizeAt]) || 0,
-        Math.floor(Date.now() / 1000) + 3600,
-      );
+      const finalizeAt = this.stubFinalizeAt(session, meta);
       const draft = await this.stripe.client.invoices.create(
         {
           customer: stripeRefId(session.customer) ?? stripeRefId(sub?.customer),
@@ -417,6 +413,26 @@ export class CatchupClaimService {
       return latest;
     }
     return null;
+  }
+
+  /**
+   * (d) When the prepaid stub's draft invoice finalizes. r3 N3: 12:00Z of the paid-through day - but Stripe rejects
+   * a past timestamp. The floor used to be `now + 1 h` read at call time, so a REDELIVERY computed a different
+   * value under the same idempotency key (`:trial-stub:<session>`) and Stripe answered with an idempotency error.
+   * The floor is now derived from the SESSION alone: its expiry + Stripe's whole webhook retry window + 1 h. A
+   * completion can only arrive before the session expires and is retried for at most that window afterwards, so the
+   * value is the same on every delivery AND still in the future on the last one. (A session with no expiry - only a
+   * hand-built one - keeps the old call-time floor.) At worst this delays the stub's finalize by about a day when the
+   * paid-through date is within ~4 days of the checkout; the subscription itself is in its trial until then.
+   */
+  private stubFinalizeAt(session: any, meta: Record<string, string>): number {
+    const planned = Number(meta[CATCHUP_META.finalizeAt]) || 0;
+    const expiresAt = Number(session?.expires_at);
+    const floor =
+      Number.isFinite(expiresAt) && expiresAt > 0
+        ? expiresAt + STRIPE_WEBHOOK_RETRY_DAYS * 24 * 3600 + 3600
+        : Math.floor(Date.now() / 1000) + 3600;
+    return Math.max(planned, floor);
   }
 
   /**
