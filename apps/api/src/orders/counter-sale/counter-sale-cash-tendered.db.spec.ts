@@ -287,9 +287,12 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
     await tenantCtx.run(tenantId, () =>
       (
         service as unknown as {
-          tender: (dto: unknown, orderId: string) => Promise<unknown>;
+          tender: (
+            legs: ReadonlyArray<{ method: string; amount?: number }>,
+            orderId: string,
+          ) => Promise<unknown>;
         }
-      ).tender({ payment: { method: "CASH", amount: 70 } }, cashOrderId),
+      ).tender([{ method: "CASH", amount: 70 }], cashOrderId),
     );
     expect(Number(await stored(cashOrderId))).toBe(50);
     // the DB filter itself: a direct write behind the NULL guard changes nothing
