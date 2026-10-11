@@ -45,6 +45,7 @@ import {
 } from "../credit-notes/line-credit-headroom";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isLockUnavailableError } from "../common/db-locks";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import {
   EXTERNAL_REFUND_METHOD,
   isRefundPending,
@@ -1212,7 +1213,7 @@ export class ReturnsService {
     return { amount, invoiceId: latest.id, creditable, ...why };
   }
 
-  async processRefund(id: string, dto?: ProcessRefundDto) {
+  async processRefund(id: string, dto?: ProcessRefundDto, actor?: JwtPayload) {
     const method = dto?.method ?? "CREDIT_NOTE";
     // Row 59: a refund is a money write on one tenant's return; a tenantless session is refused before any read.
     if (!this.prisma.getTenantId()) {
@@ -1248,7 +1249,7 @@ export class ReturnsService {
 
     // SA-737: ONE claim transaction for both methods (SA-740r2 / R20-2 for the recorded refund): Return, Order, invoices locked in
     // house order, the basis recomputed under them, then the RECEIVED→REFUNDED claim carrying the amount. The mint below is not in it.
-    const claim = await this.claimRefund(ret, method, dto?.tender, firstBasis);
+    const claim = await this.claimRefund(ret, method, dto?.tender, firstBasis, actor);
     if (method === EXTERNAL_REFUND_METHOD) return claim.row;
     const {
       amount: refundAmount,
@@ -1366,6 +1367,7 @@ export class ReturnsService {
     method: string,
     tender: RefundTender | undefined,
     firstBasis: object,
+    actor?: JwtPayload,
   ): Promise<{ row: any; basis: RefundBasis }> {
     const id = ret.id;
     const tenantId = this.prisma.getTenantId();
@@ -1431,6 +1433,30 @@ export class ReturnsService {
           },
         });
         if (claimed.count === 0) throw refundAlreadyResolved();
+        // SA-737 (parity with the inline refund's M5): cash leaving with no audit row is a gap; AWAITED, in this transaction,
+        // so no audit row means no refund
+        if (external) {
+          await tx.auditLog.create({
+            data: {
+              userId: actor?.sub ?? null,
+              impersonatedBy: actor?.impersonatedBy ?? null,
+              action: AUDIT_ACTIONS.STANDARD_REFUND_RECORDED,
+              entityType: "Return",
+              entityId: id,
+              meta: {
+                returnId: id,
+                returnNumber: locked.returnNumber ?? null,
+                orderId: orderId ?? null,
+                customerId: locked.customerId,
+                invoiceIds: resolved.invoiceIds,
+                amount: refundAmount,
+                tender: tender ?? null,
+                actor: actor?.sub ?? null,
+                impersonatedBy: actor?.impersonatedBy ?? null,
+              },
+            },
+          });
+        }
         const row = await tx.return.findUnique({ where: { id } });
         // one tender vocabulary (SA-740r2 item 8): answered like the inline refund, read back from the stored column
         return {

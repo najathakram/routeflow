@@ -16,6 +16,7 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 
 type Pay = { amount: number; status: string; method: string };
 type Inv = { id: string; status: string; total: number; payments: Pay[]; lineSubtotal?: number };
@@ -236,6 +237,64 @@ describe("ReturnsService.processRefund: the locked claim with a basis recomputed
       await refund("CREDIT_NOTE");
       expect(prisma.return.updateMany.mock.calls[0][0].data.refundAmount).toBe(40);
       expect(creditNotesCreate.mock.calls[0][0].amount).toBe(40);
+    });
+  });
+
+  describe("a recorded refund writes an AWAITED audit row in the claim transaction (parity with SA-727 M5)", () => {
+    const actor = { sub: "user-1", impersonatedBy: "root-1" } as any;
+
+    it("EXTERNAL_REFUND: one auditLog row, written in the claim transaction after the claim, carrying amount and tender", async () => {
+      let auditInsideTx: boolean | null = null;
+      prisma.auditLog.create.mockImplementation(async () => {
+        auditInsideTx = inClaimTx;
+        return {};
+      });
+      await service.processRefund(
+        "ret-1",
+        { method: "EXTERNAL_REFUND", tender: "CASH" } as any,
+        actor,
+      );
+      expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+      expect(auditInsideTx).toBe(true);
+      expect(prisma.auditLog.create.mock.invocationCallOrder[0]).toBeGreaterThan(
+        prisma.return.updateMany.mock.invocationCallOrder[0],
+      );
+      expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
+        userId: "user-1",
+        impersonatedBy: "root-1",
+        action: AUDIT_ACTIONS.STANDARD_REFUND_RECORDED,
+        entityType: "Return",
+        entityId: "ret-1",
+        meta: {
+          returnId: "ret-1",
+          orderId: "ord-1",
+          customerId: "cust-1",
+          invoiceIds: ["inv-1"],
+          amount: 20,
+          tender: "CASH",
+          actor: "user-1",
+        },
+      });
+    });
+
+    it("no audit row, no refund: a failing audit write fails the whole claim", async () => {
+      prisma.auditLog.create.mockRejectedValue(new Error("audit down"));
+      await expect(
+        service.processRefund("ret-1", { method: "EXTERNAL_REFUND" } as any, actor),
+      ).rejects.toThrow("audit down");
+    });
+
+    it("store credit writes no refund audit row (the credit note is its own record)", async () => {
+      await service.processRefund("ret-1", { method: "CREDIT_NOTE" } as any, actor);
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("a refund with no actor still records the row (system callers), userId null", async () => {
+      await service.processRefund("ret-1", { method: "EXTERNAL_REFUND" } as any);
+      expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
+        userId: null,
+        impersonatedBy: null,
+      });
     });
   });
 
