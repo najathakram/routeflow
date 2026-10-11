@@ -8,7 +8,7 @@ import { spawnSync } from "child_process";
 import * as path from "path";
 import { pathToFileURL } from "url";
 
-const LIB = pathToFileURL(
+const LIB_URL = pathToFileURL(
   path.resolve(__dirname, "..", "..", "scripts", "lib", "pause-report-keys.mjs"),
 ).href;
 
@@ -19,7 +19,7 @@ function run(tz: string, body: string): string {
       "--input-type=module",
       "-e",
       `import { createRequire } from "module";
-       import { episodeKey, utcTimestampTypes } from ${JSON.stringify(LIB)};
+       import { episodeKey, utcTimestampTypes } from ${JSON.stringify(LIB_URL)};
        const pg = createRequire(import.meta.url)("pg");
        ${body}`,
     ],
