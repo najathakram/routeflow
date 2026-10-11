@@ -1572,14 +1572,16 @@ export class BookkeepingService implements OnModuleInit {
       else if (daysPast <= interval * 3) buckets[bucketKeys[3]].push(entry);
       else buckets[bucketKeys[4]].push(entry);
     }
-    const sum = (arr: any[]) => arr.reduce((s, e) => s + e.balance, 0);
+    // Cents-exact balances summed per bucket, rounded so the buckets and the total agree with the
+    // finance dashboard's AR aging to the cent (no float dust).
+    const sum = (arr: any[]) => roundMoney(arr.reduce((s, e) => s + e.balance, 0));
     const totals: Record<string, number> = {};
     let grandTotal = 0;
     for (const key of bucketKeys) {
       totals[key] = sum(buckets[key]);
       grandTotal += totals[key];
     }
-    totals.total = grandTotal;
+    totals.total = roundMoney(grandTotal);
     depositOverdue.outstanding = roundMoney(depositOverdue.outstanding);
 
     // #1529: `depositOverdue` is its own top-level key, never a `totals` key (totals stay the AR
@@ -1753,7 +1755,8 @@ export class BookkeepingService implements OnModuleInit {
     // clamped): invoiced minus received over every non-draft invoice, shown with a Dr/Cr indicator, so an
     // overpayment reads as a credit (Cr).
     for (const cust of Object.values(byCustomer)) {
-      cust.closingBalance = cust.invoicedAmount - cust.receivedAmount;
+      // rounded to cents BEFORE the sign picks Dr/Cr, so float dust (1.1 - 11 x 0.1 = 2e-16) reads as zero
+      cust.closingBalance = roundMoney(cust.invoicedAmount - cust.receivedAmount);
       if (cust.closingBalance > 0) cust.indicator = "Dr";
       else if (cust.closingBalance < 0) cust.indicator = "Cr";
       else cust.indicator = "\u2014";

@@ -622,7 +622,8 @@ describe("BookkeepingService", () => {
       prisma.invoice.findMany.mockResolvedValue(spread());
       const res: any = await service.getArAgingInvoices();
       const vals = Object.entries(res.totals).filter(([k]) => k !== "total");
-      expect(vals.map(([, v]) => v)).toEqual([0.1, 0.3, 0.3, 0.4, 0.9]);
+      // current | 1-30 (0.2 + 0.1 + 0.3 = 0.6000000000000001 unrounded) | 31-60 | 61-90 | 90+
+      expect(vals.map(([, v]) => v)).toEqual([0.1, 0.6, 0.4, 0.7, 0.2]);
       expect(res.totals.total).toBe(2.0);
     });
 
