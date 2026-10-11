@@ -36,7 +36,11 @@ const REGISTRY: Record<string, Entry> = {
     reason: "manual invoice lines carry no order provenance and are never composed",
   },
   "invoices/invoices.service.ts::createSplitInvoices": { kind: "invoice" },
-  "invoices/invoices.service.ts::reconcileOrderDraftInvoice": { kind: "invoice" },
+  "invoices/invoices.service.ts::reconcileOrderDraftInvoiceLocked": { kind: "invoice" },
+  // SA-760 Q-760-1: the DRAFT-partial price follow. Its lines come from the shared builder (planned via
+  // deps.buildItem = buildInvoiceItemData) and a FIXED composed line keeps its component rows through the
+  // DRAFT-edit step applyComposedLineEdits, called in this same writer, in the follow tx under the R-1 locks.
+  "invoices/partial-price-follow.ts::applyPartialPriceFollow": { kind: "invoice" },
   "invoices/invoices.service.ts::rebuildSiblingDrafts": { kind: "invoice" },
   "invoices/invoices.service.ts::createPartialFromOrder": { kind: "invoice" },
   "invoices/invoices.service.ts::duplicate": {
@@ -55,6 +59,10 @@ const REGISTRY: Record<string, Entry> = {
   "orders/delivered-stamp.ts::clearUnevidencedDelivered": {
     kind: "exempt",
     reason: "deliveredQty reset to 0 only; no qty, price or composition column",
+  },
+  "orders/delivered-stamp.ts::stampDeliveredInFull": {
+    kind: "exempt",
+    reason: "SA-763r: writes only OrderItem.deliveredQty, on lines with no delivery evidence",
   },
   "orders/orders.service.ts::reopenOrder": { kind: "exempt", reason: "status only" },
   "orders/orders.service.ts::recomputeLineCategoryTaxes": {

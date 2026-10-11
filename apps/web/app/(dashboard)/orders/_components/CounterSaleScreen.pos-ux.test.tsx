@@ -138,6 +138,14 @@ describe("typed quantity editor (steppers stay)", () => {
     expect(screen.getByRole("button", { name: "Remove Cola" })).toBeInTheDocument();
   });
 
+  it("Tab from the Boxes field of a boxed line is natural (never redirected), even with a draft", async () => {
+    await buildCart();
+    const boxes = screen.getByLabelText("Boxes of Water") as HTMLInputElement;
+    boxes.focus();
+    fireEvent.change(boxes, { target: { value: "2" } });
+    expect(fireEvent.keyDown(boxes, { key: "Tab" })).toBe(true);
+  });
+
   it("a boxed line has box and piece inputs, normalized through normalizeBoxesPieces (42 pcs -> 3 boxes + 6 pcs)", async () => {
     await buildCart(); // Water 1 box + 3 pcs
     const boxes = screen.getByLabelText("Boxes of Water") as HTMLInputElement;

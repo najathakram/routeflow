@@ -16,6 +16,7 @@ import * as path from "path";
 import {
   CREDIT_LIMIT_MOVING_KEYS,
   LEGACY_SYSTEM_CONFIG_BEHAVIOUR,
+  OFF_HUB_SCREENS,
   PREFERENCE_KEYS as SHARED_PREFERENCE_KEYS,
   SETTINGS_REGISTRY,
   isRegisteredSettingKey,
@@ -132,6 +133,13 @@ describe("settings registry — rules", () => {
       plannedSurface: "later",
     });
     expect(validateSettingsRegistry([planted]).join("\n")).toMatch(/only the named credit_limit/);
+  });
+
+  it("orders.posMode is live: the Create Order switch (an off-hub screen) edits it", () => {
+    const r = SETTINGS_REGISTRY.find((x) => x.key === "orders.posMode")!;
+    expect(r.status).toBe("live");
+    expect(r.plannedSurface).toBeUndefined();
+    expect(Object.keys(OFF_HUB_SCREENS)).toContain(r.screen);
   });
 
   it("a pending or moving row cannot claim a screen (it must name a plannedSurface)", () => {

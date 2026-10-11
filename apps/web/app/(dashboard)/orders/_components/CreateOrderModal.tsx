@@ -88,7 +88,7 @@ import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
-import { API_ERROR_CODES } from "@routeflow/types";
+import { API_ERROR_CODES, staffMay } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
@@ -103,6 +103,8 @@ import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
 import { useStaffFulfilment } from "@/lib/fulfilment-caps";
+import { usePosFinish, usePosMode, PosFinishError } from "@/lib/api/pos-orders";
+import { POS_COPY } from "@/lib/pos-copy";
 import {
   OrderInlineReturnsSection,
   type OrderInlineReturnsSectionHandle,
@@ -223,6 +225,8 @@ export interface CreateOrderModalProps {
   onViewOrder?: (orderId: string) => void;
 }
 
+type SubmitOptions = { mergeChoice?: "merge" | "separate"; asDraft?: boolean };
+
 /** A 4xx the modal resolves with the operator and re-submits itself (merge prompt, license capture): the SAME attempt. */
 function isSameAttemptRefusal(err: any): boolean {
   const body = err?.response?.data;
@@ -246,6 +250,14 @@ export function CreateOrderModal({
 }: CreateOrderModalProps) {
   const { toast } = useToast();
   const createOrder = useCreateOrder({ localErrorToast: true });
+  const pos = usePosMode(); // SA-763r P-2: server-backed preference, never localStorage
+  const { user: posUser } = useAuth();
+  // The switch and PICKUP are for roles with USE_POS_MODE only: a stored preference never applies without it.
+  const posAllowed = staffMay(posUser?.role, "USE_POS_MODE");
+  const posMode = posAllowed && pos.posMode;
+  const posFinish = usePosFinish();
+  // Which POS finishing action the operator pressed ("Confirm & invoice" vs "Confirm only"); survives the merge prompt.
+  const posFinishRef = React.useRef<"invoice" | "confirm">("invoice");
   const submitKey = useCreateOrderSubmitKey(isOpen); // BUG-A: latch + Idempotency-Key per attempt
   // An unknown outcome (timeout / 5xx) may still have written the order. Closing mints a fresh key on
   // reopen (accepted residual risk), so tell the operator to check before re-entering it.
@@ -497,12 +509,13 @@ export function CreateOrderModal({
   const fulfillPath = watch("fulfillPath") ?? staffFulfilment.formDefault;
   // A ship-only account must not submit before /tenants/me/features answers (the path would fall back to
   // ROUTE) — and a FAILED answer keeps it blocked behind an inline Retry, never a silent ROUTE default.
-  const fulfilmentPending = !staffFulfilment.known;
+  // POS mode sends the explicit PICKUP path, which does not depend on the delivery settings: never blocked by them.
+  const fulfilmentPending = !staffFulfilment.known && !posMode;
   // Pre-check: as soon as a customer is selected, look up their active order so we can surface the prompt
   // the moment "Create Order" is clicked. It looks for the SAME merge target create would: same fulfil path.
   const { data: activeOrderForCustomer } = useActiveOrderForCustomer(
     selectedCustomer?.id,
-    fulfillPath,
+    posMode ? "PICKUP" : fulfillPath,
   );
 
   // Reset the builder each time it opens (a fresh session). For a resume, the
@@ -1392,17 +1405,14 @@ export function CreateOrderModal({
   // operator captures a license or accepts responsibility.
   const licenseRetryRef = React.useRef<{
     data: FormValues;
-    options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean };
+    options: SubmitOptions;
   } | null>(null);
 
   /**
    * Actually fire the create-order request with the operator's chosen mergeChoice
    * (or no choice, if the customer has no active order).
    */
-  const submitOrder = (
-    data: FormValues,
-    options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean } = {},
-  ) => {
+  const submitOrder = (data: FormValues, options: SubmitOptions = {}) => {
     if (fulfilmentPending) return;
     // SA-626c: any line still waiting for its default unit is resolved FIRST (never sent as the pack/case by default);
     // nothing pending = the synchronous path, unchanged.
@@ -1427,11 +1437,37 @@ export function CreateOrderModal({
       });
   };
 
-  const doSubmitOrder = (
-    data: FormValues,
-    options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean },
-    lines: LineItem[],
+  /** POS "Confirm & invoice" / "Confirm only": the order exists (PENDING); confirm it, then invoice it. */
+  const finishPosOrder = (
+    created: { id: string; orderNumber?: string | null },
+    finish: "invoice" | "confirm",
+    viewOrder?: (orderId: string) => void,
   ) => {
+    const action = viewOrder
+      ? { label: "View Order", onClick: () => viewOrder(created.id) }
+      : undefined;
+    posFinish
+      .mutateAsync({ orderId: created.id, invoice: finish === "invoice" })
+      .then(() => {
+        toast({
+          title: finish === "invoice" ? POS_COPY.confirmedInvoiced : POS_COPY.confirmedOnly,
+          variant: "success",
+          action,
+        });
+      })
+      .catch((err: unknown) => {
+        const step = err instanceof PosFinishError ? err.step : "confirm";
+        toast({
+          title: step === "invoice" ? POS_COPY.invoiceMissing : POS_COPY.confirmMissing,
+          variant: "warning",
+          action,
+        });
+      })
+      // POS mode lands on the new order's page (Hand over / Print live there), never back on the list.
+      .finally(() => viewOrder?.(created.id));
+  };
+
+  const doSubmitOrder = (data: FormValues, options: SubmitOptions, lines: LineItem[]) => {
     const { mergeChoice, asDraft } = options;
     // #2406: fold in whatever the operator has typed into the Returns section.
     const inlineReturn = returnSave.build(selectedCustomer!.id, "");
@@ -1484,9 +1520,10 @@ export function CreateOrderModal({
       customerId: selectedCustomer!.id,
       items: itemsForSubmit,
       notes: data.notes,
-      urgent: data.urgent,
-      fulfillPath: staffFulfilment.pickForm(data.fulfillPath),
-      requestedDeliveryDate: requestedDeliveryDate || undefined,
+      urgent: posMode ? false : data.urgent,
+      fulfillPath: posMode ? "PICKUP" : staffFulfilment.pickForm(data.fulfillPath),
+      // POS mode: the delivery-only fields step aside (their values are kept, so switching POS off restores them).
+      requestedDeliveryDate: posMode ? undefined : requestedDeliveryDate || undefined,
       orderDate: orderDate || undefined,
       ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
       ...(shippingAmt > 0 ? { shippingFee: shippingAmt } : {}),
@@ -1512,7 +1549,11 @@ export function CreateOrderModal({
       {
         onSuccess: (created: any) => {
           submitKey.settle("success");
-          toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
+          if (posMode && !asDraft && created?.id) {
+            finishPosOrder(created, posFinishRef.current, onViewOrder);
+          } else {
+            toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
+          }
           // The parked draft has become a real order — clear it from the dock.
           if (activeDraftId) deleteDraft.mutate(activeDraftId);
           setMergePrompt(null);
@@ -1840,9 +1881,28 @@ export function CreateOrderModal({
             >
               Save as Draft
             </WriteButton>
+            {posMode && (
+              <WriteButton
+                variant="secondary"
+                type="button"
+                loading={createOrder.isPending}
+                disabled={
+                  createOrder.isPending || fulfilmentPending || lineItems.some(isPendingDefaultUnit)
+                }
+                onClick={() => {
+                  posFinishRef.current = "confirm";
+                  void handleSubmit(onSubmit)();
+                }}
+              >
+                {POS_COPY.confirmOnly}
+              </WriteButton>
+            )}
             <WriteButton
               type="submit"
               form="create-order-form"
+              onClick={() => {
+                posFinishRef.current = "invoice";
+              }}
               loading={createOrder.isPending}
               // #2865 case d (SA-632): no order is created while ANY line is still waiting on its default unit
               disabled={
@@ -1850,7 +1910,7 @@ export function CreateOrderModal({
               }
               aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
             >
-              Create Order
+              {posMode ? POS_COPY.confirmAndInvoice : "Create Order"}
             </WriteButton>
           </div>
         </div>
@@ -1858,7 +1918,12 @@ export function CreateOrderModal({
     >
       <form
         id="create-order-form"
-        onSubmit={handleSubmit(onSubmit)}
+        onSubmit={(e) => {
+          // An implicit submit (no button pressed) follows the primary action; "Confirm only" bypasses this
+          // (it calls handleSubmit itself), and a click on the primary already set the same value.
+          posFinishRef.current = "invoice";
+          return handleSubmit(onSubmit)(e);
+        }}
         noValidate
         onKeyDown={(e) => {
           // A <textarea> (the per-line note) owns Enter for itself — a newline, never a submit.
@@ -1880,7 +1945,40 @@ export function CreateOrderModal({
             </div>
           )}
 
-          {staffFulfilment.failed && (
+          {posAllowed && (
+            <label
+              htmlFor="pos-mode-switch"
+              className="flex min-h-11 cursor-pointer items-start justify-between gap-3 rounded-lg border border-surface-border bg-white px-3 py-2.5"
+            >
+              <span className="min-w-0">
+                <span id="pos-mode-label" className="block text-sm font-medium text-navy">
+                  {POS_COPY.switchLabel}
+                </span>
+                <span id="pos-mode-hint" className="block text-[11px] leading-snug text-navy/70">
+                  {POS_COPY.switchHint}
+                </span>
+                {pos.failed && (
+                  <span role="alert" className="block text-[11px] leading-snug text-danger">
+                    {POS_COPY.switchFailed}
+                  </span>
+                )}
+              </span>
+              <input
+                id="pos-mode-switch"
+                type="checkbox"
+                role="switch"
+                aria-checked={posMode}
+                aria-labelledby="pos-mode-label"
+                aria-describedby="pos-mode-hint"
+                checked={posMode}
+                disabled={!pos.known || pos.saving}
+                onChange={(e) => pos.setPosMode(e.target.checked)}
+                className="mt-1 h-4 w-4 shrink-0 accent-brand-500"
+              />
+            </label>
+          )}
+
+          {staffFulfilment.failed && !posMode && (
             <div
               role="alert"
               className="flex items-center justify-between gap-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200"
@@ -2390,19 +2488,21 @@ export function CreateOrderModal({
 
             {/* Dates */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1">
-                <label className="block text-xs font-medium text-navy/70" htmlFor="delivery-date">
-                  Requested Delivery Date{" "}
-                  <span className="font-normal text-navy/70">(optional)</span>
-                </label>
-                <input
-                  id="delivery-date"
-                  type="date"
-                  value={requestedDeliveryDate}
-                  onChange={(e) => setRequestedDeliveryDate(e.target.value)}
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </div>
+              {!posMode && (
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-navy/70" htmlFor="delivery-date">
+                    Requested Delivery Date{" "}
+                    <span className="font-normal text-navy/70">(optional)</span>
+                  </label>
+                  <input
+                    id="delivery-date"
+                    type="date"
+                    value={requestedDeliveryDate}
+                    onChange={(e) => setRequestedDeliveryDate(e.target.value)}
+                    className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+              )}
               {showOrderDate ? (
                 <div className="space-y-1">
                   <label className="block text-xs font-medium text-navy/70" htmlFor="order-date">
@@ -2472,7 +2572,7 @@ export function CreateOrderModal({
               </div>
             )}
 
-            {staffFulfilment.choice && (
+            {staffFulfilment.choice && !posMode && (
               <div className="space-y-1">
                 <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
                 <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
@@ -2502,20 +2602,24 @@ export function CreateOrderModal({
               register={register("notes")}
             />
 
-            <label
-              className={cn(
-                "flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 transition-colors",
-                isUrgent
-                  ? "border-danger/40 bg-danger-bg"
-                  : "border-surface-border bg-white hover:bg-surface-raised",
-              )}
-            >
-              <input type="checkbox" {...register("urgent")} className="h-4 w-4 accent-danger" />
-              <AlertTriangle className={cn("h-4 w-4", isUrgent ? "text-danger" : "text-navy/30")} />
-              <span className={cn("text-sm font-medium", isUrgent ? "text-danger" : "text-navy")}>
-                Mark as Urgent
-              </span>
-            </label>
+            {!posMode && (
+              <label
+                className={cn(
+                  "flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 transition-colors",
+                  isUrgent
+                    ? "border-danger/40 bg-danger-bg"
+                    : "border-surface-border bg-white hover:bg-surface-raised",
+                )}
+              >
+                <input type="checkbox" {...register("urgent")} className="h-4 w-4 accent-danger" />
+                <AlertTriangle
+                  className={cn("h-4 w-4", isUrgent ? "text-danger" : "text-navy/30")}
+                />
+                <span className={cn("text-sm font-medium", isUrgent ? "text-danger" : "text-navy")}>
+                  Mark as Urgent
+                </span>
+              </label>
+            )}
           </section>
         </div>
       </form>
@@ -2537,12 +2641,16 @@ export function CreateOrderModal({
           pendingFormValuesRef.current = null;
           pendingAsDraftRef.current = false;
         }}
-        title="Open order exists"
+        title={posMode ? POS_COPY.mergeTitle : "Open order exists"}
         description={
           mergePrompt
-            ? orderDate
-              ? `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merging files these items under that order's date, so a backdated order has to be created separately.`
-              : `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merge these items into it, or create a fully separate order?`
+            ? posMode
+              ? orderDate
+                ? "Adding to it files these items under that order's date, so a backdated order has to be created separately."
+                : POS_COPY.mergeDescription
+              : orderDate
+                ? `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merging files these items under that order's date, so a backdated order has to be created separately.`
+                : `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merge these items into it, or create a fully separate order?`
             : undefined
         }
         className="max-w-md"
@@ -2564,7 +2672,9 @@ export function CreateOrderModal({
                     });
                 }}
               >
-                Merge into {mergePrompt.orderNumber ?? "existing order"}
+                {posMode
+                  ? POS_COPY.mergeAdd
+                  : `Merge into ${mergePrompt.orderNumber ?? "existing order"}`}
               </Button>
               <Button
                 type="button"
@@ -2578,7 +2688,9 @@ export function CreateOrderModal({
                     });
                 }}
               >
-                Create as separate {pendingAsDraftRef.current ? "draft" : "order"}
+                {posMode
+                  ? POS_COPY.mergeNew
+                  : `Create as separate ${pendingAsDraftRef.current ? "draft" : "order"}`}
               </Button>
             </div>
           ) : null

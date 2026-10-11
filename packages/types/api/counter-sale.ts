@@ -42,6 +42,18 @@ export interface CounterSaleRequest {
   notes?: string;
 }
 
+/**
+ * The stored price facts of one sale line (the invoice line the sale produced): what the receipt needs to apply the invoices'
+ * own original-price rule (`showOriginalPrice` in @routeflow/pricing). `originalPrice` is the LIST price (never the tier
+ * price), `priceType` one of STANDARD / SPECIAL / DISCOUNTED / MANUAL / PROMO.
+ */
+export interface CounterSaleLinePrice {
+  productId: string | null;
+  unitPrice: number;
+  originalPrice: number | null;
+  priceType: string;
+}
+
 export interface CounterSaleResponse {
   orderId: string;
   orderNumber: string;
@@ -50,6 +62,12 @@ export interface CounterSaleResponse {
   total: number;
   paid: number;
   balanceDue: number;
+  /**
+   * Cash handed back. Server-owned: on the POST and on GET .../by-key/:key it is the STORED `cashTendered` less the sale's
+   * own original CASH tender rows (so a same-key replay reads the stored amount's change). Omitted (not null) unless the
+   * sale's first stored tender is CASH, nothing is left to pay, and a non-negative change is stored (a legacy CASH sale
+   * with no stored `cashTendered` serves none).
+   */
   change?: number;
   paymentId?: string;
   /**
@@ -63,6 +81,27 @@ export interface CounterSaleResponse {
    */
   paymentRecorded: boolean;
   paymentErrorCode?: string;
+  /**
+   * The cash handed over, as stored on the order. Optional because it is OMITTED (never null) when nothing was stored
+   * (card / check / on account / a sale rung before it was stored); the Today's-sales row carries `number | null`.
+   */
+  cashTendered?: number;
+  /**
+   * The order's tax (`Order.tax`), server-owned: the counter receipt prints it as the Tax row and the remainder as
+   * Adjustments, exactly like the reprint and the emailed receipt. Omitted by an older server; then no Tax row prints.
+   */
+  tax?: number;
+  /**
+   * The sale's stored tax rate in percent (`@routeflow/pricing` `storedTaxRatePercent`), a CANDIDATE: the receipt names it
+   * only through `explainedTaxRatePercent`. null = mixed / none; omitted with `tax`.
+   */
+  taxRatePercent?: number | null;
+  /**
+   * The sale's stored lines, in invoice order, with the price facts the receipt strikes a list price from. The live receipt
+   * matches its cart lines to these by product, so it shows exactly what the reprint and the emailed receipt show. Omitted by
+   * an older server: then nothing is struck (the cart's tier price is never a base).
+   */
+  lines?: CounterSaleLinePrice[];
   /** true when this response is a replay of an earlier request carrying the same Idempotency-Key. */
   replayed?: boolean;
 }
@@ -164,11 +203,22 @@ export interface TodaysSaleRow {
   paid: number;
   balanceDue: number;
   methods: Array<{ method: TodaysSaleMethod; amount: number }>;
-  /** SA-764: the cash handed over (null on a legacy or non-cash sale) */
-  cashTendered?: number | null;
-  /** SA-764: the sale's single stored tax rate in percent (8.25 = 8.25%); null when mixed or none */
-  taxRatePercent?: number | null;
   paymentState: TodaysSalePaymentState;
+  /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
+  cashTendered: number | null;
+  /**
+   * Server-owned, the same value and gate as `CounterSaleResponse.change`: the stored `cashTendered` minus the sale's own
+   * original counter-tender CASH rows (credit-note, advance and voided rows never count), served only for a CASH sale with
+   * nothing left to pay; null otherwise (card / check / on account, partly paid, nothing tendered, or a negative result).
+   */
+  change: number | null;
+  /**
+   * The sale's single stored tax rate as a percent (0.0825 -> 8.25), from `@routeflow/pricing` `storedTaxRatePercent`: the one
+   * distinct non-zero line rate on its live invoices; for a legacy invoice whose lines ALL store 0, the flat rate its header
+   * tax implies (when that rate reproduces the tax); null when the lines carry several rates or none. A CANDIDATE: a receipt
+   * names it only through `explainedTaxRatePercent`.
+   */
+  taxRatePercent: number | null;
   returned: {
     amount: number;
     state: TodaysSaleReturnState;
@@ -187,6 +237,12 @@ export interface TodaysSalesSummary {
    * day 1's. (`sales` stays "rung this day".) `other` is ACH / Zelle / other recorded against a counter invoice.
    */
   moneyIn: { cash: number; card: number; check: number; other: number; total: number };
+  /**
+   * The "Hand-overs" line: the tenders of POS-mode pickup hand-overs (a named customer's order handed over at
+   * the till) that came in this day. Already INCLUDED in `moneyIn` and `cashExpectedInDrawer`; a counter sale is
+   * never counted here. `count` is hand-overs (orders), `total` the money.
+   */
+  handOvers: { count: number; total: number };
   /** credit-note and advance applications dated inside the day: NOT money in */
   storeCreditUsed: number;
   /** this day's sales total minus everything paid on those sales (any payment date, store credit included), never below 0 */

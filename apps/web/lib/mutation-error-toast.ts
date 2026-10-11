@@ -25,6 +25,8 @@ export function handleMutationError(
   },
 ): void {
   const data = (error as any)?.response?.data;
+  // (ORDER_EDIT_WOULD_OVERPAY is deliberately NOT here: its notice renders only in edit mode, so the order page
+  // opts the edit save out via `localErrorToast`; the same 409 anywhere else gets the generic toast.)
   // These 409s (and READ_ONLY's 403) are turned into guided in-app flows by the
   // initiating component (merge prompt, license guard, the read-only toast below)
   // — don't also surface them as a generic error toast.

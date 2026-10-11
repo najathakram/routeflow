@@ -96,6 +96,7 @@ describe("rebuildIssuedDepositMirrorOnDelivery: keyed on the billing moment", ()
   };
   const SHIPPED_AT = new Date("2026-10-01T00:00:00Z");
   const db = (fulfillPath: string, shippedAt: Date | null = SHIPPED_AT) => ({
+    $executeRaw: jest.fn().mockResolvedValue(0), // SA-760 R-1: the billing lock statements
     invoice: { findMany: jest.fn().mockResolvedValue([mirror]) },
     order: {
       findUnique: jest.fn().mockResolvedValue({ id: "o1", fulfillPath, shippedAt, lineItems: [] }),

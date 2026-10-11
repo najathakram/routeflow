@@ -63,6 +63,7 @@ import {
   type CheckStatus,
 } from "@/lib/api/invoices";
 import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
+import { canSendReminder } from "@/lib/invoice-reminder";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
@@ -77,6 +78,7 @@ import type { LineComponentView } from "@routeflow/types";
 import { CHECK_TRANSITIONS } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import { InvoiceLineAmount } from "./InvoiceLineAmount";
+import { TenantInvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
 import { RemoveCreditButton } from "./RemoveCreditButton";
 import { AdjustPricesPanel } from "./AdjustPricesPanel";
 import {
@@ -2001,6 +2003,10 @@ export default function InvoiceDetailPage() {
               {invoice.invoiceNumber}
             </h1>
             <Badge status={status} />
+            <TenantInvoiceRevisionMarks
+              revisedAt={invoice.revisedAt}
+              overpaidBy={invoice.overpaidBy}
+            />
           </div>
           <p className="mt-1 text-sm text-navy/70">
             {invoice.customer?.businessName ?? "—"}
@@ -2045,7 +2051,7 @@ export default function InvoiceDetailPage() {
               Send
             </Button>
           )}
-          {(status === "SENT" || status === "VIEWED" || status === "OVERDUE") && (
+          {canSendReminder({ status, balanceDue }) && (
             <Button
               size="sm"
               variant="secondary"

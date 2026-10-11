@@ -92,6 +92,8 @@ export const CUSTOMER_INVOICE_FIELDS = [
   "creditApplied",
   "advanceApplied",
   "isOverdue",
+  "overpaidBy", // SA-763r P-3: derived, max(0, confirmed external paid - total)
+  "revisedAt", // SA-763r P-3: derived, the latest invoice.revised audit row (null when never revised)
 ] as const;
 
 /** Invoice line scalars a buyer screen reads. `product` and `components` are projected below; the

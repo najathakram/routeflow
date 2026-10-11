@@ -174,6 +174,7 @@ export * from "./api/staff-order-email";
 export * from "./api/us-states";
 export * from "./api/config-snapshots";
 export * from "./api/counter-sale";
+export * from "./api/receipt";
 export * from "./api/counter-quick-keys";
 export * from "./api/import";
 export * from "./api/analytics-insights";

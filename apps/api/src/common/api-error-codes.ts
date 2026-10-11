@@ -113,6 +113,9 @@ export const API_ERROR_CODES = {
   UNIT_AWARE_LINE: "UNIT_AWARE_LINE",
   MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
   ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
+  ORDER_EDIT_NEEDS_LINE_IDS: "ORDER_EDIT_NEEDS_LINE_IDS",
+  ORDER_BILLING_CHANGED: "ORDER_BILLING_CHANGED",
+  ORDER_EDIT_WOULD_OVERPAY: "ORDER_EDIT_WOULD_OVERPAY",
   FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
   ORDER_WITH_CARRIER_NO_REDUCE: "ORDER_WITH_CARRIER_NO_REDUCE",
@@ -278,6 +281,16 @@ export const API_ERROR_CODES = {
   /** 400 on deactivating, deleting or merging the tenant's system walk-in customer (counter sales own it). */
   WALK_IN_PROTECTED: "WALK_IN_PROTECTED",
   /**
+   * 403 from `PATCH /orders/:id/fulfill-path` switching an order to PICKUP (POS mode, SA-763r): the caller lacks the
+   * `USE_POS_MODE` staff capability (drivers, buyers, no principal). Raised before anything is read or written.
+   */
+  POS_MODE_NOT_PERMITTED: "POS_MODE_NOT_PERMITTED",
+  /**
+   * 409 from `PATCH /orders/:id/fulfill-path` to PICKUP: the order's route-run link changed between the read and
+   * the write (a dispatch attached it), so releasing the old link would have cleared a fresh one. Nothing was written.
+   */
+  ORDER_RUN_LINK_CHANGED: "ORDER_RUN_LINK_CHANGED",
+  /**
    * 404 from GET /orders/counter-sale/by-key/:key: NO sale exists for this Idempotency-Key in this tenant.
    * A definitive answer (unlike a timeout): the clerk may ring the sale again with a new key.
    */
@@ -318,6 +331,16 @@ export const API_ERROR_CODES = {
   COUNTER_SALE_METHOD_INVALID: "COUNTER_SALE_METHOD_INVALID",
   /** 400 from GET /orders/counter-sale/today: `day` is not a real calendar day, or is after the tenant's today. */
   COUNTER_SALES_DAY_INVALID: "COUNTER_SALES_DAY_INVALID",
+  /** 429 from POST /orders/:id/receipt: this order's receipt was already emailed its per-order maximum (default 3). Final: no retry. */
+  RECEIPT_EMAIL_ORDER_LIMIT: "RECEIPT_EMAIL_ORDER_LIMIT",
+  /** 429 from POST /orders/:id/receipt: the tenant's receipt emails for today reached the per-day maximum (default 100). Final for the day. */
+  RECEIPT_EMAIL_DAY_LIMIT: "RECEIPT_EMAIL_DAY_LIMIT",
+  /** 429 from POST /orders/:id/receipt: this address already received its per-day maximum of receipt emails from the tenant (default 5, counted across all statuses). Final for that address today; another address still works. */
+  RECEIPT_EMAIL_ADDRESS_LIMIT: "RECEIPT_EMAIL_ADDRESS_LIMIT",
+  /** 502 from POST /orders/:id/receipt: the email did not go out (no transport, a rejected address, a provider error). Nothing counted; the cashier may try again. */
+  RECEIPT_EMAIL_NOT_SENT: "RECEIPT_EMAIL_NOT_SENT",
+  /** 409 from POST /orders/:id/receipt: the order is cancelled or has no live invoice (every one VOID / WRITTEN_OFF, or none), so there is no receipt to send. */
+  RECEIPT_NOT_AVAILABLE: "RECEIPT_NOT_AVAILABLE",
   /**
    * 409 from create(): this Idempotency-Key already belongs to ANOTHER customer's order. The order EXISTS: for
    * a counter sale that is an UNKNOWN outcome (never ring it again on a new key; ask GET .../by-key/:key).
@@ -420,6 +443,17 @@ export const API_ERROR_CODES = {
   PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
   /** 400 from PATCH /settings and create-tenant: `timezone` is not an IANA zone (SA-738). Nothing was written. */
   INVALID_TIME_ZONE: "INVALID_TIME_ZONE",
+  /**
+   * 422 from GET /invoices?isOverdue=true: more than 10 000 invoices owe a balance past their due day for the
+   * tenant (or the customer asked for), so the list is refused rather than silently truncated (SA-770).
+   * Narrow by customer and retry. Nothing was read.
+   */
+  OVERDUE_FILTER_TOO_BROAD: "OVERDUE_FILTER_TOO_BROAD",
+  /**
+   * 400 from POST /invoices/:id/send-reminder: the invoice has no balance due (exactly paid, overpaid or fully
+   * credited but not marked PAID), so there is nothing to remind about. Nothing was sent (SA-770).
+   */
+  REMINDER_NO_BALANCE_DUE: "REMINDER_NO_BALANCE_DUE",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
