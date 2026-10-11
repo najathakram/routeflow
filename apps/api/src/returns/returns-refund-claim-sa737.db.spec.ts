@@ -17,6 +17,8 @@
  *   T6  store credit: the claim commits, then the mint runs; a forced mint failure resets the claim (B68).
  *   T7  a recorded refund writes its awaited audit row in the same transaction.
  *   T8  a lock wait past the bound is a retryable 409 CONCURRENT_UPDATE, nothing written.
+ *   T9  a recorded refund of a COUNTER order dated inside a closed window is 409 COUNTER_SALE_DAY_CLOSED (SA-750r3): nothing
+ *       claimed, no audit row; a reopened close, and a store-credit refund, are not refused by it.
  *
  * Collected only by jest.db.config.js (`.db.spec.ts$`), run via `npm run local:test:db`. Every tenant is a throwaway
  * `qa-sa737-<run>-<n>` slug approved by `assertTestTenant`; afterAll deletes exactly the tenants this run created.
@@ -118,6 +120,7 @@ describeDb("SA-737 the STANDARD refund claim under the Order lock — real Postg
     for (const tenantId of tenantIds) {
       const where = { where: { tenantId } };
       await prisma.auditLog.deleteMany(where).catch(swallow);
+      await prisma.counterDayClose.deleteMany(where).catch(swallow);
       await prisma.returnItem.deleteMany(where).catch(swallow);
       await prisma.return.deleteMany(where).catch(swallow);
       await prisma.creditNoteItem.deleteMany(where).catch(swallow);
@@ -631,4 +634,65 @@ describeDb("SA-737 the STANDARD refund claim under the Order lock — real Postg
     const row = await returnRow(s);
     expect([row.status, row.refundedAt]).toEqual(["RECEIVED", null]);
   }, 30_000);
+
+  // ─── T9: a closed day (SA-750r3) inside the claim ─────────────────────────
+
+  describe("T9: a recorded refund of a counter order dated inside a closed day", () => {
+    const MIN = 60_000;
+    /** The standard seed, with its order put on the default register and a close in force around the database clock. */
+    async function seedClosedCounterDay(label: string) {
+      const s = await seed(label);
+      await prisma.order.update({ where: { id: s.orderId }, data: { counterSale: true } as any });
+      const close = await prisma.counterDayClose.create({
+        data: {
+          tenantId: s.tenantId,
+          registerKey: "main",
+          day: new Date(),
+          zone: "UTC",
+          windowStart: new Date(Date.now() - 60 * MIN),
+          windowEnd: new Date(Date.now() + 60 * MIN),
+          closedAt: new Date(),
+          expectedCash: 0,
+          countedCash: 0,
+          variance: 0,
+          denominations: [],
+          totals: {},
+        },
+      });
+      return { s, close };
+    }
+    const recorded = (s: Seed) => refund(s, "EXTERNAL_REFUND");
+
+    it("is 409 COUNTER_SALE_DAY_CLOSED: nothing is claimed and no audit row is written", async () => {
+      const { s } = await seedClosedCounterDay("t9-closed");
+      const out = await recorded(s);
+      expect(statusOf(out)).toBe(409);
+      expect(codeOf(out)).toBe("COUNTER_SALE_DAY_CLOSED");
+      const row = await returnRow(s);
+      expect([row.status, row.refundedAt, row.refundAmount]).toEqual(["RECEIVED", null, null]);
+      expect(
+        await prisma.auditLog.count({
+          where: { tenantId: s.tenantId, action: AUDIT_ACTIONS.STANDARD_REFUND_RECORDED },
+        }),
+      ).toBe(0);
+    });
+
+    it("a reopened close (reopenedAt set) is open again: the same refund is recorded", async () => {
+      const { s, close } = await seedClosedCounterDay("t9-reopened");
+      await prisma.counterDayClose.update({
+        where: { id: close.id },
+        data: { reopenedAt: new Date() },
+      });
+      const out = await recorded(s);
+      expect(out.ok).toBe(true);
+      expect((await returnRow(s)).status).toBe("REFUNDED");
+    });
+
+    it("a store-credit refund of the same return is not a till event: the close does not refuse it", async () => {
+      const { s } = await seedClosedCounterDay("t9-credit");
+      const out = await refund(s, "CREDIT_NOTE");
+      expect(codeOf(out)).not.toBe("COUNTER_SALE_DAY_CLOSED");
+      expect(out.ok).toBe(true);
+    });
+  });
 });

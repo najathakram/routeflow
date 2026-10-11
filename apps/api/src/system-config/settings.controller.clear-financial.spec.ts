@@ -43,9 +43,20 @@ const MODELS = [
   "purchaseOrderItem",
   "purchaseOrder",
   "payment",
+  // SA-750r3 ruling C: a day close is a snapshot of the money this wipe deletes; parked carts are counter state.
+  "counterDayClose",
+  "counterParkedCart",
 ] as const;
 
-const PARENT_MODELS = ["invoice", "vendorBill", "purchaseOrder", "creditNote", "payment"] as const;
+const PARENT_MODELS = [
+  "invoice",
+  "vendorBill",
+  "purchaseOrder",
+  "creditNote",
+  "payment",
+  "counterDayClose",
+  "counterParkedCart",
+] as const;
 
 // Child model -> { parent model, FK field on the child row, relation field on the child }.
 // PurchaseOrderItem's FK is `poId` and its relation is `po`, not `purchaseOrderId`/
@@ -333,6 +344,22 @@ describe("SettingsController#clearFinancialData — DELETE /settings/financial-d
       for (const call of models[m].deleteMany.mock.calls) {
         expect(isScopedWhere(call[0])).toBe(true);
       }
+    }
+  });
+
+  // SA-750r3 ruling C: the wipe leaves no day-close or parked-cart rows behind (a close is a snapshot of money the wipe just
+  // deleted; the close row would otherwise outlive it and block the tenant's purge via its RESTRICT FK).
+  it("T2b: clears the tenant's day closes and parked carts in the SAME transaction, scoped to the tenant", async () => {
+    const prisma = createMockPrisma();
+    prisma.getTenantId.mockReturnValue("test-tenant");
+    const controller = await buildController(prisma);
+    const tx = (prisma.$transaction as jest.Mock).mock;
+    await callClearFinancialData(controller, { confirmTenantId: "test-tenant" });
+
+    expect(tx.calls).toHaveLength(1);
+    for (const model of ["counterDayClose", "counterParkedCart"] as const) {
+      expect(prisma[model].deleteMany).toHaveBeenCalledTimes(1);
+      expect(prisma[model].deleteMany).toHaveBeenCalledWith({ where: { tenantId: "test-tenant" } });
     }
   });
 

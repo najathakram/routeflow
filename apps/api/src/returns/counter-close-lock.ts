@@ -1,3 +1,5 @@
+import { COUNTER_DEFAULT_REGISTER } from "@routeflow/pricing";
+
 /**
  * SA-740r2 item 6 / SA-750r3: the counter DAY-CLOSE lock, taken by the refund paths.
  *
@@ -9,7 +11,7 @@
  */
 
 /** The register of a till that has no register picker (one till, R20-10): every counter order without a key is on it. */
-export const COUNTER_DEFAULT_REGISTER = "main";
+export { COUNTER_DEFAULT_REGISTER };
 
 export const counterCloseKeyOf = (tenantId: string, registerKey: string): string =>
   `${tenantId}:${registerKey}`;
