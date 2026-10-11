@@ -343,6 +343,8 @@ export class BillingNotificationService {
       invoiceNumber?: string | null;
       amountCents?: number | null;
       currency?: string | null;
+      attempted?: boolean;
+      periodLabel?: string | null;
     },
   ): Promise<RfInvoiceSendResult> {
     return this.sendIfClaimed(tenantId, milestone, key, (admin, businessName) =>
@@ -356,6 +358,8 @@ export class BillingNotificationService {
         invoiceNumber: extra.invoiceNumber,
         amountCents: extra.amountCents,
         currency: extra.currency,
+        attempted: extra.attempted,
+        periodLabel: extra.periodLabel,
       }),
     );
   }

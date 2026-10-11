@@ -11,6 +11,7 @@ import {
   DUNNING_MILESTONES,
   DUNNING_PAUSE_HOURS,
   HOUR_MS,
+  dunningEmailsFor,
   PAYMENT_OVERDUE_REASON,
   READ_ONLY_STATUS,
   SUBSCRIPTION_CANCELLED_REASON,
@@ -354,6 +355,9 @@ export class DunningService {
       { tenantId: row.tenantId, stripeSubId: row.stripeSubId as string },
       now,
     );
+    // the milestone series (this PAUSED notice included) is an `enforced` path only; a pause cannot land in dark,
+    // but the switch is asked anyway so no sender can bypass it
+    if (dunningEmailsFor(mode) !== "milestones") return "paused";
     try {
       await this.notifications.notifyDunning(
         row.tenantId,

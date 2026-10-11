@@ -447,10 +447,14 @@ export function dunningTemplate(params: {
   readOnlyOn?: string;
   /** `d6` (dark) only: the tenant-local date to update the card by. */
   byDate?: string;
-  /** `paused_still_owed` only: the open invoice's number, amount still owed (cents) and currency. */
+  /** `paused_still_owed` and a never-attempted `d0`: the open invoice's number, amount still owed (cents), currency. */
   invoiceNumber?: string | null;
   amountCents?: number | null;
   currency?: string | null;
+  /** `d0` only: false when Stripe never ATTEMPTED the invoice (attempt_count 0, a discovery stamp). Absent = attempted. */
+  attempted?: boolean;
+  /** `d0` of a never-attempted invoice: the billed month ("October 2026"). */
+  periodLabel?: string | null;
 }): BillingEmailTemplate {
   const link = params.payUrl || billingSettingsUrl();
   const biz = params.businessName;
@@ -498,6 +502,22 @@ export function dunningTemplate(params: {
       body: `Because the subscription invoice for ${biz} is unpaid, your workspace is now read-only. Your data is safe and exports still work. Pay the open invoice and full access returns right away.`,
     },
   };
+  // A discovery-stamped invoice Stripe never tried must not read "we couldn't process your payment": its first
+  // notice says the invoice is open and where to pay it (SA r-note 5 A1, truthful copy keyed by attempt state).
+  if (params.kind === "d0" && params.attempted === false) {
+    const what = params.periodLabel
+      ? `Your ${params.periodLabel} invoice`
+      : "Your subscription invoice";
+    copy.d0 = {
+      subject: `Your invoice is open — ${biz}`,
+      tagline: "Invoice open",
+      body: `${what}${
+        typeof params.amountCents === "number" && params.amountCents > 0
+          ? ` for ${formatDunningAmount(params.amountCents, params.currency)}`
+          : ""
+      } is open — pay it here.`,
+    };
+  }
   const c = copy[params.kind];
   const label =
     params.kind === "paused" || params.kind === "paused_still_owed"
