@@ -31,6 +31,19 @@ const CACHE_TTL_MS = 60_000;
  * An in-memory cache (Map) with 60 s TTL avoids a DB hit on every request.
  * Call `invalidate(tenantId)` when a tenant's status changes.
  */
+/**
+ * Owner ruling 2026-10-10 (SA-750r3 O1): closing the day stays possible while the workspace is read-only; sales, orders, invoices
+ * and payments stay blocked. ONE constant, route-scoped (method AND an anchored path), never a role bypass: the close (and
+ * re-close, the same POST) and the reopen. The report resend is not exempt. The guard spec lists exactly these entries.
+ */
+export const READ_ONLY_ALLOWED_ROUTES: ReadonlyArray<{ method: string; path: RegExp }> = [
+  { method: "POST", path: /^\/api\/v1\/orders\/counter-sale\/day-close$/ },
+  {
+    method: "POST",
+    path: /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/reopen$/,
+  },
+];
+
 @Injectable()
 export class TenantStatusGuard implements CanActivate {
   private readonly logger = new Logger(TenantStatusGuard.name);
@@ -134,6 +147,7 @@ export class TenantStatusGuard implements CanActivate {
       // through by merely containing these strings. Global prefix is /api/v1.
       const allowedMutation =
         path.startsWith("/api/v1/auth/") ||
+        READ_ONLY_ALLOWED_ROUTES.some((r) => r.method === method && r.path.test(path)) ||
         path === "/api/v1/billing/subscribe" ||
         path === "/api/v1/billing/quote" ||
         path === "/api/v1/billing/subscription" ||

@@ -186,8 +186,8 @@ describe("CounterSaleService.ring: split payments", () => {
         "key-1",
       );
       expect(recordPayment.mock.calls.map((c) => c[2])).toEqual([
-        { paymentGroupId: legGroupId("ord-1", 0) },
-        { paymentGroupId: legGroupId("ord-1", 1) },
+        { tillLockHeld: true, paymentGroupId: legGroupId("ord-1", 0) },
+        { tillLockHeld: true, paymentGroupId: legGroupId("ord-1", 1) },
       ]);
       expect(legGroupId("ord-1", 0)).not.toBe(legGroupId("ord-1", 1));
       // never from the idempotency key: the same sale under another key groups identically
@@ -203,7 +203,10 @@ describe("CounterSaleService.ring: split payments", () => {
         staff,
         "another-key",
       );
-      expect(recordPayment.mock.calls[0][2]).toEqual({ paymentGroupId: legGroupId("ord-1", 0) });
+      expect(recordPayment.mock.calls[0][2]).toEqual({
+        tillLockHeld: true,
+        paymentGroupId: legGroupId("ord-1", 0),
+      });
     });
 
     it("two invoices: card 30 + cash 50 on inv1 50 / inv2 20 -> card {inv1 30}, cash {inv1 20, inv2 20}, change 10", async () => {
@@ -457,7 +460,10 @@ describe("CounterSaleService.ring: split payments", () => {
       const r = await service.ring(walkInSale({ payment: { method: "CASH", amount: 100 } }), staff);
       expect(recordPayment).toHaveBeenCalledTimes(1);
       expect(recordPayment.mock.calls[0][1]).toMatchObject({ amount: 70, method: "CASH" });
-      expect(recordPayment.mock.calls[0][2]).toEqual({ paymentGroupId: legGroupId("ord-1", 0) });
+      expect(recordPayment.mock.calls[0][2]).toEqual({
+        tillLockHeld: true,
+        paymentGroupId: legGroupId("ord-1", 0),
+      });
       expect(r).toMatchObject({ method: "CASH", paid: 70, change: 30, paymentRecorded: true });
     });
 
@@ -491,7 +497,7 @@ describe("CounterSaleService.ring: split payments", () => {
       replay = true;
       const r = await service.ring(walkInSale({ payments: split() }), staff, "key-1");
       expect(recordPayment.mock.calls.map((c) => [c[1].method, c[1].amount, c[2]])).toEqual([
-        ["CASH", 40, { paymentGroupId: G1 }],
+        ["CASH", 40, { tillLockHeld: true, paymentGroupId: G1 }],
       ]);
       expect(r).toMatchObject({
         replayed: true,
@@ -586,7 +592,7 @@ describe("CounterSaleService.ring: split payments", () => {
       );
       // inv2's 20 is written WITHOUT a group id: a grouped row would make readStoredTender drop the legacy 50
       expect(recordPayment.mock.calls.map((c) => [c[0], c[1].amount, c[2]])).toEqual([
-        ["inv-2", 20, undefined],
+        ["inv-2", 20, { tillLockHeld: true }],
       ]);
       expect(r).toMatchObject({
         paid: 70,
@@ -682,7 +688,7 @@ describe("CounterSaleService.ring: split payments", () => {
       );
       // office's 20 never counts as leg 1's cash: the cash leg's 70 is recorded, capped by capacity (50)
       expect(recordPayment.mock.calls.map((c) => [c[1].method, c[2]])).toEqual([
-        ["CASH", { paymentGroupId: G1 }],
+        ["CASH", { tillLockHeld: true, paymentGroupId: G1 }],
       ]);
     });
   });

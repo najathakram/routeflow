@@ -231,7 +231,13 @@ describe("CounterSaleVoidService: a same-day cash + card sale (test 4)", () => {
       timeout: 15_000,
     });
     expect(withAdvisoryLock).toHaveBeenCalledWith(
-      { family: "counter-tender", key: ORDER_ID, mode: "wait", waitMs: 10_000 },
+      {
+        family: "counter-tender",
+        key: ORDER_ID,
+        mode: "wait",
+        waitMs: 10_000,
+        sharedAlso: { family: "counter-close", key: "test-tenant:main" },
+      },
       expect.any(Function),
     );
   });
@@ -620,4 +626,87 @@ describe("CounterSaleVoidService: replay and refusals (test 5), each with no wri
     expect(b.prisma.tenantTransaction).toHaveBeenCalledTimes(3);
     expectNoWrites(b);
   }, 10_000);
+});
+
+describe("CounterSaleVoidService: the end-of-day close (SA-750r3)", () => {
+  type Close = { registerKey: string; reopenedAt: Date | null; windowStart: Date; windowEnd: Date };
+  const HOUR = 3_600_000;
+  const rungAt = new Date();
+  /** A close whose window sits `from..to` hours around the sale's time (negative = before it). */
+  const closeAround = (fromH: number, toH: number, over: Partial<Close> = {}): Close => ({
+    registerKey: "main",
+    reopenedAt: null,
+    windowStart: new Date(rungAt.getTime() + fromH * HOUR),
+    windowEnd: new Date(rungAt.getTime() + toH * HOUR),
+    ...over,
+  });
+  /** The window read (counterWindowClosed): a standing close whose [start, end) holds the instant. */
+  const withCloses = async (closes: Close[], opts: Parameters<typeof build>[0] = {}) => {
+    const b = await build(opts);
+    b.prisma.counterDayClose.findFirst.mockImplementation(async ({ where }: any) =>
+      closes.some(
+        (c) =>
+          c.registerKey === where.registerKey &&
+          c.reopenedAt == null &&
+          c.windowStart <= where.windowStart.lte &&
+          c.windowEnd > where.windowEnd.gt,
+      )
+        ? { id: "close-1" }
+        : null,
+    );
+    return b;
+  };
+  const paidAtRung = (over: Record<string, unknown> = {}) => [
+    pay({ paidAt: rungAt, ...over }),
+    pay({ id: "pay-2", invoiceId: "inv-2", method: "CREDIT_CARD", amount: 20, paidAt: rungAt }),
+  ];
+
+  it("takes the SHARED close lock of the order's register beside the counter-tender lock (the tender's own option)", async () => {
+    const b = await withCloses([], { order: { registerKey: "front" }, payments: paidAtRung() });
+    await run(b);
+    expect((withAdvisoryLock as jest.Mock).mock.calls[0][0]).toMatchObject({
+      family: "counter-tender",
+      sharedAlso: { family: "counter-close", key: "test-tenant:front" },
+    });
+  });
+
+  it("a sale rung and paid BEFORE a standing close is refused 409 COUNTER_SALE_DAY_CLOSED and nothing is written", async () => {
+    const b = await withCloses([closeAround(-1, 1)], { payments: paidAtRung() });
+    expect(await code(run(b))).toEqual({
+      status: 409,
+      body: expect.objectContaining({ code: "COUNTER_SALE_DAY_CLOSED" }),
+    });
+    expectNoWrites(b);
+    expect(b.prisma.invoice.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses when only a tender payment is dated inside the closed window (the sale itself is after it)", async () => {
+    const paidEarlier = new Date(rungAt.getTime() - 3 * HOUR);
+    const b = await withCloses([closeAround(-4, -2)], {
+      payments: [pay({ paidAt: paidEarlier })],
+    });
+    expect((await code(run(b))).body).toEqual(
+      expect.objectContaining({ code: "COUNTER_SALE_DAY_CLOSED" }),
+    );
+    expectNoWrites(b);
+  });
+
+  it("a sale after the latest close is allowed (the closed window ends before it)", async () => {
+    const b = await withCloses([closeAround(-3, -1)], { payments: paidAtRung() });
+    await expect(run(b)).resolves.toMatchObject({ voided: true });
+  });
+
+  it("a close of ANOTHER register does not matter", async () => {
+    const b = await withCloses([closeAround(-1, 1, { registerKey: "back" })], {
+      payments: paidAtRung(),
+    });
+    await expect(run(b)).resolves.toMatchObject({ voided: true });
+  });
+
+  it("a REOPENED close is open again: allowed", async () => {
+    const b = await withCloses([closeAround(-1, 1, { reopenedAt: new Date() })], {
+      payments: paidAtRung(),
+    });
+    await expect(run(b)).resolves.toMatchObject({ voided: true });
+  });
 });

@@ -199,7 +199,9 @@ export function PickupCompleteDialog({
             <Button variant="ghost" type="button" disabled={complete.isPending} onClick={onClose}>
               Cancel
             </Button>
-            {errorCode === API_ERROR_CODES.PICKUP_KEY_CONFLICT ? (
+            {/* Both mean the order is already handed over: nothing to retry, only to reload what the page shows. */}
+            {errorCode === API_ERROR_CODES.PICKUP_KEY_CONFLICT ||
+            errorCode === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED ? (
               <Button type="button" onClick={reload}>
                 Reload
               </Button>

@@ -17,6 +17,10 @@ export type InvoiceRow = {
   total: unknown;
   /** the stored lines: the rate the tax rate is read from (`storedTaxRatePercent`) and the price facts a receipt strikes a list price from */
   items?: Array<{
+    id?: string;
+    createdAt?: Date | string;
+    /** the order line this invoice line came from: its scan `position` is the order the clerk rang the lines in */
+    orderItem?: { position?: number | null } | null;
     taxRate?: unknown;
     productId?: string | null;
     unitPrice?: unknown;

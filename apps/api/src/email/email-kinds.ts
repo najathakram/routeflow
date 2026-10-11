@@ -9,6 +9,7 @@ export const EMAIL_KINDS = [
   "LOW_STOCK_DIGEST",
   "INVOICE_SENT",
   "AUTH_OTHER",
+  "Z_REPORT",
   "RECEIPT",
 ] as const;
 

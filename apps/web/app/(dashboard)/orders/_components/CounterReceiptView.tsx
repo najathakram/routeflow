@@ -22,7 +22,7 @@ export function CounterReceiptView({
   model: CounterReceiptModel;
   logoUrl?: string | null;
   reprintLabel?: string;
-  /** A reprint does not know who sold it (the Order stores no creator), so it names who reprinted instead. */
+  /** Who reprinted it, beside the sale's own `Cashier:` line (the model's `cashier`, from the stored `soldBy`). */
   reprintedBy?: string | null;
   /** POS-1: the screen focuses this heading when the receipt appears. */
   headingRef?: React.Ref<HTMLHeadingElement>;
@@ -65,9 +65,18 @@ export function CounterReceiptView({
         ) : (
           <p data-testid="receipt-date">{m.dateLabel}</p>
         )}
-        {reprintedBy ? <p data-testid="receipt-reprinted-by">Reprinted by {reprintedBy}</p> : null}
+        {/* owner ruling: who reprinted it and who sold it are staff-facing, on screen only; the printed copy (the customer's) omits both */}
+        {reprintedBy ? (
+          <p className="print:hidden" data-testid="receipt-reprinted-by">
+            Reprinted by {reprintedBy}
+          </p>
+        ) : null}
         {m.customerName ? <p data-testid="receipt-customer">Customer: {m.customerName}</p> : null}
-        {m.cashier ? <p data-testid="receipt-cashier">Cashier: {m.cashier}</p> : null}
+        {m.cashier ? (
+          <p className="print:hidden" data-testid="receipt-cashier">
+            Cashier: {m.cashier}
+          </p>
+        ) : null}
       </div>
       <ul className="divide-y text-sm">
         {m.lines.map((l) => (

@@ -547,9 +547,11 @@ describe("POS-5 price edit: a customer pick keeps the edited price (POS-2 surviv
     await pickAcme();
     await waitFor(() => expect(total()).toHaveTextContent("$9.00")); // cola kept 5.00, juice re-priced to 4.00
     const li = lineOf("Cola");
-    expect(within(li).getByTestId("line-original-total")).toHaveTextContent("$8.00");
+    // row 322d: the struck figure is the LIST total (10.00), the receipt's reference, not the customer's tier total (8.00)
+    expect(within(li).getByTestId("line-original-total")).toHaveTextContent("$10.00");
     expect(within(li).getByTestId("line-net-total")).toHaveTextContent("$5.00");
-    expect(within(li).getByTestId("line-price-chip")).toHaveTextContent("37.5% off");
+    // ...and the chip is measured from that same list: 5.00 is 50% off 10.00 (it was 37.5% off the tier's 8.00)
+    expect(within(li).getByTestId("line-price-chip")).toHaveTextContent(/^50% off$/);
     expect(within(lineOf("Juice")).queryByTestId("line-price-chip")).toBeNull();
     expect(screen.getByTestId("counter-reprice-note")).toHaveTextContent(
       "Prices updated for Acme Cafe (Tier 2). 1 edited price kept.",
@@ -566,29 +568,32 @@ describe("POS-5 price edit: a customer pick keeps the edited price (POS-2 surviv
     );
   });
 
-  it("a kept net equal to the new tier price is no override: the chip and the Discounts row go", async () => {
+  it("a kept net equal to the new tier price is no override: the chip and Reset go, and the tier line's own 2.00 off the list stays in Discounts (as on the receipt)", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     await editPrice("Cola", { label: "Price per item", value: "8" });
     expect(screen.getByTestId("running-discounts")).toHaveTextContent("-$2.00");
     await pickAcme();
     await waitFor(() => expect(screen.queryByTestId("line-price-chip")).toBeNull());
-    expect(screen.queryByTestId("running-discounts")).toBeNull();
+    // a plain tier-2 line (8.00 against a 10.00 list) is stored SPECIAL with the list as its original: the receipt counts it
+    expect(screen.getByTestId("running-discounts")).toHaveTextContent("-$2.00");
     expect(screen.queryByRole("button", { name: "Reset price" })).toBeNull();
     expect(total()).toHaveTextContent("$8.00");
   });
 
-  it("a kept net above the new tier price reads 'Price changed'", async () => {
+  it("a kept net above the new tier price but below the list is still struck from the list: 10.00 struck, 9.00 net, 10% off, Discounts 1.00", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     await editPrice("Cola", { mode: "Percent off", label: "Percent off", value: "10" }); // 9.00
-    await pickAcme(); // tier 2 price is 8.00: 9.00 is now ABOVE it
+    await pickAcme(); // tier 2 price is 8.00: 9.00 is now ABOVE it, but still below the 10.00 list
+    const li = lineOf("Cola");
     await waitFor(() =>
-      expect(within(lineOf("Cola")).getByTestId("line-price-chip")).toHaveTextContent(
-        "Price changed",
-      ),
+      expect(within(li).getByTestId("line-original-total")).toHaveTextContent("$10.00"),
     );
-    expect(screen.queryByTestId("running-discounts")).toBeNull();
+    expect(within(li).getByTestId("line-net-total")).toHaveTextContent("$9.00");
+    // struck -> net -> chip -> Discounts agree: 9.00 is 10% off the 10.00 list, which is 1.00 off
+    expect(within(li).getByTestId("line-price-chip")).toHaveTextContent(/^10% off$/);
+    expect(screen.getByTestId("running-discounts")).toHaveTextContent("-$1.00");
     expect(total()).toHaveTextContent("$9.00");
   });
 

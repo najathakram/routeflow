@@ -1,4 +1,4 @@
-import { roundMoney, sumConfirmed } from "@routeflow/pricing";
+import { counterChange, roundMoney, sumConfirmed } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { isTender } from "./counter-sale-readback";
 
@@ -65,8 +65,13 @@ export function tenderFigures(
   const settled = method === "ON_ACCOUNT" || balanceDue <= 0 || (!planError && !!firstTender);
   // sumConfirmed counts PAID rows only, so a voided cash payment is already out.
   const cashTaken = roundMoney(sumConfirmed(handOverTenders.filter((p) => p.method === "CASH")));
-  const owed = payment.amount != null ? roundMoney(payment.amount - cashTaken) : 0;
-  const change = method === "CASH" && balanceDue <= 0 && owed > 0 ? owed : undefined;
+  // The ONE change formula (pricing's `counterChange`, the counter sale's own): the cash handed over less the cash this
+  // hand-over took. Served only for a CASH tender once the stored balance is covered; a positive figure only.
+  const { change: handedBack } =
+    payment.amount != null
+      ? counterChange({ total: cashTaken, nonCashApplied: 0, tendered: payment.amount })
+      : { change: 0 };
+  const change = method === "CASH" && balanceDue <= 0 && handedBack > 0 ? handedBack : undefined;
   return {
     total,
     paid,

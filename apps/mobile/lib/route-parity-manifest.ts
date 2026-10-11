@@ -33,6 +33,10 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "(dashboard)/getting-started": { mobile: ["(operator)/getting-started"] },
   "(dashboard)/orders/[id]": { mobile: ["(operator)/(tabs)/orders/[id]"] },
   "(dashboard)/orders": { mobile: ["(operator)/(tabs)/orders/index"] },
+  "(dashboard)/orders/new": {
+    webOnly:
+      "a web link target that redirects to the Orders page's builder intent (row 331); mobile opens the builder from its Orders tab",
+  },
   "(dashboard)/orders/counter-sale": {
     missing:
       "walk-in counter sale (POST /orders/counter-sale) is web-first; the mobile operator sale mode is its own flow, so parity is a later owner call",
