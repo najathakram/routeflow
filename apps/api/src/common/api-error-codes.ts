@@ -442,6 +442,11 @@ export const API_ERROR_CODES = {
    * credited but not marked PAID), so there is nothing to remind about. Nothing was sent (SA-770).
    */
   REMINDER_NO_BALANCE_DUE: "REMINDER_NO_BALANCE_DUE",
+  /**
+   * 400 from POST /invoices/:id/send-reminder: the invoice is not an issued, unpaid one (a DRAFT that was never
+   * sent, or a PAID, VOID or WRITTEN_OFF invoice), so a payment reminder makes no sense. Nothing was sent (row 318).
+   */
+  REMINDER_NOT_ISSUED: "REMINDER_NOT_ISSUED",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

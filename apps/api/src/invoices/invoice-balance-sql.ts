@@ -2,6 +2,7 @@ import { BadRequestException, UnprocessableEntityException } from "@nestjs/commo
 import { InvoiceStatus, Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { confirmedBalance } from "./invoice-balance-classify";
+import { OPEN_INVOICE_STATUSES } from "./invoice-status-sets";
 import { CONFIRMED_STATUS } from "./payment-predicates";
 
 /**
@@ -150,6 +151,19 @@ export async function markInvoicesOverdue(
       SET "status" = ${InvoiceStatus.OVERDUE}::"InvoiceStatus", "updatedAt" = NOW()
       WHERE ${overdueWhere(tenantId, cutoff, statuses)}`,
   );
+}
+
+/**
+ * Row 318a: a reminder demands money on an ISSUED, UNPAID invoice. Only SENT, VIEWED, PARTIAL and OVERDUE
+ * (`OPEN_INVOICE_STATUSES`, the web `canSendReminder` set) qualify; a DRAFT (never issued), PAID, VOID or
+ * WRITTEN_OFF invoice is refused with the coded 400 REMINDER_NOT_ISSUED.
+ */
+export function assertReminderIssued(status: string): void {
+  if ((OPEN_INVOICE_STATUSES as readonly string[]).includes(status)) return;
+  throw new BadRequestException({
+    code: API_ERROR_CODES.REMINDER_NOT_ISSUED,
+    message: "A reminder can only be sent for an invoice that has been issued and is still unpaid.",
+  });
 }
 
 /**

@@ -60,7 +60,7 @@ import {
   sumConfirmed,
 } from "./payment-predicates";
 import { PAYABLE } from "./invoice-status-sets";
-import { assertReminderOwes } from "./invoice-balance-sql";
+import { assertReminderIssued, assertReminderOwes } from "./invoice-balance-sql";
 import { classifyInvoiceBalance, confirmedBalance } from "./invoice-balance-classify";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
@@ -3805,8 +3805,7 @@ export class InvoicesService {
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
-    if (inv.status === InvoiceStatus.VOID || inv.status === InvoiceStatus.PAID)
-      throw new BadRequestException("Cannot send reminder for a VOID or PAID invoice");
+    assertReminderIssued(inv.status); // row 318a: only SENT / VIEWED / PARTIAL / OVERDUE
     assertReminderOwes(inv.total, inv.payments); // SA-770: an exactly-paid or overpaid SENT invoice owes nothing
 
     // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
