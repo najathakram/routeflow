@@ -15,3 +15,11 @@ html[data-shell="1"] [data-hide-in-shell] {
     display: none !important;
   }
 }
+
+/* Refund slip: print only the slip (a portal that is a direct child of <body>), whatever page or dialog it was started from.
+   Lives here, not in globals.css, which MKT-PIN T7 pins byte-for-byte. */
+@media print {
+  body.refund-slip-open > *:not([data-refund-slip-portal]) {
+    display: none !important;
+  }
+}

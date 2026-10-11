@@ -7,14 +7,19 @@
 //
 // A new action (REFUND_CASH, EDIT_COST) is a row here + its API literal, never a second predicate.
 
-export const STAFF_CAPABILITY_VALUES = ["EDIT_LINE_PRICE", "VOID_SALE"] as const;
+export const STAFF_CAPABILITY_VALUES = [
+  "EDIT_LINE_PRICE",
+  "VOID_SALE",
+  "USE_POS_MODE",
+  "EDIT_AFTER_FINAL",
+] as const;
 export type StaffCapability = (typeof STAFF_CAPABILITY_VALUES)[number];
 
 /** The roles a staff capability can name (a DRIVER or CUSTOMER is never in a row). */
 export type StaffCapabilityRole = "OPERATOR" | "TENANT_ADMIN" | "SUPER_ADMIN";
 
 /** The operator permission groups a staff capability can hang off today (widens to OperatorPermissionGroup). */
-export type StaffCapabilityGroup = "PRICING" | "ORDERS";
+export type StaffCapabilityGroup = "PRICING" | "ORDERS" | "FINANCE";
 
 export interface StaffCapabilityRule {
   roles: readonly StaffCapabilityRole[];
@@ -25,6 +30,10 @@ export const STAFF_CAPABILITY_RULES: Record<StaffCapability, StaffCapabilityRule
   // SUPER_ADMIN joins when the orders/invoices price paths move onto staffMay (perms PR7).
   EDIT_LINE_PRICE: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "PRICING" },
   VOID_SALE: { roles: ["OPERATOR", "TENANT_ADMIN", "SUPER_ADMIN"], group: "ORDERS" },
+  // POS mode (SA-763r): a staff order on the PICKUP path, whatever the tenant offers to buyers.
+  USE_POS_MODE: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "ORDERS" },
+  // Edits to an order whose invoice is already final (SA-763r P-3 reads this row).
+  EDIT_AFTER_FINAL: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "FINANCE" },
 };
 
 /**

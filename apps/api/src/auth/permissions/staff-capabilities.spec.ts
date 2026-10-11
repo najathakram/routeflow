@@ -47,6 +47,45 @@ describe("staffMay (SA-762r Ruling A): one table, one helper", () => {
   });
 });
 
+describe("staffMay: the POS-mode rows (SA-763r)", () => {
+  it("USE_POS_MODE is OPERATOR + TENANT_ADMIN, group ORDERS; nobody else", () => {
+    expect(STAFF_CAPABILITY_RULES.USE_POS_MODE).toEqual({
+      roles: ["OPERATOR", "TENANT_ADMIN"],
+      group: "ORDERS",
+    });
+    for (const role of ["OPERATOR", "TENANT_ADMIN"])
+      expect(staffMay(role, "USE_POS_MODE")).toBe(true);
+    for (const role of ["SUPER_ADMIN", "DRIVER", "CUSTOMER", null, undefined]) {
+      expect(staffMay(role, "USE_POS_MODE")).toBe(false);
+    }
+  });
+
+  it("an OPERATOR denied ORDERS loses USE_POS_MODE; a denied PRICING keeps it", () => {
+    expect(staffMay("OPERATOR", "USE_POS_MODE", ["ORDERS"])).toBe(false);
+    expect(staffMay("OPERATOR", "USE_POS_MODE", ["PRICING", "FINANCE"])).toBe(true);
+    expect(staffMay("TENANT_ADMIN", "USE_POS_MODE", ["ORDERS"])).toBe(true);
+  });
+
+  it("EDIT_AFTER_FINAL is OPERATOR + TENANT_ADMIN, group FINANCE; nobody else", () => {
+    expect(STAFF_CAPABILITY_RULES.EDIT_AFTER_FINAL).toEqual({
+      roles: ["OPERATOR", "TENANT_ADMIN"],
+      group: "FINANCE",
+    });
+    for (const role of ["OPERATOR", "TENANT_ADMIN"]) {
+      expect(staffMay(role, "EDIT_AFTER_FINAL")).toBe(true);
+    }
+    for (const role of ["SUPER_ADMIN", "DRIVER", "CUSTOMER", null, undefined]) {
+      expect(staffMay(role, "EDIT_AFTER_FINAL")).toBe(false);
+    }
+  });
+
+  it("an OPERATOR denied FINANCE loses EDIT_AFTER_FINAL; a denied ORDERS keeps it", () => {
+    expect(staffMay("OPERATOR", "EDIT_AFTER_FINAL", ["FINANCE"])).toBe(false);
+    expect(staffMay("OPERATOR", "EDIT_AFTER_FINAL", ["ORDERS", "PRICING"])).toBe(true);
+    expect(staffMay("TENANT_ADMIN", "EDIT_AFTER_FINAL", ["FINANCE"])).toBe(true);
+  });
+});
+
 describe("voidWindowAllows: SAME_TENANT_DAY_BEFORE_CLOSE", () => {
   // A tenant in New York on 2026-10-08 (EDT, UTC-4): its day is [04:00Z on the 8th, 04:00Z on the 9th).
   const zone = "America/New_York";

@@ -127,6 +127,8 @@ export class SettingsController {
       logoUrl: all["settings.logoUrl"] ?? null,
       // SA-762r F6: the counter receipt's footer line ("" when the tenant has not set one).
       receiptFooter: all["settings.receiptFooter"] ?? "",
+      // the invoices' own switch (Settings > Invoices): the live receipt and the reprint follow it like the emailed receipt
+      hideOriginalPrice: (await this.svc.get("invoice.hideOriginalPrice")) === "true",
       invoiceNotes,
       invoiceTerms,
       timezone,

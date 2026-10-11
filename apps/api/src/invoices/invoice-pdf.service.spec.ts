@@ -323,12 +323,12 @@ describe("invoice-pdf-item — BOGO/promo line display (T-B103, R9, REG-B103)", 
     // MANUAL upsell: charged ABOVE the base price — the web renderer deliberately
     // shows no strikethrough, so the buyer never sees the lower base.
     expect(
-      showOriginalPrice({ qty: 1, unitPrice: 15, originalPrice: 12, priceType: "MANUAL" }, false),
+      showOriginalPrice({ unitPrice: 15, originalPrice: 12, priceType: "MANUAL" }, false),
     ).toBe(false);
     // MANUAL adjusted DOWN keeps the strike (the "Adjusted" branch of the reference).
-    expect(
-      showOriginalPrice({ qty: 1, unitPrice: 9, originalPrice: 12, priceType: "MANUAL" }, false),
-    ).toBe(true);
+    expect(showOriginalPrice({ unitPrice: 9, originalPrice: 12, priceType: "MANUAL" }, false)).toBe(
+      true,
+    );
   });
 });
 

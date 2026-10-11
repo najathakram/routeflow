@@ -423,6 +423,10 @@ export interface BuyerInvoiceListItem {
   paidAmount: DecimalWire;
   creditApplied: DecimalWire;
   advanceApplied: DecimalWire;
+  /** SA-763r P-3: external payments beyond the total (0 when none); an overpaid invoice is never PAID. */
+  overpaidBy?: DecimalWire;
+  /** SA-763r P-3: when the final invoice was last restated by an order edit; null when never revised. */
+  revisedAt?: string | null;
   isOverdue: boolean;
   customer: { id: string; businessName: string };
 }

@@ -145,10 +145,10 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     // Manual invoices due PR3 added billing-invoice.remind (d0/d7/d14 reminders, live mode only), 26 -> 27.
     // B1158 added billing.reconcileParkedCheckouts (parked ACH/SEPA checkouts), 27 -> 28.
     // R1 option B added billing-cron.pushUpcomingDowngradePrices (the pre-renewal downgrade price push), 28 -> 29.
-    // SA-733r3 N2 added billing.catchupSweep (the October catch-up claim sweep), 29 -> 30.
-    // SA-733r7 PR-B3 added billing.dunningSweep, billing.pauseReconcile and billing.pauseReconcileFirst, 30 -> 33; the daily billing.dunningDiscovery (SA-733r M2) made it 34.
-    // Train 3 (w23-r3) sits at 29 including SA-748's counter.parkSweep (hourly parked-cart cleanup); B1 (pushUpcomingDowngradePrices),
-    // B2a (catchupSweep) and B3 (the four dunning jobs) add 6 on top -> 35.
+    // SA-748 added counter.parkSweep (hourly parked-cart cleanup), 29 -> 30.
+    // SA-733r3 N2 added billing.catchupSweep (the October catch-up claim sweep), 30 -> 31.
+    // SA-733r7 PR-B3 added billing.dunningSweep, billing.pauseReconcile, billing.pauseReconcileFirst and the daily
+    // billing.dunningDiscovery (SA-733r M2), 31 -> 35.
     expect(declared).toBe(35);
     // A site that does not match the full `(expr, "name")` shape would be invisible to the name
     // assertions below, so pin the two counts together.

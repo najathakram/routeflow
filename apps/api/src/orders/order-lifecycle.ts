@@ -13,9 +13,16 @@
  * is invisible to it. Moving it would have silently dropped it from that guard's coverage.
  */
 
-import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from "@nestjs/common";
 import { FulfillPath, OrderStatus, RouteRunStatus, UserRole } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { JwtPayload } from "../auth/jwt-payload.interface";
+import { staffMay } from "../auth/permissions/staff-capabilities";
 import type { OrdersService } from "./orders.service";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
@@ -86,17 +93,24 @@ export async function updateShipmentImpl(
 
 /**
  * Ad-hoc trips + fulfillment mode: change an order's fulfillment path
- * (ROUTE ↔ SHIP) while it's still open. Locked once the order has left the
+ * (ROUTE ↔ SHIP ↔ PICKUP) while it's still open. Locked once the order has left the
  * "open" states — a shipped/delivered/cancelled order's fulfillment history
  * shouldn't move out from under its trip/shipment records after the fact —
- * and locked toward SHIP while the order sits on a live run.
+ * and locked toward SHIP or PICKUP while the order sits on a live run.
  */
 export async function updateFulfillPathImpl(
   self: OrdersService,
   orderId: string,
   dto: UpdateFulfillPathDto,
-  _user?: JwtPayload,
+  user?: JwtPayload,
 ) {
+  // POS mode (SA-763r R3): switching an order to PICKUP is a hand-over at the till, a staff capability.
+  if (dto.fulfillPath === FulfillPath.PICKUP && !staffMay(user?.role, "USE_POS_MODE")) {
+    throw new ForbiddenException({
+      code: API_ERROR_CODES.POS_MODE_NOT_PERMITTED,
+      message: "You don't have access to switch an order to pickup.",
+    });
+  }
   // `findFirst`, NOT `findUnique`: forTenant()'s findUnique can only POST-filter
   // on the returned row's `tenantId`, and an exclusive `select` that omits it
   // silently disables that check — which would leak another tenant's order
@@ -107,12 +121,16 @@ export async function updateFulfillPathImpl(
     select: {
       id: true,
       status: true,
+      routeRunId: true,
       routeRunStopId: true,
       routeRunStop: {
         select: {
           routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
         },
       },
+      // A driver-created order can carry a bare routeRunId with no stop (create writes both columns
+      // independently), so the run is also read through routeRunId.
+      routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
     },
   });
   if (!order) throw new NotFoundException("Order not found");
@@ -131,22 +149,61 @@ export async function updateFulfillPathImpl(
   // Since F11 a run going terminal RELEASES the orders of every stop that
   // recorded no work, so a stale attachment now only survives on a COMPLETED
   // stop — or on a row stranded before that deploy, until the D4 repair runs.
-  const run = order.routeRunStop?.routeRun ?? null;
-  const onActiveRun =
-    order.routeRunStopId != null &&
-    run != null &&
-    (run.status === RouteRunStatus.SCHEDULED || run.status === RouteRunStatus.IN_PROGRESS);
-  if (dto.fulfillPath === FulfillPath.SHIP && onActiveRun) {
+  const isActive = (r: { status: RouteRunStatus }) =>
+    r.status === RouteRunStatus.SCHEDULED || r.status === RouteRunStatus.IN_PROGRESS;
+  const stopRun = order.routeRunStop?.routeRun ?? null;
+  const idRun = order.routeRun ?? null;
+  const run = [stopRun, idRun].find((r) => r != null && isActive(r)) ?? stopRun ?? idRun;
+  const onActiveRun = (stopRun != null && isActive(stopRun)) || (idRun != null && isActive(idRun));
+  if (
+    (dto.fulfillPath === FulfillPath.SHIP || dto.fulfillPath === FulfillPath.PICKUP) &&
+    onActiveRun
+  ) {
     throw new BadRequestException(
       `This order is out on an active delivery run${
         run?.driver?.contactName ? ` with ${run.driver.contactName}` : ""
-      }. Remove it from the run before switching it to shipping.`,
+      }. Remove it from the run before switching it to ${
+        dto.fulfillPath === FulfillPath.PICKUP ? "pickup" : "shipping"
+      }.`,
     );
   }
-  return self.prisma.forTenant().order.update({
-    where: { id: orderId },
-    data: { fulfillPath: dto.fulfillPath },
+  const hasLink = order.routeRunId != null || order.routeRunStopId != null;
+  if (dto.fulfillPath !== FulfillPath.PICKUP || !hasLink) {
+    return self.prisma.forTenant().order.update({
+      where: { id: orderId },
+      data: { fulfillPath: dto.fulfillPath },
+    });
+  }
+  // B692 class: a PICKUP order that stays linked to a finished (COMPLETED / CANCELLED) run's stop is
+  // skipped by the later stock stamp, which excludes rows carrying a routeRunStopId, so a later quantity
+  // cut would restock what was never stamped. The link is released ONLY when every run it points at was
+  // read and is finished: an active run was refused above, and a link whose run row could not be read is
+  // refused too (fail closed), because clearing a link we cannot classify could detach a live run.
+  if (
+    (order.routeRunStopId != null && stopRun == null) ||
+    (order.routeRunId != null && idRun == null)
+  ) {
+    throw new BadRequestException(
+      "This order is linked to a delivery run that could not be read. Check its run before switching it to pickup.",
+    );
+  }
+  // The read above and this write are not one transaction: a dispatch attaching in between would have
+  // its fresh link cleared by an unconditional write. The release is conditional on the exact link that
+  // was read, and a miss is a coded 409 with nothing written.
+  const released = await self.prisma.forTenant().order.updateMany({
+    where: { id: orderId, routeRunId: order.routeRunId, routeRunStopId: order.routeRunStopId },
+    data: { fulfillPath: dto.fulfillPath, routeRunId: null, routeRunStopId: null },
   });
+  if (released.count === 0) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.ORDER_RUN_LINK_CHANGED,
+      message:
+        "This order's delivery run changed while you were switching it. Reload and try again.",
+    });
+  }
+  const updated = await self.prisma.forTenant().order.findFirst({ where: { id: orderId } });
+  if (!updated) throw new NotFoundException("Order not found");
+  return updated;
 }
 
 export async function toggleUrgentImpl(
