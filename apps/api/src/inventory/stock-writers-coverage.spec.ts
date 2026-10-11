@@ -315,7 +315,18 @@ const INVENTORY_WRITERS: Record<string, WriterClass> = {
   "InventoryService.recordSale": { kind: "locks-first" },
   "InventoryService.assignToVariants": { kind: "locks-first" },
   "InventoryService.commitStockCount": { kind: "locks-first" },
-  "InventoryService.commitStockCountSession": { kind: "locks-first" },
+  // SA-767 L-2.2: the session commit is a chain: commitStockCountSession (pre-checks + the
+  // stock-count advisory lock) -> commitStockCountBatches (the batch loop + the CAS) ->
+  // commitStockCountBatch (ONE short tx, locks first). The first two write nothing themselves.
+  "InventoryService.commitStockCountBatch": { kind: "locks-first" },
+  "InventoryService.commitStockCountBatches": {
+    kind: "guarded",
+    where: "delegates every Product write to commitStockCountBatch (locks-first; L-2.2 pins below)",
+  },
+  "InventoryService.commitStockCountSession": {
+    kind: "guarded",
+    where: "delegates every Product write to commitStockCountBatch (locks-first; L-2.2 pins below)",
+  },
   "InventoryService.setCostBasis": { kind: "locks-first" },
   "InventoryService.bulkSetCostBasis": { kind: "locks-first" },
   // SA-767 L-1: domain row -> Products -> reads, pinned in common/product-locks.guard.spec.ts.
@@ -330,11 +341,11 @@ const INVENTORY_WRITERS: Record<string, WriterClass> = {
   // Private bodies that only ever run inside a locked caller.
   "InventoryService.applyStockCountItemsInTx": {
     kind: "caller-locked",
-    callers: ["commitStockCount", "commitStockCountSession"],
+    callers: ["commitStockCount", "commitStockCountBatch"],
   },
   "InventoryService.setCostBasisInTx": {
     kind: "caller-locked",
-    callers: ["setCostBasis", "bulkSetCostBasis", "commitStockCountSession"],
+    callers: ["setCostBasis", "bulkSetCostBasis", "commitStockCountBatch"],
   },
   "InventoryService.postPoReceipt": {
     kind: "caller-locked",
@@ -573,4 +584,71 @@ describe("SA-767 L-2 - every InventoryService stock writer locks before it reads
       ).toEqual([expect.stringContaining("calls it before taking the lock")]);
     });
   });
+});
+
+/**
+ * SA-767 L-2.2 (r-note 2 (b)): the batched count committer keeps its shape. Source pins over the
+ * comment-stripped service: the chain delegates to the one batch tx, which is a retryStockTx tx that
+ * locks, reads locked, and skips an already-applied line; the committer is one try-mode
+ * `stock-count` advisory lock; every edit path asks `assertNotCommitting`.
+ */
+describe("SA-767 L-2.2 - the batched count committer (structural pins)", () => {
+  const strip = (code: string) =>
+    code
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+      .replace(/(^|[^:])\/\/.*$/gm, (m, lead: string) => lead + " ".repeat(m.length - lead.length));
+  const src = strip(fs.readFileSync(path.join(SRC_ROOT, INVENTORY_SERVICE), "utf8"));
+  const body = (name: string): string => {
+    const head = src.search(new RegExp(`\\n  (?:private |public )?async ${name}\\(`));
+    expect(head).toBeGreaterThan(-1);
+    const rest = src.slice(head + 1);
+    const next = rest
+      .slice(1)
+      .search(/\n  (?:private |public |protected )?(?:async )?\w+\(|\n  \/\*\*/);
+    return next < 0 ? rest : rest.slice(0, next + 1);
+  };
+
+  it("the session commit is ONE try-mode stock-count advisory lock around the batch loop", () => {
+    const m = body("commitStockCountSession");
+    expect(m).toMatch(
+      /withAdvisoryLock\(\s*\{\s*family: "stock-count",\s*key: id,\s*mode: "try"\s*\}/,
+    );
+    expect(m).toMatch(/this\.commitStockCountBatches\(/);
+    expect(m).toMatch(/stockCountCommitting\(\)/);
+    // no transaction of its own: the Product writes live in the batch method
+    expect(m).not.toMatch(/tenantTransaction/);
+  });
+
+  it("the batch loop steps by COUNT_COMMIT_BATCH and flips the session by CAS only after it", () => {
+    const m = body("commitStockCountBatches");
+    expect(m).toMatch(/i \+= COUNT_COMMIT_BATCH/);
+    const loop = m.search(/this\.commitStockCountBatch\(/);
+    const cas = m.search(/stockCountSession\.updateMany\(/);
+    expect(loop).toBeGreaterThan(-1);
+    expect(cas).toBeGreaterThan(loop);
+    expect(m).toMatch(/status: \{ in: \["OPEN", "REVIEW"\] \}/);
+    expect(m).not.toMatch(/stockCountSession\.update\(/);
+  });
+
+  it("one batch = one retryStockTx tx: lock, locked read, skip-by-movement, then apply", () => {
+    const m = body("commitStockCountBatch");
+    expect(m).toMatch(/retryStockTx\("inventory\.commitStockCountSession"/);
+    const lock = m.search(/this\.lockProducts\(/);
+    const read = m.search(/this\.readLockedStockRows\(/);
+    const skip = m.search(/tx\.stockMovement\.findMany\(/);
+    const apply = m.search(/this\.applyStockCountItemsInTx\(/);
+    expect(lock).toBeGreaterThan(-1);
+    expect(lock).toBeLessThan(read);
+    expect(read).toBeLessThan(skip);
+    expect(skip).toBeLessThan(apply);
+    expect(m).toMatch(/where: \{ reference, productId: \{ in: productIds \} \}/);
+    expect(m).toMatch(/expectedQty: l\.expectedQty/);
+  });
+
+  it.each(["upsertStockCountLine", "removeStockCountLine", "discardStockCountSession"])(
+    "%s refuses a committing count through assertNotCommitting",
+    (name) => {
+      expect(body(name)).toMatch(/this\.assertNotCommitting\(\s*await this\.loadEditableSession\(/);
+    },
+  );
 });

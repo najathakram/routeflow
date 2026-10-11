@@ -8,6 +8,7 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { assertSellableLines } from "../products/sellable-lines";
 import {
@@ -50,6 +51,12 @@ import { BulkSetCostBasisDto } from "./dto/bulk-set-cost-basis.dto";
 import { RecomputeCostsDto } from "./dto/recompute-costs.dto";
 import { VariantAssignDto } from "./dto/variant-assign.dto";
 import { retryStockTx } from "../common/tx-retry";
+import { LockUnavailableError, withAdvisoryLock } from "../common/db-locks";
+import {
+  COUNT_COMMIT_BATCH,
+  stockCountCommitting,
+  stockCountReference,
+} from "./stock-count-commit";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
 
@@ -85,6 +92,16 @@ export function effectiveDateOf(raw: string | undefined, now = new Date()): Date
 }
 /** Averages closer than this are the same cost (costDecimal keeps 4dp). */
 const AVG_CORRECTION_EPSILON = new Prisma.Decimal("0.0001");
+
+/** The slice of a StockCountLine a batch commit reads. */
+interface StockCountBatchLine {
+  id: string;
+  productId: string;
+  mode: string;
+  countedQty: Prisma.Decimal;
+  expectedQty: Prisma.Decimal;
+  unitCostOverride: Prisma.Decimal | null;
+}
 
 @Injectable()
 export class InventoryService {
@@ -987,7 +1004,17 @@ export class InventoryService {
   private async applyStockCountItemsInTx(
     tx: Prisma.TransactionClient,
     args: {
-      items: Array<{ productId: string; quantity: number; mode: "REPLACE" | "ADD" }>;
+      items: Array<{
+        productId: string;
+        quantity: number;
+        mode: "REPLACE" | "ADD";
+        /**
+         * A durable-session line's snapshot of the stock when it was counted. Set ⇒ REPLACE is
+         * `counted - expectedQty` (a sale that landed after the count survives); unset (the legacy
+         * client-session path has no snapshot) ⇒ `counted - the locked stock`.
+         */
+        expectedQty?: Prisma.Decimal;
+      }>;
       lockedMap: Map<
         string,
         { id: string; currentStock: Prisma.Decimal; averageCost: Prisma.Decimal | null }
@@ -1016,7 +1043,8 @@ export class InventoryService {
     for (const item of items) {
       const product = lockedMap.get(item.productId);
       if (!product) throw new NotFoundException("Product not found");
-      const stockBefore = runningStock.get(item.productId) ?? product.currentStock;
+      const stockBefore =
+        item.expectedQty ?? runningStock.get(item.productId) ?? product.currentStock;
       const counted = new Prisma.Decimal(item.quantity);
       const delta = item.mode === "REPLACE" ? counted.minus(stockBefore) : counted;
 
@@ -2322,6 +2350,7 @@ export class InventoryService {
     product: { id: string; costingMethod: CostingMethod },
     dto: SetCostBasisDto,
     performedById: string,
+    reference?: string,
   ) {
     const unitCost = costDecimal(dto.unitCost);
 
@@ -2348,6 +2377,8 @@ export class InventoryService {
         stockAfter: updated.currentStock,
         notes: dto.notes,
         performedById,
+        // A count's cost correction carries the session reference: it is what makes the batch resumable.
+        ...(reference ? { reference } : {}),
       },
     });
 
@@ -2537,11 +2568,29 @@ export class InventoryService {
     return session;
   }
 
+  /**
+   * SA-767 L-2.2: a count whose commit has started (some of its movements exist) but not finished (not
+   * COMMITTED yet) is "committing": a line edit or a discard would race the batches, so it is refused
+   * with 409 STOCK_COUNT_COMMITTING. Called by every edit path right after {@link loadEditableSession}
+   * (which has already refused COMMITTED / DISCARDED). `startedAt` bounds the movement lookup to the
+   * count's own lifetime (`reference` itself has no index).
+   */
+  private async assertNotCommitting(session: { id: string; startedAt?: Date }) {
+    const started = await this.prisma.forTenant().stockMovement.findFirst({
+      where: {
+        reference: stockCountReference(session.id),
+        ...(session.startedAt ? { createdAt: { gte: session.startedAt } } : {}),
+      },
+      select: { id: true },
+    });
+    if (started) throw stockCountCommitting();
+  }
+
   /** Guard: a count can only be edited while it is still OPEN or in REVIEW. */
   private async loadEditableSession(id: string) {
     const session = await this.prisma.forTenant().stockCountSession.findFirst({
       where: { id },
-      select: { id: true, status: true },
+      select: { id: true, status: true, startedAt: true },
     });
     if (!session) throw new NotFoundException("Stock count session not found");
     if (session.status === "COMMITTED") {
@@ -2567,7 +2616,7 @@ export class InventoryService {
     dto: UpsertStockCountLineDto,
     user: { sub: string },
   ) {
-    await this.loadEditableSession(sessionId);
+    await this.assertNotCommitting(await this.loadEditableSession(sessionId));
 
     const product = await this.prisma.forTenant().product.findFirst({
       where: { id: dto.productId },
@@ -2632,13 +2681,13 @@ export class InventoryService {
   }
 
   async removeStockCountLine(sessionId: string, productId: string) {
-    await this.loadEditableSession(sessionId);
+    await this.assertNotCommitting(await this.loadEditableSession(sessionId));
     await this.prisma.forTenant().stockCountLine.deleteMany({ where: { sessionId, productId } });
     return { removed: true };
   }
 
   async discardStockCountSession(id: string) {
-    await this.loadEditableSession(id);
+    await this.assertNotCommitting(await this.loadEditableSession(id));
     return this.prisma.forTenant().stockCountSession.update({
       where: { id },
       data: { status: "DISCARDED", discardedAt: new Date() },
@@ -2649,7 +2698,15 @@ export class InventoryService {
    * Commit a durable session. Uncounted products are NEVER touched — a count
    * only asserts what it actually saw.
    *
-   * Ordering is deliberate: a line's `unitCostOverride` is applied BEFORE its
+   * SA-767 L-2.2 (r-note 2 (b)): the commit is BATCHED. One committer holds the session-scoped
+   * `stock-count` advisory lock (try mode) across all batches; the lines are read once, ordered by
+   * productId, and applied COUNT_COMMIT_BATCH at a time, each batch its own short tx (see
+   * {@link commitStockCountBatch}), so a sale of a counted product waits behind at most one batch.
+   * The session stays OPEN / REVIEW (no new enum value) until a CAS after the LAST batch flips it to
+   * COMMITTED. A second committer gets 409 STOCK_COUNT_COMMITTING; a crashed commit resumes, because
+   * a line whose movement already exists is skipped.
+   *
+   * Ordering inside a batch is deliberate: a line's `unitCostOverride` is applied BEFORE its
    * quantity adjustment, so the ADJUSTMENT movement's `avgCostAfter` and any
    * lot opened for a positive delta are valued at the CORRECTED cost. Applying
    * it after would stamp the stale cost onto both.
@@ -2697,42 +2754,156 @@ export class InventoryService {
     assertSellableLines(products); // WS8
 
     const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
-    const reference = `STOCK_COUNT-${id}`;
-    const restockedProductIds: string[] = [];
+    const reference = stockCountReference(id);
+    // The batch order: productId, then line id (stable across a resume).
+    const byProductThenId = (a: { productId: string; id: string }, b: typeof a) =>
+      a.productId === b.productId ? (a.id < b.id ? -1 : 1) : a.productId < b.productId ? -1 : 1;
+    const lines = [...session.lines].sort(byProductThenId);
 
-    // SA-767 L-2: lock every counted product (one statement), read them INSIDE the tx, then the
-    // idempotency check, the cost corrections and the quantity adjustments all work from the locked
-    // rows. The whole tx re-runs on a 40P01 / 40001 / P2034: per-attempt state is reset at the top and
-    // the alerts fire once, after the commit.
-    const result = await retryStockTx("inventory.commitStockCountSession", () =>
+    let held;
+    try {
+      held = await withAdvisoryLock({ family: "stock-count", key: id, mode: "try" }, () =>
+        this.commitStockCountBatches({
+          id,
+          reference,
+          lines,
+          effectiveDate,
+          notes: dto.notes,
+          user,
+        }),
+      );
+    } catch (e) {
+      if (e instanceof LockUnavailableError) {
+        throw new ServiceUnavailableException({
+          code: API_ERROR_CODES.LOCK_UNAVAILABLE,
+          message: "Stock counts are busy. Nothing was saved; please try again in a moment.",
+        });
+      }
+      throw e;
+    }
+    if (!held.acquired) throw stockCountCommitting();
+    return held.value;
+  }
+
+  /** The body of the committer: runs only while the caller holds the session's `stock-count` lock. */
+  private async commitStockCountBatches(args: {
+    id: string;
+    reference: string;
+    lines: StockCountBatchLine[];
+    effectiveDate: Date;
+    notes?: string;
+    user: { sub: string };
+  }) {
+    const { id, reference, lines, effectiveDate, notes, user } = args;
+
+    // A committer that waited out another one (or whose predecessor finished and lost its response)
+    // must not start over: re-read the status under the lock.
+    const fresh = await this.prisma.forTenant().stockCountSession.findUnique({
+      where: { id },
+      select: { status: true },
+    });
+    if (fresh?.status === "DISCARDED") throw new BadRequestException("This count was discarded");
+    if (fresh?.status === "COMMITTED") {
+      return this.alreadyCommittedOutcome(id, reference, lines.length);
+    }
+
+    const movementIds: string[] = [];
+    const costMovementIds: string[] = [];
+    let skipped = 0;
+    for (let i = 0; i < lines.length; i += COUNT_COMMIT_BATCH) {
+      // eslint-disable-next-line no-await-in-loop
+      const batch = await this.commitStockCountBatch(lines.slice(i, i + COUNT_COMMIT_BATCH), {
+        reference,
+        effectiveDate,
+        notes,
+        userId: user.sub,
+      });
+      movementIds.push(...batch.movementIds);
+      costMovementIds.push(...batch.costMovementIds);
+      skipped += batch.skipped;
+      // Never inside the transaction: after THIS batch committed.
+      if (batch.restockedProductIds.length > 0) this.fireStockAlerts(batch.restockedProductIds);
+    }
+
+    // The CAS: only the committer that still finds the session OPEN / REVIEW flips it.
+    const flipped = await this.prisma.forTenant().stockCountSession.updateMany({
+      where: { id, status: { in: ["OPEN", "REVIEW"] } },
+      data: {
+        status: "COMMITTED",
+        committedAt: new Date(),
+        committedById: user.sub,
+        movementReference: reference,
+        ...(notes !== undefined ? { notes } : {}),
+      },
+    });
+    if (flipped.count === 0) {
+      const now = await this.prisma.forTenant().stockCountSession.findUnique({
+        where: { id },
+        select: { status: true },
+      });
+      if (now?.status === "DISCARDED") throw new BadRequestException("This count was discarded");
+      return this.alreadyCommittedOutcome(id, reference, lines.length);
+    }
+
+    return {
+      sessionId: id,
+      reference,
+      applied: movementIds.length,
+      skipped,
+      movementIds,
+      costMovementIds,
+    };
+  }
+
+  private alreadyCommittedOutcome(id: string, reference: string, lineCount: number) {
+    return {
+      sessionId: id,
+      reference,
+      applied: 0,
+      skipped: lineCount,
+      movementIds: [] as string[],
+      alreadyCommitted: true,
+    };
+  }
+
+  /**
+   * ONE batch of a count commit, its own short tx (SA-767 L-2.2): lock the batch's products (role
+   * rank, one statement), read them locked, then per line: SKIP when a movement with this session's
+   * reference already exists for the product (an earlier, interrupted run applied it - checked under
+   * the product lock, so a resume never applies a line twice), else apply the cost correction and then
+   * the adjustment. REPLACE is `counted - the line's expectedQty`, ADD is `counted`, written as an
+   * increment with `stockAfter` from the UPDATE's returned row. The whole tx re-runs on
+   * 40P01 / 40001 / P2034 / 55P03 / P2028 and every attempt starts from clean state.
+   */
+  private async commitStockCountBatch(
+    batch: StockCountBatchLine[],
+    ctx: { reference: string; effectiveDate: Date; notes?: string; userId: string },
+  ) {
+    const { reference } = ctx;
+    const productIds = batch.map((l) => l.productId);
+    return retryStockTx("inventory.commitStockCountSession", () =>
       this.prisma.tenantTransaction(
         async (tx) => {
-          restockedProductIds.length = 0;
           await this.lockProducts(tx, productIds);
           const lockedMap = await this.readLockedStockRows(tx, productIds);
 
-          // Same guard as the legacy path: if movements already carry this
-          // reference, the commit landed and only the response was lost.
-          const already = await tx.stockMovement.findMany({
-            where: { reference },
-            select: { id: true },
+          // Idempotent resume: a movement of this reference for the product means the line is done.
+          const done = await tx.stockMovement.findMany({
+            where: { reference, productId: { in: productIds } },
+            select: { id: true, productId: true, type: true },
           });
-          if (already.length > 0) {
-            return {
-              sessionId: id,
-              reference,
-              applied: already.length,
-              skipped: 0,
-              movementIds: already.map((m) => m.id),
-              costMovementIds: [] as string[],
-              alreadyCommitted: true,
-            };
-          }
+          const doneProducts = new Set(done.map((m) => m.productId));
+          const movementIds = done
+            .filter((m) => m.type === MovementType.ADJUSTMENT)
+            .map((m) => m.id);
+          const costMovementIds = done
+            .filter((m) => m.type === MovementType.COST_BASIS)
+            .map((m) => m.id);
+          const pending = batch.filter((l) => !doneProducts.has(l.productId));
 
-          // 1) Cost corrections first — see the ordering note above.
-          const costMovementIds: string[] = [];
+          // 1) Cost corrections first — see the ordering note on commitStockCountSession.
           const correctedCosts = new Map<string, Prisma.Decimal>();
-          for (const line of session.lines) {
+          for (const line of pending) {
             if (line.unitCostOverride == null) continue;
             const unitCost = costDecimal(Number(line.unitCostOverride));
             const movement = await this.setCostBasisInTx(
@@ -2742,59 +2913,40 @@ export class InventoryService {
                 unitCost: Number(line.unitCostOverride),
                 notes: `Stock count ${reference}`,
               } as SetCostBasisDto,
-              user.sub,
+              ctx.userId,
+              reference,
             );
             costMovementIds.push(movement.id);
             correctedCosts.set(line.productId, unitCost);
           }
 
-          // 2) Then the quantity adjustments, through the SHARED routine so the
-          //    durable path can never drift from the legacy one.
-          const { movementIds, skipped } = await this.applyStockCountItemsInTx(tx, {
-            items: session.lines.map((l) => ({
+          // 2) Then the quantity adjustments, through the SHARED routine so the durable path can never
+          //    drift from the legacy one.
+          const restockedProductIds: string[] = [];
+          const applied = await this.applyStockCountItemsInTx(tx, {
+            items: pending.map((l) => ({
               productId: l.productId,
               quantity: Number(l.countedQty),
               mode: l.mode as "REPLACE" | "ADD",
+              expectedQty: l.expectedQty,
             })),
             lockedMap,
             reference,
-            effectiveDate,
-            notes: dto.notes,
-            performedById: user.sub,
+            effectiveDate: ctx.effectiveDate,
+            notes: ctx.notes,
+            performedById: ctx.userId,
             restockedProductIds,
             correctedCosts,
           });
+          movementIds.push(...applied.movementIds);
 
-          await tx.stockCountSession.update({
-            where: { id },
-            data: {
-              status: "COMMITTED",
-              committedAt: new Date(),
-              committedById: user.sub,
-              movementReference: reference,
-              ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
-            },
-          });
-
-          return {
-            sessionId: id,
-            reference,
-            applied: movementIds.length,
-            skipped,
-            movementIds,
-            costMovementIds,
-          };
+          return { movementIds, costMovementIds, skipped: applied.skipped, restockedProductIds };
         },
-        // A warehouse-wide count is hundreds of lines, each doing a movement
-        // create + product update (+ a lot on a positive delta). Prisma's 5s
-        // default would abort a real audit part-way; the whole commit must be
-        // all-or-nothing.
-        { timeout: 120_000 },
+        // One batch is at most COUNT_COMMIT_BATCH lines (a movement create + product update, + a lot on a
+        // positive delta, each): well inside this budget, and a stuck batch fails instead of hanging.
+        { timeout: 60_000 },
       ),
     );
-
-    this.fireStockAlerts(restockedProductIds);
-    return result;
   }
 
   // ─── Cost recompute (history-preserving) ────────────────────────────────────

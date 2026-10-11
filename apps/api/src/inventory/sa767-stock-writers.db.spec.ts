@@ -54,7 +54,10 @@ class Gate {
   private readonly opened = new Promise<void>((r) => {
     this.open = r;
   });
-  hold(): Promise<void> {
+  /** The backend pid of the connection holding the transaction open (set by `hold`). */
+  holderPid = 0;
+  hold(holderPid = 0): Promise<void> {
+    this.holderPid = holderPid;
     this.markParked();
     return this.opened;
   }
@@ -200,7 +203,8 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
       return original(
         async (tx: any) => {
           const result = await fn(tx);
-          await gate.hold();
+          const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+          await gate.hold(pid);
           return result;
         },
         { ...opts, timeout: 30_000, maxWait: 15_000 },
@@ -406,7 +410,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     expect(Number(m.stockAfter)).toBe(90);
   }, 60_000);
 
-  it("(b3) a durable-session commit after a sale: stock = counted, cost row + adjustment from the locked rows", async () => {
+  it("(b3) a durable-session commit after a sale: the line's delta (counted 90 - expected 100) lands on the post-sale stock, cost row + adjustment from the locked rows", async () => {
     const w = await seedWorld("b3", 100, 2);
     const session = await A.prisma.stockCountSession.create({
       data: { tenantId: w.tenantId, startedById: w.userId, name: "sa767" },
@@ -441,13 +445,14 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
         `costStockAfter=${cost.stockAfter} adjDelta=${adj.quantity} adjStockAfter=${adj.stockAfter}`,
     );
     expect(waited).toBe(true);
-    expect(Number(p.currentStock)).toBe(90);
+    // SA-767 r-note 2 correction: REPLACE is counted - expectedQty (90 - 100 = -10), NOT counted - the
+    // locked stock; the sale of 30 that landed after the count survives: 100 - 30 - 10 = 60.
+    expect(Number(p.currentStock)).toBe(60);
     expect(Number(cost.stockAfter)).toBe(70); // the stock the cost row was written at
-    expect(Number(adj.quantity)).toBe(20);
-    expect(Number(adj.stockAfter)).toBe(90);
+    expect(Number(adj.quantity)).toBe(-10);
+    expect(Number(adj.stockAfter)).toBe(60);
     expect(Number(adj.avgCostAfter)).toBe(5); // the corrected cost
-    const lot = await A.prisma.stockLot.findFirstOrThrow({ where: { tenantId: w.tenantId } });
-    expect(Number(lot.unitCost)).toBe(5);
+    expect(await A.prisma.stockLot.count({ where: { tenantId: w.tenantId } })).toBe(0); // no +delta, no lot
   }, 60_000);
 
   it("(c) setCostBasis racing a sale stamps the locked stock: stockAfter 70, not the stale 100", async () => {
@@ -501,5 +506,418 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     expect(stockAfter(w.productId)).toBe(70);
     expect(stockAfter(other.id)).toBe(40);
     expect(Number((await productOf(w)).averageCost)).toBe(5);
+  }, 60_000);
+
+  // ─── SA-767 L-2.2: the batched count committer (r1-r5) ──────────────────────────────────────────
+
+  /** True once a backend is WAITING on a lock held by `holderPid` (the holder's pg_backend_pid()). */
+  async function sawLockWaitBy(holderPid: number, withinMs = 5_000): Promise<boolean> {
+    const deadline = Date.now() + withinMs;
+    while (Date.now() < deadline) {
+      // eslint-disable-next-line no-await-in-loop
+      const { rows } = await pool.query(
+        `SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database() AND pid <> pg_backend_pid()
+            AND pg_blocking_pids(pid) @> ARRAY[$1::int]`,
+        [holderPid],
+      );
+      if (rows[0].n > 0) return true;
+      // eslint-disable-next-line no-await-in-loop
+      await sleep(25);
+    }
+    return false;
+  }
+
+  /** Settles to the value, or to "pending" if it has not settled within `ms` (never hangs a case). */
+  const settleWithin = <T>(p: Promise<T>, ms: number) =>
+    Promise.race([
+      p.then(
+        (value) => ({ value }) as { value: T; err?: undefined },
+        (err) => ({ err }) as { value?: undefined; err: any },
+      ),
+      sleep(ms).then(() => "pending" as const),
+    ]);
+
+  const pad3 = (i: number) => String(i).padStart(3, "0");
+  interface CountWorld extends World {
+    sessionId: string;
+    idOf: (i: number) => string;
+  }
+
+  /** `n` products at `stock`, one session with one REPLACE line each (counted `counted`, expected `stock`). */
+  async function seedCountWorld(
+    label: string,
+    n: number,
+    opts: { stock?: number; counted?: (i: number) => number } = {},
+  ): Promise<CountWorld> {
+    const stock = opts.stock ?? 100;
+    const base = await seedWorld(label, stock, 2);
+    await A.prisma.product.delete({ where: { id: base.productId } });
+    const idOf = (i: number) => `${base.tenantId.slice(0, 8)}-${label}-${pad3(i)}`;
+    await A.prisma.product.createMany({
+      data: Array.from({ length: n }, (_, k) => ({
+        id: idOf(k + 1),
+        name: `Widget ${label} ${pad3(k + 1)}`,
+        unit: "ea",
+        pricePerUnit: 10,
+        currentStock: stock,
+        averageCost: 2,
+        costingMethod: "AVCO" as const,
+        tenantId: base.tenantId,
+      })),
+    });
+    const session = await A.prisma.stockCountSession.create({
+      data: { tenantId: base.tenantId, startedById: base.userId, name: `sa767 ${label}` },
+    });
+    await A.prisma.stockCountLine.createMany({
+      data: Array.from({ length: n }, (_, k) => ({
+        tenantId: base.tenantId,
+        sessionId: session.id,
+        productId: idOf(k + 1),
+        mode: "REPLACE" as const,
+        countedQty: (opts.counted ?? (() => stock - 10))(k + 1),
+        expectedQty: stock,
+        countedById: base.userId,
+      })),
+    });
+    return { ...base, productId: idOf(1), sessionId: session.id, idOf };
+  }
+
+  const stockOfId = async (id: string) =>
+    Number((await A.prisma.product.findUniqueOrThrow({ where: { id } })).currentStock);
+  const commitSession = (s: Services, w: CountWorld) =>
+    inTenant(s, w, () => s.inventory.commitStockCountSession(w.sessionId, {}, { sub: w.userId }));
+  const sessionOf = (w: CountWorld) =>
+    A.prisma.stockCountSession.findUniqueOrThrow({ where: { id: w.sessionId } });
+  const countMovements = (w: CountWorld) =>
+    A.prisma.stockMovement.findMany({
+      where: { tenantId: w.tenantId, reference: `STOCK_COUNT-${w.sessionId}` },
+    });
+
+  /** Product rows of the tenant NO transaction currently holds a row lock on. */
+  async function unlockedProducts(tenantId: string): Promise<number> {
+    const c = await pool.connect();
+    try {
+      await c.query("BEGIN");
+      const { rows } = await c.query(
+        `SELECT count(*)::int AS n FROM
+           (SELECT id FROM "Product" WHERE "tenantId" = $1 FOR UPDATE SKIP LOCKED) t`,
+        [tenantId],
+      );
+      return rows[0].n as number;
+    } finally {
+      await c.query("ROLLBACK").catch(() => undefined);
+      c.release();
+    }
+  }
+
+  /**
+   * Parks the FIRST `tenantTransaction` of `svc` that locks `productId` (seen on its Product lock
+   * statement): `inside` holds it open after its body ran (locks still held), `after` holds the
+   * caller AFTER that tx committed (no row locks, the commit still unfinished).
+   */
+  function parkTxLocking(svc: Services, productId: string) {
+    const inside = new Gate();
+    const after = new Gate();
+    gates.push(inside, after);
+    const original = svc.prisma.tenantTransaction.bind(svc.prisma) as any;
+    let done = false;
+    jest.spyOn(svc.prisma, "tenantTransaction").mockImplementation((async (fn: any, opts?: any) => {
+      if (done) return original(fn, opts);
+      let touched = false;
+      const result = await original(
+        async (tx: any) => {
+          const spyTx = new Proxy(tx, {
+            get(target, prop) {
+              const v = Reflect.get(target, prop, target);
+              if (prop === "$executeRaw" && typeof v === "function") {
+                return (s: unknown, ...vals: unknown[]) => {
+                  if (vals.some((x) => Array.isArray(x) && x.includes(productId))) touched = true;
+                  return v.call(target, s, ...vals);
+                };
+              }
+              return typeof v === "function" ? v.bind(target) : v;
+            },
+          });
+          const out = await fn(spyTx);
+          if (touched && !done) {
+            const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+            await inside.hold(pid);
+          }
+          return out;
+        },
+        { ...opts, timeout: 40_000, maxWait: 15_000 },
+      );
+      if (touched && !done) {
+        done = true;
+        await after.hold(0);
+      }
+      return result;
+    }) as any);
+    return { inside, after };
+  }
+
+  it("(r1) a sale mid-commit waits at most one batch: 120 counted products, the lock window is <= 50 rows", async () => {
+    const w = await seedCountWorld("r1", 120);
+    const p70 = w.idOf(70);
+    const p110 = w.idOf(110);
+    const park = parkTxLocking(A, p70);
+
+    let commitSettled = false;
+    const commit = commitSession(A, w).finally(() => {
+      commitSettled = true;
+    });
+    commit.catch(() => undefined);
+    const parked = await Promise.race([
+      park.inside.parked.then(() => true),
+      sleep(20_000).then(() => false),
+    ]);
+    expect(parked).toBe(true);
+
+    // The window: how many Product rows the in-flight commit holds. The old single tx held all 120.
+    const held = 120 - (await unlockedProducts(w.tenantId));
+    // A sale of #70 (inside the held batch) waits on the commit, a sale of #110 (a later batch) does not.
+    const saleOn70 = (async () => {
+      const c = await pool.connect();
+      try {
+        await c.query("BEGIN");
+        await c.query('SELECT id FROM "Product" WHERE id = $1 AND "tenantId" = $2 FOR UPDATE', [
+          p70,
+          w.tenantId,
+        ]);
+        const { rows } = await c.query(
+          'UPDATE "Product" SET "currentStock" = "currentStock" - 30 WHERE id = $1 RETURNING "currentStock"',
+          [p70],
+        );
+        await c.query("COMMIT");
+        return Number(rows[0].currentStock);
+      } finally {
+        c.release();
+      }
+    })();
+    saleOn70.catch(() => undefined);
+    const waitedOn70 = await sawLockWaitBy(park.inside.holderPid);
+    const saleOn110 = (async () => {
+      const c = await pool.connect();
+      try {
+        await c.query("BEGIN");
+        await c.query('SELECT id FROM "Product" WHERE id = $1 AND "tenantId" = $2 FOR UPDATE', [
+          p110,
+          w.tenantId,
+        ]);
+        await c.query('UPDATE "Product" SET "currentStock" = "currentStock" - 30 WHERE id = $1', [
+          p110,
+        ]);
+        await c.query("COMMIT");
+        return true;
+      } finally {
+        c.release();
+      }
+    })();
+    saleOn110.catch(() => undefined);
+    const sale110 = await settleWithin(saleOn110, 3_000);
+    console.log(
+      `SA-767(r1) observed: parked=${parked} rowsHeld=${held} saleOn70Waited=${waitedOn70} ` +
+        `saleOn110=${sale110 === "pending" ? "BLOCKED" : "done"}`,
+    );
+
+    park.inside.release(); // the batch with #70 commits; the sale of #70 then proceeds
+    const left70 = await saleOn70;
+    // the batch is done and the commit is parked BEFORE its later batches / CAS: the sale already landed
+    const afterParked = await Promise.race([
+      park.after.parked.then(() => true),
+      sleep(20_000).then(() => false),
+    ]);
+    const settledWhileParked = commitSettled;
+    const stock70WhileParked = await stockOfId(p70);
+    park.after.release();
+    await commit;
+
+    expect(held).toBeLessThanOrEqual(50); // old code: 120
+    expect(waitedOn70).toBe(true); // the sale really waited, behind this batch's row lock
+    expect(sale110).not.toBe("pending"); // a product in a later batch is free while a batch is in flight
+    expect(afterParked).toBe(true);
+    expect(settledWhileParked).toBe(false); // the sale finished while the commit still had work left
+    expect(left70).toBe(60); // 100 - 10 (the batch) - 30 (the sale)
+    expect(stock70WhileParked).toBe(60);
+    // final: the count's delta is counted - expectedQty = -10 for everyone; the two sales survive
+    expect(await stockOfId(p70)).toBe(60);
+    expect(await stockOfId(p110)).toBe(60);
+    expect(await stockOfId(w.idOf(1))).toBe(90);
+    expect(await stockOfId(w.idOf(120))).toBe(90);
+    const moves = await countMovements(w);
+    expect(moves).toHaveLength(120);
+    expect(moves.every((m) => Number(m.quantity) === -10)).toBe(true);
+    const mv70 = moves.find((m) => m.productId === p70)!;
+    expect(Number(mv70.stockAfter)).toBe(90); // the batch landed first (100 - 10); the sale then left 60
+    const s = await sessionOf(w);
+    expect(s.status).toBe("COMMITTED");
+    expect(s.committedAt).not.toBeNull();
+    expect(s.movementReference).toBe(`STOCK_COUNT-${w.sessionId}`);
+  }, 120_000);
+
+  it("(r2) a commit killed after batch 1 resumes: batch-1 lines are applied once, the session ends COMMITTED once", async () => {
+    // New-behaviour pin: the old single-tx committer has no batch boundary to be killed at (its first
+    // commit simply succeeds), so this is red on the old code only as "the commit did not fail".
+    const w = await seedCountWorld("r2", 120);
+    const original = A.prisma.tenantTransaction.bind(A.prisma) as any;
+    let calls = 0;
+    jest.spyOn(A.prisma, "tenantTransaction").mockImplementation(((fn: any, opts?: any) => {
+      calls += 1;
+      if (calls === 2) return Promise.reject(new Error("injected: process killed before batch 2"));
+      return original(fn, opts);
+    }) as any);
+
+    const first = await settleWithin(commitSession(A, w), 30_000);
+    jest.restoreAllMocks();
+
+    const midMoves = await countMovements(w);
+    const midSession = await sessionOf(w);
+    console.log(
+      `SA-767(r2) observed: first=${first === "pending" ? "pending" : first.err ? "failed" : "succeeded"} ` +
+        `movementsAfterKill=${midMoves.length} status=${midSession.status}`,
+    );
+    expect(first).not.toBe("pending");
+    expect((first as any).err?.message).toMatch(/injected/);
+    expect(midMoves).toHaveLength(50); // batch 1 only
+    expect(midSession.status).toBe("OPEN"); // still not COMMITTED
+    expect(midSession.committedAt).toBeNull();
+
+    const resumed: any = await commitSession(A, w);
+
+    expect(resumed.applied).toBe(120); // 50 resumed + 70 new: the session's complete movement set
+    const moves = await countMovements(w);
+    expect(moves).toHaveLength(120);
+    expect(new Set(moves.map((m) => m.productId)).size).toBe(120); // one movement per product
+    for (const i of [1, 50, 51, 120]) expect(await stockOfId(w.idOf(i))).toBe(90); // -10 once, not -20
+    const s = await sessionOf(w);
+    expect(s.status).toBe("COMMITTED");
+    expect(s.committedAt).not.toBeNull();
+
+    // a further commit is the already-committed outcome and writes nothing
+    const again: any = await commitSession(A, w);
+    expect(again.alreadyCommitted).toBe(true);
+    expect(await countMovements(w)).toHaveLength(120);
+  }, 180_000);
+
+  it("(r3) two concurrent commits: exactly one wins, the other gets 409 STOCK_COUNT_COMMITTING", async () => {
+    const w = await seedCountWorld("r3", 3);
+    const gateA = holdFirstTxOpen(A); // A's first batch ran and is parked; A still owns the session lock
+
+    const first = commitSession(A, w);
+    first.catch(() => undefined);
+    await gateA.parked;
+    // B's pre-checks see the session OPEN (A has not committed).
+    const second = await settleWithin(commitSession(B, w), 8_000);
+    console.log(
+      `SA-767(r3) observed: second=${second === "pending" ? "BLOCKED" : second.err ? `err ${JSON.stringify(second.err?.response)}` : "returned"}`,
+    );
+    gateA.release();
+    const winner: any = await first;
+
+    expect(second).not.toBe("pending");
+    expect((second as any).err?.status).toBe(409);
+    expect((second as any).err?.response).toMatchObject({ code: "STOCK_COUNT_COMMITTING" });
+    expect(winner.applied).toBe(3);
+    const moves = await countMovements(w);
+    expect(moves).toHaveLength(3);
+    expect((await sessionOf(w)).status).toBe("COMMITTED");
+    for (let i = 1; i <= 3; i++) expect(await stockOfId(w.idOf(i))).toBe(90);
+  }, 90_000);
+
+  it("(r4) line edits and discard are refused 409 STOCK_COUNT_COMMITTING once movements exist and the session is not COMMITTED", async () => {
+    const w = await seedCountWorld("r4", 3);
+    const upsertBefore = await A.prisma.stockCountLine.findFirstOrThrow({
+      where: { sessionId: w.sessionId, productId: w.idOf(1) },
+    });
+    // The "committing" state: a batch landed its movement for this session's reference, no CAS yet.
+    await A.prisma.stockMovement.create({
+      data: {
+        tenantId: w.tenantId,
+        productId: w.idOf(1),
+        type: "ADJUSTMENT",
+        quantity: -10,
+        stockAfter: 90,
+        reference: `STOCK_COUNT-${w.sessionId}`,
+        performedById: w.userId,
+      },
+    });
+
+    const attempts = {
+      upsert: await inTenant(A, w, () =>
+        A.inventory.upsertStockCountLine(
+          w.sessionId,
+          { productId: w.idOf(2), countedQty: 1 } as any,
+          { sub: w.userId },
+        ),
+      ).catch((e) => e),
+      remove: await inTenant(A, w, () =>
+        A.inventory.removeStockCountLine(w.sessionId, w.idOf(3)),
+      ).catch((e) => e),
+      discard: await inTenant(A, w, () => A.inventory.discardStockCountSession(w.sessionId)).catch(
+        (e) => e,
+      ),
+    };
+    console.log(
+      `SA-767(r4) observed: ${Object.entries(attempts)
+        .map(
+          ([k, v]: [string, any]) =>
+            `${k}=${v?.response?.code ?? (v?.status ? v.status : "ALLOWED")}`,
+        )
+        .join(" ")}`,
+    );
+    for (const [name, err] of Object.entries(attempts) as Array<[string, any]>) {
+      expect({ name, status: err?.status }).toEqual({ name, status: 409 });
+      expect(err.response).toMatchObject({ code: "STOCK_COUNT_COMMITTING" });
+    }
+    // nothing changed
+    const s = await sessionOf(w);
+    expect(s.status).toBe("OPEN");
+    expect(await A.prisma.stockCountLine.count({ where: { sessionId: w.sessionId } })).toBe(3);
+    const upsertAfter = await A.prisma.stockCountLine.findFirstOrThrow({
+      where: { sessionId: w.sessionId, productId: w.idOf(1) },
+    });
+    expect(Number(upsertAfter.countedQty)).toBe(Number(upsertBefore.countedQty));
+  }, 60_000);
+
+  it("(r5) an all-zero-delta session committed twice applies once; a line added before the commit is included", async () => {
+    // Regression guard (not a red): the old committer was already correct for the sequential case.
+    const w = await seedCountWorld("r5", 2, { counted: () => 100 }); // counted == expected: delta 0
+    // a line added through the real autosave path before the commit starts: counted 95 of 100
+    const extra = await A.prisma.product.create({
+      data: {
+        id: w.idOf(3),
+        name: "Widget r5 003",
+        unit: "ea",
+        pricePerUnit: 10,
+        currentStock: 100,
+        averageCost: 2,
+        costingMethod: "AVCO",
+        tenantId: w.tenantId,
+      },
+    });
+    await inTenant(A, w, () =>
+      A.inventory.upsertStockCountLine(
+        w.sessionId,
+        { productId: extra.id, countedQty: 95 } as any,
+        {
+          sub: w.userId,
+        },
+      ),
+    );
+
+    const first: any = await commitSession(A, w);
+    const mid = await sessionOf(w);
+    const second: any = await commitSession(B, w);
+    const end = await sessionOf(w);
+
+    expect(first.applied).toBe(1); // only the +/- line writes a movement; the two zero lines are skipped
+    expect(first.skipped).toBe(2);
+    expect(await stockOfId(extra.id)).toBe(95);
+    expect(second.alreadyCommitted).toBe(true);
+    expect(second.applied).toBe(0);
+    expect(await countMovements(w)).toHaveLength(1);
+    expect(mid.status).toBe("COMMITTED");
+    expect(end.committedAt!.getTime()).toBe(mid.committedAt!.getTime()); // flipped once
   }, 60_000);
 });

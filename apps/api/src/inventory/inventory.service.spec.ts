@@ -1,3 +1,13 @@
+// SA-767 L-2.2: `commitStockCountSession` holds a session-scoped advisory lock (db-locks, a real pg
+// connection). These specs have no database, so the lock is a PASS-THROUGH that still runs the body.
+jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
+  withAdvisoryLock: async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  }),
+}));
+
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
@@ -1223,6 +1233,11 @@ describe("InventoryService", () => {
       ...over,
     });
 
+    // SA-767 L-2.2: the commit flips the session by CAS after the last batch.
+    beforeEach(() => {
+      prisma.stockCountSession.updateMany.mockResolvedValue({ count: 1 });
+    });
+
     it("a committed session short-circuits instead of re-applying its deltas", async () => {
       prisma.stockCountSession.findUnique.mockResolvedValue(
         session({ status: "COMMITTED", movementReference: "STOCK_COUNT-sess-1" }),
@@ -1235,15 +1250,21 @@ describe("InventoryService", () => {
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
-    it("existing movements for the reference short-circuit a lost-response retry", async () => {
+    it("a line whose movement already exists is skipped on a re-run; the interrupted commit finishes", async () => {
       prisma.stockCountSession.findUnique.mockResolvedValue(session());
       prisma.product.findMany.mockResolvedValue([product()]);
-      prisma.stockMovement.findMany.mockResolvedValue([{ id: "m-existing" }]);
+      prisma.stockMovement.findMany.mockResolvedValue([
+        { id: "m-existing", productId: "prod-1", type: "ADJUSTMENT" },
+      ]);
 
       const res = await service.commitStockCountSession("sess-1", {}, { sub: "user-1" });
 
-      expect(res).toMatchObject({ alreadyCommitted: true, applied: 1 });
+      // not re-applied, counted in the complete movement set, and the session is flipped by the CAS
+      expect(res).toMatchObject({ applied: 1, movementIds: ["m-existing"] });
+      expect(res).not.toHaveProperty("alreadyCommitted");
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(prisma.stockCountSession.updateMany).toHaveBeenCalledTimes(1);
     });
 
     it("REPLACE commits the counted-minus-expected delta and never touches uncounted products", async () => {

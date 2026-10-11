@@ -1,3 +1,13 @@
+// SA-767 L-2.2: `commitStockCountSession` holds a session-scoped advisory lock (db-locks, a real pg
+// connection). These specs have no database, so the lock is a PASS-THROUGH that still runs the body.
+jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
+  withAdvisoryLock: async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  }),
+}));
+
 import * as fs from "fs";
 import * as path from "path";
 import { Test } from "@nestjs/testing";
@@ -73,15 +83,25 @@ const WRITERS: Writer[] = [
   {
     name: "commitStockCountSession",
     label: "inventory.commitStockCountSession",
-    method: "commitStockCountSession",
-    setup: (prisma) =>
+    // SA-767 L-2.2: each batch is its own retryStockTx tx, in the private batch method.
+    method: "commitStockCountBatch",
+    setup: (prisma) => {
+      prisma.stockCountSession.updateMany.mockResolvedValue({ count: 1 });
       prisma.stockCountSession.findUnique.mockResolvedValue({
         id: "sess-1",
         status: "OPEN",
         lines: [
-          { productId: "prod-1", mode: "REPLACE", countedQty: D(15), unitCostOverride: null },
+          {
+            id: "line-1",
+            productId: "prod-1",
+            mode: "REPLACE",
+            countedQty: D(15),
+            expectedQty: D(10),
+            unitCostOverride: null,
+          },
         ],
-      }),
+      });
+    },
     call: (svc) => svc.commitStockCountSession("sess-1", {} as any, { sub: "user-1" }),
     alerts: ["prod-1"],
     clean: { movement: 1, lot: 1, product: 1 },

@@ -1,3 +1,13 @@
+// SA-767 L-2.2: `commitStockCountSession` holds a session-scoped advisory lock (db-locks, a real pg
+// connection). These specs have no database, so the lock is a PASS-THROUGH that still runs the body.
+jest.mock("../common/db-locks", () => ({
+  ...jest.requireActual("../common/db-locks"),
+  withAdvisoryLock: async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  }),
+}));
+
 import { Test } from "@nestjs/testing";
 import { Prisma } from "@prisma/client";
 import { InventoryService } from "./inventory.service";
@@ -163,10 +173,25 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
       id: "sess-1",
       status: "OPEN",
       lines: [
-        { productId: "prod-1", mode: "REPLACE", countedQty: D(90), unitCostOverride: D(5) },
-        { productId: "prod-2", mode: "ADD", countedQty: D(4), unitCostOverride: null },
+        {
+          id: "l-1",
+          productId: "prod-1",
+          mode: "REPLACE",
+          countedQty: D(90),
+          expectedQty: D(100),
+          unitCostOverride: D(5),
+        },
+        {
+          id: "l-2",
+          productId: "prod-2",
+          mode: "ADD",
+          countedQty: D(4),
+          expectedQty: D(6),
+          unitCostOverride: null,
+        },
       ],
     });
+    prisma.stockCountSession.updateMany.mockResolvedValue({ count: 1 });
     const rows = [
       row({ currentStock: D(70) }),
       row({ id: "prod-2", name: "Sugar", currentStock: D(6) }),
@@ -179,9 +204,10 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
     expect(lockCalls()).toHaveLength(1);
     const types = prisma.stockMovement.create.mock.calls.map((c) => c[0].data.type);
     expect(types).toEqual(["COST_BASIS", "ADJUSTMENT", "ADJUSTMENT"]);
-    // the REPLACE line: 90 counted - 70 locked = +20, valued at the corrected 5.00
+    // the REPLACE line: 90 counted - 100 expected = -10 (the locked 70 is NOT the base: a sale after
+    // the count survives), valued at the corrected 5.00
     const adj = prisma.stockMovement.create.mock.calls[1][0].data;
-    expect(adj.quantity.toString()).toBe("20");
+    expect(adj.quantity.toString()).toBe("-10");
     expect(adj.avgCostAfter.toString()).toBe("5");
     expect(lockedBefore(prisma.product.update, 1)).toBe(true);
   });
