@@ -500,6 +500,12 @@ export class SettingsController {
       // here. NULL-tenant payments are consequently not cleared — a pre-existing
       // limitation of untagged legacy rows, not one introduced by this change.
       await tx.payment.deleteMany({ where: { tenantId } });
+
+      // SA-750r3 ruling C: the day closes (snapshots of the money deleted above) and the parked counter carts go in the same
+      // transaction; both carry tenantId directly, so the scoped where is right. The close's tenant FK is RESTRICT, so a close
+      // left behind would also block the tenant's purge.
+      await tx.counterDayClose.deleteMany({ where: { tenantId } });
+      await tx.counterParkedCart.deleteMany({ where: { tenantId } });
     });
 
     return { success: true, message: "All financial data cleared successfully" };
