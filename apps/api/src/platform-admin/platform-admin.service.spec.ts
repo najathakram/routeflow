@@ -1381,6 +1381,57 @@ describe("PlatformAdminService — audit provenance", () => {
     );
   });
 
+  // SA r-note 5 A5 / Lead follow-up: a comp add-on is a platform grant - never billed, never in MRR. updatePlan's
+  // paying-set crossing reads the add-ons through billableAddonWhere (isComp: false) like updateStatus.
+  it("N4: a plan change that moves a tenant INTO the paying set books only BILLABLE add-ons (the comp's 20 is not in the delta)", async () => {
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      plan: "STARTER",
+      status: "ACTIVE",
+      class: "PRODUCTION",
+      deletedAt: null,
+    } as any);
+    prisma.tenant.update.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      plan: "PROFESSIONAL",
+    } as any);
+    planCatalogService.getPublishedVersion.mockResolvedValue({
+      id: "v-9",
+      definitions: [{ planKey: "SCALE", monthlyPrice: 499 }],
+    });
+    (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+      planKey: null,
+      basePriceSnapshot: null,
+      priceOverrideMonthly: null,
+      discount: 10,
+    });
+    const rows = [
+      { priceSnapshot: 39, quantity: 1, isComp: false },
+      { priceSnapshot: 15, quantity: 2, isComp: false },
+      { priceSnapshot: 20, quantity: 1, isComp: true },
+    ];
+    prisma.tenantAddon.findMany.mockImplementation(
+      async (a: any) => rows.filter((r) => (a?.where?.isComp === false ? !r.isComp : true)) as any,
+    );
+
+    await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+
+    // 499 base + (39 + 30) paid add-ons - 10 discount; NOT +20 for the comp
+    expect(billingEventService.emit).toHaveBeenCalledWith(
+      TENANT_ID,
+      "plan.changed",
+      expect.anything(),
+      expect.objectContaining({ amountDelta: 558 }),
+    );
+    expect(prisma.tenantAddon.findMany.mock.calls[0][0].where).toEqual({
+      tenantId: TENANT_ID,
+      active: true,
+      isComp: false,
+    });
+  });
+
   it("404s updatePlan when no published plan catalog exists, without writing or invalidating", async () => {
     prisma.tenant.findUnique.mockResolvedValue({
       id: TENANT_ID,
