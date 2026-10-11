@@ -6,7 +6,7 @@ import {
   ReturnStatus,
   type Prisma,
 } from "@prisma/client";
-import { roundMoney, storedTaxRatePercent, sumConfirmed } from "@routeflow/pricing";
+import { cashierNameOf, roundMoney, storedTaxRatePercent, sumConfirmed } from "@routeflow/pricing";
 import type {
   TodaysSaleMethod,
   TodaysSalePaymentState,
@@ -18,7 +18,6 @@ import type {
 } from "@routeflow/types";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
 import { counterMethodOf, servedChange } from "./counter-sale-readback";
-import { cashierNameOf } from "./counter-sale-cashier";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
 import { pickupTenderGroupId } from "./pickup-tender-group";

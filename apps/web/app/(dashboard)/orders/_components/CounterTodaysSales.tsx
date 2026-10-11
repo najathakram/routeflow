@@ -5,6 +5,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { cashierNameOf } from "@routeflow/pricing";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 import { useOrder } from "@/lib/api/orders";
@@ -172,7 +173,7 @@ function Reprint({
     document.body.classList.add("counter-reprint-open");
     return () => document.body.classList.remove("counter-reprint-open");
   }, []);
-  const reprintedBy = useOptionalAuth()?.user?.username ?? null;
+  const reprintedBy = cashierNameOf(useOptionalAuth()?.user);
   const { data: order, isError, isLoading, refetch } = useOrder(row.orderId);
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
     queryKey: ["settings"],

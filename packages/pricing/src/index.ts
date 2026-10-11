@@ -15,6 +15,7 @@ export * from "./explained-tax-rate";
 export * from "./show-original-price";
 export * from "./receipt-line";
 export * from "./receipt-line-detail";
+export * from "./cashier-name";
 export * from "./units-label";
 export * from "./unit-line-count";
 export * from "./po-display-total";

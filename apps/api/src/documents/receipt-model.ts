@@ -1,5 +1,6 @@
 import { InvoiceStatus } from "@prisma/client";
 import {
+  cashierNameOf,
   explainedTaxRatePercent,
   formatReceiptMoney,
   receiptLineAmounts,
@@ -12,7 +13,6 @@ import type { ReceiptLine, ReceiptModel } from "@routeflow/types";
 import { servedChange } from "../orders/counter-sale/counter-sale-readback";
 import { RECEIPT_FOOTER_MAX_CHARS } from "../system-config/receipt-footer";
 import { todaysMethodOf } from "../orders/counter-sale/counter-sale-today";
-import { cashierNameOf } from "../orders/counter-sale/counter-sale-cashier";
 
 /**
  * The pure half of the order receipt (SA-751r): stored rows in, the shared `ReceiptModel` out. It mirrors the web's
