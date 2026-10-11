@@ -321,7 +321,7 @@ describeDb(
       expect(await mintedNotes(s)).toHaveLength(before);
     }, 60_000);
 
-    it("8. the headroom RE-OPENS when the refund's lump note is VOID: the credit note item on A then succeeds", async () => {
+    it("8. the per-line headroom RE-OPENS when the refund's lump note is VOID, but (SA-773, LITERAL RULING PENDING SA ON S4) the REFUNDED return still reserves A: the credit note item on A is refused CREDIT_EXCEEDS_REFUNDABLE", async () => {
       // A refund's note backs a REFUNDED return, so voidWithReversal refuses it (CREDIT_NOTE_RETURN_BACKED: cancel the return
       // instead, and a REFUNDED return cannot be cancelled). This case tests the pool's VOID filter, so the note is set VOID
       // directly (the state an invoice-destroying or legacy void leaves).
@@ -335,7 +335,11 @@ describeDb(
         response: { code: "CREDIT_NOTE_OVER_HEADROOM" },
       });
       await prisma.creditNote.update({ where: { id: refundNote.id }, data: { status: "VOID" } });
-      await expect(creditItemOnX(s, s.lineA, 100)).resolves.toBeDefined();
+      // the old per-line headroom would let it through now; the refundable remainder counts every return that is not REJECTED /
+      // CANCELLED, a VOID return credit note included, until the SA rules on S4 (then this row returns to `resolves.toBeDefined()`)
+      await expect(creditItemOnX(s, s.lineA, 100)).rejects.toMatchObject({
+        response: { code: "CREDIT_EXCEEDS_REFUNDABLE" },
+      });
     }, 60_000);
 
     it("9. a credit note item on a DIFFERENT product on X (B) is unaffected by a refund of A", async () => {

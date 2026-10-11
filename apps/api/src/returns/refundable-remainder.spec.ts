@@ -594,7 +594,7 @@ describe("refundableRemainder (SA-773): the one formula", () => {
     ).toBeNull();
   });
 
-  it("a return whose own credit note was voided gave nothing back: it reserves nothing (STANDARD and INLINE)", async () => {
+  it("LITERAL RULING PENDING SA ON S4: a return whose own credit note is VOID still reserves its goods (STANDARD and INLINE)", async () => {
     const fixture: Fixture = {
       invoices: [invoice("i1", "o1", 100, [line("l1", "pA", 10, 100)])],
       standardReturns: [
@@ -642,8 +642,8 @@ describe("refundableRemainder (SA-773): the one formula", () => {
       ],
     };
     const rem = await refundableRemainder(fakeTx(fixture), { invoiceIds: ["i1"] });
-    // only r2 (1 piece, $10) and r4 (an external refund, 2 pieces, $20) still hold goods
-    expect(poolOf(rem, "i1", "pA")).toMatchObject({ qty: 7, value: 70 });
+    // every return that is not REJECTED / CANCELLED counts: r1 (4), r2 (1), r3 (3), r4 (2) = 10 pieces, $40 + $10 + $30 + $20 = $100
+    expect(poolOf(rem, "i1", "pA")).toMatchObject({ qty: 0, value: 0 });
   });
 
   it("a money guard reads plain: a client missing a model, or a query answering nothing, fails closed instead of reading as empty", async () => {

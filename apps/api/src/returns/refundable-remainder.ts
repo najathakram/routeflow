@@ -13,11 +13,10 @@
  *   (a) every Return of the order that is not REJECTED / CANCELLED, whatever its refund method, at its stored qty (fail closed:
  *       a pending, approved or received return already reserves the goods). An INLINE return counts its stored item money
  *       (subtotal + taxAmount + categoryTax). A STANDARD return stores no item money, so its value is its qty at the pool's own
- *       gross average, the figure the goods are worth;
- *       DEVIATION FROM THE RULING TEXT (declared, for the Lead to sign off): a return whose OWN credit note is VOID reserves
- *       nothing - the credit was taken back, so the goods are creditable again (the per-line headroom has always reopened on a
- *       void, and this keeps that). It stays money-safe because a VOID note's credit can no longer be spent; a return with NO credit note
- *       (a recorded refund) always reserves;
+ *       gross average, the figure the goods are worth.
+ *       LITERAL RULING PENDING SA ON S4: a return whose OWN credit note is VOID still reserves its goods (it is counted like
+ *       any other live return). The earlier reading - a VOID return credit note releases them, as the per-line headroom does -
+ *       is parked until the SA answers; it is one revertable commit away.
  *   (b) standalone CreditNoteItem rows on the pool's lines whose credit note is not VOID and is not a counted Return's own credit
  *       note (that money is already in (a); never twice). Gross = amount + categoryTax + roundMoney(amount x the line's stored
  *       taxRate);
@@ -249,16 +248,9 @@ export async function refundableRemainder(
   const lineIds = [...lineById.keys()];
 
   // 2. (a) RETURNS of the order(s): STANDARD by Return.orderId, INLINE by the item's source order
-  // a return whose own credit note was voided gave nothing back (the credit was taken away): it reserves nothing
-  const voidReturnNotes = new Set<string>();
-  const counted = (r: {
-    id?: string;
-    status?: string | null;
-    creditNoteId?: string | null;
-  }): boolean =>
-    !(r.status && DEAD.has(r.status)) &&
-    r.id !== excludeReturnId &&
-    !(r.creditNoteId && voidReturnNotes.has(r.creditNoteId));
+  // literal ruling pending SA on S4: EVERY return that is not REJECTED / CANCELLED counts, a VOID return credit note included
+  const counted = (r: { id?: string; status?: string | null }): boolean =>
+    !(r.status && DEAD.has(r.status)) && r.id !== excludeReturnId;
   const standard: Array<{
     id: string;
     orderId: string | null;
@@ -308,23 +300,6 @@ export async function refundableRemainder(
           },
         })
       : [];
-  const returnNoteIds = [
-    ...new Set(
-      [...standard, ...inlineItems.map((i) => i.return ?? {})]
-        .filter(
-          (r: any) =>
-            r.creditNoteId && !(r.status && DEAD.has(r.status)) && r.id !== excludeReturnId,
-        )
-        .map((r: any) => r.creditNoteId as string),
-    ),
-  ];
-  if (returnNoteIds.length > 0) {
-    const notes: Array<{ id: string; status?: string | null }> = await tx.creditNote.findMany({
-      where: { id: { in: returnNoteIds } },
-      select: { id: true, status: true },
-    });
-    for (const n of notes) if (n.status === "VOID") voidReturnNotes.add(n.id);
-  }
   const standardCounted = standard.filter((r) => r.kind !== "INLINE" && counted(r) && r.orderId);
 
   // STANDARD qty is in the order line's own unit: pieces through the order's pack basis (same reader the over-return cap uses)
