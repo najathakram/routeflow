@@ -42,6 +42,8 @@ export interface FollowDeps {
 export interface FollowDraftPlan {
   invoiceId: string;
   invoiceNumber: string;
+  /** The invoice status as read: applyComposedLineEdits re-checks that only a DRAFT is written. */
+  status: string;
   itemUpdates: Array<{ id: string; data: Record<string, unknown> }>;
   /** The invoice's item rows as read (before the follow): the composed-line step compares against them. */
   storedRows: any[];
@@ -202,6 +204,7 @@ export async function planPartialPriceFollow(
         plan.drafts.push({
           invoiceId: inv.id,
           invoiceNumber: inv.invoiceNumber,
+          status: inv.status,
           itemUpdates,
           storedRows: inv.items,
           subtotal: sums.subtotal,
@@ -231,7 +234,7 @@ export async function applyPartialPriceFollow(
     // DRAFT invoice edit runs (price change, qty untouched -> displayUnitPrice4 re-stamped, ids stay put).
     await applyComposedLineEdits(
       db,
-      { id: d.invoiceId, status: InvoiceStatus.DRAFT, tenantId: deps.tenantId },
+      { id: d.invoiceId, status: d.status, tenantId: deps.tenantId },
       d.itemUpdates.map((u) => ({
         rowId: u.id,
         untouched: false,
