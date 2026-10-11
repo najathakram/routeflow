@@ -8,15 +8,17 @@
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
-import { lockRefundInvoices, resolveRefundInvoiceIds } from "./inline-return-refund";
+import { lockRefundInvoices } from "./inline-return-refund";
 import { roundMoney } from "@routeflow/pricing";
 import {
   assertWithinRefundable,
   creditNoteRequests,
   creditableGroupInvoiceIds,
   inlineReturnRequests,
+  type InlineSourceRef,
   refundableRefusal,
   refundableRemainder,
+  resolveInlineSourceInvoices,
   selectedGoodsRemainder,
   standardReturnRequests,
 } from "./refundable-remainder";
@@ -38,12 +40,13 @@ export async function assertInlineReturnWithinRemainder(
 ): Promise<void> {
   const invoiceIds =
     args.invoiceIds ??
-    (
-      await resolveRefundInvoiceIds(tx, {
-        kind: "LINES",
-        sourceInvoiceItemIds: args.items.map((i) => i.sourceInvoiceItemId),
-      })
-    ).invoiceIds;
+    [
+      ...new Set(
+        (await resolveInlineSourceInvoices(tx, args.items))
+          .map((r) => r.invoiceId)
+          .filter((i): i is string => !!i),
+      ),
+    ].sort();
   if (invoiceIds.length === 0) return;
   // The pool is the order's whole creditable set: lock the siblings the source lines did not name. Taking them AFTER the source
   // invoices is safe only because every locker of several invoices of one order takes the ORDER first (the caller holds it), so
@@ -62,36 +65,32 @@ export async function assertInlineReturnWithinRemainder(
 /**
  * SA-773 N4: a captured inline return is approved, converted to store credit or re-issued some time after it was captured, and
  * its source can have changed in between. A dead (VOID / WRITTEN_OFF) invoice has no pool in the refundable remainder (it is
- * not in the creditable set), and neither does a source line that no longer exists (ReturnItem.sourceInvoiceItemId is a plain
- * string with no foreign key; a DRAFT invoice edit deletes and recreates its lines), so a request on either was never checked
- * and the mint gave store credit for goods nobody owes for. Both are refused 409 RETURN_NOTHING_BILLED, before anything is
- * restocked, reversed or minted: nothing is billed for those goods any more; the exit is rejecting or cancelling the return
- * (a cancelled return can be captured again against the lines as they are now). Runs under the Orders and the source invoices
- * the caller holds, so a void cannot slip in after it. An item with NO source line id (unreferenced) has no source to be dead
- * and is not asked about here: its own hold and the paid-in-full check own it.
+ * not in the creditable set), so a request on it was never checked and the mint gave store credit for goods nobody owes for.
+ * Refused 409 RETURN_NOTHING_BILLED before anything is restocked, reversed or minted; the exit is rejecting or cancelling the
+ * return. The invoice is the one the item's goods sit on NOW (`resolveInlineSourceInvoices`): the stored source line id, or,
+ * when a rebuild of the order's invoice lines gave the invoice new line ids (any staff edit of the order after delivery), the
+ * live line carrying the same order line. Only when NOTHING resolves (the order line was deleted, or its invoice line is gone)
+ * does it fail closed with the same code: there is then no invoice to be owed on. A rotated line on a voided sale is dead.
+ * Runs under the Orders and the source invoices the caller holds, so a void cannot slip in after it. An item with NO source
+ * line id (unreferenced) has no source to be dead and is not asked about here: its own hold and the paid-in-full check own it.
  */
 export async function assertInlineSourcesOpen(
   tx: any,
-  items: ReadonlyArray<{ sourceInvoiceItemId?: string | null }>,
+  items: ReadonlyArray<InlineSourceRef>,
 ): Promise<void> {
-  const lineIds = [
-    ...new Set(items.map((i) => i.sourceInvoiceItemId).filter((i): i is string => !!i)),
-  ];
-  if (lineIds.length === 0) return;
-  const lines: Array<{ id?: string; invoiceId: string }> =
-    (await tx.invoiceItem.findMany({
-      where: { id: { in: lineIds } },
-      select: { id: true, invoiceId: true },
-    })) ?? [];
-  const found = new Set(lines.map((l) => l.id).filter((x): x is string => !!x));
-  if (lines.length < lineIds.length || lineIds.some((id) => !found.has(id))) {
+  if (!items.some((i) => i.sourceInvoiceItemId)) return;
+  const where = await resolveInlineSourceInvoices(tx, items);
+  if (where.some((w) => w.missing)) {
     throw new ConflictException({
       code: API_ERROR_CODES.RETURN_NOTHING_BILLED,
       message:
-        "The invoice line these goods were sold on no longer exists (the invoice was edited after the return was captured), so there is nothing to credit for them. Cancel the return and capture it again.",
+        "The invoice line these goods were sold on no longer exists (the sale was edited after the return was captured), so there is nothing to credit for them. Cancel the return and capture it again.",
     });
   }
-  const invoiceIds = [...new Set(lines.map((l) => l.invoiceId))].sort();
+  const invoiceIds = [
+    ...new Set(where.map((w) => w.invoiceId).filter((i): i is string => !!i)),
+  ].sort();
+  if (invoiceIds.length === 0) return;
   const dead: { id: string } | null = await tx.invoice.findFirst({
     where: { id: { in: invoiceIds }, status: { in: [...CREDIT_SOURCE_EXCLUDED] } },
     select: { id: true },

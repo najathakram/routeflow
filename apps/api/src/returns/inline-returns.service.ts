@@ -83,6 +83,7 @@ import {
   assertInlineReturnWithinRemainder,
   assertInlineSourcesOpen,
 } from "./refund-remainder-guard";
+import { resolveInlineSourceInvoices } from "./refundable-remainder";
 import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
 import {
   refundTenderColumn,
@@ -1744,28 +1745,31 @@ export class InlineReturnsService {
       const items = fresh.items as Array<{
         sourceOrderId?: string | null;
         sourceInvoiceItemId?: string | null;
+        sourceOrderItemId?: string | null;
       }>;
       await lockRefundOrders(tx, tenantId, [
         fresh.orderId,
         ...items.map((i) => i.sourceOrderId).filter((o): o is string => !!o),
       ]);
-      const sourceItemIds = [
-        ...new Set(items.map((i) => i.sourceInvoiceItemId).filter((o): o is string => !!o)),
-      ];
-      if (sourceItemIds.length > 0) {
-        const lines: Array<{ invoiceId: string }> =
-          (await tx.invoiceItem.findMany({
-            where: { id: { in: sourceItemIds } },
-            select: { id: true, invoiceId: true },
-          })) ?? [];
-        await lockRefundInvoices(tx, tenantId, [...new Set(lines.map((l) => l.invoiceId))]);
-        // SA-773 N4: a source invoice voided / written off (or a source line gone) since the capture has no pool below, so its
-        // request would pass unchecked: refuse before the claim and the mint. (The refused cash refund steers the operator here.)
+      if (items.some((i) => i.sourceInvoiceItemId)) {
+        // the invoices the goods sit on NOW: the stored line, or the live line of the same order line after a rebuild gave the
+        // invoice new line ids (resolveInlineSourceInvoices)
+        const invoiceIds = [
+          ...new Set(
+            (await resolveInlineSourceInvoices(tx, items))
+              .map((r) => r.invoiceId)
+              .filter((i): i is string => !!i),
+          ),
+        ];
+        await lockRefundInvoices(tx, tenantId, invoiceIds);
+        // SA-773 N4: a source invoice voided / written off (or a source line gone for good) since the capture has no pool
+        // below, so its request would pass unchecked: refuse before the claim and the mint. (The refused cash refund of such
+        // a sale steers the operator here.)
         await assertInlineSourcesOpen(tx, items);
         // SA-773: store credit gives the same value back, so it fits the same remainder (this return itself excluded)
         await assertInlineReturnWithinRemainder(tx, tenantId, {
           returnId: id,
-          invoiceIds: [...new Set(lines.map((l) => l.invoiceId))],
+          invoiceIds,
           items: items as any[],
         });
       }

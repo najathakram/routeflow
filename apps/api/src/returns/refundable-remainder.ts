@@ -617,42 +617,126 @@ export function standardReturnRequests(
   return requests;
 }
 
+/** What an inline return's item remembers of the line it was priced from. */
+export interface InlineSourceRef {
+  /** the invoice line it was priced from; no foreign key, so it dangles when a writer deletes and recreates the invoice's lines */
+  sourceInvoiceItemId?: string | null;
+  /** the order line behind it: the same provenance one level up, which survives an invoice line rebuild */
+  sourceOrderItemId?: string | null;
+  /** the order the goods were sold on */
+  sourceOrderId?: string | null;
+}
+
 /**
- * The requests of an INLINE return: each stored item's pieces and money (subtotal + tax + category tax) against the pool of the
- * invoice its source line sits on. An item with no source line (unreferenced) or whose line is gone has no pool; the refund's
- * paid-in-full check already fails closed on those.
+ * The invoice each item's goods sit on NOW, aligned with `items` (null: unreferenced, or nothing resolves).
+ *
+ * The stored `sourceInvoiceItemId` is looked up first. A writer that deletes and recreates an invoice's lines in place
+ * (`rebuildSiblingDrafts`, through `resyncOrderInvoicesForEdit`: ANY staff edit of the order after delivery; the issued
+ * deposit mirror rebuilds; `reconcileOrderDraftInvoiceLocked`) gives a LIVE invoice new line ids, so the stored id then
+ * dangles although the goods are still billed. Such an item is re-resolved through `sourceOrderItemId` to the live
+ * InvoiceItem carrying that order line, on the item's source order when it has one; a candidate on a creditable invoice wins
+ * over one on a dead (VOID / WRITTEN_OFF) invoice, so a rotated line on a voided sale still reads as dead. `resolved: "order"`
+ * marks those, `resolved: "line"` an id that matched as stored. An item that names a source line which no longer exists and
+ * cannot be re-resolved has `invoiceId: null` and `missing: true` (the callers fail closed on it).
  */
-export async function inlineReturnRequests(
+export async function resolveInlineSourceInvoices(
   tx: any,
-  items: ReadonlyArray<{
-    productId: string;
-    qty: unknown;
-    sourceInvoiceItemId?: string | null;
-    subtotal?: unknown;
-    taxAmount?: unknown;
-    categoryTax?: unknown;
-  }>,
-): Promise<RefundableRequest[]> {
+  items: ReadonlyArray<InlineSourceRef>,
+): Promise<
+  Array<{ invoiceId: string | null; resolved: "line" | "order" | null; missing: boolean }>
+> {
   const lineIds = [
     ...new Set(items.map((i) => i.sourceInvoiceItemId).filter((i): i is string => !!i)),
   ];
-  if (lineIds.length === 0) return [];
-  const lines: Array<{ id: string; invoiceId: string }> = await tx.invoiceItem.findMany({
-    where: { id: { in: lineIds } },
-    select: { id: true, invoiceId: true },
+  const byLine = new Map<string, string>();
+  if (lineIds.length > 0) {
+    const lines: Array<{ id: string; invoiceId: string }> =
+      (await tx.invoiceItem.findMany({
+        where: { id: { in: lineIds } },
+        select: { id: true, invoiceId: true },
+      })) ?? [];
+    for (const l of lines) byLine.set(l.id, l.invoiceId);
+  }
+  const lost = items.filter((i) => i.sourceInvoiceItemId && !byLine.has(i.sourceInvoiceItemId));
+  const orderItemIds = [
+    ...new Set(lost.map((i) => i.sourceOrderItemId).filter((i): i is string => !!i)),
+  ];
+  const byOrderItem = new Map<
+    string,
+    Array<{ invoiceId: string; orderId: string | null; dead: boolean }>
+  >();
+  if (orderItemIds.length > 0) {
+    const rows: Array<{
+      invoiceId: string;
+      orderItemId: string | null;
+      invoice?: { orderId?: string | null; status?: string | null } | null;
+    }> =
+      (await tx.invoiceItem.findMany({
+        where: { orderItemId: { in: orderItemIds } },
+        select: {
+          id: true,
+          invoiceId: true,
+          orderItemId: true,
+          invoice: { select: { orderId: true, status: true } },
+        },
+      })) ?? [];
+    const dead = new Set<string>(CREDIT_SOURCE_EXCLUDED);
+    for (const r of rows) {
+      if (!r.orderItemId) continue;
+      const list = byOrderItem.get(r.orderItemId) ?? [];
+      list.push({
+        invoiceId: r.invoiceId,
+        orderId: r.invoice?.orderId ?? null,
+        dead: !!r.invoice?.status && dead.has(r.invoice.status),
+      });
+      byOrderItem.set(r.orderItemId, list);
+    }
+  }
+  return items.map((it) => {
+    if (!it.sourceInvoiceItemId) return { invoiceId: null, resolved: null, missing: false };
+    const direct = byLine.get(it.sourceInvoiceItemId);
+    if (direct) return { invoiceId: direct, resolved: "line" as const, missing: false };
+    const candidates = (it.sourceOrderItemId ? (byOrderItem.get(it.sourceOrderItemId) ?? []) : [])
+      .filter((c) => !it.sourceOrderId || !c.orderId || c.orderId === it.sourceOrderId)
+      .sort((a, b) => Number(a.dead) - Number(b.dead) || a.invoiceId.localeCompare(b.invoiceId));
+    const best = candidates[0];
+    return best
+      ? { invoiceId: best.invoiceId, resolved: "order" as const, missing: false }
+      : { invoiceId: null, resolved: null, missing: true };
   });
-  const invoiceOf = new Map(lines.map((l) => [l.id, l.invoiceId]));
+}
+
+/**
+ * The requests of an INLINE return: each stored item's pieces and money (subtotal + tax + category tax) against the pool of the
+ * invoice its source line sits on, the line re-resolved through its order line when a rebuild gave the invoice new line ids
+ * ({@link resolveInlineSourceInvoices}). An item with no source line (unreferenced) or whose line is gone for good has no pool;
+ * the refund's paid-in-full check already fails closed on those, and the mints ask `assertInlineSourcesOpen`.
+ */
+export async function inlineReturnRequests(
+  tx: any,
+  items: ReadonlyArray<
+    {
+      productId: string;
+      qty: unknown;
+      subtotal?: unknown;
+      taxAmount?: unknown;
+      categoryTax?: unknown;
+    } & InlineSourceRef
+  >,
+): Promise<RefundableRequest[]> {
+  if (!items.some((i) => i.sourceInvoiceItemId)) return [];
+  const where = await resolveInlineSourceInvoices(tx, items);
   const requests: RefundableRequest[] = [];
-  for (const it of items) {
-    const invoiceId = it.sourceInvoiceItemId ? invoiceOf.get(it.sourceInvoiceItemId) : undefined;
-    if (!invoiceId) continue;
+  items.forEach((it, idx) => {
+    const invoiceId = where[idx].invoiceId;
+    if (!invoiceId) return;
     requests.push({
       invoiceId,
       productId: it.productId,
       qty: num(it.qty),
       value: roundMoney(num(it.subtotal) + num(it.taxAmount) + num(it.categoryTax)),
     });
-  }
+  });
   return requests;
 }
 

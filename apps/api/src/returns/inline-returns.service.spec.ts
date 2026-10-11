@@ -1410,6 +1410,66 @@ describe("InlineReturnsService", () => {
       expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
     });
 
+    it("SA-773 N4: a rebuilt invoice (the stored line id is gone, the same order line lives on a new line) is re-resolved and approved; the re-resolved invoice is the one checked", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        ...HELD,
+        items: [{ ...HELD.items[0], sourceInvoiceItemId: "line-old", sourceOrderItemId: "oi-1" }],
+      });
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoiceItem.findMany.mockImplementation(async ({ where }: any) =>
+        where?.orderItemId
+          ? [
+              {
+                id: "line-new",
+                invoiceId: "inv-live",
+                orderItemId: "oi-1",
+                invoice: { orderId: "src-order-1", status: "PAID" },
+              },
+            ]
+          : [],
+      );
+      prisma.invoice.findFirst.mockResolvedValue(null);
+
+      await service.approve("ret-held", OPERATOR);
+
+      expect(prisma.invoice.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ["inv-live"] }, status: { in: ["VOID", "WRITTEN_OFF"] } },
+        }),
+      );
+      expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledTimes(1);
+    });
+
+    it("SA-773 N4: a rebuilt line on a dead invoice is still dead (it is the re-resolved invoice that is refused)", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        ...HELD,
+        items: [{ ...HELD.items[0], sourceInvoiceItemId: "line-old", sourceOrderItemId: "oi-1" }],
+      });
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoiceItem.findMany.mockImplementation(async ({ where }: any) =>
+        where?.orderItemId
+          ? [
+              {
+                id: "line-new",
+                invoiceId: "inv-dead",
+                orderItemId: "oi-1",
+                invoice: { orderId: "src-order-1", status: "VOID" },
+              },
+            ]
+          : [],
+      );
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-dead" });
+
+      const err: any = await service.approve("ret-held", OPERATOR).catch((e: any) => e);
+
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({
+        code: "RETURN_NOTHING_BILLED",
+        invoiceId: "inv-dead",
+      });
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
     it("SA-773 N4: a live source invoice (no dead one found) is approved as before", async () => {
       prisma.return.findFirst.mockResolvedValue({
         ...HELD,
