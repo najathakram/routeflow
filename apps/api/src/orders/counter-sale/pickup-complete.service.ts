@@ -156,6 +156,7 @@ export class PickupCompleteService {
       }
       order = (await this.readOrder(id)) ?? order;
     }
+    await this.stampSoldBy(id, user);
     const handedOverAt = order.deliveredAt ?? null;
 
     // 3. Issue every draft invoice.
@@ -314,6 +315,23 @@ export class PickupCompleteService {
       },
     );
     if (!locked.acquired) throw this.claimUnavailable();
+  }
+
+  /**
+   * Owner ruling (B): the hand-over names who handed it over (`Order.soldById`), by the counter sale's replay rule: only an
+   * order with no cashier yet is stamped, so the first cashier stays and a replay by another cashier never overwrites it. The
+   * hand-over is already committed: a failure here is logged, never thrown.
+   */
+  private async stampSoldBy(orderId: string, user: JwtPayload): Promise<void> {
+    try {
+      await this.prisma
+        .forTenant()
+        .order.updateMany({ where: { id: orderId, soldById: null }, data: { soldById: user.sub } });
+    } catch (e) {
+      this.logger.warn(
+        `pickup complete ${orderId}: cashier not stamped (${(e as Error)?.message ?? e})`,
+      );
+    }
   }
 
   /** The claim section could not take its per-order lock: a coded, retryable 503 (nothing was written). */
