@@ -18,6 +18,7 @@ jest.mock("../storage/compress.util", () => ({
 }));
 
 import { BadRequestException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { InvoicesService } from "./invoices.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { buildSplitInvoicesService } from "./testing/split-invoice-service";
@@ -138,14 +139,15 @@ describe("SA-763r P-3: deliberate standalone overpayment + no dunning on an over
 
     it("an overpaid past-due invoice gets no reminder", async () => {
       stubInvoice(130);
-      await expect(service.sendReminder("inv-1")).rejects.toBeInstanceOf(BadRequestException);
-      await expect(service.sendReminder("inv-1")).rejects.toThrow(/Nothing is owing/);
+      const err: any = await service.sendReminder("inv-1").catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.REMINDER_NO_BALANCE_DUE });
     });
 
     it("an invoice with a balance due still reaches the reminder body (not refused for balance)", async () => {
       stubInvoice(40);
       const err: any = await service.sendReminder("inv-1").catch((e) => e);
-      expect(String(err?.message ?? "")).not.toMatch(/Nothing is owing/);
+      expect(err?.getResponse?.()?.code).not.toBe(API_ERROR_CODES.REMINDER_NO_BALANCE_DUE);
     });
   });
 });

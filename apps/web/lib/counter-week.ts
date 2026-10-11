@@ -21,6 +21,7 @@ export function sumWeek(summaries: readonly TodaysSalesSummary[]): TodaysSalesSu
   const zero: TodaysSalesSummary = {
     sales: { count: 0, total: 0 },
     moneyIn: { cash: 0, card: 0, check: 0, other: 0, total: 0 },
+    handOvers: { count: 0, total: 0 },
     storeCreditUsed: 0,
     onAccount: 0,
     refunds: { count: 0, cash: 0, card: 0, check: 0, other: 0, total: 0, tenderKnown: true },
@@ -37,6 +38,10 @@ export function sumWeek(summaries: readonly TodaysSalesSummary[]): TodaysSalesSu
         check: add(t.moneyIn.check, s.moneyIn.check),
         other: add(t.moneyIn.other, s.moneyIn.other),
         total: add(t.moneyIn.total, s.moneyIn.total),
+      },
+      handOvers: {
+        count: t.handOvers.count + s.handOvers.count,
+        total: add(t.handOvers.total, s.handOvers.total),
       },
       storeCreditUsed: add(t.storeCreditUsed, s.storeCreditUsed),
       onAccount: add(t.onAccount, s.onAccount),

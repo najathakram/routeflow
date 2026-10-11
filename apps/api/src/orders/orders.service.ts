@@ -707,14 +707,6 @@ export class OrdersService implements OnApplicationBootstrap {
    * without writing.
    */
 
-  private rescaleBogoFreeUnits(...args: Parameters<typeof rescaleBogoFreeUnits>) {
-    return rescaleBogoFreeUnits(...args);
-  }
-
-  private isBuyerPricedLine(...args: Parameters<typeof isBuyerPricedLine>) {
-    return isBuyerPricedLine(...args);
-  }
-
   private mergeBoxedContributions(...args: Parameters<typeof mergeBoxedContributions>) {
     return mergeBoxedContributions(...args);
   }
@@ -806,7 +798,7 @@ export class OrdersService implements OnApplicationBootstrap {
           const bogoPromos =
             contributingLines.some((li: any) => Number(li.promoFreeUnits ?? 0) > 0) ||
             (options.buyerInitiated === true &&
-              contributingLines.some((li) => this.isBuyerPricedLine(li)))
+              contributingLines.some((li) => isBuyerPricedLine(li)))
               ? await this.loadActivePromotions(UserRole.CUSTOMER)
               : [];
 
@@ -4031,7 +4023,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 }
                 const freeUnits = isManualOverride
                   ? 0
-                  : this.rescaleBogoFreeUnits({
+                  : rescaleBogoFreeUnits({
                       promos: bogoPromos,
                       productId: li.productId,
                       category: promoCategory,
@@ -4927,7 +4919,7 @@ export class OrdersService implements OnApplicationBootstrap {
               });
               promoCategory = prod?.category ?? null;
             }
-            const freeUnits = this.rescaleBogoFreeUnits({
+            const freeUnits = rescaleBogoFreeUnits({
               promos: buyerPromos,
               productId: li.productId,
               category: promoCategory,
@@ -5005,7 +4997,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // price) — but the bigger quantity earns its OWN free units, so they
             // are re-derived here, same as the CHANGE_QTY branch above.
             const storedFreeUnits = Number((existing as any).promoFreeUnits ?? 0);
-            const freeUnits = this.rescaleBogoFreeUnits({
+            const freeUnits = rescaleBogoFreeUnits({
               promos: buyerPromos,
               productId: product.id,
               category: product.category ?? null,

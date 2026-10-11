@@ -8,7 +8,7 @@ import {
 import { creditLimitSentence } from "./credit-limit-copy";
 import { COUNTER_VOID_ERROR_COPY } from "./counter-void-copy";
 import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
-import { ORDER_EDIT_WOULD_OVERPAY, ORDER_OVERPAY_GENERIC_COPY } from "./order-overpay";
+import { ORDER_OVERPAY_GENERIC_COPY } from "./order-overpay";
 import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
 
@@ -37,8 +37,6 @@ const CODE_COPY: Record<string, string> = {
   MERGE_PACK_MISMATCH:
     "The pack size on this order no longer matches the product. Refresh and review the line.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
-  ORDER_EDIT_WOULD_OVERPAY:
-    "This change would leave an invoice paid beyond its new total. If the goods came back, record a return instead of cutting the order.",
   ORDER_BILLING_CHANGED:
     "This order's billing changed while you were working on it. Refresh and try again.",
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",
@@ -119,8 +117,8 @@ const CODE_COPY: Record<string, string> = {
     COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_NOT_TODAY],
   [API_ERROR_CODES.COUNTER_SALE_VOID_BUSY]:
     COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_BUSY],
-  // P-4: bare key until the API registers the code in API_ERROR_CODES (P-3); a surface with the structured numbers uses orderOverpayCopy.
-  [ORDER_EDIT_WOULD_OVERPAY]: ORDER_OVERPAY_GENERIC_COPY,
+  // P-4: the one overpay copy (order-overpay.ts); a surface with the structured numbers uses orderOverpayCopy.
+  [API_ERROR_CODES.ORDER_EDIT_WOULD_OVERPAY]: ORDER_OVERPAY_GENERIC_COPY,
   HANDOFF_CODE_INVALID: "This sign-in link is invalid or has expired. Sign in again.",
 };
 

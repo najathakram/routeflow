@@ -8,6 +8,7 @@ import { csvText, lastDays, sumWeek, weekCsv } from "./counter-week";
 const summary = (over: Partial<TodaysSalesSummary> = {}): TodaysSalesSummary => ({
   sales: { count: 2, total: 20.1 },
   moneyIn: { cash: 10.1, card: 5, check: 0, other: 0, total: 15.1 },
+  handOvers: { count: 0, total: 0 },
   storeCreditUsed: 1,
   onAccount: 4,
   refunds: { count: 1, cash: 2.2, card: 0, check: 0, other: 0, total: 2.2, tenderKnown: true },

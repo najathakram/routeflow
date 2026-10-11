@@ -1,8 +1,8 @@
 import { roundMoney } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { fmt } from "./formatting";
 
 /** `409 ORDER_EDIT_WOULD_OVERPAY {invoiceId, paid, projectedTotal, excess}`: the numbers are structured fields, never parsed text. */
-export const ORDER_EDIT_WOULD_OVERPAY = "ORDER_EDIT_WOULD_OVERPAY";
 
 export interface OrderOverpayInfo {
   invoiceId: string | null;
@@ -16,7 +16,8 @@ const num = (v: unknown): number | null => (typeof v === "number" && Number.isFi
 export function parseOrderEditWouldOverpay(err: unknown): OrderOverpayInfo | null {
   const res = (err as { response?: { status?: number; data?: Record<string, unknown> } } | null)
     ?.response;
-  if (res?.status !== 409 || res.data?.code !== ORDER_EDIT_WOULD_OVERPAY) return null;
+  if (res?.status !== 409 || res.data?.code !== API_ERROR_CODES.ORDER_EDIT_WOULD_OVERPAY)
+    return null;
   const d = res.data;
   return {
     invoiceId: typeof d.invoiceId === "string" ? d.invoiceId : null,
