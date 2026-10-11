@@ -132,6 +132,8 @@ const CODE_COPY: Record<string, string> = {
   // stays on invoiced billing; fixed sentences, no ids.
   [API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE]:
     "This account has an add-on that card billing can't carry yet, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  [API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]:
+    "This account's invoiced period runs past what we show as paid, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
   [API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG]:
     "This account's add-on price or quantity differs from the standard one, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
   // SA-733r7 PR-B3 (dunning): a plan change is refused while an invoice is overdue; paying it restores everything.

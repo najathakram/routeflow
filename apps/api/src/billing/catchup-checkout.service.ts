@@ -50,6 +50,8 @@ export interface CatchupReport {
   priceSource: "override" | "catalog" | null;
   monthlyCents: number | null;
   rfInvoices: { open: number; paid: number };
+  /** The manual subscription's current period (printed in the dry-run: the owner checks it against the invoices). */
+  subPeriod?: { start: Date | null; end: Date | null } | null;
   plan: CatchupPlanResult;
   /** For the session: the pieces `open()` needs (not serialised). */
   _inputs?: { planPriceData: Record<string, any>; addonLines: any[]; addonSkus: string[] };
@@ -83,6 +85,12 @@ export function catchupReportJson(r: CatchupReport) {
     priceSource: r.priceSource,
     monthlyCents: r.monthlyCents,
     rfInvoices: r.rfInvoices,
+    subPeriod: r.subPeriod
+      ? {
+          start: r.subPeriod.start ? iso(r.subPeriod.start) : null,
+          end: r.subPeriod.end ? iso(r.subPeriod.end) : null,
+        }
+      : null,
     plan: p.ok
       ? {
           ok: true as const,
@@ -133,7 +141,14 @@ export class CatchupCheckoutService {
     if (!tenant || tenant.deletedAt) throw new NotFoundException(`Tenant ${tenantId} not found`);
     const sub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
-      select: { stripeSubId: true, externalPayment: true, catchupState: true, planKey: true },
+      select: {
+        stripeSubId: true,
+        externalPayment: true,
+        catchupState: true,
+        planKey: true,
+        periodStart: true,
+        periodEnd: true,
+      },
     });
 
     const ineligible: string[] = [];
@@ -204,7 +219,33 @@ export class CatchupCheckoutService {
       select: { createdAt: true },
     });
     const billingStart = activation?.createdAt ?? null;
-    const plan = planCatchup({ now, monthly, addons, invoices: rows, billingStart, billableRows });
+    // MF2: a payment recorded by a later (re)activation moves the period and writes no RfInvoice.
+    const latestActivation = await this.prisma.auditLog.findFirst({
+      where: {
+        tenantId,
+        entityType: ADMIN_AUDIT_ENTITY,
+        action: {
+          in: [
+            AdminAuditAction.TENANT_MANUAL_ACTIVATION_MARKER,
+            AdminAuditAction.TENANT_SUBSCRIPTION_ACTIVATED,
+          ],
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    });
+    const plan = planCatchup({
+      now,
+      monthly,
+      addons,
+      invoices: rows,
+      billingStart,
+      billableRows,
+      manual: {
+        latestMarkerAt: latestActivation?.createdAt ?? null,
+        periodEnd: sub?.periodEnd ?? null,
+      },
+    });
     if (!plan.ok) ineligible.push(plan.reason);
     else {
       if (billingStart && billingStart.getTime() > CATCHUP_GO_LIVE.getTime()) {
@@ -235,6 +276,7 @@ export class CatchupCheckoutService {
         open: rows.filter((r) => r.status === "OPEN").length,
         paid: rows.filter((r) => r.status === "PAID").length,
       },
+      subPeriod: sub ? { start: sub.periodStart ?? null, end: sub.periodEnd ?? null } : null,
       plan,
       _inputs: { planPriceData, addonLines: lines.lineItems, addonSkus: lines.skus },
     };

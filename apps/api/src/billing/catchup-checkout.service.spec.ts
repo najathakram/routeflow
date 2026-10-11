@@ -213,6 +213,68 @@ describe("MF1: add-ons the card checkout cannot bill", () => {
   });
 });
 
+describe("MF2: manual activation / renewal payments", () => {
+  /** audit rows: first activation, then (optionally) a later one; asc / desc by the query's orderBy. */
+  const markers = (h: ReturnType<typeof make>, first: string, latest: string) => {
+    h.prisma.auditLog.findFirst = jest.fn(async (a: any) =>
+      a.where?.action?.in
+        ? { createdAt: new Date(a.orderBy?.createdAt === "desc" ? latest : first) }
+        : null,
+    );
+  };
+
+  it("a renewal on Oct 5 with no RfInvoice for it: plan() refuses (period printed), open() is 409 CATCHUP_MANUAL_PERIOD_AHEAD, nothing claimed or sent", async () => {
+    const h = make({
+      invoices: [OCT_OPEN],
+      sub: {
+        periodStart: new Date("2026-10-05T09:00:00Z"),
+        periodEnd: new Date("2026-11-04T09:00:00Z"),
+      },
+    });
+    markers(h, "2026-08-02T00:00:00Z", "2026-10-05T09:00:00Z");
+    const r = await h.svc.plan("t1", NOW);
+    expect(r.plan).toEqual({ ok: false, reason: "manual_period_ahead" });
+    expect(r.eligible).toBe(false);
+    const json = catchupReportJson(r);
+    expect(json.refusals).toEqual([API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]);
+    expect(json.subPeriod).toEqual({
+      start: "2026-10-05T09:00:00.000Z",
+      end: "2026-11-04T09:00:00.000Z",
+    });
+    const err: any = await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 }).catch((e) => e);
+    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD });
+    expect(JSON.stringify(err.getResponse())).not.toMatch(/manual_period_ahead/);
+    expect(h.sub().catchupState).toBeNull();
+    expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+
+  it("a period end past every invoice (no later marker) is refused too", async () => {
+    const h = make({
+      invoices: [OCT_OPEN],
+      sub: { periodEnd: new Date("2026-12-01T12:00:00Z") },
+    });
+    const r = await h.svc.plan("t1", NOW);
+    expect(r.plan).toEqual({ ok: false, reason: "manual_period_ahead" });
+  });
+
+  it("the normal unpaid-October tenant (period explained by its OPEN invoice, first activation before go-live) stays eligible and prints its period", async () => {
+    const h = make({
+      invoices: [OCT_OPEN],
+      sub: {
+        periodStart: new Date("2026-10-01T12:00:00Z"),
+        periodEnd: new Date("2026-11-01T12:00:00Z"),
+      },
+    });
+    markers(h, "2026-08-02T00:00:00Z", "2026-08-02T00:00:00Z");
+    const r = await h.svc.plan("t1", NOW);
+    expect(r.eligible).toBe(true);
+    expect(catchupReportJson(r).subPeriod).toEqual({
+      start: "2026-10-01T12:00:00.000Z",
+      end: "2026-11-01T12:00:00.000Z",
+    });
+  });
+});
+
 describe("census()", () => {
   it("plans every active production tenant read-only: ids and counts, a broken tenant is counted, not fatal", async () => {
     const h = make();

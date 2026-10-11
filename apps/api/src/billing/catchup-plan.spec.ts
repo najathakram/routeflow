@@ -5,6 +5,7 @@ import {
   addonCardRefusal,
   catchupShape,
   firstBoundaryNotBefore,
+  manualPeriodAhead,
   paidThroughOf,
   planCatchup,
   stubLines,
@@ -429,5 +430,69 @@ describe("MF1: the manual invoice's add-ons vs the card checkout's lines", () =>
       reason: "billable_addon_not_card_billable",
     });
     expect(planCatchup(base).ok).toBe(true);
+  });
+});
+
+describe("MF2: a payment recorded outside the RfInvoices (manual activation / renewal)", () => {
+  const OPEN_OCT = inv("oct", "OPEN", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
+
+  it("a renewal marker AFTER go-live (later than the first activation) refuses - October could be charged twice", () => {
+    expect(
+      manualPeriodAhead({
+        latestMarkerAt: d("2026-10-05T09:00:00Z"),
+        firstMarkerAt: d("2026-08-02T00:00:00Z"),
+        periodEnd: null,
+        paidThrough: CATCHUP_GO_LIVE,
+        invoices: [],
+      }),
+    ).toBe(true);
+  });
+
+  it("the first and only activation (even after go-live) is the separate activated_after_go_live case, not this one", () => {
+    const at = d("2026-10-20T08:30:00Z");
+    expect(
+      manualPeriodAhead({
+        latestMarkerAt: at,
+        firstMarkerAt: at,
+        periodEnd: null,
+        paidThrough: at,
+        invoices: [],
+      }),
+    ).toBe(false);
+  });
+
+  it("a marker BEFORE go-live is not a payment since go-live", () => {
+    expect(
+      manualPeriodAhead({
+        latestMarkerAt: d("2026-09-20T00:00:00Z"),
+        firstMarkerAt: d("2026-08-02T00:00:00Z"),
+        periodEnd: null,
+        paidThrough: CATCHUP_GO_LIVE,
+        invoices: [],
+      }),
+    ).toBe(false);
+  });
+
+  it("a period end no RfInvoice accounts for (past paid-through AND past every OPEN / PAID end) refuses; an unpaid current period explained by its OPEN invoice does not", () => {
+    const base = {
+      latestMarkerAt: null,
+      paidThrough: CATCHUP_GO_LIVE,
+      invoices: [OPEN_OCT],
+    };
+    expect(manualPeriodAhead({ ...base, periodEnd: d("2026-12-01T12:00:00Z") })).toBe(true);
+    expect(manualPeriodAhead({ ...base, periodEnd: d("2026-11-01T12:00:00Z") })).toBe(false);
+    expect(manualPeriodAhead({ ...base, periodEnd: null })).toBe(false);
+  });
+
+  it("planCatchup carries it as a plan reason; omitted manual input skips the check", () => {
+    const b = { now: NOW, monthly: 310, addons: [], invoices: [OPEN_OCT] };
+    expect(
+      planCatchup({
+        ...b,
+        manual: { latestMarkerAt: d("2026-10-05T09:00:00Z"), periodEnd: null },
+        billingStart: d("2026-08-02T00:00:00Z"),
+      }),
+    ).toEqual({ ok: false, reason: "manual_period_ahead" });
+    expect(planCatchup(b).ok).toBe(true);
   });
 });

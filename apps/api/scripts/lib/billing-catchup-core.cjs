@@ -105,6 +105,11 @@ function formatTenantReport(r) {
     `  census        stripe subscription: ${r.hasStripeSubscription ? "YES" : "no"} · manual invoicing: ${r.externalPayment ? "yes" : "NO"} · claim: ${r.claimState ?? "none"}`,
   );
   lines.push(`  RfInvoices    ${r.rfInvoices.open} open · ${r.rfInvoices.paid} paid`);
+  if (r.subPeriod) {
+    lines.push(
+      `  sub period    ${day(r.subPeriod.start)} -> ${day(r.subPeriod.end)} (manual subscription)`,
+    );
+  }
   if (!r.plan.ok) {
     lines.push(`  catch-up      CANNOT PLAN: ${r.plan.reason} (NEEDS RULING)`);
   } else {

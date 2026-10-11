@@ -123,6 +123,17 @@ describe("the printed report (anonymised)", () => {
     expect(text).not.toMatch(/qa-acme|slug|name/i);
   });
 
+  it("MF2: the dry-run prints the manual subscription's period beside the RfInvoice counts", () => {
+    const text = core
+      .formatTenantReport(
+        report({
+          subPeriod: { start: "2026-10-05T09:00:00.000Z", end: "2026-11-04T09:00:00.000Z" },
+        }),
+      )
+      .join("\n");
+    expect(text).toContain("sub period    2026-10-05 -> 2026-11-04");
+  });
+
   it("a refused tenant says why; a plan that cannot be made says NEEDS RULING", () => {
     const t = core.formatTenantReport(
       report({

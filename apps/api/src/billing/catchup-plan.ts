@@ -135,6 +135,42 @@ export function addonCardRefusal(
   return snapshotMismatch ? "addon_snapshot_not_catalog" : null;
 }
 
+/**
+ * Money (MF2). The paid-through is built from PAID RfInvoices only, but staff also record a payment by
+ * (re)activating the manual subscription - which moves the period and writes no RfInvoice. Charging October again
+ * on top of that is a double charge, so the plan refuses ("manual_period_ahead") when
+ *   - the LATEST manual activation / renewal marker is AFTER go-live AND later than the FIRST one (a payment may
+ *     have been recorded since; a tenant activated once, after go-live, is the separate "activated_after_go_live"
+ *     case and is not double-reported here), or
+ *   - the subscription's (snapped) period END is after everything the RfInvoices account for: later than the
+ *     paid-through AND later than every OPEN / PAID invoice's end. (An unpaid current period is explained by its OPEN
+ *     invoice and is the normal case; only a period no invoice explains is ahead.)
+ */
+export function manualPeriodAhead(i: {
+  latestMarkerAt: Date | null | undefined;
+  firstMarkerAt?: Date | null;
+  periodEnd: Date | null | undefined;
+  paidThrough: Date;
+  invoices: readonly CatchupInvoice[];
+}): boolean {
+  if (
+    i.latestMarkerAt &&
+    i.latestMarkerAt.getTime() > CATCHUP_GO_LIVE.getTime() &&
+    (!i.firstMarkerAt || i.latestMarkerAt.getTime() > i.firstMarkerAt.getTime())
+  ) {
+    return true;
+  }
+  if (!i.periodEnd) return false;
+  const end = snapToBoundary(i.periodEnd).getTime();
+  const covered = Math.max(
+    i.paidThrough.getTime(),
+    ...i.invoices
+      .filter((x) => (x.status === "OPEN" || x.status === "PAID") && x.periodEnd)
+      .map((x) => snapToBoundary(x.periodEnd!).getTime()),
+  );
+  return end > covered;
+}
+
 export interface StubLine {
   kind: "PLAN" | "ADDON";
   code: string;
@@ -284,7 +320,8 @@ export type CatchupPlanRefusal =
   | "paid_invoice_without_period"
   | "no_monthly_price"
   | "billable_addon_not_card_billable"
-  | "addon_snapshot_not_catalog";
+  | "addon_snapshot_not_catalog"
+  | "manual_period_ahead";
 
 export type CatchupPlanResult = CatchupPlan | { ok: false; reason: CatchupPlanRefusal };
 
@@ -311,6 +348,8 @@ export function planCatchup(i: {
   billingStart?: Date | null;
   /** The tenant's priced billable add-on ROWS (MF1). Omitted = the check is skipped (pure unit tests only). */
   billableRows?: readonly CatchupAddonRow[];
+  /** The manual subscription's period + its latest activation / renewal marker (MF2). Omitted = skipped. */
+  manual?: { latestMarkerAt: Date | null; periodEnd: Date | null };
 }): CatchupPlanResult {
   if (i.monthly == null || !(i.monthly >= 0)) return { ok: false, reason: "no_monthly_price" };
   const floor =
@@ -322,6 +361,18 @@ export function planCatchup(i: {
   if (i.billableRows) {
     const refusal = addonCardRefusal(i.billableRows, i.addons);
     if (refusal) return { ok: false, reason: refusal };
+  }
+  if (
+    i.manual &&
+    manualPeriodAhead({
+      latestMarkerAt: i.manual.latestMarkerAt,
+      firstMarkerAt: i.billingStart,
+      periodEnd: i.manual.periodEnd,
+      paidThrough: pt.paidThrough,
+      invoices: i.invoices,
+    })
+  ) {
+    return { ok: false, reason: "manual_period_ahead" };
   }
 
   const anchorAt = nextCheckoutAnchor(i.now);

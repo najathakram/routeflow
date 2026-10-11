@@ -17,6 +17,7 @@ export const CATCHUP_REFUSAL = {
   has_stripe_subscription: API_ERROR_CODES.CATCHUP_NEEDS_RULING,
   billable_addon_not_card_billable: API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE,
   addon_snapshot_not_catalog: API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
+  manual_period_ahead: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD,
 } as const;
 
 /** The fixed sentence per code (operator copy; the web maps the same codes to its own toast copy). */
@@ -27,6 +28,8 @@ const MESSAGE: Record<string, string> = {
     "NEEDS RULING: this tenant holds a priced add-on the card checkout cannot bill. Voiding its invoices would lose that charge. Keep it on the manual path. Nothing was created.",
   [API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG]:
     "NEEDS RULING: this tenant's add-on price or quantity differs from what the card checkout would bill. Keep it on the manual path. Nothing was created.",
+  [API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]:
+    "NEEDS RULING: this tenant's manual period runs past what its invoices show paid (a payment may have been recorded by an activation). Charging October again could double-bill. Keep it on the manual path. Nothing was created.",
 };
 
 /** The code an internal refusal reason maps to; anything unlisted is the generic "not eligible". */
