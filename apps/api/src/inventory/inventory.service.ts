@@ -356,58 +356,70 @@ export class InventoryService {
     const qty = new Prisma.Decimal(dto.quantity);
     const effectiveDate = effectiveDateOf(dto.effectiveDate);
 
-    const result = await this.prisma.tenantTransaction(async (tx) => {
-      // B562 PR-3: `stockAfter` from the update's own returned row (SA-136 §1) — write-once now.
-      const updated = await tx.product.update({
-        where: { id: dto.productId },
-        data: { currentStock: { increment: qty } },
-        select: { currentStock: true },
-      });
+    // SA-767 L-2: lock the product, then read the average the movement and the new lot are stamped
+    // with INSIDE the tx (a purchase committing since the read above has moved it). The whole tx
+    // re-runs on a 40P01 / 40001 / P2034; nothing is captured across attempts.
+    const result = await retryStockTx("inventory.recordAdjustment", () =>
+      this.prisma.tenantTransaction(async (tx) => {
+        await this.lockProducts(tx, [dto.productId]);
+        const locked = await tx.product.findUnique({
+          where: { id: dto.productId },
+          select: { averageCost: true },
+        });
+        if (!locked) throw new NotFoundException("Product not found");
 
-      const movement = await tx.stockMovement.create({
-        data: {
-          productId: dto.productId,
-          type: MovementType.ADJUSTMENT,
-          quantity: qty,
-          // Quantity-only adjustments never move the average
-          avgCostAfter: product.averageCost ?? null,
-          stockAfter: updated.currentStock,
-          reference: dto.reference,
-          notes: dto.notes,
-          performedById,
-          // B562: the effective date is the accounting date; createdAt stays write-once.
-          effectiveAt: effectiveDate,
-        },
-      });
+        // B562 PR-3: `stockAfter` from the update's own returned row (SA-136 §1) — write-once now.
+        const updated = await tx.product.update({
+          where: { id: dto.productId },
+          data: { currentStock: { increment: qty } },
+          select: { currentStock: true },
+        });
 
-      // If positive adjustment, add to lots
-      if (qty.gt(0)) {
-        await tx.stockLot.create({
+        const movement = await tx.stockMovement.create({
           data: {
             productId: dto.productId,
-            purchaseDate: effectiveDate,
-            qty,
-            remainingQty: qty,
-            unitCost: product.averageCost ?? new Prisma.Decimal(0),
-            reference: dto.reference ?? "ADJUSTMENT",
+            type: MovementType.ADJUSTMENT,
+            quantity: qty,
+            // Quantity-only adjustments never move the average
+            avgCostAfter: locked.averageCost ?? null,
+            stockAfter: updated.currentStock,
+            reference: dto.reference,
             notes: dto.notes,
+            performedById,
+            // B562: the effective date is the accounting date; createdAt stays write-once.
+            effectiveAt: effectiveDate,
           },
         });
-      }
 
-      // Backdated adjustment: the replay appends a dated correction if the average moved (§4)
-      const newer = await tx.stockMovement.count({
-        where: { productId: dto.productId, effectiveAt: { gt: effectiveDate } },
-      });
-      if (newer > 0) {
-        await this.recomputeProductInTx(tx, dto.productId, {
-          trigger: `ADJUSTMENT:${movement.id}`,
-          performedById,
+        // If positive adjustment, add to lots
+        if (qty.gt(0)) {
+          await tx.stockLot.create({
+            data: {
+              productId: dto.productId,
+              purchaseDate: effectiveDate,
+              qty,
+              remainingQty: qty,
+              unitCost: locked.averageCost ?? new Prisma.Decimal(0),
+              reference: dto.reference ?? "ADJUSTMENT",
+              notes: dto.notes,
+            },
+          });
+        }
+
+        // Backdated adjustment: the replay appends a dated correction if the average moved (§4)
+        const newer = await tx.stockMovement.count({
+          where: { productId: dto.productId, effectiveAt: { gt: effectiveDate } },
         });
-      }
+        if (newer > 0) {
+          await this.recomputeProductInTx(tx, dto.productId, {
+            trigger: `ADJUSTMENT:${movement.id}`,
+            performedById,
+          });
+        }
 
-      return movement;
-    });
+        return movement;
+      }),
+    );
 
     if (qty.gt(0)) this.fireStockAlerts([dto.productId]);
     return result;

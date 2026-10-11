@@ -71,4 +71,17 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
     expect(lockedBefore(prisma.product.findUnique, 2)).toBe(true);
     expect(lockedBefore(prisma.product.update, 1)).toBe(true);
   });
+
+  it("recordAdjustment stamps the movement and the new lot with the LOCKED average", async () => {
+    prisma.product.findUnique
+      .mockResolvedValueOnce(row())
+      .mockResolvedValue(row({ averageCost: D(3) }));
+    prisma.product.update.mockResolvedValue({ currentStock: D(15) });
+
+    await service.recordAdjustment({ productId: "prod-1", quantity: 5 } as any, "u-1");
+
+    expect(prisma.stockMovement.create.mock.calls[0][0].data.avgCostAfter.toString()).toBe("3");
+    expect(prisma.stockLot.create.mock.calls[0][0].data.unitCost.toString()).toBe("3");
+    expect(lockedBefore(prisma.product.findUnique, 2)).toBe(true);
+  });
 });

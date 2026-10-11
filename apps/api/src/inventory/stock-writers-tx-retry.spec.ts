@@ -43,6 +43,14 @@ const WRITERS: Writer[] = [
     alerts: ["prod-1"],
     clean: { movement: 1, lot: 1, product: 1 },
   },
+  {
+    name: "recordAdjustment",
+    label: "inventory.recordAdjustment",
+    method: "recordAdjustment",
+    call: (svc) => svc.recordAdjustment({ productId: "prod-1", quantity: 5 } as any, "user-1"),
+    alerts: ["prod-1"],
+    clean: { movement: 1, lot: 1, product: 1 },
+  },
 ];
 
 describe.each(WRITERS)("$name tx retry (SA-767 L-2)", (writer) => {
