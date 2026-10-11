@@ -363,8 +363,8 @@ describe("BookkeepingService", () => {
       prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 200 } });
       prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: 50 } });
       prisma.invoice.findMany.mockResolvedValue([
-        { total: 200, payments: [{ amount: 50 }] },
-        { total: 300, payments: [{ amount: 100 }] },
+        { total: 200, payments: [{ amount: 50, status: "PAID" }] },
+        { total: 300, payments: [{ amount: 100, status: "PAID" }] },
       ]);
       prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 1500 } });
       prisma.$queryRaw.mockResolvedValue([{ count: 3 }]); // SA-770: the overdue count is the balance-due SQL
@@ -473,6 +473,142 @@ describe("BookkeepingService", () => {
         inv("not-due", 500, 0, FUTURE),
       ]);
       expect(row.overdue).toBe(60.3);
+    });
+  });
+
+  // ─── SA-770 row 310: every receivable / aging / AR figure is the clamped invoice balance ──
+  // An OVERPAID open invoice (P-3 keeps it out of PAID) must never net against what other customers
+  // owe: each invoice contributes max(0, roundMoney(total - confirmed payments)). Float dust (11 x $0.10
+  // against $1.10) must not become a phantom receivable either.
+  describe("SA-770 row 310 — receivables, aging and per-customer figures use the clamped balance", () => {
+    const PAST = new Date("2020-01-01T00:00:00.000Z");
+    const FUTURE = new Date("2099-01-01T00:00:00.000Z");
+    const cust = { id: "c1", businessName: "Acme", contactName: null, phone: null };
+    const pay = (amount: number) => ({ amount, status: "PAID", method: "CASH" });
+    const row = (id: string, total: number, payments: any[], dueDate: Date, status = "SENT") => ({
+      id,
+      invoiceNumber: id.toUpperCase(),
+      customerId: "c1",
+      customer: cust,
+      status,
+      total,
+      dueDate,
+      issueDate: PAST,
+      payments,
+    });
+    const overpaid = () => row("over", 100, [pay(130)], PAST);
+    const owing = () => row("owes", 50, [], PAST, "OVERDUE");
+    // 11 x $0.10 sums to 1.0999999999999999 in floats: a phantom $2e-16 balance against $1.10
+    const dusty = () =>
+      row(
+        "dust",
+        1.1,
+        Array.from({ length: 11 }, () => pay(0.1)),
+        FUTURE,
+      );
+
+    beforeEach(() => {
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 0, taxAmount: 0 } });
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.return.aggregate.mockResolvedValue({ _sum: { refundAmount: 0 } });
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.$queryRaw.mockResolvedValue([{ count: 0 }]);
+    });
+
+    it("getSummary: receivables = ONLY the owing balance (overpaid + owing: 50, not 50 - 30 = 20)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid(), owing()]);
+      const res = await service.getSummary();
+      expect(res.outstandingReceivables).toBe(50);
+    });
+
+    it("getSummary: float dust is not a receivable", async () => {
+      prisma.invoice.findMany.mockResolvedValue([dusty()]);
+      expect((await service.getSummary()).outstandingReceivables).toBe(0);
+    });
+
+    it("getMobileDashboard: totalOutstanding sums only owing balances, in cents", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid(), owing(), dusty()]);
+      expect((await service.getMobileDashboard()).totalOutstanding).toBe(50);
+    });
+
+    it("getFinanceDashboard: AR aging never goes negative and its buckets sum to the total", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid(), owing(), dusty()]);
+      const { arAging } = await service.getFinanceDashboard();
+      expect(arAging.total).toBe(50); // the dust invoice adds exactly 0
+      expect(
+        arAging.days45plus +
+          arAging.current +
+          arAging.days1_15 +
+          arAging.days16_30 +
+          arAging.days31_45,
+      ).toBe(arAging.total);
+      for (const b of [
+        arAging.current,
+        arAging.days1_15,
+        arAging.days16_30,
+        arAging.days31_45,
+        arAging.days45plus,
+      ])
+        expect(b).toBeGreaterThanOrEqual(0);
+      expect(arAging.current).toBe(0); // float dust did not land in "current"
+    });
+
+    it("getFinanceDashboard: the summary-table 'due' figure is the clamped balance", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid(), owing(), dusty()]);
+      const { summaryTable } = await service.getFinanceDashboard();
+      expect(summaryTable.today.due).toBe(50);
+    });
+
+    it("getArAgingInvoices: the overpaid and the dust invoices are absent; totals = the owing balance", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid(), owing(), dusty()]);
+      const res: any = await service.getArAgingInvoices();
+      const ids = Object.values(res.buckets)
+        .flat()
+        .map((e: any) => e.id);
+      expect(ids).toEqual(["owes"]);
+      expect(res.totals.total).toBe(50);
+    });
+
+    it("getArAgingDetails: rows with no balance (overpaid, dust) are filtered out", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid(), owing(), dusty()]);
+      const res: any = await service.getArAgingDetails();
+      expect(res.data.map((r: any) => r.id)).toEqual(["owes"]);
+      expect(res.data[0].balance).toBe(50);
+    });
+
+    it("getCustomerBalanceSummary: the per-customer balance is the sum of CLAMPED balances; closingBalance stays SIGNED (a net position)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid(), owing()]);
+      const [c] = ((await service.getCustomerBalanceSummary()) as any).data;
+      expect(c.balance).toBe(50); // before: 50 + (100 - 130) = 20
+      expect(c.overdue).toBe(50);
+      // closingBalance = invoiced - received, deliberately signed: Dr/Cr indicator (a net, never clamped)
+      expect(c.closingBalance).toBe(150 - 130);
+      prisma.invoice.findMany.mockResolvedValue([overpaid()]);
+      const [o] = ((await service.getCustomerBalanceSummary()) as any).data;
+      expect({ closing: o.closingBalance, ind: o.indicator, balance: o.balance }).toEqual({
+        closing: -30,
+        ind: "Cr",
+        balance: 0,
+      });
+    });
+
+    it("getInvoiceDetailsReport: an overpaid row shows balance 0 (paid > total stays visible), not a negative", async () => {
+      prisma.invoice.findMany.mockResolvedValue([overpaid()]);
+      const res: any = await service.getInvoiceDetailsReport();
+      expect(res.data[0]).toMatchObject({ total: 100, paid: 130, balance: 0 });
+    });
+
+    it("getBadDebtsReport: the footer total is the sum of clamped balances", async () => {
+      const wo = (id: string, total: number, paid: number) => ({
+        ...row(id, total, paid ? [pay(paid)] : [], PAST, "WRITTEN_OFF"),
+        writtenOffAt: PAST,
+        writeOffReason: null,
+      });
+      prisma.invoice.findMany.mockResolvedValue([wo("a", 100, 130), wo("b", 40, 0)]);
+      const res: any = await service.getBadDebtsReport();
+      expect(res.data.map((r: any) => r.balance)).toEqual([0, 40]);
+      expect(res.total).toBe(40);
     });
   });
 

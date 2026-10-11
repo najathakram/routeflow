@@ -41,6 +41,8 @@ const USES_CLASSIFIER: Record<string, string> = {
   "invoices/invoice-detail-read.ts": "detail read: balanceDue / isOverdue",
   "invoices/invoices.service.ts": "list enrichment (findAll), sendEmail and sendReminder balances",
   "invoices/invoice-kpi-summary.ts": "KPI tiles: per-invoice balance (confirmedBalance)",
+  "bookkeeping/bookkeeping.service.ts":
+    "receivables / aging / AR / per-customer balances: clamped confirmedBalance per invoice (row 310). SIGNED by design: the per-customer closingBalance (invoiced - received, the Dr/Cr net position) and recordPayment's capacity guard (totalOwed - alreadyPaid)",
   "buyer/buyer.controller.ts":
     "getAnalytics: overdue / unpaid counts + BALANCE total (SA-770 r-note)",
   "buyer/buyer-dashboard.service.ts":
@@ -79,7 +81,7 @@ const BALANCE_CLAMPED: Record<string, { clamp: RegExp; reason: string }> = {
       "statement overdueAmount, both the buyer's (getMyStatement) and the operator's statement",
   },
   "bookkeeping/bookkeeping.service.ts": {
-    clamp: /Math\.max\(0, roundMoney\(bal\)\)/g,
+    clamp: /confirmedBalance\(inv\.total, inv\.payments\)/g,
     reason: "per-customer aging (getCustomerBalanceSummary) `overdue`",
   },
 };
@@ -158,6 +160,7 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
     "invoices/invoice-detail-read.ts": /\bclassifyInvoiceBalance\(/,
     "invoices/invoices.service.ts": /\bclassifyInvoiceBalance\([\s\S]*\bconfirmedBalance\(/,
     "invoices/invoice-kpi-summary.ts": /\bclassifyInvoiceBalance\(/,
+    "bookkeeping/bookkeeping.service.ts": /\bconfirmedBalance\(/,
     "buyer/buyer.controller.ts": /\bsummarizeOpenInvoices\(/,
     "buyer/buyer-dashboard.service.ts": /\bsummarizeOpenInvoices\(/,
   };
@@ -168,7 +171,7 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
     expect(src).toMatch(REQUIRED_CALL[rel]);
     // the inline copies are gone: no hand-rolled `total - <paid>` balance in these readers
     expect(src).not.toMatch(
-      /Number\((inv|i|invoice)\.total\)\s*-\s*(sumConfirmed|totalConfirmed|totalPaid|paidAmount|amountPaid|paid)\b/,
+      /Number\((inv|i|invoice)\.total\)\s*-\s*(sumConfirmed|totalConfirmed|totalPaid|paidAmount|amountPaid|paid|(inv|i|invoice)\.payments)\b/,
     );
   });
 
