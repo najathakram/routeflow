@@ -234,13 +234,22 @@ export async function refundableRemainder(
   const lineIds = [...lineById.keys()];
 
   // 2. (a) RETURNS of the order(s): STANDARD by Return.orderId, INLINE by the item's source order
-  const counted = (r: { id?: string; status?: string | null }): boolean =>
-    !(r.status && DEAD.has(r.status)) && r.id !== excludeReturnId;
+  // a return whose own credit note was voided gave nothing back (the credit was taken away): it reserves nothing
+  const voidReturnNotes = new Set<string>();
+  const counted = (r: {
+    id?: string;
+    status?: string | null;
+    creditNoteId?: string | null;
+  }): boolean =>
+    !(r.status && DEAD.has(r.status)) &&
+    r.id !== excludeReturnId &&
+    !(r.creditNoteId && voidReturnNotes.has(r.creditNoteId));
   const standard: Array<{
     id: string;
     orderId: string | null;
     kind?: string | null;
     status?: string | null;
+    creditNoteId?: string | null;
     items?: Array<{ productId: string; qty: unknown }>;
   }> =
     orderIds.length > 0
@@ -251,11 +260,11 @@ export async function refundableRemainder(
             orderId: true,
             kind: true,
             status: true,
+            creditNoteId: true,
             items: { select: { productId: true, qty: true } },
           },
         })) ?? [])
       : [];
-  const standardCounted = standard.filter((r) => r.kind !== "INLINE" && counted(r) && r.orderId);
   const inlineItems: Array<{
     productId: string;
     qty: unknown;
@@ -263,7 +272,12 @@ export async function refundableRemainder(
     subtotal?: unknown;
     taxAmount?: unknown;
     categoryTax?: unknown;
-    return?: { id?: string; kind?: string | null; status?: string | null } | null;
+    return?: {
+      id?: string;
+      kind?: string | null;
+      status?: string | null;
+      creditNoteId?: string | null;
+    } | null;
   }> =
     orderIds.length > 0
       ? ((await tx.returnItem?.findMany?.({
@@ -275,10 +289,29 @@ export async function refundableRemainder(
             subtotal: true,
             taxAmount: true,
             categoryTax: true,
-            return: { select: { id: true, kind: true, status: true } },
+            return: { select: { id: true, kind: true, status: true, creditNoteId: true } },
           },
         })) ?? [])
       : [];
+  const returnNoteIds = [
+    ...new Set(
+      [...standard, ...inlineItems.map((i) => i.return ?? {})]
+        .filter(
+          (r: any) =>
+            r.creditNoteId && !(r.status && DEAD.has(r.status)) && r.id !== excludeReturnId,
+        )
+        .map((r: any) => r.creditNoteId as string),
+    ),
+  ];
+  if (returnNoteIds.length > 0) {
+    const notes: Array<{ id: string; status?: string | null }> =
+      (await tx.creditNote?.findMany?.({
+        where: { id: { in: returnNoteIds } },
+        select: { id: true, status: true },
+      })) ?? [];
+    for (const n of notes) if (n.status === "VOID") voidReturnNotes.add(n.id);
+  }
+  const standardCounted = standard.filter((r) => r.kind !== "INLINE" && counted(r) && r.orderId);
 
   // STANDARD qty is in the order line's own unit: pieces through the order's pack basis (same reader the over-return cap uses)
   const basesByOrder = new Map<string, Map<string, ProductPackBasis>>();
@@ -407,7 +440,8 @@ export async function refundableRemainder(
     let items = group.amountOnlyItems;
     for (const [productId, pool] of group.pools) {
       billed += pool.billedValue;
-      poolValueOut += pool.valueOut;
+      // a pool credited past its value (read <= 0 below) must not eat the room of the invoice's OTHER goods
+      poolValueOut += Math.min(pool.valueOut, pool.billedValue);
       items += pool.items;
       const remainder: PoolRemainder = {
         qty: round3(pool.billedQty - pool.qtyOut),

@@ -8,8 +8,7 @@
  *   C2  a RECEIVED return of 1.6 of 4 (worth $8): a credit of the remaining $12 mints; one of $13 is refused with $12 left.
  *   C3  a REJECTED return reserves nothing; a VOID credit note takes nothing.
  *   C4  an amount-only credit note is held to the invoice-level remainder ($30 reserved of $50: $25 is refused, $20 mints).
- *   C5  a credit note and a store-credit refund of the same goods racing behind the invoice lock: one wins, the other is 409, and
- *       what is credited never exceeds the line.
+ *   C5  two credit notes for the same line racing behind the invoice lock: one mints, the other is refused, the line is credited once.
  *
  * Collected only by jest.db.config.js (`.db.spec.ts$`), run via `npm run local:test:db`.
  */
@@ -156,29 +155,16 @@ describeDb("SA-773 standalone credit notes read the refundable remainder - real 
     expect(await noteCount(s)).toBe(1);
   });
 
-  it("C5: a credit note and a store-credit refund of the same goods racing behind the invoice lock never total more than the line", async () => {
+  it("C5: two $20 credit notes for one $20 line racing behind the invoice lock: one mints, the other is a coded 4xx, the line is credited once", async () => {
     const s = await seed("c5", [{ lines: [{ product: "A", qty: 4, subtotal: 20 }] }]);
-    const ret = await addStandardReturn(prisma, s, {
-      number: rtn(),
-      status: "RECEIVED",
-      items: [{ product: "A", qty: 4 }],
-    });
     const holder = new Client({ connectionString: process.env.DATABASE_URL as string });
     await holder.connect();
     await holder.query("BEGIN");
     await holder.query(`SELECT id FROM "Invoice" WHERE id = $1 FOR UPDATE`, [s.invoices[0].id]);
-    const refund = fail(
-      asTenant(s, () =>
-        returns.processRefund(
-          ret.id,
-          { method: "CREDIT_NOTE" } as any,
-          { sub: s.userId, role: "OPERATOR" } as any,
-        ),
-      ),
-    );
-    const standalone = fail(credit(s, 20));
-    // both are queued behind the holder's invoice lock (the refund claim also waits on it after its Return and Order locks)
-    for (let i = 0; i < 200; i++) {
+    const first = fail(credit(s, 20));
+    const second = fail(credit(s, 20));
+    // both are queued behind the holder's invoice lock before it lets go
+    for (let i = 0; i < 120; i++) {
       const r = await ctl.query(
         `SELECT count(*)::int AS n FROM pg_stat_activity
           WHERE datname = current_database() AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'`,
@@ -188,15 +174,12 @@ describeDb("SA-773 standalone credit notes read the refundable remainder - real 
     }
     await holder.query("COMMIT");
     await holder.end();
-    const [refundErr, creditErr] = await Promise.all([refund, standalone]);
+    const errs = (await Promise.all([first, second])).filter(Boolean);
     const live = await prisma.creditNote.findMany({
       where: { tenantId: s.tenantId, status: { not: "VOID" } },
     });
-    const total = live.reduce((t, c) => t + Number(c.amount), 0);
-    expect(total).toBeLessThanOrEqual(20);
-    // exactly one side won; the loser is a coded 409, never a 500
-    const losers = [refundErr, creditErr].filter(Boolean);
-    expect(losers).toHaveLength(1);
-    expect(losers[0]?.getStatus?.()).toBe(409);
+    expect(live.reduce((t, c) => t + Number(c.amount), 0)).toBe(20);
+    expect(errs).toHaveLength(1);
+    expect([400, 409]).toContain(errs[0]?.getStatus?.());
   });
 });

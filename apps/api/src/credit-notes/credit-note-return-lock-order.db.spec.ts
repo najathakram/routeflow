@@ -7,7 +7,7 @@
  *
  * Before: the mint took the Order and the order's invoices FIRST and wanted the Return only at its link statement, so it sat on
  * the Order while the holder asked for it: Postgres broke the cycle with 40P01 (on the holder's statement, or the mint's, which
- * retried). After: the mint's FIRST lock is the Return row, so it queues holding nothing, the holder's Order statement is granted,
+ * retried and so looked fine; the proof is Postgres' own deadlock counter, pg_stat_database.deadlocks). After: the mint's FIRST lock is the Return row, so it queues holding nothing, the holder's Order statement is granted,
  * the holder commits, and the mint then completes. No 40P01 on either side.
  *
  * Collected only by jest.db.config.js (`.db.spec.ts$`), run via `npm run local:test:db`.
@@ -63,6 +63,16 @@ describeDb(
       return false;
     };
 
+    /** Postgres' own count of the deadlocks it has broken in this database: the signal a retry cannot hide. */
+    const deadlocks = async (): Promise<number> =>
+      Number(
+        (
+          await ctl.query(
+            `SELECT deadlocks::int AS n FROM pg_stat_database WHERE datname = current_database()`,
+          )
+        ).rows[0].n,
+      );
+
     it("the holder (a resolve: Return, then Order) and the mint (pooled, 2 creditable invoices) finish with no 40P01 and one credit note", async () => {
       const s = await seedRefundable(prisma, tenantIds, {
         run: RUN,
@@ -79,6 +89,7 @@ describeDb(
         items: [{ product: "A", qty: 2 }],
       });
 
+      const deadlocksBefore = await deadlocks();
       const holder = new Client({ connectionString: process.env.DATABASE_URL as string });
       await holder.connect();
       await holder.query("BEGIN");
@@ -120,6 +131,8 @@ describeDb(
       const out = await mint;
 
       expect(queued).toBe(true);
+      // Postgres broke no deadlock: before, the mint (or the holder) was the victim and the mint's retry loop hid it
+      expect(await deadlocks()).toBe(deadlocksBefore);
       expect(holderError?.code).not.toBe("40P01"); // red before: the holder's Order statement was the deadlock victim
       expect(holderError).toBeUndefined();
       expect(out.ok).toBe(true);

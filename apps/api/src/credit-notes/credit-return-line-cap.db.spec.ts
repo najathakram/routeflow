@@ -339,8 +339,11 @@ describeDb(
     it("3b. credit note first ($60), then a return of 4 pieces is allowed and a return of 5 is REFUSED 409 RETURN_REFUND_OVER_LINE_HEADROOM", async () => {
       const s = await seed("partial2", 0, 10);
       await creditNoteItem(s, s.lineA, 60);
-      const over = await refund(s, (await receivedReturn(s, s.pA.id, 5)).id).catch((e) => e);
+      const overReturn = await receivedReturn(s, s.pA.id, 5);
+      const over = await refund(s, overReturn.id).catch((e) => e);
       expect(over?.getResponse?.()).toMatchObject({ code: "RETURN_REFUND_OVER_LINE_HEADROOM" });
+      // SA-773: a RECEIVED return reserves its goods (fail closed), so the office rejects the refused one before the smaller refunds
+      await prisma.return.update({ where: { id: overReturn.id }, data: { status: "REJECTED" } });
       await expect(refund(s, (await receivedReturn(s, s.pA.id, 4)).id)).resolves.toBeDefined();
       expect(await creditedOnLine(s, s.lineA, s.pA.id)).toBe(100);
     });

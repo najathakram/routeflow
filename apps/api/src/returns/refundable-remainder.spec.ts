@@ -22,6 +22,8 @@ interface Fixture {
   /** every return that owns a credit note (any status): { id, creditNoteId, status } */
   linkedReturns?: Row[];
   orderLines?: Row[];
+  /** statuses of the credit notes the returns point at, by id */
+  notes?: Row[];
 }
 
 const line = (
@@ -68,7 +70,16 @@ function fakeTx(f: Fixture) {
     },
     returnItem: { findMany: jest.fn(async () => (used.push("returnItem"), f.inlineItems ?? [])) },
     creditNoteItem: { findMany: jest.fn(async () => (used.push("cnItem"), f.cnItems ?? [])) },
-    creditNote: { findMany: jest.fn(async () => (used.push("cn"), f.amountOnly ?? [])) },
+    creditNote: {
+      findMany: jest.fn(async (args: any) => {
+        if (args?.where?.id?.in) {
+          used.push("cn.status");
+          return (f.notes ?? []).filter((n) => args.where.id.in.includes(n.id));
+        }
+        used.push("cn");
+        return f.amountOnly ?? [];
+      }),
+    },
     orderItem: { findMany: jest.fn(async () => f.orderLines ?? []) },
     invoiceItem: { findMany: jest.fn(async () => []) },
   };
@@ -548,6 +559,90 @@ describe("refundableRemainder (SA-773): the one formula", () => {
     const rem = await refundableRemainder(tx, { invoiceIds: ["i1"] });
     expect(rem.byInvoice.size).toBe(0);
     expect(refundableRefusal(rem, [{ invoiceId: "i1", value: 999 }])).toBeNull();
+  });
+
+  it("a pool credited past its value does not eat the room of the invoice's other goods", async () => {
+    const tx = fakeTx({
+      invoices: [invoice("i1", "o1", 200, [line("l1", "pA", 10, 100), line("l2", "pB", 10, 100)])],
+      cnItems: [
+        {
+          invoiceItemId: "l1",
+          creditNoteId: "cn1",
+          qty: 10,
+          amount: 100,
+          categoryTax: 0,
+          creditNote: { status: "ISSUED" },
+        },
+      ],
+      standardReturns: [
+        {
+          id: "r1",
+          orderId: "o1",
+          kind: "STANDARD",
+          status: "RECEIVED",
+          items: [{ productId: "pA", qty: 10 }],
+        },
+      ],
+    });
+    const rem = await refundableRemainder(tx, { invoiceIds: ["i1"] });
+    expect(poolOf(rem, "i1", "pA")?.value).toBe(-100); // A: read <= 0, refused
+    expect(poolOf(rem, "i1", "pB")).toMatchObject({ qty: 10, value: 100 }); // B: untouched
+    expect(rem.byInvoice.get("i1")?.value).toBe(100); // the invoice still has B's room
+    expect(
+      refundableRefusal(rem, [{ invoiceId: "i1", productId: "pB", qty: 10, value: 100 }]),
+    ).toBeNull();
+  });
+
+  it("a return whose own credit note was voided gave nothing back: it reserves nothing (STANDARD and INLINE)", async () => {
+    const fixture: Fixture = {
+      invoices: [invoice("i1", "o1", 100, [line("l1", "pA", 10, 100)])],
+      standardReturns: [
+        {
+          id: "r1",
+          orderId: "o1",
+          kind: "STANDARD",
+          status: "REFUNDED",
+          creditNoteId: "cnV",
+          items: [{ productId: "pA", qty: 4 }],
+        },
+        {
+          id: "r2",
+          orderId: "o1",
+          kind: "STANDARD",
+          status: "REFUNDED",
+          creditNoteId: "cnOk",
+          items: [{ productId: "pA", qty: 1 }],
+        },
+      ],
+      inlineItems: [
+        {
+          productId: "pA",
+          qty: 3,
+          sourceOrderId: "o1",
+          subtotal: 30,
+          taxAmount: 0,
+          categoryTax: 0,
+          return: { id: "r3", kind: "INLINE", status: "REFUNDED", creditNoteId: "cnV2" },
+        },
+        {
+          productId: "pA",
+          qty: 2,
+          sourceOrderId: "o1",
+          subtotal: 20,
+          taxAmount: 0,
+          categoryTax: 0,
+          return: { id: "r4", kind: "INLINE", status: "REFUNDED", creditNoteId: null },
+        },
+      ],
+      notes: [
+        { id: "cnV", status: "VOID" },
+        { id: "cnV2", status: "VOID" },
+        { id: "cnOk", status: "ISSUED" },
+      ],
+    };
+    const rem = await refundableRemainder(fakeTx(fixture), { invoiceIds: ["i1"] });
+    // only r2 (1 piece, $10) and r4 (an external refund, 2 pieces, $20) still hold goods
+    expect(poolOf(rem, "i1", "pA")).toMatchObject({ qty: 7, value: 70 });
   });
 
   it("creditableGroupInvoiceIds adds the order's other creditable invoices to the ones given, id-sorted", async () => {

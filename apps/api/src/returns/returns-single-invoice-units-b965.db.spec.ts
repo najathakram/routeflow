@@ -249,6 +249,8 @@ describeDb(
       ).rejects.toMatchObject({
         response: { code: "RETURN_REFUND_OVER_LINE_HEADROOM" },
       });
+      // SA-773: a RECEIVED return reserves its goods (fail closed), so the office rejects the refused one before the smaller refunds
+      await prisma.return.update({ where: { id: over.id }, data: { status: "REJECTED" } });
       const ok = await receivedReturn(s, 14);
       const minted: any = await tenantCtx.run(s.tenantId, () => returns.processRefund(ok.id));
       expect(Number(minted.refundAmount)).toBe(70);
