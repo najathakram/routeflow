@@ -14,6 +14,7 @@ import {
 import { useCustomers } from "@/lib/api/customers";
 import { useInvoices, useInvoice } from "@/lib/api/invoices";
 import { fmt } from "@/lib/formatting";
+import { refundableCopy } from "@/lib/credit-note-error-copy";
 import { roundMoney } from "@routeflow/pricing";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
@@ -225,10 +226,11 @@ function CreateCreditNoteModal({
           onClose();
           onSuccess(cn.id);
         },
-        onError: () => {
+        onError: (err) => {
           toast({
             title: "Failed to create credit note",
-            description: "Please try again.",
+            // SA-773: a credit past what the goods have left says how much is left; any other failure keeps today's line
+            description: refundableCopy(err) ?? "Please try again.",
             variant: "error",
           });
         },

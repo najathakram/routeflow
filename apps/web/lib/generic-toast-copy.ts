@@ -1,8 +1,7 @@
 import { API_ERROR_CODES, CREDITS_PENDING_COPY, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
 import {
-  CREDIT_EXCEEDS_REFUNDABLE_COPY,
   CREDIT_NOTE_ERROR_COPY,
-  RETURN_EXCEEDS_REFUNDABLE_COPY,
+  refundableCopy,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
   UNCONFIRMED_COPY,
   noResponse,
@@ -28,8 +27,6 @@ import { safeTextErrorCopy } from "./safe-text-error-copy";
 /** Daily-work refusals, by `body.code`. The sentences name the cause and the next step. */
 const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
-  [API_ERROR_CODES.RETURN_EXCEEDS_REFUNDABLE]: RETURN_EXCEEDS_REFUNDABLE_COPY,
-  [API_ERROR_CODES.CREDIT_EXCEEDS_REFUNDABLE]: CREDIT_EXCEEDS_REFUNDABLE_COPY,
   INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED:
     "This item was already returned. Add a reason to confirm another return.",
   INLINE_RETURN_KEY_CONFLICT: "This return was already submitted. Refresh to see it.",
@@ -257,6 +254,9 @@ export function codedToastCopy(err: unknown): string | null {
   const gate = parsePlanGate(err);
   if (gate && gate.code !== API_ERROR_CODES.PLAN_GATE_UNAVAILABLE) return PLAN_COPY;
   const code = typeof data.code === "string" ? data.code : "";
+  // SA-773: the refundable-remainder refusals say how much is left, from the structured body
+  const refundable = refundableCopy(err);
+  if (refundable) return refundable;
   if (code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
   if (code === API_ERROR_CODES.READ_ONLY) return READ_ONLY_COPY;
   if (code === API_ERROR_CODES.INSUFFICIENT_STOCK) return STOCK_COPY;

@@ -60,6 +60,8 @@ function noResponse(err: unknown): boolean {
  * may have gone through) is the "couldn't confirm" line; anything else is `fallback`. Never the server message.
  */
 export function creditNoteErrorCopy(err: unknown, fallback: string): string {
+  const refundable = refundableCopy(err);
+  if (refundable) return refundable;
   const code = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
     ?.data?.code;
   if (
@@ -121,6 +123,21 @@ export function refundableLeftSentence(err: unknown): string {
     : "";
 }
 
+/**
+ * The copy for RETURN_EXCEEDS_REFUNDABLE / CREDIT_EXCEEDS_REFUNDABLE with "Up to $X can still be given back." from the body, else
+ * null for any other error. The ONE place the amount is added: every credit note screen (create, picker, edit, reissue) and the
+ * refund toast read it, so the figure is never lost to a generic line.
+ */
+export function refundableCopy(err: unknown): string | null {
+  const code = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
+    ?.data?.code;
+  if (code === API_ERROR_CODES.RETURN_EXCEEDS_REFUNDABLE)
+    return RETURN_EXCEEDS_REFUNDABLE_COPY + refundableLeftSentence(err);
+  if (code === API_ERROR_CODES.CREDIT_EXCEEDS_REFUNDABLE)
+    return CREDIT_EXCEEDS_REFUNDABLE_COPY + refundableLeftSentence(err);
+  return null;
+}
+
 /** F4: a sale paid (partly) with store credit goes back as store credit. */
 export const REFUND_PAID_WITH_STORE_CREDIT_COPY =
   "This was paid with store credit, so it goes back as store credit. Give store credit instead.";
@@ -143,10 +160,8 @@ export function refundErrorMessage(err: unknown, otherwise?: string): string | u
   if (code === API_ERROR_CODES.REFUND_EXCEEDS_CASH_PAID) return REFUND_EXCEEDS_CASH_PAID_COPY;
   if (code === API_ERROR_CODES.RETURN_NOTHING_BILLED) return RETURN_NOTHING_BILLED_COPY;
   if (code === API_ERROR_CODES.RETURN_REFUND_BASIS_CHANGED) return RETURN_REFUND_BASIS_CHANGED_COPY;
-  if (code === API_ERROR_CODES.RETURN_EXCEEDS_REFUNDABLE)
-    return RETURN_EXCEEDS_REFUNDABLE_COPY + refundableLeftSentence(err);
-  if (code === API_ERROR_CODES.CREDIT_EXCEEDS_REFUNDABLE)
-    return CREDIT_EXCEEDS_REFUNDABLE_COPY + refundableLeftSentence(err);
+  const refundable = refundableCopy(err);
+  if (refundable) return refundable;
   if (code === API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT) return RETURN_MIXED_UNIT_PRODUCT_COPY;
   return code === API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM
     ? RETURN_REFUND_OVER_LINE_HEADROOM_COPY

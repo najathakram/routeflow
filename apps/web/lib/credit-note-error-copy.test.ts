@@ -12,6 +12,7 @@ import {
   REFUND_PAID_WITH_STORE_CREDIT_COPY,
   UNCONFIRMED_COPY,
   creditNoteErrorCopy,
+  refundableCopy,
   refundErrorMessage,
 } from "./credit-note-error-copy";
 
@@ -177,4 +178,25 @@ describe("SA-773: the refundable-remainder refusals have fixed copy that names w
       expect(copy).not.toMatch(/RAW SERVER|outside RouteFlow|manually/i);
     },
   );
+});
+
+describe("SA-773: refundableCopy is the one place the amount left is added", () => {
+  const err = (code: string, extra: Record<string, unknown> = {}) => ({
+    response: { data: { code, ...extra } },
+  });
+
+  it("answers for the two refusals only, with the amount from the body", () => {
+    expect(refundableCopy(err("RETURN_EXCEEDS_REFUNDABLE", { remainingValue: 5 }))).toBe(
+      `${RETURN_EXCEEDS_REFUNDABLE_COPY} Up to $5.00 can still be given back.`,
+    );
+    expect(refundableCopy(err("CREDIT_EXCEEDS_REFUNDABLE"))).toBe(CREDIT_EXCEEDS_REFUNDABLE_COPY);
+    expect(refundableCopy(err("SOMETHING_ELSE", { remainingValue: 5 }))).toBeNull();
+    expect(refundableCopy(null)).toBeNull();
+  });
+
+  it("creditNoteErrorCopy (the credit note screens) carries the amount too", () => {
+    expect(creditNoteErrorCopy(err("CREDIT_EXCEEDS_REFUNDABLE", { remainingValue: 12 }), "x")).toBe(
+      `${CREDIT_EXCEEDS_REFUNDABLE_COPY} Up to $12.00 can still be given back.`,
+    );
+  });
 });

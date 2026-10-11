@@ -17,6 +17,7 @@ import { useAdminCustomers } from "../../../lib/api/admin";
 import { useCreateCreditNote, useInvoicesForCustomer } from "../../../lib/api/credit-notes";
 import { MoneyTextInput } from "../../../components/MoneyTextInput";
 import { showToast } from "../../../lib/toast";
+import { refundableCopy } from "../../../lib/credit-note-error-copy";
 
 // A standalone credit needs no invoice at all; when one IS picked every status
 // is fair game except these two dead ends (mirrors the web WP7 invoice picker).
@@ -220,7 +221,8 @@ function CreditNoteFormStep({
           showToast("Credit note created");
           onCreated(created.id);
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) =>
+          showToast(refundableCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
