@@ -17,12 +17,15 @@ const err = {
   },
 };
 
-function Harness({ error }: { error: unknown }) {
-  const guard = useOrderOverpayGuard({
-    id: "o1",
-    customerId: "c1",
-    customer: { businessName: "Acme" },
-  });
+function Harness({ error, editing = true }: { error: unknown; editing?: boolean }) {
+  const guard = useOrderOverpayGuard(
+    {
+      id: "o1",
+      customerId: "c1",
+      customer: { businessName: "Acme" },
+    },
+    editing,
+  );
   return (
     <div>
       <button onClick={() => guard.capture(error)}>go</button>
@@ -53,5 +56,12 @@ describe("useOrderOverpayGuard", () => {
     render(<Harness error={{ response: { status: 409, data: { code: "X" } } }} />);
     fireEvent.click(screen.getByText("go"));
     expect(screen.queryByTestId("order-overpay-notice")).toBeNull();
+  });
+  it("Record a return and Dismiss are 44 px touch targets (jsdom has no layout, so the size class is asserted)", () => {
+    render(<Harness error={err} />);
+    fireEvent.click(screen.getByText("go"));
+    for (const name of ["Record a return", "Dismiss"]) {
+      expect(screen.getByRole("button", { name }).className).toMatch(/\bh-11\b/);
+    }
   });
 });

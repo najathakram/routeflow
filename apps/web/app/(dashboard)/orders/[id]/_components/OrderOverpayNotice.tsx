@@ -43,11 +43,16 @@ export function useOrderOverpayGuard(
       <p>{orderOverpayCopy(info, hasInlineReturns)}</p>
       <div className="mt-2 flex gap-2">
         {hasInlineReturns && (
-          <Button variant="secondary" size="sm" onClick={() => setReturnOpen(true)}>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="h-11"
+            onClick={() => setReturnOpen(true)}
+          >
             Record a return
           </Button>
         )}
-        <Button variant="ghost" size="sm" onClick={() => setInfo(null)}>
+        <Button variant="ghost" size="sm" className="h-11" onClick={() => setInfo(null)}>
           Dismiss
         </Button>
       </div>
