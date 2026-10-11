@@ -101,6 +101,20 @@ describe("Orders page — Invoice order entry (row 331)", () => {
     expect(screen.getByRole("menuitem", { name: "Select" })).toBeInTheDocument();
   });
 
+  it("a store-only tenant's primary trails: [Export][Select][More][Invoice a customer][Counter sale]", () => {
+    gate = STORE_ONLY;
+    renderWithProviders(<OrdersPage />);
+    const order = ["Export", "Select", "More actions", "Invoice a customer", "Counter sale"];
+    const names = screen
+      .getAllByRole("button")
+      .map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim());
+    const positions = order.map((n) => names.findIndex((x) => x === n));
+    expect(positions.every((p) => p >= 0)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    // Below sm Export and Select are hidden, which leaves [More][Invoice a customer][Counter sale].
+    // From sm up the More menu is hidden, which leaves [Export][Select][Invoice a customer][Counter sale].
+  });
+
   it("a delivery tenant is unchanged: New Order is the primary, Export and Select stay inline, no More menu", () => {
     gate = {
       showButton: true,

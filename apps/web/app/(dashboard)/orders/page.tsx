@@ -720,6 +720,15 @@ export default function OrdersPage() {
                 ]}
               />
             ) : null}
+            {storeOnlyHeader && staffMay(user?.role, "USE_POS_MODE") ? (
+              <Button
+                variant="secondary"
+                className="max-sm:h-11"
+                onClick={() => setIsCreateOpen(true)}
+              >
+                Invoice a customer
+              </Button>
+            ) : null}
             {counterGate.showButton ? (
               <Button
                 // A store-only tenant has one place to ring a sale: the counter is the filled primary (UX G7).
@@ -728,15 +737,6 @@ export default function OrdersPage() {
                 onClick={() => router.push("/orders/counter-sale")}
               >
                 Counter sale
-              </Button>
-            ) : null}
-            {storeOnlyHeader && staffMay(user?.role, "USE_POS_MODE") ? (
-              <Button
-                variant="secondary"
-                className="max-sm:h-11"
-                onClick={() => setIsCreateOpen(true)}
-              >
-                Invoice a customer
               </Button>
             ) : null}
             {storeOnlyHeader ? null : (
