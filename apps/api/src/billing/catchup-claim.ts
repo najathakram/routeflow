@@ -76,6 +76,24 @@ export function claimRefusal(state: string | null | undefined): ConflictExceptio
   });
 }
 
+/**
+ * The 409 for staff MANUALLY ACTIVATING a tenant whose claim is held (MF3). Every held state refuses: even while the
+ * session is only OPEN the customer can still pay it AFTER staff recorded the same October by activating, and they
+ * are charged twice. SESSION_OPEN has its own code (the admin copy says "wait for it to complete or expire"); the
+ * later states are the same "pending" refusal as everywhere else. Null = no claim.
+ */
+export function activationClaimRefusal(state: string | null | undefined): ConflictException | null {
+  if (state === "SESSION_OPEN") {
+    return new ConflictException({
+      code: API_ERROR_CODES.ACTIVATION_CATCHUP_SESSION_OPEN,
+      message:
+        "A card checkout is open for this tenant (October catch-up). Activating them now could charge them " +
+        "twice. Wait for it to complete or expire, then try again.",
+    });
+  }
+  return claimRefusal(state);
+}
+
 /** The two values of the `catchup` marker: `period` (trial_one_time) and `prepaid` (trial / anchor_no_line). */
 export const CATCHUP_KINDS = ["period", "prepaid"] as const;
 

@@ -132,6 +132,8 @@ const CODE_COPY: Record<string, string> = {
   // stays on invoiced billing; fixed sentences, no ids.
   [API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE]:
     "This account has an add-on that card billing can't carry yet, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  [API_ERROR_CODES.ACTIVATION_CATCHUP_SESSION_OPEN]:
+    "A card checkout is open for this account (October catch-up), so it can't be activated by hand yet. Wait for the checkout to complete or expire, then try again.",
   [API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]:
     "This account's invoiced period runs past what we show as paid, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
   [API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG]:

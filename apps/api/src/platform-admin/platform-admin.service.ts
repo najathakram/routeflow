@@ -107,7 +107,7 @@ import {
 } from "../billing/price-override";
 import { underTenantPriceLock } from "../billing/price-lock";
 import { clearNeedsReconcile } from "../billing/needs-reconcile";
-import { claimRefusal } from "../billing/catchup-claim";
+import { activationClaimRefusal } from "../billing/catchup-claim";
 import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { assertValidTenantTimeZone } from "../system-config/tenant-timezone.writer";
@@ -1251,13 +1251,12 @@ export class PlatformAdminService {
             },
           },
         });
-        // SA-733r5 (Opus item 7): a manual activation rewrites the period, flips externalPayment=true and resets the
-        // coupon while the tenant's card subscription is mid-first-payment (or being released). It would race the
-        // claim's settle/release; refused, under the Tenant lock, until the claim clears.
-        const claimState = before.subscription?.catchupState;
-        if (claimState === "AWAITING_FIRST_PAYMENT" || claimState === "RELEASING") {
-          throw claimRefusal(claimState)!;
-        }
+        // SA-733r5 (Opus item 7 + MF3): a manual activation rewrites the period, flips externalPayment=true and resets
+        // the coupon while the tenant's card subscription is mid-first-payment (or being released), and while the
+        // session is still OPEN the customer can pay it AFTER staff recorded the same October (a double charge).
+        // Refused in EVERY held state, under the Tenant lock, until the claim clears.
+        const activationRefusal = activationClaimRefusal(before.subscription?.catchupState);
+        if (activationRefusal) throw activationRefusal;
 
         // B557 / SA-140: status is unconditionally ACTIVE and planKey unconditionally resolved by
         // the write below, so only class/deletedAt (untouched here) gate whether this activation

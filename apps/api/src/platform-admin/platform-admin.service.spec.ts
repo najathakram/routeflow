@@ -2071,11 +2071,25 @@ describe("PlatformAdminService — audit provenance", () => {
       },
     );
 
-    it("no claim (and a SESSION_OPEN one, which the stale-checkout guard already covers) is not refused", async () => {
-      for (const state of [null, "SESSION_OPEN"]) {
-        arrange(state);
-        await expect(activate()).resolves.toBeTruthy();
-      }
+    // SA-733r5 MF3 (Lead review): this used to ALLOW an activation while the session was open ("the stale-checkout
+    // guard covers it"). It does not: the customer can still pay the open session AFTER staff recorded the same
+    // October by activating, which charges them twice. Flipped deliberately: a SESSION_OPEN claim refuses too.
+    it("SESSION_OPEN: 409 ACTIVATION_CATCHUP_SESSION_OPEN under the Tenant lock, nothing written", async () => {
+      arrange("SESSION_OPEN");
+      const err = await activate().catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getResponse()).toMatchObject({
+        code: "ACTIVATION_CATCHUP_SESSION_OPEN",
+      });
+      expect(JSON.stringify((err as ConflictException).getResponse())).not.toMatch(
+        /SESSION_OPEN[^"]*SESSION_OPEN/,
+      );
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+
+    it("no claim is not refused", async () => {
+      arrange(null);
+      await expect(activate()).resolves.toBeTruthy();
     });
   });
 

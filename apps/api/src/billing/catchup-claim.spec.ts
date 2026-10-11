@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   CATCHUP_STATES,
+  activationClaimRefusal,
   claimRefusal,
   invoiceDefinitivelyFailed,
   isCatchupSession,
@@ -41,6 +42,20 @@ describe("catchupState", () => {
     expect(isCatchupState("RELEASING")).toBe(true);
     expect(isCatchupState("DONE")).toBe(false);
     expect(isCatchupState(null)).toBe(false);
+  });
+});
+
+describe("MF3: activationClaimRefusal", () => {
+  it("every held state refuses a manual activation; the open-session state has its own code", () => {
+    expect(activationClaimRefusal(null)).toBeNull();
+    expect(activationClaimRefusal("SESSION_OPEN")!.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.ACTIVATION_CATCHUP_SESSION_OPEN,
+    });
+    for (const s of ["AWAITING_FIRST_PAYMENT", "RELEASING"]) {
+      expect(activationClaimRefusal(s)!.getResponse()).toMatchObject({
+        code: API_ERROR_CODES.CATCHUP_PENDING,
+      });
+    }
   });
 });
 
