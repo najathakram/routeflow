@@ -15,11 +15,12 @@ const line = (over: Partial<SaleLine>): SaleLine => ({
   ...over,
 });
 
-function renderRow(l: SaleLine) {
+function renderRow(l: SaleLine, hideOriginalPrice = false) {
   return render(
     <ul>
       <CounterLineRow
         line={l}
+        hideOriginalPrice={hideOriginalPrice}
         locked={false}
         onStep={noop}
         onRemove={noop}
@@ -65,6 +66,44 @@ describe("CounterLineRow per-unit price", () => {
     expect(screen.queryByTestId("line-unit-price-was")).toBeNull();
     expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$3.00 / piece");
     expect(screen.queryByText("$2.50")).toBeNull();
+  });
+
+  it("row 322d: the tenant's hideOriginalPrice (the receipt's rule) strikes no catalogue price on the cart either", () => {
+    renderRow(line({ unitPrice: 2.1, listPrice: 2.5, priceType: "SPECIAL" }), true);
+    expect(screen.queryByTestId("line-unit-price-was")).toBeNull();
+    expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$2.10 / piece");
+  });
+
+  it("row 322d: an edited line strikes its LIST total (tier 10, list 12, price 8, qty 2: $24.00 struck, $16.00 net)", () => {
+    renderRow(
+      line({
+        unitPrice: 8,
+        tierPrice: 10,
+        listPrice: 12,
+        qty: 2,
+        priceType: "SPECIAL",
+        priceEdited: true,
+        override: { mode: "set", value: 8 },
+      }),
+    );
+    expect(screen.getByTestId("line-original-total")).toHaveTextContent("$24.00");
+    expect(screen.getByTestId("line-net-total")).toHaveTextContent("$16.00");
+  });
+
+  it("row 322d: ...and with hideOriginalPrice the edited line strikes nothing", () => {
+    renderRow(
+      line({
+        unitPrice: 8,
+        tierPrice: 10,
+        listPrice: 12,
+        qty: 2,
+        priceType: "SPECIAL",
+        priceEdited: true,
+        override: { mode: "set", value: 8 },
+      }),
+      true,
+    );
+    expect(screen.queryByTestId("line-original-total")).toBeNull();
   });
 
   it("a boxed line reads the price per box", () => {

@@ -1,4 +1,5 @@
 import { API_ERROR_CODES, type CreditNoteErrorCode } from "@routeflow/types";
+import { REFUND_DAY_CLOSED_COPY } from "./day-closed-copy";
 
 /**
  * #2418 U1 (owner rule: no raw server strings in the UI): every credit-note edit / reissue / void
@@ -111,7 +112,8 @@ export const REFUND_EXCEEDS_CASH_PAID_COPY =
 
 /**
  * The refund toast text: the fixed copy for REFUND_NEEDS_PAID_INVOICE, REFUND_PAID_WITH_STORE_CREDIT, REFUND_EXCEEDS_CASH_PAID,
- * RETURN_REFUND_OVER_LINE_HEADROOM, RETURN_REFUND_BASIS_CHANGED, RETURN_NOTHING_BILLED and RETURN_MIXED_UNIT_PRODUCT (by `response.data.code`), else the
+ * RETURN_REFUND_OVER_LINE_HEADROOM, RETURN_REFUND_BASIS_CHANGED, RETURN_NOTHING_BILLED, RETURN_MIXED_UNIT_PRODUCT and
+ * COUNTER_SALE_DAY_CLOSED (by `response.data.code`), else the
  * caller's own text. Never the server message for these codes.
  */
 export function refundErrorMessage(err: unknown, otherwise?: string): string | undefined {
@@ -121,6 +123,8 @@ export function refundErrorMessage(err: unknown, otherwise?: string): string | u
   if (code === API_ERROR_CODES.REFUND_PAID_WITH_STORE_CREDIT)
     return REFUND_PAID_WITH_STORE_CREDIT_COPY;
   if (code === API_ERROR_CODES.REFUND_EXCEEDS_CASH_PAID) return REFUND_EXCEEDS_CASH_PAID_COPY;
+  // SA-750r3: a refund dated inside a closed day (a counter sale's register): store credit or a later date.
+  if (code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED) return REFUND_DAY_CLOSED_COPY;
   if (code === API_ERROR_CODES.RETURN_NOTHING_BILLED) return RETURN_NOTHING_BILLED_COPY;
   if (code === API_ERROR_CODES.RETURN_REFUND_BASIS_CHANGED) return RETURN_REFUND_BASIS_CHANGED_COPY;
   if (code === API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT) return RETURN_MIXED_UNIT_PRODUCT_COPY;

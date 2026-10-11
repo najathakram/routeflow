@@ -71,6 +71,7 @@ import {
   refundClaimWhere,
 } from "./standard-refund-claim";
 import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
+import { assertCounterWindowOpen } from "./counter-close-window";
 import { refundTenderData, refundTenderOfColumn } from "./refund-tender";
 import { roundMoney } from "@routeflow/pricing";
 import type { ProcessRefundDto } from "./dto/process-refund.dto";
@@ -1434,6 +1435,11 @@ export class ReturnsService {
 
           // SA-758 CR-2: a recorded refund's refundedAt is the DATABASE clock, read after the close lock
           const refundedAt = external ? await dbClockNow(tx) : new Date();
+          // SA-750r3: a recorded refund dated inside a closed window is refused (a closed day's totals never move). A plain read
+          // under the close lock already held (registerKey is null for store credit), so it adds no lock: counter-close ->
+          // Return -> Order -> invoices stays the whole order. It runs after the basis/cash-cap refusals and before the claim.
+          if (registerKey && tenantId)
+            await assertCounterWindowOpen(tx, tenantId, registerKey, refundedAt);
           const claimed = await tx.return.updateMany({
             where: refundClaimWhere(id),
             data: {

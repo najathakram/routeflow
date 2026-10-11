@@ -60,7 +60,7 @@ import {
   sumConfirmed,
 } from "./payment-predicates";
 import { PAYABLE } from "./invoice-status-sets";
-import { assertReminderOwes } from "./invoice-balance-sql";
+import { assertReminderIssued, assertReminderOwes } from "./invoice-balance-sql";
 import { classifyInvoiceBalance, confirmedBalance } from "./invoice-balance-classify";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
@@ -180,6 +180,7 @@ import {
 } from "../common/calendar-date";
 import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
+import { counterPay, type CounterPayOpts } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -2895,8 +2896,9 @@ export class InvoicesService {
     const { customerId, sortBy, sortOrder, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
-    // SA-488: the isOverdue filter ends the due day in the tenant's zone (read only when used).
-    const tz = query.isOverdue ? (await this.resolveTenantInvoiceDefaults()).timezone : null;
+    // SA-488 / row 308: the tenant's zone, read ONCE per request: the isOverdue filter and every row's
+    // isOverdue flag end the due day in it (one cutoff, so the list and its filter always agree).
+    const tz = (await this.resolveTenantInvoiceDefaults()).timezone;
     applyInvoiceStatusFilters(where, query, tz);
     if (user?.role === UserRole.CUSTOMER) {
       const customer = await this.prisma
@@ -2945,12 +2947,12 @@ export class InvoicesService {
     // directly would treat a due date of "2026-05-01" (midnight UTC) as overdue
     // any time after midnight UTC on that date, regardless of local timezone.
     // Business rule: grace period extends through the end of the due date.
-    const todayIso = new Date().toISOString().slice(0, 10);
     const revisedAt = await revisedAtByInvoice(
       this.prisma.forTenant(),
       data.map((i) => i.id),
     );
-    const overdueBy = overdueCutoff(new Date());
+    const overdueBy = overdueCutoff(new Date(), tz);
+    const todayIso = overdueBy.toISOString().slice(0, 10); // the tenant's day, like isOverdue (and the deposit check)
     const computedData = data.map((inv) => {
       // F03/R1/T-B11s: CONFIRMED (PAID) payments only. An unconfirmed DRAFT
       // payment (e.g. a bulk bank-reconciliation entry an operator hasn't
@@ -2966,7 +2968,7 @@ export class InvoicesService {
       const { cash: paidAmount, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
       const totalConfirmed = paidAmount + creditApplied + advanceApplied;
       // SA-770: balanceDue + isOverdue come from the ONE classifier (B421 F3's roundMoney-before->0 rule and
-      // RF-202's "due today is not overdue" live there), judged on the UTC day as this list always has.
+      // RF-202's "due today is not overdue" live there), judged on the tenant's day (row 308; UTC when it has no zone).
       const { balanceDue, isOverdue } = classifyInvoiceBalance(inv, overdueBy);
       const { depositAmount, depositOverdue } = computeDepositFields(
         inv as any,
@@ -3062,7 +3064,11 @@ export class InvoicesService {
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
     return invoiceDetailFor(user, {
       ...inv,
-      ...deriveInvoiceDetailFields(inv),
+      ...deriveInvoiceDetailFields(
+        inv,
+        new Date(),
+        (await this.resolveTenantInvoiceDefaults()).timezone,
+      ),
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
       hideOriginalPrice,
@@ -3800,8 +3806,7 @@ export class InvoicesService {
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
-    if (inv.status === InvoiceStatus.VOID || inv.status === InvoiceStatus.PAID)
-      throw new BadRequestException("Cannot send reminder for a VOID or PAID invoice");
+    assertReminderIssued(inv.status); // row 318a: only SENT / VIEWED / PARTIAL / OVERDUE
     assertReminderOwes(inv.total, inv.payments); // SA-770: an exactly-paid or overpaid SENT invoice owes nothing
 
     // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
@@ -4562,7 +4567,11 @@ export class InvoicesService {
 
   // ─── Payment recording ────────────────────────────────────────────────────
 
-  async recordPayment(id: string, dto: RecordInvoicePaymentDto, opts?: RecordPaymentOpts) {
+  async recordPayment(
+    id: string,
+    dto: RecordInvoicePaymentDto,
+    opts?: RecordPaymentOpts & CounterPayOpts,
+  ) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     if ((dto.method as any) === "CREDIT_NOTE" || (dto.method as any) === "ADVANCE") {
       throw new BadRequestException(
@@ -4571,21 +4580,17 @@ export class InvoicesService {
     }
     // Refuse a null tenant BEFORE the transaction opens (D3): a PAY number never comes from the shared row.
     const { tenantId, tenantShort } = this.requirePaymentTenant();
+    const till = await counterPay.scope(this.prisma, id); // SA-750r3: always (the closed-date check runs even when the lock is held)
     return withAfterCommit(this.prisma, async (tx, after) => {
-      // Lock the invoice row so concurrent payment requests serialize here
+      // SA-750r3: a counter sale's shared close lock first (the tender/pickup hold it already), then the invoice row
+      await counterPay.lock(tx, till, opts?.tillLockHeld);
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
 
       const inv = await tx.invoice.findUnique({
         where: { id },
-        // PR-2 (check-payments B1 hardening, review-opus-v2 condition #6): fetches
-        // every non-VOID row now, not just CONFIRMED — the capacity guard below
-        // moves to remainingCapacity() (DRAFT+PAID, N4: capacity must count DRAFT,
-        // closing a real double-book gap this narrower query previously masked),
-        // while recomputeStatus below keeps reading CONFIRMED-only via sumConfirmed
-        // — F03/R1 status discipline is unchanged. Feeds remainingCapacity()'s own
-        // internal not-void filter; @routeflow/pricing deliberately exports no
-        // Prisma "not void" filter (see remainingCapacity's docstring), so this is
-        // the correct inline form, not a re-derived mirror.
+        // PR-2 (N4): every non-VOID row, so remainingCapacity() counts DRAFT (closes a double-book gap);
+        // recomputeStatus below still reads CONFIRMED-only via sumConfirmed (F03/R1). @routeflow/pricing exports
+        // no Prisma "not void" filter (see remainingCapacity's docstring), so this inline form is the correct one.
         // scan-ok: draft-payment-not-void — see comment above.
         include: { payments: { where: { status: { not: "VOID" } } } },
       });
@@ -4617,6 +4622,15 @@ export class InvoicesService {
           );
       }
 
+      const paidAt = await counterPay.assertDatedOk(
+        tx,
+        till,
+        inv.orderId,
+        dto,
+        paymentStatus,
+        opts?.paymentGroupId,
+      );
+
       // Auto-generate payment number — use tenantId as the counter row key so
       // each tenant has its own independent sequence. Include a short tenant hash
       // in the payment number to avoid global @unique collisions across tenants.
@@ -4636,7 +4650,7 @@ export class InvoicesService {
           method: dto.method,
           reference: dto.reference,
           notes: dto.notes,
-          paidAt: dto.paidAt ? new Date(dto.paidAt) : new Date(),
+          paidAt,
           // Never clamped: a post-dated check settles in the future.
           settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
           bankCharges: roundMoneyOrNull(dto.bankCharges),
@@ -4979,11 +4993,11 @@ export class InvoicesService {
         "Cannot edit a payment to method CREDIT_NOTE or ADVANCE. Void this payment and apply the credit note / advance via the dedicated action.",
       );
     }
+    const till = await counterPay.scope(this.prisma, invoiceId); // SA-750r3: counter sales only
     return withAfterCommit(this.prisma, async (tx, after) => {
-      // PR-2 (check-payments B1 hardening, review-opus-v2 finding m3): recordPayment
-      // already row-locks the invoice before reading its payments; updatePayment had
-      // no equivalent, so two concurrent edits could both read a stale remaining
-      // balance and jointly overshoot the invoice total.
+      // PR-2 (B1, m3): row-lock the invoice before reading its payments, like recordPayment, so two
+      // concurrent edits cannot jointly overshoot the total. SA-750r3: a counter sale's shared close lock comes first.
+      await counterPay.lock(tx, till);
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
       const inv = await tx.invoice.findUnique({
         where: { id: invoiceId },
@@ -4995,6 +5009,7 @@ export class InvoicesService {
 
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
+      await counterPay.assertEditDated(tx, till, inv.orderId, payment, dto); // per-row closed window, then till-CASH before the close
 
       // F03/R5/T-B81: read the STORED method, not just the incoming dto — the same
       // guard deletePayment (:4653) and voidPayment (:4941) already have. Neither
@@ -5086,13 +5101,11 @@ export class InvoicesService {
   async deletePayment(invoiceId: string, paymentId: string) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     let imageKey: string | null = null;
+    const till = await counterPay.scope(this.prisma, invoiceId); // SA-750r3: counter sales only
     const updated = await withAfterCommit(this.prisma, async (tx, after) => {
-      // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
-      // updatePayment/recordPayment, taken BEFORE touching the payment row, and in
-      // the same order — deletePayment and voidPayment previously took no lock at
-      // all, so a concurrent updatePayment/recordPayment on the same invoice could
-      // deadlock against them (each waiting on a row the other already touched) or
-      // simply race on a stale remaining-balance read.
+      // PR-2: same Invoice FOR UPDATE lock, taken BEFORE touching the payment row and in the same order as
+      // updatePayment/recordPayment. SA-750r3: a counter sale's shared close lock comes first.
+      await counterPay.lock(tx, till);
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
       const inv = await tx.invoice.findUnique({
         where: { id: invoiceId },
@@ -5104,6 +5117,7 @@ export class InvoicesService {
 
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
+      await counterPay.assertOpen(tx, till, payment);
       imageKey = payment.imageKey;
       if ((payment.method as any) === "CREDIT_NOTE") {
         throw new BadRequestException(
@@ -5462,9 +5476,13 @@ export class InvoicesService {
 
   async voidPayment(invoiceId: string, paymentId: string) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
-    return withAfterCommit(this.prisma, (tx, after) =>
-      this.voidPaymentInTx(tx, after, invoiceId, paymentId, tz),
-    );
+    const till = await counterPay.scope(this.prisma, invoiceId); // SA-750r3: counter sales only
+    return withAfterCommit(this.prisma, async (tx, after) => {
+      // SA-750r3: the shared close lock FIRST, then the window check on the payment's date, then the void (payment-void-tx.ts).
+      await counterPay.lock(tx, till);
+      await counterPay.assertPaymentOpen(tx, till, invoiceId, paymentId);
+      return this.voidPaymentInTx(tx, after, invoiceId, paymentId, tz);
+    });
   }
 
   /** SA-762r: the single-payment void inside a caller's tx (payment-void-tx.ts); the counter-sale void reuses it. */
@@ -5507,17 +5525,17 @@ export class InvoicesService {
    */
   async setCheckStatus(invoiceId: string, paymentId: string, dto: SetCheckStatusDto) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
+    const till = await counterPay.scope(this.prisma, invoiceId, dto.status === "BOUNCED"); // SA-750r3
     return withAfterCommit(this.prisma, async (tx, after) => {
-      // PR-2 review (routeflow-Lead, 2026-09-16): same Invoice FOR UPDATE lock as
-      // recordPayment/updatePayment/deletePayment/voidPayment, taken BEFORE
-      // touching the payment row, and in the same order — setCheckStatus
-      // previously took no lock at all, so a BOUNCED transition racing a
-      // concurrent void or edit on the same invoice could deadlock against it.
+      // PR-2: same Invoice FOR UPDATE lock, taken BEFORE touching the payment row and in the same order as the
+      // other payment writers. SA-750r3: a BOUNCED counter payment takes the shared close lock first.
+      await counterPay.lock(tx, till);
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
       const payment = await tx.invoicePayment.findFirst({
         where: { id: paymentId, invoiceId },
       });
       if (!payment) throw new NotFoundException("Payment not found");
+      await counterPay.assertOpen(tx, till, payment);
       if (payment.method !== "CHECK")
         throw new BadRequestException("Check status can only be set on CHECK payments");
       if (payment.status === "VOID")
@@ -5538,6 +5556,8 @@ export class InvoicesService {
       // paidAt); an explicit date is authoritative and drives both fields.
       const explicitSettledAt = dto.settledAt ? new Date(dto.settledAt) : null;
 
+      // SA ruling C: RECORDED -> DEPOSITED / CLEARED takes no close lock (accepted): it changes the CHECK grouping of a fresh
+      // fold, never cash and never a stored close.
       if (dto.status === "DEPOSITED" || dto.status === "CLEARED") {
         await tx.invoicePayment.update({
           where: { id: paymentId },

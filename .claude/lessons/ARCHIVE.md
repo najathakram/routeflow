@@ -3839,3 +3839,20 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **Any async lookup that can add or change lines must disable the money action until its queue is empty, and the server must judge the tender against its own total, not the screen's.**
 - **Guard:** `useCounterSaleScan` queue state gates Pay; `assertWalkInTenderCoversTotal` and its db spec.
   (Archived 2026-10-10 whole and verbatim to make room at cap: L-278: guarded by the `useCounterSaleScan` queue state gating Pay and `assertWalkInTenderCoversTotal` with its db spec; no outside citation.)
+
+### L-274 · 2026-10-07 · tooling · a plain `npm ci` runs the root `prepare` (husky) and rewrites the SHARED hooksPath
+
+- **Symptom:** after `npm ci` in a worktree, `core.hooksPath` (shared by every worktree) turned relative and later pushes ran without the fleet shim's checks.
+- **Root cause:** the root `"prepare": "husky"` script runs on a plain `npm ci`, doing exactly what `npx husky` does: it rewrites the one repo-wide `core.hooksPath`.
+- **Lesson:** **In a worktree install with `npm ci --ignore-scripts`, never a plain `npm ci`. After any install, reset the absolute shim path, print `git config core.hooksPath`, and run `check-git-hooks` before committing or pushing.**
+- **Guard:** none automatic beyond `scripts/check-git-hooks.mjs`; the install order in [[L-254]].
+- **Recurrence (2026-10-08):** a second recurrence on the shared Mac mini of a plain `npm ci` rewriting `core.hooksPath`. `npm ci --ignore-scripts` plus a manual `prisma generate` avoids it.
+  (Archived 2026-10-11 whole and verbatim to make room at cap: L-274: superseded by L-254 (the same install order and the same guard, `scripts/check-git-hooks.mjs`); no outside citation.)
+
+### L-286 · 2026-10-08 · deploy · add a foreign key to a populated table inline on the new column, and state lock durations honestly
+
+- **Symptom:** recorded by the 2026-10-08 operating review from the sitting-3 migrations; the incident detail is in the lead's notes.
+- **Root cause:** Postgres skips the validation scan for a new column with no default only when the foreign key is declared inline. Inside one transaction an `ALTER TABLE` holds ACCESS EXCLUSIVE until COMMIT, so an index built later in the same file blocks reads as well as writes.
+- **Lesson:** **Declare the FK inline: `ADD COLUMN "x" TEXT CONSTRAINT "T_x_fkey" REFERENCES ...`, not a separate `ADD CONSTRAINT` (probe on 1M rows: 0.7 ms inline vs 33 ms separate; the constraint name is unchanged, so Prisma shows no drift). Write the real lock duration in the migration header.**
+- **Guard:** the sitting-3 migration headers; replay plus `apps/api/scripts/schema-drift.mjs`.
+  (Archived 2026-10-11 whole and verbatim to make room at cap: L-286: guarded by the sitting-3 migration headers and `apps/api/scripts/schema-drift.mjs`; no outside citation.)

@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useInvalidFocus } from "@/lib/form-errors";
 import { z } from "zod";
 import { FULFILL_PATH_VALUES } from "@routeflow/types";
 import { useQueryClient } from "@tanstack/react-query";
@@ -222,8 +223,12 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     formState: { errors },
   } = useForm<CustomerFormValues>({
     resolver: zodResolver(customerSchema),
+    // onInvalid (handleSubmit's second argument) is the single focus owner: it announces "Fix N field(s)" and
+    // scrolls to the first invalid control, so a failed submit never looks like a dead button (row 328).
+    shouldFocusError: false,
     defaultValues: buildDefaultValues(initialData, newCustomerPath),
   });
+  const onInvalid = useInvalidFocus();
 
   const customerType = watch("customerType");
   const isBusiness = customerType === "BUSINESS";
@@ -410,7 +415,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     >
       <form
         id="customer-form"
-        onSubmit={handleSubmit(onSubmit)}
+        onSubmit={handleSubmit(onSubmit, onInvalid)}
         noValidate
         className="max-h-[60vh] overflow-y-auto pr-1"
       >

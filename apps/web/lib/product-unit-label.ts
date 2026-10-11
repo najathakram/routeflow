@@ -1,10 +1,7 @@
-import { unitWords } from "@routeflow/pricing";
+import { priceUnitWord, unitWords } from "@routeflow/pricing";
 
-/** The word a price is quoted per: the unit the operator chose (lower-cased), else "unit". */
-export function priceUnitWord(unit: string | null | undefined): string {
-  const t = (unit ?? "").trim().toLowerCase();
-  return t || "unit";
-}
+// The word a price is quoted per lives in pricing (receipt-line-detail.ts) so the emailed receipt reads the same word; re-exported here.
+export { priceUnitWord };
 
 const PACKISH = new Set(["box", "case", "carton", "pack", "crate", "bundle"]);
 

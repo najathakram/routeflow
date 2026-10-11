@@ -37,6 +37,10 @@ import { BuyerBackorderViewResolver } from "./buyer-backorder-view";
 import { CounterSaleController } from "./counter-sale/counter-sale.controller";
 import { CounterSaleService } from "./counter-sale/counter-sale.service";
 import { CounterSaleTodayService } from "./counter-sale/counter-sale-today.service";
+// SA-750r3: counter day close + Z report (separate controller: the counter-sale controller's constructor is pinned by its specs).
+import { CounterDayCloseController } from "./counter-sale/day-close/day-close.controller";
+import { CounterDayCloseService } from "./counter-sale/day-close/day-close.service";
+import { EmailModule } from "../email/email.module";
 // SA-748: parked counter sales (POST|GET /orders/counter-sale/parked, .../:id/resume, DELETE .../:id) + the hourly sweep.
 import { CounterParkController } from "./counter-sale/counter-park.controller";
 import { CounterParkService } from "./counter-sale/counter-park.service";
@@ -83,12 +87,15 @@ import { StorageModule } from "../storage/storage.module";
     // FeatureOverrideService comes from EntitlementsModule). BillingModule never reaches OrdersModule: no cycle.
     BillingModule,
     StorageModule,
+    // CounterDayCloseService sends the Z report through EmailService.
+    EmailModule,
   ],
   controllers: [
     OrdersController,
     CounterSaleController,
     CounterSaleVoidController,
     CounterParkController,
+    CounterDayCloseController,
     PickupCompleteController,
   ],
   providers: [
@@ -98,6 +105,7 @@ import { StorageModule } from "../storage/storage.module";
     BuyerBackorderViewResolver,
     CounterSaleService,
     CounterSaleTodayService,
+    CounterDayCloseService,
     CounterParkService,
     CounterParkSweepService,
     QuickKeysService,

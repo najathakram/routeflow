@@ -13,6 +13,7 @@ import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
+import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import { settleOrderInvoice } from "../order-status-invoicing";
@@ -31,6 +32,7 @@ import {
 import { isHandOverTender, tenderFigures, type InvoiceRow } from "./pickup-tender";
 import { pickupTenderGroupId } from "./pickup-tender-group";
 import type { PickupCompleteDto } from "./pickup-complete.dto";
+import { counterCloseShared, counterTenderPaidAt, pickupRegisterOf } from "./counter-tender-window";
 
 type OrderRow = {
   id: string;
@@ -40,6 +42,8 @@ type OrderRow = {
   deliveredAt: Date | null;
   customerId: string | null;
   customer: { isWalkIn: boolean | null } | null;
+  counterSale?: boolean | null; // SA-750r3: a COUNTER order's tender is a till event (the day-close lock + window)
+  registerKey?: string | null;
 };
 
 /**
@@ -198,9 +202,17 @@ export class PickupCompleteService {
       if (owedNow) planError = API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED;
     } else if (sent && sent.method !== "ON_ACCOUNT" && owedNow) {
       try {
+        // SA-750r3: EVERY hand-over tender (counter or POS-mode PICKUP) takes the SHARED end-of-day close lock on this pinned
+        // connection, for the order's stamped register, else the request's, else 'main'.
+        const register = pickupRegisterOf(order, dto.registerKey);
         const locked = await withAdvisoryLock(
-          { family: "counter-tender", key: id, mode: "wait" },
-          () => this.tender(id, sent, handedOverAt, walkIn),
+          {
+            family: "counter-tender",
+            key: id,
+            mode: "wait",
+            sharedAlso: counterCloseShared(this.prisma.getTenantId(), order, register),
+          },
+          () => this.tender(id, sent, handedOverAt, walkIn, order, register),
         );
         if (!locked.acquired) throw new LockTimeoutError("counter-tender", id, 0);
         ({ invoices, planError } = locked.value);
@@ -214,6 +226,10 @@ export class PickupCompleteService {
         invoices = await this.readInvoices(id);
       }
     }
+
+    // The cashier is stamped AFTER the tender section: a hand-over refused for a closed day (a thrown 409) stamps nothing,
+    // neither the register nor the cashier, so a closed day's rows never gain a writer.
+    await this.stampSoldBy(id, user);
 
     return this.respond(order, invoices, shown, handedOverAt, planError, alreadyPickedUp);
   }
@@ -304,6 +320,23 @@ export class PickupCompleteService {
     if (!locked.acquired) throw this.claimUnavailable();
   }
 
+  /**
+   * Owner ruling (B): the hand-over names who handed it over (`Order.soldById`), by the counter sale's replay rule: only an
+   * order with no cashier yet is stamped, so the first cashier stays and a replay by another cashier never overwrites it. The
+   * hand-over is already committed: a failure here is logged, never thrown.
+   */
+  private async stampSoldBy(orderId: string, user: JwtPayload): Promise<void> {
+    try {
+      await this.prisma
+        .forTenant()
+        .order.updateMany({ where: { id: orderId, soldById: null }, data: { soldById: user.sub } });
+    } catch (e) {
+      this.logger.warn(
+        `pickup complete ${orderId}: cashier not stamped (${(e as Error)?.message ?? e})`,
+      );
+    }
+  }
+
   /** The claim section could not take its per-order lock: a coded, retryable 503 (nothing was written). */
   private claimUnavailable(): ServiceUnavailableException {
     return new ServiceUnavailableException({
@@ -341,6 +374,8 @@ export class PickupCompleteService {
     payment: CounterPaymentInput,
     handedOverAt: Date | null,
     walkIn: boolean,
+    till: OrderRow,
+    register: string,
   ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
@@ -370,8 +405,8 @@ export class PickupCompleteService {
       // A refusal only stands when this hand-over took nothing yet: a stored tender means a payment went in.
       if (!invoices.some((i) => (i.payments ?? []).some(mine))) planError = plan.code;
     } else if (plan.kind === "pay") {
-      try {
-        for (const part of allocateOldestFirst(balances, plan.amount)) {
+      const writes = allocateOldestFirst(balances, plan.amount)
+        .map((part) => {
           const row = invoices.find((i) => i.id === part.invoiceId)!;
           const stored = roundMoney(
             (row.payments ?? []).filter(mine).reduce((sum, p) => sum + Number(p.amount), 0),
@@ -379,16 +414,55 @@ export class PickupCompleteService {
           const due = roundMoney(
             Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
           );
-          if (due <= 0) continue;
-          // SA-763r R7: the tender's group id is written IN the create, so Today's sales finds it.
+          return { invoiceId: part.invoiceId, due };
+        })
+        .filter((w) => w.due > 0);
+      // SA-750r3: the payment is dated from the DATABASE clock read with the shared close lock held, and a closed window of
+      // the tender's register refuses it (409 COUNTER_SALE_DAY_CLOSED, nothing stamped or recorded). Outside the try below
+      // so it is not mapped to "not recorded"; a replay with nothing left to record writes nothing and is never refused.
+      let paidAt: string | undefined;
+      if (writes.length) {
+        paidAt = await counterTenderPaidAt(this.prisma, this.prisma.getTenantId(), till, register);
+        // Stamp the register on a POS-mode (non-counter) order that has none, tenant-scoped, only after the window check and
+        // before the payment; a stamp that is already set is never overwritten (the tender counts toward it).
+        if (till.counterSale !== true && !till.registerKey) {
+          let stamped: { count?: number } | undefined;
+          try {
+            stamped = await this.prisma.forTenant().order.updateMany({
+              where: { id: orderId, tenantId: this.prisma.getTenantId(), registerKey: null },
+              data: { registerKey: register },
+            });
+          } catch (e) {
+            // The hand-over is already committed: a failed stamp must not become a 500. Nothing was recorded; the retry
+            // finishes it (an unrecorded payment, never a mis-counted one).
+            this.logger.warn(
+              `pickup complete ${orderId}: register not stamped (${(e as Error)?.message ?? e})`,
+            );
+            return { invoices, planError: API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED };
+          }
+          if (stamped?.count === 0) {
+            // A concurrent hand-over stamped another register first: the lock held is the wrong one. Record nothing; the
+            // retry reads the stamp and locks the right register.
+            const now = await this.readOrder(orderId);
+            if (now?.registerKey && now.registerKey !== register) {
+              return { invoices, planError: API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED };
+            }
+          }
+        }
+      }
+      try {
+        for (const { invoiceId, due } of writes) {
+          // SA-763r R7: the tender's group id is written IN the create, so Today's sales finds it. SA-750r3: the shared close
+          // lock is already held on the pinned connection (tillLockHeld).
           await this.invoices.recordPayment(
-            part.invoiceId,
+            invoiceId,
             {
               amount: due,
               method: toPrismaMethod(payment.method)!,
               reference: payment.reference,
+              ...(paidAt ? { paidAt } : {}),
             } as never,
-            { paymentGroupId: pickupTenderGroupId(orderId) },
+            { paymentGroupId: pickupTenderGroupId(orderId), tillLockHeld: TILL_LOCK_HELD },
           );
         }
       } catch (e) {
@@ -432,6 +506,8 @@ export class PickupCompleteService {
         deliveredAt: true,
         customerId: true,
         customer: { select: { isWalkIn: true } },
+        counterSale: true,
+        registerKey: true,
       },
     });
   }
