@@ -37,6 +37,17 @@ describe("CounterLineRow per-unit price", () => {
     expect(screen.queryByTestId("line-unit-price-was")).toBeNull();
   });
 
+  it("row 298: the line states the product's own unit word, as Create Order does", () => {
+    renderRow(line({ unit: "each" }));
+    expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$2.50 / each");
+    expect(screen.getByTestId("line-unit-price")).not.toHaveTextContent("piece");
+  });
+
+  it("row 298: any unit the product carries is lower-cased and printed", () => {
+    renderRow(line({ unit: "LB" }));
+    expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$2.50 / lb");
+  });
+
   it("a line with no catalogue price on file still reads the price each", () => {
     renderRow(line({ unitPrice: 2.5 }));
     expect(screen.getByTestId("line-unit-price")).toHaveTextContent("$2.50 / piece");

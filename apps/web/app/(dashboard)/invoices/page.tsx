@@ -32,6 +32,7 @@ import {
 } from "@/lib/api/invoices";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { apiClient } from "@/lib/api-client";
+import { invoiceListStatusParams } from "@/lib/invoice-list-filter";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
 import { fmt, fmtCalendarDate, calendarDaysUntil } from "@/lib/formatting";
 import { useAuth } from "@/lib/auth-context";
@@ -476,7 +477,7 @@ export default function InvoicesPage() {
   };
 
   const { data, isLoading, isError } = useInvoices({
-    status: statusFilter || undefined,
+    ...invoiceListStatusParams(statusFilter),
     statuses: composedStatuses,
     search: debouncedSearch || undefined,
     dateFrom: dateFrom || undefined,
@@ -503,7 +504,7 @@ export default function InvoicesPage() {
       const EXPORT_LIMIT = 1000;
       const res = await apiClient.get("/invoices", {
         params: {
-          status: statusFilter || undefined,
+          ...invoiceListStatusParams(statusFilter),
           statuses: composedStatuses,
           search: debouncedSearch || undefined,
           dateFrom: dateFrom || undefined,

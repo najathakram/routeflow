@@ -15,6 +15,14 @@ export type InvoiceRow = {
   id: string;
   invoiceNumber?: string;
   total: unknown;
+  /** the stored lines: the rate the tax rate is read from (`storedTaxRatePercent`) and the price facts a receipt strikes a list price from */
+  items?: Array<{
+    taxRate?: unknown;
+    productId?: string | null;
+    unitPrice?: unknown;
+    originalPrice?: unknown;
+    priceType?: string | null;
+  }>;
   payments?: Array<{
     id: string;
     amount: unknown;
@@ -89,6 +97,11 @@ export interface SaleTenderPlan {
   placements: TenderPlacement[];
   /** Cash handed over beyond what the cash leg places. */
   changeCents: number;
+  /**
+   * The cash HANDED OVER by the cash leg (whichever leg index it is), in cents, as requested: `Order.counterCashTendered`.
+   * Undefined when the request has no cash leg. At most one cash leg exists (TENDER_RULES), so it is never a sum.
+   */
+  cashTenderedCents?: number;
   /** Set when the tender cannot be taken as asked; NOTHING is placed then (all or nothing). */
   refusal?: string;
 }
@@ -150,7 +163,12 @@ export function planSaleTender(
   if (plan.refusedLegIndexes.length > 0 || cashPlacedNothing) {
     return { ...none, refusal: API_ERROR_CODES.COUNTER_PAYMENT_EXCEEDS_TOTAL };
   }
-  return { placements: plan.placements, changeCents: plan.changeCents };
+  const cashLeg = planned.find((l) => l.method === "CASH");
+  return {
+    placements: plan.placements,
+    changeCents: plan.changeCents,
+    ...(cashLeg ? { cashTenderedCents: cashLeg.amountCents } : {}),
+  };
 }
 
 const changed = (why: string) =>

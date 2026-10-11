@@ -362,7 +362,7 @@ export const NOT_A_COPIER: Record<string, string> = {
   "invoices/invoices.service.ts::runCreation": "consumes C1's output",
   "estimates/estimates.service.ts::convertToInvoice":
     "consumes C5's builder (buildManualInvoiceLines)",
-  "invoices/invoices.service.ts::reconcileOrderDraftInvoice": "consumes C1's output",
+  "invoices/invoices.service.ts::reconcileOrderDraftInvoiceLocked": "consumes C1's output",
   "invoices/invoices.service.ts::rebuildSiblingDrafts": "consumes C1's output",
   "invoices/invoices.service.ts::setCheckStatus": "synthesises the NSF fee line, not a copy",
   "order-templates/order-templates.service.ts::create": "template lines from the request",

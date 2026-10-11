@@ -67,6 +67,86 @@ export function refundAmountsBySale(
   return bySale;
 }
 
+/** One sale's cash room: the cash applied to it, the cash already refunded on it, and what is left. */
+export interface CashRefundRoom {
+  cashPaid: number;
+  refunded: number;
+  /** `max(0, cashPaid - refunded)`: the most that can still go back in cash */
+  room: number;
+}
+
+/**
+ * THE computation of a sale's cash room: ONE implementation behind both the 409 cap (`assertCashRefundWithinCap`) and the
+ * inline-return QUOTE's `cashRefundable`, so the quote and the cap can never disagree. Cash applied = the PAID CASH payments on
+ * the sale's live invoices; earlier refunds = the REFUNDED external returns whose tender is CASH or unknown (fail closed).
+ * `returnId` leaves that return's own row out of "earlier refunds" (omitted by the quote, which has no return row yet).
+ * Reads only; the caller holds whatever locks it needs.
+ */
+export async function cashRefundRooms(
+  tx: any,
+  input: { orderIds: readonly string[]; returnId?: string },
+): Promise<Map<string, CashRefundRoom>> {
+  const orderIds = [...new Set(input.orderIds)].sort();
+  const out = new Map<string, CashRefundRoom>();
+  if (orderIds.length === 0) return out;
+  const notThisReturn = input.returnId ? { id: { not: input.returnId } } : {};
+
+  const [payments, earlierInline, earlierStandard]: [any[], any[], any[]] = await Promise.all([
+    tx.invoicePayment.findMany({
+      where: {
+        method: "CASH",
+        status: "PAID",
+        invoice: { orderId: { in: orderIds }, status: { notIn: DEAD_INVOICE_STATUSES } },
+      },
+      select: { amount: true, invoice: { select: { orderId: true } } },
+    }),
+    tx.returnItem.findMany({
+      where: {
+        sourceOrderId: { in: orderIds },
+        return: {
+          kind: "INLINE",
+          status: "REFUNDED",
+          refundMethod: EXTERNAL_REFUND_METHOD,
+          ...notThisReturn,
+          OR: [{ refundTender: null }, { refundTender: "CASH" }],
+        },
+      },
+      select: { sourceOrderId: true, subtotal: true, taxAmount: true, categoryTax: true },
+    }),
+    tx.return.findMany({
+      where: {
+        orderId: { in: orderIds },
+        kind: "STANDARD",
+        status: "REFUNDED",
+        refundMethod: EXTERNAL_REFUND_METHOD,
+        ...notThisReturn,
+        OR: [{ refundTender: null }, { refundTender: "CASH" }],
+      },
+      select: { orderId: true, refundAmount: true },
+    }),
+  ]);
+
+  const cashPaid = new Map<string, number>();
+  for (const p of payments) {
+    const orderId = p.invoice?.orderId;
+    if (orderId) cashPaid.set(orderId, roundMoney((cashPaid.get(orderId) ?? 0) + num(p.amount)));
+  }
+  const refunded = amountsBySourceOrder(earlierInline);
+  for (const r of earlierStandard) {
+    refunded.set(r.orderId, roundMoney((refunded.get(r.orderId) ?? 0) + num(r.refundAmount)));
+  }
+  for (const orderId of orderIds) {
+    const paid = cashPaid.get(orderId) ?? 0;
+    const back = refunded.get(orderId) ?? 0;
+    out.set(orderId, {
+      cashPaid: paid,
+      refunded: back,
+      room: Math.max(0, roundMoney(paid - back)),
+    });
+  }
+  return out;
+}
+
 /** Throws 409 REFUND_EXCEEDS_CASH_PAID when a CASH refund asks for more than a sale's cash room. No-op for any other tender. */
 export async function assertCashRefundWithinCap(
   tx: any,
@@ -88,57 +168,11 @@ export async function assertCashRefundWithinCap(
   const orderIds = [...input.perOrder.keys()].sort();
   if (orderIds.length === 0) return;
 
-  const [payments, earlierInline, earlierStandard]: [any[], any[], any[]] = await Promise.all([
-    tx.invoicePayment.findMany({
-      where: {
-        method: "CASH",
-        status: "PAID",
-        invoice: { orderId: { in: orderIds }, status: { notIn: DEAD_INVOICE_STATUSES } },
-      },
-      select: { amount: true, invoice: { select: { orderId: true } } },
-    }),
-    tx.returnItem.findMany({
-      where: {
-        sourceOrderId: { in: orderIds },
-        return: {
-          kind: "INLINE",
-          status: "REFUNDED",
-          refundMethod: EXTERNAL_REFUND_METHOD,
-          id: { not: input.returnId },
-          OR: [{ refundTender: null }, { refundTender: "CASH" }],
-        },
-      },
-      select: { sourceOrderId: true, subtotal: true, taxAmount: true, categoryTax: true },
-    }),
-    tx.return.findMany({
-      where: {
-        orderId: { in: orderIds },
-        kind: "STANDARD",
-        status: "REFUNDED",
-        refundMethod: EXTERNAL_REFUND_METHOD,
-        id: { not: input.returnId },
-        OR: [{ refundTender: null }, { refundTender: "CASH" }],
-      },
-      select: { orderId: true, refundAmount: true },
-    }),
-  ]);
-
-  const cashPaid = new Map<string, number>();
-  for (const p of payments) {
-    const orderId = p.invoice?.orderId;
-    if (orderId) cashPaid.set(orderId, roundMoney((cashPaid.get(orderId) ?? 0) + num(p.amount)));
-  }
-  const refunded = amountsBySourceOrder(earlierInline);
-  for (const r of earlierStandard) {
-    refunded.set(r.orderId, roundMoney((refunded.get(r.orderId) ?? 0) + num(r.refundAmount)));
-  }
+  const rooms = await cashRefundRooms(tx, { orderIds, returnId: input.returnId });
 
   for (const orderId of orderIds) {
     const requested = roundMoney(input.perOrder.get(orderId) ?? 0);
-    const room = Math.max(
-      0,
-      roundMoney((cashPaid.get(orderId) ?? 0) - (refunded.get(orderId) ?? 0)),
-    );
+    const room = rooms.get(orderId)?.room ?? 0;
     if (requested > room + 0.001) {
       throw new ConflictException({
         code: API_ERROR_CODES.REFUND_EXCEEDS_CASH_PAID,

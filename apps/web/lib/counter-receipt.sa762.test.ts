@@ -6,7 +6,7 @@ import {
 
 /**
  * SA-762r (Web-1 #9): the receipt prints the customer's name when named (never for a walk-in), splits "Tax and adjustments"
- * into Tax and, only when non-zero, Adjustments, names the settings rate on the live receipt, and carries the business's
+ * into Tax and, only when non-zero, Adjustments, takes the live receipt's Tax and rate from the response, and carries the business's
  * footer. Live and reprint share ONE label formatter (adjustmentLabel).
  */
 const CART = [{ tempId: "a", name: "Cola", unitPrice: 10, qty: 4 }]; // net subtotal $40.00
@@ -14,10 +14,17 @@ const SOLD = new Date("2026-10-07T15:15:00.000Z");
 
 const live = (
   total: number,
-  over: { customerName?: string | null; profile?: ReceiptBusinessProfile } = {},
+  over: {
+    customerName?: string | null;
+    profile?: ReceiptBusinessProfile;
+    /** the response's server-owned tax figure and stored rate candidate (an older server sends neither) */
+    tax?: number;
+    taxRatePercent?: number | null;
+  } = {},
 ) =>
   buildCounterReceipt({
     receipt: {
+      ...(over.tax == null ? {} : { tax: over.tax, taxRatePercent: over.taxRatePercent ?? null }),
       orderId: "o1",
       orderNumber: "ORD-1",
       invoiceId: "i1",
@@ -30,7 +37,7 @@ const live = (
     },
     lines: CART,
     enteredTender: null,
-    profile: over.profile ?? { taxRate: 8.25 },
+    profile: over.profile ?? { taxRate: 8.25 }, // the settings rate is NOT a money source
     customerName: over.customerName,
     now: SOLD,
   });
@@ -42,6 +49,7 @@ const reprint = (
     customerName?: string | null;
     taxRatePercent?: number | null;
     cashTendered?: number | null;
+    change?: number | null;
   } = {},
   profile: ReceiptBusinessProfile | null = null,
 ) =>
@@ -76,21 +84,32 @@ describe("customer name", () => {
 });
 
 describe("Tax and Adjustments are separate rows", () => {
-  it("live: the settings rate that explains the whole difference is Tax (8.25%), with no Adjustments", () => {
-    const m = live(43.3);
+  it("live: the server's tax and stored rate are Tax (8.25%), with no Adjustments", () => {
+    const m = live(43.3, { tax: 3.3, taxRatePercent: 8.25 });
     expect(m.tax).toBe(3.3);
     expect(m.taxRatePercent).toBe(8.25);
     expect(m.adjustments).toBe(0);
   });
 
-  it("live: a difference the rate does not explain is Adjustments, never tax", () => {
-    const m = live(44);
+  it("live: what remains after the server's tax is Adjustments, and the rate stays on Tax", () => {
+    const m = live(44, { tax: 3.3, taxRatePercent: 8.25 });
+    expect(m.tax).toBe(3.3);
+    expect(m.taxRatePercent).toBe(8.25);
+    expect(m.adjustments).toBe(0.7);
+  });
+
+  it("live: a rate that does not reproduce the server's tax is not named (plain Tax)", () => {
+    const m = live(43.8, { tax: 3.8, taxRatePercent: 8.25 });
+    expect(m.tax).toBe(3.8);
+    expect(m.taxRatePercent).toBeNull();
+    expect(m.adjustments).toBe(0);
+  });
+
+  it("live: the settings rate is never a money source: with no server tax figure the whole difference is Adjustments", () => {
+    const m = live(43.3); // settings taxRate 8.25 would explain it, but the response carries no tax
     expect(m.tax).toBe(0);
     expect(m.taxRatePercent).toBeNull();
-    expect(m.adjustments).toBe(4);
-    const noRate = live(43.3, { profile: {} });
-    expect(noRate.tax).toBe(0);
-    expect(noRate.adjustments).toBe(3.3);
+    expect(m.adjustments).toBe(3.3);
   });
 
   it("reprint: Tax is the order's tax, with no % when the rate is unknown, and Adjustments is the rest", () => {
@@ -113,8 +132,8 @@ describe("Tax and Adjustments are separate rows", () => {
     expect(m.adjustments).toBe(3.3);
   });
 
-  it("reprint with a cash tender: Tendered + Change = tendered - the cash applied (SA-764 still holds)", () => {
-    const m = reprint(43.3, 3.3, { cashTendered: 50 });
+  it("reprint with a cash tender: Tendered, and the Change the server served (SA-764 still holds)", () => {
+    const m = reprint(43.3, 3.3, { cashTendered: 50, change: 6.7 });
     expect(m.tendered).toBe(50);
     expect(m.change).toBe(6.7);
   });

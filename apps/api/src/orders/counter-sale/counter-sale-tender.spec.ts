@@ -24,6 +24,7 @@ describe("planSaleTender: one leg keeps the rule from before split payments", ()
     expect(planSaleTender([inv("a", 37.25)], [{ method: "CASH", amount: 50 }])).toEqual({
       placements: [{ legIndex: 0, invoiceId: "a", amountCents: 3725 }],
       changeCents: 1275,
+      cashTenderedCents: 5000,
     });
   });
 
@@ -157,5 +158,44 @@ describe("readStoredTender: which row is which leg", () => {
   it("a VOID tender row is not stored tender", () => {
     const a = inv("a", 70, [{ ...pay("p0", 30, "CASH", g0), status: "VOID" }]);
     expect(readStoredTender("ord-1", [a]).byLeg.size).toBe(0);
+  });
+});
+
+describe("planSaleTender: cashTenderedCents is the cash LEG's handed-over amount (SA-749r2)", () => {
+  it("card 30 + cash 50 on 70: cash handed 50 at leg 1, whichever index it is", () => {
+    const plan = planSaleTender(
+      [inv("a", 70)],
+      [
+        { method: "CARD", amount: 30 },
+        { method: "CASH", amount: 50 },
+      ],
+    );
+    expect(plan.cashTenderedCents).toBe(5000);
+    expect(plan.changeCents).toBe(1000);
+  });
+
+  it("cash first, card second: still the cash leg's amount (leg 0)", () => {
+    const plan = planSaleTender(
+      [inv("a", 70)],
+      [
+        { method: "CASH", amount: 50 },
+        { method: "CARD", amount: 30 },
+      ],
+    );
+    expect(plan.cashTenderedCents).toBe(5000);
+    expect(plan.placements.map((p) => [p.legIndex, p.amountCents])).toEqual([
+      [1, 3000],
+      [0, 4000],
+    ]);
+  });
+
+  it("a lone cash leg with no amount tenders the exact balance", () => {
+    expect(planSaleTender([inv("a", 37.25)], [{ method: "CASH" }]).cashTenderedCents).toBe(3725);
+  });
+
+  it("no cash leg: undefined (nothing is stored)", () => {
+    expect(
+      planSaleTender([inv("a", 37.25)], [{ method: "CARD", amount: 37.25 }]).cashTenderedCents,
+    ).toBeUndefined();
   });
 });

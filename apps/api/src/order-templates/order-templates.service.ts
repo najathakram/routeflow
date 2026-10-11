@@ -906,7 +906,8 @@ export class OrderTemplatesService {
         tenantId: this.prisma.getTenantId(),
         logger: this.logger,
       },
-      { stored: storedPath, audience: "staff" },
+      // role null: a system caller never gets POS mode (SA-763r M1).
+      { stored: storedPath, audience: "staff", role: null },
     );
     const created = await this.prisma.tenantTransaction(async (tx) => {
       if (replaySince) {

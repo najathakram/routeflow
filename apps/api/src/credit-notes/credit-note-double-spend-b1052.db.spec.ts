@@ -273,7 +273,7 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
 
   /**
    * An order with one invoice of `total` (what the office invoice paths settle against). DRAFT by
-   * default; pass "SENT" where the case asserts the invoice goes PAID: `recomputeInvoiceStatus` never
+   * default; pass "SENT" where the case asserts the invoice goes PAID: `statusFromPayments` never
    * moves a DRAFT (the seller's unissued working copy), so a DRAFT fully covered by credit stays DRAFT
    * even though its payments sum to the total (the ledger is right, the status is by design).
    */
@@ -420,7 +420,7 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
       const [winnerId] = [...ledger.byInvoice.keys()];
       const loserId = winnerId === a.invoiceId ? b.invoiceId : a.invoiceId;
       // An issued (SENT) invoice fully covered by the credit goes PAID. A DRAFT is the seller's unissued
-      // working copy: recomputeInvoiceStatus never moves it, so it stays DRAFT with the same money (SA-713).
+      // working copy: statusFromPayments never moves it, so it stays DRAFT with the same money (SA-713).
       expect(await invoiceStateOf(winnerId)).toMatchObject({
         status: invoiceStatus === "SENT" ? "PAID" : "DRAFT",
         paid: 100,
@@ -509,7 +509,7 @@ describeDb("B1052 a credit note can't be spent twice (concurrent settles, real P
       const [winnerId] = [...ledger.byInvoice.keys()];
       const loserId = winnerId === a.invoiceId ? b.invoiceId : a.invoiceId;
       // An issued (SENT) invoice fully covered by the credit goes PAID. A DRAFT is the seller's unissued
-      // working copy: recomputeInvoiceStatus never moves it, so it stays DRAFT with the same money (SA-713).
+      // working copy: statusFromPayments never moves it, so it stays DRAFT with the same money (SA-713).
       expect(await invoiceStateOf(winnerId)).toMatchObject({
         status: invoiceStatus === "SENT" ? "PAID" : "DRAFT",
         paid: 100,

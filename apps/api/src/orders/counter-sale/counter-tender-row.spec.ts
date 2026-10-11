@@ -1,5 +1,6 @@
 import {
   isCounterTenderRow,
+  counterTenderCashRows,
   isForeignPaymentRow,
   legGroupId,
   type TenderRowShape,
@@ -134,5 +135,27 @@ describe("isCounterTenderRow / isForeignPaymentRow: the sale as a set", () => {
     expect(legGroupId(ORDER, 0)).toBe(legGroupId(ORDER, 0));
     expect(legGroupId(ORDER, 0)).not.toBe(legGroupId(ORDER, 1));
     expect(legGroupId(ORDER, 0)).not.toBe(legGroupId(OTHER, 0));
+  });
+});
+
+describe("counterTenderCashRows: the cash rows the change is measured against", () => {
+  const cash = (over: Partial<TenderRowShape> = {}) => row({ method: "CASH", ...over });
+
+  it("a card-first split's cash leg is found; the card leg is not", () => {
+    const card = row({ method: "CREDIT_CARD", paymentGroupId: legGroupId(ORDER, 0) });
+    const leg = cash({ paymentGroupId: legGroupId(ORDER, 1) });
+    expect(counterTenderCashRows(ORDER, [card, leg])).toEqual([leg]);
+  });
+
+  it("an ungrouped office CASH row beside grouped tender is not the cash leg's", () => {
+    const leg = cash({ paymentGroupId: legGroupId(ORDER, 0) });
+    const office = cash();
+    expect(counterTenderCashRows(ORDER, [leg, office])).toEqual([leg]);
+  });
+
+  it("a legacy sale (no grouped row): its ungrouped cash rows are the tender; a voided one never", () => {
+    const a = cash();
+    const voided = cash({ status: "VOID" });
+    expect(counterTenderCashRows(ORDER, [a, voided])).toEqual([a]);
   });
 });

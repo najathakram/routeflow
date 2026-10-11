@@ -113,6 +113,7 @@ export const LOCK_FAMILIES = [
   "policy-write",
   "counter-tender",
   "fulfilment-settings",
+  "tenant-price",
   "counter-park",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
@@ -190,6 +191,14 @@ const POOL_MAX: Record<string, number | undefined> = {
   // Console set()/clear() of the two fulfilment keys, keyed on the tenant id. A rare, short,
   // request-path settings write: a deliberately small pool.
   "fulfilment-settings": 2,
+  // `tenant-price` (SA-733 D8): every writer that moves a tenant's Stripe price serialises per tenant on
+  // this one family — the tenant-facing in-app upgrade, the admin plan edit, the price override, the
+  // catalog fan-out and the scheduled-downgrade sweep (which holds ONE slot at a time). A holder pins its
+  // slot across Stripe calls (seconds), and a WAITER pins one too, so the size is a deliberate bound, not
+  // a convenience: admin / cron writers wait up to 20 s, but the tenant-facing upgrade waits only ~2.5 s
+  // (`billing/price-lock.ts`) so a double-click burst or a slow Stripe cannot hold all 4 slots for the
+  // long wait; a caller that cannot get a slot surfaces as a retryable 409 / 503, never a hang.
+  "tenant-price": 4,
   // `counter-park` (SA-748): the parked-cart cap in `CounterParkService#park`, keyed on the tenant id. That
   // lock is a transaction-scoped `pg_advisory_xact_lock` taken on the park transaction's own Prisma connection
   // (the idempotency-service pattern), so this family opens no lock pool today. It is listed so the family name

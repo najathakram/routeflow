@@ -86,6 +86,23 @@ export function isCounterTenderRow(
 }
 
 /**
+ * The sale's counter-tender CASH rows: a live cash row (never a voided one) whose group the set above names as the
+ * counter's. The ONE definition behind "does a CASH tender already anchor the stored tendered?" (the tender write)
+ * and "which rows is the change measured against?" (the read-back, Today's row and the receipt), so the three can not
+ * drift. Pass every payment row of the sale.
+ * scan-ok: draft-payment-not-void — a DRAFT cash row is listed here and adds nothing to a PAID-only sum (sumConfirmed).
+ */
+export function counterTenderCashRows<
+  T extends { method?: string; status?: string; paymentGroupId?: string | null },
+>(orderId: string, payments: readonly T[]): T[] {
+  const set = tenderSetOf(orderId, payments);
+  return payments.filter(
+    (p) =>
+      p.status !== "VOID" && p.method === "CASH" && isCounterTenderGroup(set, p.paymentGroupId),
+  );
+}
+
+/**
  * A live (non-VOID) payment row that is not the counter's tender.
  * scan-ok: draft-payment-not-void — a DRAFT row is live and NOT a settled tender, so it reads FOREIGN (it refuses a void).
  */

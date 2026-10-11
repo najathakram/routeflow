@@ -42,6 +42,8 @@ function serviceReading(row: ReturnType<typeof invoiceRow>) {
   const findMany = jest.fn().mockResolvedValue([row]);
   Object.assign(service, {
     prisma: {
+      // SA-770: findAll resolves the tenant for the overdue balance filter (a no-op without isOverdue)
+      getTenantId: () => "tenant-1",
       forTenant: () => ({
         invoice: {
           findUnique: jest.fn().mockResolvedValue(row),
@@ -49,6 +51,7 @@ function serviceReading(row: ReturnType<typeof invoiceRow>) {
           count: jest.fn().mockResolvedValue(1),
         },
         customer: { findFirst: jest.fn().mockResolvedValue({ id: "cust-1" }) },
+        auditLog: { groupBy: jest.fn().mockResolvedValue([]) }, // revisedAt: never revised
       }),
     },
     systemConfig: { get: jest.fn().mockResolvedValue(null) },
@@ -91,6 +94,9 @@ describe("InvoicesService.findAll — customer-facing fields only", () => {
     expect(row.payments[0]).toMatchObject({ status: "PAID", method: "CASH", amount: 5 });
     expect(row.paidAmount).toBe(5);
     expect(row.balanceDue).toBe(15);
+    // SA-763r P-3: the two derived fields are on the buyer allow-list
+    expect(row.overpaidBy).toBe(0);
+    expect(row.revisedAt).toBeNull();
   });
 });
 
@@ -109,6 +115,8 @@ describe("InvoicesService.findOne — customer-facing fields only", () => {
     const out = (await service.findOne("inv-1", principal("CUSTOMER"))) as unknown as Out;
     expectNoStaffLeaks(out);
     expect(out.paidAmount).toBe(5);
+    expect(out.overpaidBy).toBe(0);
+    expect(out.revisedAt).toBeNull();
   });
 
   it("customer: a DRAFT answers 404, like a missing invoice", async () => {
