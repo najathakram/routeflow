@@ -895,17 +895,25 @@ describe("PickupCompleteService.complete", () => {
     beforeEach(() => {
       soldBy = null;
       prisma.order.updateMany.mockImplementation(async ({ where, data }: any) => {
+        // the day-close branch's register stamp (data.registerKey) shares this delegate: only the cashier stamp is modelled
+        if (!("soldById" in data)) return { count: 1 };
         if (where.soldById === null && soldBy !== null) return { count: 0 };
         soldBy = data.soldById;
         return { count: 1 };
       });
     });
+    /** The cashier stamp among the order.updateMany calls (the register stamp is a different write). */
+    const soldByCalls = () =>
+      prisma.order.updateMany.mock.calls
+        .map((c: any[]) => c[0])
+        .filter((a: any) => a?.data && "soldById" in a.data);
     const other = { sub: "op-2", role: "OPERATOR", tenantId: "t-1" } as never;
 
     it("stamps the acting staff user, only where no cashier is stored yet", async () => {
       await run();
       expect(soldBy).toBe("op-1");
-      const call = prisma.order.updateMany.mock.calls[0][0];
+      expect(soldByCalls()).toHaveLength(1);
+      const call = soldByCalls()[0];
       expect(call.where).toEqual({ id: "ord-1", soldById: null });
       expect(call.data).toEqual({ soldById: "op-1" });
     });

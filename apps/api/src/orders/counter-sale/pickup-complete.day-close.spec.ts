@@ -40,6 +40,14 @@ const cash = { payment: { method: "CASH", amount: 40 } } as never;
 
 type Inv = { id: string; total: number; status: string; createdAt: Date; payments: any[] };
 
+// Order.updateMany is also the receipt branch's cashier stamp (data.soldById): the register-stamp assertions look only at the
+// calls whose data names registerKey, so each assertion is about its own write, never about call index 0.
+let prismaRef: { order: { updateMany: jest.Mock } } | null = null;
+const registerStamps = () =>
+  (prismaRef?.order.updateMany.mock.calls ?? []).filter(
+    ([a]: any[]) => a?.data && "registerKey" in a.data,
+  );
+
 describe("PickupCompleteService.complete — the day-close lock and window (SA-750r3)", () => {
   let service: PickupCompleteService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -69,6 +77,7 @@ describe("PickupCompleteService.complete — the day-close lock and window (SA-7
     lockCalls.length = 0;
     claims = [];
     prisma = createMockPrisma();
+    prismaRef = prisma as never;
     order = orderRow("OUT_FOR_DELIVERY", { counterSale: true, registerKey: null });
     invoices = [
       {
@@ -199,7 +208,7 @@ describe("PickupCompleteService.complete — the day-close lock and window (SA-7
     order = orderRow("OUT_FOR_DELIVERY", { counterSale: true, registerKey: null });
     await run({ ...(cash as object), registerKey: "b" });
     expect(lockCalls[1].sharedAlso).toEqual({ family: "counter-close", key: "test-tenant:main" });
-    expect(prisma.order.updateMany).not.toHaveBeenCalled();
+    expect(registerStamps()).toHaveLength(0);
   });
 });
 
@@ -235,6 +244,7 @@ describe("PickupCompleteService.complete — a POS-mode PICKUP order's cash coun
     lockCalls.length = 0;
     claims = [];
     prisma = createMockPrisma();
+    prismaRef = prisma as never;
     order = orderRow("OUT_FOR_DELIVERY");
     invoices = [
       {
@@ -260,6 +270,8 @@ describe("PickupCompleteService.complete — a POS-mode PICKUP order's cash coun
     });
     prisma.order.findFirst.mockImplementation(async () => order);
     prisma.order.updateMany.mockImplementation(async (args: any) => {
+      // the receipt branch's cashier stamp (data.soldById) is not a register stamp: it never touches the register
+      if (!("registerKey" in (args.data ?? {}))) return { count: 1 };
       events.push("stamp");
       if (order.registerKey != null) return { count: 0 };
       order.registerKey = args.data.registerKey;
@@ -334,7 +346,7 @@ describe("PickupCompleteService.complete — a POS-mode PICKUP order's cash coun
     await run(withKey("b"));
     expect(lockCalls[1].sharedAlso).toEqual({ family: "counter-close", key: "test-tenant:main" });
     expect(prisma.counterDayClose.findFirst.mock.calls[0][0].where.registerKey).toBe("main");
-    expect(prisma.order.updateMany).not.toHaveBeenCalled();
+    expect(registerStamps()).toHaveLength(0);
     expect(recordPayment).toHaveBeenCalledTimes(1);
   });
 
@@ -375,7 +387,7 @@ describe("PickupCompleteService.complete — a POS-mode PICKUP order's cash coun
     closedWindow();
     const res = await run(withKey("c"));
     expect(res).toMatchObject({ alreadyPickedUp: true, paymentRecorded: true, paid: 37.25 });
-    expect(prisma.order.updateMany).not.toHaveBeenCalled();
+    expect(registerStamps()).toHaveLength(0);
     expect(recordPayment).not.toHaveBeenCalled();
     expect(prisma.counterDayClose.findFirst).not.toHaveBeenCalled();
     expect(order.registerKey).toBe("b");

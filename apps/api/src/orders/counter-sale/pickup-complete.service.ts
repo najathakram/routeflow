@@ -156,7 +156,6 @@ export class PickupCompleteService {
       }
       order = (await this.readOrder(id)) ?? order;
     }
-    await this.stampSoldBy(id, user);
     const handedOverAt = order.deliveredAt ?? null;
 
     // 3. Issue every draft invoice.
@@ -227,6 +226,10 @@ export class PickupCompleteService {
         invoices = await this.readInvoices(id);
       }
     }
+
+    // The cashier is stamped AFTER the tender section: a hand-over refused for a closed day (a thrown 409) stamps nothing,
+    // neither the register nor the cashier, so a closed day's rows never gain a writer.
+    await this.stampSoldBy(id, user);
 
     return this.respond(order, invoices, shown, handedOverAt, planError, alreadyPickedUp);
   }
@@ -423,10 +426,20 @@ export class PickupCompleteService {
         // Stamp the register on a POS-mode (non-counter) order that has none, tenant-scoped, only after the window check and
         // before the payment; a stamp that is already set is never overwritten (the tender counts toward it).
         if (till.counterSale !== true && !till.registerKey) {
-          const stamped = await this.prisma.forTenant().order.updateMany({
-            where: { id: orderId, tenantId: this.prisma.getTenantId(), registerKey: null },
-            data: { registerKey: register },
-          });
+          let stamped: { count?: number } | undefined;
+          try {
+            stamped = await this.prisma.forTenant().order.updateMany({
+              where: { id: orderId, tenantId: this.prisma.getTenantId(), registerKey: null },
+              data: { registerKey: register },
+            });
+          } catch (e) {
+            // The hand-over is already committed: a failed stamp must not become a 500. Nothing was recorded; the retry
+            // finishes it (an unrecorded payment, never a mis-counted one).
+            this.logger.warn(
+              `pickup complete ${orderId}: register not stamped (${(e as Error)?.message ?? e})`,
+            );
+            return { invoices, planError: API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED };
+          }
           if (stamped?.count === 0) {
             // A concurrent hand-over stamped another register first: the lock held is the wrong one. Record nothing; the
             // retry reads the stamp and locks the right register.
