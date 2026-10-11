@@ -29,6 +29,7 @@ import {
   lockOrderCreditSettle,
 } from "./credit-note-locks";
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
+import { assertCreditWithinRemainder } from "../returns/refund-remainder-guard";
 import {
   loadLineCredits,
   countCreditableInvoices,
@@ -193,7 +194,10 @@ export class CreditNotesService {
           });
       }
 
-    if (!lineItems) return [];
+    if (!lineItems) {
+      await this.assertWithinRemainder(db, dto, [], opts);
+      return [];
+    }
 
     const lineById = new Map((invoice.items ?? []).map((it: any) => [it.id, it]));
     // Merge duplicate line references so there is exactly ONE CreditNoteItem per
@@ -348,7 +352,27 @@ export class CreditNotesService {
         API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
         `Credit line amounts (${roundMoney(sum)}) must sum to the credit note amount (${dto.amount})`,
       );
+    await this.assertWithinRemainder(db, dto, cnItemsData, opts);
     return cnItemsData;
+  }
+
+  /**
+   * SA-773: a standalone credit also fits the goods' remainder (what returns and other credit notes already took), under the
+   * invoice lock the transaction holds. A return's own refund mint was checked by its claim and is not asked again.
+   */
+  private async assertWithinRemainder(
+    db: any,
+    dto: { invoiceId?: string; amount: number },
+    items: Array<{ invoiceItemId: string; amount: number; qty: number; categoryTax: number }>,
+    opts: { ledgerReversedByReturn?: boolean; excludeCreditNoteId?: string },
+  ): Promise<void> {
+    if (opts.ledgerReversedByReturn || !dto.invoiceId) return;
+    await assertCreditWithinRemainder(db, {
+      invoiceId: dto.invoiceId,
+      amount: dto.amount,
+      items,
+      excludeCreditNoteId: opts.excludeCreditNoteId,
+    });
   }
 
   /**

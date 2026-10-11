@@ -17,23 +17,10 @@
  * Collected only by jest.db.config.js (`.db.spec.ts$`), run via `npm run local:test:db`.
  */
 import { randomUUID } from "crypto";
-import { Test } from "@nestjs/testing";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
-import { CreditNotesService } from "../credit-notes/credit-notes.service";
-import { ReturnsService } from "./returns.service";
-import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { CommissionEngineService } from "../sales-agents/commission-engine.service";
-import { AuditService } from "../audit/audit.service";
-import { EntitlementsService } from "../billing/entitlements.service";
-import { RouteFlowGateway } from "../gateways/routeflow.gateway";
-import { NumberingService } from "../import/numbering.service";
-import { IdempotencyService } from "../common/idempotency.service";
-import { EncryptionService } from "../common/encryption.service";
-import { SystemConfigService } from "../system-config/system-config.service";
+import type { ReturnsService } from "./returns.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
-import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
-import { InlineReturnsService } from "./inline-returns.service";
 import {
   addCreditNote,
   addInlineReturn,
@@ -43,6 +30,7 @@ import {
   type Seeded,
   type SeedInvoice,
 } from "../../test/refundable-seed";
+import { buildRefundServices } from "../../test/refundable-services";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Client } = require("pg");
@@ -58,7 +46,6 @@ describeDb("SA-773 the refund paths read the refundable remainder - real Postgre
   let ctl: any; // a raw connection that only watches pg_stat_activity
   const tenantIds: string[] = [];
   let n = 0;
-  let cnSeq = 0;
 
   beforeAll(async () => {
     const url = requireLocalDatabaseUrl();
@@ -67,41 +54,7 @@ describeDb("SA-773 the refund paths read the refundable remainder - real Postgre
     await prisma.$connect();
     ctl = new Client({ connectionString: url });
     await ctl.connect();
-    const anyMethod = new Proxy(
-      {},
-      { get: (_t, prop) => (prop === "then" || typeof prop === "symbol" ? undefined : jest.fn()) },
-    );
-    const numbering = {
-      reserveNext: jest.fn().mockImplementation(async () => `CN-SA773B-${RUN}-${++cnSeq}`),
-    };
-    const mod = await Test.createTestingModule({
-      providers: [
-        CreditNotesService,
-        ReturnsService,
-        RegulatedLedgerService,
-        CommissionEngineService,
-        AuditService,
-        { provide: PrismaService, useValue: prisma },
-        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
-        { provide: RouteFlowGateway, useValue: anyMethod },
-        { provide: NumberingService, useValue: numbering },
-      ],
-    }).compile();
-    returns = mod.get(ReturnsService);
-    const systemConfig = new SystemConfigService(
-      prisma,
-      new EncryptionService({ get: () => undefined } as any),
-    );
-    inline = Object.assign(Object.create(InlineReturnsService.prototype), {
-      prisma,
-      gateway: anyMethod,
-      ledger: mod.get(RegulatedLedgerService),
-      creditNotes: mod.get(CreditNotesService),
-      numbering,
-      addonService: { hasAddon: async () => true },
-      quoteService: new InlineReturnsQuoteService(prisma, systemConfig),
-      idempotency: new IdempotencyService(),
-    });
+    ({ inline, returns } = await buildRefundServices(prisma, `SA773B-${RUN}`));
   }, 120_000);
 
   afterAll(async () => {

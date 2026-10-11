@@ -602,3 +602,53 @@ export async function inlineReturnRequests(
   }
   return requests;
 }
+
+/**
+ * The requests of a credit note: each item's pieces and gross value (amount + category tax + the line's tax at its stored rate)
+ * against the pool of the line's invoice; an amount-only credit note is its amount against the invoice-level remainder alone.
+ */
+export async function creditNoteRequests(
+  tx: any,
+  input: {
+    invoiceId: string;
+    amount: number;
+    items: ReadonlyArray<{
+      invoiceItemId: string;
+      amount: number;
+      qty: number;
+      categoryTax?: number;
+    }>;
+  },
+): Promise<RefundableRequest[]> {
+  if (input.items.length === 0)
+    return [{ invoiceId: input.invoiceId, value: roundMoney(input.amount) }];
+  const lines: any[] =
+    (await tx.invoiceItem?.findMany?.({
+      where: { id: { in: input.items.map((i) => i.invoiceItemId) } },
+      select: {
+        id: true,
+        invoiceId: true,
+        productId: true,
+        qty: true,
+        taxRate: true,
+        boxes: true,
+        pieces: true,
+        unitsPerBox: true,
+        product: { select: { unitsPerBox: true } },
+      },
+    })) ?? [];
+  const lineById = new Map(lines.map((l) => [l.id as string, l]));
+  const requests: RefundableRequest[] = [];
+  for (const item of input.items) {
+    const line = lineById.get(item.invoiceItemId);
+    if (!line) continue;
+    const amount = roundMoney(num(item.amount));
+    requests.push({
+      invoiceId: line.invoiceId,
+      productId: line.productId,
+      qty: num(item.qty) * piecesPerQtyOf(line),
+      value: roundMoney(amount + num(item.categoryTax) + roundMoney(amount * num(line.taxRate))),
+    });
+  }
+  return requests;
+}

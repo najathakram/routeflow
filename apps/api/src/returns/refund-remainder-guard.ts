@@ -9,6 +9,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockRefundInvoices } from "./inline-return-refund";
 import {
   assertWithinRefundable,
+  creditNoteRequests,
   creditableGroupInvoiceIds,
   inlineReturnRequests,
   refundableRemainder,
@@ -61,5 +62,35 @@ export async function assertStandardRefundWithinRemainder(
     rem,
     standardReturnRequests(rem, args.invoiceIds, args.items, args.bases, args.amount),
     API_ERROR_CODES.RETURN_EXCEEDS_REFUNDABLE,
+  );
+}
+
+/**
+ * A standalone credit note (create, or the replacement of a reissue): its items' pieces and gross value, or its amount alone, on
+ * the invoice's pool. Runs inside the credit note's own transaction after the invoice lock (and, with 2+ creditable invoices, the
+ * order pool locks) `create()` takes. `excludeCreditNoteId` leaves out the note a dry run replaces.
+ */
+export async function assertCreditWithinRemainder(
+  tx: any,
+  args: {
+    invoiceId: string;
+    amount: number;
+    items: ReadonlyArray<{
+      invoiceItemId: string;
+      amount: number;
+      qty: number;
+      categoryTax?: number;
+    }>;
+    excludeCreditNoteId?: string;
+  },
+): Promise<void> {
+  const rem = await refundableRemainder(tx, {
+    invoiceIds: [args.invoiceId],
+    excludeCreditNoteId: args.excludeCreditNoteId,
+  });
+  assertWithinRefundable(
+    rem,
+    await creditNoteRequests(tx, args),
+    API_ERROR_CODES.CREDIT_EXCEEDS_REFUNDABLE,
   );
 }

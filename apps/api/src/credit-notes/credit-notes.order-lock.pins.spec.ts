@@ -54,7 +54,7 @@ describe("B947: the order lock comes first, in create() and on the refund path",
   it("the pooled refund re-check runs in the SAME validate as the lock-protected read, before the early return for lump sums", () => {
     const validate = cns.slice(cns.indexOf("async validateAndBuildCnItems("));
     const refundCheck = validate.indexOf("pooledRefundRefusal(pool");
-    const earlyReturn = validate.indexOf("if (!lineItems) return [];");
+    const earlyReturn = validate.indexOf("if (!lineItems) {");
     expect(refundCheck).toBeGreaterThan(-1);
     expect(refundCheck).toBeLessThan(earlyReturn);
   });
