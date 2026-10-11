@@ -45,7 +45,7 @@ import { InvoiceStatus } from "@prisma/client";
 
 import { importCalendarDay } from "../import/import.service";
 import { isOverdue, overdueCutoff } from "../common/calendar-date";
-import { statusFromPayments } from "./invoice-status";
+import { recomputeInvoiceStatus } from "./invoice-status";
 import { applyInvoiceStatusFilters } from "./invoice-list-query";
 import { markOverdueForTenant } from "./overdue-sweep.service";
 import * as fs from "fs";
@@ -339,23 +339,17 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
     });
 
     it("recomputeStatus ± zone: a US tenant is NOT overdue at 20:00 local on the due day", () => {
-      expect(
-        statusFromPayments(0, 100, due, "SENT" as any, LA, "NOT_PAID", eveningOfDueDayLA),
-      ).toBe("SENT");
-      expect(statusFromPayments(0, 100, due, "SENT" as any, LA, "NOT_PAID", at0030LA)).toBe(
+      expect(recomputeInvoiceStatus(0, 100, due, "SENT" as any, LA, eveningOfDueDayLA)).toBe(
+        "SENT",
+      );
+      expect(recomputeInvoiceStatus(0, 100, due, "SENT" as any, LA, at0030LA)).toBe("OVERDUE");
+      // No zone: UTC — the due day ended at 00:00Z on the 26th.
+      expect(recomputeInvoiceStatus(0, 100, due, "SENT" as any, null, eveningOfDueDayLA)).toBe(
         "OVERDUE",
       );
-      // No zone: UTC — the due day ended at 00:00Z on the 26th.
-      expect(
-        statusFromPayments(0, 100, due, "SENT" as any, null, "NOT_PAID", eveningOfDueDayLA),
-      ).toBe("OVERDUE");
       // Payments and terminal states still win over the date.
-      expect(statusFromPayments(10, 100, due, "SENT" as any, LA, "NOT_PAID", at0030LA)).toBe(
-        "PARTIAL",
-      );
-      expect(statusFromPayments(0, 100, due, "DRAFT" as any, LA, "NOT_PAID", at0030LA)).toBe(
-        "DRAFT",
-      );
+      expect(recomputeInvoiceStatus(10, 100, due, "SENT" as any, LA, at0030LA)).toBe("PARTIAL");
+      expect(recomputeInvoiceStatus(0, 100, due, "DRAFT" as any, LA, at0030LA)).toBe("DRAFT");
     });
 
     describe("five paths agree at 23:30 vs 00:30 local (LA tenant)", () => {
@@ -379,9 +373,9 @@ describe("InvoicesService — #2493 due dates under a negative-offset process zo
         tenantLA();
         // 1. the predicate  2. recomputeStatus
         expect(isOverdue(due, now, LA)).toBe(overdue);
-        expect(
-          statusFromPayments(0, 100, due, "SENT" as any, LA, "NOT_PAID", now) === "OVERDUE",
-        ).toBe(overdue);
+        expect(recomputeInvoiceStatus(0, 100, due, "SENT" as any, LA, now) === "OVERDUE").toBe(
+          overdue,
+        );
         // 3. the list filter (isOverdue=true): the row is selected iff dueDate < where.dueDate.lt
         const where: any = {};
         applyInvoiceStatusFilters(where, { isOverdue: true } as any, LA);

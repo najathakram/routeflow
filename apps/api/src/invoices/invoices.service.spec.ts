@@ -1357,13 +1357,13 @@ describe("InvoicesService", () => {
       expect("payments" in data).toBe(false);
     });
 
-    it("B1098: an edited total BELOW what is already paid is held out of PAID (balance floors at 0)", async () => {
+    it("flips PAID (balance floors at 0) when the edited total drops to/below what's already paid", async () => {
       armDepositReconcile({ payments: [{ amount: 60, status: "PAID" }] });
 
       await service.reconcileOrderDraftInvoice("o-dep", { basis: "order" });
 
       const data = prisma.invoice.update.mock.calls[0][0].data;
-      expect(data.status).not.toBe(InvoiceStatus.PAID); // SENT, or OVERDUE past the due day
+      expect(data.status).toBe(InvoiceStatus.PAID);
     });
 
     it("excludes a VOID payment from the recomputed status, same as findAll/findOne", async () => {
@@ -5044,7 +5044,7 @@ describe("InvoicesService", () => {
       expect(upd.data.status).toBe(InvoiceStatus.PARTIAL);
     });
 
-    it("B1098: a PAID invoice edited to a lower total is no longer shown PAID (overpaidBy carries the excess)", async () => {
+    it("a PAID invoice edited to a lower total stays PAID (over-paid / credit balance)", async () => {
       prisma.invoice.findMany.mockResolvedValue([
         inv({ status: InvoiceStatus.PAID, payments: [{ amount: 50, status: "PAID" }] }),
       ] as any);
@@ -5057,8 +5057,8 @@ describe("InvoicesService", () => {
 
       const upd = updOf("inv-1");
       expect(upd.data.subtotal).toBe(30);
-      // paid 50 > total 30 → held out of PAID (SA-763r P-3): SENT, the balance is zero, overpaidBy 20.
-      expect(upd.data.status).toBe(InvoiceStatus.SENT);
+      // paid 50 >= total 30 → PAID (customer over-paid; balance is a credit).
+      expect(upd.data.status).toBe(InvoiceStatus.PAID);
     });
 
     it("VOID payments are excluded when recomputing status", async () => {

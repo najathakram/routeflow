@@ -237,12 +237,7 @@ describe("SA-696: no line-set change on an order with the carrier", () => {
   it("a PRICE / NOTE-only save (same lines, same quantities) is allowed and re-syncs the shipment invoice in place", async () => {
     seed(order());
     await edit([{ ...A, qty: 4, notes: "leave at the dock" }]);
-    expect(invoices.resyncOrderInvoicesForEdit).toHaveBeenCalledWith(
-      "ord-1",
-      undefined,
-      undefined,
-      "user-op",
-    );
+    expect(invoices.resyncOrderInvoicesForEdit).toHaveBeenCalledWith("ord-1");
     expect(invoices.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
   });
 
@@ -300,12 +295,7 @@ describe("SA-696: no line-set change on an order with the carrier", () => {
     it("a price-only or note-only edit of an unlisted line (same quantity) passes and re-syncs in place", async () => {
       seed(order(), true);
       await edit([keepA, { ...U, qty: 2, unitPrice: 6, notes: "dock fee" }]);
-      expect(invoices.resyncOrderInvoicesForEdit).toHaveBeenCalledWith(
-        "ord-1",
-        undefined,
-        undefined,
-        "user-op",
-      );
+      expect(invoices.resyncOrderInvoicesForEdit).toHaveBeenCalledWith("ord-1");
       expect(invoices.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
     });
 

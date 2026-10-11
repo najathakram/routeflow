@@ -50,8 +50,6 @@ import {
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import { retryCreditTx, retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
-import { judgeEditTail } from "./edit-overpay-judge";
-import { RECONCILE_PARTIALS } from "../invoices/invoice-partition";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import {
   atStopConflict,
@@ -223,7 +221,6 @@ import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
 import { shippedPushCopy } from "./shipped-push-copy";
 import { attachInvoiceStages } from "./order-invoice-stage";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
-import { markLinesRecreated, markSaleDelivered, stampDeliveredAfterEdit } from "./delivered-stamp";
 import * as carrierGuard from "./order-carrier-guard";
 import {
   throwIfWithCarrier,
@@ -2273,9 +2270,12 @@ export class OrdersService implements OnApplicationBootstrap {
     // 2. Van sale: mark the order DELIVERED *directly*. We intentionally bypass changeStatus()
     //    here — changeStatus fires a fire-and-forget DRAFT invoice on DELIVERED, which would
     //    double-invoice this sale. (It also sidesteps the PENDING->DELIVERED transition guard.)
-    //    SA-763r: the stamp (deliveredQty = qty on no-evidence lines) shares the status write's tx.
+    //    No deliveredQty stamp (B1050): a correction goes through a return/credit until that lands.
     if (deliveredNow && !(replay && order.status === OrderStatus.DELIVERED)) {
-      await markSaleDelivered(this.prisma, order.id, deliveredAt ?? new Date());
+      await this.prisma.forTenant().order.update({
+        where: { id: order.id },
+        data: { status: OrderStatus.DELIVERED, deliveredAt: deliveredAt ?? new Date() },
+      });
     }
 
     // 3. Generate the invoice from the order — sets Invoice.orderId and increments
@@ -3060,7 +3060,6 @@ export class OrdersService implements OnApplicationBootstrap {
     // totals/line set (not a pre-mutation simulation), so there is no second
     // pricing formula to drift. reconcileOrderDraftInvoice and
     // appendOrderRevision stay OUTSIDE (after commit), unchanged.
-    let skipInPlaceResync = false; // SA-763r P-3: set inside the edit tx, from the held lines
     const { subtotal, tax, total, shouldRevert, shippingFee } = await inlineReturn.runEditTx(
       inlineRet,
       this.prisma,
@@ -3199,7 +3198,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // buyer path. Drivers keep today's authoring behavior.
           // SA-422 (1): a buyer save never deletes the seller's CANCELLED rows (F07 reopen marks).
           const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items); // #2717 SA-591(b)
-          lineIdentity = await markLinesRecreated(tx, orderId, heldItems); // SA-763r M2
+          lineIdentity = "recreated";
           await tx.orderItem.deleteMany({
             where: {
               orderId,
@@ -3483,7 +3482,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // #2717 SA-591(b): a surviving FIXED line keeps its stamp + components (I11).
             const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items);
             if (opts?.isCreateMerge) markerCarry = await captureMarkerCarry(tx, orderId);
-            lineIdentity = await markLinesRecreated(tx, orderId, heldItems); // SA-763r M2
+            lineIdentity = "recreated";
             await tx.orderItem.deleteMany({ where: { orderId } });
             // R2: full replace — stamp position from the client's array order.
             let pos = 0;
@@ -4205,7 +4204,6 @@ export class OrdersService implements OnApplicationBootstrap {
           await creditGate();
         }
 
-        await stampDeliveredAfterEdit(tx, orderId, heldItems, lineIdentity); // SA-763r: DELIVERED only
         // Revert a CONFIRMED order back to PENDING when items are edited so the office
         // must re-confirm the updated pick list before dispatch. R1: scope this to a
         // CONFIRMED order whose run has NOT dispatched — once the run is out (dispatched
@@ -4237,14 +4235,6 @@ export class OrdersService implements OnApplicationBootstrap {
                 : {}),
           },
         });
-        // SA-763r P-3 (M4/M5): an edit never creates an overpayment; judged at the TAIL of this tx
-        // (edit-overpay-judge.ts), `skipInPlaceResync` from the in-tx HELD lines. A refusal rolls back all.
-        skipInPlaceResync = await judgeEditTail(
-          { invoices: this.invoicesService, tenantId: this.prisma.getTenantId() },
-          tx,
-          orderId,
-          { heldItems, postDeliveryEdit, role: user?.role },
-        );
         // B215: the merge's replay key commits in THIS transaction, atomically with the fold —
         // never a second, later commit that a crash or a post-commit throw can split off.
         if (opts?.idempotency) {
@@ -4284,7 +4274,9 @@ export class OrdersService implements OnApplicationBootstrap {
     // B215/R2 (round 2): the RULE itself is `shouldSkipInPlaceResync` (merge-idempotency.ts), so
     // the replay path evaluates the same predicate over the rows it can see rather than
     // hard-coding one side of this decision. Only the ROWS differ (pre-edit snapshot here).
-    // SA-763r P-3: `skipInPlaceResync` was set inside the edit tx above, from the HELD lines.
+    const skipInPlaceResync = postDeliveryEdit
+      ? shouldSkipInPlaceResync(order.lineItems ?? [])
+      : false;
 
     // Staff-only credit intents: apply the same role gate as the shipping fee — when the
     // caller is NOT OPERATOR/TENANT_ADMIN, treat dto.appliedCreditNotes as undefined
@@ -4296,13 +4288,11 @@ export class OrdersService implements OnApplicationBootstrap {
     // REPLAYED merge can re-run exactly this and nothing else (replayMergeReconcile): the fold
     // above runs at most once per key, while everything in here is idempotent and may run N
     // times. The status event and the revision append BELOW stay fold-only.
-    const { issuedPartialsUnchanged } = await this.reconcileOrderAfterEdit(
+    await this.reconcileOrderAfterEdit(
       orderId,
       order.customerId,
       isStaffCreditEdit ? dto.appliedCreditNotes : undefined,
       { postDeliveryEdit, skipInPlaceResync },
-      user?.sub ?? null,
-      isStaffCreditEdit,
     );
 
     if (shouldRevert) {
@@ -4326,9 +4316,7 @@ export class OrdersService implements OnApplicationBootstrap {
       dto.orderNotes ?? null,
     );
 
-    const edited = await cancelledLines.readEditedOrder(this.prisma, orderId);
-    // SA-760 Q-760-1: an issued partial whose line price moved stays as issued; the UI is told.
-    return issuedPartialsUnchanged.length > 0 ? { ...edited, issuedPartialsUnchanged } : edited;
+    return cancelledLines.readEditedOrder(this.prisma, orderId);
   }
 
   /**
@@ -4357,12 +4345,7 @@ export class OrdersService implements OnApplicationBootstrap {
     customerId: string,
     appliedCreditNotes: AppliedCreditNoteDto[] | undefined,
     routing: { postDeliveryEdit: boolean; skipInPlaceResync: boolean },
-    actor: string | null = null, // SA-763r P-3: the editing user, for the revision audit rows
-    staffEdit = false, // SA-760 Q-760-1: only a staff edit re-prices DRAFT partials
-  ): Promise<{
-    issuedPartialsUnchanged: Array<{ invoiceId: string; invoiceNumber: string | null }>;
-  }> {
-    let rebuilt = true; // did a rebuild path restate the invoices? (else the partials follow price edits)
+  ): Promise<void> {
     // Keep the order's linked invoice(s) in lockstep with the edit.
     //  - Undelivered edit: re-sync the open pending-mirror draft at order basis
     //    (no-op when there's no open draft) — unchanged.
@@ -4373,30 +4356,16 @@ export class OrdersService implements OnApplicationBootstrap {
     //    the new balance. Never blocks (bails on an unclean partition).
     if (routing.postDeliveryEdit) {
       if (!routing.skipInPlaceResync) {
-        const resynced = await (actor
-          ? this.invoicesService.resyncOrderInvoicesForEdit(orderId, undefined, undefined, actor)
-          : this.invoicesService.resyncOrderInvoicesForEdit(orderId));
-        rebuilt = resynced !== null; // null: nothing linked, or an unclean partition (bailed)
-      } else {
-        rebuilt = false; // partially invoiced: the in-place re-sync is skipped
+        await this.invoicesService.resyncOrderInvoicesForEdit(orderId);
       }
     } else {
-      const res = await this.invoicesService.reconcileOrderDraftInvoice(orderId, {
-        basis: "order",
-        ...(actor ? { actor } : {}),
-      });
-      rebuilt = res !== null && res !== RECONCILE_PARTIALS;
+      await this.invoicesService.reconcileOrderDraftInvoice(orderId, { basis: "order" });
     }
-    // SA-760 Q-760-1 (owner 10-10): where no rebuild restated the invoices, a staff edit's PRICE changes reach
-    // the order's DRAFT partials (price only, under the R-1 lock order); issued partials never change.
-    const followed =
-      staffEdit && !rebuilt ? await this.invoicesService.followPartialPrices(orderId) : null;
 
     // Credit-note intents: sync operator selection changes, then settle (shrink or
     // top-up) against the order's current invoices. Runs even when line-resync was
     // skipped for partial billing — the credits are payment-level, not line-level.
     await this.syncAndSettleOrderCredits(orderId, customerId, appliedCreditNotes);
-    return { issuedPartialsUnchanged: followed?.issuedPartialsUnchanged ?? [] };
   }
 
   private async syncCreateCredits(id: string, cId: string, n?: AppliedCreditNoteDto[]) {

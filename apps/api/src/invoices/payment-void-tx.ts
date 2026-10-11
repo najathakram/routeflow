@@ -2,7 +2,7 @@ import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import type { AfterCommit } from "../common/after-commit";
-import { statusFromPayments } from "./invoice-status";
+import { recomputeInvoiceStatus } from "./invoice-status";
 import { CONFIRMED_PAYMENT, sumConfirmed } from "./payment-predicates";
 
 /** The collaborators the single-payment void needs, bound by the caller (InvoicesService passes its own). */
@@ -100,13 +100,12 @@ export async function voidPaymentInTx(
   }
 
   const totalPaid = sumConfirmed(invoice.payments.filter((p) => p.id !== paymentId));
-  const newStatus = statusFromPayments(
+  const newStatus = recomputeInvoiceStatus(
     totalPaid,
     Number(invoice.total),
     invoice.dueDate,
     invoice.status,
     tz,
-    "NOT_PAID",
   );
   await tx.invoice.update({
     where: { id: invoiceId },

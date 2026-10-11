@@ -106,8 +106,6 @@ describe("OrdersService — credit-limit exposure (D6 / B462, option B)", () => 
           useValue: {
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
-            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
-            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
           },
         },

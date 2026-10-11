@@ -1,5 +1,4 @@
 import {
-  FulfillPath,
   InvoiceStatus,
   OrderStatus,
   PaymentStatus,
@@ -20,7 +19,6 @@ import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
 import { counterMethodOf, servedChange } from "./counter-sale-readback";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
-import { pickupTenderGroupId } from "./pickup-tender-group";
 
 /**
  * Today's sales (GET /orders/counter-sale/today): the PURE half. Everything that decides a figure lives here
@@ -96,59 +94,6 @@ export function salePaymentsWhere(tenantId: string, w: DayWindow) {
       order: liveCounterOrderAnyDayWhere(tenantId),
     },
   };
-}
-
-/**
- * HAND-OVERS (SA-763r R7): the PAID payments that CAME IN in the window on the tender of a POS-mode pickup
- * hand-over: invoices of a PICKUP order that is NOT a counter sale (a counter sale is `salePaymentsWhere`'s,
- * so the two sets are disjoint and nothing is counted twice). This is only the CANDIDATE query: whether a
- * payment is the hand-over's own tender (not a deposit or a later payment on the same invoice) is the v5
- * group id, which no SQL predicate can express, so `handOverPayments` filters in code. Bounded by the day's
- * PICKUP payments.
- */
-export function handOverCandidatesWhere(tenantId: string, w: DayWindow) {
-  return {
-    tenantId,
-    status: PaymentStatus.PAID,
-    paidAt: { gte: w.start, lt: w.end },
-    paymentGroupId: { not: null },
-    invoice: {
-      tenantId,
-      status: { notIn: DEAD_INVOICE_STATUSES },
-      order: { tenantId, fulfillPath: FulfillPath.PICKUP, counterSale: false },
-    },
-  };
-}
-
-export const handOverCandidateSelect = {
-  method: true,
-  amount: true,
-  paymentGroupId: true,
-  invoice: { select: { orderId: true } },
-} satisfies Prisma.InvoicePaymentSelect;
-
-/** One payment that is a hand-over's own tender. */
-export interface HandOverPayment {
-  method: string;
-  amount: unknown;
-  orderId: string;
-}
-
-/** The candidates whose group id IS the app-side `uuidv5(`${orderId}:pickup:0`, PICKUP_TENDER_NS)`. */
-export function handOverPayments(
-  rows: ReadonlyArray<{
-    method: string;
-    amount: unknown;
-    paymentGroupId: string | null;
-    invoice: { orderId: string | null } | null;
-  }>,
-): HandOverPayment[] {
-  return rows.flatMap((r) => {
-    const orderId = r.invoice?.orderId;
-    return orderId && r.paymentGroupId === pickupTenderGroupId(orderId)
-      ? [{ method: r.method, amount: r.amount, orderId }]
-      : [];
-  });
 }
 
 /**
@@ -442,8 +387,6 @@ export function foldSummary(input: {
   /** everything paid (any date) on the day's own sales: the `onAccount` measure */
   paidOnSales: PaidAggregate;
   returns: readonly WindowReturn[];
-  /** the hand-over tenders that came in in the window (already filtered by `handOverPayments`) */
-  handOvers?: readonly HandOverPayment[];
 }): TodaysSalesSummary {
   const by: Record<TodaysSaleMethod, number> = {
     CASH: 0,
@@ -455,14 +398,6 @@ export function foldSummary(input: {
   for (const g of input.payments) {
     const m = todaysMethodOf(g.method);
     by[m] = roundMoney(by[m] + num(g._sum?.amount));
-  }
-  // SA-763r R7: a POS-mode hand-over's tender is money in and cash in the drawer, like a counter sale's.
-  const handOvers = input.handOvers ?? [];
-  let handOverTotal = 0;
-  for (const h of handOvers) {
-    const m = todaysMethodOf(h.method);
-    by[m] = roundMoney(by[m] + num(h.amount));
-    handOverTotal = roundMoney(handOverTotal + num(h.amount));
   }
   const moneyIn = {
     cash: by.CASH,
@@ -499,7 +434,6 @@ export function foldSummary(input: {
   return {
     sales: { count: countOf(input.sales._count), total: salesTotal },
     moneyIn,
-    handOvers: { count: new Set(handOvers.map((h) => h.orderId)).size, total: handOverTotal },
     storeCreditUsed: by.STORE_CREDIT,
     onAccount: Math.max(
       0,

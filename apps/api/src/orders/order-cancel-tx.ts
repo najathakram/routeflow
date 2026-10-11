@@ -27,13 +27,6 @@ export interface CancelOrderTxOptions {
   user: JwtPayload;
   /** The event the stock movement records ("CANCEL" for the office cancel). */
   notes: string;
-  /**
-   * SA-763r: line id -> the units that were booked out for it before a hand-over reset zeroed its deliveredQty
-   * (`unevidencedDeliveredFloor`). The stock credit is made on `max(qty, floor)` for those lines, so a cut that
-   * left qty below the booked units (stock books max(qty, delivered)) still returns EVERY unit. A VIEW for the
-   * credit only: the line row (qty, history) is never written. Absent for the office cancel.
-   */
-  bookedFloor?: ReadonlyMap<string, number>;
 }
 
 /**
@@ -49,7 +42,7 @@ export async function cancelOrderInTx(
   order: { id: string },
   opts: CancelOrderTxOptions,
 ) {
-  const { fromStatuses, statusUpdateData, carrier, user, notes, bookedFloor } = opts;
+  const { fromStatuses, statusUpdateData, carrier, user, notes } = opts;
   const id = order.id;
   await lockOrderForCancel(tx, id);
   await assertNoCashRefundOnOrder(tx, id); // 409 on a cash refund, before any write
@@ -71,18 +64,12 @@ export async function cancelOrderInTx(
     });
   const row = (await tx.order.findUnique({ where: { id } }))!; // the locked row, never gone
   if (cancelReturnsStock) {
-    let activeItems = await tx.orderItem.findMany({
+    const activeItems = await tx.orderItem.findMany({
       where: { orderId: id, status: { not: "CANCELLED" } },
       select: STOCK_SETTLE_SELECT,
     });
     // Return the creation-time decrement, clamped to the undelivered remainder (empty final
     // set), AS the status read under the lock (#2472: a stale DRAFT pre-read would no-op).
-    if (bookedFloor)
-      activeItems = activeItems.map((li: any) =>
-        bookedFloor.has(li.id)
-          ? { ...li, qty: Math.max(Number(li.qty), bookedFloor.get(li.id)!) }
-          : li,
-      );
     await deps.settleStockForEdit(tx, lockedOrder, activeItems, [], user, {
       notes,
     });

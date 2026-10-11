@@ -87,18 +87,3 @@ export function foldCategoryTax(
   zeroExemptCategoryTax(itemsData, isTaxExempt);
   return sumInvoiceTotalsStrict(itemsData, { isTaxExempt }).categoryTax;
 }
-
-/**
- * The ONE order-derived regular-tax share: `order.tax` x (this invoice's subtotal / the order's subtotal),
- * cents-rounded, 0 for a tax-exempt customer. Used by every single-invoice builder (reconcile, the partial
- * create, the DRAFT-partial price follow) so the three can never drift. (The multi-invoice splits allocate
- * the same tax across siblings with a rounding remainder; that is a different, group-wide rule.)
- */
-export function regularTaxShare(
-  order: { tax?: unknown; subtotal?: unknown },
-  subtotal: number,
-  isTaxExempt: boolean,
-): number {
-  if (isTaxExempt) return 0;
-  return roundMoney(Number(order.tax) * (subtotal / (Number(order.subtotal) || 1)));
-}

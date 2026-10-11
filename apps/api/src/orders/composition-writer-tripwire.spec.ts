@@ -56,10 +56,6 @@ const REGISTRY: Record<string, Entry> = {
     kind: "exempt",
     reason: "deliveredQty reset to 0 only; no qty, price or composition column",
   },
-  "orders/delivered-stamp.ts::stampDeliveredInFull": {
-    kind: "exempt",
-    reason: "SA-763r: writes only OrderItem.deliveredQty, on lines with no delivery evidence",
-  },
   "orders/orders.service.ts::reopenOrder": { kind: "exempt", reason: "status only" },
   "orders/orders.service.ts::recomputeLineCategoryTaxes": {
     kind: "exempt",

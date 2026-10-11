@@ -126,8 +126,6 @@ describe("genericToastCopy: codes users rely on", () => {
     ["CREDIT_NOTE_OVER_HEADROOM", /more than the source invoice still allows/],
     ["UNIT_AWARE_LINE", /sold by a unit/],
     ["ORDER_CHANGED_DURING_EDIT", /changed while you were editing/],
-    ["ORDER_BILLING_CHANGED", /billing changed/],
-    ["ORDER_EDIT_WOULD_OVERPAY", /paid beyond its new total/],
     ["ORDER_WITH_CARRIER_NO_CANCEL", /already with the carrier/],
     // B1135: the change-request refusal for an order that has shipped, pinned word for word.
     [

@@ -92,8 +92,6 @@ export async function buildOversellOrders(policy: PolicyFor = "off") {
         findOpenOrderDraft: jest.fn().mockResolvedValue(null),
         reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
         resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([]),
-        followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
-        projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
         revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
         voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1" }),
         releaseWalletPaymentsInTx: jest.fn().mockResolvedValue({ credits: [], advances: 0 }),

@@ -133,12 +133,7 @@ describe("#3207 D1/D2/D6: carrier order write paths", () => {
     reopened();
     await edit(4);
     expect(invoices.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
-    expect(invoices.resyncOrderInvoicesForEdit).toHaveBeenCalledWith(
-      "ord-1",
-      undefined,
-      undefined,
-      "user-op",
-    );
+    expect(invoices.resyncOrderInvoicesForEdit).toHaveBeenCalledWith("ord-1");
   });
 
   it("control: an UNSET-mode business edits exactly as before (revert first, reduction allowed)", async () => {

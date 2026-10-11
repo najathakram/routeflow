@@ -249,14 +249,14 @@ describe("B1050 — green pins that must hold before AND after the fix", () => {
 describe("B1050 — updateOrderItems wires lineIdentity per branch (SA-703 M1)", () => {
   const src = readFileSync(path.join(__dirname, "orders.service.ts"), "utf8");
   it("flips to recreated right before BOTH deleteMany + re-create branches", () => {
-    // CUSTOMER/DRIVER non-diff, then operator replaceAll (markLinesRecreated returns "recreated").
+    // CUSTOMER/DRIVER non-diff, then operator replaceAll.
     expect(src).toMatch(
-      /lineIdentity = await markLinesRecreated\(tx, orderId, heldItems\);[^\n]*\s*await tx\.orderItem\.deleteMany\(\{\s*where: \{\s*orderId,\s*\.\.\.\(isBuyerEdit/,
+      /lineIdentity = "recreated";\s*await tx\.orderItem\.deleteMany\(\{\s*where: \{\s*orderId,\s*\.\.\.\(isBuyerEdit/,
     );
     expect(src).toMatch(
-      /lineIdentity = await markLinesRecreated\(tx, orderId, heldItems\);[^\n]*\s*await tx\.orderItem\.deleteMany\(\{ where: \{ orderId \} \}\);/,
+      /lineIdentity = "recreated";\s*await tx\.orderItem\.deleteMany\(\{ where: \{ orderId \} \}\);/,
     );
-    expect(src.match(/lineIdentity = await markLinesRecreated\(/g)).toHaveLength(2); // SA-763r: returns "recreated"
+    expect(src.match(/lineIdentity = "recreated"/g)).toHaveLength(2);
   });
   it("defaults to stable and hands the value to the edit settle", () => {
     expect(src).toMatch(/let lineIdentity: "stable" \| "recreated" = "stable";/);

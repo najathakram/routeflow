@@ -51,8 +51,6 @@ export class SplitInvoiceFakeDb {
   /** `trackedCategory.findMany` result (regulated pins); empty by default. */
   trackedCategories: Row[] = [];
   invoiceUpdateCalls: Row[] = [];
-  /** When true, invoice reads project `items` to a nested `select: { items: { select } }` like Prisma does. */
-  honorItemSelect = false;
   private seq = 0;
 
   addOrder(order: Row, lines: Row[]): void {
@@ -97,19 +95,10 @@ export class SplitInvoiceFakeDb {
     return this.orderItems.find((l) => l.id === id)!;
   }
 
-  private hydrate(inv: Row, include?: Row, select?: Row): Row {
+  private hydrate(inv: Row, include?: Row): Row {
     const out = clone(inv);
     out.items = clone(this.invoiceItems.filter((it) => it.invoiceId === inv.id));
-    const pick = this.honorItemSelect ? select?.items?.select : undefined;
-    if (pick)
-      out.items = out.items.map((it: Row) =>
-        Object.fromEntries(
-          Object.keys(pick)
-            .filter((k) => pick[k])
-            .map((k) => [k, it[k]]),
-        ),
-      );
-    out.payments = clone(inv.payments ?? []); // SA-763r P-3: a spec seeds payments on the row
+    out.payments = [];
     out.customer = include?.customer ? { id: inv.customerId, businessName: "Acme" } : undefined;
     return out;
   }
@@ -177,7 +166,7 @@ export class SplitInvoiceFakeDb {
       sortAsc(
         this.invoices.filter((i) => matches(i, args.where)),
         args.orderBy,
-      ).map((i) => this.hydrate(i, args.include, args.select)),
+      ).map((i) => this.hydrate(i, args.include)),
     );
     p.invoice.findFirst.mockImplementation(async (args: Row) => {
       const hit = sortAsc(
@@ -210,9 +199,6 @@ export class SplitInvoiceFakeDb {
       this.applyItemWrites(inv.id, items);
       return this.hydrate(inv, args.include);
     });
-    p.invoice.count.mockImplementation(
-      async (args: Row) => this.invoices.filter((i) => matches(i, args?.where)).length,
-    );
     p.invoice.aggregate.mockImplementation(async (args: Row) => ({
       _sum: {
         shippingFee: this.invoices
@@ -224,12 +210,6 @@ export class SplitInvoiceFakeDb {
     p.invoiceItem.findMany.mockImplementation(async (args: Row) =>
       clone(this.invoiceItems.filter((it) => matches(it, args.where))),
     );
-    p.invoiceItem.update.mockImplementation(async (args: Row) => {
-      const it = this.invoiceItems.find((x) => matches(x, args.where));
-      if (!it) throw new Error("invoiceItem.update: not found");
-      Object.assign(it, args.data);
-      return clone(it);
-    });
     p.invoiceItem.deleteMany.mockImplementation(async (args: Row) => {
       const keep = this.invoiceItems.filter((it) => !matches(it, args.where));
       const count = this.invoiceItems.length - keep.length;

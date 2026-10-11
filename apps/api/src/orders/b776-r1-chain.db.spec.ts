@@ -39,8 +39,6 @@ jest.mock("../invoices/invoices.service", () => ({
     findAll: jest.fn().mockResolvedValue({ data: [], meta: {} }),
     reconcileOrderDraftInvoice: jest.fn().mockResolvedValue(null),
     resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([]),
-    followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
-    projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
     revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
     // forceConsolidateCustomer's loser-cleanup loop calls this unconditionally
     // (orders.service.ts:1103) — the unit-test harness's own InvoicesService mock

@@ -24,8 +24,6 @@ jest.mock("../invoices/invoices.service", () => ({
     findAll: jest.fn().mockResolvedValue({ data: [], meta: {} }),
     revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue(undefined),
     resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
-    followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
-    projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
   })),
 }));
 
@@ -175,8 +173,6 @@ async function buildOrdersService(
             .mockResolvedValue([{ id: "inv-1", invoiceNumber: "INV-1", total: 0 }]),
           revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue(undefined),
           resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
-          followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
-          projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
           reconcileOrderDraftInvoice: jest.fn().mockResolvedValue(undefined),
           // T6/T7: forceConsolidateCustomer's loser loop reads this before
           // deleting each loser's order.

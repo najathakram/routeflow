@@ -14,8 +14,6 @@ import { isNsfLine, type NsfLineFacts } from "./nsf-line";
  */
 export const RESYNC_ITEM_SELECT = {
   orderItemId: true,
-  qty: true, // SA-763r P-3: the revision audit counts changed lines
-  subtotal: true,
   unitsPerBox: true,
   systemKind: true,
   description: true,
@@ -94,60 +92,4 @@ export function planResyncPairs(
     linesByInvoice.get(invId)!.push(li);
   }
   return invoices.map((inv) => ({ draft: inv, lines: linesByInvoice.get(inv.id) ?? [] }));
-}
-
-/**
- * The reads of a post-delivery re-sync (moved out of `InvoicesService.resyncOrderInvoicesForEdit`, SA-763r
- * P-3, so the overpay judge's projection and the writer plan from ONE read): the order's live invoices
- * with the lines they bill and the payments they carry, the order with its live lines, and the planned
- * (invoice, lines) pairs. NULL when there is nothing to re-sync or the partition is unclean (the writer bails).
- * The caller holds the SA-760 R-1 locks.
- */
-export async function loadResyncInputs(
-  db: any,
-  orderId: string,
-): Promise<{ order: any; pairs: Array<{ draft: any; lines: any[] }> } | null> {
-  const invoices = await db.invoice.findMany({
-    where: { orderId, status: { not: InvoiceStatus.VOID } },
-    // invoiceNumber tiebreak: split siblings share a createdAt (one tx timestamp),
-    // so createdAt alone is non-deterministic for picking the primary/base.
-    orderBy: [{ createdAt: "asc" }, { invoiceNumber: "asc" }],
-    select: {
-      id: true,
-      invoiceNumber: true,
-      status: true,
-      total: true,
-      deliveryBatchId: true,
-      discount: true,
-      shippingFee: true,
-      dueDate: true,
-      items: { select: RESYNC_ITEM_SELECT }, // #2268: + the NSF-line reads
-      payments: { select: { amount: true, status: true, method: true } },
-    },
-  });
-  if (invoices.length === 0) return null;
-  // Partition lines to invoices; null = unclean (untracked or shared line) -> bail.
-  const invoiceByLine = partitionInvoiceLines(invoices);
-  if (!invoiceByLine) return null;
-  const order = await db.order.findUnique({
-    where: { id: orderId },
-    include: {
-      lineItems: {
-        where: { status: { not: "CANCELLED" } },
-        include: {
-          components: { orderBy: { position: "asc" } },
-          product: {
-            select: {
-              name: true,
-              unitsPerBox: true,
-              trackedCategoryId: true,
-              trackedSubcategoryId: true,
-            },
-          },
-        },
-      },
-    },
-  });
-  if (!order) return null;
-  return { order, pairs: planResyncPairs(invoices, order.lineItems, invoiceByLine) };
 }

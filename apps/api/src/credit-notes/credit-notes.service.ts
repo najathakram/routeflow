@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
-import { statusFromPayments } from "../invoices/invoice-status";
+import { recomputeInvoiceStatus } from "../invoices/invoice-status";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -877,13 +877,12 @@ export class CreditNotesService {
     // on top of a 60-dollar DRAFT sibling was flipping a $100 invoice straight to
     // PAID off unconfirmed money. Matches restoreCreditFromPaymentInTx's own basis.
     const newPaid = roundMoney(sumConfirmed(inv.payments) + applyAmount);
-    const newStatus = statusFromPayments(
+    const newStatus = recomputeInvoiceStatus(
       newPaid,
       Number(inv.total),
       inv.dueDate,
       inv.status,
       tz,
-      "NOT_PAID",
     );
     await tx.invoice.update({
       where: { id: inv.id },
@@ -1216,13 +1215,12 @@ export class CreditNotesService {
         invoiceNumber: inv.invoiceNumber,
         amount,
         statusBefore: inv.status,
-        statusAfter: statusFromPayments(
+        statusAfter: recomputeInvoiceStatus(
           sumConfirmed(remaining),
           Number(inv.total),
           inv.dueDate,
           inv.status,
           tz,
-          "NOT_PAID",
         ),
       };
     });
@@ -1466,13 +1464,12 @@ export class CreditNotesService {
       // confirmed money, never a DRAFT (or, once PENDING exists, an un-cleared check) —
       // sumConfirmed replaces the not-void filter (F03 discipline; design.md §3.4).
       const paid = sumConfirmed(inv.payments);
-      const newStatus = statusFromPayments(
+      const newStatus = recomputeInvoiceStatus(
         paid,
         Number(inv.total),
         inv.dueDate,
         inv.status,
         tz,
-        "NOT_PAID",
       );
       await tx.invoice.update({
         where: { id: inv.id },
@@ -1551,13 +1548,12 @@ export class CreditNotesService {
       // PR-2 (check-payments B1 hardening): same sumConfirmed basis as
       // restoreCreditFromPaymentInTx above.
       const paid = sumConfirmed(inv.payments);
-      const newStatus = statusFromPayments(
+      const newStatus = recomputeInvoiceStatus(
         paid,
         Number(inv.total),
         inv.dueDate,
         inv.status,
         tz,
-        "NOT_PAID",
       );
       await tx.invoice.update({
         where: { id: inv.id },

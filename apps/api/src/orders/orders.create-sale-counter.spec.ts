@@ -85,7 +85,7 @@ describe("OrdersService.createSale — counter-sale options and resume", () => {
     expect(invoices.send).toHaveBeenCalledWith("inv-1", { suppressNotify: true });
   });
 
-  it("the order row gets status + deliveredAt ONLY (the deliveredQty stamp is a line write in the same tx, SA-763r)", async () => {
+  it("marks DELIVERED with status + deliveredAt ONLY (no deliveredQty stamp: B1050 — corrections go via return/credit)", async () => {
     const { h } = await setup();
     await h.service.createSale(dto, operatorPayload as never, { fulfillPath: "PICKUP" as never });
     const data = h.prisma.order.update.mock.calls[0][0].data;
