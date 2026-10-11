@@ -138,6 +138,8 @@ describe("CounterReceiptBody", () => {
     expect(screen.getByTestId("receipt-numbers")).toHaveTextContent("Invoice INV-1");
     expect(screen.getByTestId("receipt-date")).toHaveTextContent(/\d{4}.*\d:\d{2}/);
     expect(screen.getByTestId("receipt-cashier")).toHaveTextContent("Cashier: pat");
+    // owner ruling (A): staff see the cashier on screen, but the PRINTED copy (the customer's) never carries it
+    expect(screen.getByTestId("receipt-cashier")).toHaveClass("print:hidden");
     expect(screen.getByTestId("receipt-method")).toHaveTextContent("Cash");
     expect(screen.getByTestId("receipt-tendered")).toHaveTextContent("$30.00");
     expect(screen.getByTestId("receipt-change")).toHaveTextContent("$7.50");

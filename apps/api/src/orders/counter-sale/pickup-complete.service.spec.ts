@@ -889,4 +889,38 @@ describe("PickupCompleteService.complete", () => {
       expect(e.getResponse().code).toBe("PICKUP_INVOICE_MISSING");
     });
   });
+
+  // Owner ruling (B): a hand-over stamps Order.soldById with the acting staff user, by the same replay rule as a counter sale:
+  // the first cashier stays; a replay by another cashier never overwrites it.
+  describe("soldById (who handed it over)", () => {
+    let soldBy: string | null;
+    beforeEach(() => {
+      soldBy = null;
+      prisma.order.updateMany.mockImplementation(async ({ where, data }: any) => {
+        if (where.soldById === null && soldBy !== null) return { count: 0 };
+        soldBy = data.soldById;
+        return { count: 1 };
+      });
+    });
+    const other = { sub: "op-2", role: "OPERATOR", tenantId: "t-1" } as never;
+
+    it("stamps the acting staff user, only where no cashier is stored yet", async () => {
+      await run();
+      expect(soldBy).toBe("op-1");
+      const call = prisma.order.updateMany.mock.calls[0][0];
+      expect(call.where).toEqual({ id: "ord-1", soldById: null });
+      expect(call.data).toEqual({ soldById: "op-1" });
+    });
+
+    it("a replay by another cashier does not overwrite the first", async () => {
+      await run();
+      await service.complete("ord-1", cash() as never, other, KEY);
+      expect(soldBy).toBe("op-1");
+    });
+
+    it("a failed stamp never fails the hand-over", async () => {
+      prisma.order.updateMany.mockRejectedValue(new Error("db down"));
+      await expect(run()).resolves.toMatchObject({ orderId: "ord-1" });
+    });
+  });
 });

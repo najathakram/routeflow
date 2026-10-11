@@ -410,6 +410,10 @@ describe("CounterTodaysSales", () => {
     const root = await screen.findByTestId("receipt-print-root");
     expect(within(root).getByTestId("receipt-cashier")).toHaveTextContent("Cashier: jane");
     expect(within(root).getByTestId("receipt-reprinted-by")).toHaveTextContent("Reprinted by pat");
+    // owner ruling (A): both are staff-facing on screen only; the printed reprint (the customer's copy) carries neither
+    expect(within(root).getByTestId("receipt-cashier")).toHaveClass("print:hidden");
+    expect(within(root).getByTestId("receipt-reprinted-by")).toHaveClass("print:hidden");
+    expect(within(root).getByTestId("receipt-numbers")).not.toHaveClass("print:hidden");
   });
 
   it("a reprint of a sale with no stored cashier credits the reprinter, never a Cashier line", async () => {

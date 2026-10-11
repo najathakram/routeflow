@@ -2,7 +2,7 @@ import { buildReceiptModel } from "./receipt-model";
 import { renderOrderReceipt } from "./render-order-receipt";
 import { BRANDING, INVOICE, orderFixture, paymentsFixture } from "./receipt.fixtures";
 
-/** Row 317: the emailed receipt names the cashier like the reprint does. Placeholders only (acme). */
+/** Row 317 / owner ruling (A): the receipt MODEL carries the cashier (staff on-screen view); the e-mailed copy never prints it. Placeholders only (acme). */
 const ZONE = "America/New_York";
 const withCashier = (username: string | null) => ({
   ...orderFixture(),
@@ -28,25 +28,12 @@ describe("receipt: Cashier line", () => {
     }
   });
 
-  it("the email prints 'Cashier: <name>' in the html and the plain text, escaped; no line without one", () => {
-    const r = renderOrderReceipt(
-      withCashier("jane <b>"),
-      [INVOICE],
-      paymentsFixture(),
-      BRANDING,
-      ZONE,
-    );
-    expect(r.html).toContain("Cashier: jane &lt;b&gt;");
-    expect(r.html).not.toContain("jane <b>");
-    expect(r.text).toContain("Cashier: jane <b>");
-    const none = renderOrderReceipt(
-      withCashier(null),
-      [INVOICE],
-      paymentsFixture(),
-      BRANDING,
-      ZONE,
-    );
-    expect(none.html).not.toContain("Cashier:");
-    expect(none.text).not.toContain("Cashier:");
+  it("owner ruling (A): the emailed copy carries NO cashier text, even when soldBy is set and the name qualifies", () => {
+    const r = renderOrderReceipt(withCashier("jane"), [INVOICE], paymentsFixture(), BRANDING, ZONE);
+    expect(r.model.cashier).toBe("jane"); // the shared model still carries it for the staff on-screen view
+    for (const out of [r.html, r.text]) {
+      expect(out).not.toMatch(/cashier/i);
+      expect(out).not.toContain("jane");
+    }
   });
 });
