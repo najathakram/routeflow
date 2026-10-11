@@ -35,6 +35,8 @@ interface ExistingLineForReplaceAll {
   overriddenBy: string | null;
   /** B297 row 340: the line's own category and rate trio, carried onto a folded re-creation of it. */
   category: CarriedCategorySource;
+  /** B297 row 355: its createdAt, carried too (the free-unit allocation is oldest first by createdAt). */
+  createdAt?: Date | string | null;
 }
 
 /**
@@ -70,6 +72,7 @@ export function buildExistingLineMaps(
       id?: string | null;
       productId?: string | null;
       status?: string | null;
+      createdAt?: Date | string | null;
       unitPrice: unknown;
       priceType: PriceType;
       originalPrice: unknown;
@@ -88,6 +91,7 @@ export function buildExistingLineMaps(
   for (const li of lineItems ?? []) {
     if (!li.id || li.status === "CANCELLED") continue;
     const entry: ExistingLineForReplaceAll = {
+      ...(li.createdAt ? { createdAt: li.createdAt } : {}),
       unitPrice: Number(li.unitPrice),
       priceType: li.priceType,
       originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
@@ -399,6 +403,11 @@ export function buildReplaceAllLineData(
     // that line's own category and trio, never the product's current ones (a fold is not a new sale).
     ...(sourceLineId
       ? (carriedCategory(ctx.existingLineById.get(sourceLineId)?.category, productId) ?? {})
+      : {}),
+    // B297 row 355 (r-note 7): ...and its createdAt, or a re-created old line sorts AFTER a newer one and
+    // the split's free units (allocated oldest first by createdAt) move onto the wrong line.
+    ...(sourceLineId && ctx.existingLineById.get(sourceLineId)?.createdAt
+      ? { createdAt: ctx.existingLineById.get(sourceLineId)!.createdAt as Date }
       : {}),
   };
 }

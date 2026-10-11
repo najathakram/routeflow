@@ -48,16 +48,20 @@ describe("planSplitPromos", () => {
     expect(g.denomination).toMatchObject({ boxes: 4, pieces: 0, unitsPerBox: 12 });
   });
 
-  it("allocates the free units in PAYLOAD order: the stored half before the added half", () => {
-    const items = [
-      { productId: "p1", qty: 2, sourceLineId: "a" },
-      { productId: "p1", qty: 7, sourceLineId: "b" },
-      { productId: "p1", qty: 5 }, // added in this edit
+  it("allocates oldest first: stored lines by their createdAt (payload order be damned), then added lines in payload order", () => {
+    const lineItems = [
+      { id: "z-old", productId: "p1", createdAt: new Date("2026-01-01") },
+      { id: "a-new", productId: "p1", createdAt: new Date("2026-02-01") },
     ];
-    const g = planSplitPromos(items, [], products, none).get("p1")!;
-    // 2 free over caps [a:2, b:7, new:5]: the first line (payload order) takes both
-    expect(g.share(items[0], 2)).toBe(2);
+    const items = [
+      { productId: "p1", qty: 5 }, // added in this edit
+      { productId: "p1", qty: 7, sourceLineId: "a-new" },
+      { productId: "p1", qty: 2, sourceLineId: "z-old" }, // the OLDEST line, last in the payload
+    ];
+    const g = planSplitPromos(items, lineItems, products, none).get("p1")!;
+    // 2 free over caps [z-old:2, a-new:7, added:5]: the oldest line takes both
+    expect(g.share(items[2], 2)).toBe(2);
     expect(g.share(items[1], 2)).toBe(0);
-    expect(g.share(items[2], 2)).toBe(0);
+    expect(g.share(items[0], 2)).toBe(0);
   });
 });

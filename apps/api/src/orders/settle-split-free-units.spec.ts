@@ -39,7 +39,6 @@ function fakeTx(post: any[]) {
     },
   };
 }
-const order = (lineItems: any[]) => ({ id: "ord-1", lineItems });
 const updates = (tx: ReturnType<typeof fakeTx>) =>
   Object.fromEntries(
     tx.orderItem.update.mock.calls.map((c: any[]) => [c[0].where.id, c[0].data.promoFreeUnits]),
@@ -50,7 +49,7 @@ describe("settleSplitFreeUnits", () => {
     // pre: a=6/free 1, b=6/free 1; the edit touched b's note only -> qty unchanged: NOT touched, nothing moves
     const pre = [row("a", 6, 1), row("b", 6, 1)];
     const untouched = fakeTx([row("a", 6, 1), row("b", 6, 1)]);
-    await settleSplitFreeUnits(untouched, order(pre), [BOGO]);
+    await settleSplitFreeUnits(untouched, "ord-1", pre, [BOGO]);
     expect(untouched.orderItem.update).not.toHaveBeenCalled();
     expect(untouched.product.findMany).not.toHaveBeenCalled();
   });
@@ -58,20 +57,20 @@ describe("settleSplitFreeUnits", () => {
   it("a touched pair is re-allocated oldest first (6 + 7: floor(13/6) = 2)", async () => {
     const pre = [row("a", 6, 1), row("b", 6, 1)];
     const tx = fakeTx([row("a", 6, 1), row("b", 7, 1)]); // the edit raised b from 6 to 7
-    await settleSplitFreeUnits(tx, order(pre), [BOGO]);
+    await settleSplitFreeUnits(tx, "ord-1", pre, [BOGO]);
     expect(updates(tx)).toEqual({ a: 2, b: null });
   });
 
   it("empty promos: no query, no write", async () => {
     const tx = fakeTx([row("a", 6, 1), row("b", 6, 1)]);
-    await settleSplitFreeUnits(tx, order([row("a", 6, 1), row("b", 6, 1)]), []);
+    await settleSplitFreeUnits(tx, "ord-1", [row("a", 6, 1), row("b", 6, 1)], []);
     expect(tx.orderItem.findMany).not.toHaveBeenCalled();
     expect(tx.orderItem.update).not.toHaveBeenCalled();
   });
 
   it("a one-line order is never settled", async () => {
     const tx = fakeTx([row("a", 12, 2)]);
-    await settleSplitFreeUnits(tx, order([row("a", 12, 2)]), [BOGO]);
+    await settleSplitFreeUnits(tx, "ord-1", [row("a", 12, 2)], [BOGO]);
     expect(tx.orderItem.findMany).not.toHaveBeenCalled();
   });
 
@@ -80,7 +79,7 @@ describe("settleSplitFreeUnits", () => {
     // post: a short-picked to 4 and its per-line rescale zeroed it; b untouched.
     const pre = [row("a", 6, 2), row("b", 6, 0)];
     const tx = fakeTx([row("a", 4, null), row("b", 6, null)]);
-    await settleSplitFreeUnits(tx, order(pre), [BOGO]);
+    await settleSplitFreeUnits(tx, "ord-1", pre, [BOGO]);
     // combined 10 whole units earn floor(10/6) = 1, the oldest line takes it
     expect(updates(tx)).toEqual({ a: 1 });
   });
@@ -88,7 +87,7 @@ describe("settleSplitFreeUnits", () => {
   it("H-A: the sibling is CANCELLED and one line is left; the remaining line still earns what 6 units earn", async () => {
     const pre = [row("a", 6, 2), row("b", 6, 0)];
     const tx = fakeTx([row("b", 6, null)]); // a is no longer a live line
-    await settleSplitFreeUnits(tx, order(pre), [BOGO]);
+    await settleSplitFreeUnits(tx, "ord-1", pre, [BOGO]);
     expect(updates(tx)).toEqual({ b: 1 });
   });
 
@@ -98,7 +97,7 @@ describe("settleSplitFreeUnits", () => {
       row("a", 4, 1),
       row("piece", 6, null, { unitLabel: "Piece", unitsPerBox: 1 }),
     ]);
-    await settleSplitFreeUnits(tx, order(pre), [BOGO]);
+    await settleSplitFreeUnits(tx, "ord-1", pre, [BOGO]);
     expect(tx.orderItem.update).not.toHaveBeenCalled();
   });
 
@@ -108,9 +107,22 @@ describe("settleSplitFreeUnits", () => {
     const pre = [row("a", 4, 2), row("b", 4, 0), other("c", 4, 2), other("d", 4, 0)];
     // only p1's line b changed
     const tx = fakeTx([row("a", 4, 2), row("b", 5, 0), other("c", 4, 2), other("d", 4, 0)]);
-    await settleSplitFreeUnits(tx, order(pre), [BOGO]);
+    await settleSplitFreeUnits(tx, "ord-1", pre, [BOGO]);
     for (const call of tx.orderItem.update.mock.calls)
       expect(["a", "b"]).toContain(call[0].where.id);
     expect(tx.product.findMany.mock.calls[0][0].where.id.in).toEqual(["p1"]);
+  });
+
+  it("MED-1: free units a line CREATED by this edit was priced with are part of the licence (an at-door ADD_ITEM)", async () => {
+    // pre: L1 holds 4 units (0 free), L9 another product. The edit creates L2 (6 units) priced with 1 free.
+    const pre = [row("l1", 4, 0), row("x", 3, 0, { productId: "p2" })];
+    const tx = fakeTx([
+      row("l1", 4, null),
+      row("l2", 6, 1),
+      row("x", 3, null, { productId: "p2" }),
+    ]);
+    await settleSplitFreeUnits(tx, "ord-1", pre, [BOGO]);
+    // combined 10 earn 1 under the live rule: the unit is NOT stripped (it moves to the oldest line)
+    expect(updates(tx)).toEqual({ l1: 1, l2: null });
   });
 });

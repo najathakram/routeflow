@@ -1137,15 +1137,48 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
 
   it("row 355 (r-note 6): a stored-price qty edit of one split line re-measures the PAIR (13 combined = 2 free), oldest first", async () => {
     const { id, lines: ls } = await twoLines(7, 5);
-    const [first] = [...ls].sort((x, y) => (x.id < y.id ? -1 : 1));
-    for (const l of ls) await giveFree(l.id, l.id === first.id ? 1 : 0, Number(l.qty));
+    const oldLine = ls.find((l) => Number(l.qty) === 7)!; // created first: the oldest by (createdAt, position, id)
     const target = ls.find((l) => Number(l.qty) === 5)!;
+    await giveFree(oldLine.id, 1, 7); // 7 units earned 1 under buy-5-get-1
+    await giveFree(target.id, 0, 5);
     await withPromos([rule({ type: "BUY_N_GET_M", value: 1, minQty: 5 })], () =>
       edit(id, { replaceAll: false, items: [{ id: target.id, qty: 6 }] }),
     );
-    const out = await byId(id);
-    expect(out.reduce((n, l) => n + l.free, 0)).toBe(2); // 13 units: floor(13/6) = 2; today the pair earns 1
-    expect(out[0].free).toBe(2); // the oldest line (by id) holds them
+    const rows = await raw.orderItem.findMany({ where: { orderId: id } });
+    const free = Object.fromEntries(rows.map((r) => [r.id, r.promoFreeUnits ?? 0]));
+    expect(Object.values(free).reduce((n, f) => n + f, 0)).toBe(2); // 13 units: floor(13/6) = 2; today the pair earns 1
+    expect(free[oldLine.id]).toBe(2); // the oldest line holds them
+  }, 120_000);
+
+  it("row 355 (r-note 7): a replace-all of [new B, old A] keeps the free units on the OLD line A (a re-created line carries its createdAt)", async () => {
+    const { id, lines: ls } = await twoLines(7, 5);
+    const a = ls.find((l) => Number(l.qty) === 7)!; // the old line
+    const b = ls.find((l) => Number(l.qty) === 5)!;
+    await raw.orderItem.update({
+      where: { id: a.id },
+      data: { createdAt: new Date("2026-01-01") },
+    });
+    await raw.orderItem.update({
+      where: { id: b.id },
+      data: { createdAt: new Date("2026-02-01") },
+    });
+    await giveFree(a.id, 1, 7); // 7 units earned 1 under buy-5-get-1
+    // the payload lists the NEWER line first
+    await withPromos([rule({ type: "BUY_N_GET_M", value: 1, minQty: 5 })], () =>
+      buyerEdit(
+        id,
+        [
+          { productId, qty: 5, orderItemId: b.id },
+          { productId, qty: 7, orderItemId: a.id },
+        ],
+        { namesLines: true },
+      ),
+    );
+    const lines = await raw.orderItem.findMany({ where: { orderId: id } });
+    const oldLine = lines.find((l) => Number(l.qty) === 7)!;
+    const newLine = lines.find((l) => Number(l.qty) === 5)!;
+    expect(oldLine.createdAt.toISOString()).toBe("2026-01-01T00:00:00.000Z"); // carried, not re-stamped
+    expect([oldLine.promoFreeUnits ?? 0, newLine.promoFreeUnits ?? 0]).toEqual([2, 0]); // 12 combined = 2, oldest first
   }, 120_000);
 
   it("row 355 (review H-A): shrinking the line that holds the pair's free units still earns on the rest of the product", async () => {

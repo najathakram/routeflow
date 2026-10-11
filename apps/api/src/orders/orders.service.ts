@@ -168,7 +168,7 @@ import {
 } from "./order-stock";
 import { recomputeLineCategoryTaxes } from "./recompute-line-category-taxes";
 import { loadLiveTrioByProduct } from "./fold-target";
-import { carriedCategoryFor } from "./carry-line-category";
+import { carriedLineFor } from "./carry-line-category";
 import { applyBuyerEditLines, guardBuyerEditLineIds, piecesDenominated } from "./buyer-edit-lines";
 import { planSplitPromos, type SplitPromoGroup } from "./split-promo-group";
 import { settleSplitFreeUnits } from "./settle-split-free-units";
@@ -2997,6 +2997,7 @@ export class OrdersService implements OnApplicationBootstrap {
     const bogoPromos = (order.lineItems ?? []).some((li: any) => Number(li.promoFreeUnits ?? 0) > 0)
       ? await this.loadActivePromotions(UserRole.CUSTOMER)
       : [];
+    const settlePromos = buyerPromos.length ? buyerPromos : bogoPromos; // row 355 settle list
 
     // WP3: resolved on its own pooled connection BEFORE the tx opens, like the
     // reference reads above — the credit guard runs inside the transaction and
@@ -3297,7 +3298,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // B297 row 343: a folded line that comes from an existing line (`sourceLineId`, the buyer
                 // cart-submit fold) carries that line's own category and trio, never the product's current
                 // ones; a genuinely new line (no sourceLineId) keeps the live stamp above.
-                ...carriedCategoryFor(order.lineItems, item, item.productId),
+                ...carriedLineFor(order.lineItems, item, item.productId),
                 // R2: preserve the client's line order on full replace.
                 position: pos++,
               },
@@ -4085,7 +4086,7 @@ export class OrdersService implements OnApplicationBootstrap {
         }
 
         if (!(user?.role === UserRole.CUSTOMER && !isDiffPayload))
-          await settleSplitFreeUnits(tx, order, buyerPromos.length ? buyerPromos : bogoPromos);
+          await settleSplitFreeUnits(tx, orderId, heldItems, settlePromos);
         await this.syncCompositions(tx, orderId);
         // Recalculate order totals from all non-cancelled items
         const activeItems = await tx.orderItem.findMany({
@@ -4784,7 +4785,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
         const heldItems = await tx.orderItem.findMany({
           where: { orderId: order.id },
-          select: { ...EXISTING_LINE_SELECT, deliveredQty: true },
+          select: { ...EXISTING_LINE_SELECT, deliveredQty: true, promoFreeUnits: true },
         });
         restrictionPlan?.assertHeld(heldItems);
 
@@ -5094,7 +5095,7 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         }
 
-        await settleSplitFreeUnits(tx, order, buyerPromos);
+        await settleSplitFreeUnits(tx, order.id, heldItems, buyerPromos);
         await this.syncCompositions(tx, order.id);
         // ── Totals recompute — identical to updateOrderItems :2163-2168 ──────
         const activeItems = await tx.orderItem.findMany({

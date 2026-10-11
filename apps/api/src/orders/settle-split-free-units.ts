@@ -13,7 +13,7 @@ import {
  *
  *  - ONLY products this edit touched are settled (a line created, removed, cancelled, or changed in qty,
  *    split or free units): an unrelated product on the order is never re-priced by someone else's edit.
- *  - The licence is the PRE-edit state (`order.lineItems`, as loaded before the edit): a per-line
+ *  - The licence is the PRE-edit state (`held`: the lines read under the order's row lock): a per-line
  *    rescale may already have zeroed the line that held the units, and a product that was split is settled
  *    even when the edit left one line.
  *  - `promos` empty is a strict no-op with no query. `canEarnNew` is false: an edit never gives a product a
@@ -21,13 +21,13 @@ import {
  */
 export async function settleSplitFreeUnits(
   tx: any,
-  /** The order as loaded BEFORE the edit (its `lineItems` are the baseline). */
-  order: { id: string; lineItems?: ReadonlyArray<any> | null },
+  orderId: string,
+  /** The order's lines read UNDER THE ROW LOCK, before this edit's writes (the baseline). */
+  held: ReadonlyArray<any>,
   promos: ReadonlyArray<PromotionRule>,
 ): Promise<void> {
   if (promos.length === 0) return;
-  const orderId = order.id;
-  const pre = order.lineItems ?? [];
+  const pre = held;
   const preLive = pre.filter((l) => l.productId && l.status !== "CANCELLED");
   if (preLive.length < 2) return; // nothing can have been split
   const lines: any[] = await tx.orderItem.findMany({
@@ -60,8 +60,12 @@ export async function settleSplitFreeUnits(
   const baseline = new Map<string, FreeUnitBaseline>();
   for (const id of settle) {
     const own = preLive.filter((l) => l.productId === id);
+    // Units a line CREATED by this edit was just priced with count too (an at-door ADD_ITEM mints its own).
+    const minted = lines
+      .filter((l) => l.productId === id && !preIds.has(l.id))
+      .reduce((n, l) => n + Number(l.promoFreeUnits ?? 0), 0);
     baseline.set(id, {
-      free: own.reduce((n, l) => n + Number(l.promoFreeUnits ?? 0), 0),
+      free: own.reduce((n, l) => n + Number(l.promoFreeUnits ?? 0), 0) + minted,
       units: own.reduce(
         (n, l) =>
           n + linePromoUnits({ qty: Number(l.qty), boxes: l.boxes, pieces: l.pieces }, upbOf(l)),

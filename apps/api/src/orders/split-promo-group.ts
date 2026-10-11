@@ -52,10 +52,34 @@ export function planSplitPromos(
   for (const [productId, entries] of byProduct) {
     const upb = Number(productMap.get(productId)?.unitsPerBox ?? 0);
     if (entries.length < 2 || !productMap.has(productId)) continue;
-    // Oldest first = payload order: the write loop re-creates every line in this order (equal createdAt, so
-    // `position` decides), and the resolver puts a split's stored half before its added half. A later settle
-    // reads (createdAt, position, id), so the allocation is stable across writers.
-    const ordered = [...entries];
+    // Oldest first, as a later settle reads it: lines paired with a STORED line by `sourceLineId` first, by
+    // that line's (createdAt, position, id) (the re-created line carries its createdAt, r-note 7), then the
+    // lines added in this edit in payload order (they get a later createdAt and a later position).
+    const stored = new Map(lineItems.filter((l) => l.id).map((l) => [l.id as string, l as any]));
+    const key = (it: PlanItem) => {
+      const l = it.sourceLineId ? stored.get(it.sourceLineId) : undefined;
+      return l
+        ? ([
+            0,
+            l.createdAt ? new Date(l.createdAt).getTime() : 0,
+            l.position ?? 0,
+            String(l.id),
+          ] as const)
+        : null;
+    };
+    const ordered = entries
+      .map((it, i) => ({ it, i, k: key(it) }))
+      .sort((a, b) => {
+        if (a.k && b.k) {
+          return (
+            a.k[1] - b.k[1] || a.k[2] - b.k[2] || (a.k[3] < b.k[3] ? -1 : a.k[3] > b.k[3] ? 1 : 0)
+          );
+        }
+        if (a.k) return -1;
+        if (b.k) return 1;
+        return a.i - b.i;
+      })
+      .map((x) => x.it);
     // Each entry as the write loop will store it (the same per-line pieces-or-units decision).
     const shaped = ordered.map((it) => {
       const split =

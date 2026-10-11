@@ -74,3 +74,28 @@ export function carriedCategoryFor(
   const own = (lineItems ?? []).find((li) => li?.id === sourceLineId);
   return carriedCategory(own, productId) ?? {};
 }
+
+/**
+ * B297 row 355 (r-note 7): what a re-created line takes from the stored line it is paired with via
+ * `sourceLineId`: its category and trio (row 340) AND its `createdAt`. The free units of a split product are
+ * allocated oldest line first by (createdAt, position, id), so a re-created OLD line must not sort after a
+ * newer one: carrying the date keeps the allocation, and every later settle, on the same line.
+ */
+export function carriedLineFor(
+  lineItems:
+    | ReadonlyArray<
+        (CarriedCategorySource & { id?: string | null; createdAt?: Date | string | null }) | null
+      >
+    | null
+    | undefined,
+  item: unknown,
+  productId: string,
+): Record<string, unknown> {
+  const category = carriedCategoryFor(lineItems, item, productId);
+  const sourceLineId = (item as { sourceLineId?: string } | null)?.sourceLineId;
+  const own = sourceLineId ? (lineItems ?? []).find((li) => li?.id === sourceLineId) : undefined;
+  if (own && (own.productId ?? null) === productId && own.createdAt) {
+    return { ...category, createdAt: own.createdAt };
+  }
+  return category;
+}

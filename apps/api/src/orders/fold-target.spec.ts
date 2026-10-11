@@ -300,7 +300,7 @@ describe("caller pin: every quantity-folding site goes through foldTarget", () =
     const src = fs
       .readFileSync(path.resolve(__dirname, "orders.service.ts"), "utf8")
       .replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
-    expect(src).toMatch(/carriedCategoryFor\(order\.lineItems, item, item\.productId\)/);
+    expect(src).toMatch(/carriedLineFor\(order\.lineItems, item, item\.productId\)/); // category + createdAt (r-note 7)
   });
 
   it("the staff controller hands foldMergeItems the product's live trio", () => {
