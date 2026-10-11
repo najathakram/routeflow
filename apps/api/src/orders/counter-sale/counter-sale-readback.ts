@@ -1,5 +1,5 @@
 import { InternalServerErrorException } from "@nestjs/common";
-import { roundMoney, sumConfirmed } from "@routeflow/pricing";
+import { counterChange, roundMoney, storedTaxRatePercent, sumConfirmed } from "@routeflow/pricing";
 import type {
   CounterSalePaymentMethod,
   CounterSaleResponse,
@@ -8,8 +8,42 @@ import type {
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { CounterLeg } from "./counter-sale-legs";
 import { isTender, readStoredTender, type InvoiceRow } from "./counter-sale-tender";
+import { counterTenderCashRows } from "./counter-tender-row";
 
 export { isTender, type InvoiceRow };
+
+type PayRow = {
+  amount: unknown;
+  method?: string;
+  status?: string;
+  paymentGroupId?: string | null;
+};
+
+/**
+ * SA-764 + SA-749r2: the change every surface shows, from STORAGE alone. The ONE gate shared by the POST / by-key
+ * read-back, the Today's-sales row and the receipt document so they can not drift, and the formula is pricing's
+ * `counterChange` (no second one anywhere): `tendered` is `Order.counterCashTendered`, the CASH LEG's handed-over
+ * amount whichever leg index it is; the non-cash applied is everything PAID on the sale except the sale's own
+ * counter-tender CASH rows (`counterTenderCashRows`, the set-level tender rule). null when nothing was tendered or the
+ * sale has no cash tender row (a card-only sale). There is no "first tender" gate: a card-first split serves change.
+ * A PARTLY paid sale whose handed-over cash all went in (change 0, balance owing) serves null, not a Change $0.00 row.
+ * The cash APPLIED (a payment row) is what the till counts, never `tendered`.
+ */
+export function servedChange(
+  orderId: string,
+  tendered: unknown,
+  payments: PayRow[],
+  total: number,
+): number | null {
+  if (tendered == null) return null;
+  const cash = counterTenderCashRows(orderId, payments);
+  if (cash.length === 0) return null;
+  const paid = roundMoney(sumConfirmed(payments));
+  const nonCashApplied = roundMoney(paid - roundMoney(sumConfirmed(cash)));
+  const { change } = counterChange({ total, nonCashApplied, tendered: Number(tendered) });
+  const balanceDue = Math.max(0, roundMoney(roundMoney(total) - paid));
+  return change === 0 && balanceDue > 0 ? null : change;
+}
 
 /** The counter method of a stored tender (Prisma CREDIT_CARD reads back as CARD); undefined for any other. */
 export function counterMethodOf(
@@ -26,22 +60,31 @@ export function counterMethodOf(
  * here, from STORED invoices and payments, so a recovered sale reads exactly like the call that rang it.
  *
  * - With the request's `legs` (POST): leg 0's method is echoed and the request's own rules apply (a throw
- *   part-way through the allocation is `planError`; `change` comes from the CASH leg's own stored rows
- *   against a fully covered stored balance).
+ *   part-way through the allocation is `planError`).
  * - Without them (by-key): the method is DERIVED from storage (first stored tender; none = ON_ACCOUNT, since no
  *   marker separates "left on account" from "tender failed" and nothing new is persisted), a stored tender
- *   that leaves balance owing is NOT recorded (it may be an interrupted allocation), and there is no `change`
- *   (cash tendered is not stored). By-key with the till's `method` passes one amount-less leg.
+ *   that leaves balance owing is NOT recorded (it may be an interrupted allocation). By-key with the till's
+ *   `method` passes one amount-less leg.
+ * - Both: `change` is `servedChange` of the STORED tendered (a sale with a cash tender and nothing left to
+ *   pay), never this call's request.
  *
  * Which stored row belongs to which leg is `readStoredTender`'s rule (the sale's own group ids; a pre-split
  * attempt's ungrouped rows are leg 0's), so an office payment on the same invoice is never the sale's tender.
  */
 export function buildCounterSaleResponse(input: {
   legs?: ReadonlyArray<Pick<CounterLeg, "method" | "amount">>;
-  order: { id: string; orderNumber: string | null } | null;
+  order: {
+    id: string;
+    orderNumber: string | null;
+    counterCashTendered?: unknown;
+    /** `Order.tax`: served with the rate so the live receipt splits Tax from Adjustments like the reprint */
+    tax?: unknown;
+  } | null;
   invoices: InvoiceRow[];
   replayed: boolean;
   planError?: string;
+  /** the tenant's configured rate in percent: a stored line rate is named only when it equals this */
+  configuredTaxPercent?: number | null;
 }): CounterSaleResponse {
   const { legs, order, invoices, replayed, planError } = input;
   const first = invoices[0];
@@ -83,16 +126,9 @@ export function buildCounterSaleResponse(input: {
     if (!settled) error = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
   }
 
-  // Change is handed back ONLY once the STORED balance is fully covered: this call's cash against what its
-  // own leg stored is otherwise money still owed (a replay must never read an unpaid sibling's share as
-  // change), and never when the tender was refused (all the cash goes back). Only the CASH leg's own rows count; sumConfirmed counts PAID rows, so a voided one is out.
-  const cashLeg = legs?.findIndex((l) => l.method === "CASH") ?? -1;
-  let change: number | undefined;
-  if (legs && settled && cashLeg >= 0 && legs[cashLeg].amount != null && balanceDue <= 0) {
-    const cashPaid = sumConfirmed((stored.byLeg.get(cashLeg) ?? []).map((r) => r.payment));
-    const owed = roundMoney(legs[cashLeg].amount! - cashPaid);
-    if (owed > 0) change = owed;
-  }
+  // Change comes from the STORED cash handed over and the sale's own cash rows (`servedChange`, pricing's
+  // `counterChange`): the same figure the Today's-sales row and the receipt serve.
+  const change = servedChange(order.id, order.counterCashTendered, payments, total);
 
   // Every leg of the tender in leg order, from STORAGE: the money RECORDED against it (change is not in it)
   // and the rows that hold it. A request leg that recorded nothing (refused, or ON_ACCOUNT) reads amount 0.
@@ -126,6 +162,28 @@ export function buildCounterSaleResponse(input: {
     ...(!settled
       ? { paymentErrorCode: error ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED }
       : {}),
+    ...(order.counterCashTendered != null
+      ? { cashTendered: roundMoney(Number(order.counterCashTendered)) }
+      : {}),
+    // ONE home for the rate (pricing): the same candidate the Today's row and the emailed receipt use
+    ...(order.tax != null
+      ? {
+          tax: roundMoney(Number(order.tax)),
+          taxRatePercent: storedTaxRatePercent(
+            invoices.map((i) => ({ lines: i.items ?? [] })),
+            input.configuredTaxPercent,
+          ),
+        }
+      : {}),
+    // the stored lines' price facts, so the live receipt applies the invoices' own original-price rule (not the cart's tier price)
+    lines: invoices.flatMap((i) =>
+      (i.items ?? []).map((l) => ({
+        productId: l.productId ?? null,
+        unitPrice: roundMoney(Number(l.unitPrice ?? 0)),
+        originalPrice: l.originalPrice == null ? null : roundMoney(Number(l.originalPrice)),
+        priceType: l.priceType ?? "STANDARD",
+      })),
+    ),
     ...(replayed ? { replayed: true } : {}),
   };
 }

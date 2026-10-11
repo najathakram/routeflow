@@ -1,4 +1,5 @@
 import {
+  COUNTER_TENDER_DISPLAY_ORDER,
   TENDER_RULES,
   centsToDollars,
   dollarsToCents,
@@ -352,11 +353,16 @@ export function rowsFromWire(legs: readonly SplitWireLeg[]): SplitLegRow[] {
 // ─── display order ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * The order a sale's tender is LISTED in (receipt, reprint, Today's sales): everything that is not cash in the order given,
- * then cash. A display partition only: the request keeps the clerk's own line order and the server places the legs.
+ * The order a sale's tender is LISTED in (receipt, reprint, Today's sales): pricing's COUNTER_TENDER_DISPLAY_ORDER, the one
+ * list the API uses too (non-cash first, cash last). A display sort only (stable; a method the list does not know sorts
+ * first): the request keeps the clerk's own line order and the server places the legs.
  */
 export function tenderDisplayOrder<T extends { method: string }>(items: readonly T[]): T[] {
-  return [...items.filter((i) => i.method !== "CASH"), ...items.filter((i) => i.method === "CASH")];
+  const rank = (m: string) => (COUNTER_TENDER_DISPLAY_ORDER as readonly string[]).indexOf(m);
+  return items
+    .map((item, i) => ({ item, i }))
+    .sort((a, b) => rank(a.item.method) - rank(b.item.method) || a.i - b.i)
+    .map((x) => x.item);
 }
 
 /**

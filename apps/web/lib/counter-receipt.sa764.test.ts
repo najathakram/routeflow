@@ -2,7 +2,7 @@ import { adjustmentLabel, receiptModelFromOrder } from "./counter-receipt";
 
 const reprint = (
   total: number,
-  facts: { cashTendered?: number | null; taxRatePercent?: number | null },
+  facts: { cashTendered?: number | null; change?: number | null; taxRatePercent?: number | null },
   methods: Array<{ method: "CASH" | "CARD" | "STORE_CREDIT"; amount: number }>,
   tax?: number,
 ) =>
@@ -27,12 +27,20 @@ const reprint = (
 
 describe("SA-764 reprint: Tendered / Change and Tax (r%)", () => {
   it("a cash sale tendering $50 on $43.30 prints Tendered $50.00 and Change $6.70", () => {
-    const m = reprint(43.3, { cashTendered: 50 }, [{ method: "CASH", amount: 43.3 }]);
+    const m = reprint(43.3, { cashTendered: 50, change: 6.7 }, [{ method: "CASH", amount: 43.3 }]);
     expect(m.tendered).toBe(50);
     expect(m.change).toBe(6.7);
   });
-  it("a split sale reprints the amount applied per method (card first) and no Tendered / Change line (G7)", () => {
-    const m = reprint(43.3, { cashTendered: 30 }, [
+  it("the change is the SERVER's figure: with Tendered but no served change, none is invented from the methods", () => {
+    const m = reprint(43.3, { cashTendered: 50, change: null }, [{ method: "CASH", amount: 43.3 }]);
+    expect(m.tendered).toBe(50);
+    expect(m.change).toBeNull();
+    expect(
+      reprint(43.3, { cashTendered: 50 }, [{ method: "CASH", amount: 43.3 }]).change,
+    ).toBeNull();
+  });
+  it("a split sale reprints the amount applied per method (card first) and no Tendered / Change line, though the row serves them (G7)", () => {
+    const m = reprint(43.3, { cashTendered: 30, change: 10 }, [
       { method: "CASH", amount: 20 },
       { method: "CARD", amount: 23.3 },
     ]);
@@ -44,12 +52,19 @@ describe("SA-764 reprint: Tendered / Change and Tax (r%)", () => {
     ]);
   });
   it("cash plus store credit is not a split: it keeps the one-method reprint and its change", () => {
-    const m = reprint(43.3, { cashTendered: 30 }, [
+    const m = reprint(43.3, { cashTendered: 30, change: 10 }, [
       { method: "CASH", amount: 20 },
       { method: "STORE_CREDIT", amount: 23.3 },
     ]);
     expect(m.tenderLines).toEqual([]);
     expect(m.change).toBe(10);
+  });
+  it("no row change means no Change line, even with a tender (never a computed or clamped 0)", () => {
+    const m = reprint(43.3, { cashTendered: 43.3, change: null }, [
+      { method: "CASH", amount: 43.3 },
+    ]);
+    expect(m.tendered).toBe(43.3);
+    expect(m.change).toBeNull();
   });
   it("legacy and card sales (null or absent) keep today's behaviour: no Tendered, no Change", () => {
     for (const f of [{}, { cashTendered: null }]) {

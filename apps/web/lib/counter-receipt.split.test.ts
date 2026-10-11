@@ -31,6 +31,18 @@ describe("a split-payment receipt", () => {
     { method: "CASH", amount: 40, paymentIds: ["p2"] },
     { method: "CARD", amount: 30, paymentIds: ["p1"] },
   ];
+  // the server's facts for card 30 + cash 50 on 70 (cash is leg 1 here, or leg 0: the change is served either way)
+  const served = { cashTendered: 50, change: 10 };
+
+  it("a card-first split (cash is leg 1) shows the served Tendered and Change; nothing is derived from a cash-first tender", () => {
+    const cardFirst = [
+      { method: "CARD", amount: 30, paymentIds: ["p1"] },
+      { method: "CASH", amount: 40, paymentIds: ["p2"] },
+    ];
+    const m = build({ payments: cardFirst, method: "CARD", ...served });
+    expect(m).toMatchObject({ tendered: 50, change: 10 });
+    expect(m.tenderLines.map((t) => t.amount)).toEqual([30, 50]);
+  });
 
   it("lists one row per leg, non-cash first then cash, and labels the method 'Card + Cash'", () => {
     const m = build({ payments: legs });
@@ -42,24 +54,25 @@ describe("a split-payment receipt", () => {
   });
 
   it("card 30 + cash 50 on 70: Card $30.00 / Cash $50.00 (handed over) / Change $10.00; no separate Tendered row", () => {
-    const m = build({ payments: legs, change: 10 });
+    const m = build({ payments: legs, ...served });
     expect(m.tenderLines.map((t) => [t.label, t.amount])).toEqual([
       ["Card", 30],
       ["Cash", 50],
     ]);
     expect(m.change).toBe(10);
     expect(m.changeAsEntered).toBe(false);
-    expect(m.tendered).toBeNull();
+    expect(m.tendered).toBe(50); // the view prints it as the Cash line, not as a second Tendered row
+    expect(m.tenderedAsEntered).toBe(false);
   });
 
-  it("an exact live split has no change row; the Cash line is what was applied; Paid is the server's", () => {
-    const m = build({ payments: legs });
-    expect(m).toMatchObject({ change: null, tendered: null, paid: 70, showPaid: true });
+  it("an exact live split reads Change $0.00 as served (like exact cash); the Cash line is what was applied", () => {
+    const m = build({ payments: legs, cashTendered: 40, change: 0 });
+    expect(m).toMatchObject({ change: 0, tendered: 40, paid: 70, showPaid: true });
     expect(m.tenderLines[1]).toMatchObject({ label: "Cash", amount: 40 });
   });
 
   it("a stale 'entered' figure never leaks into a live split that has its own change", () => {
-    const m = build({ payments: legs, change: 10 }, 99);
+    const m = build({ payments: legs, ...served }, 99);
     expect(m.tenderLines[1].amount).toBe(50);
     expect(m.changeAsEntered).toBe(false);
   });
@@ -73,7 +86,8 @@ describe("a split-payment receipt", () => {
   it("a recovered split sale with no change owed shows nothing extra", () => {
     const m = build({ payments: legs }, 40);
     expect(m.tenderLines[1].amount).toBe(40);
-    expect(m.change).toBeNull();
+    expect(m.change).toBe(0); // exact cash reads Change $0.00, as entered
+    expect(m.changeAsEntered).toBe(true);
   });
 
   it("a single tender is unchanged: no tender lines, the one Payment method row", () => {

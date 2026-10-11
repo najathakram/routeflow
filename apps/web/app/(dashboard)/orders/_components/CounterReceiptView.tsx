@@ -189,7 +189,8 @@ export function CounterReceiptView({
             <dd>{money(m.balanceDue)}</dd>
           </div>
         ) : null}
-        {m.tendered != null ? (
+        {/* a split's Cash line IS the cash handed over, so it has no separate Tendered row */}
+        {m.tendered != null && m.tenderLines.length === 0 ? (
           <div className="flex justify-between" data-testid="receipt-tendered">
             <dt>Tendered</dt>
             <dd>

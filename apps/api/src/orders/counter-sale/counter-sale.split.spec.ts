@@ -59,6 +59,8 @@ describe("CounterSaleService.ring: split payments", () => {
   let createSale: jest.Mock;
   let recordPayment: jest.Mock;
   let walkIns: { getOrCreateWalkIn: jest.Mock };
+  // Order.counterCashTendered as storage holds it: the tender writes it (CAS like the real updateMany), the read-back reads it.
+  let storedTendered: unknown;
 
   const inv = (id: string, total: number, at: number, payments: Pay[] = []): Inv => ({
     id,
@@ -110,7 +112,19 @@ describe("CounterSaleService.ring: split payments", () => {
     prisma.product.findMany.mockResolvedValue([{ id: "p1" }]);
     prisma.creditNote.findMany.mockResolvedValue([]);
     prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: true });
-    prisma.order.findFirst.mockResolvedValue({ id: "ord-1", orderNumber: "ORD-1" });
+    storedTendered = null;
+    prisma.order.findFirst.mockImplementation(async () => ({
+      id: "ord-1",
+      orderNumber: "ORD-1",
+      counterCashTendered: storedTendered,
+    }));
+    prisma.order.updateMany.mockImplementation(async ({ where, data }: any) => {
+      if ("counterCashTendered" in where && storedTendered !== where.counterCashTendered) {
+        return { count: 0 };
+      }
+      storedTendered = data.counterCashTendered;
+      return { count: 1 };
+    });
     prisma.invoice.findMany.mockImplementation(async ({ where }: any = {}) =>
       invoices
         .filter((i) => !where?.status?.notIn?.includes(i.status))
@@ -739,6 +753,8 @@ describe("CounterSaleService.ring: split payments", () => {
         paid: 70,
         balanceDue: 0,
         change: 10,
+        cashTendered: 50,
+        lines: [],
         paymentId: "pay-1",
         payments: [
           { method: "CARD", amount: 30, paymentIds: ["pay-1"] },
@@ -819,7 +835,8 @@ describe("CounterSaleService.ring: split payments", () => {
     it("an office CASH payment on the same invoice is not the cash leg's: change is the cash leg's own rows only", async () => {
       // 100 sale: card 30 + cash 50 were taken (balance 20); the office then took 20 cash on the invoice (no group id).
       // The till replays with cash 60 handed over: 50 is the cash leg's, so 10 goes back. Counting the office's
-      // cash as this leg's (every CASH row on the invoice) would read "70 paid in cash" and give no change.
+      // cash as this leg's (every CASH row on the invoice) would read "70 paid in cash" and give no change: the
+      // office row is non-cash money to the sale, so the cash leg took 100 - (30 + 20) = 50.
       invoices = [
         inv("inv-1", 100, 1, [
           {
@@ -967,6 +984,127 @@ describe("CounterSaleService.ring: split payments", () => {
         "key-2",
       );
       expect(await cashRefund(0.01)).toEqual({ status: 409, code: "REFUND_EXCEEDS_CASH_PAID" });
+    });
+  });
+  // SA-749r2 (round 2): Order.counterCashTendered is the cash LEG's handed-over amount at any index, and every
+  // surface serves change from it through pricing's counterChange (no first-tender gate).
+  describe("the cash handed over and the one change figure", () => {
+    const tenderedWrites = () => prisma.order.updateMany.mock.calls.map((c: any[]) => c[0]);
+
+    it("card 30 + cash handed 40 on a 50 total: tendered 40 stored, change 20, the cash row applies 20", async () => {
+      invoices = [inv("inv-1", 50, 1)];
+      const r = await service.ring(
+        walkInSale({
+          payments: [
+            { method: "CARD", amount: 30 },
+            { method: "CASH", amount: 40 },
+          ],
+        }),
+        staff,
+        "key-1",
+      );
+      expect(storedTendered).toBe(40);
+      expect(r).toMatchObject({ paid: 50, balanceDue: 0, cashTendered: 40, change: 20 });
+      // the till and the day close count the APPLIED cash (the payment row), never the handed-over amount
+      expect(r.payments).toEqual([
+        { method: "CARD", amount: 30, paymentIds: ["pay-1"] },
+        { method: "CASH", amount: 20, paymentIds: ["pay-2"] },
+      ]);
+      expect(recordPayment.mock.calls.map((c) => [c[1].method, c[1].amount])).toEqual([
+        ["CREDIT_CARD", 30],
+        ["CASH", 20],
+      ]);
+    });
+
+    it("card 60 on a 50 total is refused BEFORE any write: COUNTER_PAYMENT_EXCEEDS_TOTAL, no order row, nothing stored", async () => {
+      invoices = [inv("inv-1", 50, 1)];
+      const e = await errorOf(
+        service.ring(walkInSale({ payments: [{ method: "CARD", amount: 60 }] }), staff, "key-1"),
+      );
+      expect(e.getStatus()).toBe(400);
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_PAYMENT_EXCEEDS_TOTAL" });
+      expect(written).toBe(false);
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(tenderedWrites()).toEqual([]);
+    });
+
+    it("card-first $70: card 30 + cash handed 50: change 10 on the 201 and on the by-key readback", async () => {
+      const r = await service.ring(
+        walkInSale({
+          payments: [
+            { method: "CARD", amount: 30 },
+            { method: "CASH", amount: 50 },
+          ],
+        }),
+        staff,
+        "key-1",
+      );
+      expect(r).toMatchObject({ method: "CARD", cashTendered: 50, change: 10 });
+      (service as any).orders.findReplayCandidateByKey.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        counterSale: true,
+        status: "DELIVERED",
+        counterCashTendered: storedTendered,
+      });
+      const k = await service.byKey("key-1");
+      expect(k).toMatchObject({ method: "CARD", cashTendered: 50, change: 10 });
+    });
+
+    it("cash-first $70: cash handed 50 then card 30: the server still applies card first, change 10", async () => {
+      const r = await service.ring(
+        walkInSale({
+          payments: [
+            { method: "CASH", amount: 50 },
+            { method: "CARD", amount: 30 },
+          ],
+        }),
+        staff,
+        "key-1",
+      );
+      expect(r).toMatchObject({ method: "CASH", cashTendered: 50, change: 10 });
+      expect(r.payments?.map((p) => p.method)).toEqual(["CASH", "CARD"]);
+      expect(recordPayment.mock.calls.map((c) => c[1].method)).toEqual(["CREDIT_CARD", "CASH"]);
+    });
+
+    it("the handed-over amount is written once: a replay of a stored cash leg never overwrites it", async () => {
+      await service.ring(
+        walkInSale({
+          payments: [
+            { method: "CARD", amount: 30 },
+            { method: "CASH", amount: 50 },
+          ],
+        }),
+        staff,
+        "key-1",
+      );
+      replay = true;
+      await service.ring(
+        walkInSale({
+          payments: [
+            { method: "CARD", amount: 30 },
+            { method: "CASH", amount: 50 },
+          ],
+        }),
+        staff,
+        "key-1",
+      );
+      expect(storedTendered).toBe(50);
+      // the anchored replay can only FILL a null (CAS on counterCashTendered: null)
+      const last = tenderedWrites().at(-1);
+      expect(last.where).toEqual({ id: "ord-1", counterCashTendered: null });
+    });
+
+    it("a card-only sale stores no tendered and serves no change", async () => {
+      const r = await service.ring(
+        walkInSale({ payments: [{ method: "CARD", amount: 70 }] }),
+        staff,
+        "key-1",
+      );
+      expect(storedTendered).toBeNull();
+      expect(tenderedWrites()).toEqual([]);
+      expect(r.change).toBeUndefined();
+      expect(r.cashTendered).toBeUndefined();
     });
   });
 });

@@ -15,6 +15,8 @@
 // call, and the "success"/"refused" screens — `InlineReturnSection` stays mounted underneath
 // them (hidden, never unmounted) across a refusal so a retry doesn't lose the operator's typed
 // lines/quote.
+import { RefundSlipAction } from "./RefundSlipAction";
+import { readAutoPrint } from "@/lib/counter-sale";
 import * as React from "react";
 import Link from "next/link";
 import { Button, Modal, Select, useToast } from "@routeflow/ui/web";
@@ -50,6 +52,8 @@ import {
   handBackLine,
   refundErrorKind,
   tenderFromPaidMethods,
+  cashBackCopy,
+  cashRefundLimit,
   TERMINAL_REFUND_ERRORS,
   type RefundErrorKind,
 } from "./refund-copy";
@@ -221,7 +225,11 @@ export function RecordInlineReturnDialog({
   const walkIn = showChoice && !!quoted?.canRefund && !!quoted?.customerIsWalkIn;
   const effResolution: InlineReturnResolution =
     !showChoice || paidWithCredit ? "STORE_CREDIT" : walkIn ? "REFUND" : resolution;
-  const effTender: InlineRefundTender = tender ?? tenderFromPaidMethods(quoted?.paidMethods);
+  // SA-749r2 #9 (G7): a refund above the sale's cash defaults to Card and says how much can still go back in cash.
+  const cashLimit = quoted ? cashRefundLimit(quoted) : null;
+  const cashShort = !!cashLimit?.exceeds;
+  const effTender: InlineRefundTender =
+    tender ?? (cashShort ? "CARD" : tenderFromPaidMethods(quoted?.paidMethods));
   const quotedAmount = quoted?.total ?? 0;
   const shownAmount = serverAmount ?? quotedAmount;
   // A 409 that carried the server's figure: the quote's Total follows it, so the screen never shows two amounts. Keyed on the
@@ -472,6 +480,7 @@ export function RecordInlineReturnDialog({
               // SA-749r2 #9: after "more cash than was taken" the tender is the way out, so it stays editable
               tenderEditable={refundError === "exceedsCash"}
               error={refundError}
+              cashUpTo={cashShort ? money(cashLimit!.upTo) : null}
             />
           ) : null
         }
@@ -591,6 +600,9 @@ export function RecordInlineReturnDialog({
               Refund recorded. {handBackLine(refundDone.tender, money(refundDone.amount))}
             </p>
           )}
+          {(refundDone || result.creditNoteId) && (
+            <RefundSlipAction returnId={result.id} autoPrint={readAutoPrint()} />
+          )}
           {result.parkedReversals && (
             <div
               data-testid="inline-return-parked-warning"
@@ -650,6 +662,7 @@ function RefundChoice({
   locked,
   tenderEditable = false,
   error,
+  cashUpTo = null,
 }: {
   amount: string;
   walkIn: boolean;
@@ -662,6 +675,8 @@ function RefundChoice({
   /** SA-749r2 #9: keep the "Refund by" tender editable although the choice is locked (the way out of a cash cap refusal). */
   tenderEditable?: boolean;
   error: RefundErrorKind | null;
+  /** the refund is more than the sale's cash: how much can still go back in cash (formatted), else null */
+  cashUpTo?: string | null;
 }) {
   const refund = resolution === "REFUND";
   return (
@@ -700,6 +715,11 @@ function RefundChoice({
             onChange={(e) => onTender(e.target.value as InlineRefundTender)}
             options={TENDER_OPTIONS}
           />
+          {cashUpTo ? (
+            <p className="text-sm text-navy" data-testid="refund-cash-limit">
+              {cashBackCopy(cashUpTo)}
+            </p>
+          ) : null}
           <p className="text-sm text-navy">{handBackLine(tender, amount)}</p>
         </>
       )}

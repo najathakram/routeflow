@@ -1,3 +1,4 @@
+import { roundMoney } from "@routeflow/pricing";
 import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { assertSellableLines } from "../products/sellable-lines";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
@@ -86,4 +87,20 @@ export function foldCategoryTax(
 ): number {
   zeroExemptCategoryTax(itemsData, isTaxExempt);
   return sumInvoiceTotalsStrict(itemsData, { isTaxExempt }).categoryTax;
+}
+
+/**
+ * The ONE order-derived regular-tax share: `order.tax` x (this invoice's subtotal / the order's subtotal),
+ * cents-rounded, 0 for a tax-exempt customer. Used by the two single-invoice builders that cut an invoice from
+ * the order (reconcile, the partial create). The DRAFT-partial price follow reaches the same figure another way:
+ * it sums its lines through sumInvoiceTotalsStrict at the order-derived rate (spec-pinned equal). (The multi-invoice splits allocate
+ * the same tax across siblings with a rounding remainder; that is a different, group-wide rule.)
+ */
+export function regularTaxShare(
+  order: { tax?: unknown; subtotal?: unknown },
+  subtotal: number,
+  isTaxExempt: boolean,
+): number {
+  if (isTaxExempt) return 0;
+  return roundMoney(Number(order.tax) * (subtotal / (Number(order.subtotal) || 1)));
 }

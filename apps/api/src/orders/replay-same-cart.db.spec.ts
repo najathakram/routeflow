@@ -16,6 +16,8 @@ jest.mock("../invoices/invoices.service", () => ({
     findAll: jest.fn().mockResolvedValue({ data: [], meta: {} }),
     revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue(undefined),
     resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+    followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+    projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
   })),
 }));
 

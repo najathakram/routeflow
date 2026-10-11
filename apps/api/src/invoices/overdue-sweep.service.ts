@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { LeaderCron } from "../common/cron-lock";
 import { overdueCutoff } from "../common/calendar-date";
+import { markInvoicesOverdue, overdueInvoiceCount } from "./invoice-balance-sql";
 import { resolveZone } from "../common/tenant-time-zone";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -49,7 +50,7 @@ const SWEPT_TENANT_STATUSES = ["TRIAL", "ACTIVE"] as const;
 
 /**
  * The invoice statuses the sweep may flip: issued and UNPAID only. PARTIAL is deliberately absent
- * (#2556 B2): `recomputeInvoiceStatus` keeps a part-paid invoice PARTIAL, so flipping it here
+ * (#2556 B2): `statusFromPayments` keeps a part-paid invoice PARTIAL, so flipping it here
  * would flip-flop on every payment and move it into sets that exclude PARTIAL on purpose (the
  * order-edit revert set, bookkeeping's "UNPAID" filter).
  */
@@ -128,19 +129,18 @@ export class OverdueSweepService {
  * Fails closed without a tenant. `dryRun` COUNTS with the same where and writes nothing.
  */
 export async function markOverdueForTenant(
-  prisma: Pick<PrismaService, "tenantConfig" | "invoice">,
+  prisma: Pick<PrismaService, "tenantConfig" | "$queryRaw" | "$executeRaw">,
   tenantId: string,
   now: Date,
   opts: { dryRun?: boolean } = {},
 ): Promise<number> {
   if (!tenantId) throw new Error("markOverdue needs a tenant id (never an unscoped sweep)");
   const { zone } = await resolveZone(prisma, { tenantId });
-  const where = {
-    tenantId,
-    status: { in: [...SWEPT_INVOICE_STATUSES] },
-    dueDate: { lt: overdueCutoff(now, zone) },
-  };
-  if (opts.dryRun) return prisma.invoice.count({ where });
-  const res = await prisma.invoice.updateMany({ where, data: { status: InvoiceStatus.OVERDUE } });
-  return res.count;
+  const cutoff = overdueCutoff(now, zone);
+  // SA-770 (row 294): "overdue" means a balance is owed. The count and the write share ONE predicate
+  // (invoice-balance-sql.ts), and the write is a single UPDATE, so a fully-paid or overpaid SENT/VIEWED
+  // invoice (P-3 keeps an overpaid one out of PAID) is never flipped, even if a payment lands mid-run.
+  const statuses = [...SWEPT_INVOICE_STATUSES];
+  if (opts.dryRun) return overdueInvoiceCount(prisma, tenantId, cutoff, { statuses });
+  return markInvoicesOverdue(prisma, tenantId, cutoff, statuses);
 }

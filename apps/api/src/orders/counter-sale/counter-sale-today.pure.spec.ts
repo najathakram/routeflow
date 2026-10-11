@@ -6,6 +6,7 @@ import {
   todaysMethodOf,
   type TodayOrderRecord,
 } from "./counter-sale-today";
+import { legGroupId } from "./counter-tender-row";
 
 /**
  * Today's sales, the PURE half (rows + summary fold). No Prisma: the fixtures are the shapes the page query
@@ -83,11 +84,58 @@ describe("toTodaysSaleRow: payments and state (test 8)", () => {
       order({ payments: [pay("CASH", "20.00"), pay("CREDIT_NOTE", "4.50")] }),
     );
     expect(row.methods).toEqual([
-      { method: "CASH", amount: 20 },
       { method: "STORE_CREDIT", amount: 4.5 },
+      { method: "CASH", amount: 20 },
     ]);
     expect(row.paid).toBe(24.5);
     expect(row.paymentState).toBe("PAID");
+  });
+
+  it("(B) methods list non-cash first and CASH last: Card $30.00 + Cash $40.00, whatever order they were taken in", () => {
+    for (const payments of [
+      [pay("CASH", "40.00"), pay("CREDIT_CARD", "30.00")],
+      [pay("CREDIT_CARD", "30.00"), pay("CASH", "40.00")],
+    ]) {
+      expect(toTodaysSaleRow(order({ payments })).methods).toEqual([
+        { method: "CARD", amount: 30 },
+        { method: "CASH", amount: 40 },
+      ]);
+    }
+  });
+
+  it("(A) a card-first split serves change on the row: $70 = card 30 + cash handed 50 -> change 10", () => {
+    const grouped = (leg: number, method: string, amount: string) => ({
+      ...pay(method, amount),
+      paymentGroupId: legGroupId("o-1", leg),
+    });
+    const row = toTodaysSaleRow(
+      order({
+        total: "70.00",
+        counterCashTendered: "50.00",
+        payments: [grouped(0, "CREDIT_CARD", "30.00"), grouped(1, "CASH", "40.00")],
+      }),
+    );
+    expect(row.methods).toEqual([
+      { method: "CARD", amount: 30 },
+      { method: "CASH", amount: 40 },
+    ]);
+    expect(row.cashTendered).toBe(50);
+    expect(row.change).toBe(10);
+  });
+
+  it("(A) a cash-first split (leg 0 cash) serves the same change", () => {
+    const grouped = (leg: number, method: string, amount: string) => ({
+      ...pay(method, amount),
+      paymentGroupId: legGroupId("o-1", leg),
+    });
+    const row = toTodaysSaleRow(
+      order({
+        total: "70.00",
+        counterCashTendered: "50.00",
+        payments: [grouped(0, "CASH", "40.00"), grouped(1, "CREDIT_CARD", "30.00")],
+      }),
+    );
+    expect(row.change).toBe(10);
   });
 
   it("an ADVANCE application is store credit too; ACH / ZELLE / OTHER read as OTHER", () => {
@@ -421,6 +469,7 @@ describe("foldSummary (tests 10 and 11)", () => {
     expect(s).toEqual({
       sales: { count: 0, total: 0 },
       moneyIn: { cash: 0, card: 0, check: 0, other: 0, total: 0 },
+      handOvers: { count: 0, total: 0 },
       storeCreditUsed: 0,
       onAccount: 0,
       // no refund in the window means no unknown tender in it: known (SA-740r2)

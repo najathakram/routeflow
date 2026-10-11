@@ -128,6 +128,10 @@ export interface InvoicePayment {
 export interface Invoice {
   id: string;
   invoiceNumber: string;
+  /** P-4: derived by the API; absent = never revised (no badge). */
+  revisedAt?: string | null;
+  /** P-4: > 0 only when overpaid; absent = nothing shown. */
+  overpaidBy?: number | null;
   customerId: string;
   customer?: {
     id: string;
@@ -895,14 +899,16 @@ export function useUnvoidInvoice() {
 
 // ─── Generate Invoice from Order ──────────────────────────────────────────────
 
-export function useCreateInvoiceFromOrder() {
+export function useCreateInvoiceFromOrder(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   // W4: a mixed regulated order returns >1 sibling invoice, so this is Invoice[].
   return useMutation<Invoice[], Error, string>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (orderId) => apiClient.post(`/invoices/from-order/${orderId}`).then((r) => r.data),
-    onSuccess: () => {
+    onSuccess: (_d, orderId) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["orders", orderId] });
     },
   });
 }

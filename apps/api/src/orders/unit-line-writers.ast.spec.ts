@@ -123,6 +123,11 @@ const INVENTORY: Record<string, Row> = {
     kind: "FIELD_ONLY",
     why: "deliveredQty reset to 0 on lines with no delivery evidence",
   },
+  // SA-763r: a DELIVERED write / edit books what left, on lines with no delivery evidence.
+  "orders/delivered-stamp.ts::stampDeliveredInFull": {
+    kind: "FIELD_ONLY",
+    why: "deliveredQty raised on lines with no delivery evidence; never factor or price",
+  },
   "orders/orders.service.ts::OrdersService.reopenOrder": {
     kind: "FIELD_ONLY",
     why: "line status flips",
@@ -177,7 +182,7 @@ const INVENTORY: Record<string, Row> = {
     why: "copies the order line via the shared builder",
     trioVia: ["buildInvoiceItemData"],
   },
-  "invoices/invoices.service.ts::InvoicesService.reconcileOrderDraftInvoice": {
+  "invoices/invoices.service.ts::InvoicesService.reconcileOrderDraftInvoiceLocked": {
     kind: "SAFE_COPY",
     needs: "buildInvoiceItemData",
     why: "copies via the shared builder",
@@ -441,6 +446,7 @@ function lineWriteDataKeys(node: ts.Node): string[] {
 const FREE_WRITER_DATA_KEYS: Record<string, string[]> = {
   "orders/order-cancel-tx.ts::cancelOrderInTx": ["status"],
   "orders/delivered-stamp.ts::clearUnevidencedDelivered": ["deliveredQty"],
+  "orders/delivered-stamp.ts::stampDeliveredInFull": ["deliveredQty"],
 };
 
 function exportedFunctions(sf: ts.SourceFile): Map<string, ts.FunctionDeclaration> {

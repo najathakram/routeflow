@@ -478,4 +478,41 @@ describeDb("SA-762r: void a counter sale, real Postgres", () => {
     expect((await snapshot(e)).stock).toBe(95); // evidence says they left: nothing restocked
     expect((await snapshot(e)).orderStatus).toBe("CANCELLED");
   }, 120_000);
+  /** A stamped counter sale: `qty` sold (stock 100 - booked), deliveredQty = sold, then the office cuts the line to `cut`. */
+  async function seedStampedThenCut(label: string, sold: number, cut: number, pack: number | null) {
+    const s = await seedSale(label, sold);
+    const perUnit = pack ?? 1;
+    await prisma.product.update({
+      where: { id: s.product.id },
+      data: { unitsPerBox: pack, currentStock: 100 - sold * perUnit },
+    });
+    // the stamp (createSale's DELIVERED write) left d = sold; an office cut books max(qty, d) = sold: no stock moves
+    await prisma.orderItem.update({
+      where: { id: s.item.id },
+      data: { deliveredQty: sold, qty: cut },
+    });
+    return s;
+  }
+
+  it("(j) counter 12 -> cut to 10 -> void: the stock counter ends where it started (88 -> 100, not 98)", async () => {
+    const s = await seedStampedThenCut("cut", 12, 10, null);
+    expect((await snapshot(s)).stock).toBe(88);
+    await doVoid(s);
+    expect((await snapshot(s)).stock).toBe(100);
+    const line = await prisma.orderItem.findUniqueOrThrow({ where: { id: s.item.id } });
+    expect(Number(line.qty)).toBe(10); // the cancelled line's qty is never rewritten
+  }, 120_000);
+
+  it("(k) counter 12 -> no cut -> void: back to the start", async () => {
+    const s = await seedStampedThenCut("nocut", 12, 12, null);
+    await doVoid(s);
+    expect((await snapshot(s)).stock).toBe(100);
+  }, 120_000);
+
+  it("(l) a box-unaware boxed line: 3 boxes of 12 sold, cut to 2, void: all 36 pieces come back", async () => {
+    const s = await seedStampedThenCut("boxedcut", 3, 2, PACK);
+    expect((await snapshot(s)).stock).toBe(100 - 36);
+    await doVoid(s);
+    expect((await snapshot(s)).stock).toBe(100);
+  }, 120_000);
 });

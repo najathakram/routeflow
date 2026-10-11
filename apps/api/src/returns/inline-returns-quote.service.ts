@@ -51,6 +51,7 @@ import {
   sourcesAreRefundable,
 } from "./inline-return-refund";
 import { assertWalkInCoveredBySale, resolveSourceSale } from "./inline-returns-source-sale";
+import { cashRefundRooms } from "./cash-refund-cap";
 
 /** PR-1..3 ship fixed defaults (design.md §8) — config reading comes after
  * feature-grants PR-3a's EntitlementsService wiring. */
@@ -142,13 +143,17 @@ export class InlineReturnsQuoteService {
       paidMethods: string[];
       paidWithStoreCredit: boolean;
       customerIsWalkIn: boolean;
+      cashRefundable: Record<string, number>;
     }
   > {
     const db = this.prisma.forTenant();
     const priced = await this.priceInlineReturn(dto, user, db);
     // SA-727 (additive): what the counter dialog needs to offer a cash/card/check refund. Read-only and unlocked: a hint
     // only; POST /returns/inline/:id/refund re-checks everything under its locks.
-    const [customer, source] = await Promise.all([
+    const sourceOrderIds = [
+      ...new Set(priced.chunks.flatMap((c) => (c.sourceOrderId ? [c.sourceOrderId] : []))),
+    ];
+    const [customer, source, rooms] = await Promise.all([
       db.customer.findFirst({
         where: { id: dto.customerId, deletedAt: null },
         select: { isWalkIn: true },
@@ -157,6 +162,8 @@ export class InlineReturnsQuoteService {
         db,
         priced.chunks.map((c) => c.sourceInvoiceItemId),
       ),
+      // SA-749r2: the cash each source sale can still give back, by the SAME function the 409 cap uses (cash-refund-cap.ts)
+      cashRefundRooms(db, { orderIds: sourceOrderIds }),
     ]);
     return {
       ...priced,
@@ -166,6 +173,9 @@ export class InlineReturnsQuoteService {
       paidMethods: source.paidMethods,
       paidWithStoreCredit: source.paidWithStoreCredit,
       customerIsWalkIn: customer?.isWalkIn === true,
+      cashRefundable: Object.fromEntries(
+        sourceOrderIds.map((id) => [id, rooms.get(id)?.room ?? 0]),
+      ),
     };
   }
 

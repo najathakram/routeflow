@@ -1,6 +1,11 @@
 // POS-4b: fixed copy + error classification for the refund-vs-credit choice. Never render
 // server text for these errors (apps/web/lib/raw-message-allowlist.json must not grow).
-import { API_ERROR_CODES, type InlineRefundTender } from "@routeflow/types";
+import { roundMoney } from "@routeflow/pricing";
+import {
+  API_ERROR_CODES,
+  type InlineRefundTender,
+  type InlineReturnQuoteResponse,
+} from "@routeflow/types";
 
 export type RefundErrorKind =
   | "changed"
@@ -93,3 +98,43 @@ export const TENDER_OPTIONS: { value: InlineRefundTender; label: string }[] = [
   { value: "CARD", label: "Card" },
   { value: "CHECK", label: "Check" },
 ];
+
+/** SA-749r2 item 9 (G7): shown on the refund choice when the refund is more than the sale's cash can go back as. */
+export const cashBackCopy = (amount: string): string => `Up to ${amount} back in cash`;
+
+/**
+ * Whether a cash refund of this quote would pass the server's cap, from the quote alone (no client math on the wrong fields):
+ * per source sale, the refund's share (its chunks' subtotal + tax + category tax) against that sale's `cashRefundable`. `exceeds`
+ * is true when ANY sale's share is above its room (the 409 REFUND_EXCEEDS_CASH_PAID case); `upTo` is the most that can go back
+ * in cash, the sum over the sales of the lesser of share and room (a sale with no figure counts whole). null when the quote carries no `cashRefundable` (an older
+ * API) or no chunk sits on a sale: then nothing is limited here and the server's cap still answers.
+ */
+export function cashRefundLimit(
+  quote: Pick<InlineReturnQuoteResponse, "chunks"> &
+    Partial<Pick<InlineReturnQuoteResponse, "cashRefundable">>,
+): { exceeds: boolean; upTo: number } | null {
+  const rooms = quote.cashRefundable;
+  if (!rooms) return null;
+  const shares = new Map<string, number>();
+  for (const c of quote.chunks) {
+    if (!c.sourceOrderId) continue;
+    shares.set(
+      c.sourceOrderId,
+      roundMoney((shares.get(c.sourceOrderId) ?? 0) + c.subtotal + c.taxAmount + c.categoryTax),
+    );
+  }
+  if (shares.size === 0) return null;
+  let exceeds = false;
+  let upTo = 0;
+  for (const [orderId, share] of shares) {
+    const known = rooms[orderId];
+    if (known === undefined) {
+      upTo = roundMoney(upTo + share); // no figure for this sale (an older API): nothing limits it here
+      continue;
+    }
+    const room = Math.max(0, known);
+    if (share > room + 0.001) exceeds = true;
+    upTo = roundMoney(upTo + Math.min(share, room));
+  }
+  return { exceeds, upTo };
+}

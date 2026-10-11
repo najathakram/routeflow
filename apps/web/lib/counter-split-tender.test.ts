@@ -1,4 +1,4 @@
-import { TENDER_RULES } from "@routeflow/pricing";
+import { COUNTER_TENDER_DISPLAY_ORDER, TENDER_RULES } from "@routeflow/pricing";
 import {
   PAYMENT_PROBLEM_COPY,
   counterSaleErrorCopy,
@@ -283,8 +283,13 @@ describe("summarizeSplit: Remaining, change and the first rule that stops the sa
 describe("how a tender is listed (display order only)", () => {
   it("non-cash first, then cash; each group keeps the order it came in", () => {
     const items = [{ method: "CASH" }, { method: "CHECK" }, { method: "CARD" }];
-    expect(tenderDisplayOrder(items).map((i) => i.method)).toEqual(["CHECK", "CARD", "CASH"]);
+    expect(tenderDisplayOrder(items).map((i) => i.method)).toEqual(["CARD", "CHECK", "CASH"]);
     expect(items.map((i) => i.method)).toEqual(["CASH", "CHECK", "CARD"]); // the input is untouched
+    // the order is pricing's one list (the API reads the same), never a copy here
+    const listed = [...COUNTER_TENDER_DISPLAY_ORDER].reverse().map((method) => ({ method }));
+    expect(tenderDisplayOrder(listed).map((i) => i.method)).toEqual([
+      ...COUNTER_TENDER_DISPLAY_ORDER,
+    ]);
   });
 
   it("a split is two or more methods that took money; store credit is not one", () => {

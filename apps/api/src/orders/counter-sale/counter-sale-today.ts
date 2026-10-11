@@ -1,11 +1,17 @@
 import {
+  FulfillPath,
   InvoiceStatus,
   OrderStatus,
   PaymentStatus,
   ReturnStatus,
   type Prisma,
 } from "@prisma/client";
-import { roundMoney, sumConfirmed } from "@routeflow/pricing";
+import {
+  COUNTER_TENDER_DISPLAY_ORDER,
+  roundMoney,
+  storedTaxRatePercent,
+  sumConfirmed,
+} from "@routeflow/pricing";
 import type {
   TodaysSaleMethod,
   TodaysSalePaymentState,
@@ -16,9 +22,10 @@ import type {
   TodaysSalesSummary,
 } from "@routeflow/types";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
-import { counterMethodOf } from "./counter-sale-readback";
+import { counterMethodOf, servedChange } from "./counter-sale-readback";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
+import { pickupTenderGroupId } from "./pickup-tender-group";
 
 /**
  * Today's sales (GET /orders/counter-sale/today): the PURE half. Everything that decides a figure lives here
@@ -97,6 +104,59 @@ export function salePaymentsWhere(tenantId: string, w: DayWindow) {
 }
 
 /**
+ * HAND-OVERS (SA-763r R7): the PAID payments that CAME IN in the window on the tender of a POS-mode pickup
+ * hand-over: invoices of a PICKUP order that is NOT a counter sale (a counter sale is `salePaymentsWhere`'s,
+ * so the two sets are disjoint and nothing is counted twice). This is only the CANDIDATE query: whether a
+ * payment is the hand-over's own tender (not a deposit or a later payment on the same invoice) is the v5
+ * group id, which no SQL predicate can express, so `handOverPayments` filters in code. Bounded by the day's
+ * PICKUP payments.
+ */
+export function handOverCandidatesWhere(tenantId: string, w: DayWindow) {
+  return {
+    tenantId,
+    status: PaymentStatus.PAID,
+    paidAt: { gte: w.start, lt: w.end },
+    paymentGroupId: { not: null },
+    invoice: {
+      tenantId,
+      status: { notIn: DEAD_INVOICE_STATUSES },
+      order: { tenantId, fulfillPath: FulfillPath.PICKUP, counterSale: false },
+    },
+  };
+}
+
+export const handOverCandidateSelect = {
+  method: true,
+  amount: true,
+  paymentGroupId: true,
+  invoice: { select: { orderId: true } },
+} satisfies Prisma.InvoicePaymentSelect;
+
+/** One payment that is a hand-over's own tender. */
+export interface HandOverPayment {
+  method: string;
+  amount: unknown;
+  orderId: string;
+}
+
+/** The candidates whose group id IS the app-side `uuidv5(`${orderId}:pickup:0`, PICKUP_TENDER_NS)`. */
+export function handOverPayments(
+  rows: ReadonlyArray<{
+    method: string;
+    amount: unknown;
+    paymentGroupId: string | null;
+    invoice: { orderId: string | null } | null;
+  }>,
+): HandOverPayment[] {
+  return rows.flatMap((r) => {
+    const orderId = r.invoice?.orderId;
+    return orderId && r.paymentGroupId === pickupTenderGroupId(orderId)
+      ? [{ method: r.method, amount: r.amount, orderId }]
+      : [];
+  });
+}
+
+/**
  * Everything PAID, on any date, on the live invoices of the day's own live sales: what `onAccount` (the day's
  * sales still owed) is measured against. NOT money in (that is `salePaymentsWhere`, by paid date).
  */
@@ -168,6 +228,7 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
       total: true,
       createdAt: true,
       customerId: true,
+      counterCashTendered: true,
       customer: { select: { businessName: true, isWalkIn: true } },
       invoices: {
         orderBy: { createdAt: "asc" },
@@ -175,7 +236,13 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           id: true,
           invoiceNumber: true,
           status: true,
-          payments: { select: { method: true, amount: true, status: true } },
+          payments: {
+            orderBy: { createdAt: "asc" },
+            // paymentGroupId: which rows are the counter's own tender (the change is measured against its cash rows)
+            select: { method: true, amount: true, status: true, paymentGroupId: true },
+          },
+          // the stored line rates the sale's tax rate is read from (pricing's storedTaxRatePercent)
+          items: { select: { taxRate: true } },
         },
       },
       returns: {
@@ -208,12 +275,21 @@ export interface TodayOrderRecord {
   total: unknown;
   createdAt: Date;
   customerId: string;
+  /** SA-764: the cash handed over (null = not a cash sale / rung before it was stored) */
+  counterCashTendered?: unknown;
   customer: { businessName: string | null; isWalkIn: boolean | null } | null;
   invoices: Array<{
     id: string;
     invoiceNumber: string | null;
     status: string;
-    payments: Array<{ method: string; amount: unknown; status: string }>;
+    payments: Array<{
+      method: string;
+      amount: unknown;
+      status: string;
+      paymentGroupId?: string | null;
+    }>;
+    /** SA-764: each line's stored tax rate (a fraction, 0.0825) */
+    items?: Array<{ taxRate: unknown }>;
   }>;
   returns: Array<{
     id: string;
@@ -231,7 +307,7 @@ export interface TodayOrderRecord {
 }
 
 /** The sale's money labels, in the order a receipt lists them. */
-const METHOD_ORDER: TodaysSaleMethod[] = ["CASH", "CARD", "CHECK", "OTHER", "STORE_CREDIT"];
+const METHOD_ORDER: readonly TodaysSaleMethod[] = COUNTER_TENDER_DISPLAY_ORDER;
 
 /** A stored payment method as the till names it: CASH / CARD / CHECK, a credit application, anything else. */
 export function todaysMethodOf(prismaMethod: string): TodaysSaleMethod {
@@ -269,7 +345,11 @@ export function returnAmount(r: ReturnMoney): number {
   return credit > 0 ? credit : roundMoney(num(r.refundAmount));
 }
 
-export function toTodaysSaleRow(o: TodayOrderRecord): TodaysSaleRow {
+export function toTodaysSaleRow(
+  o: TodayOrderRecord,
+  /** the tenant's configured rate in percent (`settings.taxRate`): a stored line rate is named only when it equals this */
+  configuredTaxPercent: number | null = null,
+): TodaysSaleRow {
   const live = o.invoices.filter((i) => !isDeadInvoice(i.status));
   const voided = o.status === OrderStatus.CANCELLED || (o.invoices.length > 0 && live.length === 0);
   const payments = live.flatMap((i) => i.payments);
@@ -324,6 +404,13 @@ export function toTodaysSaleRow(o: TodayOrderRecord): TodaysSaleRow {
     balanceDue,
     methods,
     paymentState,
+    cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
+    change: servedChange(o.id, o.counterCashTendered, payments, total),
+    // ONE home for the rate (pricing): a STORED line rate, corroborated by the configured rate; never inferred
+    taxRatePercent: storedTaxRatePercent(
+      live.map((i) => ({ lines: i.items ?? [] })),
+      configuredTaxPercent,
+    ),
     returned: { amount: returnedAmount, state: returnState, returns },
     voided,
   };
@@ -366,6 +453,8 @@ export function foldSummary(input: {
   /** everything paid (any date) on the day's own sales: the `onAccount` measure */
   paidOnSales: PaidAggregate;
   returns: readonly WindowReturn[];
+  /** the hand-over tenders that came in in the window (already filtered by `handOverPayments`) */
+  handOvers?: readonly HandOverPayment[];
 }): TodaysSalesSummary {
   const by: Record<TodaysSaleMethod, number> = {
     CASH: 0,
@@ -377,6 +466,14 @@ export function foldSummary(input: {
   for (const g of input.payments) {
     const m = todaysMethodOf(g.method);
     by[m] = roundMoney(by[m] + num(g._sum?.amount));
+  }
+  // SA-763r R7: a POS-mode hand-over's tender is money in and cash in the drawer, like a counter sale's.
+  const handOvers = input.handOvers ?? [];
+  let handOverTotal = 0;
+  for (const h of handOvers) {
+    const m = todaysMethodOf(h.method);
+    by[m] = roundMoney(by[m] + num(h.amount));
+    handOverTotal = roundMoney(handOverTotal + num(h.amount));
   }
   const moneyIn = {
     cash: by.CASH,
@@ -413,6 +510,7 @@ export function foldSummary(input: {
   return {
     sales: { count: countOf(input.sales._count), total: salesTotal },
     moneyIn,
+    handOvers: { count: new Set(handOvers.map((h) => h.orderId)).size, total: handOverTotal },
     storeCreditUsed: by.STORE_CREDIT,
     onAccount: Math.max(
       0,

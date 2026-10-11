@@ -219,6 +219,11 @@ export interface InlineReturnQuoteResponse
   /** Per-productId sub-breakdown — same shape as the top-level totals, scoped to one
    *  requested item. */
   productBreakdown: Record<string, InlineReturnQuoteBreakdown>;
+  /** SA-749r2: per source sale (order id) the most that can still go back in CASH: the cash applied to that sale (PAID CASH
+   *  payments on its live invoices) less the cash already refunded on it. The SAME figure the 409 REFUND_EXCEEDS_CASH_PAID cap
+   *  carries as `maxCashRefund` for that sale (one function, `cashRefundRooms`). Keyed by every `sourceOrderId` in `chunks`. A
+   *  client talking to an older API reads it as optional. */
+  cashRefundable: Record<string, number>;
 }
 
 // ─── Response: what POST /returns/inline/capture (and approve/reject/cancel) return ────
