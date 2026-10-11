@@ -56,6 +56,7 @@ import {
 } from "./inline-return-refund";
 import { assertCashRefundWithinCap } from "./cash-refund-cap";
 import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
+import { assertCounterWindowOpen } from "./counter-close-window";
 import { refundTenderData, refundTenderOfColumn } from "./refund-tender";
 import { roundMoney } from "@routeflow/pricing";
 import type { ProcessRefundDto } from "./dto/process-refund.dto";
@@ -1390,6 +1391,9 @@ export class ReturnsService {
       }
       // SA-758 CR-2: refundedAt is the DATABASE clock, read after the close lock (the close reads its cutoff from the same clock)
       const refundedAt = await dbClockNow(tx);
+      // SA-750r3: a refund dated inside a closed window is refused (a closed day's totals never move)
+      if (registerKey && tenantId)
+        await assertCounterWindowOpen(tx, tenantId, registerKey, refundedAt);
       const claimed = await tx.return.updateMany({
         where: { id, status: "RECEIVED" },
         data: {

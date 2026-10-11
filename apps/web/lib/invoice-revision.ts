@@ -5,7 +5,11 @@ import { fmt } from "./formatting";
  * P-4: the invoice's derived `revisedAt` (ISO or null) and `overpaidBy` (> 0 only when overpaid) are OPTIONAL on the wire —
  * absent means no badge / nothing shown, so the client is safe before the API field lands.
  */
-/** `timeZone` is the business's own IANA zone (the day it revised the invoice), not the browser's; unknown/invalid = UTC. */
+/**
+ * `timeZone` is the business's own IANA zone (the day it revised the invoice), not the browser's. An INVALID zone
+ * (one `toLocaleDateString` rejects) falls back to UTC; a MISSING zone is not rejected, it is passed on as
+ * `undefined`, so the date then reads in the browser's own zone.
+ */
 export function revisedBadgeText(revisedAt?: string | null, timeZone?: string): string | null {
   if (!revisedAt) return null;
   const at = new Date(revisedAt);

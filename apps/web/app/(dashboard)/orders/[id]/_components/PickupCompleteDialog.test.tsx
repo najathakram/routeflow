@@ -323,6 +323,26 @@ describe("PickupCompleteDialog — the API's pickup codes", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("409 COUNTER_SALE_DAY_CLOSED: the order IS handed over; fixed copy, never the server text, Reload (no retry)", async () => {
+    balance(25);
+    post.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "COUNTER_SALE_DAY_CLOSED", message: "raw text" } },
+    });
+    const { invalidate, onClose } = mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "25" } });
+    confirm();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Handed over. Payment not taken: the till for that day is closed.",
+    );
+    expect(screen.queryByText(/raw text/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    invalidate.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ["orders"] }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
   it("409 PICKUP_INVOICE_MISSING: fixed copy, Retry reposts under the SAME key", async () => {
     balance(0, "PAID");
     post.mockRejectedValueOnce({
@@ -532,6 +552,7 @@ describe("PickupCompleteDialog — the global error toast", () => {
     "COUNTER_CHECK_NUMBER_REQUIRED",
     "PICKUP_NOT_READY",
     "PICKUP_ONLY",
+    "COUNTER_SALE_DAY_CLOSED",
   ])("%s: the dialog's own copy shows and NO global toast fires", async (code) => {
     toast.mockClear();
     post.mockRejectedValueOnce({ response: { status: 409, data: { code } } });

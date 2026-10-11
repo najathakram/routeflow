@@ -14,8 +14,11 @@ import { type ConfirmablePaymentRow, sumConfirmed } from "./payment-predicates";
  * The rule: balance = `roundMoney(total - Σ CONFIRMED payments)` floored at 0 (cash, credit-note and
  * advance applications all reduce it; DRAFT, VOID and PENDING never do). A PAID / VOID / WRITTEN_OFF
  * invoice reads as settled (0). Overdue = not settled AND a balance is due AND the due DAY has ended
- * before `cutoff` (RF-202: the whole due day is grace). `cutoff` is `overdueCutoff(now, zone)` in the
- * INVOICE'S OWN tenant zone, so a reader spanning sellers passes each invoice its own seller's cutoff.
+ * before `cutoff` (RF-202: the whole due day is grace). Row 318b: only an ISSUED invoice (an
+ * `OPEN_INVOICE_STATUSES` status) can be overdue, so a past-due DRAFT keeps its balanceDue but reads
+ * isOverdue:false, as the KPI tiles and the list filter already judge it. `cutoff` is
+ * `overdueCutoff(now, zone)` in the INVOICE'S OWN tenant zone, so a reader spanning sellers passes each
+ * invoice its own seller's cutoff.
  */
 
 const SETTLED: readonly string[] = [
@@ -46,7 +49,7 @@ export function classifyInvoiceBalance(
   const settled = SETTLED.includes(inv.status);
   const balanceDue = settled ? 0 : confirmedBalance(inv.total, inv.payments);
   const isOverdue =
-    !settled &&
+    (OPEN_INVOICE_STATUSES as readonly string[]).includes(inv.status) &&
     balanceDue > 0 &&
     inv.dueDate != null &&
     startOfCalendarDay(inv.dueDate, "UTC").getTime() < cutoff.getTime();

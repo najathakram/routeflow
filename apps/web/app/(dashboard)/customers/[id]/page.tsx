@@ -3657,7 +3657,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                   </thead>
                   <tbody className="divide-y divide-surface-border">
                     {customerInvoices.map((inv) => {
-                      const isOverdue = inv.status === "OVERDUE";
+                      const isOverdue = inv.isOverdue === true; // the server's one rule (row 318c), not status
                       const balanceDue = inv.balanceDue ?? 0;
                       return (
                         <tr

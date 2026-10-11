@@ -374,6 +374,7 @@ describe("CounterSaleTodayService: query budget (test 12)", () => {
         "invoices",
         "orderNumber",
         "returns",
+        "soldBy", // row 317: the cashier's username only (counter-sale-cashier.spec.ts pins the select)
         "status",
         "total",
       ].sort(),
