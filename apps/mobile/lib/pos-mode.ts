@@ -3,18 +3,19 @@
  * unit-testable in the node Jest env); mirrors `apps/web/lib/api/pos-orders.ts`, `lib/pos-copy.ts`
  * and `PosOrderActions.tsx`. The order's `fulfillPath` is the snapshot: see `isPosOrder`.
  */
-import { API_ERROR_CODES } from "@routeflow/types";
+import { API_ERROR_CODES, PREF, staffMay } from "@routeflow/types";
 import type { PickupCompleteRequest, PickupCompleteResponse } from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
 
 export { isPosOrder } from "./order-status-flow";
 
-/**
- * The per-user preference key (`GET/PATCH /users/me/preferences`), written on flip and never kept in
- * AsyncStorage. TODO(P-1a): move into `@routeflow/types` PREFERENCE_KEYS when the API allow-list lands
- * it (the parity spec pins the lists set-equal, so adding it there alone would turn that spec red).
- */
-export const POS_MODE_PREF_KEY = "orders.posMode";
+/** The per-user preference key, from the shared `PREF` (a `PREFERENCE_KEYS` entry). */
+export const POS_MODE_PREF_KEY = PREF.ordersPosMode;
+
+/** Who may use POS mode: the shared `USE_POS_MODE` capability row. */
+export function canUsePosMode(role: string | null | undefined): boolean {
+  return staffMay(role, "USE_POS_MODE");
+}
 
 /** Unset = off; only the literal "true" turns the switch on. */
 export function posModeFromPreferences(prefs: Record<string, string> | null | undefined): boolean {

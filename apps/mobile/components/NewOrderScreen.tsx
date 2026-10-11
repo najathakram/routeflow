@@ -149,7 +149,7 @@ import { CatalogSectionLabel, RowSpacer } from "./new-order/CatalogParts";
 import type { UnlistedLine } from "./new-order/types";
 import { usePosModeState } from "../lib/use-pos-mode";
 import { PosConfirmOnly, PosModeSwitch } from "./PosModeSwitch";
-import { posConfirmLabel, posMergeAlert } from "../lib/pos-mode";
+import { canUsePosMode, posConfirmLabel, posMergeAlert } from "../lib/pos-mode";
 import {
   savedOrderDestination,
   creditsPendingFromError,
@@ -1671,10 +1671,9 @@ function ProductPickView({
   const createOrder = useCreateOrderAsDriver();
   // Pre-check the customer's open draft/pending order so we can ask before submitting.
   // POS mode (SA-763r P-2): staff only, never a driver's at-door cart (lib/use-pos-mode.ts).
-  const showPosSwitch = isStaff && !runId && !stopId;
+  const showPosSwitch = canUsePosMode(userRole) && !runId && !stopId;
   const pos = usePosModeState(showPosSwitch);
   const posMode = pos.posMode;
-  // TODO(API P-1a): /orders/active ignores PICKUP until P-1a; the 409 MERGE_CHOICE_REQUIRED path backstops.
   const { data: activeOrder } = useActiveOrderForCustomer(customerId, pos.activePath);
 
   // A screen instance IS a cart session: mint a fresh Idempotency-Key for it

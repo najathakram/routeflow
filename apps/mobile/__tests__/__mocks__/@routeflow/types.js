@@ -34,6 +34,20 @@ module.exports = {
   isShippedOrderStatus: (s) =>
     !!s && ["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"].includes(s),
   UserRole: {},
+  // Hand copy of packages/types/api/staff-capabilities.ts; pinned equal by
+  // apps/mobile/__tests__/pos-mode-capability.test.ts.
+  STAFF_CAPABILITY_RULES: {
+    EDIT_LINE_PRICE: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "PRICING" },
+    VOID_SALE: { roles: ["OPERATOR", "TENANT_ADMIN", "SUPER_ADMIN"], group: "ORDERS" },
+    USE_POS_MODE: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "ORDERS" },
+    EDIT_AFTER_FINAL: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "FINANCE" },
+  },
+  staffMay: (role, action, deniedGroups = []) => {
+    const rule = module.exports.STAFF_CAPABILITY_RULES[action];
+    if (!role || !rule.roles.includes(role)) return false;
+    if (role === "OPERATOR" && deniedGroups.includes(rule.group)) return false;
+    return true;
+  },
   FULFILL_PATH_VALUES: ["ROUTE", "SHIP", "PICKUP"],
   EMAIL_DELIVERY_STATUS_VALUES: ["QUEUED", "SENT", "FAILED", "BOUNCED", "WOULD_SEND", "OPTED_OUT"],
   // Hand copy of packages/types/api/preferences.ts PREF; pinned equal by
