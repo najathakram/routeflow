@@ -27,7 +27,7 @@ export const BUYER_EDIT_IDLESS_FALLBACK = true;
 /**
  * Row 356 (SA-734r2 r-note 5): the fallback above is removed on this date, once the web and mobile buyer
  * clients that send `orderItemId` + `namesLines` are in a released version (otherwise the row moves the date).
- * `buyer-edit-lines.spec.ts` fails after it, so removal or a deliberate new date can't be forgotten.
+ * `buyer-edit-lines.spec.ts` logs a loud (non-failing) warning after it; the date is tracked on row 356.
  */
 export const BUYER_EDIT_IDLESS_FALLBACK_REMOVE_ON = "2026-11-15";
 

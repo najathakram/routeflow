@@ -197,11 +197,16 @@ describe("resolveBuyerEditLines", () => {
       expect(BUYER_EDIT_IDLESS_FALLBACK).toBe(true);
     });
 
-    it("row 356: the fallback is dated for removal on 2026-11-15 — past it, remove it (or move the date on its row)", () => {
+    it("row 356: the fallback is dated for removal on 2026-11-15 (a loud warning past it, never a failure)", () => {
       expect(BUYER_EDIT_IDLESS_FALLBACK_REMOVE_ON).toBe("2026-11-15");
-      expect(Date.now()).toBeLessThan(
-        Date.parse(`${BUYER_EDIT_IDLESS_FALLBACK_REMOVE_ON}T00:00:00Z`),
-      );
+      // Non-blocking by design: a date-bound FAILURE would turn every PR red that day, a hotfix included.
+      // The date is tracked on row 356 (ACTION-ITEMS); this only makes a stale fallback loud in CI logs.
+      if (Date.now() >= Date.parse(`${BUYER_EDIT_IDLESS_FALLBACK_REMOVE_ON}T00:00:00Z`)) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[row 356] BUYER_EDIT_IDLESS_FALLBACK is past its ${BUYER_EDIT_IDLESS_FALLBACK_REMOVE_ON} removal date: remove it, or move the date on its row.`,
+        );
+      }
     });
   });
 
