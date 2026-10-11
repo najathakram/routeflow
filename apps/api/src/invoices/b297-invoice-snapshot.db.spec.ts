@@ -368,6 +368,35 @@ describeDb("B297 PR3 — invoice recompute reads the line's rate snapshot, real 
     expect(warnedAbout(s.itemId)).toBe(true);
   });
 
+  it("PATCH /invoices/:id: a NULL-trio row whose product has since moved to another category stays on its own category (withRowCategories)", async () => {
+    const s = await seed("patch-moved", { status: "DRAFT", nullTrio: true });
+    const other = await prisma.trackedCategory.create({
+      data: {
+        tenantId: s.tenantId,
+        name: `other ${RUN}`,
+        taxType: "PERCENT_OF_SALE",
+        rate: 0.5,
+      },
+    });
+    await prisma.product.update({
+      where: { id: s.productId },
+      data: { trackedCategoryId: other.id },
+    });
+    await patch(s, 6);
+    const [l] = await prisma.$queryRaw<
+      Array<{ category: string | null; amount: string; type: string | null; rate: string | null }>
+    >`SELECT "trackedCategoryId" AS category, "categoryTaxAmount"::text AS amount,
+             "categoryTaxType"::text AS type, "categoryTaxRate"::text AS rate
+        FROM "InvoiceItem" WHERE id = ${s.itemId}`;
+    // priced at ITS OWN category's live rate (6 x 0.07), stamped with that category's trio, never moved
+    expect(l).toEqual({
+      category: s.categoryId,
+      amount: "0.42",
+      type: "EXCISE_PER_UNIT",
+      rate: "0.0700",
+    });
+  });
+
   it("PATCH /invoices/:id: a no-category row with a stored levy keeps it through a quantity edit, with a warn [L1]", async () => {
     const s = await seed("patch-l1", { status: "DRAFT", noCategory: true });
     await prisma.product.update({ where: { id: s.productId }, data: { trackedCategoryId: null } });
@@ -402,6 +431,11 @@ describeDb("B297 PR3 — invoice recompute reads the line's rate snapshot, real 
     expect(inv.exempt).toBeGreaterThanOrEqual(1);
     expect(res.stdout).not.toMatch(/qa-b297|example\.invalid|[0-9a-f]{8}-[0-9a-f]{4}-/);
     // re-pricing the stale line away takes (b) down by exactly one: stamp it at the live rate
+    // an exempt line's stored amount never moves (b): it is excluded whatever it holds
+    await prisma.invoiceItem.update({
+      where: { id: exempt.itemId },
+      data: { categoryTaxAmount: 5 },
+    });
     await prisma.invoiceItem.update({
       where: { id: stale.itemId },
       data: { categoryTaxAmount: 0.84 },

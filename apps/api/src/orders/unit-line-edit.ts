@@ -209,6 +209,10 @@ export async function createUnitLine(
  * `recomputeLineCategoryTaxes` re-derives every active line's amount from the line's OWN
  * rate snapshot right after this transaction (B297 PR3; it was the live category before). Only the
  * TRIO is the thing this function must not touch on a same-product edit.
+ * KNOWN GAP (found in the PR3 review, not fixed here): on a same-product edit `rest` still carries
+ * `trackedCategoryId` / `trackedSubcategoryId` / `categoryTaxAmount` from the product's CURRENT
+ * category, so a product that left (or changed) its category re-files the line and the recompute
+ * then keeps or re-prices it from a trio that no longer matches the category.
  */
 export async function updateUnitLine(
   ctx: UnitWriteContext,
