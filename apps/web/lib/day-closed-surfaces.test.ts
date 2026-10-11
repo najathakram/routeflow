@@ -53,7 +53,12 @@ const GENERIC_CONFLICT =
 /** [surface, how it reaches the copy, refusal, expected sentence] */
 const SURFACES: ReadonlyArray<readonly [string, (e: unknown) => string, unknown, string]> = [
   // The Void dialog (CounterVoidSaleDialog): a sale rung before the close, or a tender dated inside a closed day.
-  ["Void sale dialog", counterVoidErrorCopy, COUNTER, "This day is closed. Use Return instead."],
+  [
+    "Void sale dialog",
+    counterVoidErrorCopy,
+    COUNTER,
+    "This sale is in a closed day. Use Return items instead.",
+  ],
   // The pickup hand-over dialog: the hand-over stands, only the payment was refused.
   [
     "Pickup hand-over dialog",
@@ -121,7 +126,7 @@ describe("every surface that can receive an end-of-day close refusal shows fixed
 
   it("the sentences are the ones the helpers export (no drift between a constant and its use)", () => {
     expect(COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED]).toBe(
-      "This day is closed. Use Return instead.",
+      "This sale is in a closed day. Use Return items instead.",
     );
     expect(PICKUP_DAY_CLOSED_COPY).toBe(
       "Handed over. Payment not taken: the till for that day is closed.",
