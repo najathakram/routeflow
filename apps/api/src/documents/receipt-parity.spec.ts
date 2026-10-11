@@ -718,3 +718,78 @@ describe("the live counter receipt splits Tax and Adjustments like the reprint a
     expect(bare.adjustments).toBe(2.12);
   });
 });
+
+describe("row 317b: the unit word ('/ each') is ONE text on the live receipt, the reprint and the email", () => {
+  const line = (
+    id: string,
+    name: string,
+    unit: string | null,
+    over: Record<string, unknown> = {},
+  ) => ({
+    id,
+    name: null,
+    status: "DELIVERED",
+    qty: "3",
+    unitPrice: "2.50",
+    unitsPerBox: null,
+    boxes: null,
+    pieces: null,
+    product: {
+      name,
+      unit,
+      variantName: null,
+      parentProductId: null,
+      parent: null,
+    },
+    ...over,
+  });
+  const s = build({
+    total: "30.78",
+    tax: "2.28",
+    payments: [{ method: "CASH", amount: "30.78" }],
+    lines: [
+      line("a", "Cola", "Each"),
+      line("b", "Deli ham", "lb", { qty: "2", unitPrice: "6.00" }),
+      line("c", "Mints", null, { qty: "1", unitPrice: "1.00" }),
+      // a boxed line carries the BOX price and "per box", never the unit word
+      line("d", "Chips", "Each", {
+        qty: "15",
+        unitPrice: "12.00",
+        unitsPerBox: 12,
+        boxes: 1,
+        pieces: 3,
+      }),
+    ] as never,
+    live: [
+      { tempId: "a", name: "Cola", unitPrice: 2.5, qty: 3, unit: "Each" },
+      { tempId: "b", name: "Deli ham", unitPrice: 6, qty: 2, unit: "lb" },
+      { tempId: "c", name: "Mints", unitPrice: 1, qty: 1, unit: null },
+      {
+        tempId: "d",
+        name: "Chips",
+        unitPrice: 12,
+        qty: 15,
+        unitsPerBox: 12,
+        boxes: 1,
+        pieces: 3,
+        unit: "Each",
+      },
+    ],
+  });
+  const details = (m: ReceiptModel) => m.lines.map((l) => l.detail);
+
+  it("the email prints the same detail text as the reprint, line for line", () => {
+    expect(details(s.emailModel)).toEqual(details(s.reprint));
+  });
+
+  it("every surface prints the product's own unit word after a plain line's price, and none on a boxed line", () => {
+    for (const m of [s.live, s.reprint, s.emailModel]) {
+      expect(details(m)).toEqual([
+        "3 × $2.50 / each",
+        "2 × $6.00 / lb",
+        "1 × $1.00",
+        "1 box + 3 pcs × $12.00 per box",
+      ]);
+    }
+  });
+});
