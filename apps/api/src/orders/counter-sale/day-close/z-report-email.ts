@@ -1,9 +1,12 @@
+import { dayCloseZSections, type ZRow } from "@routeflow/pricing";
 import type { DayCloseSnapshot } from "@routeflow/types";
 import { escapeHtml } from "../../../common/html-escape";
 
 /**
  * The Z report email: the closed window's summary for the tenant's admins. It is built from the stored SNAPSHOT only (totals,
- * never rows), so it carries no customer name and no line. Every interpolated value is escaped.
+ * never rows), so it carries no customer name and no line. Every interpolated value is escaped. The sections, their order and
+ * their rows come from the shared `dayCloseZSections` (@routeflow/pricing), the same builder the web screen renders, so the
+ * email and the screen cannot drift (SA-750r3 flow plan, section 4).
  */
 
 export interface ZReportEmail {
@@ -19,148 +22,130 @@ export function zMoney(n: number): string {
   return n < 0 && cents > 0 ? `-${text}` : text;
 }
 
-/** A wall-clock time in the tenant's zone ("Oct 8, 2026, 6:05 PM"), UTC when the zone is unusable. */
-export function zTime(iso: string, zone: string): string {
+const MINUS = "−";
+const DOT = "·";
+const DASH = "–";
+
+interface Clock {
+  /** "2026-10-09", the tenant-zone calendar day */
+  ymd: string;
+  /** "Thu" */
+  weekday: string;
+  /** "Thu, Oct 9" */
+  dateLabel: string;
+  /** "9:42 PM" */
+  time: string;
+}
+
+/** The tenant-zone pieces of an instant; `utc` is true when the zone was unusable and UTC stood in. */
+function clock(iso: string, zone: string): Clock & { utc: boolean } {
   const at = new Date(iso);
-  const fmt = (timeZone: string) =>
-    new Intl.DateTimeFormat("en-US", { timeZone, dateStyle: "medium", timeStyle: "short" }).format(
-      at,
-    );
+  const read = (timeZone: string): Clock => {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      weekday: "short",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).formatToParts(at);
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+    const monthNum = new Intl.DateTimeFormat("en-US", { timeZone, month: "2-digit" }).format(at);
+    const dayNum = get("day").padStart(2, "0");
+    return {
+      ymd: `${get("year")}-${monthNum}-${dayNum}`,
+      weekday: get("weekday"),
+      dateLabel: `${get("weekday")}, ${get("month")} ${get("day")}`,
+      time: `${get("hour")}:${get("minute")} ${get("dayPeriod").toUpperCase()}`,
+    };
+  };
   try {
-    return fmt(zone);
+    return { ...read(zone), utc: false };
   } catch {
-    return `${fmt("UTC")} UTC`;
+    return { ...read("UTC"), utc: true };
   }
 }
 
-type Row = readonly [label: string, value: string];
-interface Section {
-  title: string;
-  rows: Row[];
-  warning?: string;
+/** A signed over/short figure: "+$1.00", "−$2.50", "$0.00" for none. */
+function signedMoney(n: number): string {
+  const text = zMoney(Math.abs(n));
+  if (text === "$0.00") return text;
+  return n < 0 ? `${MINUS}${text}` : `+${text}`;
 }
 
-function sectionsOf(s: DayCloseSnapshot): Section[] {
-  const t = s.totals;
-  const variance = s.variance;
-  const varianceText =
-    variance === 0
-      ? "Even"
-      : variance > 0
-        ? `Over ${zMoney(variance)}`
-        : `Short ${zMoney(Math.abs(variance))}`;
-  const unknown = t.refunds.unknownTenderCount;
-  return [
-    {
-      title: "Sales",
-      rows: [
-        ["Sales", String(t.salesCount)],
-        ["Sales total", zMoney(t.salesTotal)],
-        ["On account (not paid)", zMoney(t.onAccount)],
-      ],
-    },
-    {
-      title: "Money in",
-      rows: [
-        ["Cash", zMoney(t.moneyIn.cash)],
-        ["Card", zMoney(t.moneyIn.card)],
-        ["Check", zMoney(t.moneyIn.check)],
-        ["Other", zMoney(t.moneyIn.other)],
-        ["Total in", zMoney(t.moneyIn.total)],
-        // already inside the figures above; a close made before the field existed has no value, which is not zero
-        [
-          "Pickup hand-overs",
-          t.handOver
-            ? `${t.handOver.count} · ${zMoney(t.handOver.cash)} (in till cash)`
-            : "Not recorded",
-        ],
-      ],
-    },
-    {
-      title: "Refunds",
-      rows: [
-        ["Refunds", String(t.refunds.count)],
-        ["Cash", zMoney(t.refunds.cash)],
-        ["Card", zMoney(t.refunds.card)],
-        ["Check", zMoney(t.refunds.check)],
-        ["Tender not recorded", zMoney(t.refunds.other)],
-        ["Total refunded", zMoney(t.refunds.total)],
-      ],
-      ...(t.refunds.tenderKnown
-        ? {}
-        : {
-            warning: `Warning: ${unknown} refund${unknown === 1 ? " has" : "s have"} no recorded tender. ${
-              unknown === 1 ? "It was" : "They were"
-            } not taken out of the expected cash.`,
-          }),
-    },
-    {
-      title: "Store credit",
-      rows: [
-        ["Used", zMoney(t.storeCreditUsed)],
-        ["Issued", `${zMoney(t.storeCreditIssued.amount)} (${t.storeCreditIssued.count})`],
-      ],
-    },
-    { title: "Net collected", rows: [["Money in minus refunds", zMoney(t.netCollected)]] },
-    {
-      title: "Cash drawer",
-      rows: [
-        ["Opening float", zMoney(s.openingFloat)],
-        ["Expected cash", zMoney(s.expectedCash)],
-        ["Counted cash", zMoney(s.countedCash)],
-        ["Variance", varianceText],
-      ],
-    },
-    {
-      title: "Not taken at the till",
-      rows: [["Office or driver payments on counter invoices", zMoney(t.notAtTill)]],
-    },
-  ];
+function valueOf(row: ZRow): string {
+  if (row.amount === null) return "Not recorded";
+  const money = row.signed ? signedMoney(row.amount) : zMoney(row.amount);
+  return row.count === undefined ? money : `${row.count} ${DOT} ${money}`;
 }
+
+const VERDICT_LABEL = { short: "Short", over: "Over", even: "Even" } as const;
 
 export function buildZReportEmail(input: {
   businessName: string;
   snapshot: DayCloseSnapshot;
 }): ZReportEmail {
   const { snapshot: s } = input;
-  const closedBy = s.closedByName ?? "an unknown user";
-  const closedAt = zTime(s.closedAt, s.zone);
-  const from = zTime(s.windowStart, s.zone);
-  const to = zTime(s.windowEnd, s.zone);
   const subject = `Z report for ${s.day} - ${input.businessName}`;
-  const sections = sectionsOf(s);
+  const z = dayCloseZSections(s);
 
-  const tr = (label: string, value: string) =>
-    `<tr><td style="padding:2px 12px 2px 0">${escapeHtml(label)}</td><td style="padding:2px 0;text-align:right">${escapeHtml(value)}</td></tr>`;
-  const block = (sec: Section) =>
-    `<h3 style="margin:16px 0 4px">${escapeHtml(sec.title)}</h3><table>${sec.rows
-      .map(([l, v]) => tr(l, v))
-      .join("")}</table>${
-      sec.warning ? `<p style="color:#b45309"><strong>${escapeHtml(sec.warning)}</strong></p>` : ""
-    }`;
+  const closed = clock(s.closedAt, s.zone);
+  const start = clock(s.windowStart, s.zone);
+  const end = clock(s.windowEnd, s.zone);
+  const suffix = closed.utc ? " UTC" : "";
+  const titleLine = `Z report ${DOT} ${closed.dateLabel}`;
+  const closedLine = `Closed ${closed.time}${s.closedByName ? ` by ${s.closedByName}` : ""}${suffix}`;
+  const crossesDay = start.ymd !== end.ymd;
+  const windowLine = crossesDay
+    ? `${start.weekday} ${start.time} ${DASH} ${end.weekday} ${end.time}${suffix}`
+    : `${start.time} ${DASH} ${end.time}${suffix}`;
+  const headline = `Counted ${zMoney(z.headline.counted)} ${DOT} ${VERDICT_LABEL[z.headline.verdict]} ${zMoney(z.headline.amount)}`;
+  const notTaken = `Not taken at the till: ${zMoney(z.notTakenAtTill)}`;
+  const tenderWarning = "Some refunds have no method. Cash in drawer may be high.";
+
+  const tr = (row: ZRow) => {
+    const cell = (v: string) => (row.bold ? `<strong>${escapeHtml(v)}</strong>` : escapeHtml(v));
+    return `<tr><td style="padding:2px 12px 2px 0">${cell(row.label)}</td><td style="padding:2px 0;text-align:right">${cell(valueOf(row))}</td></tr>`;
+  };
 
   const html =
     `<div style="font-family:Arial,sans-serif;font-size:14px">` +
-    `<h2 style="margin:0 0 4px">Z report for ${escapeHtml(s.day)}</h2>` +
-    `<p style="margin:0">${escapeHtml(input.businessName)}</p>` +
-    `<p style="margin:4px 0">Closed ${escapeHtml(closedAt)} by ${escapeHtml(closedBy)}</p>` +
-    `<p style="margin:4px 0">Window ${escapeHtml(from)} to ${escapeHtml(to)} (${escapeHtml(s.zone)})</p>` +
-    sections.map((sec) => block(sec)).join("") +
-    (s.notes ? `<h3 style="margin:16px 0 4px">Notes</h3><p>${escapeHtml(s.notes)}</p>` : "") +
+    `<h2 style="margin:0 0 4px">${escapeHtml(titleLine)}</h2>` +
+    `<p style="margin:4px 0">${escapeHtml(closedLine)}</p>` +
+    `<p style="margin:4px 0">${escapeHtml(windowLine)}</p>` +
+    `<p style="margin:12px 0 0;font-size:16px"><strong>${escapeHtml(headline)}</strong></p>` +
+    z.groups
+      .map(
+        (g) =>
+          `<h3 style="margin:16px 0 4px">${escapeHtml(g.heading)}</h3><table>${g.rows.map((r) => tr(r)).join("")}</table>`,
+      )
+      .join("") +
+    `<p style="margin:16px 0 0">${escapeHtml(notTaken)}</p>` +
+    (z.refundsTenderKnown
+      ? ""
+      : `<p style="color:#b45309"><strong>${escapeHtml(tenderWarning)}</strong></p>`) +
+    (s.notes
+      ? `<p style="margin:16px 0 0"><strong>Note</strong>: ${escapeHtml(s.notes)}</p>`
+      : "") +
     `</div>`;
 
   const text = [
-    `Z report for ${s.day}`,
-    input.businessName,
-    `Closed ${closedAt} by ${closedBy}`,
-    `Window ${from} to ${to} (${s.zone})`,
-    ...sections.flatMap((sec) => [
+    titleLine,
+    closedLine,
+    windowLine,
+    "",
+    headline,
+    ...z.groups.flatMap((g) => [
       "",
-      sec.title,
-      ...sec.rows.map(([l, v]) => `  ${l}: ${v}`),
-      ...(sec.warning ? [`  ${sec.warning}`] : []),
+      g.heading,
+      ...g.rows.map((r) => `  ${r.label}: ${valueOf(r)}`),
     ]),
-    ...(s.notes ? ["", "Notes", `  ${s.notes}`] : []),
+    "",
+    notTaken,
+    ...(z.refundsTenderKnown ? [] : [tenderWarning]),
+    ...(s.notes ? ["", `Note: ${s.notes}`] : []),
   ].join("\n");
 
   return { subject, html, text };

@@ -581,7 +581,7 @@ describe("CounterDayCloseService: the Z report", () => {
       entityType: "CounterDayClose",
       entityId: snap.id,
     });
-    expect(email.send.mock.calls[0][0].html).toContain("Z report for");
+    expect(email.send.mock.calls[0][0].html).toContain("Z report ·");
   });
 
   it("no admin to send to: the close succeeds and reportSent is null", async () => {
