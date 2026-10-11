@@ -4579,8 +4579,15 @@ describe("PlatformAdminService — audit provenance", () => {
           platformAdmin: true,
           paymentMethod: "BANK_TRANSFER",
           cycle: "MONTHLY",
+          // the activation's OWN unsnapped period, for the catch-up's paid-coverage check (SA r-note 10-11)
+          periodStart: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+          periodEnd: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
         }),
       });
+      const m = data.meta as { periodStart: string; periodEnd: string };
+      expect(new Date(m.periodEnd).getTime() - new Date(m.periodStart).getTime()).toBe(
+        activateDto.billingPeriodDays * 24 * 60 * 60 * 1000,
+      );
       // the post-commit trail row is a different action: it is never the marker
       expect(auditLog.mock.calls[0][0]).toMatchObject({ action: "TENANT_SUBSCRIPTION_ACTIVATED" });
     });

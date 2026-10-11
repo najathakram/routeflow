@@ -156,79 +156,47 @@ export function addonCardRefusal(
   return null;
 }
 
-/**
- * Is [from, to) COVERED by the union of the (snapped) OPEN / PAID RfInvoice windows? Half-open intervals, merged when
- * they touch or overlap; a gap, or an uncovered head or tail, is NOT covered. Empty or inverted target = covered.
- */
-export function windowsCover(invoices: readonly CatchupInvoice[], from: Date, to: Date): boolean {
-  const lo = from.getTime();
-  const hi = to.getTime();
-  if (hi <= lo) return true;
-  const windows = invoices
-    .filter((x) => (x.status === "OPEN" || x.status === "PAID") && x.periodStart && x.periodEnd)
-    .map((x) => [snapToBoundary(x.periodStart!).getTime(), snapToBoundary(x.periodEnd!).getTime()])
-    .filter(([a, b]) => b > a)
-    .sort((x, y) => x[0] - y[0]);
-  let reach = lo; // everything in [lo, reach) is covered so far
-  for (const [a, b] of windows) {
-    if (a > reach) break; // a hole before this window: [reach, a) is uncovered
-    if (b > reach) reach = b;
-    if (reach >= hi) return true;
-  }
-  return reach >= hi;
+/** One manual-activation audit row, as the catch-up reads it. */
+export interface ActivationRecord {
+  action: string;
+  at: Date;
+  /** The activation's OWN unsnapped period, when the row recorded it. */
+  periodStart?: Date | null;
+  periodEnd?: Date | null;
 }
 
-/**
- * Money (MF2). The paid-through is built from PAID RfInvoices only, but staff also record a payment by
- * (re)activating the manual subscription - which moves the period and writes no RfInvoice. Charging October again
- * on top of that is a double charge, so the plan refuses ("manual_period_ahead") when
- *   - the LATEST manual activation / renewal is AFTER go-live AND later than the FIRST one (a payment may have been
- *     recorded since; a tenant activated once, after go-live, is the separate "activated_after_go_live" case and is
- *     not double-reported here), or
- *   - [paid-through, snapped period end) is not COVERED by the union of the snapped OPEN / PAID invoice windows. A
- *     period that is just an unpaid current invoice is the normal case and is covered. Comparing only the END dates
- *     misses a pre-go-live activation whose 30 days run past Oct 1 (activated Sep 26 -> [Sep 26, Oct 26)): once the
- *     next window [Oct 26, Nov 1) is issued the END is "covered", yet Oct 1-26 was already paid by the activation.
- */
-export function manualPeriodAhead(i: {
-  latestMarkerAt: Date | null | undefined;
-  firstMarkerAt?: Date | null;
-  periodEnd: Date | null | undefined;
-  paidThrough: Date;
-  invoices: readonly CatchupInvoice[];
-}): boolean {
-  if (
-    i.latestMarkerAt &&
-    i.latestMarkerAt.getTime() > CATCHUP_GO_LIVE.getTime() &&
-    (!i.firstMarkerAt || i.latestMarkerAt.getTime() > i.firstMarkerAt.getTime())
-  ) {
-    return true;
-  }
-  if (!i.periodEnd) return false;
-  return !windowsCover(i.invoices, i.paidThrough, snapToBoundary(i.periodEnd));
-}
-
-/** A manual activation writes its marker (in the tx) and its trail row (after the commit) seconds apart. */
+/** An activation is TWO audit rows (the in-tx marker and the post-commit trail row) seconds apart. */
 const ACTIVATION_CLUSTER_GAP_MS = 10 * 60 * 1000;
 
+export type ManualCoverage =
+  { ok: true; latestEnd: Date | null } | { ok: false; reason: "manual_marker_without_period" };
+
 /**
- * The tenant's activation history as INSTANTS: rows closer than ACTIVATION_CLUSTER_GAP_MS are the same activation
- * (its marker row + trail row). `first` is the earliest activation, `latest` the START of the last one - so a
- * single activation has first === latest, and only a genuine second one (a renewal) moves `latest` past `first`.
+ * Money (MF2, SA-733r5 r-note 10-11). What the manual activations ALREADY PAID, unsnapped: the latest recorded
+ * period end across EVERY activation (not just the latest one). Rows are grouped per activation (marker + trail row,
+ * seconds apart); an activation is usable when EITHER of its rows carries a period. An activation with none -
+ * a legacy marker from before periods were recorded - cannot be measured, so the plan fails closed
+ * ("manual_marker_without_period"). No activations at all: nothing was paid this way.
  */
-export function activationInstants(times: readonly Date[]): {
-  first: Date | null;
-  latest: Date | null;
-} {
-  if (times.length === 0) return { first: null, latest: null };
-  const sorted = [...times].sort((a, b) => a.getTime() - b.getTime());
-  let clusterStart = sorted[0];
-  let prev = sorted[0];
-  for (const t of sorted) {
-    if (t.getTime() - prev.getTime() > ACTIVATION_CLUSTER_GAP_MS) clusterStart = t;
-    prev = t;
+export function manualCoverage(rows: readonly ActivationRecord[]): ManualCoverage {
+  const sorted = [...rows].sort((x, y) => x.at.getTime() - y.at.getTime());
+  const clusters: ActivationRecord[][] = [];
+  let prev: number | null = null;
+  for (const r of sorted) {
+    if (prev === null || r.at.getTime() - prev > ACTIVATION_CLUSTER_GAP_MS) clusters.push([r]);
+    else clusters[clusters.length - 1].push(r);
+    prev = r.at.getTime();
   }
-  return { first: sorted[0], latest: clusterStart };
+  let latestEnd: Date | null = null;
+  for (const cluster of clusters) {
+    const ends = cluster
+      .map((r) => r.periodEnd)
+      .filter((e): e is Date => e instanceof Date && !Number.isNaN(e.getTime()));
+    if (ends.length === 0) return { ok: false, reason: "manual_marker_without_period" };
+    const end = new Date(Math.max(...ends.map((e) => e.getTime())));
+    if (!latestEnd || end.getTime() > latestEnd.getTime()) latestEnd = end;
+  }
+  return { ok: true, latestEnd };
 }
 
 export interface StubLine {
@@ -387,7 +355,8 @@ export type CatchupPlanRefusal =
   | "billable_addon_not_card_billable"
   | "addon_snapshot_not_catalog"
   | "checkout_addon_without_priced_row"
-  | "manual_period_ahead";
+  | "manual_period_ahead"
+  | "manual_marker_without_period";
 
 export type CatchupPlanResult = CatchupPlan | { ok: false; reason: CatchupPlanRefusal };
 
@@ -414,8 +383,12 @@ export function planCatchup(i: {
   billingStart?: Date | null;
   /** The tenant's priced billable add-on ROWS (MF1). Omitted = the check is skipped (pure unit tests only). */
   billableRows?: readonly CatchupAddonRow[];
-  /** The manual subscription's period + its latest activation / renewal marker (MF2). Omitted = skipped. */
-  manual?: { latestMarkerAt: Date | null; periodEnd: Date | null };
+  /**
+   * The tenant's manual activation rows (MF2). Present = the paid-coverage rule applies: paid coverage - every PAID
+   * RfInvoice window and every activation's recorded period - must not reach past the first charged service start
+   * (the floor), by ANY amount. Omitted = the pure planner, no such rule (used by the shape/builder unit specs).
+   */
+  manual?: { activations: readonly ActivationRecord[] };
 }): CatchupPlanResult {
   if (i.monthly == null || !(i.monthly >= 0)) return { ok: false, reason: "no_monthly_price" };
   const floor =
@@ -428,17 +401,20 @@ export function planCatchup(i: {
     const refusal = addonCardRefusal(i.billableRows, i.addons);
     if (refusal) return { ok: false, reason: refusal };
   }
-  if (
-    i.manual &&
-    manualPeriodAhead({
-      latestMarkerAt: i.manual.latestMarkerAt,
-      firstMarkerAt: i.billingStart,
-      periodEnd: i.manual.periodEnd,
-      paidThrough: pt.paidThrough,
-      invoices: i.invoices,
-    })
-  ) {
-    return { ok: false, reason: "manual_period_ahead" };
+  if (i.manual) {
+    // SA-733r5 r-note 10-11: paid coverage is measured UNSNAPPED, from EVERY paid source - each PAID RfInvoice
+    // window and each manual activation's own recorded period. Past the first charged service start by any amount
+    // = already-paid days that the one-time line would charge again, so refuse. There is no "covered by a PAID
+    // window" exemption. OPEN windows (rollCycles periods) are unpaid REQUIREMENTS, not coverage.
+    const cov = manualCoverage(i.manual.activations);
+    if (!cov.ok) return { ok: false, reason: cov.reason };
+    const ends = i.invoices
+      .filter((x) => x.status === "PAID" && x.periodEnd)
+      .map((x) => x.periodEnd!.getTime());
+    if (cov.latestEnd) ends.push(cov.latestEnd.getTime());
+    if (ends.length > 0 && Math.max(...ends) > floor.getTime()) {
+      return { ok: false, reason: "manual_period_ahead" };
+    }
   }
 
   const anchorAt = nextCheckoutAnchor(i.now);

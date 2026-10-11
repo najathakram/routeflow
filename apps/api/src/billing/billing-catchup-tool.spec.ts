@@ -203,12 +203,47 @@ describe("the printed report (anonymised)", () => {
       })
       .join("\n");
     expect(text).toContain("refused tenants (route to the manual path)");
-    expect(text).toContain(`  ${refusedId}  CATCHUP_ADDON_NOT_CARD_BILLABLE`);
+    expect(text).toContain(
+      `  ${refusedId}  CATCHUP_ADDON_NOT_CARD_BILLABLE  (billable_addon_not_card_billable)`,
+    );
     const list = text.slice(text.indexOf("refused tenants"), text.indexOf("tenant 1111"));
     expect(list).not.toContain("11111111-1111-4111-8111-111111111111");
     expect(text).not.toMatch(/qa-acme|slug/i);
     // and the per-tenant verdict carries the code too
     expect(text).toContain("[CATCHUP_ADDON_NOT_CARD_BILLABLE]");
+  });
+
+  it("SA r-note 10-11: a legacy activation marker with no recorded period is listed by tenant id with its reason", () => {
+    const id = "33333333-3333-4333-8333-333333333333";
+    const text = core
+      .formatCensus({
+        counts: {
+          total: 1,
+          planned: 1,
+          failed: 0,
+          eligible: 0,
+          trialOneTime: 0,
+          trial: 0,
+          anchorNoLine: 0,
+          needsRuling: 1,
+          withStripeSubscription: 0,
+          neitherManualNorStripe: 0,
+          claimHeld: 0,
+        },
+        tenants: [
+          report({
+            tenantId: id,
+            eligible: false,
+            ineligible: ["manual_marker_without_period"],
+            refusals: ["CATCHUP_MANUAL_PERIOD_AHEAD"],
+            plan: { ok: false, reason: "manual_marker_without_period" },
+          }),
+        ],
+        failed: [],
+      })
+      .join("\n");
+    expect(text).toContain(`  ${id}  CATCHUP_MANUAL_PERIOD_AHEAD  (manual_marker_without_period)`);
+    expect(text).not.toMatch(/qa-acme|slug/i);
   });
 
   it("money() is integer arithmetic", () => {

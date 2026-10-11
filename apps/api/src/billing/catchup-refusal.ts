@@ -20,6 +20,8 @@ export const CATCHUP_REFUSAL = {
   // the reverse direction: a card line the manual invoice never billed. Same family, same fixed copy.
   checkout_addon_without_priced_row: API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
   manual_period_ahead: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD,
+  // a legacy activation marker with no recorded period cannot be measured: same code, fail closed
+  manual_marker_without_period: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD,
 } as const;
 
 /** The fixed sentence per code (operator copy; the web maps the same codes to its own toast copy). */

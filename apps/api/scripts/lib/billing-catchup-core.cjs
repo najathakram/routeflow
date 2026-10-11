@@ -153,9 +153,10 @@ function formatCensus(c) {
   if (refused.length > 0) {
     lines.push("", `refused tenants (route to the manual path) - id and code: ${refused.length}`);
     for (const t of refused) {
-      lines.push(
-        `  ${t.tenantId}  ${(t.refusals && t.refusals.length ? t.refusals : []).join(", ") || "-"}`,
-      );
+      const codes = (t.refusals && t.refusals.length ? t.refusals : []).join(", ") || "-";
+      const reasons =
+        Array.isArray(t.ineligible) && t.ineligible.length ? `  (${t.ineligible.join(", ")})` : "";
+      lines.push(`  ${t.tenantId}  ${codes}${reasons}`);
     }
   }
   for (const t of c.tenants) lines.push("", ...formatTenantReport(t));

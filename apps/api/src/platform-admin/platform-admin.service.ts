@@ -1474,6 +1474,8 @@ export class PlatformAdminService {
               plan: dto.plan,
               paymentMethod: dto.paymentMethod,
               cycle,
+              // the activation's OWN unsnapped period: the October catch-up measures paid coverage from it
+              periodStart: now.toISOString(),
               periodEnd: periodEnd.toISOString(),
             },
           },

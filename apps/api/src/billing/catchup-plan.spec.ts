@@ -2,12 +2,12 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   CATCHUP_GO_LIVE,
-  activationInstants,
+  manualCoverage,
+  type ActivationRecord,
   addonCardRefusal,
   CATCHUP_TRIAL_STUB_MIN_LEAD_MS,
   catchupShape,
   firstBoundaryNotBefore,
-  manualPeriodAhead,
   paidThroughOf,
   planCatchup,
   stubLines,
@@ -487,140 +487,146 @@ describe("MF1: the manual invoice's add-ons vs the card checkout's lines", () =>
   });
 });
 
-describe("MF2: a payment recorded outside the RfInvoices (manual activation / renewal)", () => {
+describe("MF2 (SA-733r5 r-note 10-11): paid coverage is measured UNSNAPPED, from every paid source", () => {
+  const MARKER = "TENANT_MANUAL_ACTIVATION_MARKER";
+  const TRAIL = "TENANT_SUBSCRIPTION_ACTIVATED";
+  /** One manual activation = its in-tx marker (with the recorded period) + the post-commit trail row seconds later. */
+  const activation = (start: string, end: string): ActivationRecord[] => [
+    { action: MARKER, at: d(start), periodStart: d(start), periodEnd: d(end) },
+    { action: TRAIL, at: new Date(d(start).getTime() + 3000), periodEnd: d(end) },
+  ];
   const OPEN_OCT = inv("oct", "OPEN", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
+  const run = (activations: ActivationRecord[], invoices: CatchupInvoice[] = [OPEN_OCT]) => {
+    const first = activations.length
+      ? new Date(Math.min(...activations.map((x) => x.at.getTime())))
+      : null;
+    return planCatchup({
+      now: NOW,
+      monthly: 310,
+      addons: [],
+      invoices,
+      billingStart: first,
+      manual: { activations },
+    });
+  };
+  const AHEAD = { ok: false, reason: "manual_period_ahead" };
 
-  it("a renewal marker AFTER go-live (later than the first activation) refuses - October could be charged twice", () => {
+  it("the normal unpaid-October tenant (Sept paid by invoice through Oct 1, October only an OPEN requirement) stays eligible", () => {
+    const sepPaid = inv("sep", "PAID", "2026-09-01T12:00:00Z", "2026-10-01T12:00:00Z");
+    const r = run(activation("2026-08-02T10:00:00Z", "2026-09-01T10:00:00Z"), [sepPaid, OPEN_OCT]);
+    expect(r.ok).toBe(true);
+  });
+
+  it("activated Sep 10 for 30 days ([Sep 10, Oct 10)): refused - Oct 1-10 is already paid (the snapped end would have read Oct 1)", () => {
+    expect(run(activation("2026-09-10T09:00:00Z", "2026-10-10T09:00:00Z"))).toEqual(AHEAD);
+  });
+
+  it("activated Sep 26 ([Sep 26, Oct 26)): refused before AND after the next window [Oct 26, Nov 1) is issued", () => {
+    const sep26 = activation("2026-09-26T09:00:00Z", "2026-10-26T09:00:00Z");
+    expect(run(sep26, [])).toEqual(AHEAD);
+    const next = (status: string) =>
+      inv("next", status, "2026-10-26T09:00:00Z", "2026-11-01T12:00:00Z");
+    expect(run(sep26, [next("OPEN")])).toEqual(AHEAD);
+    // once the next window is PAID (rolled) the PAID run has a hole before it: still refused (the generic gap
+    // refusal fires first - the planner reads PAID windows before the manual rule)
+    expect(run(sep26, [next("PAID")]).ok).toBe(false);
+  });
+
+  it("'by ANY amount': coverage ending exactly at the first charged service start is fine, one minute past it is not", () => {
+    expect(run(activation("2026-09-01T12:00:00Z", "2026-10-01T12:00:00Z")).ok).toBe(true);
+    expect(run(activation("2026-09-01T12:01:00Z", "2026-10-01T12:01:00Z"))).toEqual(AHEAD);
+  });
+
+  it("EVERY activation counts, not just the latest: a renewal on Oct 5 refuses, and so does an early one whose end is still ahead", () => {
+    const aug = activation("2026-08-02T10:00:00Z", "2026-09-01T10:00:00Z");
+    expect(run([...aug, ...activation("2026-10-05T09:00:00Z", "2026-11-04T09:00:00Z")])).toEqual(
+      AHEAD,
+    );
+    // the long one is NOT the latest: it must still be seen
     expect(
-      manualPeriodAhead({
-        latestMarkerAt: d("2026-10-05T09:00:00Z"),
-        firstMarkerAt: d("2026-08-02T00:00:00Z"),
-        periodEnd: null,
-        paidThrough: CATCHUP_GO_LIVE,
-        invoices: [],
-      }),
-    ).toBe(true);
+      run([
+        ...activation("2026-09-05T09:00:00Z", "2026-12-04T09:00:00Z"),
+        ...activation("2026-09-20T09:00:00Z", "2026-09-25T09:00:00Z"),
+      ]),
+    ).toEqual(AHEAD);
   });
 
-  it("the first and only activation (even after go-live) is the separate activated_after_go_live case, not this one", () => {
-    const at = d("2026-10-20T08:30:00Z");
-    expect(
-      manualPeriodAhead({
-        latestMarkerAt: at,
-        firstMarkerAt: at,
-        periodEnd: null,
-        paidThrough: at,
-        invoices: [],
-      }),
-    ).toBe(false);
+  it("a PAID RfInvoice window reaching into the anchor month (to Oct 5) is already-paid days: refused - there is NO 'covered by a PAID window' exemption", () => {
+    const paid = inv("p", "PAID", "2026-09-05T12:00:00Z", "2026-10-05T12:00:00Z");
+    expect(run([], [paid, OPEN_OCT])).toEqual(AHEAD);
   });
 
-  it("a marker BEFORE go-live is not a payment since go-live", () => {
-    expect(
-      manualPeriodAhead({
-        latestMarkerAt: d("2026-09-20T00:00:00Z"),
-        firstMarkerAt: d("2026-08-02T00:00:00Z"),
-        periodEnd: null,
-        paidThrough: CATCHUP_GO_LIVE,
-        invoices: [],
-      }),
-    ).toBe(false);
+  it("a PAID October window ([Oct 1, Nov 1)) is paid coverage past the start too: refused (the SA text, 10-11 r-note)", () => {
+    const paidOct = inv("po", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
+    expect(run([], [paidOct])).toEqual(AHEAD);
+    // ... and the legacy 00:00Z spelling of the same window
+    const legacy = inv("pl", "PAID", "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z");
+    expect(run([], [legacy])).toEqual(AHEAD);
   });
 
-  it("a period end no RfInvoice accounts for (past paid-through AND past every OPEN / PAID end) refuses; an unpaid current period explained by its OPEN invoice does not", () => {
-    const base = {
-      latestMarkerAt: null,
-      paidThrough: CATCHUP_GO_LIVE,
-      invoices: [OPEN_OCT],
-    };
-    expect(manualPeriodAhead({ ...base, periodEnd: d("2026-12-01T12:00:00Z") })).toBe(true);
-    expect(manualPeriodAhead({ ...base, periodEnd: d("2026-11-01T12:00:00Z") })).toBe(false);
-    expect(manualPeriodAhead({ ...base, periodEnd: null })).toBe(false);
+  it("a PAID window ending exactly at the start (Sept) is the normal paid-up state and stays eligible", () => {
+    const sep = inv("sep", "PAID", "2026-09-01T12:00:00Z", "2026-10-01T12:00:00Z");
+    expect(run([], [sep, OPEN_OCT]).ok).toBe(true);
   });
 
-  describe("coverage: [paid-through, snapped period end) must be COVERED by the snapped OPEN / PAID windows", () => {
-    const NOV = inv("nov", "OPEN", "2026-11-01T12:00:00Z", "2026-12-01T12:00:00Z");
-    const ahead = (periodEnd: string, invoices: CatchupInvoice[], paidThrough = CATCHUP_GO_LIVE) =>
-      manualPeriodAhead({
-        latestMarkerAt: null,
-        periodEnd: d(periodEnd),
-        paidThrough,
-        invoices,
-      });
+  it("a rollCycles period is a REQUIREMENT, not coverage: a tenant with no marker and only OPEN windows is eligible", () => {
+    expect(run([], [OPEN_OCT]).ok).toBe(true);
+  });
 
-    it("the normal unpaid-October tenant (period = its OPEN invoice) stays eligible", () => {
-      expect(ahead("2026-11-01T12:00:00Z", [OPEN_OCT])).toBe(false);
+  it("without the manual input (the pure planner) none of this applies: a prepaid plan still plans", () => {
+    const paid = inv("p", "PAID", "2026-10-01T12:00:00Z", "2026-11-14T12:00:00Z");
+    const p = planCatchup({ now: NOW, monthly: 310, addons: [], invoices: [paid] });
+    expect(p.ok && p.shape).toBe("trial");
+  });
+
+  describe("legacy markers (no recorded period) fail closed, PER activation cluster", () => {
+    const LEGACY = { ok: false, reason: "manual_marker_without_period" };
+
+    it("a trail row alone (a pre-marker activation) or a marker without a period: refused", () => {
+      expect(run([{ action: TRAIL, at: d("2026-08-02T10:00:00Z") }])).toEqual(LEGACY);
+      expect(run([{ action: MARKER, at: d("2026-08-02T10:00:00Z") }])).toEqual(LEGACY);
     });
 
-    it("a Sep-26 manual activation ([Sep 26, Oct 26) paid by the activation, no invoice): refused BEFORE the next window is issued", () => {
-      expect(ahead("2026-10-26T09:00:00Z", [])).toBe(true);
+    it("one activation = marker + trail: EITHER row carrying the period is enough", () => {
+      const at = d("2026-08-02T10:00:00Z");
+      const later = new Date(at.getTime() + 3000);
+      const end = d("2026-09-01T10:00:00Z");
+      expect(
+        run([
+          { action: MARKER, at },
+          { action: TRAIL, at: later, periodEnd: end },
+        ]).ok,
+      ).toBe(true);
+      expect(
+        run([
+          { action: MARKER, at, periodEnd: end },
+          { action: TRAIL, at: later },
+        ]).ok,
+      ).toBe(true);
     });
 
-    it("... and AFTER the next window [Oct 26, Nov 1) is issued (OPEN) or rolled (PAID): Oct 1-26 is still uncovered", () => {
-      const next = (status: string) =>
-        inv("next", status, "2026-10-26T09:00:00Z", "2026-11-01T12:00:00Z");
-      expect(ahead("2026-10-26T09:00:00Z", [next("OPEN")])).toBe(true);
-      expect(ahead("2026-10-26T09:00:00Z", [next("PAID")])).toBe(true);
-    });
-
-    it("contiguous OPEN + PAID windows that cover [paid-through, period end) stay eligible", () => {
-      const paidOct = inv("oct", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
-      // paid-through is Nov 1; the OPEN November window covers the rest of the period
-      expect(ahead("2026-12-01T12:00:00Z", [paidOct, NOV], d("2026-11-01T12:00:00Z"))).toBe(false);
-      // from go-live: two contiguous OPEN windows
-      expect(ahead("2026-12-01T12:00:00Z", [OPEN_OCT, NOV])).toBe(false);
-    });
-
-    it("a gap between windows (or an uncovered head) is ahead", () => {
-      const dec = inv("dec", "OPEN", "2026-12-01T12:00:00Z", "2027-01-01T12:00:00Z");
-      expect(ahead("2027-01-01T12:00:00Z", [OPEN_OCT, dec])).toBe(true); // Nov is a hole
-      expect(ahead("2026-12-01T12:00:00Z", [NOV])).toBe(true); // October (the head) is not covered
-    });
-
-    it("VOID invoices and windows without a period cover nothing", () => {
-      const voided = inv("v", "VOID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
-      const noPeriod = inv("n", "OPEN", null, null);
-      expect(ahead("2026-11-01T12:00:00Z", [voided, noPeriod])).toBe(true);
-    });
-
-    it("a prepaid tenant (period end at or before paid-through) has nothing left to cover", () => {
-      expect(ahead("2026-11-01T12:00:00Z", [], d("2026-11-14T12:00:00Z"))).toBe(false);
+    it("the rule is per cluster: a good activation does not excuse a later legacy one", () => {
+      expect(
+        run([
+          ...activation("2026-08-02T10:00:00Z", "2026-09-01T10:00:00Z"),
+          { action: TRAIL, at: d("2026-09-15T10:00:00Z") },
+        ]),
+      ).toEqual(LEGACY);
     });
   });
 
-  it("planCatchup carries it as a plan reason; omitted manual input skips the check", () => {
-    const b = { now: NOW, monthly: 310, addons: [], invoices: [OPEN_OCT] };
-    expect(
-      planCatchup({
-        ...b,
-        manual: { latestMarkerAt: d("2026-10-05T09:00:00Z"), periodEnd: null },
-        billingStart: d("2026-08-02T00:00:00Z"),
-      }),
-    ).toEqual({ ok: false, reason: "manual_period_ahead" });
-    expect(planCatchup(b).ok).toBe(true);
-  });
-});
+  describe("manualCoverage", () => {
+    it("no activations: nothing paid by activation", () => {
+      expect(manualCoverage([])).toEqual({ ok: true, latestEnd: null });
+    });
 
-describe("activationInstants: one activation is TWO audit rows (marker in the tx, trail row after the commit)", () => {
-  const t = (iso: string) => d(iso);
-  it("a marker and its trail row seconds apart are ONE activation: first === latest", () => {
-    const r = activationInstants([t("2026-08-02T10:00:00Z"), t("2026-08-02T10:00:03Z")]);
-    expect(r.first!.toISOString()).toBe("2026-08-02T10:00:00.000Z");
-    expect(r.latest!.toISOString()).toBe("2026-08-02T10:00:00.000Z");
-  });
-
-  it("a later, separate activation (a renewal) is a new cluster: latest is ITS start", () => {
-    const r = activationInstants([
-      t("2026-10-05T09:00:03Z"),
-      t("2026-08-02T10:00:00Z"),
-      t("2026-08-02T10:00:03Z"),
-      t("2026-10-05T09:00:00Z"),
-    ]);
-    expect(r.first!.toISOString()).toBe("2026-08-02T10:00:00.000Z");
-    expect(r.latest!.toISOString()).toBe("2026-10-05T09:00:00.000Z");
-  });
-
-  it("no rows: nothing", () => {
-    expect(activationInstants([])).toEqual({ first: null, latest: null });
+    it("the latest unsnapped end across ALL clusters", () => {
+      const r = manualCoverage([
+        ...activation("2026-08-02T10:00:00Z", "2026-09-01T10:00:00Z"),
+        ...activation("2026-09-05T09:00:00Z", "2026-10-05T09:00:00Z"),
+        ...activation("2026-09-20T09:00:00Z", "2026-09-25T09:00:00Z"),
+      ]);
+      expect(r.ok && r.latestEnd!.toISOString()).toBe("2026-10-05T09:00:00.000Z");
+    });
   });
 });

@@ -19,7 +19,7 @@ import {
   type CatchupAddonRow,
   type CatchupPlan,
   type CatchupPlanResult,
-  activationInstants,
+  type ActivationRecord,
 } from "./catchup-plan";
 import { planRefusalException, refusalCodesOf } from "./catchup-refusal";
 import { buildCatchupSessionParams } from "./catchup-session-params";
@@ -205,9 +205,9 @@ export class CatchupCheckoutService {
 
     // The tenant's billing start (its first manual activation): a tenant activated AFTER go-live is not charged
     // from Oct 1, and is not plainly eligible - the owner confirms the start (Opus item 9).
-    // One activation is TWO audit rows (the in-tx marker and the post-commit trail row): cluster them, so a single
-    // activation is not mistaken for an activation plus a renewal (MF2).
-    const activations = (await this.prisma.auditLog.findMany({
+    // Every manual activation, with the period its tx recorded (the in-tx marker, and the post-commit trail row).
+    // The plan measures paid coverage from these - unsnapped - and fails closed on one with no recorded period.
+    const activationRows = (await this.prisma.auditLog.findMany({
       where: {
         tenantId,
         entityType: ADMIN_AUDIT_ENTITY,
@@ -219,11 +219,19 @@ export class CatchupCheckoutService {
         },
       },
       orderBy: { createdAt: "asc" },
-      select: { createdAt: true },
-    })) as { createdAt: Date }[];
-    const { first: billingStart, latest: latestMarkerAt } = activationInstants(
-      activations.map((r) => r.createdAt),
-    );
+      select: { action: true, createdAt: true, meta: true },
+    })) as { action: string; createdAt: Date; meta: Record<string, unknown> | null }[];
+    const asDate = (v: unknown): Date | null =>
+      typeof v === "string" && !Number.isNaN(Date.parse(v)) ? new Date(v) : null;
+    const activations: ActivationRecord[] = activationRows.map((r) => ({
+      action: r.action,
+      at: r.createdAt,
+      periodStart: asDate(r.meta?.periodStart),
+      periodEnd: asDate(r.meta?.periodEnd),
+    }));
+    const billingStart = activations.length
+      ? new Date(Math.min(...activations.map((x) => x.at.getTime())))
+      : null;
     const plan = planCatchup({
       now,
       monthly,
@@ -231,16 +239,13 @@ export class CatchupCheckoutService {
       invoices: rows,
       billingStart,
       billableRows,
-      manual: {
-        latestMarkerAt,
-        periodEnd: sub?.periodEnd ?? null,
-      },
+      manual: { activations },
     });
     if (!plan.ok) ineligible.push(plan.reason);
-    else {
-      if (billingStart && billingStart.getTime() > CATCHUP_GO_LIVE.getTime()) {
-        ineligible.push("activated_after_go_live");
-      }
+    if (billingStart && billingStart.getTime() > CATCHUP_GO_LIVE.getTime()) {
+      ineligible.push("activated_after_go_live");
+    }
+    if (plan.ok) {
       // an OPEN RfInvoice whose period cannot be placed would be left standing beside the card subscription
       if (plan.unplaceableOpenIds.length > 0) ineligible.push("unplaceable_open_invoice");
     }
