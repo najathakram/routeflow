@@ -10,7 +10,11 @@ import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
  * #2717, to keep the size ratchet's ceiling): the confirmed-payment split, balance due, overdue and
  * the deposit fields. `inv` is the loaded invoice with its `payments`.
  */
-export function deriveInvoiceDetailFields(inv: any, now: Date = new Date()) {
+export function deriveInvoiceDetailFields(
+  inv: any,
+  now: Date = new Date(),
+  timeZone: string | null = null,
+) {
   // F03/R1: CONFIRMED (PAID) payments only. VOID payments (manually voided OR
   // bounced checks) must not count toward the paid amount - and neither must an
   // unconfirmed DRAFT one; every other paid-sum in this file matches.
@@ -21,8 +25,9 @@ export function deriveInvoiceDetailFields(inv: any, now: Date = new Date()) {
   const { cash: paidAmount, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
   const totalConfirmed = paidAmount + creditApplied + advanceApplied;
   // SA-770: balance and overdue come from the ONE classifier (RF-202: invoice due today is NOT
-  // overdue; the cutoff is the UTC day of `now`, as this read has always judged it).
-  const { balanceDue, isOverdue } = classifyInvoiceBalance(inv, overdueCutoff(now));
+  // overdue). Row 308: `timeZone` is the invoice tenant's zone, resolved once per request by the caller,
+  // so this flag agrees with the list filter and KPI tiles; a caller with no zone (null) judges the UTC day.
+  const { balanceDue, isOverdue } = classifyInvoiceBalance(inv, overdueCutoff(now, timeZone));
   const todayIso = now.toISOString().slice(0, 10);
   const { depositAmount, depositOverdue } = computeDepositFields(inv, totalConfirmed, todayIso);
   return {
