@@ -45,6 +45,11 @@ describe("SA-773: the STANDARD refund claim reads the refundable remainder under
   let raw: string[];
   /** the other (counted) STANDARD returns on the order, as the remainder's read sees them */
   let otherReturns: any[];
+  /** the order's billed lines (the claim's price and the remainder both read them) and the qty the return brings back */
+  let invoiceLines: any[];
+  let returnQty: number;
+  /** inline return items already out of the order, as the remainder's read sees them */
+  let priorInlineItems: any[];
   let remainderReads: number[];
 
   beforeEach(async () => {
@@ -53,6 +58,9 @@ describe("SA-773: the STANDARD refund claim reads the refundable remainder under
     raw = [];
     remainderReads = [];
     otherReturns = [];
+    invoiceLines = [billedLine()];
+    returnQty = 2;
+    priorInlineItems = [];
     prisma.tenantTransaction.mockImplementation((fn: any) =>
       fn({
         ...prisma,
@@ -65,7 +73,7 @@ describe("SA-773: the STANDARD refund claim reads the refundable remainder under
     prisma.invoice.findMany.mockImplementation(async ({ where }: any) => {
       if (where?.OR) {
         remainderReads.push(raw.length); // how many statements had run when the remainder was read
-        return [{ id: "inv-1", orderId: "ord-1", status: "SENT", items: [billedLine()] }];
+        return [{ id: "inv-1", orderId: "ord-1", status: "SENT", items: invoiceLines }];
       }
       if (where?.id?.in)
         return [
@@ -81,6 +89,9 @@ describe("SA-773: the STANDARD refund claim reads the refundable remainder under
     // the cash cap's own read filters on status REFUNDED; the remainder's read does not (it filters in code)
     prisma.return.findMany.mockImplementation(async ({ where }: any) =>
       where?.status ? [] : otherReturns,
+    );
+    prisma.returnItem.findMany.mockImplementation(async ({ where }: any) =>
+      where?.return?.status ? [] : priorInlineItems,
     );
     prisma.return.updateMany.mockResolvedValue({ count: 1 });
     prisma.return.update.mockResolvedValue({});
@@ -101,7 +112,7 @@ describe("SA-773: the STANDARD refund claim reads the refundable remainder under
             kind: "STANDARD",
             customerId: "cust-1",
             orderId: "ord-1",
-            items: [{ productId: "p1", qty: 2 }],
+            items: [{ productId: "p1", qty: returnQty }],
             order: {
               id: "ord-1",
               orderNumber: "ORD-1",
@@ -113,10 +124,15 @@ describe("SA-773: the STANDARD refund claim reads the refundable remainder under
                   invoiceNumber: "N-1",
                   status: "SENT",
                   total: 100,
-                  items: [billedLine()],
+                  items: invoiceLines,
                 },
               ],
-              lineItems: [{ productId: "p1", qty: 10, unitPrice: 10, subtotal: 100 }],
+              lineItems: invoiceLines.map((l) => ({
+                productId: "p1",
+                qty: l.qty,
+                unitPrice: l.subtotal / l.qty,
+                subtotal: l.subtotal,
+              })),
             },
           }
         : { id: "ret-1", status: "REFUNDED", refundAmount: 20, refundTender: null },
@@ -181,6 +197,67 @@ describe("SA-773: the STANDARD refund claim reads the refundable remainder under
     ];
     await refund("CREDIT_NOTE");
     expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  describe("the pool's VALUE is checked, not only its qty (a priced refund can exceed what the pool has left in value)", () => {
+    const mixedPool = () => [
+      billedLine({ id: "il-cheap", qty: 10, subtotal: 10 }),
+      billedLine({ id: "il-premium", qty: 10, subtotal: 100 }),
+    ];
+
+    it.each(["CREDIT_NOTE", "EXTERNAL_REFUND"] as const)(
+      "%s: a mixed-price pool whose premium pieces already went out inline: the other 10 pieces fit by qty but are priced at the $5.50 average ($55) against $10 left -> 409",
+      async (method) => {
+        invoiceLines = mixedPool();
+        returnQty = 10;
+        priorInlineItems = [
+          {
+            productId: "p1",
+            qty: 10,
+            sourceOrderId: "ord-1",
+            subtotal: 100,
+            taxAmount: 0,
+            categoryTax: 0,
+            return: { id: "ret-in", kind: "INLINE", status: "RECEIVED" },
+          },
+        ];
+        const err = await failure(refund(method));
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(bodyOf(err)).toMatchObject({
+          code: "RETURN_EXCEEDS_REFUNDABLE",
+          productId: "p1",
+          remainingQty: 10,
+          remainingValue: 10,
+        });
+        expect(prisma.return.updateMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it("a credit note item with a tiny explicit qty that took the whole line's money leaves no value: the line's units are refused", async () => {
+      invoiceLines = [billedLine({ id: "il-1", qty: 10, subtotal: 20 })];
+      returnQty = 9.99; // qty passes (9.999 left); only the value ($20 credited of $20) can refuse
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          invoiceItemId: "il-1",
+          creditNoteId: "cn-1",
+          qty: 0.001,
+          amount: 20,
+          categoryTax: 0,
+          creditNote: { status: "ISSUED" },
+        },
+      ]);
+      const err = await failure(refund("EXTERNAL_REFUND"));
+      expect(bodyOf(err)).toMatchObject({ code: "RETURN_EXCEEDS_REFUNDABLE", remainingValue: 0 });
+      expect(bodyOf(err).remainingQty).toBeGreaterThan(9.9);
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("the same refund with the pool's value intact still claims", async () => {
+      invoiceLines = mixedPool();
+      returnQty = 10;
+      await refund("EXTERNAL_REFUND");
+      expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("the remainder is read AFTER the Return, Order and invoice locks and BEFORE the claim", async () => {

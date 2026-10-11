@@ -243,6 +243,63 @@ describeDb("SA-773 the refund paths read the refundable remainder - real Postgre
     expect(body(err)).toMatchObject({ code: "RETURN_EXCEEDS_REFUNDABLE", remainingQty: 0 });
   });
 
+  const standardCashRefund = (s: Seeded, returnId: string) =>
+    asTenant(s, () =>
+      returns.processRefund(
+        returnId,
+        { method: "EXTERNAL_REFUND", tender: "CASH" } as any,
+        staff(s),
+      ),
+    );
+
+  it("T8: a mixed-price pool: the premium pieces went out inline ($100), the other 10 fit by qty but are priced at the $5.50 average ($55) against $10 left: 409 on the pool's VALUE", async () => {
+    const s = await seed("t8", [
+      {
+        lines: [
+          { product: "A", qty: 10, subtotal: 10 },
+          { product: "A", qty: 10, subtotal: 100 },
+          { product: "B", qty: 1, subtotal: 200 },
+        ],
+      },
+    ]);
+    await addInlineReturn(prisma, s, {
+      number: rtn(),
+      status: "RECEIVED",
+      items: [{ line: 1, qty: 10, subtotal: 100 }],
+    });
+    const mine = await addStandardReturn(prisma, s, {
+      number: rtn(),
+      status: "RECEIVED",
+      items: [{ product: "A", qty: 10 }],
+    });
+    const err = await fail(standardCashRefund(s, mine.id));
+    expect(body(err)).toMatchObject({
+      code: "RETURN_EXCEEDS_REFUNDABLE",
+      productId: s.products.A,
+      remainingQty: 10, // the qty passes: only the value can refuse
+      remainingValue: 10,
+    });
+    expect((await row(mine.id)).status).toBe("RECEIVED");
+  });
+
+  it("T9: a credit note item with an explicit qty of 0.001 that took the whole $20 line: a cash refund of the line's units is refused on VALUE (the qty has 9.999 left)", async () => {
+    const s = await seed("t9", [{ lines: [{ product: "A", qty: 10, subtotal: 20 }] }]);
+    await addCreditNote(prisma, s, { number: cn(), items: [{ line: 0, amount: 20, qty: 0.001 }] });
+    const mine = await addStandardReturn(prisma, s, {
+      number: rtn(),
+      status: "RECEIVED",
+      items: [{ product: "A", qty: 9.99 }],
+    });
+    const err = await fail(standardCashRefund(s, mine.id));
+    expect(body(err)).toMatchObject({
+      code: "RETURN_EXCEEDS_REFUNDABLE",
+      productId: s.products.A,
+      remainingValue: 0,
+    });
+    expect(body(err).remainingQty).toBeGreaterThan(9.9);
+    expect((await row(mine.id)).status).toBe("RECEIVED");
+  });
+
   it("T6: the check is made under the invoice lock: a credit note the lock holder commits while the refund waits is seen", async () => {
     const s = await seed("t6", [{ lines: [{ product: "A", qty: 4, subtotal: 20 }] }]);
     const ret = await pendingRefund(s, [{ line: 0, qty: 4, subtotal: 20 }]);

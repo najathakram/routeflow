@@ -53,6 +53,8 @@ export interface PoolRemainder {
   valueTol: number;
   /** Pieces per qty of the pool's lines when they agree, else 1: what a STANDARD qty with no pack proof is counted at. */
   unitFactor: number;
+  /** Net (pre-tax) billed value per piece of the pool: what a STANDARD return of its goods is priced at (the pooled average). */
+  unitNet: number;
 }
 
 /** What is left of a billing group's invoices as a whole (includes the amount-only credit notes of (c)). */
@@ -81,6 +83,7 @@ interface Line {
 interface Pool {
   billedQty: number;
   billedValue: number;
+  billedNet: number;
   qtyTol: number;
   qtyOut: number;
   valueOut: number;
@@ -217,6 +220,7 @@ export async function refundableRemainder(
         ({
           billedQty: 0,
           billedValue: 0,
+          billedNet: 0,
           qtyTol: 0,
           qtyOut: 0,
           valueOut: 0,
@@ -226,6 +230,7 @@ export async function refundableRemainder(
         } as Pool);
       pool.billedQty += num(it.qty) * ppq;
       pool.billedValue += lineGrossValue(it);
+      pool.billedNet += roundMoney(num(it.subtotal));
       pool.qtyTol += 0.001 * ppq;
       pool.ppqs.add(ppq);
       pool.invoiceIds.add(inv.id);
@@ -453,6 +458,7 @@ export async function refundableRemainder(
         qtyTol: Math.max(0.001, pool.qtyTol),
         valueTol: valueTolerance(pool.items),
         unitFactor: poolUnitFactor(pool),
+        unitNet: pool.billedQty > 0 ? pool.billedNet / pool.billedQty : 0,
       };
       for (const invoiceId of pool.invoiceIds)
         result.byInvoiceProduct.set(poolKey(invoiceId, productId), remainder);
@@ -575,8 +581,9 @@ export function invoiceIdForProduct(
 
 /**
  * The requests of a STANDARD return: its qty per product in PIECES (the order line's unit through its pack basis, the same
- * conversion the over-return cap uses; an unknown basis counts the typed qty as it is) plus the refund's net `value` against the
- * invoice-level remainder. A product billed on none of the invoices has no pool and is not requested here.
+ * conversion the over-return cap uses; an unknown basis counts the typed qty as it is) and, per product, its VALUE: the pieces at the
+ * pool's pooled net average, which is the price `priceReturn` gives them (a recorded EXTERNAL_REFUND has no other value gate), plus
+ * the refund's net `value` against the invoice-level remainder. A product billed on none of the invoices has no pool and is not requested here.
  */
 export function standardReturnRequests(
   rem: RefundableRemainder,
@@ -594,10 +601,14 @@ export function standardReturnRequests(
     if (!invoiceId) continue;
     const f = packFactorOrReason(bases, productId);
     const unit = rem.byInvoiceProduct.get(poolKey(invoiceId, productId))?.unitFactor ?? 1;
-    requests.push({ invoiceId, productId, qty: qty * ("factor" in f ? f.factor : unit) });
+    const pieces = qty * ("factor" in f ? f.factor : unit);
+    const unitNet = rem.byInvoiceProduct.get(poolKey(invoiceId, productId))?.unitNet ?? 0;
+    requests.push({ invoiceId, productId, qty: pieces, value: roundMoney(pieces * unitNet) });
   }
+  // each product's value already counts at the invoice level; the refund's own figure stands in only when no product has a pool
   const anchor = invoiceIds.find((id) => rem.byInvoice.has(id));
-  if (anchor && value > 0) requests.push({ invoiceId: anchor, value: roundMoney(value) });
+  if (anchor && value > 0 && requests.length === 0)
+    requests.push({ invoiceId: anchor, value: roundMoney(value) });
   return requests;
 }
 
