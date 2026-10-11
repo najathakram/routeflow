@@ -104,3 +104,73 @@ describe("SA-767 L-1 — lockProductsForStock is the one Product stock lock", ()
     expect(method).not.toMatch(/for\s*\(/);
   });
 });
+
+/**
+ * B908 — the global lock order for the stock paths that already lock through `lockProducts`:
+ * (advisory) -> the DOMAIN row (PurchaseOrder / VendorBill) -> Products -> anything else, and no
+ * Product value is read before the Product lock. Source-order pin over each method body.
+ */
+function methodBody(src: string, name: string): string {
+  const head = src.search(new RegExp(`\n  (?:private |public )?async ${name}\\(`));
+  if (head < 0) return "";
+  const rest = src.slice(head + 1);
+  const next = rest
+    .slice(1)
+    .search(/\n  (?:private |public |protected )?(?:async )?\w+\(|\n  \/\*\*/);
+  return next < 0 ? rest : rest.slice(0, next + 1);
+}
+
+/** The first index of `re` in `body`, or Infinity. */
+const at = (body: string, re: RegExp) => {
+  const m = re.exec(body);
+  return m ? m.index : Infinity;
+};
+
+/**
+ * True iff the domain lock comes first, then the product lock, then the first single-row Product
+ * read / write (the stock and cost values a writer decides from). updatePurchaseOrder's one
+ * pre-lock `tx.product.findMany` is the line-product existence / kind validation (404 + the FAMILY
+ * refusal): it decides no stock or cost value, so `findMany` is not counted.
+ */
+function domainThenProducts(body: string, domainLock: RegExp): boolean {
+  const d = at(body, domainLock);
+  const p = at(body, /\blockProducts\(/);
+  const read = at(body, /\btx\.product\.(?:findUnique|findFirst|update)\(/);
+  return d < p && p < read;
+}
+
+describe("SA-767 L-1 / B908 — domain row, then Products, then reads", () => {
+  const inv = read("inventory/inventory.service.ts");
+  const bills = read("vendor-bills/vendor-bills.service.ts");
+
+  const PO = /this\.lockPurchaseOrder\(/;
+  const BILL = /this\.lockBillAndAssertReceiptState\(/;
+  const cases = [
+    {
+      site: "InventoryService.receivePurchaseOrder",
+      src: inv,
+      name: "receivePurchaseOrder",
+      re: PO,
+    },
+    { site: "InventoryService.updatePurchaseOrder", src: inv, name: "updatePurchaseOrder", re: PO },
+    { site: "VendorBillsService.receive", src: bills, name: "receive", re: BILL },
+    { site: "VendorBillsService.revertToDraft", src: bills, name: "revertToDraft", re: BILL },
+    { site: "VendorBillsService.voidBill", src: bills, name: "voidBill", re: BILL },
+  ];
+
+  it.each(cases)("$site: domain lock < lockProducts < first Product read", ({ src, name, re }) => {
+    const body = methodBody(src, name);
+    expect(body).not.toBe("");
+    expect(domainThenProducts(body, re)).toBe(true);
+  });
+
+  it("the pin has teeth: Products locked before the domain row, or read before the lock, fail it", () => {
+    const re = /this\.lockPurchaseOrder\(/;
+    const ok = "this.lockPurchaseOrder(tx); this.lockProducts(tx); tx.product.findUnique(x)";
+    const productsFirst = "this.lockProducts(tx); this.lockPurchaseOrder(tx); tx.product.update(x)";
+    const readFirst = "this.lockPurchaseOrder(tx); tx.product.findUnique(x); this.lockProducts(tx)";
+    expect(domainThenProducts(ok, re)).toBe(true);
+    expect(domainThenProducts(productsFirst, re)).toBe(false);
+    expect(domainThenProducts(readFirst, re)).toBe(false);
+  });
+});
