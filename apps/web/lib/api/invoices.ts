@@ -186,6 +186,11 @@ export interface Invoice {
   payments?: InvoicePayment[];
   /** Server-computed balance due — 0 for PAID/VOID/WRITTEN_OFF regardless of payment records */
   balanceDue?: number;
+  /**
+   * Server-computed (SA-770): an open (SENT/VIEWED/PARTIAL/OVERDUE) invoice that still owes AND whose due day
+   * has ended in the tenant's zone. The one overdue rule, so a client never re-derives it from `status`.
+   */
+  isOverdue?: boolean;
   /** Server-computed CASH-ONLY amount paid (B421) — excludes CREDIT_NOTE/ADVANCE
    *  applications, which are surfaced separately below. */
   paidAmount?: number;

@@ -77,8 +77,10 @@ describe("InvoicesService.sendReminder — refuses an invoice with no balance du
     expect(email.isEmailConfigured).toHaveBeenCalled(); // reached the email-setup check
   });
 
-  it("the VOID / PAID refusals are unchanged", async () => {
+  it("the VOID / PAID refusals are still 400s (row 318a: now the coded REMINDER_NOT_ISSUED)", async () => {
     prisma.invoice.findUnique.mockResolvedValue(invoice("PAID", 100, [pay(100)]));
-    await expect(service.sendReminder("inv-1")).rejects.toThrow(/VOID or PAID/);
+    const err = await service.sendReminder("inv-1").catch((e) => e);
+    expect(err.getStatus()).toBe(400);
+    expect(err.getResponse()).toMatchObject({ code: "REMINDER_NOT_ISSUED" });
   });
 });

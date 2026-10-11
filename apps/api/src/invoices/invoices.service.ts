@@ -60,7 +60,7 @@ import {
   sumConfirmed,
 } from "./payment-predicates";
 import { PAYABLE } from "./invoice-status-sets";
-import { assertReminderOwes } from "./invoice-balance-sql";
+import { assertReminderIssued, assertReminderOwes } from "./invoice-balance-sql";
 import { classifyInvoiceBalance, confirmedBalance } from "./invoice-balance-classify";
 import { reconcileDeliveredOrdersInTx as reconcileDeliveredOrdersInTxImpl } from "./delivered-reconcile";
 import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./pack-at-sale";
@@ -2896,8 +2896,9 @@ export class InvoicesService {
     const { customerId, sortBy, sortOrder, page = 1, limit = 20 } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
-    // SA-488: the isOverdue filter ends the due day in the tenant's zone (read only when used).
-    const tz = query.isOverdue ? (await this.resolveTenantInvoiceDefaults()).timezone : null;
+    // SA-488 / row 308: the tenant's zone, read ONCE per request: the isOverdue filter and every row's
+    // isOverdue flag end the due day in it (one cutoff, so the list and its filter always agree).
+    const tz = (await this.resolveTenantInvoiceDefaults()).timezone;
     applyInvoiceStatusFilters(where, query, tz);
     if (user?.role === UserRole.CUSTOMER) {
       const customer = await this.prisma
@@ -2946,12 +2947,12 @@ export class InvoicesService {
     // directly would treat a due date of "2026-05-01" (midnight UTC) as overdue
     // any time after midnight UTC on that date, regardless of local timezone.
     // Business rule: grace period extends through the end of the due date.
-    const todayIso = new Date().toISOString().slice(0, 10);
     const revisedAt = await revisedAtByInvoice(
       this.prisma.forTenant(),
       data.map((i) => i.id),
     );
-    const overdueBy = overdueCutoff(new Date());
+    const overdueBy = overdueCutoff(new Date(), tz);
+    const todayIso = overdueBy.toISOString().slice(0, 10); // the tenant's day, like isOverdue (and the deposit check)
     const computedData = data.map((inv) => {
       // F03/R1/T-B11s: CONFIRMED (PAID) payments only. An unconfirmed DRAFT
       // payment (e.g. a bulk bank-reconciliation entry an operator hasn't
@@ -2967,7 +2968,7 @@ export class InvoicesService {
       const { cash: paidAmount, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
       const totalConfirmed = paidAmount + creditApplied + advanceApplied;
       // SA-770: balanceDue + isOverdue come from the ONE classifier (B421 F3's roundMoney-before->0 rule and
-      // RF-202's "due today is not overdue" live there), judged on the UTC day as this list always has.
+      // RF-202's "due today is not overdue" live there), judged on the tenant's day (row 308; UTC when it has no zone).
       const { balanceDue, isOverdue } = classifyInvoiceBalance(inv, overdueBy);
       const { depositAmount, depositOverdue } = computeDepositFields(
         inv as any,
@@ -3063,7 +3064,11 @@ export class InvoicesService {
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
     return invoiceDetailFor(user, {
       ...inv,
-      ...deriveInvoiceDetailFields(inv),
+      ...deriveInvoiceDetailFields(
+        inv,
+        new Date(),
+        (await this.resolveTenantInvoiceDefaults()).timezone,
+      ),
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
       hideOriginalPrice,
@@ -3801,8 +3806,7 @@ export class InvoicesService {
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
-    if (inv.status === InvoiceStatus.VOID || inv.status === InvoiceStatus.PAID)
-      throw new BadRequestException("Cannot send reminder for a VOID or PAID invoice");
+    assertReminderIssued(inv.status); // row 318a: only SENT / VIEWED / PARTIAL / OVERDUE
     assertReminderOwes(inv.total, inv.payments); // SA-770: an exactly-paid or overpaid SENT invoice owes nothing
 
     // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —

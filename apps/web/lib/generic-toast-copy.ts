@@ -72,6 +72,8 @@ const CODE_COPY: Record<string, string> = {
     "Too many invoices are overdue to list at once. Filter by customer, then try again.",
   [API_ERROR_CODES.REMINDER_NO_BALANCE_DUE]:
     "This invoice has no balance due, so there is nothing to remind about.",
+  [API_ERROR_CODES.REMINDER_NOT_ISSUED]:
+    "A reminder can only be sent for an invoice that has been issued and is still unpaid.",
   EMAIL_NOT_CONFIGURED:
     "Email isn't set up for this workspace yet. Connect it under Settings → Email, then try again.",
   EMAIL_SEND_FAILED:
