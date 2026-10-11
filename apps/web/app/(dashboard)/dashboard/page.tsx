@@ -42,6 +42,8 @@ import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
 import { isUnsetCapabilities, useFulfilmentCaps } from "@/lib/fulfilment-caps";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { isStoreOnlyHeader } from "@/lib/counter-sale";
+import { staffMay } from "@routeflow/types";
 import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
@@ -572,6 +574,7 @@ export default function DashboardPage() {
   const counterGate = useCounterSaleGate({
     enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
   });
+  const storeOnlyHeader = isStoreOnlyHeader(counterGate);
   // Routes/drivers are recurring-routes surfaces, so every gate below (the mode
   // pill AND the route/driver cards it reveals) must use the same condition as
   // the shell's "Drive mode" menu item / exit chip in (dashboard)/layout.tsx —
@@ -834,15 +837,29 @@ export default function DashboardPage() {
                 New Route
               </Button>
             )}
+            {/* Store-only tenant: the SAME rule as the Orders header. New Order would open the counter too, so the
+                header is Invoice a customer (secondary) + Counter sale (primary); `builder=1` opens the builder
+                itself where the counter is the default. */}
+            {storeOnlyHeader && staffMay(user?.role, "USE_POS_MODE") ? (
+              <Button href="/orders?action=new&builder=1" size="sm" variant="secondary">
+                Invoice a customer
+              </Button>
+            ) : null}
             {counterGate.showButton ? (
-              <Button href="/orders/counter-sale" size="sm" variant="secondary">
+              <Button
+                href="/orders/counter-sale"
+                size="sm"
+                variant={storeOnlyHeader ? "primary" : "secondary"}
+              >
                 Counter sale
               </Button>
             ) : null}
-            <Button href="/orders?action=new" size="sm" variant="primary">
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              New Order
-            </Button>
+            {storeOnlyHeader ? null : (
+              <Button href="/orders?action=new" size="sm" variant="primary">
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                New Order
+              </Button>
+            )}
           </div>
         </div>
       )}

@@ -39,6 +39,15 @@ export function isStoreOnly(
   return methods.length > 0 && methods.every((m) => m === "PICKUP");
 }
 
+/**
+ * The store-only HEADER mode (UX G7), the ONE predicate for the Orders page and the dashboard: a business whose only
+ * fulfilment is PICKUP has one place to ring a sale, so "New Order" (which would open the counter too) is dropped and the
+ * header carries Counter sale (primary) + Invoice a customer.
+ */
+export function isStoreOnlyHeader(gate: Pick<CounterSaleGate, "offerInvoiceOrder">): boolean {
+  return gate.offerInvoiceOrder === true;
+}
+
 /** always -> the button and New order opens as the counter; optional -> the button only; off / unknown / loading -> nothing. */
 export function counterSaleGate(cap: FulfilmentCapability | null | undefined): CounterSaleGate {
   if (!cap) return NO_COUNTER;
