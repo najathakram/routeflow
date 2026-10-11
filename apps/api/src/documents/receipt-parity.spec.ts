@@ -51,6 +51,8 @@ interface Scenario {
   hide?: boolean;
   payments?: Pay[];
   tendered?: string | null;
+  /** the stored cashier (`Order.soldBy.username`); omitted = a sale rung before soldById was stamped */
+  cashier?: string;
   /** what the clerk typed at the till (the live screen's `enteredTender`); every other surface never sees it */
   entered?: number | null;
   /** the order's lines, and the same lines as the live cart rang them (cart prices are NET; the default carries a $1.00 discount) */
@@ -75,7 +77,10 @@ function build(s: Scenario) {
     tax: s.tax,
     counterCashTendered: s.tendered ?? null,
   });
-  const order = s.lines ? { ...base, lineItems: s.lines } : base;
+  const order = {
+    ...(s.lines ? { ...base, lineItems: s.lines } : base),
+    ...(s.cashier ? { soldBy: { username: s.cashier } } : {}),
+  };
   const configured = s.configured === undefined ? 8 : s.configured;
   const rates = s.rates ?? ["0.0800", "0.0800", "0.0800"];
   const payments = (s.payments ?? DEFAULT_PAYMENTS).map((p, i) => ({
@@ -121,11 +126,13 @@ function build(s: Scenario) {
     customerId: "c1",
     counterCashTendered: s.tendered ?? null,
     customer: { businessName: "Acme Test Customer", isWalkIn: false },
+    ...(s.cashier ? { soldBy: { username: s.cashier } } : {}),
     invoices: [invoice],
     returns: [],
   } as unknown as TodayOrderRecord;
   const row = toTodaysSaleRow(record, configured);
   const reprint = receiptModelFromOrder({
+    cashier: row.cashierName,
     order: {
       orderNumber: "ORD-1001",
       total: Number(s.total),
@@ -191,6 +198,15 @@ describe("print / reprint / email carry one money model (SA-762r)", () => {
     expect(emailModel.tax).toBe(2.12);
     expect(emailModel.adjustments).toBe(0);
     expect(emailModel.taxRatePercent).toBe(8);
+  });
+
+  it("row 317: the cashier is the stored soldBy on the email and the reprint (via the Today's row); none stored = none printed", () => {
+    const s = build({ total: "28.62", tax: "2.12", cashier: "jane" });
+    expect(s.row.cashierName).toBe("jane");
+    expect(s.emailModel.cashier).toBe("jane");
+    expect(s.reprint.cashier).toBe("jane");
+    expect(emailModel.cashier).toBeNull();
+    expect(reprint.cashier).toBeNull();
   });
 
   it("the email's lines are the reprint's lines (name, detail, total)", () => {

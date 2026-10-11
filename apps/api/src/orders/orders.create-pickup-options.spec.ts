@@ -124,6 +124,34 @@ describe("OrdersService.create — counter-sale options", () => {
     expect(prisma.order.create.mock.calls[0][0].data).not.toHaveProperty("counterSale");
   });
 
+  it("a counter sale stamps soldById with the acting staff user; any other order does not write it (row 317)", async () => {
+    await service.create({ ...body, idempotencyKey: undefined } as never, staff, {
+      skipAutoMerge: true,
+      fulfillPath: "PICKUP" as never,
+      counterSale: true,
+    });
+    expect(prisma.order.create.mock.calls[0][0].data.soldById).toBe("user-op");
+    prisma.order.create.mockClear();
+    await service.create({ ...body, idempotencyKey: undefined } as never, staff, {
+      skipAutoMerge: true,
+      fulfillPath: "PICKUP" as never,
+    });
+    expect(prisma.order.create.mock.calls[0][0].data).not.toHaveProperty("soldById");
+  });
+
+  it("a replay of a counter sale writes nothing, so the first cashier's soldById is never overwritten (row 317)", async () => {
+    jest.spyOn(service as any, "findReplayCandidateByKey").mockResolvedValue(original);
+    const otherStaff = { ...(staff as object), sub: "user-other" } as never;
+    await service.create(body as never, otherStaff, {
+      skipAutoMerge: true,
+      counterSale: true,
+      onReplay: jest.fn(),
+    } as never);
+    expect(prisma.order.create).not.toHaveBeenCalled();
+    expect(prisma.order.update).not.toHaveBeenCalled();
+    expect(prisma.order.updateMany).not.toHaveBeenCalled();
+  });
+
   it("without the option the customer default still decides (unchanged)", async () => {
     await service.create({ ...body, idempotencyKey: undefined } as never, staff, {
       skipAutoMerge: true,
