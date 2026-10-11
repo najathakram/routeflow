@@ -51,14 +51,17 @@ async function refuseOnCashRefund(
 /**
  * The INLINE source clauses for these invoice lines (none: no clause). The reverse of the refund's resolution
  * (`resolveInlineSourceInvoices`): an item is sourced from the invoice by its stored line id, OR, when a rebuild of the order's
- * invoice lines left that id dangling, by the order line (`sourceOrderItemId`) one of the invoice's lines carries, on the
- * invoice's own order. Without the second clause a cash refund of a rebuilt line (refunded since row 347) would not block the
- * void of the invoice it was paid back against. A superset (an item whose stored line is alive elsewhere also matches) is the
- * safe side of a refusal.
+ * invoice lines left that id DANGLING (no invoice line of the order has it any more), by the order line (`sourceOrderItemId`)
+ * one of the invoice's lines carries, on the invoice's own order. Without the second clause a cash refund of a rebuilt line
+ * (refundable since row 347) would not block the void of the invoice it was paid back against. The second clause is narrowed to
+ * dangling references: an item whose stored line is ALIVE on a sibling invoice (one order line billed on two invoices, 6 + 4)
+ * belongs to that sibling, so a cash refund of the sibling's goods never blocks voiding this invoice. `orderLineIds` is every
+ * invoice line of the order, whatever its invoice's status.
  */
 function inlineSourceFrom(
   lines: Array<{ id?: string | null; orderItemId?: string | null }>,
   orderId: string | null,
+  orderLineIds: ReadonlyArray<string>,
 ): Array<Record<string, unknown>> {
   const ids = lines.map((l) => l.id).filter((i): i is string => !!i);
   const orderItemIds = [
@@ -73,6 +76,7 @@ function inlineSourceFrom(
       items: {
         some: {
           sourceOrderItemId: { in: orderItemIds },
+          sourceInvoiceItemId: { notIn: [...orderLineIds] },
           ...(orderId ? { OR: [{ sourceOrderId: orderId }, { sourceOrderId: null }] } : {}),
         },
       },
@@ -91,12 +95,21 @@ export async function assertNoCashRefundOnInvoice(
   orderId: string | null,
 ): Promise<void> {
   const refs = await sourceRefsOfInvoice(tx, invoiceId);
+  // every invoice line of the order: a stored line id in it is NOT dangling (it is alive, on this invoice or a sibling)
+  const orderLines: Array<{ id?: string | null }> =
+    orderId && refs.orderItemIds.length > 0
+      ? ((await tx.invoiceItem.findMany({
+          where: { invoice: { orderId } },
+          select: { id: true },
+        })) ?? [])
+      : [];
   const sources = inlineSourceFrom(
     [
       ...refs.lineIds.map((id) => ({ id })),
       ...refs.orderItemIds.map((orderItemId) => ({ orderItemId })),
     ],
     orderId,
+    orderLines.map((l) => l.id).filter((i): i is string => !!i),
   );
   if (orderId) sources.push({ kind: "STANDARD", orderId });
   await refuseOnCashRefund(
@@ -113,12 +126,23 @@ export async function assertNoCashRefundOnInvoice(
  * through `orderId`. Reads only; call it right after `lockOrderForCancel`, BEFORE the cancel's first write.
  */
 export async function assertNoCashRefundOnOrder(tx: any, orderId: string): Promise<void> {
-  const lines: Array<{ id?: string | null; orderItemId?: string | null }> =
+  // ONE query: every line of the order's invoices with its invoice's status (the live ones are the sources, all of them tell a
+  // dangling stored id from one that is alive on a voided sibling)
+  const all: Array<{
+    id?: string | null;
+    orderItemId?: string | null;
+    invoice?: { status?: string | null } | null;
+  }> =
     (await tx.invoiceItem.findMany({
-      where: { invoice: { orderId, status: { not: "VOID" } } },
-      select: { id: true, orderItemId: true },
+      where: { invoice: { orderId } },
+      select: { id: true, orderItemId: true, invoice: { select: { status: true } } },
     })) ?? [];
-  const sources = inlineSourceFrom(lines, orderId);
+  const lines = all.filter((l) => l.invoice?.status !== "VOID");
+  const sources = inlineSourceFrom(
+    lines,
+    orderId,
+    all.map((l) => l.id).filter((i): i is string => !!i),
+  );
   sources.push({ kind: "STANDARD", orderId });
   await refuseOnCashRefund(
     tx,

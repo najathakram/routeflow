@@ -345,6 +345,26 @@ describeDb(
       expect((await row(ret.id)).status).toBe("RECEIVED");
     }, 60_000);
 
+    it("R9: a cash refund of goods on partial invoice B does not block voiding sibling A that shares the order line (B itself stays blocked)", async () => {
+      const { s, ret, lo, hi } = await splitLine("r9");
+      expect((await refund(s, ret.id, 20)).ok).toBe(true);
+      const guard = (invoiceId: string) =>
+        tenantCtx
+          .run(s.tenantId, () =>
+            prisma.tenantTransaction((tx: any) =>
+              assertNoCashRefundOnInvoice(tx, invoiceId, s.orderId),
+            ),
+          )
+          .then(
+            () => null,
+            (e: any) => e,
+          );
+
+      // the stored line is ALIVE on B: A's void is as allowed as it was before the order-line clause existed
+      expect(await guard(s.invoices[lo].id)).toBeNull();
+      expect(codeOf(await guard(s.invoices[hi].id))).toBe("INVOICE_HAS_CASH_REFUND");
+    }, 60_000);
+
     it("R7: the reverse guard follows the rotation: a rotated cash refund blocks the invoice void and the order cancel", async () => {
       const s = await sale("r7");
       const ret = await pendingRefund(s, 5, 50);
