@@ -49,5 +49,6 @@ export function storedTaxRatePercent(
   const stored = [...rates][0];
   // the column is Decimal(5, 4): compare at that precision, in basis points of the fraction
   if (Math.round(stored * 10_000) !== Math.round((configuredPercent / 100) * 10_000)) return null;
-  return Number((stored * 100).toFixed(4));
+  // print the CONFIGURED rate: the stored column is Decimal(5, 4), so 8.875% is stored as 0.0888 and must not read 8.88%
+  return configuredPercent;
 }

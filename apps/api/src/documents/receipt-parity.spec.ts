@@ -344,6 +344,14 @@ describe("a receipt never prints a back-calculated rate (RULING): the same label
     expect(surfaces(s)).toEqual([null, null, null, null, null]);
   });
 
+  it("a configured 8.875% (stored rounded to 0.0888) prints Tax (8.875%) on every surface, never 8.88%", () => {
+    // 22.50 x 8.875% = 1.997 -> 2.00; the Decimal(5,4) column holds 0.0888
+    const s = proof(["0.0888", "0.0888"], { configured: 8.875, total: "24.50", tax: "2.00" });
+    expect(surfaces(s)).toEqual([8.875, 8.875, 8.875, 8.875, 8.875]);
+    for (const m of [s.reprint, s.emailModel, s.live])
+      expect(adjustmentLabel(m.taxRatePercent)).toBe("Tax (8.875%)");
+  });
+
   it("a configured rate that changed since the sale is not applied to it", () => {
     const s = proof(["0.0825", "0.0825"], { configured: 9 });
     expect(surfaces(s)).toEqual([null, null, null, null, null]);

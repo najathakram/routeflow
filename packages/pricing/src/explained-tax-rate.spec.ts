@@ -70,4 +70,13 @@ describe("storedTaxRatePercent (a STORED line rate, corroborated by the tenant's
     expect(storedTaxRatePercent([inv([0.0825])], 8.25)).toBe(8.25);
     expect(storedTaxRatePercent([inv([0.0888])], 8.88)).toBe(8.88);
   });
+
+  it("PRINTS the configured rate, not the stored one: a configured 8.875% against a stored 0.0888 is 'Tax (8.875%)', never 8.88%", () => {
+    // the column is Decimal(5, 4): 8.875% is stored rounded to 0.0888, and it equals the configured rate at that precision
+    expect(storedTaxRatePercent([inv([0.0888])], 8.875)).toBe(8.875);
+    expect(taxRowLabel(storedTaxRatePercent([inv([0.0888])], 8.875))).toBe("Tax (8.875%)");
+    expect(storedTaxRatePercent([inv([0.0825])], 8.25)).toBe(8.25);
+    // a different configured rate at that precision still names nothing
+    expect(storedTaxRatePercent([inv([0.0888])], 8.9)).toBeNull();
+  });
 });
