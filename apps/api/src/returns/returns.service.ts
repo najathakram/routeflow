@@ -1299,10 +1299,8 @@ export class ReturnsService {
             : {}),
         },
         // receive() already reversed the returned regulated goods in the ledger: the refund rows must not reverse them again
-        {
-          ledgerReversedByReturn: true,
-          ...(pooledRefund ? { pooledRefund, returnId: id } : {}),
-        },
+        // SA-773 row 333(a): the return id goes with EVERY shape, so the link is written inside the mint transaction
+        { ledgerReversedByReturn: true, returnId: id, ...(pooledRefund ? { pooledRefund } : {}) },
       );
     } catch (err) {
       // F08 B68: the RECEIVED→REFUNDED claim above already committed. A failed mint
@@ -1347,8 +1345,6 @@ export class ReturnsService {
       }
       throw err;
     }
-    await this.prisma.forTenant().return.update({ where: { id }, data: { creditNoteId: cn.id } });
-
     return withUnbilled({ ...updated, creditNoteId: cn.id });
   }
 

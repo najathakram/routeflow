@@ -39,7 +39,7 @@ describe("B947: the order lock comes first, in create() and on the refund path",
   });
 
   it("the refund path hands create() the returned products AND the return id, so the re-check runs under the locks and the link is written in the mint tx", () => {
-    expect(rs).toMatch(/pooledRefund, returnId: id/);
+    expect(rs).toMatch(/returnId: id, \.\.\.\(pooledRefund \? \{ pooledRefund \} : \{\}\)/);
     // N7: the in-tx Return link sits inside the tenantTransaction, after the insert, before the return
     const tx = create.slice(create.indexOf("await this.prisma.tenantTransaction("));
     const insert = tx.indexOf("await this.insertCreditNoteInTx(");

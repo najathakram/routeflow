@@ -31,6 +31,11 @@ import {
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
 import { assertCreditWithinRemainder } from "../returns/refund-remainder-guard";
 import {
+  ReturnLinkLost,
+  creditNoteLinkedToReturn,
+  returnLinkConflict,
+} from "./credit-note-return-link";
+import {
   loadLineCredits,
   countCreditableInvoices,
   loadOrderPool,
@@ -582,6 +587,13 @@ export class CreditNotesService {
     // check fired.
     if (!tenantId) throw new BadRequestException("A tenant context is required.");
 
+    // SA-773 row 333(a): a retry for a return that already has its credit note gets THAT note back: no validation (its goods are
+    // spent by that very note), no number burned, no second mint
+    if (internal.returnId) {
+      const already = await creditNoteLinkedToReturn(this.prisma.forTenant(), internal.returnId);
+      if (already) return already;
+    }
+
     // REG-B267-E: the customer summary the response carries is read HERE, ahead
     // of the reservation, through the tenant-scoped `findFirst` — `findFirst` is
     // in SCOPED_METHODS so `tenantId` is injected into `where`, whereas
@@ -613,6 +625,7 @@ export class CreditNotesService {
     });
 
     let cn: any;
+    let reused = false; // the winner of a lost link CAS: already announced by whoever minted it
     // F1 (REG-B267-F/G, cause-ruling.md §2 D2 follow-up): the SERIALIZABLE tx
     // re-reads CreditNote (validateAndBuildCnItems's aggregate) then inserts
     // into it, a textbook rw-antidependency — PostgreSQL SSI cancels one
@@ -641,6 +654,14 @@ export class CreditNotesService {
             // (a stale snapshot aborts 40001 and re-reads the shared per-line headroom).
             // B947: with 2+ creditable invoices on the order, the Order and ALL of them are locked FIRST (Order -> Invoice,
             // id-sorted), so a refund on Y and a credit note on X serialise and no writer takes an Invoice then the Order.
+            if (internal.returnId) {
+              // the in-transaction read of the link: a request that linked it since the pre-read is the one to hand back
+              const linked = await creditNoteLinkedToReturn(tx, internal.returnId);
+              if (linked) {
+                reused = true;
+                return linked;
+              }
+            }
             if (dto.invoiceId) await lockOrderPoolRows(tx, dto.invoiceId, tenantId);
             if (dto.invoiceId) {
               await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} AND "tenantId" = ${tenantId} FOR UPDATE`;
@@ -673,11 +694,13 @@ export class CreditNotesService {
             // B947: a lump-sum refund is attributed to its product only THROUGH its Return's link, so the link is written in
             // the SAME transaction as the note: a credit note item that reads the pool after the commit can never see the
             // lump with no return (and a crash between the mint and a later link cannot leave it uncounted).
-            if (internal.returnId)
-              await tx.return.updateMany({
+            if (internal.returnId) {
+              const linkedNow = await tx.return.updateMany({
                 where: { id: internal.returnId, creditNoteId: null },
                 data: { creditNoteId: created.id },
               });
+              if (linkedNow.count === 0) throw new ReturnLinkLost(); // rolls the insert back; the winner's note is handed back
+            }
             return created;
           },
           { isolationLevel: "Serializable" },
@@ -685,6 +708,14 @@ export class CreditNotesService {
         serializationErr = undefined;
         break;
       } catch (err: any) {
+        if (err instanceof ReturnLinkLost && internal.returnId) {
+          const winner = await creditNoteLinkedToReturn(this.prisma.forTenant(), internal.returnId);
+          if (!winner) throw returnLinkConflict();
+          cn = winner;
+          reused = true;
+          serializationErr = undefined;
+          break;
+        }
         if (err?.code === "P2002") {
           // The try above spans five statements, so a P2002 here is only a NUMBER
           // conflict when the violated constraint actually names creditNoteNumber.
@@ -717,12 +748,13 @@ export class CreditNotesService {
       throw new ConflictException("Concurrent credit note for this invoice, please retry");
     }
 
-    this.gateway.emitCreditNoteCreated(this.prisma.getTenantId(), {
-      creditNoteId: cn.id,
-      creditNoteNumber: cn.creditNoteNumber,
-      customerId: cn.customerId,
-      amount: Number(cn.amount),
-    });
+    if (!reused)
+      this.gateway.emitCreditNoteCreated(this.prisma.getTenantId(), {
+        creditNoteId: cn.id,
+        creditNoteNumber: cn.creditNoteNumber,
+        customerId: cn.customerId,
+        amount: Number(cn.amount),
+      });
 
     return cn;
   }

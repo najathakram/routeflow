@@ -176,7 +176,7 @@ describe("ReturnsService.processRefund — mixed-unit product at the refund door
     await service.processRefund("ret-1");
     expect(creditNotesCreate).toHaveBeenCalledWith(
       expect.objectContaining({ amount: 60, items: [{ invoiceItemId: "i1", amount: 60, qty: 1 }] }),
-      { ledgerReversedByReturn: true },
+      { ledgerReversedByReturn: true, returnId: "ret-1" },
     );
   });
 
@@ -189,6 +189,7 @@ describe("ReturnsService.processRefund — mixed-unit product at the refund door
     await service.processRefund("ret-1");
     expect(creditNotesCreate).toHaveBeenCalledWith(expect.objectContaining({ amount: 30 }), {
       ledgerReversedByReturn: true,
+      returnId: "ret-1",
     });
   });
 });

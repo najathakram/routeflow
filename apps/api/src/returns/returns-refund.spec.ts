@@ -161,11 +161,9 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     // T16 pin (REG-B68): a successful mint never triggers the compensation path — the
     // claim fires exactly once.
     expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
-    expect(prisma.return.update).toHaveBeenCalledTimes(1);
-    expect(prisma.return.update).toHaveBeenCalledWith({
-      where: { id: "ret-1" },
-      data: { creditNoteId: "cn-1" },
-    });
+    // SA-773 row 333(a): the link is written by the mint itself (the return id goes with the call), not by a second write here
+    expect(prisma.return.update).not.toHaveBeenCalled();
+    expect(creditNotesCreate.mock.calls[0][1]).toMatchObject({ returnId: "ret-1" });
     expect(result.creditNoteId).toBe("cn-1");
   });
 
@@ -245,10 +243,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     expect(creditNotesCreate).toHaveBeenCalledTimes(1);
     const dto = creditNotesCreate.mock.calls[0][0];
     expect(dto.invoiceId).toBeUndefined();
-    expect(prisma.return.update).toHaveBeenCalledWith({
-      where: { id: "ret-12" },
-      data: { creditNoteId: "cn-12" },
-    });
+    expect(prisma.return.update).not.toHaveBeenCalled();
+    expect(creditNotesCreate.mock.calls[0][1]).toMatchObject({ returnId: "ret-12" });
     expect(result.creditNoteId).toBe("cn-12");
   });
 
