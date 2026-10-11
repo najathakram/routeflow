@@ -32,10 +32,30 @@ describe("BuyerController.getAnalytics — overdue means a balance is due (SA-77
   });
   afterEach(() => jest.useRealTimers());
 
-  const analytics = async (rows: any[]) => {
+  const analytics = async (rows: any[], paidCount = 0) => {
     prisma.invoice.findMany.mockResolvedValue(rows);
+    prisma.invoice.count.mockResolvedValue(paidCount);
     return controller.getAnalytics({ customerId: "cust-1" });
   };
+
+  it("reads BOUNDED: PAID invoices are counted, only OPEN ones are fetched, with the confirmed payments' amount, status and method", async () => {
+    await analytics([], 4);
+    expect(prisma.invoice.count).toHaveBeenCalledWith({
+      where: { customerId: "cust-1", status: "PAID" },
+    });
+    expect(prisma.invoice.findMany).toHaveBeenCalledWith({
+      where: { customerId: "cust-1", status: { in: ["SENT", "VIEWED", "PARTIAL", "OVERDUE"] } },
+      select: {
+        status: true,
+        total: true,
+        dueDate: true,
+        payments: {
+          where: { status: "PAID" },
+          select: { amount: true, status: true, method: true },
+        },
+      },
+    });
+  });
 
   it("an overpaid open invoice past due: overdueCount 0 and $0 (before the fix: 1 and the gross)", async () => {
     const res = await analytics([row(100, [pay(110)], "2020-01-01")]);
@@ -61,12 +81,14 @@ describe("BuyerController.getAnalytics — overdue means a balance is due (SA-77
   });
 
   it("a mix: paid in substance counts as paid; only owed money is summed", async () => {
-    const res = await analytics([
-      row(100, [pay(100)], "2020-01-01"), // exactly paid, still SENT
-      row(50, [], "2020-01-01", "OVERDUE"),
-      row(200, [pay(20)], "2099-01-01"),
-      row(10, [pay(10)], "2020-01-01", "PAID"),
-    ]);
+    const res = await analytics(
+      [
+        row(100, [pay(100)], "2020-01-01"), // exactly paid, still SENT
+        row(50, [], "2020-01-01", "OVERDUE"),
+        row(200, [pay(20)], "2099-01-01"),
+      ],
+      1, // one PAID invoice
+    );
     expect(res.invoiceBreakdown).toEqual({ paid: 2, unpaid: 1, overdue: 1 });
     expect(res.summary.unpaidInvoiceCount).toBe(2);
     expect(res.summary.unpaidInvoiceTotal).toBe(230); // 50 + 180

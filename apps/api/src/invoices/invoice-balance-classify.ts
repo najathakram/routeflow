@@ -1,7 +1,8 @@
 import { roundMoney } from "@routeflow/pricing";
 import { InvoiceStatus } from "@prisma/client";
 import { startOfCalendarDay } from "../common/calendar-date";
-import { type ConfirmablePaymentRow, splitConfirmed, sumConfirmed } from "./payment-predicates";
+import { OPEN_INVOICE_STATUSES } from "./invoice-status-sets";
+import { type ConfirmablePaymentRow, sumConfirmed } from "./payment-predicates";
 
 /**
  * SA-770 r-note: THE TypeScript answer to "what is still owed on this invoice, and is it overdue?".
@@ -23,14 +24,6 @@ const SETTLED: readonly string[] = [
   InvoiceStatus.WRITTEN_OFF,
 ];
 
-/** The statuses of an issued invoice that can still be owed. */
-export const OPEN_INVOICE_STATUSES = [
-  InvoiceStatus.SENT,
-  InvoiceStatus.VIEWED,
-  InvoiceStatus.PARTIAL,
-  InvoiceStatus.OVERDUE,
-] as const;
-
 export interface ClassifiableInvoice {
   status: string;
   total: unknown;
@@ -51,11 +44,7 @@ export function classifyInvoiceBalance(
   cutoff: Date,
 ): { balanceDue: number; isOverdue: boolean } {
   const settled = SETTLED.includes(inv.status);
-  // splitConfirmed + the three buckets, exactly as the detail read always summed them
-  const { cash, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
-  const balanceDue = settled
-    ? 0
-    : Math.max(0, roundMoney(Number(inv.total) - (cash + creditApplied + advanceApplied)));
+  const balanceDue = settled ? 0 : confirmedBalance(inv.total, inv.payments);
   const isOverdue =
     !settled &&
     balanceDue > 0 &&
