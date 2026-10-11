@@ -1583,8 +1583,13 @@ describe("Decision 5: a release never cancels a subscription whose OTHER invoice
     expect(
       h.db.audits.filter((a) => a.meta?.kind === "billing_catchup_release_refused_other_paid"),
     ).toHaveLength(1);
-    // the claim is still held: RouteFlow invoicing stays frozen until a human rules
-    expect(h.sub().catchupState).toBe("RELEASING");
+    // the operator gets the INTACT awaiting state - the sub link kept, manual invoicing still off, nothing half-released
+    expect(h.sub()).toMatchObject({
+      catchupState: "AWAITING_FIRST_PAYMENT",
+      stripeSubId: SUB,
+      externalPayment: false,
+    });
+    expect(h.stripe.invoices.get("in_1")!.status).toBe("open"); // not voided either
   });
 
   it("a $0 trial invoice (status paid, nothing collected) is not 'money paid': the release goes ahead", async () => {

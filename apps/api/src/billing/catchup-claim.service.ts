@@ -756,6 +756,28 @@ export class CatchupClaimService {
       );
     }
 
+    // ── Step 0b (Decision 5): never cancel a subscription that already holds PAID money besides the settling
+    //    invoice (e.g. the renewal at T was paid while the stub kept retrying): that month would be charged twice
+    //    once RouteFlow invoicing resumes. Checked BEFORE the release tx so the operator finds the claim INTACT
+    //    (AWAITING_FIRST_PAYMENT, the subscription link kept, manual invoicing still off). A human rules; the
+    //    hourly sweep retries without re-alerting. ──
+    if (subId && (await this.otherInvoicePaid(subId, seen.catchupInvoiceId))) {
+      const first = await this.noticeOnce(
+        this.prisma,
+        tenantId,
+        "billing_catchup_release_refused_other_paid",
+        subId,
+        `NEEDS RULING: the October catch-up first invoice failed, but another invoice on subscription ${subId} is already PAID. The subscription was NOT cancelled and RouteFlow invoicing stays frozen; refund or re-attach it in Stripe, then clear the claim by the runbook.`,
+        { subscriptionId: subId },
+      ).catch(() => false);
+      if (first) {
+        this.logger.error(
+          `billing.catchup.release_refused_other_paid tenant=${tenantId} subscription=${subId}: NEEDS RULING`,
+        );
+      }
+      return "needs_ruling";
+    }
+
     // ── Step 1 (+ the release tx) ──
     const proceed = await this.inTenantTx(tenantId, async (tx) => {
       const cur = await this.readClaim(tx, tenantId);
@@ -839,26 +861,6 @@ export class CatchupClaimService {
         if (again && invoiceIsPaid(again)) return refusedBecausePaid();
         throw err; // the row stays RELEASING; the sweep finishes it
       }
-    }
-
-    // ── Step 2b (Decision 5): never cancel a subscription that already holds PAID money besides the settling
-    //    invoice (e.g. the renewal at T was paid while the stub kept retrying): that month would be charged twice
-    //    once RouteFlow invoicing resumes. A human rules; the hourly sweep retries without re-alerting. ──
-    if (subId && (await this.otherInvoicePaid(subId, seen.catchupInvoiceId))) {
-      const first = await this.noticeOnce(
-        this.prisma,
-        tenantId,
-        "billing_catchup_release_refused_other_paid",
-        subId,
-        `NEEDS RULING: the October catch-up first invoice failed, but another invoice on subscription ${subId} is already PAID. The subscription was NOT cancelled and RouteFlow invoicing stays frozen; refund or re-attach it in Stripe, then clear the claim by the runbook.`,
-        { subscriptionId: subId },
-      ).catch(() => false);
-      if (first) {
-        this.logger.error(
-          `billing.catchup.release_refused_other_paid tenant=${tenantId} subscription=${subId}: NEEDS RULING`,
-        );
-      }
-      return "needs_ruling";
     }
 
     // ── Step 3: cancel the subscription (idempotent: the finishDuplicate pattern) ──
