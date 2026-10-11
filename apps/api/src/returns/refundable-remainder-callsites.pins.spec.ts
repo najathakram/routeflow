@@ -338,10 +338,14 @@ const readableOptions = (e: ts.Expression): boolean => {
 /**
  * A raw statement that writes one of the tables: the keyword and the QUOTED table identifier (optionally schema-qualified), the
  * only form that reaches these camel-case tables (an unquoted name folds to lower case and is another table). Case-insensitive
- * on the keyword only, so a message like 'Could not update return' never reads as SQL.
+ * on the keyword only, so a message like 'Could not update return' never reads as SQL. The schema may be quoted or not
+ * (`public."Return"`), and `UPDATE ONLY "Return"` is the same statement.
  */
 const rawStatement = (table: string): RegExp =>
-  new RegExp(`\\b(?:INSERT\\s+INTO|UPDATE)\\s+(?:"public"\\.)?"${table}"(?![A-Za-z0-9_])`, "i");
+  new RegExp(
+    `\\b(?:INSERT\\s+INTO|UPDATE)\\s+(?:ONLY\\s+)?(?:"?public"?\\.)?"${table}"(?![A-Za-z0-9_])`,
+    "i",
+  );
 const RAW_WRITE = {
   creditNote: rawStatement("CreditNote"),
   creditNoteItem: rawStatement("CreditNoteItem"),
@@ -759,6 +763,18 @@ describe("SA-773 pin helper: each shape of write the inventory must see turns it
     `);
     expect(prose.creditNoteWrites).toEqual([]);
     expect(prose.returnWrites).toEqual([]);
+    // the schema qualifier may be unquoted, and ONLY is the same statement
+    expect(
+      facts(`await tx.$executeRawUnsafe('UPDATE public."Return" SET x = 1');`).returnWrites.length,
+    ).toBeGreaterThan(0);
+    expect(
+      facts(`await tx.$executeRawUnsafe('UPDATE ONLY "Return" SET x = 1');`).returnWrites.length,
+    ).toBeGreaterThan(0);
+    expect(
+      facts(
+        `await tx.$executeRawUnsafe('INSERT INTO ONLY public."CreditNoteItem" (id) VALUES (1)');`,
+      ).creditNoteWrites.length,
+    ).toBeGreaterThan(0);
     // an unquoted identifier is another (non-existent) table in Postgres, so it is not a write to these
     expect(facts("await tx.$executeRawUnsafe('UPDATE Return SET x = 1');").returnWrites).toEqual(
       [],
