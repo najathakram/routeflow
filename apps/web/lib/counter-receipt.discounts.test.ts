@@ -4,7 +4,12 @@ import { buildCounterReceipt, receiptModelFromOrder } from "./counter-receipt";
  * One presentation of a lowered price: the live receipt (the cart's tier price) and the reprint (the order line's stored
  * `originalPrice`) both show the struck list price and a Discounts row, from pricing's receiptLineAmounts.
  */
-const reprint = (lines: Array<Record<string, unknown>>, total: number, tax: number) =>
+const reprint = (
+  lines: Array<Record<string, unknown>>,
+  total: number,
+  tax: number,
+  profile: { hideOriginalPrice?: boolean } | null = null,
+) =>
   receiptModelFromOrder({
     order: {
       orderNumber: "ORD-1",
@@ -20,7 +25,7 @@ const reprint = (lines: Array<Record<string, unknown>>, total: number, tax: numb
       methods: [{ method: "CASH", amount: total }],
       createdAt: "2026-10-07T15:15:00.000Z",
     },
-    profile: null,
+    profile,
   });
 
 describe("reprint: a lowered price is struck and summed into Discounts (like the live receipt)", () => {
@@ -73,6 +78,48 @@ describe("reprint: a lowered price is struck and summed into Discounts (like the
     expect(live.subtotal).toBe(32.48);
     expect(live.discounts).toBe(9.98);
     expect(live.lines[1]).toMatchObject({ original: 29.98, discount: 9.98 });
+  });
+
+  it("the tenant's hideOriginalPrice (the invoices' setting): net lines only, no struck price and no Discounts, reprint and live", () => {
+    const hidden = reprint(
+      [
+        { name: "Each", qty: 1, unitPrice: 2.5 },
+        { name: "Pc", qty: 2, unitPrice: "10.00", originalPrice: "14.99", priceType: "DISCOUNTED" },
+      ],
+      24.36,
+      1.86,
+      { hideOriginalPrice: true },
+    );
+    expect(hidden).toMatchObject({ subtotal: 22.5, discounts: 0, tax: 1.86, total: 24.36 });
+    expect(hidden.lines.every((l) => l.original === null && l.discount === 0)).toBe(true);
+    const live = buildCounterReceipt({
+      receipt: {
+        orderId: "o1",
+        orderNumber: "ORD-1",
+        invoiceId: "i1",
+        invoiceNumber: "INV-1",
+        total: 24.36,
+        paid: 24.36,
+        balanceDue: 0,
+        tax: 1.86,
+        taxRatePercent: null,
+        method: "CARD",
+        paymentRecorded: true,
+        lines: [
+          { productId: "pa", unitPrice: 2.5, originalPrice: null, priceType: "STANDARD" },
+          { productId: "pb", unitPrice: 10, originalPrice: 14.99, priceType: "DISCOUNTED" },
+        ],
+      },
+      lines: [
+        { tempId: "a", productId: "pa", name: "Each", unitPrice: 2.5, qty: 1 },
+        { tempId: "b", productId: "pb", name: "Pc", unitPrice: 10, qty: 2 },
+      ],
+      enteredTender: null,
+      profile: { hideOriginalPrice: true },
+      now: new Date("2026-10-07T15:15:00.000Z"),
+    });
+    expect(live).toMatchObject({ subtotal: 22.5, discounts: 0, total: 24.36 });
+    expect(live.lines.every((l) => l.original === null && l.discount === 0)).toBe(true);
   });
 
   it("a list price at or below the charge (or none) prints plain", () => {

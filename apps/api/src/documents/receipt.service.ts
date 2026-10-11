@@ -46,6 +46,8 @@ const SETTING_KEYS = [
   "settings.phone",
   "settings.receiptFooter",
   "settings.taxRate",
+  // the invoices' own switch: no struck list price and no Discounts row
+  "invoice.hideOriginalPrice",
 ];
 
 const tooMany = (code: string, message: string) =>
@@ -249,6 +251,7 @@ export class ReceiptService {
       phone: config?.phone ?? settings["settings.phone"],
       footer: settings["settings.receiptFooter"],
       configuredTaxPercent: taxRatePercentFrom(settings["settings.taxRate"]),
+      hideOriginalPrice: settings["invoice.hideOriginalPrice"] === "true",
     };
     const { subject, html, text } = renderOrderReceipt(order, invoices, payments, branding, zone);
 

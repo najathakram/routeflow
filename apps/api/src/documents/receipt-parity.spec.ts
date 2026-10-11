@@ -276,6 +276,35 @@ describe("the proof sale: a $14.99 Pc line rung at $10.00 x 2 reads the same on 
     }
   });
 
+  it("the tenant's invoice.hideOriginalPrice (the invoices' own setting): net lines only, no struck price and no Discounts row, on all three", () => {
+    const hidden = build({
+      total: "24.36",
+      tax: "1.86",
+      configured: 8.25,
+      rates: ["0.0825", "0.0825"],
+      hide: true,
+      payments: [{ method: "CASH", amount: "24.36" }],
+      lines: [line("a", "Each", "2.50", "1"), line("b", "Pc", "10.00", "2", "14.99")],
+      live: [
+        { tempId: "a", name: "Each", unitPrice: 2.5, qty: 1 },
+        { tempId: "b", name: "Pc", unitPrice: 10, qty: 2, tierPrice: 12, override: {} },
+      ],
+    });
+    for (const m of [hidden.live, hidden.reprint, hidden.emailModel]) {
+      expect(m).toMatchObject({
+        subtotal: 22.5,
+        discounts: 0,
+        tax: 1.86,
+        adjustments: 0,
+        total: 24.36,
+      });
+      expect(m.lines.map((l) => [l.total, l.original, l.discount])).toEqual([
+        [2.5, null, 0],
+        [20, null, 0],
+      ]);
+    }
+  });
+
   it("an unedited line stored with no list price, or a list price at or below the charge, shows nothing struck", () => {
     const plain = build({
       total: "24.36",

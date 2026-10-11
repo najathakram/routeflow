@@ -283,6 +283,18 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
       expect(text).toContain("Thanks <b>&</b> come again");
     });
 
+    it("shows the struck list price and a Discounts row for a lowered line (the invoices' rule), unless the tenant hides original prices (invoice.hideOriginalPrice)", async () => {
+      const shown = setup({});
+      await shown.send();
+      expect(shown.email.send.mock.calls[0][0].text).toContain("Discounts");
+      const hidden = setup({ settings: { "invoice.hideOriginalPrice": "true" } });
+      await hidden.send();
+      const { html, text } = hidden.email.send.mock.calls[0][0];
+      for (const body of [html, text]) expect(body).not.toContain("Discount");
+      const read = hidden.prisma.systemConfig.findMany.mock.calls[0][0].where.key.in;
+      expect(read).toContain("invoice.hideOriginalPrice");
+    });
+
     it("prints the cash handed over when the sale stored it", async () => {
       const { email, send } = setup({ order: storedOrder({ counterCashTendered: "50.00" }) });
       await send();
