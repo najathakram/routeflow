@@ -21,10 +21,7 @@
  */
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import {
-  CASH_REFUNDED_RETURN_WHERE,
-  sourceLineIdsOfInvoice,
-} from "../returns/inline-return-refund";
+import { CASH_REFUNDED_RETURN_WHERE, sourceRefsOfInvoice } from "../returns/inline-return-refund";
 
 /** The 409 message of `INVOICE_HAS_CASH_REFUND` on an invoice void (web shows a generic sentence by code). */
 export const INVOICE_HAS_CASH_REFUND_MESSAGE =
@@ -51,14 +48,36 @@ async function refuseOnCashRefund(
   }
 }
 
-/** The INLINE source clause for these invoice line ids (none: no clause). */
+/**
+ * The INLINE source clauses for these invoice lines (none: no clause). The reverse of the refund's resolution
+ * (`resolveInlineSourceInvoices`): an item is sourced from the invoice by its stored line id, OR, when a rebuild of the order's
+ * invoice lines left that id dangling, by the order line (`sourceOrderItemId`) one of the invoice's lines carries, on the
+ * invoice's own order. Without the second clause a cash refund of a rebuilt line (refunded since row 347) would not block the
+ * void of the invoice it was paid back against. A superset (an item whose stored line is alive elsewhere also matches) is the
+ * safe side of a refusal.
+ */
 function inlineSourceFrom(
-  lineIds: Array<string | null | undefined>,
+  lines: Array<{ id?: string | null; orderItemId?: string | null }>,
+  orderId: string | null,
 ): Array<Record<string, unknown>> {
-  const ids = lineIds.filter((i): i is string => !!i);
-  return ids.length > 0
-    ? [{ kind: "INLINE", items: { some: { sourceInvoiceItemId: { in: ids } } } }]
-    : [];
+  const ids = lines.map((l) => l.id).filter((i): i is string => !!i);
+  const orderItemIds = [
+    ...new Set(lines.map((l) => l.orderItemId).filter((i): i is string => !!i)),
+  ];
+  const clauses: Array<Record<string, unknown>> = [];
+  if (ids.length > 0)
+    clauses.push({ kind: "INLINE", items: { some: { sourceInvoiceItemId: { in: ids } } } });
+  if (orderItemIds.length > 0)
+    clauses.push({
+      kind: "INLINE",
+      items: {
+        some: {
+          sourceOrderItemId: { in: orderItemIds },
+          ...(orderId ? { OR: [{ sourceOrderId: orderId }, { sourceOrderId: null }] } : {}),
+        },
+      },
+    });
+  return clauses;
 }
 
 /**
@@ -71,7 +90,14 @@ export async function assertNoCashRefundOnInvoice(
   invoiceId: string,
   orderId: string | null,
 ): Promise<void> {
-  const sources = inlineSourceFrom(await sourceLineIdsOfInvoice(tx, invoiceId));
+  const refs = await sourceRefsOfInvoice(tx, invoiceId);
+  const sources = inlineSourceFrom(
+    [
+      ...refs.lineIds.map((id) => ({ id })),
+      ...refs.orderItemIds.map((orderItemId) => ({ orderItemId })),
+    ],
+    orderId,
+  );
   if (orderId) sources.push({ kind: "STANDARD", orderId });
   await refuseOnCashRefund(
     tx,
@@ -87,12 +113,12 @@ export async function assertNoCashRefundOnInvoice(
  * through `orderId`. Reads only; call it right after `lockOrderForCancel`, BEFORE the cancel's first write.
  */
 export async function assertNoCashRefundOnOrder(tx: any, orderId: string): Promise<void> {
-  const lines: Array<{ id?: string | null }> =
+  const lines: Array<{ id?: string | null; orderItemId?: string | null }> =
     (await tx.invoiceItem.findMany({
       where: { invoice: { orderId, status: { not: "VOID" } } },
-      select: { id: true },
+      select: { id: true, orderItemId: true },
     })) ?? [];
-  const sources = inlineSourceFrom(lines.map((l) => l.id));
+  const sources = inlineSourceFrom(lines, orderId);
   sources.push({ kind: "STANDARD", orderId });
   await refuseOnCashRefund(
     tx,

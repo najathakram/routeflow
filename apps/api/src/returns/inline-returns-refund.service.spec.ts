@@ -1410,7 +1410,9 @@ describe("loadSourceInvoicesState + sourcesAreRefundable (F4, pure over a mocked
     ["CREDIT_NOTE", true],
     ["ADVANCE", true],
   ])("a confirmed %s payment: paidWithStoreCredit = %s", async (method, expected) => {
-    const s = await loadSourceInvoicesState(db([{ amount: 30, status: "PAID", method }]), ["ii-1"]);
+    const s = await loadSourceInvoicesState(db([{ amount: 30, status: "PAID", method }]), [
+      { sourceInvoiceItemId: "ii-1" },
+    ]);
     expect(s.paidInFull).toBe(true);
     expect(s.paidWithStoreCredit).toBe(expected);
     expect(sourcesAreRefundable(s)).toBe(!expected);
@@ -1424,7 +1426,7 @@ describe("loadSourceInvoicesState + sourcesAreRefundable (F4, pure over a mocked
         { amount: 5, status: "VOID", method: "ADVANCE" },
         { amount: 0, status: "PAID", method: "CREDIT_NOTE" },
       ]),
-      ["ii-1"],
+      [{ sourceInvoiceItemId: "ii-1" }],
     );
     expect(s.paidWithStoreCredit).toBe(false);
     expect(sourcesAreRefundable(s)).toBe(true);
@@ -1439,9 +1441,102 @@ describe("loadSourceInvoicesState + sourcesAreRefundable (F4, pure over a mocked
     });
     const noInvoices = db([]);
     noInvoices.invoiceItem.findMany.mockResolvedValue([]);
-    expect(await loadSourceInvoicesState(noInvoices, ["ii-1"])).toMatchObject({
+    expect(
+      await loadSourceInvoicesState(noInvoices, [{ sourceInvoiceItemId: "ii-1" }]),
+    ).toMatchObject({
       paidInFull: false,
       paidWithStoreCredit: false,
+    });
+  });
+
+  describe("row 347 (3): a rebuilt source line re-resolves through its order line (the ONE resolver)", () => {
+    /** the stored line id is gone; the live line carrying the order line sits on `inv-live` (status given) */
+    const rebuilt = (invoiceStatus = "PAID") => {
+      const d = db([{ amount: 30, status: "PAID", method: "CASH" }]);
+      d.invoiceItem.findMany.mockImplementation(async ({ where }: any) =>
+        where?.id
+          ? []
+          : [
+              {
+                id: "ii-new",
+                invoiceId: "inv-live",
+                orderItemId: "oi-1",
+                invoice: { orderId: "ord-src", status: invoiceStatus },
+              },
+            ],
+      );
+      d.invoice.findMany.mockResolvedValue([
+        paidInvoice({
+          id: "inv-live",
+          status: invoiceStatus,
+          payments: [{ amount: 30, status: "PAID", method: "CASH" }],
+        }),
+      ]);
+      return d;
+    };
+    const item = {
+      sourceInvoiceItemId: "ii-old",
+      sourceOrderItemId: "oi-1",
+      sourceOrderId: "ord-src",
+    };
+
+    it("a rebuilt line on a paid invoice is paid in full: the invoice is the live line's", async () => {
+      const s = await loadSourceInvoicesState(rebuilt(), [item]);
+      expect(s.invoiceIds).toEqual(["inv-live"]);
+      expect(s.paidInFull).toBe(true);
+      expect(sourcesAreRefundable(s)).toBe(true);
+    });
+
+    it("a rebuilt line on a VOID invoice is dead: not paid in full", async () => {
+      const s = await loadSourceInvoicesState(rebuilt("VOID"), [item]);
+      expect(s.paidInFull).toBe(false);
+    });
+
+    it("a line that resolves nowhere (no order line either) fails closed, as before", async () => {
+      const d = rebuilt();
+      const s = await loadSourceInvoicesState(d, [
+        { sourceInvoiceItemId: "ii-old", sourceOrderItemId: null, sourceOrderId: "ord-src" },
+      ]);
+      expect(s.paidInFull).toBe(false);
+    });
+
+    it("an item with no source line (unreferenced) is not refundable, even beside a resolvable one", async () => {
+      const s = await loadSourceInvoicesState(rebuilt(), [item, { sourceInvoiceItemId: null }]);
+      expect(s.paidInFull).toBe(false);
+    });
+
+    it("the lock set is re-resolved under the lock: a line moved to another invoice in between is a retryable 409", async () => {
+      const d = rebuilt();
+      let call = 0;
+      d.invoiceItem.findMany.mockImplementation(async ({ where }: any) => {
+        if (where?.id) return [];
+        call += 1;
+        // the first resolution (before the lock) names inv-live; after the lock the line sits on inv-other
+        return [
+          {
+            id: "ii-new",
+            invoiceId: call === 1 ? "inv-live" : "inv-other",
+            orderItemId: "oi-1",
+            invoice: { orderId: "ord-src", status: "PAID" },
+          },
+        ];
+      });
+      const lock = jest.fn().mockResolvedValue(undefined);
+      await expect(
+        loadSourceInvoicesState(d, [item], { beforeInvoiceRead: lock }),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: "CONCURRENT_UPDATE", retryable: true },
+      });
+      expect(lock).toHaveBeenCalledWith(["inv-live"]);
+      expect(d.invoice.findMany).not.toHaveBeenCalled(); // nothing was read, nothing paid against inv-live
+    });
+
+    it("the same resolution under the lock proceeds (an in-place rebuild does not refuse)", async () => {
+      const lock = jest.fn().mockResolvedValue(undefined);
+      const s = await loadSourceInvoicesState(rebuilt(), [item], { beforeInvoiceRead: lock });
+      expect(lock).toHaveBeenCalledWith(["inv-live"]);
+      expect(s.paidInFull).toBe(true);
     });
   });
 

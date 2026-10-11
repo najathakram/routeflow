@@ -504,6 +504,25 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
     return out.sort();
   };
 
+  it("row 347 (3): ONE line-to-invoice resolver: the inline refund's resolveRefundInvoiceIds goes through resolveInlineSourceInvoices", () => {
+    // the refund (inline cash refund, REFUND capture pre-check, quote) resolves a rebuilt source line through its order line
+    // exactly as approve, store credit and the remainder do; a second copy of that resolution would drift (the refund once
+    // refused paid goods whose invoice lines a staff edit had rebuilt)
+    expect(callersOf("resolveInlineSourceInvoices")).toEqual([
+      "returns/inline-return-refund.ts::resolveRefundInvoiceIds",
+      "returns/inline-returns.service.ts::storeCreditInstead",
+      "returns/refund-remainder-guard.ts::assertInlineReturnWithinRemainder",
+      "returns/refund-remainder-guard.ts::assertInlineSourcesOpen",
+      "returns/refundable-remainder.ts::inlineReturnRequests",
+    ]);
+    // and the refund() / REFUND capture / quote callers reach it only through that composition
+    expect(callersOf("loadSourceInvoicesState")).toEqual([
+      "returns/inline-returns-quote.service.ts::quote",
+      "returns/inline-returns.service.ts::assertRefundable",
+      "returns/inline-returns.service.ts::refund",
+    ]);
+  });
+
   it("insertCreditNoteInTx is called by create() and the reissue only, each validating (the remainder included) before it inserts", () => {
     expect(callersOf("insertCreditNoteInTx")).toEqual([
       "credit-notes/credit-note-reissue.service.ts::reissue",

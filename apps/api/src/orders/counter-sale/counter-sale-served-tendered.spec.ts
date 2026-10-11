@@ -73,7 +73,7 @@ function surfaces(opts: { tendered: string | null; payments: Pay[]; total: strin
   const model = buildReceiptModel(
     order,
     [invoice],
-    invoice.payments.map((p) => ({ ...p, invoiceId: "inv-1" })),
+    invoice.payments.map((p) => ({ ...p, status: p.status ?? "PAID", invoiceId: "inv-1" })),
     BRANDING,
     "America/New_York",
   );

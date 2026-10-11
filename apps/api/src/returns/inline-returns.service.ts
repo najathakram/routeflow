@@ -653,7 +653,14 @@ export class InlineReturnsService {
   /** SA-727 (M3): a refund needs every source invoice paid in full; a $0 return has nothing to refund. */
   private async assertRefundable(
     tx: any,
-    priced: { total: number; chunks: Array<{ sourceInvoiceItemId: string | null }> },
+    priced: {
+      total: number;
+      chunks: Array<{
+        sourceInvoiceItemId: string | null;
+        sourceOrderItemId?: string | null;
+        sourceOrderId?: string | null;
+      }>;
+    },
   ): Promise<void> {
     if (!(priced.total > 0.001)) {
       throw new ConflictException({
@@ -661,10 +668,7 @@ export class InlineReturnsService {
         message: "This return is worth $0.00, so there is nothing to refund.",
       });
     }
-    const src = await loadSourceInvoicesState(
-      tx,
-      priced.chunks.map((c) => c.sourceInvoiceItemId),
-    );
+    const src = await loadSourceInvoicesState(tx, priced.chunks);
     // paid in full AND none of it store credit (F4): the ONE refusal, shared with the STANDARD refund
     const refusal = refundSourcesRefusal(src);
     if (refusal) throw refusal;
@@ -1571,6 +1575,7 @@ export class InlineReturnsService {
       const items = fresh.items as Array<{
         sourceOrderId?: string | null;
         sourceInvoiceItemId?: string | null;
+        sourceOrderItemId?: string | null;
       }>;
       await lockRefundOrders(tx, tenantId, [
         fresh.orderId,
@@ -1595,11 +1600,11 @@ export class InlineReturnsService {
       }
 
       // M3: every source invoice paid in full, read under the invoice locks
-      const src = await loadSourceInvoicesState(
-        tx,
-        items.map((i) => i.sourceInvoiceItemId),
-        { beforeInvoiceRead: (invoiceIds) => lockRefundInvoices(tx, tenantId, invoiceIds) },
-      );
+      // Row 347 (3): the invoices the goods sit on NOW (a rebuilt line re-resolves through its order line, as approve and
+      // store credit do), locked, then re-resolved under the lock; every check below runs on THESE invoices
+      const src = await loadSourceInvoicesState(tx, items, {
+        beforeInvoiceRead: (invoiceIds) => lockRefundInvoices(tx, tenantId, invoiceIds),
+      });
       // paid in full AND none of it store credit (F4, read under the same invoice locks)
       const refusal = refundSourcesRefusal(src);
       if (refusal) throw refusal;
