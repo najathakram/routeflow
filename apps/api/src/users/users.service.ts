@@ -19,6 +19,7 @@ import { CreateOperatorDto } from "./dto/create-operator.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { ChangeUserStatusDto } from "./dto/change-user-status.dto";
 import { issueSetPasswordLink } from "./set-password-token";
+import { revokeUserLinkTokens } from "../common/revoke-user-link-tokens";
 
 @Injectable()
 export class UsersService {
@@ -104,9 +105,7 @@ export class UsersService {
     return matches.length === 1 ? matches[0] : null;
   }
 
-  async findById(
-    id: string,
-  ): Promise<
+  async findById(id: string): Promise<
     | (Omit<User, "password" | "googleId" | "deniedPermissionGroups" | "permissionsVersion"> & {
         googleLinked: boolean;
         hasPassword: boolean;
@@ -210,10 +209,16 @@ export class UsersService {
     if (!user) throw new NotFoundException("User not found");
     assertMayChangeAccount(user, callerRole);
     await this.assertNotWalkInAccount(userId);
-    return this.prisma.forTenant().user.update({
-      where: { id: userId },
-      data: { status: dto.status },
-      select: { id: true, username: true, email: true, role: true, status: true },
+    // Every write that leaves the account non-ACTIVE (INACTIVE -> INACTIVE included) burns its
+    // outstanding links in the same transaction; reactivation restores nothing and burns nothing.
+    return this.prisma.tenantTransaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { status: dto.status },
+        select: { id: true, username: true, email: true, role: true, status: true },
+      });
+      if (dto.status !== "ACTIVE") await revokeUserLinkTokens(tx, userId);
+      return updated;
     });
   }
 
@@ -269,19 +274,35 @@ export class UsersService {
       ...(emailChanged ? { email: normalizedEmail } : {}),
       ...(usernameEdit ? { username: normalizedUsername } : {}),
     };
-    const updated = await this.prisma.forTenant().user.update({
-      where: { id: userId },
-      data,
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        role: true,
-        status: true,
-        isAdmin: true,
-        canActAsDriver: true,
-        forcePasswordChange: true,
-      },
+    // An email or role change burns the user's outstanding links in the SAME transaction as the
+    // write (a link mailed to the old address, or issued for the old role, must stop working).
+    const updated: Pick<
+      User,
+      | "id"
+      | "username"
+      | "email"
+      | "role"
+      | "status"
+      | "isAdmin"
+      | "canActAsDriver"
+      | "forcePasswordChange"
+    > = await this.prisma.tenantTransaction(async (tx) => {
+      const row = await tx.user.update({
+        where: { id: userId },
+        data,
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          role: true,
+          status: true,
+          isAdmin: true,
+          canActAsDriver: true,
+          forcePasswordChange: true,
+        },
+      });
+      if (emailChanged || roleChanged) await revokeUserLinkTokens(tx, userId);
+      return row;
     });
 
     // Best-effort account notices (NOTIFY-SPEC N2) — never let a delivery failure
@@ -289,14 +310,10 @@ export class UsersService {
     if (emailChanged) {
       // N2 review fix (#811 merge-session finding): a set-password invite link sent to
       // a mistyped address must not keep working after the admin corrects the email —
-      // otherwise the wrong recipient can still set a password and log in. Invalidate
-      // any outstanding token unconditionally on an email change, then — only if the
+      // otherwise the wrong recipient can still set a password and log in. The outstanding
+      // tokens were already burned in the write's transaction above; now — only if the
       // user has never set their own password — mint and send a fresh one to the
       // corrected address so they aren't left with no way in at all.
-      await this.prisma.passwordResetToken.updateMany({
-        where: { userId, usedAt: null },
-        data: { usedAt: new Date() },
-      });
       await this.notifyEmailChanged(userId, previousEmail, updated.email, updated.username);
       if (updated.forcePasswordChange && updated.email) {
         await this.sendSetPasswordInvite(userId, updated.email, updated.username);

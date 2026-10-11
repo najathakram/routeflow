@@ -35,6 +35,10 @@ describe("BuyerAuthService.deleteAccount — Apple revoke (#2309, SA-418)", () =
       ],
     }).compile();
     service = module.get(BuyerAuthService);
+    // the soft delete and the link burn run in one transaction: hand the callback a client
+    (prisma.$transaction as jest.Mock).mockImplementation(async (fn: (t: unknown) => unknown) =>
+      fn({ ...prisma, $executeRaw: jest.fn().mockResolvedValue(1) }),
+    );
   });
 
   it("clears appleId and googleId on the soft-deleted row and calls revoke", async () => {
@@ -50,6 +54,34 @@ describe("BuyerAuthService.deleteAccount — Apple revoke (#2309, SA-418)", () =
         googleId: null,
       }),
     });
+  });
+
+  it("burns the account's outstanding reset and verification links in the SAME transaction as the soft delete", async () => {
+    const tx = { ...prisma, $executeRaw: jest.fn().mockResolvedValue(1) };
+    (prisma.$transaction as jest.Mock).mockImplementation(async (fn: (t: unknown) => unknown) =>
+      fn(tx),
+    );
+
+    await service.deleteAccount("buyer-1");
+
+    // the soft delete ran on the transaction client, and the helper's statements ran on it too
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.buyerAccount.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "buyer-1" } }),
+    );
+    const statements = tx.$executeRaw.mock.calls.map(([strings]: any[]) => strings.join("?"));
+    expect(statements.some((q: string) => q.includes('"BuyerPasswordResetToken"'))).toBe(true);
+    expect(statements.some((q: string) => q.includes('"BuyerEmailVerificationToken"'))).toBe(true);
+  });
+
+  it("rolls the delete back when the link revoke fails (nothing half-deleted)", async () => {
+    const tx = { ...prisma, $executeRaw: jest.fn().mockRejectedValue(new Error("db down")) };
+    (prisma.$transaction as jest.Mock).mockImplementation(async (fn: (t: unknown) => unknown) =>
+      fn(tx),
+    );
+
+    await expect(service.deleteAccount("buyer-1")).rejects.toThrow("db down");
+    expect(prisma.buyerRefreshToken.deleteMany).not.toHaveBeenCalled();
   });
 
   it("still deletes when revoke throws", async () => {

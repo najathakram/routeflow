@@ -12,6 +12,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import type { AppConfig } from "../config/configuration";
 import type { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { BUYER_ACCESS_AUDIENCE } from "../auth/session-token";
+import { revokeBuyerLinkTokens } from "../common/revoke-user-link-tokens";
 
 /**
  * SUPER_ADMIN buyer account management.
@@ -104,7 +105,12 @@ export class BuyerAdminService {
     if (status === "DELETED") data.deletedAt = new Date();
     if (status === "ACTIVE") data.deletedAt = null;
 
-    await this.prisma.buyerAccount.update({ where: { id }, data });
+    // Any non-ACTIVE write (SUSPENDED -> SUSPENDED included) burns the buyer's outstanding reset
+    // and verification links in the same transaction; reactivation restores nothing.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.buyerAccount.update({ where: { id }, data });
+      if (status !== "ACTIVE") await revokeBuyerLinkTokens(tx, id);
+    });
     return { id, status, message: `Buyer account ${status.toLowerCase()}` };
   }
 
@@ -243,6 +249,8 @@ export class BuyerAdminService {
         // address. Revoke sessions too: the identity anchor just changed.
         await tx.buyerEmailVerificationToken.deleteMany({ where: { buyerAccountId: id } });
         await tx.buyerRefreshToken.deleteMany({ where: { buyerAccountId: id } });
+        // ...and so must a password-reset link mailed to it.
+        await revokeBuyerLinkTokens(tx, id);
       }
       return u;
     });

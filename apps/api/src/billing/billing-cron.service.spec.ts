@@ -25,6 +25,8 @@ function make(
     cancellations?: any[];
     cancelAddons?: any[];
     activeTeam?: number;
+    /** ids the seat-free sweep selects for deactivation (default two users) */
+    seatUsers?: string[];
     /** #2641: the Tenant row as re-read UNDER lockTenantForLedger (default: ACTIVE PRODUCTION). */
     lockedTenant?: { status?: string; class?: string; deletedAt?: Date | null };
     /** #2641: per-tenant overrides of the subscription row re-read under the lock. */
@@ -62,7 +64,14 @@ function make(
         ...data.lockedTenant,
       }),
     },
+    // Account-link revocation (common/revoke-user-link-tokens.ts) is raw SQL on the tx client.
+    $executeRaw: jest.fn().mockResolvedValue(1),
     user: {
+      // The seat-free sweep selects the ids it will deactivate BEFORE writing (to burn their
+      // links in the same tx); `data.seatUsers` names them.
+      findMany: jest
+        .fn()
+        .mockResolvedValue((data.seatUsers ?? ["u2", "u3"]).map((id: string) => ({ id }))),
       updateMany: jest.fn().mockResolvedValue({ count: 2 }),
       count: jest.fn().mockResolvedValue(data.activeTeam ?? 5),
     },
@@ -723,7 +732,79 @@ describe("BillingCronService", () => {
     await svc.applyScheduledDowngrades();
     // notIn [] matches all → deactivates every non-admin operator/driver.
     expect(tx.user.updateMany).toHaveBeenCalled();
-    expect(tx.user.updateMany.mock.calls[0][0].where.id).toEqual({ notIn: [] });
+    expect(tx.user.findMany.mock.calls[0][0].where.id).toEqual({ notIn: [] });
+    expect(tx.user.updateMany.mock.calls[0][0].where.id).toMatchObject({ notIn: [] });
+  });
+
+  describe("seat-free bulk deactivation burns the freed users' account links", () => {
+    const burnedIds = (tx: any) =>
+      tx.$executeRaw.mock.calls
+        .filter(([strings]: any[]) => strings.join("").includes('UPDATE "PasswordResetToken"'))
+        .map((c: any[]) => c[1]);
+    const downgrade = (over: Record<string, unknown> = {}) => ({
+      tenantId: "t1",
+      planKey: "BUSINESS",
+      planVersionId: "v7",
+      downgradeToPlanKey: "STARTER",
+      retainedUserIds: ["u1"],
+      ...over,
+    });
+
+    it("revokes exactly the users it deactivates, in the same tx and before the write", async () => {
+      const { svc, tx } = make({
+        downgrades: [downgrade()],
+        activeTeam: 5,
+        seatUsers: ["u2", "u3"],
+      });
+
+      await svc.applyScheduledDowngrades();
+
+      expect(burnedIds(tx)).toEqual(["u2", "u3"]);
+      // the write is keyed on the very ids that were burned (never a re-evaluated predicate)
+      const write = tx.user.updateMany.mock.calls[0][0];
+      expect(write.where.id).toMatchObject({ in: ["u2", "u3"], notIn: ["u1"] });
+      expect(write.data).toEqual({ status: "INACTIVE" });
+      // the selection uses the same predicate the old write used: never an admin, never retained
+      const select = tx.user.findMany.mock.calls[0][0];
+      expect(select.where).toMatchObject({
+        tenantId: "t1",
+        role: { in: ["OPERATOR", "DRIVER"] },
+        status: "ACTIVE",
+        deletedAt: null,
+        id: { notIn: ["u1"] },
+      });
+      // ordering: every burn precedes the status write
+      const lastBurn = Math.max(...tx.$executeRaw.mock.invocationCallOrder);
+      expect(lastBurn).toBeLessThan(tx.user.updateMany.mock.invocationCallOrder[0]);
+    });
+
+    it("a failed burn fails the tenant's downgrade (nothing is deactivated)", async () => {
+      const { svc, tx } = make({ downgrades: [downgrade()], activeTeam: 5, seatUsers: ["u2"] });
+      tx.$executeRaw.mockRejectedValue(new Error("db down"));
+
+      await svc.applyScheduledDowngrades().catch(() => undefined);
+
+      expect(tx.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("burns nothing and writes nothing when no user is eligible to be freed", async () => {
+      const { svc, tx, events } = make({ downgrades: [downgrade()], activeTeam: 5, seatUsers: [] });
+
+      await svc.applyScheduledDowngrades();
+
+      expect(burnedIds(tx)).toEqual([]);
+      expect(tx.user.updateMany).not.toHaveBeenCalled();
+      expect(emitted(events)).not.toContain(BILLING_EVENTS.SEAT_FREED);
+    });
+
+    it("burns nothing when the tenant is within the new seat cap", async () => {
+      const { svc, tx } = make({ downgrades: [downgrade()], activeTeam: 1 });
+
+      await svc.applyScheduledDowngrades();
+
+      expect(tx.user.findMany).not.toHaveBeenCalled();
+      expect(burnedIds(tx)).toEqual([]);
+    });
   });
 
   it("downgrade WITHIN the new seat cap frees nobody", async () => {

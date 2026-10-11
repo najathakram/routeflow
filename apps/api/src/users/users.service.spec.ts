@@ -398,6 +398,10 @@ describe("UsersService", () => {
     });
 
     it("N2 review fix (#811): invalidates any outstanding set-password/reset token when the email changes, so a link mailed to a mistyped address stops working", async () => {
+      const executeRaw = jest.fn().mockResolvedValue(1);
+      prisma.tenantTransaction.mockImplementation((fn: any) =>
+        fn({ user: prisma.user, $executeRaw: executeRaw }),
+      );
       prisma.user.findUnique.mockResolvedValue({
         id: "u1",
         username: "acme_op",
@@ -419,10 +423,13 @@ describe("UsersService", () => {
         "OPERATOR" as any,
       );
 
-      expect(prisma.passwordResetToken.updateMany).toHaveBeenCalledWith({
-        where: { userId: "u1", usedAt: null },
-        data: { usedAt: expect.any(Date) },
-      });
+      // Burned by the shared helper, in the same transaction as the email write (the per-writer
+      // pins live in users.service.link-revocation.spec.ts).
+      expect(executeRaw).toHaveBeenCalledTimes(1);
+      expect((executeRaw.mock.calls[0][0] as TemplateStringsArray).join("")).toContain(
+        'UPDATE "PasswordResetToken"',
+      );
+      expect(executeRaw.mock.calls[0][1]).toBe("u1");
     });
 
     it("N2 review fix (#811): sends a fresh set-password invite to the corrected address when the user never set their own password", async () => {

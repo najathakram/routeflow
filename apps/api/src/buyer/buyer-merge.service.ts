@@ -12,6 +12,7 @@ import { EmailService } from "../email/email.service";
 import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { revokeBuyerLinkTokens } from "../common/revoke-user-link-tokens";
 
 @Injectable()
 export class BuyerMergeService {
@@ -454,6 +455,8 @@ export class BuyerMergeService {
           mergedIntoId: primaryAccount.id,
         },
       });
+      // 5b. The deleted secondary's outstanding reset / verification links die with it.
+      await revokeBuyerLinkTokens(tx, secondaryAccount.id);
 
       // 6. Complete the merge request
       await tx.buyerMergeRequest.update({

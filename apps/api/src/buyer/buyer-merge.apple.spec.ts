@@ -40,6 +40,8 @@ function build(primary: Acct, secondary: Acct) {
     },
     buyerRefreshToken: { deleteMany: jest.fn() },
     buyerMergeRequest: { update: jest.fn() },
+    // account-link revocation is raw SQL on the tx client
+    $executeRaw: jest.fn().mockResolvedValue(0),
   };
   const prisma = {
     buyerMergeRequest: {

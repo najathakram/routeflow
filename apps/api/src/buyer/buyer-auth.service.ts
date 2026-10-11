@@ -19,6 +19,7 @@ import { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { BuyerRegisterDto } from "./dto/buyer-register.dto";
 import { BuyerLoginDto } from "./dto/buyer-login.dto";
 import { escapeHtml } from "../common/html-escape";
+import { revokeBuyerLinkTokens } from "../common/revoke-user-link-tokens";
 import { isLoginEligible, isSignInBlocked } from "../auth/login-eligibility";
 import {
   BUYER_ACCESS_AUDIENCE,
@@ -421,16 +422,21 @@ export class BuyerAuthService {
     // in SA-418: a soft-deleted row previously kept its @unique googleId, so a
     // re-sign-up after deletion hit P2002 — clearing both here fixes Apple's half and
     // Google's pre-existing half in the same write) so the stable sub can sign up again.
-    await this.prisma.buyerAccount.update({
-      where: { id: buyerAccountId },
-      data: {
-        status: "DELETED",
-        deletedAt: new Date(),
-        appleId: null,
-        googleId: null,
-        // revoked above; never keep a dead credential on a deleted row
-        appleRefreshTokenEnc: null,
-      },
+    // The deletion burns the account's outstanding reset and verification links in the SAME transaction (a deleted
+    // account must not be revived by an old link); if the burn fails the delete rolls back.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.buyerAccount.update({
+        where: { id: buyerAccountId },
+        data: {
+          status: "DELETED",
+          deletedAt: new Date(),
+          appleId: null,
+          googleId: null,
+          // revoked above; never keep a dead credential on a deleted row
+          appleRefreshTokenEnc: null,
+        },
+      });
+      await revokeBuyerLinkTokens(tx, buyerAccountId);
     });
 
     // Disconnect all active/pending links
@@ -617,28 +623,33 @@ export class BuyerAuthService {
    */
   async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
     const tokenHash = this.hashToken(token);
-    const record = await this.prisma.buyerPasswordResetToken.findUnique({ where: { tokenHash } });
+    // One refusal for every way a link can fail (unknown, used, expired, account not eligible).
+    const refuse = () => new BadRequestException("Reset link is invalid or has already been used.");
 
-    if (!record) throw new BadRequestException("Reset link is invalid or has already been used.");
-    if (record.usedAt) throw new BadRequestException("Reset link has already been used.");
-    if (record.expiresAt < new Date()) throw new BadRequestException("Reset link has expired.");
+    // Cheap early exit before the (costly) password hash; the claim below is what decides.
+    const record = await this.prisma.buyerPasswordResetToken.findUnique({ where: { tokenHash } });
+    if (!record || record.usedAt || record.expiresAt < new Date()) throw refuse();
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
-    // Mark token used and update password in a transaction
-    await this.prisma.$transaction([
-      this.prisma.buyerPasswordResetToken.update({
-        where: { tokenHash },
-        data: { usedAt: new Date() },
-      }),
-      this.prisma.buyerAccount.update({
-        where: { id: record.buyerAccountId },
+    await this.prisma.$transaction(async (tx) => {
+      // Claim the link first: of any number of concurrent uses exactly one sees count 1.
+      const now = new Date();
+      const claim = await tx.buyerPasswordResetToken.updateMany({
+        where: { tokenHash, usedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now },
+      });
+      if (claim.count !== 1) throw refuse();
+
+      // Only an active, not-deleted account may be reset. Throwing here rolls the claim back.
+      const updated = await tx.buyerAccount.updateMany({
+        where: { id: record.buyerAccountId, status: "ACTIVE", deletedAt: null },
         data: { passwordHash, passwordSet: true },
-      }),
-      this.prisma.buyerRefreshToken.deleteMany({
-        where: { buyerAccountId: record.buyerAccountId },
-      }),
-    ]);
+      });
+      if (updated.count !== 1) throw refuse();
+
+      await tx.buyerRefreshToken.deleteMany({ where: { buyerAccountId: record.buyerAccountId } });
+    });
 
     return { message: "Password reset successfully. Please log in with your new password." };
   }

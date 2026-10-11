@@ -108,3 +108,118 @@ describe("BuyerAdminService.updateBuyer", () => {
     expect(prisma.buyerRefreshToken.deleteMany).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Account links die with the account's standing: setBuyerStatus (any non-ACTIVE status) and an
+ * email change burn the buyer's outstanding reset + verification links in the SAME transaction as
+ * the write (`common/revoke-user-link-tokens.ts`); reactivation burns nothing.
+ */
+describe("BuyerAdminService — link revocation on standing changes", () => {
+  let service: BuyerAdminService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let tx: any;
+
+  const burned = () =>
+    tx.$executeRaw.mock.calls.map(([strings, id]: any[]) => ({
+      table: /UPDATE "(\w+)"/.exec(strings.join(""))![1],
+      id,
+    }));
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    tx = { ...prisma, $executeRaw: jest.fn().mockResolvedValue(1) };
+    // every buyer write must go through the tx client: the plain client rejects
+    prisma.buyerAccount.update.mockRejectedValue(new Error("write outside the transaction"));
+    tx.buyerAccount = { ...prisma.buyerAccount, update: jest.fn().mockResolvedValue({ id: "b1" }) };
+    prisma.$transaction.mockImplementation((fn: any) => fn(tx));
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BuyerAdminService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: JwtService, useValue: { sign: jest.fn().mockReturnValue("tok") } },
+        { provide: ConfigService, useValue: { get: () => ({ secret: "s" }) } },
+      ],
+    }).compile();
+    service = module.get(BuyerAdminService);
+  });
+
+  describe("setBuyerStatus", () => {
+    it.each(["SUSPENDED", "DELETED"] as const)(
+      "to %s: writes the status and burns both buyer link kinds in the same transaction",
+      async (status) => {
+        prisma.buyerAccount.findUnique.mockResolvedValue(EXISTING_BUYER as any);
+
+        await service.setBuyerStatus("b1", status);
+
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(tx.buyerAccount.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: "b1" },
+            data: expect.objectContaining({ status }),
+          }),
+        );
+        expect(burned()).toEqual([
+          { table: "BuyerPasswordResetToken", id: "b1" },
+          { table: "BuyerEmailVerificationToken", id: "b1" },
+        ]);
+      },
+    );
+
+    it("SUSPENDED -> SUSPENDED still burns the links", async () => {
+      prisma.buyerAccount.findUnique.mockResolvedValue({
+        ...EXISTING_BUYER,
+        status: "SUSPENDED",
+      } as any);
+
+      await service.setBuyerStatus("b1", "SUSPENDED");
+
+      expect(burned()).toHaveLength(2);
+    });
+
+    it("reactivation (to ACTIVE) writes the status and burns nothing", async () => {
+      prisma.buyerAccount.findUnique.mockResolvedValue({
+        ...EXISTING_BUYER,
+        status: "SUSPENDED",
+      } as any);
+
+      await service.setBuyerStatus("b1", "ACTIVE");
+
+      expect(tx.buyerAccount.update).toHaveBeenCalledTimes(1);
+      expect(burned()).toEqual([]);
+    });
+
+    it("a failed burn fails the status change", async () => {
+      prisma.buyerAccount.findUnique.mockResolvedValue(EXISTING_BUYER as any);
+      tx.$executeRaw.mockRejectedValue(new Error("db down"));
+
+      await expect(service.setBuyerStatus("b1", "SUSPENDED")).rejects.toThrow("db down");
+    });
+  });
+
+  describe("updateBuyer", () => {
+    it("an email change burns both buyer link kinds inside the same transaction", async () => {
+      prisma.buyerAccount.findUnique
+        .mockResolvedValueOnce(EXISTING_BUYER as any)
+        .mockResolvedValueOnce(null);
+
+      await service.updateBuyer("b1", { email: "new@x.com" });
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(tx.buyerAccount.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ email: "new@x.com" }) }),
+      );
+      expect(burned()).toEqual([
+        { table: "BuyerPasswordResetToken", id: "b1" },
+        { table: "BuyerEmailVerificationToken", id: "b1" },
+      ]);
+    });
+
+    it("an edit that does not change the email burns nothing", async () => {
+      prisma.buyerAccount.findUnique.mockResolvedValueOnce(EXISTING_BUYER as any);
+
+      await service.updateBuyer("b1", { name: "New Name" });
+
+      expect(burned()).toEqual([]);
+    });
+  });
+});

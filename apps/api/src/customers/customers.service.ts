@@ -92,6 +92,8 @@ import { portalInviteEmailHtml } from "./portal-invite-email";
 import { buildCustomersCsv } from "./customers-csv";
 import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes";
 import { assertProductIdNotFamily } from "../products/sellable-lines";
+import { revokeUserLinkTokens } from "../common/revoke-user-link-tokens";
+import { setCustomerLoginStatus } from "./customer-login-status";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -835,11 +837,7 @@ export class CustomersService {
       throw new ConflictException("Restore the customer first");
     }
     if (dto.status !== "ACTIVE") assertNotWalkIn(customer);
-    return this.prisma.forTenant().user.update({
-      where: { id: customer.userId },
-      data: { status: dto.status },
-      select: { id: true, status: true },
-    });
+    return setCustomerLoginStatus(this.prisma, customer.userId, dto.status);
   }
 
   async findRoutes(id: string) {
@@ -2222,6 +2220,7 @@ export class CustomersService {
             email: emailToRestore,
           },
         });
+        await revokeUserLinkTokens(tx, customer.userId); // status + email rewritten
       });
     } catch (err: any) {
       // A newer customer claimed this username or (in the unlikely race the pre-check
@@ -2367,6 +2366,7 @@ export class CustomersService {
             // it, so nulling it here made restore lossy for no gain.
           },
         });
+        await revokeUserLinkTokens(tx, customer.userId); // links die with the tombstone
       });
       return { success: true, softDeleted: true };
     }

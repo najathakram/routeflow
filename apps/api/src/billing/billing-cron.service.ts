@@ -1,5 +1,6 @@
 import { priceOverrideOf } from "./price-override";
 import { Injectable, Logger } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
@@ -24,6 +25,7 @@ import { lockTenantForLedger } from "./addon-ledger";
 import { isPayingRow } from "./mrr.service";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transition-config.service";
+import { revokeUserLinkTokens } from "../common/revoke-user-link-tokens";
 
 /** A run of this many snapshot failures in one sweep is systemic — the sweep aborts loudly. */
 const MAX_CONSECUTIVE_SNAPSHOT_FAILURES = 3;
@@ -374,16 +376,28 @@ export class BillingCronService {
               },
             });
             if (activeTeam > seatCap) {
-              const freed = await tx.user.updateMany({
-                where: {
-                  tenantId: s.tenantId,
-                  role: { in: ["OPERATOR", "DRIVER"] },
-                  status: "ACTIVE",
-                  deletedAt: null,
-                  id: { notIn: s.retainedUserIds },
-                },
-                data: { status: "INACTIVE" },
+              // Account links die with the seat: select the ids FIRST (inside this tx), burn each
+              // one's outstanding set-password / reset links, then deactivate exactly those ids.
+              const seatWhere: Prisma.UserWhereInput = {
+                tenantId: s.tenantId,
+                role: { in: ["OPERATOR", "DRIVER"] },
+                status: "ACTIVE",
+                deletedAt: null,
+                id: { notIn: s.retainedUserIds },
+              };
+              const toFree: { id: string }[] = await tx.user.findMany({
+                where: seatWhere,
+                select: { id: true },
               });
+              const freeIds = toFree.map((u) => u.id);
+              for (const userId of freeIds) await revokeUserLinkTokens(tx, userId);
+              const freed =
+                freeIds.length > 0
+                  ? await tx.user.updateMany({
+                      where: { ...seatWhere, id: { in: freeIds, notIn: s.retainedUserIds } },
+                      data: { status: "INACTIVE" },
+                    })
+                  : { count: 0 };
               if (freed.count > 0) {
                 await this.events.emit(
                   s.tenantId,

@@ -47,7 +47,10 @@ describe("the walk-in customer is protected (WALK_IN_PROTECTED)", () => {
       forTenant: () => scoped,
       scoped,
       getTenantId: () => "t1",
-      tenantTransaction: jest.fn(),
+      // the status write now runs in a transaction (link revocation shares it)
+      tenantTransaction: jest.fn(async (fn: any) =>
+        fn({ user: scoped.user, $executeRaw: jest.fn(async () => 0) }),
+      ),
     };
     const mod = await Test.createTestingModule({
       providers: [
