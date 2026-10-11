@@ -1427,6 +1427,20 @@ describe("InventoryService", () => {
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
     });
 
+    it("a product that vanishes between the pre-read and the lock is a NotFound, not a TypeError", async () => {
+      givenSession(session({ lines: [line({ unitCostOverride: D(3.5) })] }));
+      prisma.product.findMany
+        .mockResolvedValueOnce([product()]) // the pre-tx validation still sees it
+        .mockResolvedValueOnce([]); // the locked read does not: it was deleted in between
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+
+      const attempt = service.commitStockCountSession("sess-1", {}, { sub: "user-1" });
+
+      await expect(attempt).rejects.toBeInstanceOf(NotFoundException);
+      await expect(attempt).rejects.toThrow("Product not found");
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+
     it("refuses to commit an empty count and a discarded one", async () => {
       prisma.stockCountSession.findUnique.mockResolvedValue(session({ lines: [] }));
       await expect(

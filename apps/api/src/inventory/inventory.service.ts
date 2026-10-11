@@ -2792,9 +2792,12 @@ export class InventoryService {
           for (const line of lines) {
             if (line.unitCostOverride == null) continue;
             const unitCost = costDecimal(Number(line.unitCostOverride));
+            // The product can be deleted between the pre-tx read and the lock: same guard as the other writers.
+            const locked = lockedMap.get(line.productId);
+            if (!locked) throw new NotFoundException("Product not found");
             const movement = await this.setCostBasisInTx(
               tx,
-              lockedMap.get(line.productId)!,
+              locked,
               {
                 unitCost: Number(line.unitCostOverride),
                 notes: `Stock count ${reference}`,
