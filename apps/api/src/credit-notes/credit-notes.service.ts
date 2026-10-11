@@ -1127,6 +1127,24 @@ export class CreditNotesService {
   }
 
   /**
+   * SA-773 follow-up (A): the Orders and Invoices a cancel of this note must hold BEFORE `cancelStandaloneInTx` writes: the
+   * orders of the invoices its live applications sit on, and those invoices (the same set `voidWithReversalInTx` locks). Read
+   * unlocked; `cancelStandaloneInTx` re-reads under the locks and refuses an application outside what was taken.
+   */
+  async cancelLockSet(
+    tx: any,
+    creditNoteId: string,
+  ): Promise<{ orderIds: string[]; invoiceIds: string[] }> {
+    const payments: any[] = await this.liveCreditPayments(tx, creditNoteId);
+    return {
+      orderIds: [
+        ...new Set(payments.map((p) => p.invoice?.orderId).filter(Boolean) as string[]),
+      ].sort(),
+      invoiceIds: [...new Set(payments.map((p) => p.invoiceId as string))].sort(),
+    };
+  }
+
+  /**
    * Returns Inside Order Creation — PR-1c (m-5): cancels ONE standalone credit note an
    * inline return minted, inside the CALLER's own transaction (`InlineReturnsService.
    * cancel()`, which already holds the Return + carrying-Order locks) — never opens one of
@@ -1141,17 +1159,36 @@ export class CreditNotesService {
    * non-zero after restoring everything a payment row could account for — money consumed
    * through some path this couldn't find and restore, which must block the cancel rather than
    * silently void a note that's still "used" on paper (m-5's "restore < amountUsed" case).
+   *
+   * SA-773 follow-up (A): every restore writes the invoice its payment sat on, and that invoice can belong to ANOTHER order
+   * than the carrying one. The caller therefore locks `cancelLockSet()` (those orders, in ONE statement with its carrying
+   * order, then those invoices) before its first write and passes it back as `held`; an application that appeared since
+   * (another apply racing the cancel) is outside what is held and is refused 409 CREDIT_NOTE_CHANGED_CONCURRENTLY with
+   * nothing written, never written unlocked. Without `held` the caller owns the locks (the specs).
    */
-  async cancelStandaloneInTx(tx: any, creditNoteId: string): Promise<{ restored: number }> {
+  async cancelStandaloneInTx(
+    tx: any,
+    creditNoteId: string,
+    held?: { orderIds: readonly string[]; invoiceIds: readonly string[] },
+  ): Promise<{ restored: number }> {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
-    // scan-ok: draft-payment-not-void — a CREDIT_NOTE-method InvoicePayment is an
-    // internal ledger write this service itself creates atomically as CONFIRMED;
-    // it is never written as DRAFT/PENDING like an imported bank row or a
-    // post-dated check, so not-VOID is the correct (and only reachable) filter here.
-    const payments = await tx.invoicePayment.findMany({
-      where: { creditNoteId, method: PaymentMethod.CREDIT_NOTE, status: { not: "VOID" } },
-      orderBy: { createdAt: "desc" },
-    });
+    // CREDIT_NOTE payments are only ever written CONFIRMED (liveCreditPayments: not-VOID is the complete filter).
+    const payments: any[] = await this.liveCreditPayments(tx, creditNoteId);
+    if (held) {
+      const heldOrders = new Set(held.orderIds);
+      const heldInvoices = new Set(held.invoiceIds);
+      const outside = payments.some(
+        (p) =>
+          !heldInvoices.has(p.invoiceId) ||
+          (p.invoice?.orderId != null && !heldOrders.has(p.invoice.orderId)),
+      );
+      if (outside) {
+        throw cnConflict(
+          API_ERROR_CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY,
+          "This credit note was applied to another invoice while its return was being cancelled. Nothing was changed; try again.",
+        );
+      }
+    }
     let restored = 0;
     for (const p of payments) {
       restored = roundMoney(

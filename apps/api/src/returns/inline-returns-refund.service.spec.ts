@@ -700,6 +700,9 @@ describe("InlineReturnsService.refund (SA-727)", () => {
         refundedAt: new Date(),
       });
       (creditNotes as any).cancelStandaloneInTx = jest.fn().mockResolvedValue({});
+      (creditNotes as any).cancelLockSet = jest
+        .fn()
+        .mockResolvedValue({ orderIds: [], invoiceIds: [] });
       await service.cancel("ret-1", OPERATOR);
       expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
     });

@@ -422,9 +422,14 @@ export class InlineReturnsService {
     );
 
     // Fallback: the priced chunks name an Order the preflight did not (a walk-in's new order, whose preflight cannot price, or data
-    // that moved in between): lock it now, before any source invoice is written. RESIDUAL RISK: this second statement is not
-    // id-ordered against the first, so it can in theory cross another locker of the same Orders (a 40P01, which the caller's
-    // retry or a 500 surfaces). The preflight is what keeps the common case in ONE id-sorted statement.
+    // that moved in between): lock it now, before any source invoice is written. RESIDUAL RISK, a 40P01 and nothing worse (the
+    // caller's retry or a 500 surfaces it; no write is lost): this second statement is not id-ordered against the first, so it
+    // can cross another locker of the same Orders. The edges that exist today: an ORDER EDIT takes its own Order C FOR UPDATE and
+    // then captureInTx locks the SOURCE Order S of the chunks; approve / issueCredit lock {S, C} sorted in ONE statement, so with
+    // S < C an approve holds S and asks for C while the edit holds C and asks for S. (Inline cancel was a third party to this
+    // until SA-773 follow-up (A): its restore wrote the invoices of the orders the note was applied to without their Order
+    // lock; it now takes them with the carrying order in one sorted statement, so it is on the approve side of the edge.) The
+    // preflight is what keeps the common case in ONE id-sorted statement.
     const lateOrders = priced.chunks
       .map((c) => c.sourceOrderId)
       .filter((o): o is string => !!o && !lockedOrders.has(o));
@@ -1910,9 +1915,17 @@ export class InlineReturnsService {
         throw new BadRequestException("Return is already cancelled");
       }
 
-      // m-5 order: the carrying order is locked before any credit pull-back below touches
-      // its invoices.
-      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${fresh.orderId} FOR UPDATE`;
+      // m-5 order: the carrying order is locked before any credit pull-back below touches its invoices. SA-773 follow-up (A):
+      // the pull-back writes the invoices this return's credit note was APPLIED to, and those can sit on other orders: their
+      // Orders go in the SAME id-sorted statement as the carrying order (the {source, carrying} set approve/issueCredit take,
+      // so no cycle with them), then those invoices id-sorted, all before the first write below. The set is read unlocked
+      // here and re-checked by the restore under the locks (an application that appeared since is a 409, nothing written).
+      const noteLocks =
+        fresh.status === "REFUNDED" && fresh.creditNoteId
+          ? await this.creditNotes.cancelLockSet(tx, fresh.creditNoteId)
+          : { orderIds: [] as string[], invoiceIds: [] as string[] };
+      await lockRefundOrders(tx, tenantId, [fresh.orderId, ...noteLocks.orderIds]);
+      await lockRefundInvoices(tx, tenantId, noteLocks.invoiceIds);
 
       // HIGH-4: "applied" (restocked + regulated-ledger reversed) is no longer just
       // `status IN (RECEIVED, REFUNDED)` — a RECEIVED row still carrying `DRIVER_CAP` in
@@ -1960,7 +1973,10 @@ export class InlineReturnsService {
         // sweeps a DIFFERENT credit note that happens to sit on the same order/invoice.
         // Throws RETURN_CREDIT_CONSUMED if some of its `amountUsed` can't be traced back to a
         // restorable payment (m-5: "restore < amountUsed").
-        await this.creditNotes.cancelStandaloneInTx(tx, fresh.creditNoteId);
+        await this.creditNotes.cancelStandaloneInTx(tx, fresh.creditNoteId, {
+          orderIds: [fresh.orderId, ...noteLocks.orderIds],
+          invoiceIds: noteLocks.invoiceIds,
+        });
         await tx.orderCreditNote.deleteMany({
           where: { orderId: fresh.orderId, creditNoteId: fresh.creditNoteId },
         });

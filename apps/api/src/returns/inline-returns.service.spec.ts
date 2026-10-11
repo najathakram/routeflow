@@ -109,6 +109,7 @@ describe("InlineReturnsService", () => {
     mintStandaloneInTx: jest.Mock;
     settleOrderCreditsInTx: jest.Mock;
     cancelStandaloneInTx: jest.Mock;
+    cancelLockSet: jest.Mock;
   };
   let ledger: { reverseReturnEntries: jest.Mock; unreverseReturnEntries: jest.Mock };
   let addonService: { hasAddon: jest.Mock };
@@ -133,6 +134,7 @@ describe("InlineReturnsService", () => {
       ),
       settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
       cancelStandaloneInTx: jest.fn().mockResolvedValue({ restored: 30 }),
+      cancelLockSet: jest.fn().mockResolvedValue({ orderIds: [], invoiceIds: [] }),
     };
     ledger = {
       reverseReturnEntries: jest.fn().mockResolvedValue(undefined),
@@ -1646,10 +1648,77 @@ describe("InlineReturnsService", () => {
 
       await service.cancel("ret-refunded", OPERATOR);
 
-      expect(creditNotes.cancelStandaloneInTx).toHaveBeenCalledWith(expect.anything(), "cn-1");
+      expect(creditNotes.cancelStandaloneInTx).toHaveBeenCalledWith(expect.anything(), "cn-1", {
+        orderIds: ["ord-carrying"],
+        invoiceIds: [],
+      });
       expect(prisma.orderCreditNote.deleteMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { orderId: "ord-carrying", creditNoteId: "cn-1" } }),
       );
+    });
+
+    it("SA-773 follow-up (A): locks the carrying Order and every order the note was applied to in ONE id-sorted statement, then those invoices, before the pull-back writes", async () => {
+      const events: string[] = [];
+      const text = (strings: TemplateStringsArray, values: any[]) =>
+        strings.reduce((acc, str, i) => acc + str + (i < values.length ? "?" : ""), "");
+      const ids = (values: any[]) =>
+        values.flatMap((v) => (v && Array.isArray(v.values) ? v.values : [v])).join(",");
+      prisma.tenantTransaction.mockImplementation((fn: any) =>
+        fn({
+          ...prisma,
+          $executeRaw: jest.fn((strings: TemplateStringsArray, ...values: any[]) => {
+            const t = text(strings, values);
+            if (/FROM "Order"/.test(t)) events.push(`orders:${ids(values.slice(0, 1))}`);
+            else if (/FROM "Invoice"/.test(t)) events.push(`invoices:${ids(values.slice(0, 1))}`);
+            else if (/FROM "Return"/.test(t)) events.push("return");
+            return Promise.resolve(0);
+          }),
+        }),
+      );
+      creditNotes.cancelLockSet.mockResolvedValue({
+        orderIds: ["ord-other-a", "ord-other-b"],
+        invoiceIds: ["inv-other-a", "inv-other-b"],
+      });
+      creditNotes.cancelStandaloneInTx.mockImplementation(async () => {
+        events.push("restore");
+        return { restored: 30 };
+      });
+      prisma.return.findFirst.mockResolvedValue({
+        id: "ret-refunded",
+        status: "REFUNDED",
+        holdReason: null,
+        items: [],
+        orderId: "ord-carrying",
+        creditNoteId: "cn-1",
+      });
+
+      await service.cancel("ret-refunded", OPERATOR);
+
+      // ONE Order statement (the carrying order sorted among the others by the lock helper), the invoices after it,
+      // and the restore only after both: nothing of another order's invoice is written before its Order is held
+      expect(events).toEqual([
+        "return",
+        "orders:ord-carrying,ord-other-a,ord-other-b",
+        "invoices:inv-other-a,inv-other-b",
+        "restore",
+      ]);
+      expect(creditNotes.cancelStandaloneInTx).toHaveBeenCalledWith(expect.anything(), "cn-1", {
+        orderIds: ["ord-carrying", "ord-other-a", "ord-other-b"],
+        invoiceIds: ["inv-other-a", "inv-other-b"],
+      });
+    });
+
+    it("a return that is not REFUNDED never reads a note's lock set", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        id: "ret-received",
+        status: "RECEIVED",
+        holdReason: null,
+        items: [],
+        orderId: "ord-carrying",
+        creditNoteId: null,
+      });
+      await service.cancel("ret-received", OPERATOR);
+      expect(creditNotes.cancelLockSet).not.toHaveBeenCalled();
     });
 
     it("refuses cancelling an already-cancelled return", async () => {
