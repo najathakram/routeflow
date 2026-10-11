@@ -149,6 +149,7 @@ import {
 import { reconcileSplitOrderDrafts, type SplitReconcileDeps } from "./split-draft-reconcile";
 import { auditDeliberateOverpayment, auditRestatement, countLinesChanged } from "./invoice-audit";
 import { splitKeptItems } from "./kept-invoice-lines";
+import { assertSalesNotLockedForEdit } from "../regulated/filing-lock";
 import {
   applyPartialPriceFollow,
   planPartialPriceFollow,
@@ -5802,6 +5803,9 @@ export class InvoicesService {
       onCommitted?: () => void, // bulk: the tx committed (SA-651 MED-1), before the post-commit syncs
     ) => {
       const auditLine = `[${new Date().toLocaleDateString()} — Price adjusted by operator]`;
+      // B297 PR5 (D4a): a price change moves money on every adjusted line, so it is refused (409
+      // FILED_PERIOD_LOCKED) when the invoice's regulated SALE rows sit in a LOCKED filing period.
+      await assertSalesNotLockedForEdit(this.prisma.forTenant(), { invoiceId: inv.id });
 
       // B294 (SA-141): a legacy order/estimate-derived invoice (every line taxRate 0, a real
       // regular tax) keeps its tax — the inferred flat rate is stamped onto its lines first, in the

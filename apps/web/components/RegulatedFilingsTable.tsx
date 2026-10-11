@@ -1,10 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { Download } from "lucide-react";
-import { Badge, useToast } from "@routeflow/ui/web";
+import { Download, Lock } from "lucide-react";
+import { Badge, Button, Modal, Textarea, useToast } from "@routeflow/ui/web";
 import { fmt } from "@/lib/formatting";
-import { fetchRegulatedFilingUrl, type RegulatedFiling } from "@/lib/api/tracked-categories";
+import { useAuth } from "@/lib/auth-context";
+import {
+  fetchRegulatedFilingUrl,
+  useLockRegulatedFiling,
+  type RegulatedFiling,
+} from "@/lib/api/tracked-categories";
 
 interface Props {
   filings: RegulatedFiling[];
@@ -28,6 +33,31 @@ export function RegulatedFilingsTable({
   emptyHint,
 }: Props) {
   const { toast } = useToast();
+  // B297 PR5: only a tenant admin may lock a filed period, with a reason; there is no unlock.
+  const canLock = useAuth().user?.role === "TENANT_ADMIN";
+  const lock = useLockRegulatedFiling();
+  const [lockTarget, setLockTarget] = React.useState<RegulatedFiling | null>(null);
+  const [reason, setReason] = React.useState("");
+
+  const submitLock = () => {
+    if (!lockTarget || reason.trim().length < 3) return;
+    lock.mutate(
+      { id: lockTarget.id, reason: reason.trim() },
+      {
+        onSuccess: () => {
+          toast({ title: `Filing ${lockTarget.periodKey} locked`, variant: "success" });
+          setLockTarget(null);
+          setReason("");
+        },
+        onError: (e) =>
+          toast({
+            title: "Could not lock the filing",
+            description: (e as Error)?.message,
+            variant: "error",
+          }),
+      },
+    );
+  };
 
   const openFilingUrl = async (id: string) => {
     const url = await fetchRegulatedFilingUrl(id, "csv");
@@ -77,12 +107,31 @@ export function RegulatedFilingsTable({
                 {fmt(Number(f.totalCategoryTax))}
               </td>
               <td className="py-2 pr-3">
-                <Badge
-                  variant={f.status === "GENERATED" ? "success" : "warning"}
-                  label={f.status === "GENERATED" ? "Generated" : "Failed"}
-                />
+                {f.status === "LOCKED" ? (
+                  <span
+                    title={f.lockReason ?? undefined}
+                    className="inline-flex items-center gap-1"
+                  >
+                    <Badge variant="neutral" label="Locked" />
+                    <Lock className="h-3 w-3 text-navy/50" aria-hidden />
+                  </span>
+                ) : (
+                  <Badge
+                    variant={f.status === "GENERATED" ? "success" : "warning"}
+                    label={f.status === "GENERATED" ? "Generated" : "Failed"}
+                  />
+                )}
               </td>
               <td className="py-2 text-right">
+                {canLock && f.status === "GENERATED" && new Date(f.periodEnd) <= new Date() && (
+                  <button
+                    type="button"
+                    onClick={() => setLockTarget(f)}
+                    className="mr-1 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-navy hover:bg-surface-raised"
+                  >
+                    <Lock className="h-3.5 w-3.5" /> Lock
+                  </button>
+                )}
                 {f.csvKey && (
                   <button
                     type="button"
@@ -101,6 +150,45 @@ export function RegulatedFilingsTable({
           ))}
         </tbody>
       </table>
+      <Modal
+        open={lockTarget != null}
+        onClose={() => {
+          setLockTarget(null);
+          setReason("");
+        }}
+        title={`Lock the ${lockTarget?.periodKey ?? ""} filing`}
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setLockTarget(null)}
+              disabled={lock.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={submitLock}
+              loading={lock.isPending}
+              disabled={reason.trim().length < 3}
+            >
+              Lock filing
+            </Button>
+          </>
+        }
+      >
+        <p className="mb-3 text-sm text-navy/70">
+          A locked filing is closed: it is never regenerated, changes that would move its
+          period&apos;s money are refused, and it cannot be unlocked. Returns and credit notes book
+          into the current period.
+        </p>
+        <Textarea
+          label="Reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. Filed with the state on 10/20"
+        />
+      </Modal>
     </div>
   );
 }

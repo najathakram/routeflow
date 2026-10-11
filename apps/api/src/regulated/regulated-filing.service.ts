@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
@@ -10,6 +16,7 @@ import { filingPeriod, FilingCadence } from "./period";
 import { buildFilingCsv } from "./filing-csv";
 import { serializeReportCsv } from "./report-csv";
 import { assertNoParkedReversals, listParkedReversals } from "./parked-reversals";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** Round a quantity to 3 decimals — matches Decimal(12,3) + the CSV's .toFixed(3). */
 const roundQty = (n: number) => Math.round(n * 1000) / 1000;
@@ -65,6 +72,95 @@ export class RegulatedFilingService {
   }
 
   /**
+   * B297 PR5 (SA-088 D4): lock a GENERATED filing. A tenant-admin action with a required reason and an audit
+   * row; there is NO unlock in this work. Refused while the period is still running (a running period never
+   * locks), for a FAILED filing, for an already LOCKED one, and while return reversals for the period are
+   * parked (the figures the lock would freeze are incomplete).
+   */
+  async lockFiling(id: string, params: { userId: string; reason: string }) {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("Filings are tenant-scoped");
+    const reason = (params.reason ?? "").trim();
+    if (reason.length < 3)
+      throw new BadRequestException(
+        "A reason (at least 3 characters) is required to lock a filing.",
+      );
+
+    const filing = await this.prisma.forTenant().regulatedFiling.findUnique({ where: { id } });
+    if (!filing) throw new NotFoundException("Filing not found");
+    if (filing.status === "LOCKED")
+      throw new ConflictException({
+        code: API_ERROR_CODES.FILING_ALREADY_LOCKED,
+        message: "This filing is already locked.",
+      });
+    if (filing.status !== "GENERATED")
+      throw new ConflictException({
+        code: API_ERROR_CODES.FILING_NOT_LOCKABLE,
+        message: "Only a successfully generated filing can be locked.",
+      });
+    if (filing.periodEnd > new Date())
+      throw new ConflictException({
+        code: API_ERROR_CODES.FILING_PERIOD_RUNNING,
+        message: "A running period cannot be locked: lock a filing once its period has ended.",
+      });
+
+    const category = await this.prisma
+      .forTenant()
+      .trackedCategory.findUnique({ where: { id: filing.trackedCategoryId } });
+    const { buckets } = filingPeriod(
+      filing.cadence as FilingCadence,
+      Number(filing.periodStart.getUTCFullYear()),
+      this.indexOf(filing.cadence as FilingCadence, filing.periodStart),
+    );
+    assertNoParkedReversals(
+      await listParkedReversals(this.prisma.forTenant(), {
+        trackedCategoryId: filing.trackedCategoryId,
+        buckets,
+      }),
+      { categoryName: category?.name ?? filing.trackedCategoryId, periodKey: filing.periodKey },
+    );
+
+    // Claimed conditionally: a concurrent lock (or a regeneration that flipped it) cannot double-lock.
+    const claimed = await this.prisma.forTenant().regulatedFiling.updateMany({
+      where: { id, status: "GENERATED" },
+      data: {
+        status: "LOCKED",
+        lockedAt: new Date(),
+        lockedById: params.userId,
+        lockReason: reason,
+      },
+    });
+    if (claimed.count !== 1)
+      throw new ConflictException({
+        code: API_ERROR_CODES.FILING_ALREADY_LOCKED,
+        message: "This filing changed while it was being locked; reload and retry.",
+      });
+    await this.audit.log({
+      tenantId,
+      userId: params.userId,
+      action: "regulated_filing.locked",
+      entityType: "RegulatedFiling",
+      entityId: id,
+      meta: {
+        trackedCategoryId: filing.trackedCategoryId,
+        periodKey: filing.periodKey,
+        reason,
+        totalCategoryTax: Number(filing.totalCategoryTax),
+        generationCount: filing.generationCount,
+      },
+    });
+    return this.prisma.forTenant().regulatedFiling.findUnique({ where: { id } });
+  }
+
+  /** The 1-based month / quarter index of a period's start (ANNUAL ignores it). */
+  private indexOf(cadence: FilingCadence, start: Date): number {
+    const m = start.getUTCMonth();
+    if (cadence === "MONTHLY") return m + 1;
+    if (cadence === "QUARTERLY") return Math.floor(m / 3) + 1;
+    return 1;
+  }
+
+  /**
    * (Re)generate the filing for a PAST period. Upserts the (tenant, category,
    * period) row — regeneration overwrites the CSV at a deterministic key, bumps
    * generationCount, and is audit-logged. Totals are the ledger's pre-signed nets,
@@ -101,6 +197,13 @@ export class RegulatedFilingService {
         "Filings can only be prepared for completed periods — the period must be in the past.",
       );
     }
+
+    // B297 PR5: a LOCKED filing is closed. It is never regenerated: the stored artifact and totals ARE the
+    // filing (re-running the ledger read could only differ by what the lock exists to keep out).
+    const locked = await this.prisma.forTenant().regulatedFiling.findFirst({
+      where: { trackedCategoryId: params.trackedCategoryId, periodKey, status: "LOCKED" },
+    });
+    if (locked?.status === "LOCKED") return locked;
 
     // FILING GATE: a return reversal the ledger could not book (pack unknown) is parked and NOT in these
     // figures. Refuse BEFORE anything is uploaded or upserted (a regeneration too), so a period with an

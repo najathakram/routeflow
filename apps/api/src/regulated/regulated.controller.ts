@@ -15,6 +15,7 @@ import { ParkedReversalResolutionService } from "./parked-reversal-resolution.se
 import { ListLedgerDto } from "./dto/list-ledger.dto";
 import { ListFilingsDto } from "./dto/list-filings.dto";
 import { PrepareFilingDto } from "./dto/prepare-filing.dto";
+import { LockFilingDto } from "./dto/lock-filing.dto";
 import { ReportQueryDto } from "./dto/report-query.dto";
 import { ResolveParkedReversalDto } from "./dto/resolve-parked-reversal.dto";
 import { REPORT_TEMPLATES } from "./template-registry";
@@ -84,6 +85,15 @@ export class RegulatedController {
   @RequireAddon("tobacco_dealer")
   prepare(@Body() dto: PrepareFilingDto, @CurrentUser() user: { id: string }) {
     return this.filings.prepareFiling({ ...dto, userId: user.id });
+  }
+
+  // B297 PR5: lock a generated filing for a period that has ended. Tenant admin only; the reason is
+  // required and audited; there is no unlock. After `filings/prepare` and before the `:id` downloads.
+  @Post("filings/:id/lock")
+  @Roles(UserRole.TENANT_ADMIN)
+  @RequireAddon("tobacco_dealer")
+  lockFiling(@Param("id") id: string, @Body() dto: LockFilingDto, @CurrentUser() user: JwtPayload) {
+    return this.filings.lockFiling(id, { userId: user.sub, reason: dto.reason });
   }
 
   @Get("filings/:id/csv")

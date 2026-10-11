@@ -244,6 +244,7 @@ import { tenantSafeParentView } from "../products/product-parent";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { assertOrderEditNotLocked } from "../regulated/filing-lock";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 
 @Injectable()
@@ -2892,6 +2893,7 @@ export class OrdersService implements OnApplicationBootstrap {
     if (order.status === "CANCELLED") {
       throw new BadRequestException("Items can't be edited on a cancelled order");
     }
+    await assertOrderEditNotLocked(this.prisma.forTenant(), orderId, dto as any); // B297 PR5 (D4a)
     const isDiffPayload = classifyEditPayload(order, dto, user); // A4/B13: see order-edit-payload.ts
     // SA-422: never revive a seller-CANCELLED line (409 before any write; a strike-off of one is a
     // no-op). SA-422b: BEFORE every unit check, so a cancelled line's id gets this answer first.

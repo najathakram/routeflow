@@ -10,6 +10,7 @@ import {
   type SaleAxisState,
 } from "@routeflow/pricing";
 import { periodBucketOf } from "./period";
+import { assertLedgerRowsNotLocked } from "./filing-lock";
 
 /** Round a quantity to 3 decimals (matches the Decimal(12,3) ledger columns). */
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -317,6 +318,7 @@ export class RegulatedLedgerService {
         };
       });
     if (rows.length === 0) return;
+    await assertLedgerRowsNotLocked(db, rows); // B297 PR5: the last-line guard, before any row is written
     await db.regulatedSalesLedger.createMany({ data: rows });
   }
 
@@ -359,6 +361,7 @@ export class RegulatedLedgerService {
       rows.push(reversalRowFor(held, now, bucket));
     }
     if (rows.length === 0) return;
+    await assertLedgerRowsNotLocked(db, rows); // B297 PR5: the last-line guard, before any row is written
     await db.regulatedSalesLedger.createMany({ data: rows });
   }
 
@@ -405,7 +408,10 @@ export class RegulatedLedgerService {
       if (outstanding) reversals.push(reversalRowFor(h!, now, bucket));
       toWrite.push(l);
     }
-    if (reversals.length > 0) await db.regulatedSalesLedger.createMany({ data: reversals });
+    if (reversals.length > 0) {
+      await assertLedgerRowsNotLocked(db, reversals); // B297 PR5
+      await db.regulatedSalesLedger.createMany({ data: reversals });
+    }
     if (toWrite.length > 0)
       await this.writeSaleEntries({ tenantId, orderId, invoiceId, soldAt, lines: toWrite, db });
   }
@@ -1077,6 +1083,7 @@ export class RegulatedLedgerService {
     }
 
     if (rows.length === 0) return;
+    await assertLedgerRowsNotLocked(db, rows); // B297 PR5: the last-line guard, before any row is written
     await db.regulatedSalesLedger.createMany({ data: rows });
   }
 
@@ -1145,6 +1152,7 @@ export class RegulatedLedgerService {
       });
     }
     if (rows.length === 0) return 0;
+    await assertLedgerRowsNotLocked(db, rows); // B297 PR5: the last-line guard, before any row is written
     await db.regulatedSalesLedger.createMany({ data: rows });
     return rows.length;
   }
@@ -2040,6 +2048,7 @@ export class RegulatedLedgerService {
       });
     }
     if (rows.length === 0) return;
+    await assertLedgerRowsNotLocked(db, rows); // B297 PR5: the last-line guard, before any row is written
     await db.regulatedSalesLedger.createMany({ data: rows });
   }
 
