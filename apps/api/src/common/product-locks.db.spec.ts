@@ -523,6 +523,32 @@ describeDb("SA-767 L-1 — lockProductsForStock (real Postgres)", () => {
     }
   }, 60_000);
 
+  it("(vi) the helper's 5s default never overrides a caller's own lock_timeout; a tx at the default gets 5s", async () => {
+    // SA-767 L-2.4 free item 1: the default is set only when the tx's lock_timeout is still '0'.
+    const tenantId = await seedTenant("lto-own");
+    const id = `${run}-lto-own-${seq}`;
+    await mkProduct(tenantId, id, "STANDARD", 10);
+    const show = async (tx: any) =>
+      (await tx.$queryRaw`SELECT current_setting('lock_timeout') AS v`)[0].v as string;
+
+    const seen = await tenantCtx.run(tenantId, async () => {
+      const own = await prisma.tenantTransaction(async (tx: any) => {
+        await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+        await lockProductsForStock(tx, tenantId, [id]);
+        return show(tx);
+      });
+      const dflt = await prisma.tenantTransaction(async (tx: any) => {
+        await lockProductsForStock(tx, tenantId, [id]);
+        return show(tx);
+      });
+      return { own, dflt };
+    });
+    console.log(`SA-767(vi) observed: own=${seen.own} default=${seen.dflt}`);
+
+    expect(seen.own).toBe("3s"); // the caller's own value survives (the old helper forced 5s)
+    expect(seen.dflt).toBe("5s");
+  }, 60_000);
+
   it("refuses an empty tenant id, and an empty id list issues no statement", async () => {
     const calls: unknown[] = [];
     const tx = { $executeRaw: (...a: unknown[]) => calls.push(a) };

@@ -78,11 +78,11 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
     prisma = createMockPrisma();
     lock = jest.fn().mockResolvedValue(0);
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
-      // The helper's `SET LOCAL lock_timeout` (SA-767 r-note 2 (c)) is not a lock statement: `lock` sees only those.
+      // The helper's lock_timeout default (SA-767 r-note 2 (c); a set_config) is not a lock statement: `lock` sees only those.
       fn({
         ...prisma,
         $executeRaw: (strings: TemplateStringsArray, ...rest: unknown[]) =>
-          /SET LOCAL lock_timeout/.test(strings.join("?"))
+          /set_config\('lock_timeout'/.test(strings.join("?"))
             ? Promise.resolve(0)
             : lock(strings, ...rest),
       }),
