@@ -94,7 +94,9 @@ function bodyHtmlOf(m: ReceiptModel): string {
     ? `<p style="margin:16px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700;color:#1D2A3D;">On account: ${escapeHtml(money(m.balanceDue))} balance due on account</p>`
     : "";
   // the customer line is a named customer's only (null for a walk-in), as in the print header
-  const customer = m.customerName ? `<br>Customer: ${escapeHtml(m.customerName)}` : "";
+  const customer =
+    (m.customerName ? `<br>Customer: ${escapeHtml(m.customerName)}` : "") +
+    (m.cashier ? `<br>Cashier: ${escapeHtml(m.cashier)}` : "");
   const footer = m.footer
     ? `<p style="margin:24px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#536579;white-space:pre-line;">${escapeHtml(m.footer)}</p>`
     : "";
@@ -118,7 +120,7 @@ function bodyTextOf(m: ReceiptModel): string[] {
   ];
   const parts = [
     ...(head.length ? [head.join("\n")] : []),
-    `Order ${m.orderNumber} · Invoice ${m.invoiceNumber}\n${m.dateLabel}${m.customerName ? `\nCustomer: ${m.customerName}` : ""}`,
+    `Order ${m.orderNumber} · Invoice ${m.invoiceNumber}\n${m.dateLabel}${m.customerName ? `\nCustomer: ${m.customerName}` : ""}${m.cashier ? `\nCashier: ${m.cashier}` : ""}`,
     m.lines
       .map((l) => {
         const amount =

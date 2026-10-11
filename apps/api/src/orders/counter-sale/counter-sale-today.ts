@@ -18,6 +18,7 @@ import type {
 } from "@routeflow/types";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
 import { counterMethodOf, servedChange } from "./counter-sale-readback";
+import { cashierNameOf } from "./counter-sale-cashier";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
 import { pickupTenderGroupId } from "./pickup-tender-group";
@@ -225,6 +226,8 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
       customerId: true,
       counterCashTendered: true,
       customer: { select: { businessName: true, isWalkIn: true } },
+      // row 317: the cashier's username only (their display name); never the email or any other user column
+      soldBy: { select: { username: true } },
       invoices: {
         orderBy: { createdAt: "asc" },
         select: {
@@ -272,6 +275,8 @@ export interface TodayOrderRecord {
   /** SA-764: the cash handed over (null = not a cash sale / rung before it was stored) */
   counterCashTendered?: unknown;
   customer: { businessName: string | null; isWalkIn: boolean | null } | null;
+  /** row 317: the staff user who rang the sale (`Order.soldBy`); null/absent on a sale rung before it was stamped */
+  soldBy?: { username: string | null } | null;
   invoices: Array<{
     id: string;
     invoiceNumber: string | null;
@@ -387,6 +392,7 @@ export function toTodaysSaleRow(
     customerId: o.customerId,
     customerName: o.customer?.businessName ?? "",
     isWalkIn,
+    cashierName: cashierNameOf(o.soldBy),
     status: o.status,
     total,
     paid,

@@ -22,7 +22,7 @@ export function CounterReceiptView({
   model: CounterReceiptModel;
   logoUrl?: string | null;
   reprintLabel?: string;
-  /** A reprint does not know who sold it (the Order stores no creator), so it names who reprinted instead. */
+  /** Who reprinted it, beside the sale's own `Cashier:` line (the model's `cashier`, from the stored `soldBy`). */
   reprintedBy?: string | null;
   /** POS-1: the screen focuses this heading when the receipt appears. */
   headingRef?: React.Ref<HTMLHeadingElement>;

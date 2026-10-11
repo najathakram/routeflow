@@ -187,6 +187,7 @@ function Reprint({
     order && row.invoiceId && row.invoiceNumber
       ? receiptModelFromOrder({
           order,
+          cashier: row.cashierName,
           profile: { ...settings, businessName: branding?.businessName || settings?.businessName },
           sale: {
             invoiceId: row.invoiceId,
@@ -372,6 +373,9 @@ function SaleRow({
       <p className="text-xs text-navy/70">
         {timeOf(row.createdAt, timezone)} · {who}
         {methods ? ` · ${methods}` : ""}
+        {row.cashierName ? (
+          <span data-testid="today-row-cashier"> · Cashier: {row.cashierName}</span>
+        ) : null}
       </p>
       <div className="flex flex-wrap gap-1">
         {row.voided ? (

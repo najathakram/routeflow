@@ -1,6 +1,8 @@
 import {
   explainedTaxRatePercent,
+  formatReceiptMoney,
   receiptLineAmounts,
+  receiptLineDetail,
   roundMoney,
   taxRowLabel,
 } from "@routeflow/pricing";
@@ -12,7 +14,6 @@ import type {
   TodaysSaleMethod,
 } from "@routeflow/types";
 import { displayProductName } from "./product-display";
-import { priceUnitWord } from "./product-unit-label";
 
 /**
  * The counter-sale receipt as a pure view model. Line money goes through pricing's `receiptLineAmounts` (a boxed line is prorated,
@@ -72,9 +73,8 @@ export type CounterReceiptModel = ReceiptModel;
  */
 export const adjustmentLabel = taxRowLabel;
 
-/** Sign first: a downward reprice reads "-$1.00", never "$-1.00". */
-export const formatReceiptMoney = (n: number): string =>
-  `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
+/** Sign first: a downward reprice reads "-$1.00", never "$-1.00". The ONE formatter (pricing), shared with the emailed receipt. */
+export { formatReceiptMoney };
 
 const METHOD_LABEL: Record<CounterSalePaymentMethod, string> = {
   CASH: "Cash",
@@ -83,20 +83,8 @@ const METHOD_LABEL: Record<CounterSalePaymentMethod, string> = {
   ON_ACCOUNT: "On account",
 };
 
-const isBoxed = (l: ReceiptLineInput) => (l.unitsPerBox ?? 0) > 1;
-
-function lineDetail(l: ReceiptLineInput): string {
-  const price = formatReceiptMoney(l.unitPrice);
-  if (!isBoxed(l)) {
-    const unit = (l.unit ?? "").trim() ? ` / ${priceUnitWord(l.unit)}` : "";
-    return `${l.qty} × ${price}${unit}`;
-  }
-  const boxes = l.boxes ?? 0;
-  const pieces = l.pieces ?? 0;
-  const parts = [`${boxes} box${boxes === 1 ? "" : "es"}`];
-  if (pieces) parts.push(`${pieces} pcs`);
-  return `${parts.join(" + ")} × ${price} per box`;
-}
+/** "3 × $2.50 / each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the email prints. */
+const lineDetail = (l: ReceiptLineInput): string => receiptLineDetail(l);
 
 /** GET /orders/:id serialises Prisma Decimals as strings ("3.30"): coerce, and treat anything non-numeric as 0. */
 const num = (v: unknown): number => Number(v ?? 0) || 0;
@@ -342,7 +330,7 @@ export function formatSaleTime(at: string | Date, timeZone: string = "UTC"): str
 export function receiptModelFromOrder(input: {
   order: ReprintOrderLike;
   sale: ReprintSaleFacts;
-  /** Omit on a reprint: the Order stores no creator, so the original cashier is unknown. */
+  /** The sale's stored cashier (the Today's-sales row's `cashierName`); null/omitted on a sale rung before it was stamped. */
   cashier?: string | null;
   profile: ReceiptBusinessProfile | null | undefined;
 }): CounterReceiptModel {
