@@ -16,11 +16,13 @@ import {
   dayCloseWindowIsEmpty,
   validOpeningFloat,
   validateDenominations,
-  type DayCloseSnapshot,
-  type DayCloseState,
-  type DayCloseTotals,
-  type DenominationCount,
 } from "@routeflow/pricing";
+import type {
+  DayCloseSnapshot,
+  DayCloseState,
+  DayCloseTotals,
+  DenominationCount,
+} from "@routeflow/types";
 import type { JwtPayload } from "../../../auth/jwt-payload.interface";
 import { API_ERROR_CODES } from "../../../common/api-error-codes";
 import {

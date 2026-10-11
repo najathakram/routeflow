@@ -1,11 +1,7 @@
 import { IsOptional, IsString, MaxLength, registerDecorator } from "class-validator";
 import type { ValidationOptions } from "class-validator";
-import {
-  DAY_CLOSE_NOTES_MAX,
-  validOpeningFloat,
-  validateDenominations,
-  type DenominationCount,
-} from "@routeflow/pricing";
+import { DAY_CLOSE_NOTES_MAX, validOpeningFloat, validateDenominations } from "@routeflow/pricing";
+import type { DenominationCount } from "@routeflow/types";
 import { REGISTER_KEY_PATTERN } from "./day-close-register";
 
 const check = (

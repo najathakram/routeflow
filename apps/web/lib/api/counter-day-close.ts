@@ -1,7 +1,7 @@
 // End-of-day close + Z report (SA-750): the web side of `/orders/counter-sale/day-close`. The shapes are the contract in
 // `@routeflow/pricing` (the server imports the same file); the server recomputes every figure, so the form's numbers are a preview.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { DayCloseRequest, DayCloseSnapshot, DayCloseState } from "@routeflow/pricing";
+import type { DayCloseRequest, DayCloseSnapshot, DayCloseState } from "@routeflow/types";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { apiClient } from "../api-client";
 

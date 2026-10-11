@@ -25,7 +25,7 @@ import { randomUUID } from "crypto";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
-import type { DenominationCount } from "@routeflow/pricing";
+import type { DenominationCount } from "@routeflow/types";
 import type { JwtPayload } from "../../../auth/jwt-payload.interface";
 import { describeDb, requireLocalDatabaseUrl } from "../../../common/testing/db-spec";
 import { PrismaService } from "../../../prisma/prisma.service";

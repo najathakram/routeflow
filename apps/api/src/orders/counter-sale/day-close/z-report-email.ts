@@ -1,4 +1,4 @@
-import type { DayCloseSnapshot } from "@routeflow/pricing";
+import type { DayCloseSnapshot } from "@routeflow/types";
 import { escapeHtml } from "../../../common/html-escape";
 
 /**

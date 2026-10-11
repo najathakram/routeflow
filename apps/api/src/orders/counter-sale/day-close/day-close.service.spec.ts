@@ -9,7 +9,8 @@ import {
   ForbiddenException,
   NotFoundException,
 } from "@nestjs/common";
-import { roundMoney, sumDenominations, type DenominationCount } from "@routeflow/pricing";
+import { roundMoney, sumDenominations } from "@routeflow/pricing";
+import type { DenominationCount } from "@routeflow/types";
 import type { JwtPayload } from "../../../auth/jwt-payload.interface";
 import { countSalesSince, readWindowFacts } from "./day-close-facts";
 import type { WindowFacts, WindowPayment } from "./day-close-fold";

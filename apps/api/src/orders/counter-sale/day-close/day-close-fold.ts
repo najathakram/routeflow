@@ -1,4 +1,5 @@
-import { roundMoney, type DayCloseTotals } from "@routeflow/pricing";
+import { roundMoney } from "@routeflow/pricing";
+import type { DayCloseTotals } from "@routeflow/types";
 import { refundTenderOfColumn } from "../../../returns/refund-tender";
 import { isCounterTenderRow } from "../counter-tender-row";
 import {

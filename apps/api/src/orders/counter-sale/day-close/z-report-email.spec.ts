@@ -1,4 +1,4 @@
-import type { DayCloseSnapshot } from "@routeflow/pricing";
+import type { DayCloseSnapshot } from "@routeflow/types";
 import { buildZReportEmail, zMoney, zTime } from "./z-report-email";
 
 /** The Z report body: the figures a manager reads, the warning, no customers, and every interpolated value escaped. Placeholders only (acme). */

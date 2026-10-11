@@ -1,6 +1,6 @@
 import * as React from "react";
 import { act, renderWithProviders, screen, fireEvent, waitFor, within } from "@/test-utils/render";
-import type { DayCloseSnapshot, DayCloseState, DayCloseTotals } from "@routeflow/pricing";
+import type { DayCloseSnapshot, DayCloseState, DayCloseTotals } from "@routeflow/types";
 import type { TodaysSaleRow, TodaysSalesResponse, TodaysSalesSummary } from "@routeflow/types";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 
