@@ -12,8 +12,20 @@
  * On the old code B is blocked at its first Product write; on the new code at the lock statement.
  * Either way the contention is real and the final state tells the two apart.
  *
- *  (a) two concurrent recordPurchase: the final average is the TRUE weighted average of both applied
- *      in the serialized order, and the second movement's avgCostAfter derives from the first's.
+ *  (a)  two concurrent recordPurchase: the final average is the TRUE weighted average of both applied
+ *       in the serialized order, and the second movement's avgCostAfter derives from the first's.
+ *  (b1) commitStockCount landing AFTER a sale replaces the post-sale stock (counted 90, delta 90 - 70).
+ *  (b2) a sale landing AFTER a count is not erased (regression guard, the old code was already right).
+ *  (b3) commitStockCountSession after a sale: cost row and adjustment come from the locked rows.
+ *  (c)  setCostBasis racing a sale stamps the locked stock (stockAfter 70), not the stale read.
+ *  (c-bulk) bulkSetCostBasis locks every product in one statement and stamps each locked stock.
+ *  (d)  recordAdjustment racing a purchase takes avgCostAfter and the lot cost from the locked row.
+ *  (e1) the same all-zero-delta session committed twice concurrently applies ONCE (session CAS).
+ *  (e1b) a duplicate commit that read the session before the first landed cannot erase a later sale.
+ *  (e2) a line saved after the pre-tx read is committed with the session, never silently dropped.
+ *
+ * `sawLockWait(holderPid)` only counts a backend blocked BY the holder's connection, so another DB
+ * lane waiting on its own locks in the same database cannot fake the observation.
  *
  * Collected only by `jest.db.config.js`, run via `npm run test:db`. `requireLocalDatabaseUrl()`
  * refuses any non-local host. Tenants are throwaway `qa-sa767-l2-<run>-<n>-<label>` slugs approved by
@@ -54,7 +66,10 @@ class Gate {
   private readonly opened = new Promise<void>((r) => {
     this.open = r;
   });
-  hold(): Promise<void> {
+  /** The backend pid of the connection holding the transaction open (set by `hold`). */
+  holderPid = 0;
+  hold(holderPid: number): Promise<void> {
+    this.holderPid = holderPid;
     this.markParked();
     return this.opened;
   }
@@ -200,7 +215,8 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
       return original(
         async (tx: any) => {
           const result = await fn(tx);
-          await gate.hold();
+          const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+          await gate.hold(pid);
           return result;
         },
         { ...opts, timeout: 30_000, maxWait: 15_000 },
@@ -209,15 +225,20 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     return gate;
   }
 
-  /** True once some backend of this database is genuinely WAITING on another backend's lock. */
-  async function sawLockWait(withinMs = 5_000): Promise<boolean> {
+  /**
+   * True once some backend is genuinely WAITING on a lock held by `holderPid` (the holder
+   * connection's pg_backend_pid()). Filtering on the blocker means a parallel DB lane waiting on its
+   * own locks in the same database can never produce a false true.
+   */
+  async function sawLockWait(holderPid: number, withinMs = 5_000): Promise<boolean> {
     const deadline = Date.now() + withinMs;
     while (Date.now() < deadline) {
       // eslint-disable-next-line no-await-in-loop
       const { rows } = await pool.query(
         `SELECT count(*)::int AS n FROM pg_stat_activity
           WHERE datname = current_database() AND pid <> pg_backend_pid()
-            AND cardinality(pg_blocking_pids(pid)) > 0`,
+            AND pg_blocking_pids(pid) @> ARRAY[$1::int]`,
+        [holderPid],
       );
       if (rows[0].n > 0) return true;
       // eslint-disable-next-line no-await-in-loop
@@ -238,7 +259,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     const purchaseB = inTenant(B, w, () =>
       B.inventory.recordPurchase({ productId: w.productId, quantity: 20, unitCost: 6 }, w.userId),
     );
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(gateA.holderPid);
     gateA.release();
     await Promise.all([purchaseA, purchaseB]);
 
@@ -267,6 +288,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     const c = await pool.connect();
     openClients.push(c);
     await c.query("BEGIN");
+    const { rows: pidRows } = await c.query("SELECT pg_backend_pid() AS pid");
     await c.query('SELECT id FROM "Product" WHERE id = $1 AND "tenantId" = $2 FOR UPDATE', [
       productId,
       w.tenantId,
@@ -276,6 +298,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
       [productId, qty],
     );
     return {
+      pid: pidRows[0].pid as number,
       async commit() {
         await c.query("COMMIT");
         openClients.splice(openClients.indexOf(c), 1);
@@ -330,7 +353,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     const adjustment = inTenant(B, w, () =>
       B.inventory.recordAdjustment({ productId: w.productId, quantity: 5 }, w.userId),
     );
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(gateA.holderPid);
     gateA.release();
     await Promise.all([purchase, adjustment]);
 
@@ -365,7 +388,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     const count = inTenant(A, w, () =>
       A.inventory.commitStockCount(countDto(90, w.productId), w.userId),
     );
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(sale.pid);
     await sale.commit();
     await count;
 
@@ -393,7 +416,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     );
     await gateA.parked; // the count is written (stock 90) and still holds the row
     const sale = saleAfter(w, 30);
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(gateA.holderPid);
     gateA.release();
     const [, left] = await Promise.all([count, sale]);
 
@@ -428,7 +451,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     const commit = inTenant(A, w, () =>
       A.inventory.commitStockCountSession(session.id, {}, { sub: w.userId }),
     );
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(sale.pid);
     await sale.commit();
     await commit;
 
@@ -457,7 +480,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     const setCost = inTenant(A, w, () =>
       A.inventory.setCostBasis(w.productId, { unitCost: 5 }, w.userId),
     );
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(sale.pid);
     await sale.commit();
     await setCost;
 
@@ -490,7 +513,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
         w.userId,
       ),
     );
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(sale.pid);
     await sale.commit();
     await bulk;
 
@@ -543,7 +566,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     await gateA.parked; // A applied the cost row and flipped the session, uncommitted
     // B's pre-tx read still sees the session OPEN (A has not committed).
     const second = commitSession(B, w, sessionId);
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(gateA.holderPid);
     gateA.release();
     const [r1, r2] = await Promise.all([first, second]);
 
