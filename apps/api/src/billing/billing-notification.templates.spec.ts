@@ -226,6 +226,32 @@ describe("billing-notification.templates", () => {
       expect(t.html).toContain("/settings/billing");
     });
 
+    // Lead ruling: a canceled subscription is not a payment problem - the copy says so and the CTA picks a plan.
+    it("reason 'subscription canceled': says the subscription was canceled and to choose a plan, never 'payment details'", () => {
+      const t = suspendedTemplate({
+        businessName: "Acme Retail",
+        adminName: "Jamie",
+        reason: "subscription canceled",
+      });
+      const sentence = "Your subscription was canceled. Choose a plan to restore access.";
+      expect(t.html).toContain(sentence);
+      expect(t.text).toContain(sentence);
+      expect(t.html).toContain("Choose a plan");
+      expect(t.html).toContain("/settings/billing");
+      for (const part of [t.html, t.text]) expect(part).not.toMatch(/payment details/i);
+    });
+
+    it("any other reason keeps the payment-details copy", () => {
+      const t = suspendedTemplate({
+        businessName: "Acme Retail",
+        adminName: "Jamie",
+        reason: "overdue payment",
+      });
+      expect(t.html).toContain("update your payment details to restore access");
+      expect(t.text).toContain("update your payment details to restore access");
+      expect(t.html).not.toContain("Choose a plan to restore access");
+    });
+
     it("escapes a hostile reason string", () => {
       const t = suspendedTemplate({
         businessName: "Acme Retail",
