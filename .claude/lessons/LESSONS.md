@@ -12,6 +12,13 @@
 
 ## process
 
+### L-290 · 2026-10-10 · process · a train member that is red on its own branch does not enter the train: read each member's own latest CI before merging it
+
+- **Symptom:** a member whose own branch had a red database spec was merged into Train 3 and had to be ejected after the train was assembled, costing a revert on the tip.
+- **Root cause:** the train gate read the local checks and the assembled tip, never each member's own latest CI run on its head sha, so a red member only showed up once it was already in; the abandoned approach was "assemble first, find the reds on the tip".
+- **Lesson:** **Before a member is merged into a train, read that member's own latest CI result for its exact head sha. Red, missing or stale means it does not enter, whatever the local checks said; the tip's CI is the second check, not the first.**
+- **Guard:** none automatic; the train checklist (per member: head sha, its latest run, green). Cf. [[L-288]].
+
 ### L-289 · 2026-10-09 · process · a lead decides within its own authority when the owner is away; it never parks a train on an absent owner's reply
 
 - **Symptom:** work idled behind a question that only the owner could answer, while the owner was not reachable and everything else was ready.
@@ -173,13 +180,6 @@
 - **Lesson:** **After landing two PRs that touch the same constructor, signature or shared type in one window, run `npm run check-types -w apps/api` (and the touched specs) on the COMBINED master before the next land; never infer the combination from each PR's own green. Cf. [[L-228]], [[L-247]].**
 - **Guard:** none automatic yet; the landing script is to run `npm run check-types -w apps/api` on the post-merge tree before the next merge (to be added).
 
-### L-266 · 2026-10-06 · process · a close/reopen CI re-run can replay a cached merge commit: read "Merge X into Y" in the run log before landing (#3223)
-
-- **Symptom:** #3223's CI re-run after close/reopen went green, yet its checkout log read "Merge <head> into <an older master>": GitHub replayed its cached merge commit although `refs/pull/N/merge` already showed the new master as a parent.
-- **Root cause:** a close/reopen re-runs against the cached merge commit; a fresh one is built only when master moves or a branch is pushed. The green run therefore proved the PR against the older master, not the one the landing rule allows. Related: [[L-198]] (`gh run rerun` replays the original merge ref).
-- **Lesson:** **Before landing, read the run log's "HEAD is now at … Merge X into Y" line and require Y to be the master the landing rule allows. Close/reopen can replay a cached merge commit; a fresh one comes only from master moving or a push.**
-- **Guard:** the landing script's merge-base check.
-
 ### L-267 · 2026-10-06 · process · a "retry with the same key" path excludes every state an office action ended, and "final" is derived only from terminal facts (#3211 counter-sale review)
 
 - **Symptom:** review of the counter-sale change found that a repeated submit with the same idempotency key could replay or re-open a sale that an office action had already ended (cancelled, returned or voided), and that a sale read as "final" from facts that are not terminal.
@@ -210,6 +210,13 @@
 - **Recurrence (2026-10-08):** the age-filter rule also covers cleanup scripts: a cleanup script must age-filter (keep anything recent) before it deletes.
 
 ## tooling
+
+### L-291 · 2026-10-10 · tooling · never feed python a heredoc on Windows (`python3 -`): it hangs; write the script to a file or use node
+
+- **Symptom:** a lane's shell hung indefinitely on a `python3 - <<EOF` edit on a Windows machine.
+- **Root cause:** stdin-fed python (`python3 -` with a heredoc) does not return there; the exact mechanism was not chased, and waiting or retrying never helps.
+- **Lesson:** **On Windows, never pipe a script into `python3 -`. Make the edit with the editor tool, or write the script to a file and run it (node is always present in this repo); treat a silent hang on a heredoc as this trap before anything else.**
+- **Guard:** none automatic; the lane rules.
 
 ### L-198 · 2026-09-18 · tooling · `gh run rerun` replays the original checkout, not a fresh merge-ref
 
@@ -382,6 +389,13 @@
 
 ## testing
 
+### L-292 · 2026-10-10 · testing · a fixture that leaks an environment variable (RF_VERIFY_MODE) makes the pre-push hook and CI disagree
+
+- **Symptom:** the same checks gave different results in the local pre-push hook and in CI.
+- **Root cause:** a fixture left `RF_VERIFY_MODE` set in the process environment, so what a spec saw depended on which runner (and which earlier spec in the worker) had set it; the abandoned approach was re-running until the two agreed.
+- **Lesson:** **A test or fixture that sets a process environment variable restores it afterwards (save in a before hook, restore in an after hook, even on failure), and a spec whose behavior depends on such a variable sets it explicitly instead of inheriting it. When the hook and CI disagree, diff the environment first.**
+- **Guard:** none automatic; review check on fixtures that write `process.env`.
+
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
 
 - **Symptom:** `touch-reveal-b511.test.ts` and `edit-line-item-row-b513.test.ts` both asserted a
@@ -551,20 +565,6 @@
 - **Root cause:** the brief named the call sites, and the change declared "the single add-on ledger writer" without sweeping the tree, so an unnamed writer kept a second formula.
 - **Lesson:** **Before declaring one writer for a ledger or event stream, grep the whole tree for every emit of those events and every `amountDelta:` site, not only the call sites the brief named. Route each one through the writer or exempt it explicitly.**
 - **Guard:** #2186: `subscribe()` (`subscription-mutation.service.ts` :395-421 at review) was the writer the sweep missed and now calls `emitAddonDelta`. On master, `ADDON_ENABLED/DISABLED` is emitted only in `billing/addon-ledger.ts`. No structural pin yet; propose one beside `mrr-paying-predicate.parity.spec.ts`.
-
-### L-277 · 2026-10-07 · domain · a scan resolves through the exact-code ladder, never `data[0]` of a fuzzy search
-
-- **Symptom:** a scanned code added a different product, or a duplicate, because the first row of a contains-style search was taken as the match.
-- **Root cause:** a fuzzy or prefix search returns several rows ordered by name; the first is not the product that owns the code.
-- **Lesson:** **Resolve a scan through the exact-code ladder (SKU, barcode, exact code) and use a fuzzy hit only when it is the sole result and the user confirms it; an ambiguous hit opens a picker.**
-- **Guard:** `products/scan-prefix-exact.db.spec.ts` and `CounterSaleScreen.scan.test.tsx`.
-
-### L-278 · 2026-10-07 · domain · a queued lookup in front of a money action blocks the action until the queue drains
-
-- **Symptom:** a counter sale was paid while a scan was still resolving, and the lookup's line landed after the total was taken.
-- **Root cause:** scans resolve asynchronously one at a time, but Pay read the cart as it stood, not as it would be.
-- **Lesson:** **Any async lookup that can add or change lines must disable the money action until its queue is empty, and the server must judge the tender against its own total, not the screen's.**
-- **Guard:** `useCounterSaleScan` queue state gates Pay; `assertWalkInTenderCoversTotal` and its db spec.
 
 ## security
 

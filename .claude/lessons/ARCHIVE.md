@@ -3815,3 +3815,27 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **Make a tenant (or other scope) parameter required in the type, throw (fail closed) at runtime when it is missing, and let the compiler list every site. Making the two predicates tenant-required surfaced 11 production sites plus the order-write gate, all fixed.**
 - **Guard:** `apps/api/src/buyer/buyer-tenant-required.spec.ts`.
   (Archived 2026-10-09 whole and verbatim to make room at cap: L-285: guarded by `apps/api/src/buyer/buyer-tenant-required.spec.ts`; no outside citation.)
+
+### L-266 · 2026-10-06 · process · a close/reopen CI re-run can replay a cached merge commit: read "Merge X into Y" in the run log before landing (#3223)
+
+- **Symptom:** #3223's CI re-run after close/reopen went green, yet its checkout log read "Merge <head> into <an older master>": GitHub replayed its cached merge commit although `refs/pull/N/merge` already showed the new master as a parent.
+- **Root cause:** a close/reopen re-runs against the cached merge commit; a fresh one is built only when master moves or a branch is pushed. The green run therefore proved the PR against the older master, not the one the landing rule allows. Related: [[L-198]] (`gh run rerun` replays the original merge ref).
+- **Lesson:** **Before landing, read the run log's "HEAD is now at … Merge X into Y" line and require Y to be the master the landing rule allows. Close/reopen can replay a cached merge commit; a fresh one comes only from master moving or a push.**
+- **Guard:** the landing script's merge-base check.
+  (Archived 2026-10-10 whole and verbatim to make room at cap: L-266: guarded by the landing script's merge-base check; no outside citation.)
+
+### L-277 · 2026-10-07 · domain · a scan resolves through the exact-code ladder, never `data[0]` of a fuzzy search
+
+- **Symptom:** a scanned code added a different product, or a duplicate, because the first row of a contains-style search was taken as the match.
+- **Root cause:** a fuzzy or prefix search returns several rows ordered by name; the first is not the product that owns the code.
+- **Lesson:** **Resolve a scan through the exact-code ladder (SKU, barcode, exact code) and use a fuzzy hit only when it is the sole result and the user confirms it; an ambiguous hit opens a picker.**
+- **Guard:** `products/scan-prefix-exact.db.spec.ts` and `CounterSaleScreen.scan.test.tsx`.
+  (Archived 2026-10-10 whole and verbatim to make room at cap: L-277: guarded by `products/scan-prefix-exact.db.spec.ts` and `CounterSaleScreen.scan.test.tsx`; no outside citation.)
+
+### L-278 · 2026-10-07 · domain · a queued lookup in front of a money action blocks the action until the queue drains
+
+- **Symptom:** a counter sale was paid while a scan was still resolving, and the lookup's line landed after the total was taken.
+- **Root cause:** scans resolve asynchronously one at a time, but Pay read the cart as it stood, not as it would be.
+- **Lesson:** **Any async lookup that can add or change lines must disable the money action until its queue is empty, and the server must judge the tender against its own total, not the screen's.**
+- **Guard:** `useCounterSaleScan` queue state gates Pay; `assertWalkInTenderCoversTotal` and its db spec.
+  (Archived 2026-10-10 whole and verbatim to make room at cap: L-278: guarded by the `useCounterSaleScan` queue state gating Pay and `assertWalkInTenderCoversTotal` with its db spec; no outside citation.)
