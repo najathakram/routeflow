@@ -92,6 +92,11 @@ const ALLOWLIST: { file: string; count: number; note: string }[] = [
     note: "B297 PR3: the storedAmount member read; the write is data.categoryTaxAmount = (+ Object.assign stamp) — see header",
   },
   {
+    file: "orders/unit-line-edit.ts",
+    count: 2,
+    note: "B297 row 338: updateUnitLine's destructure + its SUBSTITUTE-only data spread (a same-product edit writes no category, levy or trio; the new product's are stamped only on a substitute)",
+  },
+  {
     file: "orders/unit-line-build.ts",
     count: 1,
     note: "categoryTaxForLine/buildUnitLine — stamps",
@@ -157,8 +162,8 @@ describe("category tax trio callsites — every categoryTaxAmount writer enumera
     expect(offenders).toEqual([]);
   });
 
-  it("total categoryTaxAmount writes across apps/api/src is exactly 23", () => {
+  it("total categoryTaxAmount writes across apps/api/src is exactly 25", () => {
     const total = FILES.reduce((n, f) => n + writeCount(fs.readFileSync(f, "utf8")), 0);
-    expect(total).toBe(23);
+    expect(total).toBe(25);
   });
 });

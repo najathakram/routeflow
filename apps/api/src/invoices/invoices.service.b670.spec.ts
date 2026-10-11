@@ -688,6 +688,12 @@ describe("InvoicesService — update() line preservation", () => {
         subtotal: 50,
         unitsPerBox: 12,
         categoryTaxAmount: 6,
+        // a regulated line, as a real one is: its category and the trio it was priced at (B297 row 338: a
+        // row with NO category but a stored levy keeps that levy instead of re-pricing at the product's)
+        trackedCategoryId: "cat-1",
+        categoryTaxType: "EXCISE_PER_UNIT",
+        categoryTaxRate: 0.1,
+        categoryPriceIncludesTax: false,
       });
       arrange([row], { category: true });
       await service.update("inv-box", {

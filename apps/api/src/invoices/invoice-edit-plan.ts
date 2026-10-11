@@ -314,12 +314,18 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         ? (row.trackedCategoryId as string)
         : null;
     // A kept row with a NULL trio is the row's OWN category's line (C), whatever its product's category is now:
-    // pricing it at the product's current category D would move the line to D.
+    // pricing it at the product's current category D would move the line to D. A kept row with NO category but a
+    // stored levy keeps it (L1, B297 row 338): the recompute returns the stored amount, never re-prices it at
+    // its product's current category.
+    const keepsStoredLevy =
+      keepsRow && !row.trackedCategoryId && Math.abs(Number(row.categoryTaxAmount ?? 0)) >= 0.005;
     const lineCategoryId =
       ownCategoryId ??
       (keepsRow && row.trackedCategoryId
         ? (row.trackedCategoryId as string)
-        : (product?.trackedCategoryId ?? null));
+        : keepsStoredLevy
+          ? null
+          : (product?.trackedCategoryId ?? null));
     const category = lineCategoryId ? ctx.categoryMap.get(lineCategoryId) : null;
     // The levy basis reads the SAME resolved pack the money used (SA-180): never the live pack for a stored line.
     const basisPack = Number(unitsPerBox ?? ownPack ?? (row ? 0 : livePack) ?? 0);

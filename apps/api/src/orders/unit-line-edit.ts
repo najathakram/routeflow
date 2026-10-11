@@ -203,16 +203,17 @@ export async function createUnitLine(
  * re-stamps from the NEW product's category, same as `createUnitLine`. A same-product qty/price
  * edit is NOT a new sale, so the trio must never move — the 3 trio keys are stripped out of
  * `buildUnitLine`'s return before the Prisma call, so `data` never names them and the existing
- * columns are left untouched (Prisma only writes fields present in `data`). The amount still
- * prices from `product`'s own category either way (the unchanged product on a same-product edit,
- * the new one on a substitute) — harmless even for the same-product case, since
- * `recomputeLineCategoryTaxes` re-derives every active line's amount from the line's OWN
- * rate snapshot right after this transaction (B297 PR3; it was the live category before). Only the
- * TRIO is the thing this function must not touch on a same-product edit.
- * KNOWN GAP (found in the PR3 review, not fixed here): on a same-product edit `rest` still carries
- * `trackedCategoryId` / `trackedSubcategoryId` / `categoryTaxAmount` from the product's CURRENT
- * category, so a product that left (or changed) its category re-files the line and the recompute
- * then keeps or re-prices it from a trio that no longer matches the category.
+ * columns are left untouched (Prisma only writes fields present in `data`). A SUBSTITUTE's amount prices
+ * from the new product's category; on a same-product edit the amount is not written at all (row 338,
+ * below): `recomputeLineCategoryTaxes` re-derives every active line's amount from the line's OWN rate
+ * snapshot right after this transaction (B297 PR3; it was the live category before). Only the TRIO is the
+ * thing this function must not touch on a same-product edit.
+ * B297 row 338: a same-product edit also leaves `trackedCategoryId` / `trackedSubcategoryId` /
+ * `categoryTaxAmount` untouched. They used to be written from the product's CURRENT category, so a product
+ * that had left (or changed) its category re-filed the line and the recompute then priced it from a trio that
+ * no longer matched, or dropped its sale-time excise. The line keeps the category it was sold under; its
+ * amount is re-derived from its own snapshot by `recomputeLineCategoryTaxes` (a no-category line keeps its
+ * stored levy, L1).
  */
 export async function updateUnitLine(
   ctx: UnitWriteContext,
@@ -230,6 +231,11 @@ export async function updateUnitLine(
     categoryTaxType,
     categoryTaxRate,
     categoryPriceIncludesTax,
+    // B297 row 338: the category the line was SOLD under (and its levy) belong to the line, not to the
+    // product's CURRENT category; only a substitute (a new sale) takes the new product's.
+    trackedCategoryId,
+    trackedSubcategoryId,
+    categoryTaxAmount,
     ...rest
   } = buildUnitLine({
     product,
@@ -242,7 +248,15 @@ export async function updateUnitLine(
     tenantId: ctx.tenantId,
   });
   const data = isSubstitute
-    ? { ...rest, categoryTaxType, categoryTaxRate, categoryPriceIncludesTax }
+    ? {
+        ...rest,
+        trackedCategoryId,
+        trackedSubcategoryId,
+        categoryTaxAmount,
+        categoryTaxType,
+        categoryTaxRate,
+        categoryPriceIncludesTax,
+      }
     : rest;
   await writeLineUpdate(ctx.tx, ctx.orderId, lineId, data); // #2577: { id, orderId }, never bare
 }

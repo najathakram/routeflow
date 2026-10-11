@@ -126,7 +126,7 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
       (o) => o.id,
     );
     await (raw as any).orderRevision?.deleteMany?.({ where: { orderId: { in: ids } } });
-    await raw.stockMovement.deleteMany({ where: { productId } });
+    await raw.stockMovement.deleteMany({ where: { product: { tenantId } } });
     await raw.orderItem.deleteMany({ where: { tenantId } });
     await raw.order.deleteMany({ where: { tenantId } });
     await raw.routeRunStop.deleteMany({ where: { routeRun: { route: { tenantId } } } });
@@ -258,6 +258,7 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
       await wipe();
       await raw.auditLog.deleteMany({ where: { tenantId } });
       await raw.driver.deleteMany({ where: { tenantId } });
+      await raw.productUnit.deleteMany({ where: { tenantId } });
       await raw.product.deleteMany({ where: { tenantId } });
       await raw.trackedCategory.deleteMany({ where: { tenantId } });
       await raw.customer.deleteMany({ where: { tenantId } });
@@ -459,6 +460,50 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
     const [m1] = await lines(id2);
     expect(m1).toMatchObject({ amount: 0.7, rate: LIVE_RATE }); // a substitute is a new sale at the live rate
     await raw.product.delete({ where: { id: plain.id } }).catch(() => undefined);
+  }, 120_000);
+
+  // ---- row 338: a unit-aware same-product edit keeps the category the line was sold under -------
+
+  it("row 338: a same-product edit of a UNIT line whose product left its category keeps its category and its sale-time excise", async () => {
+    const unitProduct = await raw.product.create({
+      data: {
+        name: `Unit ${run}`,
+        unit: "each",
+        pricePerUnit: "1.00",
+        currentStock: 1000,
+        trackedCategoryId: categoryId,
+        tenantId,
+      },
+    });
+    await raw.productUnit.create({
+      data: {
+        tenantId,
+        productId: unitProduct.id,
+        label: "Case",
+        factorToBase: 12,
+        price: "10.00",
+      },
+    });
+    const created: any = await inTenant(() =>
+      orders.create(
+        { customerId, items: [{ productId: unitProduct.id, qty: 1, unitLabel: "Case" }] },
+        operator(),
+        { skipAutoMerge: true },
+      ),
+    );
+    const [l0] = await lines(created.id);
+    expect(l0).toMatchObject({ trackedCategoryId: categoryId, amount: 0.6 }); // 1 Case = 12 x 0.05
+    // the product leaves its category (a re-categorisation after the sale)
+    await raw.product.update({ where: { id: unitProduct.id }, data: { trackedCategoryId: null } });
+    await edit(created.id, {
+      replaceAll: false,
+      items: [{ id: l0.id, qty: 2, unitLabel: "Case" }],
+    });
+    const [l1] = await lines(created.id);
+    expect(l1.qty).toBe(24); // 2 Cases, stored in base pieces
+    expect(l1.trackedCategoryId).toBe(categoryId); // master: null
+    expect(l1.amount).toBe(1.2); // 2 Cases = 24 x 0.05 at the line's own trio; master: 0.00
+    expect(l1.rate).toBe(SNAPSHOT_RATE);
   }, 120_000);
 
   // ---- L1: a line with no category keeps its stored excise -------------------------------------

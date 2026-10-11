@@ -185,6 +185,18 @@ describe("invoice edit plan: a matched row re-prices at its own snapshot (B297 P
     expect(warn.mock.calls[0][0]).toContain("row-1");
   });
 
+  it("row 338: a no-category row with a stored levy KEEPS it, and stays category-less, even when its product is regulated now [L1]", () => {
+    const { lines, warn } = plan(
+      [item()],
+      [row({ trackedCategoryId: null, ...NULL_TRIO, categoryTaxAmount: 4.2 })],
+    ); // the product is in cat-1 (RAISED) now: it must not move the line there and re-price it
+    expect(lines[0].data.categoryTaxAmount).toBe(4.2);
+    expect(lines[0].data.trackedCategoryId).toBeNull();
+    expect(lines[0].data.categoryTaxRate).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("row-1");
+  });
+
   it("a no-category row with a zero levy stays 0, silently", () => {
     const { lines, warn } = plan(
       [item()],
