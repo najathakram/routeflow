@@ -40,6 +40,36 @@ const invoice = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/**
+ * Review nit: `depositOverdue` (a deposit due before the tenant's TODAY and not yet covered) used the UTC day
+ * while `isOverdue` used the tenant's. Both reads now take today from the tenant-zone cutoff.
+ */
+describe("depositOverdue judges the tenant's day (same zone as isOverdue)", () => {
+  const withDeposit = () =>
+    invoice({ depositPercent: 50, depositDueDate: DUE_SEP_20, depositAmount: null });
+
+  it("Auckland, 20:00Z on the deposit's due day: overdue for the tenant, grace for a zone-less caller", () => {
+    expect(deriveInvoiceDetailFields(withDeposit(), AUCKLAND_NOW, AUCKLAND).depositOverdue).toBe(
+      true,
+    );
+    expect(deriveInvoiceDetailFields(withDeposit(), AUCKLAND_NOW).depositOverdue).toBe(false);
+  });
+
+  it("Chicago, 22:00 local on the deposit's due day: still grace; UTC would say overdue", () => {
+    expect(deriveInvoiceDetailFields(withDeposit(), CHICAGO_NOW, CHICAGO).depositOverdue).toBe(
+      false,
+    );
+    expect(deriveInvoiceDetailFields(withDeposit(), CHICAGO_NOW).depositOverdue).toBe(true);
+  });
+
+  it("a covered deposit is never overdue, and the amount is unchanged by the zone", () => {
+    const paid = { ...withDeposit(), payments: [{ amount: 50, status: "PAID", method: "CASH" }] };
+    const out = deriveInvoiceDetailFields(paid, AUCKLAND_NOW, AUCKLAND);
+    expect(out.depositOverdue).toBe(false);
+    expect(out.depositAmount).toBe(50);
+  });
+});
+
 describe("row 308: the staff invoice reads judge overdue in the invoice's tenant zone", () => {
   describe("deriveInvoiceDetailFields (the detail read)", () => {
     it("Auckland, 20:00Z on the due day: overdue for the tenant, not for a zone-less caller", () => {
@@ -137,6 +167,21 @@ describe("row 308: the staff invoice reads judge overdue in the invoice's tenant
       const where = prisma.invoice.findMany.mock.calls[0][0].where;
       expect(DUE_SEP_20 < where.dueDate.lt).toBe(false); // due today: not selected
       expect(res.data[0].isOverdue).toBe(false);
+    });
+
+    it("findAll's row depositOverdue follows the tenant day too (Auckland true, Chicago false)", async () => {
+      const row = () => invoice({ depositPercent: 50, depositDueDate: DUE_SEP_20 });
+      jest.setSystemTime(AUCKLAND_NOW);
+      tenantZone(AUCKLAND);
+      prisma.invoice.findMany.mockResolvedValue([row()]);
+      prisma.invoice.count.mockResolvedValue(1);
+      const auckland: any = await service.findAll({} as any);
+      expect(auckland.data[0].depositOverdue).toBe(true);
+
+      jest.setSystemTime(CHICAGO_NOW);
+      tenantZone(CHICAGO);
+      const chicago: any = await service.findAll({} as any);
+      expect(chicago.data[0].depositOverdue).toBe(false);
     });
 
     it("findAll looks the zone up once for a whole page, never per row", async () => {
