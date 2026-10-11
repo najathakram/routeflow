@@ -59,12 +59,16 @@ export interface PoolRemainder {
   unitFactor: number;
   /** Net (pre-tax) billed value per piece of the pool: what a STANDARD return of its goods is priced at (the pooled average). */
   unitNet: number;
+  /** Net share of the pool's gross value (billed net / billed gross; 1 for a pool with no value): converts "gross left" to "net left". */
+  netShare: number;
 }
 
 /** What is left of a billing group's invoices as a whole (includes the amount-only credit notes of (c)). */
 export interface InvoiceRemainder {
   value: number;
   valueTol: number;
+  /** Net share of the group's gross value (as PoolRemainder.netShare). */
+  netShare: number;
 }
 
 export interface RefundableRemainder {
@@ -457,13 +461,16 @@ export async function refundableRemainder(
         valueTol: valueTolerance(pool.items),
         unitFactor: poolUnitFactor(pool),
         unitNet: pool.billedQty > 0 ? pool.billedNet / pool.billedQty : 0,
+        netShare: pool.billedValue > 0 ? pool.billedNet / pool.billedValue : 1,
       };
       for (const invoiceId of pool.invoiceIds)
         result.byInvoiceProduct.set(poolKey(invoiceId, productId), remainder);
     }
+    const billedNet = [...group.pools.values()].reduce((t, p) => t + p.billedNet, 0);
     const invoiceLevel: InvoiceRemainder = {
       value: roundMoney(billed - poolValueOut - group.amountOnlyOut),
       valueTol: valueTolerance(items),
+      netShare: billed > 0 ? billedNet / billed : 1,
     };
     for (const invoiceId of group.invoiceIds) result.byInvoice.set(invoiceId, invoiceLevel);
   }
@@ -706,6 +713,11 @@ export async function creditNoteRequests(
 export function selectedGoodsRemainder(
   rem: RefundableRemainder,
   goods: ReadonlyArray<{ invoiceId: string; productId: string }>,
+  /**
+   * "gross" (default): the remainder's own basis. "net": the same left, scaled by each pool's and the group's net share, i.e. in
+   * the NET money a STANDARD refund pays out (it is priced pre-tax), so a figure shown beside a payout is on the payout's basis.
+   */
+  basis: "gross" | "net" = "gross",
 ): number {
   const pools = new Set<PoolRemainder>();
   const perInvoice = new Map<InvoiceRemainder, number>();
@@ -714,9 +726,11 @@ export function selectedGoodsRemainder(
     const inv = rem.byInvoice.get(g.invoiceId);
     if (!pool || !inv || pools.has(pool)) continue;
     pools.add(pool);
-    perInvoice.set(inv, (perInvoice.get(inv) ?? 0) + floor0(pool.value));
+    const left = floor0(pool.value) * (basis === "net" ? pool.netShare : 1);
+    perInvoice.set(inv, (perInvoice.get(inv) ?? 0) + left);
   }
   let total = 0;
-  for (const [inv, value] of perInvoice) total += Math.min(value, floor0(inv.value));
+  for (const [inv, value] of perInvoice)
+    total += Math.min(value, floor0(inv.value) * (basis === "net" ? inv.netShare : 1));
   return roundMoney(total);
 }

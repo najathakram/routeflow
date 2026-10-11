@@ -792,4 +792,24 @@ describe("selectedGoodsRemainder: the figure a quote's cashRefundable takes with
     ).toBe(20);
     expect(selectedGoodsRemainder(rem, [{ invoiceId: "i1", productId: "pZ" }])).toBe(0);
   });
+
+  it("net basis: a taxed pool with $55 of its $110 gross left has $50 of NET left (the money a STANDARD refund pays), gross stays 55", async () => {
+    const tx = fakeTx({
+      invoices: [invoice("i1", "o1", 110, [line("l1", "pA", 10, 100, { taxRate: 0.1 })])],
+      cnItems: [
+        {
+          invoiceItemId: "l1",
+          creditNoteId: "cn1",
+          qty: 5,
+          amount: 50,
+          categoryTax: 0,
+          creditNote: { status: "ISSUED" },
+        },
+      ],
+    });
+    const rem = await refundableRemainder(tx, { invoiceIds: ["i1"] });
+    const goods = [{ invoiceId: "i1", productId: "pA" }];
+    expect(selectedGoodsRemainder(rem, goods)).toBe(55);
+    expect(selectedGoodsRemainder(rem, goods, "net")).toBe(50);
+  });
 });

@@ -142,11 +142,13 @@ export async function previewStandardRefund(
     args.amount,
   );
   if (!refundableRefusal(rem, requests)) return { amount: args.amount, capped: false };
+  // ONE basis: the net a STANDARD refund pays out (the estimate is net), so "up to $X" and the estimate are comparable
   const left = selectedGoodsRemainder(
     rem,
     requests
       .filter((r) => r.productId)
       .map((r) => ({ invoiceId: r.invoiceId, productId: r.productId as string })),
+    "net",
   );
   return { amount: roundMoney(Math.min(args.amount, left)), capped: true };
 }
