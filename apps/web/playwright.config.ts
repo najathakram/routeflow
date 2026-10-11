@@ -1047,6 +1047,15 @@ export default defineConfig({
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
           },
+          {
+            name: "counter-split-payment",
+            testMatch: /74-counter-split-payment\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
         ]
       : []),
   ],

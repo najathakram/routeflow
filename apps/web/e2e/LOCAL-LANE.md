@@ -245,3 +245,12 @@ the counter on and restores the tenant's fulfilment config in `afterAll`; it nee
 it enters the counter from the nav, checks the 64 px rail (lg+ only), the peek (which never writes `rf-sidebar-collapsed`), Exit
 with and without a cart (the "Discard this sale?" guard) and the device preference redirect. It sells nothing and creates no rows
 (it only puts a product on the cart and discards it); the preference lives in the browser context's localStorage.
+
+## Spec 74 (`counter-split-payment`): same lane, same rules as 71
+
+`74-counter-split-payment.spec.ts` (the G7 split payment: the "Split payment" link grows in place, Card then Cash, the focused leg
+input never sits under the sticky checkout bar, at most 4 taps from the cart to Complete, "Remaining" -> "Change" in the bar's
+change-due slot) is on the `local:e2e` allow-list right after 73 and is registered under the same local-only condition. It
+reuses 71's helper to turn the counter on and restores the tenant's fulfilment config in `afterAll`; it needs `npm run local:sa`
+and an API that serves the split contract. The layout tests at 390 and 1440 stop before Complete and write nothing; one test
+rings a single counter sale (Card + Cash over-pay) on the approved test tenant at 1440 and reads it back in Today's sales.
