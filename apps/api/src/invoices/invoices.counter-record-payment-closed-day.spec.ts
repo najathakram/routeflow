@@ -269,6 +269,34 @@ describe("InvoicesService.recordPayment — counter invoice and the day close (S
       },
     );
 
+    it("an office CREDIT_CARD on a NON-counter PICKUP invoice, backdated into a closed window, is ACCEPTED (only its hand-over group rows are till money)", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        counterSale: false,
+        fulfillPath: "PICKUP",
+        registerKey: null,
+      });
+      await service.recordPayment("inv-1", pay({ method: "CREDIT_CARD" }) as any);
+      expect(written().paidAt).toEqual(new Date(BEFORE));
+    });
+
+    it("a card with NO given date is dated from the database clock, not the app clock", async () => {
+      const dbNow = new Date("2026-10-09T09:30:00Z"); // after the cutoff
+      (prisma.$queryRaw as jest.Mock).mockResolvedValue([{ now: dbNow }]);
+      jest
+        .useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] })
+        .setSystemTime(new Date("2026-10-08T12:00:00Z")); // an app clock lagging INSIDE the closed day
+      try {
+        await service.recordPayment(
+          "inv-1",
+          pay({ method: "CREDIT_CARD", paidAt: undefined }) as any,
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+      expect(written().paidAt).toEqual(dbNow);
+    });
+
     it("a CREDIT_CARD on a NON-counter invoice, backdated, is untouched (no close read)", async () => {
       prisma.order.findFirst.mockResolvedValue({
         counterSale: false,
