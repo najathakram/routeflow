@@ -2,6 +2,8 @@ import { overdueCutoff } from "../common/calendar-date";
 import { computeDepositFields } from "./deposit-fields";
 import { classifyInvoiceBalance } from "./invoice-balance-classify";
 import { splitConfirmed } from "./payment-predicates";
+import { overpaidByOf } from "./invoice-status";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 
 /**
  * The derived read-time fields of InvoicesService.findOne (moved verbatim out of invoices.service.ts,
@@ -25,6 +27,7 @@ export function deriveInvoiceDetailFields(inv: any, now: Date = new Date()) {
   const { depositAmount, depositOverdue } = computeDepositFields(inv, totalConfirmed, todayIso);
   return {
     balanceDue,
+    overpaidBy: overpaidByOf(inv.total, paidAmount), // SA-763r P-3: external cash beyond the total
     paidAmount,
     creditApplied,
     advanceApplied,
@@ -32,4 +35,26 @@ export function deriveInvoiceDetailFields(inv: any, now: Date = new Date()) {
     depositAmount,
     depositOverdue,
   };
+}
+
+/**
+ * SA-763r P-3 (R5.1): the derived `revisedAt` — when the invoice's final document was last restated by an
+ * order edit (the latest `invoice.revised` audit row), keyed by invoice id. The issue date is never moved
+ * by a revision. One grouped read; `db` is the tenant client.
+ */
+export async function revisedAtByInvoice(
+  db: { auditLog: { groupBy(args: any): Promise<any[]> } },
+  invoiceIds: string[],
+): Promise<Map<string, Date>> {
+  if (invoiceIds.length === 0) return new Map();
+  const rows = await db.auditLog.groupBy({
+    by: ["entityId"],
+    where: {
+      entityType: "invoice",
+      action: AUDIT_ACTIONS.INVOICE_REVISED,
+      entityId: { in: invoiceIds },
+    },
+    _max: { createdAt: true },
+  });
+  return new Map(rows.filter((r) => r.entityId).map((r) => [r.entityId, r._max.createdAt]));
 }

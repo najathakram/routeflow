@@ -2,7 +2,7 @@
  * #2520 (SA-495a, tier 1): the PERSISTED OVERDUE status uses the tenant's zone.
  *
  * F2's executed #2518 proof: a PATCH of terms at 23:30 CDT on the due day stamped OVERDUE, because
- * the status writer had no zone (UTC's day had already ended). `recomputeInvoiceStatus`'s timeZone
+ * the status writer had no zone (UTC's day had already ended). `statusFromPayments`'s timeZone
  * is now REQUIRED, so every writer passes the tenant's zone, and `markOverdue` runs per tenant under
  * @LeaderCron (OverdueSweepService), each on its own zone's day. Zones are passed as data (jest
  * cannot move the host zone). Bootstrap copied from invoices.service.b2256-due-date.spec.ts.
@@ -379,14 +379,14 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
 
   it("every persisted-status writer passes the tenant zone (the required parameter, counted)", () => {
     const read = (rel: string) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
-    const calls = (src: string) => src.match(/recomputeInvoiceStatus\(/g)?.length ?? 0;
+    const calls = (src: string) => src.match(/statusFromPayments\(/g)?.length ?? 0;
     // 10 writers + the injected price-adjustment dep in invoices.service (voidPayment's writer moved verbatim
     // to payment-void-tx.ts, SA-762r, counted next); in credit notes the 3 settlement writers + #2536's
     // voidPreview (a read-only preview of the status after a void).
     expect(calls(read("invoices/invoices.service.ts"))).toBe(11);
     expect(calls(read("invoices/payment-void-tx.ts"))).toBe(1);
     expect(read("invoices/payment-void-tx.ts")).toMatch(
-      /recomputeInvoiceStatus\(\s*totalPaid,[\s\S]*?\btz,/,
+      /statusFromPayments\(\s*totalPaid,[\s\S]*?\btz,/,
     );
     expect(calls(read("credit-notes/credit-notes.service.ts"))).toBe(4);
     for (const rel of ["invoices/invoices.service.ts", "credit-notes/credit-notes.service.ts"])

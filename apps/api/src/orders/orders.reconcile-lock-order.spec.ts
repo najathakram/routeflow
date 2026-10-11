@@ -105,6 +105,8 @@ function build(tenantId: string | null) {
   );
   const invoicesService = {
     resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue(null),
+    followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+    projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
     reconcileOrderDraftInvoice: jest.fn().mockResolvedValue(undefined),
   };
   const service = Object.assign(Object.create(OrdersService.prototype), {
@@ -234,7 +236,9 @@ describe("reconcileOrderAfterEdit — a write conflict retries the credit tx (SA
       return result;
     });
 
-    await expect(reconcile([{ creditNoteId: CN_NEW.id }])).resolves.toBeUndefined();
+    await expect(reconcile([{ creditNoteId: CN_NEW.id }])).resolves.toEqual({
+      issuedPartialsUnchanged: [],
+    });
 
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
     // Each attempt is a whole tx: it re-takes the Order lock FIRST, then re-runs the sync.
