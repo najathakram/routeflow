@@ -1,0 +1,106 @@
+/**
+ * SA-767 L-1 — structural pin for the ONE Product stock lock (#2841).
+ *
+ * `lockProductsForStock` (common/product-locks.ts) is the only place a stock / cost writer takes
+ * Product row locks: ONE statement, tenant-filtered, `ORDER BY rank, id FOR UPDATE`, where rank is
+ * the catalog house order (FAMILY parents -> recipe products -> everything else). Before it,
+ * order-stock.ts locked `WHERE id IN (...) FOR UPDATE` in line order with no tenant filter, and
+ * `lockProducts` locked one id at a time in id order: a stock writer holding a component and then
+ * asking for the family deadlocks (40P01) against a catalog writer (B908).
+ *
+ * Plain jest, reads source, no DB. Comments are stripped before scanning so prose never counts.
+ */
+import fs from "node:fs";
+import path from "node:path";
+
+const SRC = path.join(__dirname, "..");
+
+const strip = (code: string) =>
+  code
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+    .replace(/(^|[^:])\/\/.*$/gm, (m, lead: string) => lead + " ".repeat(m.length - lead.length));
+
+const read = (rel: string) => {
+  const file = path.join(SRC, rel);
+  return fs.existsSync(file) ? strip(fs.readFileSync(file, "utf8")) : "";
+};
+
+function walk(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    if (e.isDirectory()) {
+      return e.name === "node_modules" ? [] : walk(path.join(dir, e.name));
+    }
+    return /\.ts$/.test(e.name) && !/\.(spec|test)\.ts$/.test(e.name)
+      ? [path.join(dir, e.name)]
+      : [];
+  });
+}
+
+/** A `FROM "Product"` followed by `FOR UPDATE` inside ONE string / template literal (no backtick between). */
+const RAW_PRODUCT_LOCK = /FROM\s+\\?"Product\\?"[^`]*?FOR\s+(?:NO\s+KEY\s+)?UPDATE/;
+
+/**
+ * Every non-spec file allowed to hold a raw `FROM "Product" ... FOR UPDATE` statement, with why.
+ * A new stock / cost writer calls `lockProductsForStock`; it never adds itself here. SA-767
+ * L-2..L-5 writers (recordPurchase, recordAdjustment, counts, cost basis, replay, returns, import,
+ * reopen, writeOff) hold no raw statement today (they lock through `lockProducts`, now a delegate
+ * of the helper, or not at all), so none is listed under an L-2..L-5 reason.
+ */
+const RAW_LOCK_ALLOW_LIST: Record<string, string> = {
+  "common/product-locks.ts": "the one stock-writer helper (this guard pins its SQL)",
+  "products/product-catalog-sync.ts":
+    "lockProductRow: the catalog house lock (family / recipe product / component rows), taken first",
+  "products/recipe-category-guard.ts":
+    "lockProductsForCategoryWrite: a catalog writer; locks family, recipe product, then targets in the house order",
+};
+
+describe("SA-767 L-1 — lockProductsForStock is the one Product stock lock", () => {
+  const helper = read("common/product-locks.ts");
+
+  it("the helper statement is tenant-filtered, ranked (house order) then id, and FOR UPDATE", () => {
+    expect(helper).toMatch(/"tenantId"\s*=\s*\$\{tenantId\}/);
+    expect(helper).toMatch(/id\s*=\s*ANY\(\$\{ids\}::text\[\]\)/);
+    // ORDER BY <rank CASE>, id FOR UPDATE — the rank is FAMILY 0, RECIPE 1, rest 2.
+    expect(helper).toMatch(
+      /ORDER BY\s+CASE\s+kind\s+WHEN\s+'FAMILY'\s+THEN\s+0\s+WHEN\s+'RECIPE'\s+THEN\s+1\s+ELSE\s+2\s+END\s*,\s*id\s+FOR UPDATE/,
+    );
+    // One statement: a single lock call, never a per-id loop.
+    expect((helper.match(/FOR UPDATE/g) ?? []).length).toBe(1);
+    expect(helper).toMatch(/export async function lockProductsForStock\b/);
+  });
+
+  it("refuses an empty tenant id (never an unfiltered lock)", () => {
+    expect(helper).toMatch(/if\s*\(\s*!tenantId\s*\)\s*throw/);
+  });
+
+  it('no non-spec file outside the named allow-list holds a raw FROM "Product" ... FOR UPDATE', () => {
+    const offenders: string[] = [];
+    const seen = new Set<string>();
+    for (const file of walk(SRC)) {
+      const rel = path.relative(SRC, file).replace(/\\/g, "/");
+      if (!RAW_PRODUCT_LOCK.test(strip(fs.readFileSync(file, "utf8")))) continue;
+      seen.add(rel);
+      if (!(rel in RAW_LOCK_ALLOW_LIST)) offenders.push(rel);
+    }
+    expect(offenders).toEqual([]);
+    // The allow-list stays honest: every entry still has the statement it is excused for.
+    expect([...seen].sort()).toEqual(Object.keys(RAW_LOCK_ALLOW_LIST).sort());
+  });
+
+  it("order-stock.ts locks through the helper with the ambient tenant, twice", () => {
+    const src = read("orders/order-stock.ts");
+    expect(src).toMatch(
+      /import\s*\{\s*lockProductsForStock\s*\}\s*from\s*"..\/common\/product-locks"/,
+    );
+    expect((src.match(/lockProductsForStock\(\s*\w+\s*,\s*deps\.tenantId/g) ?? []).length).toBe(2);
+  });
+
+  it("InventoryService.lockProducts delegates to the helper (no per-id loop)", () => {
+    const src = read("inventory/inventory.service.ts");
+    const body = src.slice(src.indexOf("async lockProducts("));
+    const end = body.indexOf("\n  }\n");
+    const method = body.slice(0, end);
+    expect(method).toMatch(/lockProductsForStock\(\s*tx\s*,\s*this\.prisma\.getTenantId\(\)/);
+    expect(method).not.toMatch(/for\s*\(/);
+  });
+});

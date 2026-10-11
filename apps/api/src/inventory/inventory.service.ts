@@ -1,4 +1,5 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { lockProductsForStock } from "../common/product-locks";
 import { productNameViolation } from "../common/text-cell-guards";
 import {
   BadRequestException,
@@ -1494,10 +1495,8 @@ export class InventoryService {
    * the read - the lock is what keeps that read consistent with the write.
    */
   async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
-    const tenantId = this.prisma.getTenantId();
-    for (const productId of [...new Set(productIds)].sort()) {
-      await tx.$executeRaw`SELECT id FROM "Product" WHERE id = ${productId} AND "tenantId" = ${tenantId} FOR UPDATE`;
-    }
+    // SA-767 L-1: a thin delegate of the one stock lock (house order: family -> recipe product -> rest).
+    await lockProductsForStock(tx, this.prisma.getTenantId(), productIds);
   }
 
   private async postPoReceipt(
