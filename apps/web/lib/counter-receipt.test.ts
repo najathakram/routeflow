@@ -111,6 +111,14 @@ describe("buildCounterReceipt", () => {
     expect(m.changeAsEntered).toBe(true);
   });
 
+  it("row 347: an entered tender never invents a Change on a non-cash sale (the server withholds a figure no cash row backs)", () => {
+    for (const method of ["CARD", "CHECK"] as const) {
+      const m = build({ method, paid: 22.5 }, { enteredTender: 40 });
+      expect(m.change).toBeNull();
+      expect(m.changeAsEntered).toBe(false);
+    }
+  });
+
   it("on account and payment-not-recorded show no tender", () => {
     const acct = build({ method: "ON_ACCOUNT", paid: 0, balanceDue: 22.5 });
     expect(acct.onAccount).toBe(true);

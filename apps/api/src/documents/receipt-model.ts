@@ -8,7 +8,7 @@ import {
   sumConfirmed,
 } from "@routeflow/pricing";
 import type { ReceiptLine, ReceiptModel } from "@routeflow/types";
-import { servedChange } from "../orders/counter-sale/counter-sale-readback";
+import { servedChange, servedTendered } from "../orders/counter-sale/counter-sale-readback";
 import { RECEIPT_FOOTER_MAX_CHARS } from "../system-config/receipt-footer";
 import { todaysMethodOf } from "../orders/counter-sale/counter-sale-today";
 
@@ -243,8 +243,7 @@ export function buildReceiptModel(
   // Tendered is what was handed over; Change is the SERVER's figure, from the one gate the POST / by-key response and the
   // Today's row use (`servedChange`, pricing's `counterChange`: the cash handed over less the cash the sale took, whichever leg
   // the cash was), never recomputed here.
-  const tendered =
-    order.counterCashTendered == null ? null : roundMoney(num(order.counterCashTendered));
+  const tendered = servedTendered(order.id, order.counterCashTendered, livePayments);
   // cut by code points (never through a surrogate pair) at the ONE footer cap the settings route enforces
   const footer = Array.from(clean(branding.footer)).slice(0, RECEIPT_FOOTER_MAX_CHARS).join("");
   const walkIn = !order.customer || !!order.customer.isWalkIn;

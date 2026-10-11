@@ -421,14 +421,15 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
       wroteNothing();
     });
 
-    it("(5) a failed CASH attempt (tendered stored, no CASH row) replayed as ON_ACCOUNT serves cashTendered, no change", async () => {
+    it("(5) a failed CASH attempt (tendered stored, no CASH row) replayed as ON_ACCOUNT serves NO cashTendered and no change, as by-key (row 347 item 2)", async () => {
       replay = true;
       stored = 60;
       const r = await ring({ method: "ON_ACCOUNT" });
       keyed(stored);
       const k = await service.byKey("k1", "ON_ACCOUNT");
       expect(r).toEqual(k);
-      expect(r.cashTendered).toBe(60);
+      // the figure was written before any money moved and no counter-tender cash row backs it: served on no reader
+      expect(r.cashTendered).toBeUndefined();
       expect(r.change).toBeUndefined();
       expect(r.paymentId).toBeUndefined();
       expect(r.paymentRecorded).toBe(true);

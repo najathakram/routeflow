@@ -22,7 +22,7 @@ import type {
   TodaysSalesSummary,
 } from "@routeflow/types";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
-import { counterMethodOf, servedChange } from "./counter-sale-readback";
+import { counterMethodOf, servedChange, servedTendered } from "./counter-sale-readback";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
 import { pickupTenderGroupId } from "./pickup-tender-group";
@@ -404,7 +404,8 @@ export function toTodaysSaleRow(
     balanceDue,
     methods,
     paymentState,
-    cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
+    // row 347: the figure only while a counter-tender cash row backs it (the gate `change` below uses)
+    cashTendered: servedTendered(o.id, o.counterCashTendered, payments),
     change: servedChange(o.id, o.counterCashTendered, payments, total),
     // ONE home for the rate (pricing): a STORED line rate, corroborated by the configured rate; never inferred
     taxRatePercent: storedTaxRatePercent(
