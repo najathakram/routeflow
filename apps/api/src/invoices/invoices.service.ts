@@ -5005,8 +5005,7 @@ export class InvoicesService {
 
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
-      await counterPay.assertOpen(tx, till, payment.paidAt, dto.paidAt); // old AND new date
-      await counterPay.assertEditDated(tx, till, inv.orderId, payment, dto); // till-CASH before the close
+      await counterPay.assertEditDated(tx, till, inv.orderId, payment, dto); // per-row closed window, then till-CASH before the close
 
       // F03/R5/T-B81: read the STORED method, not just the incoming dto — the same
       // guard deletePayment (:4653) and voidPayment (:4941) already have. Neither
@@ -5114,7 +5113,7 @@ export class InvoicesService {
 
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
-      await counterPay.assertOpen(tx, till, payment.paidAt);
+      await counterPay.assertOpen(tx, till, payment);
       imageKey = payment.imageKey;
       if ((payment.method as any) === "CREDIT_NOTE") {
         throw new BadRequestException(
@@ -5477,13 +5476,7 @@ export class InvoicesService {
     return withAfterCommit(this.prisma, async (tx, after) => {
       // SA-750r3: the shared close lock FIRST, then the window check on the payment's date, then the void (payment-void-tx.ts).
       await counterPay.lock(tx, till);
-      if (till) {
-        const dated = await tx.invoicePayment.findFirst({
-          where: { id: paymentId, invoiceId },
-          select: { paidAt: true },
-        });
-        if (dated) await counterPay.assertOpen(tx, till, dated.paidAt);
-      }
+      await counterPay.assertPaymentOpen(tx, till, invoiceId, paymentId);
       return this.voidPaymentInTx(tx, after, invoiceId, paymentId, tz);
     });
   }
@@ -5538,7 +5531,7 @@ export class InvoicesService {
         where: { id: paymentId, invoiceId },
       });
       if (!payment) throw new NotFoundException("Payment not found");
-      await counterPay.assertOpen(tx, till, payment.paidAt);
+      await counterPay.assertOpen(tx, till, payment);
       if (payment.method !== "CHECK")
         throw new BadRequestException("Check status can only be set on CHECK payments");
       if (payment.status === "VOID")

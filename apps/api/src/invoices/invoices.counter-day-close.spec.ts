@@ -4,6 +4,11 @@
  * statement of their transaction (before the Invoice FOR UPDATE) and refuse 409 COUNTER_SALE_DAY_CLOSED when the payment's
  * paidAt (for an edit, the old AND the new date) falls inside a closed window of the order's register. A non-counter invoice
  * is unchanged: no lock statement, no window read.
+ *
+ * End-of-day close, per-row rule (SA ruling mirroring b6002ad76): a POS PICKUP order (fulfillPath PICKUP) is scoped too, the
+ * shared lock covers every payment edit of its invoices, and the 409 is refused PER ROW: only a till-tender row (a counter sale's
+ * ungrouped tender, a pickup order's own hand-over group) dated in a closed window. Office / credit-note / advance / deposited
+ * rows are never refused by it.
  */
 jest.mock("./invoice-pdf.service", () => ({
   InvoicePdfService: jest.fn().mockImplementation(() => ({
@@ -31,6 +36,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { pickupTenderGroupId } from "../orders/counter-sale/pickup-tender-group";
 
 const WINDOW = { start: new Date("2026-10-08T05:00:00Z"), end: new Date("2026-10-09T05:00:00Z") };
 const INSIDE = new Date("2026-10-08T17:30:00Z");
@@ -130,16 +136,16 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
   /** One arranged call per path, with the payment dated `paidAt`. */
   const paths: Array<{
     name: string;
-    arrange: (paidAt: Date) => void;
+    arrange: (paidAt: Date, over?: Record<string, unknown>) => void;
     act: (dto?: any) => Promise<unknown>;
     writes: () => jest.Mock[];
   }> = [
     {
       name: "voidPayment",
-      arrange: (paidAt) => {
-        prisma.invoicePayment.findFirst.mockResolvedValue(payRow({ paidAt }));
+      arrange: (paidAt, over = {}) => {
+        prisma.invoicePayment.findFirst.mockResolvedValue(payRow({ paidAt, ...over }));
         prisma.invoicePayment.update.mockResolvedValue({});
-        prisma.invoice.findUnique.mockResolvedValue(invoiceRow([payRow({ paidAt })]));
+        prisma.invoice.findUnique.mockResolvedValue(invoiceRow([payRow({ paidAt, ...over })]));
         prisma.invoice.update.mockResolvedValue({});
       },
       act: () => service.voidPayment("inv-1", "pay-1"),
@@ -147,8 +153,8 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
     },
     {
       name: "deletePayment",
-      arrange: (paidAt) => {
-        prisma.invoice.findUnique.mockResolvedValue(invoiceRow([payRow({ paidAt })]));
+      arrange: (paidAt, over = {}) => {
+        prisma.invoice.findUnique.mockResolvedValue(invoiceRow([payRow({ paidAt, ...over })]));
         prisma.invoicePayment.delete.mockResolvedValue({});
         prisma.invoice.update.mockResolvedValue(invoiceRow([]));
       },
@@ -157,8 +163,8 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
     },
     {
       name: "updatePayment (amount)",
-      arrange: (paidAt) => {
-        prisma.invoice.findUnique.mockResolvedValue(invoiceRow([payRow({ paidAt })]));
+      arrange: (paidAt, over = {}) => {
+        prisma.invoice.findUnique.mockResolvedValue(invoiceRow([payRow({ paidAt, ...over })]));
         prisma.invoicePayment.update.mockResolvedValue({});
         prisma.invoice.update.mockResolvedValue(invoiceRow([]));
       },
@@ -167,14 +173,12 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
     },
     {
       name: "setCheckStatus(BOUNCED)",
-      arrange: (paidAt) => {
-        prisma.invoicePayment.findFirst.mockResolvedValue(
-          payRow({ paidAt, method: "CHECK", checkStatus: "DEPOSITED" }),
-        );
+      arrange: (paidAt, over = {}) => {
+        // A RECORDED check is a till tender; a DEPOSITED / CLEARED one is foreign money (see the per-row block below).
+        const row = payRow({ paidAt, method: "CHECK", checkStatus: "RECORDED", ...over });
+        prisma.invoicePayment.findFirst.mockResolvedValue(row);
         prisma.invoicePayment.updateMany.mockResolvedValue({ count: 1 });
-        prisma.invoice.findUnique.mockResolvedValue(
-          invoiceRow([payRow({ paidAt, method: "CHECK" })]),
-        );
+        prisma.invoice.findUnique.mockResolvedValue(invoiceRow([row]));
         prisma.invoiceItem.create.mockResolvedValue({});
         prisma.invoice.update.mockResolvedValue({});
       },
@@ -365,6 +369,163 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
       await editTo({ paidAt: ANCIENT.toISOString() });
       expect(prisma.invoicePayment.update).toHaveBeenCalled();
       expect(prisma.counterDayClose.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("per-row closed-window refusal and the pickup order scope (SA end-of-day close)", () => {
+    const HAND = pickupTenderGroupId("ord-1");
+    const OFFICE_GROUP = "5b0f4a6e-2b0a-4c53-9a54-6f1c8d1f2a11";
+    const pickupOrder = (registerKey: string | null = null) =>
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        counterSale: false,
+        fulfillPath: "PICKUP",
+        registerKey,
+      });
+
+    describe.each(paths)("$name on a PICKUP order", (p) => {
+      it("a hand-over row dated inside a closed window: lock first, then 409 COUNTER_SALE_DAY_CLOSED, nothing written", async () => {
+        pickupOrder();
+        p.arrange(INSIDE, { paymentGroupId: HAND });
+        const err: any = await p.act().catch((e: unknown) => e);
+        expect(err.getStatus?.()).toBe(409);
+        expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
+        expect(lockSql()[0]).toContain("pg_advisory_xact_lock_shared(hashtext('counter-close')");
+        expect(prisma.$executeRaw.mock.calls[0][1]).toBe("test-tenant:main");
+        for (const w of p.writes()) expect(w).not.toHaveBeenCalled();
+      });
+
+      it("the pickup order's stamped register is the one locked and read", async () => {
+        pickupOrder("b");
+        p.arrange(INSIDE, { paymentGroupId: HAND });
+        await p.act(); // register b has no close: allowed
+        expect(prisma.$executeRaw.mock.calls[0][1]).toBe("test-tenant:b");
+        for (const w of p.writes()) expect(w).toHaveBeenCalled();
+      });
+
+      it("an OFFICE row on the same order (ungrouped, or another group) dated inside the window: allowed", async () => {
+        for (const group of [undefined, null, OFFICE_GROUP]) {
+          jest.clearAllMocks();
+          pickupOrder();
+          p.arrange(INSIDE, { paymentGroupId: group });
+          await p.act();
+          for (const w of p.writes()) expect(w).toHaveBeenCalled();
+        }
+      });
+
+      it("a hand-over row dated AFTER the closed window: allowed", async () => {
+        pickupOrder();
+        p.arrange(AFTER, { paymentGroupId: HAND });
+        await p.act();
+        for (const w of p.writes()) expect(w).toHaveBeenCalled();
+      });
+
+      it("a hand-over row inside a window whose close was REOPENED: allowed", async () => {
+        pickupOrder();
+        closes[0].reopenedAt = new Date("2026-10-09T08:00:00Z");
+        p.arrange(INSIDE, { paymentGroupId: HAND });
+        await p.act();
+        for (const w of p.writes()) expect(w).toHaveBeenCalled();
+      });
+    });
+
+    describe.each(paths)("$name on a DELIVERY (ROUTE) invoice", (p) => {
+      it("no lock statement and no window read, even for a hand-over-group row inside a window", async () => {
+        prisma.order.findFirst.mockResolvedValue({
+          id: "ord-1",
+          counterSale: false,
+          fulfillPath: "ROUTE",
+          registerKey: null,
+        });
+        p.arrange(INSIDE, { paymentGroupId: HAND });
+        await p.act();
+        expect(lockSql()).toHaveLength(1); // the Invoice FOR UPDATE alone
+        expect(prisma.counterDayClose.findFirst).not.toHaveBeenCalled();
+        for (const w of p.writes()) expect(w).toHaveBeenCalled();
+      });
+    });
+
+    describe("a NON-tender row of a COUNTER invoice dated inside a closed window is not refused (per row)", () => {
+      it("voidPayment of an ADVANCE row: allowed", async () => {
+        counterOrder();
+        paths[0].arrange(INSIDE, { method: "ADVANCE" });
+        await paths[0].act();
+        for (const w of paths[0].writes()) expect(w).toHaveBeenCalled();
+      });
+
+      it("deletePayment of an ADVANCE row: allowed", async () => {
+        counterOrder();
+        paths[1].arrange(INSIDE, { method: "ADVANCE" });
+        await paths[1].act();
+        for (const w of paths[1].writes()) expect(w).toHaveBeenCalled();
+      });
+
+      it("updatePayment of an ACH row (stays ACH): allowed", async () => {
+        counterOrder();
+        paths[2].arrange(INSIDE, { method: "ACH" });
+        await service.updatePayment("inv-1", "pay-1", { amount: 40, method: "ACH" } as any);
+        expect(prisma.invoicePayment.update).toHaveBeenCalled();
+      });
+
+      it("a DEPOSITED check bounced inside a closed window: allowed (a deposited check is foreign money)", async () => {
+        counterOrder();
+        paths[3].arrange(INSIDE, { checkStatus: "DEPOSITED" });
+        await paths[3].act();
+        for (const w of paths[3].writes()) expect(w).toHaveBeenCalled();
+      });
+
+      it("a card tender row in the window is still refused (the till methods are CASH / CREDIT_CARD / CHECK)", async () => {
+        counterOrder();
+        paths[1].arrange(INSIDE, { method: "CREDIT_CARD" });
+        await expect(paths[1].act()).rejects.toMatchObject({
+          response: { code: "COUNTER_SALE_DAY_CLOSED" },
+        });
+      });
+
+      it("an ACH row of a counter invoice inside the window is not a tender: allowed", async () => {
+        counterOrder();
+        paths[1].arrange(INSIDE, { method: "ACH" });
+        await paths[1].act();
+        expect(prisma.invoicePayment.delete).toHaveBeenCalled();
+      });
+    });
+
+    describe("updatePayment judges the row's NEW state too", () => {
+      const editTo = (dto: Record<string, unknown>) =>
+        service.updatePayment("inv-1", "pay-1", { amount: 30, method: "CHECK", ...dto } as any);
+
+      it("a stored non-tender hand-over-group row (ACH) edited INTO a check inside a closed window is refused", async () => {
+        pickupOrder();
+        paths[2].arrange(INSIDE, { method: "ACH", paymentGroupId: HAND });
+        await expect(editTo({})).rejects.toMatchObject({
+          response: { code: "COUNTER_SALE_DAY_CLOSED" },
+        });
+        expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
+      });
+
+      it("the same edit on an OFFICE row (another group) of that pickup order is allowed", async () => {
+        pickupOrder();
+        paths[2].arrange(INSIDE, { method: "ACH", paymentGroupId: OFFICE_GROUP });
+        await editTo({});
+        expect(prisma.invoicePayment.update).toHaveBeenCalled();
+      });
+
+      it("a stored non-tender counter row (ACH) moved INTO a closed window as a check is refused on its new state", async () => {
+        counterOrder();
+        paths[2].arrange(AFTER, { method: "ACH" });
+        await expect(editTo({ paidAt: INSIDE.toISOString() })).rejects.toMatchObject({
+          response: { code: "COUNTER_SALE_DAY_CLOSED" },
+        });
+        expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
+      });
+
+      it("a hand-over row moved OUT of the closed window is refused on its stored state", async () => {
+        pickupOrder();
+        paths[2].arrange(INSIDE, { paymentGroupId: HAND });
+        await expect(editTo({ method: "CASH", paidAt: AFTER.toISOString() })).rejects.toMatchObject(
+          { response: { code: "COUNTER_SALE_DAY_CLOSED" } },
+        );
+      });
     });
   });
 

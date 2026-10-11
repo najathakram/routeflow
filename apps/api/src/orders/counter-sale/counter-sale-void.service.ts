@@ -250,12 +250,13 @@ export class CounterSaleVoidService {
     const tender = payments.filter((p) => isCounterTenderRow(orderId, p, COUNTER_ORDER));
     // 7b. A closed day's totals never move (SA-750r3), evaluated under the shared close lock before any write: the sale's own
     // time (it counts as a sale of its day) and every tender payment this void reverses (money in, dated by paidAt).
-    await counterPay.assertOpen(
+    await counterPay.assertDatesOpen(
       tx,
       {
         tenantId: this.prisma.getTenantId()!,
         registerKey: registerKeyOfOrder(order)!,
         counterSale: true,
+        orderId,
       },
       order.createdAt,
       ...tender.map((p) => p.paidAt),
