@@ -538,9 +538,10 @@ describeDb("POS-7b-1 — GET /orders/counter-sale/today on real Postgres", () =>
       returned: { state: "PARTLY", amount: 5 },
     });
     expect(row("card").methods).toEqual([{ method: "CARD", amount: 9.99 }]);
+    // the ruled display order (COUNTER_TENDER_DISPLAY_ORDER): non-cash first, CASH last
     expect(row("split-credit").methods).toEqual([
-      { method: "CASH", amount: 5.5 },
       { method: "STORE_CREDIT", amount: 4.5 },
+      { method: "CASH", amount: 5.5 },
     ]);
     expect(row("on-account")).toMatchObject({ paymentState: "ON_ACCOUNT", balanceDue: 12.34 });
     expect(row("cancelled")).toMatchObject({ voided: true });
