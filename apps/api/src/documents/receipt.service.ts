@@ -11,6 +11,7 @@ import {
 import type { SendReceiptResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { calendarDayBounds } from "../common/calendar-date";
+import { resolveZone } from "../common/tenant-time-zone";
 import { EmailService } from "../email/email.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RECEIPT_CHANNELS } from "./receipt-channels";
@@ -44,17 +45,6 @@ const SETTING_KEYS = [
   "settings.phone",
   "settings.receiptFooter",
 ];
-
-/** The tenant's zone, or UTC when it has none or an unknown one (the same fallback the calendar helpers use). */
-function effectiveZone(tz: string | null | undefined): string {
-  if (!tz) return "UTC";
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz });
-    return tz;
-  } catch {
-    return "UTC";
-  }
-}
 
 const tooMany = (code: string, message: string) =>
   new HttpException({ code, message }, HttpStatus.TOO_MANY_REQUESTS);
@@ -162,7 +152,7 @@ export class ReceiptService {
       });
     }
 
-    const [config, settingRows] = await Promise.all([
+    const [config, settingRows, resolvedZone] = await Promise.all([
       this.prisma.tenantConfig.findUnique({
         where: { tenantId },
         select: {
@@ -172,18 +162,19 @@ export class ReceiptService {
           state: true,
           zip: true,
           phone: true,
-          timezone: true,
         },
       }),
       db.systemConfig.findMany({
         where: { key: { in: SETTING_KEYS } },
         select: { key: true, value: true },
       }),
+      // the tenant zone has ONE reader (common/tenant-time-zone.ts); never selected here
+      resolveZone(this.prisma, { tenantId }),
     ]);
     const settings = Object.fromEntries(
       (settingRows as Array<{ key: string; value: string }>).map((r) => [r.key, r.value]),
     );
-    const zone = effectiveZone(config?.timezone);
+    const zone = resolvedZone.zone;
 
     // per-order first: it is the limit the cashier can read and act on
     const perOrderCap = resolveReceiptLimit(

@@ -79,18 +79,14 @@ export function orderFixture(over: Partial<ReceiptOrderInput> = {}): ReceiptOrde
   };
 }
 
-/** The stored invoice: every line carries the 8% rate that reproduces the order's $2.12 over the $26.50 lines. */
+/** The stored invoice (line rates only: a missing categoryTaxAmount reads as 0): every line carries the 8% rate that reproduces the order's $2.12 over the $26.50 lines. */
 export const INVOICE: ReceiptInvoiceInput = {
   id: "inv-1",
   invoiceNumber: "INV-2001",
   status: "PAID",
   subtotal: "26.50",
   taxAmount: "2.12",
-  items: [
-    { taxRate: "0.0800", categoryTaxAmount: "0.00" },
-    { taxRate: "0.0800", categoryTaxAmount: "0.00" },
-    { taxRate: "0.0800", categoryTaxAmount: "0.00" },
-  ],
+  items: [{ taxRate: "0.0800" }, { taxRate: "0.0800" }, { taxRate: "0.0800" }],
 };
 
 export function paymentsFixture(over: ReceiptPaymentInput[] = []): ReceiptPaymentInput[] {
