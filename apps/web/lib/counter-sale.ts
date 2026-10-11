@@ -61,6 +61,28 @@ export function counterSaleGate(cap: FulfilmentCapability | null | undefined): C
 }
 
 /**
+ * Row 331 (UX G7) + row 344: the ONE header rule for every place that carries the quick-create entries (the Orders
+ * header, the dashboard header). A store-only business has a single place to ring a sale, so "New Order" (which
+ * went to the same place as "Counter sale") is not offered, Counter sale is the filled primary and trails, and
+ * the actions are 44 px targets below `sm`. Read from the one capability gate (`counterSaleGate`), so there is no
+ * second rule and no second capability read. A partial gate (a test double, a loading state) is NOT store-only.
+ */
+export interface QuickCreateRule {
+  storeOnly: boolean;
+  /** "New Order" is offered. */
+  showNewOrder: boolean;
+  /** "Counter sale" is the filled primary (and trails the other actions). */
+  counterIsPrimary: boolean;
+}
+
+export function quickCreateRule(
+  gate: Partial<Pick<CounterSaleGate, "offerInvoiceOrder">> | null | undefined,
+): QuickCreateRule {
+  const storeOnly = gate?.offerInvoiceOrder === true;
+  return { storeOnly, showNewOrder: !storeOnly, counterIsPrimary: storeOnly };
+}
+
+/**
  * Mirrors the server resolver: the CUSTOMER's stored path is used only if it is one of `capability.methods`, otherwise
  * `capability.staffDefault`. A stored ROUTE on a ship-only business therefore preselects SHIP.
  */

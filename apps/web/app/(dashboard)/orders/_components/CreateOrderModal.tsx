@@ -1863,7 +1863,7 @@ export function CreateOrderModal({
           <Button
             variant="ghost"
             type="button"
-            className="w-full sm:mr-auto sm:w-auto"
+            className="w-full max-sm:h-11 sm:mr-auto sm:w-auto"
             onClick={handleMinimize}
             disabled={!canMinimize || savingDraft}
             loading={savingDraft}
@@ -1875,12 +1875,14 @@ export function CreateOrderModal({
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
           <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-            <Button variant="ghost" type="button" onClick={handleDismiss}>
+            {/* Row 344: the footer actions are 44 px tap targets below sm (they were 34 px at 390). */}
+            <Button variant="ghost" type="button" className="max-sm:h-11" onClick={handleDismiss}>
               Cancel
             </Button>
             <Button
               variant="secondary"
               type="button"
+              className="max-sm:h-11"
               loading={createOrder.isPending}
               disabled={createOrder.isPending || fulfilmentPending}
               onClick={onSaveDraft}
@@ -1891,6 +1893,7 @@ export function CreateOrderModal({
               <Button
                 variant="secondary"
                 type="button"
+                className="max-sm:h-11"
                 loading={createOrder.isPending}
                 disabled={
                   createOrder.isPending || fulfilmentPending || lineItems.some(isPendingDefaultUnit)
@@ -1906,6 +1909,7 @@ export function CreateOrderModal({
             <Button
               type="submit"
               form="create-order-form"
+              className="max-sm:h-11"
               onClick={() => {
                 posFinishRef.current = "invoice";
               }}

@@ -364,6 +364,17 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
     expect(notes).toHaveAttribute("placeholder", "Special instructions…");
   });
 
+  it("row 344: every footer button is a 44 px tap target below sm (390 px was 34 px)", async () => {
+    asStoreOnly();
+    await openWithLine();
+    await screen.findByRole("button", { name: "Confirm & invoice" });
+    const names = ["Minimize", "Cancel", "Save as Draft", "Confirm only", "Confirm & invoice"];
+    for (const name of names) {
+      const btn = screen.getByRole("button", { name });
+      expect(btn.className).toMatch(/max-sm:h-11/);
+    }
+  });
+
   it("a role without POS mode is left on the normal builder", async () => {
     asStoreOnly();
     mockRole = "SUPER_ADMIN";
