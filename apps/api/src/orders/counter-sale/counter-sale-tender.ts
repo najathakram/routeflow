@@ -220,7 +220,9 @@ export function assertStoredTenderMatches(
       if (have !== planned) throw changed(`payment ${idx + 1} was taken for another amount`);
     }
   }
-  if (stored.byLeg.size === 0) return; // nothing taken yet: a failed first attempt's tendered is simply overwritten
+  // nothing taken yet: a failed first attempt's tendered is simply overwritten by a cash retry, or cleared by a retry that
+  // takes no cash (SA-773 N6: counter-sale.service.ts `tender`, so a stale figure is never served on a card-only sale)
+  if (stored.byLeg.size === 0) return;
   const cashStored = [...stored.byLeg.values()].some((rows) =>
     rows.some((r) => r.payment.method === "CASH"),
   );

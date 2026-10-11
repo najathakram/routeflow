@@ -207,7 +207,7 @@ export class CounterSaleService {
       try {
         const locked = await withAdvisoryLock(
           { family: "counter-tender", key: orderId, mode: "wait" },
-          () => this.tender(legs, orderId),
+          () => this.tender(legs, orderId, replayed),
         );
         if (!locked.acquired) throw new LockTimeoutError("counter-tender", orderId, 0);
         ({ invoices, planError } = locked.value);
@@ -313,6 +313,8 @@ export class CounterSaleService {
   private async tender(
     legs: readonly CounterLeg[],
     orderId: string,
+    /** this call is a replay of an earlier one (same key, same order): the only way a figure can already be stored */
+    replayed = false,
   ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
@@ -323,11 +325,13 @@ export class CounterSaleService {
     const plan = planSaleTender(invoices, legs);
     const stored = readStoredTender(orderId, invoices);
     // the handed-over amount as the first call stored it (written BEFORE any money moves): half of the replay fingerprint
-    const storedRow = stored.byLeg.size
-      ? await this.prisma
-          .forTenant()
-          .order.findFirst({ where: { id: orderId }, select: { counterCashTendered: true } })
-      : null;
+    // (read for a replay too: an attempt that died after the write has a figure and no tender row, SA-773 N6 below)
+    const storedRow =
+      stored.byLeg.size || replayed
+        ? await this.prisma
+            .forTenant()
+            .order.findFirst({ where: { id: orderId }, select: { counterCashTendered: true } })
+        : null;
     const storedTendered = storedRow?.counterCashTendered;
     assertStoredTenderMatches(
       stored,
@@ -337,9 +341,29 @@ export class CounterSaleService {
       plan.cashTenderedCents,
     );
     if (!plan.refusal) assertNonCashShortfallsFit(invoices, stored, legs, plan.placements);
+    // SA-773 split N6: the handed-over figure is written BEFORE the payments, so an attempt that died after that write
+    // (no tender row stored) leaves a figure no money backs. A retry that takes no cash (a card / check retry under the same
+    // key, or one the plan refuses) never writes a new figure, and the stale one would be served as `cashTendered` on a
+    // sale that took none (the response, Today's row, the receipt). With NOTHING stored, the figure must be this request's
+    // own: when this request writes none, it is cleared HERE under the same lock, before any money moves. A cash retry
+    // overwrites it below (unchanged); once any tender row exists the fingerprint above has already decided (unchanged).
+    const writesTendered =
+      !plan.refusal && plan.placements.length > 0 && plan.cashTenderedCents != null;
+    if (stored.byLeg.size === 0 && storedTendered != null && !writesTendered) {
+      try {
+        await this.prisma
+          .forTenant()
+          .order.updateMany({ where: { id: orderId }, data: { counterCashTendered: null } });
+      } catch (e) {
+        this.logger.warn(
+          `counter sale ${orderId}: stale cash tendered not cleared (${(e as Error)?.message ?? e})`,
+        );
+        planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+      }
+    }
     if (plan.refusal) {
       // A refusal only stands when nothing was taken yet: a stored tender means a payment already went in.
-      if (stored.byLeg.size === 0) planError = plan.refusal;
+      if (stored.byLeg.size === 0 && !planError) planError = plan.refusal;
     } else if (plan.placements.length > 0) {
       // SA-764 + SA-749r2: the CASH handed over (the cash LEG's requested amount, whichever leg index it is; null
       // when the sale has no cash leg) is stored BEFORE any money moves, so a paid sale can never lack its tender.
