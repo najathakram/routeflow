@@ -31,6 +31,8 @@ import {
 import { Prisma } from "@prisma/client";
 import { overdueCutoff } from "../common/calendar-date";
 import { markOverdueForTenant } from "./overdue-sweep.service";
+import { applyInvoiceStatusFilters } from "./invoice-list-query";
+import { computeInvoiceKpiSummary } from "./invoice-kpi-summary";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -373,5 +375,50 @@ describeDb("balanceDueSql — SQL <-> TS parity (SA-770), real Postgres", () => 
     expect(await status(justBefore)).toBe("OVERDUE");
     expect(await status(atCutoff)).toBe("SENT");
     expect(await status(justAfter)).toBe("SENT");
+  });
+  it("R4 'partial-past-due': a PARTIAL invoice that owes $5 is in the list's overdue ids, classifier-overdue, and in the KPI overdue bucket with the OVERDUE one", async () => {
+    const s = await seedTenant("partial-past-due");
+    // INV-0014: PARTIAL, total 35, 30 confirmed -> owes 5, due Sep 15 (the sweep never flips PARTIAL)
+    const partial = await seedInvoice(
+      s,
+      { label: "partial-past-due", total: 35, payments: [{ amount: 30 }] },
+      { status: "PARTIAL", dueDate: new Date("2026-09-15T00:00:00.000Z") },
+    );
+    // INV-0016: OVERDUE, total 30, nothing paid -> owes 30
+    const overdue = await seedInvoice(
+      s,
+      { label: "overdue-unpaid", total: 30, payments: [] },
+      { status: "OVERDUE", dueDate: new Date("2026-09-10T00:00:00.000Z") },
+    );
+    const cutoff = new Date("2026-10-02T00:00:00.000Z");
+
+    // the LIST: the statuses the isOverdue filter composes, through the one SQL predicate
+    const where: any = {};
+    applyInvoiceStatusFilters(where, { isOverdue: true } as any, null);
+    expect(where.status.in).toContain("PARTIAL");
+    const ids = await overdueInvoiceIds(prisma, s.tenantId, cutoff, { statuses: where.status.in });
+    expect(new Set(ids)).toEqual(new Set([partial, overdue]));
+    expect(
+      await overdueInvoiceCount(prisma, s.tenantId, cutoff, { statuses: where.status.in }),
+    ).toBe(2);
+
+    // the TS classifier says the same about the same rows
+    const rows = await prisma.invoice.findMany({
+      where: { tenantId: s.tenantId },
+      include: { payments: true },
+    });
+    const byId = new Map(rows.map((r) => [r.id, classifyInvoiceBalance(r, cutoff)]));
+    expect(byId.get(partial)).toEqual({ balanceDue: 5, isOverdue: true });
+    expect(byId.get(overdue)).toEqual({ balanceDue: 30, isOverdue: true });
+
+    // the KPI overdue bucket = the sum of exactly those balances ($35.00, the Release 4 tile)
+    const kpi = await tenantCtx.run(s.tenantId, () =>
+      computeInvoiceKpiSummary(
+        { prisma, resolveTenantInvoiceDefaults: async () => ({ timezone: null }) },
+        "2026-10-02",
+        { sub: "op", role: "OPERATOR" } as any,
+      ),
+    );
+    expect(kpi.overdue).toBe(35);
   });
 });
