@@ -397,6 +397,18 @@ export const NOWAIT_LOCK_TABLES = ["RouteRunStop", "Invoice", "Order"] as const;
 export type NoWaitLockTable = (typeof NOWAIT_LOCK_TABLES)[number];
 
 /**
+ * True for Postgres `lock_not_available` (SQLSTATE 55P03: a NOWAIT miss or a `lock_timeout`), however Prisma wraps it.
+ * Prisma surfaces the SQLSTATE on `meta.code` for a raw query, but not on every driver/error shape, so the message check is the
+ * fallback: a wrapped error is never mistaken for a real failure and rethrown as a 500.
+ */
+export function isLockUnavailableError(err: unknown): boolean {
+  return (
+    (err as any)?.meta?.code === "55P03" ||
+    /55P03|could not obtain lock/i.test(String((err as any)?.message ?? ""))
+  );
+}
+
+/**
  * Take `FOR NO KEY UPDATE NOWAIT` on the given rows inside `tx`; a lock held by an in-flight
  * writer surfaces as 409 CONCURRENT_UPDATE (retryable) instead of a wait.
  *
@@ -441,10 +453,7 @@ export async function lockRowsNoWait(
     // Prisma surfaces the SQLSTATE on `meta.code` for a raw query, but not on every driver/error
     // shape — the message check is the fallback so a wrapped error is never mistaken for a real
     // failure and rethrown as a 500.
-    const lockUnavailable =
-      (err as any)?.meta?.code === "55P03" ||
-      /55P03|could not obtain lock/i.test(String((err as any)?.message ?? ""));
-    if (!lockUnavailable) throw err;
+    if (!isLockUnavailableError(err)) throw err;
     throw new ConflictException({
       code: API_ERROR_CODES.CONCURRENT_UPDATE,
       reason,
