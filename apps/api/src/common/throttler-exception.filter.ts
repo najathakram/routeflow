@@ -2,6 +2,7 @@ import { ArgumentsHost, Catch, ExceptionFilter, HttpStatus, Logger } from "@nest
 import { ThrottlerException } from "@nestjs/throttler";
 import type { Response } from "express";
 import { resolveLoginThrottle } from "../auth/login-throttle.config";
+import { redactedRoute, RouteRequestLike } from "./redacted-route";
 
 /**
  * RF-160: Intercepts ThrottlerException (429) and adds the Retry-After header
@@ -20,7 +21,7 @@ export class ThrottlerExceptionFilter implements ExceptionFilter {
   catch(exception: ThrottlerException, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const res = ctx.getResponse<Response>();
-    const req = ctx.getRequest<{ path: string; ip: string }>();
+    const req = ctx.getRequest<RouteRequestLike & { path: string; ip: string }>();
 
     // Default retry window; the login route's window comes from the same
     // login-throttle config the @Throttle decorator reads (default 300 s).
@@ -28,7 +29,8 @@ export class ThrottlerExceptionFilter implements ExceptionFilter {
       ? Math.max(1, Math.ceil(resolveLoginThrottle().ttl / 1000))
       : 60;
 
-    this.logger.warn(`Rate limit hit: ${req.path} ip=${req.ip}`);
+    // Route template (token-redacted path when none matched): a raw path can carry a link token.
+    this.logger.warn(`Rate limit hit: ${redactedRoute(req)} ip=${req.ip}`);
 
     // BUG-OPS1-5: NestJS's ThrottlerException.message exposes the internal
     // class name ("ThrottlerException: Too Many Requests"). Rewrite to a

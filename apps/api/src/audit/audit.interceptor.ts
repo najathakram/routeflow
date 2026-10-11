@@ -2,12 +2,10 @@ import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from "@nes
 import type { Request } from "express";
 import { AuditService } from "./audit.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { GLOBAL_PREFIX, matchedTemplateParts, rawPath } from "../common/redacted-route";
 
 /** HTTP methods that constitute a mutation */
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-
-/** The global prefix Nest bakes into every route template (main.ts `setGlobalPrefix`). */
-const GLOBAL_PREFIX = /^\/api\/v1(?=\/|$)/;
 
 /** Stored in place of a path when the request matched no route template. */
 export const AUDIT_UNMATCHED_PATH = "<unmatched>";
@@ -35,20 +33,15 @@ export function deriveAuditTarget(req: Request): {
   entityType: string;
   entityId: string | null;
 } {
-  const template = typeof req.route?.path === "string" ? (req.route.path as string) : null;
-  if (template === null) {
+  const templateParts = matchedTemplateParts(req);
+  if (templateParts === null) {
     return {
       action: `${req.method} ${AUDIT_UNMATCHED_PATH}`,
       entityType: "unknown",
       entityId: null,
     };
   }
-  const templateParts = template.replace(GLOBAL_PREFIX, "").split("/").filter(Boolean);
-  const rawParts = (req.originalUrl ?? req.url ?? req.path ?? "")
-    .split("?")[0]
-    .replace(GLOBAL_PREFIX, "")
-    .split("/")
-    .filter(Boolean);
+  const rawParts = rawPath(req).replace(GLOBAL_PREFIX, "").split("/").filter(Boolean);
 
   const idSegment = templateParts[1];
   let entityId: string | null = null;
