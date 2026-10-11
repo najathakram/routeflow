@@ -565,3 +565,30 @@ export async function withAdvisoryLocks<T>(
     else client.release();
   }
 }
+
+/**
+ * Take the SHARED, transaction-scoped advisory lock on `(family, key)` inside `tx`, in try mode (never
+ * waits). The key pair is derived EXACTLY like {@link withAdvisoryLock}'s - `hashtext(family)`,
+ * `hashtext(key)` - so it conflicts with a holder of that lock's exclusive session-level form: the
+ * committer of a durable stock count holds `stock-count:<sessionId>` exclusively across all of its
+ * batch transactions, while a line edit or a discard holds the shared form for its own transaction
+ * (many edits run side by side; none runs beside the committer). Returns `false` when an exclusive
+ * holder has it; the lock is released by Postgres when `tx` ends, so there is nothing to unlock.
+ */
+export async function tryAdvisoryXactLockShared(
+  tx: { $queryRaw: (...args: any[]) => unknown },
+  family: LockFamily,
+  key: string,
+): Promise<boolean> {
+  if (typeof key !== "string" || key.length === 0) {
+    throw new TypeError("tryAdvisoryXactLockShared: key must be a non-empty string");
+  }
+  if (!(LOCK_FAMILIES as readonly string[]).includes(family)) {
+    throw new TypeError(`tryAdvisoryXactLockShared: unknown lock family "${family}"`);
+  }
+  const rows = (await tx.$queryRaw`
+    SELECT pg_try_advisory_xact_lock_shared(hashtext(${family}), hashtext(${key})) AS ok
+  `) as Array<{ ok?: boolean }> | undefined;
+  // Postgres always answers one boolean row; only an explicit false is "an exclusive holder has it".
+  return rows?.[0]?.ok !== false;
+}

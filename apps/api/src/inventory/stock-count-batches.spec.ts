@@ -321,13 +321,16 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
     prisma.stockCountSession.findUnique.mockResolvedValue(
       session([line(1, { unitCostOverride: D(5) })]),
     );
-    // present at the pre-tx validation read, deleted before the batch tx reads it under the lock
+    // present at the pre-lock and the under-lock validation reads, deleted before the batch tx
+    // reads it under the product lock
     const base = prisma.product.findMany.getMockImplementation()!;
-    prisma.product.findMany.mockImplementationOnce(async (args: any) => {
-      const rows = await base(args);
-      stock.delete(pid(1));
-      return rows;
-    });
+    prisma.product.findMany
+      .mockImplementationOnce(base)
+      .mockImplementationOnce(async (args: any) => {
+        const rows = await base(args);
+        stock.delete(pid(1));
+        return rows;
+      });
 
     const err: any = await commit().catch((e) => e);
 
@@ -340,10 +343,10 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
 
   it("a CAS that matches no row (someone else finished) returns the alreadyCommitted outcome", async () => {
     seed([pid(1)]);
-    // pre-check: OPEN; the re-read under the lock: OPEN; the re-read after the failed CAS: COMMITTED
+    // pre-check: OPEN; the re-read (status + lines) under the lock: OPEN; the re-read after the failed CAS: COMMITTED
     prisma.stockCountSession.findUnique
       .mockResolvedValueOnce(session([line(1)]))
-      .mockResolvedValueOnce({ status: "OPEN" })
+      .mockResolvedValueOnce(session([line(1)]))
       .mockResolvedValue({ status: "COMMITTED" });
     prisma.stockCountSession.updateMany.mockResolvedValue({ count: 0 });
 
@@ -398,7 +401,7 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
     it("an OPEN session with no movements is still editable and discardable", async () => {
       open();
       prisma.stockMovement.findFirst.mockResolvedValue(null);
-      prisma.stockCountSession.update.mockResolvedValue({ id: "sess-1", status: "DISCARDED" });
+      prisma.stockCountSession.findUnique.mockResolvedValue({ id: "sess-1", status: "DISCARDED" });
 
       await expect(service.removeStockCountLine("sess-1", "prod-1")).resolves.toEqual({
         removed: true,

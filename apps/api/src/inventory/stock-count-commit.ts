@@ -7,12 +7,40 @@
  * (no new enum value, no migration) until a CAS after the last batch flips it to COMMITTED. While some
  * of its movements exist and it is not COMMITTED it is "committing": a second commit, a line edit and
  * a discard are refused with 409 STOCK_COUNT_COMMITTING.
+ *
+ * The lock protocol (SA-767 L-2.4 B, r-note 4 B): the committer holds the session's `stock-count`
+ * advisory lock EXCLUSIVELY across all of its batches; a line edit or a discard holds the SHARED form
+ * of the same key pair for its own tx and is 409 STOCK_COUNT_COMMITTING if the committer has it.
  */
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** Lines per commit transaction: bounds how long one count batch holds its Product row locks. */
 export const COUNT_COMMIT_BATCH = 50;
+
+/** The advisory-lock family of the committer (exclusive) and of the edits (shared): `db-locks.ts`. */
+export const STOCK_COUNT_LOCK_FAMILY = "stock-count" as const;
+
+/**
+ * The committer's try-lock is retried this many times, `COUNT_LOCK_RETRY_MS` apart, before it answers
+ * 409: an edit that is mid-flight holds the SHARED form of the lock for a few milliseconds, and a
+ * commit that merely collided with one should wait it out rather than fail (the committer then
+ * re-reads the lines, so the finished edit is included). A genuinely second committer holds the
+ * exclusive form for minutes and still gets its 409 after ~0.4 s.
+ */
+export const COUNT_LOCK_ATTEMPTS = 3;
+export const COUNT_LOCK_RETRY_MS = 200;
+
+/** What a committed (or already committed) count answers. */
+export interface StockCountCommitOutcome {
+  sessionId: string;
+  reference: string;
+  applied: number;
+  skipped: number;
+  movementIds: string[];
+  costMovementIds?: string[];
+  alreadyCommitted?: boolean;
+}
 
 /** The `StockMovement.reference` of every movement a count session writes (also its movementReference). */
 export const stockCountReference = (sessionId: string): string => `STOCK_COUNT-${sessionId}`;

@@ -590,7 +590,8 @@ describe("SA-767 L-2 - every InventoryService stock writer locks before it reads
  * SA-767 L-2.2 (r-note 2 (b)): the batched count committer keeps its shape. Source pins over the
  * comment-stripped service: the chain delegates to the one batch tx, which is a retryStockTx tx that
  * locks, reads locked, and skips an already-applied line; the committer is one try-mode
- * `stock-count` advisory lock; every edit path asks `assertNotCommitting`.
+ * `stock-count` advisory lock, taken before its lines are read; every edit path and discard run in
+ * their own tx under the SHARED form of that lock (SA-767 L-2.4 B).
  */
 describe("SA-767 L-2.2 - the batched count committer (structural pins)", () => {
   const strip = (code: string) =>
@@ -610,13 +611,24 @@ describe("SA-767 L-2.2 - the batched count committer (structural pins)", () => {
 
   it("the session commit is ONE try-mode stock-count advisory lock around the batch loop", () => {
     const m = body("commitStockCountSession");
-    expect(m).toMatch(
+    expect(body("runUnderCountLock")).toMatch(
       /withAdvisoryLock\(\s*\{\s*family: "stock-count",\s*key: id,\s*mode: "try"\s*\}/,
     );
+    expect(m).toMatch(/this\.runUnderCountLock\(/);
     expect(m).toMatch(/this\.commitStockCountBatches\(/);
     expect(m).toMatch(/stockCountCommitting\(\)/);
     // no transaction of its own: the Product writes live in the batch method
     expect(m).not.toMatch(/tenantTransaction/);
+  });
+
+  it("the committer re-reads the session AND its lines under the lock, before the first batch", () => {
+    const m = body("commitStockCountBatches");
+    const reread = m.search(
+      /stockCountSession\.findUnique\(\{\s*where: \{ id \},\s*include: \{ lines: true \}/,
+    );
+    expect(reread).toBeGreaterThan(-1);
+    expect(reread).toBeLessThan(m.search(/this\.commitStockCountBatch\(/));
+    expect(body("commitStockCountSession")).not.toMatch(/commitStockCountBatch\(/);
   });
 
   it("the batch loop steps by COUNT_COMMIT_BATCH and flips the session by CAS only after it", () => {
@@ -660,9 +672,34 @@ describe("SA-767 L-2.2 - the batched count committer (structural pins)", () => {
   });
 
   it.each(["upsertStockCountLine", "removeStockCountLine", "discardStockCountSession"])(
-    "%s refuses a committing count through assertNotCommitting",
+    "%s runs in its own tx under the shared stock-count lock (enterSessionEdit)",
     (name) => {
-      expect(body(name)).toMatch(/this\.assertNotCommitting\(\s*await this\.loadEditableSession\(/);
+      const m = body(name);
+      expect(m).toMatch(/this\.prisma\.tenantTransaction\(/);
+      expect(m).toMatch(/this\.enterSessionEdit\(tx, /);
+      // nothing is decided from a read made before the lock
+      expect(m.search(/this\.enterSessionEdit\(/)).toBeLessThan(
+        m.search(/tx\.\w+\.(find|delete|update|create)\w*\(/),
+      );
     },
   );
+
+  it("enterSessionEdit: the shared lock first, then the status, then the movements check", () => {
+    const m = body("enterSessionEdit");
+    const lock = m.search(/tryAdvisoryXactLockShared\(tx, STOCK_COUNT_LOCK_FAMILY, sessionId\)/);
+    const status = m.search(/tx\.stockCountSession\.findFirst\(/);
+    const moves = m.search(/tx\.stockMovement\.findFirst\(/);
+    expect(lock).toBeGreaterThan(-1);
+    expect(lock).toBeLessThan(status);
+    expect(status).toBeLessThan(moves);
+    expect(m).toMatch(/stockCountCommitting\(\)/);
+  });
+
+  it("discardStockCountSession is a CAS on OPEN / REVIEW; a CAS that matches nothing is the 409", () => {
+    const m = body("discardStockCountSession");
+    expect(m).toMatch(/tx\.stockCountSession\.updateMany\(/);
+    expect(m).toMatch(/status: \{ in: \["OPEN", "REVIEW"\] \}/);
+    expect(m).toMatch(/flipped\.count === 0\) throw stockCountCommitting\(\)/);
+    expect(m).not.toMatch(/stockCountSession\.update\(/);
+  });
 });
