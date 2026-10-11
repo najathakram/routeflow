@@ -765,6 +765,33 @@ describe("InlineReturnsService.refund (SA-727)", () => {
       });
     });
 
+    it("SA-773 N4: a source invoice voided or written off since the capture is refused 409 RETURN_NOTHING_BILLED before the CAS and the mint", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
+      const err: any = await service.storeCreditInstead("ret-1", OPERATOR).catch((e: any) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({
+        code: "RETURN_NOTHING_BILLED",
+        invoiceId: "inv-1",
+      });
+      expect(prisma.invoice.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ["inv-1"] }, status: { in: ["VOID", "WRITTEN_OFF"] } },
+        }),
+      );
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("SA-773 N4: a source line that no longer exists is refused 409 RETURN_NOTHING_BILLED the same way (an item with no pool is never minted unchecked)", async () => {
+      prisma.invoiceItem.findMany.mockResolvedValue([]);
+      const err: any = await service.storeCreditInstead("ret-1", OPERATOR).catch((e: any) => e);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: "RETURN_NOTHING_BILLED" });
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
     describe("F3: a retry of an already-converted return is a 200 (the same as a refund replay)", () => {
       const converted = (over: Record<string, unknown> = {}) =>
         receivedReturn({

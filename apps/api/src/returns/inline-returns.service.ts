@@ -1322,6 +1322,8 @@ export class InlineReturnsService {
         items: (fresh.items ?? []) as any[],
         lockSourceInvoices: true,
       });
+      // SA-773 N4: a replay re-issue after the source invoice was voided / written off (or its line deleted) mints nothing
+      await assertInlineSourcesOpen(tx, (fresh.items ?? []) as any[]);
       const amount = roundMoney(
         Number(fresh.creditSubtotal ?? 0) +
           Number(fresh.creditTax ?? 0) +
@@ -1757,6 +1759,9 @@ export class InlineReturnsService {
             select: { id: true, invoiceId: true },
           })) ?? [];
         await lockRefundInvoices(tx, tenantId, [...new Set(lines.map((l) => l.invoiceId))]);
+        // SA-773 N4: a source invoice voided / written off (or a source line gone) since the capture has no pool below, so its
+        // request would pass unchecked: refuse before the claim and the mint. (The refused cash refund steers the operator here.)
+        await assertInlineSourcesOpen(tx, items);
         // SA-773: store credit gives the same value back, so it fits the same remainder (this return itself excluded)
         await assertInlineReturnWithinRemainder(tx, tenantId, {
           returnId: id,

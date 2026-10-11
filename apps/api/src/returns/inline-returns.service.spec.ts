@@ -484,6 +484,35 @@ describe("InlineReturnsService", () => {
     );
   });
 
+  it("SA-773 N4: the replay re-issue of a STUCK return whose source invoice was voided mints nothing (409 RETURN_NOTHING_BILLED)", async () => {
+    const stuck = {
+      id: "ret-stuck",
+      returnKey: "nonce-1",
+      kind: "INLINE",
+      customerId: "cust-1",
+      orderId: "ord-carrying",
+      status: "RECEIVED",
+      creditNoteId: null,
+      holdReason: null,
+      returnNumber: "RET-STUCK",
+      creditSubtotal: 28,
+      creditTax: 2,
+      creditCategoryTax: 0,
+      items: [{ productId: "prod-1", qty: 6, sourceInvoiceItemId: "line-1" }],
+    };
+    prisma.return.findFirst.mockImplementation(async ({ where }: any) =>
+      where?.returnKey === "nonce-1" || where?.id === "ret-stuck" ? stuck : null,
+    );
+    prisma.invoiceItem.findMany.mockResolvedValue([{ id: "line-1", invoiceId: "inv-dead" }]);
+    prisma.invoice.findFirst.mockResolvedValue({ id: "inv-dead" });
+
+    const err: any = await service.capture(CAPTURE_DTO as any, OPERATOR).catch((e: any) => e);
+
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "RETURN_NOTHING_BILLED" });
+    expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+  });
+
   it("a returnKey belonging to a DIFFERENT customer/order (found only at the PRE-tx check, gone by the in-tx re-check) is never treated as a replay", async () => {
     prisma.return.findFirst.mockResolvedValueOnce({
       id: "ret-other",
@@ -1362,6 +1391,22 @@ describe("InlineReturnsService", () => {
       );
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
       expect(ledger.reverseReturnEntries).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("SA-773 N4: a source line that no longer exists fails closed the same way (no pool, so it would be minted unchecked)", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        ...HELD,
+        items: [{ ...HELD.items[0], sourceInvoiceItemId: "line-gone" }],
+      });
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoiceItem.findMany.mockResolvedValue([]);
+
+      const err: any = await service.approve("ret-held", OPERATOR).catch((e: any) => e);
+
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: "RETURN_NOTHING_BILLED" });
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
       expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
     });
 
