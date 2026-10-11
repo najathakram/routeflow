@@ -303,7 +303,13 @@ describe("AuthService", () => {
       const result = await service.verifyEmailAndLogin("valid.jwt.token");
 
       expect(prisma.user.updateMany).toHaveBeenCalledWith({
-        where: { id: "user-1", status: "INACTIVE", lastLoginAt: null },
+        where: {
+          id: "user-1",
+          status: "INACTIVE",
+          lastLoginAt: null,
+          role: "TENANT_ADMIN",
+          deletedAt: null,
+        },
         data: { status: "ACTIVE" },
       });
       expect(result).toHaveProperty("accessToken");

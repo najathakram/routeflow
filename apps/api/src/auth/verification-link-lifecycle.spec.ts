@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { BadRequestException } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import { TenantsService } from "../tenants/tenants.service";
+import { RESEND_LIMITER } from "../tenants/resend-verification-limit";
 import { UsersService } from "../users/users.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
@@ -89,6 +90,18 @@ describe("verification link lifecycle", () => {
         },
         { provide: EncryptionService, useValue: {} },
         { provide: StorageService, useValue: {} },
+        // The resend is rate limited per address; a counter that never refuses.
+        {
+          provide: RESEND_LIMITER,
+          useValue: {
+            increment: jest.fn().mockResolvedValue({
+              totalHits: 1,
+              timeToExpire: 1,
+              isBlocked: false,
+              timeToBlockExpire: 0,
+            }),
+          },
+        },
       ],
     }).compile();
     auth = mod.get(AuthService);
@@ -107,6 +120,18 @@ describe("verification link lifecycle", () => {
     expect(res).toHaveProperty("accessToken");
     expect(statusWrites()).toHaveLength(1);
     expect(statusWrites()[0][0].data).toEqual({ status: "ACTIVE" });
+  });
+
+  it("the activation is conditional on a live signup admin who never signed in", async () => {
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+    await auth.verifyEmailAndLogin("t");
+    expect(statusWrites()[0][0].where).toEqual({
+      id: "user-1",
+      status: "INACTIVE",
+      lastLoginAt: null,
+      role: "TENANT_ADMIN",
+      deletedAt: null,
+    });
   });
 
   it("writes an audit row for the activation, actor is the user", async () => {
@@ -171,7 +196,7 @@ describe("verification link lifecycle", () => {
     });
 
     it("resend sends nothing", async () => {
-      const sent = await tenants.resendVerification("owner@acme.example");
+      const sent = await tenants.performResend("owner@acme.example");
       expect(sent).toBe(false);
       expect(email.send).not.toHaveBeenCalled();
       expect(jwt.sign).not.toHaveBeenCalled();
@@ -180,7 +205,7 @@ describe("verification link lifecycle", () => {
 
   it("resend still sends for a signup admin who never signed in", async () => {
     (prisma.user.findFirst as jest.Mock).mockResolvedValue(base);
-    expect(await tenants.resendVerification("owner@acme.example")).toBe(true);
+    expect(await tenants.performResend("owner@acme.example")).toBe(true);
     expect(email.send).toHaveBeenCalledTimes(1);
   });
 });

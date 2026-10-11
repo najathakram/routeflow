@@ -880,26 +880,37 @@ export class GoogleOAuthService {
     // redeemable, so the link is left untouched and the token is NOT consumed — restore has
     // to be able to bring the pending invite back with the customer. The Google path ignores
     // a non-redeemable token silently (`return`), exactly as it does an expired one.
-    const link = await this.prisma.customerLink.findFirst({
-      where: {
-        inviteToken: token,
-        status: { in: ["INVITED", "PENDING_SELLER_APPROVAL"] },
-        customer: { deletedAt: null },
+    const redeemable = {
+      inviteToken: token,
+      status: {
+        in: ["INVITED", "PENDING_SELLER_APPROVAL"] as ("INVITED" | "PENDING_SELLER_APPROVAL")[],
       },
+      customer: { deletedAt: null },
+    };
+    const link = await this.prisma.customerLink.findFirst({
+      where: redeemable,
+      select: { id: true },
     });
     if (!link) return;
-    if (link.inviteExpiresAt && link.inviteExpiresAt < new Date()) return;
 
-    await this.prisma.customerLink.update({
-      where: { id: link.id },
+    // The claim is the gate: one conditional update consumes the token, so a concurrent accept
+    // of the same link (Google or web) gets count 0 and is ignored here, as an expired one is.
+    const now = new Date();
+    const claim = await this.prisma.customerLink.updateMany({
+      where: {
+        id: link.id,
+        ...redeemable,
+        OR: [{ inviteExpiresAt: null }, { inviteExpiresAt: { gt: now } }],
+      },
       data: {
         buyerAccountId,
         status: "ACTIVE",
         inviteToken: null,
         inviteExpiresAt: null,
-        linkedAt: new Date(),
+        linkedAt: now,
       },
     });
+    if (claim.count !== 1) return;
     this.logger.log(`CustomerLink accepted via Google invite: buyer=${buyerAccountId}`);
   }
 

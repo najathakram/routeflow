@@ -139,6 +139,28 @@ export class BuyerService {
         throw new ConflictException("This invite has already been used");
       }
 
+      // Claim the invite: the token is consumed by the one writer whose conditional update
+      // matches, so a concurrent accept (web or Google) of the same link gets count 0. Anything
+      // that throws after this point rolls the claim back with the rest of the transaction.
+      const now = new Date();
+      const claim = await tx.customerLink.updateMany({
+        where: {
+          id: link.id,
+          inviteToken: token,
+          status: { in: ["INVITED", "PENDING_SELLER_APPROVAL"] },
+          customer: { deletedAt: null },
+          OR: [{ inviteExpiresAt: null }, { inviteExpiresAt: { gt: now } }],
+        },
+        data: {
+          buyerAccountId,
+          status: "ACTIVE",
+          linkedAt: now,
+          inviteToken: null,
+          inviteExpiresAt: null,
+        },
+      });
+      if (claim.count !== 1) throw new NotFoundException("Invite not found or already used");
+
       // Check if buyer already has a link to this tenant
       const existing = await tx.customerLink.findFirst({
         where: { buyerAccountId, tenantId: link.tenantId, id: { not: link.id } },
@@ -147,24 +169,12 @@ export class BuyerService {
         throw new ConflictException("You are already connected to this seller");
       }
 
-      const updated = await tx.customerLink.update({
-        where: { id: link.id },
-        data: {
-          buyerAccountId,
-          status: "ACTIVE",
-          linkedAt: new Date(),
-          inviteToken: null,
-          inviteExpiresAt: null,
-        },
-        include: { tenant: { select: { name: true, slug: true } } },
-      });
-
       this.logger.log(`BuyerAccount ${buyerAccountId} linked to tenant ${link.tenantId}`);
 
       return {
         message: `Successfully connected to ${link.tenant.name}`,
         tenantSlug: link.tenant.slug,
-        linkId: updated.id,
+        linkId: link.id,
       };
     });
   }

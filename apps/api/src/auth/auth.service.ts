@@ -513,7 +513,13 @@ export class AuthService {
     // transaction, so a failed audit write rolls the activation back.
     const claimed = await this.prisma.tenantTransaction(async (tx) => {
       const res = await tx.user.updateMany({
-        where: { id: user.id, status: "INACTIVE", lastLoginAt: null },
+        where: {
+          id: user.id,
+          status: "INACTIVE",
+          lastLoginAt: null,
+          role: "TENANT_ADMIN",
+          deletedAt: null,
+        },
         data: { status: "ACTIVE" },
       });
       if (res.count !== 1) return false;
@@ -620,26 +626,33 @@ export class AuthService {
    */
   async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
     const tokenHash = this.hashToken(token);
-    const record = await this.prisma.passwordResetToken.findUnique({ where: { tokenHash } });
+    // One refusal for every way a link can fail (unknown, used, expired, account not eligible).
+    const refuse = () => new BadRequestException("Reset link is invalid or has already been used.");
 
-    if (!record) throw new BadRequestException("Reset link is invalid or has already been used.");
-    if (record.usedAt) throw new BadRequestException("Reset link has already been used.");
-    if (record.expiresAt < new Date()) throw new BadRequestException("Reset link has expired.");
+    // Cheap early exit before the (costly) password hash; the claim below is what decides.
+    const record = await this.prisma.passwordResetToken.findUnique({ where: { tokenHash } });
+    if (!record || record.usedAt || record.expiresAt < new Date()) throw refuse();
 
     const newHash = await bcrypt.hash(newPassword, 10);
 
-    // Mark token used and update password in a transaction
-    await this.prisma.$transaction([
-      this.prisma.passwordResetToken.update({
-        where: { tokenHash },
-        data: { usedAt: new Date() },
-      }),
-      this.prisma.user.update({
-        where: { id: record.userId },
+    await this.prisma.$transaction(async (tx) => {
+      // Claim the link first: of any number of concurrent uses exactly one sees count 1.
+      const now = new Date();
+      const claim = await tx.passwordResetToken.updateMany({
+        where: { tokenHash, usedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now },
+      });
+      if (claim.count !== 1) throw refuse();
+
+      // Only an active, not-deleted account may be reset. Throwing here rolls the claim back.
+      const updated = await tx.user.updateMany({
+        where: { id: record.userId, status: "ACTIVE", deletedAt: null },
         data: { password: newHash, forcePasswordChange: false },
-      }),
-      this.prisma.refreshToken.deleteMany({ where: { userId: record.userId } }),
-    ]);
+      });
+      if (updated.count !== 1) throw refuse();
+
+      await tx.refreshToken.deleteMany({ where: { userId: record.userId } });
+    });
 
     return { message: "Password reset successfully. Please log in with your new password." };
   }

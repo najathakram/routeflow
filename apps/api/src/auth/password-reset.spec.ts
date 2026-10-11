@@ -180,10 +180,10 @@ describe("AuthService — password reset (RF-018)", () => {
     });
 
     beforeEach(() => {
-      // $transaction: call the callback with an array of operations
-      (prisma.$transaction as jest.Mock).mockImplementation((ops: any[]) =>
-        Promise.all(ops.map(() => ({}))),
-      );
+      // The default $transaction mock runs the callback with the model mocks; the claim and the
+      // account update each affect one row.
+      (prisma.passwordResetToken.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+      (prisma.user.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
       (bcrypt.hash as jest.Mock).mockResolvedValue("$2b$10$newhash");
     });
 
@@ -194,6 +194,15 @@ describe("AuthService — password reset (RF-018)", () => {
 
       expect(result.message).toContain("Password reset successfully");
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.passwordResetToken.updateMany).toHaveBeenCalledWith({
+        where: { tokenHash: fakeHash, usedAt: null, expiresAt: { gt: expect.any(Date) } },
+        data: { usedAt: expect.any(Date) },
+      });
+      expect(prisma.user.updateMany).toHaveBeenCalledWith({
+        where: { id: "user-1", status: "ACTIVE", deletedAt: null },
+        data: { password: "$2b$10$newhash", forcePasswordChange: false },
+      });
+      expect(prisma.refreshToken.deleteMany).toHaveBeenCalledWith({ where: { userId: "user-1" } });
     });
 
     it("throws 400 when token is not found", async () => {

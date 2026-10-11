@@ -158,9 +158,10 @@ describe("BuyerAuthService — password reset", () => {
     });
 
     beforeEach(() => {
-      (prisma.$transaction as jest.Mock).mockImplementation((ops: any[]) =>
-        Promise.all(ops.map(() => ({}))),
-      );
+      // The default $transaction mock runs the callback with the model mocks; the claim and the
+      // account update each affect one row.
+      prisma.buyerPasswordResetToken.updateMany.mockResolvedValue({ count: 1 } as any);
+      prisma.buyerAccount.updateMany.mockResolvedValue({ count: 1 } as any);
       (bcrypt.hash as jest.Mock).mockResolvedValue("$2b$10$newhash");
     });
 
@@ -172,12 +173,12 @@ describe("BuyerAuthService — password reset", () => {
       expect(result.message).toContain("Password reset successfully");
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       // The transaction's operations were built from these calls:
-      expect(prisma.buyerPasswordResetToken.update).toHaveBeenCalledWith({
-        where: { tokenHash: fakeHash },
+      expect(prisma.buyerPasswordResetToken.updateMany).toHaveBeenCalledWith({
+        where: { tokenHash: fakeHash, usedAt: null, expiresAt: { gt: expect.any(Date) } },
         data: { usedAt: expect.any(Date) },
       });
-      expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
-        where: { id: "buyer-1" },
+      expect(prisma.buyerAccount.updateMany).toHaveBeenCalledWith({
+        where: { id: "buyer-1", status: "ACTIVE", deletedAt: null },
         data: { passwordHash: "$2b$10$newhash", passwordSet: true },
       });
       expect(prisma.buyerRefreshToken.deleteMany).toHaveBeenCalledWith({

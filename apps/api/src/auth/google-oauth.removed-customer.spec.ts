@@ -160,6 +160,15 @@ describe("GoogleOAuthService — a removed customer's invite is not redeemed (B1
       if (rel?.deletedAt === null && row.customer.deletedAt !== null) return null;
       return row;
     }) as any);
+    // The claim applies the same where to the stored row, so it reports a real count.
+    prisma.customerLink.updateMany.mockImplementation((async (args: any) => {
+      const where = args?.where ?? {};
+      const rel = where.customer?.is ?? where.customer;
+      if (where.id !== row.id || where.inviteToken !== row.inviteToken) return { count: 0 };
+      if (!where.status?.in?.includes(row.status)) return { count: 0 };
+      if (rel?.deletedAt === null && row.customer.deletedAt !== null) return { count: 0 };
+      return { count: 1 };
+    }) as any);
     return { prisma, service: buildService(prisma) };
   }
 
@@ -173,7 +182,7 @@ describe("GoogleOAuthService — a removed customer's invite is not redeemed (B1
         where: expect.objectContaining({ customer: { deletedAt: null } }),
       }),
     );
-    expect(prisma.customerLink.update).not.toHaveBeenCalled();
+    expect(prisma.customerLink.updateMany).not.toHaveBeenCalled();
   });
 
   it("B141 P10: a live customer's invite still links on Google sign-in", async () => {
@@ -181,9 +190,9 @@ describe("GoogleOAuthService — a removed customer's invite is not redeemed (B1
 
     await service.findOrCreateUser(invitedProfile as any);
 
-    expect(prisma.customerLink.update).toHaveBeenCalledWith(
+    expect(prisma.customerLink.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "link-1" },
+        where: expect.objectContaining({ id: "link-1", inviteToken: "tok-invite" }),
         data: expect.objectContaining({
           buyerAccountId: "buyer-1",
           status: "ACTIVE",
