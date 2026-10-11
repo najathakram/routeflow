@@ -316,6 +316,12 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
   it("(5) the Today's-sales rows carry cashTendered and taxRatePercent from the stored line rates (8.25; null when mixed)", async () => {
     lineRates = ["0.0825", "0.0600"];
     const mixed = await ring({ method: "CARD" }, mixedKey);
+    // a stored line rate is named only when the configured rate corroborates it (pricing storedTaxRatePercent)
+    await raw.systemConfig.upsert({
+      where: { tenantId_key: { tenantId, key: "settings.taxRate" } },
+      create: { tenantId, key: "settings.taxRate", value: "8.25" },
+      update: { value: "8.25" },
+    });
     const res = await tenantCtx.run(tenantId, () => today.today({} as never));
     const row = (id: string) => res.data.find((d) => d.orderId === id)!;
     expect(row(cashOrderId).cashTendered).toBe(50);
