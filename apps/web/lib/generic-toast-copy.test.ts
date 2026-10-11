@@ -137,6 +137,8 @@ describe("genericToastCopy: codes users rely on", () => {
     ["ORDER_WITH_CARRIER_NO_REDUCE", /Record a return instead of reducing/],
     ["ORDER_WITH_CARRIER_NO_ADD", /Create a new order for the extra items/],
     ["CONCURRENT_UPDATE", /Someone else is updating/],
+    // SA-767 L-2.2: a second commit / an edit of a count that is being saved.
+    ["STOCK_COUNT_COMMITTING", /^This count is being saved. Try again in a moment.$/],
     ["BARCODE_TAKEN", /barcode/],
     ["ADDON_GATE", /isn't included in your current plan/],
   ])("%s", (code, re) => {

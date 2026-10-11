@@ -115,6 +115,7 @@ export const LOCK_FAMILIES = [
   "fulfilment-settings",
   "tenant-price",
   "counter-park",
+  "stock-count",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
@@ -205,6 +206,12 @@ const POOL_MAX: Record<string, number | undefined> = {
   // is reserved in the one namespace (a `withAdvisoryLock` caller can never collide with it by accident) and
   // sized small in case a pinned caller is ever added.
   "counter-park": 2,
+  // `stock-count` (SA-767 L-2.2): `InventoryService#commitStockCountSession`, keyed on the count session id,
+  // mode `try`. The single committer of a count holds its slot across ALL of the commit's batch transactions
+  // (minutes for a warehouse-wide count), so the size is the cap on counts committing at the same moment
+  // across every tenant; a committer that finds no slot gets the retryable 503 LOCK_UNAVAILABLE, and a
+  // second commit of the same session loses the try-lock at once (409 STOCK_COUNT_COMMITTING).
+  "stock-count": 4,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {

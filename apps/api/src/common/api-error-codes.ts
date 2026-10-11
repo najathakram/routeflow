@@ -123,6 +123,9 @@ export const API_ERROR_CODES = {
   CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
   MERGE_IN_PROGRESS: "MERGE_IN_PROGRESS",
   LOCK_UNAVAILABLE: "LOCK_UNAVAILABLE",
+  // SA-767 L-2.2: a durable stock count is being committed (batch by batch); a second commit, a line edit or a
+  // discard is refused until the last batch lands. 409, nothing was changed, retry is safe.
+  STOCK_COUNT_COMMITTING: "STOCK_COUNT_COMMITTING",
   PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
   BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
   INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
