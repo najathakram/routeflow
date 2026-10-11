@@ -70,6 +70,7 @@ function quote(extra: Partial<RefundQuote> = {}): RefundQuote {
     categoryTax: 0,
     total: 12.4,
     productBreakdown: {},
+    cashRefundable: {},
     canRefund: true,
     paidInFull: true,
     paidMethods: ["CASH"],

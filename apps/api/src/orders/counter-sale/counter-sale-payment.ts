@@ -6,6 +6,8 @@ import { API_ERROR_CODES } from "../../common/api-error-codes";
  * Counter sale payment rules. Two stages, because the sale's total is computed by create() (tax,
  * tiers, overrides) and is not known until it commits:
  *  - `assertPaymentShape`: what can be judged from the request alone. Runs BEFORE anything is written.
+ *    (A counter sale's own pre-write rules, one leg or many, are counter-sale-legs.ts; this file keeps the
+ *    single-payment pieces pickup-complete also uses.)
  *  - `planCounterPayment`: the tender decision against the server's POST-send invoice balance. Runs
  *    after the sale commits; a refusal there leaves the sale as an open invoice on account.
  * No line/tax/total math lives here: only the payment split, in cents via roundMoney.
@@ -32,21 +34,6 @@ export function assertPaymentShape(payment: CounterPaymentInput, walkIn: boolean
   }
   if (payment.method === "CHECK" && !payment.reference?.trim()) {
     throw refuse(API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED, "Enter the check number");
-  }
-}
-
-/**
- * B1209: a walk-in has no account, so a stated tender below the SERVER total is refused (400 COUNTER_TENDER_SHORT, the status pickup-complete uses for the same code)
- * before anything is written. `total` is create()'s own, handed over through `beforeWrite`. An omitted amount is the
- * exact balance; ON_ACCOUNT takes no money (assertPaymentShape already refuses it for a walk-in).
- */
-export function assertWalkInTenderCoversTotal(payment: CounterPaymentInput, total: number): void {
-  if (payment.method === "ON_ACCOUNT" || payment.amount == null) return;
-  if (roundMoney(payment.amount) < roundMoney(total)) {
-    throw new BadRequestException({
-      code: API_ERROR_CODES.COUNTER_TENDER_SHORT,
-      message: "A walk-in customer must pay the full balance",
-    });
   }
 }
 

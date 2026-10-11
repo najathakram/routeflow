@@ -4,7 +4,7 @@
  * The sale's total is only known inside OrdersService.create() (pricing, tax), so the counter sale passes create() a
  * `beforeWrite({ total })` hook (see counter-sale.service.ts) that runs after pricing and before the stock lock and
  * the transaction. This drives the REAL create() through the same `Object.create` harness as
- * counter-sale-replay.db.spec.ts with exactly that hook (assertWalkInTenderCoversTotal): a short tender is a 400
+ * counter-sale-replay.db.spec.ts with exactly that hook (assertLegsAgainstTotal): a short tender is a 400
  * COUNTER_TENDER_SHORT and leaves NO order, NO stock movement, NO invoice and NO payment row, and the stock is
  * untouched; an exact tender creates the order. NOT RUN by the authoring lane (no Postgres): the DB lane runs it
  * (`npm run local:test:db`, test tenant only, collected only by jest.db.config.js).
@@ -28,7 +28,7 @@ import { EncryptionService } from "../../common/encryption.service";
 import { SystemConfigService } from "../../system-config/system-config.service";
 import { OrdersService } from "../orders.service";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
-import { assertWalkInTenderCoversTotal } from "./counter-sale-payment";
+import { assertLegsAgainstTotal } from "./counter-sale-legs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../../scripts/lib/test-tenants.cjs");
@@ -166,7 +166,7 @@ describeDb(
             counterSale: true,
             beforeWrite: ({ total }: { total: number }) => {
               hook?.(total);
-              assertWalkInTenderCoversTotal({ method: "CASH", amount }, total);
+              assertLegsAgainstTotal([{ method: "CASH", amount }], total, true);
             },
           },
         ),
@@ -209,7 +209,7 @@ describeDb(
             onReplay: () => (replayed = true),
             beforeWrite: ({ total }: { total: number }) => {
               hook(total);
-              assertWalkInTenderCoversTotal({ method: "CASH", amount: 1 }, total);
+              assertLegsAgainstTotal([{ method: "CASH", amount: 1 }], total, true);
             },
           },
         ),

@@ -38,6 +38,7 @@ const moneyRows = (m: ReceiptModel) => Object.fromEntries(MONEY_ROWS.map((k) => 
 interface Pay {
   method: string;
   amount: string;
+  status?: string;
 }
 interface Scenario {
   total: string;
@@ -82,7 +83,7 @@ function build(s: Scenario) {
     id: `pay-${i + 1}`,
     method: p.method,
     amount: p.amount,
-    status: "PAID",
+    status: p.status ?? "PAID",
   }));
   const invoice = {
     id: "inv-1",
@@ -588,26 +589,50 @@ describe("cash handed over: ONE change figure (the server's servedChange) on eve
     expect(s.live.change).toBe(0);
   });
 
-  it("a card-first sale (cash only for part of it, tendered stored): no change on any surface", () => {
+  it("a card-first split (card 20 + cash handed 50 on 37.25): change 32.75 on every surface (no first-tender gate)", () => {
     const s = cash({
       payments: [
         { method: "CREDIT_CARD", amount: "20.00" },
         { method: "CASH", amount: "17.25" },
       ],
     });
-    expect(s.row.change).toBeNull();
-    expect(s.response.change).toBeUndefined();
-    for (const m of [s.reprint, s.emailModel, s.live]) expect(m.change).toBeNull();
+    expect(s.row.change).toBe(32.75);
+    expect(s.response.change).toBe(32.75);
+    for (const m of [s.reprint, s.emailModel]) expect(m.tendered).toBe(50);
+    // the live receipt shows the server's change as given (its Tendered row for a card-first split is the web's to
+    // read from `cashTendered`: the web builder still derives it from a CASH first tender)
+    for (const m of [s.reprint, s.emailModel, s.live]) expect(m.change).toBe(32.75);
     expect(moneyRows(s.emailModel)).toEqual(moneyRows(s.reprint));
   });
 
-  it("an ENTERED tender never invents a Change the server did not serve: a card-first sale the clerk typed 50 on has no Change row", () => {
+  it("an interrupted tender (cash 10 of 37.25 recorded, 50 handed over) serves no change on any stored surface", () => {
+    const s = cash({ payments: [{ method: "CASH", amount: "10.00" }] });
+    expect(s.row.change).toBeNull();
+    for (const m of [s.reprint, s.emailModel]) expect(m.change).toBeNull();
+  });
+
+  it("S1 a card payment voided after the sale does not move the change: it is the stored CASH row's (32.75) on every surface", () => {
     const s = cash({
-      entered: 50,
       payments: [
-        { method: "CREDIT_CARD", amount: "20.00" },
+        { method: "CREDIT_CARD", amount: "20.00", status: "VOID" },
         { method: "CASH", amount: "17.25" },
       ],
+    });
+    expect(s.row.change).toBe(32.75);
+    for (const m of [s.reprint, s.emailModel]) expect(m.change).toBe(32.75);
+  });
+
+  it("a card-only sale with a stale stored tendered serves no change anywhere", () => {
+    const s = cash({ payments: [{ method: "CREDIT_CARD", amount: "37.25" }] });
+    expect(s.row.change).toBeNull();
+    expect(s.response.change).toBeUndefined();
+    for (const m of [s.reprint, s.emailModel, s.live]) expect(m.change).toBeNull();
+  });
+
+  it("an ENTERED tender never invents a Change the server did not serve: a card-only sale the clerk typed 50 on has no Change row", () => {
+    const s = cash({
+      entered: 50,
+      payments: [{ method: "CREDIT_CARD", amount: "37.25" }],
     });
     expect(s.response.cashTendered).toBe(50); // stored, and the server serves no change for it
     expect(s.response.change).toBeUndefined();
@@ -632,13 +657,13 @@ describe("cash handed over: ONE change figure (the server's servedChange) on eve
     expect(s.live.changeAsEntered).toBe(true);
   });
 
-  it("a partly paid cash sale serves no change anywhere", () => {
-    const s = cash({ payments: [{ method: "CASH", amount: "20.00" }] });
-    expect(s.row.change).toBeNull();
-    for (const m of [s.reprint, s.emailModel]) expect(m.change).toBeNull();
+  it("a partly paid cash sale (all the cash handed over went in) serves Change 0 everywhere (no balance gate)", () => {
+    const s = cash({ tendered: "20.00", payments: [{ method: "CASH", amount: "20.00" }] });
+    expect(s.row.change).toBe(0);
+    for (const m of [s.reprint, s.emailModel]) expect(m.change).toBe(0);
   });
 
-  it("payments are read in the order they were taken: the first stored tender decides (cash first, card second)", () => {
+  it("the order the payments were taken in does not matter (cash first, card second)", () => {
     const s = cash({
       payments: [
         { method: "CASH", amount: "17.25" },

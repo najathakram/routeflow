@@ -44,8 +44,8 @@ describe("buildReceiptModel (stored rows -> the shared ReceiptModel)", () => {
     });
   });
 
-  it("labels the tender in the till's order (cash first, then card) and shows Paid, not Balance, when covered", () => {
-    expect(model.methodLabel).toBe("Cash + Card");
+  it("labels the tender in the server's order (card first, cash last) and shows Paid, not Balance, when covered", () => {
+    expect(model.methodLabel).toBe("Card + Cash");
     expect(model.showPaid).toBe(true);
     expect(model.showBalance).toBe(false);
     expect(model.onAccount).toBe(false);
@@ -335,7 +335,7 @@ describe("renderOrderReceipt (email)", () => {
       expect(body).toContain("Total");
       expect(body).toContain("$28.62");
       expect(body).toContain("Payment method");
-      expect(body).toContain("Cash + Card");
+      expect(body).toContain("Card + Cash");
       expect(body).toContain("Paid");
       expect(body).not.toContain("Cancelled item");
       expect(body).not.toContain("99.00");

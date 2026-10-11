@@ -154,10 +154,15 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
     expect(stored).toBe(41.27);
   });
 
-  it("(b) a replay of the same key never overwrites the stored value", async () => {
+  it("(b) a replay of the same key never overwrites the stored value: a different amount is 409, the same amount rewrites nothing", async () => {
     await ring({ method: "CASH", amount: 50 });
     replay = true;
-    await ring({ method: "CASH", amount: 60 });
+    await expect(ring({ method: "CASH", amount: 60 })).rejects.toMatchObject({
+      response: { code: "COUNTER_TENDER_CHANGED" },
+    });
+    expect(stored).toBe(50);
+    expect(prisma.order.updateMany).toHaveBeenCalledTimes(1); // the 409 wrote nothing
+    await ring({ method: "CASH", amount: 50 });
     expect(stored).toBe(50);
     // the second write is the frozen, NULL-filtered one
     expect(prisma.order.updateMany).toHaveBeenCalledTimes(2);
@@ -170,10 +175,10 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
       data: { counterCashTendered: 50 },
     });
     replay = true;
-    const r = await ring({ method: "CASH", amount: 60 });
+    const r = await ring({ method: "CASH", amount: 50 });
     expect(prisma.order.updateMany).toHaveBeenLastCalledWith({
       where: { id: "ord-1", counterCashTendered: null },
-      data: { counterCashTendered: 60 },
+      data: { counterCashTendered: 50 },
     });
     expect(stored).toBe(50);
     expect(r.change).toBe(8.73);
@@ -269,12 +274,14 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
     expect(r.cashTendered).toBeUndefined();
   });
 
-  it("a CARD replay on a sale whose stored first tender is CASH serves the same change as by-key", async () => {
+  it("a CARD replay on a sale whose stored first tender is CASH is 409 COUNTER_TENDER_CHANGED (split-payment replay rule); by-key still serves the change", async () => {
     replay = true;
     stored = 50;
     invoices[0].status = "PAID";
     invoices[0].payments.push({ id: "p0", amount: 41.27, method: "CASH", status: "PAID" });
-    const r = await ring({ method: "CARD", amount: 41.27 });
+    await expect(ring({ method: "CARD", amount: 41.27 })).rejects.toMatchObject({
+      response: { code: "COUNTER_TENDER_CHANGED" },
+    });
     findReplayCandidateByKey.mockResolvedValue({
       id: "ord-1",
       orderNumber: "ORD-1",
@@ -284,8 +291,7 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
     });
     const k = await service.byKey("k1");
     expect(k.change).toBe(8.73);
-    expect(r.cashTendered).toBe(k.cashTendered);
-    expect(r.change).toBe(k.change);
+    expect(k.cashTendered).toBe(50);
   });
 
   describe("row 290: an ON_ACCOUNT replay serves what by-key serves", () => {
@@ -334,16 +340,14 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
       wroteNothing();
     });
 
-    it("(3) a CASH-first sale replayed as CARD is unchanged: still serves by-key, writes nothing", async () => {
+    it("(3) a CASH-first sale replayed as CARD is 409 COUNTER_TENDER_CHANGED (leg 0's method differs): writes nothing", async () => {
       replay = true;
       stored = 50;
       invoices[0].status = "PAID";
       invoices[0].payments.push({ id: "p0", amount: 41.27, method: "CASH", status: "PAID" });
-      const r = await ring({ method: "CARD", amount: 41.27 });
-      keyed(stored);
-      const k = await service.byKey("k1", "CARD");
-      expect(r).toEqual(k);
-      expect(r.change).toBe(8.73);
+      await expect(ring({ method: "CARD", amount: 41.27 })).rejects.toMatchObject({
+        response: { code: "COUNTER_TENDER_CHANGED" },
+      });
       expect(invoices[0].payments).toHaveLength(1);
       wroteNothing();
     });

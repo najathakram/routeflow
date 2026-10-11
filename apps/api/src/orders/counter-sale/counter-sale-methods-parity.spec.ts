@@ -2,6 +2,7 @@ import "reflect-metadata";
 import * as PrismaEnums from "@prisma/client";
 import { COUNTER_SALE_METHODS } from "./counter-sale.dto";
 import { toPrismaMethod, type CounterPaymentMethod } from "./counter-sale-payment";
+import { TENDER_METHOD_VALUES, TENDER_RULES } from "@routeflow/pricing";
 
 /**
  * L-072: a hand-typed local mirror of a shared list is how drift ships. `COUNTER_SALE_METHODS` (the DTO's
@@ -37,5 +38,14 @@ describe("counter sale payment methods: pinned against their sources (L-072)", (
     for (const m of COUNTER_SALE_METHODS as readonly CounterPaymentMethod[]) {
       expect(["CREDIT_NOTE", "ADVANCE"]).not.toContain(toPrismaMethod(m));
     }
+  });
+
+  it("COUNTER_SALE_METHODS IS the pricing counter row (derived, not a second typed list) and a subset of TENDER_METHOD_VALUES", () => {
+    expect(COUNTER_SALE_METHODS).toBe(TENDER_RULES.counter.allowed);
+    for (const m of COUNTER_SALE_METHODS) expect(TENDER_METHOD_VALUES).toContain(m);
+    // The ONLY tender method the counter does not take is the wallet one.
+    expect(TENDER_METHOD_VALUES.filter((m) => !COUNTER_SALE_METHODS.includes(m as never))).toEqual([
+      "STORE_CREDIT",
+    ]);
   });
 });

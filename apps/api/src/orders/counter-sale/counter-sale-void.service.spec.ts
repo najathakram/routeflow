@@ -5,6 +5,7 @@ import { decrementStockForSale } from "../order-stock";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import { RouteFlowGateway } from "../../gateways/routeflow.gateway";
 import { CounterSaleVoidService } from "./counter-sale-void.service";
+import { legGroupId } from "./counter-tender-row";
 
 // The advisory lock needs a pg pool; these specs exercise the void's logic, so run the critical section inline.
 // A test that needs the lock to fail overrides it for one call.
@@ -494,6 +495,67 @@ describe("CounterSaleVoidService: replay and refusals (test 5), each with no wri
       body: { code: "COUNTER_SALE_VOID_FOREIGN_PAYMENT" },
     });
     expectNoWrites(b);
+  });
+
+  // SET-LEVEL (SA-749r2 on the SA-762r predicate): on the split base EVERY new sale's tender is grouped
+  // (paymentGroupId = uuidv5(orderId:legIndex)), single-method ones included. A null-group-only test would call
+  // those rows foreign and refuse every void of a new sale.
+  describe("a sale rung on the split base (grouped tender rows)", () => {
+    const leg = (i: number, over: Record<string, unknown>) =>
+      pay({ paymentGroupId: legGroupId(ORDER_ID, i), ...over });
+
+    it("a single-method NEW sale (its one grouped cash row) is NOT foreign: it voids", async () => {
+      const b = await build({ payments: [leg(0, {})] });
+      await expect(run(b)).resolves.toEqual({ voided: true, handBack: { CASH: 30 } });
+      expect(b.invoices.voidPaymentInTx).toHaveBeenCalledTimes(1);
+    });
+
+    it("a split sale: both legs are the counter's tender and both void", async () => {
+      const b = await build({
+        payments: [
+          leg(0, { id: "pay-1", method: "CREDIT_CARD", amount: 20 }),
+          leg(1, { id: "pay-2", method: "CASH", amount: 30 }),
+        ],
+      });
+      await expect(run(b)).resolves.toEqual({
+        voided: true,
+        handBack: { CARD: 20, CASH: 30 },
+      });
+      expect(b.invoices.voidPaymentInTx).toHaveBeenCalledTimes(2);
+    });
+
+    it("an UNGROUPED office payment on the same sale IS foreign: 409, nothing voided", async () => {
+      const b = await build({
+        payments: [leg(0, {}), pay({ id: "pay-9", method: "CHECK", amount: 10 })],
+      });
+      expect(await code(run(b))).toMatchObject({
+        status: 409,
+        body: { code: "COUNTER_SALE_VOID_FOREIGN_PAYMENT" },
+      });
+      expectNoWrites(b);
+    });
+
+    it("a leg group of ANOTHER order is foreign", async () => {
+      const b = await build({
+        payments: [
+          leg(0, {}),
+          pay({
+            id: "pay-9",
+            paymentGroupId: legGroupId("22222222-2222-4222-8222-222222222222", 0),
+          }),
+        ],
+      });
+      expect(await code(run(b))).toMatchObject({
+        status: 409,
+        body: { code: "COUNTER_SALE_VOID_FOREIGN_PAYMENT" },
+      });
+      expectNoWrites(b);
+    });
+
+    it("a LEGACY sale (no grouped row at all) keeps the old rule: its ungrouped rows void", async () => {
+      const b = await build({ payments: [CASH, CARD] });
+      await expect(run(b)).resolves.toEqual({ voided: true, handBack: { CASH: 30, CARD: 20 } });
+    });
   });
 
   it("a sale rung on an earlier day in the tenant zone is 409 COUNTER_SALE_VOID_NOT_TODAY", async () => {

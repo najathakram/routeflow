@@ -1,5 +1,6 @@
 import { InvoiceStatus } from "@prisma/client";
 import {
+  COUNTER_TENDER_DISPLAY_ORDER,
   explainedTaxRatePercent,
   receiptLineAmounts,
   roundMoney,
@@ -74,6 +75,8 @@ export interface ReceiptPaymentInput {
   method: string;
   amount: unknown;
   status: string;
+  /** which rows are the counter's own tender (the change is measured against its cash rows) */
+  paymentGroupId?: string | null;
 }
 
 /** The receipt header and footer: TenantConfig first, the legacy SystemConfig values behind it (as `GET /settings` reads them). */
@@ -98,7 +101,8 @@ const DEAD_INVOICE_STATUSES: readonly string[] = [InvoiceStatus.VOID, InvoiceSta
 export const isLiveInvoice = (i: Pick<ReceiptInvoiceInput, "status">): boolean =>
   !DEAD_INVOICE_STATUSES.includes(i.status);
 
-const METHOD_ORDER = ["CASH", "CARD", "CHECK", "OTHER", "STORE_CREDIT"] as const;
+// ONE list for every surface (pricing): non-cash methods first, CASH last, the order the server applies the legs.
+const METHOD_ORDER = COUNTER_TENDER_DISPLAY_ORDER;
 const METHOD_LABEL: Record<(typeof METHOD_ORDER)[number], string> = {
   CASH: "Cash",
   CARD: "Card",
@@ -237,8 +241,8 @@ export function buildReceiptModel(
     ),
   });
   // Tendered is what was handed over; Change is the SERVER's figure, from the one gate the POST / by-key response and the
-  // Today's row use (`servedChange`: a CASH-first sale with nothing left to pay), never recomputed here. The payments arrive
-  // in the order they were taken (the service orders them), because the first stored tender decides.
+  // Today's row use (`servedChange`, pricing's `counterChange`: the cash handed over less the cash the sale took, whichever leg
+  // the cash was), never recomputed here.
   const tendered =
     order.counterCashTendered == null ? null : roundMoney(num(order.counterCashTendered));
   // cut by code points (never through a surrogate pair) at the ONE footer cap the settings route enforces
@@ -273,7 +277,7 @@ export function buildReceiptModel(
     methodLabel: hasTender ? methods.map((m) => METHOD_LABEL[m]).join(" + ") : null,
     tendered,
     tenderedAsEntered: false,
-    change: servedChange(order.counterCashTendered, livePayments, balanceDue),
+    change: servedChange(order.id, order.counterCashTendered, livePayments, total),
     changeAsEntered: false,
   };
 }

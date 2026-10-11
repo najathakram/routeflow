@@ -213,7 +213,8 @@ export class CounterSaleVoidService {
             },
             orderBy: [{ invoiceId: "asc" }, { createdAt: "asc" }, { id: "asc" }],
           });
-    if (payments.some((p) => isForeignPaymentRow(orderId, p))) throw counterVoidForeignPayment();
+    if (payments.some((p) => isForeignPaymentRow(orderId, p, payments)))
+      throw counterVoidForeignPayment();
 
     // 7. The window: the sale's createdAt on today's day in the tenant zone, read again here in the tx.
     const tz = await tenantTimeZone({
@@ -228,7 +229,7 @@ export class CounterSaleVoidService {
     if (!allowed) throw counterVoidNotToday();
 
     // 8. Void the counter tender rows with the one payment-void writer (split legs each voided).
-    const tender = payments.filter((p) => isCounterTenderRow(orderId, p));
+    const tender = payments.filter((p) => isCounterTenderRow(orderId, p, payments));
     // voidPaymentInTx queues an invoice.updated with the status the payment void leaves (SENT / OVERDUE). Every invoice
     // of this sale ends VOID in this same transaction, so that event would tell operators AND the customer room about a
     // state that never lasts: it is handed a queue that is never flushed. (The order's CANCELLED event, queued on

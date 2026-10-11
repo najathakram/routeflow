@@ -23,7 +23,7 @@ import { AuditService } from "../../audit/audit.service";
 import { createMockPrisma } from "../../testing/prisma-mock";
 import * as fs from "fs";
 import * as path from "path";
-import { assertWalkInTenderCoversTotal } from "./counter-sale-payment";
+import { assertLegsAgainstTotal } from "./counter-sale-legs";
 
 /**
  * B1209: a walk-in has no account, so a CASH (or card/check) tender below the SERVER-computed total is refused with
@@ -157,14 +157,16 @@ describe("CounterSaleService.ring: walk-in tender must cover the server total (B
   });
 });
 
-describe("assertWalkInTenderCoversTotal", () => {
-  it("rounds to cents before comparing and never refuses an omitted amount or ON_ACCOUNT", () => {
+describe("assertLegsAgainstTotal (walk-in, one leg)", () => {
+  it("never refuses an omitted amount or ON_ACCOUNT; a short stated amount is refused", () => {
     expect(() =>
-      assertWalkInTenderCoversTotal({ method: "CASH", amount: 37.249 }, 37.25),
+      assertLegsAgainstTotal([{ method: "CASH", amount: 37.25 }], 37.25, true),
     ).not.toThrow();
-    expect(() => assertWalkInTenderCoversTotal({ method: "CASH", amount: 37.24 }, 37.25)).toThrow();
-    expect(() => assertWalkInTenderCoversTotal({ method: "CASH" }, 37.25)).not.toThrow();
-    expect(() => assertWalkInTenderCoversTotal({ method: "ON_ACCOUNT" }, 37.25)).not.toThrow();
+    expect(() =>
+      assertLegsAgainstTotal([{ method: "CASH", amount: 37.24 }], 37.25, true),
+    ).toThrow();
+    expect(() => assertLegsAgainstTotal([{ method: "CASH" }], 37.25, true)).not.toThrow();
+    expect(() => assertLegsAgainstTotal([{ method: "ON_ACCOUNT" }], 37.25, true)).not.toThrow();
   });
 });
 
@@ -172,7 +174,7 @@ describe("B1209: one code, one status; the hook never fires on a replay", () => 
   it("ring() and pickup-complete answer COUNTER_TENDER_SHORT with the SAME status (400)", () => {
     let ringStatus = 0;
     try {
-      assertWalkInTenderCoversTotal({ method: "CASH", amount: 1 }, 5);
+      assertLegsAgainstTotal([{ method: "CASH", amount: 1 }], 5, true);
     } catch (e: any) {
       ringStatus = e.getStatus();
     }

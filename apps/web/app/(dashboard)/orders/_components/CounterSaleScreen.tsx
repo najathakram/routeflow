@@ -13,8 +13,9 @@ import {
 } from "@routeflow/pricing";
 import type {
   CounterSaleItem,
-  CounterSaleRequest,
+  CounterSalePayment,
   CounterSalePaymentMethod,
+  CounterSaleRequest,
   CounterSaleResponse,
 } from "@routeflow/types";
 import { API_ERROR_CODES, staffMay } from "@routeflow/types";
@@ -116,6 +117,10 @@ const money = (n: number) => `$${n.toFixed(2)}`;
 const UNDO_MS = 5000;
 
 export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
+
+/** The one tender this screen rings: it only ever sends `payment` (the split legs arrive with the split UI). */
+const sentPayment = (dto: CounterSaleRequest): CounterSalePayment =>
+  dto.payment ?? dto.payments?.[0] ?? { method: "ON_ACCOUNT" };
 
 export function CounterSaleScreen() {
   const router = useRouter();
@@ -760,7 +765,7 @@ export function CounterSaleScreen() {
     try {
       res = await lookupSale.mutateAsync({
         idempotencyKey: attempt.key,
-        method: attempt.dto.payment.method,
+        method: sentPayment(attempt.dto).method,
       });
     } catch (err) {
       const finalCopy = finalCounterSaleCopy(err);
@@ -790,7 +795,7 @@ export function CounterSaleScreen() {
     attemptRef.current = null;
     clearHeldAttempt(heldKey);
     setOutcomeUnknown(false);
-    const { method: sentMethod, amount } = attempt.dto.payment;
+    const { method: sentMethod, amount } = sentPayment(attempt.dto);
     setEnteredTender(
       sentMethod === "CASH" && amount != null && res.paymentRecorded !== false ? amount : null,
     );

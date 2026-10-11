@@ -24,5 +24,7 @@ export * from "./largest-remainder";
 export * from "./component-pieces";
 export * from "./pending-unit";
 export * from "./invoice-totals";
+export * from "./tender";
 export * from "./unit-words";
 export * from "./counter-park";
+export * from "./counter-change";

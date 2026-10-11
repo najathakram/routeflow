@@ -6,7 +6,12 @@ import {
   ReturnStatus,
   type Prisma,
 } from "@prisma/client";
-import { roundMoney, storedTaxRatePercent, sumConfirmed } from "@routeflow/pricing";
+import {
+  COUNTER_TENDER_DISPLAY_ORDER,
+  roundMoney,
+  storedTaxRatePercent,
+  sumConfirmed,
+} from "@routeflow/pricing";
 import type {
   TodaysSaleMethod,
   TodaysSalePaymentState,
@@ -233,7 +238,8 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           status: true,
           payments: {
             orderBy: { createdAt: "asc" },
-            select: { method: true, amount: true, status: true },
+            // paymentGroupId: which rows are the counter's own tender (the change is measured against its cash rows)
+            select: { method: true, amount: true, status: true, paymentGroupId: true },
           },
           // the stored line rates the sale's tax rate is read from (pricing's storedTaxRatePercent)
           items: { select: { taxRate: true } },
@@ -276,7 +282,12 @@ export interface TodayOrderRecord {
     id: string;
     invoiceNumber: string | null;
     status: string;
-    payments: Array<{ method: string; amount: unknown; status: string }>;
+    payments: Array<{
+      method: string;
+      amount: unknown;
+      status: string;
+      paymentGroupId?: string | null;
+    }>;
     /** SA-764: each line's stored tax rate (a fraction, 0.0825) */
     items?: Array<{ taxRate: unknown }>;
   }>;
@@ -296,7 +307,7 @@ export interface TodayOrderRecord {
 }
 
 /** The sale's money labels, in the order a receipt lists them. */
-const METHOD_ORDER: TodaysSaleMethod[] = ["CASH", "CARD", "CHECK", "OTHER", "STORE_CREDIT"];
+const METHOD_ORDER: readonly TodaysSaleMethod[] = COUNTER_TENDER_DISPLAY_ORDER;
 
 /** A stored payment method as the till names it: CASH / CARD / CHECK, a credit application, anything else. */
 export function todaysMethodOf(prismaMethod: string): TodaysSaleMethod {
@@ -394,7 +405,7 @@ export function toTodaysSaleRow(
     methods,
     paymentState,
     cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
-    change: servedChange(o.counterCashTendered, payments, balanceDue),
+    change: servedChange(o.id, o.counterCashTendered, payments, total),
     // ONE home for the rate (pricing): a STORED line rate, corroborated by the configured rate; never inferred
     taxRatePercent: storedTaxRatePercent(
       live.map((i) => ({ lines: i.items ?? [] })),

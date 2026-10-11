@@ -104,7 +104,7 @@ describe("packages/types/api/inline-returns.ts stays pinned to the pricing engin
       `export interface X {${(responseSource as RegExpMatchArray)[1]}\n}`,
       "X",
     );
-    expect(own).toEqual(["productBreakdown"]);
+    expect(own).toEqual(["productBreakdown", "cashRefundable"]);
 
     const eligibility = interfaceFieldNames(sharedTypesSource, "InlineReturnRefundEligibility");
     expect(eligibility).toEqual([

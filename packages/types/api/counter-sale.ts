@@ -38,8 +38,24 @@ export interface CounterSaleRequest {
   customerId?: string;
   walkIn?: boolean;
   items: CounterSaleItem[];
-  payment: CounterSalePayment;
+  /**
+   * The tender, EXACTLY ONE of `payment` / `payments` (both, or neither, is 400 COUNTER_PAYMENT_SHAPE_CONFLICT).
+   * `payment` is a one-leg alias of `payments` and stays supported so a held attempt replays unchanged.
+   */
+  payment?: CounterSalePayment;
+  /**
+   * A split tender: up to 4 legs (one cash at most; ON_ACCOUNT only alone). In a split every leg carries an
+   * amount above zero, in whole cents. Non-cash legs are taken first, cash last (change is cash's).
+   */
+  payments?: CounterSalePayment[];
   notes?: string;
+}
+
+/** One tender leg as stored: its method, the money recorded against it and the payment rows that hold it. */
+export interface CounterSaleTenderLine {
+  method: CounterSalePaymentMethod;
+  amount: number;
+  paymentIds: string[];
 }
 
 /**
@@ -63,15 +79,18 @@ export interface CounterSaleResponse {
   paid: number;
   balanceDue: number;
   /**
-   * Cash handed back. Server-owned: on the POST and on GET .../by-key/:key it is the STORED `cashTendered` less the sale's
-   * own original CASH tender rows (so a same-key replay reads the stored amount's change). Omitted (not null) unless the
-   * sale's first stored tender is CASH, nothing is left to pay, and a non-negative change is stored (a legacy CASH sale
-   * with no stored `cashTendered` serves none).
+   * Cash handed back. Server-owned, from STORAGE alone (pricing's `counterChange`): the stored `cashTendered` (the cash
+   * leg's handed-over amount, whichever leg index it is) less the cash the sale took, which is the total less what the
+   * other methods applied. The same figure on the POST, GET .../by-key/:key, Today's sales and the receipt. Omitted (not
+   * null) when no cash was tendered or stored (a card-only sale, a legacy sale with no stored `cashTendered`).
    */
   change?: number;
+  /** the first stored payment of the FIRST leg (leg 0) */
   paymentId?: string;
+  /** every leg of the tender, in request order, read back from storage (GET by-key: the legs found there) */
+  payments?: CounterSaleTenderLine[];
   /**
-   * The tender method, echoed on the POST and DERIVED from storage on GET .../by-key/:key (a stored CASH/CARD/CHECK
+   * The tender method (leg 0's), echoed on the POST and DERIVED from storage on GET .../by-key/:key (a stored CASH/CARD/CHECK
    * tender; none = "ON_ACCOUNT", since nothing marks "left on account" apart from "tender failed").
    */
   method?: CounterSalePaymentMethod;
@@ -207,9 +226,9 @@ export interface TodaysSaleRow {
   /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
   cashTendered: number | null;
   /**
-   * Server-owned, the same value and gate as `CounterSaleResponse.change`: the stored `cashTendered` minus the sale's own
-   * original counter-tender CASH rows (credit-note, advance and voided rows never count), served only for a CASH sale with
-   * nothing left to pay; null otherwise (card / check / on account, partly paid, nothing tendered, or a negative result).
+   * Server-owned, the same value as `CounterSaleResponse.change` (pricing's `counterChange`): the stored `cashTendered`
+   * less the cash the sale took (its total less what the other methods applied), a card-first split included; null when
+   * the sale took no cash (card / check / on account), nothing was tendered, or a partly paid sale returns no change.
    */
   change: number | null;
   /**

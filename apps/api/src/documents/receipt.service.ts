@@ -129,10 +129,10 @@ export class ReceiptService {
             status: true,
             // the stored line rates the receipt names its tax rate from (pricing's storedTaxRatePercent)
             items: { select: { taxRate: true } },
-            // in the order they were taken: the first stored tender decides whether change is served
+            // paymentGroupId: which rows are the counter's own tender (the change is measured against its cash rows)
             payments: {
               orderBy: { createdAt: "asc" },
-              select: { method: true, amount: true, status: true },
+              select: { method: true, amount: true, status: true, paymentGroupId: true },
             },
           },
         },
@@ -240,6 +240,7 @@ export class ReceiptService {
         method: p.method,
         amount: p.amount,
         status: p.status,
+        paymentGroupId: p.paymentGroupId,
       })),
     );
     const branding: ReceiptBranding = {
