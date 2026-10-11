@@ -54,6 +54,9 @@ module.exports = {
     // SA-714: the pure staff "Backorder" tag rule, same subpath trick (the package root is stubbed).
     "^@routeflow/types/order-line-backorder$":
       "<rootDir>/../../packages/types/order-line-backorder.ts",
+    // SA-767 L-2.4 D: the stock-count commit copy, same subpath trick (the package root is stubbed).
+    "^@routeflow/types/stock-count-commit-copy$":
+      "<rootDir>/../../packages/types/stock-count-commit-copy.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
     // #2653: the shell bridge is pure TS (zod only) — resolve it to SOURCE, ahead of the ui stub.
     "^@routeflow/ui/shell-bridge$": "<rootDir>/../../packages/ui/src/shell-bridge.ts",

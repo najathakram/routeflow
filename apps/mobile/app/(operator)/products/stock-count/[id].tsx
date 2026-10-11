@@ -25,6 +25,11 @@ import { ScanMatchPickerSheet } from "../../../../components/ScanMatchPickerShee
 import { useScanMatchPicker } from "../../../../lib/use-scan-match-picker";
 import { sanitizeIntInput } from "../../../../lib/qty";
 import { showToast } from "../../../../lib/toast";
+import {
+  STOCK_COUNT_FINISH_WITH_SKIPS_LABEL,
+  STOCK_COUNT_RECOUNT_COPY,
+  stockCountCommitFailure,
+} from "@routeflow/types/stock-count-commit-copy";
 import { confirm, chooseAction } from "../../../../lib/confirm";
 import { scanHaptic } from "../../../../lib/haptics";
 import { fmtCurrency, fmtDate } from "../../../../utils/format";
@@ -327,24 +332,49 @@ export default function StockCountSessionScreen() {
 
   const summary = buildRowCommitSummary(rows);
 
-  const onCommit = () => {
+  const onCommit = (finishWithSkips = false) => {
     if (!id) return;
     commitMut.mutate(
-      { notes: notes.trim() || undefined },
+      { notes: notes.trim() || undefined, ...(finishWithSkips ? { finishWithSkips: true } : {}) },
       {
         onSuccess: (r) => {
           const netText =
             summary.netVarianceMoney !== 0 ? ` (${fmtCurrency(summary.netVarianceMoney)} net)` : "";
+          const skippedText = r.skippedProducts?.length
+            ? ` ${r.skippedProducts.length} skipped: ${r.skippedProducts
+                .map((p) => p.name ?? "a deleted product")
+                .join(", ")}. ${STOCK_COUNT_RECOUNT_COPY}.`
+            : "";
           showToast(
             r.alreadyCommitted
               ? "This count was already committed."
-              : `Count committed — ${r.applied} updated${netText}${r.skipped ? `, ${r.skipped} unchanged` : ""}`,
+              : `Count committed — ${r.applied} updated${netText}${r.skipped ? `, ${r.skipped} unchanged` : ""}${skippedText}`,
           );
           setReviewOpen(false);
           router.replace(`/(operator)/products/stock-count/${id}` as any);
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Couldn't commit the count."),
+        onError: async (e: any) => {
+          // SA-767 L-2.4 D: count-specific copy by state ("Partly saved — commit again to finish",
+          // "Nothing was saved — try again"); the numbers are server fields, not the message.
+          const failure = stockCountCommitFailure(e);
+          if (failure && !failure.permanent) {
+            showToast(failure.copy);
+            return;
+          }
+          if (failure?.permanent) {
+            // A product this count can never save. Only a PARTLY saved count (the detail's `commit`,
+            // re-read now: the failed attempt may have changed it) has the escape.
+            const fresh = await sessionQuery.refetch();
+            if (fresh.data?.commit) {
+              chooseAction("Can't finish saving", failure.copy, [
+                { label: "Cancel", style: "cancel" },
+                { label: STOCK_COUNT_FINISH_WITH_SKIPS_LABEL, onPress: () => onCommit(true) },
+              ]);
+              return;
+            }
+          }
+          showToast(e?.response?.data?.message ?? e?.message ?? "Couldn't commit the count.");
+        },
       },
     );
   };
@@ -645,7 +675,7 @@ export default function StockCountSessionScreen() {
         onNotes={setNotes}
         committing={commitMut.isPending}
         onClose={() => setReviewOpen(false)}
-        onCommit={onCommit}
+        onCommit={() => onCommit()}
         onSetCounted={setCounted}
         onRemove={removeRow}
         onSetUnitCost={setUnitCostOverride}

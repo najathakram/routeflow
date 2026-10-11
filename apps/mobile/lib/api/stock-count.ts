@@ -128,7 +128,7 @@ export function useCommitStockCountSession(sessionId: string | null | undefined)
   return useMutation<
     CommitStockCountSessionResponse,
     Error,
-    { notes?: string; effectiveDate?: string }
+    { notes?: string; effectiveDate?: string; finishWithSkips?: boolean }
   >({
     mutationFn: (dto) =>
       apiClient.post(`/inventory/stock-counts/${sessionId}/commit`, dto).then((r) => r.data),

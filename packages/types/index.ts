@@ -126,6 +126,7 @@ export * from "./trip-grouping";
 // ─── Sentinel emails (B910 — one impl for web/mobile; the api keeps a spec-pinned local copy) ──
 
 export * from "./internal-email";
+export * from "./stock-count-commit-copy";
 
 // ─── Post-delivery invoice prompt (#2089) ─────────────────────────────────────
 

@@ -99,6 +99,9 @@ export interface CommitStockCountSessionResponse {
   movementIds: string[];
   costMovementIds?: string[];
   alreadyCommitted?: boolean;
+  /** "Finish with skips" (SA-767 L-2.4 C): lines left out because the product can never be counted
+   *  (a product family now, or deleted). Empty on a normal commit. */
+  skippedProducts?: Array<{ productId: string; name?: string; reason: string }>;
 }
 
 /** Near-identical: web's `variantName` is required, mobile's is optional/nullable —
