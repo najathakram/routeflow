@@ -60,6 +60,8 @@ export function orderFixture(over: Partial<ReceiptOrderInput> = {}): ReceiptOrde
         status: "DELIVERED",
         qty: "1",
         unitPrice: "4.00",
+        // rung at $4.00 off the $5.00 list: the order stores the list as originalPrice
+        originalPrice: "5.00",
         unitsPerBox: null,
         boxes: null,
         pieces: null,

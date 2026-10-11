@@ -1,7 +1,7 @@
 import { InvoiceStatus } from "@prisma/client";
 import {
-  computeLineSubtotal,
   explainedTaxRatePercent,
+  receiptLineAmounts,
   roundMoney,
   storedTaxRatePercent,
   sumConfirmed,
@@ -28,6 +28,10 @@ export interface ReceiptLineInput {
   status: string;
   qty: unknown;
   unitPrice: unknown;
+  /** the list price the line was lowered from (`OrderItem.originalPrice`); null = never lowered */
+  originalPrice?: unknown;
+  /** the cashier's per-line note (`OrderItem.notes`), printed under the line */
+  notes?: string | null;
   unitsPerBox: number | null;
   boxes: number | null;
   pieces: number | null;
@@ -175,23 +179,29 @@ export function buildReceiptModel(
 
   const lines: ReceiptLine[] = order.lineItems
     .filter((l) => l.status !== "CANCELLED")
-    .map((l) => ({
-      key: l.id,
-      name: lineName(l),
-      detail: lineDetail(l),
-      // a reprint shows no per-line note and no discount (the order does not store the system price an edit started from)
-      note: null,
-      original: null,
-      discount: 0,
-      total: computeLineSubtotal({
+    .map((l) => {
+      // ONE rule for a lowered price (pricing's receiptLineAmounts, shared with the counter receipt and the reprint): the
+      // stored list price is struck and the difference is a Discounts row, only when the price was LOWERED
+      const { total, original, discount } = receiptLineAmounts({
         unitPrice: num(l.unitPrice),
+        listUnitPrice: l.originalPrice == null ? null : num(l.originalPrice),
         qty: num(l.qty),
         boxes: l.boxes,
         pieces: l.pieces,
         unitsPerBox: l.unitsPerBox,
-      }),
-    }));
-  const subtotal = roundMoney(lines.reduce((sum, l) => sum + l.total, 0));
+      });
+      return {
+        key: l.id,
+        name: lineName(l),
+        detail: lineDetail(l),
+        note: clean(l.notes) || null,
+        total,
+        original,
+        discount,
+      };
+    });
+  const netSubtotal = roundMoney(lines.reduce((sum, l) => sum + l.total, 0));
+  const discounts = roundMoney(lines.reduce((sum, l) => sum + l.discount, 0));
   const total = roundMoney(num(order.total));
   const paid = roundMoney(
     sumConfirmed(livePayments.map((p) => ({ amount: p.amount, status: p.status }))),
@@ -210,9 +220,9 @@ export function buildReceiptModel(
   const hasTender = methods.length > 0;
   const onAccount = !hasTender && balanceDue > 0;
   const tax = roundMoney(num(order.tax));
-  const adjustments = roundMoney(total - subtotal - tax) || 0; // never -0
+  const adjustments = roundMoney(total - netSubtotal - tax) || 0; // never -0
   const taxRatePercent = explainedTaxRatePercent({
-    base: subtotal,
+    base: netSubtotal,
     tax,
     // a STORED line rate corroborated by the configured rate; never inferred from the tax (pricing)
     ratePercent: storedTaxRatePercent(
@@ -241,8 +251,8 @@ export function buildReceiptModel(
     lines,
     cashier: null,
     customerName: customerName || null,
-    subtotal,
-    discounts: 0,
+    subtotal: roundMoney(netSubtotal + discounts),
+    discounts,
     tax,
     adjustments,
     taxRatePercent,

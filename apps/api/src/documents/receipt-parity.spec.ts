@@ -124,6 +124,7 @@ function build(s: Scenario) {
         product: l.product,
         qty: Number(l.qty),
         unitPrice: Number(l.unitPrice),
+        originalPrice: l.originalPrice == null ? null : Number(l.originalPrice),
         unitsPerBox: l.unitsPerBox,
         boxes: l.boxes,
         pieces: l.pieces,
@@ -183,9 +184,16 @@ describe("print / reprint / email carry one money model (SA-762r)", () => {
     expect(pick(emailModel)).toEqual(pick(reprint));
   });
 
-  it("the live receipt's Subtotal is at system prices: net lines + the $1.00 discount (Subtotal - Discounts = the email's Subtotal)", () => {
-    expect(live.discounts).toBe(1);
-    expect(roundMoney(live.subtotal - live.discounts)).toBe(emailModel.subtotal);
+  it("ONE presentation of a lowered price: Subtotal at list prices, a Discounts row and the struck list price, on the live receipt, the reprint and the email", () => {
+    for (const m of [live, reprint, emailModel]) {
+      expect(m.subtotal).toBe(27.5);
+      expect(m.discounts).toBe(1);
+      const candy = m.lines.find((l) => l.name === "Loose candy");
+      expect(candy).toMatchObject({ total: 4, original: 5, discount: 1 });
+    }
+    const money = (m: ReceiptModel) => [m.subtotal, m.discounts, m.tax, m.adjustments, m.total];
+    expect(money(reprint)).toEqual(money(emailModel));
+    expect(money(live)).toEqual(money(emailModel));
   });
 
   it("every model adds up: Subtotal - Discounts + Tax + Adjustments = Total", () => {
@@ -199,6 +207,77 @@ describe("print / reprint / email carry one money model (SA-762r)", () => {
     expect(odd.emailModel.taxRatePercent).toBeNull();
     expect(odd.emailModel.tax).toBe(2.5);
     expect(adjustmentLabel(odd.emailModel.taxRatePercent)).toBe("Tax");
+  });
+});
+
+describe("the proof sale: a $14.99 Pc line rung at $10.00 x 2 reads the same on every surface", () => {
+  const line = (
+    id: string,
+    name: string,
+    unitPrice: string,
+    qty: string,
+    originalPrice?: string,
+  ) => ({
+    id,
+    name,
+    status: "DELIVERED",
+    qty,
+    unitPrice,
+    ...(originalPrice ? { originalPrice } : {}),
+    unitsPerBox: null,
+    boxes: null,
+    pieces: null,
+    product: null,
+  });
+  const s = build({
+    total: "24.36",
+    tax: "1.86",
+    configured: 8.25,
+    rates: ["0.0825", "0.0825"],
+    payments: [{ method: "CASH", amount: "24.36" }],
+    lines: [line("a", "Each", "2.50", "1"), line("b", "Pc", "10.00", "2", "14.99")],
+    live: [
+      { tempId: "a", name: "Each", unitPrice: 2.5, qty: 1 },
+      { tempId: "b", name: "Pc", unitPrice: 10, qty: 2, tierPrice: 14.99, override: {} },
+    ],
+  });
+
+  it("Subtotal $32.48, Discounts $9.98, the struck $29.98 on the line, Tax $1.86, Total $24.36", () => {
+    for (const m of [s.live, s.reprint, s.emailModel]) {
+      expect(m).toMatchObject({
+        subtotal: 32.48,
+        discounts: 9.98,
+        tax: 1.86,
+        adjustments: 0,
+        total: 24.36,
+      });
+      expect(m.lines.find((l) => l.name === "Pc")).toMatchObject({
+        total: 20,
+        original: 29.98,
+        discount: 9.98,
+      });
+      expect(m.lines.find((l) => l.name === "Each")).toMatchObject({ original: null, discount: 0 });
+    }
+  });
+
+  it("an unedited line stored with no list price, or a list price at or below the charge, shows nothing struck", () => {
+    const plain = build({
+      total: "24.36",
+      tax: "1.86",
+      configured: 8.25,
+      rates: ["0.0825"],
+      payments: [{ method: "CASH", amount: "24.36" }],
+      lines: [line("a", "Each", "2.50", "1", "2.50"), line("b", "Pc", "10.00", "2", "9.00")],
+      live: [
+        { tempId: "a", name: "Each", unitPrice: 2.5, qty: 1 },
+        { tempId: "b", name: "Pc", unitPrice: 10, qty: 2 },
+      ],
+    });
+    for (const m of [plain.live, plain.reprint, plain.emailModel]) {
+      expect(m.discounts).toBe(0);
+      expect(m.subtotal).toBe(22.5);
+      expect(m.lines.every((l) => l.original === null)).toBe(true);
+    }
   });
 });
 

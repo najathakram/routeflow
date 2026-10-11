@@ -1,6 +1,6 @@
 import {
-  computeLineSubtotal,
   explainedTaxRatePercent,
+  receiptLineAmounts,
   roundMoney,
   taxRowLabel,
 } from "@routeflow/pricing";
@@ -15,7 +15,7 @@ import { displayProductName } from "./product-display";
 import { priceUnitWord } from "./product-unit-label";
 
 /**
- * The counter-sale receipt as a pure view model. Line money goes through `computeLineSubtotal` (a boxed line is prorated,
+ * The counter-sale receipt as a pure view model. Line money goes through pricing's `receiptLineAmounts` (a boxed line is prorated,
  * never `qty * unitPrice`); the sale's own figures (total / paid / balance / change) are the server's, passed through.
  */
 
@@ -173,21 +173,17 @@ export function buildCounterReceipt(input: {
     }
   }
 
-  const lineTotal = (l: ReceiptLineInput, unitPrice: number) =>
-    computeLineSubtotal({
-      unitPrice,
+  const rows = lines.map((l) => {
+    // ONE rule for a lowered price (pricing's receiptLineAmounts, shared with the reprint and the emailed receipt): only a
+    // LOWERED price is shown against the system price; a raised one must not reveal the lower figure.
+    const { total, original, discount } = receiptLineAmounts({
+      unitPrice: l.unitPrice,
+      listUnitPrice: !!l.override && l.tierPrice != null ? l.tierPrice : null,
       qty: l.qty,
       boxes: l.boxes,
       pieces: l.pieces,
       unitsPerBox: l.unitsPerBox,
     });
-  const rows = lines.map((l) => {
-    const total = lineTotal(l, l.unitPrice);
-    const edited = !!l.override && l.tierPrice != null;
-    const systemTotal = edited ? lineTotal(l, l.tierPrice as number) : null;
-    // Only a LOWERED price is shown against the system price; a raised one must not reveal the lower figure.
-    const original =
-      systemTotal != null && roundMoney(systemTotal - total) > 0 ? systemTotal : null;
     return {
       key: l.tempId,
       name: l.name,
@@ -195,7 +191,7 @@ export function buildCounterReceipt(input: {
       note: clean(l.note) || null,
       total,
       original,
-      discount: original == null ? 0 : roundMoney(original - total),
+      discount,
     };
   });
   const netSubtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
@@ -259,6 +255,8 @@ export interface ReprintOrderLike {
     } | null;
     qty: number;
     unitPrice: number;
+    /** the list price the line was lowered from (`OrderItem.originalPrice`; a Decimal arrives as a string) */
+    originalPrice?: number | string | null;
     unitsPerBox?: number | null;
     boxes?: number | null;
     pieces?: number | null;
@@ -346,33 +344,37 @@ export function receiptModelFromOrder(input: {
         pieces: l.pieces == null ? undefined : num(l.pieces),
         unit: l.product?.unit ?? null,
       };
+      // the SAME rule as the live receipt: the stored list price is struck and the difference is a Discounts row, but only
+      // when the price was LOWERED (a raised or equal list price prints plain)
+      const { total, original, discount } = receiptLineAmounts({
+        unitPrice: line.unitPrice,
+        listUnitPrice: l.originalPrice == null ? null : num(l.originalPrice),
+        qty: line.qty,
+        boxes: line.boxes,
+        pieces: line.pieces,
+        unitsPerBox: line.unitsPerBox,
+      });
       return {
         key: line.tempId,
         name: line.name,
         detail: lineDetail(line),
         note: clean(l.notes) || null,
-        // A reprint shows no discount: the line stores originalPrice and overrideReason, but not the tier price an edit started from.
-        original: null,
-        discount: 0,
-        total: computeLineSubtotal({
-          unitPrice: line.unitPrice,
-          qty: line.qty,
-          boxes: line.boxes,
-          pieces: line.pieces,
-          unitsPerBox: line.unitsPerBox,
-        }),
+        total,
+        original,
+        discount,
       };
     });
-  const subtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
+  const netSubtotal = roundMoney(rows.reduce((sum, r) => sum + r.total, 0));
+  const discounts = roundMoney(rows.reduce((sum, r) => sum + r.discount, 0));
   const hasTender = sale.methods.length > 0;
   const { paid, balanceDue } = sale;
   const onAccount = !hasTender && balanceDue > 0;
   const orderTotal = num(order.total);
   const tax = roundMoney(num(order.tax));
-  const adjustments = roundMoney(orderTotal - subtotal - tax) || 0; // never -0
+  const adjustments = roundMoney(orderTotal - netSubtotal - tax) || 0; // never -0
   // Name the rate only when it accounts for the stored tax (a re-price or credit must not read as tax); else plain "Tax".
   const taxRatePercent = explainedTaxRatePercent({
-    base: subtotal,
+    base: netSubtotal,
     tax,
     ratePercent: sale.taxRatePercent,
   });
@@ -385,10 +387,10 @@ export function receiptModelFromOrder(input: {
     dateLabel: formatSaleTime(sale.createdAt, sale.timezone),
     lines: rows,
     cashier: clean(input.cashier) || null,
-    subtotal,
+    subtotal: roundMoney(netSubtotal + discounts),
     tax,
     adjustments,
-    discounts: 0,
+    discounts,
     total: orderTotal,
     paid,
     balanceDue,
