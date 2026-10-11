@@ -2,6 +2,7 @@ import { CATCHUP_META } from "./catchup-claim";
 import { planCheckoutAnchor } from "./checkout-anchor";
 import {
   CATCHUP_TRIAL_MIN_LEAD_MS,
+  CATCHUP_TRIAL_STUB_MIN_LEAD_MS,
   STRIPE_MIN_CHARGE_CENTS,
   type CatchupPlan,
 } from "./catchup-plan";
@@ -201,6 +202,14 @@ export function buildCatchupSessionParams(i: CatchupSessionInput): Record<string
   const trialEnd = params.subscription_data?.trial_end;
   if (trialEnd != null && trialEnd * 1000 - i.now.getTime() < CATCHUP_TRIAL_MIN_LEAD_MS) {
     throw new Error("catch-up trial_end is under 72 h away");
+  }
+  // Decision 5: a prepaid trial's stub must finalize before the trial ends (see CATCHUP_TRIAL_STUB_MIN_LEAD_MS)
+  if (
+    i.plan.shape === "trial" &&
+    i.plan.stub.totalCents >= STRIPE_MIN_CHARGE_CENTS &&
+    i.plan.trialEndAt.getTime() - i.now.getTime() < CATCHUP_TRIAL_STUB_MIN_LEAD_MS
+  ) {
+    throw new Error("catch-up trial with a stub ends under 98 h away");
   }
   assertCheckoutAcceptable(params);
   return params;

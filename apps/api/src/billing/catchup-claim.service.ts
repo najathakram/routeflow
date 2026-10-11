@@ -422,8 +422,10 @@ export class CatchupClaimService {
    * The floor is now derived from the SESSION alone: its expiry + Stripe's whole webhook retry window + 1 h. A
    * completion can only arrive before the session expires and is retried for at most that window afterwards, so the
    * value is the same on every delivery AND still in the future on the last one. (A session with no expiry - only a
-   * hand-built one - keeps the old call-time floor.) At worst this delays the stub's finalize by about a day when the
-   * paid-through date is within ~4 days of the checkout; the subscription itself is in its trial until then.
+   * hand-built one - keeps the old call-time floor.) The real bound: the stub finalizes at the LATER of its planned
+   * time and (expiry + 73 h), i.e. up to 97 h after the session was created. The `trial` shape is therefore only
+   * chosen when the trial ends at least 98 h out (catchup-plan CATCHUP_TRIAL_STUB_MIN_LEAD_MS), so the stub always
+   * finalizes BEFORE the renewal at T - a failed stub can never be released after the renewal was paid.
    */
   private stubFinalizeAt(session: any, meta: Record<string, string>): number {
     const planned = Number(meta[CATCHUP_META.finalizeAt]) || 0;
@@ -839,6 +841,26 @@ export class CatchupClaimService {
       }
     }
 
+    // ── Step 2b (Decision 5): never cancel a subscription that already holds PAID money besides the settling
+    //    invoice (e.g. the renewal at T was paid while the stub kept retrying): that month would be charged twice
+    //    once RouteFlow invoicing resumes. A human rules; the hourly sweep retries without re-alerting. ──
+    if (subId && (await this.otherInvoicePaid(subId, seen.catchupInvoiceId))) {
+      const first = await this.noticeOnce(
+        this.prisma,
+        tenantId,
+        "billing_catchup_release_refused_other_paid",
+        subId,
+        `NEEDS RULING: the October catch-up first invoice failed, but another invoice on subscription ${subId} is already PAID. The subscription was NOT cancelled and RouteFlow invoicing stays frozen; refund or re-attach it in Stripe, then clear the claim by the runbook.`,
+        { subscriptionId: subId },
+      ).catch(() => false);
+      if (first) {
+        this.logger.error(
+          `billing.catchup.release_refused_other_paid tenant=${tenantId} subscription=${subId}: NEEDS RULING`,
+        );
+      }
+      return "needs_ruling";
+    }
+
     // ── Step 3: cancel the subscription (idempotent) ──
     if (subId) {
       try {
@@ -906,6 +928,17 @@ export class CatchupClaimService {
         periodEnd: meta.periodEnd ? new Date(meta.periodEnd) : null,
       },
     });
+  }
+
+  /** Does the subscription hold a PAID invoice with money on it other than `exceptId`? ($0 trial invoices are "paid"). */
+  private async otherInvoicePaid(subId: string, exceptId: string | null): Promise<boolean> {
+    const listed = await this.stripe.listSubscriptionInvoices(subId, 100);
+    for (const inv of listed) {
+      if (inv.id === exceptId) continue;
+      const f = await this.stripe.getInvoiceFacts(inv.id);
+      if (invoiceIsPaid(f) && f.amountPaid > 0) return true;
+    }
+    return false;
   }
 
   // ─── the hourly sweep ─────────────────────────────────────────────────────

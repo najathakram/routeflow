@@ -270,3 +270,19 @@ describe("assertCheckoutAcceptable (Stripe's documented Checkout limits)", () =>
     ).not.toThrow();
   });
 });
+
+describe("Decision 5: a prepaid trial with a stub never finalizes it after the trial ends", () => {
+  const PAID_TO_OCT30 = inv("oct", "PAID", "2026-10-01T12:00:00Z", "2026-10-30T12:00:00Z");
+
+  it("the builder refuses a trial whose trial_end is under 98 h away when it carries a stub", () => {
+    const farNow = d("2026-10-28T04:00:00Z"); // T = Nov 1 12:00 is 104 h away
+    const far = plan({ now: farNow, invoices: [PAID_TO_OCT30] });
+    expect(far.shape).toBe("trial");
+    expect(() => build(far, farNow)).not.toThrow();
+
+    const nearNow = d("2026-10-29T04:00:00Z"); // 80 h: the OLD selector still said trial
+    const near = plan({ now: nearNow, invoices: [PAID_TO_OCT30] });
+    expect(near.shape).not.toBe("trial");
+    expect(() => build({ ...near, shape: "trial" }, nearNow)).toThrow(/98 h/);
+  });
+});

@@ -4,6 +4,7 @@ import {
   CATCHUP_GO_LIVE,
   activationInstants,
   addonCardRefusal,
+  CATCHUP_TRIAL_STUB_MIN_LEAD_MS,
   catchupShape,
   firstBoundaryNotBefore,
   manualPeriodAhead,
@@ -209,11 +210,11 @@ describe("the Checkout shape (r3 N3 + Stripe's documented Checkout limits)", () 
     expect(p.stub.totalCents).toBe(31000);
   });
 
-  it("the prepaid trial needs 72 h: exactly 72 h out is a trial, 1 minute less is not", () => {
-    // paid through Nov 29 12:00 => T = Dec 1 12:00Z
-    const inv72 = [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-11-29T12:00:00Z")];
-    expect(plan({ now: d("2026-11-28T12:00:00Z"), invoices: inv72 }).shape).toBe("trial");
-    expect(plan({ now: d("2026-11-28T12:01:00Z"), invoices: inv72 }).shape).not.toBe("trial");
+  it("the prepaid trial WITH a stub needs 98 h (Decision 5): exactly 98 h out is a trial, 1 minute less is not", () => {
+    // paid through Nov 29 12:00 => T = Dec 1 12:00Z, a two-day stub; 98 h before T is Nov 27 10:00Z
+    const inv98 = [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-11-29T12:00:00Z")];
+    expect(plan({ now: d("2026-11-27T10:00:00Z"), invoices: inv98 }).shape).toBe("trial");
+    expect(plan({ now: d("2026-11-27T10:01:00Z"), invoices: inv98 }).shape).not.toBe("trial");
   });
 });
 
@@ -284,6 +285,44 @@ describe("SA-733r5 selector rows", () => {
     expect(
       catchupShape({ paidThrough: d("2026-11-01T12:00:00Z"), now: d("2026-10-30T09:00:00Z") }),
     ).toBe("anchor_no_line");
+  });
+
+  describe("Decision 5: the prepaid trial shape needs room for its stub to finalize BEFORE the renewal", () => {
+    // paid through Oct 30 12:00 -> T = Nov 1 12:00, so the stub is two days: [Oct 30 12:00, Nov 1 12:00)
+    const pt = d("2026-10-30T12:00:00Z");
+
+    it("the lead is the session life + Stripe's 3-day webhook retry window + 2 h = 98 h", () => {
+      expect(CATCHUP_TRIAL_STUB_MIN_LEAD_MS).toBe((24 + 72 + 2) * 3600_000);
+    });
+
+    it("WITH a stub: trial only when T >= now + 98 h; closer than that the stub is billed up front", () => {
+      expect(catchupShape({ paidThrough: pt, now: d("2026-10-28T04:00:00Z") })).toBe("trial"); // 104 h
+      expect(catchupShape({ paidThrough: pt, now: d("2026-10-28T10:00:00Z") })).toBe("trial"); // exactly 98 h
+      expect(catchupShape({ paidThrough: pt, now: d("2026-10-28T10:01:00Z") })).toBe(
+        "anchor_no_line",
+      ); // 97 h 59 min
+      expect(catchupShape({ paidThrough: pt, now: d("2026-10-29T04:00:00Z") })).toBe(
+        "anchor_no_line",
+      ); // 80 h: the OLD 72 h rule said trial
+    });
+
+    it("the plan then bills that stub UP FRONT as the one-time line, never as a post-completion draft", () => {
+      const p = plan({
+        now: d("2026-10-29T04:00:00Z"),
+        monthly: 310,
+        invoices: [inv("oct", "PAID", "2026-10-01T12:00:00Z", "2026-10-30T12:00:00Z")],
+      });
+      expect(p.shape).toBe("trial_one_time");
+      expect(p.stub.totalCents).toBeGreaterThan(0);
+    });
+
+    it("with NO stub (paid through exactly on the 1st) the 72 h rule stands: nothing is left to finalize late", () => {
+      const onFirst = d("2026-11-01T12:00:00Z");
+      expect(catchupShape({ paidThrough: onFirst, now: d("2026-10-28T11:00:00Z") })).toBe("trial"); // 97 h
+      expect(catchupShape({ paidThrough: onFirst, now: d("2026-10-30T09:00:00Z") })).toBe(
+        "anchor_no_line",
+      ); // 51 h
+    });
   });
 
   it("session Oct 30 unpaid since Oct 1: A = Dec 1 12:00Z, ONE line Oct 1 -> Nov 30 (two months)", () => {

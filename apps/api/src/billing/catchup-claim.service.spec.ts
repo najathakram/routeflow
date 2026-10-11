@@ -1554,6 +1554,51 @@ describe("(a) a released catch-up restores the MANUAL period so its window is no
   });
 });
 
+describe("Decision 5: a release never cancels a subscription whose OTHER invoice is already paid", () => {
+  const failedFirst = {
+    id: "in_1",
+    status: "open" as const,
+    subscription: SUB,
+    amountDue: 31000,
+    attemptCount: 4,
+    nextPaymentAttempt: null,
+  };
+  const renewalPaid = {
+    id: "in_renewal",
+    status: "paid" as const,
+    subscription: SUB,
+    amountDue: 31000,
+    amountPaid: 31000,
+  };
+
+  it("the first invoice failed for good but the renewal is PAID: NEEDS RULING (once), the subscription is NOT cancelled", async () => {
+    const h = make(awaiting({ catchupInvoiceId: "in_1" }), [octOpen], {
+      invoices: [failedFirst, renewalPaid],
+    });
+    const out = await h.svc.release("t1", { sessionId: SESSION, reason: "t" });
+    expect(out).toBe("needs_ruling");
+    expect(h.stripe.calls.some((c) => c.startsWith("cancelSubscription"))).toBe(false);
+    await h.svc.sweep(NOW); // the RELEASING row is retried hourly: no second alert
+    await h.svc.sweep(NOW);
+    expect(
+      h.db.audits.filter((a) => a.meta?.kind === "billing_catchup_release_refused_other_paid"),
+    ).toHaveLength(1);
+    // the claim is still held: RouteFlow invoicing stays frozen until a human rules
+    expect(h.sub().catchupState).toBe("RELEASING");
+  });
+
+  it("a $0 trial invoice (status paid, nothing collected) is not 'money paid': the release goes ahead", async () => {
+    const h = make(awaiting({ catchupInvoiceId: "in_1" }), [octOpen], {
+      invoices: [
+        failedFirst,
+        { id: "in_trial0", status: "paid", subscription: SUB, amountDue: 0, amountPaid: 0 },
+      ],
+    });
+    expect(await h.svc.release("t1", { sessionId: SESSION, reason: "t" })).toBe("released");
+    expect(h.stripe.calls).toContain(`cancelSubscription:${SUB}`);
+  });
+});
+
 describe("nits", () => {
   it("the release's refused-because-paid NEEDS RULING is raised ONCE per invoice, not on every hourly retry", async () => {
     const h = make(awaiting({ catchupInvoiceId: "in_1" }), [octOpen], {

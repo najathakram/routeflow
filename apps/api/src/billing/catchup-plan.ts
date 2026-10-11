@@ -1,5 +1,6 @@
 import { roundMoney, toCents } from "@routeflow/pricing";
 import { prorateDaily } from "./billing-math";
+import { STRIPE_WEBHOOK_RETRY_DAYS } from "./catchup-claim";
 import { nextCheckoutAnchor } from "./checkout-anchor";
 import {
   BOUNDARY_HOUR_UTC,
@@ -30,6 +31,17 @@ export const CATCHUP_GO_LIVE = boundary(2026, 9);
 
 /** A trial must end at least 48 h out (Stripe); 72 h keeps the floor even if the session completes at its 24 h expiry. */
 export const CATCHUP_TRIAL_MIN_LEAD_MS = 72 * 60 * 60 * 1000;
+
+/**
+ * Decision 5. The prepaid `trial` shape bills its stub as a DRAFT invoice that finalizes after the session completes
+ * (claim service stubFinalizeAt: at the latest session expiry + Stripe's 3-day webhook retry window + 1 h). If it
+ * finalized AFTER the trial ends (T), its payment could fail for good after the renewal at T was already paid, and the
+ * release would cancel a subscription that has a paid renewal - the renewal month charged twice. So `trial` with a
+ * stub needs T >= session life (24 h) + 3 days + 2 h from now (98 h); closer than that the stub is billed UP FRONT
+ * (the one-time-line shape). A prepaid tenant with NO stub keeps the plain 72 h rule: there is nothing to finalize.
+ */
+export const CATCHUP_TRIAL_STUB_MIN_LEAD_MS =
+  (24 + STRIPE_WEBHOOK_RETRY_DAYS * 24 + 2) * 60 * 60 * 1000;
 
 /** Stripe's smallest chargeable amount in USD (r3 N3: "the stub is skipped under $0.50"). */
 export const STRIPE_MIN_CHARGE_CENTS = 50;
@@ -323,11 +335,16 @@ export function describeStub(from: Date, to: Date): string {
  */
 export type CheckoutShape = "trial_one_time" | "trial" | "anchor_no_line";
 
-/** The selector (SA-733r5): `trial_one_time` iff snap(paid-through) <= now; else `trial` iff T >= now + 72 h. */
+/**
+ * The selector (SA-733r5): `trial_one_time` iff snap(paid-through) <= now; else `trial` iff T >= now + 72 h, or
+ * T >= now + 98 h when it carries a stub (Decision 5: see CATCHUP_TRIAL_STUB_MIN_LEAD_MS); else `anchor_no_line`.
+ */
 export function catchupShape(i: { paidThrough: Date; now: Date }): CheckoutShape {
   if (snapToBoundary(i.paidThrough).getTime() <= i.now.getTime()) return "trial_one_time";
   const t = firstBoundaryNotBefore(i.paidThrough);
-  return t.getTime() - i.now.getTime() >= CATCHUP_TRIAL_MIN_LEAD_MS ? "trial" : "anchor_no_line";
+  const hasStub = t.getTime() > i.paidThrough.getTime();
+  const lead = hasStub ? CATCHUP_TRIAL_STUB_MIN_LEAD_MS : CATCHUP_TRIAL_MIN_LEAD_MS;
+  return t.getTime() - i.now.getTime() >= lead ? "trial" : "anchor_no_line";
 }
 
 export interface CatchupPlan {
