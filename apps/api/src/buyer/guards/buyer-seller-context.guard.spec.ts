@@ -171,6 +171,15 @@ describe("BuyerSellerContextGuard — the buyer's own account (#2142 R1)", () =>
 // it has just resolved the seller. One boolean-grade refusal: coded SELLER_UNAVAILABLE, neutral wording, never the
 // reason (payment_overdue, trial_expired, cancelled ... all look the same to a buyer).
 describe("BuyerSellerContextGuard - a read-only seller (B4)", () => {
+  // A3: the refusal is the ENFORCED behaviour of SELLER_READ_ONLY_BUYER_GATE (default dark, see the gate block below)
+  const savedGate = process.env.SELLER_READ_ONLY_BUYER_GATE;
+  beforeEach(() => {
+    process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced";
+  });
+  afterEach(() => {
+    if (savedGate === undefined) delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+    else process.env.SELLER_READ_ONLY_BUYER_GATE = savedGate;
+  });
   const live = () => [link("ACTIVE", null)];
 
   it.each(["POST", "PATCH", "PUT", "DELETE"])(
