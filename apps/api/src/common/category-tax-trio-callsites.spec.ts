@@ -97,6 +97,16 @@ const ALLOWLIST: { file: string; count: number; note: string }[] = [
     note: "B297 row 338: updateUnitLine's destructure + its SUBSTITUTE-only data spread (a same-product edit writes no category, levy or trio; the new product's are stamped only on a substitute)",
   },
   {
+    file: "orders/carry-line-category.ts",
+    count: 1,
+    note: "B297 row 340: carriedCategory — a fold's no-category line carries its STORED levy (never a computed one); a full trio carries the line's own trio, copied not derived",
+  },
+  {
+    file: "orders/replace-all-line-build.ts",
+    count: 2,
+    note: "B297 row 340: the existing-line map's categoryTaxAmount read + the builder's carry spread; the amount is a carried stored levy, the trio the line's own (copyCategoryTaxSnapshot) or the live stamp for a new line",
+  },
+  {
     file: "orders/unit-line-build.ts",
     count: 1,
     note: "categoryTaxForLine/buildUnitLine — stamps",
@@ -162,8 +172,8 @@ describe("category tax trio callsites — every categoryTaxAmount writer enumera
     expect(offenders).toEqual([]);
   });
 
-  it("total categoryTaxAmount writes across apps/api/src is exactly 25", () => {
+  it("total categoryTaxAmount writes across apps/api/src is exactly 28", () => {
     const total = FILES.reduce((n, f) => n + writeCount(fs.readFileSync(f, "utf8")), 0);
-    expect(total).toBe(25);
+    expect(total).toBe(28);
   });
 });

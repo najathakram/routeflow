@@ -506,6 +506,60 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
     expect(l1.rate).toBe(SNAPSHOT_RATE);
   }, 120_000);
 
+  // ---- row 340: a merge FOLD carries each existing line's own category and trio -----------------
+
+  const fold = (orderId: string, items: any[]) =>
+    inTenant(() =>
+      orders.updateOrderItems(orderId, { replaceAll: true, items } as any, operator(), {
+        isCreateMerge: true,
+      }),
+    );
+
+  it("row 340: a fold re-creates an existing line at ITS snapshot rate after a rate raise and a re-categorisation", async () => {
+    const other = await raw.trackedCategory.create({
+      data: { tenantId, name: `Other ${run}`, taxType: "PERCENT_OF_SALE", rate: 0.5 },
+    });
+    const id = await createOrder(12);
+    const [l0] = await lines(id);
+    await raiseCategoryRate(LIVE_RATE);
+    await raw.product.update({ where: { id: productId }, data: { trackedCategoryId: other.id } });
+    await fold(id, [{ productId, qty: 20, sourceLineId: l0.id }]);
+    const [l1] = await lines(id);
+    expect(l1.qty).toBe(20);
+    expect(l1.trackedCategoryId).toBe(categoryId); // master: the product's current category
+    expect(l1.rate).toBe(SNAPSHOT_RATE); // master: stamped from the live category
+    expect(l1.amount).toBe(1); // 20 x 0.05 at the line's own trio
+    await raw.product.update({ where: { id: productId }, data: { trackedCategoryId: categoryId } });
+    await raw.trackedCategory.deleteMany({ where: { id: other.id } });
+  }, 120_000);
+
+  it("row 340: a fold keeps a no-category line category-less with its stored levy; a NEW line stamps live", async () => {
+    const id = await createOrder(12);
+    const [l0] = await lines(id);
+    await raw.orderItem.update({
+      where: { id: l0.id },
+      data: {
+        trackedCategoryId: null,
+        categoryTaxType: null,
+        categoryTaxRate: null,
+        categoryPriceIncludesTax: null,
+        categoryTaxAmount: 4.2,
+      },
+    });
+    await raiseCategoryRate(LIVE_RATE);
+    await fold(id, [
+      { productId, qty: 12, sourceLineId: l0.id },
+      { productId, qty: 5 }, // no sourceLineId: genuinely new, a new sale at the live rate
+    ]);
+    const ls = await lines(id);
+    expect(ls).toHaveLength(2);
+    const kept = ls.find((l) => l.qty === 12)!;
+    expect(kept).toMatchObject({ trackedCategoryId: null, amount: 4.2, rate: null });
+    const added = ls.find((l) => l.qty === 5)!;
+    expect(added).toMatchObject({ trackedCategoryId: categoryId, rate: LIVE_RATE });
+    expect(added.amount).toBe(0.35);
+  }, 120_000);
+
   // ---- L1: a line with no category keeps its stored excise -------------------------------------
 
   it("a no-category line with a stored excise keeps it through a quantity edit, with a warn [L1]", async () => {
