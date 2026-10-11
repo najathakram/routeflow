@@ -42,6 +42,11 @@ import {
 import { computeDepositFields } from "./deposit-fields";
 import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-read";
 import { withComponentViews } from "../orders/component-view";
+import {
+  HANDOVER_SOLD_BY_SELECT,
+  seesHandOverStamp,
+  stampHandedOverBy,
+} from "../orders/handover-stamp";
 import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
 import {
   buildEditedLines,
@@ -3045,7 +3050,17 @@ export class InvoicesService {
         },
         // The web invoice page gates Edit/Send for an order-linked DRAFT until the
         // order is delivered (the "pending mirror"). Surface the order's status here.
-        order: { select: { status: true, orderNumber: true, fulfillPath: true, shippedAt: true } },
+        order: {
+          select: {
+            status: true,
+            orderNumber: true,
+            fulfillPath: true,
+            shippedAt: true,
+            // row 342: "Handed over at register main by Pat" (the cashier relation is staff only)
+            registerKey: true,
+            ...(seesHandOverStamp(user) ? { soldBy: HANDOVER_SOLD_BY_SELECT } : {}),
+          },
+        },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3062,6 +3077,7 @@ export class InvoicesService {
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+    stampHandedOverBy(inv.order, user); // row 342: staff only (`invoiceDetailFor` drops `order` for a buyer)
     return invoiceDetailFor(user, {
       ...inv,
       ...deriveInvoiceDetailFields(

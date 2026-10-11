@@ -25,6 +25,7 @@ import {
   pageQuery,
   paidOnDaysSalesWhere,
   salePaymentsWhere,
+  toHandOverRows,
   toTodaysSaleRow,
   windowReturnsWhere,
   type TodayOrderRecord,
@@ -50,8 +51,9 @@ const badDay = (message: string) =>
  * Query budget (a spec pins it): the zone (1) + the page `findMany` (1) + the `count` (1), and on page 1 only the
  * six whole-day summary queries: `order.aggregate`, `invoicePayment.groupBy` (money in, by paid date),
  * `invoicePayment.aggregate` (paid on the day's own sales), `creditNote.findMany` (ids created in the window),
- * `invoicePayment.findMany` (the day's POS-mode hand-over candidates, v5-filtered in code) and
- * `return.findMany` (a day's few returns). No per-row call.
+ * `invoicePayment.findMany` (the day's POS-mode hand-over candidates, v5-filtered in code; the same rows feed
+ * the summary's hand-over line and `handOverRows`, so the rows add no query) and `return.findMany` (a day's few
+ * returns). No per-row call.
  * Rows and summary are two reads, not one transaction: a sale rung between them can show in one and not the other
  * until the next refetch (accepted; the web refetches both together).
  */
@@ -79,7 +81,7 @@ export class CounterSaleTodayService {
     const limit = query.limit ?? TODAYS_SALES_DEFAULT_LIMIT;
     const db = this.prisma.forTenant();
 
-    const [rows, total, summary, configuredTaxPercent] = await Promise.all([
+    const [rows, total, whole, configuredTaxPercent] = await Promise.all([
       db.order.findMany(pageQuery(tenantId, window, page, limit)) as Promise<TodayOrderRecord[]>,
       db.order.count({ where: counterSalesWhere(tenantId, window) }),
       page === 1 ? this.summary(db, tenantId, window) : Promise.resolve(null),
@@ -99,7 +101,9 @@ export class CounterSaleTodayService {
         windowStart: window.start.toISOString(),
         windowEnd: window.end.toISOString(),
       },
-      summary,
+      summary: whole?.summary ?? null,
+      // row 342: the hand-overs the summary already read, as rows; [] on later pages (no summary, no read)
+      handOverRows: whole?.handOverRows ?? [],
     };
   }
 
@@ -115,7 +119,7 @@ export class CounterSaleTodayService {
     tenantId: string,
     window: { start: Date; end: Date },
   ) {
-    const [sales, payments, paidOnSales, creditNotes, handOverRows] = await Promise.all([
+    const [sales, payments, paidOnSales, creditNotes, handOverCandidates] = await Promise.all([
       db.order.aggregate({
         where: liveCounterSalesWhere(tenantId, window),
         _count: { _all: true },
@@ -155,12 +159,11 @@ export class CounterSaleTodayService {
         creditCategoryTax: true,
       },
     });
-    return foldSummary({
-      sales,
-      payments,
-      paidOnSales,
-      returns,
-      handOvers: handOverPayments(handOverRows),
-    });
+    // ONE filter, two folds: the summary's hand-over line and the rows come from the same tenders (row 342).
+    const handOvers = handOverPayments(handOverCandidates);
+    return {
+      summary: foldSummary({ sales, payments, paidOnSales, returns, handOvers }),
+      handOverRows: toHandOverRows(handOvers),
+    };
   }
 }

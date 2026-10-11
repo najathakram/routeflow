@@ -6,8 +6,15 @@ import {
   ReturnStatus,
   type Prisma,
 } from "@prisma/client";
-import { cashierNameOf, roundMoney, storedTaxRatePercent, sumConfirmed } from "@routeflow/pricing";
+import {
+  COUNTER_DEFAULT_REGISTER,
+  cashierNameOf,
+  roundMoney,
+  storedTaxRatePercent,
+  sumConfirmed,
+} from "@routeflow/pricing";
 import type {
+  TodaysHandOverRow,
   TodaysSaleMethod,
   TodaysSalePaymentState,
   TodaysSaleReturn,
@@ -120,18 +127,47 @@ export function handOverCandidatesWhere(tenantId: string, w: DayWindow) {
   };
 }
 
+/**
+ * What a hand-over ROW needs on top of the summary's method / amount / group id: when the tender came in and the
+ * order's number, register, cashier (the username only: row 317's rule, never an email) and customer name. ONE
+ * read for both the summary and the rows (row 342): no extra query.
+ */
 export const handOverCandidateSelect = {
   method: true,
   amount: true,
+  paidAt: true,
   paymentGroupId: true,
-  invoice: { select: { orderId: true } },
+  invoice: {
+    select: {
+      orderId: true,
+      order: {
+        select: {
+          orderNumber: true,
+          registerKey: true,
+          soldBy: { select: { username: true } },
+          customer: { select: { businessName: true } },
+        },
+      },
+    },
+  },
 } satisfies Prisma.InvoicePaymentSelect;
+
+/** The order a hand-over tender sits on, as the candidate select reads it (all optional: a hand-built record may omit it). */
+export interface HandOverOrder {
+  orderNumber?: string | null;
+  registerKey?: string | null;
+  soldBy?: { username?: string | null } | null;
+  customer?: { businessName?: string | null } | null;
+}
 
 /** One payment that is a hand-over's own tender. */
 export interface HandOverPayment {
   method: string;
   amount: unknown;
   orderId: string;
+  /** when the tender was recorded (absent on a hand-built record) */
+  paidAt?: Date;
+  order?: HandOverOrder | null;
 }
 
 /** The candidates whose group id IS the app-side `uuidv5(`${orderId}:pickup:0`, PICKUP_TENDER_NS)`. */
@@ -140,15 +176,90 @@ export function handOverPayments(
     method: string;
     amount: unknown;
     paymentGroupId: string | null;
-    invoice: { orderId: string | null } | null;
+    paidAt?: Date;
+    invoice: { orderId: string | null; order?: HandOverOrder | null } | null;
   }>,
 ): HandOverPayment[] {
   return rows.flatMap((r) => {
     const orderId = r.invoice?.orderId;
     return orderId && r.paymentGroupId === pickupTenderGroupId(orderId)
-      ? [{ method: r.method, amount: r.amount, orderId }]
+      ? [
+          {
+            method: r.method,
+            amount: r.amount,
+            orderId,
+            ...(r.paidAt ? { paidAt: r.paidAt } : {}),
+            ...(r.invoice?.order ? { order: r.invoice.order } : {}),
+          },
+        ]
       : [];
   });
+}
+
+/** The most hand-over rows one response carries (a day's few hand-overs; `summary.handOvers` is the whole-day figure). */
+export const HAND_OVER_ROWS_MAX = 200;
+
+/**
+ * The day's hand-overs as ROWS (row 342): one per order, folded from the SAME filtered tenders `foldSummary` totals
+ * (`handOverPayments`' output), so the rows' order count is `summary.handOvers.count` and their amounts sum to
+ * `summary.handOvers.total` (until the 200-row bound). The method split uses the till's own mapping
+ * (`todaysMethodOf`); `paidAt` is the latest tender in the window; an unstamped register reads as "main"; an
+ * unstamped or email-like cashier is null (`cashierNameOf`). Newest first, then order id (a stable tie-break).
+ */
+export function toHandOverRows(handOvers: readonly HandOverPayment[]): TodaysHandOverRow[] {
+  const byOrder = new Map<
+    string,
+    {
+      order: HandOverOrder | null | undefined;
+      amount: number;
+      paidAt: number;
+      methods: Map<TodaysSaleMethod, number>;
+    }
+  >();
+  for (const h of handOvers) {
+    const g = byOrder.get(h.orderId) ?? {
+      order: h.order,
+      amount: 0,
+      paidAt: Number.NEGATIVE_INFINITY,
+      methods: new Map<TodaysSaleMethod, number>(),
+    };
+    const amount = num(h.amount);
+    g.amount = roundMoney(g.amount + amount);
+    const m = todaysMethodOf(h.method);
+    g.methods.set(m, roundMoney((g.methods.get(m) ?? 0) + amount));
+    if (h.paidAt && h.paidAt.getTime() > g.paidAt) g.paidAt = h.paidAt.getTime();
+    g.order ??= h.order;
+    byOrder.set(h.orderId, g);
+  }
+  return [...byOrder.entries()]
+    .map(([orderId, g]): TodaysHandOverRow => {
+      const registerKey = (g.order?.registerKey ?? "").trim();
+      return {
+        orderId,
+        orderNumber: g.order?.orderNumber ?? "",
+        customerName: g.order?.customer?.businessName ?? "",
+        paidAt: new Date(Number.isFinite(g.paidAt) ? g.paidAt : 0).toISOString(),
+        amount: g.amount,
+        methods: METHOD_ORDER.flatMap((method) => {
+          const a = g.methods.get(method) ?? 0;
+          return a > 0 ? [{ method, amount: a }] : [];
+        }),
+        registerKey: registerKey || COUNTER_DEFAULT_REGISTER,
+        handedOverBy: cashierNameOf(g.order?.soldBy),
+      };
+    })
+    .sort((a, b) =>
+      a.paidAt === b.paidAt
+        ? a.orderId < b.orderId
+          ? -1
+          : a.orderId > b.orderId
+            ? 1
+            : 0
+        : a.paidAt < b.paidAt
+          ? 1
+          : -1,
+    )
+    .slice(0, HAND_OVER_ROWS_MAX);
 }
 
 /**
