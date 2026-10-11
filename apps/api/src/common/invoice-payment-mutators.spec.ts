@@ -298,7 +298,7 @@ describe("InvoicePayment update / delete writers are all classified", () => {
 
   it("(f) the guard itself still judges PER ROW with the one tender predicate and the closed-window read", () => {
     const guard = read("invoices/counter-payment-guard.ts");
-    expect(guard).toContain("isCounterTenderRow(scope.orderId, r, scope)");
+    expect(guard).toContain("isCounterTenderRow(scope.orderId, r, scope, scope.saleRows)");
     expect(guard).toContain("counterWindowClosed(tx, scope.tenantId, scope.registerKey");
     expect(guard).toContain('order.fulfillPath === "PICKUP"');
     // The shared lock is taken for any scoped invoice (counter sale OR pickup order), never conditional on counterSale alone.

@@ -1,7 +1,7 @@
 import { roundMoney } from "@routeflow/pricing";
 import type { DayCloseTotals } from "@routeflow/types";
 import { refundTenderOfColumn } from "../../../returns/refund-tender";
-import { isCounterTenderRow } from "../counter-tender-row";
+import { isCounterTenderRowIn, tenderSetOf, type TenderSet } from "../counter-tender-row";
 import {
   REFUND_METHOD_EXTERNAL,
   foldSummary,
@@ -13,8 +13,9 @@ import {
 
 /**
  * Counter day close: the PURE half. The Today's-sales fold (`foldSummary`) over a close window, with the till-cash rules applied:
- * a payment is TILL money only when it is a counter tender row (`isCounterTenderRow`, the one predicate the void shares, told the
- * order's kind: a counter sale's ungrouped row, or a POS-mode pickup hand-over's own-group row); a
+ * a payment is TILL money only when it is a counter tender row (`isCounterTenderRowIn`, the one predicate the void shares, told the
+ * order's kind and judged against the sale's set: a counter sale's leg row, a legacy ungrouped row, its own pickup hand-over
+ * row, or a POS-mode pickup hand-over's own-group row); a
  * payment on a counter invoice that is not (an office or driver payment, a deposited check) is shown apart as `notAtTill` and
  * never enters the expected cash. Store-credit applications are not money in. A refund with no recorded tender is never cash.
  */
@@ -29,7 +30,19 @@ export interface WindowPayment {
   status: string;
   paymentGroupId?: string | null;
   checkStatus?: string | null;
-  invoice?: { orderId: string | null; order?: { counterSale: boolean | null } | null } | null;
+  invoice?: {
+    orderId: string | null;
+    order?: {
+      counterSale: boolean | null;
+      /**
+       * The order's other payments that carry a group id (any invoice, a VOID row or a voided invoice's too): the SET the one tender predicate
+       * judges an ungrouped row against (is this sale's tender grouped, or a legacy ungrouped one?). Absent reads as none.
+       */
+      invoices?: ReadonlyArray<{
+        payments?: ReadonlyArray<{ paymentGroupId: string | null; status: string }>;
+      }> | null;
+    } | null;
+  } | null;
 }
 
 /** What the window's queries returned; `foldDayClose` is the only thing that reads it. */
@@ -53,6 +66,24 @@ const CREDIT_APPLICATIONS: readonly string[] = ["CREDIT_NOTE", "ADVANCE"];
 
 export function foldDayClose(facts: WindowFacts): DayCloseFold {
   const groups = new Map<string, number>();
+  // One sale SET per order, built once for all its rows: the order's other grouped payments (the facts read them nested)
+  // and the window's own rows of that order.
+  const inWindow = new Map<string, WindowPayment[]>();
+  for (const r of facts.payments) {
+    const id = r.invoice?.orderId ?? "";
+    inWindow.set(id, [...(inWindow.get(id) ?? []), r]);
+  }
+  const sets = new Map<string, TenderSet>();
+  const saleSetOf = (p: WindowPayment): TenderSet => {
+    const orderId = p.invoice?.orderId ?? "";
+    let set = sets.get(orderId);
+    if (!set) {
+      const nested = (p.invoice?.order?.invoices ?? []).flatMap((i) => i.payments ?? []);
+      set = tenderSetOf(orderId, [...nested, ...(inWindow.get(orderId) ?? [])]);
+      sets.set(orderId, set);
+    }
+    return set;
+  };
   let notAtTill = 0;
   let handOverCount = 0;
   let handOverCash = 0;
@@ -62,9 +93,12 @@ export function foldDayClose(facts: WindowFacts): DayCloseFold {
     if (CREDIT_APPLICATIONS.includes(p.method)) {
       groups.set(p.method, roundMoney((groups.get(p.method) ?? 0) + amount));
     } else if (
-      isCounterTenderRow(p.invoice?.orderId ?? "", p, {
-        counterSale: p.invoice?.order?.counterSale,
-      })
+      isCounterTenderRowIn(
+        p.invoice?.orderId ?? "",
+        p,
+        { counterSale: p.invoice?.order?.counterSale },
+        saleSetOf(p),
+      )
     ) {
       groups.set(p.method, roundMoney((groups.get(p.method) ?? 0) + amount));
       // Only the NON-counter clause makes a POS pickup hand-over: a counter order's own pickup cash is ordinary counter till

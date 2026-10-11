@@ -1,5 +1,6 @@
 import { planSaleTender, readStoredTender, type InvoiceRow } from "./counter-sale-tender";
 import { legGroupId } from "./counter-tender-row";
+import { pickupTenderGroupId } from "./pickup-tender-group";
 
 /** The pure half of the split tender: leg placement over the sale's invoices and row-to-leg attribution. */
 const inv = (id: string, total: number, payments: InvoiceRow["payments"] = []): InvoiceRow => ({
@@ -143,10 +144,65 @@ describe("readStoredTender: which row is which leg", () => {
     expect(s.byLeg.get(0)).toHaveLength(1);
   });
 
-  it("another order's group ids are not this sale's", () => {
+  it("another order's group ids are not this sale's tender at all (no second classifier: the ONE predicate decides)", () => {
     const a = inv("a", 70, [pay("p0", 30, "CREDIT_CARD", legGroupId("ord-OTHER", 0))]);
     const s = readStoredTender("ord-1", [a]);
-    expect(s.legacy).toBe(true);
+    expect(s.legacy).toBe(false);
+    expect(s.byLeg.size).toBe(0);
+  });
+
+  // A1: the legacy branch keeps ONLY what the one predicate calls the counter's own ungrouped tender.
+  describe("a sale with no leg-grouped row: only the predicate's ungrouped tender rows are leg 0's", () => {
+    it("the order's own pickup hand-over cash is another till event, not the sale's tender", () => {
+      const a = inv("a", 37.25, [pay("handover", 37.25, "CASH", pickupTenderGroupId("ord-1"))]);
+      const s = readStoredTender("ord-1", [a]);
+      expect(s.byLeg.size).toBe(0);
+      expect(s.legacy).toBe(false);
+    });
+
+    it("an office row with a random group id, an ACH row and a deposited check are not the sale's tender", () => {
+      const cash = pay("till", 37.25, "CASH");
+      const a = inv("a", 37.25, [
+        cash,
+        pay("office", 10, "CASH", "00000000-0000-4000-8000-000000000000"),
+        pay("ach", 10, "ACH"),
+        pay("zelle", 10, "ZELLE"),
+        { ...pay("dep", 10, "CHECK"), checkStatus: "DEPOSITED" } as never,
+      ]);
+      const s = readStoredTender("ord-1", [a]);
+      expect(s.legacy).toBe(true);
+      expect(s.byLeg.get(0)!.map((r) => r.payment.id)).toEqual(["till"]);
+    });
+
+    it("an ungrouped RECORDED check and card are the legacy tender", () => {
+      const a = inv("a", 40, [
+        { ...pay("chk", 10, "CHECK"), checkStatus: "RECORDED" } as never,
+        pay("card", 30, "CREDIT_CARD"),
+      ]);
+      expect(
+        readStoredTender("ord-1", [a])
+          .byLeg.get(0)!
+          .map((r) => r.payment.id),
+      ).toEqual(["chk", "card"]);
+    });
+  });
+
+  // A2: a VOIDED leg row still makes the sale 'grouped' (VOID rows never count as tender themselves).
+  it("a sale whose leg rows were ALL voided is still grouped: a later ungrouped office row is not its legacy tender", () => {
+    const a = inv("a", 70, [
+      { ...pay("p0", 30, "CASH", g0), status: "VOID" },
+      pay("office", 20, "CASH", null),
+    ]);
+    const s = readStoredTender("ord-1", [a]);
+    expect(s.legacy).toBe(false);
+    expect(s.byLeg.size).toBe(0);
+  });
+
+  it("evidence from a voided SIBLING invoice's leg row makes the sale grouped too", () => {
+    const live = inv("a", 20, [pay("office", 20, "CASH", null)]);
+    const s = readStoredTender("ord-1", [live], [{ paymentGroupId: g0 }]);
+    expect(s.legacy).toBe(false);
+    expect(s.byLeg.size).toBe(0);
   });
 
   it("a VOID tender row is not stored tender", () => {

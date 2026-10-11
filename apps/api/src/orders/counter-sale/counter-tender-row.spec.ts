@@ -197,11 +197,11 @@ describe("isCounterTenderRow / isForeignPaymentRow: the sale as a set", () => {
     expect(verdict(card, [cash, card])).toBe("tender");
   });
 
-  it("a VOID grouped row does not turn a legacy sale into a split one", () => {
+  it("a VOID grouped row still makes the sale a split one (it was rung on the split base): the ungrouped row is foreign, the VOID row neither", () => {
     const voided = leg(0, { status: "VOID" });
-    const legacy = row({});
-    expect(verdict(legacy, [voided, legacy])).toBe("tender");
-    expect(verdict(voided, [voided, legacy])).toBe("ignored");
+    const later = row({});
+    expect(verdict(later, [voided, later])).toBe("foreign");
+    expect(verdict(voided, [voided, later])).toBe("ignored");
   });
 
   it("the leg group id is a stable per-order, per-leg uuid", () => {
@@ -310,5 +310,29 @@ describe("tenderTakenCents: what the sale's own tender took", () => {
     expect(
       tenderTakenCents(ORDER, [pay(20), pay(30, { paymentGroupId: pickupTenderGroupId(ORDER) })]),
     ).toBe(2000);
+  });
+});
+
+// A2: the set keeps VOID rows for the "has a leg-grouped row" decision (a VOID row never counts as tender itself).
+describe("tenderSetOf: voided leg rows and the rest of the order still make the sale grouped", () => {
+  const voidedLeg = row({ paymentGroupId: legGroupId(ORDER, 0), status: "VOID" });
+  const office = row({});
+
+  it("a sale whose leg rows were ALL voided reads as grouped: a later ungrouped cash row is foreign, not legacy tender", () => {
+    expect(tenderSetOf(ORDER, [voidedLeg]).hasGrouped).toBe(true);
+    expect(isCounterTenderRow(ORDER, office, COUNTER, [voidedLeg, office])).toBe(false);
+    expect(isForeignPaymentRow(ORDER, office, COUNTER, [voidedLeg, office])).toBe(true);
+    // the voided row itself is neither
+    expect(isCounterTenderRow(ORDER, voidedLeg, COUNTER, [voidedLeg, office])).toBe(false);
+    expect(isForeignPaymentRow(ORDER, voidedLeg, COUNTER, [voidedLeg, office])).toBe(false);
+  });
+
+  it("counterTenderCashRows / tenderTakenCents judge the legacy rule with the same set (and the evidence rows)", () => {
+    const evidence = [{ paymentGroupId: legGroupId(ORDER, 1) }]; // a leg row on a voided sibling invoice
+    expect(counterTenderCashRows(ORDER, [office])).toEqual([office]);
+    expect(counterTenderCashRows(ORDER, [office], evidence)).toEqual([]);
+    const paid = { amount: 20, method: "CASH", status: "PAID", paymentGroupId: null };
+    expect(tenderTakenCents(ORDER, [paid])).toBe(2000);
+    expect(tenderTakenCents(ORDER, [paid], evidence)).toBe(0);
   });
 });

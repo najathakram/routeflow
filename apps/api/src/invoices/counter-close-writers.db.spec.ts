@@ -382,7 +382,8 @@ describeDb("the end-of-day close and every writer of till money, real Postgres (
 
   describe("the counter tender", () => {
     const till = { counterSale: true, registerKey: null };
-    const cash = { payment: { method: "CASH", amount: 40 } };
+    // the locked half of the tender takes the request's legs (one leg: the old `payment` alias)
+    const cash = [{ method: "CASH", amount: 40 }];
     const tender = (s: { tenantId: string; orderId: string }) =>
       tenantCtx.run(s.tenantId, () =>
         withAdvisoryLock(

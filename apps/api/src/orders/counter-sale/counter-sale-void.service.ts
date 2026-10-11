@@ -33,7 +33,7 @@ import { handBackOf } from "./counter-sale-void-handback";
 import { tenantDayWindow } from "./counter-sale-void-window";
 import { registerKeyOfOrder } from "../../returns/counter-close-lock";
 import { counterCloseShared } from "./counter-tender-window";
-import { isCounterTenderRow, isForeignPaymentRow } from "./counter-tender-row";
+import { isCounterTenderRow, isForeignPaymentRow, legGroupIds } from "./counter-tender-row";
 
 /** The void only ever sees a counter-sale order (step 1 refuses any other): the kind the tender predicate must be told. */
 const COUNTER_ORDER = { counterSale: true } as const;
@@ -232,7 +232,16 @@ export class CounterSaleVoidService {
             },
             orderBy: [{ invoiceId: "asc" }, { createdAt: "asc" }, { id: "asc" }],
           });
-    if (payments.some((p) => isForeignPaymentRow(orderId, p, COUNTER_ORDER, payments)))
+    // The set the predicate judges against is every payment row of the ORDER (a VOID row, a voided sibling invoice's):
+    // the same one the day close facts and the closed-day guard read, so the void and the close can never disagree on
+    // whether an ungrouped row is this sale's tender.
+    const legEvidence: Array<{ paymentGroupId: string | null; status: string }> =
+      (await tx.invoicePayment.findMany({
+        where: { paymentGroupId: { in: legGroupIds(orderId) }, invoice: { orderId } },
+        select: { paymentGroupId: true, status: true },
+      })) ?? [];
+    const saleRows = [...payments, ...legEvidence];
+    if (payments.some((p) => isForeignPaymentRow(orderId, p, COUNTER_ORDER, saleRows)))
       throw counterVoidForeignPayment();
 
     // 7. The window: the sale's createdAt on today's day in the tenant zone, read again here in the tx.
@@ -247,7 +256,7 @@ export class CounterSaleVoidService {
     });
     if (!allowed) throw counterVoidNotToday();
 
-    const tender = payments.filter((p) => isCounterTenderRow(orderId, p, COUNTER_ORDER, payments));
+    const tender = payments.filter((p) => isCounterTenderRow(orderId, p, COUNTER_ORDER, saleRows));
     // 7b. A closed day's totals never move (SA-750r3), evaluated under the shared close lock before any write: the sale's own
     // time (it counts as a sale of its day) and every tender payment this void reverses (money in, dated by paidAt).
     await counterPay.assertDatesOpen(
@@ -257,7 +266,7 @@ export class CounterSaleVoidService {
         registerKey: registerKeyOfOrder(order)!,
         counterSale: true,
         orderId,
-        saleRows: payments,
+        saleRows,
       },
       order.createdAt,
       ...tender.map((p) => p.paidAt),

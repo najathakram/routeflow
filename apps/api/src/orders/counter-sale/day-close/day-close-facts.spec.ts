@@ -131,8 +131,31 @@ describe("readWindowFacts: what is sent", () => {
       checkStatus: true,
       invoice: { select: { orderId: true, order: { select: { counterSale: true } } } },
     };
-    expect(calls[1].args.select).toEqual(select);
+    // the hand-over query (non-counter orders) reads exactly that; the counter query also reads, per order, the group ids of
+    // its other live payments: the one tender predicate judges an ungrouped row against the sale's set (SA-749r2)
     expect(calls[2].args.select).toEqual(select);
+    expect(calls[1].args.select).toEqual({
+      ...select,
+      invoice: {
+        select: {
+          orderId: true,
+          order: {
+            select: {
+              counterSale: true,
+              invoices: {
+                select: {
+                  payments: {
+                    // every payment of the order's invoices, VOID ones too: they still make the sale "grouped"
+                    where: { paymentGroupId: { not: null } },
+                    select: { paymentGroupId: true, status: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
   });
 
   it("countSalesSince counts live counter sales of the register from the cutoff on", async () => {

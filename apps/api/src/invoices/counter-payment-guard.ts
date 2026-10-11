@@ -10,7 +10,11 @@ import {
   counterWindowClosed,
   dayClosedConflict,
 } from "../returns/counter-close-window";
-import { isCounterTenderRow, type TenderRowShape } from "../orders/counter-sale/counter-tender-row";
+import {
+  isCounterTenderRow,
+  legGroupIds,
+  type TenderRowShape,
+} from "../orders/counter-sale/counter-tender-row";
 import { isTillCashRow } from "../orders/counter-sale/counter-till-cash";
 
 /**
@@ -29,11 +33,28 @@ export interface CounterPaymentScope {
   counterSale: boolean;
   /** The order's id: a pickup hand-over's group id (`pickupTenderGroupId`) derives from it. */
   orderId: string;
+  /**
+   * The sale's payment rows as the one predicate needs them as a SET: a row that carries one of the order's tender leg ids
+   * on ANY invoice of the order, VOID row or voided invoice included (at most one is read: it only says "this sale's tender
+   * is grouped"). Without it an ungrouped office payment on a grouped sale would read as legacy till tender here and as
+   * foreign money in the day close.
+   */
+  saleRows: ReadonlyArray<{ paymentGroupId?: string | null; status?: string }>;
 }
 
 type ScopeReader = {
   getTenantId: () => string | null;
   forTenant: () => {
+    invoicePayment: {
+      findMany: (args: {
+        where: {
+          paymentGroupId: { in: string[] };
+          invoice: { orderId: string };
+        };
+        select: { paymentGroupId: true; status: true };
+        take: 1;
+      }) => Promise<Array<{ paymentGroupId: string | null; status: string }>>;
+    };
     order: {
       findFirst: (args: {
         where: { invoices: { some: { id: string } } };
@@ -66,7 +87,20 @@ async function scope(
   const counterSale = order?.counterSale === true;
   if (!order || !(counterSale || order.fulfillPath === "PICKUP")) return null;
   const registerKey = order.registerKey ?? COUNTER_DEFAULT_REGISTER;
-  return { tenantId, registerKey, counterSale, orderId: order.id ?? "" };
+  const orderId = order.id ?? "";
+  // Only a counter sale's tender can carry a leg id; a POS pickup order's rows are judged by its own pickup id alone.
+  let saleRows: CounterPaymentScope["saleRows"] = [];
+  if (counterSale) {
+    saleRows = await prisma.forTenant().invoicePayment.findMany({
+      where: {
+        paymentGroupId: { in: legGroupIds(orderId) },
+        invoice: { orderId },
+      },
+      select: { paymentGroupId: true, status: true },
+      take: 1,
+    });
+  }
+  return { tenantId, registerKey, counterSale, orderId, saleRows };
 }
 
 /**
@@ -102,7 +136,7 @@ async function assertOpen(
 ): Promise<void> {
   if (!scope) return;
   for (const r of rows) {
-    if (r?.paidAt == null || !isCounterTenderRow(scope.orderId, r, scope)) continue;
+    if (r?.paidAt == null || !isCounterTenderRow(scope.orderId, r, scope, scope.saleRows)) continue;
     if (await counterWindowClosed(tx, scope.tenantId, scope.registerKey, new Date(r.paidAt)))
       throw dayClosedConflict();
   }
@@ -190,7 +224,7 @@ async function assertDatedOk(
     checkStatus: dto.method === "CHECK" ? "RECORDED" : null,
   };
   if (!scope) return given ?? new Date();
-  if (!isTillCashRow(orderId ?? "", row, scope)) {
+  if (!isTillCashRow(orderId ?? "", row, scope, scope.saleRows)) {
     // A CARD / CHECK / hand-over tender moves a close total too (moneyIn): its date may not sit inside a CLOSED window.
     // no given date: "now" is the DATABASE clock the close reads its cutoff from, as in the cash branch below
     const when = given ?? (await dbClockNow(tx));
@@ -235,7 +269,7 @@ async function assertEditDated(
     status: dto.status ?? stored.status ?? "PAID",
     paidAt: dto.paidAt ?? stored.paidAt,
   });
-  if (!dto.paidAt && isTillCashRow(orderId ?? "", stored, scope)) return;
+  if (!dto.paidAt && isTillCashRow(orderId ?? "", stored, scope, scope.saleRows)) return;
   const status = dto.status ?? stored.status ?? "PAID";
   await assertDatedOk(
     tx,

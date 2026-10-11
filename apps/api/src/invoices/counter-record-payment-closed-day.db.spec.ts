@@ -415,8 +415,7 @@ describeDb(
                 mode: "wait",
                 sharedAlso: counterCloseShared(s.tenantId, till),
               },
-              () =>
-                counterSale.tender({ payment: { method: "CASH", amount: 40 } }, s.orderId, till),
+              () => counterSale.tender([{ method: "CASH", amount: 40 }], s.orderId, till),
             ),
           );
 

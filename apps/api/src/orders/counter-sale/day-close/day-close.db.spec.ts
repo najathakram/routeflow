@@ -31,6 +31,7 @@ import { describeDb, requireLocalDatabaseUrl } from "../../../common/testing/db-
 import { PrismaService } from "../../../prisma/prisma.service";
 import { TenantContextService } from "../../../tenant/tenant-context.service";
 import { dbClockNow, lockCounterClose } from "../../../returns/counter-close-lock";
+import { legGroupId } from "../counter-tender-row";
 import { CounterDayCloseService } from "./day-close.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -409,6 +410,37 @@ describeDb("counter day close on real Postgres", () => {
     const isolated = await as("B", () => service.state("main", NOW));
     expect(isolated.preview.tillCash).toBe(77);
     expect(isolated.preview.totals.refunds.count).toBe(0);
+  }, 60_000);
+
+  it("a split sale: its leg rows are till money, an ungrouped office row beside them is not, and a legacy sale's ungrouped row is", async () => {
+    const REG = `split-${run}`;
+    const split = await sale({ registerKey: REG, total: 50 });
+    const legacy = await sale({ registerKey: REG, total: 12 });
+    // the sale's tender, as the split writer stores it: a card leg and a cash leg, each with the order's own leg group id
+    await pay(split, {
+      amount: 30,
+      method: "CREDIT_CARD",
+      at: "2026-10-08T15:00:00.000Z",
+      group: legGroupId(split.orderId, 0),
+    });
+    await pay(split, {
+      amount: 20,
+      at: "2026-10-08T15:00:00.000Z",
+      group: legGroupId(split.orderId, 1),
+    });
+    await pay(split, { amount: 6, at: "2026-10-08T15:30:00.000Z" }); // ungrouped: an office payment beside the legs
+    await pay(legacy, { amount: 12, at: "2026-10-08T15:40:00.000Z" }); // ungrouped, no leg row: the legacy tender
+
+    const state = await as("A", () => service.state(REG, NOW));
+    expect(state.preview.tillCash).toBe(32); // 20 (the cash leg) + 12 (the legacy sale); not the office 6
+    expect(state.preview.totals.moneyIn).toEqual({
+      cash: 32,
+      card: 30,
+      check: 0,
+      other: 0,
+      total: 62,
+    });
+    expect(state.preview.totals.notAtTill).toBe(6);
   }, 60_000);
 
   // ─── Reopen and re-close ───────────────────────────────────────────────────────────────────────

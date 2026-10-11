@@ -48,9 +48,34 @@ export async function readWindowFacts(
     checkStatus: true,
     invoice: { select: { orderId: true, order: { select: { counterSale: true } } } },
   } as const;
+  // The counter query also reads, per order, the group ids of its OTHER payments (VOID ones too): the one tender predicate judges an
+  // ungrouped row against the sale's set (a grouped sale's ungrouped row is an office payment, not till money).
+  const counterPaymentSelect = {
+    ...paymentSelect,
+    invoice: {
+      select: {
+        orderId: true,
+        order: {
+          select: {
+            counterSale: true,
+            invoices: {
+              select: {
+                payments: {
+                  // every payment row of the order's invoices, VOID ones too (the sale's set; money is summed from the
+                  // window's own PAID rows in the fold): a voided leg still makes the sale "grouped"
+                  where: { paymentGroupId: { not: null } },
+                  select: { paymentGroupId: true, status: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  } as const;
   const counterPayments = await db.invoicePayment.findMany({
     where: { AND: [taken, { invoice: { order: reg } }] },
-    select: paymentSelect,
+    select: counterPaymentSelect,
   });
   // SA-750r3 r-note (Train 4): a POS-mode pickup hand-over's tender is till cash of the register its order is stamped on. The
   // candidates are the Today's-sales hand-over query (PAID, dated in the window, non-counter PICKUP orders, group id set) with

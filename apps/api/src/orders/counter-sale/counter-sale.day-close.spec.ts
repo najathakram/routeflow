@@ -23,6 +23,7 @@ import { BadRequestException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import type { FulfilmentCapability } from "@routeflow/types";
 import { CounterSaleService } from "./counter-sale.service";
+import { legGroupId } from "./counter-tender-row";
 import { WalkInCustomerService } from "./walk-in-customer";
 import { FULFILMENT_CAPABILITY_READER } from "./fulfilment-capability-reader";
 import { OrdersService } from "../orders.service";
@@ -168,7 +169,7 @@ describe("CounterSaleService.ring — the day-close lock and window (SA-750r3)",
         reference: undefined,
         paidAt: DB_NOW.toISOString(),
       },
-      { tillLockHeld: true },
+      { tillLockHeld: true, paymentGroupId: legGroupId("ord-1", 0) },
     );
     expect(events).toEqual(["lock", "window-read", "record", "unlock"]);
     expect(prisma.counterDayClose.findFirst.mock.calls[0][0].where).toMatchObject({
@@ -261,21 +262,44 @@ describe("CounterSaleService.ring — the day-close lock and window (SA-750r3)",
     });
 
     it("a replay with nothing left to record and NO cash tender row anchoring it still only fills a NULL", async () => {
-      // the stored tender is a card row that already covers the balance: nothing to record, and no CASH row to anchor the figure
-      invoices[0].payments.push({
-        id: "pay-card",
-        amount: 37.25,
-        method: "CREDIT_CARD",
-        status: "PAID",
+      // SA-749r2 form of the rule: the card leg is stored (grouped), the cash leg has no row and NO room left (an office
+      // check took the rest of the invoice), so there is nothing to record and no CASH row anchors the figure. The first
+      // attempt stored the 20 handed over before any money moved; the replay carries the same 20 (another figure is 409).
+      // (A CASH request over a stored CARD row is now COUNTER_TENDER_CHANGED: the replay of a different tender.)
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        counterCashTendered: 20,
       });
+      invoices[0].payments.push(
+        {
+          id: "pay-card",
+          amount: 20,
+          method: "CREDIT_CARD",
+          status: "PAID",
+          paymentGroupId: legGroupId("ord-1", 0),
+        },
+        { id: "pay-office", amount: 17.25, method: "CHECK", status: "PAID", paymentGroupId: null },
+      );
       replay = true;
-      const r = await service.ring(body({ method: "CASH", amount: 40 }), staff, "k");
+      const r = await service.ring(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "p1", qty: 2, unitPrice: 5 }],
+          payments: [
+            { method: "CARD", amount: 20 },
+            { method: "CASH", amount: 20 },
+          ],
+        } as never,
+        staff,
+        "k",
+      );
       expect(r).toMatchObject({ replayed: true });
       expect(recordPayment).not.toHaveBeenCalled();
       expect(prisma.order.updateMany).toHaveBeenCalledTimes(1);
       expect(prisma.order.updateMany).toHaveBeenCalledWith({
         where: { id: "ord-1", counterCashTendered: null },
-        data: { counterCashTendered: 40 },
+        data: { counterCashTendered: 20 },
       });
     });
 
