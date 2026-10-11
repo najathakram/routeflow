@@ -1333,6 +1333,80 @@ describe("MF4 (Opus SHOULD-FIX 6, tightened): a completed catch-up session is cl
   });
 });
 
+describe("(b) sweepAwaiting has an exit when the subscription was cancelled at Stripe", () => {
+  const cancelledSub = (status = "canceled") => ({
+    [SUB]: { id: SUB, customer: "cus_1", latest_invoice: null, status },
+  });
+  const openInvoice = {
+    id: "in_1",
+    status: "open" as const,
+    subscription: SUB,
+    amountDue: 31000,
+    attemptCount: 1,
+    nextPaymentAttempt: 1791172800, // another attempt is scheduled: NOT definitively failed
+  };
+
+  it("cancelled at Stripe, nothing paid, the invoice still open: released - manual invoicing resumes, the invoice is voided (no claim frozen forever)", async () => {
+    const h = make(awaiting({ catchupInvoiceId: "in_1" }), [octOpen], {
+      invoices: [openInvoice],
+      subs: cancelledSub(),
+    });
+    await h.svc.sweep(NOW);
+    expect(h.sub()).toMatchObject({
+      catchupState: null,
+      catchupSessionId: null,
+      stripeSubId: null,
+      externalPayment: true,
+    });
+    expect(h.stripe.invoices.get("in_1")!.status).toBe("void");
+    expect(h.inv("inv_oct").status).toBe("OPEN"); // RouteFlow invoicing carries on
+  });
+
+  it("cancelled at Stripe before any invoice with money was stored: released too", async () => {
+    const h = make(awaiting({ catchupInvoiceId: null }), [octOpen], { subs: cancelledSub() });
+    await h.svc.sweep(NOW);
+    expect(h.sub()).toMatchObject({ catchupState: null, stripeSubId: null, externalPayment: true });
+  });
+
+  it("a subscription Stripe no longer knows (resource_missing) counts as gone", async () => {
+    const h = make(awaiting({ catchupInvoiceId: null }), [octOpen], { subs: {} });
+    await h.svc.sweep(NOW);
+    expect(h.sub()).toMatchObject({ catchupState: null, stripeSubId: null });
+  });
+
+  it("a PAID settling invoice wins over a cancelled subscription: it settles, it is not released", async () => {
+    const h = make(awaiting({ catchupInvoiceId: "in_1" }), [octOpen], {
+      invoices: [
+        { id: "in_1", status: "paid", subscription: SUB, amountDue: 31000, amountPaid: 31000 },
+      ],
+      subs: cancelledSub(),
+    });
+    await h.svc.sweep(NOW);
+    expect(h.inv("inv_oct").status).toBe("VOID");
+    expect(h.sub()).toMatchObject({ catchupState: null, externalPayment: false });
+    expect(h.stripe.calls.some((c) => c.startsWith("cancelSubscription"))).toBe(false);
+  });
+
+  it("a live subscription with an open invoice still being retried is left alone", async () => {
+    const h = make(awaiting({ catchupInvoiceId: "in_1" }), [octOpen], {
+      invoices: [openInvoice],
+      subs: cancelledSub("active"),
+    });
+    await h.svc.sweep(NOW);
+    expect(h.sub().catchupState).toBe("AWAITING_FIRST_PAYMENT");
+    expect(h.stripe.calls.some((c) => c.startsWith("cancelSubscription"))).toBe(false);
+  });
+
+  it("a payment still PROCESSING (ACH) defers the release even on a cancelled subscription", async () => {
+    const h = make(awaiting({ catchupInvoiceId: "in_1" }), [octOpen], {
+      invoices: [{ ...openInvoice, processing: true }],
+      subs: cancelledSub(),
+    });
+    await h.svc.sweep(NOW);
+    expect(h.sub().catchupState).toBe("AWAITING_FIRST_PAYMENT");
+  });
+});
+
 describe("nits", () => {
   it("the release's refused-because-paid NEEDS RULING is raised ONCE per invoice, not on every hourly retry", async () => {
     const h = make(awaiting({ catchupInvoiceId: "in_1" }), [octOpen], {

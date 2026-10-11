@@ -911,16 +911,39 @@ export class CatchupClaimService {
       if (invoiceId && facts)
         await this.setInvoiceIdBySub(row.tenantId, row.stripeSubId, invoiceId);
     }
-    if (!facts) return false;
-    if (invoiceIsPaid(facts)) return this.settle(row.tenantId, row.stripeSubId, facts, invoiceId);
-    if (invoiceDefinitivelyFailed(facts)) {
+    if (facts && invoiceIsPaid(facts)) {
+      return this.settle(row.tenantId, row.stripeSubId, facts, invoiceId);
+    }
+    if (facts && invoiceDefinitivelyFailed(facts)) {
       const r = await this.release(row.tenantId, {
         sessionId: row.catchupSessionId,
         reason: "sweep_failed",
       });
       return r !== "none";
     }
+    // (b) The subscription itself is gone at Stripe (cancelled by the customer, in the dashboard, by dunning's end)
+    // with nothing paid: no invoice will ever settle or fail this claim, and it would freeze the tenant's RouteFlow
+    // invoicing forever. Release it - Step 0 still defers to a PAID or PROCESSING invoice first.
+    if (await this.subscriptionGoneAtStripe(row.stripeSubId)) {
+      const r = await this.release(row.tenantId, {
+        sessionId: row.catchupSessionId,
+        reason: "sweep_subscription_cancelled",
+      });
+      return r !== "none";
+    }
     return false;
+  }
+
+  /** Cancelled / expired / unknown at Stripe. Any other read error says nothing and is rethrown (next run retries). */
+  private async subscriptionGoneAtStripe(subId: string): Promise<boolean> {
+    try {
+      const status = (await this.stripe.getSubscription(subId))?.status;
+      return status === "canceled" || status === "incomplete_expired";
+    } catch (err) {
+      const e = err as { code?: string; statusCode?: number };
+      if (e?.code === "resource_missing" || e?.statusCode === 404) return true;
+      throw err;
+    }
   }
 
   private async sweepSessionOpen(row: ClaimRow, now: Date): Promise<boolean> {
