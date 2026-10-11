@@ -214,7 +214,7 @@ export function CounterLineRow({
           <span className="block text-xs text-navy/70">
             {cartStrikesList(l, hideOriginalPrice) ? (
               <s className="mr-1 tabular-nums text-navy/50" data-testid="line-unit-price-was">
-                {money(l.listPrice)}
+                {money(l.listPrice ?? l.unitPrice)}
               </s>
             ) : null}
             <span className="tabular-nums" data-testid="line-unit-price">
