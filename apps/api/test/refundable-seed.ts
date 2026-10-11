@@ -240,6 +240,8 @@ export async function addInlineReturn(
     number: string;
     status: string;
     refundMethod?: string | null;
+    /** a driver-cap / already-returned hold awaiting approval: the held credit */
+    hold?: { reason: "DRIVER_CAP" | "ALREADY_RETURNED"; amount: number };
     items: Array<{
       invoice?: number;
       line: number;
@@ -262,6 +264,8 @@ export async function addInlineReturn(
       kind: "INLINE",
       returnNumber: opts.number,
       refundMethod: opts.refundMethod ?? null,
+      holdReason: opts.hold?.reason ?? null,
+      heldAmount: opts.hold?.amount ?? null,
       // the priced total, split as the capture stores it (the refund answers with exactly this figure)
       creditSubtotal: round2(opts.items.reduce((t, i) => t + i.subtotal, 0)),
       creditTax: round2(opts.items.reduce((t, i) => t + (i.taxAmount ?? 0), 0)),

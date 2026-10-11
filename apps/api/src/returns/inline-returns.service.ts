@@ -1315,8 +1315,15 @@ export class InlineReturnsService {
       ) {
         return { skipped: true as const };
       }
-      // SA-706c: as issueCredit() — the Order right after the Return, before restock/mint/insert.
-      await lockOrderRow(tx, tenantId, fresh.orderId);
+      // SA-706c: as issueCredit() - the Order right after the Return, before restock/mint/insert. SA-773: the held items'
+      // SOURCE Orders go in the same single id-sorted statement (the set and order capture and refund() take), so the
+      // remainder below is read under them and the Order never inverts against another locker of that set.
+      await lockRefundOrders(tx, tenantId, [
+        fresh.orderId,
+        ...(fresh.items as Array<{ sourceOrderId?: string | null }>)
+          .map((i) => i.sourceOrderId)
+          .filter((o): o is string => !!o),
+      ]);
       const heldAmount = roundMoney(Number(fresh.heldAmount ?? 0));
       const amount = dto?.amount != null ? roundMoney(dto.amount) : heldAmount;
       if (amount > heldAmount + 0.001) {
@@ -1329,6 +1336,15 @@ export class InlineReturnsService {
           "Approved amount must be greater than 0 — use reject() to decline a hold entirely",
         );
       }
+
+      // SA-773: a hold skipped the capture-time check (it credited nothing yet), so the goods' remainder is read HERE, before
+      // anything is restocked or minted. The stored items are at least the approved amount, so this fails closed. The held
+      // return excludes itself; an approval "with a reason" of goods already returned or credited is refused here too.
+      await assertInlineReturnWithinRemainder(tx, tenantId, {
+        returnId: id,
+        items: fresh.items as any[],
+        lockSourceInvoices: true,
+      });
 
       // HIGH-4: apply what capture() deferred — restock + regulated-ledger reversal — now
       // that an operator has actually approved the credit.

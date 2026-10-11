@@ -151,7 +151,15 @@ describe("order-lock callers: every settle / invoice-create caller declares its 
       expect(start).toBeGreaterThan(-1);
       const body = src.slice(start, start + 6000);
       const returnLock = body.indexOf('FROM "Return"');
-      const orderLock = body.indexOf("lockOrderRow(tx, tenantId, fresh.orderId)");
+      // approve() (SA-773) takes the carrying Order together with its held items' source Orders in ONE statement
+      const orderLock = Math.min(
+        ...[
+          "lockOrderRow(tx, tenantId, fresh.orderId)",
+          "lockRefundOrders(tx, tenantId, [\n        fresh.orderId",
+        ]
+          .map((n) => body.indexOf(n))
+          .filter((i) => i > -1),
+      );
       const firstWrite = Math.min(
         ...["restockReturnItems(", "issueCreditInTx("]
           .map((n) => body.indexOf(n))

@@ -30,6 +30,8 @@ export async function assertInlineReturnWithinRemainder(
     /** the invoices the returned lines sit on (already locked by the caller); resolved from the items' source lines when absent */
     invoiceIds?: readonly string[];
     items: Parameters<typeof inlineReturnRequests>[1];
+    /** the caller has NOT locked the source invoices (approve): lock the whole pool here, after the Orders it holds */
+    lockSourceInvoices?: boolean;
   },
 ): Promise<void> {
   const invoiceIds =
@@ -45,7 +47,8 @@ export async function assertInlineReturnWithinRemainder(
   // invoices is safe only because every locker of several invoices of one order takes the ORDER first (the caller holds it), so
   // two value-givers on the pool queue on the Order and the id order across the two statements cannot cycle.
   const group = await creditableGroupInvoiceIds(tx, invoiceIds);
-  if (group.some((id) => !invoiceIds.includes(id))) await lockRefundInvoices(tx, tenantId, group);
+  if (args.lockSourceInvoices || group.some((id) => !invoiceIds.includes(id)))
+    await lockRefundInvoices(tx, tenantId, group);
   const rem = await refundableRemainder(tx, { invoiceIds: group, excludeReturnId: args.returnId });
   assertWithinRefundable(
     rem,

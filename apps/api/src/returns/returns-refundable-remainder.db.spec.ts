@@ -418,6 +418,58 @@ describeDb("SA-773 the refund paths read the refundable remainder - real Postgre
     expect(third?.getStatus?.()).toBeGreaterThanOrEqual(400);
   });
 
+  const approve = (s: Seeded, id: string, dto: Record<string, unknown> = {}) =>
+    asTenant(s, () => inline.approve(id, staff(s), dto));
+  const heldReturn = (s: Seeded, reason: "DRIVER_CAP" | "ALREADY_RETURNED") =>
+    addInlineReturn(prisma, s, {
+      number: rtn(),
+      status: "RECEIVED",
+      hold: { reason, amount: 50 },
+      items: [{ line: 0, qty: 5, subtotal: 50 }],
+    });
+
+  it("T14: a driver's DRIVER_CAP hold of all 5 units ($50) on an invoice that already has a $50 amount-only credit note: approve is 409 and mints nothing (it minted $50 more)", async () => {
+    const s = await seed("t14", [{ lines: [{ product: "A", qty: 5, subtotal: 50 }] }]);
+    await addCreditNote(prisma, s, { number: cn(), invoice: 0, amount: 50 });
+    const held = await heldReturn(s, "DRIVER_CAP");
+    const err = await fail(approve(s, held.id));
+    expect(body(err)).toMatchObject({ code: "RETURN_EXCEEDS_REFUNDABLE", remainingValue: 0 });
+    const after = await row(held.id);
+    expect([after.status, after.creditNoteId, after.holdReason]).toEqual([
+      "RECEIVED",
+      null,
+      "DRIVER_CAP",
+    ]);
+    expect(await prisma.creditNote.count({ where: { tenantId: s.tenantId } })).toBe(1);
+    expect(await prisma.stockMovement.count({ where: { product: { tenantId: s.tenantId } } })).toBe(
+      0,
+    );
+  });
+
+  it("T15: goods already cash-refunded through a STANDARD return, a driver's ALREADY_RETURNED hold of the same goods: approve with a reason is 409 (a staff capture of them is refused, so approve cannot be the way round)", async () => {
+    const s = await seed("t15", [{ lines: [{ product: "A", qty: 5, subtotal: 50 }] }]);
+    await addStandardReturn(prisma, s, {
+      number: rtn(),
+      status: "REFUNDED",
+      items: [{ product: "A", qty: 5 }],
+      refundMethod: "EXTERNAL_REFUND",
+      refundAmount: 50,
+    });
+    const held = await heldReturn(s, "ALREADY_RETURNED");
+    const err = await fail(approve(s, held.id, { reason: "customer insists" }));
+    expect(body(err)).toMatchObject({ code: "RETURN_EXCEEDS_REFUNDABLE", remainingQty: 0 });
+    expect((await row(held.id)).creditNoteId).toBeNull();
+    expect(await prisma.creditNote.count({ where: { tenantId: s.tenantId } })).toBe(0);
+  });
+
+  it("T16: a hold nothing else has taken the goods of is approved and mints", async () => {
+    const s = await seed("t16", [{ lines: [{ product: "A", qty: 5, subtotal: 50 }] }]);
+    const held = await heldReturn(s, "DRIVER_CAP");
+    await approve(s, held.id);
+    const after = await row(held.id);
+    expect([after.status, after.creditNoteId === null]).toEqual(["REFUNDED", false]);
+  });
+
   it("T6: the check is made under the invoice lock: a credit note the lock holder commits while the refund waits is seen", async () => {
     const s = await seed("t6", [{ lines: [{ product: "A", qty: 4, subtotal: 20 }] }]);
     const ret = await pendingRefund(s, [{ line: 0, qty: 4, subtotal: 20 }]);

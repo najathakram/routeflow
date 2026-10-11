@@ -190,4 +190,53 @@ describe("InlineReturnsService.capture: the refundable remainder before an immed
       remainingValue: 30,
     });
   });
+
+  describe("approve() of a held capture reads the remainder before it restocks or mints", () => {
+    const held = (hold: string) => ({
+      id: "ret-held",
+      kind: "INLINE",
+      status: "RECEIVED",
+      holdReason: hold,
+      heldAmount: 50,
+      creditNoteId: null,
+      customerId: "cust-1",
+      orderId: "ord-carrying",
+      returnNumber: "RET-1",
+      items: [
+        {
+          productId: "prod-1",
+          qty: 5,
+          sourceOrderId: "src-order-1",
+          sourceInvoiceItemId: "invitem-1",
+          subtotal: 50,
+          taxAmount: 0,
+          categoryTax: 0,
+        },
+      ],
+    });
+
+    it.each(["DRIVER_CAP", "ALREADY_RETURNED"])(
+      "%s hold, the goods already credited by an amount-only note: 409 RETURN_EXCEEDS_REFUNDABLE, nothing restocked or minted",
+      async (hold) => {
+        amountOnly = [{ id: "cn-manual", invoiceId: "inv-1", amount: 50, status: "ISSUED" }];
+        prisma.return.findFirst.mockResolvedValue(held(hold));
+        const err = await failure(
+          service.approve("ret-held", OPERATOR, { reason: "checked" } as any),
+        );
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(err.getResponse()).toMatchObject({
+          code: "RETURN_EXCEEDS_REFUNDABLE",
+          remainingValue: 0,
+        });
+        expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+        expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it("nothing else took the goods: the approval mints as before", async () => {
+      prisma.return.findFirst.mockResolvedValue(held("DRIVER_CAP"));
+      await service.approve("ret-held", OPERATOR);
+      expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledTimes(1);
+    });
+  });
 });
