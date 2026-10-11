@@ -164,3 +164,6 @@ strix_runs/
 
 # #2865: planted trees from scripts/size-ratchet-gate.self-test.mjs (removed after each run).
 .size-ratchet-selftest/
+
+# graphify knowledge graph (local build output)
+graphify-out/
