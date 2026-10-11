@@ -2946,12 +2946,12 @@ export class InvoicesService {
     // directly would treat a due date of "2026-05-01" (midnight UTC) as overdue
     // any time after midnight UTC on that date, regardless of local timezone.
     // Business rule: grace period extends through the end of the due date.
-    const todayIso = new Date().toISOString().slice(0, 10);
     const revisedAt = await revisedAtByInvoice(
       this.prisma.forTenant(),
       data.map((i) => i.id),
     );
     const overdueBy = overdueCutoff(new Date(), tz);
+    const todayIso = overdueBy.toISOString().slice(0, 10); // the tenant's day, like isOverdue (and the deposit check)
     const computedData = data.map((inv) => {
       // F03/R1/T-B11s: CONFIRMED (PAID) payments only. An unconfirmed DRAFT
       // payment (e.g. a bulk bank-reconciliation entry an operator hasn't

@@ -27,8 +27,10 @@ export function deriveInvoiceDetailFields(
   // SA-770: balance and overdue come from the ONE classifier (RF-202: invoice due today is NOT
   // overdue). Row 308: `timeZone` is the invoice tenant's zone, resolved once per request by the caller,
   // so this flag agrees with the list filter and KPI tiles; a caller with no zone (null) judges the UTC day.
-  const { balanceDue, isOverdue } = classifyInvoiceBalance(inv, overdueCutoff(now, timeZone));
-  const todayIso = now.toISOString().slice(0, 10);
+  const cutoff = overdueCutoff(now, timeZone);
+  const { balanceDue, isOverdue } = classifyInvoiceBalance(inv, cutoff);
+  // The deposit's "today" is the same tenant-zone day (the cutoff is that day's UTC-midnight stamp).
+  const todayIso = cutoff.toISOString().slice(0, 10);
   const { depositAmount, depositOverdue } = computeDepositFields(inv, totalConfirmed, todayIso);
   return {
     balanceDue,

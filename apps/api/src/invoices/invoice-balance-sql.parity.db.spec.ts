@@ -486,6 +486,11 @@ describeDb("balanceDueSql — SQL <-> TS parity (SA-770), real Postgres", () => 
         { label: `zone-${tag}`, total: 100, payments: [] },
         { dueDate: DUE_SEP_20 },
       );
+      // a 50% deposit due the same day: depositOverdue must follow the tenant's day too (review nit)
+      await prisma.invoice.update({
+        where: { id },
+        data: { depositPercent: 50, depositDueDate: DUE_SEP_20 },
+      });
       const tenantCutoff = overdueCutoff(now, zone);
       const utcCutoff = overdueCutoff(now, null);
 
@@ -512,9 +517,11 @@ describeDb("balanceDueSql — SQL <-> TS parity (SA-770), real Postgres", () => 
         // the plain list ships the tenant-zone flag on the row (was the UTC flag)
         const plain: any = await atClock(now, () => service.findAll({} as any));
         expect(plain.data.find((r: any) => r.id === id).isOverdue).toBe(overdueForTenant);
+        expect(plain.data.find((r: any) => r.id === id).depositOverdue).toBe(overdueForTenant);
         // the detail read agrees with the list row
         const detail: any = await atClock(now, () => service.findOne(id));
         expect(detail.isOverdue).toBe(overdueForTenant);
+        expect(detail.depositOverdue).toBe(overdueForTenant);
         // the KPI tiles bucket it the same way (overdue vs due-today), whatever day the viewer sends
         const kpi = await atClock(now, () =>
           computeInvoiceKpiSummary(
