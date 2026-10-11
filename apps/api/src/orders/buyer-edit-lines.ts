@@ -185,8 +185,9 @@ export function guardBuyerEditLineIds(
   isDiffPayload: boolean,
 ): void {
   const items = dto.items ?? [];
-  if (!opts?.buyerLineIds) assertNoOrderItemIdOutsideBuyerEdit(items);
-  else if (user?.role === "CUSTOMER" && !isDiffPayload) {
+  // A diff payload (a per-line change by `id`) is not the replace-by-line contract: never silently ignored.
+  if (!opts?.buyerLineIds || isDiffPayload) assertNoOrderItemIdOutsideBuyerEdit(items);
+  else if (user?.role === "CUSTOMER") {
     preflightBuyerEditLines(items, order.lineItems ?? [], dto.namesLines);
   }
 }

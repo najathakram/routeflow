@@ -30,7 +30,7 @@ class UpdateOrderItemDto {
    * B297 row 352 — BUYER edit only (PATCH /buyer/orders/:id/items): the stored line this entry edits. It keeps
    * the rate it was sold at; an entry without it is a new line (or, for one release, the line of its product
    * when exactly one exists). An id that is not a line of this order, or is another product's, is a 400.
-   * Staff edits name a line with `id`; this field is ignored there.
+   * Staff edits name a line with `id`; an entry carrying this field there is refused (400), never ignored.
    */
   @IsOptional()
   @IsString()

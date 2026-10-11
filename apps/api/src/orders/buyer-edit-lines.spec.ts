@@ -3,6 +3,7 @@ import {
   BUYER_EDIT_IDLESS_FALLBACK,
   applyBuyerEditLines,
   assertNoOrderItemIdOutsideBuyerEdit,
+  guardBuyerEditLineIds,
   preflightBuyerEditLines,
   resolveBuyerEditLines,
   type StoredEditLine,
@@ -259,6 +260,48 @@ describe("refusals can run before anything commits (preflight)", () => {
         [{ productId: "p1", qty: 1 }],
         [line("L1", 0.05), line("L2", 0.07)],
         true,
+      ),
+    ).not.toThrow();
+  });
+});
+
+describe("guardBuyerEditLineIds routes each caller to the right check", () => {
+  const order = { lineItems: [line("L1", 0.05)] };
+  const items = [{ productId: "p1", qty: 1, orderItemId: "L1" }];
+  const customer = { role: "CUSTOMER" };
+
+  it("a buyer replace-all runs the line-id preflight", () => {
+    expect(() =>
+      guardBuyerEditLineIds(
+        order,
+        { items: [{ ...items[0], orderItemId: "NOPE" }] },
+        customer,
+        { buyerLineIds: true },
+        false,
+      ),
+    ).toThrow(BadRequestException);
+    expect(() =>
+      guardBuyerEditLineIds(order, { items }, customer, { buyerLineIds: true }, false),
+    ).not.toThrow();
+  });
+
+  it("a buyer DIFF payload carrying an orderItemId is refused, not ignored", () => {
+    expect(() =>
+      guardBuyerEditLineIds(order, { items }, customer, { buyerLineIds: true }, true),
+    ).toThrow(BadRequestException);
+  });
+
+  it("a caller without buyerLineIds is refused when an entry carries one", () => {
+    expect(() =>
+      guardBuyerEditLineIds(order, { items }, { role: "OPERATOR" }, undefined, false),
+    ).toThrow(BadRequestException);
+    expect(() =>
+      guardBuyerEditLineIds(
+        order,
+        { items: [{ productId: "p1", qty: 1 }] },
+        { role: "OPERATOR" },
+        undefined,
+        false,
       ),
     ).not.toThrow();
   });
