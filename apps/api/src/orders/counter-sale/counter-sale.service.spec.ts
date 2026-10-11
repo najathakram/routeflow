@@ -1533,4 +1533,14 @@ describe("CounterSaleService.ring", () => {
       });
     });
   });
+  // Row 322a: the read-back serves the stored lines in a STABLE order, so two lines of one product keep their order
+  // across the POST, a replay and GET .../by-key (the web matches its cart lines to them product + price).
+  it("reads the invoice lines back in a stable order (createdAt, then id)", async () => {
+    await service.ring(named({ method: "ON_ACCOUNT" }) as never, staff);
+    const reads = prisma.invoice.findMany.mock.calls.map(([a]: [any]) => a);
+    expect(reads.length).toBeGreaterThan(0);
+    for (const a of reads) {
+      expect(a.include.items.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+    }
+  });
 });
