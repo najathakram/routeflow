@@ -368,6 +368,32 @@ describe("SA-733r7 PR-B3 structural pins", () => {
       expect(fn).not.toMatch(/\/\s*100\b/);
     });
 
+    it("A1: ONE switch (dunningEmailsFor) decides which dunning email path sends; no sender bypasses it", () => {
+      const sendsDunning = walk(path.join(SRC, "billing")).filter((f) =>
+        /\bnotifyDunning\(|\bsendPaymentFailedEmail\(/.test(code(read(f))),
+      );
+      const names = sendsDunning.map((f) => path.basename(f)).sort();
+      expect(names).toEqual(
+        [
+          "billing-notification.service.ts",
+          "billing.service.ts",
+          "dunning-milestones.ts",
+          "dunning.service.ts",
+        ].sort(),
+      );
+      for (const f of sendsDunning) {
+        if (path.basename(f) === "billing-notification.service.ts") continue; // the sender itself (callers gate)
+        expect(code(read(f))).toMatch(/\bdunningEmailsFor\(/);
+      }
+    });
+
+    it("A1: the failed-payment email (master #2440) is sent only on the legacy path", () => {
+      const src = code(read(path.join(SRC, "billing", "billing.service.ts")));
+      expect(src).toMatch(
+        /dunningEmailsFor\([^)]*\)\s*===\s*"legacy_failed_payment"[\s\S]{0,200}sendPaymentFailedEmail\(/,
+      );
+    });
+
     it("the d0-sentAt lookup is gone (a stamp is always the stamp time)", () => {
       const all = dunningFiles()
         .map((f) => code(read(f)))

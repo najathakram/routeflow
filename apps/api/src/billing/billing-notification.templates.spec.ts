@@ -9,6 +9,7 @@ import {
   suspendedTemplate,
   checkoutPlanNotAppliedTemplate,
   billingSettingsUrl,
+  dunningTemplate,
 } from "./billing-notification.templates";
 
 describe("billing-notification.templates", () => {
@@ -247,6 +248,48 @@ describe("billing-notification.templates", () => {
       expect(t.text).toContain("NOT changed");
       expect(t.html).toContain("/settings/billing");
       expect(t.html).not.toContain("<b>SCALE</b>");
+    });
+  });
+
+  describe("dunning d0 copy is keyed by whether Stripe ATTEMPTED the invoice (SA r-note 5 A1)", () => {
+    const base = {
+      kind: "d0" as const,
+      businessName: "Acme",
+      adminName: "Sam",
+      payUrl: "https://pay.example.test/i/in_1",
+    };
+
+    it("attempted: 'We couldn't process your payment ... we'll try again'", () => {
+      const t = dunningTemplate({ ...base, attempted: true });
+      expect(t.text).toMatch(/couldn't process/i);
+      expect(t.text).toMatch(/try again/i);
+      expect(t.subject).toMatch(/payment failed/i);
+    });
+
+    it("never attempted: 'Your <period> invoice for $X is open - pay it here', no failure language", () => {
+      const t = dunningTemplate({
+        ...base,
+        attempted: false,
+        periodLabel: "October 2026",
+        amountCents: 4900,
+        currency: "usd",
+      });
+      expect(t.text).toContain("Your October 2026 invoice for $49.00 is open");
+      expect(t.text).toMatch(/pay it here/i);
+      expect(t.text).toContain(base.payUrl);
+      for (const part of [t.subject, t.text]) {
+        expect(part).not.toMatch(/couldn't process|unable to process|payment failed|try again/i);
+      }
+    });
+
+    it("never attempted, no period or amount known: still truthful ('Your subscription invoice is open')", () => {
+      const t = dunningTemplate({ ...base, attempted: false });
+      expect(t.text).toContain("Your subscription invoice is open");
+      expect(t.text).not.toMatch(/undefined|null|NaN/);
+    });
+
+    it("the attempted flag is absent (older callers): behaves as attempted, the long-standing copy", () => {
+      expect(dunningTemplate({ ...base }).text).toMatch(/couldn't process/i);
     });
   });
 });

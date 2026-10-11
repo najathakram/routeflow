@@ -2658,13 +2658,91 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       expect(prisma.tenantSubscription.update).toHaveBeenCalledTimes(1);
     });
 
-    // SA-733r7 PR-B3: B410's direct email is GONE - the d0 notice is DunningService's (BillingNotificationLog,
-    // keyed by invoice), so a failure sends no email and creates no portal session from here.
-    it("PR-B3: sends NO direct email and creates no billing-portal session (B410 removed)", async () => {
-      const { svc, stripe, email } = make({ sub: FAILING });
-      await (svc as any).onPaymentFailed(failed());
-      expect(email.send).not.toHaveBeenCalled();
-      expect(stripe.createBillingPortalSession).not.toHaveBeenCalled();
+    // SA r-note 5 A1: dark is SILENT to tenants. In off AND dark a real invoice.payment_failed sends exactly master's
+    // #2440 admin email (one per event, portal link best-effort); the dunning milestone series replaces it ONLY in
+    // enforced, so a tenant is never told twice and never told by the milestone series in dark.
+    describe("A1: the #2440 failed-payment email (restored) vs the enforced milestone series", () => {
+      const saved = process.env.BILLING_PAUSE_MODE;
+      afterEach(() => {
+        if (saved === undefined) delete process.env.BILLING_PAUSE_MODE;
+        else process.env.BILLING_PAUSE_MODE = saved;
+      });
+
+      it.each(["dark", "off"])(
+        "%s: a real payment_failed sends exactly ONE admin email carrying the billing-portal link",
+        async (m) => {
+          process.env.BILLING_PAUSE_MODE = m;
+          const { svc, stripe, email } = make({ sub: FAILING });
+          await (svc as any).onPaymentFailed(failed());
+          expect(stripe.createBillingPortalSession.mock.calls[0][0]).toEqual(
+            expect.objectContaining({ customerId: "cus_1" }),
+          );
+          expect(email.send).toHaveBeenCalledTimes(1);
+          const mail = email.send.mock.calls[0][0];
+          expect(mail.subject).toBe("Payment failed — Acme");
+          expect(mail.html).toContain("https://billing.stripe.test/p/session_1");
+          expect(mail.html).toContain("<strong>3 days</strong>");
+        },
+      );
+
+      it("default mode (unset = dark) is the same: the email goes out", async () => {
+        delete process.env.BILLING_PAUSE_MODE;
+        const { svc, email } = make({ sub: FAILING });
+        await (svc as any).onPaymentFailed(failed());
+        expect(email.send).toHaveBeenCalledTimes(1);
+      });
+
+      it("enforced: the direct email is replaced by the milestone series (no direct email, no portal session)", async () => {
+        process.env.BILLING_PAUSE_MODE = "enforced";
+        const { svc, stripe, email } = make({ sub: FAILING });
+        await (svc as any).onPaymentFailed(failed());
+        expect(email.send).not.toHaveBeenCalled();
+        expect(stripe.createBillingPortalSession).not.toHaveBeenCalled();
+      });
+
+      // #2476 Opus MED fold: the portal call runs inside the webhook claim lease - capped.
+      it("#2476: the payment-failed portal call is capped (10 s, no network retries)", async () => {
+        process.env.BILLING_PAUSE_MODE = "dark";
+        const { svc, stripe } = make({ sub: FAILING });
+        await (svc as any).onPaymentFailed(failed());
+        expect(stripe.createBillingPortalSession).toHaveBeenCalledWith(
+          expect.objectContaining({ customerId: "cus_1" }),
+          { timeoutMs: 10_000, maxNetworkRetries: 0 },
+        );
+      });
+
+      it("a portal failure still sends the email, with today's fallback text", async () => {
+        process.env.BILLING_PAUSE_MODE = "dark";
+        const { svc, stripe, email } = make({ sub: FAILING });
+        stripe.createBillingPortalSession.mockRejectedValue(new Error("portal down"));
+        await (svc as any).onPaymentFailed(failed());
+        expect(email.send).toHaveBeenCalledTimes(1);
+        expect(email.send.mock.calls[0][0].html).toContain("contacting support");
+      });
+
+      // #2476 / SA-472: the increment is the event's effect; a later throw must never fail the handler.
+      it("#2476: an admin lookup that throws AFTER the increment never fails the handler (count once)", async () => {
+        process.env.BILLING_PAUSE_MODE = "dark";
+        const { svc, prisma, email } = make({ sub: FAILING });
+        prisma.user.findFirst.mockRejectedValue(new Error("db blip"));
+        const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
+        await expect((svc as any).onPaymentFailed(failed())).resolves.toBeUndefined();
+        expect(prisma.tenantSubscription.update).toHaveBeenCalledTimes(1);
+        expect(email.send).not.toHaveBeenCalled();
+        expect(warn.mock.calls.some((c: any[]) => /payment-failed email/i.test(String(c[0])))).toBe(
+          true,
+        );
+      });
+
+      it("another customer's subscription id, or an invoice with no subscription: no count, no email", async () => {
+        process.env.BILLING_PAUSE_MODE = "dark";
+        const other = make({ sub: { ...FAILING, stripeCustomerId: "cus_other" } });
+        await (other.svc as any).onPaymentFailed(failed());
+        expect(other.email.send).not.toHaveBeenCalled();
+        const none = make({ sub: { ...FAILING, stripeSubId: null } });
+        await (none.svc as any).onPaymentFailed({ customer: "cus_1" });
+        expect(none.email.send).not.toHaveBeenCalled();
+      });
     });
 
     it("#2476: the user-facing portal session keeps Stripe's default request options", async () => {

@@ -1186,6 +1186,108 @@ describe("DunningService", () => {
     });
   });
 
+  describe("A1 (SA r-note 5): dark and off are SILENT to tenants - stamp and log only", () => {
+    const H = 3_600_000;
+    const T = new Date("2026-11-09T04:00:00Z");
+    const pausedRowT = () =>
+      row({
+        pastDueSince: T,
+        pausedAt: new Date("2026-11-08T09:00:00Z"),
+        tenant: {
+          status: "READ_ONLY",
+          readOnlyReason: "payment_overdue",
+          deletedAt: null,
+          class: "PRODUCTION",
+        },
+      });
+    const noMail = (d: ReturnType<typeof make>) => {
+      expect(d.notifications.notifyDunning).not.toHaveBeenCalled();
+      expect(d.notifications.recordDunningMilestone).not.toHaveBeenCalled();
+    };
+
+    it.each(["dark", "off"])(
+      "%s: a real payment_failed stamps (dark) and sends NO dunning notice",
+      async (m) => {
+        mode(m);
+        const d = make({ row: row({ pastDueInvoiceId: null, pastDueSince: null }) });
+        const out = await d.svc.onPaymentFailed(invoice(), T);
+        expect(out).toBe(m === "dark" ? "stamped" : "off");
+        noMail(d);
+      },
+    );
+
+    it.each([1, 80, 150, 200])(
+      "dark: an ACTIVE clocked tenant at +%i h gets no d0/d3/d6/final and nothing is recorded as skipped",
+      async (h) => {
+        mode("dark");
+        const d = make({ sweepRows: [row({ pastDueSince: T })] });
+        await d.svc.sweep(new Date(T.getTime() + h * H));
+        noMail(d);
+      },
+    );
+
+    it("dark: a PAUSED tenant (paused while enforced) gets no PAUSED_STILL_OWED either", async () => {
+      mode("dark");
+      const d = make({ sweepRows: [pausedRowT()] });
+      await d.svc.sweep(new Date(T.getTime() + 3 * H));
+      noMail(d);
+    });
+
+    it("off sweeps nothing at all", async () => {
+      mode("off");
+      const d = make({ sweepRows: [row({ pastDueSince: T })] });
+      await d.svc.sweep(new Date(T.getTime() + 200 * H));
+      noMail(d);
+    });
+
+    it("enforced: the milestone series still goes out (d0 on the stamp)", async () => {
+      mode("enforced");
+      const d = make({ row: row({ pastDueInvoiceId: null, pastDueSince: null }) });
+      await d.svc.onPaymentFailed(invoice(), T);
+      expect(d.notifications.notifyDunning).toHaveBeenCalledWith(
+        "t1",
+        "DUNNING_D0",
+        ep(T),
+        "d0",
+        expect.anything(),
+      );
+    });
+
+    it("enforced: d0 is told whether Stripe ATTEMPTED the invoice (attempt_count > 0) so the copy stays truthful", async () => {
+      mode("enforced");
+      const tried = make({ row: row({ pastDueInvoiceId: null, pastDueSince: null }) });
+      await tried.svc.onPaymentFailed(invoice(), T); // OPEN_FACTS.attemptCount = 3
+      expect(tried.notifications.notifyDunning.mock.calls[0][4]).toMatchObject({ attempted: true });
+
+      const untried = make({
+        row: row({ pastDueInvoiceId: null, pastDueSince: null }),
+        facts: { ...OPEN_FACTS, attemptCount: 0 },
+      });
+      await untried.svc.onPaymentFailed(invoice(), T);
+      expect(untried.notifications.notifyDunning.mock.calls[0][4]).toMatchObject({
+        attempted: false,
+        amountCents: 4900,
+        invoiceNumber: "INV-0042",
+      });
+    });
+
+    it("enforced sweep: a discovery-stamped (never attempted) clock's d0 carries attempted:false", async () => {
+      mode("enforced");
+      const d = make({
+        sweepRows: [row({ pastDueSince: T })],
+        facts: { ...OPEN_FACTS, attemptCount: 0 },
+      });
+      await d.svc.sweep(new Date(T.getTime() + 1 * H));
+      expect(d.notifications.notifyDunning).toHaveBeenCalledWith(
+        "t1",
+        "DUNNING_D0",
+        ep(T),
+        "d0",
+        expect.objectContaining({ attempted: false }),
+      );
+    });
+  });
+
   describe("G8: a PAUSED tenant is told ONCE per episode that it is still read-only (no d0/d3/d6/final)", () => {
     const P = new Date("2026-11-09T04:00:00Z"); // the clock was moved to this invoice while the tenant stays paused
     const H = 3_600_000;
