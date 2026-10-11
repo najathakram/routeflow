@@ -374,9 +374,47 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
   });
 
   describe("suspendOverdueTenants (→ SUSPENDED)", () => {
-    it("emits a NEGATIVE delta via an ACTIVE→SUSPENDED CAS when Stripe confirms past_due", async () => {
+    // SA r-note 5 A2 (N5): payment overdue never SUSPENDS. Dunning owns non-payment (the 7-day grace, then
+    // READ_ONLY + pay); this cron keeps only its `canceled` arm (a subscription the tenant ended).
+    describe("A2: past_due / unpaid never change a status, in EVERY pause mode", () => {
+      const saved = process.env.BILLING_PAUSE_MODE;
+      afterEach(() => {
+        if (saved === undefined) delete process.env.BILLING_PAUSE_MODE;
+        else process.env.BILLING_PAUSE_MODE = saved;
+      });
+      it.each([
+        ["past_due", "off"],
+        ["past_due", "dark"],
+        ["past_due", "enforced"],
+        ["unpaid", "off"],
+        ["unpaid", "dark"],
+        ["unpaid", "enforced"],
+      ])("Stripe %s in %s: no transition, no MRR event, no notification", async (status, m) => {
+        process.env.BILLING_PAUSE_MODE = m;
+        const { svc, prisma, tx, events, billingNotification } = make({
+          stripeStatus: status,
+          transitionCount: 1,
+        });
+        await svc.suspendOverdueTenants();
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+        expect(events.emit).not.toHaveBeenCalled();
+        expect(billingNotification.notifySuspended).not.toHaveBeenCalled();
+      });
+
+      it("the `canceled` arm is untouched: it still suspends (row 335 follow-up decides its future)", async () => {
+        const { svc, tx } = make({ stripeStatus: "canceled", transitionCount: 1 });
+        await svc.suspendOverdueTenants();
+        expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
+          where: { id: "t1", status: "ACTIVE" },
+          data: { status: "SUSPENDED" },
+        });
+      });
+    });
+
+    it("emits a NEGATIVE delta via an ACTIVE→SUSPENDED CAS when Stripe confirms the subscription is canceled", async () => {
       const { svc, tx, events } = make({
-        stripeStatus: "unpaid",
+        stripeStatus: "canceled",
         transitionCount: 1,
         addons: [{ priceSnapshot: 12, quantity: 2 }],
       });
@@ -396,7 +434,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       ["a soft-deleted tenant", { deletedAt: new Date("2026-09-01"), class: "PRODUCTION" }],
     ])("#2045: %s — the suspension applies but books no delta", async (_label, row) => {
       const { svc, tx, events } = make({
-        stripeStatus: "unpaid",
+        stripeStatus: "canceled",
         transitionCount: 1,
         addons: [{ priceSnapshot: 12, quantity: 2 }],
       });
@@ -409,19 +447,19 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
     });
 
     it("N3: notifies the tenant admin with reason 'overdue payment' only when the suspension actually applied", async () => {
-      const { svc, billingNotification } = make({ stripeStatus: "unpaid", transitionCount: 1 });
+      const { svc, billingNotification } = make({ stripeStatus: "canceled", transitionCount: 1 });
       await svc.suspendOverdueTenants();
       expect(billingNotification.notifySuspended).toHaveBeenCalledWith("t1", "overdue payment");
     });
 
     it("N3: does NOT notify when the CAS lost the race (already suspended elsewhere)", async () => {
-      const { svc, billingNotification } = make({ stripeStatus: "unpaid", transitionCount: 0 });
+      const { svc, billingNotification } = make({ stripeStatus: "canceled", transitionCount: 0 });
       await svc.suspendOverdueTenants();
       expect(billingNotification.notifySuspended).not.toHaveBeenCalled();
     });
 
     it("N3: a rejected notifySuspended never blocks the cron tick", async () => {
-      const { svc, billingNotification } = make({ stripeStatus: "unpaid", transitionCount: 1 });
+      const { svc, billingNotification } = make({ stripeStatus: "canceled", transitionCount: 1 });
       billingNotification.notifySuspended.mockRejectedValueOnce(new Error("email down"));
       await expect(svc.suspendOverdueTenants()).resolves.toBeUndefined();
     });
@@ -1614,7 +1652,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
   it("pin B216: suspending an overdue tenant leaves a scheduled downgrade armed", async () => {
     const { svc, prisma, tx } = make({
       sub: armedSub({ stripeSubId: "sub_1" }),
-      stripeStatus: "unpaid",
+      stripeStatus: "canceled",
       transitionCount: 1,
     });
     await svc.suspendOverdueTenants();
