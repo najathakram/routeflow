@@ -1391,7 +1391,9 @@ export class ReturnsService {
         if (!fresh) throw new NotFoundException("Return not found");
         if (fresh.kind === "INLINE")
           throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
-        // the first read saw RECEIVED: a return that is not any more was resolved by another request while this one waited
+        // The first read (above the locks) is 400 "Only RECEIVED returns can be refunded", as ever. This re-read, under the Return lock,
+        // is 409 with the same text: the return was RECEIVED a moment ago, so another request resolved it while this one waited
+        // (the loser of two refunds). Lead ruling: 400 before the lock, 409 in it.
         if (fresh.status !== "RECEIVED") throw refundAlreadyResolved();
         const orderId = ret.order?.id ?? ret.orderId;
         if (orderId) await lockRefundOrders(tx, tenantId, [orderId]);

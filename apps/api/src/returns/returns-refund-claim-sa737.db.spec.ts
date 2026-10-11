@@ -480,12 +480,12 @@ describeDb("SA-737 the STANDARD refund claim under the Order lock — real Postg
           ),
         ),
       );
-    const credit = (s: Seed) =>
+    const credit = (s: Seed, invoiceIndex = 0) =>
       settle(
         asTenant(s, () =>
           creditNotes.create({
             customerId: s.customerId,
-            invoiceId: s.invoiceIds[0],
+            invoiceId: s.invoiceIds[invoiceIndex],
             amount: 5,
             reason: "sa737 deadlock probe",
           }),
@@ -512,23 +512,38 @@ describeDb("SA-737 the STANDARD refund claim under the Order lock — real Postg
       },
     );
 
+    // creditNotes.create takes the ORDER row only when the order has 2+ creditable invoices (lockOrderPoolRows); on a lone
+    // invoice it takes the INVOICE row alone. So the barrier is the Order lock for a two-invoice order and the Invoice lock
+    // for a one-invoice order: in both shapes the refund and the credit note queue on the same row, and the two money-out
+    // writes are on different money (a $20 recorded refund, a $5 credit note), so BOTH must land.
     it.each([
-      ["refund first", true],
-      ["credit note first", false],
+      ["two invoices, Order barrier", 2, true, true],
+      ["two invoices, Order barrier", 2, false, true],
+      ["one invoice, Invoice barrier", 1, true, false],
+      ["one invoice, Invoice barrier", 1, false, false],
     ])(
-      "recorded refund vs creditNotes.create on the same order (%s): neither is a deadlock",
-      async (_label, refundFirst) => {
-        const s = await seed(`t5n-${refundFirst ? "r" : "n"}`);
-        const h = await holder(lockOrder(s.orderId));
+      "recorded refund vs creditNotes.create (%s, refund first: %s): both land, no 40P01",
+      async (_label, invoiceCount, refundFirst, orderBarrier) => {
+        const s = await seed(`t5n-${invoiceCount}${refundFirst ? "r" : "n"}`, invoiceCount);
+        // the credit note goes on the LAST invoice; the refunded item sits on the first (the same one on a lone invoice)
+        const creditIndex = invoiceCount - 1;
+        const h = await holder(orderBarrier ? lockOrder(s.orderId) : lockInvoice(s.invoiceIds[0]));
         const started: Array<Promise<Outcome>> = [];
-        started.push(refundFirst ? refund(s, "EXTERNAL_REFUND") : credit(s));
+        started.push(refundFirst ? refund(s, "EXTERNAL_REFUND") : credit(s, creditIndex));
         const first = await waitForWaiters(1);
-        started.push(refundFirst ? credit(s) : refund(s, "EXTERNAL_REFUND"));
+        started.push(refundFirst ? credit(s, creditIndex) : refund(s, "EXTERNAL_REFUND"));
         const both = await waitForWaiters(2);
         await h.commit();
         const outs = await Promise.all(started);
         expect({ first, both }).toEqual({ first: true, both: true });
         expect(outs.some(deadlocked)).toBe(false);
+        expect(outs.map((o) => (o.ok ? "ok" : (codeOf(o) ?? String(o.e?.message))))).toEqual([
+          "ok",
+          "ok",
+        ]);
+        // the order's money out is exactly what was asked: one recorded refund of 20 and one credit note of 5
+        expect((await returnRow(s)).status).toBe("REFUNDED");
+        expect(await prisma.creditNote.count({ where: { tenantId: s.tenantId } })).toBe(1);
       },
     );
   });
