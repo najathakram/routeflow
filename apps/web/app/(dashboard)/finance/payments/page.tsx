@@ -19,7 +19,6 @@ import { useInvoices, type InvoiceStatus } from "@/lib/api/invoices";
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { clampAllocationInput } from "@/lib/payment-allocation";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
-import { isDayClosedRefusal } from "@/lib/day-closed-copy";
 import { useCustomers } from "@/lib/api/customers";
 import { useToast, EmptyState, Button, Badge } from "@routeflow/ui/web";
 import Link from "next/link";
@@ -198,8 +197,6 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       }
       onClose();
     } catch (err: unknown) {
-      // The app-wide error toast already says a closed-day refusal in fixed copy: one toast, not two.
-      if (isDayClosedRefusal(err)) return;
       toast({
         title: "Failed to record payment",
         description: genericToastCopy(err),
@@ -521,9 +518,7 @@ export default function FinancePaymentsPage() {
       await voidPayment.mutateAsync(voidConfirm);
       toast({ title: "Payment voided", variant: "success" });
       setVoidConfirm(null);
-    } catch (err: unknown) {
-      // The app-wide error toast already says a closed-day refusal in fixed copy: one toast, not two.
-      if (isDayClosedRefusal(err)) return;
+    } catch {
       toast({ title: "Failed to void payment", variant: "error" });
     }
   };

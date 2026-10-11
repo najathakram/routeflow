@@ -55,7 +55,6 @@ import {
   Printer,
 } from "lucide-react";
 import { Badge, cn, useToast, type ToastVariant } from "@routeflow/ui/web";
-import { isDayClosedRefusal } from "@/lib/day-closed-copy";
 import { depositOverdueLine, groupArAgingByCustomer } from "@/lib/ar-aging-rows";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
@@ -2002,9 +2001,7 @@ function LedgerReport() {
       });
       toast({ title: "Payment recorded", variant: "success" });
       setPaymentModal(null);
-    } catch (err: unknown) {
-      // The app-wide error toast already says a closed-day refusal in fixed copy: one toast, not two.
-      if (isDayClosedRefusal(err)) return;
+    } catch {
       toast({ title: "Failed to record payment", variant: "error" });
     }
   };

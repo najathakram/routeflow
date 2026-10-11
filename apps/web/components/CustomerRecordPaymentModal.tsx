@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
-import { isDayClosedRefusal } from "@/lib/day-closed-copy";
 import { Paperclip, Wallet } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import {
@@ -179,8 +178,6 @@ export function CustomerRecordPaymentModal({
       onSuccess?.();
       onClose();
     } catch (err: unknown) {
-      // The app-wide error toast already says a closed-day refusal in fixed copy: one toast, not two.
-      if (isDayClosedRefusal(err)) return;
       toast({
         title: "Failed to record payment",
         description: genericToastCopy(err),
