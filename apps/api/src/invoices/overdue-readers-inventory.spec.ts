@@ -74,7 +74,7 @@ const FOLLOW_UP_READERS: Record<string, string> = {
  * roundMoney(balance)), so an overpaid open invoice can never make the figure negative (the selection of
  * which invoices count is unchanged). The spec asserts the clamp is still in the source.
  */
-const BALANCE_CLAMPED: Record<string, { clamp: RegExp; reason: string }> = {
+const BALANCE_CLAMPED: Record<string, { clamp: RegExp; reason: string; method?: string }> = {
   "customers/customer-statement.ts": {
     clamp: /Math\.max\(0, roundMoney\(Number\(i\.total\) - i\.amountPaid\)\)/g,
     reason:
@@ -82,9 +82,31 @@ const BALANCE_CLAMPED: Record<string, { clamp: RegExp; reason: string }> = {
   },
   "bookkeeping/bookkeeping.service.ts": {
     clamp: /confirmedBalance\(inv\.total, inv\.payments\)/g,
+    method: "getCustomerBalanceSummary",
     reason: "per-customer aging (getCustomerBalanceSummary) `overdue`",
   },
 };
+
+/** The source of ONE method (from `async name(` to the next `async` member), comments excluded. */
+function methodSource(src: string, name: string): string {
+  const start = src.indexOf(`async ${name}(`);
+  if (start < 0) throw new Error(`method ${name} not found`);
+  const next = src.indexOf("\n  async ", start + 10);
+  return src.slice(start, next < 0 ? undefined : next);
+}
+
+/** Every bookkeeping reader that shows a receivable / aging / balance figure: each must call confirmedBalance. */
+const BOOKKEEPING_BALANCE_READERS = [
+  "getSummary",
+  "getMobileDashboard",
+  "getFinanceDashboard",
+  "getArAgingInvoices",
+  "getCustomerBalanceSummary",
+  "getInvoiceDetailsReport",
+  "getBadDebtsReport",
+  "getArAgingDetails",
+  "getReceivableSummary",
+];
 
 const CUTOFF_READER = [
   /\boverdueCutoff\s*\(/,
@@ -148,12 +170,28 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
   );
 
   it.each(Object.entries(BALANCE_CLAMPED))("%s clamps its overdue contributions at 0", (rel, c) => {
-    const src = stripComments(fs.readFileSync(path.join(SRC_ROOT, rel), "utf8"));
+    const whole = stripComments(fs.readFileSync(path.join(SRC_ROOT, rel), "utf8"));
+    // pinned to the overdue site's own method when one is named, not to any call in the file
+    const src = c.method ? methodSource(whole, c.method) : whole;
     expect(src.match(c.clamp)?.length ?? 0).toBeGreaterThanOrEqual(1);
     if (rel.startsWith("customers/")) expect(src.match(c.clamp)).toHaveLength(2); // both statements
     // the raw, unclamped accumulations are gone
     expect(src).not.toMatch(/overdue\s*\+=\s*bal\b/);
   });
+
+  it.each(BOOKKEEPING_BALANCE_READERS)(
+    "bookkeeping %s computes its balance through confirmedBalance (no inline total - paid)",
+    (name) => {
+      const src = stripComments(
+        fs.readFileSync(path.join(SRC_ROOT, "bookkeeping/bookkeeping.service.ts"), "utf8"),
+      );
+      const body = methodSource(src, name);
+      expect(body).toMatch(/\bconfirmedBalance\(/);
+      expect(body).not.toMatch(
+        /Number\((inv|i|invoice)\.total\)\s*-\s*(paid|inv\.payments|sumConfirmed)/,
+      );
+    },
+  );
 
   // What each classifier user must actually CALL (an import alone proves nothing).
   const REQUIRED_CALL: Record<string, RegExp> = {
