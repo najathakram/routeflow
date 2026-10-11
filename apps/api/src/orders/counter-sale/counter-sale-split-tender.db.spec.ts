@@ -29,7 +29,7 @@ import { describeDb, requireLocalDatabaseUrl } from "../../common/testing/db-spe
 import { PrismaService } from "../../prisma/prisma.service";
 import { TenantContextService } from "../../tenant/tenant-context.service";
 import { CounterSaleService } from "./counter-sale.service";
-import { legGroupId } from "./counter-sale-tender";
+import { legGroupId } from "./counter-tender-row";
 import { assertCashRefundWithinCap } from "../../returns/cash-refund-cap";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 

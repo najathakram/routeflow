@@ -51,6 +51,11 @@ import { Pool } from "pg";
 import { resolveDatabaseUrl, redactUrl, scrubSecrets } from "./lib/railway-db-url.mjs";
 import { planCheckDateBackfill } from "./lib/check-date-backfill.mjs";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+import guard from "./lib/live-target-guard.cjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+
+const { assertWritableTenant, protectedTenantIds, ProtectedTenantError } = guard;
+const { loadProtectedSlugs } = protectedSlugsLib;
 
 // The migration that introduced `checkDate`
 // (apps/api/prisma/migrations/20260916010000_check_instrument_fields) — the default cutoff, so
@@ -124,6 +129,17 @@ async function main() {
     console.error(err.message);
     process.exit(1);
   }
+  // Row 195: a protected tenant (paying | stripe-linked | PROTECTED_TENANT_SLUGS) is never written,
+  // by `--apply` of either shape. Loaded ONCE against the URL dialed; dry-run scans stay unrestricted.
+  let protectedSlugs = null;
+  if (apply) {
+    try {
+      protectedSlugs = loadProtectedSlugs(process.env, databaseUrl);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+  }
   console.log(`Resolved database host: ${redactUrl(databaseUrl)}`);
   console.log(`Cutoff (--since): ${since.toISOString()}`);
   if (tenantId) console.log(`Scoped to tenant: ${tenantId}`);
@@ -137,10 +153,21 @@ async function main() {
       if (tenantId) {
         const tenant = await prisma.tenant.findUnique({
           where: { id: tenantId },
-          select: { slug: true },
+          select: { id: true, slug: true, status: true, class: true, deletedAt: true },
         });
         if (!tenant) {
           console.error(`Tenant "${tenantId}" not found. Nothing was written.`);
+          process.exit(1);
+        }
+        const sub = await prisma.tenantSubscription.findUnique({
+          where: { tenantId },
+          select: { planKey: true, stripeSubId: true },
+        });
+        try {
+          assertWritableTenant(tenant, sub, protectedSlugs);
+        } catch (err) {
+          if (!(err instanceof ProtectedTenantError)) throw err;
+          console.error(`${err.message} Nothing was written.`);
           process.exit(1);
         }
         // Approved test tenants (scripts/lib/test-tenants.cjs) proceed as today — this is what
@@ -189,10 +216,28 @@ async function main() {
         method: true,
         checkStatus: true,
         checkDate: true,
+        invoice: { select: { tenantId: true } },
       },
     });
 
-    const plan = planCheckDateBackfill(candidates, since);
+    const planned = planCheckDateBackfill(candidates, since);
+    // Write path only: drop rows of protected tenants. A NULL-tenant payment is judged by its
+    // PARENT invoice's tenant. Dry-run keeps the full plan (it writes nothing).
+    let plan = planned;
+    if (apply) {
+      const prot = new Set(await protectedTenantIds(prisma, protectedSlugs));
+      const parentTenant = new Map(
+        candidates.map((c) => [c.id, c.tenantId ?? c.invoice?.tenantId]),
+      );
+      plan = planned.filter((r) => {
+        const owner = parentTenant.get(r.id);
+        // Fail closed: a row with no derivable tenant cannot be shown to be unprotected.
+        return Boolean(owner) && !prot.has(owner);
+      });
+      console.log(
+        `protected-tenant guard: skipped ${planned.length - plan.length} of ${planned.length} row(s)`,
+      );
+    }
 
     console.log(`${candidates.length} candidate row(s) scanned, ${plan.length} change(s):`);
     console.table(

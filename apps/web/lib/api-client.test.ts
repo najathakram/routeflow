@@ -118,6 +118,20 @@ describe("api-client", () => {
     expect(localStorage.getItem(OP_KEYS.refreshToken)).toBe("new-refresh");
   });
 
+  it("a failed refresh (session over) wipes every stored live counter cart before the redirect", async () => {
+    localStorage.setItem(OP_KEYS.accessToken, "old-token");
+    localStorage.setItem(OP_KEYS.refreshToken, "refresh-token");
+    localStorage.setItem("rf.counterSale.liveCart:acme:u1", "{}");
+    axiosPost.mockRejectedValue(new Error("refresh denied"));
+    const original: Config = {
+      url: "/orders",
+      method: "get",
+      headers: { Authorization: "Bearer old-token" },
+    };
+    await expect(errorHandler({ response: { status: 401 }, config: original })).rejects.toThrow();
+    expect(localStorage.getItem("rf.counterSale.liveCart:acme:u1")).toBeNull();
+  });
+
   // FINDING: the brief (PR-9 R3) claims a 401 on /auth/refresh itself "clears the
   // stored tokens". Reading apps/web/lib/api-client.ts:178-187, the guard that
   // matches original.url?.includes("/auth/refresh") returns Promise.reject(error)

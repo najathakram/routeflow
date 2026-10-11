@@ -127,14 +127,14 @@ describe("buildCounterReceipt", () => {
     expect(formatReceiptMoney(0)).toBe("$0.00");
   });
 
-  it("subtotal + adjustment reconcile to the server total, also for a repriced sale", () => {
+  it("subtotal + adjustments reconcile to the server total, also for a repriced sale", () => {
     const same = build({ total: 22.5 });
     expect(same.subtotal).toBe(22.5);
-    expect(same.adjustment).toBe(0);
+    expect(same.adjustments).toBe(0);
     const repriced = build({ total: 24.75, paid: 24.75 });
     expect(repriced.subtotal).toBe(22.5);
-    expect(repriced.adjustment).toBe(2.25);
-    expect(roundMoney(repriced.subtotal + repriced.adjustment)).toBe(repriced.total);
+    expect(repriced.adjustments).toBe(2.25);
+    expect(roundMoney(repriced.subtotal + repriced.adjustments)).toBe(repriced.total);
   });
 
   it("falls back to the rung method when the response has none; carries the cashier", () => {
@@ -156,5 +156,32 @@ describe("formatSaleTime", () => {
   it("a zone that is not IANA (free-text tenant setting) falls back to UTC, never throws", () => {
     expect(() => formatSaleTime(at, "Not/AZone")).not.toThrow();
     expect(formatSaleTime(at, "Not/AZone")).toBe("Oct 7, 2026, 3:15 PM");
+  });
+});
+
+describe("browser zone must never leak into the receipt (SA-738)", () => {
+  const at = "2026-10-07T03:15:00.000Z"; // Oct 6, 8:15 PM in Los Angeles; Oct 7, 3:15 AM UTC
+  const prevTz = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "America/Los_Angeles";
+  });
+  afterAll(() => {
+    if (prevTz === undefined) delete process.env.TZ;
+    else process.env.TZ = prevTz;
+  });
+
+  it("formatSaleTime with no zone reads UTC, not the browser's zone", () => {
+    expect(formatSaleTime(at)).toBe("Oct 7, 2026, 3:15 AM");
+  });
+
+  it("the live receipt with no profile zone prints UTC under a non-UTC process TZ", () => {
+    const m = buildCounterReceipt({
+      receipt: sale() as never,
+      lines: [PLAIN],
+      enteredTender: null,
+      profile: null,
+      now: new Date(at),
+    });
+    expect(m.dateLabel).toBe("Oct 7, 2026, 3:15 AM");
   });
 });

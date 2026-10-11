@@ -101,7 +101,7 @@ async function toQuote(q: RefundQuote, props: Record<string, unknown> = {}) {
     />,
   );
   await screen.findByText(/what came back/i);
-  fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "5" } });
+  fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
   fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
   fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
   await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
@@ -368,6 +368,26 @@ describe("refund flow", () => {
     expect(refundReturn.mock.calls[1]).toEqual(["ret-1", { tender: "CARD", expectedAmount: 10 }]);
     expect(captureMutate).toHaveBeenCalledTimes(1);
     expect(quoteMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("row 182: after a 409 carrying the server amount the quote's Total shows that figure too, not the stale one", async () => {
+    refundReturn.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "REFUND_AMOUNT_CHANGED", amount: 10 } },
+    });
+    await refundFlow();
+    expect(screen.getByText("Total").parentElement).toHaveTextContent("$12.40");
+    expect(screen.getByText("Subtotal")).toBeInTheDocument();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByRole("button", { name: /^return & refund \$10\.00$/i });
+    await waitFor(() =>
+      expect(screen.getByText("Total").parentElement).toHaveTextContent("$10.00"),
+    );
+    expect(screen.getByText("Total").parentElement).not.toHaveTextContent("$12.40");
+    // the old breakdown would no longer add up to the new total: it is hidden, never left contradicting it
+    expect(screen.queryByText("Subtotal")).toBeNull();
+    expect(screen.queryByText("Tax")).toBeNull();
   });
 
   it("a second 409 with a different amount updates the confirm again, still without a re-quote", async () => {

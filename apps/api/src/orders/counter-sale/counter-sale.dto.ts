@@ -28,7 +28,7 @@ export const COUNTER_SALE_METHODS = TENDER_RULES.counter.allowed as readonly Cou
 
 /**
  * `CounterSaleItem` of the shared contract. `priceReason` maps to OrderItemDto.overrideReason. A `unitPrice` that
- * is a real change from the server's price is accepted only from a caller who passes `canEditPrices` (POS-5).
+ * is a real change from the server's price is accepted only from a caller who passes `staffMay(role, "EDIT_LINE_PRICE")` (POS-5).
  */
 export class CounterSaleItemDto {
   @IsUUID() productId: string;

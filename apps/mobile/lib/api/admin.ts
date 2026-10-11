@@ -811,6 +811,9 @@ export interface AdminReturn {
   status: string;
   reason: string;
   notes?: string;
+  /** How a REFUNDED return was resolved (the list returns the whole row): drives the "Store credit" pill. */
+  refundMethod?: string | null;
+  creditNoteId?: string | null;
   createdAt: string;
   order?: { orderNumber: string };
   customer?: { businessName: string };

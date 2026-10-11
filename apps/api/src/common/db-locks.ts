@@ -113,6 +113,7 @@ export const LOCK_FAMILIES = [
   "policy-write",
   "counter-tender",
   "fulfilment-settings",
+  "counter-park",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
@@ -189,6 +190,12 @@ const POOL_MAX: Record<string, number | undefined> = {
   // Console set()/clear() of the two fulfilment keys, keyed on the tenant id. A rare, short,
   // request-path settings write: a deliberately small pool.
   "fulfilment-settings": 2,
+  // `counter-park` (SA-748): the parked-cart cap in `CounterParkService#park`, keyed on the tenant id. That
+  // lock is a transaction-scoped `pg_advisory_xact_lock` taken on the park transaction's own Prisma connection
+  // (the idempotency-service pattern), so this family opens no lock pool today. It is listed so the family name
+  // is reserved in the one namespace (a `withAdvisoryLock` caller can never collide with it by accident) and
+  // sized small in case a pinned caller is ever added.
+  "counter-park": 2,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {

@@ -46,6 +46,18 @@ export function planRefundTenderBackfill(rows) {
 }
 
 /**
+ * Row 195 / #3344: splits the plan by the tenants the protected-tenant guard let through. `writableTenants` is the `writable`
+ * list of the guard's `filterWritableTenants`; every planned refund of any other tenant is HELD (never written).
+ */
+export function partitionByWritableTenants(plan, writableTenants) {
+  const ok = new Set(writableTenants.map((t) => t.id));
+  return {
+    apply: plan.filter((p) => ok.has(p.tenantId)),
+    held: plan.filter((p) => !ok.has(p.tenantId)),
+  };
+}
+
+/**
  * Mirror of `setRefundTender` (returns/refund-tender.ts): sets the column of a resolved EXTERNAL_REFUND of this tenant, only
  * where it is still null. Returns the rows written (0 or 1). `db` is a Prisma client (or any `{ return: { updateMany } }`).
  */

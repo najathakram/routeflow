@@ -26,6 +26,12 @@ import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
 import { RemittanceConfigDto } from "./dto/remittance-config.dto";
 import { PricingTierLabelsDto } from "./dto/pricing-tier-labels.dto";
 import { ClearFinancialDataDto } from "./dto/clear-financial-data.dto";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { FALLBACK_ZONE, TENANT_ZONE_SELECT, zoneFromConfig } from "../common/tenant-time-zone";
+import { changeTenantTimeZone, prepareTenantTimeZoneChange } from "./tenant-timezone.writer";
+import { QuickKeysSettingsService } from "./quick-keys-settings.service";
+import { sanitizeReceiptFooter } from "./receipt-footer";
 
 // RF-213: serve under both /settings and /tenant/settings so the frontend
 // calling the latter doesn't get a 404 while the operator app uses /settings.
@@ -38,6 +44,7 @@ export class SettingsController {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly quickKeys: QuickKeysSettingsService,
   ) {}
 
   @Get()
@@ -59,9 +66,10 @@ export class SettingsController {
     let state = all["settings.state"] ?? "";
     let zip = all["settings.zip"] ?? "";
     let phone = all["settings.phone"] ?? "";
-    // The business's own IANA zone (TenantConfig.timezone, default America/New_York): the web uses it
-    // to place "this week" (Sunday 00:00 local) for the shipping cards and the orders week view.
-    let timezone = "America/New_York";
+    // The business's own IANA zone: the web uses it to place "this week" (Sunday 00:00 local) for the
+    // shipping cards and the orders week view. SA-738: the RESOLVED zone (the one resolver), so it is
+    // always valid and always the same zone the counter windows use; UTC when there is no usable zone.
+    let timezone: string = FALLBACK_ZONE;
 
     if (tenantId) {
       const config = await this.prisma.tenantConfig.findUnique({
@@ -77,10 +85,10 @@ export class SettingsController {
           phone: true,
           invoiceNotes: true,
           invoiceTerms: true,
-          timezone: true,
+          ...TENANT_ZONE_SELECT,
         },
       });
-      if (config?.timezone) timezone = config.timezone;
+      timezone = zoneFromConfig(config, { tenantId }).zone;
       if (config?.businessName) businessName = config.businessName;
       if (config?.ownerName) ownerName = config.ownerName;
       if (config?.customerEmail) customerEmail = config.customerEmail;
@@ -117,14 +125,18 @@ export class SettingsController {
       zip,
       taxRate: all["settings.taxRate"] != null ? parseFloat(all["settings.taxRate"]) : 0,
       logoUrl: all["settings.logoUrl"] ?? null,
+      // SA-762r F6: the counter receipt's footer line ("" when the tenant has not set one).
+      receiptFooter: all["settings.receiptFooter"] ?? "",
       invoiceNotes,
       invoiceTerms,
       timezone,
+      // SA-747: the counter quick keys (pins, hides, window, cap), defaults filled; a corrupt value is the defaults.
+      quickKeys: this.quickKeys.fromAll(all),
     };
   }
 
   @Patch()
-  async updateSettings(@Body() dto: Record<string, unknown>) {
+  async updateSettings(@Body() dto: Record<string, unknown>, @CurrentUser() user?: JwtPayload) {
     // B1188: these two used to be accepted here and silently dropped (neither is stored by this
     // endpoint). Refuse them loudly, before ANY write, naming where each really lives.
     if (dto.invoicePrefix !== undefined) {
@@ -147,14 +159,27 @@ export class SettingsController {
       }
     }
 
-    // businessName and email are NOT editable by tenant admin (set by super admin).
-    // taxRate and logoUrl stay in SystemConfig (no dedicated TenantConfig column for them yet).
-    const allowed = ["taxRate", "logoUrl"];
-    await Promise.all(
-      allowed
-        .filter((k) => dto[k] !== undefined)
-        .map((k) => this.svc.set(`settings.${k}`, String(dto[k]))),
-    );
+    // SA-738 R16-4: `timezone` is TENANT_ADMIN only (403) and must be an IANA zone (400), checked
+    // before ANY field is written.
+    const newZone =
+      dto.timezone !== undefined ? prepareTenantTimeZoneChange(user, dto.timezone) : undefined;
+
+    // SA-747: `quickKeys` is validated (shape, caps, and that every id is this tenant's product) BEFORE any
+    // write of this request, so a bad value rejects the whole request and nothing is half-applied.
+    const quickKeys =
+      dto.quickKeys !== undefined ? await this.quickKeys.prepare(dto.quickKeys) : undefined;
+
+    // SA-762r F6: receiptFooter is checked (and stripped) BEFORE any write, like taxRate above, and only ever
+    // lands in the CALLER'S tenant: with no tenant context SystemConfigService.set would write an unscoped row.
+    let receiptFooter: string | undefined;
+    if (dto.receiptFooter !== undefined) {
+      if (!this.prisma.getTenantId()) {
+        throw new ForbiddenException(
+          "receiptFooter is saved per business; no business is selected",
+        );
+      }
+      receiptFooter = sanitizeReceiptFooter(dto.receiptFooter);
+    }
 
     // ownerName, customerEmail, and address fields are stored in TenantConfig
     const tenantId = this.prisma.getTenantId();
@@ -177,12 +202,18 @@ export class SettingsController {
         configUpdate.invoiceNotes = typeof dto.invoiceNotes === "string" ? dto.invoiceNotes : "";
       if (dto.invoiceTerms !== undefined)
         configUpdate.invoiceTerms = typeof dto.invoiceTerms === "string" ? dto.invoiceTerms : "";
+      // SA-738: a zone change commits WITH these fields and its audit row in one transaction, so a
+      // failed save changes no TenantConfig field; without a zone the fields are written as before.
+      if (newZone !== undefined)
+        await changeTenantTimeZone(this.prisma, { tenantId, user, zone: newZone, configUpdate });
       if (Object.keys(configUpdate).length > 0) {
-        await this.prisma.tenantConfig.upsert({
-          where: { tenantId },
-          create: { tenantId, ...configUpdate },
-          update: configUpdate,
-        });
+        if (newZone === undefined) {
+          await this.prisma.tenantConfig.upsert({
+            where: { tenantId },
+            create: { tenantId, ...configUpdate },
+            update: configUpdate,
+          });
+        }
 
         // Anything we just updated shows on the invoice header (address /
         // phone / customer email / business name) or on the body (notes /
@@ -209,6 +240,20 @@ export class SettingsController {
         }
       }
     }
+
+    // businessName and email are NOT editable by tenant admin (set by super admin).
+    // taxRate and logoUrl stay in SystemConfig (no dedicated TenantConfig column for them yet). They
+    // are written LAST (SA-738): a 403/400 or a failed TenantConfig save leaves them untouched.
+    const allowed = ["taxRate", "logoUrl"];
+    await Promise.all(
+      allowed
+        .filter((k) => dto[k] !== undefined)
+        .map((k) => this.svc.set(`settings.${k}`, String(dto[k]))),
+    );
+    // SA-762r F6: the receipt footer (validated above) follows taxRate/logoUrl.
+    if (receiptFooter !== undefined) await this.svc.set("settings.receiptFooter", receiptFooter);
+    // SA-747: the quick keys are settings JSON too, so they follow the TenantConfig save as well.
+    if (quickKeys) await this.quickKeys.save(quickKeys);
 
     return this.getSettings();
   }

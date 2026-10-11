@@ -1,4 +1,4 @@
-import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import { computeLineSubtotal, roundMoney, validCustomer, validLine } from "@routeflow/pricing";
 import {
   API_ERROR_CODES,
   type CounterSalePaymentMethod,
@@ -105,6 +105,11 @@ export function quickTenderOptions(total: number): QuickTender[] {
 /** Change owed for a tender, in cents; never negative. */
 export function changeDue(total: number, tendered: number): number {
   return Math.max(0, roundMoney(tendered - total));
+}
+
+/** What is still owed for a tender, in cents; never negative. Zero exactly when `changeDue` takes over. */
+export function amountDue(total: number, tendered: number): number {
+  return Math.max(0, roundMoney(total - tendered));
 }
 
 export interface PaymentMethodOption {
@@ -235,7 +240,7 @@ export function isCounterSaleIncomplete(err: unknown): boolean {
 
 /** POS-5: 403 PRICE_EDIT_NOT_PERMITTED (an edited price from a caller who may not change prices). Nothing was written. */
 export const COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY =
-  "You can't change prices. Reset the edited prices, or ask your account admin.";
+  "You can't change prices. Use Reset price on the edited lines, or ask your account admin.";
 
 /**
  * FIXED copy by status (and the one named 403 code); the server's own message is never shown. "Nothing was charged" is
@@ -382,27 +387,9 @@ export const COUNTER_DISCARD_COPY =
 export function heldAttemptKey(tenant?: string | null, userId?: string | null): string | null {
   return tenant && userId ? `${HELD_ATTEMPT_KEY}:${tenant}:${userId}` : null;
 }
-const isNum = (n: unknown): boolean => typeof n === "number" && Number.isFinite(n);
-const optNum = (n: unknown): boolean => n === undefined || isNum(n);
-function validLine(l: unknown): boolean {
-  if (!l || typeof l !== "object") return false;
-  const o = l as Record<string, unknown>;
-  return (
-    typeof o.productId === "string" &&
-    !!o.productId &&
-    isNum(o.qty) &&
-    isNum(o.unitPrice) &&
-    optNum(o.boxes) &&
-    optNum(o.pieces) &&
-    optNum(o.unitsPerBox)
-  );
-}
-function validCustomer(c: unknown): boolean {
-  if (c === null || c === undefined) return true;
-  if (typeof c !== "object") return false;
-  const o = c as Record<string, unknown>;
-  return typeof o.id === "string" && typeof o.businessName === "string";
-}
+// The two shape checks live in @routeflow/pricing (the park contract shares them with the API); re-exported so every caller
+// of the held-attempt snapshot keeps importing them from here.
+export { validLine, validCustomer } from "@routeflow/pricing";
 /**
  * The held attempt, null when none is stored, or "corrupt" when something IS stored but is not a valid attempt: the payload is
  * dropped and the caller must keep the sale LOCKED as "outcome unknown" (never silently unlock: a sale may have been written).

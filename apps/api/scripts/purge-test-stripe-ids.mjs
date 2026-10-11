@@ -37,6 +37,15 @@ import pg from "pg";
 import { isLocalDbTarget } from "./lib/local-db-target.cjs";
 import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
+import protectedSlugsLib from "./lib/protected-slugs.cjs";
+import payingTenant from "./lib/paying-tenant.cjs";
+import liveTargetGuard from "./lib/live-target-guard.cjs";
+import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+
+const { loadProtectedSlugs } = protectedSlugsLib;
+const { protectedArm } = payingTenant;
+const { assertWritableTenant, confirmProtectedOverride, refuseRetiredFlags, ProtectedTenantError } =
+  liveTargetGuard;
 import {
   applyRefusal,
   buildPlan,
@@ -49,7 +58,7 @@ import {
 } from "./lib/stripe-test-purge.mjs";
 
 const TAG = "purge-test-stripe-ids";
-const USAGE = `Usage: node apps/api/scripts/purge-test-stripe-ids.mjs [--local] [--exclude-tenant <slug,...>] [--apply --backup-taken --confirm <N>]
+const USAGE = `Usage: node apps/api/scripts/purge-test-stripe-ids.mjs [--local] [--exclude-tenant <slug,...>] [--allow-protected <tenantId>]... [--apply --backup-taken --confirm <N>]
   Dry run by default. Needs STRIPE_SECRET_KEY = the CURRENT sk_test key (run BEFORE the live cutover).
   Production: STRIPE_SECRET_KEY=sk_test_… railway run --service postgres node apps/api/scripts/purge-test-stripe-ids.mjs`;
 
@@ -205,6 +214,39 @@ async function main() {
 
     const refusal = applyRefusal({ args, keyMode, plan });
     if (refusal) fail(`refusing --apply: ${refusal}`);
+
+    // Row 195: this script clears Stripe ids on the very tenants the protected arm covers (paying,
+    // Stripe-linked), so it is NEVER bulk on them: each protected tenant it would touch needs its own
+    // `--allow-protected <tenantId>` AND a typed "ALLOW PROTECTED <tenantId>" at a real terminal.
+    // Approved test tenants hold no client data and need neither.
+    try {
+      refuseRetiredFlags(process.argv.slice(2));
+      const protectedSlugs = loadProtectedSlugs(process.env, url);
+      const touched = [...new Set(plan.changes.map((c) => c.tenantId))];
+      const { rows: guardRows } = await client.query(
+        `SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId"
+           FROM "Tenant" t LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
+          WHERE t.id = ANY($1::text[])`,
+        [touched],
+      );
+      const tokens = new Map();
+      for (const t of guardRows) {
+        if (isTestTenant(t.slug)) continue;
+        if (protectedArm(t, t, protectedSlugs) === null) continue;
+        tokens.set(
+          t.id,
+          await confirmProtectedOverride({ tenantId: t.id, argv: process.argv.slice(2) }),
+        );
+      }
+      for (const t of guardRows) {
+        if (isTestTenant(t.slug)) continue;
+        assertWritableTenant(t, t, protectedSlugs, { allowProtected: tokens.get(t.id) });
+      }
+    } catch (err) {
+      if (err instanceof ProtectedTenantError || /PROTECTED_TENANT_SLUGS/.test(err.message))
+        fail(err.message);
+      throw err;
+    }
 
     await client.query("BEGIN");
     let applied = 0;

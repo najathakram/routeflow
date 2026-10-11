@@ -10,6 +10,7 @@ import { ClearFinancialDataDto } from "./dto/clear-financial-data.dto";
 import { SystemConfigService } from "./system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { quickKeysSettingsStubProvider } from "../testing/quick-keys-settings-stub";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -179,6 +180,7 @@ async function buildController(prisma: unknown): Promise<SettingsController> {
       { provide: ConfigService, useValue: { get: jest.fn() } },
       { provide: PrismaService, useValue: prisma },
       { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+      quickKeysSettingsStubProvider,
     ],
   }).compile();
   return module.get<SettingsController>(SettingsController);

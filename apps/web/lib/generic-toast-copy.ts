@@ -1,4 +1,4 @@
-import { API_ERROR_CODES, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
+import { API_ERROR_CODES, CREDITS_PENDING_COPY, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
 import {
   CREDIT_NOTE_ERROR_COPY,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
@@ -6,6 +6,7 @@ import {
   noResponse,
 } from "./credit-note-error-copy";
 import { creditLimitSentence } from "./credit-limit-copy";
+import { COUNTER_VOID_ERROR_COPY } from "./counter-void-copy";
 import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
 import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
@@ -52,9 +53,10 @@ const CODE_COPY: Record<string, string> = {
   CONCURRENT_UPDATE: "Someone else is updating this record. Try again in a moment.",
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
   LOCK_UNAVAILABLE: "This is busy right now. Try again in a moment.",
-  [API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING]:
-    "The order was saved, but the credit notes weren't applied yet. Someone in the office needs to apply them on the order.",
+  [API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING]: CREDITS_PENDING_COPY,
   [API_ERROR_CODES.BARCODE_TAKEN]: "Another product already uses that barcode.",
+  [API_ERROR_CODES.FAMILY_NOT_PRICEABLE]:
+    "A product family can't be priced or promoted. Use its variants instead.",
   [API_ERROR_CODES.PACK_SIZE_UNKNOWN]:
     "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",
   // B986-7 (Opus): coded refusals whose server sentence tells the user what to fix. Fixed sentences, no ids or typed text. Keys are
@@ -86,6 +88,10 @@ const CODE_COPY: Record<string, string> = {
     "The pack size changed, so a change request was filed. Decline it and re-add the item to the next order.",
   [API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY]:
     "The invoice changed while this was happening. Refresh and try again.",
+  [API_ERROR_CODES.INVOICE_TAX_STATE_STALE]:
+    "This invoice's tax no longer matches its lines. Re-save the invoice lines, then try again.",
+  [API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID]:
+    "That change would take the invoice total below what is already paid or credited. Remove the credit first, or change the lines or discount.",
   PO_ALREADY_BILLED: "That purchase order already has a bill.",
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
   INVOICE_HAS_UNSPENT_CREDIT:
@@ -94,6 +100,15 @@ const CODE_COPY: Record<string, string> = {
     "Part of this invoice was refunded in cash. Issue a credit note for the rest instead of voiding.",
   [API_ERROR_CODES.ORDER_HAS_CASH_REFUND]:
     "Part of this order was refunded in cash. Issue a credit note instead of cancelling.",
+  // SA-762r: the counter-sale void's own refusals (the same sentences the void dialog shows).
+  [API_ERROR_CODES.COUNTER_SALE_VOID_HAS_RETURN]:
+    COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_HAS_RETURN],
+  [API_ERROR_CODES.COUNTER_SALE_VOID_FOREIGN_PAYMENT]:
+    COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_FOREIGN_PAYMENT],
+  [API_ERROR_CODES.COUNTER_SALE_VOID_NOT_TODAY]:
+    COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_NOT_TODAY],
+  [API_ERROR_CODES.COUNTER_SALE_VOID_BUSY]:
+    COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_BUSY],
   HANDOFF_CODE_INVALID: "This sign-in link is invalid or has expired. Sign in again.",
 };
 

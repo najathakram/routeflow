@@ -399,7 +399,7 @@ export default defineConfig({
       name: "migration-hub-gate",
       testMatch: /25-migration-hub\.spec\.ts/,
       dependencies: ["setup"],
-      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── Payments-import duplicate reporting (F17, spec 26) ─────────────────────
@@ -413,7 +413,7 @@ export default defineConfig({
       name: "import-duplicates",
       testMatch: /26-import-duplicates\.spec\.ts/,
       dependencies: ["setup"],
-      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── Order-edit pricing readiness gate (F06, spec 24) ───────────────────────
@@ -508,6 +508,14 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── PKG-4: Create Order customer keyboard (ArrowDown+Enter, Tab parity, Escape closes the list) + Change customer Undo (spec 68).
+    {
+      name: "create-order-customer-keyboard",
+      testMatch: /68-create-order-customer-keyboard\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).
     {
       name: "invoice-edit-pending-mirror",
@@ -522,7 +530,7 @@ export default defineConfig({
       name: "invoice-numbering-card",
       testMatch: /67-invoice-numbering-card\.spec\.ts/,
       dependencies: ["setup"],
-      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "tenant-admin.json") },
     },
 
     // ── Recurring-template edit + standing-order item edit (F13, spec 30) ──────
@@ -898,7 +906,7 @@ export default defineConfig({
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],
-        storageState: path.join(AUTH_DIR, "operator.json"),
+        storageState: path.join(AUTH_DIR, "tenant-admin.json"),
       },
     },
 

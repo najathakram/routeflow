@@ -5,7 +5,8 @@ import { cartTotals } from "@/lib/counter-sale";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
- * POS-5: price edit at the counter. ONE gate (`canEditPrices`, admin-only today): an operator, a missing user or an unknown
+ * POS-5 / SA-762r: price edit at the counter. ONE gate (`staffMay(role, "EDIT_LINE_PRICE")`: OPERATOR and TENANT_ADMIN): a
+ * SUPER_ADMIN (until perms PR7), a driver, a missing user or an unknown
  * role never gets the control (hidden, not disabled). An admin's edit resolves to ONE net unit price through
  * @routeflow/pricing; the line, totals, payload and receipt all follow it; a customer pick keeps it (the survive rule).
  */
@@ -160,7 +161,8 @@ const sentItems = (call = 0) =>
 
 describe("POS-5 price edit: hidden without the grant (the ONE gate)", () => {
   it.each([
-    ["an OPERATOR", OPERATOR],
+    ["a SUPER_ADMIN", { ...ADMIN, role: "SUPER_ADMIN" }],
+    ["a DRIVER", { ...ADMIN, role: "DRIVER" }],
     ["a signed-in user with no role", { id: "u-x", tenantSlug: "acme" }],
     ["no user at all", undefined],
     ["a null user", null],
@@ -181,20 +183,20 @@ describe("POS-5 price edit: hidden without the grant (the ONE gate)", () => {
     },
   );
 
-  it("a TENANT_ADMIN and a SUPER_ADMIN get the button", async () => {
-    mockUser = ADMIN;
+  it("an OPERATOR and a TENANT_ADMIN get the button", async () => {
+    mockUser = OPERATOR;
     const first = renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     expect(editBtn("Cola")).toBeEnabled();
     first.unmount();
-    mockUser = { ...ADMIN, role: "SUPER_ADMIN" };
+    mockUser = ADMIN;
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     expect(editBtn("Cola")).toBeEnabled();
   });
 
-  it("an operator's sale carries no price on any line", async () => {
-    mockUser = OPERATOR;
+  it("a sale rung by a user without the control carries no price on any line", async () => {
+    mockUser = { ...ADMIN, role: "DRIVER" };
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     fireEvent.click(screen.getByRole("button", { name: "Card" }));
@@ -418,7 +420,7 @@ describe("POS-5 price edit: the request", () => {
     fireEvent.click(completeBtn());
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(
-      "You can't change prices. Reset the edited prices, or ask your account admin.",
+      "You can't change prices. Use Reset price on the edited lines, or ask your account admin.",
     );
     expect(alert.textContent).not.toMatch(/permission to complete/);
     expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();

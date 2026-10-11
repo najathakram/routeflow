@@ -71,6 +71,21 @@ describe("assertCashRefundWithinCap", () => {
     expect(out?.body.message).toMatch(/card or check|store credit/i);
   });
 
+  it("a single-method NEW counter sale (its cash row is leg-grouped) is capped by that row: the query never filters on the group id", async () => {
+    // SA-749r2: on the split base even a one-method sale stores paymentGroupId = uuidv5(orderId:leg); the cap reads
+    // cash by method / status / live invoice only, so the grouped row is the sale's cash (not a "foreign" payment).
+    const pay = [{ amount: 25, paymentGroupId: "grouped-leg-0", invoice: { orderId: "o1" } }];
+    const ok = await run({ pay }, [["o1", 25]]);
+    expect(ok.out).toBeNull();
+    const where = ok.calls.pay[0].where;
+    expect(where).toMatchObject({ method: "CASH", status: "PAID" });
+    expect(JSON.stringify(where)).not.toContain("paymentGroupId");
+    expect((await run({ pay }, [["o1", 25.01]])).out?.body).toMatchObject({
+      code: "REFUND_EXCEEDS_CASH_PAID",
+      maxCashRefund: 25,
+    });
+  });
+
   it("earlier cash refunds on the sale reduce the room: cash 40, 30 already refunded, so at most 10.00 more", async () => {
     const pay = [{ amount: 40, invoice: { orderId: "o1" } }];
     const items = [{ sourceOrderId: "o1", subtotal: 28, taxAmount: 2, categoryTax: 0 }];
