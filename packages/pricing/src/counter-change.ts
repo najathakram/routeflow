@@ -17,7 +17,8 @@ export type CounterTenderDisplayMethod = (typeof COUNTER_TENDER_DISPLAY_ORDER)[n
 
 /**
  * THE change of a counter sale (SA-749r2): the ONE formula, used by the tender response, the by-key read-back, Today's
- * sales and the receipt / reprint, so no surface keeps a second one.
+ * sales, the receipt / reprint and the pickup hand-over's tender response (`tenderFigures`, fed its stored cash rows as the
+ * `total`), so no surface keeps a second one.
  *
  * - `total`: what the sale owed.
  * - `nonCashApplied`: money applied to it that is NOT the cash leg (card, check, credit, an advance).

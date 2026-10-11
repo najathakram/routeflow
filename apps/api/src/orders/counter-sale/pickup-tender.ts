@@ -1,4 +1,4 @@
-import { roundMoney, sumConfirmed } from "@routeflow/pricing";
+import { counterChange, roundMoney, sumConfirmed } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { isTender } from "./counter-sale-readback";
 
@@ -65,7 +65,14 @@ export function tenderFigures(
   const settled = method === "ON_ACCOUNT" || balanceDue <= 0 || (!planError && !!firstTender);
   // sumConfirmed counts PAID rows only, so a voided cash payment is already out.
   const cashTaken = roundMoney(sumConfirmed(handOverTenders.filter((p) => p.method === "CASH")));
-  const owed = payment.amount != null ? roundMoney(payment.amount - cashTaken) : 0;
+  // SA-773 split N3: the change is pricing's `counterChange`, the ONE formula every counter surface serves. Its inputs are the
+  // STORED cash taken (this hand-over's CASH rows: `cashApplied`) and the amount the till says it was handed:
+  // `change = max(0, tendered - cashApplied)`. With the cash rows as the `total` and nothing else applied, `cashApplied` IS
+  // the stored cash, exactly as `servedChange` feeds it.
+  const owed =
+    payment.amount != null
+      ? counterChange({ total: cashTaken, nonCashApplied: 0, tendered: payment.amount }).change
+      : 0;
   const change = method === "CASH" && balanceDue <= 0 && owed > 0 ? owed : undefined;
   return {
     total,
