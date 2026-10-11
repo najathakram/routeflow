@@ -1,10 +1,13 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import type { ThrottlerStorage } from "@nestjs/throttler";
 import * as bcrypt from "bcrypt";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
@@ -26,6 +29,7 @@ import { compressImage } from "../storage/compress.util";
 import { TRIAL_LENGTH_DAYS, planKeyFromEnum } from "../billing/plan-catalog.constants";
 import { escapeHtml } from "../common/html-escape";
 import { mayUseVerificationLink } from "../auth/verification-link-eligibility";
+import { RESEND_LIMITER, mayResendTo } from "./resend-verification-limit";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
 
@@ -67,6 +71,18 @@ const RESERVED_USERNAMES = new Set([
   "manager",
 ]);
 
+/** An error's message with every occurrence of the address removed, for a log line. */
+function scrubAddress(err: unknown, email: unknown): string {
+  const raw = (err as { message?: unknown } | null)?.message;
+  const msg = typeof raw === "string" ? raw : "unknown";
+  if (typeof email !== "string" || !email.trim()) return msg;
+  return msg
+    .split(email.trim())
+    .join("[address]")
+    .split(email.trim().toLowerCase())
+    .join("[address]");
+}
+
 @Injectable()
 export class TenantsService {
   private readonly logger = new Logger(TenantsService.name);
@@ -79,6 +95,11 @@ export class TenantsService {
     private readonly email: EmailService,
     private readonly config: ConfigService,
     private readonly jwt: JwtService,
+    // Optional only so a module that never resends can build this service; without a limiter the
+    // resend refuses (fails closed), it never sends unthrottled.
+    @Optional()
+    @Inject(RESEND_LIMITER)
+    private readonly resendLimiter?: Pick<ThrottlerStorage, "increment">,
   ) {
     // Fails the boot on a missing or short secret (see derived-jwt-key.ts).
     this.emailVerifyKey = derivedJwtKey(
@@ -256,18 +277,35 @@ export class TenantsService {
   }
 
   /**
-   * Resend a verification email to an INACTIVE user. The HTTP response stays a
-   * fixed, enumeration-safe message regardless of outcome (never reveals whether
-   * the address is registered), but the ATTEMPT is no longer silent: a real
-   * delivery failure for a real account is logged here so it's diagnosable
-   * server-side instead of only ever manifesting as "user says they never got
-   * the email". Returns whether a send was attempted and delivered, for callers
-   * that want to log/test — never expose this boolean to the client.
+   * Resend a verification email to an INACTIVE user. The WHOLE body runs detached: this returns as
+   * soon as the work is scheduled, so the HTTP response is the same fixed acknowledgement at the
+   * same speed whether the address is unknown, ineligible, rate limited or real. Nothing from the
+   * detached part reaches the caller: its errors are caught and logged without the address or any
+   * link.
    *
-   * Only an account eligible for the verification link (verification-link-eligibility.ts)
-   * is sent one; every other case returns the same silent false.
+   * Per ADDRESS, before any account lookup and for every address alike: a cooldown of one resend
+   * per 10 minutes and a cap of five per day, counted in the shared Redis throttler under a hash of
+   * the lowercased address (see resend-verification-limit.ts). The throttler fails closed. The
+   * daily cap can be used up for one address by a third party; the fallback is the back office.
+   *
+   * Only an account eligible for the verification link (verification-link-eligibility.ts) is sent
+   * one.
    */
-  async resendVerification(email: string): Promise<boolean> {
+  async resendVerification(email: string): Promise<void> {
+    void this.performResend(email).catch((err: unknown) => {
+      this.logger.error(`Resend-verification failed: ${scrubAddress(err, email)}`);
+    });
+  }
+
+  /**
+   * The detached resend body. Resolves true only when a link was handed to the mail transport and
+   * delivered; every refusal resolves false. Exposed (not private) so specs can await the outcome;
+   * callers on the request path use `resendVerification`, which never exposes it.
+   */
+  async performResend(email: string): Promise<boolean> {
+    if (typeof email !== "string") return false;
+    if (!(await mayResendTo(this.resendLimiter, email))) return false;
+
     const user = await this.prisma.user.findFirst({
       where: {
         email: email.toLowerCase().trim(),
@@ -314,7 +352,7 @@ export class TenantsService {
       if (!sendResult.delivered) {
         this.logger.error(
           `Resend-verification email NOT delivered for tenant "${user.tenant.slug}" ` +
-            `(user ${user.id}, ${user.email}) — transport=${sendResult.transport} ` +
+            `(user ${user.id}) — transport=${sendResult.transport} ` +
             `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}.`,
         );
       }
@@ -322,7 +360,7 @@ export class TenantsService {
     } catch (err: any) {
       this.logger.error(
         `Failed to resend verification email for tenant "${user.tenant.slug}" ` +
-          `(user ${user.id}, ${user.email}): ${err?.message ?? err}`,
+          `(user ${user.id}): ${scrubAddress(err, email)}`,
       );
       return false;
     }

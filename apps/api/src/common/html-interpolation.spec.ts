@@ -84,7 +84,7 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
   },
   "tenants/tenants.service.ts": {
     "register :: href escapeHtml(verifyUrl)": { reason: ENV_LINK, count: 2 },
-    "resendVerification :: href escapeHtml(verifyUrl)": ENV_LINK,
+    "performResend :: href escapeHtml(verifyUrl)": ENV_LINK,
   },
   "customers/customers.service.ts": {
     "sendPortalInvite :: portalInviteEmailHtml(sellerName, inviteUrl)":

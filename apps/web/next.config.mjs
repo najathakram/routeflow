@@ -100,18 +100,23 @@ const nextConfig = {
           { key: "Content-Security-Policy", value: csp },
         ],
       },
-      // F3-004: password-reset pages land with a single-use token in the URL.
-      // Force no-referrer here (stricter than the site default) so the token can
-      // never leak via the Referer of any subresource these pages load. The pages
-      // also strip the token from the visible URL client-side after reading it.
-      {
-        source: "/reset-password",
+      // F3-004: pages that land with a single-use link token in the URL (password reset,
+      // email verification, buyer invite, buyer merge). Force no-referrer here (stricter than
+      // the site default) so the token can never leak via the Referer of any subresource or
+      // outbound navigation these pages make. The pages also strip the token from the visible
+      // URL client-side after reading it. The buyer invite page is a dynamic route, hence
+      // `:path*` (it also covers the bare /buyer/invite).
+      ...[
+        "/reset-password",
+        "/buyer/reset-password",
+        "/verify-email",
+        "/buyer/verify-email",
+        "/buyer/invite/:path*",
+        "/buyer/verify-merge",
+      ].map((source) => ({
+        source,
         headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
-      },
-      {
-        source: "/buyer/reset-password",
-        headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
-      },
+      })),
       // A6: the marketing site's static, signed-out pages were shipping only
       // `s-maxage` (App Router's own ISR default) with no plain `max-age`, so
       // a shared/CDN cache could reuse the response but a visitor's own

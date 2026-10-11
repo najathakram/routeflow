@@ -8,6 +8,8 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { EncryptionService } from "../common/encryption.service";
 import { StorageService } from "../storage/storage.service";
 import { EmailService } from "../email/email.service";
+import { PublicTenantsController } from "./public-tenants.controller";
+import { RESEND_LIMITER, resendAddressKey } from "./resend-verification-limit";
 
 /**
  * Repro-first coverage for the self-service tenant signup email-honesty bug:
@@ -24,8 +26,29 @@ import { EmailService } from "../email/email.service";
  * signup silently didn't. This file did not exist before this fix (the
  * self-service registration path had zero test coverage).
  */
+/** In-memory stand-in for the Redis throttler: fixed-window INCR per key, no clock needed. */
+function makeFakeLimiter() {
+  const hits = new Map<string, number>();
+  const limiter = {
+    keys: () => [...hits.keys()],
+    /** The window of every counter whose key starts with `prefix` elapses. */
+    expire: (prefix: string) => {
+      for (const k of [...hits.keys()]) if (k.startsWith(prefix)) hits.delete(k);
+    },
+    fail: false,
+    increment: jest.fn(async (key: string, _ttl: number, limit: number) => {
+      if (limiter.fail) throw new Error("redis down");
+      const totalHits = (hits.get(key) ?? 0) + 1;
+      hits.set(key, totalHits);
+      return { totalHits, timeToExpire: 1, isBlocked: totalHits > limit, timeToBlockExpire: 0 };
+    }),
+  };
+  return limiter;
+}
+
 describe("TenantsService", () => {
   let service: TenantsService;
+  let limiter: ReturnType<typeof makeFakeLimiter>;
   let prisma: ReturnType<typeof createMockPrisma>;
   let email: { send: jest.Mock };
 
@@ -67,6 +90,7 @@ describe("TenantsService", () => {
     );
 
     email = { send: jest.fn() };
+    limiter = makeFakeLimiter();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -86,6 +110,7 @@ describe("TenantsService", () => {
           },
         },
         { provide: JwtService, useValue: { sign: jest.fn().mockReturnValue("mock.jwt.token") } },
+        { provide: RESEND_LIMITER, useValue: limiter },
       ],
     }).compile();
 
@@ -206,11 +231,13 @@ describe("TenantsService", () => {
       (prisma.refreshToken.count as jest.Mock).mockResolvedValue(0);
     });
 
+    const flush = () => new Promise((r) => setImmediate(r));
+
     it("returns true and dispatches the email for a real pending account", async () => {
       (prisma.user.findFirst as jest.Mock).mockResolvedValue(PENDING_USER);
       email.send.mockResolvedValue({ delivered: true, transport: "resend" });
 
-      const sent = await service.resendVerification("owner@acme.example");
+      const sent = await service.performResend("owner@acme.example");
 
       expect(sent).toBe(true);
       expect(email.send).toHaveBeenCalledWith(
@@ -220,7 +247,7 @@ describe("TenantsService", () => {
 
     it("returns false without calling email.send for a non-existent/already-verified address (enumeration-safe)", async () => {
       (prisma.user.findFirst as jest.Mock).mockResolvedValue(null);
-      const sent = await service.resendVerification("nobody@nowhere.example");
+      const sent = await service.performResend("nobody@nowhere.example");
       expect(sent).toBe(false);
       expect(email.send).not.toHaveBeenCalled();
     });
@@ -230,10 +257,148 @@ describe("TenantsService", () => {
       email.send.mockResolvedValue({ delivered: false, transport: "none", error: "no transport" });
       const loggerErrorSpy = jest.spyOn((service as any).logger, "error");
 
-      const sent = await service.resendVerification("owner@acme.example");
+      const sent = await service.performResend("owner@acme.example");
 
       expect(sent).toBe(false);
       expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining("NOT delivered"));
+    });
+
+    describe("per-address limits", () => {
+      beforeEach(() => {
+        (prisma.user.findFirst as jest.Mock).mockResolvedValue(PENDING_USER);
+        email.send.mockResolvedValue({ delivered: true, transport: "resend" });
+      });
+
+      it("a second request inside the cooldown sends nothing", async () => {
+        expect(await service.performResend("owner@acme.example")).toBe(true);
+        expect(await service.performResend("owner@acme.example")).toBe(false);
+        expect(email.send).toHaveBeenCalledTimes(1);
+      });
+
+      it("another address is unaffected by the first one's cooldown", async () => {
+        await service.performResend("owner@acme.example");
+        expect(await service.performResend("other@acme.example")).toBe(true);
+        expect(email.send).toHaveBeenCalledTimes(2);
+      });
+
+      it("case and whitespace variants of one address share one counter", async () => {
+        expect(await service.performResend("owner@acme.example")).toBe(true);
+        expect(await service.performResend("  OWNER@Acme.Example ")).toBe(false);
+        expect(email.send).toHaveBeenCalledTimes(1);
+      });
+
+      it("the 6th request in a day sends nothing even once the cooldown has passed", async () => {
+        let sends = 0;
+        for (let i = 0; i < 7; i++) {
+          // The 10-minute cooldown window elapses between attempts; the daily window does not.
+          limiter.expire("resend-verify-cooldown:");
+          if (await service.performResend("owner@acme.example")) sends++;
+        }
+        expect(sends).toBe(5);
+        expect(email.send).toHaveBeenCalledTimes(5);
+      });
+
+      it("keys the limiter on the hash, never on the raw address", async () => {
+        await service.performResend("Owner@Acme.Example ");
+        const hash = resendAddressKey("owner@acme.example");
+        expect(hash).toMatch(/^[0-9a-f]{64}$/);
+        expect(limiter.keys().length).toBeGreaterThan(0);
+        for (const k of limiter.keys()) {
+          expect(k).toContain(hash);
+          expect(k.toLowerCase()).not.toContain("owner");
+          expect(k.toLowerCase()).not.toContain("acme");
+        }
+        for (const call of limiter.increment.mock.calls) {
+          expect(JSON.stringify(call).toLowerCase()).not.toContain("owner@");
+        }
+      });
+
+      it("counts BEFORE the account lookup, for an address that does not exist too", async () => {
+        (prisma.user.findFirst as jest.Mock).mockResolvedValue(null);
+        await service.performResend("nobody@nowhere.example");
+        await service.performResend("nobody@nowhere.example");
+        expect(limiter.increment).toHaveBeenCalled();
+        // The second request is refused by the cooldown before it reaches the lookup.
+        expect(prisma.user.findFirst).toHaveBeenCalledTimes(1);
+      });
+
+      it("fails closed when the throttler is unavailable: nothing is looked up or sent", async () => {
+        limiter.fail = true;
+        expect(await service.performResend("owner@acme.example")).toBe(false);
+        expect(prisma.user.findFirst).not.toHaveBeenCalled();
+        expect(email.send).not.toHaveBeenCalled();
+      });
+
+      it("fails closed when no limiter is wired at all", async () => {
+        const bare = new TenantsService(
+          prisma as any,
+          {} as any,
+          {} as any,
+          email as any,
+          { get: jest.fn(() => "test-jwt-secret-0123456789-abcdefghijklmnop") } as any,
+          {} as any,
+        );
+        expect(await bare.performResend("owner@acme.example")).toBe(false);
+        expect(email.send).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("detached response", () => {
+      it("resolves with the same value for a real, an unknown and a limited address", async () => {
+        email.send.mockResolvedValue({ delivered: true, transport: "resend" });
+        (prisma.user.findFirst as jest.Mock).mockResolvedValue(PENDING_USER);
+        const real = await service.resendVerification("owner@acme.example");
+        (prisma.user.findFirst as jest.Mock).mockResolvedValue(null);
+        const unknown = await service.resendVerification("nobody@nowhere.example");
+        const limited = await service.resendVerification("owner@acme.example"); // inside the cooldown
+        await flush();
+        expect(real).toBeUndefined();
+        expect(unknown).toBe(real);
+        expect(limited).toBe(real);
+      });
+
+      it("the endpoint answers with an identical body for a real, unknown and limited address", async () => {
+        const controller = new PublicTenantsController(service, {} as any);
+        email.send.mockResolvedValue({ delivered: true, transport: "resend" });
+        (prisma.user.findFirst as jest.Mock).mockResolvedValue(PENDING_USER);
+        const real = await controller.resendVerification({ email: "owner@acme.example" });
+        (prisma.user.findFirst as jest.Mock).mockResolvedValue(null);
+        const unknown = await controller.resendVerification({ email: "nobody@nowhere.example" });
+        const limited = await controller.resendVerification({ email: "owner@acme.example" });
+        await flush();
+        expect(JSON.stringify(unknown)).toBe(JSON.stringify(real));
+        expect(JSON.stringify(limited)).toBe(JSON.stringify(real));
+        expect(real.message).toContain("If an account");
+      });
+
+      it("returns before the detached part has finished", async () => {
+        (prisma.user.findFirst as jest.Mock).mockResolvedValue(PENDING_USER);
+        let release!: (v: unknown) => void;
+        email.send.mockReturnValue(new Promise((r) => (release = r)));
+        await service.resendVerification("owner@acme.example"); // would hang if it awaited the send
+        await flush();
+        expect(email.send).toHaveBeenCalledTimes(1);
+        release({ delivered: true, transport: "resend" });
+        await flush();
+      });
+
+      it("does not let a detached failure reach the caller, and logs without the address", async () => {
+        (prisma.user.findFirst as jest.Mock).mockRejectedValue(
+          new Error("db down for owner@acme.example"),
+        );
+        const loggerErrorSpy = jest.spyOn((service as any).logger, "error");
+        await expect(service.resendVerification("owner@acme.example")).resolves.toBeUndefined();
+        await flush();
+        await flush();
+        expect(loggerErrorSpy).toHaveBeenCalled();
+        expect(JSON.stringify(loggerErrorSpy.mock.calls)).not.toContain("owner@acme.example");
+      });
+
+      it("a non-string address is absorbed the same way", async () => {
+        await expect(service.resendVerification({ x: 1 } as any)).resolves.toBeUndefined();
+        await flush();
+        expect(email.send).not.toHaveBeenCalled();
+      });
     });
   });
 
