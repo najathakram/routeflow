@@ -74,6 +74,8 @@ async function ringOne(page: Page, sku: string): Promise<number> {
   await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
     timeout: 15_000,
   });
+  // the line's price resolves a beat after the row mounts: wait for a non-zero total before reading it
+  await expect(page.getByTestId("running-total")).not.toContainText(/\$0\.00/, { timeout: 15_000 });
   const text = (await page.getByTestId("running-total").textContent()) ?? "";
   const m = /\$(\d+)\.(\d{2})/.exec(text.replace(/,/g, ""));
   expect(m, `a total like $12.34 in "${text}"`).toBeTruthy();
@@ -114,7 +116,8 @@ for (const vp of VIEWPORTS) {
       const lb = await link.boundingBox();
       expect(lb!.height).toBeGreaterThanOrEqual(44);
       if (vp.width <= 390) {
-        const cb = await page.getByTestId("counter-payment-column").boundingBox();
+        // counter-payment-column is display:contents at 390 (no box): the Payment section is its box-bearing child
+        const cb = await page.getByRole("region", { name: "Payment" }).boundingBox();
         expect(lb!.width).toBeGreaterThanOrEqual(cb!.width - 2); // full width of its column
       }
       await tap(link);
