@@ -12,6 +12,7 @@ import {
   useGetPaymentImageUrl,
 } from "@/lib/api/invoices";
 import { Badge, Button, Card, useToast } from "@routeflow/ui/web";
+import { isDayClosedRefusal } from "@/lib/day-closed-copy";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 
@@ -61,7 +62,9 @@ export default function PaymentDetailPage() {
     try {
       await voidPayment.mutateAsync({ invoiceId: payment.invoice.id, paymentId: payment.id });
       toast({ title: "Payment voided", variant: "success" });
-    } catch {
+    } catch (err: unknown) {
+      // The app-wide error toast already says a closed-day refusal in fixed copy: one toast, not two.
+      if (isDayClosedRefusal(err)) return;
       toast({ title: "Failed to void payment", variant: "error" });
     }
   };
