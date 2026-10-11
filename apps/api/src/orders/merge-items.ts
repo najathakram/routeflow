@@ -248,10 +248,24 @@ export function foldMergeItems(
     // incoming quantity opens a new live-stamped bucket. With no live trio supplied every bucket is a candidate.
     const live = liveTrioByProductId.get(item.productId);
     const allBuckets = bucketsByProduct.get(item.productId);
-    const buckets =
+    let buckets =
       live && allBuckets
         ? allBuckets.filter((b) => b.trio === undefined || foldTarget(b.trio, live) === "ADD")
         : allBuckets;
+    // The pack refusals below see only the candidates. When the trio filter removed a bucket and no candidate
+    // can take this scan's pack (every candidate is boxed at ANOTHER known pack), the scan is not a pack
+    // mismatch with the order: its pack simply belongs to a line that was sold at an older trio. It opens a new
+    // live bucket instead of refusing, or folding into a different-pack line.
+    if (
+      buckets &&
+      allBuckets &&
+      buckets.length > 0 &&
+      buckets.length < allBuckets.length &&
+      incomingUnitsPerBox > 1 &&
+      !buckets.some((b) => b.unitsPerBox === incomingUnitsPerBox || b.unitsPerBox <= 1)
+    ) {
+      buckets = [];
+    }
 
     if (!buckets || buckets.length === 0) {
       // Brand-new line for this merge — no existing accumulator to fold into.

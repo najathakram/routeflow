@@ -334,16 +334,16 @@ export class OrdersService implements OnApplicationBootstrap {
     return currentTaxRate(this.systemConfig);
   }
 
-  /**
-   * RF-4 / B297 PR3: recompute + persist each regulated line's `categoryTaxAmount` at the line's OWN rate
-   * snapshot (never the live category) and return the order-level Σ. The rule, the NULL-trio stamp and
-   * the no-category keep live in `recompute-line-category-taxes.ts`; this binds the service's logger.
-   */
   /** B297 row 340: the trio a new sale of each product takes today (a fold's `foldTarget` input). */
   liveTrioByProduct(productIds: string[]) {
     return loadLiveTrioByProduct(this.prisma.forTenant() as any, productIds);
   }
 
+  /**
+   * RF-4 / B297 PR3: recompute + persist each regulated line's `categoryTaxAmount` at the line's OWN rate
+   * snapshot (never the live category) and return the order-level Σ. The rule, the NULL-trio stamp and
+   * the no-category keep live in `recompute-line-category-taxes.ts`; this binds the service's logger.
+   */
   private recomputeLineCategoryTaxes(tx: any, lines: any[]): Promise<number> {
     return recomputeLineCategoryTaxes(tx, lines, this.logger);
   }

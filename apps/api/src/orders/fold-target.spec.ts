@@ -193,7 +193,109 @@ describe("loadLiveTrioByProduct", () => {
   });
 });
 
+describe("MED-A/MED-B (review): clustering and pack refusal under a split", () => {
+  const ml = (over: Record<string, unknown> = {}) => ({
+    id: undefined as string | undefined,
+    productId: "p1",
+    qty: 12,
+    boxes: null,
+    pieces: null,
+    unitsPerBox: null,
+    unitPrice: 1,
+    subtotal: 12,
+    priceType: "STANDARD" as any,
+    originalPrice: null,
+    overrideReason: null,
+    overriddenBy: null,
+    notes: null,
+    promoFreeUnits: null,
+    trackedCategoryId: "cat-1",
+    categoryTaxType: "EXCISE_PER_UNIT" as any,
+    categoryTaxRate: 0.05,
+    categoryPriceIncludesTax: false,
+    ...over,
+  });
+  const o = {
+    promos: [],
+    canEarnNew: false,
+    categoryFor: () => "cat-1",
+    liveUnitsPerBoxFor: () => 0,
+  };
+  const NULLS = { categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null };
+
+  it("a NULL-trio winner never pulls loser lines of different trios into one sum", () => {
+    const { writes } = buildMergeLineWrites(
+      [ml({ id: "w", qty: 5, subtotal: 5, ...NULLS })],
+      [
+        ml({ qty: 12, subtotal: 12, categoryTaxRate: 0.05 }),
+        ml({ qty: 8, subtotal: 8, categoryTaxRate: 0.08 }),
+      ],
+      o,
+    );
+    const quantities = writes.map((w: any) => w.data.qty).sort((a: number, b: number) => a - b);
+    // the 0.05 and 0.08 lines are never summed together (the NULL-trio winner may take one of them)
+    expect(quantities).not.toContain(25);
+    expect(quantities.reduce((n: number, q: number) => n + q, 0)).toBeGreaterThanOrEqual(20);
+  });
+
+  it("a NULL-trio LOSER listed first is not the representative either", () => {
+    const { writes } = buildMergeLineWrites(
+      [],
+      [
+        ml({ id: undefined, qty: 3, subtotal: 3, ...NULLS }),
+        ml({ qty: 12, subtotal: 12, categoryTaxRate: 0.05 }),
+        ml({ qty: 8, subtotal: 8, categoryTaxRate: 0.08 }),
+      ],
+      o,
+    );
+    expect(writes.map((w: any) => w.data.qty)).not.toContain(23);
+  });
+
+  it("a scan of another known pack opens a new live bucket instead of a pack refusal when the matching-pack line was split off", () => {
+    const stale12 = {
+      id: "e1",
+      productId: "p1",
+      qty: 24,
+      boxes: 2,
+      pieces: 0,
+      unitsPerBox: 12,
+      unitPrice: 10,
+      priceType: "STANDARD",
+      trackedCategoryId: "cat-1",
+      categoryTaxType: "EXCISE_PER_UNIT",
+      categoryTaxRate: 0.05,
+      categoryPriceIncludesTax: false,
+    };
+    const live6 = {
+      ...stale12,
+      id: "e2",
+      qty: 12,
+      boxes: 2,
+      unitsPerBox: 6,
+      categoryTaxRate: 0.08,
+    };
+    const r = foldMergeItems(
+      [stale12, live6],
+      [{ productId: "p1", qty: 12, boxes: 1, pieces: 0 }], // a 12-pack scan
+      undefined,
+      new Map([["p1", T(0.08)]]),
+    );
+    expect(r.items.map((i: any) => [i.sourceLineId ?? "NEW", i.unitsPerBox, i.qty])).toEqual([
+      ["e1", 12, 24],
+      ["e2", 6, 12],
+      ["NEW", 12, 12],
+    ]);
+  });
+});
+
 describe("caller pin: every quantity-folding site goes through foldTarget", () => {
+  it("the staff controller hands foldMergeItems the product's live trio", () => {
+    const src = fs
+      .readFileSync(path.resolve(__dirname, "orders.controller.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+    expect(src).toMatch(/foldMergeItems\([\s\S]{0,400}liveTrioByProduct\(/);
+  });
+
   it.each(["merge-items.ts", "merge-line-writes.ts"])("%s imports and calls foldTarget", (f) => {
     const src = fs
       .readFileSync(path.resolve(__dirname, f), "utf8")

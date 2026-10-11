@@ -8,6 +8,7 @@
 import { PriceType } from "@prisma/client";
 import {
   copyCategoryTaxSnapshot,
+  hasNullTrio,
   type CategoryTaxType,
   type PromotionRule,
 } from "@routeflow/pricing";
@@ -171,8 +172,17 @@ export function buildMergeLineWrites(
       }
       (asWinner ? c.winner : c.losers).push(li);
     };
-    vb.winner.forEach((li) => place(li, true));
-    vb.losers.forEach((li) => place(li, false));
+    // A line with NO stamped trio is "ADD" against every trio of its category, so it must never be the
+    // cluster's representative while a stamped line exists (it would pull lines of different trios into one
+    // cluster). Stamped lines (winners first) cluster among themselves; unstamped ones then attach to the first
+    // cluster of their category, or form their own.
+    const stamped = (li: MergeLine) => !hasNullTrio(li as any) || !li.trackedCategoryId;
+    const tagged = [
+      ...vb.winner.map((li) => ({ li, asWinner: true })),
+      ...vb.losers.map((li) => ({ li, asWinner: false })),
+    ];
+    tagged.filter((t) => stamped(t.li)).forEach((t) => place(t.li, t.asWinner));
+    tagged.filter((t) => !stamped(t.li)).forEach((t) => place(t.li, t.asWinner));
     for (const c of clusters)
       buckets.push({ productId: vb.productId, winner: c.winner, losers: c.losers });
   }
