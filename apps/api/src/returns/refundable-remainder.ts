@@ -32,7 +32,7 @@
  * the queries scope by id, so the formula is the same one the specs pin.
  */
 import { ConflictException } from "@nestjs/common";
-import { roundMoney } from "@routeflow/pricing";
+import { round4, roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { piecesPerQtyOf } from "../credit-notes/line-credit-headroom";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
@@ -41,7 +41,8 @@ import { PACK_LINE_SELECT, packFactorOrReason, standardPackBases } from "./retur
 import type { ProductPackBasis } from "./returns-restock-pieces";
 
 const num = (v: unknown): number => (v == null ? 0 : Number(v));
-const round3 = (n: number): number => Math.round(n * 1000) / 1000;
+// quantities are stored to 3 decimals; the pricing package's round4 (no hand-written rounding here) keeps them without noise
+const roundQty = round4;
 const DEAD = new Set<string>(DEAD_RETURN_STATUSES);
 const EXCLUDED_INVOICE = new Set<string>(CREDIT_SOURCE_EXCLUDED);
 /** One cent, plus half a cent of rounding drift per earlier item (at most 4 cents), like the line headroom's tolerance. */
@@ -456,7 +457,7 @@ export async function refundableRemainder(
       poolValueOut += Math.min(pool.valueOut, pool.billedValue);
       items += pool.items;
       const remainder: PoolRemainder = {
-        qty: round3(pool.billedQty - pool.qtyOut),
+        qty: roundQty(pool.billedQty - pool.qtyOut),
         value: roundMoney(pool.billedValue - pool.valueOut),
         qtyTol: Math.max(0.001, pool.qtyTol),
         valueTol: valueTolerance(pool.items),
@@ -537,7 +538,7 @@ export function refundableRefusal(
       return {
         invoiceId: acc.invoiceId,
         productId: acc.productId,
-        remainingQty: round3(floor0(pool.qty)),
+        remainingQty: roundQty(floor0(pool.qty)),
         remainingValue: roundMoney(floor0(pool.value)),
       };
   }

@@ -1271,6 +1271,9 @@ export class InlineReturnsService {
       // SA-706c (house order Return → Order): the Order BEFORE the intent insert below takes KEY SHARE on it.
       await lockOrderRow(tx, tenantId, fresh.orderId);
 
+      // SA-773, TRANSITIONAL: no remainder check here. This is the immediate issue right after a capture that already asked it
+      // (captureInTx); the only return that reaches it unchecked is an unheld RECEIVED one captured BEFORE that check shipped and
+      // re-issued by a replay (HIGH-2). It ages out with those rows; do not add callers that skip the capture.
       const amount = roundMoney(
         Number(fresh.creditSubtotal ?? 0) +
           Number(fresh.creditTax ?? 0) +

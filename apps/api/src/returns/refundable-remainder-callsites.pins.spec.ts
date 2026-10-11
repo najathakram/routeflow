@@ -36,21 +36,24 @@ const propChain = (e: ts.Expression): string[] => {
   return out;
 };
 
-const hasRefundedStatus = (call: ts.CallExpression): boolean => {
+/**
+ * A return write that can set status REFUNDED: its source mentions REFUNDED anywhere (a literal, a constant named for it), or its
+ * `data` is not a plain object literal with a literal status (an identifier, a spread, a call: it could carry anything). The
+ * heuristic over-reports on purpose: an over-reported writer must be classified in the inventory below, never silently skipped.
+ */
+const hasRefundedStatus = (call: ts.CallExpression, sf: ts.SourceFile): boolean => {
   const arg = call.arguments[0];
-  if (!arg || !ts.isObjectLiteralExpression(arg)) return false;
+  if (!arg) return false;
+  if (arg.getText(sf).includes("REFUNDED")) return true;
+  if (!ts.isObjectLiteralExpression(arg)) return true;
   const data = arg.properties.find(
     (p): p is ts.PropertyAssignment =>
       ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === "data",
   );
-  if (!data || !ts.isObjectLiteralExpression(data.initializer)) return false;
+  if (!data) return arg.properties.some((p) => ts.isSpreadAssignment(p));
+  if (!ts.isObjectLiteralExpression(data.initializer)) return true;
   return data.initializer.properties.some(
-    (p) =>
-      ts.isPropertyAssignment(p) &&
-      ts.isIdentifier(p.name) &&
-      p.name.text === "status" &&
-      ts.isStringLiteralLike(p.initializer) &&
-      p.initializer.text === "REFUNDED",
+    (p) => ts.isSpreadAssignment(p) || (ts.isPropertyAssignment(p) && !ts.isIdentifier(p.name)),
   );
 };
 
@@ -82,7 +85,7 @@ function factsOf(rel: string): Map<string, FnFacts> {
       const owner = chain[chain.length - 2];
       if (owner === "return" && (callee === "updateMany" || callee === "update")) {
         current.returnWrites.push(node.getStart(sf));
-        if (hasRefundedStatus(node)) current.refundedWrites.push(node.getStart(sf));
+        if (hasRefundedStatus(node, sf)) current.refundedWrites.push(node.getStart(sf));
       }
       if (owner === "creditNote" && (callee === "create" || callee === "createMany"))
         current.creditNoteWrites.push(node.getStart(sf));
@@ -208,6 +211,60 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
     }
   });
 
+  // ─── the CALLERS of the value-giving helpers are a closed set, each with its remainder check ────────────
+
+  /** Every function in apps/api/src that calls `helper(...)` (any receiver), as file::function. */
+  const callersOf = (helper: string): string[] => {
+    const out: string[] = [];
+    for (const file of walkSources(SRC)) {
+      const rel = path.relative(SRC, file).replace(/\\/g, "/");
+      if (!fs.readFileSync(file, "utf8").includes(helper)) continue;
+      for (const f of factsOf(rel).values())
+        if (f.calls.some((c) => c.name === helper) && f.name !== helper)
+          out.push(`${rel}::${f.name}`);
+    }
+    return out.sort();
+  };
+
+  it("insertCreditNoteInTx is called by create() and the reissue only, each validating (the remainder included) before it inserts", () => {
+    expect(callersOf("insertCreditNoteInTx")).toEqual([
+      "credit-notes/credit-note-reissue.service.ts::reissue",
+      "credit-notes/credit-notes.service.ts::create",
+    ]);
+  });
+
+  it("mintStandaloneInTx is called by issueCreditInTx only, and issueCreditInTx by exactly the four classified callers, each with its check", () => {
+    expect(callersOf("mintStandaloneInTx")).toEqual([
+      "returns/inline-returns.service.ts::issueCreditInTx",
+    ]);
+    expect(callersOf("issueCreditInTx")).toEqual([
+      "returns/inline-returns.service.ts::approve",
+      "returns/inline-returns.service.ts::captureAndIssueInTx",
+      "returns/inline-returns.service.ts::issueCredit",
+      "returns/inline-returns.service.ts::storeCreditInstead",
+    ]);
+    const issue = (fn: string) => inlineSvc.get(fn)!;
+    // approve() and storeCreditInstead() ask the remainder themselves, before they mint
+    for (const fn of ["approve", "storeCreditInstead"]) {
+      const f = issue(fn);
+      expect(firstPos(f, "assertInlineReturnWithinRemainder")).toBeGreaterThan(-1);
+      expect(firstPos(f, "assertInlineReturnWithinRemainder")).toBeLessThan(
+        firstPos(f, "issueCreditInTx"),
+      );
+    }
+    // approve() also asks it before it restocks or reverses the ledger
+    expect(firstPos(issue("approve"), "assertInlineReturnWithinRemainder")).toBeLessThan(
+      firstPos(issue("approve"), "restockReturnItems"),
+    );
+    // captureAndIssueInTx runs the capture (which asks it) before it mints
+    expect(firstPos(issue("captureAndIssueInTx"), "captureInTx")).toBeLessThan(
+      firstPos(issue("captureAndIssueInTx"), "issueCreditInTx"),
+    );
+    // issueCredit() is the one TRANSITIONAL unchecked caller (the immediate issue after a checked capture; see its comment): it must
+    // stay the only one, and never grow a second way in
+    expect(firstPos(issue("issueCredit"), "assertInlineReturnWithinRemainder")).toBe(-1);
+  });
+
   // ─── the inventory is closed ─────────────────────────────────────────────
 
   /** Every function in apps/api/src that writes a credit note row, by file::function. */
@@ -242,16 +299,22 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
     ]);
   });
 
-  it("the only writers of status REFUNDED on a return are the three claims", () => {
-    expect(refundedWriters()).toEqual([
-      // the STANDARD claim (store credit and recorded): pinned above
-      // the store credit mint: its callers are captureAndIssueInTx / issueCredit (right after a capture that asked the remainder,
-      // pinned above) and approve() (a HELD return was never credited: it reserves its goods in the remainder, so a later
-      // value-giver is refused, and the capture it came from was held, not checked)
-      "returns/inline-returns.service.ts::issueCreditInTx",
-      // the inline cash refund: pinned above
-      "returns/inline-returns.service.ts::refund",
-      "returns/returns.service.ts::claimRefund",
-    ]);
+  it("the only return writers that can set status REFUNDED are the three claims; the other over-reported writers set something else", () => {
+    expect(refundedWriters()).toEqual(
+      [
+        // the STANDARD claim (store credit and recorded): pinned above
+        // the store credit mint: its callers are captureAndIssueInTx / issueCredit (right after a capture that asked the remainder,
+        // pinned above) and approve() (a HELD return was never credited: it reserves its goods in the remainder, so a later
+        // value-giver is refused, and the capture it came from was held, not checked)
+        "returns/inline-returns.service.ts::issueCreditInTx",
+        // the inline cash refund: pinned above
+        "returns/inline-returns.service.ts::refund",
+        "returns/returns.service.ts::claimRefund",
+        // over-reported by the broad heuristic, each reviewed: none of them sets REFUNDED
+        "returns/refund-tender.ts::setRefundTender", // writes the tender column of an already-resolved return
+        "returns/returns.service.ts::cancel", // the CAS to CANCELLED (a REFUNDED return cannot be cancelled)
+        "returns/returns.service.ts::processRefund", // the compensation: REFUNDED back to RECEIVED when the mint failed
+      ].sort(),
+    );
   });
 });

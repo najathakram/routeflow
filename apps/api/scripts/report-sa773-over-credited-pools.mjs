@@ -12,6 +12,10 @@
 //          the recorded (EXTERNAL_REFUND) STANDARD refunds that issued no credit note.
 // A STANDARD return that issued a credit note is in both sections through that credit note; one still open (not yet refunded) is
 // not money out and is not counted.
+// Money-safe reading: the application's pool is GROSS (tax at the line's stored rate) while a STANDARD refund is priced NET, so a
+// pool can read zero or negative in the application (it fails closed and refuses) where this census, which counts a STANDARD
+// refund net, reads it clean. The two can differ by the tax on STANDARD refunds, never by more: read the census as a sizing
+// estimate, not as the set the application refuses.
 //
 // Output is an overage bucket and integers ONLY. `--list` additionally prints one row per case with the tenant id, the INVOICE id
 // (the order's first live invoice), the product id (pool section) and the overage, for the owner's per-case decision: ids only,
