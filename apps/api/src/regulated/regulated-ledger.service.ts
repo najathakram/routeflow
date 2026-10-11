@@ -47,7 +47,16 @@ export function netHeldByLine(
       netSales: 0,
       categoryTax: 0,
     };
-    if (r.entryType === "SALE" && !cur.sale) cur.sale = r;
+    // The metadata row: the NEWEST base SALE (never a correction, which points at one), so a line re-filed
+    // under another subcategory or order line is reversed under the live key's own metadata, not under
+    // whichever dead SALE an unordered read happened to return first.
+    if (r.entryType === "SALE" && r.correctsEntryId == null) {
+      const at = new Date(r.createdAt ?? 0).getTime();
+      const curAt = cur.sale ? new Date(cur.sale.createdAt ?? 0).getTime() : -1;
+      if (!cur.sale || cur.sale.correctsEntryId != null || at >= curAt) cur.sale = r;
+    } else if (r.entryType === "SALE" && !cur.sale) {
+      cur.sale = r; // only corrections seen so far: a fallback until a base SALE arrives
+    }
     const isReturnOrCredit =
       r.entryType === "REVERSAL" && (r.returnId != null || r.creditNoteId != null);
     if (!(preserveReturns && isReturnOrCredit)) {

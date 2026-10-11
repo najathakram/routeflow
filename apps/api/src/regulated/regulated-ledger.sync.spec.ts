@@ -318,6 +318,76 @@ describe("RegulatedLedgerService.reverseInvoiceEntries nets per category (B297 P
   });
 });
 
+describe("void metadata after a re-file (B297 PR4 review MED-1)", () => {
+  it("a void after a SUBCATEGORY re-file reverses the net under the LIVE sale's subcategory", async () => {
+    const createMany = jest.fn().mockResolvedValue({ count: 0 });
+    // SALE1 (sub-a), the sync's REVERSAL of it (sub-a), then SALE2 (sub-b): the net sits under sub-b
+    const rows = [
+      sale({
+        id: "s1",
+        trackedSubcategoryId: "sub-a",
+        createdAt: new Date("2026-10-01T00:00:00Z"),
+      }),
+      sale({
+        id: "s1-rev",
+        entryType: "REVERSAL",
+        trackedSubcategoryId: "sub-a",
+        qty: -12,
+        unitBasisQty: -12,
+        netSales: -120,
+        categoryTax: -0.6,
+        createdAt: new Date("2026-10-02T00:00:00Z"),
+      }),
+      sale({
+        id: "s2",
+        trackedSubcategoryId: "sub-b",
+        createdAt: new Date("2026-10-02T00:00:01Z"),
+      }),
+    ];
+    // an unordered read must not matter: the dead SALE is returned FIRST, before the live one
+    const db = {
+      regulatedSalesLedger: {
+        findMany: jest.fn().mockResolvedValue([rows[0], rows[1], rows[2]]),
+        createMany,
+      },
+    };
+    await new RegulatedLedgerService({} as any).reverseInvoiceEntries({ invoiceId: "inv-1", db });
+    const written = createMany.mock.calls.flatMap((c) => c[0].data as any[]);
+    expect(written.map((r) => [r.entryType, r.trackedSubcategoryId, r.qty])).toEqual([
+      ["REVERSAL", "sub-b", -12],
+    ]);
+  });
+
+  it("a void after an order-line RELINK reverses against the live order line", async () => {
+    const createMany = jest.fn().mockResolvedValue({ count: 0 });
+    const rows = [
+      sale({ id: "s1", orderItemId: "oi-1", createdAt: new Date("2026-10-01T00:00:00Z") }),
+      sale({
+        id: "s1-rev",
+        entryType: "REVERSAL",
+        orderItemId: "oi-1",
+        qty: -12,
+        unitBasisQty: -12,
+        netSales: -120,
+        categoryTax: -0.6,
+        createdAt: new Date("2026-10-02T00:00:00Z"),
+      }),
+      sale({ id: "s2", orderItemId: "oi-9", createdAt: new Date("2026-10-02T00:00:01Z") }),
+    ];
+    const db = {
+      regulatedSalesLedger: {
+        findMany: jest.fn().mockResolvedValue([rows[0], rows[1], rows[2]]),
+        createMany,
+      },
+    };
+    await new RegulatedLedgerService({} as any).reverseInvoiceEntries({ invoiceId: "inv-1", db });
+    const written = createMany.mock.calls.flatMap((c) => c[0].data as any[]);
+    expect(written.map((r) => [r.entryType, r.orderItemId, r.qty])).toEqual([
+      ["REVERSAL", "oi-9", -12],
+    ]);
+  });
+});
+
 describe("netHeldByLine (the one netting implementation)", () => {
   it("sums every signed row per invoice line, and leaves return / credit reversals out under preserveReturns", () => {
     const rows = [
