@@ -150,7 +150,7 @@ describe("buyer write routes carry BuyerSellerContextGuard (B4 B1 sweep)", () =>
 
   // The READ_ONLY exemption is ONE constant: exactly the buyer's own payment routes match it, no BuyerController
   // route (orders, cart, templates, favorites ...) does.
-  it("the read-only exemption matches the three payment writes and nothing else", () => {
+  it("the read-only exemption matches the three payment writes and the buyer's own order cancel, nothing else", () => {
     const exempt = (ctrl: any, name: string) => {
       const fn = ctrl.prototype[name];
       const method = Reflect.getMetadata(METHOD_METADATA, fn);
@@ -171,6 +171,7 @@ describe("buyer write routes carry BuyerSellerContextGuard (B4 B1 sweep)", () =>
           Reflect.getMetadata(METHOD_METADATA, ctrl.prototype[n]) !== undefined && exempt(ctrl, n),
       );
     expect(hit(BuyerPaymentsController).sort()).toEqual(["cancel", "card", "cash"]);
-    expect(hit(BuyerController)).toEqual([]);
+    // A3: a buyer cancelling their OWN order is the one BuyerController write that joins the exemption
+    expect(hit(BuyerController)).toEqual(["cancelOrder"]);
   });
 });
