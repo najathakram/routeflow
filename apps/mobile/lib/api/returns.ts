@@ -54,6 +54,8 @@ export interface Return {
    * UI can show the amount before the operator commits to a resolve method.
    */
   refundEstimate?: number;
+  /** "EXCEEDS_REFUNDABLE": the goods were already returned or credited, so the claim would refuse (SA-773). */
+  refundEstimateReason?: string | null;
   items: ReturnItem[];
   createdAt: string;
   updatedAt: string;

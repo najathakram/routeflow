@@ -113,8 +113,10 @@ export async function assertCreditWithinRemainder(
 
 /**
  * The PREVIEW of a STANDARD return's refund (display only, no lock, never a gate): the priced figure, or - when the claim would
- * refuse it for the remainder - what the selected goods still have left, so the screen never offers a figure the claim then
- * refuses. `capped` says which. The claim itself is never clamped: it refuses (409 RETURN_EXCEEDS_REFUNDABLE).
+ * refuse it for the remainder - what the selected goods still have left. `capped: true` MEANS THE CLAIM WILL REFUSE this return
+ * (409 RETURN_EXCEEDS_REFUNDABLE): a STANDARD refund has no amount input, it is always priced at the pool average, so the
+ * capped figure is information ("up to $X is left"), never an amount that can be refunded. Callers must present it as a block,
+ * not as an offer. The claim itself is never clamped.
  */
 export async function previewStandardRefund(
   db: any,

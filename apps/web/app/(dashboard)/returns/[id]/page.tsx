@@ -95,10 +95,18 @@ const REFUND_ESTIMATE_REASON_LABELS: Record<string, string> = {
   NOTHING_CREDITABLE: "Nothing billed on this order can be refunded.",
   NOTHING_BILLED:
     "None of the returned items were billed on this order, so there is nothing to refund.",
-  // SA-773: the goods were already returned or credited; the estimate shown is what is still left (0 = nothing)
-  EXCEEDS_REFUNDABLE:
-    "These goods were already returned or credited, so nothing more can be refunded for them.",
 };
+
+// SA-773: the claim REFUSES a return whose goods were already returned or credited (409 RETURN_EXCEEDS_REFUNDABLE), so the screen
+// says so up front and offers no Resolve; the estimate then carries only what is still left for the goods, never an amount to give.
+const EXCEEDS_REFUNDABLE = "EXCEEDS_REFUNDABLE";
+function refundBlockedText(refundEstimate?: number | null): string {
+  const left =
+    refundEstimate && refundEstimate > 0
+      ? `Up to ${fmtMoney(refundEstimate)} can still be given back for these goods.`
+      : "Nothing more can be given back for these goods.";
+  return `These goods were already returned or credited, so this return can't be resolved as it stands. ${left} Cancel the return and give an inline return or a credit note for what is left.`;
+}
 
 function refundEstimateReasonText(reason: string): string {
   return REFUND_ESTIMATE_REASON_LABELS[reason] ?? "No refundable amount";
@@ -135,19 +143,27 @@ function ResolveReturnModal({
     }
   }, [isOpen]);
 
+  const refundBlocked = refundEstimateReason === EXCEEDS_REFUNDABLE;
   const amountLabel = fmtMoney(refundEstimate);
   // The server reports 0 WITH a reason when the basis is not creditable (nothing
   // billed / no headroom left). Showing it here is the difference between a genuine
   // $0 and a store-credit attempt that can only ever be refused.
-  const estimateReasonLabel =
-    refundEstimateReason && !refundEstimate ? refundEstimateReasonText(refundEstimateReason) : null;
+  const estimateReasonLabel = refundBlocked
+    ? refundBlockedText(refundEstimate)
+    : refundEstimateReason && !refundEstimate
+      ? refundEstimateReasonText(refundEstimateReason)
+      : null;
 
   return (
     <Modal
       open={isOpen}
       onClose={onClose}
       title="Resolve Return"
-      description={`Choose how the ${amountLabel} for this return is settled with the customer.`}
+      description={
+        refundBlocked
+          ? "This return can't be settled for its priced amount."
+          : `Choose how the ${amountLabel} for this return is settled with the customer.`
+      }
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
@@ -158,7 +174,7 @@ function ResolveReturnModal({
               onConfirm(method, method === "EXTERNAL_REFUND" && tender ? tender : undefined)
             }
             loading={isPending}
-            disabled={method === "EXTERNAL_REFUND" && tenderRequired && !tender}
+            disabled={refundBlocked || (method === "EXTERNAL_REFUND" && tenderRequired && !tender)}
           >
             Resolve Return
           </Button>
@@ -166,7 +182,14 @@ function ResolveReturnModal({
       }
     >
       <div className="space-y-3">
-        {estimateReasonLabel && <p className="text-xs text-navy/70">{estimateReasonLabel}</p>}
+        {estimateReasonLabel && (
+          <p
+            className={refundBlocked ? "text-sm font-medium text-danger" : "text-xs text-navy/70"}
+            data-testid="resolve-estimate-reason"
+          >
+            {estimateReasonLabel}
+          </p>
+        )}
         <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-surface-border p-3 hover:bg-surface-raised">
           <input
             type="radio"

@@ -85,20 +85,50 @@ describe("ReturnDetailPage (#2406)", () => {
     expect(screen.getAllByRole("button", { name: /cancel/i }).length).toBeGreaterThan(0);
   });
 
-  it("SA-773: a RECEIVED return whose goods are already returned or credited previews $0 with the reason in Resolve", async () => {
-    mockReturn = {
-      ...baseReturn,
-      kind: "STANDARD",
-      status: "RECEIVED",
-      refundEstimate: 0,
-      refundEstimateReason: "EXCEEDS_REFUNDABLE",
-    } as unknown as Return;
-    const user = userEvent.setup();
-    renderWithProviders(<ReturnDetailPage />);
-    await user.click(screen.getAllByRole("button", { name: /resolve/i })[0]);
-    expect(
-      await screen.findByText(/already returned or credited, so nothing more can be refunded/),
-    ).toBeInTheDocument();
+  describe("SA-773: a return the claim would refuse for the remainder cannot be resolved from the screen", () => {
+    const received = (refundEstimate: number) =>
+      ({
+        ...baseReturn,
+        kind: "STANDARD",
+        status: "RECEIVED",
+        refundEstimate,
+        refundEstimateReason: "EXCEEDS_REFUNDABLE",
+      }) as unknown as Return;
+
+    it.each([
+      [10, /Up to \$10\.00 can still be given back for these goods\./],
+      [0, /Nothing more can be given back for these goods\./],
+    ])(
+      "an estimate of %s says what is left, and the Resolve Return button is disabled",
+      async (estimate, left) => {
+        mockReturn = received(estimate);
+        const user = userEvent.setup();
+        renderWithProviders(<ReturnDetailPage />);
+        await user.click(screen.getAllByRole("button", { name: /resolve/i })[0]);
+        const reason = await screen.findByTestId("resolve-estimate-reason");
+        expect(reason).toHaveTextContent(/already returned or credited/);
+        expect(reason).toHaveTextContent(left);
+        expect(reason).toHaveTextContent(/Cancel the return/);
+        // nothing in the dialog offers to mint or record the priced amount
+        expect(screen.queryByText(/Choose how the/)).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Resolve Return" })).toBeDisabled();
+      },
+    );
+
+    it("a return that fits keeps the normal dialog and an enabled Resolve Return", async () => {
+      mockReturn = {
+        ...baseReturn,
+        kind: "STANDARD",
+        status: "RECEIVED",
+        refundEstimate: 55,
+        refundEstimateReason: null,
+      } as unknown as Return;
+      const user = userEvent.setup();
+      renderWithProviders(<ReturnDetailPage />);
+      await user.click(screen.getAllByRole("button", { name: /resolve/i })[0]);
+      expect(await screen.findByText(/Choose how the \$55\.00/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Resolve Return" })).toBeEnabled();
+    });
   });
 
   it("Train 4: a refunded return offers Print slip (from this same record)", async () => {

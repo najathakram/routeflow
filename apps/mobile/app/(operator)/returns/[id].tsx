@@ -19,7 +19,11 @@ import { returnActionFlags, returnPillFor } from "../../../lib/returns-logic";
 import { showToast } from "../../../lib/toast";
 import { refundErrorMessage } from "../../../lib/credit-note-error-copy";
 import { chooseAction, confirm } from "../../../lib/confirm";
-import { refundTenderChoiceActions, resolveReturnRequest } from "../../../lib/standard-refund";
+import {
+  refundBlockedText,
+  refundTenderChoiceActions,
+  resolveReturnRequest,
+} from "../../../lib/standard-refund";
 
 function fmtQty(v: number | string | null | undefined): string {
   const n = Number(v ?? 0);
@@ -120,6 +124,7 @@ export default function ReturnDetailScreen() {
   }
 
   const pill = returnPillFor(ret.status, ret);
+  const blockedText = refundBlockedText(ret);
   const flags = returnActionFlags(ret.status);
   const anyPending =
     approveMut.isPending ||
@@ -155,6 +160,13 @@ export default function ReturnDetailScreen() {
             </Text>
             {ret.notes ? <Text style={styles.notes}>{ret.notes}</Text> : null}
           </View>
+
+          {/* SA-773: the claim would refuse these goods; say so instead of offering a Resolve that can only fail */}
+          {blockedText && flags.canRefund ? (
+            <View style={styles.card}>
+              <Text style={styles.notes}>{blockedText}</Text>
+            </View>
+          ) : null}
 
           {/* Actions */}
           {!flags.terminal ? (
@@ -211,7 +223,7 @@ export default function ReturnDetailScreen() {
                 <ActionTile
                   icon="cash-outline"
                   label="Resolve return"
-                  disabled={anyPending}
+                  disabled={anyPending || !!blockedText}
                   onPress={openResolveChoice}
                 />
               ) : null}
