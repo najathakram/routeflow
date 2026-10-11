@@ -27,6 +27,16 @@ class UpdateOrderItemDto {
   productId?: string;
 
   /**
+   * B297 row 352 — BUYER edit only (PATCH /buyer/orders/:id/items): the stored line this entry edits. It keeps
+   * the rate it was sold at; an entry without it is a new line (or, for one release, the line of its product
+   * when exactly one exists). An id that is not a line of this order, or is another product's, is a 400.
+   * Staff edits name a line with `id`; this field is ignored there.
+   */
+  @IsOptional()
+  @IsString()
+  orderItemId?: string;
+
+  /**
    * units_v1 (A1): sell by this unit of the product's ladder (Case, Pallet, Piece …). STAFF ONLY,
    * behind flag.units_v1; `qty` then counts the unit and boxes/pieces must be omitted. Absent on
    * an existing unit-aware line's edit is REFUSED (never interpreted), not "keep the old unit" —
@@ -121,6 +131,15 @@ export class UpdateOrderItemsDto {
   @IsOptional()
   @IsBoolean()
   replaceAll?: boolean;
+
+  /**
+   * B297 row 352 — BUYER edit only: the client names every existing line with `items[].orderItemId`, so an
+   * entry without one is a NEW line. Absent = a legacy client: the server falls back to the product's only
+   * line when exactly one exists (one release), and 409s `ORDER_EDIT_NEEDS_LINE_IDS` when two or more could be meant.
+   */
+  @IsOptional()
+  @IsBoolean()
+  namesLines?: boolean;
 
   // RF-110: strip HTML to prevent stored XSS via order notes
   @IsOptional()

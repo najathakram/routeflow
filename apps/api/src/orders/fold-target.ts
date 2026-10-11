@@ -63,18 +63,25 @@ export async function loadLiveTrioByProduct(
     : [];
   const catById = new Map<string, any>(cats.map((c) => [c.id, c]));
   for (const p of products) {
-    const c = p.trackedCategoryId ? catById.get(p.trackedCategoryId) : null;
-    out.set(
-      p.id,
-      c
-        ? {
-            trackedCategoryId: p.trackedCategoryId,
-            categoryTaxType: c.taxType,
-            categoryTaxRate: Number(c.rate),
-            categoryPriceIncludesTax: !!c.priceIncludesTax,
-          }
-        : { trackedCategoryId: null },
-    );
+    out.set(p.id, liveTrioFor(p, p.trackedCategoryId ? catById.get(p.trackedCategoryId) : null));
   }
   return out;
+}
+
+/**
+ * The trio a new sale of `product` takes today, from its category row (null when the product has none, or the
+ * category could not be read: uncategorised). Shared by the fold's loader and the buyer line-id edit.
+ */
+export function liveTrioFor(
+  product: { trackedCategoryId?: string | null },
+  category: { taxType?: unknown; rate?: unknown; priceIncludesTax?: unknown } | null | undefined,
+): FoldTrio {
+  return category && product.trackedCategoryId
+    ? {
+        trackedCategoryId: product.trackedCategoryId,
+        categoryTaxType: category.taxType,
+        categoryTaxRate: Number(category.rate),
+        categoryPriceIncludesTax: !!category.priceIncludesTax,
+      }
+    : { trackedCategoryId: null };
 }

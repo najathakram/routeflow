@@ -678,6 +678,242 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
     expect(added.amount).toBe(0.35);
   }, 120_000);
 
+  // ---- row 352: the buyer's PATCH items edit names its lines (orderItemId) ----------------------
+
+  const buyerEdit = (orderId: string, items: any[], extra: Record<string, unknown> = {}) =>
+    inTenant(() =>
+      orders.updateOrderItems(orderId, { replaceAll: true, items, ...extra } as any, buyer(), {
+        buyerLineIds: true,
+      }),
+    );
+  // The invoice revert commits on its own connection ahead of the edit transaction: a REFUSED edit must
+  // never reach it (a SENT invoice reverted to DRAFT with no edit to re-sync it).
+  const revertSpy = () => {
+    const spy = jest.spyOn(orders.invoicesService, "revertLinkedInvoicesForOrderEdit");
+    spy.mockClear(); // a spy from an earlier case keeps its call history
+    return spy;
+  };
+  /** An order holding 12 @ the snapshot rate and 8 @ 0.08: what a row-340 split leaves behind. */
+  const splitOrder = async () => {
+    const id = await createOrder(12);
+    await raiseCategoryRate(0.08);
+    const existing = await raw.orderItem.findMany({ where: { orderId: id } });
+    const trio = await orders.liveTrioByProduct([productId]);
+    const folded = foldMergeItems(existing as any, [{ productId, qty: 8 }], undefined, trio);
+    await fold(id, folded.items as any[]);
+    const ls = await lines(id);
+    return { id, a: ls.find((l) => l.qty === 12)!, b: ls.find((l) => l.qty === 8)! };
+  };
+  const shape = (ls: Array<{ qty: number; rate: number | null; amount: number }>) =>
+    ls.map((l) => [l.qty, l.rate, l.amount]).sort();
+
+  it("row 352: a named line keeps its own category and trio after a rate raise and a re-categorisation", async () => {
+    const other = await raw.trackedCategory.create({
+      data: { tenantId, name: `Other352 ${run}`, taxType: "PERCENT_OF_SALE", rate: 0.5 },
+    });
+    const id = await createOrder(12);
+    const [l0] = await lines(id);
+    try {
+      await raiseCategoryRate(LIVE_RATE);
+      await raw.product.update({ where: { id: productId }, data: { trackedCategoryId: other.id } });
+      await buyerEdit(id, [{ productId, qty: 12, orderItemId: l0.id }]);
+      const [l1] = await lines(id);
+      expect(l1.trackedCategoryId).toBe(categoryId); // without the id: the product's current category
+      expect(l1.rate).toBe(SNAPSHOT_RATE); // without the id: stamped from the live category
+      expect(l1.amount).toBe(0.6);
+    } finally {
+      await raw.product.update({
+        where: { id: productId },
+        data: { trackedCategoryId: categoryId },
+      });
+      await raw.orderItem.deleteMany({ where: { tenantId } });
+      await raw.trackedCategory.deleteMany({ where: { id: other.id } }).catch(() => undefined);
+    }
+  }, 120_000);
+
+  it("row 352: more quantity on a line sold at an older rate keeps its units and puts the rest on a live line", async () => {
+    const id = await createOrder(12);
+    const [l0] = await lines(id);
+    await raiseCategoryRate(0.08);
+    await buyerEdit(id, [{ productId, qty: 20, orderItemId: l0.id }]);
+    expect(shape(await lines(id))).toEqual(
+      [
+        [12, SNAPSHOT_RATE, 0.6],
+        [8, 0.08, 0.64],
+      ].sort(),
+    );
+  }, 120_000);
+
+  it("row 352: more quantity at an unchanged rate stays on the one line", async () => {
+    const id = await createOrder(12);
+    const [l0] = await lines(id);
+    await buyerEdit(id, [{ productId, qty: 20, orderItemId: l0.id }]);
+    expect(shape(await lines(id))).toEqual([[20, SNAPSHOT_RATE, 1]]);
+  }, 120_000);
+
+  it("row 352: the two lines of a split order round-trip, each at its own rate", async () => {
+    const { id, a, b } = await splitOrder();
+    await buyerEdit(id, [
+      { productId, qty: 12, orderItemId: a.id },
+      { productId, qty: 8, orderItemId: b.id },
+    ]);
+    expect(shape(await lines(id))).toEqual(
+      [
+        [12, SNAPSHOT_RATE, 0.6],
+        [8, 0.08, 0.64],
+      ].sort(),
+    );
+  }, 120_000);
+
+  it("row 352: reducing one line of a split order keeps both rates", async () => {
+    const { id, a, b } = await splitOrder();
+    await buyerEdit(id, [
+      { productId, qty: 12, orderItemId: a.id },
+      { productId, qty: 3, orderItemId: b.id },
+    ]);
+    expect(shape(await lines(id))).toEqual(
+      [
+        [12, SNAPSHOT_RATE, 0.6],
+        [3, 0.08, 0.24],
+      ].sort(),
+    );
+  }, 120_000);
+
+  it("row 352: an entry with no id, beside the line that names the product, is a new line at the live rate", async () => {
+    const id = await createOrder(12);
+    const [l0] = await lines(id);
+    await raiseCategoryRate(0.08);
+    await buyerEdit(id, [
+      { productId, qty: 12, orderItemId: l0.id },
+      { productId, qty: 5 },
+    ]);
+    expect(shape(await lines(id))).toEqual(
+      [
+        [12, SNAPSHOT_RATE, 0.6],
+        [5, 0.08, 0.4],
+      ].sort(),
+    );
+  }, 120_000);
+
+  it("row 352: an id that is not a line of this order is a 400 and nothing is written", async () => {
+    const mine = await createOrder(12);
+    const theirs = await createOrder(7);
+    const [foreign] = await lines(theirs);
+    const before = await lines(mine);
+    const revert = revertSpy();
+    await expect(
+      buyerEdit(mine, [{ productId, qty: 12, orderItemId: foreign.id }]),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(await lines(mine)).toEqual(before);
+    expect(revert).not.toHaveBeenCalled(); // no SENT invoice is un-sent by a refused edit
+  }, 120_000);
+
+  it("row 352 (legacy id-less): exactly one line of the product is that line, its trio carried", async () => {
+    const id = await createOrder(12);
+    await raiseCategoryRate(0.08);
+    await buyerEdit(id, [{ productId, qty: 12 }]);
+    expect(shape(await lines(id))).toEqual([[12, SNAPSHOT_RATE, 0.6]]);
+  }, 120_000);
+
+  it("row 352 (legacy id-less): two lines of the product is a 409 ORDER_EDIT_NEEDS_LINE_IDS and nothing is written", async () => {
+    const { id } = await splitOrder();
+    const before = await lines(id);
+    const revert = revertSpy();
+    await expect(buyerEdit(id, [{ productId, qty: 20 }])).rejects.toMatchObject({
+      status: 409,
+      response: expect.objectContaining({ code: "ORDER_EDIT_NEEDS_LINE_IDS" }),
+    });
+    expect(await lines(id)).toEqual(before);
+    expect(revert).not.toHaveBeenCalled(); // no SENT invoice is un-sent by a refused edit
+  }, 120_000);
+
+  it("row 352 (namesLines): an id-less entry is a NEW line at the live rate even when one line of the product exists", async () => {
+    const id = await createOrder(12);
+    await raiseCategoryRate(0.08);
+    await buyerEdit(id, [{ productId, qty: 12 }], { namesLines: true });
+    expect(shape(await lines(id))).toEqual([[12, 0.08, 0.96]]); // a re-added product is a new sale
+  }, 120_000);
+
+  it("row 352 (namesLines): two lines removed and the product re-added is a new line, not a 409", async () => {
+    const { id } = await splitOrder();
+    await buyerEdit(id, [{ productId, qty: 5 }], { namesLines: true });
+    expect(shape(await lines(id))).toEqual([[5, 0.08, 0.4]]);
+  }, 120_000);
+
+  it("row 352: re-categorised product plus more quantity splits into the NEW category's live line", async () => {
+    const other = await raw.trackedCategory.create({
+      data: { tenantId, name: `Moved352 ${run}`, taxType: "EXCISE_PER_UNIT", rate: 0.09 },
+    });
+    const id = await createOrder(12);
+    const [l0] = await lines(id);
+    try {
+      await raw.product.update({ where: { id: productId }, data: { trackedCategoryId: other.id } });
+      await buyerEdit(id, [{ productId, qty: 20, orderItemId: l0.id }], { namesLines: true });
+      const ls = await lines(id);
+      const kept = ls.find((l) => l.qty === 12)!;
+      const added = ls.find((l) => l.qty === 8)!;
+      expect(kept).toMatchObject({
+        trackedCategoryId: categoryId,
+        rate: SNAPSHOT_RATE,
+        amount: 0.6,
+      });
+      expect(added).toMatchObject({ trackedCategoryId: other.id, rate: 0.09, amount: 0.72 });
+    } finally {
+      await raw.product.update({
+        where: { id: productId },
+        data: { trackedCategoryId: categoryId },
+      });
+      await raw.orderItem.deleteMany({ where: { tenantId } });
+      await raw.trackedCategory.deleteMany({ where: { id: other.id } }).catch(() => undefined);
+    }
+  }, 120_000);
+
+  it("row 352: a NULL-trio line named by id stamps ITS category's live trio once and keeps it", async () => {
+    const id = await createOrder(12);
+    const [l0] = await lines(id);
+    await raw.orderItem.update({
+      where: { id: l0.id },
+      data: { categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null },
+    });
+    await raiseCategoryRate(LIVE_RATE);
+    await buyerEdit(id, [{ productId, qty: 12, orderItemId: l0.id }]);
+    expect(shape(await lines(id))).toEqual([[12, LIVE_RATE, 0.84]]); // priced once at the live rate
+  }, 120_000);
+
+  it("row 352: a box-split line named by id compares in pieces and splits at the box boundary", async () => {
+    const boxed = await raw.product.create({
+      data: {
+        name: `Boxed352 ${run}`,
+        unit: "each",
+        pricePerUnit: "1.00",
+        currentStock: 1000,
+        unitsPerBox: 12,
+        trackedCategoryId: categoryId,
+        tenantId,
+      },
+    });
+    const created: any = await inTenant(() =>
+      orders.create(
+        { customerId, items: [{ productId: boxed.id, qty: 24, boxes: 2, pieces: 0 }] },
+        operator(),
+        { skipAutoMerge: true },
+      ),
+    );
+    await raw.orderItem.updateMany({ where: { orderId: created.id }, data: { deliveredQty: 0 } });
+    await raw.order.update({ where: { id: created.id }, data: { skipAutoMerge: false } });
+    const [l0] = await lines(created.id);
+    await raiseCategoryRate(0.08);
+    await buyerEdit(created.id, [
+      { productId: boxed.id, qty: 36, boxes: 3, pieces: 0, orderItemId: l0.id },
+    ]);
+    expect(shape(await lines(created.id))).toEqual(
+      [
+        [24, SNAPSHOT_RATE, 1.2],
+        [12, 0.08, 0.96],
+      ].sort(),
+    );
+  }, 120_000);
+
   // ---- L1: a line with no category keeps its stored excise -------------------------------------
 
   it("a no-category line with a stored excise keeps it through a quantity edit, with a warn [L1]", async () => {

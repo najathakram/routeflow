@@ -58,6 +58,8 @@ const STATUS_STEPS = [
 ];
 
 interface BuyerEditLine {
+  /** B297 row 352: the stored line this row edits (unset on a row added in this session). */
+  orderItemId?: string;
   unitPrice: number;
   qty: number;
   unitsPerBox?: number | null;
@@ -65,6 +67,11 @@ interface BuyerEditLine {
   /** BUY_N_GET_M snapshot on the loaded line + the whole-unit count it was earned at. */
   promoFreeUnits?: number | null;
   promoBaseUnits?: number | null;
+}
+
+/** A row's identity: its stored line, else (a row added in this session) its product. */
+function editRowKey(i: { orderItemId?: string; productId: string }): string {
+  return i.orderItemId ?? i.productId;
 }
 
 /**
@@ -619,6 +626,7 @@ export default function BuyerOrderDetailPage() {
     setActionError(null);
     setEditItems(
       active.map((li) => ({
+        orderItemId: li.id,
         productId: li.productId!,
         qty: Number(li.qty),
         name: li.product!.name,
@@ -643,7 +651,11 @@ export default function BuyerOrderDetailPage() {
     try {
       await updateItems.mutateAsync({
         orderId: order.id,
-        items: editItems.map((i) => ({ productId: i.productId, qty: i.qty })),
+        items: editItems.map((i) => ({
+          productId: i.productId,
+          qty: i.qty,
+          ...(i.orderItemId ? { orderItemId: i.orderItemId } : {}),
+        })),
       });
       setEditMode(false);
     } catch (err: any) {
@@ -655,6 +667,14 @@ export default function BuyerOrderDetailPage() {
         setActionError(
           `This order includes regulated items${names ? ` (${names})` : ""} that need a verified license. Submit or renew it on the Licenses page, then try again.`,
         );
+        return;
+      }
+      if (
+        err?.response?.status === 409 &&
+        data?.code === API_ERROR_CODES.ORDER_EDIT_NEEDS_LINE_IDS
+      ) {
+        // B297 row 352: the order has more than one line for a product and this page is out of date.
+        setActionError("This order has changed since you opened it. Refresh and try again.");
         return;
       }
       setActionError(data?.message ?? "Failed to update order items.");
@@ -876,13 +896,13 @@ export default function BuyerOrderDetailPage() {
             <tbody className="divide-y divide-surface-border">
               {editMode
                 ? editItems.map((item) => (
-                    <tr key={item.productId} className="hover:bg-surface-raised/50">
+                    <tr key={editRowKey(item)} className="hover:bg-surface-raised/50">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() =>
                               setEditItems((prev) =>
-                                prev.filter((i) => i.productId !== item.productId),
+                                prev.filter((i) => editRowKey(i) !== editRowKey(item)),
                               )
                             }
                             className="rounded p-1 text-danger/40 hover:bg-danger-bg hover:text-danger transition-colors"
@@ -905,7 +925,7 @@ export default function BuyerOrderDetailPage() {
                             onClick={() =>
                               setEditItems((prev) =>
                                 prev.map((i) =>
-                                  i.productId === item.productId
+                                  editRowKey(i) === editRowKey(item)
                                     ? { ...i, qty: Math.max(1, i.qty - 1) }
                                     : i,
                                 ),
@@ -923,7 +943,7 @@ export default function BuyerOrderDetailPage() {
                               const v = Math.max(1, Number(e.target.value));
                               setEditItems((prev) =>
                                 prev.map((i) =>
-                                  i.productId === item.productId ? { ...i, qty: v } : i,
+                                  editRowKey(i) === editRowKey(item) ? { ...i, qty: v } : i,
                                 ),
                               );
                             }}
@@ -933,7 +953,7 @@ export default function BuyerOrderDetailPage() {
                             onClick={() =>
                               setEditItems((prev) =>
                                 prev.map((i) =>
-                                  i.productId === item.productId ? { ...i, qty: i.qty + 1 } : i,
+                                  editRowKey(i) === editRowKey(item) ? { ...i, qty: i.qty + 1 } : i,
                                 ),
                               )
                             }

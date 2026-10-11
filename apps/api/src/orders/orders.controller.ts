@@ -545,7 +545,12 @@ export class OrdersController {
     @Body() dto: UpdateOrderItemsDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.forCaller(user, await this.ordersService.updateOrderItems(id, dto, user));
+    // B297 row 352: a CUSTOMER principal on this route names its lines exactly as on the buyer route.
+    const edited =
+      user.role === UserRole.CUSTOMER
+        ? await this.ordersService.updateOrderItems(id, dto, user, { buyerLineIds: true })
+        : await this.ordersService.updateOrderItems(id, dto, user);
+    return this.forCaller(user, edited);
   }
 
   // ─── P5-09: post-dispatch change requests ───────────────────────────────────

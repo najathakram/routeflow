@@ -875,7 +875,12 @@ export class BuyerController {
     @Body() dto: UpdateOrderItemsDto,
     @CurrentBuyerCustomer() ctx: any,
   ) {
-    return toCustomerOrder(await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx)));
+    // B297 row 352: the entries name their lines (`orderItemId`), so a line keeps the rate it was sold at.
+    return toCustomerOrder(
+      await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx), {
+        buyerLineIds: true,
+      }),
+    );
   }
 
   @Post("orders/:id/change-requests")
