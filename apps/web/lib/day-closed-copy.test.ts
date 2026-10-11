@@ -2,6 +2,8 @@ import {
   COUNTER_SALE_DAY_CLOSED_COPY,
   DAY_CLOSED_FOR_PAYMENT_DATE_COPY,
   dayClosedCopy,
+  isCounterSaleDayClosed,
+  isDayClosedRefusal,
 } from "./day-closed-copy";
 
 const refusal = (
@@ -36,5 +38,24 @@ describe("dayClosedCopy (fixed copy for the end-of-day close refusals)", () => {
     ["null", null],
   ])("%s -> null (the caller keeps its own copy)", (_n, err) => {
     expect(dayClosedCopy(err)).toBeNull();
+  });
+});
+
+describe("isDayClosedRefusal / isCounterSaleDayClosed", () => {
+  it("both codes are day-close refusals; only COUNTER_SALE_DAY_CLOSED is a till write", () => {
+    expect(isDayClosedRefusal(refusal("DAY_CLOSED_FOR_PAYMENT_DATE"))).toBe(true);
+    expect(isDayClosedRefusal(refusal("COUNTER_SALE_DAY_CLOSED"))).toBe(true);
+    expect(isCounterSaleDayClosed(refusal("COUNTER_SALE_DAY_CLOSED"))).toBe(true);
+    expect(isCounterSaleDayClosed(refusal("DAY_CLOSED_FOR_PAYMENT_DATE"))).toBe(false);
+  });
+
+  it.each([
+    ["another 409 code", refusal("SOMETHING_ELSE")],
+    ["a non-409", refusal("COUNTER_SALE_DAY_CLOSED", "x", 400)],
+    ["no response", {}],
+    ["null", null],
+  ])("%s is not a day-close refusal", (_n, err) => {
+    expect(isDayClosedRefusal(err)).toBe(false);
+    expect(isCounterSaleDayClosed(err)).toBe(false);
   });
 });

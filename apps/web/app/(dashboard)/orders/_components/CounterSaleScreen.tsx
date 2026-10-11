@@ -66,6 +66,7 @@ import {
   writeHeldAttempt,
 } from "@/lib/counter-sale";
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
+import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
 import { CounterReceiptBody } from "./CounterReceiptBody";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
@@ -645,7 +646,8 @@ export function CounterSaleScreen() {
           tendered,
           reference,
         });
-        setError("");
+        // A tender refused for a CLOSED DAY leaves the sale saved but unpaid: say so (the banner below is the generic one).
+        setError(isCounterSaleDayClosed(err) ? counterSaleErrorCopy(err) : "");
         setOutcomeUnknown(true);
       }
       return null;

@@ -197,7 +197,14 @@ const ORDER_EXISTS_CODES: ReadonlySet<unknown> = new Set([
   API_ERROR_CODES.COUNTER_SALE_ORDER_CHANGED,
   API_ERROR_CODES.IDEMPOTENCY_KEY_OTHER_ORDER,
   API_ERROR_CODES.IDEMPOTENCY_KEY_CART_MISMATCH,
+  // The sale is committed BEFORE its tender: a tender dated inside a closed day is refused afterwards, so the sale exists
+  // (unpaid). A fresh key would ring it twice; the SAME key finishes it once the close is reopened.
+  API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
 ]);
+
+/** 409 COUNTER_SALE_DAY_CLOSED from the till's sale: the sale is saved, only its payment was refused (the tender's day is closed). */
+export const COUNTER_SALE_DAY_CLOSED_TILL_COPY =
+  "This day is closed, so no payment was taken. The sale is saved. Ask the office to reopen the close, then use Try again.";
 
 /**
  * True only for a 4xx that PROVES nothing was written (the auth guard, the throttler and validation all reject BEFORE the
@@ -281,6 +288,8 @@ export function counterSaleErrorCopy(err: unknown): string {
     return "You don't have permission to complete a counter sale.";
   const final = finalCounterSaleCopy(err);
   if (final) return final;
+  if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)
+    return COUNTER_SALE_DAY_CLOSED_TILL_COPY;
   if (status === 409 && ORDER_EXISTS_CODES.has(res?.data?.code))
     return COUNTER_OUTCOME_UNKNOWN_COPY; // the order exists
   if (status === 409 && res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT)
