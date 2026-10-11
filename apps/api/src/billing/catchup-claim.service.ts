@@ -861,20 +861,12 @@ export class CatchupClaimService {
       return "needs_ruling";
     }
 
-    // ── Step 3: cancel the subscription (idempotent) ──
+    // ── Step 3: cancel the subscription (idempotent: the finishDuplicate pattern) ──
     if (subId) {
-      try {
-        await this.stripe.cancelSubscription(
-          subId,
-          { prorate: false, invoice_now: false },
-          {
-            idempotencyKey: `${tenantId}:catchup-release-cancel:${seen.catchupSessionId ?? subId}`,
-          },
-        );
-      } catch (err) {
-        const e = err as { code?: string; statusCode?: number };
-        if (!(e?.code === "resource_missing" || e?.statusCode === 404)) throw err;
-      }
+      await this.cancelSubscriptionOnce(
+        subId,
+        `${tenantId}:catchup-release-cancel:${seen.catchupSessionId ?? subId}`,
+      );
     }
 
     // ── Step 4: clear the claim ──
@@ -1038,15 +1030,41 @@ export class CatchupClaimService {
     return false;
   }
 
-  /** Cancelled / expired / unknown at Stripe. Any other read error says nothing and is rethrown (next run retries). */
-  private async subscriptionGoneAtStripe(subId: string): Promise<boolean> {
+  /** The subscription's status at Stripe; "missing" when Stripe no longer knows it. Any other error is rethrown. */
+  private async subscriptionStatus(subId: string): Promise<string | null> {
     try {
-      const status = (await this.stripe.getSubscription(subId))?.status;
-      return status === "canceled" || status === "incomplete_expired";
+      return (await this.stripe.getSubscription(subId))?.status ?? null;
     } catch (err) {
       const e = err as { code?: string; statusCode?: number };
-      if (e?.code === "resource_missing" || e?.statusCode === 404) return true;
+      if (e?.code === "resource_missing" || e?.statusCode === 404) return "missing";
       throw err;
+    }
+  }
+
+  private static readonly GONE = new Set(["missing", "canceled", "incomplete_expired"]);
+
+  /** Cancelled / expired / unknown at Stripe. Any other read error says nothing and is rethrown (next run retries). */
+  private async subscriptionGoneAtStripe(subId: string): Promise<boolean> {
+    const status = await this.subscriptionStatus(subId);
+    return status != null && CatchupClaimService.GONE.has(status);
+  }
+
+  /**
+   * Cancel the subscription unless it is already gone, the finishDuplicate pattern: skip when it is cancelled /
+   * missing; on ANY error from the cancel (a non-404 5xx or a lost reply may have landed) re-read its status and treat
+   * cancelled / missing as success, else rethrow so the row stays RELEASING for the hourly sweep.
+   */
+  private async cancelSubscriptionOnce(subId: string, idempotencyKey: string): Promise<void> {
+    if (await this.subscriptionGoneAtStripe(subId)) return;
+    try {
+      await this.stripe.cancelSubscription(
+        subId,
+        { prorate: false, invoice_now: false },
+        { idempotencyKey },
+      );
+    } catch (err) {
+      const again = await this.subscriptionGoneAtStripe(subId).catch(() => false);
+      if (!again) throw err;
     }
   }
 

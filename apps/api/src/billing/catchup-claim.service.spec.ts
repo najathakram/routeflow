@@ -1599,6 +1599,62 @@ describe("Decision 5: a release never cancels a subscription whose OTHER invoice
   });
 });
 
+describe("(b) caveat: release Step 3 finishes like finishDuplicate - read, cancel, on ANY error re-read", () => {
+  const failedFirst = {
+    id: "in_1",
+    status: "open" as const,
+    subscription: SUB,
+    amountDue: 31000,
+    attemptCount: 4,
+    nextPaymentAttempt: null,
+  };
+  const subOf = (status: string) => ({
+    [SUB]: { id: SUB, customer: "cus_1", latest_invoice: null, status },
+  });
+  const arrange = (status: string) =>
+    make(awaiting({ catchupInvoiceId: "in_1" }), [octOpen], {
+      invoices: [failedFirst],
+      subs: subOf(status),
+    });
+
+  it("an already-cancelled subscription is not cancelled again", async () => {
+    const h = arrange("canceled");
+    expect(await h.svc.release("t1", { sessionId: SESSION, reason: "t" })).toBe("released");
+    expect(h.stripe.calls.some((c) => c.startsWith("cancelSubscription"))).toBe(false);
+    expect(h.sub()).toMatchObject({ catchupState: null, stripeSubId: null, externalPayment: true });
+  });
+
+  it("a NON-404 error from the cancel, but the subscription IS cancelled when re-read: success (the first call landed, the reply was lost)", async () => {
+    const h = arrange("active");
+    h.stripe.cancelSubscription.mockImplementationOnce(async (id: string) => {
+      h.stripe.subs[id] = { ...h.stripe.subs[id], status: "canceled" };
+      throw Object.assign(new Error("socket hang up"), { statusCode: 500 });
+    });
+    expect(await h.svc.release("t1", { sessionId: SESSION, reason: "t" })).toBe("released");
+    expect(h.sub()).toMatchObject({ catchupState: null, stripeSubId: null });
+  });
+
+  it("a NON-404 error and the subscription is still LIVE: the error is rethrown and the row stays RELEASING for the sweep", async () => {
+    const h = arrange("active");
+    h.stripe.cancelSubscription.mockRejectedValueOnce(new Error("stripe is down"));
+    await expect(h.svc.release("t1", { sessionId: SESSION, reason: "t" })).rejects.toThrow(
+      "stripe is down",
+    );
+    expect(h.sub().catchupState).toBe("RELEASING");
+    // the next run (the sweep) finishes it
+    await h.svc.sweep(NOW);
+    expect(h.sub().catchupState).toBeNull();
+  });
+
+  it("a subscription Stripe no longer knows (404) is success", async () => {
+    const h = make(awaiting({ catchupInvoiceId: "in_1" }), [octOpen], {
+      invoices: [failedFirst],
+      subs: {},
+    });
+    expect(await h.svc.release("t1", { sessionId: SESSION, reason: "t" })).toBe("released");
+  });
+});
+
 describe("nits", () => {
   it("the release's refused-because-paid NEEDS RULING is raised ONCE per invoice, not on every hourly retry", async () => {
     const h = make(awaiting({ catchupInvoiceId: "in_1" }), [octOpen], {
