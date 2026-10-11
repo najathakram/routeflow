@@ -18,8 +18,8 @@
  *   Plan-only estimates: an unaligned MONTHLY row's first prorated amount from basePriceSnapshot (add-ons are
  *   not included; ANNUAL rows get none because the snapshot is monthly).
  *
- * Output: COUNTS by default. `--owner-ids` adds internal ids (tenant / invoice ids, never a slug or a
- * name) for the owner only. `--self-test` runs the pure part with no database.
+ * Output: COUNTS by default. `--owner-ids` adds internal ids (tenant / invoice ids, never a slug, a name or an
+ * email - a pinned rule) for the owner only. `--self-test` runs the pure part with no database.
  *
  *   railway run --service postgres node apps/api/scripts/report-rf-invoice-calendar-census.mjs [--owner-ids]
  *
@@ -38,6 +38,7 @@ const cal = require("./lib/rf-calendar-windows.cjs");
 const SCRIPT = "report-rf-invoice-calendar-census";
 const DAY = cal.DAY_MS;
 export const READ_ONLY_SESSION = [
+  "SET default_transaction_read_only = on",
   "BEGIN READ ONLY",
   "SET LOCAL statement_timeout = '60s'",
   "SET LOCAL lock_timeout = '5s'",
