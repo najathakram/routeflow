@@ -386,4 +386,168 @@ describeDb("B297 PR4 — a ledger re-sync writes only what changed, real Postgre
     expect((await ledger(s)).map((r) => r.id)).toEqual(before);
     expect((await netByLine(s)).A).toEqual({ qty: 10, net: 100, tax: 0.5 }); // 12 sold - 2 returned
   }, 120_000);
+
+  // ---- the draft edit and price-adjustment paths (the in-place-row paths) ------------------------
+
+  /** A manual DRAFT invoice (no order) with two regulated lines in cat1 and SALE rows booked last month. */
+  async function seedDraft(label: string) {
+    seq += 1;
+    const slug = assertTestTenant(
+      `qa-b297r-${RUN}-${seq}-${label}`,
+      "ledger-resync-noop-b297.db.spec.ts",
+    );
+    const tenant = await prisma.tenant.create({ data: { slug, name: `B297 PR4 ${slug}` } });
+    tenantIds.push(tenant.id);
+    const tenantId = tenant.id;
+    const user = await prisma.user.create({
+      data: { email: `${slug}@example.invalid`, username: slug, role: "CUSTOMER", tenantId },
+    });
+    const customer = await prisma.customer.create({
+      data: { userId: user.id, businessName: `c ${label}`, contactName: `c ${label}`, tenantId },
+    });
+    const cat1 = await prisma.trackedCategory.create({
+      data: { tenantId, name: `c1 ${label}`, taxType: "EXCISE_PER_UNIT", rate: 0.05 },
+    });
+    const cat2 = await prisma.trackedCategory.create({
+      data: { tenantId, name: `c2 ${label}`, taxType: "EXCISE_PER_UNIT", rate: 0.05 },
+    });
+    const p1 = await prisma.product.create({
+      data: {
+        tenantId,
+        name: `p1 ${label}`,
+        unit: "each",
+        pricePerUnit: 10,
+        trackedCategoryId: cat1.id,
+      },
+    });
+    const p2 = await prisma.product.create({
+      data: {
+        tenantId,
+        name: `p2 ${label}`,
+        unit: "each",
+        pricePerUnit: 10,
+        trackedCategoryId: cat2.id,
+      },
+    });
+    const invoice = await prisma.invoice.create({
+      data: {
+        tenantId,
+        customerId: customer.id,
+        invoiceNumber: `INV-B297D-${RUN}-${seq}`,
+        status: "DRAFT",
+        subtotal: 180,
+        taxAmount: 0.9,
+        total: 180.9,
+      },
+    });
+    const mk = async (qty: number, tax: number) => {
+      const it = await prisma.invoiceItem.create({
+        data: {
+          tenantId,
+          invoiceId: invoice.id,
+          productId: p1.id,
+          description: `p1 ${label}`,
+          qty,
+          unitPrice: 10,
+          subtotal: qty * 10,
+          trackedCategoryId: cat1.id,
+          categoryTaxAmount: tax,
+          categoryTaxType: "EXCISE_PER_UNIT",
+          categoryTaxRate: 0.05,
+          categoryPriceIncludesTax: false,
+        },
+      });
+      await prisma.regulatedSalesLedger.create({
+        data: {
+          tenantId,
+          trackedCategoryId: cat1.id,
+          entryType: "SALE",
+          invoiceId: invoice.id,
+          invoiceItemId: it.id,
+          qty,
+          unitBasisQty: qty,
+          netSales: qty * 10,
+          categoryTax: tax,
+          soldAt: new Date("2026-09-15T00:00:00Z"),
+          periodBucket: "2026-09",
+        },
+      });
+      return it.id;
+    };
+    const a = await mk(12, 0.6);
+    const b = await mk(6, 0.3);
+    return {
+      tenantId,
+      invoiceId: invoice.id,
+      aId: a,
+      bId: b,
+      p1: p1.id,
+      p2: p2.id,
+      cat1: cat1.id,
+      cat2: cat2.id,
+    };
+  }
+  const draftLedger = (invoiceId: string) =>
+    prisma.regulatedSalesLedger.findMany({ where: { invoiceId }, orderBy: { createdAt: "asc" } });
+  const netBy = (rows: any[], pick: (r: any) => string) => {
+    const out: Record<string, { qty: number; net: number }> = {};
+    for (const r of rows) {
+      const k = pick(r);
+      out[k] ??= { qty: 0, net: 0 };
+      out[k].qty += Number(r.qty);
+      out[k].net += Number(r.netSales);
+    }
+    for (const v of Object.values(out)) {
+      v.qty = Math.round(v.qty * 1000) / 1000;
+      v.net = Math.round(v.net * 100) / 100;
+    }
+    return out;
+  };
+
+  it("H1: a draft edit that swaps a line's product to another category re-files its SALE (reversal under the old, SALE under the new) and leaves the other line's rows alone", async () => {
+    const s = await seedDraft("swap");
+    const before = await draftLedger(s.invoiceId);
+    await tenantCtx.run(s.tenantId, () =>
+      invoices.update(s.invoiceId, {
+        items: [
+          { id: s.aId, productId: s.p2, description: "swapped", qty: 12, unitPrice: 10 },
+          { id: s.bId, productId: s.p1, description: "p1", qty: 6, unitPrice: 10 },
+        ],
+      } as any),
+    );
+    const after = await draftLedger(s.invoiceId);
+    const added = after.filter((r) => !before.some((b) => b.id === r.id));
+    // line A: reversed under cat1, booked under cat2; line B untouched
+    expect(added.filter((r) => r.invoiceItemId === s.bId)).toHaveLength(0);
+    expect(
+      netBy(
+        after.filter((r) => r.invoiceItemId === s.aId),
+        (r) => r.trackedCategoryId,
+      ),
+    ).toEqual({
+      [s.cat1]: { qty: 0, net: 0 },
+      [s.cat2]: { qty: 12, net: 120 },
+    }); // master writes nothing for a same-money swap: VAPE keeps $120 and CIGAR reports $0
+  }, 120_000);
+
+  it("a price adjustment on a DRAFT books a pair for the re-priced line only", async () => {
+    const s = await seedDraft("adjust");
+    const before = await draftLedger(s.invoiceId);
+    await tenantCtx.run(s.tenantId, () =>
+      invoices.applyPriceAdjustment(s.invoiceId, {
+        items: [{ itemId: s.aId, newUnitPrice: 11 }],
+        scope: "SINGLE",
+      } as any),
+    );
+    const after = await draftLedger(s.invoiceId);
+    const added = after.filter((r) => !before.some((b) => b.id === r.id));
+    expect(added.map((r) => [r.invoiceItemId === s.aId ? "A" : "B", r.entryType]).sort()).toEqual([
+      ["A", "REVERSAL"],
+      ["A", "SALE"],
+    ]);
+    expect(netBy(after, (r) => (r.invoiceItemId === s.aId ? "A" : "B"))).toEqual({
+      A: { qty: 12, net: 132 },
+      B: { qty: 6, net: 60 },
+    });
+  }, 120_000);
 });

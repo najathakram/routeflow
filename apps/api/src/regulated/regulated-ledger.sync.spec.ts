@@ -141,6 +141,77 @@ describe("RegulatedLedgerService.syncInvoiceEntries (B297 PR4)", () => {
     ]);
   });
 
+  it("H1: the same money re-filed to another CATEGORY books a reversal under the old one and a SALE under the new", async () => {
+    const { sync, written } = setup([sale()]);
+    await sync([line({ trackedCategoryId: "cat-2" })]);
+    expect(written().map((r) => [r.entryType, r.trackedCategoryId, r.qty])).toEqual([
+      ["REVERSAL", "cat-1", -12],
+      ["SALE", "cat-2", 12],
+    ]);
+  });
+
+  it("H1: a changed reporting SUBCATEGORY is a change of the booked line", async () => {
+    const { sync, written } = setup([sale({ trackedSubcategoryId: "sub-a" })]);
+    await sync([line({ trackedSubcategoryId: "sub-b" })]);
+    expect(written().map((r) => [r.entryType, r.trackedSubcategoryId])).toEqual([
+      ["REVERSAL", "sub-a"],
+      ["SALE", "sub-b"],
+    ]);
+  });
+
+  it("H1: an order-line RELINK (the return cap's key) is a change of the booked line", async () => {
+    const { sync, written } = setup([sale()]);
+    await sync([line({ orderItemId: "oi-9" })]);
+    expect(written().map((r) => [r.entryType, r.orderItemId])).toEqual([
+      ["REVERSAL", "oi-1"],
+      ["SALE", "oi-9"],
+    ]);
+  });
+
+  it("a PIECE-basis change with the same qty and money is a change (the box-unaware pack moved)", async () => {
+    const { sync, written } = setup([sale({ unitBasisQty: 12 })]);
+    await sync([line({ packAtSale: 24 })]); // qty 12 x pack 24 = 288 pieces, held 12
+    expect(written().map((r) => r.entryType)).toEqual(["REVERSAL", "SALE"]);
+  });
+
+  it("a credit-note reversal stays standing like a return's", async () => {
+    const { sync, createMany } = setup([
+      sale(),
+      sale({
+        id: "r-cn",
+        entryType: "REVERSAL",
+        creditNoteId: "cn-1",
+        qty: -2,
+        unitBasisQty: -2,
+        netSales: -20,
+        categoryTax: -0.1,
+      }),
+    ]);
+    await sync([line()]);
+    expect(createMany).not.toHaveBeenCalled();
+  });
+
+  it("M1: after SALE(cat-1), its REVERSAL and SALE(cat-2) the next change reverses the CATEGORY the net sits in", async () => {
+    const { sync, written } = setup([
+      sale({ id: "x", trackedCategoryId: "cat-1" }),
+      sale({
+        id: "x-rev",
+        entryType: "REVERSAL",
+        trackedCategoryId: "cat-1",
+        qty: -12,
+        unitBasisQty: -12,
+        netSales: -120,
+        categoryTax: -0.6,
+      }),
+      sale({ id: "y", trackedCategoryId: "cat-2" }),
+    ]);
+    await sync([line({ trackedCategoryId: "cat-2", qty: 10, netSales: 100, categoryTax: 0.5 })]);
+    expect(written().map((r) => [r.entryType, r.trackedCategoryId, r.qty])).toEqual([
+      ["REVERSAL", "cat-2", -12],
+      ["SALE", "cat-2", 10],
+    ]);
+  });
+
   it("a prior return's reversal stays standing: the held net excludes it, so an unchanged line writes nothing", async () => {
     const { sync, createMany } = setup([
       sale(),
@@ -220,6 +291,33 @@ describe("RegulatedLedgerService.syncInvoiceEntries (B297 PR4)", () => {
   });
 });
 
+describe("RegulatedLedgerService.reverseInvoiceEntries nets per category (B297 PR4 M1)", () => {
+  it("a void reverses the net under the category it sits in, not the first SALE read", async () => {
+    const createMany = jest.fn().mockResolvedValue({ count: 0 });
+    const rows = [
+      sale({ id: "x", trackedCategoryId: "cat-1" }),
+      sale({
+        id: "x-rev",
+        entryType: "REVERSAL",
+        trackedCategoryId: "cat-1",
+        qty: -12,
+        unitBasisQty: -12,
+        netSales: -120,
+        categoryTax: -0.6,
+      }),
+      sale({ id: "y", trackedCategoryId: "cat-2" }),
+    ];
+    const db = {
+      regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue(rows), createMany },
+    };
+    await new RegulatedLedgerService({} as any).reverseInvoiceEntries({ invoiceId: "inv-1", db });
+    const written = createMany.mock.calls.flatMap((c) => c[0].data as any[]);
+    expect(written.map((r) => [r.entryType, r.trackedCategoryId, r.qty])).toEqual([
+      ["REVERSAL", "cat-2", -12],
+    ]);
+  });
+});
+
 describe("netHeldByLine (the one netting implementation)", () => {
   it("sums every signed row per invoice line, and leaves return / credit reversals out under preserveReturns", () => {
     const rows = [
@@ -243,9 +341,9 @@ describe("netHeldByLine (the one netting implementation)", () => {
         creditNoteId: "c1",
       }),
     ];
-    const all = netHeldByLine(rows).get("ii-1")!;
+    const all = netHeldByLine(rows).get("ii-1|cat-1")!;
     expect([all.qty, all.netSales]).toEqual([8, 80]);
-    const kept = netHeldByLine(rows, { preserveReturns: true }).get("ii-1")!;
+    const kept = netHeldByLine(rows, { preserveReturns: true }).get("ii-1|cat-1")!;
     expect([kept.qty, kept.netSales]).toEqual([12, 120]);
     expect(kept.sale).toBe(rows[0]);
   });

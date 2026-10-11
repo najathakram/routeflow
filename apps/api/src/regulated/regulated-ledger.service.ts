@@ -33,12 +33,12 @@ export interface HeldNet {
  */
 export function netHeldByLine(
   rows: any[],
-  opts: { preserveReturns?: boolean } = {},
+  opts: { preserveReturns?: boolean; keyOf?: (row: any) => string | null } = {},
 ): Map<string, HeldNet> {
-  const { preserveReturns = false } = opts;
+  const { preserveReturns = false, keyOf = lineKey } = opts;
   const byItem = new Map<string, HeldNet>();
   for (const r of rows) {
-    const key = r.invoiceItemId as string | null;
+    const key = keyOf(r);
     if (key == null) continue;
     const cur = byItem.get(key) ?? {
       sale: null,
@@ -61,6 +61,26 @@ export function netHeldByLine(
   return byItem;
 }
 
+/**
+ * The line a ledger row belongs to for netting: the invoice item AND the category it was booked under, so a
+ * line re-filed to another category (a product swap) nets each category to its own figure instead of one
+ * figure under whichever SALE row happened to be read first.
+ */
+const lineKey = (r: any): string | null =>
+  r.invoiceItemId == null ? null : `${r.invoiceItemId}|${r.trackedCategoryId ?? ""}`;
+
+/**
+ * The finer key `syncInvoiceEntries` nets on: also the reporting subcategory and the order line the row points
+ * at. A change in any of them is a CHANGE of the booked line (the filing breakdown and the return cap read
+ * them), so the old key is reversed and the new one booked, even when the money is the same.
+ */
+const syncKey = (r: any): string | null =>
+  r.invoiceItemId == null
+    ? null
+    : `${r.invoiceItemId}|${r.trackedCategoryId ?? ""}|${r.trackedSubcategoryId ?? ""}|${r.orderItemId ?? ""}`;
+const targetKey = (l: SaleLedgerLine): string =>
+  `${l.invoiceItemId}|${l.trackedCategoryId ?? ""}|${l.trackedSubcategoryId ?? ""}|${l.orderItemId ?? ""}`;
+
 const HELD_EPS = 0.0005;
 
 /**
@@ -82,8 +102,9 @@ function isSquare(h: HeldNet): boolean {
 }
 
 /** The REVERSAL row that brings `held` back to zero, booked into the CURRENT period (never backdated). */
-function reversalRowFor(held: HeldNet, invoiceItemId: string, now: Date, bucket: string) {
+function reversalRowFor(held: HeldNet, now: Date, bucket: string) {
   const s = held.sale;
+  const invoiceItemId = s.invoiceItemId as string;
   return {
     tenantId: s.tenantId,
     trackedCategoryId: s.trackedCategoryId,
@@ -323,10 +344,10 @@ export class RegulatedLedgerService {
     const now = new Date();
     const bucket = periodBucketOf(now);
     const rows: any[] = [];
-    for (const [invoiceItemId, held] of netHeldByLine(all, { preserveReturns })) {
+    for (const held of netHeldByLine(all, { preserveReturns }).values()) {
       if (!held.sale) continue; // no SALE for this line — nothing of ours to reverse
       if (isSquare(held)) continue; // the sale is already fully reversed in every dimension
-      rows.push(reversalRowFor(held, invoiceItemId, now, bucket));
+      rows.push(reversalRowFor(held, now, bucket));
     }
     if (rows.length === 0) return;
     await db.regulatedSalesLedger.createMany({ data: rows });
@@ -356,22 +377,23 @@ export class RegulatedLedgerService {
     const { invoiceId, orderId, tenantId, soldAt, lines, db } = params;
     if (!tenantId) return;
     const all = await db.regulatedSalesLedger.findMany({ where: { invoiceId } });
-    const held = netHeldByLine(all, { preserveReturns: true });
+    const held = netHeldByLine(all, { preserveReturns: true, keyOf: syncKey });
     const regulated = lines.filter((l) => l.trackedCategoryId);
-    const targetIds = new Set(regulated.map((l) => l.invoiceItemId));
+    const targetKeys = new Set(regulated.map(targetKey));
     const now = new Date();
     const bucket = periodBucketOf(now);
     const reversals: any[] = [];
     const toWrite: SaleLedgerLine[] = [];
-    for (const [invoiceItemId, h] of held) {
-      if (!h.sale || isSquare(h) || targetIds.has(invoiceItemId)) continue;
-      reversals.push(reversalRowFor(h, invoiceItemId, now, bucket)); // the line left the invoice
+    for (const [key, h] of held) {
+      if (!h.sale || isSquare(h) || targetKeys.has(key)) continue;
+      // the line left the invoice, or was re-filed (another category / subcategory / order line)
+      reversals.push(reversalRowFor(h, now, bucket));
     }
     for (const l of regulated) {
-      const h = held.get(l.invoiceItemId);
+      const h = held.get(targetKey(l));
       const outstanding = !!h && !!h.sale && !isSquare(h);
       if (outstanding && matchesTarget(h!, targetOf(l))) continue; // unchanged: write nothing
-      if (outstanding) reversals.push(reversalRowFor(h!, l.invoiceItemId, now, bucket));
+      if (outstanding) reversals.push(reversalRowFor(h!, now, bucket));
       toWrite.push(l);
     }
     if (reversals.length > 0) await db.regulatedSalesLedger.createMany({ data: reversals });
