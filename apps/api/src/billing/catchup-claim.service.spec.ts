@@ -1617,6 +1617,17 @@ describe("(b) caveat: release Step 3 finishes like finishDuplicate - read, cance
       subs: subOf(status),
     });
 
+  it("a LIVE subscription is cancelled exactly once, with the release idempotency key (the DB spec's fixture must seed a live sub)", async () => {
+    const h = arrange("active");
+    expect(await h.svc.release("t1", { sessionId: SESSION, reason: "t" })).toBe("released");
+    expect(h.stripe.cancelSubscription).toHaveBeenCalledTimes(1);
+    expect(h.stripe.cancelSubscription).toHaveBeenCalledWith(
+      SUB,
+      { prorate: false, invoice_now: false },
+      { idempotencyKey: `t1:catchup-release-cancel:${SESSION}` },
+    );
+  });
+
   it("an already-cancelled subscription is not cancelled again", async () => {
     const h = arrange("canceled");
     expect(await h.svc.release("t1", { sessionId: SESSION, reason: "t" })).toBe("released");
@@ -1652,6 +1663,7 @@ describe("(b) caveat: release Step 3 finishes like finishDuplicate - read, cance
       subs: {},
     });
     expect(await h.svc.release("t1", { sessionId: SESSION, reason: "t" })).toBe("released");
+    expect(h.stripe.cancelSubscription).not.toHaveBeenCalled(); // nothing to cancel
   });
 });
 

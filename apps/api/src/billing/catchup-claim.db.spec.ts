@@ -236,6 +236,9 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
         },
       ],
       sessions: { cs_rel: { id: "cs_rel", subscription: "sub_rel", status: "complete" } },
+      // the release cancels a LIVE subscription exactly once; a subscription Stripe does not know (the fake's
+      // default) is "gone" and is rightly never cancelled, so the fixture must seed it
+      subs: { sub_rel: { id: "sub_rel", customer: "cus_rel", status: "active" } },
     });
     const { svc } = svcWith(stripe);
     const seen: unknown[] = [];
@@ -290,6 +293,7 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
         },
       ],
       sessions: { cs_cpn: { id: "cs_cpn", subscription: "sub_cpn", status: "complete" } },
+      subs: { sub_cpn: { id: "sub_cpn", customer: "cus_cpn", status: "active" } },
     });
     const { svc } = svcWith(stripe);
     expect(await svc.release(id, { sessionId: "cs_cpn", reason: "db-test" })).toBe("released");
