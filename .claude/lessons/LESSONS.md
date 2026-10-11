@@ -17,7 +17,7 @@
 - **Symptom:** a member whose own branch had a red database spec was merged into Train 3 and had to be ejected after the train was assembled, costing a revert on the tip.
 - **Root cause:** the train gate read the local checks and the assembled tip, never each member's own latest CI run on its head sha, so a red member only showed up once it was already in; the abandoned approach was "assemble first, find the reds on the tip".
 - **Lesson:** **Before a member is merged into a train, read that member's own latest CI result for its exact head sha. Red, missing or stale means it does not enter, whatever the local checks said; the tip's CI is the second check, not the first.**
-- **Guard:** none automatic; the train checklist (per member: head sha, its latest run, green). Cf. [[L-288]].
+- **Guard:** none automatic; train assembly reads each member's own latest CI (all jobs, not just Verify) and runs its changed specs before merging it. Cf. [[L-288]].
 
 ### L-289 · 2026-10-09 · process · a lead decides within its own authority when the owner is away; it never parks a train on an absent owner's reply
 
@@ -392,9 +392,9 @@
 ### L-292 · 2026-10-10 · testing · a fixture that leaks an environment variable (RF_VERIFY_MODE) makes the pre-push hook and CI disagree
 
 - **Symptom:** the same checks gave different results in the local pre-push hook and in CI.
-- **Root cause:** a fixture left `RF_VERIFY_MODE` set in the process environment, so what a spec saw depended on which runner (and which earlier spec in the worker) had set it; the abandoned approach was re-running until the two agreed.
-- **Lesson:** **A test or fixture that sets a process environment variable restores it afterwards (save in a before hook, restore in an after hook, even on failure), and a spec whose behavior depends on such a variable sets it explicitly instead of inheriting it. When the hook and CI disagree, diff the environment first.**
-- **Guard:** none automatic; review check on fixtures that write `process.env`.
+- **Root cause:** fixtures ran the real `main()` of a script and inherited `RF_VERIFY_MODE=fast` from the hook environment, so the hook (fast mode) and CI (full mode) exercised different code; the abandoned approach was re-running until the two agreed.
+- **Lesson:** **A fixture that runs a script's real `main()` scrubs the environment first, through one shared helper, so a mode variable inherited from the hook (`RF_VERIFY_MODE=fast`) cannot change what the spec exercises; any test that sets a process variable restores it afterwards. When the hook and CI disagree, diff the environment first.**
+- **Guard:** the shared environment scrub in the fixtures; a review check on any fixture that runs a real `main()` or writes `process.env`.
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
 
