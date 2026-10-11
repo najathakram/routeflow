@@ -140,6 +140,8 @@ export class FakeParkDb {
             createdAt: r.createdAt,
             expiresAt: r.expiresAt,
             lineCount: p.lines?.length ?? 0,
+            // the SQL's `"payload"->'lines'` (the list projects the pricing inputs of these in JS)
+            lines: p.lines ?? [],
             customerName: p.customer?.businessName ?? null,
           };
         });
