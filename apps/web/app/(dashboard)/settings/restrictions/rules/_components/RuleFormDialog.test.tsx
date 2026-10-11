@@ -202,9 +202,11 @@ describe("RuleFormDialog", () => {
       const { unmount } = renderWithProviders(<RuleFormDialog open onClose={jest.fn()} />);
       fireEvent.click(screen.getByRole("radio", { name: "One product" }));
       fireEvent.change(screen.getByLabelText("Search products"), { target: { value: "gum" } });
-      await screen.findByRole("button", { name: /Gummies 0/ }, { timeout: 2000 });
+      // Load flake (row 272): passes alone but timed out on a saturated shared host, so the wait
+      // and the test budget are generous. Wait budget only; the assertions are unchanged.
+      await screen.findByRole("button", { name: /Gummies 0/ }, { timeout: 20_000 });
       expect(!!screen.queryByText(/Showing the first 8\. Refine your search\./)).toBe(hint);
       unmount();
     }
-  });
+  }, 60_000);
 });

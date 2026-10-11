@@ -79,6 +79,8 @@ export type {
 export interface BuyerInvoice {
   id: string;
   invoiceNumber: string;
+  revisedAt?: string | null;
+  overpaidBy?: number | null;
   status: string;
   issueDate?: string;
   dueDate?: string;
@@ -520,6 +522,8 @@ export function useBuyerCancelOrder() {
 export function useBuyerInvoices(params?: {
   status?: string;
   statuses?: string[];
+  /** Derived overdue set (open status + balance due + past due), not the strict status OVERDUE. */
+  isOverdue?: boolean;
   page?: number;
   limit?: number;
 }) {

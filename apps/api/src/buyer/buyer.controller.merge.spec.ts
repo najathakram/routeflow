@@ -207,7 +207,7 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     await controller.createOrder({ items: [{ productId: "p1", qty: 1 }] } as any, MOCK_CTX as any);
     expect(ordersService.findActiveOrder).toHaveBeenCalledWith(
       MOCK_CTX.customerId,
-      expect.objectContaining({ forMerge: true, mergeAs: { audience: "buyer" } }),
+      expect.objectContaining({ forMerge: true, mergeAs: { audience: "buyer", role: "CUSTOMER" } }),
     );
   });
 

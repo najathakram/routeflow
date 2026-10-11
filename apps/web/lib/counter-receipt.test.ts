@@ -185,3 +185,37 @@ describe("browser zone must never leak into the receipt (SA-738)", () => {
     expect(m.dateLabel).toBe("Oct 7, 2026, 3:15 AM");
   });
 });
+
+describe("row 298: the receipt line names the product's unit", () => {
+  const detailOf = (line: object) =>
+    buildCounterReceipt({
+      receipt: {
+        orderId: "o1",
+        orderNumber: "ORD-1",
+        invoiceId: "i1",
+        invoiceNumber: "INV-1",
+        total: 2.5,
+        paid: 2.5,
+        balanceDue: 0,
+        method: "CARD",
+        paymentRecorded: true,
+      } as never,
+      lines: [{ tempId: "a", name: "Cola", unitPrice: 2.5, qty: 1, ...line }],
+      enteredTender: null,
+      profile: null,
+      now: new Date("2026-10-07T15:15:00Z"),
+    }).lines[0].detail;
+
+  it("a plain line prints the unit word after the price", () => {
+    expect(detailOf({ unit: "each" })).toBe("1 × $2.50 / each");
+    expect(detailOf({ unit: " LB ", qty: 3 })).toBe("3 × $2.50 / lb");
+  });
+  it("a line with no unit on file keeps the bare form", () => {
+    expect(detailOf({})).toBe("1 × $2.50");
+  });
+  it("a boxed line keeps its per-box wording", () => {
+    expect(detailOf({ unit: "each", unitsPerBox: 12, boxes: 1, pieces: 0, qty: 12 })).toBe(
+      "1 box × $2.50 per box",
+    );
+  });
+});

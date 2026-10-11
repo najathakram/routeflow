@@ -65,6 +65,8 @@ export interface Return {
   creditNote?: { id: string; creditNoteNumber: string; amount: number; status: string };
   refundAmount?: number | null;
   refundMethod?: RefundMethod | null;
+  /** The tender an EXTERNAL_REFUND was paid out in (SA-740r2, `Return.refundTender`); null when none was recorded. */
+  refundTender?: "CASH" | "CARD" | "CHECK" | null;
   refundedAt?: string | null;
   /**
    * Server-computed Σ qty × (subtotal/qty) across the return's items — the same

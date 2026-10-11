@@ -10,6 +10,7 @@ import {
   startOfLocalDay,
 } from "../../common/calendar-date";
 import { resolveTenantZone, resolveZone } from "../../common/tenant-time-zone";
+import { configuredTaxRatePercent } from "../../common/tax-rate";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { CounterSaleTodayDto } from "./counter-sale-today.dto";
 import {
@@ -17,6 +18,9 @@ import {
   counterSalesWhere,
   creditNotesInWindowWhere,
   foldSummary,
+  handOverCandidateSelect,
+  handOverCandidatesWhere,
+  handOverPayments,
   liveCounterSalesWhere,
   pageQuery,
   paidOnDaysSalesWhere,
@@ -44,8 +48,9 @@ const badDay = (message: string) =>
  * calendar-date helpers (DST-safe), never by this class.
  *
  * Query budget (a spec pins it): the zone (1) + the page `findMany` (1) + the `count` (1), and on page 1 only the
- * five whole-day summary queries: `order.aggregate`, `invoicePayment.groupBy` (money in, by paid date),
- * `invoicePayment.aggregate` (paid on the day's own sales), `creditNote.findMany` (ids created in the window) and
+ * six whole-day summary queries: `order.aggregate`, `invoicePayment.groupBy` (money in, by paid date),
+ * `invoicePayment.aggregate` (paid on the day's own sales), `creditNote.findMany` (ids created in the window),
+ * `invoicePayment.findMany` (the day's POS-mode hand-over candidates, v5-filtered in code) and
  * `return.findMany` (a day's few returns). No per-row call.
  * Rows and summary are two reads, not one transaction: a sale rung between them can show in one and not the other
  * until the next refetch (accepted; the web refetches both together).
@@ -74,14 +79,16 @@ export class CounterSaleTodayService {
     const limit = query.limit ?? TODAYS_SALES_DEFAULT_LIMIT;
     const db = this.prisma.forTenant();
 
-    const [rows, total, summary] = await Promise.all([
+    const [rows, total, summary, configuredTaxPercent] = await Promise.all([
       db.order.findMany(pageQuery(tenantId, window, page, limit)) as Promise<TodayOrderRecord[]>,
       db.order.count({ where: counterSalesWhere(tenantId, window) }),
       page === 1 ? this.summary(db, tenantId, window) : Promise.resolve(null),
+      // one read per page: the rate a stored line rate must equal before a row names it
+      configuredTaxRatePercent(this.prisma),
     ]);
 
     return {
-      data: rows.map(toTodaysSaleRow),
+      data: rows.map((r) => toTodaysSaleRow(r, configuredTaxPercent)),
       meta: {
         total,
         page,
@@ -97,7 +104,7 @@ export class CounterSaleTodayService {
   }
 
   /**
-   * The whole day, five queries (never per-row), folded in counter-sale-today.ts: the day's sales (aggregate), the
+   * The whole day, six queries (never per-row), folded in counter-sale-today.ts: the day's sales (aggregate), the
    * money that CAME IN in the window by method (groupBy on `paidAt`, sales of any day), what is paid on the day's own
    * sales (aggregate, for `onAccount`), the ids of the credit notes created in the window, and then the returns counted
    * in the window (a day's few returns are read whole so the per-return amount rule applies; a grouped sum cannot).
@@ -108,7 +115,7 @@ export class CounterSaleTodayService {
     tenantId: string,
     window: { start: Date; end: Date },
   ) {
-    const [sales, payments, paidOnSales, creditNotes] = await Promise.all([
+    const [sales, payments, paidOnSales, creditNotes, handOverRows] = await Promise.all([
       db.order.aggregate({
         where: liveCounterSalesWhere(tenantId, window),
         _count: { _all: true },
@@ -127,6 +134,11 @@ export class CounterSaleTodayService {
         where: creditNotesInWindowWhere(tenantId, window),
         select: { id: true },
       }),
+      // SA-763r R7: candidates by the SQL predicates; the v5 group id is matched in code below.
+      db.invoicePayment.findMany({
+        where: handOverCandidatesWhere(tenantId, window),
+        select: handOverCandidateSelect,
+      }),
     ]);
     const returns = await db.return.findMany({
       where: windowReturnsWhere(
@@ -143,6 +155,12 @@ export class CounterSaleTodayService {
         creditCategoryTax: true,
       },
     });
-    return foldSummary({ sales, payments, paidOnSales, returns });
+    return foldSummary({
+      sales,
+      payments,
+      paidOnSales,
+      returns,
+      handOvers: handOverPayments(handOverRows),
+    });
   }
 }

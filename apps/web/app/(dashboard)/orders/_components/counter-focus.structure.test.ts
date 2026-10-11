@@ -13,8 +13,8 @@ const DIR = __dirname;
 /** file -> the number of direct `.focus()` calls it may have, and why. */
 const ALLOWED: Record<string, { count: number; why: string }> = {
   "CounterSaleScreen.tsx": {
-    count: 1,
-    why: "the receipt heading takes focus when the receipt appears (POS-1); not an input",
+    count: 2,
+    why: "the receipt heading takes focus when the receipt appears (POS-1); and the digit redirect (row 237) focuses the scan box SYNCHRONOUSLY so the very keystroke lands in it (a scheduled refocus would lose it)",
   },
   "CounterReturnAction.tsx": {
     count: 1,

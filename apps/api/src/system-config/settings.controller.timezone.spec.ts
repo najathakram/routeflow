@@ -39,7 +39,14 @@ async function build(cfg: unknown, opts: { set?: jest.Mock } = {}) {
   const m = await Test.createTestingModule({
     controllers: [SettingsController],
     providers: [
-      { provide: SystemConfigService, useValue: { getAll: jest.fn().mockResolvedValue({}), set } },
+      {
+        provide: SystemConfigService,
+        useValue: {
+          getAll: jest.fn().mockResolvedValue({}),
+          get: jest.fn().mockResolvedValue(null),
+          set,
+        },
+      },
       { provide: ConfigService, useValue: { get: jest.fn() } },
       { provide: PrismaService, useValue: prisma },
       { provide: EmailService, useValue: { send: jest.fn() } },
@@ -71,6 +78,7 @@ describe("GET /settings: tenant timezone (SA-738, one resolver)", () => {
     const { c, prisma } = await build(null);
     prisma.forTenant = jest.fn(() => ({
       user: { findFirst: jest.fn().mockResolvedValue(null) },
+      systemConfig: { findFirst: jest.fn().mockResolvedValue(null) },
       order: prisma.order,
       invoicePayment: prisma.invoicePayment,
       return: prisma.return,

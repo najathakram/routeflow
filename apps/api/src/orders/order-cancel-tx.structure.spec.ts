@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from "fs";
-import { join } from "path";
+import { join, sep } from "path";
 
 // SA-762r test 9 (structural): the cancel unwind has ONE implementation. The "CANCEL" stock event (the restock of a
 // cancelled order) is written by cancelOrderInTx's caller-supplied `notes` only, and every cancel caller goes through
@@ -21,7 +21,12 @@ describe("cancelOrderInTx is the only cancel/restock path (SA-762r)", () => {
   it('only the two callers of cancelOrderInTx name the "CANCEL" stock event: the office cancel and the counter-sale void', () => {
     const naming = files
       .filter(({ src }) => /notes:\s*"CANCEL"/.test(src))
-      .map(({ p }) => p.slice(SRC.length + 1))
+      .map(({ p }) =>
+        p
+          .slice(SRC.length + 1)
+          .split(sep)
+          .join("/"),
+      )
       .sort();
     expect(naming).toEqual([
       "orders/counter-sale/counter-sale-void.service.ts",
@@ -51,7 +56,12 @@ describe("cancelOrderInTx is the only cancel/restock path (SA-762r)", () => {
   it("the unwind body (claim, stock credit, credit + wallet release, invoice voids, line marking) lives in order-cancel-tx.ts alone", () => {
     const body = files
       .filter(({ src }) => /export async function cancelOrderInTx\(/.test(src))
-      .map(({ p }) => p.slice(SRC.length + 1));
+      .map(({ p }) =>
+        p
+          .slice(SRC.length + 1)
+          .split(sep)
+          .join("/"),
+      );
     expect(body).toEqual(["orders/order-cancel-tx.ts"]);
     const service = readFileSync(join(SRC, "orders/orders.service.ts"), "utf8");
     expect(service).not.toMatch(/releaseOrderCreditsInTx\(tx, id\)[\s\S]{0,200}voidInvoiceInTx/);

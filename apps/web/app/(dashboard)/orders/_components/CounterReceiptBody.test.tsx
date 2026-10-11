@@ -84,9 +84,16 @@ describe("CounterReceiptBody", () => {
     expect(h.querySelector("img")).toHaveAttribute("src", "https://cdn.example/logo.png");
   });
 
-  it("SA-762r: the named customer, the settings tax rate and the footer reach the paper; a walk-in has no customer line", () => {
-    const profile = { taxRate: 10, receiptFooter: "Thanks!" };
-    const withTax = { ...RECEIPT, total: 24.75, paid: 24.75, change: undefined as never };
+  it("SA-762r: the named customer, the server's tax and rate and the footer reach the paper; a walk-in has no customer line", () => {
+    const profile = { receiptFooter: "Thanks!" };
+    const withTax = {
+      ...RECEIPT,
+      total: 24.75,
+      paid: 24.75,
+      change: undefined as never,
+      tax: 2.25,
+      taxRatePercent: 10,
+    };
     const { unmount } = renderWithProviders(
       <CounterReceiptBody
         receipt={withTax}
@@ -104,6 +111,16 @@ describe("CounterReceiptBody", () => {
     unmount();
     show();
     expect(screen.queryByTestId("receipt-customer")).not.toBeInTheDocument();
+  });
+
+  it("exact cash: the server's served change of 0 prints Tendered and a Change $0.00 row (null would print none)", () => {
+    const { unmount } = show({ ...RECEIPT, total: 22.5, paid: 22.5, change: 0 });
+    expect(screen.getByTestId("receipt-tendered")).toHaveTextContent("$22.50");
+    expect(screen.getByTestId("receipt-change")).toHaveTextContent("Change");
+    expect(screen.getByTestId("receipt-change")).toHaveTextContent("$0.00");
+    unmount();
+    show({ ...RECEIPT, total: 22.5, paid: 22.5, change: undefined as never });
+    expect(screen.queryByTestId("receipt-change")).not.toBeInTheDocument();
   });
 
   it("header falls back to the settings name, then to name only, then to nothing", () => {

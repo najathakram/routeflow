@@ -117,7 +117,12 @@ describe("B986-7 Opus: uncoded refusals keep TODAY's server sentence (never a va
     expect(banner).toMatch(/err\.response\?\.data\?\.message \|\|\s*err\.message/);
     expect(banner).not.toContain("The order couldn't be created. Check the customer and lines");
     const page = read(`${D2}/orders/[id]/page.tsx`);
-    expect((page.match(/orderErrorText\(e\)/g) ?? []).length).toBe(4);
+    // two delete sites live in the page; the other two are DeleteOrderTier, rendered twice and handed orderErrorText
+    const tier = read(`${D2}/orders/[id]/_components/DeleteOrderTier.tsx`);
+    expect((page.match(/orderErrorText\(e\)/g) ?? []).length).toBe(2);
+    expect((page.match(/<DeleteOrderTier/g) ?? []).length).toBe(2);
+    expect(page).toContain("errorText={orderErrorText}");
+    expect(tier).toContain("errorText(e)");
     expect(page).not.toMatch(/codedToastCopy\(e\)\s*\?\?\s*e\.message/);
     expect(page).toMatch(
       /codedToastCopy\(err\)\s*\?\?\s*err\?\.response\?\.data\?\.message\s*\?\?\s*"Please try again, or refresh and check its invoices\."/,
@@ -139,8 +144,13 @@ describe("B986-7 Opus: uncoded refusals keep TODAY's server sentence (never a va
     expect(page).toContain("useDeleteOrder({ localErrorToast: true })");
     expect(page).toContain("const cancelOrder = useUpdateOrderStatus({ localErrorToast: true })");
     // every deleteOrder.mutate has an onError that toasts (the first one used to rely on the global toast)
-    const sites = page.split("deleteOrder.mutate(").slice(1);
-    expect(sites).toHaveLength(4);
+    const tier = read(`${D2}/orders/[id]/_components/DeleteOrderTier.tsx`);
+    // two direct sites in the page, plus the extracted DeleteOrderTier (one mutate, rendered at two call sites)
+    const sites = [
+      ...page.split("deleteOrder.mutate(").slice(1),
+      ...tier.split("deleteOrder.mutate(").slice(1),
+    ];
+    expect(sites).toHaveLength(3);
     for (const site of sites) expect(site.slice(0, 700)).toContain("onError");
   });
 
