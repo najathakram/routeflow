@@ -49,7 +49,7 @@ import { SetCostBasisDto } from "./dto/set-cost-basis.dto";
 import { BulkSetCostBasisDto } from "./dto/bulk-set-cost-basis.dto";
 import { RecomputeCostsDto } from "./dto/recompute-costs.dto";
 import { VariantAssignDto } from "./dto/variant-assign.dto";
-import { retryOnTxConflict, retryStockTx } from "../common/tx-retry";
+import { retryStockTx } from "../common/tx-retry";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
 
@@ -549,9 +549,10 @@ export class InventoryService {
     const familyMode = await readFamilyPriceMode(this.featureConfig, this.prisma.getTenantId());
 
     // SA-587e: the family-first lock order removes the deadlock, not a plain 40001/P2034 on the
-    // Serializable tx, so the WHOLE attempt is retried. The array is cleared at the start of each
+    // Serializable tx, so the WHOLE attempt is retried (SA-767 L-2: through retryStockTx, so the
+    // exhausted attempts are a coded 503 LOCK_UNAVAILABLE). The array is cleared at the start of each
     // attempt (a rolled-back attempt must not leak ids); alerts fire once, after the commit.
-    const result = await retryOnTxConflict("inventory.assignToVariants", () =>
+    const result = await retryStockTx("inventory.assignToVariants", () =>
       this.prisma.tenantTransaction(
         async (tx) => {
           restockedProductIds.length = 0;
@@ -564,6 +565,13 @@ export class InventoryService {
           if (familyMode === "on" && lockTenantId) {
             await lockFamilyRow(tx, lockTenantId, dto.parentProductId);
           }
+          // SA-767 L-2: then the parent and every EXISTING target variant through the one stock lock
+          // (house order: family role -> rest), before any Product value is read. New variants are
+          // created below and need no lock.
+          await this.lockProducts(tx, [
+            dto.parentProductId,
+            ...dto.assignments.flatMap((a) => (a.productId ? [a.productId] : [])),
+          ]);
           const parent = await tx.product.findUnique({ where: { id: dto.parentProductId } });
           if (!parent) {
             throw parentInvalid(PRODUCT_PARENT_REASONS.NOT_FOUND, "Parent product not found");
@@ -1083,6 +1091,9 @@ export class InventoryService {
     performedById: string | null,
     tx: Prisma.TransactionClient,
   ): Promise<{ unitCost: Prisma.Decimal; stockAfter: Prisma.Decimal }> {
+    // SA-767 L-2: a no-op when the caller already holds the row (the live order paths lock first); it keeps
+    // this writer safe if it is ever called on its own.
+    await this.lockProducts(tx, [productId]);
     // B562 PR-2: the cost resolver and the SALE row writer live in sale-movement.ts, shared with
     // the order stock paths (orders/order-stock.ts) so a sale is costed one way everywhere.
     // SA-136b: the row is written AFTER the counter moves, with `stockAfter` read off the update's

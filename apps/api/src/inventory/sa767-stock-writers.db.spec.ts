@@ -262,40 +262,6 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     expect(lots).toHaveLength(2);
   }, 60_000);
 
-  it("(d) an adjustment racing a purchase takes its avgCostAfter and lot cost from the LOCKED row", async () => {
-    const w = await seedWorld("d", 10, 2);
-    const gateA = holdFirstTxOpen(A);
-
-    const purchase = inTenant(A, w, () =>
-      A.inventory.recordPurchase({ productId: w.productId, quantity: 10, unitCost: 4 }, w.userId),
-    );
-    await gateA.parked; // avg 2.00 -> 3.00, stock 20, uncommitted
-    // B validates against the committed row (avg 2.00): the stale read the old code stamped.
-    const adjustment = inTenant(B, w, () =>
-      B.inventory.recordAdjustment({ productId: w.productId, quantity: 5 }, w.userId),
-    );
-    const waited = await sawLockWait();
-    gateA.release();
-    await Promise.all([purchase, adjustment]);
-
-    const p = await productOf(w);
-    const moves = await movementsOf(w);
-    const adj = moves.find((m) => m.type === "ADJUSTMENT")!;
-    const lot = await A.prisma.stockLot.findFirstOrThrow({
-      where: { tenantId: w.tenantId, reference: "ADJUSTMENT" },
-    });
-    console.log(
-      `SA-767(d) observed: lockWait=${waited} stock=${p.currentStock} avg=${p.averageCost} ` +
-        `adjAvgCostAfter=${adj.avgCostAfter} adjStockAfter=${adj.stockAfter} lotCost=${lot.unitCost}`,
-    );
-    expect(waited).toBe(true);
-    expect(Number(p.currentStock)).toBe(25);
-    expect(Number(p.averageCost)).toBe(3); // an adjustment never moves the average
-    expect(Number(adj.stockAfter)).toBe(25);
-    expect(Number(adj.avgCostAfter)).toBe(3); // the old code stamped the stale 2.00
-    expect(Number(lot.unitCost)).toBe(3);
-  }, 60_000);
-
   /** A SALE in flight (what `decrementStockForSale` does): holds the Product row, decremented, uncommitted. */
   async function openSale(w: World, qty: number, productId = w.productId) {
     const c = await pool.connect();
@@ -351,6 +317,40 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
       },
     });
   }
+
+  it("(d) an adjustment racing a purchase takes its avgCostAfter and lot cost from the LOCKED row", async () => {
+    const w = await seedWorld("d", 10, 2);
+    const gateA = holdFirstTxOpen(A);
+
+    const purchase = inTenant(A, w, () =>
+      A.inventory.recordPurchase({ productId: w.productId, quantity: 10, unitCost: 4 }, w.userId),
+    );
+    await gateA.parked; // avg 2.00 -> 3.00, stock 20, uncommitted
+    // B validates against the committed row (avg 2.00): the stale read the old code stamped.
+    const adjustment = inTenant(B, w, () =>
+      B.inventory.recordAdjustment({ productId: w.productId, quantity: 5 }, w.userId),
+    );
+    const waited = await sawLockWait();
+    gateA.release();
+    await Promise.all([purchase, adjustment]);
+
+    const p = await productOf(w);
+    const moves = await movementsOf(w);
+    const adj = moves.find((m) => m.type === "ADJUSTMENT")!;
+    const lot = await A.prisma.stockLot.findFirstOrThrow({
+      where: { tenantId: w.tenantId, reference: "ADJUSTMENT" },
+    });
+    console.log(
+      `SA-767(d) observed: lockWait=${waited} stock=${p.currentStock} avg=${p.averageCost} ` +
+        `adjAvgCostAfter=${adj.avgCostAfter} adjStockAfter=${adj.stockAfter} lotCost=${lot.unitCost}`,
+    );
+    expect(waited).toBe(true);
+    expect(Number(p.currentStock)).toBe(25);
+    expect(Number(p.averageCost)).toBe(3); // an adjustment never moves the average
+    expect(Number(adj.stockAfter)).toBe(25);
+    expect(Number(adj.avgCostAfter)).toBe(3); // the old code stamped the stale 2.00
+    expect(Number(lot.unitCost)).toBe(3);
+  }, 60_000);
 
   const countDto = (qty: number, productId: string) => ({
     sessionId: randomUUID(),

@@ -219,11 +219,23 @@ describe("SA-767 Nit 6 — the stock writers use retryStockTx", () => {
   it.each([
     ["inventory.receivePurchaseOrder", inv],
     ["inventory.updatePurchaseOrder", inv],
+    // SA-767 L-2: the manual stock / cost writers.
+    ["inventory.recordPurchase", inv],
+    ["inventory.recordAdjustment", inv],
+    ["inventory.assignToVariants", inv],
+    ["inventory.commitStockCount", inv],
+    ["inventory.commitStockCountSession", inv],
+    ["inventory.setCostBasis", inv],
+    ["inventory.bulkSetCostBasis", inv],
     ["vendorBills.receive", bills],
     ["vendorBills.revertToDraft", bills],
     ["vendorBills.voidBill", bills],
   ])("%s runs inside retryStockTx", (label, src) => {
     expect(src).toContain(`retryStockTx("${label}"`);
+  });
+
+  it("the inventory service no longer uses the bare retryOnTxConflict (SA-767 L-2)", () => {
+    expect(inv).not.toMatch(/retryOnTxConflict/);
   });
 
   it("the vendor-bill service no longer imports the bare retryOnTxConflict", () => {

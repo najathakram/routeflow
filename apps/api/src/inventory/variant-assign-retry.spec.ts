@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Test } from "@nestjs/testing";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ServiceUnavailableException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -11,7 +11,8 @@ import { StockAlertService } from "../stock-alerts/stock-alert.service";
 /**
  * SA-587e (#2717 M2): assignToVariants is a Serializable transaction; even with the family-first
  * lock order a plain 40001/P2034 can still abort it, so the WHOLE attempt runs inside
- * retryOnTxConflict. Stock alerts fire once, after the successful attempt, never per attempt.
+ * retryStockTx (SA-767 L-2: exhausted attempts are a coded 503 LOCK_UNAVAILABLE, not a raw 500).
+ * Stock alerts fire once, after the successful attempt, never per attempt.
  */
 const D = (n: number) => new Prisma.Decimal(n);
 const parent = {
@@ -76,11 +77,25 @@ describe("assignToVariants retry (SA-587e)", () => {
     });
   }
 
-  it("placement: assignToVariants runs its transaction inside retryOnTxConflict", () => {
+  it("placement: assignToVariants runs its transaction inside retryStockTx", () => {
     const src = fs.readFileSync(path.join(__dirname, "inventory.service.ts"), "utf8");
     const body = src.slice(src.indexOf("async assignToVariants("));
     const head = body.slice(0, body.indexOf("// ─── Stock count"));
-    expect(head).toMatch(/retryOnTxConflict\(\s*["'`]inventory\.assignToVariants/);
+    expect(head).toMatch(/retryStockTx\(\s*["'`]inventory\.assignToVariants/);
+    expect(head).not.toMatch(/retryOnTxConflict/);
+  });
+
+  it("a conflict on EVERY attempt is a coded 503 LOCK_UNAVAILABLE and fires no alerts", async () => {
+    const real = prisma.tenantTransaction.getMockImplementation()!;
+    prisma.tenantTransaction.mockImplementation(async (fn: any, opts?: any) => {
+      await real(fn, opts);
+      throw Object.assign(new Error("conflict"), { code: "P2034" });
+    });
+    const err: any = await service.assignToVariants(dto, "user-1").catch((e) => e);
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect(err.getResponse()).toMatchObject({ code: "LOCK_UNAVAILABLE" });
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
+    expect(alerts).not.toHaveBeenCalled();
   });
 
   it("retries a P2034 conflict, fires alerts once with the successful attempt's ids only", async () => {
