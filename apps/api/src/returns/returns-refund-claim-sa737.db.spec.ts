@@ -5,7 +5,10 @@
  *
  * What it pins (house lock order: Return -> Order -> the order's invoices, id-sorted):
  *   T1  a void that holds the Order lock while a refund waits: the refund re-reads under the lock and gets 409
- *       RETURN_REFUND_BASIS_CHANGED, refundedAt stays null. (Red before: the unlocked claim committed on the first figure.)
+ *       RETURN_REFUND_BASIS_CHANGED, refundedAt stays null. HONEST NOTE: only the two-invoice EXTERNAL_REFUND case is a real
+ *       money failure on the base (it claimed a stale figure and committed). The one-invoice cases differ on the base only in
+ *       the error answered (REFUND_NEEDS_PAID_INVOICE, or the unlocked store-credit claim then a refused mint): they pin the
+ *       code and the wait, not a new money loss.
  *   T2  the claim holds the Order lock while a void waits: after the commit the void's guard answers 409
  *       INVOICE_HAS_CASH_REFUND (the two statements voidInvoice runs first: lockInvoiceRow, assertNoCashRefundOnInvoice).
  *   T3  an order cancel after a cash-refunded STANDARD return: 409 ORDER_HAS_CASH_REFUND, nothing voided.
@@ -618,7 +621,7 @@ describeDb("SA-737 the STANDARD refund claim under the Order lock — real Postg
     const h = await holder(lockOrder(s.orderId));
     let out: Outcome;
     try {
-      out = await refund(s, "CREDIT_NOTE"); // waits 3 s on the Order lock, then gives up
+      out = await refund(s, "CREDIT_NOTE"); // waits 2 s on the Order lock (the per-wait bound), then gives up
     } finally {
       await h.rollback();
     }

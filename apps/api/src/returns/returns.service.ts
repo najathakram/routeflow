@@ -61,6 +61,8 @@ import { assertCashRefundWithinCap } from "./cash-refund-cap";
 import {
   NOTHING_CREDITABLE_MESSAGE,
   REFUND_LOCK_TIMEOUT_MS,
+  REFUND_TX_TIMEOUT_MS,
+  isTransactionExpired,
   isNothingBilledRefusal,
   pricedNothingBilled,
   refundAlreadyResolved,
@@ -1380,102 +1382,108 @@ export class ReturnsService {
     // SA-740r2 item 6: the shared counter-close lock is the FIRST statement (a counter order's refund counts in the drawer)
     const registerKey = external ? registerKeyOfOrder(ret.order) : null;
     try {
-      return await this.prisma.tenantTransaction(async (tx: any) => {
-        if (registerKey && tenantId) await lockCounterClose(tx, tenantId, registerKey);
-        await tx.$executeRaw`SELECT set_config('lock_timeout', ${String(REFUND_LOCK_TIMEOUT_MS)}, true)`;
-        await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
-        const fresh = await tx.return.findFirst({
-          where: { id },
-          select: { id: true, status: true, kind: true },
-        });
-        if (!fresh) throw new NotFoundException("Return not found");
-        if (fresh.kind === "INLINE")
-          throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
-        // The first read (above the locks) is 400 "Only RECEIVED returns can be refunded", as ever. This re-read, under the Return lock,
-        // is 409 with the same text: the return was RECEIVED a moment ago, so another request resolved it while this one waited
-        // (the loser of two refunds). Lead ruling: 400 before the lock, 409 in it.
-        if (fresh.status !== "RECEIVED") throw refundAlreadyResolved();
-        const orderId = ret.order?.id ?? ret.orderId;
-        if (orderId) await lockRefundOrders(tx, tenantId, [orderId]);
-        const resolved = await resolveRefundInvoiceIds(tx, {
-          kind: "ORDER",
-          orderId: orderId ?? "",
-        });
-        await lockRefundInvoices(tx, tenantId, resolved.invoiceIds);
+      return await this.prisma.tenantTransaction(
+        async (tx: any) => {
+          // The wait bound comes FIRST so the counter-close wait is bounded too; it takes no lock, so the close lock is still the
+          // first LOCK the transaction acquires (counter-close -> Return -> Order -> invoices).
+          await tx.$executeRaw`SELECT set_config('lock_timeout', ${String(REFUND_LOCK_TIMEOUT_MS)}, true)`;
+          if (registerKey && tenantId) await lockCounterClose(tx, tenantId, registerKey);
+          await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
+          const fresh = await tx.return.findFirst({
+            where: { id },
+            select: { id: true, status: true, kind: true },
+          });
+          if (!fresh) throw new NotFoundException("Return not found");
+          if (fresh.kind === "INLINE")
+            throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
+          // The first read (above the locks) is 400 "Only RECEIVED returns can be refunded", as ever. This re-read, under the Return lock,
+          // is 409 with the same text: the return was RECEIVED a moment ago, so another request resolved it while this one waited
+          // (the loser of two refunds). Lead ruling: 400 before the lock, 409 in it.
+          if (fresh.status !== "RECEIVED") throw refundAlreadyResolved();
+          const orderId = ret.order?.id ?? ret.orderId;
+          if (orderId) await lockRefundOrders(tx, tenantId, [orderId]);
+          const resolved = await resolveRefundInvoiceIds(tx, {
+            kind: "ORDER",
+            orderId: orderId ?? "",
+          });
+          await lockRefundInvoices(tx, tenantId, resolved.invoiceIds);
 
-        // the order, its invoices and their lines as they are NOW, under the locks
-        const locked = await tx.return.findUnique({
-          where: { id },
-          include: REFUND_RETURN_INCLUDE,
-        });
-        if (!locked) throw new NotFoundException("Return not found");
-        const basis = await this.basisUnderLock(method, locked, tx, firstBasis);
-        const refundAmount = roundMoney(basis.amount);
+          // the order, its invoices and their lines as they are NOW, under the locks
+          const locked = await tx.return.findUnique({
+            where: { id },
+            include: REFUND_RETURN_INCLUDE,
+          });
+          if (!locked) throw new NotFoundException("Return not found");
+          const basis = await this.basisUnderLock(method, locked, tx, firstBasis);
+          const refundAmount = roundMoney(basis.amount);
 
-        if (external) {
-          const state = await loadInvoiceRefundState(tx, resolved);
-          const refusal = refundSourcesRefusal(state);
-          if (refusal) throw refusal;
-          // SA-749r2 item 9: a CASH refund may not exceed the cash applied to the order minus earlier cash refunds on it
-          if (orderId) {
-            await assertCashRefundWithinCap(tx, {
-              returnId: id,
-              tender,
-              counterOrder: registerKey != null,
-              perOrder: new Map([[orderId, refundAmount]]),
-            });
-          }
-        }
-
-        // SA-758 CR-2: a recorded refund's refundedAt is the DATABASE clock, read after the close lock
-        const refundedAt = external ? await dbClockNow(tx) : new Date();
-        const claimed = await tx.return.updateMany({
-          where: refundClaimWhere(id),
-          data: {
-            status: "REFUNDED",
-            refundMethod: method,
-            refundAmount,
-            refundedAt,
-            ...(external ? refundTenderData(tender) : {}),
-          },
-        });
-        if (claimed.count === 0) throw refundAlreadyResolved();
-        // SA-737 (parity with the inline refund's M5): cash leaving with no audit row is a gap; AWAITED, in this transaction,
-        // so no audit row means no refund
-        if (external) {
-          await tx.auditLog.create({
-            data: {
-              userId: actor?.sub ?? null,
-              impersonatedBy: actor?.impersonatedBy ?? null,
-              action: AUDIT_ACTIONS.STANDARD_REFUND_RECORDED,
-              entityType: "Return",
-              entityId: id,
-              meta: {
+          if (external) {
+            const state = await loadInvoiceRefundState(tx, resolved);
+            const refusal = refundSourcesRefusal(state);
+            if (refusal) throw refusal;
+            // SA-749r2 item 9: a CASH refund may not exceed the cash applied to the order minus earlier cash refunds on it
+            if (orderId) {
+              await assertCashRefundWithinCap(tx, {
                 returnId: id,
-                returnNumber: locked.returnNumber ?? null,
-                orderId: orderId ?? null,
-                customerId: locked.customerId,
-                invoiceIds: resolved.invoiceIds,
-                amount: refundAmount,
-                tender: tender ?? null,
-                actor: actor?.sub ?? null,
-                impersonatedBy: actor?.impersonatedBy ?? null,
-              },
+                tender,
+                counterOrder: registerKey != null,
+                perOrder: new Map([[orderId, refundAmount]]),
+              });
+            }
+          }
+
+          // SA-758 CR-2: a recorded refund's refundedAt is the DATABASE clock, read after the close lock
+          const refundedAt = external ? await dbClockNow(tx) : new Date();
+          const claimed = await tx.return.updateMany({
+            where: refundClaimWhere(id),
+            data: {
+              status: "REFUNDED",
+              refundMethod: method,
+              refundAmount,
+              refundedAt,
+              ...(external ? refundTenderData(tender) : {}),
             },
           });
-        }
-        const row = await tx.return.findUnique({ where: { id } });
-        // one tender vocabulary (SA-740r2 item 8): answered like the inline refund, read back from the stored column
-        return {
-          row:
-            external && row
-              ? { ...row, refundTender: refundTenderOfColumn(row.refundTender) }
-              : row,
-          basis: { ...basis, amount: refundAmount },
-        };
-      });
+          if (claimed.count === 0) throw refundAlreadyResolved();
+          // SA-737 (parity with the inline refund's M5): cash leaving with no audit row is a gap; AWAITED, in this transaction,
+          // so no audit row means no refund
+          if (external) {
+            await tx.auditLog.create({
+              data: {
+                userId: actor?.sub ?? null,
+                impersonatedBy: actor?.impersonatedBy ?? null,
+                action: AUDIT_ACTIONS.STANDARD_REFUND_RECORDED,
+                entityType: "Return",
+                entityId: id,
+                meta: {
+                  returnId: id,
+                  returnNumber: locked.returnNumber ?? null,
+                  orderId: orderId ?? null,
+                  customerId: locked.customerId,
+                  invoiceIds: resolved.invoiceIds,
+                  amount: refundAmount,
+                  tender: tender ?? null,
+                  actor: actor?.sub ?? null,
+                  impersonatedBy: actor?.impersonatedBy ?? null,
+                },
+              },
+            });
+          }
+          const row = await tx.return.findUnique({ where: { id } });
+          // one tender vocabulary (SA-740r2 item 8): answered like the inline refund, read back from the stored column
+          return {
+            row:
+              external && row
+                ? { ...row, refundTender: refundTenderOfColumn(row.refundTender) }
+                : row,
+            basis: { ...basis, amount: refundAmount },
+          };
+        },
+        { timeout: REFUND_TX_TIMEOUT_MS },
+      );
     } catch (err) {
-      if (isLockUnavailableError(err)) throw refundBusy();
+      // a lock wait past its bound (55P03) or a transaction that ran out of budget (P2028): nothing was written, safe to retry
+      if (isLockUnavailableError(err) || isTransactionExpired(err)) throw refundBusy();
       throw err;
     }
   }
@@ -1503,6 +1511,14 @@ export class ReturnsService {
     }
     // the recorded refund prices with the PURE helper, which reports "nothing billed" instead of throwing it
     if (pricedNothingBilled(basis) && !pricedNothingBilled(firstBasis)) throw refundBasisChanged();
+    // A recorded (cash) refund is handed over against the figure the operator saw: a different figure under the locks is
+    // refused, never recorded silently (the drawer would drift from the books). Store credit claims the locked figure.
+    if (
+      method === EXTERNAL_REFUND_METHOD &&
+      roundMoney(Number((firstBasis as { amount?: number }).amount ?? 0)) !==
+        roundMoney(basis.amount)
+    )
+      throw refundBasisChanged("AMOUNT");
     return basis;
   }
 

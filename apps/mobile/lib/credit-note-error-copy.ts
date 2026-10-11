@@ -97,9 +97,9 @@ export const RETURN_NOTHING_BILLED_COPY =
 export const REFUND_NEEDS_PAID_INVOICE_COPY =
   "A cash, card or check refund needs every invoice for these goods to be paid in full. Give store credit instead, or cancel the return.";
 
-/** SA-737: the order's invoices were voided (or the order cancelled) while the refund was being recorded, so nothing returned is billed any more. */
+/** SA-737: the order's invoices were voided (or the order cancelled) while the refund was being recorded, so the refund no longer matches what is billed. */
 export const RETURN_REFUND_BASIS_CHANGED_COPY =
-  "The invoices for this order changed while the refund was being recorded, so nothing was refunded. Review the order, then give store credit or cancel the return.";
+  "The invoices for this order changed while the refund was being recorded, so nothing was refunded. Review the order and try again, or give store credit or cancel the return.";
 
 /** F4: a sale paid (partly) with store credit goes back as store credit. */
 export const REFUND_PAID_WITH_STORE_CREDIT_COPY =

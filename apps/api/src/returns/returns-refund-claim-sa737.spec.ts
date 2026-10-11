@@ -17,6 +17,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import { REFUND_LOCK_TIMEOUT_MS } from "./standard-refund-claim";
 
 type Pay = { amount: number; status: string; method: string };
 type Inv = { id: string; status: string; total: number; payments: Pay[]; lineSubtotal?: number };
@@ -219,18 +220,26 @@ describe("ReturnsService.processRefund: the locked claim with a basis recomputed
       },
     );
 
-    it("a restated invoice changes the figure: the claim carries the figure read under the lock", async () => {
+    it("EXTERNAL_REFUND: a figure that changed between the first read and the lock is 409, nothing recorded (cash is handed over against the figure the operator saw)", async () => {
       after = [
         { id: "inv-1", status: "SENT", total: 200, payments: paidCash(200), lineSubtotal: 200 },
       ];
       prisma.invoicePayment.findMany.mockResolvedValue([
         { amount: 200, invoice: { orderId: "ord-1" } },
       ]);
-      await refund("EXTERNAL_REFUND");
-      expect(prisma.return.updateMany.mock.calls[0][0].data.refundAmount).toBe(40);
+      const err = await failure(refund("EXTERNAL_REFUND"));
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(codeOf(err)).toBe("RETURN_REFUND_BASIS_CHANGED");
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
     });
 
-    it("the same for store credit: the credit note is minted for the figure read under the lock", async () => {
+    it("EXTERNAL_REFUND: an unchanged figure still claims (the cent-rounded figures are compared)", async () => {
+      await refund("EXTERNAL_REFUND");
+      expect(prisma.return.updateMany.mock.calls[0][0].data.refundAmount).toBe(20);
+    });
+
+    it("store credit keeps claiming the figure read under the lock: the credit note is minted for it", async () => {
       after = [
         { id: "inv-1", status: "SENT", total: 200, payments: paidCash(200), lineSubtotal: 200 },
       ];
@@ -323,6 +332,57 @@ describe("ReturnsService.processRefund: the locked claim with a basis recomputed
       expect(err).toBeInstanceOf(ConflictException);
       expect(err.getResponse()).toMatchObject({ code: "CONCURRENT_UPDATE", retryable: true });
       expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("an expired transaction (Prisma P2028: three lock waits ran past the budget) is the same retryable 409, never a bare 500", async () => {
+      prisma.tenantTransaction.mockRejectedValue(
+        Object.assign(new Error("Transaction already closed: timeout"), { code: "P2028" }),
+      );
+      const err = await failure(refund("CREDIT_NOTE"));
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({ code: "CONCURRENT_UPDATE", retryable: true });
+    });
+
+    it("the transaction budget covers all three bounded lock waits plus the work (an explicit timeout, not Prisma's 5 s default)", async () => {
+      await refund("CREDIT_NOTE");
+      const options = prisma.tenantTransaction.mock.calls[0][1];
+      expect(options?.timeout).toBeGreaterThan(3 * REFUND_LOCK_TIMEOUT_MS + 2000);
+    });
+
+    it("a counter order's close-lock wait is bounded too: lock_timeout is set before the close lock, which is still the first LOCK taken", async () => {
+      prisma.return.findUnique.mockImplementation(async (args: any) =>
+        args?.include?.order
+          ? {
+              id: "ret-1",
+              returnNumber: "RET-1",
+              status: "RECEIVED",
+              kind: "STANDARD",
+              customerId: "cust-1",
+              orderId: "ord-1",
+              items: [{ productId: "p1", qty: 2 }],
+              order: {
+                id: "ord-1",
+                orderNumber: "ORD-1",
+                counterSale: true,
+                registerKey: null,
+                invoices: [
+                  {
+                    id: "inv-1",
+                    invoiceNumber: "N-1",
+                    status: "SENT",
+                    total: 100,
+                    items: [{ productId: "p1", qty: 10, subtotal: 100 }],
+                  },
+                ],
+                lineItems: [{ productId: "p1", qty: 10, unitPrice: 10, subtotal: 100 }],
+              },
+            }
+          : { id: "ret-1", status: "REFUNDED", refundAmount: 20, refundTender: null },
+      );
+      await refund("EXTERNAL_REFUND");
+      expect(raw[0]).toMatch(/set_config\('lock_timeout'/);
+      expect(raw[1]).toMatch(/pg_advisory_xact_lock_shared/);
+      expect(raw.findIndex((t) => /FOR UPDATE/.test(t))).toBeGreaterThan(1);
     });
 
     it("the wait is bounded: the transaction sets lock_timeout before its first row lock", async () => {

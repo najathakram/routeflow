@@ -8,10 +8,18 @@ import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
- * How long the claim waits for a row lock before it gives up with a retryable 409. Kept well inside Prisma's 5 s interactive-
- * transaction budget so contention reads as a clear refusal, not an opaque expired transaction.
+ * How long ONE lock wait of the claim (the counter close, the Return, the Order, the invoices) gives up after, with a retryable
+ * 409. `lock_timeout` is per statement, so the claim's waits add up: up to four of them, which is why the transaction below
+ * gets its own budget instead of Prisma's 5 s default. An expired transaction (P2028) is mapped to the same 409.
  */
-export const REFUND_LOCK_TIMEOUT_MS = 3000;
+export const REFUND_LOCK_TIMEOUT_MS = 2000;
+
+/** The claim transaction's budget: four bounded lock waits plus the recompute, the claim and the audit row. */
+export const REFUND_TX_TIMEOUT_MS = 15_000;
+
+/** Prisma's "transaction already closed / expired" error code (the budget ran out before the claim finished). */
+export const isTransactionExpired = (err: unknown): boolean =>
+  (err as { code?: unknown } | null)?.code === "P2028";
 
 /** The 400 text of "nothing billed on this order can be refunded" (the pre-claim refusal AND the one the recompute converts). */
 export const NOTHING_CREDITABLE_MESSAGE = "Nothing billed on this order can be refunded";
@@ -23,13 +31,22 @@ export const REFUND_ALREADY_RESOLVED_MESSAGE = "Only RECEIVED returns can be ref
 export const refundClaimWhere = (id: string) =>
   ({ id, status: "RECEIVED", refundedAt: null, creditNoteId: null }) as const;
 
-/** 409: what was billed changed while the refund waited for the locks (an invoice was voided, or the order cancelled). */
-export function refundBasisChanged(): ConflictException {
+/**
+ * 409: what was billed changed while the refund waited for the locks. `NOTHING_BILLED`: an invoice was voided or the order
+ * cancelled and nothing returned is billed any more. `AMOUNT`: the recorded (cash) refund would be a different figure than the
+ * one the operator was shown.
+ */
+export function refundBasisChanged(
+  kind: "NOTHING_BILLED" | "AMOUNT" = "NOTHING_BILLED",
+): ConflictException {
   return new ConflictException({
     code: API_ERROR_CODES.RETURN_REFUND_BASIS_CHANGED,
     message:
-      "The invoices for this order changed while the refund was being recorded, and nothing the customer returned is billed any more. " +
-      "Nothing was refunded. Review the order, then give store credit or cancel the return.",
+      kind === "AMOUNT"
+        ? "The invoices for this order changed while the refund was being recorded, so the refund is now a different amount. " +
+          "Nothing was refunded. Review the order and try again."
+        : "The invoices for this order changed while the refund was being recorded, and nothing the customer returned is billed any more. " +
+          "Nothing was refunded. Review the order, then give store credit or cancel the return.",
   });
 }
 

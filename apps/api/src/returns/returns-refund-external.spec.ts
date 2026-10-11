@@ -260,7 +260,7 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
       );
       await refund();
       expect(prisma.return.updateMany.mock.calls[0][0].data.refundedAt).toEqual(dbTime);
-      expect(raw[0].text).toMatch(/pg_advisory_xact_lock_shared/);
+      expect(raw[1].text).toMatch(/pg_advisory_xact_lock_shared/);
     });
   });
 
@@ -338,12 +338,12 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
     it("counter order: counter-close (tenant:register), then Return, Order, Invoices", async () => {
       setReturn({ counterSale: true, registerKey: null });
       await refund();
-      expect(raw[0].text).toBe(
+      // SA-737: the bound on every lock wait is set first (it takes no lock), so the close lock wait is bounded too
+      expect(raw[0].text).toMatch(/set_config\('lock_timeout'/);
+      expect(raw[1].text).toBe(
         "SELECT pg_advisory_xact_lock_shared(hashtext('counter-close'), hashtext(?))",
       );
-      expect(raw[0].values).toEqual(["test-tenant:main"]);
-      // SA-737: the bounded lock wait is set right after the close lock, before the first row lock
-      expect(raw[1].text).toMatch(/set_config\('lock_timeout'/);
+      expect(raw[1].values).toEqual(["test-tenant:main"]);
       expect(raw).toHaveLength(5);
       expect(raw[2].text).toMatch(/FROM "Return" WHERE id/);
     });
@@ -351,7 +351,7 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
     it("a named register is keyed tenant:register; refundedAt is set after the lock (the claim is the last write)", async () => {
       setReturn({ counterSale: true, registerKey: "till-2" });
       await refund();
-      expect(raw[0].values).toEqual(["test-tenant:till-2"]);
+      expect(raw[1].values).toEqual(["test-tenant:till-2"]);
       expect(prisma.return.updateMany.mock.invocationCallOrder[0]).toBeGreaterThan(0);
     });
   });
