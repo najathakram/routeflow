@@ -63,6 +63,16 @@ describe("TenantStatusGuard — READ_ONLY enforcement", () => {
     }
   });
 
+  it("the day-close exemption is POST only: DELETE, PUT and PATCH on that exact path stay blocked", async () => {
+    for (const method of ["DELETE", "PUT", "PATCH"]) {
+      const err = await guardFor("READ_ONLY")
+        .canActivate(ctx(method, "/api/v1/orders/counter-sale/day-close"))
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
+    }
+  });
+
   it("allows /billing/quote while READ_ONLY (the plan-change classifier /choose-plan fires before subscribe)", async () => {
     await expect(
       guardFor("READ_ONLY").canActivate(ctx("POST", "/api/v1/billing/quote")),

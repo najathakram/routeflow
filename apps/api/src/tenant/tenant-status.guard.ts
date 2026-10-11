@@ -135,8 +135,8 @@ export class TenantStatusGuard implements CanActivate {
       const allowedMutation =
         path.startsWith("/api/v1/auth/") ||
         // Owner ruling 2026-10-10: closing the day stays possible while read-only (sales stay blocked). EXACTLY this one
-        // path; reopen and the report resend are not exempt.
-        path === "/api/v1/orders/counter-sale/day-close" ||
+        // path AND method (POST); reopen and the report resend are not exempt.
+        (method === "POST" && path === "/api/v1/orders/counter-sale/day-close") ||
         path === "/api/v1/billing/subscribe" ||
         path === "/api/v1/billing/quote" ||
         path === "/api/v1/billing/subscription" ||
