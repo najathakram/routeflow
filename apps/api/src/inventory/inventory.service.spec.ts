@@ -729,6 +729,9 @@ describe("InventoryService", () => {
   describe("setCostBasis", () => {
     it("creates a COST_BASIS movement (qty 0) and updates the product average", async () => {
       prisma.product.findUnique.mockResolvedValue(product({ averageCost: null }));
+      // SA-767 L-2: the movement is stamped from the counter the update returned (the locked row).
+      prisma.product.findMany.mockResolvedValue([product({ averageCost: null })]);
+      prisma.product.update.mockResolvedValue({ currentStock: D(10) } as any);
 
       await service.setCostBasis("prod-1", { unitCost: 3.15, notes: "opening basis" }, "user-1");
 
@@ -743,6 +746,7 @@ describe("InventoryService", () => {
       expect(prisma.product.update).toHaveBeenCalledWith({
         where: { id: "prod-1" },
         data: { averageCost: D(3.15) },
+        select: { currentStock: true },
       });
       // Lots untouched unless explicitly requested
       expect(prisma.stockLot.updateMany).not.toHaveBeenCalled();
@@ -750,6 +754,7 @@ describe("InventoryService", () => {
 
     it("rewrites open lots only when applyToLots is set", async () => {
       prisma.product.findUnique.mockResolvedValue(product());
+      prisma.product.findMany.mockResolvedValue([product()]);
 
       await service.setCostBasis("prod-1", { unitCost: 3, applyToLots: true }, "user-1");
 

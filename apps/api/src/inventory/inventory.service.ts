@@ -2256,8 +2256,15 @@ export class InventoryService {
     if (!product) throw new NotFoundException("Product not found");
     assertSellableLines([product]); // WS8: a FAMILY has no cost basis (no stock)
 
-    return this.prisma.tenantTransaction((tx) =>
-      this.setCostBasisInTx(tx, product, dto, performedById),
+    // SA-767 L-2: lock, then stamp the movement from the LOCKED stock (a sale committing since the
+    // read above has moved it). The whole tx re-runs on a 40P01 / 40001 / P2034.
+    return retryStockTx("inventory.setCostBasis", () =>
+      this.prisma.tenantTransaction(async (tx) => {
+        await this.lockProducts(tx, [productId]);
+        const locked = (await this.readLockedStockRows(tx, [productId])).get(productId);
+        if (!locked) throw new NotFoundException("Product not found");
+        return this.setCostBasisInTx(tx, locked, dto, performedById);
+      }),
     );
   }
 
@@ -2276,29 +2283,50 @@ export class InventoryService {
     }
     assertSellableLines(products); // WS8
 
-    return this.prisma.tenantTransaction(async (tx) => {
-      const movementIds: string[] = [];
-      for (const item of dto.items) {
-        const movement = await this.setCostBasisInTx(
-          tx,
-          productMap.get(item.productId)!,
-          { unitCost: item.unitCost, notes: dto.notes, applyToLots: dto.applyToLots },
-          performedById,
-        );
-        movementIds.push(movement.id);
-      }
-      return { updated: movementIds.length, movementIds };
-    });
+    // SA-767 L-2: ONE lock statement over every product (sorted by the helper), then one locked read.
+    return retryStockTx("inventory.bulkSetCostBasis", () =>
+      this.prisma.tenantTransaction(async (tx) => {
+        await this.lockProducts(tx, productIds);
+        const lockedMap = await this.readLockedStockRows(tx, productIds);
+        const movementIds: string[] = [];
+        for (const item of dto.items) {
+          const locked = lockedMap.get(item.productId);
+          if (!locked) throw new NotFoundException("Product not found");
+          const movement = await this.setCostBasisInTx(
+            tx,
+            locked,
+            { unitCost: item.unitCost, notes: dto.notes, applyToLots: dto.applyToLots },
+            performedById,
+          );
+          movementIds.push(movement.id);
+        }
+        return { updated: movementIds.length, movementIds };
+      }),
+    );
   }
 
+  /** `product` is the row the caller read INSIDE its tx, after `lockProducts` (SA-767 L-2). */
   private async setCostBasisInTx(
     tx: Prisma.TransactionClient,
-    product: { id: string; currentStock: Prisma.Decimal; costingMethod: CostingMethod },
+    product: { id: string; costingMethod: CostingMethod },
     dto: SetCostBasisDto,
     performedById: string,
   ) {
     const unitCost = costDecimal(dto.unitCost);
 
+    // A STANDARD product is valued from standardCost, so also set it — otherwise
+    // "Set cost" writes averageCost only and the stock table (which reads
+    // standardCost for STANDARD) never clears its "No cost set" state.
+    const updated = await tx.product.update({
+      where: { id: product.id },
+      data:
+        product.costingMethod === CostingMethod.STANDARD
+          ? { averageCost: unitCost, standardCost: unitCost }
+          : { averageCost: unitCost },
+      select: { currentStock: true },
+    });
+
+    // The snapshot is the counter this update RETURNED, never a read made before it.
     const movement = await tx.stockMovement.create({
       data: {
         productId: product.id,
@@ -2306,21 +2334,10 @@ export class InventoryService {
         quantity: 0,
         unitCost,
         avgCostAfter: unitCost,
-        stockAfter: product.currentStock,
+        stockAfter: updated.currentStock,
         notes: dto.notes,
         performedById,
       },
-    });
-
-    // A STANDARD product is valued from standardCost, so also set it — otherwise
-    // "Set cost" writes averageCost only and the stock table (which reads
-    // standardCost for STANDARD) never clears its "No cost set" state.
-    await tx.product.update({
-      where: { id: product.id },
-      data:
-        product.costingMethod === CostingMethod.STANDARD
-          ? { averageCost: unitCost, standardCost: unitCost }
-          : { averageCost: unitCost },
     });
 
     if (dto.applyToLots) {

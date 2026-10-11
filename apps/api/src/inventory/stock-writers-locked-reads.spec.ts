@@ -119,6 +119,36 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
     expect(prisma.stockMovement.create.mock.calls[0][0].data.stockAfter.toString()).toBe("88");
   });
 
+  it("setCostBasis stamps stockAfter from the update's returned row, after the lock", async () => {
+    prisma.product.findUnique.mockResolvedValue(row({ currentStock: D(100) }));
+    prisma.product.findMany.mockResolvedValue([row({ currentStock: D(70) })]);
+    prisma.product.update.mockResolvedValue({ currentStock: D(70) });
+
+    await service.setCostBasis("prod-1", { unitCost: 5 } as any, "u-1");
+
+    expect(prisma.stockMovement.create.mock.calls[0][0].data.stockAfter.toString()).toBe("70");
+    expect(lockedBefore(prisma.product.findMany, 1)).toBe(true);
+  });
+
+  it("bulkSetCostBasis takes ONE lock statement for every product", async () => {
+    const rows = [row(), row({ id: "prod-2", name: "Sugar" })];
+    prisma.product.findMany.mockResolvedValue(rows);
+    prisma.product.update.mockResolvedValue({ currentStock: D(10) });
+
+    await service.bulkSetCostBasis(
+      {
+        items: [
+          { productId: "prod-1", unitCost: 2 },
+          { productId: "prod-2", unitCost: 3 },
+        ],
+      } as any,
+      "u-1",
+    );
+
+    expect(lockStatement).toHaveBeenCalledTimes(1);
+    expect(prisma.stockMovement.create).toHaveBeenCalledTimes(2);
+  });
+
   it("a session commit locks every counted product once, before the cost row and the adjustment", async () => {
     prisma.stockCountSession.findUnique.mockResolvedValue({
       id: "sess-1",

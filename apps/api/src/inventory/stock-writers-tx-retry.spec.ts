@@ -82,6 +82,23 @@ const WRITERS: Writer[] = [
     alerts: ["prod-1"],
     clean: { movement: 1, lot: 1, product: 1 },
   },
+  {
+    name: "setCostBasis",
+    label: "inventory.setCostBasis",
+    method: "setCostBasis",
+    call: (svc) => svc.setCostBasis("prod-1", { unitCost: 3 } as any, "user-1"),
+    alerts: null,
+    clean: { movement: 1, lot: 0, product: 1 },
+  },
+  {
+    name: "bulkSetCostBasis",
+    label: "inventory.bulkSetCostBasis",
+    method: "bulkSetCostBasis",
+    call: (svc) =>
+      svc.bulkSetCostBasis({ items: [{ productId: "prod-1", unitCost: 3 }] } as any, "user-1"),
+    alerts: null,
+    clean: { movement: 1, lot: 0, product: 1 },
+  },
 ];
 
 describe.each(WRITERS)("$name tx retry (SA-767 L-2)", (writer) => {

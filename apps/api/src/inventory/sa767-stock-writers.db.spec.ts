@@ -449,4 +449,57 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     const lot = await A.prisma.stockLot.findFirstOrThrow({ where: { tenantId: w.tenantId } });
     expect(Number(lot.unitCost)).toBe(5);
   }, 60_000);
+
+  it("(c) setCostBasis racing a sale stamps the locked stock: stockAfter 70, not the stale 100", async () => {
+    const w = await seedWorld("c", 100, 2);
+    const sale = await openSale(w, 30); // stock 70, uncommitted
+
+    const setCost = inTenant(A, w, () =>
+      A.inventory.setCostBasis(w.productId, { unitCost: 5 }, w.userId),
+    );
+    const waited = await sawLockWait();
+    await sale.commit();
+    await setCost;
+
+    const p = await productOf(w);
+    const [m] = await movementsOf(w);
+    console.log(
+      `SA-767(c) observed: lockWait=${waited} stock=${p.currentStock} avg=${p.averageCost} ` +
+        `movement=${m.type} stockAfter=${m.stockAfter} avgCostAfter=${m.avgCostAfter}`,
+    );
+    expect(waited).toBe(true);
+    expect(Number(p.currentStock)).toBe(70);
+    expect(Number(p.averageCost)).toBe(5);
+    expect(Number(m.stockAfter)).toBe(70); // the old code stamped the stale 100
+    expect(Number(m.avgCostAfter)).toBe(5);
+  }, 60_000);
+
+  it("(c-bulk) bulkSetCostBasis locks every product in one statement and stamps each locked stock", async () => {
+    const w = await seedWorld("cbulk", 100, 2);
+    const other = await addProduct(w, 40, 1);
+    const sale = await openSale(w, 30); // p1 -> 70, uncommitted
+
+    const bulk = inTenant(A, w, () =>
+      A.inventory.bulkSetCostBasis(
+        {
+          items: [
+            { productId: other.id, unitCost: 7 },
+            { productId: w.productId, unitCost: 5 },
+          ],
+        } as any,
+        w.userId,
+      ),
+    );
+    const waited = await sawLockWait();
+    await sale.commit();
+    await bulk;
+
+    const moves = await movementsOf(w);
+    const stockAfter = (productId: string) =>
+      Number(moves.find((m) => m.productId === productId)!.stockAfter);
+    expect(waited).toBe(true);
+    expect(stockAfter(w.productId)).toBe(70);
+    expect(stockAfter(other.id)).toBe(40);
+    expect(Number((await productOf(w)).averageCost)).toBe(5);
+  }, 60_000);
 });
