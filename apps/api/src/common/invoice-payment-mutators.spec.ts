@@ -85,9 +85,9 @@ const TABLE: Row[] = [
       },
       {
         where: "setCheckStatus DEPOSITED / CLEARED (update)",
-        class: "known-gap",
+        class: "non-till",
         reason:
-          "scope is read only for BOUNCED (SA-750r3 ruled the lifecycle moves unchanged: invoices.counter-day-close.spec.ts 'setCheckStatus other than BOUNCED is unchanged'), so a RECORDED check (a tender row, counted in the CHECK group of a close) dated in a closed window can leave tender state without lock or refusal, and a fresh fold of that window then differs from the stored close for the CHECK group. No cash moves. Covered by that ruling only; raise to the SA if the CHECK group must stay stable",
+          "SA ruling C (accepted, 2026-10-10): a RECORDED check moving to DEPOSITED / CLEARED without the close lock is accepted. It changes grouping only (the CHECK group of a fresh fold: a deposited check is no longer a till tender row), never cash, and never a stored close. invoices.counter-day-close.spec.ts pins that setCheckStatus other than BOUNCED is unchanged",
       },
       {
         where: "setCheckStatus BOUNCED (updateMany compare-and-swap to VOID)",
@@ -217,9 +217,9 @@ const TABLE: Row[] = [
     mutators: [
       {
         where: "clearFinancialData (deleteMany of every payment of the tenant)",
-        class: "known-gap",
+        class: "non-till",
         reason:
-          "TENANT_ADMIN whole-tenant financial wipe behind a typed tenantId confirmation: it deletes every payment, closed-window tender rows included, with no close lock and no window check, and does not clear the CounterDayClose rows. A dataset reset, not a payment edit; no ruling covers it. Raise to the SA if closes must survive or block a wipe",
+          "TENANT_ADMIN whole-tenant financial wipe behind a typed tenantId confirmation, a dataset reset rather than a payment edit. SA ruling C: it deletes the tenant's CounterDayClose and CounterParkedCart rows in the SAME transaction (settings.controller.clear-financial.spec.ts T2b), so no close outlives the money it summarised",
       },
     ],
   },

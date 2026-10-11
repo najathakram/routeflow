@@ -169,7 +169,8 @@ type DatedTx = Parameters<typeof dbClockNow>[0] &
  * `recordPayment`, under the shared lock (`scope` non-null only): a till-CASH row (`isTillCashRow`) dated strictly BEFORE the
  * latest STANDING close's cutoff of the register would change that closed Z report, so it is refused 409
  * DAY_CLOSED_FOR_PAYMENT_DATE (`closedThrough` = that cutoff). A reopened close is not standing. A CHECK / card / ACH / DRAFT
- * moves no close total and keeps its true date. Returns the instant to store: `paidAt` as given, else "now" (for a till-cash row
+ * moves no CASH total, so it keeps its true date, but a tender-method row (card / check) dated INSIDE a closed window is refused
+ * COUNTER_SALE_DAY_CLOSED (`assertOpen`: it would change that window's money in). Returns the instant to store: `paidAt` as given, else "now" (for a till-cash row
  * on a counter invoice, the DATABASE clock the close reads its cutoff from, so a lagging app clock cannot back-date into it).
  */
 async function assertDatedOk(
@@ -188,7 +189,13 @@ async function assertDatedOk(
     paymentGroupId,
     checkStatus: dto.method === "CHECK" ? "RECORDED" : null,
   };
-  if (!scope || !isTillCashRow(orderId ?? "", row, scope)) return given ?? new Date();
+  if (!scope) return given ?? new Date();
+  if (!isTillCashRow(orderId ?? "", row, scope)) {
+    // A CARD / CHECK / hand-over tender moves a close total too (moneyIn): its date may not sit inside a CLOSED window.
+    const when = given ?? new Date();
+    await assertOpen(tx, scope, { ...row, paidAt: when });
+    return when;
+  }
   const at = given ?? (await dbClockNow(tx));
   const close = await tx.counterDayClose.findFirst({
     where: { tenantId: scope.tenantId, registerKey: scope.registerKey, reopenedAt: null },

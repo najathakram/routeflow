@@ -227,6 +227,7 @@ export function createMockPrisma(): MockPrisma {
     crmHandoff: modelProxy(),
     // SA-750r3: the day-close window reads (`counterWindowClosed`)
     counterDayClose: modelProxy(),
+    counterParkedCart: modelProxy(),
   });
 
   const txModels = () => ({

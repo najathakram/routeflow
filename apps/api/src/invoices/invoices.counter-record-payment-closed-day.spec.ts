@@ -40,7 +40,12 @@ const EARLIER_CUTOFF = new Date("2026-10-08T05:00:00Z");
 const BEFORE = "2026-10-08T17:30:00Z"; // inside the closed day
 const AFTER = "2026-10-09T09:00:00Z"; // after the cutoff
 
-type Close = { registerKey: string; reopenedAt: Date | null; windowEnd: Date };
+type Close = {
+  registerKey: string;
+  reopenedAt: Date | null;
+  windowEnd: Date;
+  windowStart?: Date;
+};
 
 describe("InvoicesService.recordPayment — counter invoice and the day close (SA-750r3)", () => {
   let service: InvoicesService;
@@ -103,6 +108,16 @@ describe("InvoicesService.recordPayment — counter invoice and the day close (S
       const standing = closes
         .filter((c) => c.registerKey === where.registerKey && c.reopenedAt == null)
         .sort((a, b) => b.windowEnd.getTime() - a.windowEnd.getTime());
+      if (where.windowEnd?.gt) {
+        // the closed-window question (assertOpen): is this instant inside a standing close's window?
+        const at: Date = where.windowEnd.gt;
+        const hit = standing.find(
+          (c) =>
+            (c.windowStart ?? new Date(c.windowEnd.getTime() - 86_400_000)) <= at &&
+            c.windowEnd > at,
+        );
+        return hit ? { id: "close-1" } : null;
+      }
       return standing[0] ? { windowEnd: standing[0].windowEnd } : null;
     });
     counterOrder();
@@ -220,10 +235,49 @@ describe("InvoicesService.recordPayment — counter invoice and the day close (S
   });
 
   describe("methods that move no close total keep their TRUE paidAt on a counter invoice", () => {
-    it.each(["CHECK", "CREDIT_CARD", "ACH", "ZELLE"])("a backdated %s is accepted", async (m) => {
+    it.each(["ACH", "ZELLE"])("a backdated %s is accepted", async (m) => {
       await service.recordPayment("inv-1", pay({ method: m }) as any);
       expect(written().paidAt).toEqual(new Date(BEFORE));
       expect(written().method).toBe(m);
+    });
+
+    // A card or a check IS counted in the close (moneyIn.card / check / total): dated inside a CLOSED window it would change the
+    // closed Z, so the create path refuses it COUNTER_SALE_DAY_CLOSED (per row); dated after the cutoff it is fine.
+    it.each(["CHECK", "CREDIT_CARD"])(
+      "a backdated %s INSIDE a closed window is refused COUNTER_SALE_DAY_CLOSED and nothing is written",
+      async (m) => {
+        await expect(
+          service.recordPayment("inv-1", pay({ method: m }) as any),
+        ).rejects.toMatchObject({
+          response: { code: "COUNTER_SALE_DAY_CLOSED" },
+        });
+        expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["CHECK", "CREDIT_CARD"])("a %s dated AFTER the cutoff keeps its date", async (m) => {
+      await service.recordPayment("inv-1", pay({ method: m, paidAt: AFTER }) as any);
+      expect(written().paidAt).toEqual(new Date(AFTER));
+    });
+
+    it.each(["CHECK", "CREDIT_CARD"])(
+      "a backdated %s is accepted when the close is reopened",
+      async (m) => {
+        closes[0].reopenedAt = new Date("2026-10-09T08:00:00Z");
+        await service.recordPayment("inv-1", pay({ method: m }) as any);
+        expect(written().paidAt).toEqual(new Date(BEFORE));
+      },
+    );
+
+    it("a CREDIT_CARD on a NON-counter invoice, backdated, is untouched (no close read)", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        counterSale: false,
+        fulfillPath: "DELIVERY",
+        registerKey: null,
+      });
+      await service.recordPayment("inv-1", pay({ method: "CREDIT_CARD" }) as any);
+      expect(written().paidAt).toEqual(new Date(BEFORE));
+      expect(prisma.counterDayClose.findFirst).not.toHaveBeenCalled();
     });
 
     it("a backdated CASH that is a DRAFT (not PAID) is accepted", async () => {
