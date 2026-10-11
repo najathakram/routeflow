@@ -370,7 +370,14 @@ describe("BookkeepingService", () => {
             return [{ now: opts.dbNow ?? DB_NOW }];
           }),
           counterDayClose: {
-            findFirst: jest.fn(async () => (opts.closeEnd ? { windowEnd: opts.closeEnd } : null)),
+            // The latest-standing-close read answers with its windowEnd; the closed-window question (assertOpen: is this
+            // instant inside a window?) is answered from the same close, whose window ends at closeEnd.
+            findFirst: jest.fn(async ({ where }: any) => {
+              if (!opts.closeEnd) return null;
+              if (where?.windowEnd?.gt)
+                return where.windowEnd.gt < opts.closeEnd ? { id: "close" } : null;
+              return { windowEnd: opts.closeEnd };
+            }),
           },
           invoice: {
             findMany: jest.fn(async () => [{ orderId: "ord-1" }]),

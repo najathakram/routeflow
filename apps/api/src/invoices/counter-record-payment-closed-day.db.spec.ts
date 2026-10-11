@@ -8,8 +8,8 @@
  *  - a backdated CASH payment on a COUNTER invoice, dated inside a closed window, is refused 409 DAY_CLOSED_FOR_PAYMENT_DATE
  *    (`closedThrough` = the close's windowEnd) and the stored close row and a fresh fold over the closed window are
  *    BYTE-IDENTICAL before and after (the closed Z cannot change);
- *  - a backdated CHECK is accepted with its TRUE paidAt; the stored close row and the closed window's CASH figures
- *    (tillCash, cashRefunds, moneyIn.cash: what the drawer count is judged against) are unchanged;
+ *  - a backdated CHECK or CREDIT_CARD (counted in moneyIn) into a closed window is refused 409 COUNTER_SALE_DAY_CLOSED and the
+ *    closed fold is byte-identical; a backdated ACH (no till total) keeps its true paidAt;
  *  - a CASH dated after the cutoff, a CASH on a NON-counter invoice, and a CASH into a REOPENED close all go through;
  *  - deadlock contract: the counter tender, while a close is queued for the EXCLUSIVE lock behind the tender's shared one,
  *    still records its payment (recordPayment takes no second shared request: `tillLockHeld`).
@@ -311,24 +311,42 @@ describeDb(
         expect(JSON.stringify(await fold(s.tenantId, s.w))).toBe(JSON.stringify(foldBefore));
       });
 
-      it("a backdated CHECK: accepted with its TRUE paidAt; the stored close row and the closed CASH figures are unchanged", async () => {
-        const s = await closedDay("check-closed");
-        const closeBefore = await closeJson(s.close.id);
-        const cashBefore = cashFigures(await fold(s.tenantId, s.w));
-        const when = Date.now() - 25 * MIN;
+      it.each(["CHECK", "CREDIT_CARD"])(
+        "a backdated %s into the closed window: refused COUNTER_SALE_DAY_CLOSED; the stored close and the whole closed fold are byte-identical",
+        async (method) => {
+          const s = await closedDay(`${method.toLowerCase()}-closed`);
+          const closeBefore = await closeJson(s.close.id);
+          const foldBefore = JSON.stringify(await fold(s.tenantId, s.w));
+          const rowsBefore = (await stored(s.invoiceId)).length;
 
+          await expect(
+            tenantCtx.run(s.tenantId, () =>
+              invoices.recordPayment(s.invoiceId, {
+                amount: 20,
+                method,
+                paidAt: new Date(Date.now() - 25 * MIN).toISOString(),
+              } as any),
+            ),
+          ).rejects.toMatchObject({ response: { code: "COUNTER_SALE_DAY_CLOSED" } });
+
+          expect(await stored(s.invoiceId)).toHaveLength(rowsBefore);
+          expect(await closeJson(s.close.id)).toBe(closeBefore);
+          expect(JSON.stringify(await fold(s.tenantId, s.w))).toBe(foldBefore);
+        },
+      );
+
+      it("a backdated ACH (moves no till total) keeps its TRUE paidAt", async () => {
+        const s = await closedDay("ach-closed");
+        const when = Date.now() - 25 * MIN;
         await tenantCtx.run(s.tenantId, () =>
           invoices.recordPayment(s.invoiceId, {
             amount: 20,
-            method: "CHECK",
+            method: "ACH",
             paidAt: new Date(when).toISOString(),
           } as any),
         );
-
-        const check = (await stored(s.invoiceId)).find((p) => p.method === "CHECK")!;
-        expect(check.paidAt.getTime()).toBe(when);
-        expect(await closeJson(s.close.id)).toBe(closeBefore);
-        expect(cashFigures(await fold(s.tenantId, s.w))).toEqual(cashBefore);
+        const ach = (await stored(s.invoiceId)).find((p) => p.method === "ACH")!;
+        expect(ach.paidAt.getTime()).toBe(when);
       });
 
       it("a CASH dated after the cutoff (the open day): accepted, and the closed fold is unchanged", async () => {
