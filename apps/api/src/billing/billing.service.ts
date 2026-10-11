@@ -2576,7 +2576,7 @@ export class BillingService {
       subject: `Payment failed — ${sub.tenant.name ?? sub.tenant.slug}`,
       html: `<p>Hello ${escapeHtml(adminUser.username)},</p>
 <p>We were unable to process your subscription payment for <strong>${escapeHtml(sub.tenant.name ?? sub.tenant.slug)}</strong>.</p>
-<p>Please update your payment method within <strong>${PAYMENT_GRACE_DAYS} days</strong> to avoid service interruption.</p>
+<p>Please update your payment method to avoid service interruption.</p>
 ${updateLine}
 <p>RouteFlow Platform</p>`,
     });
@@ -2784,7 +2784,7 @@ ${updateLine}
             );
             // N3: best-effort admin notification, never blocks the suspension above.
             try {
-              await this.billingNotification.notifySuspended(sub.tenantId, "overdue payment");
+              await this.billingNotification.notifySuspended(sub.tenantId, "subscription canceled");
             } catch (e) {
               this.logger.error(
                 `N3 notifySuspended threw unexpectedly for tenant ${sub.tenantId}`,
