@@ -914,6 +914,264 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
     );
   }, 120_000);
 
+  // ---- row 355 (SA-734r2 r-note 5): pack vs pieces is decided per LINE, from its own stored unit fields ----
+
+  /** A boxed product (12 per box, $10 per box) in the excise category, one box-split line AND one pack line. */
+  const mixedShapeOrder = async () => {
+    const boxed = await raw.product.create({
+      data: {
+        name: `Mixed355 ${run} ${randomUUID().slice(0, 6)}`,
+        unit: "box",
+        pricePerUnit: "10.00",
+        currentStock: 1000,
+        unitsPerBox: 12,
+        trackedCategoryId: categoryId,
+        tenantId,
+      },
+    });
+    const created: any = await inTenant(() =>
+      orders.create(
+        { customerId, items: [{ productId: boxed.id, qty: 24, boxes: 2, pieces: 0 }] },
+        operator(),
+        { skipAutoMerge: true },
+      ),
+    );
+    const [boxSplit] = await raw.orderItem.findMany({ where: { orderId: created.id } });
+    // The pack line a mobile cart leaves: qty = 2 selling units (boxes), no split, no pack snapshot.
+    const pack = await raw.orderItem.create({
+      data: {
+        orderId: created.id,
+        tenantId,
+        productId: boxed.id,
+        qty: 2,
+        unitPrice: "10.00",
+        subtotal: "20.00",
+        status: "PENDING",
+        priceType: "STANDARD",
+        trackedCategoryId: categoryId,
+        categoryTaxType: boxSplit.categoryTaxType,
+        categoryTaxRate: boxSplit.categoryTaxRate,
+        categoryPriceIncludesTax: boxSplit.categoryPriceIncludesTax,
+        categoryTaxAmount: "1.20",
+        position: 9,
+      } as any,
+    });
+    await raw.orderItem.updateMany({ where: { orderId: created.id }, data: { deliveredQty: 0 } });
+    await raw.order.update({ where: { id: created.id }, data: { skipAutoMerge: false } });
+    return {
+      orderId: created.id as string,
+      productId: boxed.id,
+      boxSplitId: boxSplit.id,
+      packId: pack.id,
+    };
+  };
+  const money = async (orderId: string) =>
+    (await raw.orderItem.findMany({ where: { orderId }, orderBy: { position: "asc" } })).map(
+      (r) => ({
+        id: r.id,
+        qty: Number(r.qty),
+        boxes: r.boxes,
+        pieces: r.pieces,
+        subtotal: Number(r.subtotal),
+        tax: Number(r.categoryTaxAmount),
+      }),
+    );
+
+  it("row 355: a product with a pack line AND a box-split line bills each from its own fields (a pack line is never read as pieces)", async () => {
+    const m = await mixedShapeOrder();
+    await buyerEdit(
+      m.orderId,
+      [
+        { productId: m.productId, qty: 24, boxes: 2, pieces: 0, orderItemId: m.boxSplitId },
+        { productId: m.productId, qty: 2, orderItemId: m.packId },
+      ],
+      { namesLines: true },
+    );
+    const ls = await money(m.orderId);
+    const pack = ls.find((l) => l.boxes == null)!;
+    const split = ls.find((l) => l.boxes != null)!;
+    expect(pack).toMatchObject({ qty: 2, subtotal: 20 }); // 2 boxes x $10; today 2 PIECES = $1.67
+    expect(pack.tax).toBe(1.2); // 2 boxes = 24 pieces x 0.05
+    expect(split).toMatchObject({ qty: 24, boxes: 2, pieces: 0, subtotal: 20 });
+  }, 120_000);
+
+  it("row 355: the same edit with a plain qty on the box-split line (the web shape) still reads that line as pieces", async () => {
+    const m = await mixedShapeOrder();
+    await buyerEdit(
+      m.orderId,
+      [
+        { productId: m.productId, qty: 36, orderItemId: m.boxSplitId }, // 3 boxes' worth of PIECES
+        { productId: m.productId, qty: 2, orderItemId: m.packId },
+      ],
+      { namesLines: true },
+    );
+    const ls = await money(m.orderId);
+    expect(ls.find((l) => l.boxes != null)).toMatchObject({ qty: 36, boxes: 3, subtotal: 30 });
+    expect(ls.find((l) => l.boxes == null)).toMatchObject({ qty: 2, subtotal: 20 });
+  }, 120_000);
+
+  // ---- row 355: a product on several lines prices its promotion on the COMBINED quantity ----------
+
+  const withPromos = async (rules: any[], fn: () => Promise<unknown>) => {
+    const prev = orders.promotionsService;
+    orders.promotionsService = { activeForCatalog: async () => rules };
+    try {
+      await fn();
+    } finally {
+      orders.promotionsService = prev;
+    }
+  };
+  const rule = (over: Record<string, unknown>) => ({
+    id: "promo-355",
+    type: "QTY_BREAK",
+    value: 10,
+    minQty: 10,
+    scope: "ALL",
+    category: null,
+    productIds: [],
+    ...over,
+  });
+  /** Two lines of the unboxed test product at two rate trios: `a` units @ the snapshot rate, `b` @ 0.08. */
+  const twoLines = async (a: number, b: number) => {
+    const id = await createOrder(a);
+    await raiseCategoryRate(0.08);
+    const existing = await raw.orderItem.findMany({ where: { orderId: id } });
+    const trio = await orders.liveTrioByProduct([productId]);
+    const folded = foldMergeItems(existing as any, [{ productId, qty: b }], undefined, trio);
+    await fold(id, folded.items as any[]);
+    const ls = await raw.orderItem.findMany({ where: { orderId: id }, orderBy: { id: "asc" } });
+    return { id, lines: ls };
+  };
+  const billed = async (orderId: string) =>
+    (await raw.orderItem.findMany({ where: { orderId } }))
+      .map((r) => ({
+        qty: Number(r.qty),
+        unitPrice: Number(r.unitPrice),
+        free: r.promoFreeUnits,
+        subtotal: Number(r.subtotal),
+        priceType: r.priceType,
+      }))
+      .sort((x, y) => y.qty - x.qty);
+
+  it("row 355: 6 + 6 on two lines meets a 10-unit QTY_BREAK that neither line meets alone — every line bills the break price", async () => {
+    const { id, lines: ls } = await twoLines(6, 6);
+    await withPromos([rule({})], () =>
+      buyerEdit(
+        id,
+        ls.map((l) => ({ productId, qty: 6, orderItemId: l.id })),
+        { namesLines: true },
+      ),
+    );
+    const out = await billed(id);
+    expect(out).toHaveLength(2);
+    for (const l of out) {
+      expect(l).toMatchObject({ unitPrice: 0.9, priceType: "PROMO", subtotal: 5.4 }); // today: 1.00 / STANDARD / 6.00
+    }
+  }, 120_000);
+
+  it("row 355: buy-5-get-1 on 7 + 5 earns what one 12-unit line earns (2 free), allocated oldest line first", async () => {
+    const { id, lines: ls } = await twoLines(7, 5);
+    await withPromos([rule({ type: "BUY_N_GET_M", value: 1, minQty: 5 })], () =>
+      buyerEdit(
+        id,
+        ls.map((l) => ({ productId, qty: Number(l.qty), orderItemId: l.id })),
+        { namesLines: true },
+      ),
+    );
+    const out = await billed(id);
+    expect(out.reduce((n, l) => n + (l.free ?? 0), 0)).toBe(2); // today: 1 (7 earns 1, 5 earns 0)
+    expect(out.reduce((n, l) => n + l.subtotal, 0)).toBe(10); // 12 units - 2 free at $1.00
+  }, 120_000);
+
+  it("row 355: a buyer-initiated merge of two split-rate lines earns buy-5-get-1 on the COMBINED 12 units (2 free), oldest line first", async () => {
+    await createOrder(7);
+    await raiseCategoryRate(0.08);
+    await createOrder(5);
+    await withPromos([rule({ type: "BUY_N_GET_M", value: 1, minQty: 5 })], () =>
+      inTenant(() => orders.mergeAllPendingForCustomer(customerId, { buyerInitiated: true })),
+    );
+    const survivors = await raw.order.findMany({ where: { tenantId } });
+    expect(survivors).toHaveLength(1);
+    const out = await billed(survivors[0].id);
+    expect(out).toHaveLength(2); // two rate trios stay two lines (row 340)
+    expect(out.reduce((n, l) => n + (l.free ?? 0), 0)).toBe(2); // without the combined measure: 0
+    expect(out.reduce((n, l) => n + l.subtotal, 0)).toBe(10);
+  }, 120_000);
+
+  /** The lines of an order, oldest first by id (the ruling's "id order"), with what they bill. */
+  const byId = async (orderId: string) =>
+    (await raw.orderItem.findMany({ where: { orderId }, orderBy: { id: "asc" } })).map((r) => ({
+      qty: Number(r.qty),
+      free: r.promoFreeUnits ?? 0,
+      subtotal: Number(r.subtotal),
+    }));
+  const giveFree = (lineId: string, free: number, qty: number) =>
+    raw.orderItem.update({
+      where: { id: lineId },
+      data: { promoFreeUnits: free, subtotal: String(qty - free) },
+    });
+
+  it("row 355 (r-note 6): a force-consolidate of 6 + 6 BOGO lines onto a split pair is 2 free, the oldest line first", async () => {
+    const a = await createOrder(6);
+    await raiseCategoryRate(0.08);
+    const b = await createOrder(6);
+    const before = new Set<string>();
+    for (const orderId of [a, b]) {
+      const [l] = await raw.orderItem.findMany({ where: { orderId } });
+      before.add(l.id);
+      await giveFree(l.id, 1, 6); // each 6 earned 1 under buy-5-get-1
+    }
+    await withPromos([rule({ type: "BUY_N_GET_M", value: 1, minQty: 5 })], () =>
+      inTenant(() => orders.forceConsolidateCustomer(customerId)),
+    );
+    const survivors = await raw.order.findMany({ where: { tenantId } });
+    expect(survivors).toHaveLength(1);
+    const lines = await raw.orderItem.findMany({ where: { orderId: survivors[0].id } });
+    expect(lines).toHaveLength(2); // two rate trios stay two lines (row 340)
+    // The winner's existing line is the oldest: it holds both free units; the moved line none (today: 1 + 1).
+    const oldest = lines.find((l) => before.has(l.id))!;
+    const moved = lines.find((l) => !before.has(l.id))!;
+    expect([oldest.promoFreeUnits, moved.promoFreeUnits ?? 0]).toEqual([2, 0]);
+    expect(lines.reduce((n, l) => n + Number(l.subtotal), 0)).toBe(10);
+  }, 120_000);
+
+  it("row 355 (r-note 6): a stored-price qty edit of one split line re-measures the PAIR (13 combined = 2 free), oldest first", async () => {
+    const { id, lines: ls } = await twoLines(7, 5);
+    const [first] = [...ls].sort((x, y) => (x.id < y.id ? -1 : 1));
+    for (const l of ls) await giveFree(l.id, l.id === first.id ? 1 : 0, Number(l.qty));
+    const target = ls.find((l) => Number(l.qty) === 5)!;
+    await withPromos([rule({ type: "BUY_N_GET_M", value: 1, minQty: 5 })], () =>
+      edit(id, { replaceAll: false, items: [{ id: target.id, qty: 6 }] }),
+    );
+    const out = await byId(id);
+    expect(out.reduce((n, l) => n + l.free, 0)).toBe(2); // 13 units: floor(13/6) = 2; today the pair earns 1
+    expect(out[0].free).toBe(2); // the oldest line (by id) holds them
+  }, 120_000);
+
+  it("row 355 (review H-A): shrinking the line that holds the pair's free units still earns on the rest of the product", async () => {
+    const { id, lines: ls } = await twoLines(6, 6);
+    const [first, second] = [...ls].sort((x, y) => (x.id < y.id ? -1 : 1));
+    await giveFree(first.id, 2, 6); // the oldest line holds the pair's free units
+    await giveFree(second.id, 0, 6);
+    await withPromos([rule({ type: "BUY_N_GET_M", value: 1, minQty: 5 })], () =>
+      edit(id, { replaceAll: false, items: [{ id: first.id, qty: 4 }] }),
+    );
+    const out = await byId(id);
+    // combined 10 whole units earn floor(10/6) = 1; the per-line rescale alone left 0 (the buyer overpaid a unit)
+    expect(out.reduce((n, l) => n + l.free, 0)).toBe(1);
+  }, 120_000);
+
+  it("row 355: a product on ONE line prices exactly as before (no group)", async () => {
+    const id = await createOrder(12);
+    const [l0] = await raw.orderItem.findMany({ where: { orderId: id } });
+    await withPromos([rule({ minQty: 10 })], () =>
+      buyerEdit(id, [{ productId, qty: 12, orderItemId: l0.id }], { namesLines: true }),
+    );
+    expect(await billed(id)).toEqual([
+      { qty: 12, unitPrice: 0.9, free: null, subtotal: 10.8, priceType: "PROMO" },
+    ]);
+  }, 120_000);
+
   // ---- L1: a line with no category keeps its stored excise -------------------------------------
 
   it("a no-category line with a stored excise keeps it through a quantity edit, with a warn [L1]", async () => {

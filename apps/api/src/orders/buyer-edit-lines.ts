@@ -24,6 +24,12 @@ import { foldTarget, liveTrioFor, type FoldTrio } from "./fold-target";
  * loaded in its transaction, and splices the result back into the payload.
  */
 export const BUYER_EDIT_IDLESS_FALLBACK = true;
+/**
+ * Row 356 (SA-734r2 r-note 5): the fallback above is removed on this date, once the web and mobile buyer
+ * clients that send `orderItemId` + `namesLines` are in a released version (otherwise the row moves the date).
+ * `buyer-edit-lines.spec.ts` fails after it, so removal or a deliberate new date can't be forgotten.
+ */
+export const BUYER_EDIT_IDLESS_FALLBACK_REMOVE_ON = "2026-11-15";
 
 export interface StoredEditLine extends FoldTrio {
   id: string;
@@ -58,9 +64,9 @@ const isBoxSplit = (l: { boxes?: unknown; pieces?: unknown }) =>
 
 /**
  * The stored line's quantity in the unit the payload's `qty` is written in. The write path decides that per
- * PRODUCT, not per line (updateOrderItems' `pieceDenominated`): a plain `qty` is PIECES when any live line of
- * the product is box-split (or the entry carries an explicit split), else selling units. A box-unaware stored
- * line holds selling units, so it is expanded by the pack when the payload is in pieces.
+ * LINE (`piecesDenominated`, row 355): a `qty` is PIECES when the entry carries an explicit split or names a
+ * box-split line, else selling units. A box-unaware stored line holds selling units, so it is expanded by the
+ * pack when the payload is in pieces.
  */
 function storedQtyInPayloadUnits(
   own: StoredEditLine,
@@ -72,8 +78,15 @@ function storedQtyInPayloadUnits(
   return isBoxSplit(own) ? stored : stored * (upb > 1 ? upb : 1);
 }
 
-function withQty(item: BuyerEditEntry, qty: number, upb: number): BuyerEditEntry {
-  if (isBoxSplit(item) && upb > 1) {
+function withQty(
+  item: BuyerEditEntry,
+  qty: number,
+  upb: number,
+  inPieces: boolean,
+): BuyerEditEntry {
+  // A half that names no line must say it is in PIECES (an explicit split): the write path reads a plain
+  // entry that names no line as selling units, which would bill the added pieces as packs (x unitsPerBox).
+  if (inPieces && upb > 1) {
     const split = normalizeBoxesPieces({ qty, unitsPerBox: upb });
     return { ...item, qty: split.qty, boxes: split.boxes, pieces: split.pieces };
   }
@@ -85,7 +98,6 @@ export function resolveBuyerEditLines(args: ResolveBuyerEditArgs): BuyerEditEntr
   const allowFallback = args.allowIdlessFallback ?? BUYER_EDIT_IDLESS_FALLBACK;
   const live = lineItems.filter((l) => l.productId && l.status !== "CANCELLED");
   const byId = new Map(live.map((l) => [l.id, l]));
-  const boxSplitProducts = new Set(live.filter(isBoxSplit).map((l) => l.productId as string));
   const claimed = new Set<string>();
   for (const it of items) {
     if (!it.productId || !it.orderItemId) continue;
@@ -139,13 +151,14 @@ export function resolveBuyerEditLines(args: ResolveBuyerEditArgs): BuyerEditEntr
       continue;
     }
     const upb = upbByProduct.get(productId) ?? 0;
-    const payloadInPieces = upb > 1 && (isBoxSplit(it) || boxSplitProducts.has(productId));
+    // Row 355: the write path reads the entry like its OWN line (an explicit split is pieces too).
+    const payloadInPieces = upb > 1 && (isBoxSplit(it) || isBoxSplit(own));
     const have = storedQtyInPayloadUnits(own, payloadInPieces, upb);
     const want = Number(it.qty ?? 0);
     const live2: FoldTrio = liveTrioByProduct.get(productId) ?? { trackedCategoryId: null };
     if (want > have && foldTarget(own, live2) === "SPLIT") {
-      out.push({ ...withQty(rest, have, upb), sourceLineId: own.id });
-      out.push(withQty(rest, want - have, upb)); // a sale made today: its own live-stamped line
+      out.push({ ...withQty(rest, have, upb, payloadInPieces), sourceLineId: own.id });
+      out.push(withQty(rest, want - have, upb, payloadInPieces)); // a sale made today: its own live line
       continue;
     }
     out.push({ ...rest, sourceLineId: own.id });
@@ -230,4 +243,41 @@ export function applyBuyerEditLines<T extends BuyerEditEntry>(
   });
   // The resolver only adds `sourceLineId` and splits an entry in two copies of itself: same shape as `T`.
   items.splice(0, items.length, ...(resolved as unknown as T[]));
+}
+
+/**
+ * B297 row 355 (SA-734r2 r-note 5): is this entry's `qty` written in PIECES (re-split by the pack and
+ * prorated by the BOX price), or in selling units (the pack, never re-split)? Decided per LINE from the
+ * line's own stored unit fields, never per product: a product can hold a pack line and a box-split line at
+ * once (row 340 splits), and reading the pack line as pieces under-charges it by `unitsPerBox`.
+ *  - an entry carrying an explicit boxes/pieces split is in pieces (the split is a signal, re-derived server-side);
+ *  - an entry naming a line of this product (`sourceLineId`) reads like that line: box-split => pieces;
+ *  - an entry naming none reads like the product's live lines WHEN THEY AGREE (every one box-split => pieces:
+ *    the legacy plain qty of a box-split line); with a pack line among them, or none at all, it is a plain
+ *    buyer qty = the default selling unit. A DRIVER entry keeps the product-wide gate.
+ */
+export function piecesDenominated(
+  lineItems:
+    | ReadonlyArray<{
+        id?: string | null;
+        productId?: string | null;
+        status?: string | null;
+        boxes?: unknown;
+        pieces?: unknown;
+      }>
+    | null
+    | undefined,
+  item: { productId?: string | null; boxes?: unknown; pieces?: unknown; sourceLineId?: string },
+  productPieceDenominated: ReadonlySet<string>,
+  isBuyerEdit: boolean,
+): boolean {
+  if (isBuyerEdit && (item.boxes != null || item.pieces != null)) return true;
+  const lines = lineItems ?? [];
+  const own = item.sourceLineId
+    ? lines.find((l) => l.id === item.sourceLineId && l.productId === item.productId)
+    : undefined;
+  if (own) return own.boxes != null || own.pieces != null;
+  if (!isBuyerEdit) return !!item.productId && productPieceDenominated.has(item.productId);
+  const live = lines.filter((l) => l.productId === item.productId && l.status !== "CANCELLED");
+  return live.length > 0 && live.every((l) => l.boxes != null || l.pieces != null);
 }

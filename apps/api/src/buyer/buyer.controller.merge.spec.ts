@@ -145,6 +145,52 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     controller = module.get<BuyerController>(BuyerController);
   });
 
+  // ─── row 355 (M2): a stored PACK line beside a box-split line of one product ─────
+  it("row 355: a bare incoming add on a product with a box-split line AND a pack line folds in the right units (pack normalized to pieces)", async () => {
+    const activeOrder = {
+      id: "order-mixed",
+      customerId: MOCK_CTX.customerId,
+      lineItems: [
+        // a pack line: 2 selling units (boxes), no split
+        {
+          id: "li-pack",
+          productId: "prod-boxed",
+          qty: 2,
+          boxes: null,
+          pieces: null,
+          unitsPerBox: null,
+          unitPrice: 10,
+          priceType: "STANDARD",
+        },
+        // a box-split line: 1 box = 12 pieces
+        {
+          id: "li-box",
+          productId: "prod-boxed",
+          qty: 12,
+          boxes: 1,
+          pieces: 0,
+          unitsPerBox: 12,
+          unitPrice: 10,
+          priceType: "STANDARD",
+        },
+      ],
+    };
+    ordersService.findActiveOrder.mockResolvedValue(activeOrder);
+    prisma.product.findMany.mockResolvedValue([{ id: "prod-boxed", unitsPerBox: 12 }]);
+
+    await controller.createOrder(
+      { items: [{ productId: "prod-boxed", qty: 3 }] } as any, // 3 selling units (boxes)
+      MOCK_CTX as any,
+    );
+
+    const written = ordersService.updateOrderItems.mock.calls[0][1].items as any[];
+    const pieces = written
+      .filter((i) => i.productId === "prod-boxed")
+      .reduce((n, i) => n + Number(i.qty), 0);
+    // 2 packs (24 pieces) + 1 box (12 pieces) + 3 boxes added (36 pieces) = 72 pieces, never 2 + 12 + 36.
+    expect(pieces).toBe(72);
+  });
+
   // ─── REG-B47 (T14 companion): denomination-aware fold, replaceAll, no unlisted ──
 
   it("REG-B47 (T14 companion): merges a box-unaware existing line + boxed incoming add into a single {qty:36, boxes:3, pieces:0} line, replaceAll:true, no unlisted entries — never the naive qty sum", async () => {

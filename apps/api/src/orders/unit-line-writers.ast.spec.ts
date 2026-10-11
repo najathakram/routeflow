@@ -114,6 +114,11 @@ const INVENTORY: Record<string, Row> = {
     kind: "FIELD_ONLY",
     why: "categoryTaxAmount, plus the rate trio on a NULL-trio line (stamped once); prices at the line snapshot first",
   },
+  // B297 row 355: re-allocates a split product's BUY_N_GET_M free units across its lines after an edit.
+  "orders/settle-split-free-units.ts::settleSplitFreeUnits": {
+    kind: "FIELD_ONLY",
+    why: "promoFreeUnits and the subtotal it implies (computeLineSubtotal); never a factor, quantity or unit price",
+  },
   // SA-762r F1: the cancel's line status flip, moved verbatim out of changeStatus into the shared unwind.
   "orders/order-cancel-tx.ts::cancelOrderInTx": {
     kind: "FIELD_ONLY",
@@ -400,6 +405,7 @@ const FREE_WRITER_FILES = [
   "orders/order-cancel-tx.ts",
   "orders/delivered-stamp.ts",
   "orders/recompute-line-category-taxes.ts",
+  "orders/settle-split-free-units.ts",
 ];
 /** Pre-existing free-function line writers under orders/ that predate this scan (shrink-only; classify one to remove it). */
 const KNOWN_UNSCANNED_FREE_WRITERS = [
@@ -452,6 +458,7 @@ const FREE_WRITER_DATA_KEYS: Record<string, string[]> = {
   "orders/order-cancel-tx.ts::cancelOrderInTx": ["status"],
   "orders/delivered-stamp.ts::clearUnevidencedDelivered": ["deliveredQty"],
   "orders/delivered-stamp.ts::stampDeliveredInFull": ["deliveredQty"],
+  "orders/settle-split-free-units.ts::settleSplitFreeUnits": ["promoFreeUnits", "subtotal"],
   "orders/recompute-line-category-taxes.ts::recomputeLineCategoryTaxes": [
     "categoryPriceIncludesTax",
     "categoryTaxAmount",

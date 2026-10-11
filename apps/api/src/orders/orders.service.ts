@@ -169,7 +169,9 @@ import {
 import { recomputeLineCategoryTaxes } from "./recompute-line-category-taxes";
 import { loadLiveTrioByProduct } from "./fold-target";
 import { carriedCategoryFor } from "./carry-line-category";
-import { applyBuyerEditLines, guardBuyerEditLineIds } from "./buyer-edit-lines";
+import { applyBuyerEditLines, guardBuyerEditLineIds, piecesDenominated } from "./buyer-edit-lines";
+import { planSplitPromos, type SplitPromoGroup } from "./split-promo-group";
+import { settleSplitFreeUnits } from "./settle-split-free-units";
 import { dateAndShipmentFilters } from "./list-filters";
 import { resolveOversellAllowed } from "./oversell-policy";
 import { PolicyOversellReader } from "./policy-oversell-reader";
@@ -2871,7 +2873,6 @@ export class OrdersService implements OnApplicationBootstrap {
     await unitAware.assertOrderEditAllowed(order, dto, user, findOwner);
     // SA-507a/b: the buyer-diff 400 runs AFTER the guard (ownership, then the 409 shapes).
     await assertBuyerDiffShape(order, dto, user, isDiffPayload, findOwner);
-    // B297 row 352: line-id refusals run BEFORE the un-tx'd invoice revert below (it strands a SENT invoice in DRAFT).
     guardBuyerEditLineIds(order, dto, user, opts, isDiffPayload);
 
     // units_v1 (A1): resolve every dto item's unit-awareness ONCE, up front — see unit-line-edit.ts.
@@ -3177,6 +3178,9 @@ export class OrdersService implements OnApplicationBootstrap {
           // stamp position from a counter that only advances on a real create
           // (skipped/invalid items `continue` before it).
           let pos = 0;
+          const splitPromos = isBuyerEdit
+            ? planSplitPromos(dto.items, order.lineItems ?? [], productMap, pieceDenominated)
+            : new Map<string, SplitPromoGroup>();
           for (const item of dto.items) {
             if (!item.productId) {
               // B51: buyers never author/rename/drop an unlisted line — the
@@ -3208,19 +3212,10 @@ export class OrdersService implements OnApplicationBootstrap {
             if (!item.qty) continue;
             const product = productMap.get(item.productId);
             if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
-            // An explicit boxes/pieces split (and DRIVER pieceDenominated lines) carry qty as
-            // PIECES: re-split and prorate by the BOX price, else qty*unitPrice over-charges
-            // by unitsPerBox. A PLAIN buyer qty (pre-existing or new) is the default selling
-            // unit (the pack), NOT pieces: it is never re-split and keeps qty*price.
-            // DRIVER edits keep the strict pieceDenominated gate.
+            // Row 355: pack vs pieces per LINE, from its own unit fields (`piecesDenominated`).
             const upb = Number(product.unitsPerBox ?? 0);
             const shouldSplit =
-              upb > 1 &&
-              (pieceDenominated.has(item.productId) ||
-                // REG-B47: a folded merge payload carries an explicit box/piece split —
-                // treat it as piece-denominated and re-split server-side from qty + LIVE
-                // unitsPerBox (B13 posture: the split is a signal, never trusted verbatim).
-                (isBuyerEdit && (item.boxes != null || item.pieces != null)));
+              upb > 1 && piecesDenominated(order.lineItems, item, pieceDenominated, isBuyerEdit);
             // SA-601 / #2780 (PACK ONLY): a PLAIN buyer qty (no boxes/pieces/unitLabel) on a
             // product NEW to the order is NOT re-split as pieces — it is the DEFAULT SELLING
             // UNIT (the pack: qty N = N packs), exactly as create() stores it. It falls through
@@ -3241,16 +3236,17 @@ export class OrdersService implements OnApplicationBootstrap {
             // BUY_N_GET_M threshold: whole SELLING units (boxes for a boxed line,
             // pieces otherwise) — mirrors create()'s qtyUnits derivation.
             const qtyUnits = boxes != null ? boxes : qty;
-            const priced = isBuyerEdit
+            const group = splitPromos.get(item.productId);
+            const pricedRaw = isBuyerEdit
               ? this.resolveBuyerLinePrice(
                   product,
                   buyerCpMap.get(item.productId) ?? buyerDefaultTier,
                   buyerPromos,
-                  qtyPieces,
-                  qtyUnits,
+                  group?.qtyPieces ?? qtyPieces,
+                  group?.qtyUnits ?? qtyUnits,
                   buyerPriceHistory[item.productId]?.lastPrice ?? null,
                   // REG-B109: the exact denomination this line bills with below.
-                  { boxes, pieces, unitsPerBox: upb },
+                  group?.denomination ?? { boxes, pieces, unitsPerBox: upb },
                 )
               : {
                   unitPrice: Number(product.pricePerUnit),
@@ -3258,6 +3254,9 @@ export class OrdersService implements OnApplicationBootstrap {
                   priceType: PriceType.STANDARD,
                   freeUnits: 0,
                 };
+            const priced = group
+              ? { ...pricedRaw, freeUnits: group.share(item, pricedRaw.freeUnits) }
+              : pricedRaw;
             const made = await tx.orderItem.create({
               data: {
                 orderId,
@@ -4085,6 +4084,8 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         }
 
+        if (!(user?.role === UserRole.CUSTOMER && !isDiffPayload))
+          await settleSplitFreeUnits(tx, order, buyerPromos.length ? buyerPromos : bogoPromos);
         await this.syncCompositions(tx, orderId);
         // Recalculate order totals from all non-cancelled items
         const activeItems = await tx.orderItem.findMany({
@@ -5093,6 +5094,7 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         }
 
+        await settleSplitFreeUnits(tx, order, buyerPromos);
         await this.syncCompositions(tx, order.id);
         // ── Totals recompute — identical to updateOrderItems :2163-2168 ──────
         const activeItems = await tx.orderItem.findMany({

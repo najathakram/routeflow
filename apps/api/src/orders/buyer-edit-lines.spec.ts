@@ -1,9 +1,11 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import {
   BUYER_EDIT_IDLESS_FALLBACK,
+  BUYER_EDIT_IDLESS_FALLBACK_REMOVE_ON,
   applyBuyerEditLines,
   assertNoOrderItemIdOutsideBuyerEdit,
   guardBuyerEditLineIds,
+  piecesDenominated,
   preflightBuyerEditLines,
   resolveBuyerEditLines,
   type StoredEditLine,
@@ -194,6 +196,13 @@ describe("resolveBuyerEditLines", () => {
     it("the fallback is on for this release (flipping it is a deliberate, dated change)", () => {
       expect(BUYER_EDIT_IDLESS_FALLBACK).toBe(true);
     });
+
+    it("row 356: the fallback is dated for removal on 2026-11-15 — past it, remove it (or move the date on its row)", () => {
+      expect(BUYER_EDIT_IDLESS_FALLBACK_REMOVE_ON).toBe("2026-11-15");
+      expect(Date.now()).toBeLessThan(
+        Date.parse(`${BUYER_EDIT_IDLESS_FALLBACK_REMOVE_ON}T00:00:00Z`),
+      );
+    });
   });
 
   it("an entry with no product (an unlisted line) passes through untouched", () => {
@@ -202,24 +211,46 @@ describe("resolveBuyerEditLines", () => {
   });
 });
 
-describe("payload denomination follows the product, as the write path does", () => {
+describe("payload denomination follows the entry's own line, as the write path does (row 355)", () => {
   const box = (id: string, rate: number, qty: number, over: Partial<StoredEditLine> = {}) =>
     line(id, rate, { qty, boxes: Math.floor(qty / 12), pieces: qty % 12, ...over });
 
-  it("a plain qty on a product with a box-split line is PIECES, so a pack line beside it is expanded", () => {
-    // L1 holds 2 packs (box-unaware, qty 2); L2 is box-split 12 pieces. A plain qty of 24 on L1 is 24
-    // PIECES to the write path, so the stored 2 packs are 24 pieces: equal, no split.
+  it("a pack line beside a box-split line is compared in selling units, never as pieces", () => {
+    // L1 holds 2 packs (box-unaware); L2 is box-split 12 pieces. 3 packs on L1 is +1 PACK (split at a
+    // differing trio), not 3 pieces against 24.
     const out = run(
       [
-        { productId: "p1", qty: 24, orderItemId: "L1" },
+        { productId: "p1", qty: 3, orderItemId: "L1" },
         { productId: "p1", qty: 12, orderItemId: "L2" },
       ],
       [line("L1", 0.05, { qty: 2 }), box("L2", 0.07, 12)],
     );
-    expect(out.map((i) => [i.sourceLineId, i.qty])).toEqual([
-      ["L1", 24],
-      ["L2", 12],
-    ]);
+    expect(out.filter((i) => i.sourceLineId === "L1").map((i) => i.qty)).toEqual([2]);
+    expect(out.filter((i) => !i.sourceLineId).map((i) => i.qty)).toEqual([1]);
+    expect(out.find((i) => i.sourceLineId === "L2")).toMatchObject({ qty: 12 });
+  });
+
+  it("raising a box-split line at a differing trio: the ADDED half carries an explicit split (never read as packs)", () => {
+    // 24 pieces stored (2 boxes), the buyer sends a plain 36. The added 12 PIECES must be 1 box, not 12 packs.
+    const out = run(
+      [
+        { productId: "p1", qty: 2, orderItemId: "L1" },
+        { productId: "p1", qty: 36, orderItemId: "L2" },
+      ],
+      [line("L1", 0.05, { qty: 2 }), box("L2", 0.05, 24)],
+    );
+    const added = out.find((i) => !i.sourceLineId)!;
+    expect(added).toMatchObject({ qty: 12, boxes: 1, pieces: 0 });
+    expect(out.find((i) => i.sourceLineId === "L2")).toMatchObject({
+      qty: 24,
+      boxes: 2,
+      pieces: 0,
+    });
+  });
+
+  it("a plain qty on a box-split line is pieces, compared with its stored pieces", () => {
+    const out = run([{ productId: "p1", qty: 30, orderItemId: "L2" }], [box("L2", 0.05, 24)]);
+    expect(out.map((i) => i.qty)).toEqual([24, 6]);
   });
 
   it("with no box-split line a plain qty is selling units, compared as stored", () => {
@@ -227,8 +258,49 @@ describe("payload denomination follows the product, as the write path does", () 
       [{ productId: "p1", qty: 3, orderItemId: "L1" }],
       [line("L1", 0.05, { qty: 2 })],
     );
-    expect(out).toHaveLength(2); // 2 stored, 1 more packs at a differing trio => split
     expect(out.map((i) => i.qty)).toEqual([2, 1]);
+  });
+});
+
+describe("piecesDenominated: pack vs pieces from the entry's own line (row 355)", () => {
+  const lines = [
+    { id: "pack", productId: "p1", status: "PENDING", boxes: null, pieces: null },
+    { id: "box", productId: "p1", status: "PENDING", boxes: 2, pieces: 0 },
+    { id: "other", productId: "p2", status: "PENDING", boxes: 1, pieces: 0 },
+  ];
+  const none = new Set<string>(["p1"]); // the old product-wide gate says p1 is pieces
+
+  it("an explicit split is pieces", () => {
+    expect(piecesDenominated([], { productId: "p1", boxes: 1 }, new Set(), true)).toBe(true);
+  });
+
+  it("a named line decides: the pack line is selling units even though the product has a box-split line", () => {
+    expect(piecesDenominated(lines, { productId: "p1", sourceLineId: "pack" }, none, true)).toBe(
+      false,
+    );
+    expect(piecesDenominated(lines, { productId: "p1", sourceLineId: "box" }, none, true)).toBe(
+      true,
+    );
+  });
+
+  it("an id naming another product's line is not that line", () => {
+    expect(piecesDenominated(lines, { productId: "p1", sourceLineId: "other" }, none, true)).toBe(
+      false,
+    );
+  });
+
+  it("no named line: reads like the product's live lines when they agree, else the pack default", () => {
+    const boxOnly = lines.filter((l) => l.id !== "pack");
+    expect(piecesDenominated(boxOnly, { productId: "p1" }, none, true)).toBe(true); // legacy plain qty
+    expect(piecesDenominated(lines, { productId: "p1" }, none, true)).toBe(false); // mixed: the pack default
+    expect(piecesDenominated([], { productId: "p9" }, none, true)).toBe(false); // new product: the pack
+    const cancelled = [{ ...lines[1], status: "CANCELLED" }];
+    expect(piecesDenominated(cancelled, { productId: "p1" }, none, true)).toBe(false);
+  });
+
+  it("a DRIVER entry naming no line keeps the product-wide gate", () => {
+    expect(piecesDenominated([], { productId: "p1" }, none, false)).toBe(true);
+    expect(piecesDenominated([], { productId: "p2" }, none, false)).toBe(false);
   });
 });
 

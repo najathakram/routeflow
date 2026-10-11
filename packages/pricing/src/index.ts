@@ -27,3 +27,4 @@ export * from "./invoice-totals";
 export * from "./unit-words";
 export * from "./counter-park";
 export * from "./recompute-category-tax";
+export * from "./product-promotion-qty";

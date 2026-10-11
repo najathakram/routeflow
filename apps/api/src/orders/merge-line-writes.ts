@@ -5,6 +5,7 @@
  * PACK GROUPS first (`merge-pack-resolve.ts`) and emit one write PER GROUP, so a product whose
  * contributing lines disagree on pack never folds across that disagreement.
  */
+import { allocateSplitFreeUnits } from "./merge-split-promo";
 import { PriceType } from "@prisma/client";
 import {
   copyCategoryTaxSnapshot,
@@ -323,5 +324,6 @@ export function buildMergeLineWrites(
     }
   }
 
-  return { writes, warnings };
+  // Row 355: a product left on several lines earns its free units on the COMBINED quantity.
+  return { writes: allocateSplitFreeUnits(writes, winnerLines, opts), warnings };
 }
