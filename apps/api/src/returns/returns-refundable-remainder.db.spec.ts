@@ -208,6 +208,41 @@ describeDb("SA-773 the refund paths read the refundable remainder - real Postgre
     expect(done.creditNoteId).not.toBeNull();
   });
 
+  it("T7: a TAXED line is refunded in two real captures (3 + 7 of 10 at 8.25%) without the gross remainder refusing either, and a third piece is refused", async () => {
+    const s = await seed("t7", [
+      { lines: [{ product: "A", qty: 10, subtotal: 33.33, taxRate: 0.0825 }] },
+    ]);
+    // the invoice charged tax, so the captures price it at the line's stored rate
+    await prisma.invoice.update({ where: { id: s.invoices[0].id }, data: { taxAmount: 2.75 } });
+    const capture = async (pieces: number) =>
+      asTenant(s, () =>
+        inline.capture(
+          {
+            customerId: s.customerId,
+            orderId: s.orderId,
+            items: [{ productId: s.products.A, qty: pieces, boxes: 0, pieces }],
+            returnKey: `t7-${RUN}-${++n}`,
+            resolution: "REFUND",
+          },
+          staff(s),
+        ),
+      );
+    const total = (r: any) =>
+      Math.round(
+        (Number(r.creditSubtotal) + Number(r.creditTax) + Number(r.creditCategoryTax)) * 100,
+      ) / 100;
+    const a = await capture(3);
+    await cashRefund(s, a.id, total(a));
+    const b = await capture(7);
+    await cashRefund(s, b.id, total(b));
+    expect([(await row(a.id)).status, (await row(b.id)).status]).toEqual(["REFUNDED", "REFUNDED"]);
+    // the two refunds together are the line's full gross ($33.33 + $2.75): nothing is left
+    expect(Math.round((total(a) + total(b)) * 100) / 100).toBe(36.08);
+    const more = await pendingRefund(s, [{ line: 0, qty: 1, subtotal: 3.33, taxAmount: 0.27 }]);
+    const err = await fail(cashRefund(s, more.id, 3.6));
+    expect(body(err)).toMatchObject({ code: "RETURN_EXCEEDS_REFUNDABLE", remainingQty: 0 });
+  });
+
   it("T6: the check is made under the invoice lock: a credit note the lock holder commits while the refund waits is seen", async () => {
     const s = await seed("t6", [{ lines: [{ product: "A", qty: 4, subtotal: 20 }] }]);
     const ret = await pendingRefund(s, [{ line: 0, qty: 4, subtotal: 20 }]);
