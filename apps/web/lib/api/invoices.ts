@@ -1,4 +1,4 @@
-import type { InvoiceItemSystemKind } from "@routeflow/types";
+import type { InvoiceItemSystemKind, InvoiceStatus } from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { isDayClosedRefusal } from "../day-closed-copy";
@@ -23,8 +23,9 @@ import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type InvoiceStatus =
-  "DRAFT" | "SENT" | "VIEWED" | "PARTIAL" | "PAID" | "VOID" | "OVERDUE" | "WRITTEN_OFF";
+// The ONE union, derived from INVOICE_STATUS_VALUES in @routeflow/types (L-072): the API enum's client mirror,
+// pinned set-equal to the Prisma enum by apps/api/src/common/enum-parity.spec.ts. Never hand-type it again.
+export type { InvoiceStatus };
 
 // `PriceType` re-exported from @routeflow/types (wave E / imp-10b R2: was
 // declared identically here AND in `orders.ts` — collapsed to one import).
