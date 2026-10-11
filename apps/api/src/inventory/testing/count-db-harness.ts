@@ -217,9 +217,27 @@ export function useCountDbHarness(spec: string) {
     h.A.prisma.stockMovement.findMany({
       where: { tenantId: w.tenantId, reference: `STOCK_COUNT-${w.sessionId}` },
     });
-  /** A sale, as the stock writers do it: relative decrement of the counter. */
-  const sell = (id: string, qty: number) =>
-    h.A.prisma.product.update({ where: { id }, data: { currentStock: { decrement: qty } } });
+  /**
+   * A sale, as the stock writers do it: a relative decrement of the counter and its SALE movement
+   * (the ledger invariant the writer-coverage pin enforces on every non-spec writer, this one too).
+   */
+  const sell = async (id: string, qty: number) => {
+    const p = await h.A.prisma.product.update({
+      where: { id },
+      data: { currentStock: { decrement: qty } },
+      select: { tenantId: true, currentStock: true },
+    });
+    await h.A.prisma.stockMovement.create({
+      data: {
+        tenantId: p.tenantId as string,
+        productId: id,
+        type: "SALE",
+        quantity: -qty,
+        stockAfter: p.currentStock,
+      },
+    });
+    return p;
+  };
 
   /**
    * The FIRST `tenantTransaction` of `svc` runs its body, then parks (still holding every lock the
