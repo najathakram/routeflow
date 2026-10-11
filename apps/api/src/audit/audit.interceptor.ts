@@ -6,6 +6,64 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 /** HTTP methods that constitute a mutation */
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+/** The global prefix Nest bakes into every route template (main.ts `setGlobalPrefix`). */
+const GLOBAL_PREFIX = /^\/api\/v1(?=\/|$)/;
+
+/** Stored in place of a path when the request matched no route template. */
+export const AUDIT_UNMATCHED_PATH = "<unmatched>";
+
+/** Marker stored for an id that came from a secret-bearing path parameter. */
+export const AUDIT_REDACTED = "[redacted]";
+
+/** A path parameter whose name contains "token" carries a secret, never an id. */
+const TOKEN_PARAM = /^:[A-Za-z0-9_]*token/i;
+
+/**
+ * The audit target for a mutation, built from the ROUTE TEMPLATE (`req.route.path`, e.g.
+ * `/buyer/invites/:token/accept`), never from the raw URL: a secret carried in a path parameter
+ * therefore never reaches storage, and neither does a query string. The template is known before
+ * the handler runs, so a request that later fails is recorded exactly like one that succeeds.
+ *
+ * - `action`   `METHOD /template` (global prefix removed), or `METHOD <unmatched>` when the request
+ *              matched no route (the raw path is never stored then).
+ * - `entityType` the first template segment.
+ * - `entityId` the second segment's value when it is an ordinary path parameter, the template text
+ *              when it is a literal, and `[redacted]` when it is a token-named parameter.
+ */
+export function deriveAuditTarget(req: Request): {
+  action: string;
+  entityType: string;
+  entityId: string | null;
+} {
+  const template = typeof req.route?.path === "string" ? (req.route.path as string) : null;
+  if (template === null) {
+    return {
+      action: `${req.method} ${AUDIT_UNMATCHED_PATH}`,
+      entityType: "unknown",
+      entityId: null,
+    };
+  }
+  const templateParts = template.replace(GLOBAL_PREFIX, "").split("/").filter(Boolean);
+  const rawParts = (req.originalUrl ?? req.url ?? req.path ?? "")
+    .split("?")[0]
+    .replace(GLOBAL_PREFIX, "")
+    .split("/")
+    .filter(Boolean);
+
+  const idSegment = templateParts[1];
+  let entityId: string | null = null;
+  if (idSegment !== undefined) {
+    if (!idSegment.startsWith(":")) entityId = idSegment;
+    else if (TOKEN_PARAM.test(idSegment)) entityId = AUDIT_REDACTED;
+    else entityId = rawParts[1] ?? null;
+  }
+  return {
+    action: `${req.method} /${templateParts.join("/")}`,
+    entityType: templateParts[0] ?? "unknown",
+    entityId,
+  };
+}
+
 /**
  * Global interceptor that logs every mutation request (POST/PUT/PATCH/DELETE)
  * to the AuditLog table. Logging is fire-and-forget — it never blocks or
@@ -27,19 +85,7 @@ export class AuditInterceptor implements NestInterceptor {
       // strips the 2 trusted proxy hops from the RIGHT to get the real client IP).
       const ip = req.ip ?? req.socket?.remoteAddress ?? null;
 
-      // Derive entity type + id from the full URL path.
-      // req.path in NestJS is the raw Express path, which does NOT include
-      // the global prefix. The actual URL including prefix is in req.url.
-      // We strip both /api/v1 and a leading slash to get clean segments.
-      const rawPath = (req.url ?? req.path).split("?")[0]; // drop query string
-      const pathParts = rawPath
-        .replace(/^\/api\/v1\//, "")
-        .replace(/^\//, "")
-        .split("/")
-        .filter(Boolean);
-      const entityType = pathParts[0] ?? "unknown";
-      const entityId = pathParts[1] ?? null;
-      const action = `${req.method} /${pathParts.join("/")}`;
+      const { action, entityType, entityId } = deriveAuditTarget(req);
 
       // Fire-and-forget: log in the next microtask so it doesn't block
       setImmediate(() => {
