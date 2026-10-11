@@ -166,26 +166,41 @@ export function buildCounterReceipt(input: {
     }
   }
 
-  // The stored lines the response serves (the invoice lines): the LIST price and type each cart line was sold at. A cart
-  // line takes the first unused stored line of its product AT ITS OWN NET PRICE (two lines of one product at different prices
-  // must not swap their list prices); a price the server did not store falls back to the first unused line of the product.
-  // None (an older server) means nothing is struck, never the tier price.
-  const stored = [...(receipt.lines ?? [])];
-  const takeStored = (productId: string | undefined, unitPrice: number) => {
-    if (!productId) return undefined;
-    const same = (s: (typeof stored)[number]) => s.productId === productId;
-    let i = stored.findIndex((s) => same(s) && roundMoney(s.unitPrice) === roundMoney(unitPrice));
-    if (i < 0) i = stored.findIndex(same);
-    return i < 0 ? undefined : stored.splice(i, 1)[0];
+  // The stored lines the response serves (the invoice lines): the LIST price and type each cart line was sold at. Matched in
+  // two passes so a fallback can never take a line a later cart line matches exactly: (1) EVERY cart line takes the first
+  // unused stored line of its product AT ITS OWN NET PRICE (two lines of one product at different prices must not swap their
+  // list prices); (2) a line whose price the server did not store (a re-priced tier) takes the first unused line of the
+  // product. None (an older server) means nothing is struck, never the tier price.
+  const stored = receipt.lines ?? [];
+  const taken = new Set<number>();
+  const facts: Array<(typeof stored)[number] | undefined> = lines.map(() => undefined);
+  const claim = (at: number, row: number) => {
+    taken.add(at);
+    facts[row] = stored[at];
   };
-  const rows = lines.map((l) => {
+  lines.forEach((l, row) => {
+    if (!l.productId) return;
+    const at = stored.findIndex(
+      (s, k) =>
+        !taken.has(k) &&
+        s.productId === l.productId &&
+        roundMoney(s.unitPrice) === roundMoney(l.unitPrice),
+    );
+    if (at >= 0) claim(at, row);
+  });
+  lines.forEach((l, row) => {
+    if (!l.productId || facts[row]) return;
+    const at = stored.findIndex((s, k) => !taken.has(k) && s.productId === l.productId);
+    if (at >= 0) claim(at, row);
+  });
+  const rows = lines.map((l, row) => {
     // ONE rule for a lowered price (pricing's receiptLineAmounts, shared with the reprint and the emailed receipt), on the
     // invoices' own original-price rule: the struck base is the stored list price.
-    const facts = takeStored(l.productId, l.unitPrice);
+    const sold = facts[row];
     const { total, original, discount } = receiptLineAmounts({
       unitPrice: l.unitPrice,
-      originalPrice: facts?.originalPrice ?? null,
-      priceType: facts?.priceType,
+      originalPrice: sold?.originalPrice ?? null,
+      priceType: sold?.priceType,
       hideOriginalPrice: !!profile?.hideOriginalPrice,
       qty: l.qty,
       boxes: l.boxes,

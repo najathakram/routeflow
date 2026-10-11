@@ -475,13 +475,17 @@ export class CounterSaleService {
         // the stored lines: the rate the sale's tax rate is read from, and the price facts a receipt strikes a list price from
         items: {
           select: {
+            id: true,
+            createdAt: true,
+            // the order line's scan position: the read-back sorts by it (lines of one transaction share createdAt)
+            orderItem: { select: { position: true } },
             taxRate: true,
             productId: true,
             unitPrice: true,
             originalPrice: true,
             priceType: true,
           },
-          // a STABLE line order (row 322a): the web matches its cart lines to these by product + price
+          // a deterministic base order (row 322a); the read-back then sorts by scan position (inScanOrder)
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         },
       },
