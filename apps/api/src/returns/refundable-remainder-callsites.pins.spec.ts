@@ -563,6 +563,25 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
     expect(firstPos(issue("captureAndIssueInTx"), "captureInTx")).toBeLessThan(
       firstPos(issue("captureAndIssueInTx"), "issueCreditInTx"),
     );
+    // row 347 (1): and, since the standalone capture() mints in its own transaction, it asks the source-open question too:
+    // after the capture locked the source invoices, before the mint (a void after the pricing read leaves nothing behind)
+    const captureMint = issue("captureAndIssueInTx");
+    expect(firstPos(captureMint, "assertInlineSourcesOpen")).toBeGreaterThan(
+      firstPos(captureMint, "captureInTx"),
+    );
+    expect(firstPos(captureMint, "assertInlineSourcesOpen")).toBeLessThan(
+      firstPos(captureMint, "issueCreditInTx"),
+    );
+    // row 347 (1): capture() composes capture and mint in ONE transaction: it calls captureAndIssueInTx (STORE_CREDIT) inside the
+    // tenantTransaction callback, and its only issueCredit() call is the replay tail that comes after the transaction
+    const standalone = issue("capture");
+    expect(firstPos(standalone, "captureAndIssueInTx")).toBeGreaterThan(
+      firstPos(standalone, "tenantTransaction"),
+    );
+    expect(firstPos(standalone, "issueCredit")).toBeGreaterThan(
+      firstPos(standalone, "captureAndIssueInTx"),
+    );
+    expect(positions(standalone, "issueCredit")).toHaveLength(1);
   });
 
   // ─── the inventory is closed ─────────────────────────────────────────────

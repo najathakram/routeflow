@@ -193,6 +193,13 @@ describe("InlineReturnsService", () => {
     });
     // sumInlineReturnCredit's own query — empty by default (no prior committed credit).
     prisma.return.findMany.mockResolvedValue([]);
+    // Row 347 (1): the capture mints in its OWN transaction, so assertInlineSourcesOpen now asks about the captured chunk's source
+    // line ("invitem-1") before the mint: by default it exists, on a live invoice (tests that drive a dead / lost source override).
+    prisma.invoiceItem.findMany.mockImplementation(async ({ where }: any) =>
+      (where?.id?.in ?? []).includes("invitem-1")
+        ? [{ id: "invitem-1", invoiceId: "inv-live" }]
+        : [],
+    );
     // The final "read back the row" call at the end of capture()/approve() — a realistic
     // stand-in so a test that doesn't care about the exact returned shape still gets a
     // truthy object back instead of the mock's bare `null` default.
@@ -1031,32 +1038,63 @@ describe("InlineReturnsService", () => {
 
   // ─── N-1: cancel racing between the re-read and the link ────────────────────
 
-  it("N-1: a return that moved out of RECEIVED between issueCredit's lock and the mint mints NOTHING (revert ⇒ orphaned CN)", async () => {
-    // The unlocked pre-read (m-2) still sees RECEIVED — issueCredit proceeds to open its tx.
+  it("N-1: a REPLAY re-issue (issueCredit) of a return that moved out of RECEIVED between its pre-read and its lock mints NOTHING (revert ⇒ orphaned CN)", async () => {
+    // A fresh capture mints in its own transaction (row 347: nothing can move the return before it is visible), so the
+    // cancel-vs-issue race lives on the replay path: a stuck RECEIVED return re-issued by a retry. The unlocked pre-read (m-2)
+    // still sees RECEIVED, so issueCredit proceeds to open its tx.
+    const stuck = {
+      id: "ret-stuck",
+      returnKey: "nonce-1",
+      kind: "INLINE",
+      status: "RECEIVED",
+      creditNoteId: null,
+      holdReason: null,
+      customerId: "cust-1",
+      orderId: "ord-carrying",
+      creditSubtotal: 28,
+      creditTax: 2,
+      creditCategoryTax: 0,
+      items: [],
+    };
     prisma.return.findFirst
-      .mockResolvedValueOnce(null) // capture()'s own pre-tx replay check
-      .mockResolvedValueOnce(null) // capture()'s in-tx replay check (kind INLINE) — none found, proceeds to create
-      .mockResolvedValueOnce({
-        id: "ret-1",
-        status: "RECEIVED",
-        creditNoteId: null,
-        holdReason: null,
-        customerId: "cust-1",
-        orderId: "ord-carrying",
-        creditSubtotal: 28,
-        creditTax: 2,
-        creditCategoryTax: 0,
-      }) // issueCredit's own unlocked pre-read (m-2) — carries the priced amount ($30) so it clears the amount>0 gate and actually opens the tx
-      .mockResolvedValueOnce({ id: "ret-1", status: "CANCELLED", creditNoteId: null }); // issueCredit's in-tx FOR-UPDATE re-read: cancel() won the race
+      .mockResolvedValueOnce(stuck) // capture()'s own pre-tx replay check: the stuck row
+      .mockResolvedValueOnce(stuck) // issueCredit's own unlocked pre-read (m-2): still RECEIVED
+      .mockResolvedValueOnce({ id: "ret-stuck", status: "CANCELLED", creditNoteId: null }); // its in-tx FOR-UPDATE re-read: cancel() won the race
 
     await service.capture(CAPTURE_DTO as any, OPERATOR);
 
+    expect(prisma.return.create).not.toHaveBeenCalled();
     expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
     expect(prisma.return.updateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ creditNoteId: expect.anything() }),
       }),
     );
+  });
+
+  it("row 347 (1): a fresh STORE_CREDIT capture mints in the capture's OWN transaction: one transaction, no issueCredit re-read", async () => {
+    const out = await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+    expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledTimes(1);
+    // the intent keeps its full amount (the standalone path is not capped at the order's balance)
+    expect(prisma.orderCreditNote.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ amount: 30 }) }),
+    );
+    expect(gateway.emitCreditNoteCreated).toHaveBeenCalledTimes(1);
+    expect(out).toMatchObject({ creditNoteId: "cn-1" });
+  });
+
+  it("row 347 (1): a source that went dead before the mint rolls the capture back (409 RETURN_NOTHING_BILLED), no credit note and no event", async () => {
+    prisma.invoiceItem.findMany.mockResolvedValue([{ id: "invitem-1", invoiceId: "inv-dead" }]);
+    prisma.invoice.findFirst.mockResolvedValue({ id: "inv-dead" });
+
+    const code = await codeOf(service.capture(CAPTURE_DTO as any, OPERATOR));
+
+    expect(code).toBe("RETURN_NOTHING_BILLED");
+    expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    expect(gateway.emitCreditNoteCreated).not.toHaveBeenCalled();
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1); // the whole refusal is inside the one transaction
   });
 
   // ─── the N-1 guarded link's exact refusal literal — pinned cross-boundary (SA-091b) ──

@@ -815,6 +815,11 @@ export class InlineReturnsService {
       creditNoteNumber?: string;
       orderRouteRunId?: string | null;
       sourceOrderIds?: readonly string[];
+      /**
+       * Cap the system-owned intent at the carrying order's remaining balance (default: true, the order create/edit path). The
+       * standalone capture() passes false: its intent has always been the whole credit, as issueCredit() writes it.
+       */
+      capIntentToOrderBalance?: boolean;
     } = {},
   ): Promise<{ replayed: boolean; ret: any; overCap: boolean; minted: any }> {
     const captured = await this.captureInTx(tx, dto, user, {
@@ -823,6 +828,11 @@ export class InlineReturnsService {
     });
     if (captured.replayed || captured.overCap) return { ...captured, minted: null };
     const ret = captured.ret;
+    // Row 347 (1): the store credit is minted in the capture's own transaction, so the refusal issueCredit() gave a dead
+    // source (after the return had committed and restocked) is asked here, before the mint, like every other mint site: the
+    // source invoices are locked by now (the headroom UPDATE, the remainder's pool locks), so a void that landed after the
+    // pricing read refuses 409 RETURN_NOTHING_BILLED and the whole transaction rolls back: no return, no stock moved, no note.
+    await assertInlineSourcesOpen(tx, (ret.items ?? []) as any[]);
     const amount = roundMoney(
       Number(ret.creditSubtotal ?? 0) +
         Number(ret.creditTax ?? 0) +
@@ -830,7 +840,7 @@ export class InlineReturnsService {
     );
     const minted = await this.issueCreditInTx(tx, ret, amount, this.prisma.getTenantId(), {
       creditNoteNumber: opts.creditNoteNumber,
-      capIntentToOrderBalance: true,
+      capIntentToOrderBalance: opts.capIntentToOrderBalance ?? true,
     });
     return { ...captured, minted };
   }
@@ -1061,7 +1071,8 @@ export class InlineReturnsService {
     const tenantId = this.prisma.getTenantId();
     await this.assertGranted(tenantId);
 
-    let result: { replayed: boolean; ret: any; overCap: boolean };
+    // `minted` is set only by a fresh, unheld STORE_CREDIT capture: its credit note was minted in the capture's own transaction
+    let result: { replayed: boolean; ret: any; overCap: boolean; minted?: any };
 
     // m-2/m-3: an unlocked pre-read resolves an already-captured returnKey without opening a
     // transaction — a retried submission (offline replay, double-tap) burns nothing. Routed
@@ -1099,9 +1110,21 @@ export class InlineReturnsService {
           // order create/edit paths (#2094) take this same lock themselves, as their FIRST
           // statement, and then call `captureInTx`.
           await this.lockCustomerInTx(tx, dto.customerId);
-          return this.captureInTx(tx, dto, user, {
-            forRefund: resolution === "REFUND",
+          // Row 347 (1): a STORE_CREDIT capture mints its credit in THIS transaction (the order-create path's composition:
+          // capture, then mint, under the Orders and source invoices the capture holds), so a void or line rebuild can no
+          // longer land between a committed return and its mint and refuse 409 for a return that exists. A held capture
+          // (DRIVER_CAP / already returned) and a replay mint nothing here (captureAndIssueInTx returns `minted: null`), and a
+          // REFUND capture only stores its intent. A mint failure rolls the whole capture back: a same-key retry starts clean.
+          if (resolution === "REFUND") {
+            const refundCapture = await this.captureInTx(tx, dto, user, {
+              forRefund: true,
+              sourceOrderIds,
+            });
+            return { ...refundCapture, minted: null };
+          }
+          return this.captureAndIssueInTx(tx, dto, user, {
             sourceOrderIds,
+            capIntentToOrderBalance: false,
           });
         });
       } catch (err: any) {
@@ -1129,17 +1152,22 @@ export class InlineReturnsService {
       }
     }
 
-    // HIGH-2: a RECEIVED row with neither a credit note nor a hold is "stuck" — either just
-    // captured (the normal, expected case) or left behind by a PRIOR issueCredit that failed
-    // after this same capture committed. Either way, (re-)issue idempotently before returning.
+    // The credit was minted in the capture's own transaction: tell the dashboard now that it has committed, and answer with
+    // the issued row (the snapshot above predates the link).
+    if (result.minted) this.emitCreditNoteCreated(tenantId, result.minted);
+
+    // HIGH-2: a RECEIVED row with neither a credit note nor a hold is "stuck" — a REPLAY of a capture whose credit was never
+    // minted (the return committed before capture and mint shared a transaction, or its mint was refused: a source that has
+    // since gone dead is still refused by issueCredit's own checks). (Re-)issue idempotently before returning.
     if (
       resolution === "STORE_CREDIT" &&
-      result.ret.status === "RECEIVED" &&
-      !result.ret.creditNoteId &&
-      !result.ret.refundMethod &&
-      !result.ret.holdReason
+      (result.minted ||
+        (result.ret.status === "RECEIVED" &&
+          !result.ret.creditNoteId &&
+          !result.ret.refundMethod &&
+          !result.ret.holdReason))
     ) {
-      await this.issueCredit(result.ret.id);
+      if (!result.minted) await this.issueCredit(result.ret.id);
       const reissued = await this.prisma
         .forTenant()
         .return.findUnique({ where: { id: result.ret.id }, include: { items: true } });
@@ -1274,8 +1302,11 @@ export class InlineReturnsService {
 
   /**
    * §6.5.3: unlocked pre-read (m-2) → tx: Return FOR UPDATE → guard → `issueCreditInTx`
-   * (m-1 mint, N-1 guarded link, intent, settle) → one commit. The immediate-issue path for
-   * a return that was NOT held — the amount is the full priced total, never overridden
+   * (m-1 mint, N-1 guarded link, intent, settle) → one commit. Since row 347 this is the REPLAY
+   * re-issue only: a fresh capture mints inside its own transaction (`captureAndIssueInTx`),
+   * so what reaches here is a RECEIVED return, not held, with no credit note, that a retry with
+   * the same returnKey found (committed before capture and mint shared a transaction, or whose
+   * mint was refused) — the amount is the full priced total, never overridden
    * (`approve()` calls `issueCreditInTx` directly with its own, possibly-reduced amount).
    */
   private async issueCredit(returnId: string): Promise<void> {
@@ -1315,7 +1346,7 @@ export class InlineReturnsService {
           .filter((o): o is string => !!o),
       ]);
 
-      // SA-773: the remainder is read here too. The immediate issue after a fresh capture was just checked by captureInTx, but a
+      // SA-773: the remainder is read here too. A fresh capture was just checked by captureInTx (and mints in its own tx), but a
       // replay (HIGH-2) re-issues a RECEIVED return with no credit note that may predate that check, or whose pool has since been
       // credited (a manual amount-only note): minting it unchecked paid the same goods twice. The return excludes itself.
       await assertInlineReturnWithinRemainder(tx, tenantId, {
