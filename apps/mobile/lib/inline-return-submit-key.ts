@@ -147,7 +147,7 @@ export const INLINE_RETURN_REFUSAL_CODES: readonly string[] = [
 /**
  * SA-740: the source-sale refusals of the capture (a counter return names no usable source sale, or asks for more than the sale
  * had). Nothing was written, so each is as definite as the codes above. Spelled through the shared constants (the codes list
- * is shrink-only for bare literals); pinned to the server's three by inline-returns-source-sale.spec.ts.
+ * is shrink-only for bare literals); pinned to the server's four by inline-returns-source-sale.spec.ts.
  */
 export const SOURCE_SALE_REFUSAL_CODES: readonly string[] = [
   API_ERROR_CODES.SOURCE_SALE_REQUIRED,

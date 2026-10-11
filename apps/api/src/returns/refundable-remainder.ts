@@ -721,6 +721,11 @@ export async function resolveInlineSourceInvoices(
       .sort((a, b) => Number(a.dead) - Number(b.dead) || a.invoiceId.localeCompare(b.invoiceId));
     const best = candidates[0];
     if (!best) return { invoiceId: null, resolved: null, missing: true, candidateInvoiceIds: [] };
+    // Known fail-closed case (review SHOULD-1, row 347): a DEAD candidate stays in the set for good. Void an invoice of a split
+    // line, re-invoice its quantity, edit the order later (the stored line id dangles), and a deferred CASH refund of goods that
+    // are billed on the live invoice is refused, because the voided sibling still carries the order line and "was the goods'
+    // invoice" cannot be ruled out (the schema has no void timestamp to compare with the capture). The exit is store credit
+    // (it gates on the best pick, `invoiceId`), or cancel.
     const candidateInvoiceIds = [...new Set(candidates.map((c) => c.invoiceId))].sort();
     return {
       invoiceId: best.invoiceId,

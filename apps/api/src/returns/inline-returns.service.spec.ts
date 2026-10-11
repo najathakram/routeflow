@@ -1115,6 +1115,18 @@ describe("InlineReturnsService", () => {
       );
     });
 
+    it("a write conflict / deadlock (Prisma P2034, SQLSTATE 40P01 and 40001) is the same retryable 409, never an uncoded 500", async () => {
+      await refuses(
+        Object.assign(new Error("Transaction failed due to a write conflict"), { code: "P2034" }),
+      );
+      await refuses(Object.assign(new Error("deadlock detected"), { meta: { code: "40P01" } }));
+      await refuses(
+        Object.assign(new Error("could not serialize"), {
+          cause: { originalCode: "40001" },
+        }),
+      );
+    });
+
     it("any other failure still propagates as it was", async () => {
       prisma.tenantTransaction.mockRejectedValueOnce(new Error("boom"));
       await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow("boom");

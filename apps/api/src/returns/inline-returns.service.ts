@@ -55,6 +55,7 @@ import {
 } from "../credit-notes/line-credit-headroom";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isLockUnavailableError } from "../common/db-locks";
+import { txConflictState } from "../common/tx-retry";
 import { isTransactionExpired, refundBusy } from "./standard-refund-claim";
 import { IdempotencyService } from "../common/idempotency.service";
 import { AddonService } from "../billing/addon.service";
@@ -823,8 +824,14 @@ export class InlineReturnsService {
    * Numbering (row 347, N2, no change): the RETURN number row (reserved inside captureInTx) and the CREDIT_NOTE number row
    * (reserved here, unless the caller pre-reserved) are row-locked by `reserveNext` until the transaction ends, and the
    * transaction now also covers the mint and the settle. Tenant-wide numbering of returns and credit notes therefore waits
-   * for the whole capture, where it waited for each of two shorter transactions before. Lock order stays RETURN number ->
-   * Product rows -> CREDIT_NOTE number everywhere (approve() takes the same tail), so it queues, never deadlocks.
+   * for the whole capture, where it waited for each of two shorter transactions before.
+   *
+   * Lock order, exactly: the standalone capture takes the RETURN number, then the Product rows, then the CREDIT_NOTE number
+   * (approve() takes Product rows then CREDIT_NOTE number). It is NOT the order everywhere: an order create locks the Product
+   * rows FIRST (decrementStockForSale) and reaches the RETURN number later, through applyReturn -> captureInTx. A sale of
+   * product P can therefore deadlock a standalone capture restocking P (a pre-existing pair; holding the RETURN number row
+   * through mint and settle widens its window). The capture maps that 40P01 / P2034 to the retryable 409 CONCURRENT_UPDATE
+   * (capture()'s catch), as the order-create side retries it on `txConflictState`.
    */
   async captureAndIssueInTx(
     tx: any,
@@ -850,7 +857,7 @@ export class InlineReturnsService {
     // Row 347 (1): the store credit is minted in the capture's own transaction, so the refusal issueCredit() gave a dead
     // source (after the return had committed and restocked) is asked here, before the mint, like every other mint site: the
     // source invoices are locked by now (the headroom UPDATE, the remainder's pool locks), so a void that landed after the
-    // pricing read refuses 409 RETURN_NOTHING_BILLED and the whole transaction rolls back: no return, no stock moved, no note.
+    // pricing read refuses 409 RETURN_CAPTURE_SOURCE_CLOSED and the whole transaction rolls back: no return, no stock moved, no note.
     await assertInlineSourcesOpen(tx, (ret.items ?? []) as any[], { capture: true });
     const amount = roundMoney(
       Number(ret.creditSubtotal ?? 0) +
@@ -1147,9 +1154,11 @@ export class InlineReturnsService {
           });
         }, CAPTURE_TX_OPTIONS);
       } catch (err: any) {
-        // a transaction that ran out of budget (P2028) or a lock wait that gave up (55P03) wrote nothing: the same retryable 409
-        // the refund claims answer, never an uncoded 500 (the caller retries with the same returnKey)
-        if (isLockUnavailableError(err) || isTransactionExpired(err)) throw refundBusy();
+        // a transaction that ran out of budget (P2028), a lock wait that gave up (55P03) or a write conflict / deadlock
+        // (P2034, 40001, 40P01: the order-create side retries on the same `txConflictState`) wrote nothing: the same retryable
+        // 409 the refund claims answer, never an uncoded 500 (the caller retries with the same returnKey)
+        if (isLockUnavailableError(err) || isTransactionExpired(err) || txConflictState(err))
+          throw refundBusy();
         if (this.isReturnKeyConflict(err) && dto.returnKey) {
           const raced = await this.prisma.forTenant().return.findFirst({
             where: { returnKey: dto.returnKey, kind: "INLINE" },
