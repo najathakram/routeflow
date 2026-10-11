@@ -18,6 +18,7 @@ jest.mock("../storage/compress.util", () => ({
 }));
 
 import { BadRequestException, Logger } from "@nestjs/common";
+import { componentUnitPrice4 } from "@routeflow/pricing";
 import { InvoicesService } from "./invoices.service";
 import { planPartialPriceFollow } from "./partial-price-follow";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -157,17 +158,17 @@ describe("SA-760 Q-760-1: a DRAFT partial follows order price edits (price only)
     expect(spy.mock.calls[0][2]).toHaveLength(1); // the one stale line
   });
 
-  it("the regular tax share is the creator's: the same order.tax x subtotal share the partial was cut with", async () => {
+  it("the follow's tax equals the creator's order.tax x subtotal share (summed at the order-derived rate)", async () => {
     Object.assign(db.orders.get("ord-1")!, { tax: 28.215, total: 370.215 }); // 8.25% of 342
     const created = await partialA(72); // 169.2 + 169.2/342*28.215 (= 13.96)
     expect(Number(created.taxAmount)).toBe(13.96);
-    // an unchanged order re-run of the follow is a no-op (same figures), and a reprice uses the same formula
+    // the follow sums its lines through sumInvoiceTotalsStrict (order-derived rate); the creator uses regularTaxShare: same figure
     repriceA(); // line A 300 -> order subtotal 360; the order's tax restated at the same 8.25%: 29.7
     Object.assign(db.orders.get("ord-1")!, { tax: 29.7, total: 389.7 });
     await service.followPartialPrices("ord-1");
     const inv = db.invoicesOf("ord-1")[0];
     expect(Number(inv.subtotal)).toBe(180);
-    expect(Number(inv.taxAmount)).toBe(14.85); // 29.7 x 180/360, the same helper the creator uses
+    expect(Number(inv.taxAmount)).toBe(14.85); // 29.7 x 180/360: the order-derived rate summed by sumInvoiceTotalsStrict, the creator's figure
     expect(Number(inv.total)).toBe(194.85);
   });
 
@@ -245,6 +246,27 @@ describe("SA-760 Q-760-1: a DRAFT partial follows order price edits (price only)
         }),
       ).rejects.toThrow(TypeError);
     });
+  });
+
+  it("a FIXED composed line: the follow re-stamps its component rows' display price on the new net (same path as a DRAFT edit)", async () => {
+    db.honorItemSelect = true; // read items through the planner's own select: dropping compositionMode turns this red
+    const created = await partialA(72);
+    db.invoiceItems.find((i) => i.invoiceId === created.id)!.compositionMode = "FIXED";
+    repriceA(); // 72 pieces of the line are now worth 180.00 (was 169.20)
+    await service.followPartialPrices("ord-1");
+    const upd = (prisma as any).invoiceItemComponent.updateMany;
+    expect(upd).toHaveBeenCalledTimes(1);
+    expect(upd).toHaveBeenCalledWith({
+      where: { invoiceItemId: expect.any(String), tenantId: "test-tenant" },
+      data: { displayUnitPrice4: componentUnitPrice4(180, 72) },
+    });
+  });
+
+  it("a plain line writes no component row", async () => {
+    await partialA(72);
+    repriceA();
+    await service.followPartialPrices("ord-1");
+    expect((prisma as any).invoiceItemComponent.updateMany).not.toHaveBeenCalled();
   });
 
   it("the sole invoice that bills the whole order is the MIRROR, not a partial: left to the re-sync", async () => {

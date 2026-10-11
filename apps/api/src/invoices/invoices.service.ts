@@ -37,6 +37,7 @@ import {
   normalizeBoxesPieces,
   remainingCapacity,
   inferredGoodsFlatRate,
+  OVERPAID_EPSILON,
 } from "@routeflow/pricing";
 import { computeDepositFields } from "./deposit-fields";
 import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-read";
@@ -1450,7 +1451,6 @@ export class InvoicesService {
     return {
       buildItem: (li, qty, tenantId, o) => this.buildInvoiceItemData(li, qty, tenantId, o),
       taxRateOf: (order, exempt) => this.orderDerivedTaxRate(order, exempt),
-      foldCategoryTax: (items, exempt) => this.foldCategoryTax(items, exempt),
       applyMsrp: (db, customerId, items) => this.applyMsrpSnapshots(db, customerId, items),
       tenantId: this.prisma.getTenantId(),
     };
@@ -5416,7 +5416,7 @@ export class InvoicesService {
               "PAID",
             );
             const overpaidBy = roundMoney(totalPaid - Number(invoice.total));
-            if (overpaidBy > 0.005)
+            if (overpaidBy > OVERPAID_EPSILON)
               await auditDeliberateOverpayment(tx, {
                 invoiceId: alloc.invoiceId,
                 paymentGroupId,

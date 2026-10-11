@@ -1,4 +1,4 @@
-import { roundMoney } from "@routeflow/pricing";
+import { OVERPAID_EPSILON, roundMoney } from "@routeflow/pricing";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 
 /**
@@ -95,7 +95,7 @@ export async function auditRestatement(
     linesChanged: p.linesChanged,
   });
   const overpaidBy = roundMoney(p.paid - p.totalAfter);
-  if (overpaidBy > 0.005)
+  if (overpaidBy > OVERPAID_EPSILON)
     await auditOverpaidAfterRestatement(tx, {
       invoiceId: p.invoiceId,
       paid: roundMoney(p.paid),

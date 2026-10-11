@@ -1,9 +1,9 @@
 import { BadRequestException, Logger } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
 import { draftBillsLessThanOrder } from "./invoice-partition";
 import { isNsfLine } from "./nsf-line";
-import { regularTaxShare } from "./manual-invoice-context";
+import { applyComposedLineEdits } from "./invoice-composed-edit";
+import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { UnitLineSplitError } from "../orders/unit-line-split";
 
 const logger = new Logger("PartialPriceFollow");
@@ -34,8 +34,6 @@ export interface FollowDeps {
   ): any;
   /** InvoicesService.orderDerivedTaxRate, bound. */
   taxRateOf(order: { tax?: unknown; subtotal?: unknown }, isTaxExempt: boolean): number;
-  /** foldCategoryTax (manual-invoice-context.ts). */
-  foldCategoryTax(items: Array<{ categoryTaxAmount?: number }>, isTaxExempt: boolean): number;
   /** InvoicesService.applyMsrpSnapshots, bound (stamps each rebuilt line's MSRP like every other builder). */
   applyMsrp(db: any, customerId: string, items: any[]): Promise<void>;
   tenantId: string | null;
@@ -44,7 +42,11 @@ export interface FollowDeps {
 export interface FollowDraftPlan {
   invoiceId: string;
   invoiceNumber: string;
+  /** The invoice status as read: applyComposedLineEdits re-checks that only a DRAFT is written. */
+  status: string;
   itemUpdates: Array<{ id: string; data: Record<string, unknown> }>;
+  /** The invoice's item rows as read (before the follow): the composed-line step compares against them. */
+  storedRows: any[];
   subtotal: number;
   taxAmount: number;
   total: number;
@@ -78,6 +80,7 @@ export async function planPartialPriceFollow(
         select: {
           id: true,
           orderItemId: true,
+          compositionMode: true, // applyComposedLineEdits reads it
           qty: true,
           unitPrice: true,
           originalPrice: true,
@@ -183,40 +186,30 @@ export async function planPartialPriceFollow(
             categoryPriceIncludesTax: f.categoryPriceIncludesTax,
           },
         }));
-        // The draft's money after the follow: stale lines at their fresh figures, the rest as stored.
-        const after = inv.items.map((it: any) => {
+        // The draft's money after the follow, by the ONE totals formula (sumInvoiceTotals, B1043): stale lines at
+        // their fresh figures, the rest as stored; the NSF fee line is untaxed (rate 0).
+        const priced = inv.items.map((it: any) => {
           const f = fresh.get(it.id);
-          return f
-            ? { nsf: false, subtotal: f.subtotal, categoryTaxAmount: f.categoryTaxAmount }
-            : {
-                nsf: isNsfLine(it),
-                subtotal: Number(it.subtotal),
-                categoryTaxAmount: Number(it.categoryTaxAmount ?? 0),
-              };
+          return {
+            subtotal: f ? f.subtotal : it.subtotal,
+            taxRate: !f && isNsfLine(it) ? 0 : rate,
+            categoryTaxAmount: f ? f.categoryTaxAmount : it.categoryTaxAmount,
+          };
         });
-        const lineSubtotal = roundMoney(
-          after.filter((a: any) => !a.nsf).reduce((s: number, a: any) => s + a.subtotal, 0),
-        );
-        const nsfFee = roundMoney(
-          after.filter((a: any) => a.nsf).reduce((s: number, a: any) => s + a.subtotal, 0),
-        );
-        const regularTax = regularTaxShare(order, lineSubtotal, isTaxExempt);
-        const categoryTax = deps.foldCategoryTax(
-          after.filter((a: any) => !a.nsf),
+        const sums = sumInvoiceTotalsStrict(priced, {
+          discount: Number(inv.discount ?? 0),
+          shipping: Number(inv.shippingFee ?? 0),
           isTaxExempt,
-        );
-        const taxAmount = roundMoney(regularTax + categoryTax);
-        const subtotal = roundMoney(lineSubtotal + nsfFee);
-        const total = roundMoney(
-          subtotal - Number(inv.discount ?? 0) + Number(inv.shippingFee ?? 0) + taxAmount,
-        );
+        });
         plan.drafts.push({
           invoiceId: inv.id,
           invoiceNumber: inv.invoiceNumber,
+          status: inv.status,
           itemUpdates,
-          subtotal,
-          taxAmount,
-          total,
+          storedRows: inv.items,
+          subtotal: sums.subtotal,
+          taxAmount: sums.tax,
+          total: sums.total,
         });
       }
     }
@@ -237,6 +230,18 @@ export async function applyPartialPriceFollow(
   for (const d of plan.drafts) {
     for (const u of d.itemUpdates)
       await db.invoiceItem.update({ where: { id: u.id }, data: u.data });
+    // A FIXED composed line keeps its component rows' display price on the line's new net: the SAME step a
+    // DRAFT invoice edit runs (price change, qty untouched -> displayUnitPrice4 re-stamped, ids stay put).
+    await applyComposedLineEdits(
+      db,
+      { id: d.invoiceId, status: d.status, tenantId: deps.tenantId },
+      d.itemUpdates.map((u) => ({
+        rowId: u.id,
+        untouched: false,
+        data: { qty: d.storedRows.find((r) => r.id === u.id)?.qty, subtotal: u.data.subtotal },
+      })),
+      d.storedRows,
+    );
     await db.invoice.update({
       where: { id: d.invoiceId },
       data: { subtotal: d.subtotal, taxAmount: d.taxAmount, total: d.total, pdfUrl: null },

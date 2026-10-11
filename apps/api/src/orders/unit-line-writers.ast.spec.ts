@@ -182,7 +182,7 @@ const INVENTORY: Record<string, Row> = {
     why: "copies the order line via the shared builder",
     trioVia: ["buildInvoiceItemData"],
   },
-  "invoices/invoices.service.ts::InvoicesService.reconcileOrderDraftInvoice": {
+  "invoices/invoices.service.ts::InvoicesService.reconcileOrderDraftInvoiceLocked": {
     kind: "SAFE_COPY",
     needs: "buildInvoiceItemData",
     why: "copies via the shared builder",
