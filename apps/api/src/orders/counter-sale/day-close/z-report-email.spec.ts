@@ -112,8 +112,16 @@ function inOrder(body: string, needles: string[]) {
 describe("buildZReportEmail", () => {
   const mail = buildZReportEmail({ businessName: "Acme Wholesale", snapshot: snap() });
 
-  it("keeps the subject", () => {
-    expect(mail.subject).toBe("Z report for 2026-10-07 - Acme Wholesale");
+  it("words the subject with the screen's date, not the ISO day", () => {
+    expect(mail.subject).toBe("Z report · Wed, Oct 7 · Acme Wholesale");
+    expect(mail.subject).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    // the same calendar-date label the Z screen's title uses, whatever the zone or the close time
+    const sun = buildZReportEmail({
+      businessName: "Acme Wholesale",
+      snapshot: snap({ day: "2026-10-11", zone: "Pacific/Auckland" }),
+    });
+    expect(sun.subject).toBe("Z report · Sun, Oct 11 · Acme Wholesale");
+    expect(sun.text.split("\n")[0]).toBe("Z report · Sun, Oct 11");
   });
 
   it("opens with the title, the closer and the window in the tenant zone", () => {
@@ -272,6 +280,7 @@ describe("buildZReportEmail", () => {
         windowStart: "2026-10-08T01:00:00.000Z", // Wed 9:00 PM New York
         windowEnd: "2026-10-09T01:42:00.000Z", // Thu 9:42 PM
         closedAt: "2026-10-09T01:42:00.000Z",
+        day: "2026-10-08",
       }),
     });
     for (const body of [m.text, m.html]) {

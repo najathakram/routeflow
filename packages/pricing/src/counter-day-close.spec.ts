@@ -1,6 +1,7 @@
 import {
   DAY_CLOSE_DENOMINATIONS,
   dayCloseCashFromSales,
+  dayCloseDateLabel,
   dayCloseZSections,
   dayCloseWindowIsEmpty,
   DAY_CLOSE_MAX_COUNT,
@@ -8,6 +9,17 @@ import {
   validOpeningFloat,
   validateDenominations,
 } from "./counter-day-close";
+
+describe("dayCloseDateLabel", () => {
+  it("words a calendar day as the Z title does: weekday, month, day", () => {
+    expect(dayCloseDateLabel("2026-10-11")).toBe("Sun, Oct 11");
+    expect(dayCloseDateLabel("2026-10-07")).toBe("Wed, Oct 7");
+    expect(dayCloseDateLabel("2026-01-01")).toBe("Thu, Jan 1");
+  });
+  it("returns a malformed day unchanged rather than a wrong date", () => {
+    expect(dayCloseDateLabel("not-a-day")).toBe("not-a-day");
+  });
+});
 
 describe("sumDenominations", () => {
   it("rounds every row to cents: 0.10 x 3 is 0.30", () => {

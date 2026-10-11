@@ -178,7 +178,7 @@ describe("CounterDayClose: the form", () => {
     expect(screen.getByTestId("close-counted")).toHaveTextContent("$0.00");
     // expected = 100 + 30 - 0
     expect(screen.getByTestId("close-expected")).toHaveTextContent("$130.00");
-    expect(screen.getByTestId("close-variance")).toHaveTextContent("Under $130.00");
+    expect(screen.getByTestId("close-variance")).toHaveTextContent("Short $130.00");
   });
 
   it("has a row per denomination, the $1 bill and the $1 coin distinct", async () => {
@@ -202,7 +202,7 @@ describe("CounterDayClose: the form", () => {
     expect(screen.getByTestId("close-counted")).toHaveTextContent("$0.30");
     // 0.2 + 0.1 is 0.30000000000000004 in floating point
     expect(screen.getByTestId("close-expected")).toHaveTextContent("$0.30");
-    expect(screen.getByTestId("close-variance")).toHaveTextContent("Balanced");
+    expect(screen.getByTestId("close-variance")).toHaveTextContent("Even $0.00");
     expect(document.body.textContent).not.toMatch(/0\.30000/);
   });
 
@@ -212,22 +212,24 @@ describe("CounterDayClose: the form", () => {
     expect(screen.getByTestId("close-expected")).toHaveTextContent("$122.75");
   });
 
-  it("labels the variance Balanced / Over / Under in words, not by colour alone", async () => {
+  it("labels the variance Even / Over / Short in words, not by colour alone", async () => {
     await openForm();
     setCount("$100 bill", 1);
     setCount("$20 bill", 1);
     setCount("$10 bill", 1);
     expect(screen.getByTestId("close-counted")).toHaveTextContent("$130.00");
     const v = screen.getByTestId("close-variance");
-    expect(v).toHaveTextContent("Balanced");
+    expect(v).toHaveTextContent("Even $0.00");
     setCount("$5 bill", 1);
     expect(v).toHaveTextContent("Over $5.00");
     expect(v.className).toMatch(/amber/);
     setCount("$5 bill", 0);
     setCount("$10 bill", 0);
-    expect(v).toHaveTextContent("Under $10.00");
+    expect(v).toHaveTextContent("Short $10.00");
     expect(v.className).toMatch(/red/);
     expect(v.className).not.toMatch(/amber/);
+    // one vocabulary: the old Balanced / Under words are gone from the form
+    expect(v.textContent).not.toMatch(/Balanced|Under/);
   });
 
   it("shows Not taken at the till, and the tender note only while a refund has no recorded tender", async () => {
@@ -378,7 +380,7 @@ describe("CounterDayClose: the closed state", () => {
     expect(within(closed).getByTestId("closed-float")).toHaveTextContent("$100.00");
     expect(within(closed).getByTestId("closed-expected")).toHaveTextContent("$130.00");
     expect(within(closed).getByTestId("closed-counted")).toHaveTextContent("$128.00");
-    expect(within(closed).getByTestId("closed-variance")).toHaveTextContent("Under $2.00");
+    expect(within(closed).getByTestId("closed-variance")).toHaveTextContent("Short $2.00");
   });
 
   it.each([
@@ -422,6 +424,59 @@ describe("CounterDayClose: the closed state", () => {
     expect(within(dialog).getByTestId("z-note")).toHaveTextContent("ok");
     // no customer names, no sale lines
     expect(within(dialog).queryAllByRole("listitem")).toHaveLength(0);
+  });
+
+  it("View Z carries Print, Resend and Back to sales; Back to sales returns to the sheet", async () => {
+    withClose({ reportSent: true });
+    await openSheet();
+    fireEvent.click(await screen.findByRole("button", { name: "View Z" }));
+    const z = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
+    const actions = within(z).getByTestId("z-actions");
+    expect(
+      within(actions)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Print", "Resend", "Back to sales"]);
+    fireEvent.click(within(actions).getByRole("button", { name: "Back to sales" }));
+    await waitFor(() => expect(screen.queryByTestId("z-report")).toBeNull());
+    expect(screen.getByRole("dialog", { name: "Today's sales" })).toBeInTheDocument();
+  });
+
+  it("Resend in the Z view posts the report route and shows the fixed sent line", async () => {
+    withClose({ reportSent: true });
+    post.mockResolvedValue({ data: { reportSent: true } });
+    await openSheet();
+    fireEvent.click(await screen.findByRole("button", { name: "View Z" }));
+    const z = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
+    fireEvent.click(within(z).getByRole("button", { name: "Resend" }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/orders/counter-sale/day-close/dc1/report"),
+    );
+    expect(await within(z).findByTestId("z-resend-status")).toHaveTextContent(
+      "Report sent to the admins",
+    );
+  });
+
+  it("Escape leaves the Z view first, then the Today's sales sheet", async () => {
+    withClose();
+    await openSheet();
+    fireEvent.click(await screen.findByRole("button", { name: "View Z" }));
+    await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape", code: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("z-report")).toBeNull());
+    expect(screen.getByRole("dialog", { name: "Today's sales" })).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape", code: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("the card, the form and the Z view say the same variance in the same words", async () => {
+    withClose({ variance: -2, countedCash: 128 });
+    await openSheet();
+    expect(await screen.findByTestId("closed-variance")).toHaveTextContent("Short $2.00");
+    fireEvent.click(screen.getByRole("button", { name: "View Z" }));
+    const z = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
+    expect(within(z).getByTestId("z-headline")).toHaveTextContent("Counted $128.00 · Short $2.00");
+    expect(document.body.textContent).not.toMatch(/Balanced|Under \$/);
   });
 
   it("shows 'Report not sent' with Resend only when reportSent === false", async () => {
@@ -630,7 +685,7 @@ describe("CounterDayClose: Edit count (reopen, then close again)", () => {
     // live figures: counted 128 against the STORED expected 130, not the next window's preview
     expect(screen.getByTestId("close-counted")).toHaveTextContent("$128.00");
     expect(screen.getByTestId("close-expected")).toHaveTextContent("$130.00");
-    expect(screen.getByTestId("close-variance")).toHaveTextContent("Under $2.00");
+    expect(screen.getByTestId("close-variance")).toHaveTextContent("Short $2.00");
     expect(screen.getByRole("button", { name: "Save count" })).toBeEnabled();
     expect(post).not.toHaveBeenCalled();
   });
