@@ -242,25 +242,25 @@ export function summarizeSplit(input: {
   let problem: SplitPaymentProblem | null = null;
   let problemRowId: string | null = null;
   const cashLines = live.filter(isCash);
-  if (live.length > SPLIT_RULE.maxLegs) problem = "COUNTER_TOO_MANY_LEGS";
+  if (live.length > SPLIT_RULE.maxLegs) problem = SPLIT_CODES.COUNTER_TOO_MANY_LEGS;
   else if (live.some((r) => !SPLIT_RULE.allowed.includes(r.method)))
-    problem = "TENDER_METHOD_NOT_ALLOWED";
+    problem = SPLIT_CODES.TENDER_METHOD_NOT_ALLOWED;
   else if (live.length > 1 && live.some((r) => SPLIT_RULE.singleLegOnly.includes(r.method)))
-    problem = "COUNTER_ON_ACCOUNT_NOT_SPLIT";
+    problem = SPLIT_CODES.COUNTER_ON_ACCOUNT_NOT_SPLIT;
   else if (cashLines.length > SPLIT_RULE.maxCashLegs) {
-    problem = "COUNTER_DUPLICATE_CASH_LEG";
+    problem = SPLIT_CODES.COUNTER_DUPLICATE_CASH_LEG;
     problemRowId = cashLines[SPLIT_RULE.maxCashLegs].id;
   } else if (badRow) {
-    problem = "COUNTER_LEG_NOT_CENTS";
+    problem = SPLIT_CODES.COUNTER_LEG_NOT_CENTS;
     problemRowId = badRow.id;
   } else if (live.length === 0) {
-    problem = "COUNTER_LEG_AMOUNT_REQUIRED";
+    problem = SPLIT_CODES.COUNTER_LEG_AMOUNT_REQUIRED;
     problemRowId = rows[rows.length - 1]?.id ?? null;
   } else if (live.some((r) => r.method === "CHECK" && !r.reference.trim())) {
-    problem = "COUNTER_CHECK_NUMBER_REQUIRED";
+    problem = SPLIT_CODES.COUNTER_CHECK_NUMBER_REQUIRED;
     problemRowId = live.find((r) => r.method === "CHECK" && !r.reference.trim())!.id;
   } else if (nonCash > totalCents || (cash > 0 && nonCash >= totalCents)) {
-    problem = "COUNTER_PAYMENT_EXCEEDS_TOTAL";
+    problem = SPLIT_CODES.COUNTER_PAYMENT_EXCEEDS_TOTAL;
     // the line that tips the non-cash sum over the total; else the cash line that has nothing left to take
     let running = 0;
     const tipping = live.find((r) => {
@@ -270,7 +270,7 @@ export function summarizeSplit(input: {
     });
     problemRowId = (tipping ?? cashLines[0]).id;
   } else if (isWalkIn && enteredCents < totalCents) {
-    problem = "COUNTER_TENDER_SHORT";
+    problem = SPLIT_CODES.COUNTER_TENDER_SHORT;
     problemRowId = live[live.length - 1].id;
   }
 
@@ -289,10 +289,10 @@ export function summarizeSplit(input: {
 
 /** Problems the clerk is told about while typing; the rest wait for an attempt to finish (Enter on the last line). */
 const LIVE_PROBLEMS: ReadonlySet<SplitPaymentProblem> = new Set([
-  "COUNTER_TOO_MANY_LEGS",
-  "COUNTER_DUPLICATE_CASH_LEG",
-  "COUNTER_LEG_NOT_CENTS",
-  "COUNTER_PAYMENT_EXCEEDS_TOTAL",
+  SPLIT_CODES.COUNTER_TOO_MANY_LEGS,
+  SPLIT_CODES.COUNTER_DUPLICATE_CASH_LEG,
+  SPLIT_CODES.COUNTER_LEG_NOT_CENTS,
+  SPLIT_CODES.COUNTER_PAYMENT_EXCEEDS_TOTAL,
 ]);
 
 export interface SplitIssue {
@@ -308,7 +308,10 @@ export function splitIssue(summary: SplitSummary, attempted: boolean): SplitIssu
   const { problem, problemRowId } = summary;
   if (!problem || !problemRowId) return null;
   if (!LIVE_PROBLEMS.has(problem) && !attempted) return null;
-  if (problem === "COUNTER_TENDER_SHORT" || problem === "COUNTER_LEG_AMOUNT_REQUIRED")
+  if (
+    problem === SPLIT_CODES.COUNTER_TENDER_SHORT ||
+    problem === SPLIT_CODES.COUNTER_LEG_AMOUNT_REQUIRED
+  )
     return { rowId: problemRowId, text: stillDueCopy(summary.remainingCents) };
   return { rowId: problemRowId, text: SPLIT_PROBLEM_COPY[problem] };
 }

@@ -18,7 +18,7 @@ import {
   SPLIT_CODES,
   isSplitTender,
   tenderDisplayOrder,
-} from "@/lib/counter-split-tender";
+} from "./counter-split-tender";
 
 /**
  * The counter-sale receipt as a pure view model. Line money goes through pricing's `receiptLineAmounts` (a boxed line is prorated,
@@ -204,7 +204,11 @@ export function buildCounterReceipt(input: {
     } else if (method === "CASH") {
       // the server's `paid` is what the invoice absorbed; cash handed over = paid + the change given
       tendered = roundMoney(receipt.paid + (serverChange ?? 0));
-    } // card / check: exactly what was charged, which the Paid row already says
+    } else if (serverChange != null && receipt.cashTendered != null) {
+      // a sale whose first stored tender is not cash but that took cash and served its change (a card-first split read back as
+      // one line): the cash handed over is the stored `cashTendered`
+      tendered = receipt.cashTendered;
+    } // card / check alone: exactly what was charged, which the Paid row already says
     if (serverChange != null) change = serverChange;
     // As-entered fallback ONLY for a paid sale the server stored no tender for (a recovered or legacy cash sale). A stored
     // tender (`cashTendered`) or a balance still owing means the server's null IS the answer: no Change row.

@@ -598,11 +598,17 @@ describe("cash handed over: ONE change figure (the server's servedChange) on eve
     });
     expect(s.row.change).toBe(32.75);
     expect(s.response.change).toBe(32.75);
-    for (const m of [s.reprint, s.emailModel]) expect(m.tendered).toBe(50);
-    // the live receipt shows the server's change as given (its Tendered row for a card-first split is the web's to
-    // read from `cashTendered`: the web builder still derives it from a CASH first tender)
-    for (const m of [s.reprint, s.emailModel, s.live]) expect(m.change).toBe(32.75);
-    expect(moneyRows(s.emailModel)).toEqual(moneyRows(s.reprint));
+    // The emailed receipt and the live receipt show what the server serves (Tendered 50 from `cashTendered`, Change 32.75).
+    // The web REPRINT of a split (two money methods) shows the amount applied per method and hides both (G7 item 7).
+    for (const m of [s.emailModel, s.live]) {
+      expect(m.tendered).toBe(50);
+      expect(m.change).toBe(32.75);
+    }
+    expect(s.reprint.tendered).toBeNull();
+    expect(s.reprint.change).toBeNull();
+    const { tendered: _t, change: _c, ...reprintRows } = moneyRows(s.reprint);
+    const { tendered: _et, change: _ec, ...emailRows } = moneyRows(s.emailModel);
+    expect(emailRows).toEqual(reprintRows);
   });
 
   it("an interrupted tender (cash 10 of 37.25 recorded, 50 handed over) serves no change on any stored surface", () => {
@@ -672,7 +678,8 @@ describe("cash handed over: ONE change figure (the server's servedChange) on eve
     });
     expect(s.row.change).toBe(32.75);
     expect(s.emailModel.change).toBe(32.75);
-    expect(s.reprint.change).toBe(32.75);
+    expect(s.live.change).toBe(32.75);
+    expect(s.reprint.change).toBeNull(); // a split's web reprint hides Change (G7 item 7)
   });
 });
 

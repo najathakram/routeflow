@@ -34,6 +34,17 @@ describe("a split-payment receipt", () => {
   // the server's facts for card 30 + cash 50 on 70 (cash is leg 1 here, or leg 0: the change is served either way)
   const served = { cashTendered: 50, change: 10 };
 
+  it("a card-first split read back as ONE line (ungrouped rows) still shows the served Tendered and Change", () => {
+    const m = build({
+      method: "CARD",
+      paid: 70,
+      payments: [{ method: "CARD", amount: 70, paymentIds: ["p1", "p2"] }],
+      cashTendered: 90,
+      change: 20,
+    });
+    expect(m).toMatchObject({ tendered: 90, change: 20, tenderLines: [] });
+  });
+
   it("a card-first split (cash is leg 1) shows the served Tendered and Change; nothing is derived from a cash-first tender", () => {
     const cardFirst = [
       { method: "CARD", amount: 30, paymentIds: ["p1"] },
