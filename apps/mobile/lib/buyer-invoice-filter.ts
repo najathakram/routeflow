@@ -7,9 +7,11 @@
  * "Overdue" is the derived `isOverdue` filter, not a status: the sweep never flips PARTIAL to OVERDUE, so a strict
  * `status=OVERDUE` query would drop a past-due part-paid invoice (R4).
  */
+import { OPEN_INVOICE_STATUS_VALUES } from "@routeflow/types";
+
 export type BuyerInvoiceFilterId = "ALL" | "UNPAID" | "PAID" | "OVERDUE";
 
-export const BUYER_UNPAID_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"] as const;
+export const BUYER_UNPAID_STATUSES = OPEN_INVOICE_STATUS_VALUES;
 
 export interface BuyerInvoiceQuery {
   status?: string;

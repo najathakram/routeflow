@@ -2,6 +2,7 @@
  * Pure invoice/payment gating helpers (no api-client/react-query imports so they
  * stay unit-testable in the node Jest env). Mirror the server's guards.
  */
+import { OPEN_INVOICE_STATUS_VALUES } from "@routeflow/types";
 
 /** An invoice can be written off only from these unpaid-but-live statuses. */
 export function canWriteOff(status: string): boolean {
@@ -75,7 +76,7 @@ export function invoiceActionFlags(i: InvoiceActionInput): InvoiceActionFlags {
   return {
     canEdit: s === "DRAFT",
     canSendReminder:
-      (s === "SENT" || s === "VIEWED" || s === "OVERDUE" || s === "PARTIAL") &&
+      (OPEN_INVOICE_STATUS_VALUES as readonly string[]).includes(s) &&
       i.balanceDue != null &&
       Number(i.balanceDue) > 0, // NaN (unknown / non-numeric) fails this too
     canDuplicate: !i.isOrderLinked,

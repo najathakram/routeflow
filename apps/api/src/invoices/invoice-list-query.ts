@@ -1,8 +1,8 @@
-import { InvoiceStatus } from "@prisma/client";
 import type { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { calendarDayOf } from "./settled-date-filter";
 import { overdueCutoff } from "../common/calendar-date";
 import { type RawSqlDb, overdueInvoiceIds } from "./invoice-balance-sql";
+import { OPEN_INVOICE_STATUSES } from "./invoice-status-sets";
 
 /**
  * The invoice LIST query, lifted verbatim out of `InvoicesService.findAll` (size-ratchet prefactor for
@@ -23,7 +23,7 @@ export function applyInvoiceStatusFilters(
     // Derived overdue: unpaid invoices past the END of their due day in the tenant's zone
     // (SA-488: the same rule as the cron, recomputeStatus and bookkeeping aging).
     where.status = {
-      in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE],
+      in: [...OPEN_INVOICE_STATUSES], // the one open set (invoice-status-sets.ts)
     };
     where.dueDate = { lt: overdueCutoff(new Date(), timeZone) };
   } else if (statuses && statuses.length > 0) {
