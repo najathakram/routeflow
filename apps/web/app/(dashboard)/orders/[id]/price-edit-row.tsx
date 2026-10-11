@@ -88,6 +88,9 @@ export function PriceEditRow({
   const priceChangedThisSession =
     originalUnitPrice != null && Math.abs(unitPrice - originalUnitPrice) > 0.0001;
   const reasonRequired = !!isSpecial && priceChangedThisSession;
+  // Row 329b: the box turns red only with words. The server refuses the save without a non-blank reason (no minimum length).
+  const reasonMissing = reasonRequired && !overrideReason?.trim();
+  const reasonMessageId = React.useId();
   // #815 proof-run finding: the block below (was-$X/upsell badge + reason input) used
   // to render ONLY on `overridden` (vs basePrice) — so repricing a SPECIAL line to
   // EXACTLY the list price made `overridden` false and hid the reason field entirely,
@@ -154,12 +157,18 @@ export function PriceEditRow({
             required={reasonRequired}
             aria-required={reasonRequired}
             aria-invalid={reasonRequired && !overrideReason?.trim() ? true : undefined}
+            aria-describedby={reasonMissing ? reasonMessageId : undefined}
             className={
               reasonRequired && !overrideReason?.trim()
                 ? "min-w-0 flex-1 rounded border border-danger bg-danger-bg/30 px-2 py-1 text-navy outline-none ring-1 ring-danger placeholder:text-danger/70"
                 : "min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-navy outline-none placeholder:text-navy/40"
             }
           />
+          {reasonMissing ? (
+            <span id={reasonMessageId} className="basis-full text-danger">
+              Add a reason to change this customer&apos;s special price.
+            </span>
+          ) : null}
         </>
       )}
       {/* Live cost & margin — the negotiation floor (pos-cost-roles-spec §1) */}

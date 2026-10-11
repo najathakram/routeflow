@@ -18,10 +18,7 @@ import { LeaderCron } from "../common/cron-lock";
 import { withAfterCommit } from "../common/after-commit";
 import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
-import {
-  attachPaymentCreditNotes,
-  ORDER_CREDIT_PAYMENT_SELECT,
-} from "./order-payment-credit-notes";
+import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment-credit-notes";
 import { attachInvoicesNeedReview } from "./order-invoices-review";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
@@ -522,28 +519,7 @@ export class OrdersService implements OnApplicationBootstrap {
           orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         },
         transaction: true,
-        invoices: {
-          select: {
-            id: true,
-            invoiceNumber: true,
-            status: true,
-            total: true,
-            deliveryBatchId: true, // the invoice stage (pdfVariant) keys on it
-            // Applied credit-note payments, so clients can show per-credit dollars
-            // actually applied without a second roundtrip.
-            // Classification pending: whether this credit-note-application read
-            // should count DRAFT rows is decided by campaign batch F03's
-            // confirmed-payment sweep (sums go PAID-only, listings keep not-VOID
-            // with visible status). F03 converts this site or writes the reasoned
-            // exemption here.
-            // scan-ok: draft-payment-not-void — pending F03 classification, see above.
-            payments: {
-              where: { method: "CREDIT_NOTE", status: { not: "VOID" } },
-              // #2404: autoApplied (SA-436 PR-1) labels each credit Automatic / Manual.
-              select: ORDER_CREDIT_PAYMENT_SELECT,
-            },
-          },
-        },
+        invoices: { select: ORDER_INVOICES_SELECT }, // + each line's stored taxRate (row 329a)
         // Credit-note INTENTS selected for this order (join table) — the reason/
         // amount/status render at read time via the relation so an edit to the
         // credit note's reason shows up everywhere automatically.
