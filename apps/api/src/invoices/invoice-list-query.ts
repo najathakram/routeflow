@@ -2,6 +2,7 @@ import { InvoiceStatus } from "@prisma/client";
 import type { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { calendarDayOf } from "./settled-date-filter";
 import { overdueCutoff } from "../common/calendar-date";
+import { type RawSqlDb, overdueInvoiceIds } from "./invoice-balance-sql";
 
 /**
  * The invoice LIST query, lifted verbatim out of `InvoicesService.findAll` (size-ratchet prefactor for
@@ -32,6 +33,30 @@ export function applyInvoiceStatusFilters(
     // RF-204: normalize "VOIDED" → "VOID" for single-status filter
     where.status = (status as string) === "VOIDED" ? "VOID" : status;
   }
+}
+
+/**
+ * SA-770 (row 294): the `isOverdue` status + due-day clauses above select by STATUS and DATE only, so an
+ * overpaid or exactly-paid invoice that is not (yet) PAID would list as overdue. This second stage, run
+ * AFTER the buyer scoping, narrows the list to invoices that still owe a balance: the ids come from the
+ * one SQL balance predicate (`overdueInvoiceIds`, tenant-scoped, bound, capped with a coded 422) and the
+ * list pages over `id IN ids`, so the counts and pages stay right. A no-op unless `isOverdue`. Returns
+ * false when there is no tenant to scope to (the caller answers an empty page).
+ */
+export async function applyOverdueBalanceFilter(
+  where: any,
+  query: ListInvoicesDto,
+  db: RawSqlDb,
+  tenantId: string | null,
+): Promise<boolean> {
+  if (!query.isOverdue) return true;
+  if (!tenantId) return false;
+  const ids = await overdueInvoiceIds(db, tenantId, where.dueDate.lt, {
+    statuses: where.status.in,
+    customerId: where.customerId,
+  });
+  where.id = { in: ids };
+  return true;
 }
 
 /** Search / issue-date / due-date filters: the second stage, after the buyer scoping. */

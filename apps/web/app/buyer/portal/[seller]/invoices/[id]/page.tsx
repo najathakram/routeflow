@@ -22,6 +22,7 @@ import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { checkBadgeFor } from "@/lib/check-badge";
 import { invoiceStatusVariant } from "@/lib/buyer-invoice-status";
 import { fmtCalendarDate } from "@/lib/formatting";
+import { InvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -209,7 +210,10 @@ export default function BuyerInvoiceDetailPage() {
       {/* Header */}
       <div className="flex items-start justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-navy">{invoice.invoiceNumber}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-bold text-navy">{invoice.invoiceNumber}</h1>
+            <InvoiceRevisionMarks revisedAt={invoice.revisedAt} overpaidBy={invoice.overpaidBy} />
+          </div>
           <p className="text-sm text-navy/70 mt-1">
             Issued {fmtCalendarDate(invoice.issueDate)} · Due {fmtCalendarDate(invoice.dueDate)}
             {paymentTermsLabel ? ` · Terms: ${paymentTermsLabel}` : ""}

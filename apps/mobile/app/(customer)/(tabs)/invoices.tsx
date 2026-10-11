@@ -46,11 +46,15 @@ export default function CustomerInvoicesScreen() {
   const router = useRouter();
   const [filter, setFilter] = useState<FilterId>("ALL");
 
-  const statusParam = filter === "ALL" || filter === "UNPAID" ? undefined : filter;
+  // Overdue is DERIVED (open status + balance due + past due), not a status: the sweep never flips a
+  // PARTIAL invoice to OVERDUE, so a strict status=OVERDUE query would drop a past-due part-paid one.
+  const statusParam =
+    filter === "ALL" || filter === "UNPAID" || filter === "OVERDUE" ? undefined : filter;
   const statusesParam = filter === "UNPAID" ? ["SENT", "OVERDUE"] : undefined;
   const { data, isLoading, isFetching, refetch } = useBuyerInvoices({
     status: statusParam,
     statuses: statusesParam,
+    isOverdue: filter === "OVERDUE" ? true : undefined,
     limit: 30,
   });
   const invoices = data?.data ?? [];

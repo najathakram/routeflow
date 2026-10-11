@@ -497,7 +497,14 @@ describe("POS-5 price edit: the estimate matches the server, so 'next sale' rese
 
 describe("POS-5 price edit: the receipt", () => {
   it("shows the struck original, the net and the discount for the edited line only, and a Discounts row", async () => {
-    mutateAsync.mockResolvedValue(saleResponse(14));
+    // the server serves the stored lines: Cola was rung at 9.00 off its 10.00 LIST price (the struck base is the list, not the cart's tier)
+    mutateAsync.mockResolvedValue({
+      ...saleResponse(14),
+      lines: [
+        { productId: "p-cola", unitPrice: 9, originalPrice: 10, priceType: "DISCOUNTED" },
+        { productId: "p-juice", unitPrice: 5, originalPrice: null, priceType: "STANDARD" },
+      ],
+    });
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     await scan("JUICE");

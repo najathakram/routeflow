@@ -98,6 +98,11 @@ const ALLOWLIST: { file: string; count: number; note: string }[] = [
     note: "buildEditedLines stamp + inPlacePatch (writes only a CHANGED amount)",
   },
   { file: "invoices/invoice-unit-line.ts", count: 1, note: "buildInvoiceUnitLine — stamps" },
+  {
+    file: "invoices/partial-price-follow.ts",
+    count: 5,
+    note: "SA-760 Q-760-1 price follow (the fingerprint also counts the member reads f.categoryTaxAmount / it.categoryTaxAmount): copies the amount and the trio verbatim from the shared builder's output for a stale DRAFT-partial line (categoryTaxType et al. in the same write); no derivation of its own",
+  },
 ];
 
 describe("category tax trio callsites — every categoryTaxAmount writer enumerated (B297-SPEC.md guard i, SA-096)", () => {
@@ -137,8 +142,8 @@ describe("category tax trio callsites — every categoryTaxAmount writer enumera
     expect(offenders).toEqual([]);
   });
 
-  it("total categoryTaxAmount writes across apps/api/src is exactly 13", () => {
+  it("total categoryTaxAmount writes across apps/api/src is exactly 18", () => {
     const total = FILES.reduce((n, f) => n + writeCount(fs.readFileSync(f, "utf8")), 0);
-    expect(total).toBe(13);
+    expect(total).toBe(18);
   });
 });

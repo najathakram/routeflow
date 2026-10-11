@@ -63,6 +63,9 @@ const TABLE: Record<string, Row> = {
   "orders/delivered-stamp.ts::clearUnevidencedDelivered": X(
     "deliveredQty reset to 0 (the counter-sale void): adds no quantity",
   ),
+  "orders/delivered-stamp.ts::stampDeliveredInFull": X(
+    "deliveredQty raised on a DELIVERED order's lines (SA-763r): books goods that already left, adds no line or ordered quantity",
+  ),
   // Owner ruling 2026-09-25 (#2093): at-door delivery of an order placed before a ban delivers up to the
   // ordered quantity; any increase, added line or substitution is blocked. That ceiling is
   // `assertDeliveriesFitStop` (pinned in routes/delivery-lines.util.spec.ts), so the path cannot sell more.
@@ -90,7 +93,9 @@ const TABLE: Record<string, Row> = {
       "import-invoices-restrictions.spec.ts), never blocked",
   ),
   [inv("applyPriceAdjustment")]: X("price only"),
-  [inv("reconcileOrderDraftInvoice")]: X("mirrors the order's own goods (checked at the order)"),
+  [inv("reconcileOrderDraftInvoiceLocked")]: X(
+    "mirrors the order's own goods (checked at the order)",
+  ),
   [inv("rebuildSiblingDrafts")]: X("mirrors the order's own goods"),
   [inv("createPartialFromOrder")]: X("copies lines of an existing, already-checked order"),
   [inv("recomputeOrderFromInvoices")]: X(
