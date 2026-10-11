@@ -389,6 +389,23 @@ describe("cash handed over: ONE change figure (the server's servedChange) on eve
     expect(moneyRows(s.emailModel)).toEqual(moneyRows(s.reprint));
   });
 
+  it("EXACT cash (tendered 37.25 on 37.25): the server serves change 0 and EVERY surface shows Change $0.00, never a hidden row", () => {
+    const s = cash({ tendered: "37.25" });
+    expect(s.row.change).toBe(0);
+    expect(s.response.change).toBe(0);
+    for (const m of [s.reprint, s.emailModel, s.live]) {
+      expect(m.tendered).toBe(37.25);
+      expect(m.change).toBe(0);
+    }
+    expect(moneyRows(s.emailModel)).toEqual(moneyRows(s.reprint));
+  });
+
+  it("exact cash the clerk typed on a sale the server stored no tender for keeps its as-entered Change $0.00", () => {
+    const s = cash({ tendered: null, entered: 37.25 });
+    expect(s.live.tendered).toBe(37.25);
+    expect(s.live.change).toBe(0);
+  });
+
   it("a card-first sale (cash only for part of it, tendered stored): no change on any surface", () => {
     const s = cash({
       payments: [

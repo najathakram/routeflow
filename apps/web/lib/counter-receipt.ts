@@ -148,7 +148,8 @@ export function buildCounterReceipt(input: {
   const onAccount = method === "ON_ACCOUNT" && !paymentNotRecorded;
   const hasTender = !paymentNotRecorded && !onAccount;
 
-  const serverChange = receipt.change != null && receipt.change > 0 ? receipt.change : null;
+  // The server's served change is shown as given: null/absent = no Change row, 0 = a Change $0.00 row (exact cash).
+  const serverChange = receipt.change ?? null;
   let tendered: number | null = null;
   let tenderedAsEntered = false;
   let change: number | null = null;
@@ -166,7 +167,7 @@ export function buildCounterReceipt(input: {
     // tender (`cashTendered`) or a balance still owing means the server's null IS the answer: no Change row.
     else if (enteredTender != null && receipt.cashTendered == null && receipt.balanceDue <= 0) {
       const derived = roundMoney(enteredTender - receipt.paid);
-      if (derived > 0) {
+      if (derived >= 0) {
         change = derived;
         changeAsEntered = true;
       }
