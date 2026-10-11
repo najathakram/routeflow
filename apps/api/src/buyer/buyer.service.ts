@@ -127,6 +127,9 @@ export class BuyerService {
         include: { tenant: { select: { name: true, slug: true } } },
       });
 
+      // This pre-check answers 404 / 410 / 409 separately on purpose: the public details route
+      // already reveals the same three states for a token, so nothing new is exposed here, and the
+      // conditional claim below is the only gate that decides whether the invite is consumed.
       if (!link) throw new NotFoundException("Invite not found or already used");
       if (link.inviteExpiresAt && link.inviteExpiresAt < new Date()) {
         throw new GoneException("This invite link has expired");

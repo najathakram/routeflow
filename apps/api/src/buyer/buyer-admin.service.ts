@@ -13,6 +13,7 @@ import type { AppConfig } from "../config/configuration";
 import type { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { BUYER_ACCESS_AUDIENCE } from "../auth/session-token";
 import { revokeBuyerLinkTokens } from "../common/revoke-user-link-tokens";
+import { clearInvite, withoutInviteSecrets } from "./invite-token";
 
 /**
  * SUPER_ADMIN buyer account management.
@@ -92,7 +93,8 @@ export class BuyerAdminService {
       },
     });
     if (!buyer) throw new NotFoundException("Buyer account not found");
-    return buyer;
+    // The link rows are echoed whole: neither token column may reach the response.
+    return { ...buyer, customerLinks: buyer.customerLinks.map((l) => withoutInviteSecrets(l)) };
   }
 
   // ─── Set buyer status ─────────────────────────────────────────────────────────
@@ -169,7 +171,10 @@ export class BuyerAdminService {
       this.prisma.customerLink.count({ where }),
     ]);
 
-    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    return {
+      data: data.map((l) => withoutInviteSecrets(l)),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   // ─── Link stats ───────────────────────────────────────────────────────────────
@@ -284,19 +289,20 @@ export class BuyerAdminService {
       // Admin override: reassign the link to this buyer
       const updated = await this.prisma.customerLink.update({
         where: { id: existing.id },
-        data: {
+        // A reassigned link is live for a new owner: no earlier invite may stay redeemable.
+        data: clearInvite({
           buyerAccountId: buyerId,
-          status: "ACTIVE",
+          status: "ACTIVE" as const,
           linkedAt: new Date(),
           disconnectedAt: null,
           disconnectedBy: null,
-        },
+        }),
         include: {
           tenant: { select: { id: true, name: true, slug: true } },
           customer: { select: { id: true, businessName: true } },
         },
       });
-      return updated;
+      return withoutInviteSecrets(updated);
     }
 
     // Create fresh link
@@ -313,7 +319,7 @@ export class BuyerAdminService {
         customer: { select: { id: true, businessName: true } },
       },
     });
-    return link;
+    return withoutInviteSecrets(link);
   }
 
   // ─── Remove a seller link ─────────────────────────────────────────────────────
@@ -324,11 +330,11 @@ export class BuyerAdminService {
 
     await this.prisma.customerLink.update({
       where: { id: linkId },
-      data: {
-        status: "DISCONNECTED",
+      data: clearInvite({
+        status: "DISCONNECTED" as const,
         disconnectedAt: new Date(),
         buyerAccountId: null,
-      },
+      }),
     });
     return { id: linkId, message: "Link disconnected" };
   }

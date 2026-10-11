@@ -56,6 +56,18 @@ describe("BuyerAuthService.deleteAccount — Apple revoke (#2309, SA-418)", () =
     });
   });
 
+  it("disconnects the account's links with both invite token columns nulled", async () => {
+    await service.deleteAccount("buyer-1");
+
+    const call = (prisma.customerLink.updateMany as jest.Mock).mock.calls[0][0];
+    expect(call.where).toMatchObject({ buyerAccountId: "buyer-1" });
+    expect(call.data).toMatchObject({
+      status: "DISCONNECTED",
+      inviteToken: null,
+      inviteTokenHash: null,
+    });
+  });
+
   it("burns the account's outstanding reset and verification links in the SAME transaction as the soft delete", async () => {
     const tx = { ...prisma, $executeRaw: jest.fn().mockResolvedValue(1) };
     (prisma.$transaction as jest.Mock).mockImplementation(async (fn: (t: unknown) => unknown) =>

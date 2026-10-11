@@ -83,3 +83,24 @@ describe("BuyerMergeService.executeMerge — link revocation", () => {
     await expect(service.executeMerge("req-1")).rejects.toThrow("db down");
   });
 });
+
+describe("BuyerMergeService.executeMerge — disconnected links lose their invite", () => {
+  it("a conflicting link is disconnected with both token columns nulled", async () => {
+    const { service, tx, prisma } = build();
+    prisma.customerLink.findMany
+      .mockResolvedValueOnce([{ id: "L-S", tenantId: "T1" }]) // secondary's
+      .mockResolvedValueOnce([{ id: "L-P", tenantId: "T1" }]); // primary's: same tenant
+
+    await service.executeMerge("req-1");
+
+    const call = (tx.customerLink.updateMany as jest.Mock).mock.calls.find(
+      ([a]) => a.data.status === "DISCONNECTED",
+    )!;
+    expect(call[0].where).toEqual({ id: { in: ["L-S"] } });
+    expect(call[0].data).toMatchObject({
+      buyerAccountId: null,
+      inviteToken: null,
+      inviteTokenHash: null,
+    });
+  });
+});

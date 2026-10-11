@@ -110,6 +110,8 @@ describe("the plaintext invite-token column is touched only by its helper", () =
       ["customers/customers.service.ts", /issueInviteData\(/],
       ["customers/customers.service.ts", /hasLiveInviteToken\(/],
       ["customers/customers.service.ts", /clearInvite\(/],
+      ["buyer/buyer-admin.service.ts", /withoutInviteSecrets\(/],
+      ["buyer/buyer-admin.service.ts", /clearInvite\(/],
     ];
     for (const [file, pattern] of need) {
       const src = fs.readFileSync(path.join(SRC_ROOT, file), "utf8");

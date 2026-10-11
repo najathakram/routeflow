@@ -20,6 +20,7 @@ import { BuyerRegisterDto } from "./dto/buyer-register.dto";
 import { BuyerLoginDto } from "./dto/buyer-login.dto";
 import { escapeHtml } from "../common/html-escape";
 import { revokeBuyerLinkTokens } from "../common/revoke-user-link-tokens";
+import { clearInvite } from "./invite-token";
 import { isLoginEligible, isSignInBlocked } from "../auth/login-eligibility";
 import {
   BUYER_ACCESS_AUDIENCE,
@@ -460,11 +461,11 @@ export class BuyerAuthService {
         buyerAccountId,
         status: { notIn: ["DISCONNECTED"] },
       },
-      data: {
-        status: "DISCONNECTED",
-        disconnectedBy: "BUYER",
+      data: clearInvite({
+        status: "DISCONNECTED" as const,
+        disconnectedBy: "BUYER" as const,
         disconnectedAt: new Date(),
-      },
+      }),
     });
 
     // Revoke all refresh tokens

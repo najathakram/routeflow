@@ -358,6 +358,7 @@ export class AuthController {
    */
   @Post("google/start")
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60_000, limit: 30 } }) // public and writes a nonce row: same cap as exchange
   @ApiOperation({ summary: "Start Google sign-in for a seller invite (token in the body)" })
   async googleStart(@Body() dto: GoogleStartDto, @Res({ passthrough: true }) res: any) {
     if (!this.googleOAuth.isConfigured()) {

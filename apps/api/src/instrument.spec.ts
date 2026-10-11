@@ -3,7 +3,10 @@
 // crash boot. Sentry.init() runs as a module-level side effect on import, so each case mocks
 // @sentry/node and re-imports the module fresh via jest.isolateModules + resetModules.
 
-jest.mock("@sentry/node", () => ({ init: jest.fn() }));
+jest.mock("@sentry/node", () => ({
+  init: jest.fn(),
+  httpIntegration: jest.fn((options: unknown) => ({ name: "Http", options })),
+}));
 
 describe("instrument.ts release tagging (PR 1)", () => {
   const ORIGINAL_ENV = process.env;
@@ -43,5 +46,32 @@ describe("instrument.ts release tagging (PR 1)", () => {
     require("./instrument");
 
     expect(init).toHaveBeenCalledWith(expect.objectContaining({ release: undefined }));
+  });
+
+  it("sends no incoming request body and scrubs every event and transaction", () => {
+    process.env.SENTRY_DSN = "https://example@o0.ingest.sentry.io/1";
+
+    require("./instrument");
+
+    const options = init.mock.calls[0][0];
+    expect(options.integrations).toEqual([
+      expect.objectContaining({ name: "Http", options: { maxIncomingRequestBodySize: "none" } }),
+    ]);
+    const event = { request: { url: "https://h.test/a?token=x", query_string: "token=x" } };
+    expect(options.beforeSend(event)).toBe(event);
+    expect(event.request).toEqual({ url: "https://h.test/a" });
+    const tx = { request: { url: "https://h.test/b?t=1", data: "{}" } };
+    expect(options.beforeSendTransaction(tx)).toBe(tx);
+    expect(tx.request).toEqual({ url: "https://h.test/b" });
+  });
+
+  it("stays inert without a DSN", () => {
+    delete process.env.SENTRY_DSN;
+
+    require("./instrument");
+
+    expect(init).toHaveBeenCalledWith(
+      expect.objectContaining({ dsn: undefined, enabled: false, skipOpenTelemetrySetup: true }),
+    );
   });
 });

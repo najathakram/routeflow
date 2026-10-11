@@ -13,6 +13,7 @@ import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { revokeBuyerLinkTokens } from "../common/revoke-user-link-tokens";
+import { clearInvite } from "./invite-token";
 
 @Injectable()
 export class BuyerMergeService {
@@ -403,11 +404,11 @@ export class BuyerMergeService {
       if (conflictingLinks.length > 0) {
         await tx.customerLink.updateMany({
           where: { id: { in: conflictingLinks.map((l) => l.id) } },
-          data: {
-            status: "DISCONNECTED",
+          data: clearInvite({
+            status: "DISCONNECTED" as const,
             disconnectedAt: new Date(),
             buyerAccountId: null,
-          },
+          }),
         });
       }
 

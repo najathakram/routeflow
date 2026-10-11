@@ -140,6 +140,8 @@ describe("verification link lifecycle", () => {
       lastLoginAt: null,
       role: "TENANT_ADMIN",
       deletedAt: null,
+      emailVerifiedAt: null,
+      refreshTokens: { none: {} },
     });
   });
 

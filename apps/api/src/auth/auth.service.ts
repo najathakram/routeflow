@@ -557,6 +557,9 @@ export class AuthService {
           lastLoginAt: null,
           role: "TENANT_ADMIN",
           deletedAt: null,
+          // Re-checked inside the claim: both can change between the reads above and this write.
+          emailVerifiedAt: null,
+          refreshTokens: { none: {} },
         },
         data: { status: "ACTIVE", emailVerifiedAt: now },
       });

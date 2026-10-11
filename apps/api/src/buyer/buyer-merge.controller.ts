@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   Post,
   UseGuards,
@@ -15,6 +16,7 @@ import { BuyerJwtAuthGuard } from "./guards/buyer-jwt-auth.guard";
 import { CurrentBuyer } from "./decorators/current-buyer.decorator";
 import type { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { BuyerVerifyMergeDto } from "./dto/buyer-verify-merge.dto";
+import { legacyMergeLinkAccepted } from "../auth/legacy-link-windows";
 
 @ApiTags("buyer-merge")
 @Controller("buyer/auth")
@@ -43,7 +45,7 @@ export class BuyerMergeController {
 
   /**
    * LEGACY (path token): links emailed before the fragment format carry the token in the URL
-   * path. Kept only until those 24h links have expired (audit redacts the path by route
+   * path. Kept only until `LEGACY_MERGE_LINK_ACCEPT_UNTIL` (audit redacts the path by route
    * template); remove together with the web page's legacy query read.
    */
   @Get("verify-merge/:token")
@@ -53,6 +55,12 @@ export class BuyerMergeController {
     deprecated: true,
   })
   verifyMerge(@Param("token") token: string) {
+    this.assertLegacyMergePathOpen(new Date());
     return this.mergeService.verifyMergeToken(token);
+  }
+
+  /** After the legacy window the path form answers exactly like any unknown token. */
+  private assertLegacyMergePathOpen(now: Date): void {
+    if (!legacyMergeLinkAccepted(now)) throw new NotFoundException("Invalid verification token");
   }
 }

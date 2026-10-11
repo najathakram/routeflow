@@ -14,6 +14,9 @@ export const LEGACY_VERIFY_ACCEPT_UNTIL = new Date("2026-10-14T00:00:00.000Z");
 /** The last instant a plaintext customer-link invite value is still accepted. */
 export const LEGACY_INVITE_ACCEPT_UNTIL = new Date("2026-10-20T00:00:00.000Z");
 
+/** The last instant a buyer-merge verification link with its token in the URL path is accepted. */
+export const LEGACY_MERGE_LINK_ACCEPT_UNTIL = new Date("2026-10-15T00:00:00.000Z");
+
 /**
  * Accounts created before this instant never get a verification link from the resend path: their
  * sign-in timestamp is not reliable, so they stay on the back-office route. It applies only when a
@@ -24,4 +27,9 @@ export const VERIFY_RESEND_CUTOFF = new Date("2026-09-29T00:00:00.000Z");
 /** True while a legacy stateless verification link is still inside its window. */
 export function legacyVerifyAccepted(now: Date): boolean {
   return now.getTime() < LEGACY_VERIFY_ACCEPT_UNTIL.getTime();
+}
+
+/** True while a legacy buyer-merge link (token in the URL path) is still inside its window. */
+export function legacyMergeLinkAccepted(now: Date): boolean {
+  return now.getTime() < LEGACY_MERGE_LINK_ACCEPT_UNTIL.getTime();
 }

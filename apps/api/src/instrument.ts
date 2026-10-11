@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/node";
+import { scrubSentryEvent } from "./common/sentry-scrub";
 
 // DSN-optional: with SENTRY_DSN unset this init is a no-op and the SDK
 // stays fully inert (enabled:false disables transport + instrumentation).
@@ -22,4 +23,10 @@ Sentry.init({
   environment: process.env.RAILWAY_ENVIRONMENT_NAME ?? process.env.NODE_ENV ?? "development",
   release: process.env.RAILWAY_GIT_COMMIT_SHA || undefined,
   tracesSampleRate: 0,
+  // A request URL, query string, cookie, header or body can carry a single-use link token or a
+  // credential: no incoming body is attached, and every event is scrubbed (common/sentry-scrub.ts)
+  // down to the redacted route before it is sent.
+  integrations: [Sentry.httpIntegration({ maxIncomingRequestBodySize: "none" })],
+  beforeSend: scrubSentryEvent,
+  beforeSendTransaction: scrubSentryEvent,
 });
