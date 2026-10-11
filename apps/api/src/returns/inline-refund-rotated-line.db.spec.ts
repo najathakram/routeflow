@@ -259,6 +259,76 @@ describeDb(
       expect((audit.meta as any).invoiceIds).toEqual([s.invoices[1].id]);
     }, 60_000);
 
+    /**
+     * ONE order line billed on TWO live invoices (createPartialFromOrder: 6 + 4): `lo` (the lower id, the one the resolver's
+     * tie-break prefers) and `hi`, both carrying the SAME order line. A return of 2 pieces ($20) is captured for a refund from
+     * `hi`'s line. Returns the indexes into `s.invoices`.
+     */
+    const splitLine = async (label: string) => {
+      const s = await sale(label, [
+        { lines: [{ product: "A", qty: 6, subtotal: 60 }] },
+        { lines: [{ product: "A", qty: 4, subtotal: 40 }] },
+      ]);
+      const lo = s.invoices[0].id < s.invoices[1].id ? 0 : 1;
+      const hi = 1 - lo;
+      const shared = s.invoices[lo].lines[0].orderItemId;
+      await prisma.invoiceItem.update({
+        where: { id: s.invoices[hi].lines[0].id },
+        data: { orderItemId: shared },
+      });
+      const ret = await pendingRefund(s, 2, 20, hi);
+      await prisma.returnItem.updateMany({
+        where: { returnId: ret.id },
+        data: { sourceOrderItemId: shared },
+      });
+      s.invoices[hi].lines[0].orderItemId = shared;
+      return { s, ret, lo, hi };
+    };
+
+    it("R8: one order line on TWO live invoices, the invoice the goods were on owing after a rebuild: refused (never paid against the other)", async () => {
+      const { s, ret, hi } = await splitLine("r8");
+      // after the capture: the goods' invoice goes unpaid (its payment voided) and a staff edit rebuilds its lines
+      await prisma.invoicePayment.updateMany({
+        where: { invoiceId: s.invoices[hi].id },
+        data: { status: "VOID" },
+      });
+      await rotate(s, { invoice: hi });
+
+      const out = await refund(s, ret.id, 20);
+
+      expect(out.ok).toBe(false);
+      expect((out as any).e?.getStatus?.()).toBe(409);
+      expect(codeOf((out as any).e)).toBe("REFUND_NEEDS_PAID_INVOICE");
+      const after = await row(ret.id);
+      expect(after.status).toBe("RECEIVED");
+      expect(after.refundedAt).toBeNull();
+      expect(await audits(s)).toHaveLength(0);
+    }, 60_000);
+
+    it("R8b: a VOIDED sibling that carries the same order line also refuses the cash (fail closed), the exit is store credit", async () => {
+      const { s, ret, lo } = await splitLine("r8b");
+      await prisma.invoice.update({ where: { id: s.invoices[lo].id }, data: { status: "VOID" } });
+      await rotate(s, { invoice: 1 - lo });
+
+      const out = await refund(s, ret.id, 20);
+
+      expect(out.ok).toBe(false);
+      expect(codeOf((out as any).e)).toBe("REFUND_NEEDS_PAID_INVOICE");
+      expect((await row(ret.id)).status).toBe("RECEIVED");
+    }, 60_000);
+
+    it("R8 control: the same split with BOTH invoices paid in full still refunds, and the audit names both candidate invoices", async () => {
+      const { s, ret } = await splitLine("r8c");
+      await rotate(s, { invoice: s.invoices[0].id < s.invoices[1].id ? 1 : 0 });
+
+      const out = await refund(s, ret.id, 20);
+
+      expect(out.ok).toBe(true);
+      expect((await row(ret.id)).status).toBe("REFUNDED");
+      const [audit] = await audits(s);
+      expect((audit.meta as any).invoiceIds).toEqual([s.invoices[0].id, s.invoices[1].id].sort());
+    }, 60_000);
+
     it("R6: paid with store credit stays store-credit-only after a rebuild (F4 runs on the re-resolved invoice)", async () => {
       const s = await sale("r6");
       await prisma.invoicePayment.updateMany({

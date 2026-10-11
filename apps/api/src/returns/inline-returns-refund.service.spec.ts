@@ -1492,6 +1492,51 @@ describe("loadSourceInvoicesState + sourcesAreRefundable (F4, pure over a mocked
       expect(s.paidInFull).toBe(false);
     });
 
+    describe("one order line billed on TWO invoices (a 6 + 4 partial split): every candidate is held to the gate", () => {
+      const two = (second: { status?: string; paid: number }) => {
+        const d = db([]);
+        d.invoiceItem.findMany.mockImplementation(async ({ where }: any) =>
+          where?.id
+            ? []
+            : ["inv-a", "inv-b"].map((invoiceId) => ({
+                id: `ii-${invoiceId}`,
+                invoiceId,
+                orderItemId: "oi-1",
+                invoice: { orderId: "ord-src", status: "PAID" },
+              })),
+        );
+        d.invoice.findMany.mockResolvedValue([
+          paidInvoice({
+            id: "inv-a",
+            payments: [{ amount: 30, status: "PAID", method: "CASH" }],
+          }),
+          paidInvoice({
+            id: "inv-b",
+            status: second.status ?? "PAID",
+            payments: [{ amount: second.paid, status: "PAID", method: "CASH" }],
+          }),
+        ]);
+        return d;
+      };
+
+      it("both paid in full: both are in the set and the refund may proceed", async () => {
+        const s = await loadSourceInvoicesState(two({ paid: 30 }), [item]);
+        expect(s.invoiceIds).toEqual(["inv-a", "inv-b"]);
+        expect(s.paidInFull).toBe(true);
+      });
+
+      it("the invoice the resolver would NOT pick (higher id) owing: not paid in full, never paid against the other one", async () => {
+        const s = await loadSourceInvoicesState(two({ paid: 10 }), [item]);
+        expect(s.invoiceIds).toEqual(["inv-a", "inv-b"]);
+        expect(s.paidInFull).toBe(false);
+      });
+
+      it("a voided candidate refuses too (fail closed for cash)", async () => {
+        const s = await loadSourceInvoicesState(two({ status: "VOID", paid: 30 }), [item]);
+        expect(s.paidInFull).toBe(false);
+      });
+    });
+
     it("a line that resolves nowhere (no order line either) fails closed, as before", async () => {
       const d = rebuilt();
       const s = await loadSourceInvoicesState(d, [

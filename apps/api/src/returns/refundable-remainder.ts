@@ -643,7 +643,20 @@ export async function resolveInlineSourceInvoices(
   tx: any,
   items: ReadonlyArray<InlineSourceRef>,
 ): Promise<
-  Array<{ invoiceId: string | null; resolved: "line" | "order" | null; missing: boolean }>
+  Array<{
+    invoiceId: string | null;
+    resolved: "line" | "order" | null;
+    missing: boolean;
+    /**
+     * EVERY invoice the goods can sit on (sorted, distinct): the one stored line's invoice, or, for an item re-resolved through
+     * its order line, every candidate invoice, live AND dead (one order line can be billed on several: createPartialFromOrder
+     * splits a line 6 + 4). `invoiceId` stays the single best pick (a creditable one wins) the remainder pools and the
+     * store-credit mints use. A reader that GATES money on the invoice's state (the cash refund: paid in full, not voided)
+     * must hold ALL of them to the gate, because once the stored id dangles nothing says which of the invoices the goods were
+     * on. Cash is the strict side: an owing or dead sibling refuses it (the exits are store credit or cancel).
+     */
+    candidateInvoiceIds: string[];
+  }>
 > {
   const lineIds = [
     ...new Set(items.map((i) => i.sourceInvoiceItemId).filter((i): i is string => !!i)),
@@ -693,16 +706,28 @@ export async function resolveInlineSourceInvoices(
     }
   }
   return items.map((it) => {
-    if (!it.sourceInvoiceItemId) return { invoiceId: null, resolved: null, missing: false };
+    if (!it.sourceInvoiceItemId)
+      return { invoiceId: null, resolved: null, missing: false, candidateInvoiceIds: [] };
     const direct = byLine.get(it.sourceInvoiceItemId);
-    if (direct) return { invoiceId: direct, resolved: "line" as const, missing: false };
+    if (direct)
+      return {
+        invoiceId: direct,
+        resolved: "line" as const,
+        missing: false,
+        candidateInvoiceIds: [direct],
+      };
     const candidates = (it.sourceOrderItemId ? (byOrderItem.get(it.sourceOrderItemId) ?? []) : [])
       .filter((c) => !it.sourceOrderId || !c.orderId || c.orderId === it.sourceOrderId)
       .sort((a, b) => Number(a.dead) - Number(b.dead) || a.invoiceId.localeCompare(b.invoiceId));
     const best = candidates[0];
-    return best
-      ? { invoiceId: best.invoiceId, resolved: "order" as const, missing: false }
-      : { invoiceId: null, resolved: null, missing: true };
+    if (!best) return { invoiceId: null, resolved: null, missing: true, candidateInvoiceIds: [] };
+    const candidateInvoiceIds = [...new Set(candidates.map((c) => c.invoiceId))].sort();
+    return {
+      invoiceId: best.invoiceId,
+      resolved: "order" as const,
+      missing: false,
+      candidateInvoiceIds,
+    };
   });
 }
 

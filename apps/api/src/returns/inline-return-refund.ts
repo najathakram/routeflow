@@ -197,9 +197,12 @@ export async function resolveRefundInvoiceIds(
   // new line ids (any staff edit after delivery), the live line carrying the same order line. A line gone for good, or an
   // unreferenced item, is not refundable in cash.
   const where = await resolveInlineSourceInvoices(db, items);
-  const invoiceIds = [
-    ...new Set(where.map((w) => w.invoiceId).filter((i): i is string => !!i)),
-  ].sort();
+  // EVERY candidate invoice of a re-resolved item, live and dead, not just the resolver's best pick: one order line can be billed
+  // on two invoices (a 6 + 4 partial split), and with the stored id gone nothing says which one the goods were on. Holding ALL
+  // of them to "paid in full" fails closed (an owing or voided sibling refuses; the exits are store credit or cancel), so cash
+  // is never paid against an invoice the goods were never on; when every candidate is paid in full the refund proceeds. They
+  // are also all locked and re-verified below. (Store credit and approve gate on `invoiceId`, the best pick: no cash leaves.)
+  const invoiceIds = [...new Set(where.flatMap((w) => w.candidateInvoiceIds))].sort();
   const complete = items.every((it, idx) => !!it.sourceInvoiceItemId && !where[idx].missing);
   return { invoiceIds, complete };
 }
