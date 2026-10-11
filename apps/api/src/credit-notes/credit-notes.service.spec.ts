@@ -1583,13 +1583,15 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
   });
 
   describe("validateSelectionsForCustomer", () => {
+    // B1204: every refusal carries CREDIT_NOTE_UNAVAILABLE so the web shows its fixed copy by CODE.
+    const UNAVAILABLE = { response: { code: "CREDIT_NOTE_UNAVAILABLE" } };
     it("rejects a duplicate creditNoteId in the selection list", async () => {
       await expect(
         service.validateSelectionsForCustomer(prisma as any, "c1", [
           { creditNoteId: "cn-1" },
           { creditNoteId: "cn-1" },
         ]),
-      ).rejects.toThrow(/duplicate/i);
+      ).rejects.toMatchObject(UNAVAILABLE);
     });
 
     it("rejects an unknown credit note id", async () => {
@@ -1598,7 +1600,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
         service.validateSelectionsForCustomer(prisma as any, "c1", [
           { creditNoteId: "cn-missing" },
         ]),
-      ).rejects.toThrow(/not found/i);
+      ).rejects.toMatchObject(UNAVAILABLE);
     });
 
     it("rejects a credit note belonging to a different customer", async () => {
@@ -1607,7 +1609,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       ]);
       await expect(
         service.validateSelectionsForCustomer(prisma as any, "c1", [{ creditNoteId: "cn-1" }]),
-      ).rejects.toThrow(/customer/i);
+      ).rejects.toMatchObject(UNAVAILABLE);
     });
 
     it("rejects a VOID credit note", async () => {
@@ -1616,7 +1618,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       ]);
       await expect(
         service.validateSelectionsForCustomer(prisma as any, "c1", [{ creditNoteId: "cn-1" }]),
-      ).rejects.toThrow(/voided/i);
+      ).rejects.toMatchObject(UNAVAILABLE);
     });
 
     it("rejects an expired credit note", async () => {
@@ -1630,7 +1632,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       ]);
       await expect(
         service.validateSelectionsForCustomer(prisma as any, "c1", [{ creditNoteId: "cn-1" }]),
-      ).rejects.toThrow(/expired/i);
+      ).rejects.toMatchObject(UNAVAILABLE);
     });
 
     it("ACCEPTS a fully-consumed selection (idempotent resubmit) — no remaining-balance check", async () => {

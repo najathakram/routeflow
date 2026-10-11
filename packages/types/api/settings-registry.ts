@@ -10,10 +10,12 @@ import { PREF } from "./preferences";
  *  - `policy`       tenant BEHAVIOUR switches (policy store, #1337);
  *  - `systemConfig` tenant CONFIG DATA (SystemConfig); no new behaviour key may live here;
  *  - `userPref`     per-USER preferences (`users/me/preferences`);
+ *  - `tenantConfig` tenant CONFIG DATA stored as columns on `TenantConfig` (e.g. `timezone`,
+ *    SA-738); the key is the column name;
  *  - `featureConfig` tenant BEHAVIOUR modes stored as `TenantFeatureConfig` rows (the feature
  *    registry's config blocks, e.g. `fulfilment_model`); the key IS the feature key.
  */
-export type SettingHome = "policy" | "systemConfig" | "userPref" | "featureConfig";
+export type SettingHome = "policy" | "systemConfig" | "userPref" | "featureConfig" | "tenantConfig";
 export type SettingKind = "config" | "behaviour" | "preference" | "memo";
 export type SettingStatus =
   "live" | "legacy" | "pending #1337" | "moves to policy (PR-3)" | "pending WS4";
@@ -88,9 +90,9 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   // ── systemConfig: settings controller writers ────────────────────────────────
   cfg("settings.taxRate", "/settings?tab=profile"),
   cfg("settings.logoUrl", "/settings?tab=profile"),
-  cfg("settings.receiptFooter", "/settings?tab=profile"),
   // Counter sale quick keys (SA-747): pins, hides, window and cap as one JSON value; edited from the counter screen.
   cfg("settings.quickKeys", "/orders/counter-sale"),
+  cfg("settings.receiptFooter", "/settings?tab=profile"),
   ...[
     "fromName",
     "fromEmail",
@@ -200,6 +202,16 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
         : "/settings?tab=fulfilment#counter-sales",
     adminOnly: true,
   })),
+  // -- tenantConfig (SA-738): the business time zone, a `TenantConfig.timezone` column written by
+  // `PATCH /settings` (and by signup / create-tenant). Only a TENANT_ADMIN changes it.
+  {
+    key: "timezone",
+    home: "tenantConfig",
+    kind: "config",
+    status: "live",
+    screen: "/settings?tab=profile",
+    adminOnly: true,
+  },
   // ── userPref: derived from PREF so the list cannot drift ─────────────────────
   {
     key: PREF.lowStockDigestEnabled,
@@ -301,6 +313,8 @@ export function validateSettingsRegistry(
       if (featureConfigKeys && !featureConfigKeys.includes(r.key))
         problems.push(`${r.key}: not a feature-registry key with a config block`);
     }
+    if (r.home === "tenantConfig" && r.kind !== "config")
+      problems.push(`${r.key}: tenant-config rows are config data only`);
     if (r.home === "userPref" && r.kind !== "preference" && r.kind !== "memo")
       problems.push(`${r.key}: per-user home holds preferences only`);
     if (r.home === "systemConfig" && r.kind === "behaviour") {

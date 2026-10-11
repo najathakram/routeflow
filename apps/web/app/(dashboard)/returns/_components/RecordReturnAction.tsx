@@ -9,6 +9,7 @@ import { RotateCcw } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON } from "@/lib/api/addons";
+import { useOrder } from "@/lib/api/orders";
 import { RecordInlineReturnDialog } from "./RecordInlineReturnDialog";
 
 export interface RecordReturnActionProps {
@@ -32,6 +33,11 @@ export function RecordReturnAction({
 }: RecordReturnActionProps) {
   const [open, setOpen] = React.useState(false);
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
+  // SA-740: a WALK-IN's return must name its sale (the one shared walk-in customer would otherwise match any receipt), so
+  // the order this was opened from is that sale. A named customer's return may spill across orders: nothing is pinned.
+  // Reads the order the page already has cached (same query key); no extra request on the order page.
+  const { data: entryOrder } = useOrder(orderId ?? "");
+  const sourceOrderId = orderId && entryOrder?.customer?.isWalkIn === true ? orderId : undefined;
   if (!hasInlineReturns) return null;
 
   return (
@@ -50,6 +56,7 @@ export function RecordReturnAction({
         customerId={customerId}
         customerName={customerName}
         orderId={orderId}
+        sourceOrderId={sourceOrderId}
         allowRefund={allowRefund}
       />
     </>

@@ -237,6 +237,27 @@ describe("CounterTodaysSales", () => {
     expect(screen.getByTestId("today-cash-expected")).not.toHaveTextContent("before refunds");
   });
 
+  it("SA-740r2: some refunds with a recorded method and some without: the breakdown shows, and the labels say what is missing", async () => {
+    serve({
+      1: page1([row()], {
+        summary: {
+          ...SUMMARY,
+          refunds: { count: 2, cash: 3, card: 0, check: 0, other: 2, total: 5, tenderKnown: false },
+          cashExpectedInDrawer: 27,
+        },
+      }),
+    });
+    await open();
+    expect(await screen.findByTestId("today-refunds-cash")).toHaveTextContent("$3.00");
+    expect(screen.getByTestId("today-refunds-other")).toHaveTextContent("$2.00");
+    expect(screen.getByTestId("today-refunds")).toHaveTextContent(
+      /some without a recorded method/i,
+    );
+    expect(screen.getByTestId("today-cash-expected")).toHaveTextContent(
+      /before refunds with no method recorded/i,
+    );
+  });
+
   it("a voided row is labelled Voided, struck through, with no Reprint or Return", async () => {
     serve({ 1: page1([row({ voided: true })]) });
     await open();
@@ -261,6 +282,35 @@ describe("CounterTodaysSales", () => {
     expect(root.textContent).not.toMatch(/Tendered|Change/);
     fireEvent.click(screen.getByRole("button", { name: "Back to sales" }));
     expect(await screen.findByTestId("today-row-o1")).toBeInTheDocument();
+  });
+
+  it("SA-762r: a reprint prints a named customer and the settings footer; a walk-in row prints no customer line", async () => {
+    get.mockImplementation((url: string) =>
+      url === "/orders/counter-sale/today"
+        ? Promise.resolve({
+            data: page1([
+              row({ customerName: "Acme Co", isWalkIn: false }),
+              row({ orderId: "o2", orderNumber: "ORD-2", invoiceId: "i2", invoiceNumber: "INV-2" }),
+            ]),
+          })
+        : url === "/settings"
+          ? Promise.resolve({ data: { receiptFooter: "Thanks!\nSee you soon" } })
+          : Promise.resolve({ data: {} }),
+    );
+    await open();
+    const named = await screen.findByTestId("today-row-o1");
+    fireEvent.click(within(named).getByRole("button", { name: "Reprint" }));
+    const root = await screen.findByTestId("receipt-print-root");
+    expect(within(root).getByTestId("receipt-customer")).toHaveTextContent("Customer: Acme Co");
+    expect((await within(root).findByTestId("receipt-footer")).textContent).toBe(
+      "Thanks!\nSee you soon",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Back to sales" }));
+    fireEvent.click(
+      within(await screen.findByTestId("today-row-o2")).getByRole("button", { name: "Reprint" }),
+    );
+    const root2 = await screen.findByTestId("receipt-print-root");
+    expect(within(root2).queryByTestId("receipt-customer")).toBeNull();
   });
 
   it("while a reprint is open the page prints only the receipt; closing it undoes that", async () => {

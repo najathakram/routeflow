@@ -180,6 +180,22 @@ describe("settings registry — rules", () => {
     expect(r.adminOnly).toBeFalsy();
   });
 
+  it("the business time zone (SA-738) is an admin-only tenantConfig row on the profile tab", () => {
+    const r = SETTINGS_REGISTRY.find((x) => x.key === "timezone")!;
+    expect(r).toMatchObject({
+      home: "tenantConfig",
+      kind: "config",
+      status: "live",
+      screen: "/settings?tab=profile",
+      adminOnly: true,
+    });
+    expect(
+      validateSettingsRegistry([row({ key: "tz", home: "tenantConfig", kind: "behaviour" })]).join(
+        " ",
+      ),
+    ).toMatch(/tenant-config rows are config data only/);
+  });
+
   it("userPref rows are exactly the shared and api preference allow-lists", () => {
     const keys = SETTINGS_REGISTRY.filter((r) => r.home === "userPref")
       .map((r) => r.key)

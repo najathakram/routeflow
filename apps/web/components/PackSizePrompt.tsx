@@ -27,7 +27,7 @@ import * as React from "react";
 import { X } from "lucide-react";
 import { Button, cn } from "@routeflow/ui/web";
 import { formatCountList, suggestPackSize } from "@routeflow/types";
-import { perUnitPrice } from "@routeflow/pricing";
+import { perUnitPrice, unitWords } from "@routeflow/pricing";
 
 export interface PackSizePromptProps {
   /** Product name — the parser reads candidate counts out of this. */
@@ -122,6 +122,7 @@ export function PackSizePrompt({
   if (!suggestion.confidence || suggestion.confidence === "PIECE_UNIT") return null;
   if (dismissed) return null;
 
+  const w = unitWords();
   const isAmbiguous = suggestion.confidence === "AMBIGUOUS";
   const isConfident = suggestion.confidence === "HIGH" || suggestion.confidence === "MEDIUM";
   const acceptableValue = parseAcceptableCount(draftValue);
@@ -150,20 +151,20 @@ export function PackSizePrompt({
           {isAmbiguous ? (
             <>
               This name mentions {suggestion.counts.length} different counts (
-              {formatCountList(suggestion.counts)}). Which one is a box?
+              {formatCountList(suggestion.counts)}). Which one is a {w.pack.lower}?
             </>
           ) : isConfident ? (
             <>
-              Looks like this is sold in a box of <strong>{suggestion.packSize}</strong>. Set pack
-              size?
+              Looks like this is sold in a {w.pack.lower} of <strong>{suggestion.packSize}</strong>.
+              Set pack size?
             </>
           ) : (
-            "How many pieces in a box?"
+            `How many ${w.base.lowerOther} in a ${w.pack.lower}?`
           )}
         </p>
         {isAmbiguous && (
           <p className="mt-0.5 text-[11px] text-brand-700/80">
-            We never guess between them — tell us which one is the box.
+            We never guess between them — tell us which one is the {w.pack.lower}.
           </p>
         )}
         {(currentStock ?? 0) > 0 && (
@@ -174,8 +175,8 @@ export function PackSizePrompt({
           // only one who knows which unit that 50 was counted in.
           <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
             This product already holds <strong>{currentStock}</strong> in stock. Setting a pack size
-            makes that number, and the recorded cost, read as <em>pieces</em> — so if it was counted
-            in cases, adjust stock and cost afterwards.
+            makes that number, and the recorded cost, read as <em>{w.base.lowerOther}</em> — so if
+            it was counted in cases, adjust stock and cost afterwards.
           </p>
         )}
         <div className="mt-2 flex items-center gap-2">
@@ -188,7 +189,7 @@ export function PackSizePrompt({
             value={draftValue}
             onChange={(e) => setDraftValue(e.target.value)}
             placeholder={isConfident ? undefined : "e.g. 12"}
-            aria-label="Units per box"
+            aria-label={`${w.base.other} per ${w.pack.lower}`}
             className="w-24 rounded border border-brand-300 bg-white px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           <Button

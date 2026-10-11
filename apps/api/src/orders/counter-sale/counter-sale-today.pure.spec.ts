@@ -276,6 +276,86 @@ const credit = (subtotal: string, tax = "0", category = "0") => ({
 });
 const none = { _sum: { amount: null } };
 
+const refundOf = (refundAmount: string, refundTender?: string | null) => ({
+  ...noReturnMoney,
+  refundMethod: "EXTERNAL_REFUND",
+  refundAmount,
+  ...(refundTender === undefined ? {} : { refundTender }),
+});
+
+// SA-740r2: Today's sales reads ONLY the Return.refundTender column; tenderKnown is COMPUTED per window (the old
+// REFUND_TENDER_KNOWN = false constant is gone). An unknown tender is never guessed to be cash.
+describe("foldSummary: refund tenders from the column (SA-740r2)", () => {
+  const sales = { _count: { _all: 1 }, _sum: { total: "100.00" } };
+  const day = (returns: any[], cash = "100.00") =>
+    foldSummary({
+      sales,
+      payments: [{ method: "CASH", _sum: { amount: cash } }],
+      paidOnSales: { _sum: { amount: cash } },
+      returns,
+    });
+
+  it("9. one inline CASH refund of 5.00: cash 5, other 0, the drawer is 5 lower, tenderKnown true", () => {
+    const s = day([refundOf("5.00", "CASH")]);
+    expect(s.refunds).toEqual({
+      count: 1,
+      cash: 5,
+      card: 0,
+      check: 0,
+      other: 0,
+      total: 5,
+      tenderKnown: true,
+    });
+    expect(s.cashExpectedInDrawer).toBe(95);
+    expect(s.netCollected).toBe(95);
+  });
+
+  it("CREDIT_CARD is the card bucket and CHECK the check bucket; only cash leaves the drawer", () => {
+    const s = day([
+      refundOf("4.00", "CASH"),
+      refundOf("3.00", "CREDIT_CARD"),
+      refundOf("2.00", "CHECK"),
+    ]);
+    expect(s.refunds).toMatchObject({
+      count: 3,
+      cash: 4,
+      card: 3,
+      check: 2,
+      other: 0,
+      total: 9,
+      tenderKnown: true,
+    });
+    expect(s.cashExpectedInDrawer).toBe(96);
+    expect(s.netCollected).toBe(91);
+  });
+
+  it.each([
+    ["a null tender (the backfill has not reached it, or none was sent)", null],
+    ["a missing tender field", undefined],
+    ["a tender that is not a refund tender", "ACH"],
+  ])(
+    "10. %s goes to `other`, is never guessed to be cash, and tenderKnown is false",
+    (_label, tender) => {
+      const s = day([refundOf("5.00", "CASH"), refundOf("7.00", tender as any)]);
+      expect(s.refunds).toMatchObject({
+        count: 2,
+        cash: 5,
+        other: 7,
+        total: 12,
+        tenderKnown: false,
+      });
+      // the known cash refund is subtracted; the unknown one is not (the figure says so through tenderKnown)
+      expect(s.cashExpectedInDrawer).toBe(95);
+    },
+  );
+
+  it("a store-credit return carries no tender and does not affect tenderKnown", () => {
+    const s = day([credit("10.00")]);
+    expect(s.refunds.tenderKnown).toBe(true);
+    expect(s.refunds.count).toBe(0);
+  });
+});
+
 describe("foldSummary (tests 10 and 11)", () => {
   const sales = { _count: { _all: 12 }, _sum: { total: "284.50" } };
 
@@ -344,14 +424,15 @@ describe("foldSummary (tests 10 and 11)", () => {
       handOvers: { count: 0, total: 0 },
       storeCreditUsed: 0,
       onAccount: 0,
-      refunds: { count: 0, cash: 0, card: 0, check: 0, other: 0, total: 0, tenderKnown: false },
+      // no refund in the window means no unknown tender in it: known (SA-740r2)
+      refunds: { count: 0, cash: 0, card: 0, check: 0, other: 0, total: 0, tenderKnown: true },
       storeCreditIssued: { count: 0, amount: 0 },
       cashExpectedInDrawer: 0,
       netCollected: 0,
     });
   });
 
-  it("refunds by refund date lower netCollected; the tender is not stored, so they sit in `other` and cash expected does not subtract them", () => {
+  it("refunds by refund date lower netCollected; a refund with NO recorded tender sits in `other` and cash expected does not subtract it", () => {
     const s = foldSummary({
       sales,
       payments: [{ method: "CASH", _sum: { amount: "120.00" } }],

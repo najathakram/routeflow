@@ -1,5 +1,6 @@
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
+import { ToastProvider } from "@routeflow/ui/web";
 import BuyerProductDetailPage from "./page";
 
 /**
@@ -70,33 +71,53 @@ beforeEach(() => {
 describe("product detail: Ships when restocked", () => {
   it("renders exactly once when the buyer can backorder", () => {
     product = { ...base, canBackorder: true };
-    render(<BuyerProductDetailPage />);
+    render(
+      <ToastProvider>
+        <BuyerProductDetailPage />
+      </ToastProvider>,
+    );
     expect(screen.getAllByText("Ships when restocked")).toHaveLength(1);
   });
 
   it("still renders once when the item is already in the cart", () => {
     product = { ...base, canBackorder: true };
     cartItems = [{ productId: "p1", qty: 1 }];
-    render(<BuyerProductDetailPage />);
+    render(
+      <ToastProvider>
+        <BuyerProductDetailPage />
+      </ToastProvider>,
+    );
     expect(screen.getAllByText("Ships when restocked")).toHaveLength(1);
   });
 
   it("out of stock and cannot backorder: the page still says Out of stock", () => {
     product = { ...base, canBackorder: false };
-    render(<BuyerProductDetailPage />);
+    render(
+      <ToastProvider>
+        <BuyerProductDetailPage />
+      </ToastProvider>,
+    );
     expect(screen.getByText("Out of stock")).toBeInTheDocument();
     expect(screen.queryByText("Ships when restocked")).toBeNull();
   });
 
   it("in stock and low stock lines are unchanged", () => {
     product = { ...base, stockStatus: "LOW", stockLeft: 3, inStock: true };
-    render(<BuyerProductDetailPage />);
+    render(
+      <ToastProvider>
+        <BuyerProductDetailPage />
+      </ToastProvider>,
+    );
     expect(screen.getByText("Only 3 left")).toBeInTheDocument();
   });
 
   it("the favourite heart has a 44px hit area", () => {
     product = { ...base, canBackorder: true };
-    render(<BuyerProductDetailPage />);
+    render(
+      <ToastProvider>
+        <BuyerProductDetailPage />
+      </ToastProvider>,
+    );
     expect(screen.getByTitle("Add to favorites").className).toMatch(/\bmin-h-11\b/);
   });
 });

@@ -8,5 +8,10 @@
 /** The register a request names when it names none (or an unknown one). One register in v1. */
 export const COUNTER_DEFAULT_REGISTER = "main";
 
-/** A register key is a short slug. */
-export const REGISTER_KEY_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+/**
+ * What a register key may look like: 1..64 characters of letters, digits, underscore and dash, with ':' allowed after
+ * the first character (so a namespaced key like `store:2` works, and `:x` does not). Case-sensitive: `Front-1` and
+ * `front-1` are two registers. This is the ONE union pattern; park, quick keys and the day close all share it, none
+ * keeps a local regex. No flags, so `$` never matches before a trailing newline.
+ */
+export const REGISTER_KEY_PATTERN = /^[A-Za-z0-9_-][A-Za-z0-9:_-]{0,63}$/;

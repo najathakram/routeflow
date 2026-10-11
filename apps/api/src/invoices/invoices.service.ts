@@ -13,15 +13,17 @@ import { applyComposedLineEdits } from "./invoice-composed-edit";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import * as unitAware from "../orders/unit-aware-guard";
 import {
+  assertFiniteInvoiceInput,
   assertInvoiceTotalsSane,
   assertNoNegativeLineSubtotal,
   storedInvoiceTotals,
+  sumInvoiceTotalsStrict,
 } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { overpaidByOf, statusFromPayments } from "./invoice-status";
 import { voidPaymentInTx } from "./payment-void-tx";
-import { tenantTimeZone } from "../common/tenant-time-zone";
+import { TENANT_ZONE_SELECT, configuredZone, tenantTimeZone } from "../common/tenant-time-zone";
 import { StorageService } from "../storage/storage.service";
 import {
   deletePaymentImage,
@@ -42,7 +44,6 @@ import { withComponentViews } from "../orders/component-view";
 import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
 import {
   buildEditedLines,
-  editInvoiceTotals,
   loadEditCatalog,
   orderSyncLines,
   inPlacePatch,
@@ -186,7 +187,20 @@ import {
   catalogRestrictionLines,
 } from "./invoice-restriction-lines";
 import { buildManualInvoiceLines, type ManualLineItem } from "./manual-invoice-lines";
-import { foldCategoryTax, loadManualLineContext, regularTaxShare } from "./manual-invoice-context";
+import {
+  foldCategoryTax,
+  loadManualLineContext,
+  regularTaxShare,
+  zeroExemptCategoryTax,
+} from "./manual-invoice-context";
+import {
+  assertNotOverpaidByEdit,
+  assertSameOrderLink,
+  assertStillDraft,
+  intakeMoney,
+  loadLockedInvoiceForEdit,
+  planHeaderOnlyTotals,
+} from "./locked-invoice-edit";
 import { resolveLineUnits } from "../products/line-units";
 import { assertUnitLineSplit } from "../orders/unit-line-split";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
@@ -337,12 +351,12 @@ export class InvoicesService {
     if (!tenantId) return { notes: null, terms: null, timezone: null };
     const cfg = await this.prisma.tenantConfig.findUnique({
       where: { tenantId },
-      select: { invoiceNotes: true, invoiceTerms: true, timezone: true },
+      select: { invoiceNotes: true, invoiceTerms: true, ...TENANT_ZONE_SELECT },
     });
     return {
       notes: cfg?.invoiceNotes ?? null,
       terms: cfg?.invoiceTerms ?? null,
-      timezone: cfg?.timezone ?? null,
+      timezone: configuredZone(cfg, { tenantId }),
     };
   }
 
@@ -399,6 +413,7 @@ export class InvoicesService {
   async create(dto: Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] }) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
+    assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
     assertNsfLinesUntaxed(dto.items); // #2656: an NSF-described line is never taxed (400)
     const customer = await this.prisma
       .forTenant()
@@ -429,15 +444,13 @@ export class InvoicesService {
     );
 
     // Manual-invoice line builder: see manual-invoice-lines.ts (verbatim move; units_v1 4c-1 prefactor).
-    const { itemsData, subtotal: linesSubtotal } = buildManualInvoiceLines(dto.items, {
+    const { itemsData } = buildManualInvoiceLines(dto.items, {
       productMap,
       categoryMap,
       tenantId: this.prisma.getTenantId(),
       clampFreeUnits: (free, boxes, qty) => this.clampLineFreeUnits(free, boxes, qty),
       resolved,
     });
-    let subtotal = linesSubtotal;
-    subtotal = roundMoney(subtotal);
     // A regulated line makes this a filable sale — the SALE ledger rows are written below.
     const hasRegulated = itemsData.some((it: any) => it.trackedCategoryId != null);
     await this.applyMsrpSnapshots(this.prisma.forTenant(), dto.customerId, itemsData);
@@ -446,21 +459,25 @@ export class InvoicesService {
     // money-invariants.util.ts, shared with EstimatesService.convertToInvoice's pre-flight.
     assertNoNegativeLineSubtotal(itemsData);
 
-    const invDiscount = dto.discount ?? 0;
-    const shipping = dto.shippingFee ?? 0;
+    const invDiscount = intakeMoney(dto.discount, 0); // B1047: cents at intake
+    const shipping = intakeMoney(dto.shippingFee, 0);
     // RF-079: tax-exempt customers owe $0 tax regardless of line item tax rates.
     // Tax is derived from each line's stored post-discount subtotal — the SAME
     // basis as the line itself — so boxed/prorated lines are taxed on what they
     // actually bill (previously re-derived qty*unitPrice, which diverged).
     const isTaxExempt = !!(customer as any).isTaxExempt;
-    const regularTax = isTaxExempt
-      ? 0
-      : roundMoney(itemsData.reduce((sum, it) => sum + it.subtotal * (it.taxRate ?? 0), 0));
-    // RF-4: fold the regulated category tax into the invoice tax — exempt → 0 for
-    // BOTH (foldCategoryTax also zeroes the per-line snapshots so the ledger records 0).
-    const categoryTaxTotal = this.foldCategoryTax(itemsData, isTaxExempt);
-    const taxTotal = roundMoney(regularTax + categoryTaxTotal);
-    const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
+    // RF-4: exempt → $0 of BOTH taxes (the per-line category snapshots are zeroed so the ledger records 0).
+    zeroExemptCategoryTax(itemsData, isTaxExempt);
+    // One source: the stored subtotal and the total come from the SAME builder result (N2).
+    const {
+      subtotal,
+      tax: taxTotal,
+      total,
+    } = sumInvoiceTotalsStrict(itemsData, {
+      discount: invDiscount,
+      shipping,
+      isTaxExempt,
+    });
 
     // Validate invoice-level discount doesn't exceed subtotal and total is non-negative — B1030:
     // shared with update(), which runs the same two checks on both of its paths.
@@ -2490,11 +2507,11 @@ export class InvoicesService {
     if (tenantId) {
       const cfg = await this.prisma.tenantConfig.findUnique({
         where: { tenantId },
-        select: { invoiceNotes: true, invoiceTerms: true, timezone: true },
+        select: { invoiceNotes: true, invoiceTerms: true, ...TENANT_ZONE_SELECT },
       });
       tenantNotes = cfg?.invoiceNotes ?? null;
       tenantTerms = cfg?.invoiceTerms ?? null;
-      tenantTimezone = cfg?.timezone ?? null;
+      tenantTimezone = configuredZone(cfg, { tenantId });
     }
 
     // A backdated order bills on its business date, and the payment term runs from
@@ -3064,6 +3081,7 @@ export class InvoicesService {
   }
 
   async update(id: string, dto: UpdateInvoiceDto) {
+    assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
     const inv = await this.findOneOrThrow(id); // a missing invoice is a 404 whatever else is wrong
     // units_v1: a line can be CREATED by a unit (create(), 4c-1) but not yet REWRITTEN by one (4c-2);
     // the shared DTO accepts `unitLabel`, and this path would silently store a PACK line for it.
@@ -3101,10 +3119,10 @@ export class InvoicesService {
       const { updated } = await this.prisma.tenantTransaction(async (tx: any) => {
         // Serialize concurrent saves of this invoice: rows are read AFTER the lock, so a second save
         // sees the first's rows and totals instead of writing over them (no P2025, total = its lines).
-        // Lock order (SA-137/203): the ORDER row first, then the invoice, as the invoice-from-order paths do.
-        if (inv.orderId)
-          await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${inv.orderId} FOR UPDATE`;
-        await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
+        // Lock order (SA-137/203): the ORDER row first, then the invoice (loadLockedInvoiceForEdit, B1043).
+        const locked = await loadLockedInvoiceForEdit(tx, id);
+        assertStillDraft(locked.invoice); // r87: DRAFT re-checked under the lock
+        assertSameOrderLink(locked.invoice, inv); // the pre-read order is the one we locked
         // SA-674b / SA-689 a: with the carrier, the shipment invoice keeps its lines and quantities. Read
         // UNDER the row locks (an order shipped since the pre-reads is refused), never before the tx.
         const carrierLocked = await invoiceOrderWithCarrier(
@@ -3115,7 +3133,7 @@ export class InvoicesService {
         // SA-184/186: match the payload to THIS invoice's stored rows (by id, tenant-scoped; never by
         // productId), keep untouched rows verbatim and in place, re-price only changed lines. Rules
         // and reasoning: invoice-edit-plan.ts.
-        const storedRows = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
+        const { storedRows, isTaxExempt, invoice: cur } = locked;
         const matches = matchEditLines(items, storedRows);
         if (carrierLocked) assertCarrierLinesUnchanged(items, matches, storedRows); // before any write
         assertNsfLinesUntaxed(
@@ -3142,27 +3160,23 @@ export class InvoicesService {
           inv.customerId,
           editLines.filter((l) => !l.untouched).map((l) => l.data as any),
         );
-        const customerForTax = await tx.customer.findFirst({
-          where: { id: inv.customerId },
-          select: { isTaxExempt: true },
-        });
-        const isTaxExempt = !!(customerForTax as any)?.isTaxExempt;
-        const cur = await tx.invoice.findUnique({
-          where: { id },
-          select: { discount: true, shippingFee: true, subtotal: true, total: true },
-        });
-        const invDiscount = dto.discount ?? Number(cur.discount);
-        const shipping = dto.shippingFee ?? Number(cur.shippingFee);
-        const { subtotal, taxTotal, total } = editInvoiceTotals(
-          itemsData,
-          isTaxExempt,
-          invDiscount,
+        const invDiscount = intakeMoney(dto.discount, cur.discount); // B1047: cents at intake
+        const shipping = intakeMoney(dto.shippingFee, cur.shippingFee);
+        zeroExemptCategoryTax(itemsData, isTaxExempt); // exempt: $0 levy on the stored snapshots too
+        const {
+          subtotal,
+          tax: taxTotal,
+          total,
+        } = sumInvoiceTotalsStrict(itemsData as any[], {
+          discount: invDiscount,
           shipping,
-        );
+          isTaxExempt,
+        });
         assertInvoiceTotalsSane(
           { discount: invDiscount, subtotal, total },
           storedInvoiceTotals(cur),
         ); // B1030 / SA-651: not worse than stored, before any write
+        assertNotOverpaidByEdit(locked.payments, total, cur.total); // B1046
         // Rebuild the items AND re-sync the W5 ledger atomically: the delete-and-recreate
         // rotates invoiceItemIds and can change qty/price or add/remove a regulated line,
         // so the invoice's prior SALE rows must be reversed and re-written from the new
@@ -3242,65 +3256,50 @@ export class InvoicesService {
       return updated;
     }
 
-    // RF-012: if discount or shippingFee changed, recompute total from existing items.
+    // RF-012 / B1043: a discount or shippingFee change re-prices the total from the stored lines.
     const needsRecalc = dto.discount !== undefined || dto.shippingFee !== undefined;
-    let recalcData: Record<string, unknown> = {};
-    if (needsRecalc) {
-      const existingItems = await this.prisma
-        .forTenant()
-        .invoiceItem.findMany({ where: { invoiceId: id } });
-      const subtotal = roundMoney(
-        existingItems.reduce((s: number, i: any) => s + Number(i.subtotal), 0),
-      );
-      const taxTotal = roundMoney(
-        existingItems.reduce(
-          (s: number, i: any) => s + Number(i.subtotal) * Number(i.taxRate ?? 0),
-          0,
-        ),
-      );
-      const invDiscount = dto.discount !== undefined ? dto.discount : Number(inv.discount);
-      const shipping = dto.shippingFee !== undefined ? dto.shippingFee : Number(inv.shippingFee);
-      const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
-      assertInvoiceTotalsSane({ discount: invDiscount, subtotal, total }, storedInvoiceTotals(inv)); // B1030 / SA-651
-      recalcData = {
-        subtotal,
-        taxAmount: taxTotal,
-        discount: invDiscount,
-        shippingFee: shipping,
-        total,
-      };
-    }
-
-    const updated = await this.prisma.forTenant().invoice.update({
-      where: { id },
-      data: {
-        ...(due.dueDate && { dueDate: due.dueDate }),
-        ...(issueDate && { issueDate }),
-        ...(dto.notes !== undefined && { notes: dto.notes }),
-        ...(dto.terms !== undefined && { terms: dto.terms }),
-        // "" clears the label (the composer sends it when the operator hand-typed a
-        // due date and the term no longer applies) — same convention as the supplier
-        // and customer default-terms fields.
-        ...(dto.paymentTermsLabel !== undefined && {
-          paymentTermsLabel: dto.paymentTermsLabel || null,
-        }),
-        ...(dto.referenceNumber !== undefined && {
-          referenceNumber: dto.referenceNumber || null,
-        }),
-        ...(dto.subject !== undefined && { subject: dto.subject || null }),
-        ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
-        ...(dto.depositDueDate !== undefined && {
-          depositDueDate: due.depositDueDate,
-        }),
-        ...recalcData,
-      },
-      include: {
-        customer: { select: { id: true, businessName: true } },
-        items: true,
-        payments: true,
-      },
-    });
-    // Backward sync: discount/shipping changes alter the order total too.
+    const headerData = {
+      ...(due.dueDate && { dueDate: due.dueDate }),
+      ...(issueDate && { issueDate }),
+      ...(dto.notes !== undefined && { notes: dto.notes }),
+      ...(dto.terms !== undefined && { terms: dto.terms }),
+      // "" clears the label (the composer sends it when the operator hand-typed a
+      // due date and the term no longer applies) — same convention as the supplier
+      // and customer default-terms fields.
+      ...(dto.paymentTermsLabel !== undefined && {
+        paymentTermsLabel: dto.paymentTermsLabel || null,
+      }),
+      ...(dto.referenceNumber !== undefined && {
+        referenceNumber: dto.referenceNumber || null,
+      }),
+      ...(dto.subject !== undefined && { subject: dto.subject || null }),
+      ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
+      ...(dto.depositDueDate !== undefined && {
+        depositDueDate: due.depositDueDate,
+      }),
+    };
+    const include = {
+      customer: { select: { id: true, businessName: true } },
+      items: true,
+      payments: true,
+    };
+    // Totals untouched: nothing to lock. Totals touched: the SAME locks and locked reads as the items branch,
+    // ONE update for the header fields + the totals (F4), the prior for the sanity guard from the LOCKED row.
+    const updated = !needsRecalc
+      ? await this.prisma.forTenant().invoice.update({ where: { id }, data: headerData, include })
+      : await this.prisma.tenantTransaction(async (tx: any) => {
+          const locked = await loadLockedInvoiceForEdit(tx, id);
+          assertStillDraft(locked.invoice); // r87
+          assertSameOrderLink(locked.invoice, inv);
+          const { subtotal, ...totals } = planHeaderOnlyTotals(locked, dto);
+          assertInvoiceTotalsSane(
+            { discount: totals.discount, subtotal, total: totals.total },
+            storedInvoiceTotals(locked.invoice),
+          ); // B1030 / SA-651
+          assertNotOverpaidByEdit(locked.payments, totals.total, locked.invoice.total); // B1046
+          return tx.invoice.update({ where: { id }, data: { ...headerData, ...totals }, include });
+        });
+    // Backward sync: discount/shipping changes alter the order total too (lines unchanged: no ledger resync).
     if (inv.orderId && needsRecalc) await this.recomputeOrderFromInvoices(inv.orderId);
     return updated;
   }
@@ -4336,17 +4335,16 @@ export class InvoicesService {
       systemKind: i.systemKind ?? null,
       tenantId: this.prisma.getTenantId(),
     }));
-    const subtotal = roundMoney(itemsData.reduce((s, i) => s + Number(i.subtotal), 0));
     const isTaxExempt = !!(customer as any)?.isTaxExempt;
-    const regularTax = isTaxExempt
-      ? 0
-      : roundMoney(itemsData.reduce((s, i) => s + Number(i.subtotal) * Number(i.taxRate ?? 0), 0));
-    // RF-4: fold category tax (exempt → 0 both + zeroed snapshots).
-    const categoryTaxTotal = this.foldCategoryTax(itemsData, isTaxExempt);
-    const taxTotal = roundMoney(regularTax + categoryTaxTotal);
+    // RF-4: exempt → $0 of BOTH taxes (zeroed snapshots); the totals come from the ONE builder (B1043).
+    zeroExemptCategoryTax(itemsData, isTaxExempt);
     const invDiscount = Number(inv.discount ?? 0);
     const shipping = Number(inv.shippingFee ?? 0);
-    const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
+    const {
+      subtotal,
+      tax: taxTotal,
+      total,
+    } = sumInvoiceTotalsStrict(itemsData, { discount: invDiscount, shipping, isTaxExempt });
     // B89/L-047: stamp issueDate explicitly as UTC-midnight of today (tenant
     // calendar day) — every other issueDate write in this file holds this
     // invariant; omitting it here left it to whatever the schema default

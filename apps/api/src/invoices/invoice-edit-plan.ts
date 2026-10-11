@@ -38,11 +38,9 @@ import {
   normalizeBoxesPieces,
   packFromOwnSplit,
   regulatedUnitBasis,
-  roundMoney,
   splitMatchesQty,
   type CategoryTaxType,
 } from "@routeflow/pricing";
-import { foldCategoryTax } from "./manual-invoice-context";
 import { priceReplacedLine, resolveUpdateLinePack } from "./update-pack-resolution";
 
 export interface EditPayloadLine {
@@ -397,24 +395,6 @@ export function orderSyncLines(
   }
   const totalsMoved = !same(discount, cur.discount ?? 0) || !same(shipping, cur.shippingFee ?? 0);
   return changed.length > 0 || totalsMoved ? changed : null;
-}
-
-/**
- * The saved invoice's money from its lines' stored subtotals (same basis as each line): regular tax on the
- * post-discount subtotal, the regulated category tax folded in (RF-4; exempt -> 0 for both, snapshots zeroed).
- */
-export function editInvoiceTotals(
-  itemsData: Array<Record<string, any>>,
-  isTaxExempt: boolean,
-  discount: number,
-  shipping: number,
-): { subtotal: number; taxTotal: number; total: number } {
-  const subtotal = roundMoney(itemsData.reduce((s, it) => s + Number(it.subtotal), 0));
-  const regularTax = isTaxExempt
-    ? 0
-    : roundMoney(itemsData.reduce((s, it) => s + it.subtotal * (it.taxRate ?? 0), 0));
-  const taxTotal = roundMoney(regularTax + foldCategoryTax(itemsData, isTaxExempt));
-  return { subtotal, taxTotal, total: roundMoney(subtotal - discount + shipping + taxTotal) };
 }
 
 /** Reads the products (pack + regulated snapshot) and regulated-section tax config the edited lines reference. */

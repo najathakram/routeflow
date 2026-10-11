@@ -77,7 +77,8 @@ const SHARED = [
   "invoiceNumber",
   "invoiceId",
   "subtotal",
-  "adjustment",
+  "tax",
+  "adjustments",
   "total",
   "paid",
   "balanceDue",
@@ -89,7 +90,7 @@ const SHARED = [
 
 describe("receipt golden: live vs reprint", () => {
   it.each([["CASH"], ["CARD"]] as const)(
-    "%s sale: same header, lines, subtotal, adjustment, total, method, numbers",
+    "%s sale: same header, lines, subtotal, tax, adjustments, total, method, numbers",
     (m) => {
       const a = live(m);
       const b = reprint([{ method: m, amount: 24.5 }]);

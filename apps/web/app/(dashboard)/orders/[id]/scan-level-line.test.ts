@@ -44,9 +44,12 @@ describe("explicitBumpLevel + bumpLineForScan — shared code equals a picker ta
 });
 
 describe("splitLineHintText — singular/plural (Opus nit, #2764)", () => {
-  it("1 case (not '1 cases'), plural otherwise, loose stays a count", () => {
-    expect(splitLineHintText(12, 12)).toBe("1 case + 0 loose");
-    expect(splitLineHintText(25, 12)).toBe("2 cases + 1 loose");
-    expect(splitLineHintText(5, 12)).toBe("0 cases + 5 loose");
+  it("1 box (not '1 boxes'), plural otherwise, pc for exactly 1", () => {
+    expect(splitLineHintText(12, 12)).toBe("1 box + 0 pcs");
+    expect(splitLineHintText(25, 12)).toBe("2 boxes + 1 pc");
+    expect(splitLineHintText(5, 12)).toBe("0 boxes + 5 pcs");
+    expect(splitLineHintText(13, 12)).toBe("1 box + 1 pc"); // exactly 1 piece is "pc"
+    expect(splitLineHintText(27, 12)).toBe("2 boxes + 3 pcs");
+    expect(splitLineHintText(1, 12)).toBe("0 boxes + 1 pc");
   });
 });

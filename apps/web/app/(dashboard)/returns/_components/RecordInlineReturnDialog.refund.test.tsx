@@ -3,6 +3,7 @@ import { act } from "react";
 import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { RecordInlineReturnDialog } from "./RecordInlineReturnDialog";
 import type { InlineReturnQuoteResponse, InlineReturnRefundEligibility } from "@routeflow/types";
+import { REFUND_COPY } from "./refund-copy";
 
 /** The quote as the POS-4b API will answer it (refund eligibility alongside the breakdown). */
 type RefundQuote = InlineReturnQuoteResponse & Partial<InlineReturnRefundEligibility>;
@@ -100,7 +101,7 @@ async function toQuote(q: RefundQuote, props: Record<string, unknown> = {}) {
     />,
   );
   await screen.findByText(/what came back/i);
-  fireEvent.change(screen.getByLabelText(/qty \(pieces\)/i), { target: { value: "5" } });
+  fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
   fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
   fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
   await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
@@ -305,6 +306,28 @@ describe("refund flow", () => {
     expect(captureMutate).toHaveBeenCalledTimes(1);
     expect(refundReturn.mock.calls[1]).toEqual(refundReturn.mock.calls[0]);
     await screen.findByText(/^Refund recorded\./);
+  });
+
+  it("SA-749r2 #9: a cash refund over the sale's cash gets fixed copy; the clerk switches to Card and retries, or gives store credit", async () => {
+    refundReturn
+      .mockRejectedValueOnce(apiErr(409, "REFUND_EXCEEDS_CASH_PAID"))
+      .mockResolvedValueOnce({});
+    await refundFlow(quote({ paidMethods: ["CASH"] }));
+    expect(screen.getByLabelText("Refund by")).toHaveValue("CASH");
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByText(REFUND_COPY.exceedsCash);
+    expect(screen.queryByText("SERVER RAW TEXT")).toBeNull();
+    expect(screen.getByRole("button", { name: "Give store credit instead" })).toBeInTheDocument();
+    // the tender can be changed on this refusal (it is the way out), then only the refund is re-POSTed
+    const select = screen.getByLabelText("Refund by");
+    expect(select).not.toBeDisabled();
+    fireEvent.change(select, { target: { value: "CARD" } });
+    fireEvent.click(screen.getByRole("button", { name: "Retry refund" }));
+    await waitFor(() => expect(refundReturn).toHaveBeenCalledTimes(2));
+    expect(refundReturn.mock.calls[1]).toEqual(["ret-1", { tender: "CARD", expectedAmount: 12.4 }]);
+    expect(captureMutate).toHaveBeenCalledTimes(1);
   });
 
   it("REFUND_AMOUNT_CHANGED re-quotes and needs a fresh confirm with the new amount", async () => {

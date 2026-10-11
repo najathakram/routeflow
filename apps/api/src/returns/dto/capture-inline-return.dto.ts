@@ -163,4 +163,14 @@ export class CaptureInlineReturnDto extends InlineReturnLinesDto {
   @IsString()
   @IsNotEmpty()
   orderId!: string;
+
+  /**
+   * SA-740 (row 190): the sale the goods are from, when it is not the carrying order. A walk-in capture defaults it to
+   * `orderId` (the counter flow carries the return on the sale itself); a named customer's capture is unpinned unless
+   * this is sent. The same rules as `QuoteInlineReturnDto.sourceOrderId`; send the SAME value the quote priced.
+   */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  sourceOrderId?: string;
 }

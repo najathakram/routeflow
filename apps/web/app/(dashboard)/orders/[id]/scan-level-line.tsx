@@ -1,4 +1,4 @@
-import type { SellLevel } from "@routeflow/pricing";
+import { unitWords, type SellLevel, type UnitWords } from "@routeflow/pricing";
 import type { PriceType } from "@/lib/api/orders";
 import { displayProductName } from "@/lib/product-display";
 
@@ -50,14 +50,16 @@ export function bumpLineForScan<
     : { ...it, qty: it.qty + 1 };
 }
 
-/** "1 case + 0 loose", "2 cases + 1 loose" — the count word agrees with its number. */
-export function splitLineHintText(qty: number, upb: number): string {
-  const cases = Math.floor(qty / upb);
-  return `${cases} ${cases === 1 ? "case" : "cases"} + ${qty % upb} loose`;
+/** "1 box + 0 pcs", "2 boxes + 1 pc" — the count word agrees with its number. */
+export function splitLineHintText(qty: number, upb: number, w: UnitWords = unitWords()): string {
+  const packs = Math.floor(qty / upb);
+  const rest = qty % upb;
+  return `${packs} ${w.packFor(packs)} + ${rest} ${w.baseShortFor(rest)}`;
 }
 
 /** No hidden quantity (SA-580): a split line counts PIECES, so say cases + loose. */
 export function SplitLineHint({ item }: { item: any }) {
+  const w = unitWords(item);
   const upb = Number(item.unitsPerBox ?? 0);
   if (!(item.boxSplit && upb > 1 && item.unitLabel == null)) return null;
   return (
@@ -65,7 +67,7 @@ export function SplitLineHint({ item }: { item: any }) {
       data-testid="edit-line-split"
       className="text-[11px] normal-case tracking-normal text-navy/60"
     >
-      pcs = {splitLineHintText(item.qty, upb)}
+      {w.base.short.other} = {splitLineHintText(item.qty, upb, w)}
     </span>
   );
 }

@@ -75,11 +75,14 @@ export const API_ERROR_CODES = {
   CREDIT_NOTE_EXPIRY_NOT_EDITABLE: "CREDIT_NOTE_EXPIRY_NOT_EDITABLE",
   CREDIT_NOTE_LINES_REQUIRED: "CREDIT_NOTE_LINES_REQUIRED",
   CREDIT_NOTE_LINE_INVALID: "CREDIT_NOTE_LINE_INVALID",
+  CREDIT_NOTE_UNAVAILABLE: "CREDIT_NOTE_UNAVAILABLE",
   CUSTOMER_NOT_LINKED: "CUSTOMER_NOT_LINKED",
   BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
   BILL_VOID: "BILL_VOID",
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
+  INVOICE_TAX_STATE_STALE: "INVOICE_TAX_STATE_STALE",
+  INVOICE_TOTAL_BELOW_PAID: "INVOICE_TOTAL_BELOW_PAID",
   PRICE_ADJUSTMENT_PARTIAL: "PRICE_ADJUSTMENT_PARTIAL",
   PRICE_ADJUSTMENT_OVERPAYS: "PRICE_ADJUSTMENT_OVERPAYS",
   PRICE_ADJUSTMENT_REFUSED: "PRICE_ADJUSTMENT_REFUSED",
@@ -99,6 +102,12 @@ export const API_ERROR_CODES = {
   INLINE_RETURN_PACK_CONFLICT: "INLINE_RETURN_PACK_CONFLICT",
   INLINE_RETURN_PACK_UNKNOWN: "INLINE_RETURN_PACK_UNKNOWN",
   INLINE_RETURN_USE_INLINE_ENDPOINTS: "INLINE_RETURN_USE_INLINE_ENDPOINTS",
+  /** SA-740: a walk-in return names the sale it is from (the quote requires it; the capture defaults to the carrying order). 400. */
+  SOURCE_SALE_REQUIRED: "SOURCE_SALE_REQUIRED",
+  /** SA-740: the named source sale is not this customer's counter sale or delivered order in this tenant (or is cancelled). 400. */
+  SOURCE_SALE_INVALID: "SOURCE_SALE_INVALID",
+  /** SA-740: a walk-in return of more than the source sale had left to return; never priced as an unreferenced chunk. 409. */
+  RETURN_EXCEEDS_SALE: "RETURN_EXCEEDS_SALE",
   UNIT_AWARE_LINE: "UNIT_AWARE_LINE",
   MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
   ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
@@ -224,6 +233,12 @@ export const API_ERROR_CODES = {
   SUPPLIER_ALLOCATION_BILL_VOID: "SUPPLIER_ALLOCATION_BILL_VOID",
   SUPPLIER_ALLOCATION_OVER_BALANCE: "SUPPLIER_ALLOCATION_OVER_BALANCE",
   COUNTER_SALES_DISABLED: "COUNTER_SALES_DISABLED",
+  /** 409 from POST /orders/counter-sale/parked: this register already holds the maximum open parked carts (COUNTER_PARK_MAX_PER_REGISTER); resume or discard one first. */
+  PARK_LIMIT: "PARK_LIMIT",
+  /** 404 from resume / discard of a parked cart: it was already taken back (by another till), discarded, or has expired. */
+  PARK_TAKEN: "PARK_TAKEN",
+  /** 409 from POST /orders/counter-sale/parked: the client-minted park id already names a row this park may not replay (another tenant's or register's, or one already taken back or expired). Park again; the client mints a new id. */
+  PARK_ID_CONFLICT: "PARK_ID_CONFLICT",
   WALK_IN_NO_ACCOUNT: "WALK_IN_NO_ACCOUNT",
   WALK_IN_WITH_CUSTOMER: "WALK_IN_WITH_CUSTOMER",
   WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
@@ -335,6 +350,8 @@ export const API_ERROR_CODES = {
   REFUND_AMOUNT_CHANGED: "REFUND_AMOUNT_CHANGED",
   /** SA-727: a cash/card/check refund needs every source invoice paid in full (non-VOID, balance 0); otherwise issue store credit. 409. */
   REFUND_NEEDS_PAID_INVOICE: "REFUND_NEEDS_PAID_INVOICE",
+  /** SA-749r2 item 9: a CASH refund above the cash applied to the sale minus the cash already refunded on it. 409; carries `maxCashRefund`. */
+  REFUND_EXCEEDS_CASH_PAID: "REFUND_EXCEEDS_CASH_PAID",
   /**
    * SA-727 (F4): any part of a source invoice was paid with store credit (a CREDIT_NOTE or ADVANCE payment), so the return
    * goes back as store credit only: store credit is never turned into cash. 409 on the refund and on a REFUND capture.
@@ -389,6 +406,8 @@ export const API_ERROR_CODES = {
    * variants of its own). Nothing was written.
    */
   PRODUCT_PARENT_INVALID: "PRODUCT_PARENT_INVALID",
+  /** 400 from PATCH /settings and create-tenant: `timezone` is not an IANA zone (SA-738). Nothing was written. */
+  INVALID_TIME_ZONE: "INVALID_TIME_ZONE",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

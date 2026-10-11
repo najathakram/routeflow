@@ -119,7 +119,7 @@ describe("the counter void and the DELIVERED write (structure)", () => {
     };
     const users = walk(SRC)
       .filter((p) => /clearUnevidencedDelivered/.test(readFileSync(p, "utf8")))
-      .map((p) => p.slice(SRC.length + 1))
+      .map((p) => p.slice(SRC.length + 1).replace(/\\/g, "/")) // POSIX separators on Windows too
       .sort();
     expect(users).toEqual([
       "orders/counter-sale/counter-sale-void.service.ts",

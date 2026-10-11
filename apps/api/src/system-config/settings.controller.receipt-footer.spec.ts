@@ -5,8 +5,8 @@ import { SettingsController } from "./settings.controller";
 import { SystemConfigService } from "./system-config.service";
 import { RECEIPT_FOOTER_MAX_CHARS, sanitizeReceiptFooter } from "./receipt-footer";
 import { PrismaService } from "../prisma/prisma.service";
-import { QuickKeysSettingsService } from "./quick-keys-settings.service";
 import { EmailService } from "../email/email.service";
+import { QuickKeysSettingsService } from "./quick-keys-settings.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 /**
@@ -37,13 +37,10 @@ describe("SettingsController: receiptFooter (SA-762r F6)", () => {
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: EmailService, useValue: { send: jest.fn() } },
+        // the quick-keys settings are not under test here: a stub keeps GET /settings' extra field inert
         {
           provide: QuickKeysSettingsService,
-          useValue: {
-            prepare: jest.fn(),
-            save: jest.fn(),
-            fromAll: jest.fn().mockReturnValue(undefined),
-          },
+          useValue: { fromAll: jest.fn(() => undefined), prepare: jest.fn(), save: jest.fn() },
         },
       ],
     }).compile();
