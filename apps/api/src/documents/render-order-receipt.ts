@@ -152,13 +152,14 @@ export function renderOrderReceipt(
   const name = oneLine(model.header.name ?? "");
   const subject = name
     ? `Your receipt from ${name} (Order ${model.orderNumber})`
-    : `Your receipt (Order ${model.orderNumber})`;
+    : `Your receipt for order ${model.orderNumber}`;
   const { html, text } = renderBrandedEmail({
     headerHtml: tenantHeaderHtml(name || "Receipt"),
     heading: "Receipt",
     bodyHtml: bodyHtmlOf(model),
     bodyText: bodyTextOf(model),
-    footerNote: name ? `Receipt sent by ${name}.` : "Receipt sent from RouteFlow.",
+    // The business name is already in this context; with none there is no name to print, so the old line stays.
+    footerNote: name ? `Sent by ${name}.` : "Receipt sent from RouteFlow.",
   });
   return { model, subject, html, text };
 }

@@ -1,6 +1,6 @@
 /**
  * Row 317b: the ONE text of a receipt line's detail, shared by the live counter receipt, the Today's-sales reprint (apps/web)
- * and the emailed receipt (apps/api), so "3 × $2.50 / each" reads the same on every surface. A plain line prints its quantity,
+ * and the emailed receipt (apps/api), so "3 × $2.50 each" reads the same on every surface. A plain line prints its quantity,
  * its price and the product's own selling unit; a boxed line prints boxes + pieces at the BOX price.
  */
 
@@ -26,7 +26,7 @@ export function receiptLineDetail(l: {
 }): string {
   const price = formatReceiptMoney(l.unitPrice);
   if ((l.unitsPerBox ?? 0) <= 1) {
-    const word = (l.unit ?? "").trim() ? ` / ${priceUnitWord(l.unit)}` : "";
+    const word = (l.unit ?? "").trim() ? ` ${priceUnitWord(l.unit)}` : "";
     return `${l.qty} × ${price}${word}`;
   }
   const boxes = l.boxes ?? 0;

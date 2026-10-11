@@ -77,7 +77,7 @@ export class PosFinishError extends Error {
 }
 
 /**
- * "Confirm & invoice": PATCH status CONFIRMED, then POST /invoices/from-order/:id. Both are idempotent on the
+ * "Confirm and invoice": PATCH status CONFIRMED, then POST /invoices/from-order/:id. Both are idempotent on the
  * server, so a retry of either is safe. A failure names the step so the caller can say which half is missing
  * (the order page offers "Create invoice" when only the second failed).
  */

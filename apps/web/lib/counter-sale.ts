@@ -1,4 +1,10 @@
-import { computeLineSubtotal, roundMoney, validCustomer, validLine } from "@routeflow/pricing";
+import {
+  computeLineSubtotal,
+  formatReceiptMoney,
+  roundMoney,
+  validCustomer,
+  validLine,
+} from "@routeflow/pricing";
 import {
   API_ERROR_CODES,
   type CounterSalePaymentMethod,
@@ -174,12 +180,22 @@ export function validatePayment(input: {
   return null;
 }
 
-export const PAYMENT_PROBLEM_COPY: Record<PaymentProblem, string> = {
-  TENDER_SHORT: "The amount tendered is less than the total.",
+export const PAYMENT_PROBLEM_COPY: Record<Exclude<PaymentProblem, "TENDER_SHORT">, string> = {
   CHECK_NUMBER_REQUIRED: "Enter the check number.",
   WALK_IN_ON_ACCOUNT:
     "A walk-in customer can't be charged on account. Pick a customer or another payment method.",
 };
+
+/** A short cash tender names what to enter: "Enter at least $18.94." (the amount is the sale's / order's amount due). */
+export const TENDER_SHORT_PREFIX = "Enter at least ";
+export function tenderShortCopy(due: number): string {
+  return `${TENDER_SHORT_PREFIX}${formatReceiptMoney(due)}.`;
+}
+
+/** The fixed sentence for a payment problem; `due` is what the cash tender has to reach (the sale total / balance due). */
+export function paymentProblemCopy(problem: PaymentProblem, due: number): string {
+  return problem === "TENDER_SHORT" ? tenderShortCopy(due) : PAYMENT_PROBLEM_COPY[problem];
+}
 
 /** The scan field: 1-3 digits are a QUANTITY to multiply the next scan by; anything else is a code. */
 export function parseScanField(

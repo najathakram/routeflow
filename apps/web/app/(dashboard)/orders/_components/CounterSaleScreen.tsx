@@ -44,7 +44,8 @@ import {
   COUNTER_DISCARD_COPY,
   COUNTER_OUTCOME_UNKNOWN_COPY,
   COUNTER_SALES_DISABLED_COPY,
-  PAYMENT_PROBLEM_COPY,
+  paymentProblemCopy,
+  TENDER_SHORT_PREFIX,
   cartTotals,
   amountDue,
   changeDue,
@@ -207,9 +208,8 @@ export function CounterSaleScreen() {
     customerFindRef,
     awaitingCustomerRef,
   });
-  // Fixing the tender clears the "less than the total" message and ONLY that one (never a server or final-sale error).
-  const clearUnderpaidError = () =>
-    setError((e) => (e === PAYMENT_PROBLEM_COPY.TENDER_SHORT ? "" : e));
+  // Fixing the tender clears the "Enter at least $X" message and ONLY that one (never a server or final-sale error).
+  const clearUnderpaidError = () => setError((e) => (e.startsWith(TENDER_SHORT_PREFIX) ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
   // SA-748 section 1: the unfinished cart survives a refresh (restored UNLOCKED; a held attempt always wins).
   const liveCart = useCounterLiveCart({
@@ -679,7 +679,7 @@ export function CounterSaleScreen() {
       isWalkIn,
     });
     if (problem) {
-      setError(PAYMENT_PROBLEM_COPY[problem]);
+      setError(paymentProblemCopy(problem, totals.total));
       return null;
     }
     const tenderAmount = roundMoney(tenderedNum);
@@ -1005,7 +1005,8 @@ export function CounterSaleScreen() {
               ref={scanRef}
               aria-label="Scan or search items"
               className="min-h-[44px] w-full rounded border px-3 py-2 text-base"
-              placeholder="Scan or type an item (type a quantity first to multiply)"
+              placeholder="Scan or type an item"
+              aria-describedby="counter-scan-hint"
               value={scanText}
               disabled={lineLocked}
               onChange={(e) => {
@@ -1034,6 +1035,14 @@ export function CounterSaleScreen() {
               </span>
             ) : null}
           </form>
+          {/* The multiply tip lives under the field: in the placeholder it was cut off at 390px. */}
+          <p
+            id="counter-scan-hint"
+            data-testid="counter-scan-hint"
+            className="text-xs text-navy/70"
+          >
+            Type a quantity first to multiply.
+          </p>
           {scanCue ? (
             <p
               role="status"
@@ -1349,7 +1358,7 @@ export function CounterSaleScreen() {
               </div>
             ) : null}
             <div className="flex justify-between text-lg font-semibold" data-testid="running-total">
-              <span>Estimated total</span>
+              <span>Total</span>
               <span>{money(totals.total)}</span>
             </div>
 

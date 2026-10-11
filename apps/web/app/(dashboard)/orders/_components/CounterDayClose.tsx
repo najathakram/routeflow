@@ -125,7 +125,7 @@ function DayCloseForm({
       title={editing ? "Edit count" : "Close day"}
       description={
         editing
-          ? "Fix the count. The window stays the same and a corrected report is sent."
+          ? "Fix the count. Sales times stay the same. A corrected Z report is emailed."
           : "Count the drawer. The totals are checked again when you close."
       }
       scroll
@@ -366,7 +366,7 @@ function DayCloseFormBody({
                   void onViewZ().finally(() => setViewing(false));
                 }}
               >
-                View Z
+                View Z report
               </Button>
             ) : null}
           </div>
@@ -448,11 +448,11 @@ function ClosedCard({
           </Button>
         </div>
       ) : close.reportSent === true ? (
-        <p className="text-xs text-navy/70">Report sent to the admins</p>
+        <p className="text-xs text-navy/70">Z report emailed to admins</p>
       ) : null}
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="secondary" className="min-h-11" onClick={onViewZ}>
-          View Z
+          View Z report
         </Button>
         {canEdit ? (
           <Button type="button" variant="secondary" className="min-h-11" onClick={onEdit}>

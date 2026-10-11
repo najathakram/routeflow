@@ -719,7 +719,7 @@ describe("the live counter receipt splits Tax and Adjustments like the reprint a
   });
 });
 
-describe("row 317b: the unit word ('/ each') is ONE text on the live receipt, the reprint and the email", () => {
+describe("row 317b: the unit word ('each') is ONE text on the live receipt, the reprint and the email", () => {
   const line = (
     id: string,
     name: string,
@@ -785,8 +785,8 @@ describe("row 317b: the unit word ('/ each') is ONE text on the live receipt, th
   it("every surface prints the product's own unit word after a plain line's price, and none on a boxed line", () => {
     for (const m of [s.live, s.reprint, s.emailModel]) {
       expect(details(m)).toEqual([
-        "3 × $2.50 / each",
-        "2 × $6.00 / lb",
+        "3 × $2.50 each",
+        "2 × $6.00 lb",
         "1 × $1.00",
         "1 box + 3 pcs × $12.00 per box",
       ]);

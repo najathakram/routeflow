@@ -21,7 +21,7 @@ import { useOptionalAuth } from "@/lib/auth-context";
 import { guardCounterLeave } from "@/lib/counter-cart-signal";
 import {
   formatReceiptMoney as money,
-  formatSaleTime,
+  formatSaleDayTime,
   receiptCustomerName,
   receiptModelFromOrder,
   type ReceiptBusinessProfile,
@@ -226,7 +226,7 @@ function Reprint({
           model={model}
           logoUrl={branding?.logoUrl ?? null}
           reprintedBy={reprintedBy}
-          reprintLabel={`Reprint · sold ${formatSaleTime(row.createdAt, timezone)}`}
+          reprintLabel={`Reprint · Sold ${formatSaleDayTime(row.createdAt, timezone)}`}
         />
       ) : isError ? (
         <div role="alert" className="space-y-2 text-sm">

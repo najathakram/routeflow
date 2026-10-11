@@ -295,7 +295,7 @@ describe("ZReportView: actions (Back to sales, Resend, Print)", () => {
       expect(post).toHaveBeenCalledWith("/orders/counter-sale/day-close/dc1/report"),
     );
     expect(await screen.findByTestId("z-resend-status")).toHaveTextContent(
-      "Report sent to the admins",
+      "Z report emailed to admins",
     );
   });
 

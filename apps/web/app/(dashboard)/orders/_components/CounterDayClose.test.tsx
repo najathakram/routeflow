@@ -409,7 +409,7 @@ describe("CounterDayClose: the closed state", () => {
   it("View Z opens the Z report for the stored close, in the plan's four groups", async () => {
     withClose({ day: "2026-10-07" });
     await openSheet();
-    fireEvent.click(await screen.findByRole("button", { name: "View Z" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Z report" }));
     const dialog = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
     expect(within(dialog).getByTestId("z-headline")).toHaveTextContent(
       "Counted $128.00 · Short $2.00",
@@ -429,7 +429,7 @@ describe("CounterDayClose: the closed state", () => {
   it("View Z carries Print, Resend and Back to sales; Back to sales returns to the sheet", async () => {
     withClose({ reportSent: true });
     await openSheet();
-    fireEvent.click(await screen.findByRole("button", { name: "View Z" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Z report" }));
     const z = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
     const actions = within(z).getByTestId("z-actions");
     expect(
@@ -446,21 +446,21 @@ describe("CounterDayClose: the closed state", () => {
     withClose({ reportSent: true });
     post.mockResolvedValue({ data: { reportSent: true } });
     await openSheet();
-    fireEvent.click(await screen.findByRole("button", { name: "View Z" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Z report" }));
     const z = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
     fireEvent.click(within(z).getByRole("button", { name: "Resend" }));
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith("/orders/counter-sale/day-close/dc1/report"),
     );
     expect(await within(z).findByTestId("z-resend-status")).toHaveTextContent(
-      "Report sent to the admins",
+      "Z report emailed to admins",
     );
   });
 
   it("Escape leaves the Z view first, then the Today's sales sheet", async () => {
     withClose();
     await openSheet();
-    fireEvent.click(await screen.findByRole("button", { name: "View Z" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Z report" }));
     await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape", code: "Escape" });
     await waitFor(() => expect(screen.queryByTestId("z-report")).toBeNull());
@@ -473,7 +473,7 @@ describe("CounterDayClose: the closed state", () => {
     withClose({ variance: -2, countedCash: 128 });
     await openSheet();
     expect(await screen.findByTestId("closed-variance")).toHaveTextContent("Short $2.00");
-    fireEvent.click(screen.getByRole("button", { name: "View Z" }));
+    fireEvent.click(screen.getByRole("button", { name: "View Z report" }));
     const z = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
     expect(within(z).getByTestId("z-headline")).toHaveTextContent("Counted $128.00 · Short $2.00");
     expect(document.body.textContent).not.toMatch(/Balanced|Under \$/);
@@ -527,7 +527,7 @@ describe("CounterDayClose: the closed state", () => {
     withClose();
     await openSheet();
     await screen.findByTestId("day-close-closed");
-    expect(screen.getByRole("button", { name: "View Z" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View Z report" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Edit count" })).toBeInTheDocument();
   });
 
@@ -536,7 +536,7 @@ describe("CounterDayClose: the closed state", () => {
     withClose();
     await openSheet();
     await screen.findByTestId("day-close-closed");
-    expect(screen.getByRole("button", { name: "View Z" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View Z report" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit count" })).toBeNull();
   });
 
@@ -669,6 +669,16 @@ describe("CounterDayClose: Edit count (reopen, then close again)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Edit count" }));
     return screen.findByTestId("day-close-form");
   };
+
+  it("row 345: the help line says sales times stay the same and a corrected Z report is emailed", async () => {
+    closedWithQuietNextWindow();
+    await openEdit();
+    const dialog = screen.getByRole("dialog", { name: "Edit count" });
+    expect(dialog).toHaveTextContent(
+      "Fix the count. Sales times stay the same. A corrected Z report is emailed.",
+    );
+    expect(dialog).not.toHaveTextContent("The window stays the same");
+  });
 
   it("opens the count form prefilled from the stored close, float locked, and posts nothing yet", async () => {
     closedWithQuietNextWindow();
@@ -828,7 +838,7 @@ describe("CounterDayClose: close failures (fixed copy per cause, counts kept)", 
     expect(alert).toHaveTextContent("Closed on another device.");
     expect(screen.getByLabelText("$20 bill count")).toHaveValue("3");
     const before = stateCalls().length;
-    fireEvent.click(within(alert).getByRole("button", { name: "View Z" }));
+    fireEvent.click(within(alert).getByRole("button", { name: "View Z report" }));
     const z = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
     expect(stateCalls().length).toBeGreaterThan(before);
     expect(within(z).getByTestId("z-closed-line")).toHaveTextContent("Closed 11:30 AM by Sam");
@@ -837,7 +847,7 @@ describe("CounterDayClose: close failures (fixed copy per cause, counts kept)", 
 
   it("only DAY_ALREADY_CLOSED offers View Z in the form", async () => {
     const alert = await failWith(apiError(500, "INTERNAL"));
-    expect(within(alert).queryByRole("button", { name: "View Z" })).toBeNull();
+    expect(within(alert).queryByRole("button", { name: "View Z report" })).toBeNull();
   });
 });
 
@@ -880,7 +890,7 @@ describe("CounterDayClose: phone layout", () => {
     dayState = stateOf({ lastClose: snapshot({ reportSent: false }), salesSince: 0 });
     await openSheet();
     const card = await screen.findByTestId("day-close-closed");
-    for (const name of ["Resend", "View Z", "Edit count"]) {
+    for (const name of ["Resend", "View Z report", "Edit count"]) {
       expect(within(card).getByRole("button", { name }).className).toMatch(/min-h-11/);
     }
     fireEvent.click(within(card).getByRole("button", { name: "Edit count" }));

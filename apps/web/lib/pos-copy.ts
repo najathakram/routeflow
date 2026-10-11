@@ -5,12 +5,11 @@
 export const POS_COPY = {
   /** The builder's title and subtitle when POS mode is forced by the capability (a store-only business). */
   builderTitle: "Invoice a customer",
-  builderSubtitle:
-    "Sold in store. The invoice is made when you confirm; hand the goods over when they collect.",
+  builderSubtitle: "Sold in store. Confirming creates the invoice. Hand goods over at pickup.",
   switchLabel: "POS mode",
-  switchHint: "A named customer, invoiced now. For walk-in, pay-now sales use Counter.",
+  switchHint: "A named customer, invoiced now. For walk-in sales paid now, use Counter sale.",
   switchFailed: "Couldn't save your POS mode setting. Try again.",
-  confirmAndInvoice: "Confirm & invoice",
+  confirmAndInvoice: "Confirm and invoice",
   confirmOnly: "Confirm only",
   confirmedInvoiced: "Order confirmed and invoiced",
   confirmedOnly: "Order confirmed",

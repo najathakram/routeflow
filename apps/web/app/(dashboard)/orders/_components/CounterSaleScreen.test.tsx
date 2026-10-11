@@ -177,15 +177,15 @@ describe("CounterSaleScreen", () => {
     expect(screen.getByTestId("change-due")).toHaveTextContent("Change $0.50");
   });
 
-  it("cash: the 'less than the total' error clears the moment the tender is fixed (row 188)", async () => {
+  it("cash: the 'Enter at least' error clears the moment the tender is fixed (row 188)", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("012345678905");
     await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("less than the total");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter at least $2.50.");
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "5" } });
-    expect(screen.queryByText(/less than the total/)).toBeNull();
+    expect(screen.queryByText(/Enter at least/)).toBeNull();
   });
 
   it("row 238: the underpaid error renders INSIDE the sticky checkout bar, next to Complete (never off-screen below the fold)", async () => {
@@ -195,7 +195,7 @@ describe("CounterSaleScreen", () => {
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("less than the total");
+    expect(alert).toHaveTextContent("Enter at least $2.50.");
     expect(screen.getByTestId("counter-checkout-bar")).toContainElement(alert);
     // and it sits before the actions, so the cashier reads why before the buttons
     const actions = screen.getByTestId("counter-checkout-actions");
@@ -551,7 +551,7 @@ describe("CounterSaleScreen", () => {
     await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/less than the total/);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter at least $2.50.");
     expect(mutateAsync).not.toHaveBeenCalled();
   });
 
@@ -1404,13 +1404,29 @@ describe("CounterSaleScreen: API contract wiring", () => {
   });
 
   describe("the displayed total is an ESTIMATE; the receipt carries the server's number", () => {
-    it("the running figure is labelled 'Estimated total' (and still drives quick tender / change)", async () => {
+    it("the running figure is labelled 'Total' (and still drives quick tender / change)", async () => {
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
       const running = screen.getByTestId("running-total");
-      expect(running).toHaveTextContent("Estimated total");
+      expect(running.firstElementChild).toHaveTextContent(/^Total$/);
       expect(running).toHaveTextContent("$2.50");
       expect(screen.getByTestId("change-due")).toHaveTextContent("Change $17.50");
+    });
+
+    it("row 345: the scan field's placeholder is short; the multiply tip is a hint line under it", () => {
+      renderWithProviders(<CounterSaleScreen />);
+      const field = screen.getByLabelText("Scan or search items");
+      expect(field).toHaveAttribute("placeholder", "Scan or type an item");
+      const hint = screen.getByTestId("counter-scan-hint");
+      expect(hint).toHaveTextContent("Type a quantity first to multiply.");
+      // the field keeps its accessible name and gains the tip as its description
+      expect(field).toHaveAccessibleDescription("Type a quantity first to multiply.");
+      // under the field, outside the form
+      expect(hint.closest("form")).toBeNull();
+      expect(
+        screen.getByTestId("counter-scan-bar").compareDocumentPosition(hint) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
     });
 
     it("the receipt's total is prominent and is the server's number", async () => {
@@ -2375,7 +2391,7 @@ describe("digital receipt on the live receipt (SA-751r)", () => {
     expect(input.value).toBe("");
     expect(input).toHaveFocus();
     await user.type(input, "someone@example.com{Enter}");
-    expect(await screen.findByText("Sent to someone@example.com.")).toBeInTheDocument();
+    expect(await screen.findByText("Receipt sent to someone@example.com.")).toBeInTheDocument();
     expect(api.post).toHaveBeenCalledWith("/orders/o1/receipt", {
       channel: "email",
       to: "someone@example.com",
@@ -2399,7 +2415,7 @@ describe("digital receipt on the live receipt (SA-751r)", () => {
     expect(screen.getByRole("button", { name: "Send" })).toHaveFocus();
     expect(api.post).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(await screen.findByText("Sent to buyer@example.com.")).toBeInTheDocument();
+    expect(await screen.findByText("Receipt sent to buyer@example.com.")).toBeInTheDocument();
     expect(api.post).toHaveBeenCalledTimes(1); // 2 presses from the receipt: Email receipt, Send
   });
 

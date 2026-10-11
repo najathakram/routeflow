@@ -190,7 +190,7 @@ function ZReportContent({
           className="text-sm text-navy/70 print:hidden"
           data-testid="z-resend-status"
         >
-          Report sent to the admins
+          Z report emailed to admins
         </p>
       ) : null}
       {outcome === "failed" ? (

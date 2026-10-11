@@ -2334,7 +2334,7 @@ export default function NewInvoicePage() {
                   loading={createInvoice.isPending || updateInvoice.isPending}
                   disabled={createInvoice.isPending || updateInvoice.isPending}
                 >
-                  Save as Draft
+                  Save as draft
                 </Button>
                 <Button
                   onClick={() => handleSubmit(true)}

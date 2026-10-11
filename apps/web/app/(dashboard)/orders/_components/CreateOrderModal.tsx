@@ -261,7 +261,7 @@ export function CreateOrderModal({
   // POS mode forced by the capability (not an opt-in): the builder talks about invoicing in store, not delivery.
   const storeOnlyPos = posAllowed && storeOnly;
   const posFinish = usePosFinish();
-  // Which POS finishing action the operator pressed ("Confirm & invoice" vs "Confirm only"); survives the merge prompt.
+  // Which POS finishing action the operator pressed ("Confirm and invoice" vs "Confirm only"); survives the merge prompt.
   const posFinishRef = React.useRef<"invoice" | "confirm">("invoice");
   const submitKey = useCreateOrderSubmitKey(isOpen); // BUG-A: latch + Idempotency-Key per attempt
   // An unknown outcome (timeout / 5xx) may still have written the order. Closing mints a fresh key on
@@ -1402,7 +1402,7 @@ export function CreateOrderModal({
   }, [isOpen, initialScanCode, resumeDraftId, activeDraftId]);
 
   // Stash form values + intended status across the merge-prompt round-trip so we can
-  // re-submit with the operator's choice. Both "Save as Draft" and "Create Order"
+  // re-submit with the operator's choice. Both "Save as draft" and "Create Order"
   // funnel through here so the prompt fires for either action.
   const pendingFormValuesRef = React.useRef<FormValues | null>(null);
   const pendingAsDraftRef = React.useRef<boolean>(false);
@@ -1442,7 +1442,7 @@ export function CreateOrderModal({
       });
   };
 
-  /** POS "Confirm & invoice" / "Confirm only": the order exists (PENDING); confirm it, then invoice it. */
+  /** POS "Confirm and invoice" / "Confirm only": the order exists (PENDING); confirm it, then invoice it. */
   const finishPosOrder = (
     created: { id: string; orderNumber?: string | null },
     finish: "invoice" | "confirm",
@@ -1887,7 +1887,7 @@ export function CreateOrderModal({
               disabled={createOrder.isPending || fulfilmentPending}
               onClick={onSaveDraft}
             >
-              Save as Draft
+              Save as draft
             </Button>
             {posMode && (
               <Button
