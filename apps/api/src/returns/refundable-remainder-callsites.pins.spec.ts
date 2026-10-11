@@ -250,6 +250,11 @@ function factsOfSource(text: string, fileName = "fixture.ts"): Map<string, FnFac
         if (!readableOptions(node.arguments[1])) current.opaqueMintOptions.push(node.getStart(sf));
       }
     }
+    // a tagged template is a call too (`tx.$executeRaw\`UPDATE ...\``): its tag joins the call list at its position
+    if (ts.isTaggedTemplateExpression(node)) {
+      const tag = propChain(node.tag).pop();
+      if (tag) current.calls.push({ name: tag, pos: node.getStart(sf) });
+    }
     // raw SQL, wherever its text sits: every string / template literal that names a write on the tables
     if (ts.isStringLiteralLike(node) || ts.isTemplateExpression(node)) {
       const sql = ts.isStringLiteralLike(node) ? node.text : node.getText(sf);
@@ -396,6 +401,23 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
     expect(check).toBeLessThan(firstPos(capture, "reserveNext"));
     for (const create of capture.calls.filter((c) => c.name === "create"))
       expect(check).toBeLessThan(create.pos);
+    // SA-773 follow-up (D): the LATE Order lock (the chunk Orders only the pricing under the locks found) is taken before the
+    // first invoice-row write, which is the headroom check's raw UPDATE of each source invoice, and before every write of
+    // the capture itself. A lock statement after that write is how a credit note's Order-then-invoice order gets crossed.
+    const locks = positions(capture, "lockRefundOrders");
+    expect(locks).toHaveLength(2); // the first statement (carrying + preflight sources) and the late one
+    const lateLock = Math.max(...locks);
+    const headroom = firstPos(capture, "assertWithinLineHeadroom");
+    expect(headroom).toBeGreaterThan(-1);
+    expect(lateLock).toBeLessThan(headroom);
+    for (const write of capture.calls.filter((c) =>
+      ["create", "createMany", "update", "updateMany", "upsert", "$executeRaw"].includes(c.name),
+    ))
+      expect(lateLock).toBeLessThan(write.pos);
+    // the headroom check is where the invoice write lives (so the order above is not vacuous): it still issues its raw UPDATE
+    expect(
+      positions(inlineSvc.get("assertWithinLineHeadroom")!, "$executeRaw").length,
+    ).toBeGreaterThan(0);
     const orderCreate = inlineSvc.get("captureAndIssueInTx")!;
     expect(firstPos(orderCreate, "captureInTx")).toBeGreaterThan(-1);
     expect(firstPos(orderCreate, "captureInTx")).toBeLessThan(

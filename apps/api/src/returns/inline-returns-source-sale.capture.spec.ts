@@ -167,12 +167,25 @@ describe("SA-740 §1: captureInTx source sale + locks", () => {
   });
 
   it("SA-773: with no ids passed, a chunk Order only the pricing under the locks finds is locked before any source invoice is written", async () => {
+    // the priced chunk sits on a source line of invoice inv-src: the headroom check then WRITES that invoice row (a new row
+    // version, so a racing credit note's snapshot conflicts), through the raw UPDATE statement it owns
+    prisma.invoiceItem.findMany.mockResolvedValueOnce([{ id: "invitem-1", invoiceId: "inv-src" }]);
     await service.captureInTx(prisma, dto(), OPERATOR); // PRICED chunks come from src-z
     const locks = lockCalls();
     expect(locks).toHaveLength(2);
     expect(locks[0].values).not.toContain("src-z");
     expect(locks[1].values).toContain("src-z");
-    expect(prisma.invoice.update ?? null).toBeDefined(); // (the headroom write comes after, pinned in the AST spec)
+    // the invoice write happened (exactly once, tenant-bound) and came AFTER the late Order lock: the call order of the raw
+    // statements is [first Order lock, late Order lock, UPDATE "Invoice"]
+    const raw = prisma.$executeRaw.mock.calls.map(renderRaw);
+    const writes = raw.filter((c) => /UPDATE "Invoice"/.test(c.text));
+    expect(writes).toHaveLength(1);
+    expect(writes[0].values).toEqual(["inv-src", "test-tenant"]);
+    const lateLock = raw.findIndex(
+      (c) => c.text.includes('FROM "Order"') && c.values.includes("src-z"),
+    );
+    expect(lateLock).toBeGreaterThan(-1);
+    expect(raw.indexOf(writes[0])).toBeGreaterThan(lateLock);
   });
 
   it("SA-773: the unlocked preflights hand the source Orders they priced from to the caller, for captureInTx", async () => {
