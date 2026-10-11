@@ -1,6 +1,7 @@
 import {
   DAY_CLOSE_DENOMINATIONS,
   dayCloseCashFromSales,
+  dayCloseZSections,
   dayCloseWindowIsEmpty,
   DAY_CLOSE_MAX_COUNT,
   sumDenominations,
@@ -133,5 +134,77 @@ describe("dayCloseCashFromSales", () => {
     expect(dayCloseCashFromSales(125, 100, 5)).toBe(30);
     expect(dayCloseCashFromSales(100.3, 100, 0)).toBe(0.3);
     expect(dayCloseCashFromSales(0.3, 0.1, 0)).toBe(0.2);
+  });
+});
+
+describe("dayCloseZSections (SA-750r3 §4 order)", () => {
+  const input = {
+    openingFloat: 100,
+    expectedCash: 415,
+    countedCash: 412.5,
+    variance: -2.5,
+    totals: {
+      moneyIn: { cash: 330, card: 40, check: 10, other: 0, total: 380 },
+      refunds: { cash: 15, card: 0, check: 0, other: 0, total: 15, tenderKnown: true },
+      storeCreditUsed: 0,
+      storeCreditIssued: { amount: 5 },
+      onAccount: 60,
+      netCollected: 365,
+      notAtTill: 40,
+      handOver: { count: 2, cash: 50 },
+    },
+  };
+  it("prints the headline, then Money in, Credit & account, Refunds & net, Drawer, in that order", () => {
+    const z = dayCloseZSections(input);
+    expect(z.headline).toEqual({ counted: 412.5, verdict: "short", amount: 2.5 });
+    expect(z.groups.map((g) => g.heading)).toEqual([
+      "Money in",
+      "Credit & account",
+      "Refunds & net",
+      "Drawer",
+    ]);
+    expect(z.groups[0].rows.map((r) => r.label)).toEqual([
+      "Cash",
+      "Card",
+      "Check",
+      "Other",
+      "Total",
+      "Pickup hand-overs (in till cash)",
+    ]);
+    expect(z.groups[3].rows.map((r) => [r.label, r.amount])).toEqual([
+      ["Opening float", 100],
+      ["Cash from sales", 330],
+      ["Cash in drawer", 415],
+      ["Counted", 412.5],
+      ["Over/short", -2.5],
+    ]);
+    expect(z.groups[2].rows.at(-1)).toMatchObject({ label: "Net collected", bold: true });
+    expect(z.groups[3].rows[2]).toMatchObject({ label: "Cash in drawer", bold: true });
+    expect(z.notTakenAtTill).toBe(40);
+    expect(z.refundsTenderKnown).toBe(true);
+  });
+  it("every row is present at zero, over/even verdicts, and a close without handOver is 'never recorded' (null), not zero", () => {
+    const zero = {
+      ...input,
+      variance: 0,
+      totals: {
+        ...input.totals,
+        moneyIn: { cash: 0, card: 0, check: 0, other: 0, total: 0 },
+        handOver: undefined,
+      },
+    };
+    const z = dayCloseZSections(zero);
+    expect(z.headline.verdict).toBe("even");
+    expect(z.groups[0].rows.every((r) => r.amount === 0 || r.label.startsWith("Pickup"))).toBe(
+      true,
+    );
+    expect(z.groups[0].rows.at(-1)).toEqual({
+      label: "Pickup hand-overs (in till cash)",
+      amount: null,
+    });
+    expect(dayCloseZSections({ ...input, variance: 1 }).headline).toMatchObject({
+      verdict: "over",
+      amount: 1,
+    });
   });
 });

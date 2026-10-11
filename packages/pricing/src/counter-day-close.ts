@@ -134,3 +134,122 @@ export function dayCloseCashFromSales(
 ): number {
   return roundMoney(expectedCash - openingFloat + cashRefunds);
 }
+
+// ─── The Z report, in the order the flow plan fixes (SA-750r3 §4) ─────────────────────────────────────────────────────
+//
+// ONE definition of what a Z report shows and in what order, used by the Z email (API) and the screen (web), so they cannot
+// drift. Pure data: the renderers format money and write the date/time/closer lines themselves. Every row is always present
+// (a zero prints as $0.00, never a dash); only a figure that was NEVER recorded (a close made before the field existed) is
+// `amount: null`, which the renderer prints as "Not recorded".
+
+export interface ZReportInput {
+  openingFloat: number;
+  expectedCash: number;
+  countedCash: number;
+  variance: number;
+  totals: {
+    moneyIn: { cash: number; card: number; check: number; other: number; total: number };
+    refunds: {
+      cash: number;
+      card: number;
+      check: number;
+      other: number;
+      total: number;
+      tenderKnown: boolean;
+    };
+    storeCreditUsed: number;
+    storeCreditIssued: { amount: number };
+    onAccount: number;
+    netCollected: number;
+    notAtTill: number;
+    handOver?: { count: number; cash: number };
+  };
+}
+
+export interface ZRow {
+  label: string;
+  /** dollars; null = never recorded (print "Not recorded") */
+  amount: number | null;
+  /** a count shown beside the amount, e.g. the number of pickup hand-overs */
+  count?: number;
+  bold?: boolean;
+  /** an over/short row is signed: positive = over, negative = short */
+  signed?: boolean;
+}
+export interface ZGroup {
+  heading: string;
+  rows: ZRow[];
+}
+export interface ZSections {
+  /** "Counted $412.50 · Short $2.50" / "Even $0.00" / "Over $1.00" */
+  headline: { counted: number; verdict: "short" | "even" | "over"; amount: number };
+  groups: ZGroup[];
+  /** "Not taken at the till: $40.00" */
+  notTakenAtTill: number;
+  /** false -> print "Some refunds have no method. Cash in drawer may be high." */
+  refundsTenderKnown: boolean;
+}
+
+export function dayCloseZSections(s: ZReportInput): ZSections {
+  const t = s.totals;
+  const variance = roundMoney(s.variance);
+  return {
+    headline: {
+      counted: roundMoney(s.countedCash),
+      verdict: variance < 0 ? "short" : variance > 0 ? "over" : "even",
+      amount: Math.abs(variance),
+    },
+    groups: [
+      {
+        heading: "Money in",
+        rows: [
+          { label: "Cash", amount: t.moneyIn.cash },
+          { label: "Card", amount: t.moneyIn.card },
+          { label: "Check", amount: t.moneyIn.check },
+          { label: "Other", amount: t.moneyIn.other },
+          { label: "Total", amount: t.moneyIn.total },
+          t.handOver
+            ? {
+                label: "Pickup hand-overs (in till cash)",
+                amount: t.handOver.cash,
+                count: t.handOver.count,
+              }
+            : { label: "Pickup hand-overs (in till cash)", amount: null },
+        ],
+      },
+      {
+        heading: "Credit & account",
+        rows: [
+          { label: "Store credit used", amount: t.storeCreditUsed },
+          { label: "Store credit issued", amount: t.storeCreditIssued.amount },
+          { label: "On account", amount: t.onAccount },
+        ],
+      },
+      {
+        heading: "Refunds & net",
+        rows: [
+          { label: "Cash refunds", amount: t.refunds.cash },
+          { label: "Card refunds", amount: t.refunds.card },
+          { label: "Check refunds", amount: t.refunds.check },
+          { label: "Other refunds", amount: t.refunds.other },
+          { label: "Net collected", amount: t.netCollected, bold: true },
+        ],
+      },
+      {
+        heading: "Drawer",
+        rows: [
+          { label: "Opening float", amount: s.openingFloat },
+          {
+            label: "Cash from sales",
+            amount: dayCloseCashFromSales(s.expectedCash, s.openingFloat, t.refunds.cash),
+          },
+          { label: "Cash in drawer", amount: s.expectedCash, bold: true },
+          { label: "Counted", amount: s.countedCash },
+          { label: "Over/short", amount: variance, signed: true },
+        ],
+      },
+    ],
+    notTakenAtTill: t.notAtTill,
+    refundsTenderKnown: t.refunds.tenderKnown,
+  };
+}
