@@ -402,9 +402,13 @@ export type NoWaitLockTable = (typeof NOWAIT_LOCK_TABLES)[number];
  * fallback: a wrapped error is never mistaken for a real failure and rethrown as a 500.
  */
 export function isLockUnavailableError(err: unknown): boolean {
+  const e = err as any;
   return (
-    (err as any)?.meta?.code === "55P03" ||
-    /55P03|could not obtain lock/i.test(String((err as any)?.message ?? ""))
+    e?.meta?.code === "55P03" ||
+    // the driver-adapter shape (the SQLSTATE rides on the cause, as the SA-218 lane reads it)
+    e?.meta?.driverAdapterError?.cause?.originalCode === "55P03" ||
+    e?.cause?.originalCode === "55P03" ||
+    /55P03|could not obtain lock/i.test(String(e?.message ?? ""))
   );
 }
 
