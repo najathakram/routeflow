@@ -4,9 +4,17 @@
  */
 import { OPEN_INVOICE_STATUS_VALUES } from "@routeflow/types";
 
+/**
+ * True for the shared OPEN invoice statuses (SENT, VIEWED, PARTIAL, OVERDUE: issued and not settled).
+ * The one place a screen asks "is this invoice open?": never hand-type the list (a pin fails on it).
+ */
+export function isOpenInvoiceStatus(status: string | null | undefined): boolean {
+  return status != null && (OPEN_INVOICE_STATUS_VALUES as readonly string[]).includes(status);
+}
+
 /** An invoice can be written off only from these unpaid-but-live statuses. */
 export function canWriteOff(status: string): boolean {
-  return status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
+  return isOpenInvoiceStatus(status);
 }
 
 /**
@@ -17,7 +25,7 @@ export function canWriteOff(status: string): boolean {
  * web's allow-list exactly (invoices/[id]/page.tsx canRecordPayment gate).
  */
 export function canRecordPayment(status: string): boolean {
-  return status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
+  return isOpenInvoiceStatus(status);
 }
 
 /**
@@ -82,8 +90,7 @@ export function invoiceActionFlags(i: InvoiceActionInput): InvoiceActionFlags {
   const s = i.status;
   return {
     canEdit: s === "DRAFT",
-    canSendReminder:
-      (OPEN_INVOICE_STATUS_VALUES as readonly string[]).includes(s) && owesBalance(i.balanceDue),
+    canSendReminder: isOpenInvoiceStatus(s) && owesBalance(i.balanceDue),
     canDuplicate: !i.isOrderLinked,
     canReopen: s === "PAID",
     canUnvoid: s === "VOID",
