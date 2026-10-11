@@ -345,13 +345,15 @@ describe("BookkeepingService", () => {
     function setup(opts: { counter: boolean; closeEnd?: Date; dbNow?: Date }) {
       const log: string[] = [];
       const create = jest.fn(async () => ({ id: "pay-1" }));
-      // counterPay.scope reads the order through forTenant() BEFORE the transaction.
+      // counterPay.scope reads the order, and the sale's leg-grouped tender rows (the one tender predicate judges a row
+      // against the sale as a set), through forTenant() BEFORE the transaction.
       prisma.forTenant.mockReturnValue({
         order: {
           findFirst: jest.fn(async () =>
             opts.counter ? { counterSale: true, registerKey: "r1" } : null,
           ),
         },
+        invoicePayment: { findMany: jest.fn(async () => []) },
       } as never);
       prisma.tenantTransaction.mockImplementation(async (fn: any) =>
         fn({

@@ -18,6 +18,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { InvoiceStatus } from "@prisma/client";
 import { InvoicesService } from "./invoices.service";
 import { TILL_LOCK_HELD } from "./counter-payment-guard";
+import { legGroupId, legGroupIds } from "../orders/counter-sale/counter-tender-row";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { NumberingService } from "../import/numbering.service";
@@ -148,6 +149,35 @@ describe("InvoicesService.recordPayment — counter invoice and the day close (S
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
       expect(prisma.paymentCounter.upsert).not.toHaveBeenCalled();
       expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    // SA-749r2 meets SA-750r3: the one tender predicate is judged against the sale's rows as a set.
+    it("an ungrouped office CASH payment on a sale whose tender is leg-grouped is NOT till cash: a backdated date is accepted", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        counterSale: true,
+        registerKey: null,
+      });
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { paymentGroupId: legGroupId("ord-1", 0), status: "PAID" },
+      ] as never);
+      await service.recordPayment("inv-1", pay() as any);
+      expect(written().paidAt).toEqual(new Date(BEFORE));
+    });
+
+    it("the same payment on a sale with NO leg-grouped row (a legacy sale) is till cash and refused", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        counterSale: true,
+        registerKey: null,
+      });
+      prisma.invoicePayment.findMany.mockResolvedValue([] as never);
+      const err: any = await service.recordPayment("inv-1", pay() as any).catch((e: unknown) => e);
+      expect(err.getResponse()).toMatchObject({ code: "DAY_CLOSED_FOR_PAYMENT_DATE" });
+      // the sale's leg rows are asked for by the order's own four leg ids, never a loose group filter
+      const where = (prisma.invoicePayment.findMany.mock.calls[0][0] as any).where;
+      expect(where.paymentGroupId.in).toEqual(legGroupIds("ord-1"));
+      expect(where.invoice).toEqual({ orderId: "ord-1" });
     });
 
     it("takes the SHARED close lock for the order's register as the FIRST statement, before the Invoice FOR UPDATE", async () => {

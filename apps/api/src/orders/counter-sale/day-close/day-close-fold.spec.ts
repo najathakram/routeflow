@@ -1,3 +1,4 @@
+import { legGroupId } from "../counter-tender-row";
 import { pickupTenderGroupId } from "../pickup-tender-group";
 import { dayCloseWindowIsEmpty } from "@routeflow/pricing";
 import {
@@ -426,5 +427,90 @@ describe("foldDayClose: totals.handOver", () => {
     const zero = foldDayClose(facts({ payments: [handOver(0)] }));
     expect(zero.totals.handOver).toEqual({ count: 1, cash: 0 });
     expect(dayCloseWindowIsEmpty(zero.totals)).toBe(false);
+  });
+});
+
+/**
+ * SA-749r2 meets SA-750r3: the ONE tender predicate is judged against the SALE's rows as a set. A split sale's legs carry
+ * the order's own leg group ids; an ungrouped row beside them is an office payment (the facts read the order's other
+ * grouped payments nested on the order), never till money.
+ */
+describe("foldDayClose: a split counter sale (the sale as a set)", () => {
+  const ORDER = "ord-split";
+  const leg = (i: number, amount: number, over: Partial<Omit<WindowPayment, "amount">> = {}) =>
+    pay({
+      amount,
+      paymentGroupId: legGroupId(ORDER, i),
+      invoice: { orderId: ORDER, order: { counterSale: true } },
+      ...over,
+    });
+  const office = (amount: number, over: Partial<Omit<WindowPayment, "amount">> = {}) =>
+    pay({
+      amount,
+      paymentGroupId: null,
+      invoice: {
+        orderId: ORDER,
+        order: {
+          counterSale: true,
+          // the order's other live payments with a group id: the card leg and the cash leg
+          invoices: [
+            {
+              payments: [
+                { paymentGroupId: legGroupId(ORDER, 0), status: "PAID" },
+                { paymentGroupId: legGroupId(ORDER, 1), status: "PAID" },
+              ],
+            },
+          ],
+        },
+      },
+      ...over,
+    });
+
+  it("a card leg and a cash leg are till money (cash counts the APPLIED amount of the row)", () => {
+    const f = foldDayClose(
+      facts({ payments: [leg(0, 30, { method: "CREDIT_CARD" }), leg(1, 20)] }),
+    );
+    expect(f.tillCash).toBe(20);
+    expect(f.totals.moneyIn).toEqual({ cash: 20, card: 30, check: 0, other: 0, total: 50 });
+    expect(f.totals.notAtTill).toBe(0);
+  });
+
+  it("an ungrouped office cash payment on that sale is 'not at the till', never expected cash", () => {
+    const f = foldDayClose(facts({ payments: [leg(1, 20), office(7.5)] }));
+    expect(f.tillCash).toBe(20);
+    expect(f.totals.notAtTill).toBe(7.5);
+  });
+
+  it("the same ungrouped row on a LEGACY sale (no leg-grouped payment on the order) is till cash", () => {
+    const legacy = pay({
+      amount: 7.5,
+      paymentGroupId: null,
+      invoice: { orderId: ORDER, order: { counterSale: true, invoices: [{ payments: [] }] } },
+    });
+    const f = foldDayClose(facts({ payments: [legacy] }));
+    expect(f.tillCash).toBe(7.5);
+    expect(f.totals.notAtTill).toBe(0);
+  });
+
+  it("a leg row of ANOTHER order is not this sale's tender", () => {
+    const stray = pay({
+      amount: 9,
+      paymentGroupId: legGroupId("ord-other", 0),
+      invoice: { orderId: ORDER, order: { counterSale: true } },
+    });
+    const f = foldDayClose(facts({ payments: [stray] }));
+    expect(f.tillCash).toBe(0);
+    expect(f.totals.notAtTill).toBe(9);
+  });
+
+  it("the sale's own pickup hand-over cash beside its legs is ordinary counter till cash, counted once, not a hand-over", () => {
+    const handedOver = pay({
+      amount: 12,
+      paymentGroupId: pickupTenderGroupId(ORDER),
+      invoice: { orderId: ORDER, order: { counterSale: true } },
+    });
+    const f = foldDayClose(facts({ payments: [leg(1, 20), handedOver] }));
+    expect(f.tillCash).toBe(32);
+    expect(f.totals.handOver).toEqual({ count: 0, cash: 0 });
   });
 });

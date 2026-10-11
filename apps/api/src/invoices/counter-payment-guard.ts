@@ -90,18 +90,19 @@ async function scope(
   const registerKey = order.registerKey ?? COUNTER_DEFAULT_REGISTER;
   const orderId = order.id ?? "";
   // Only a counter sale's tender can carry a leg id; a POS pickup order's rows are judged by its own pickup id alone.
-  // scan-ok: draft-payment-not-void — an existence probe, never a money sum: only a VOIDED row is no part of the sale's set.
-  const saleRows = counterSale
-    ? await prisma.forTenant().invoicePayment.findMany({
-        where: {
-          status: { not: "VOID" },
-          paymentGroupId: { in: legGroupIds(orderId) },
-          invoice: { orderId },
-        },
-        select: { paymentGroupId: true, status: true },
-        take: 1,
-      })
-    : [];
+  let saleRows: CounterPaymentScope["saleRows"] = [];
+  if (counterSale) {
+    // scan-ok: draft-payment-not-void — an existence probe, never a money sum: only a VOIDED row is no part of the sale's set.
+    saleRows = await prisma.forTenant().invoicePayment.findMany({
+      where: {
+        status: { not: "VOID" },
+        paymentGroupId: { in: legGroupIds(orderId) },
+        invoice: { orderId },
+      },
+      select: { paymentGroupId: true, status: true },
+      take: 1,
+    });
+  }
   return { tenantId, registerKey, counterSale, orderId, saleRows };
 }
 
