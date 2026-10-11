@@ -114,6 +114,11 @@ export const INLINE_RETURN_ERROR_CODES = {
   ALREADY_RETURNED_REASON_REQUIRED: API_ERROR_CODES.INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED,
 } as const;
 
+/** SA-773: the distinct source Order ids of priced chunks. */
+const sourceOrdersOf = (chunks: ReadonlyArray<{ sourceOrderId?: string | null }>): string[] => [
+  ...new Set(chunks.map((c) => c.sourceOrderId).filter((o): o is string => !!o)),
+];
+
 /** B961 (SA-071f N3): the hold reasons of an INLINE return awaiting staff approval. ALREADY_RETURNED wins over DRIVER_CAP (it needs a reason). */
 export const ALREADY_RETURNED_HOLD_REASON = "ALREADY_RETURNED";
 const INLINE_HOLD_REASONS = ["DRIVER_CAP", ALREADY_RETURNED_HOLD_REASON] as const;
@@ -269,6 +274,8 @@ export class InlineReturnsService {
     lines: InlineReturnLinesDto,
     customerId: string,
     user: JwtPayload,
+    /** receives the source Orders the dry run priced from, for captureInTx's first lock statement (SA-773) */
+    found?: { sourceOrderIds?: string[] },
   ): Promise<number> {
     const db = this.prisma.forTenant();
     if (lines.returnKey) {
@@ -292,6 +299,7 @@ export class InlineReturnsService {
     );
     // B961: a staff order create without the already-returned reason refuses HERE, before the number is reserved.
     this.alreadyReturnedPolicy(lines.items, priced.chunks, user);
+    if (found) found.sourceOrderIds = sourceOrdersOf(priced.chunks);
     return priced.total;
   }
 
@@ -315,21 +323,28 @@ export class InlineReturnsService {
     tx: any,
     dto: CaptureInlineReturnDto,
     user: JwtPayload,
-    opts: { orderRouteRunId?: string | null; forRefund?: boolean } = {},
+    opts: {
+      orderRouteRunId?: string | null;
+      forRefund?: boolean;
+      /**
+       * SA-773: the source Orders the chunks will be priced from, found by the caller's UNLOCKED preflight (never inside this
+       * transaction: a second pooled connection per in-flight capture exhausts the pool). Taken in the first lock statement.
+       */
+      sourceOrderIds?: readonly string[];
+    } = {},
   ): Promise<{ replayed: boolean; ret: any; overCap: boolean }> {
     const tenantId = this.prisma.getTenantId();
     // SA-740 (row 190): lock the carrying order, plus the SOURCE sale when it is a different one, in ONE id-sorted,
     // tenant-bound statement (the set and order `refund()` takes, so a capture and a refund cannot deadlock). It replaces
     // the old carrying-only lock, which had no tenant predicate. The customer advisory lock the caller holds stays first.
-    // SA-773: a named customer's capture with no named source prices chunks from OTHER orders. Their Orders are found by an
-    // unlocked dry run and locked in this same first statement (id-sorted with the rest), BEFORE any source invoice is written
-    // and the order's sibling invoices are asked for: the order a credit note create (Order, then its invoices) takes. A dry
-    // run that fails locks nothing extra; the priced chunks are re-checked under the locks just below.
-    const discovered = await this.discoverChunkSourceOrders(dto, user);
+    // SA-773: a named customer's capture with no named source prices chunks from OTHER orders. The caller's preflight found their
+    // Orders (opts.sourceOrderIds); they are locked in this same first statement (id-sorted with the rest), BEFORE any source
+    // invoice is written and the order's sibling invoices are asked for: the order a credit note create (Order, then its
+    // invoices) takes. Nothing is discovered in here: the pricing under the locks is authoritative.
     const lockedOrders = new Set<string>([
       dto.orderId,
       ...(dto.sourceOrderId ? [dto.sourceOrderId] : []),
-      ...discovered,
+      ...(opts.sourceOrderIds ?? []),
     ]);
     await lockRefundOrders(tx, tenantId, [...lockedOrders]);
     const order = await tx.order.findFirst({
@@ -406,8 +421,10 @@ export class InlineReturnsService {
       { defaultSourceOrderId: dto.orderId },
     );
 
-    // Fallback: the priced chunks name an Order the dry run did not (the data moved in between): lock it now, before any
-    // source invoice is written. Rare; the dry run is what keeps the locks in one id-sorted statement.
+    // Fallback: the priced chunks name an Order the preflight did not (a walk-in's new order, whose preflight cannot price, or data
+    // that moved in between): lock it now, before any source invoice is written. RESIDUAL RISK: this second statement is not
+    // id-ordered against the first, so it can in theory cross another locker of the same Orders (a 40P01, which the caller's
+    // retry or a 500 surfaces). The preflight is what keeps the common case in ONE id-sorted statement.
     const lateOrders = priced.chunks
       .map((c) => c.sourceOrderId)
       .filter((o): o is string => !!o && !lockedOrders.has(o));
@@ -726,6 +743,8 @@ export class InlineReturnsService {
     // the matching set as it will be AFTER that revert (the reverted invoices left out), so a return
     // whose only pack evidence is this order's own SENT invoice refuses HERE, before the revert.
     opts: { revertOrderId?: string } = {},
+    /** receives the source Orders the dry run priced from, for captureInTx's first lock statement (SA-773) */
+    found?: { sourceOrderIds?: string[] },
   ): Promise<number | null> {
     const db = this.prisma.forTenant();
     if (dto.returnKey) {
@@ -764,6 +783,7 @@ export class InlineReturnsService {
     );
     // B961: staff without the reason refuse HERE too (before the caller's revert commits); a driver is held at capture.
     this.alreadyReturnedPolicy(dto.items, priced.chunks, user);
+    if (found) found.sourceOrderIds = sourceOrdersOf(priced.chunks);
     // B948 (Opus r1, B215 class): the SAME line-headroom refusal, read-only (no Invoice write, no lock), BEFORE the caller's
     // un-tx'd revert commits SENT->DRAFT; the in-tx check stays as the race backstop.
     await this.assertWithinLineHeadroom(db, priced.chunks, { readOnly: true });
@@ -782,10 +802,15 @@ export class InlineReturnsService {
     tx: any,
     dto: CaptureInlineReturnDto,
     user: JwtPayload,
-    opts: { creditNoteNumber?: string; orderRouteRunId?: string | null } = {},
+    opts: {
+      creditNoteNumber?: string;
+      orderRouteRunId?: string | null;
+      sourceOrderIds?: readonly string[];
+    } = {},
   ): Promise<{ replayed: boolean; ret: any; overCap: boolean; minted: any }> {
     const captured = await this.captureInTx(tx, dto, user, {
       orderRouteRunId: opts.orderRouteRunId,
+      sourceOrderIds: opts.sourceOrderIds,
     });
     if (captured.replayed || captured.overCap) return { ...captured, minted: null };
     const ret = captured.ret;
@@ -801,11 +826,8 @@ export class InlineReturnsService {
     return { ...captured, minted };
   }
 
-  /**
-   * SA-773: the source Orders a capture's chunks will be priced from, from an UNLOCKED dry run of the same pricing (no row is
-   * written). Any failure is "none found": the in-lock pricing is authoritative and refuses on its own.
-   */
-  private async discoverChunkSourceOrders(
+  /** SA-773: the source Orders of an unlocked dry run for the standalone capture; any failure is "none found". */
+  private async dryRunSourceOrders(
     dto: CaptureInlineReturnDto,
     user: JwtPayload,
   ): Promise<string[]> {
@@ -818,12 +840,10 @@ export class InlineReturnsService {
           sourceOrderId: dto.sourceOrderId,
         },
         user,
-        this.prisma.forTenant(), // an unlocked read on its own connection, like the preflights
+        this.prisma.forTenant(),
         { defaultSourceOrderId: dto.orderId },
       );
-      return [
-        ...new Set((dry?.chunks ?? []).map((c: any) => c.sourceOrderId as string | null)),
-      ].filter((o): o is string => !!o);
+      return sourceOrdersOf(dry?.chunks ?? []);
     } catch {
       return [];
     }
@@ -1060,6 +1080,9 @@ export class InlineReturnsService {
         overCap: isInlineHold(preExisting.holdReason),
       };
     } else {
+      // SA-773: the chunk source Orders, found by an unlocked dry run BEFORE the transaction opens (its own connection, never
+      // two per capture); a dry run that fails finds none and the pricing under the locks decides
+      const sourceOrderIds = await this.dryRunSourceOrders(dto, user);
       try {
         result = await this.prisma.tenantTransaction(async (tx: any) => {
           // §5: the SAME customer-scoped lock returns.service.ts's create() takes — inline and
@@ -1067,7 +1090,10 @@ export class InlineReturnsService {
           // order create/edit paths (#2094) take this same lock themselves, as their FIRST
           // statement, and then call `captureInTx`.
           await this.lockCustomerInTx(tx, dto.customerId);
-          return this.captureInTx(tx, dto, user, { forRefund: resolution === "REFUND" });
+          return this.captureInTx(tx, dto, user, {
+            forRefund: resolution === "REFUND",
+            sourceOrderIds,
+          });
         });
       } catch (err: any) {
         if (this.isReturnKeyConflict(err) && dto.returnKey) {

@@ -135,6 +135,10 @@ describe("SA-740 §1: captureInTx source sale + locks", () => {
   });
 
   it("locks the carrying AND the source order (id-sorted, tenant-bound) BEFORE pricing when they differ", async () => {
+    quote.priceInlineReturn.mockResolvedValue({
+      ...PRICED,
+      chunks: PRICED.chunks.map((c) => ({ ...c, sourceOrderId: "src-a" })),
+    });
     await service.captureInTx(prisma, dto({ sourceOrderId: "src-a" }), OPERATOR);
     const locks = lockCalls();
     expect(locks).toHaveLength(1);
@@ -149,8 +153,8 @@ describe("SA-740 §1: captureInTx source sale + locks", () => {
     expect(lockOrder).toBeLessThan(calls[calls.length - 1]);
   });
 
-  it("SA-773: a capture with no named source locks the Orders its dry-run chunks come from, in the SAME first statement (id-sorted with the carrying order)", async () => {
-    await service.captureInTx(prisma, dto(), OPERATOR); // PRICED chunks come from src-z
+  it("SA-773: the source Orders the caller's preflight found are locked in the SAME first statement (id-sorted with the carrying order), and nothing is priced before the locks", async () => {
+    await service.captureInTx(prisma, dto(), OPERATOR, { sourceOrderIds: ["src-z"] });
     const locks = lockCalls();
     expect(locks).toHaveLength(1);
     expect(locks[0].values.filter((v) => v === "ord-carrying" || v === "src-z")).toEqual([
@@ -158,17 +162,47 @@ describe("SA-740 §1: captureInTx source sale + locks", () => {
       "src-z",
     ]);
     const calls = quote.priceInlineReturn.mock.invocationCallOrder;
-    expect(calls.length).toBe(2); // the dry run, then the pricing under the locks
-    expect(prisma.$executeRaw.mock.invocationCallOrder[0]).toBeGreaterThan(calls[0]);
-    expect(prisma.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(calls[1]);
+    expect(calls).toHaveLength(1); // no discovery inside the transaction: ONE pricing, under the locks
+    expect(prisma.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(calls[0]);
   });
 
-  it("SA-773: a dry run that fails locks nothing extra; the pricing under the locks still decides", async () => {
-    quote.priceInlineReturn.mockRejectedValueOnce(new Error("dry run down"));
-    await service.captureInTx(prisma, dto(), OPERATOR);
-    expect(lockCalls()[0].values.filter((v) => v === "src-z")).toHaveLength(0);
-    // and the chunk's order, found only under the locks, is locked before any source invoice is written
-    expect(lockCalls().some((l, i) => i > 0 && l.values.includes("src-z"))).toBe(true);
+  it("SA-773: with no ids passed, a chunk Order only the pricing under the locks finds is locked before any source invoice is written", async () => {
+    await service.captureInTx(prisma, dto(), OPERATOR); // PRICED chunks come from src-z
+    const locks = lockCalls();
+    expect(locks).toHaveLength(2);
+    expect(locks[0].values).not.toContain("src-z");
+    expect(locks[1].values).toContain("src-z");
+    expect(prisma.invoice.update ?? null).toBeDefined(); // (the headroom write comes after, pinned in the AST spec)
+  });
+
+  it("SA-773: the unlocked preflights hand the source Orders they priced from to the caller, for captureInTx", async () => {
+    const found: { sourceOrderIds?: string[] } = {};
+    await service.preflightCapture(dto(), OPERATOR, { routeRunId: null }, {}, found);
+    expect(found.sourceOrderIds).toEqual(["src-z"]);
+    const fromOrderCreate: { sourceOrderIds?: string[] } = {};
+    await service.preflightNewOrderReturn(
+      { items: dto().items } as any,
+      "cust-1",
+      OPERATOR,
+      fromOrderCreate,
+    );
+    expect(fromOrderCreate.sourceOrderIds).toEqual(["src-z"]);
+  });
+
+  it("SA-773: the standalone capture() finds them in a dry run BEFORE its transaction opens and passes them in", async () => {
+    const order: string[] = [];
+    prisma.tenantTransaction.mockImplementation((fn: any) => {
+      order.push("tx");
+      return fn(prisma);
+    });
+    quote.priceInlineReturn.mockImplementation(async () => {
+      order.push("price");
+      return PRICED;
+    });
+    await service.capture(dto() as any, OPERATOR).catch(() => undefined); // only the ORDER of the steps matters here
+    expect(order[0]).toBe("price"); // the dry run, outside the transaction
+    expect(order[1]).toBe("tx");
+    expect(lockCalls()[0].values).toContain("src-z"); // and its Orders are in the first lock statement
   });
 
   it("a capture with no source (or the source = the carrying order) locks only the carrying order, tenant-bound", async () => {

@@ -80,7 +80,7 @@ describe("reserveInlineReturnNumber / lockInlineReturnCustomer", () => {
     const p = await prepareInlineReturn(svc as any, LINES, STAFF);
     await expect(reserveInlineReturnNumber(p, "c1", STAFF)).rejects.toThrow(ConflictException);
     expect(svc.reserveCreditNoteNumber).not.toHaveBeenCalled();
-    expect(svc.preflightNewOrderReturn).toHaveBeenCalledWith(LINES, "c1", STAFF);
+    expect(svc.preflightNewOrderReturn).toHaveBeenCalledWith(LINES, "c1", STAFF, expect.anything());
   });
 
   it("a return that dry-runs to $0 reserves no number", async () => {
@@ -404,6 +404,7 @@ describe("preflightInlineReturn (Opus R1)", () => {
       STAFF,
       { routeRunId: "run-1" },
       {}, // #2178: willRevert defaults to false, so no revertOrderId
+      expect.anything(), // SA-773: the handle that receives the source Orders the dry run priced from
     );
   });
 });

@@ -122,6 +122,14 @@ describeDb("SA-773 capture locks every chunk's source Order first - real Postgre
         (e: any) => ({ ok: false as const, e }),
       );
     const queued = await waiters(1);
+    // WHAT the capture is blocked on: fixed, its first lock statement waits on Order X (holding only its own order); before, it had
+    // already written a source invoice and waited on the sibling invoice
+    const blockedOn: Array<{ query: string }> = (
+      await ctl.query(
+        `SELECT query FROM pg_stat_activity
+          WHERE datname = current_database() AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'`,
+      )
+    ).rows;
 
     let holderError: any;
     try {
@@ -137,6 +145,8 @@ describeDb("SA-773 capture locks every chunk's source Order first - real Postgre
     const out = await capture;
 
     expect(queued).toBe(true);
+    expect(blockedOn.some((r) => /FROM "Order"/.test(r.query))).toBe(true);
+    expect(blockedOn.some((r) => /FROM "Invoice"/.test(r.query))).toBe(false);
     expect(await deadlocks()).toBe(before); // red before: +1
     expect(holderError).toBeUndefined();
     expect(out.ok).toBe(true);
