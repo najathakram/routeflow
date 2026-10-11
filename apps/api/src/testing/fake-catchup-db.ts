@@ -80,8 +80,8 @@ export function fakeCatchupDb(seed: { subs?: Row[]; invoices?: Row[] } = {}): Fa
         return {};
       }),
       /** tenantId / entityType / action equality plus `AND: [{ meta: { path: [k], equals } }]` (the noticeOnce shape). */
-      findFirst: jest.fn(async ({ where = {} }: any = {}) => {
-        const hit = audits.find((a) => {
+      findFirst: jest.fn(async ({ where = {}, orderBy }: any = {}) => {
+        const matching = audits.filter((a) => {
           if (where.tenantId !== undefined && a.tenantId !== where.tenantId) return false;
           if (where.entityType !== undefined && a.entityType !== where.entityType) return false;
           if (where.entityId !== undefined && a.entityId !== where.entityId) return false;
@@ -90,6 +90,8 @@ export function fakeCatchupDb(seed: { subs?: Row[]; invoices?: Row[] } = {}): Fa
             (c: any) => c.meta?.path && a.meta?.[c.meta.path[0]] === c.meta.equals,
           );
         });
+        // creation order is insertion order: `orderBy: { createdAt: "desc" }` is the LAST match
+        const hit = orderBy?.createdAt === "desc" ? matching[matching.length - 1] : matching[0];
         return hit ? { id: "audit-hit", ...hit } : null;
       }),
     },

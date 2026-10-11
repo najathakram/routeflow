@@ -35,6 +35,9 @@ import { StripeService } from "./stripe.service";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** The audit-notice kind that records the manual period at claim time, for the release to restore (a). */
+const MANUAL_PERIOD_KIND = "billing_catchup_manual_period";
+
 /** The claim columns, as one select/clear. */
 const CLAIM_SELECT = {
   tenantId: true,
@@ -252,6 +255,23 @@ export class CatchupClaimService {
         data: { catchupState: "SESSION_OPEN" },
       });
       if (count !== 1) throw claimRefusal("SESSION_OPEN")!;
+      // (a) The ordinary completion overwrites periodStart / periodEnd with Stripe's trial window. A RELEASE must put
+      // the manual window back or RouteFlow invoicing would resume AFTER it and the window would never be billed.
+      // No column for it (no schema change), so it rides the audit trail, in this same transaction.
+      const period = (await tx.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: { periodStart: true, periodEnd: true },
+      })) as { periodStart?: Date | null; periodEnd?: Date | null } | null;
+      await this.notice(
+        tx,
+        tenantId,
+        MANUAL_PERIOD_KIND,
+        "October catch-up claim opened; the manual subscription period is recorded so a release can restore it.",
+        {
+          periodStart: period?.periodStart ? period.periodStart.toISOString() : null,
+          periodEnd: period?.periodEnd ? period.periodEnd.toISOString() : null,
+        },
+      );
     });
   }
 
@@ -763,6 +783,7 @@ export class CatchupClaimService {
           reason: "catchup_released",
           tenantLockHeld: true,
         });
+        await this.restoreManualPeriodTx(tx, tenantId);
       }
     });
 
@@ -835,6 +856,40 @@ export class CatchupClaimService {
       }
     });
     return "released";
+  }
+
+  /**
+   * (a) Put the manual period recorded at openClaim back (the latest record). Skipped, loudly, when none exists (a
+   * claim opened before this record was written): the period is left as the completion wrote it.
+   */
+  private async restoreManualPeriodTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+  ): Promise<void> {
+    const saved = (await tx.auditLog.findFirst({
+      where: {
+        tenantId,
+        entityType: ADMIN_AUDIT_ENTITY,
+        action: AdminAuditAction.TENANT_CONFIG_UPDATED,
+        AND: [{ meta: { path: ["kind"], equals: MANUAL_PERIOD_KIND } }],
+      },
+      orderBy: { createdAt: "desc" },
+      select: { meta: true },
+    })) as { meta?: { periodStart?: string | null; periodEnd?: string | null } } | null;
+    const meta = saved?.meta;
+    if (!meta || (!meta.periodStart && !meta.periodEnd)) {
+      this.logger.warn(
+        `catch-up release tenant=${tenantId}: no recorded manual period to restore - left as the completion wrote it`,
+      );
+      return;
+    }
+    await tx.tenantSubscription.updateMany({
+      where: { tenantId },
+      data: {
+        periodStart: meta.periodStart ? new Date(meta.periodStart) : null,
+        periodEnd: meta.periodEnd ? new Date(meta.periodEnd) : null,
+      },
+    });
   }
 
   // ─── the hourly sweep ─────────────────────────────────────────────────────

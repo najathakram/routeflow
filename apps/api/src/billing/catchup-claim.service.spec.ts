@@ -1407,6 +1407,124 @@ describe("(b) sweepAwaiting has an exit when the subscription was cancelled at S
   });
 });
 
+describe("(a) a released catch-up restores the MANUAL period so its window is not skipped", () => {
+  const OCT1 = new Date("2026-10-01T12:00:00Z");
+  const NOV1 = new Date("2026-11-01T12:00:00Z");
+  const manual = { periodStart: OCT1, periodEnd: NOV1 };
+  const periodRecords = (h: ReturnType<typeof make>) =>
+    h.db.audits.filter((a) => a.meta?.kind === "billing_catchup_manual_period");
+
+  it("openClaim records the manual period it found, inside the claim's own transaction", async () => {
+    const h = make({ ...manual });
+    await h.svc.openClaim("t1");
+    expect(periodRecords(h)).toHaveLength(1);
+    expect(periodRecords(h)[0].meta).toMatchObject({
+      periodStart: OCT1.toISOString(),
+      periodEnd: NOV1.toISOString(),
+    });
+  });
+
+  it("the checkout's completion moves the period to Stripe's trial window; the RELEASE puts the manual one back", async () => {
+    const h = make({ ...manual }, [octOpen], {
+      invoices: [
+        {
+          id: "in_1",
+          status: "open",
+          subscription: SUB,
+          amountDue: 31000,
+          attemptCount: 4,
+          nextPaymentAttempt: null, // definitively failed
+        },
+      ],
+    });
+    await h.svc.openClaim("t1");
+    await h.svc.attachSession("t1", SESSION);
+    // what the ordinary completion wrote: the card subscription, its trialing window, manual invoicing off
+    Object.assign(h.sub(), {
+      stripeSubId: SUB,
+      externalPayment: false,
+      catchupState: "AWAITING_FIRST_PAYMENT",
+      catchupInvoiceId: "in_1",
+      periodStart: new Date("2026-10-09T12:00:00Z"),
+      periodEnd: new Date("2026-12-01T12:00:00Z"),
+    });
+    await h.svc.sweep(NOW);
+    expect(h.sub()).toMatchObject({
+      catchupState: null,
+      stripeSubId: null,
+      externalPayment: true,
+      periodStart: OCT1,
+      periodEnd: NOV1,
+    });
+  });
+
+  it("the LATEST recorded period wins (an older record from an earlier, released claim is ignored)", async () => {
+    const h = make({ ...manual }, [octOpen], {
+      invoices: [
+        { id: "in_1", status: "open", subscription: SUB, amountDue: 100, attemptCount: 4 },
+      ],
+    });
+    h.db.audits.push({
+      tenantId: "t1",
+      action: "TENANT_CONFIG_UPDATED",
+      entityType: "platform_admin",
+      entityId: "t1",
+      meta: {
+        kind: "billing_catchup_manual_period",
+        periodStart: "2026-09-01T12:00:00.000Z",
+        periodEnd: "2026-10-01T12:00:00.000Z",
+      },
+    });
+    await h.svc.openClaim("t1");
+    expect(periodRecords(h)).toHaveLength(2);
+    Object.assign(h.sub(), {
+      stripeSubId: SUB,
+      externalPayment: false,
+      catchupState: "AWAITING_FIRST_PAYMENT",
+      catchupSessionId: SESSION,
+      catchupInvoiceId: "in_1",
+      periodStart: new Date("2026-10-09T12:00:00Z"),
+      periodEnd: new Date("2026-12-01T12:00:00Z"),
+    });
+    await h.svc.sweep(NOW);
+    expect(h.sub()).toMatchObject({ periodStart: OCT1, periodEnd: NOV1 });
+  });
+
+  it("no record (a claim opened before this fix) restores nothing and does not fail the release", async () => {
+    const h = make(awaiting({ catchupInvoiceId: "in_1", ...manual }), [octOpen], {
+      invoices: [
+        { id: "in_1", status: "open", subscription: SUB, amountDue: 100, attemptCount: 4 },
+      ],
+    });
+    Object.assign(h.sub(), { periodEnd: new Date("2026-12-01T12:00:00Z") });
+    await h.svc.release("t1", { sessionId: SESSION, reason: "t" });
+    expect(h.sub()).toMatchObject({ catchupState: null, stripeSubId: null, externalPayment: true });
+    expect(h.sub().periodEnd).toEqual(new Date("2026-12-01T12:00:00Z"));
+  });
+
+  it("a PAID settlement keeps Stripe's period (nothing is restored on the success path)", async () => {
+    const h = make(awaiting({ catchupInvoiceId: "in_1", ...manual }), [octOpen], {
+      invoices: [
+        { id: "in_1", status: "paid", subscription: SUB, amountDue: 31000, amountPaid: 31000 },
+      ],
+    });
+    await h.svc.openClaim("t1").catch(() => undefined); // already claimed: refused, records nothing
+    Object.assign(h.sub(), { periodEnd: new Date("2026-12-01T12:00:00Z") });
+    await h.svc.sweep(NOW);
+    expect(h.sub()).toMatchObject({ catchupState: null, externalPayment: false });
+    expect(h.sub().periodEnd).toEqual(new Date("2026-12-01T12:00:00Z"));
+  });
+
+  it("releasing a SESSION_OPEN claim never touches the period (the session never completed)", async () => {
+    const h = make({ ...manual });
+    await h.svc.openClaim("t1");
+    await h.svc.attachSession("t1", SESSION);
+    h.stripe.sessions[SESSION] = { id: SESSION, status: "expired", metadata: { tenantId: "t1" } };
+    await h.svc.sweep(NOW);
+    expect(h.sub()).toMatchObject({ catchupState: null, periodStart: OCT1, periodEnd: NOV1 });
+  });
+});
+
 describe("nits", () => {
   it("the release's refused-because-paid NEEDS RULING is raised ONCE per invoice, not on every hourly retry", async () => {
     const h = make(awaiting({ catchupInvoiceId: "in_1" }), [octOpen], {
