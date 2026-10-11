@@ -35,8 +35,9 @@
 //   1. --confirm-plan equals the plan file's own sha256;
 //   2. --guard-sha is a git ancestor of this checkout's HEAD (the PR3 code that stops new NULL lines);
 //   3. the DB fingerprint (database, tenant ids) still matches the dry run;
-//   4. a LIVE (non-test) tenant needs --live-tenant-override, the literal type-back phrase AND its own
-//      --yes-tenant <tenantId> (the owner's yes, per live tenant);
+//   4. a LIVE (non-test) tenant needs --live-tenant-override, the literal phrase, its own
+//      --yes-tenant <tenantId> AND the tenant id typed back at a real terminal (stdin and stdout; a
+//      non-TTY run refuses) — the owner's yes, per live tenant;
 //   4b. a PROTECTED tenant (paying, Stripe-linked, or named in PROTECTED_TENANT_SLUGS) is HELD at the dry
 //      run unless named with --allow-protected <tenantId>; the apply RE-DERIVES protection in its
 //      transaction and, for every protected tenant it writes, needs --allow-protected plus a typed
@@ -309,7 +310,14 @@ export function verifyPlanFile(saved, confirmPlan) {
  * The live-tenant yes (SA: an owner yes per live tenant). `liveTenantIds` are the plan's non-test tenants.
  * Needs --live-tenant-override, the literal phrase for the plan's line count, and a --yes-tenant for each.
  */
-export function liveTenantGate({ liveTenantIds, lineCount, override, confirm, yesTenants }) {
+export function liveTenantGate({
+  liveTenantIds,
+  lineCount,
+  override,
+  confirm,
+  yesTenants,
+  typedTenants,
+}) {
   if (liveTenantIds.length === 0) return { ok: true };
   const phrase = `APPLY ${lineCount} LINES`;
   if (!override || confirm !== phrase) {
@@ -323,7 +331,56 @@ export function liveTenantGate({ liveTenantIds, lineCount, override, confirm, ye
   if (missing.length) {
     return { ok: false, reason: `no --yes-tenant for live tenant(s) ${missing.join(", ")}` };
   }
+  // House policy for a live-tenant write: dry run first PLUS a type-back at a real terminal. The flag alone
+  // (an automated session can pass it) is never enough; `typedTenants` is what `confirmLiveTenantYes` minted.
+  const typed = new Set(typedTenants ?? []);
+  const untyped = liveTenantIds.filter((id) => !typed.has(id)).sort();
+  if (untyped.length) {
+    return {
+      ok: false,
+      reason: `live tenant(s) ${untyped.join(", ")} not confirmed by typing the tenant id at a terminal`,
+    };
+  }
   return { ok: true };
+}
+
+function readlineAsk(stdin, stdout, question) {
+  const readline = require("node:readline");
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+  return new Promise((resolve) =>
+    rl.question(question, (a) => {
+      rl.close();
+      resolve(a);
+    }),
+  );
+}
+
+/**
+ * The owner's yes for ONE live tenant: --yes-tenant <tenantId> naming it, AND the tenant id typed back at a
+ * real terminal (stdin and stdout). Refuses when either is missing or not a TTY. Returns the tenant id.
+ */
+export async function confirmLiveTenantYes({
+  tenantId,
+  argv,
+  stdin = process.stdin,
+  stdout = process.stdout,
+  ask,
+}) {
+  if (!argv.some((a, i) => a === "--yes-tenant" && argv[i + 1] === tenantId)) {
+    throw refuse(`live tenant ${tenantId}: --yes-tenant must name this tenant's id`);
+  }
+  if (!(stdin && stdin.isTTY && stdout && stdout.isTTY)) {
+    throw refuse(
+      `live tenant ${tenantId}: the confirmation needs a real terminal (stdin and stdout)`,
+    );
+  }
+  const typed = await (ask ?? ((q) => readlineAsk(stdin, stdout, q)))(
+    `LIVE tenant. Type the tenant id (${tenantId}) back to confirm: `,
+  );
+  if (String(typed).trim() !== tenantId) {
+    throw refuse(`live tenant ${tenantId}: the typed confirmation did not match`);
+  }
+  return tenantId;
 }
 
 // ─── SQL ──────────────────────────────────────────────────────────────────────
@@ -645,7 +702,7 @@ export function assertRowProvesWrite(row, a, categoryTenantId) {
 /**
  * The apply core, on an OPEN client already `BEGIN`-ed. Every gate that needs the database runs here; the
  * caller COMMITs on a return and ROLLBACKs on a throw. `ctx`: { protectedSlugs, overrides: Map<tenantId,
- * token>, liveOverride, confirm, yesTenants }. Returns the number of lines written.
+ * token>, liveOverride, confirm, yesTenants, typedTenants }. Returns the number of lines written.
  */
 export async function applyPlan(client, plan, ctx) {
   if (JSON.stringify(await fingerprint(client)) !== JSON.stringify(plan.fingerprint)) {
@@ -689,6 +746,7 @@ export async function applyPlan(client, plan, ctx) {
     override: !!ctx.liveOverride,
     confirm: ctx.confirm,
     yesTenants: ctx.yesTenants ?? [],
+    typedTenants: ctx.typedTenants ?? [],
   });
   if (!liveGate.ok) throw refuse(liveGate.reason);
 
@@ -844,6 +902,23 @@ async function apply() {
   const client = new pg.Client(dialConfig(url));
   try {
     await client.connect();
+    // The owner's yes per LIVE tenant is typed back at a terminal BEFORE the transaction opens (a prompt
+    // must not hold row locks). The plan's tenants are classified here only to know whom to ask; the
+    // transaction below re-derives every gate from the database.
+    const planTenants = [...new Set(plan.apply.map((a) => a.tenantId).filter(Boolean))];
+    const slugRows = planTenants.length
+      ? (
+          await client.query('SELECT id, slug FROM "Tenant" WHERE id = ANY($1::text[])', [
+            planTenants,
+          ])
+        ).rows
+      : [];
+    const typedTenants = [];
+    for (const t of slugRows.filter((r) => !isTestTenant(r.slug))) {
+      typedTenants.push(
+        await confirmLiveTenantYes({ tenantId: t.id, argv: process.argv.slice(2) }),
+      );
+    }
     await client.query("BEGIN");
     // A lock held on a production tenant row must never queue app traffic behind a long apply.
     await client.query("SET LOCAL lock_timeout = '5s'");
@@ -854,6 +929,7 @@ async function apply() {
       liveOverride: process.argv.includes("--live-tenant-override"),
       confirm: argOf("--confirm"),
       yesTenants: argvAll("--yes-tenant"),
+      typedTenants,
     });
     await client.query("COMMIT");
     console.log(`${TAG}: committed — ${written} line(s)`);

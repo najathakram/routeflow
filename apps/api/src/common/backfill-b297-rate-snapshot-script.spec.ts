@@ -165,14 +165,16 @@ describe("backfill-b297-rate-snapshot", () => {
     expect(out.zero).toBeNull();
   });
 
-  it("a live tenant needs the override, the literal phrase for the line count, and its own yes", () => {
+  it("a live tenant needs the override, the literal phrase, its own --yes-tenant AND the id typed back", () => {
     const out = runModule(`
-      const g = (o) => m.liveTenantGate({ liveTenantIds: ["t-1", "t-2"], lineCount: 5, override: true, confirm: "APPLY 5 LINES", yesTenants: ["t-1", "t-2"], ...o });
+      const g = (o) => m.liveTenantGate({ liveTenantIds: ["t-1", "t-2"], lineCount: 5, override: true, confirm: "APPLY 5 LINES", yesTenants: ["t-1", "t-2"], typedTenants: ["t-1", "t-2"], ...o });
       console.log(JSON.stringify({
         ok: g({}),
         noOverride: g({ override: false }),
         badPhrase: g({ confirm: "APPLY 4 LINES" }),
         missingYes: g({ yesTenants: ["t-1"] }),
+        notTyped: g({ typedTenants: ["t-1"] }),
+        noneTyped: g({ typedTenants: undefined }),
         noLive: m.liveTenantGate({ liveTenantIds: [], lineCount: 5, override: false, confirm: undefined, yesTenants: [] }),
       }));`);
     expect(out.ok).toEqual({ ok: true });
@@ -180,7 +182,34 @@ describe("backfill-b297-rate-snapshot", () => {
     expect(out.badPhrase.ok).toBe(false);
     expect(out.missingYes).toMatchObject({ ok: false });
     expect(out.missingYes.reason).toContain("t-2");
+    expect(out.notTyped).toMatchObject({ ok: false });
+    expect(out.notTyped.reason).toContain("t-2");
+    expect(out.noneTyped.ok).toBe(false);
     expect(out.noLive).toEqual({ ok: true });
+  });
+
+  it("confirmLiveTenantYes: needs the flag naming the tenant, a real terminal, and the id typed back", () => {
+    const out = runModule(`
+      const tty = { isTTY: true };
+      const notTty = { isTTY: false };
+      const tries = async (o) => { try { return await m.confirmLiveTenantYes(o); } catch (e) { return e.refuse ? "REFUSED:" + e.message : "THROW:" + e.message; } };
+      const typed = (id) => async () => id;
+      console.log(JSON.stringify({
+        ok: await tries({ tenantId: "t-1", argv: ["--yes-tenant", "t-1"], stdin: tty, stdout: tty, ask: typed("t-1") }),
+        noFlag: await tries({ tenantId: "t-1", argv: [], stdin: tty, stdout: tty, ask: typed("t-1") }),
+        otherFlag: await tries({ tenantId: "t-1", argv: ["--yes-tenant", "t-2"], stdin: tty, stdout: tty, ask: typed("t-1") }),
+        noTtyIn: await tries({ tenantId: "t-1", argv: ["--yes-tenant", "t-1"], stdin: notTty, stdout: tty, ask: typed("t-1") }),
+        noTtyOut: await tries({ tenantId: "t-1", argv: ["--yes-tenant", "t-1"], stdin: tty, stdout: notTty, ask: typed("t-1") }),
+        wrongTyped: await tries({ tenantId: "t-1", argv: ["--yes-tenant", "t-1"], stdin: tty, stdout: tty, ask: typed("t-2") }),
+        padded: await tries({ tenantId: "t-1", argv: ["--yes-tenant", "t-1"], stdin: tty, stdout: tty, ask: typed("  t-1 ") }),
+      }));`);
+    expect(out.ok).toBe("t-1");
+    expect(out.noFlag).toMatch(/REFUSED:.*--yes-tenant must name/);
+    expect(out.otherFlag).toMatch(/REFUSED:.*--yes-tenant must name/);
+    expect(out.noTtyIn).toMatch(/REFUSED:.*real terminal/);
+    expect(out.noTtyOut).toMatch(/REFUSED:.*real terminal/);
+    expect(out.wrongTyped).toMatch(/REFUSED:.*did not match/);
+    expect(out.padded).toBe("t-1");
   });
 
   it("a protected tenant is held unless named; one that turned protected since the dry run refuses the apply", () => {
