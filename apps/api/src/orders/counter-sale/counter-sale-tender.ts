@@ -141,15 +141,21 @@ export function planSaleTender(
   invoices: InvoiceRow[],
   legs: readonly CounterLeg[],
 ): SaleTenderPlan {
-  const none: SaleTenderPlan = { placements: [], changeCents: 0 };
   const balances = preTenderBalances(invoices);
   const owing = balances.reduce((sum, b) => sum + b.balanceCents, 0);
   const single = legs.length === 1;
-  if (single && (legs[0].method === "ON_ACCOUNT" || owing <= 0)) return none;
   const planned = legs.map((l) => ({
     method: l.method,
     amountCents: l.amount == null ? (single ? owing : 0) : dollarsToCents(roundMoney(l.amount)),
   }));
+  // The cash handed over is the REQUEST's cash leg, whatever the plan does with it (it is half of a replay's fingerprint).
+  const cashLeg = planned.find((l) => l.method === "CASH");
+  const none: SaleTenderPlan = {
+    placements: [],
+    changeCents: 0,
+    ...(cashLeg ? { cashTenderedCents: cashLeg.amountCents } : {}),
+  };
+  if (single && (legs[0].method === "ON_ACCOUNT" || owing <= 0)) return none;
   if (single && planned[0].amountCents <= 0) {
     return { ...none, refusal: API_ERROR_CODES.COUNTER_TENDER_SHORT };
   }
@@ -163,12 +169,7 @@ export function planSaleTender(
   if (plan.refusedLegIndexes.length > 0 || cashPlacedNothing) {
     return { ...none, refusal: API_ERROR_CODES.COUNTER_PAYMENT_EXCEEDS_TOTAL };
   }
-  const cashLeg = planned.find((l) => l.method === "CASH");
-  return {
-    placements: plan.placements,
-    changeCents: plan.changeCents,
-    ...(cashLeg ? { cashTenderedCents: cashLeg.amountCents } : {}),
-  };
+  return { ...none, placements: plan.placements, changeCents: plan.changeCents };
 }
 
 const changed = (why: string) =>
@@ -178,17 +179,31 @@ const changed = (why: string) =>
   });
 
 /**
- * A replay (same Idempotency-Key) must be the SAME tender, or a resume of it. Refused 409
- * COUNTER_TENDER_CHANGED, before anything more is recorded, when the stored rows cannot be this request's
- * legs: a split meeting a pre-split attempt's ungrouped rows, a stored leg this request does not have, a
- * stored leg with another method, or a stored amount above the planned placement (per leg and invoice, so
- * money is never topped up on another invoice). A stored amount BELOW the plan is an interrupted attempt:
- * it resumes (only the shortfall is recorded).
+ * A replay (same Idempotency-Key) must be the SAME tender, or a resume of it. Any other body is refused 409
+ * COUNTER_TENDER_CHANGED, before anything more is recorded. The fingerprint is DERIVED from what is already
+ * stored (no column): the leg group ids carry each leg's index, the rows carry method and amount per invoice, and
+ * `Order.counterCashTendered` (written BEFORE any money moves) says whether the original request had a cash leg and
+ * how much was handed over. So the stored tender is not the request when:
+ *  - a split meets a pre-split attempt's ungrouped rows, or a stored leg is not in the request (index at or past the
+ *    request's legs, so legs in another ORDER are another request too: the index is the stored identity);
+ *  - a stored leg has another method;
+ *  - a (leg, invoice) pair holds money but not EXACTLY the request's placement for it: one `recordPayment` writes a
+ *    pair whole, so a part-filled pair means a different amount (Card 30 stored, Card 35 asked; Cash 15 stored,
+ *    Cash 20 asked), never an interrupted write. A pair with NO stored row is a resume: only that shortfall is recorded;
+ *  - the cash leg's handed-over amount differs from the stored `counterCashTendered` (once a CASH row anchors it);
+ *  - the request has a cash leg but the stored sale took none (no tendered), or has none but the stored sale did.
+ * The legs are compared in cents; `reference` is not compared (recordPayment normalises it and the money rows decide).
+ * Known gap (no marker exists for it): a replay that APPENDS a non-cash leg to a stored sale that had no cash leg is
+ * indistinguishable from the resume of an interrupted split.
  */
 export function assertStoredTenderMatches(
   stored: StoredTender,
   legs: readonly CounterLeg[],
   placements: TenderPlacement[],
+  /** `Order.counterCashTendered` as stored, in cents; null = none stored. */
+  storedTenderedCents: number | null = null,
+  /** the request's cash leg handed-over amount in cents (`planSaleTender`'s cashTenderedCents); undefined = no cash leg */
+  requestCashTenderedCents?: number,
 ): void {
   if (stored.legacy && legs.length > 1) throw changed("a one-payment sale replayed as a split");
   for (const [idx, rows] of stored.byLeg) {
@@ -201,13 +216,25 @@ export function assertStoredTenderMatches(
     for (const invoiceId of new Set(rows.map((r) => r.invoiceId))) {
       const have = rows
         .filter((r) => r.invoiceId === invoiceId)
-        .reduce((s, r) => s + r.amountCents, 0);
+        .reduce((sum, r) => sum + r.amountCents, 0);
       const planned = placements
         .filter((p) => p.legIndex === idx && p.invoiceId === invoiceId)
-        .reduce((s, p) => s + p.amountCents, 0);
-      if (have > planned)
-        throw changed(`payment ${idx + 1} was taken for more than this request asks`);
+        .reduce((sum, p) => sum + p.amountCents, 0);
+      if (have !== planned) throw changed(`payment ${idx + 1} was taken for another amount`);
     }
+  }
+  if (stored.legacy || stored.byLeg.size === 0) return; // nothing grouped to compare the cash leg against
+  const cashStored = [...stored.byLeg.values()].some((rows) =>
+    rows.some((r) => r.payment.method === "CASH"),
+  );
+  if (cashStored && storedTenderedCents != null) {
+    if (requestCashTenderedCents !== storedTenderedCents) {
+      throw changed("the cash handed over is not the amount already taken");
+    }
+  } else if (!cashStored && requestCashTenderedCents != null && storedTenderedCents == null) {
+    throw changed("this sale was taken without cash");
+  } else if (!cashStored && requestCashTenderedCents == null && storedTenderedCents != null) {
+    throw changed("this sale was taken with cash");
   }
 }
 

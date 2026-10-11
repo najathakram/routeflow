@@ -281,10 +281,12 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
     expect(Number(await stored(cashOrderId))).toBe(50);
   }, 60_000);
 
-  it("(2) a same-key replay and a later tender with a DIFFERENT amount leave it at 50.00", async () => {
-    await ring({ method: "CASH", amount: 60 }, cashKey);
+  it("(2) a same-key replay and a later tender with a DIFFERENT amount are 409 COUNTER_TENDER_CHANGED and leave it at 50.00", async () => {
+    await expect(ring({ method: "CASH", amount: 60 }, cashKey)).rejects.toMatchObject({
+      response: { code: "COUNTER_TENDER_CHANGED" },
+    });
     expect(Number(await stored(cashOrderId))).toBe(50);
-    await tenantCtx.run(tenantId, () =>
+    const direct409 = tenantCtx.run(tenantId, () =>
       (
         service as unknown as {
           tender: (
@@ -294,6 +296,9 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
         }
       ).tender([{ method: "CASH", amount: 70 }], cashOrderId),
     );
+    await expect(direct409).rejects.toMatchObject({
+      response: { code: "COUNTER_TENDER_CHANGED" },
+    });
     expect(Number(await stored(cashOrderId))).toBe(50);
     // the DB filter itself: a direct write behind the NULL guard changes nothing
     const direct = await raw.order.updateMany({
@@ -351,8 +356,11 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
     expect(retry.cashTendered).toBe(60);
     expect(retry.change).toBe(18.73);
     // now anchored by a CASH row: frozen against a further replay, and every read agrees
-    const again = await ring({ method: "CASH", amount: 90 }, key);
+    await expect(ring({ method: "CASH", amount: 90 }, key)).rejects.toMatchObject({
+      response: { code: "COUNTER_TENDER_CHANGED" },
+    });
     expect(Number(await stored(first.orderId))).toBe(60);
+    const again = await ring({ method: "CASH", amount: 60 }, key); // the SAME body still serves
     expect(again.change).toBe(18.73);
     const byKey = await tenantCtx.run(tenantId, () => service.byKey(key));
     expect(byKey.change).toBe(18.73);
