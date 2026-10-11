@@ -12,6 +12,55 @@
 
 ## process
 
+### L-290 · 2026-10-10 · process · a train member that is red on its own branch does not enter the train: read each member's own latest CI before merging it
+
+- **Symptom:** a member whose own branch had a red database spec was merged into Train 3 and had to be ejected after the train was assembled, costing a revert on the tip.
+- **Root cause:** the train gate read the local checks and the assembled tip, never each member's own latest CI run on its head sha, so a red member only showed up once it was already in; the abandoned approach was "assemble first, find the reds on the tip".
+- **Lesson:** **Before a member is merged into a train, read that member's own latest CI result for its exact head sha. Red, missing or stale means it does not enter, whatever the local checks said; the tip's CI is the second check, not the first.**
+- **Guard:** none automatic; the train checklist (per member: head sha, its latest run, green). Cf. [[L-288]].
+
+### L-289 · 2026-10-09 · process · a lead decides within its own authority when the owner is away; it never parks a train on an absent owner's reply
+
+- **Symptom:** work idled behind a question that only the owner could answer, while the owner was not reachable and everything else was ready.
+- **Root cause:** the decision was treated as the owner's by default, so a reversible, in-scope call waited on a reply that was not coming; the abandoned approach was "ask, then hold everything until answered".
+- **Lesson:** **Before holding work for the owner, ask whether the call is reversible and inside the authority already delegated. If so, decide, write the reason on the board, and keep moving. Only an irreversible or outward-facing action (prod writes, repo visibility, spend, a bypass of a standing gate) waits, and it waits as ONE queued ask with a default, while every unrelated item keeps flowing.**
+- **Guard:** none automatic; the lead's operating notes and the lane rules. Cf. [[L-253]] (a public window closes on state, never on a reply).
+
+### L-288 · 2026-10-09 · process · use one merge strategy end to end: trains merge to master with a MERGE COMMIT, so stacked and train-based branches stay ancestors of master
+
+- **Symptom:** a branch built on a train tip looked 256 commits ahead of master after that train was squash-merged, and merging it would have reverted four later fixes; the same shape threatened a second branch built on an earlier sitting.
+- **Root cause:** members were squashed or rebased while the train itself was squashed, so no branch built on a train tip could ever be an ancestor of the landed master; a mixed strategy made "is this merged?" unanswerable ([[L-197]], [[L-268]]).
+- **Lesson:** **Land a train with a merge commit (no squash, no rebase) so every member and every branch stacked on a train tip remains an ancestor of master. Before opening a PR for a branch built on any train, sitting or stacked base, run `git merge-base --is-ancestor <base> origin/master`; if it fails, cherry-pick the branch's own commits onto fresh master and prove `git diff origin/master...HEAD` lists only the PR's files.**
+- **Guard:** none automatic; the landing checklist's empty-diff proof (the file set of the two-dot and three-dot diffs against master must be identical). Supersedes the rebase-merge rule of [[L-268]].
+
+### L-287 · 2026-10-09 · process · never put a full local test gate on a train push that GitHub CI tests again; pre-flight takes seconds
+
+- **Symptom:** train and branch pushes sat for many minutes behind a full local verify plus the database lane, on a shared box already at its load cap, and then GitHub CI ran the same suites a second time.
+- **Root cause:** the local pre-push gate was designed when CI minutes were scarce, so it re-proves everything; on a train that CI tests anyway it is duplicate work, and it also queues every other lane behind the one push ([[L-283]]).
+- **Lesson:** **For a train push whose members were each verified and whose tip CI will test, do the seconds-long pre-flight only (`npm run lint:migrations`, `split-prisma-schema.mjs --check`, the fail-fast guards) and let CI in the window be the gate. Do not add FULL_VERIFY or the database lane to such a push. Bypassing the pre-push hook is still an owner decision (an audited SKIP_VERIFY), never a lane's.**
+- **Guard:** none automatic; the lead's lane rules and the audited `SKIP_VERIFY_REASON` line in `.git/skip-verify.log`.
+
+### L-284 · 2026-10-08 · process · lanes report events only, review depth follows risk, and a bug in a file you are changing rides in its own commit
+
+- **Symptom:** recorded by the 2026-10-08 operating review as an operating-model rule; the incident detail is in the lead's notes.
+- **Root cause:** coordination messages cost more than the work they describe, review effort is only worth spending where the risk is, and a bug fixed inside a commit about something else cannot be reviewed or reverted on its own.
+- **Lesson:** **Lanes report EVENTS only (pushed <sha> / blocked <why> / done / needs ruling), never status or load pings. Review depth follows risk: Opus for money, tenant security, concurrency and migrations; Sonnet for UI and docs; non-money nits go to a follow-up row, not a re-review loop. A bug found in a file you are already changing rides along in its OWN commit on the same branch, with a red-first test.**
+- **Guard:** the lane rules and the `pre-merge-review` skill.
+
+### L-283 · 2026-10-08 · process · cap work in flight per machine, and run the 2-minute fail-fast guards before the 7-minute verify push
+
+- **Symptom:** recorded by the 2026-10-08 operating review as an operating-model rule; the incident detail is in the lead's notes.
+- **Root cause:** work in flight beyond what one machine can finish competes with new work, and one deterministic failure found only inside the ~7 minute verify push costs a full verify.
+- **Lesson:** **Cap work in flight per machine: at most 2 PRs in review and at most 1 local-only branch; finish and push in-flight work before starting new feature work. Before a verify push run the ~2 minute fail-fast guards: size ratchets, pins, campaign-check freshness after any master merge, bare-cron, and check-types on the changed workspaces.**
+- **Guard:** the lane rules; the pre-push gates themselves.
+
+### L-281 · 2026-10-08 · process · on a shared host never `git stash` in a lane session and never kill processes by name
+
+- **Symptom:** recorded by the 2026-10-08 operating review as a standing hazard of several sessions sharing one machine; the incident detail is in the lead's notes.
+- **Root cause:** a stash is repo-wide and invisible in any working tree, so a `pop` in the wrong worktree restores or loses another lane's work. A name or pattern match (`pkill`, grep-and-kill) on a shared host cannot tell your jobs from another lane's, so it kills theirs.
+- **Lesson:** **In a builder or worktree session never use `git stash`: commit a WIP commit instead. Never kill by name or pattern: kill only the PID tree you started.**
+- **Guard:** the standing lane rules in the start prompt; no script yet.
+
 ### L-215 · 2026-09-23 · process · an approval covers only the exact value or sha it names
 
 - **Symptom:** a relayed brief said "set the ratchet baseline to the actual 5716" (a lowering from
@@ -26,23 +75,6 @@
   new size", never "set it to the actual size".**
 - **Guard:** none automated. Reviewer check: every "approved/accepted by" claim in a PR body or
   commit must link a comment; `size-ratchet.spec.ts` already refuses raises that exceed headroom.
-
-### L-209 · 2026-09-19 · process · read the shared review channel immediately before every merge
-
-- **Symptom:** three PRs were squash-merged on green CI plus an in-session review while an
-  independent reviewer had already posted a ship-after-fixes verdict with blockers on the shared
-  coordination issue minutes earlier. The blockers (a prod E2E gate that goes red on unseeded
-  fixtures, a script that sent live-tenant addresses to a third party before its test-tenant
-  gate, a vendor verdict accepted without checking its inferred components) landed on master and
-  needed fix-forward PRs plus a manual prod re-seed.
-- **Root cause:** the merge gate checked CI plus one commissioned review, not the channel where
-  independent reviews are posted — a green CI cannot see a blocker that lives in prose.
-- **Lesson:** **A merge gate must include a fresh read of the shared review channel for that
-  specific PR — re-fetch it and filter for REVIEW / BLOCKED / HOLD lines naming the PR,
-  immediately before `gh pr merge`, not once at window open. Any unresolved blocker line, or a
-  REVIEW line newer than the last commit reviewed, holds the merge.**
-- **Guard:** landing-coordinator routine step "read the coordination issue for REVIEW lines on
-  this PR" before each merge (no code guard).
 
 ### L-197 · 2026-09-17/18 · process · verifying landed/unlanded needs a fresh fetch AND the right commit (merged: L-203)
 
@@ -94,6 +126,7 @@
 - **Guard:** none yet — scoped a `bugs.mjs next-id` proposal (fetch-all-refs scan + a companion
   neighbor query) so allocation routes through a command, not memory. See [[L-197]], same
   problem, landed/unlanded side.
+- **Recurrence (2026-10-08):** bugs were minted in a stale checkout whose registry ended at an old id, and the id collided with a landed bug. Mint (`bugs.mjs file`) only in the current bookkeeping tree after a fetch, never in a stale main checkout.
 
 ### L-200 · 2026-09-18 · process · removing a UI control is a different risk class than removing dead code (#866, B519)
 
@@ -112,13 +145,6 @@
   UI while the gap it exposed is still wide open through a sibling surface.**
 - **Guard:** none yet — propose a removal checklist item: "list every client call site of the
   endpoint(s) this control posts to, not just this control's own references."
-
-### L-228 · 2026-09-27 · process · a merge train must leave master's tree equal to the tree that was verified (train A)
-
-- **Symptom:** a train of 14 PRs merged `--no-ff` and verified as one head (tree e98a41e8) was landed as a single squash; nothing but a deliberate check said the squash equalled what had been tested.
-- **Root cause:** a squash-merge builds its own tree from the PR diff against the current base, so anything that moved on master after the train was built (or a hand-resolved conflict) changes what lands without changing what was verified.
-- **Lesson:** **Land a train only after its head is verified and any hand hunk (import unions, ratchet rows) is confirmed against the merge-tree; after the squash, compare `git rev-parse origin/master^{tree}` with the verified tree and stop on any difference.**
-- **Guard:** the train PR body states the expected tree; the landing coordinator runs the comparison (train A: master's tree equals e98a41e8, checked). Dropped PRs are named with their reason so they re-enter the next train. Cf. [[L-197]].
 
 ### L-231 · 2026-09-22 · process · a register claim needs the check that would disprove it, not just the belief
 
@@ -140,58 +166,6 @@
   file:line beside any factual claim, and a landing-procedure reminder to run `date -u` before
   quoting a time. Related: [[L-213]].
 
-### L-240 · 2026-09-27 · process · a board issue has a 2,500-comment cap; roll to a successor at ~2,300
-
-- **Symptom:** the review board of record (#938) reached GitHub's 2,500-comment limit mid-window,
-  and commenting on it was disabled. PASS verdicts and gate messages had nowhere to go until a
-  successor (#2554) was opened, pinned and pointed at from every skill and script that named #938.
-- **Root cause:** the board was a single ever-growing issue, and nothing tracked its comment count
-  against GitHub's hard limit. The number was hardcoded in skills and in `fleet-status.mjs`.
-- **Lesson:** **A long-lived coordination issue is a capped resource: GitHub stops accepting
-  comments at 2,500. Watch the count and roll to a pinned successor at ~2,300, before the cap. Name
-  the live board in one place (a constant or config) and have skills point at it; leave the old
-  issue's comment links as history.**
-- **Guard:** `fleet-lead/scripts/fleet-status.mjs` reads the board from one `BOARD_ISSUE` constant
-  (env `FLEET_BOARD_ISSUE`), and `fleet-lead/SKILL.md` names #2554 as the live board. Proposed:
-  `fleet-status.mjs` prints the board's comment count and warns at 2,300.
-
-### L-241 · 2026-09-28 · process · text with backticks goes through a quoted heredoc to a file, never an unquoted heredoc or --body "…" (#2707)
-
-- **Symptom:** a lane wrote a PR body through an unquoted heredoc (`<<EOF`). The shell ran the
-  backticked commands in the text, including an owner-only `railway run … audit-tenant-entitlements.mjs`,
-  which was stopped only by a missing CLI on that machine (MacBook, #2707; no damage).
-- **Root cause:** shell command substitution runs inside an unquoted heredoc and inside a
-  double-quoted `--body "…"`, so any backticked command in prose is executed, not quoted.
-- **Lesson:** **Any PR, board or brief text that contains backticks is written with a QUOTED heredoc
-  (`<<'EOF'`) or the file-write tool to a file, then passed as `--body-file` / `gh … -F body=@file`.
-  Never interpolate such text into a command line.**
-- **Guard:** the lane brief rule (write bodies to a file first); production commands are owner-run on
-  the Mac mini only, with no railway CLI or link on the MacBook.
-
-### L-244 · 2026-09-29 · process · a merge reads every ruling posted after the last PASS, not only the PASS (#2678)
-
-- **Symptom:** #2678 landed on a PASS that predated a binding fold ruling (SA-551a, #2554
-  5867986094); the fold it required never shipped.
-- **Root cause:** the merge decision read the PR's last PASS and stopped, so a later ruling on the
-  same PR (a fold, HOLD or FAIL) was invisible to it.
-- **Lesson:** **A PASS is only current until the next comment that names the PR. Before a merge, list
-  every board comment that names the PR and was posted after its last PASS; an open fold, HOLD or
-  FAIL blocks the merge.**
-- **Guard:** the coordinator's pre-merge step (fleet-lead log entry 2026-09-29 #2678); no script yet.
-
-### L-246 · 2026-09-29 · process · a code-map stamp never goes inside a PR that gets squashed
-
-- **Symptom:** a code-map `mappedSha` (or a sha in a landing bullet) written inside a PR that was then
-  squash-merged named a commit that never reached master, so the map read as stale from the moment it
-  landed and its cited sha resolved to nothing.
-- **Root cause:** a squash merge replaces the branch's commits with one new commit; any sha a PR
-  records about itself, or about its own branch, does not exist on master afterwards.
-- **Lesson:** **Stamp `mappedSha` and cite shas only from the docs follow-up PR, and only shas that are
-  already on master (the squash commit). Never write the PR's own head or a branch sha into the map.**
-- **Guard:** Bookkeeping Option B (the code PR carries `Bookkeeping-Follow-Up: pending`; the follow-up
-  cites the merged sha). No script yet: propose `git merge-base --is-ancestor <sha> origin/master`
-  before any stamp.
-
 ### L-257 · 2026-10-02 · process · a stacked branch's master merge is a per-file three-way merge, never "take master's side"
 
 - **Symptom:** #3017's base was a stack branch (the WS9 settings-inventory PR), not master. Its master merge resolved all 10 conflicted files to master's side (the policy controller, the api and types error-code registries and `packages/types/index.ts`, the mobile types mock, `package.json` and the lock, four policy files). The parent owned lines in five of them, including `INVENTORY_SETTING_INVALID` and the policy-controller change; landing in stack order would have dropped them silently.
@@ -206,26 +180,12 @@
 - **Lesson:** **After landing two PRs that touch the same constructor, signature or shared type in one window, run `npm run check-types -w apps/api` (and the touched specs) on the COMBINED master before the next land; never infer the combination from each PR's own green. Cf. [[L-228]], [[L-247]].**
 - **Guard:** none automatic yet; the landing script is to run `npm run check-types -w apps/api` on the post-merge tree before the next merge (to be added).
 
-### L-266 · 2026-10-06 · process · a close/reopen CI re-run can replay a cached merge commit: read "Merge X into Y" in the run log before landing (#3223)
-
-- **Symptom:** #3223's CI re-run after close/reopen went green, yet its checkout log read "Merge <head> into <an older master>": GitHub replayed its cached merge commit although `refs/pull/N/merge` already showed the new master as a parent.
-- **Root cause:** a close/reopen re-runs against the cached merge commit; a fresh one is built only when master moves or a branch is pushed. The green run therefore proved the PR against the older master, not the one the landing rule allows. Related: [[L-198]] (`gh run rerun` replays the original merge ref).
-- **Lesson:** **Before landing, read the run log's "HEAD is now at … Merge X into Y" line and require Y to be the master the landing rule allows. Close/reopen can replay a cached merge commit; a fresh one comes only from master moving or a push.**
-- **Guard:** the landing script's merge-base check.
-
 ### L-267 · 2026-10-06 · process · a "retry with the same key" path excludes every state an office action ended, and "final" is derived only from terminal facts (#3211 counter-sale review)
 
 - **Symptom:** review of the counter-sale change found that a repeated submit with the same idempotency key could replay or re-open a sale that an office action had already ended (cancelled, returned or voided), and that a sale read as "final" from facts that are not terminal.
 - **Root cause:** the replay lookup matched on the key alone, so it did not ask which states a staff action can end; and the "final" flag was inferred from a non-terminal signal instead of a terminal fact.
 - **Lesson:** **A "retry with the same key" code path must exclude every state an office action can end, and a "final" state may be derived only from terminal facts, never from a signal that a later action can undo.**
 - **Guard:** none automatic yet; caught at pre-merge review. Propose a spec that enumerates every terminal and office-ended status and asserts the replay path refuses each. Cf. [[L-228]] and [[L-264]].
-
-### L-268 · 2026-10-06 · process · a merge train is built off master, verified as ONE tree, and rebase-merged so master equals the verified tree (W13 to W16)
-
-- **Symptom:** landing N ready PRs one by one made each PR re-run CI against a moving master (the L-266 re-run for every PR), and a squash built its own tree, so what landed was never the tree that had been tested.
-- **Root cause:** serial landing re-verifies every PR N times against a different base, and a squash-merge rebuilds the diff against the current base, so the verified tree and the landed tree can differ ([[L-228]]).
-- **Lesson:** **Build `train/wNN` off master; per PR run `git merge --squash <exact sha>` and commit "<PR title> (#N)", asserting each commit's tree equals `git merge-tree --write-tree HEAD <sha>`. Run ONE CI on the exact landing tree (plus the DB lane on that tree when DB code is touched) and pass the bug-hunt gate (scan-signatures and the lead's cross-PR hunt) before merging. REBASE-merge the train PR, then `git diff train origin/master` must be empty; close the originals naming their master commits.**
-- **Guard:** the train PR body states the expected tree and the empty diff is checked after the merge; a red run drops the culprit PR (its per-PR run names it), rebuilds and re-runs once. Cf. [[L-228]], [[L-266]].
 
 ### L-269 · 2026-10-07 · process · re-arm the visibility watchdog on a timer at least 5 minutes before its deadline, and read visibility before every merge (W15)
 
@@ -234,13 +194,6 @@
 - **Lesson:** **Re-arm the visibility watchdog on a timer at least 5 minutes before its deadline (an app restart also kills it), and read the repo's visibility immediately before every merge; a merge never proceeds on the belief that the window is open.**
 - **Guard:** none automatic yet; propose a pre-merge step in the landing script that fails on `PRIVATE` or on under 5 minutes of watchdog time left. Cf. [[L-253]] (archived).
 
-### L-271 · 2026-10-07 · process · a train of several PRs runs check-types and every PR's specs on the combined tree before the push
-
-- **Symptom:** squashing several PRs into one train, a later PR's guard spec failed because an earlier PR had added a new file the guard now covered; no single PR was red on its own.
-- **Root cause:** each PR was verified alone against its own base, so a cross-PR interaction (a new file meeting another PR's guard or type) was invisible until the combined tree.
-- **Lesson:** **Before pushing a train, run `check-types` and the specs of EVERY PR in the train on the combined tree, not only the last PR's; a later PR's guard can be violated by an earlier PR's new file.**
-- **Guard:** the train's pre-push list names each PR's guard specs and `npm run check-types`; cf. [[L-228]], [[L-268]].
-
 ### L-273 · 2026-10-07 · process · a pre-push log piped through `tail` hides the real failure
 
 - **Symptom:** a builder diagnosed a warning near the end of a pre-push log as the failure and chased it.
@@ -248,7 +201,22 @@
 - **Lesson:** **Save the full pre-push or verify log to a file and grep it for `FAIL` and `Tests:` before diagnosing; never judge a failure from the tail of a piped log.**
 - **Guard:** run verify as `... > log 2>&1` and read `grep -n "FAIL\|Tests:" log` first.
 
+### L-280 · 2026-10-08 · process · a delete-by-filter ran with an erroring age filter and removed recent files
+
+- **Symptom:** a disk-cleanup helper meant to delete only folders older than three days deleted every unreferenced proof and handoff folder regardless of age; the files were gitignored and not recoverable.
+- **Root cause:** the age filter (`find -newermt '-3 days'`) is invalid on this machine's `find`, printed an error and an empty list, and the helper read "nothing is recent" as "everything is old".
+- **Lesson:** **Test any delete-by-filter on a known-recent file first and require it to be KEPT, and make an erroring or empty filter abort the whole run, never default to "old". Run the listing as a dry run and read its count before the delete.**
+- **Guard:** none automated; the cleanup helper's filter check is the proposal (assert the known-recent canary survives, abort on a non-zero filter exit).
+- **Recurrence (2026-10-08):** the age-filter rule also covers cleanup scripts: a cleanup script must age-filter (keep anything recent) before it deletes.
+
 ## tooling
+
+### L-291 · 2026-10-10 · tooling · never feed python a heredoc on Windows (`python3 -`): it hangs; write the script to a file or use node
+
+- **Symptom:** a lane's shell hung indefinitely on a `python3 - <<EOF` edit on a Windows machine.
+- **Root cause:** stdin-fed python (`python3 -` with a heredoc) does not return there; the exact mechanism was not chased, and waiting or retrying never helps.
+- **Lesson:** **On Windows, never pipe a script into `python3 -`. Make the edit with the editor tool, or write the script to a file and run it (node is always present in this repo); treat a silent hang on a heredoc as this trap before anything else.**
+- **Guard:** none automatic; the lane rules.
 
 ### L-198 · 2026-09-18 · tooling · `gh run rerun` replays the original checkout, not a fresh merge-ref
 
@@ -402,8 +370,31 @@
 - **Root cause:** every full image rebuild leaves dangling layers inside a fixed-size VM disk, and nothing pruned them between proof runs.
 - **Lesson:** **After each local proof run, prune dangling images and trim the VM disk; never let the VM fill mid-build. Check VM free space before a rebuild, not host free space.**
 - **Guard:** none automated; a pre-build free-space check in the local runbook is the proposal.
+- **Recurrence (2026-10-08):** a deps-only `db:up` left for a one-off DB diagnostic kept the fixed-name postgres and redis containers, which blocked the next `local:up` and cost an 8.5 minute failed build. Run `db:down` in the same step that ran `db:up`.
+
+### L-274 · 2026-10-07 · tooling · a plain `npm ci` runs the root `prepare` (husky) and rewrites the SHARED hooksPath
+
+- **Symptom:** after `npm ci` in a worktree, `core.hooksPath` (shared by every worktree) turned relative and later pushes ran without the fleet shim's checks.
+- **Root cause:** the root `"prepare": "husky"` script runs on a plain `npm ci`, doing exactly what `npx husky` does: it rewrites the one repo-wide `core.hooksPath`.
+- **Lesson:** **In a worktree install with `npm ci --ignore-scripts`, never a plain `npm ci`. After any install, reset the absolute shim path, print `git config core.hooksPath`, and run `check-git-hooks` before committing or pushing.**
+- **Guard:** none automatic beyond `scripts/check-git-hooks.mjs`; the install order in [[L-254]].
+- **Recurrence (2026-10-08):** a second recurrence on the shared Mac mini of a plain `npm ci` rewriting `core.hooksPath`. `npm ci --ignore-scripts` plus a manual `prisma generate` avoids it.
+
+### L-275 · 2026-10-07 · tooling · local stack image tags are shared across worktrees
+
+- **Symptom:** a proof run used an api image another worktree had built, and its result was reported as the branch's own.
+- **Root cause:** `routeflow-api:local` and `routeflow-web:local` are single tags for the whole machine; whichever build finished last owns them, and two concurrent builds overwrite each other.
+- **Lesson:** **Never run two stack builds at once, and read an image's `org.routeflow.sha` label (`docker image inspect`) before claiming whose it is or that a proof ran on your sha.**
+- **Guard:** none automatic; cf. [[L-272]] and the Mac slot rule.
 
 ## testing
+
+### L-292 · 2026-10-10 · testing · a fixture that leaks an environment variable (RF_VERIFY_MODE) makes the pre-push hook and CI disagree
+
+- **Symptom:** the same checks gave different results in the local pre-push hook and in CI.
+- **Root cause:** a fixture left `RF_VERIFY_MODE` set in the process environment, so what a spec saw depended on which runner (and which earlier spec in the worker) had set it; the abandoned approach was re-running until the two agreed.
+- **Lesson:** **A test or fixture that sets a process environment variable restores it afterwards (save in a before hook, restore in an after hook, even on failure), and a spec whose behavior depends on such a variable sets it explicitly instead of inheriting it. When the hook and CI disagree, diff the environment first.**
+- **Guard:** none automatic; review check on fixtures that write `process.env`.
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
 
@@ -470,13 +461,6 @@
   plainly that it is unverified.**
 - **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
-### L-226 · 2026-09-27 · testing · a money fixture must be shaped by the production writer (#2274, #2245, #2305)
-
-- **Symptom:** ledger and unit-line specs built rows by hand in shapes the writer never produces (credit overshoot legs the per-line and header caps would refuse; quantities not in base pieces), so they proved a state that cannot exist and could miss the one the writer can.
-- **Root cause:** a hand-built fixture encodes the author's model of the writer, not the writer's output; the spec can only agree with the model (cf. [[L-220]]).
-- **Lesson:** **Build every money or unit fixture with the production writer (or copy its exact shape: base-piece qty, `net + tax` amounts, the maps it stores). Before asserting an overshoot or edge state, confirm the writer can reach it; if only a downstream clamp stops it, test that clamp.**
-- **Guard:** review checks each fixture against the writer's call site (train A: `credit-notes.service.ts` caps, `returns.service.ts` return maps); `regulated-ledger-price-correction.db.spec.ts` drives the real writers.
-
 ### L-247 · 2026-09-29 · testing · swapping a constructor dependency has construction sites tsc does not check (#2241)
 
 - **Symptom:** #2241 replaced `EntitlementsService` with `EntitlementAuthority` in two services; 12 specs
@@ -512,6 +496,14 @@
 - **Lesson:** **A probe asserts the mode or path it actually entered (the edit mode, the line count after) before it reads the effect it measures; otherwise a fixture that took a different branch reads as a bug.**
 - **Guard:** probes print and assert the branch marker (mode, resulting line count) before any effect assertion; a probe with no such line is not evidence.
 
+### L-276 · 2026-10-07 · testing · a scoped jest run leaves a partial campaign report, and a jest path argument is a regex
+
+- **Symptom:** a push carried a campaign report listing only a handful of specs, and turbo's cached test replay did not rewrite it; a scoped run of `app/(dashboard)/...` matched nothing and looked green.
+- **Root cause:** `npx jest <spec>` in a workspace overwrites that workspace's report with the partial run, a cached replay writes nothing, and a path pattern is a REGEX, so unescaped parentheses match no file.
+- **Lesson:** **After any scoped jest run, regenerate the full workspace report before pushing. Escape or avoid regex characters in a path pattern and check the `Tests:` count is plausible before trusting a pass.**
+- **Guard:** none automatic; read `Tests: N` from the run and compare the report's spec count to the workspace's.
+- **Recurrence (2026-10-08):** a master merge, or a merge of another branch, makes the api and mobile `.campaign/runs` reports STALE even when no test file changed on your branch, because turbo serves cached test results and never regenerates them. Regenerate with the full suite (`cd apps/api && npx jest --maxWorkers=2`, the same in mobile) before the push.
+
 ## domain
 
 ### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
@@ -540,20 +532,6 @@
   guards; a test asserting every consumer calls the _same_ function reference (not just a
   matching result) is flagged, not yet added.
 
-### L-170 · 2026-09-16 · domain · #743 fix round F3 (roundMoney before comparison)
-
-- **Symptom:** a fully-settled invoice rendered a red "Balance Due $0.00" badge instead of the
-  green paid state — the number was right but its color-coding read non-zero.
-- **Root cause:** the balance summed three independently-derived floats before subtracting from
-  total; the color-coding ran on that raw sum, where a sub-cent float remnant survives `Math.max`
-  and still reads non-zero. `roundMoney` was applied only at display-formatting time.
-- **Lesson:** **`roundMoney` must wrap a sum of independently-derived floats BEFORE the value
-  drives any comparison or branch — color-coding, `>0` checks, conditional rendering — never
-  only where it's formatted for display.**
-- **Guard:** `invoices.service.ts`'s two `balanceDue` sites and the PDF template now wrap in
-  `roundMoney()` before the comparison. Also fixed at `customers.service.ts`'s
-  `applyAdvancePaymentToInvoiceLocked` (#814), same class.
-
 ### L-072 · 2026-09-03 · domain · wave E `imp-10b`
 
 - **Symptom:** 4 hand-typed client mirrors of Prisma enums drifted from the schema (invented,
@@ -566,18 +544,6 @@
 - **Guard:** `apps/api/src/common/enum-parity.spec.ts` — a generic table (40 enums) against
   `packages/types/api/enums.ts`, plus a regression layer pinning the drifted files and the
   mobile jest stub that can't `require` the shared package directly.
-
-### L-119 · 2026-09-13 · process · F38 round 4
-
-- **Symptom:** an independent pre-merge review found a door quote collecting excise on cancelled
-  and already-delivered lines — after three in-lane review rounds had passed that code.
-- **Root cause:** the two halves of one money figure came from differently filtered line sets;
-  each file read correctly alone, so the defect lived only in the seam between them.
-- **Lesson:** **Both halves of one money figure must derive from ONE collection — pass the
-  filtered array, never re-derive the filter at the second call site. A reviewer inside the lane
-  is the wrong instrument for a seam; it takes an independent pre-merge pass to see across two
-  files that are each individually right.**
-- **Guard:** REG-B305 round 4 + the source pin `short-pick-category-tax.pins.test.ts`.
 
 ### L-125 · 2026-09-14 · domain · W1 billing anchor
 
@@ -592,31 +558,6 @@
   a wrong charge date.**
 - **Guard:** the time-of-day half shipped alone; the drift half is filed, blocked on an
   `anchorDay` column. Sibling [[L-118]].
-
-### L-159 · 2026-09-15 · domain · B421 (PDF + web-detail rounds, independent review)
-
-- **Symptom:** a PDF template's fallback re-derived `totalPaid`/`creditApplied`/`advanceApplied`
-  independently, each gated on its OWN `!= null` check — a caller passing an old,
-  credit-inclusive `totalPaid` alone got the other two re-split from raw payments too,
-  double-subtracting. A web page reinvented the identical bug independently right after.
-- **Root cause:** three related figures each checked their own presence instead of sharing ONE
-  gate, so a partially-precomputed payload silently mixed two inconsistent bases.
-- **Lesson:** **When a fallback re-derives several related figures from raw data, gate ALL of
-  them on ONE presence check, never per-field — a caller must get either the full precomputed
-  set or the full re-derived set, never a mix.**
-- **Guard:** `payment-predicates.ts`'s `resolveConfirmedAmounts(precomputed, payments)` and the
-  web mirror both gate on one field's presence; each has a red-first regression test pinning
-  the double-subtraction case.
-
-### L-222 · 2026-09-26 · domain · a line's unitPrice and unitsPerBox are ONE denomination (SA-330)
-
-- **Symptom:** a rolled-over next-delivery line was split and priced at the LIVE product pack, so after a repack it was re-split and re-priced from the source line.
-- **Root cause:** the copy carried the price without its pack, or the pack without its price; a live price converted to an old pack is a second pricing formula.
-- **Lesson:** **When a line is copied, snapshot BOTH unitPrice and unitsPerBox or neither. Carrying the pack with a live price under-bills after a repack; converting a live price to an old pack is refused.**
-- **Guard:** `next-delivery-pack.db.spec.ts` (a repack with a price change, plus an AT_STOP vs NEXT_DELIVERY parity pin).
-- **Recurrence (2026-09-30, #2781):** the PO receive path read the LIVE product pack while the detail
-  screen used `linePack`; web modal, mobile form and API now all resolve the stored pack through `linePack`.
-- **Recurrence (2026-10-01, B965/B967/B969, #2988):** every quantity crossing a money door carries its unit axis (boxes, pieces, or the order line's own unit); mixed pack factors are converted ONCE at the boundary with one shared helper (`standardReturnPieces` / `poolPieces` / `toPiecesPool`) or refused (`RETURN_MIXED_UNIT_PRODUCT`), never summed raw (30 pieces on a 2-box x 12 plus a 12-piece line refunded $300 instead of $250; a box-unaware line under-refunds by the pack).
 
 ### L-223 · 2026-09-26 · domain · "one ledger writer" needs a sweep of every emit site, not the named ones (B863–B866)
 
@@ -640,6 +581,20 @@
   named query params on any new route.
 
 ## deploy
+
+### L-286 · 2026-10-08 · deploy · add a foreign key to a populated table inline on the new column, and state lock durations honestly
+
+- **Symptom:** recorded by the 2026-10-08 operating review from the sitting-3 migrations; the incident detail is in the lead's notes.
+- **Root cause:** Postgres skips the validation scan for a new column with no default only when the foreign key is declared inline. Inside one transaction an `ALTER TABLE` holds ACCESS EXCLUSIVE until COMMIT, so an index built later in the same file blocks reads as well as writes.
+- **Lesson:** **Declare the FK inline: `ADD COLUMN "x" TEXT CONSTRAINT "T_x_fkey" REFERENCES ...`, not a separate `ADD CONSTRAINT` (probe on 1M rows: 0.7 ms inline vs 33 ms separate; the constraint name is unchanged, so Prisma shows no drift). Write the real lock duration in the migration header.**
+- **Guard:** the sitting-3 migration headers; replay plus `apps/api/scripts/schema-drift.mjs`.
+
+### L-282 · 2026-10-08 · deploy · a feature PR never adds or changes tenants or rows in the shared e2e seed that runs against production
+
+- **Symptom:** recorded by the 2026-10-08 operating review; the incident detail is in the lead's notes.
+- **Root cause:** the e2e seed runs against production after every deploy, so a tenant a feature PR adds to it is created for real by the next post-deploy E2E.
+- **Lesson:** **The production e2e seed gains a tenant or row only through its own reviewed PR, never inside a feature PR. Test data follows the approved test-tenant policy (CLAUDE.md "Test tenants & real-client data").**
+- **Guard:** standing rule plus the e2e-seed review checklist; no script yet.
 
 ### L-184 · 2026-09-17 · deploy · #777 merged/deployed without its migration or a drift check
 
@@ -671,15 +626,3 @@
 - **Guard:** none yet — propose `post-deploy-check` reading the full status array (not just
   index 0) or verifying the served commit sha directly.
 
-### L-212 · 2026-09-21 · testing · a Playwright selector keyed to a responsive utility class rots silently (B620)
-
-- **Symptom:** the boxed-proration e2e spec's line-total reader matched nothing and reported
-  nothing — a selector that matches zero elements raised no error.
-- **Root cause:** the selector was keyed to a layout utility class (`span.w-16`); a later UI
-  change (#946) replaced it with a breakpoint-prefixed variant (`sm:w-16`), so the literal class
-  no longer existed and the query silently returned an empty set.
-- **Lesson:** **Never select by a layout or responsive utility class — a breakpoint prefix added
-  later makes the selector match nothing with no error. Select by `data-testid`, which no styling
-  change can rename.**
-- **Guard:** #1133 (b8765689) added `data-testid="line-total"`; spec 13's `readLineTotal` reads it
-  via `getByTestId`.
