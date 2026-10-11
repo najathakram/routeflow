@@ -446,10 +446,13 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_SUSPENDED) ?? 0).toBe(0);
     });
 
-    it("N3: notifies the tenant admin with reason 'overdue payment' only when the suspension actually applied", async () => {
+    it("N3: notifies the tenant admin with reason 'subscription canceled' (the only arm left: A2 removed overdue payment) only when the suspension actually applied", async () => {
       const { svc, billingNotification } = make({ stripeStatus: "canceled", transitionCount: 1 });
       await svc.suspendOverdueTenants();
-      expect(billingNotification.notifySuspended).toHaveBeenCalledWith("t1", "overdue payment");
+      expect(billingNotification.notifySuspended).toHaveBeenCalledWith(
+        "t1",
+        "subscription canceled",
+      );
     });
 
     it("N3: does NOT notify when the CAS lost the race (already suspended elsewhere)", async () => {
@@ -2719,7 +2722,12 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
           const mail = email.send.mock.calls[0][0];
           expect(mail.subject).toBe("Payment failed — Acme");
           expect(mail.html).toContain("https://billing.stripe.test/p/session_1");
-          expect(mail.html).toContain("<strong>3 days</strong>");
+          // Lead ruling (Opus delta S1): after A2 nothing interrupts service at 3 days, so master's "within 3 days" is
+          // dropped; the rest of master's copy is unchanged.
+          expect(mail.html).toContain(
+            "<p>Please update your payment method to avoid service interruption.</p>",
+          );
+          expect(mail.html).not.toMatch(/within|3 days/);
         },
       );
 

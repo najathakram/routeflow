@@ -155,6 +155,44 @@ function capabilities(slug: string | null, token: string | null = buyerToken("bu
   return req;
 }
 
+// SA r-note 5 A3 (Opus delta M1): the buyer web UI derives "isn't taking online orders" / a disabled Place Order button
+// ONLY from `acceptingOrders`, so it must follow SELLER_READ_ONLY_BUYER_GATE: a dark gate means the server still takes
+// the order, and the UI must not claim otherwise.
+describe("GET /buyer/capabilities — acceptingOrders follows SELLER_READ_ONLY_BUYER_GATE", () => {
+  const saved = process.env.SELLER_READ_ONLY_BUYER_GATE;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+    else process.env.SELLER_READ_ONLY_BUYER_GATE = saved;
+  });
+  const readOnlySeller = () => {
+    store.tenants.find((t) => t.id === "t-acme")!.status = "READ_ONLY";
+  };
+
+  it("dark (the default) + a READ_ONLY seller: acceptingOrders is TRUE (the server takes the order)", async () => {
+    delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+    readOnlySeller();
+    const res = await capabilities("acme").expect(200);
+    expect(res.body.acceptingOrders).toBe(true);
+  });
+
+  it("enforced + a READ_ONLY seller: acceptingOrders is FALSE", async () => {
+    process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced";
+    readOnlySeller();
+    const res = await capabilities("acme").expect(200);
+    expect(res.body.acceptingOrders).toBe(false);
+  });
+
+  it.each([undefined, "dark", "enforced"])(
+    "an ACTIVE seller accepts orders (gate %s)",
+    async (g) => {
+      if (g === undefined) delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+      else process.env.SELLER_READ_ONLY_BUYER_GATE = g;
+      const res = await capabilities("acme").expect(200);
+      expect(res.body.acceptingOrders).toBe(true);
+    },
+  );
+});
+
 describe("GET /buyer/capabilities — only the linked seller's facts", () => {
   it("buyer A at its own seller A: 200, read for seller A's tenant", async () => {
     const res = await capabilities("acme").expect(200);
