@@ -97,6 +97,7 @@ import { ShipmentCard } from "@/components/ShipmentCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
+import { HandOverStamp } from "@/components/HandOverStamp";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
@@ -2015,6 +2016,12 @@ export default function InvoiceDetailPage() {
             {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
             {invoice.dueDate ? ` · due ${fmtCalendarDate(invoice.dueDate)}` : ""}
           </p>
+          {/* Row 342: where and by whom the linked order was handed over (staff reads only) */}
+          {invoice.order ? (
+            <div className="mt-0.5">
+              <HandOverStamp order={invoice.order} role={user?.role} />
+            </div>
+          ) : null}
         </div>
 
         {/* Zoho-style action toolbar */}

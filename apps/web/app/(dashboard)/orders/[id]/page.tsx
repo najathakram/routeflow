@@ -61,6 +61,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { HandOverStamp } from "@/components/HandOverStamp";
 import { useStaffFulfilment } from "@/lib/fulfilment-caps";
 import { OrderFulfilmentRow, fulfillPathErrorCopy } from "../_components/OrderFulfilmentRow";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
@@ -2559,6 +2560,10 @@ export default function OrderDetailPage() {
                 Delivery: {formatDateOnly(order.requestedDeliveryDate)}
               </span>
             )}
+          </div>
+          {/* Row 342: who handed it over, at which register (staff reads only) */}
+          <div className="mt-1.5">
+            <HandOverStamp order={order} role={user?.role} />
           </div>
         </div>
 
