@@ -222,7 +222,9 @@ describeDb("row 347 item 1: capture + mint are one transaction - real Postgres",
 
     expect(out.ok).toBe(false);
     expect((out as any).e?.getStatus?.()).toBe(409);
-    expect(codeOf((out as any).e)).toBe("RETURN_NOTHING_BILLED");
+    // the capture variant: nothing exists to cancel, so the code and words are not the approve / store-credit ones
+    expect(codeOf((out as any).e)).toBe("RETURN_CAPTURE_SOURCE_CLOSED");
+    expect((out as any).e?.getResponse?.().message).not.toMatch(/cancel|reject/i);
     const after = await state(s);
     expect(after.returns).toHaveLength(0);
     expect(after.notes).toHaveLength(0);

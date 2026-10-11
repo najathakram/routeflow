@@ -115,6 +115,25 @@ describe("refundErrorMessage (SA-628, B946)", () => {
   });
 });
 
+describe("row 347: a capture whose source sale closed (nothing was recorded)", () => {
+  const EXPECTED =
+    "Nothing was recorded: the sale this return refers to was voided or is no longer open. Capture it against another sale, or without a reference.";
+  const err = {
+    response: { data: { code: "RETURN_CAPTURE_SOURCE_CLOSED", message: "RAW SERVER TEXT" } },
+  };
+
+  it("has its own fixed copy, never the server text, and never sends the operator to cancel a return that does not exist", () => {
+    expect(refundErrorMessage(err, "other")).toBe(EXPECTED);
+    expect(EXPECTED).not.toMatch(/cancel|reject/i);
+  });
+
+  it("is a different copy from RETURN_NOTHING_BILLED, whose return DOES exist", () => {
+    const billed = { response: { data: { code: "RETURN_NOTHING_BILLED" } } };
+    expect(refundErrorMessage(billed, "other")).toBe(RETURN_NOTHING_BILLED_COPY);
+    expect(refundErrorMessage(err, "other")).not.toBe(RETURN_NOTHING_BILLED_COPY);
+  });
+});
+
 describe("SA-740r2: the refund refusals have fixed copy that names the exits", () => {
   const err = (code: string) => ({ response: { data: { code, message: "RAW SERVER TEXT" } } });
 

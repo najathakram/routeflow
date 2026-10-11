@@ -87,6 +87,13 @@ export const API_ERROR_CODES = {
    * inline hold's approval finds its source invoice voided or written off since the capture; carries `invoiceId`.
    */
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
+  /**
+   * Row 347 (S2): a CAPTURE (standalone or inside an order create/edit) whose source sale was voided / written off, or whose
+   * source line is gone, in the instant before its credit was minted. The capture's one transaction rolled back, so NOTHING was
+   * recorded and there is no return to cancel (unlike RETURN_NOTHING_BILLED, which the approve / store-credit paths answer for
+   * a return that exists). Definite refusal: the offline nonce settles.
+   */
+  RETURN_CAPTURE_SOURCE_CLOSED: "RETURN_CAPTURE_SOURCE_CLOSED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
   INVOICE_TAX_STATE_STALE: "INVOICE_TAX_STATE_STALE",
   INVOICE_TOTAL_BELOW_PAID: "INVOICE_TOTAL_BELOW_PAID",

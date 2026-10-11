@@ -153,6 +153,8 @@ export const SOURCE_SALE_REFUSAL_CODES: readonly string[] = [
   API_ERROR_CODES.SOURCE_SALE_REQUIRED,
   API_ERROR_CODES.SOURCE_SALE_INVALID,
   API_ERROR_CODES.RETURN_EXCEEDS_SALE,
+  // row 347: the capture's source sale closed before its credit was minted; the capture rolled back, so nothing was recorded
+  API_ERROR_CODES.RETURN_CAPTURE_SOURCE_CLOSED,
 ];
 
 /**

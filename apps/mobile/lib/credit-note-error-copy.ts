@@ -93,6 +93,14 @@ export const RETURN_NOTHING_BILLED_COPY =
   "None of the returned items were billed on this order, so there is nothing to refund. Cancel the return.";
 
 /**
+ * Row 347: a capture (standalone, or inside an order create / edit) whose source sale was voided or lost its line before the
+ * credit was minted. The capture's one transaction rolled back, so there is no return to cancel (the RETURN_NOTHING_BILLED
+ * copy above is for a return that exists).
+ */
+export const RETURN_CAPTURE_SOURCE_CLOSED_COPY =
+  "Nothing was recorded: the sale this return refers to was voided or is no longer open. Capture it against another sale, or without a reference.";
+
+/**
  * SA-740r2 item 2: a recorded (cash / card / check) refund of a STANDARD return needs the order's invoices paid in full. The exits
  * are named: store credit when billable, else cancel the return (never "refund it outside RouteFlow").
  */
@@ -159,6 +167,8 @@ export function refundErrorMessage(err: unknown, otherwise?: string): string | u
     return REFUND_PAID_WITH_STORE_CREDIT_COPY;
   if (code === API_ERROR_CODES.REFUND_EXCEEDS_CASH_PAID) return REFUND_EXCEEDS_CASH_PAID_COPY;
   if (code === API_ERROR_CODES.RETURN_NOTHING_BILLED) return RETURN_NOTHING_BILLED_COPY;
+  if (code === API_ERROR_CODES.RETURN_CAPTURE_SOURCE_CLOSED)
+    return RETURN_CAPTURE_SOURCE_CLOSED_COPY;
   if (code === API_ERROR_CODES.RETURN_REFUND_BASIS_CHANGED) return RETURN_REFUND_BASIS_CHANGED_COPY;
   const refundable = refundableCopy(err);
   if (refundable) return refundable;

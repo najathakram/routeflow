@@ -1121,16 +1121,33 @@ describe("InlineReturnsService", () => {
     });
   });
 
-  it("row 347 (1): a source that went dead before the mint rolls the capture back (409 RETURN_NOTHING_BILLED), no credit note and no event", async () => {
+  it("row 347 (1): a source that went dead before the mint rolls the capture back (409 RETURN_CAPTURE_SOURCE_CLOSED, not the approve wording), no credit note and no event", async () => {
     prisma.invoiceItem.findMany.mockResolvedValue([{ id: "invitem-1", invoiceId: "inv-dead" }]);
     prisma.invoice.findFirst.mockResolvedValue({ id: "inv-dead" });
 
-    const code = await codeOf(service.capture(CAPTURE_DTO as any, OPERATOR));
+    const err: any = await service.capture(CAPTURE_DTO as any, OPERATOR).then(
+      () => null,
+      (e) => e,
+    );
 
-    expect(code).toBe("RETURN_NOTHING_BILLED");
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse().code).toBe("RETURN_CAPTURE_SOURCE_CLOSED");
+    // nothing exists to cancel or reject: the capture rolled back, and the words say so
+    expect(err.getResponse().message).toMatch(/Nothing was recorded/);
+    expect(err.getResponse().message).not.toMatch(/cancel|reject/i);
+    // the source line itself gone: the same capture refusal and words
+    prisma.invoiceItem.findMany.mockResolvedValue([]);
+    const gone: any = await service.capture(CAPTURE_DTO as any, OPERATOR).then(
+      () => null,
+      (e) => e,
+    );
+    expect(gone.getResponse().code).toBe("RETURN_CAPTURE_SOURCE_CLOSED");
+    expect(gone.getResponse().message).not.toMatch(/cancel|reject/i);
+    prisma.invoiceItem.findMany.mockResolvedValue([{ id: "invitem-1", invoiceId: "inv-dead" }]);
     expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
     expect(gateway.emitCreditNoteCreated).not.toHaveBeenCalled();
-    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1); // the whole refusal is inside the one transaction
+    // the whole refusal is inside the one transaction (two captures were driven above: the dead invoice and the lost line)
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
   });
 
   // ─── the N-1 guarded link's exact refusal literal — pinned cross-boundary (SA-091b) ──

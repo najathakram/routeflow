@@ -845,7 +845,7 @@ export class InlineReturnsService {
     // source (after the return had committed and restocked) is asked here, before the mint, like every other mint site: the
     // source invoices are locked by now (the headroom UPDATE, the remainder's pool locks), so a void that landed after the
     // pricing read refuses 409 RETURN_NOTHING_BILLED and the whole transaction rolls back: no return, no stock moved, no note.
-    await assertInlineSourcesOpen(tx, (ret.items ?? []) as any[]);
+    await assertInlineSourcesOpen(tx, (ret.items ?? []) as any[], { capture: true });
     const amount = roundMoney(
       Number(ret.creditSubtotal ?? 0) +
         Number(ret.creditTax ?? 0) +

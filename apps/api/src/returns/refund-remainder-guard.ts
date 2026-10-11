@@ -62,6 +62,10 @@ export async function assertInlineReturnWithinRemainder(
   );
 }
 
+/** The capture's refusal when its source sale closed before the credit was minted: nothing was recorded. */
+export const CAPTURE_SOURCE_CLOSED_MESSAGE =
+  "Nothing was recorded: the sale this return refers to was voided or is no longer open. Capture it against another sale, or without a reference.";
+
 /**
  * SA-773 N4: a captured inline return is approved, converted to store credit or re-issued some time after it was captured, and
  * its source can have changed in between. A dead (VOID / WRITTEN_OFF) invoice has no pool in the refundable remainder (it is
@@ -77,9 +81,33 @@ export async function assertInlineReturnWithinRemainder(
 export async function assertInlineSourcesOpen(
   tx: any,
   items: ReadonlyArray<InlineSourceRef>,
+  /**
+   * `capture`: the check runs inside the CAPTURE's own transaction (row 347), so the refusal rolls the capture back: there is
+   * no return to cancel or reject. It then answers RETURN_CAPTURE_SOURCE_CLOSED with words that say nothing was recorded; the
+   * approve / store-credit / replay paths (a return exists) keep RETURN_NOTHING_BILLED and "reject or cancel the return".
+   */
+  opts: { capture?: boolean } = {},
 ): Promise<void> {
   if (!items.some((i) => i.sourceInvoiceItemId)) return;
   const where = await resolveInlineSourceInvoices(tx, items);
+  if (opts.capture) {
+    const closed = (invoiceId?: string) =>
+      new ConflictException({
+        code: API_ERROR_CODES.RETURN_CAPTURE_SOURCE_CLOSED,
+        message: CAPTURE_SOURCE_CLOSED_MESSAGE,
+        ...(invoiceId ? { invoiceId } : {}),
+      });
+    if (where.some((w) => w.missing)) throw closed();
+    const ids = [...new Set(where.map((w) => w.invoiceId).filter((i): i is string => !!i))].sort();
+    if (ids.length === 0) return;
+    const gone: { id: string } | null = await tx.invoice.findFirst({
+      where: { id: { in: ids }, status: { in: [...CREDIT_SOURCE_EXCLUDED] } },
+      select: { id: true },
+      orderBy: { id: "asc" },
+    });
+    if (gone) throw closed(gone.id);
+    return;
+  }
   if (where.some((w) => w.missing)) {
     throw new ConflictException({
       code: API_ERROR_CODES.RETURN_NOTHING_BILLED,
