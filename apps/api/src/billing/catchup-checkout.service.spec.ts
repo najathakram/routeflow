@@ -248,6 +248,30 @@ describe("MF2: manual activation / renewal payments", () => {
     expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
   });
 
+  it("the Sep-26 activation ([Sep 26, Oct 26) paid by the activation itself): refused before AND after the next window is issued", async () => {
+    const sub = {
+      periodStart: new Date("2026-09-26T09:00:00Z"),
+      periodEnd: new Date("2026-10-26T09:00:00Z"),
+    };
+    const before = make({ invoices: [], sub });
+    expect((await before.svc.plan("t1", NOW)).plan).toEqual({
+      ok: false,
+      reason: "manual_period_ahead",
+    });
+    const nextWindow = {
+      ...OCT_OPEN,
+      id: "next",
+      periodKey: "kn",
+      periodStart: new Date("2026-10-26T09:00:00Z"),
+      periodEnd: new Date("2026-11-01T12:00:00Z"),
+    };
+    const after = make({ invoices: [nextWindow], sub });
+    expect((await after.svc.plan("t1", NOW)).plan).toEqual({
+      ok: false,
+      reason: "manual_period_ahead",
+    });
+  });
+
   it("a period end past every invoice (no later marker) is refused too", async () => {
     const h = make({
       invoices: [OCT_OPEN],

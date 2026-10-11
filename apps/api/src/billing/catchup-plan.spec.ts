@@ -484,6 +484,56 @@ describe("MF2: a payment recorded outside the RfInvoices (manual activation / re
     expect(manualPeriodAhead({ ...base, periodEnd: null })).toBe(false);
   });
 
+  describe("coverage: [paid-through, snapped period end) must be COVERED by the snapped OPEN / PAID windows", () => {
+    const NOV = inv("nov", "OPEN", "2026-11-01T12:00:00Z", "2026-12-01T12:00:00Z");
+    const ahead = (periodEnd: string, invoices: CatchupInvoice[], paidThrough = CATCHUP_GO_LIVE) =>
+      manualPeriodAhead({
+        latestMarkerAt: null,
+        periodEnd: d(periodEnd),
+        paidThrough,
+        invoices,
+      });
+
+    it("the normal unpaid-October tenant (period = its OPEN invoice) stays eligible", () => {
+      expect(ahead("2026-11-01T12:00:00Z", [OPEN_OCT])).toBe(false);
+    });
+
+    it("a Sep-26 manual activation ([Sep 26, Oct 26) paid by the activation, no invoice): refused BEFORE the next window is issued", () => {
+      expect(ahead("2026-10-26T09:00:00Z", [])).toBe(true);
+    });
+
+    it("... and AFTER the next window [Oct 26, Nov 1) is issued (OPEN) or rolled (PAID): Oct 1-26 is still uncovered", () => {
+      const next = (status: string) =>
+        inv("next", status, "2026-10-26T09:00:00Z", "2026-11-01T12:00:00Z");
+      expect(ahead("2026-10-26T09:00:00Z", [next("OPEN")])).toBe(true);
+      expect(ahead("2026-10-26T09:00:00Z", [next("PAID")])).toBe(true);
+    });
+
+    it("contiguous OPEN + PAID windows that cover [paid-through, period end) stay eligible", () => {
+      const paidOct = inv("oct", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
+      // paid-through is Nov 1; the OPEN November window covers the rest of the period
+      expect(ahead("2026-12-01T12:00:00Z", [paidOct, NOV], d("2026-11-01T12:00:00Z"))).toBe(false);
+      // from go-live: two contiguous OPEN windows
+      expect(ahead("2026-12-01T12:00:00Z", [OPEN_OCT, NOV])).toBe(false);
+    });
+
+    it("a gap between windows (or an uncovered head) is ahead", () => {
+      const dec = inv("dec", "OPEN", "2026-12-01T12:00:00Z", "2027-01-01T12:00:00Z");
+      expect(ahead("2027-01-01T12:00:00Z", [OPEN_OCT, dec])).toBe(true); // Nov is a hole
+      expect(ahead("2026-12-01T12:00:00Z", [NOV])).toBe(true); // October (the head) is not covered
+    });
+
+    it("VOID invoices and windows without a period cover nothing", () => {
+      const voided = inv("v", "VOID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
+      const noPeriod = inv("n", "OPEN", null, null);
+      expect(ahead("2026-11-01T12:00:00Z", [voided, noPeriod])).toBe(true);
+    });
+
+    it("a prepaid tenant (period end at or before paid-through) has nothing left to cover", () => {
+      expect(ahead("2026-11-01T12:00:00Z", [], d("2026-11-14T12:00:00Z"))).toBe(false);
+    });
+  });
+
   it("planCatchup carries it as a plan reason; omitted manual input skips the check", () => {
     const b = { now: NOW, monthly: 310, addons: [], invoices: [OPEN_OCT] };
     expect(

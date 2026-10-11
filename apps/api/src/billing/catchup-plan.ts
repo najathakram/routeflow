@@ -136,15 +136,38 @@ export function addonCardRefusal(
 }
 
 /**
+ * Is [from, to) COVERED by the union of the (snapped) OPEN / PAID RfInvoice windows? Half-open intervals, merged when
+ * they touch or overlap; a gap, or an uncovered head or tail, is NOT covered. Empty or inverted target = covered.
+ */
+export function windowsCover(invoices: readonly CatchupInvoice[], from: Date, to: Date): boolean {
+  const lo = from.getTime();
+  const hi = to.getTime();
+  if (hi <= lo) return true;
+  const windows = invoices
+    .filter((x) => (x.status === "OPEN" || x.status === "PAID") && x.periodStart && x.periodEnd)
+    .map((x) => [snapToBoundary(x.periodStart!).getTime(), snapToBoundary(x.periodEnd!).getTime()])
+    .filter(([a, b]) => b > a)
+    .sort((x, y) => x[0] - y[0]);
+  let reach = lo; // everything in [lo, reach) is covered so far
+  for (const [a, b] of windows) {
+    if (a > reach) break; // a hole before this window: [reach, a) is uncovered
+    if (b > reach) reach = b;
+    if (reach >= hi) return true;
+  }
+  return reach >= hi;
+}
+
+/**
  * Money (MF2). The paid-through is built from PAID RfInvoices only, but staff also record a payment by
  * (re)activating the manual subscription - which moves the period and writes no RfInvoice. Charging October again
  * on top of that is a double charge, so the plan refuses ("manual_period_ahead") when
- *   - the LATEST manual activation / renewal marker is AFTER go-live AND later than the FIRST one (a payment may
- *     have been recorded since; a tenant activated once, after go-live, is the separate "activated_after_go_live"
- *     case and is not double-reported here), or
- *   - the subscription's (snapped) period END is after everything the RfInvoices account for: later than the
- *     paid-through AND later than every OPEN / PAID invoice's end. (An unpaid current period is explained by its OPEN
- *     invoice and is the normal case; only a period no invoice explains is ahead.)
+ *   - the LATEST manual activation / renewal is AFTER go-live AND later than the FIRST one (a payment may have been
+ *     recorded since; a tenant activated once, after go-live, is the separate "activated_after_go_live" case and is
+ *     not double-reported here), or
+ *   - [paid-through, snapped period end) is not COVERED by the union of the snapped OPEN / PAID invoice windows. A
+ *     period that is just an unpaid current invoice is the normal case and is covered. Comparing only the END dates
+ *     misses a pre-go-live activation whose 30 days run past Oct 1 (activated Sep 26 -> [Sep 26, Oct 26)): once the
+ *     next window [Oct 26, Nov 1) is issued the END is "covered", yet Oct 1-26 was already paid by the activation.
  */
 export function manualPeriodAhead(i: {
   latestMarkerAt: Date | null | undefined;
@@ -161,14 +184,7 @@ export function manualPeriodAhead(i: {
     return true;
   }
   if (!i.periodEnd) return false;
-  const end = snapToBoundary(i.periodEnd).getTime();
-  const covered = Math.max(
-    i.paidThrough.getTime(),
-    ...i.invoices
-      .filter((x) => (x.status === "OPEN" || x.status === "PAID") && x.periodEnd)
-      .map((x) => snapToBoundary(x.periodEnd!).getTime()),
-  );
-  return end > covered;
+  return !windowsCover(i.invoices, i.paidThrough, snapToBoundary(i.periodEnd));
 }
 
 export interface StubLine {
