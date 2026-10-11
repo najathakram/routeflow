@@ -151,8 +151,10 @@ export async function creditableGroupInvoiceIds(
 ): Promise<string[]> {
   const ids = [...new Set(invoiceIds.filter(Boolean))];
   if (ids.length === 0) return [];
-  const rows: Array<{ id: string }> =
-    (await tx.invoice?.findMany?.({ where: groupWhere(ids), select: { id: true } })) ?? [];
+  const rows: Array<{ id: string }> = await tx.invoice.findMany({
+    where: groupWhere(ids),
+    select: { id: true },
+  });
   return [...new Set([...ids, ...rows.map((r) => r.id)])].sort();
 }
 
@@ -177,12 +179,11 @@ export async function refundableRemainder(
     orderId: string | null;
     status?: string;
     items?: any[];
-  }> =
-    (await tx.invoice?.findMany?.({
-      where: groupWhere(ids),
-      select: INVOICE_SELECT,
-      orderBy: [{ id: "asc" }],
-    })) ?? [];
+  }> = await tx.invoice.findMany({
+    where: groupWhere(ids),
+    select: INVOICE_SELECT,
+    orderBy: [{ id: "asc" }],
+  });
   const groups = new Map<string, Group>();
   const groupOfInvoice = new Map<string, Group>();
   const lineById = new Map<string, Line>();
@@ -262,7 +263,7 @@ export async function refundableRemainder(
     items?: Array<{ productId: string; qty: unknown }>;
   }> =
     orderIds.length > 0
-      ? ((await tx.return?.findMany?.({
+      ? await tx.return.findMany({
           where: { orderId: { in: orderIds }, kind: "STANDARD" },
           select: {
             id: true,
@@ -272,7 +273,7 @@ export async function refundableRemainder(
             creditNoteId: true,
             items: { select: { productId: true, qty: true } },
           },
-        })) ?? [])
+        })
       : [];
   const inlineItems: Array<{
     productId: string;
@@ -289,7 +290,7 @@ export async function refundableRemainder(
     } | null;
   }> =
     orderIds.length > 0
-      ? ((await tx.returnItem?.findMany?.({
+      ? await tx.returnItem.findMany({
           where: { sourceOrderId: { in: orderIds }, return: { kind: "INLINE" } },
           select: {
             productId: true,
@@ -300,7 +301,7 @@ export async function refundableRemainder(
             categoryTax: true,
             return: { select: { id: true, kind: true, status: true, creditNoteId: true } },
           },
-        })) ?? [])
+        })
       : [];
   const returnNoteIds = [
     ...new Set(
@@ -313,11 +314,10 @@ export async function refundableRemainder(
     ),
   ];
   if (returnNoteIds.length > 0) {
-    const notes: Array<{ id: string; status?: string | null }> =
-      (await tx.creditNote?.findMany?.({
-        where: { id: { in: returnNoteIds } },
-        select: { id: true, status: true },
-      })) ?? [];
+    const notes: Array<{ id: string; status?: string | null }> = await tx.creditNote.findMany({
+      where: { id: { in: returnNoteIds } },
+      select: { id: true, status: true },
+    });
     for (const n of notes) if (n.status === "VOID") voidReturnNotes.add(n.id);
   }
   const standardCounted = standard.filter((r) => r.kind !== "INLINE" && counted(r) && r.orderId);
@@ -326,11 +326,10 @@ export async function refundableRemainder(
   const basesByOrder = new Map<string, Map<string, ProductPackBasis>>();
   for (const orderId of new Set(standardCounted.map((r) => r.orderId as string))) {
     if (!standardCounted.some((r) => r.orderId === orderId && (r.items?.length ?? 0) > 0)) continue;
-    const lines: any[] =
-      (await tx.orderItem?.findMany?.({
-        where: { orderId, status: { not: "CANCELLED" } },
-        select: PACK_LINE_SELECT,
-      })) ?? [];
+    const lines: any[] = await tx.orderItem.findMany({
+      where: { orderId, status: { not: "CANCELLED" } },
+      select: PACK_LINE_SELECT,
+    });
     basesByOrder.set(orderId, await standardPackBases(tx, orderId, lines));
   }
   for (const ret of standardCounted) {
@@ -368,7 +367,7 @@ export async function refundableRemainder(
     creditNote?: { status?: string | null } | null;
   }> =
     lineIds.length > 0
-      ? ((await tx.creditNoteItem?.findMany?.({
+      ? await tx.creditNoteItem.findMany({
           where: { invoiceItemId: { in: lineIds } },
           select: {
             invoiceItemId: true,
@@ -378,7 +377,7 @@ export async function refundableRemainder(
             categoryTax: true,
             creditNote: { select: { status: true } },
           },
-        })) ?? [])
+        })
       : [];
   const amountOnly: Array<{
     id: string;
@@ -387,10 +386,10 @@ export async function refundableRemainder(
     status?: string | null;
   }> =
     memberInvoiceIds.length > 0
-      ? ((await tx.creditNote?.findMany?.({
+      ? await tx.creditNote.findMany({
           where: { invoiceId: { in: memberInvoiceIds }, items: { none: {} } },
           select: { id: true, invoiceId: true, amount: true, status: true },
-        })) ?? [])
+        })
       : [];
   const liveItems = cnItems.filter(
     (row) => !isVoidNote(row.creditNote) && row.creditNoteId !== excludeCreditNoteId,
@@ -407,10 +406,10 @@ export async function refundableRemainder(
     status?: string | null;
   }> =
     cnIds.length > 0
-      ? ((await tx.return?.findMany?.({
+      ? await tx.return.findMany({
           where: { creditNoteId: { in: cnIds } },
           select: { id: true, creditNoteId: true, status: true },
-        })) ?? [])
+        })
       : [];
   // a credit note of a return that is counted in (a), or the one being refunded now, is never "standalone"
   const returnsOwn = new Set(
@@ -632,11 +631,10 @@ export async function inlineReturnRequests(
     ...new Set(items.map((i) => i.sourceInvoiceItemId).filter((i): i is string => !!i)),
   ];
   if (lineIds.length === 0) return [];
-  const lines: Array<{ id: string; invoiceId: string }> =
-    (await tx.invoiceItem?.findMany?.({
-      where: { id: { in: lineIds } },
-      select: { id: true, invoiceId: true },
-    })) ?? [];
+  const lines: Array<{ id: string; invoiceId: string }> = await tx.invoiceItem.findMany({
+    where: { id: { in: lineIds } },
+    select: { id: true, invoiceId: true },
+  });
   const invoiceOf = new Map(lines.map((l) => [l.id, l.invoiceId]));
   const requests: RefundableRequest[] = [];
   for (const it of items) {
@@ -671,21 +669,20 @@ export async function creditNoteRequests(
 ): Promise<RefundableRequest[]> {
   if (input.items.length === 0)
     return [{ invoiceId: input.invoiceId, value: roundMoney(input.amount) }];
-  const lines: any[] =
-    (await tx.invoiceItem?.findMany?.({
-      where: { id: { in: input.items.map((i) => i.invoiceItemId) } },
-      select: {
-        id: true,
-        invoiceId: true,
-        productId: true,
-        qty: true,
-        taxRate: true,
-        boxes: true,
-        pieces: true,
-        unitsPerBox: true,
-        product: { select: { unitsPerBox: true } },
-      },
-    })) ?? [];
+  const lines: any[] = await tx.invoiceItem.findMany({
+    where: { id: { in: input.items.map((i) => i.invoiceItemId) } },
+    select: {
+      id: true,
+      invoiceId: true,
+      productId: true,
+      qty: true,
+      taxRate: true,
+      boxes: true,
+      pieces: true,
+      unitsPerBox: true,
+      product: { select: { unitsPerBox: true } },
+    },
+  });
   const lineById = new Map(lines.map((l) => [l.id as string, l]));
   const requests: RefundableRequest[] = [];
   for (const item of input.items) {

@@ -646,6 +646,23 @@ describe("refundableRemainder (SA-773): the one formula", () => {
     expect(poolOf(rem, "i1", "pA")).toMatchObject({ qty: 7, value: 70 });
   });
 
+  it("a money guard reads plain: a client missing a model, or a query answering nothing, fails closed instead of reading as empty", async () => {
+    const invoices = [invoice("i1", "o1", 100, [line("l1", "pA", 10, 100)])];
+    // no creditNoteItem model at all
+    const noModel = {
+      invoice: { findMany: async () => invoices },
+      return: { findMany: async () => [] },
+      returnItem: { findMany: async () => [] },
+    };
+    await expect(refundableRemainder(noModel, { invoiceIds: ["i1"] })).rejects.toThrow();
+    // a query that answers nothing
+    const silent = {
+      ...fakeTx({ invoices }),
+      invoice: { findMany: jest.fn(async () => undefined) },
+    };
+    await expect(refundableRemainder(silent, { invoiceIds: ["i1"] })).rejects.toThrow();
+  });
+
   it("creditableGroupInvoiceIds adds the order's other creditable invoices to the ones given, id-sorted", async () => {
     const tx = fakeTx({ invoices: [] });
     tx.invoice.findMany.mockResolvedValueOnce([{ id: "i3" }, { id: "i1" }]);

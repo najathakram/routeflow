@@ -84,11 +84,13 @@ describe("CreditNotesService.validateAndBuildCnItems: B960 own-line check vs the
         findMany: jest.fn(async (args: any) =>
           (f.cnItems ?? []).filter(
             (r) =>
-              args.where.creditNote.invoiceId === r.invoiceId &&
+              args.where.creditNote?.invoiceId === r.invoiceId &&
               args.where.invoiceItemId.in.includes(r.invoiceItemId),
           ),
         ),
       },
+      // SA-773: the refundable remainder's reads (a money guard reads plain: a fake without a model fails closed)
+      invoiceItem: { findMany: jest.fn().mockResolvedValue([]) },
       returnItem: { findMany: jest.fn().mockResolvedValue([]) },
       return: { findMany: jest.fn().mockResolvedValue([{ items: [{ productId: "pp", qty: 1 }] }]) },
       $executeRaw: jest.fn().mockResolvedValue(0),
@@ -186,11 +188,13 @@ describe("CreditNotesService.validateAndBuildCnItems: B960 own-line check vs the
         findMany: jest.fn(async (args: any) =>
           cn.filter(
             (r) =>
-              args.where.creditNote.invoiceId === r.invoiceId &&
+              args.where.creditNote?.invoiceId === r.invoiceId &&
               args.where.invoiceItemId.in.includes(r.invoiceItemId),
           ),
         ),
       },
+      // SA-773: the refundable remainder's reads (a money guard reads plain: a fake without a model fails closed)
+      invoiceItem: { findMany: jest.fn().mockResolvedValue([]) },
       returnItem: { findMany: jest.fn().mockResolvedValue([]) },
       return: {
         findMany: jest.fn().mockResolvedValue([{ items: [{ productId: "pp", qty: 10 }] }]),

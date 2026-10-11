@@ -7,11 +7,11 @@ import { ConflictException } from "@nestjs/common";
 /** The credit note a return already points at (with the customer summary a create() answers with), else null. */
 export async function creditNoteLinkedToReturn(db: any, returnId: string): Promise<any> {
   const ret: { creditNoteId?: string | null } | null =
-    (await db.return?.findFirst?.({ where: { id: returnId }, select: { creditNoteId: true } })) ??
+    (await db.return.findFirst({ where: { id: returnId }, select: { creditNoteId: true } })) ??
     null;
   if (!ret?.creditNoteId) return null;
   return (
-    (await db.creditNote?.findFirst?.({
+    (await db.creditNote.findFirst({
       where: { id: ret.creditNoteId },
       include: { customer: { select: { id: true, businessName: true } } },
     })) ?? null

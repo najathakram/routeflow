@@ -170,6 +170,9 @@ describeDb("SA-773 the refund paths read the refundable remainder - real Postgre
     expect(await prisma.creditNote.count({ where: { tenantId: s.tenantId } })).toBe(1); // only the seeded one
   });
 
+  // T5 seeds its two overlapping RECEIVED returns directly on purpose: create() has its own over-return cap, which refuses a second
+  // return of goods the first already covers, so such an overlap exists only in older rows or after a race. T13 below makes the
+  // legitimate neighbours through the real create().
   it("T5: a STANDARD refund of goods another RECEIVED return already reserves is 409; a REJECTED one reserves nothing", async () => {
     const s = await seed("t5a", [{ lines: [{ product: "A", qty: 10, subtotal: 100 }] }]);
     await addStandardReturn(prisma, s, {
@@ -371,6 +374,48 @@ describeDb("SA-773 the refund paths read the refundable remainder - real Postgre
     const ok = await capture(3); // $30
     expect(ok.status).toBeDefined();
     expect(await prisma.return.count({ where: { tenantId: s.tenantId } })).toBe(1);
+  });
+
+  it("T13: two returns made through the real create() (6 + 4 of 10) are both refundable in either order: a neighbour's reservation does not block them, and a third is refused by create() itself", async () => {
+    const s = await seed("t13", [{ lines: [{ product: "A", qty: 10, subtotal: 100 }] }]);
+    await prisma.order.update({ where: { id: s.orderId }, data: { status: "DELIVERED" } });
+    const make = async (qty: number): Promise<string> => {
+      const created: any = await asTenant(s, () =>
+        returns.create(
+          {
+            orderId: s.orderId,
+            reason: "DAMAGED",
+            items: [{ productId: s.products.A, qty, reason: "DAMAGED" }],
+          },
+          s.userId,
+          "OPERATOR",
+        ),
+      );
+      await prisma.return.update({ where: { id: created.id }, data: { status: "RECEIVED" } });
+      return created.id as string;
+    };
+    const first = await make(6);
+    const second = await make(4);
+    await standardCashRefund(s, second);
+    await standardCashRefund(s, first);
+    expect([(await row(first)).status, (await row(second)).status]).toEqual([
+      "REFUNDED",
+      "REFUNDED",
+    ]);
+    const third = await fail(
+      asTenant(s, () =>
+        returns.create(
+          {
+            orderId: s.orderId,
+            reason: "DAMAGED",
+            items: [{ productId: s.products.A, qty: 1, reason: "DAMAGED" }],
+          },
+          s.userId,
+          "OPERATOR",
+        ),
+      ),
+    );
+    expect(third?.getStatus?.()).toBeGreaterThanOrEqual(400);
   });
 
   it("T6: the check is made under the invoice lock: a credit note the lock holder commits while the refund waits is seen", async () => {
