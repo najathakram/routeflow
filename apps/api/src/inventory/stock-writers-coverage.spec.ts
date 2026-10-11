@@ -645,6 +645,17 @@ describe("SA-767 L-2.2 - the batched count committer (structural pins)", () => {
     expect(audit).toBeGreaterThan(cas);
   });
 
+  it("the committer's 503s carry progress: LockUnavailable, retryStockTx's 503 and a raw lock error all go through lockUnavailableWithProgress", () => {
+    const m = body("commitStockCountSession");
+    expect(m).toMatch(/e instanceof LockUnavailableError/);
+    expect(m).toMatch(/API_ERROR_CODES\.LOCK_UNAVAILABLE/);
+    expect(m).toMatch(/stockTxRetryState\(e\) !== null/);
+    expect(m).toMatch(/throw await this\.lockUnavailableWithProgress\(id\)/);
+    const p = body("lockUnavailableWithProgress");
+    expect(p).toMatch(/code: API_ERROR_CODES\.LOCK_UNAVAILABLE/);
+    expect(p).toMatch(/\.\.\.\(progress \?\? \{\}\)/);
+  });
+
   it("the batch loop steps by COUNT_COMMIT_BATCH and flips the session by CAS only after it", () => {
     const m = body("commitStockCountBatches");
     expect(m).toMatch(/i \+= COUNT_COMMIT_BATCH/);

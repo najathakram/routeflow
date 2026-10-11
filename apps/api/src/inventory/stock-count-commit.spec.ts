@@ -4,6 +4,8 @@ import {
   COUNT_COMMIT_BATCH,
   COUNT_LOCK_ATTEMPTS,
   COUNT_LOCK_RETRY_MS,
+  computeCommitProgress,
+  lineWritesAdjustment,
   STOCK_COUNT_LOCK_FAMILY,
   stockCountCommitting,
   stockCountReference,
@@ -51,6 +53,37 @@ describe("stock-count-commit: SA-767 L-2.4 vocabulary", () => {
     expect(stockCountSkipNote({ productId: "p2", reason: "PRODUCT_DELETED" })).toBe(
       "Skipped p2: no longer exists, not counted. Recount it in a new session.",
     );
+  });
+
+  describe("commit progress", () => {
+    const line = (productId: string, mode: string, counted: number, expected: number) => ({
+      productId,
+      mode,
+      countedQty: counted,
+      expectedQty: expected,
+    });
+
+    it("a line writes an adjustment iff its delta is non-zero (REPLACE counted - expected, ADD counted)", () => {
+      expect(lineWritesAdjustment(line("a", "REPLACE", 90, 100))).toBe(true);
+      expect(lineWritesAdjustment(line("a", "REPLACE", 100, 100))).toBe(false);
+      expect(lineWritesAdjustment(line("a", "ADD", 4, 100))).toBe(true);
+      expect(lineWritesAdjustment(line("a", "ADD", 0, 100))).toBe(false);
+    });
+
+    it("committedLines = lines with an ADJUSTMENT movement; totalLines = lines that write one", () => {
+      const lines = [
+        line("a", "REPLACE", 90, 100),
+        line("b", "REPLACE", 90, 100),
+        line("c", "REPLACE", 100, 100), // zero delta: in neither number
+        line("d", "ADD", 2, 0),
+      ];
+      const moves = [
+        { productId: "a", type: "ADJUSTMENT" },
+        { productId: "b", type: "COST_BASIS" }, // a cost row alone is not a saved line
+        { productId: "zzz", type: "ADJUSTMENT" }, // not a line of this session
+      ];
+      expect(computeCommitProgress(lines, moves)).toEqual({ committedLines: 1, totalLines: 3 });
+    });
   });
 });
 

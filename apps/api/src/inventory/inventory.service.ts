@@ -50,7 +50,7 @@ import { SetCostBasisDto } from "./dto/set-cost-basis.dto";
 import { BulkSetCostBasisDto } from "./dto/bulk-set-cost-basis.dto";
 import { RecomputeCostsDto } from "./dto/recompute-costs.dto";
 import { VariantAssignDto } from "./dto/variant-assign.dto";
-import { retryStockTx } from "../common/tx-retry";
+import { retryStockTx, stockTxRetryState } from "../common/tx-retry";
 import {
   LockUnavailableError,
   tryAdvisoryXactLockShared,
@@ -61,11 +61,13 @@ import {
   COUNT_COMMIT_BATCH,
   COUNT_LOCK_ATTEMPTS,
   COUNT_LOCK_RETRY_MS,
+  computeCommitProgress,
   STOCK_COUNT_LOCK_FAMILY,
   stockCountCommitting,
   stockCountReference,
   stockCountSkipNote,
   type StockCountCommitOutcome,
+  type StockCountCommitProgress,
   type StockCountSkippedProduct,
   type StockCountSkipReason,
 } from "./stock-count-commit";
@@ -2577,7 +2579,28 @@ export class InventoryService {
       },
     });
     if (!session) throw new NotFoundException("Stock count session not found");
-    return session;
+    return { ...session, commit: await this.commitProgressOf(session) };
+  }
+
+  /**
+   * `{ committedLines, totalLines }` while a commit is UNFINISHED - some movement exists for the
+   * session and it is not COMMITTED / DISCARDED - else null (SA-767 L-2.4 D). The same movement query
+   * the edit paths' committing check makes, bounded by `startedAt`. A session that is not OPEN /
+   * REVIEW is not looked up at all.
+   */
+  private async commitProgressOf(session: {
+    id: string;
+    status: string;
+    startedAt: Date;
+    lines: Parameters<typeof computeCommitProgress>[0];
+  }): Promise<StockCountCommitProgress | null> {
+    if (session.status !== "OPEN" && session.status !== "REVIEW") return null;
+    const moves = await this.prisma.forTenant().stockMovement.findMany({
+      where: { reference: stockCountReference(session.id), createdAt: { gte: session.startedAt } },
+      select: { productId: true, type: true },
+    });
+    if (moves.length === 0) return null;
+    return computeCommitProgress(session.lines, moves);
   }
 
   /**
@@ -2798,16 +2821,55 @@ export class InventoryService {
         }),
       );
     } catch (e) {
-      if (e instanceof LockUnavailableError) {
-        throw new ServiceUnavailableException({
-          code: API_ERROR_CODES.LOCK_UNAVAILABLE,
-          message: "Stock counts are busy. Nothing was saved; please try again in a moment.",
-        });
-      }
+      // Every "busy" answer the committer can raise - no lock connection, retries exhausted in a batch
+      // (retryStockTx's 503), a raw lock timeout / deadlock outside a batch - becomes ONE 503 that also
+      // says how far the commit got. Anything else propagates untouched.
+      const busy =
+        e instanceof LockUnavailableError ||
+        (e instanceof ServiceUnavailableException &&
+          (e.getResponse() as { code?: string })?.code === API_ERROR_CODES.LOCK_UNAVAILABLE) ||
+        stockTxRetryState(e) !== null;
+      if (busy) throw await this.lockUnavailableWithProgress(id);
       throw e;
     }
     if (!held.acquired) throw stockCountCommitting();
     return held.value;
+  }
+
+  /**
+   * The 503 LOCK_UNAVAILABLE of a count commit, with `committedLines` / `totalLines` (SA-767 L-2.4 D)
+   * so the client can say "Partly saved - commit again to finish" or "Nothing was saved". The code
+   * stays LOCK_UNAVAILABLE (clients that retry on it are unchanged); `retryStockTx` is not touched,
+   * only the count committer adds the fields. A failure to read the progress degrades to the plain 503.
+   */
+  private async lockUnavailableWithProgress(id: string): Promise<ServiceUnavailableException> {
+    let progress: StockCountCommitProgress | null = null;
+    try {
+      const s = await this.prisma.forTenant().stockCountSession.findUnique({
+        where: { id },
+        select: {
+          startedAt: true,
+          lines: { select: { productId: true, mode: true, countedQty: true, expectedQty: true } },
+        },
+      });
+      if (s) {
+        const moves = await this.prisma.forTenant().stockMovement.findMany({
+          where: { reference: stockCountReference(id), createdAt: { gte: s.startedAt } },
+          select: { productId: true, type: true },
+        });
+        progress = computeCommitProgress(s.lines, moves);
+      }
+    } catch (err) {
+      this.logger.warn(`count commit progress unavailable for ${id}: ${(err as Error)?.message}`);
+    }
+    return new ServiceUnavailableException({
+      code: API_ERROR_CODES.LOCK_UNAVAILABLE,
+      message:
+        progress && progress.committedLines > 0
+          ? "Part of this count was saved. Commit again to finish."
+          : "Nothing was saved. Please try again in a moment.",
+      ...(progress ?? {}),
+    });
   }
 
   /**

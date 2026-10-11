@@ -13,6 +13,7 @@
  * of the same key pair for its own tx and is 409 STOCK_COUNT_COMMITTING if the committer has it.
  */
 import { ConflictException } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** Lines per commit transaction: bounds how long one count batch holds its Product row locks. */
@@ -54,6 +55,44 @@ export function stockCountSkipNote(skip: StockCountSkippedProduct): string {
       ? "is now a product family, not counted"
       : "no longer exists, not counted";
   return `Skipped ${label}: ${why}. Recount it in a new session.`;
+}
+
+/**
+ * How far an unfinished commit got (SA-767 L-2.4 D, r-note 4 D): on the session detail as `commit`
+ * while some movement exists and the session is not COMMITTED, and on a 503 LOCK_UNAVAILABLE raised by
+ * the committer. `committedLines` = lines whose ADJUSTMENT movement exists; `totalLines` = lines that
+ * write one (a zero-delta line never does, so it is in neither number). The client reads "Saving
+ * count... N of M" and "Partly saved" / "Nothing was saved" off the same two numbers.
+ */
+export interface StockCountCommitProgress {
+  committedLines: number;
+  totalLines: number;
+}
+
+type Qty = Prisma.Decimal | number | string;
+
+/** A line writes an ADJUSTMENT iff its delta is non-zero: REPLACE counted - expected, ADD counted. */
+export function lineWritesAdjustment(l: {
+  mode: string;
+  countedQty: Qty;
+  expectedQty: Qty;
+}): boolean {
+  const counted = Number(l.countedQty);
+  return l.mode === "ADD" ? counted !== 0 : counted !== Number(l.expectedQty);
+}
+
+export function computeCommitProgress(
+  lines: ReadonlyArray<{ productId: string; mode: string; countedQty: Qty; expectedQty: Qty }>,
+  movements: ReadonlyArray<{ productId: string; type: string }>,
+): StockCountCommitProgress {
+  const writers = lines.filter(lineWritesAdjustment);
+  const adjusted = new Set(
+    movements.filter((m) => m.type === "ADJUSTMENT").map((m) => m.productId),
+  );
+  return {
+    committedLines: writers.filter((l) => adjusted.has(l.productId)).length,
+    totalLines: writers.length,
+  };
 }
 
 /** What a committed (or already committed) count answers. */
