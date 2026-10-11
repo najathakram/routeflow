@@ -154,10 +154,15 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
     expect(stored).toBe(41.27);
   });
 
-  it("(b) a replay of the same key never overwrites the stored value", async () => {
+  it("(b) a replay of the same key never overwrites the stored value: a different amount is 409, the same amount rewrites nothing", async () => {
     await ring({ method: "CASH", amount: 50 });
     replay = true;
-    await ring({ method: "CASH", amount: 60 });
+    await expect(ring({ method: "CASH", amount: 60 })).rejects.toMatchObject({
+      response: { code: "COUNTER_TENDER_CHANGED" },
+    });
+    expect(stored).toBe(50);
+    expect(prisma.order.updateMany).toHaveBeenCalledTimes(1); // the 409 wrote nothing
+    await ring({ method: "CASH", amount: 50 });
     expect(stored).toBe(50);
     // the second write is the frozen, NULL-filtered one
     expect(prisma.order.updateMany).toHaveBeenCalledTimes(2);
@@ -170,10 +175,10 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
       data: { counterCashTendered: 50 },
     });
     replay = true;
-    const r = await ring({ method: "CASH", amount: 60 });
+    const r = await ring({ method: "CASH", amount: 50 });
     expect(prisma.order.updateMany).toHaveBeenLastCalledWith({
       where: { id: "ord-1", counterCashTendered: null },
-      data: { counterCashTendered: 60 },
+      data: { counterCashTendered: 50 },
     });
     expect(stored).toBe(50);
     expect(r.change).toBe(8.73);

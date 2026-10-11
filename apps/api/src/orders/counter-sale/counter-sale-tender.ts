@@ -223,14 +223,18 @@ export function assertStoredTenderMatches(
       if (have !== planned) throw changed(`payment ${idx + 1} was taken for another amount`);
     }
   }
-  if (stored.legacy || stored.byLeg.size === 0) return; // nothing grouped to compare the cash leg against
+  if (stored.byLeg.size === 0) return; // nothing taken yet: a failed first attempt's tendered is simply overwritten
   const cashStored = [...stored.byLeg.values()].some((rows) =>
     rows.some((r) => r.payment.method === "CASH"),
   );
+  // The handed-over amount is compared for a pre-split (ungrouped) sale too: its CASH row plus a stored tendered is a
+  // finished cash sale, and a different amount is another request.
   if (cashStored && storedTenderedCents != null) {
     if (requestCashTenderedCents !== storedTenderedCents) {
       throw changed("the cash handed over is not the amount already taken");
     }
+  } else if (stored.legacy) {
+    return; // a pre-split attempt: the one-leg method check above is the whole fingerprint
   } else if (!cashStored && requestCashTenderedCents != null && storedTenderedCents == null) {
     throw changed("this sale was taken without cash");
   } else if (!cashStored && requestCashTenderedCents == null && storedTenderedCents != null) {

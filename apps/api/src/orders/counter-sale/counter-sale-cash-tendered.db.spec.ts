@@ -135,6 +135,8 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
   const recordPayment = async (
     invoiceId: string,
     dto: { amount: number; method: "CASH" | "CREDIT_CARD" | "CHECK"; reference?: string },
+    // the real recordPayment writes the leg's group id in the payment's own create (L-226: build fixtures like the writer)
+    opts?: { paymentGroupId?: string },
   ) => {
     if (failNextPayment) {
       failNextPayment = false;
@@ -146,6 +148,7 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
         amount: dto.amount,
         method: dto.method,
         reference: dto.reference,
+        paymentGroupId: opts?.paymentGroupId ?? null,
         status: "PAID",
         tenantId,
       },
@@ -306,6 +309,37 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
       data: { counterCashTendered: 99 },
     });
     expect(direct.count).toBe(0);
+  }, 60_000);
+
+  it("(2b) a pre-split (UNGROUPED) cash row is fingerprinted too: a different amount is 409, the same body serves, nothing is written", async () => {
+    const rows = await raw.invoicePayment.findMany({
+      where: { invoice: { orderId: cashOrderId }, method: "CASH" },
+    });
+    expect(rows.length).toBeGreaterThan(0);
+    const groups = rows.map((r) => ({ id: r.id, group: r.paymentGroupId }));
+    await raw.invoicePayment.updateMany({
+      where: { id: { in: rows.map((r) => r.id) } },
+      data: { paymentGroupId: null },
+    });
+    try {
+      await expect(ring({ method: "CASH", amount: 60 }, cashKey)).rejects.toMatchObject({
+        response: { code: "COUNTER_TENDER_CHANGED" },
+      });
+      const same = await ring({ method: "CASH", amount: 50 }, cashKey);
+      expect(same.replayed).toBe(true);
+      expect(same.cashTendered).toBe(50);
+      expect(same.change).toBe(8.73);
+      expect(Number(await stored(cashOrderId))).toBe(50);
+      expect(
+        await raw.invoicePayment.count({
+          where: { invoice: { orderId: cashOrderId }, method: "CASH" },
+        }),
+      ).toBe(rows.length);
+    } finally {
+      for (const g of groups) {
+        await raw.invoicePayment.update({ where: { id: g.id }, data: { paymentGroupId: g.group } });
+      }
+    }
   }, 60_000);
 
   it("(3) a CARD sale leaves it NULL", async () => {

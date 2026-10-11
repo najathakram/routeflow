@@ -1215,6 +1215,31 @@ describe("CounterSaleService.ring: split payments", () => {
       });
     });
 
+    it("a pre-split (ungrouped) CASH sale with its stored tendered 50, replayed with Cash 60 (still placing 20): 409", async () => {
+      invoices = [inv("inv-1", 20, 1, [{ ...cash(20), paymentGroupId: null }])];
+      storedTendered = 50;
+      replay = true;
+      const e = await errorOf(
+        service.ring(named({ payment: { method: "CASH", amount: 60 } }), staff, "key-1"),
+      );
+      expect(e.getResponse()).toMatchObject({ code: "COUNTER_TENDER_CHANGED" });
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("the same pre-split sale replayed with its own Cash 50 serves it", async () => {
+      invoices = [inv("inv-1", 20, 1, [{ ...cash(20), paymentGroupId: null }])];
+      storedTendered = 50;
+      replay = true;
+      const r = await service.ring(
+        named({ payment: { method: "CASH", amount: 50 } }),
+        staff,
+        "key-1",
+      );
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({ replayed: true, cashTendered: 50, change: 30 });
+    });
+
     it("the SAME legs replay serves the stored sale and writes nothing", async () => {
       storedSale([card30(), cash(15)], 15);
       const r = await service.ring(
