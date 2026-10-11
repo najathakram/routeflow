@@ -725,6 +725,9 @@ export function useRecordPaymentStandalone() {
     StandalonePaymentDto<SelectablePaymentMethod>
   >({
     mutationFn: (dto) => apiClient.post("/invoices/payments/record", dto).then((r) => r.data),
+    // Row 348: every caller (finance Payments, the customer Record Payment modal) answers a closed-day refusal in its
+    // own toast; the global one stays quiet for it so the failure is shown ONCE.
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
@@ -737,6 +740,8 @@ export function useVoidPayment() {
   return useMutation<{ success: boolean }, Error, { invoiceId: string; paymentId: string }>({
     mutationFn: ({ invoiceId, paymentId }) =>
       apiClient.patch(`/invoices/${invoiceId}/payments/${paymentId}/void`).then((r) => r.data),
+    // Row 348: both void surfaces toast a closed-day refusal themselves; the global toast stays quiet for it.
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
