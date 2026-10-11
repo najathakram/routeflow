@@ -350,6 +350,92 @@ describeDb("B297 PR5 — a LOCKED filing closes its period, real Postgres", () =
     );
   }, 120_000);
 
+  it("refuses to lock while return reversals for the period are parked", async () => {
+    const f = await makeFiling();
+    const order = await raw.order.create({
+      data: { customerId, tenantId, status: "DELIVERED", subtotal: "10", total: "10" },
+    });
+    const sale = await raw.regulatedSalesLedger.create({
+      data: {
+        tenantId,
+        trackedCategoryId: categoryId,
+        entryType: "SALE",
+        orderId: order.id,
+        qty: 1,
+        unitBasisQty: 1,
+        netSales: 10,
+        categoryTax: 0,
+        soldAt: new Date("2026-09-10T00:00:00Z"),
+        periodBucket: SOLD_BUCKET,
+      },
+    });
+    const ret = await raw.return.create({
+      data: { orderId: order.id, customerId, reason: "EXCESS_ORDER", status: "RECEIVED", tenantId },
+    });
+    await raw.regulatedLedgerParkedReversal.create({
+      data: {
+        tenantId,
+        returnId: ret.id,
+        orderId: order.id,
+        saleEntryId: sale.id,
+        returnedPieces: 4,
+        reason: "no live pack snapshot",
+        periodBucket: SOLD_BUCKET,
+      },
+    });
+    try {
+      await expect(lockAs(f.id)).rejects.toMatchObject({
+        response: { code: "PARKED_REVERSALS_UNRESOLVED" },
+      });
+      expect((await raw.regulatedFiling.findUniqueOrThrow({ where: { id: f.id } })).status).toBe(
+        "GENERATED",
+      );
+    } finally {
+      await raw.regulatedLedgerParkedReversal.deleteMany({ where: { tenantId } });
+      await raw.return.deleteMany({ where: { orderId: order.id } });
+      await raw.regulatedSalesLedger.deleteMany({ where: { tenantId } });
+      await raw.order.deleteMany({ where: { id: order.id } });
+    }
+  }, 120_000);
+
+  it("voiding a credit note or cancelling a return cannot delete reversal rows of a locked period", async () => {
+    const f = await makeFiling();
+    await raw.regulatedSalesLedger.create({
+      data: {
+        tenantId,
+        trackedCategoryId: categoryId,
+        entryType: "REVERSAL",
+        creditNoteId: "cn-locked",
+        returnId: "ret-locked",
+        qty: -1,
+        unitBasisQty: -1,
+        netSales: -10,
+        categoryTax: 0,
+        soldAt: new Date("2026-09-12T00:00:00Z"),
+        periodBucket: SOLD_BUCKET,
+      },
+    });
+    await lockAs(f.id);
+    for (const call of [
+      () => asLedger().unreverseCreditNoteEntries({ creditNoteId: "cn-locked", db: prisma }),
+      () => asLedger().unreverseReturnEntries({ returnId: "ret-locked", db: prisma }),
+    ])
+      await expect(inTenant(call)).rejects.toMatchObject({
+        response: { code: "LEDGER_PERIOD_LOCKED" },
+      });
+    expect(
+      await raw.regulatedSalesLedger.count({ where: { tenantId, creditNoteId: "cn-locked" } }),
+    ).toBe(1);
+    // once the period is not locked the same undo is allowed
+    await raw.regulatedFiling.update({ where: { id: f.id }, data: { status: "GENERATED" } });
+    await inTenant(() =>
+      asLedger().unreverseCreditNoteEntries({ creditNoteId: "cn-locked", db: prisma }),
+    );
+    expect(
+      await raw.regulatedSalesLedger.count({ where: { tenantId, creditNoteId: "cn-locked" } }),
+    ).toBe(0);
+  }, 120_000);
+
   it("prepareFiling on a LOCKED filing returns the stored row and never regenerates", async () => {
     const f = await makeFiling();
     await lockAs(f.id);

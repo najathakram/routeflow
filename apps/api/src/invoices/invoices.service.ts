@@ -3103,6 +3103,10 @@ export class InvoicesService {
     if (inv.status !== InvoiceStatus.DRAFT)
       throw new BadRequestException("Only DRAFT invoices can be edited");
     await this.assertOrderInvoiceUnlocked(inv);
+    // B297 PR5 (D4a): a DRAFT can carry regulated SALE rows (split drafts book them at creation): a line,
+    // discount or shipping edit re-syncs them, so it is refused when they sit in a LOCKED filing period.
+    if (dto.items || dto.discount !== undefined || dto.shippingFee !== undefined)
+      await assertSalesNotLockedForEdit(this.prisma.forTenant(), { invoiceId: id });
 
     // #2197: the same literal calendar-day stamp create() writes.
     const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
@@ -5825,7 +5829,10 @@ export class InvoicesService {
       const auditLine = `[${new Date().toLocaleDateString()} — Price adjusted by operator]`;
       // B297 PR5 (D4a): a price change moves money on every adjusted line, so it is refused (409
       // FILED_PERIOD_LOCKED) when the invoice's regulated SALE rows sit in a LOCKED filing period.
-      await assertSalesNotLockedForEdit(this.prisma.forTenant(), { invoiceId: inv.id });
+      await assertSalesNotLockedForEdit(this.prisma.forTenant(), {
+        invoiceId: inv.id,
+        lineIds: { invoiceItemIds: [...localPriceMap.keys()] },
+      });
 
       // B294 (SA-141): a legacy order/estimate-derived invoice (every line taxRate 0, a real
       // regular tax) keeps its tax — the inferred flat rate is stamped onto its lines first, in the

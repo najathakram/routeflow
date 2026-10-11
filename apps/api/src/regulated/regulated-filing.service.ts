@@ -152,6 +152,24 @@ export class RegulatedFilingService {
     return this.prisma.forTenant().regulatedFiling.findUnique({ where: { id } });
   }
 
+  /**
+   * B297 PR5: a regeneration's row write that can never UNLOCK a filing. Conditional on the row not being LOCKED:
+   * when a lock committed first the stored (locked) row is returned unchanged instead of being flipped back to
+   * GENERATED.
+   */
+  private async regenerateUnlessLocked(id: string, data: Record<string, unknown>) {
+    const db = this.prisma.forTenant();
+    try {
+      return await db.regulatedFiling.update({
+        where: { id, status: { not: "LOCKED" } } as any,
+        data: data as any,
+      });
+    } catch (err: any) {
+      if (err?.code !== "P2025") throw err; // no row matched: it is LOCKED now
+      return db.regulatedFiling.findUniqueOrThrow({ where: { id } });
+    }
+  }
+
   /** The 1-based month / quarter index of a period's start (ANNUAL ignores it). */
   private indexOf(cadence: FilingCadence, start: Date): number {
     const m = start.getUTCMonth();
@@ -298,8 +316,14 @@ export class RegulatedFilingService {
       });
       rowsJson = rows as unknown as Prisma.InputJsonValue;
     }
-    // Deterministic, tenant-scoped key — regeneration overwrites in place.
+    // Deterministic, tenant-scoped key — regeneration overwrites in place. B297 PR5: re-read the lock right
+    // before the overwrite (a lock may have committed since the early check, while the ledger was read), so a
+    // closed filing's artifact is never replaced; the row write below is conditional for the residual window.
     const csvKey = `regulated-filings/${tenantId}/${params.trackedCategoryId}/${periodKey}.csv`;
+    const lockedNow = await this.prisma.forTenant().regulatedFiling.findFirst({
+      where: { trackedCategoryId: params.trackedCategoryId, periodKey },
+    });
+    if (lockedNow?.status === "LOCKED") return lockedNow;
     await this.storage.upload(csvKey, Buffer.from(csv, "utf8"), "text/csv");
 
     // forTenant() can't inject into a composite-unique upsert — findFirst + create/update.
@@ -335,7 +359,7 @@ export class RegulatedFilingService {
     let filing;
     try {
       filing = existing
-        ? await this.prisma.forTenant().regulatedFiling.update({ where: { id: existing.id }, data })
+        ? await this.regenerateUnlessLocked(existing.id, data)
         : await (this.prisma.forTenant().regulatedFiling.create as any)({ data });
     } catch (err: any) {
       if (err?.code !== "P2002") throw err;
@@ -343,11 +367,14 @@ export class RegulatedFilingService {
         where: { trackedCategoryId: params.trackedCategoryId, periodKey },
       });
       if (!raced) throw err;
-      filing = await this.prisma.forTenant().regulatedFiling.update({
-        where: { id: raced.id },
-        data: { ...data, generationCount: raced.generationCount + 1 },
+      filing = await this.regenerateUnlessLocked(raced.id, {
+        ...data,
+        generationCount: raced.generationCount + 1,
       });
     }
+
+    // A lock that committed while this regeneration ran won: nothing was regenerated, so nothing is audited as such.
+    if (filing.status === "LOCKED") return filing;
 
     await this.audit.log({
       tenantId,

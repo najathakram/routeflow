@@ -86,22 +86,58 @@ export async function assertLedgerRowsNotLocked(db: LockDb, rows: BucketRef[]): 
 }
 
 /**
- * (a) the edit guard: refuse when any SALE row of the given order or invoice sits in a locked period. The
- * caller decides WHICH edits are money-bearing (a note or a delivery date never calls this).
+ * (a) the edit guard: refuse when a SALE the edit would move sits in a locked period. `lineIds` narrows it to
+ * the lines the edit actually changes (the order lines or invoice lines named): a change to one regulated line
+ * must not freeze the order's other lines. A booked line that is already square (fully reversed or superseded)
+ * does not count. The caller decides WHICH edits are money-bearing (a note or a delivery date never calls this).
  */
 export async function assertSalesNotLockedForEdit(
   db: LockDb,
-  where: { orderId?: string; invoiceId?: string },
+  where: {
+    orderId?: string;
+    invoiceId?: string;
+    lineIds?: { orderItemIds?: string[]; invoiceItemIds?: string[] };
+  },
 ): Promise<void> {
   // Cheap exit for the overwhelmingly common tenant: nothing is locked, so no ledger read at all.
   if (!db.regulatedFiling?.findMany || !db.regulatedSalesLedger?.findMany) return;
   const anyLocked = await db.regulatedFiling.findMany({ where: { status: "LOCKED" }, take: 1 });
   if (anyLocked.length === 0) return;
-  const sales = await db.regulatedSalesLedger.findMany({
-    where: { ...where, entryType: "SALE", correctsEntryId: null },
-    select: { trackedCategoryId: true, periodBucket: true },
+  const { lineIds, ...scope } = where;
+  const rows = await db.regulatedSalesLedger.findMany({
+    where: {
+      ...scope,
+      entryType: { in: ["SALE", "REVERSAL"] },
+      ...(lineIds?.orderItemIds ? { orderItemId: { in: lineIds.orderItemIds } } : {}),
+      ...(lineIds?.invoiceItemIds ? { invoiceItemId: { in: lineIds.invoiceItemIds } } : {}),
+    },
+    select: {
+      trackedCategoryId: true,
+      periodBucket: true,
+      orderItemId: true,
+      invoiceItemId: true,
+      qty: true,
+      netSales: true,
+      categoryTax: true,
+    },
   });
-  const hit = (await lockedFilingsCovering(db, sales as BucketRef[]))[0];
+  // Net per booked line and bucket: a sale that has since been fully reversed in that bucket is not at stake.
+  const net = new Map<string, { ref: BucketRef; qty: number; money: number }>();
+  for (const r of rows) {
+    const key = `${r.orderItemId ?? r.invoiceItemId ?? ""}|${r.trackedCategoryId}|${r.periodBucket}`;
+    const cur = net.get(key) ?? {
+      ref: { trackedCategoryId: r.trackedCategoryId, periodBucket: r.periodBucket },
+      qty: 0,
+      money: 0,
+    };
+    cur.qty += Number(r.qty);
+    cur.money += Number(r.netSales) + Number(r.categoryTax);
+    net.set(key, cur);
+  }
+  const live = [...net.values()]
+    .filter((n) => Math.abs(n.qty) >= 0.0005 || Math.abs(n.money) >= 0.005)
+    .map((n) => n.ref);
+  const hit = (await lockedFilingsCovering(db, live))[0];
   if (!hit) return;
   throw new ConflictException({
     code: API_ERROR_CODES.FILED_PERIOD_LOCKED,
@@ -151,5 +187,15 @@ export async function assertOrderEditNotLocked(
   orderId: string,
   dto: Parameters<typeof isMoneyBearingEdit>[0],
 ): Promise<void> {
-  if (isMoneyBearingEdit(dto)) await assertSalesNotLockedForEdit(db, { orderId });
+  if (!isMoneyBearingEdit(dto)) return;
+  // A diff payload that names only existing lines (no replace-all, no new line) can only move THOSE lines.
+  const items = dto.items ?? [];
+  const named =
+    dto.replaceAll !== true &&
+    items.length > 0 &&
+    items.every((i) => typeof i.id === "string" && i.id);
+  await assertSalesNotLockedForEdit(db, {
+    orderId,
+    ...(named ? { lineIds: { orderItemIds: items.map((i) => String(i.id)) } } : {}),
+  });
 }

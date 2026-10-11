@@ -6,6 +6,7 @@ import { ListGroup, ListRow, Pill } from "@routeflow/ui/mobile/ios";
 import { fetchRegulatedFilingUrl, type RegulatedFiling } from "../lib/api/regulated";
 import { shareCsv } from "../lib/share-pdf";
 import { fmtMoney } from "../lib/regulated-format";
+import { filingStatusLabel, isFiledOk } from "../lib/filing-status";
 import { showToast } from "../lib/toast";
 
 interface Props {
@@ -71,12 +72,12 @@ export function RegulatedFilingsList({
           key={f.id}
           icon={
             <Ionicons
-              name={f.status === "GENERATED" ? "document-text-outline" : "alert-circle"}
+              name={isFiledOk(f.status) ? "document-text-outline" : "alert-circle"}
               size={16}
-              color={f.status === "GENERATED" ? ios.brand : ios.system.redInk}
+              color={isFiledOk(f.status) ? ios.brand : ios.system.redInk}
             />
           }
-          iconBg={f.status === "GENERATED" ? ios.brandWash : ios.system.redWash}
+          iconBg={isFiledOk(f.status) ? ios.brandWash : ios.system.redWash}
           title={
             showCategory && categoryName
               ? `${f.periodKey} · ${categoryName(f.trackedCategoryId)}`
@@ -87,8 +88,8 @@ export function RegulatedFilingsList({
             sharingId === f.id ? (
               <ActivityIndicator size="small" color={ios.brand} />
             ) : (
-              <Pill variant={f.status === "GENERATED" ? "green" : "orange"} small>
-                {f.status === "GENERATED" ? "Generated" : "Failed"}
+              <Pill variant={f.status === "FAILED" ? "orange" : "green"} small>
+                {filingStatusLabel(f.status)}
               </Pill>
             )
           }

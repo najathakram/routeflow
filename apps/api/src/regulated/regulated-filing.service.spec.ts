@@ -222,6 +222,8 @@ describe("RegulatedFilingService", () => {
     it("retries as an update when a concurrent create hits the unique constraint", async () => {
       regulated.getLedger.mockResolvedValue({ rows: [ledgerRow()], totals: {} });
       prisma.regulatedFiling.findFirst
+        .mockResolvedValueOnce(null) // B297 PR5: the early LOCKED check
+        .mockResolvedValueOnce(null) // B297 PR5: the re-read right before the artifact upload
         .mockResolvedValueOnce(null) // initial: no existing → create path
         .mockResolvedValueOnce({ id: "raced-1", generationCount: 1 }); // post-P2002 lookup
       prisma.regulatedFiling.create.mockRejectedValueOnce({ code: "P2002" });
@@ -231,7 +233,8 @@ describe("RegulatedFilingService", () => {
         index: 1,
       });
       expect(prisma.regulatedFiling.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: "raced-1" } }),
+        // B297 PR5: the regeneration write is conditional, so a lock that committed first is never overwritten
+        expect.objectContaining({ where: { id: "raced-1", status: { not: "LOCKED" } } }),
       );
       expect(filing.generationCount).toBe(2); // raced.generationCount + 1
     });

@@ -18,6 +18,7 @@ import {
 } from "../common/money-invariants.util";
 import type { PriceAdjustmentOverpaidInvoice } from "@routeflow/types";
 import { isNsfLine } from "./nsf-line";
+import { assertSalesNotLockedForEdit } from "../regulated/filing-lock";
 import { sumConfirmed, type ConfirmablePaymentRow } from "./payment-predicates";
 
 const logger = new Logger("PriceAdjustment");
@@ -338,6 +339,8 @@ const KNOWN_REFUSAL_CODES: ReadonlySet<string> = new Set([
   API_ERROR_CODES.MONEY_INVARIANT,
   API_ERROR_CODES.PRICE_ADJUSTMENT_OVERPAYS,
   API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY,
+  API_ERROR_CODES.FILED_PERIOD_LOCKED, // B297 PR5: the lock's own refusal, echoed as such
+  API_ERROR_CODES.LEDGER_PERIOD_LOCKED,
 ]);
 const reportedCode = (e: BulkRefusal): string => {
   const code = codeOf(e);
@@ -418,6 +421,12 @@ export async function preflightBulkPriceAdjustment(
   const projected = new Map<string, number>();
   for (const { inv, localMap } of plans) {
     try {
+      // B297 PR5 (D4a): judged here, with every other refusal, BEFORE any invoice is written: a locked-period
+      // invoice in a bulk run must not stop it partway through.
+      await assertSalesNotLockedForEdit(db as any, {
+        invoiceId: inv.id,
+        lineIds: { invoiceItemIds: [...localMap.keys()] },
+      });
       const reference = await loadPriceAdjustmentReference(db, inv.items, localMap);
       const updates = buildPriceAdjustmentUpdates({
         items: inv.items,

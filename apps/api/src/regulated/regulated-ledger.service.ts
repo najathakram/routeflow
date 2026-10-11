@@ -1181,6 +1181,7 @@ export class RegulatedLedgerService {
     // `returnId` (they restate historical fact, not this-return-specific fact), so neither
     // delete below can touch them, and the SALE stays correctly classified piece-axis forever
     // after regardless of what happens to this one return.
+    await this.assertUnreverseNotLocked(db, { returnId, entryType: "REVERSAL" });
     await db.regulatedSalesLedger.deleteMany({ where: { returnId, entryType: "REVERSAL" } });
     // B681/SA-067(4): a return this guard parked (because its sale row's box/piece axis
     // couldn't be classified) leaves a RegulatedLedgerParkedReversal row blocking its period's
@@ -2056,6 +2057,21 @@ export class RegulatedLedgerService {
    *  to the returns cancel-undo). Delete keeps the `creditNoteId` idempotency clean. */
   async unreverseCreditNoteEntries(params: { creditNoteId: string; db: any }): Promise<void> {
     const { creditNoteId, db } = params;
+    await this.assertUnreverseNotLocked(db, { creditNoteId, entryType: "REVERSAL" });
     await db.regulatedSalesLedger.deleteMany({ where: { creditNoteId, entryType: "REVERSAL" } });
+  }
+
+  /**
+   * B297 PR5: undoing a return or a credit note DELETES its REVERSAL rows, the one ledger write that changes a
+   * closed period's SUM. A row bucketed into a LOCKED filing's period is refused (409 LEDGER_PERIOD_LOCKED):
+   * the filing's figures are frozen, so the document cannot be voided or cancelled after the period locked.
+   */
+  private async assertUnreverseNotLocked(db: any, where: Record<string, unknown>): Promise<void> {
+    const rows: Array<{ trackedCategoryId: string; periodBucket: string }> =
+      (await db.regulatedSalesLedger.findMany?.({
+        where,
+        select: { trackedCategoryId: true, periodBucket: true },
+      })) ?? [];
+    await assertLedgerRowsNotLocked(db, rows);
   }
 }

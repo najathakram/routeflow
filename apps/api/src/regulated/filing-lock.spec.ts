@@ -1,6 +1,9 @@
 import { ConflictException } from "@nestjs/common";
+import * as fs from "fs";
+import * as path from "path";
 import {
   assertLedgerRowsNotLocked,
+  assertOrderEditNotLocked,
   isMoneyBearingEdit,
   assertSalesNotLockedForEdit,
   lockedFilingsCovering,
@@ -88,6 +91,12 @@ describe("assertSalesNotLockedForEdit", () => {
   const sale = (over: Record<string, unknown> = {}) => ({
     trackedCategoryId: "cat-1",
     periodBucket: "2026-09",
+    orderItemId: "ol-1",
+    invoiceItemId: null,
+    entryType: "SALE",
+    qty: 12,
+    netSales: 120,
+    categoryTax: 0.6,
     ...over,
   });
   it("refuses with FILED_PERIOD_LOCKED naming the filing and period", async () => {
@@ -134,5 +143,86 @@ describe("isMoneyBearingEdit", () => {
     ])
       expect(isMoneyBearingEdit({ items: [item] })).toBe(true);
     expect(isMoneyBearingEdit({ replaceAll: true, items: [{ id: "a", notes: "n" }] })).toBe(true);
+  });
+});
+
+describe("the edit guard is scoped to the lines the edit changes and ignores a square sale (review M3)", () => {
+  const dbRows = (filings: any[], rows: any[]) => ({
+    regulatedFiling: { findMany: jest.fn(async () => filings) },
+    regulatedSalesLedger: {
+      findMany: jest.fn(async (a: any) => {
+        const ids: string[] | undefined = a.where.orderItemId?.in;
+        return rows.filter((r) => !ids || ids.includes(r.orderItemId));
+      }),
+    },
+  });
+  const sold = (orderItemId: string, over: Record<string, unknown> = {}) => ({
+    orderItemId,
+    invoiceItemId: null,
+    trackedCategoryId: "cat-1",
+    periodBucket: "2026-09",
+    entryType: "SALE",
+    qty: 12,
+    netSales: 120,
+    categoryTax: 0.6,
+    ...over,
+  });
+
+  it("a change to ONE named line passes when only ANOTHER line was sold in the locked period", async () => {
+    const d = dbRows([filing()], [sold("tobacco-line")]);
+    await expect(
+      assertOrderEditNotLocked(d as any, "o1", { items: [{ id: "soda-line", qty: 3 }] }),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertOrderEditNotLocked(d as any, "o1", { items: [{ id: "tobacco-line", qty: 3 }] }),
+    ).rejects.toMatchObject({ response: { code: "FILED_PERIOD_LOCKED" } });
+  });
+
+  it("a replace-all or a new line is judged against the whole order", async () => {
+    const d = dbRows([filing()], [sold("tobacco-line")]);
+    await expect(
+      assertOrderEditNotLocked(d as any, "o1", { replaceAll: true, items: [] }),
+    ).rejects.toMatchObject({
+      response: { code: "FILED_PERIOD_LOCKED" },
+    });
+    await expect(
+      assertOrderEditNotLocked(d as any, "o1", { items: [{ productId: "p1", qty: 1 }] }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("a sale already fully reversed in that period is not at stake", async () => {
+    const d = dbRows(
+      [filing()],
+      [
+        sold("tobacco-line"),
+        sold("tobacco-line", {
+          entryType: "REVERSAL",
+          qty: -12,
+          netSales: -120,
+          categoryTax: -0.6,
+        }),
+      ],
+    );
+    await expect(
+      assertOrderEditNotLocked(d as any, "o1", { items: [{ id: "tobacco-line", qty: 3 }] }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("caller pin: every money-moving entry point is behind a guard (B297 PR5)", () => {
+  const src = (rel: string) =>
+    fs.readFileSync(path.resolve(__dirname, rel), "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+  it("orders.updateOrderItems, invoices.update and applyPriceAdjustment (single + bulk preflight) call the edit guard", () => {
+    expect(src("../orders/orders.service.ts")).toMatch(/assertOrderEditNotLocked\(/);
+    expect(
+      src("../invoices/invoices.service.ts").match(/assertSalesNotLockedForEdit\(/g)?.length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(src("../invoices/price-adjustment-ledger.ts")).toMatch(/assertSalesNotLockedForEdit\(/);
+  });
+  it("every ledger writer and both un-reverse deletes run the ledger guard", () => {
+    const ledger = src("regulated-ledger.service.ts");
+    expect(ledger.match(/assertLedgerRowsNotLocked\(/g)?.length).toBeGreaterThanOrEqual(7);
+    expect(ledger).toMatch(/assertUnreverseNotLocked\(db, \{ returnId/);
+    expect(ledger).toMatch(/assertUnreverseNotLocked\(db, \{ creditNoteId/);
   });
 });

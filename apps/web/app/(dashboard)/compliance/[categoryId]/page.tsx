@@ -94,7 +94,14 @@ export default function RegulatedSectionPage() {
       { trackedCategoryId: c.id, cadence: c.reportCadence, year: py, index },
       {
         onSuccess: async (filing) => {
-          toast({ title: `Filing prepared · ${filing.periodKey}`, variant: "success" });
+          // B297 PR5: a locked period is never regenerated; the stored filing comes back unchanged.
+          toast({
+            title:
+              filing.status === "LOCKED"
+                ? `Filing ${filing.periodKey} is locked (not regenerated)`
+                : `Filing prepared · ${filing.periodKey}`,
+            variant: "success",
+          });
           try {
             const url = await fetchRegulatedFilingUrl(filing.id, "csv");
             window.open(url, "_blank", "noopener");
