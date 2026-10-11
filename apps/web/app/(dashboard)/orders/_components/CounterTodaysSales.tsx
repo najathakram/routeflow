@@ -25,6 +25,7 @@ import {
   receiptModelFromOrder,
   type ReceiptBusinessProfile,
 } from "@/lib/counter-receipt";
+import { CounterDayClose } from "./CounterDayClose";
 import { receiptEmailPrefill } from "@/lib/email-receipt";
 import { CounterReceiptView } from "./CounterReceiptView";
 import { CounterReturnAction } from "./CounterReturnAction";
@@ -519,6 +520,7 @@ export function CounterTodaysSales() {
                 Last 7 days
               </Button>
             </div>
+            {view === "week" ? null : <CounterDayClose />}
             {view === "week" && tenantDay ? <WeekReport today={tenantDay} /> : null}
             {view === "week" ? null : summary ? <Summary s={summary} /> : null}
             {view === "week" ? null : rows.length === 0 ? (

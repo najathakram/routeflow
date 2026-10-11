@@ -416,6 +416,12 @@ export const API_ERROR_CODES = {
   SUPPLIER_ALLOCATION_BILL_VOID: "SUPPLIER_ALLOCATION_BILL_VOID",
   SUPPLIER_ALLOCATION_OVER_BALANCE: "SUPPLIER_ALLOCATION_OVER_BALANCE",
   COUNTER_SALES_DISABLED: "COUNTER_SALES_DISABLED",
+  /** 409 from a counter-sale tender, a payment edit or a refund dated inside a window that has been closed (the closed day's totals never move). Reopen the close first. */
+  COUNTER_SALE_DAY_CLOSED: "COUNTER_SALE_DAY_CLOSED",
+  /** 409 from POST /invoices/:id/payments: a CASH payment on a counter sale dated before the latest standing day close would change that closed Z report (body carries `closedThrough`, ISO). Record it with today's date. */
+  DAY_CLOSED_FOR_PAYMENT_DATE: "DAY_CLOSED_FOR_PAYMENT_DATE",
+  /** 409 from POST /orders/counter-sale/day-close: this window was closed by another request first (a first-close race). */
+  DAY_ALREADY_CLOSED: "DAY_ALREADY_CLOSED",
   /** 409 from POST /orders/counter-sale/parked: this register already holds the maximum open parked carts (COUNTER_PARK_MAX_PER_REGISTER); resume or discard one first. */
   PARK_LIMIT: "PARK_LIMIT",
   /** 404 from resume / discard of a parked cart: it was already taken back (by another till), discarded, or has expired. */

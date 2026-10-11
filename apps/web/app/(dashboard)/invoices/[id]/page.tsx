@@ -96,6 +96,7 @@ import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
+import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
@@ -1790,7 +1791,7 @@ export default function InvoiceDetailPage() {
         onError: (err: any) => {
           toast({
             title: "Failed to record payment",
-            description: err?.response?.data?.message ?? "Please try again.",
+            description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
             variant: "error",
           });
         },
@@ -1827,7 +1828,7 @@ export default function InvoiceDetailPage() {
         onError: (err: any) => {
           toast({
             title: "Failed to update payment",
-            description: err?.response?.data?.message ?? "Please try again.",
+            description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
             variant: "error",
           });
         },
@@ -1844,8 +1845,12 @@ export default function InvoiceDetailPage() {
           setDeletingPayment(null);
           toast({ title: "Payment deleted", variant: "info" });
         },
-        onError: () => {
-          toast({ title: "Failed to delete payment", variant: "error" });
+        onError: (err: any) => {
+          toast({
+            title: "Failed to delete payment",
+            description: dayClosedCopy(err) ?? undefined,
+            variant: "error",
+          });
         },
       },
     );
@@ -1868,7 +1873,7 @@ export default function InvoiceDetailPage() {
         onError: (err: any) => {
           toast({
             title: "Failed to update check status",
-            description: err?.response?.data?.message ?? "Please try again.",
+            description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
             variant: "error",
           });
         },

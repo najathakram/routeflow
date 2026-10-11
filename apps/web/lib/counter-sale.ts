@@ -329,6 +329,9 @@ export const PICKUP_NOT_READY_COPY =
 export const PICKUP_ONLY_COPY = "Only a pickup order can be handed over this way.";
 export const PICKUP_GENERIC_COPY = "Couldn't complete the pickup. Check the order and try again.";
 
+/** 409 COUNTER_SALE_DAY_CLOSED from pickup-complete: the hand-over stands, only the payment was refused (the tender's day is closed). */
+export const PICKUP_DAY_CLOSED_COPY =
+  "Handed over. Payment not taken: the till for that day is closed.";
 export const PICKUP_PAYMENT_REQUIRED_COPY =
   "A balance is due on this order now. Take payment to finish.";
 export const PICKUP_TENDER_SHORT_COPY = "A walk-in customer must pay the full balance.";
@@ -355,6 +358,8 @@ export function pickupCompleteErrorCopy(err: unknown): string {
   if (res?.data?.code === API_ERROR_CODES.PICKUP_INVOICE_MISSING)
     return PICKUP_INVOICE_MISSING_COPY;
   if (res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT) return PICKUP_WALK_IN_CREDIT_COPY;
+  if (res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)
+    return PICKUP_DAY_CLOSED_COPY;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_NOT_READY) return PICKUP_NOT_READY_COPY;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_ONLY) return PICKUP_ONLY_COPY;
   if (res?.data?.code === API_ERROR_CODES.WALK_IN_NO_ACCOUNT)
@@ -466,6 +471,7 @@ const PICKUP_HANDLED_CODES: ReadonlySet<string> = new Set([
   API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED,
   API_ERROR_CODES.PICKUP_NOT_READY,
   API_ERROR_CODES.PICKUP_ONLY,
+  API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
 ]);
 export function isPickupHandledError(err: unknown): boolean {
   const code = pickupErrorCode(err);

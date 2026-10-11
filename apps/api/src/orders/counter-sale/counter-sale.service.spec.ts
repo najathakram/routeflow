@@ -513,6 +513,7 @@ describe("CounterSaleService.ring", () => {
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
         expect.objectContaining({ amount: 37.25 }),
+        { tillLockHeld: true },
       );
       expect(r).toMatchObject({
         invoiceId: "inv-1",
@@ -534,11 +535,16 @@ describe("CounterSaleService.ring", () => {
 
     it("CASH 50 on 37.25: pays 37.25, change 12.75, balance 0", async () => {
       const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff);
-      expect(recordPayment).toHaveBeenCalledWith("inv-1", {
-        amount: 37.25,
-        method: "CASH",
-        reference: undefined,
-      });
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        {
+          amount: 37.25,
+          method: "CASH",
+          reference: undefined,
+          paidAt: expect.any(String), // SA-750r3: dated from the database clock
+        },
+        { tillLockHeld: true },
+      );
       expect(r).toEqual({
         orderId: "ord-1",
         lines: [],
@@ -558,11 +564,16 @@ describe("CounterSaleService.ring", () => {
 
     it("CARD exact: recorded as CREDIT_CARD with the reference; no change", async () => {
       const r = await service.ring(named({ method: "CARD", reference: "auth-77" }) as never, staff);
-      expect(recordPayment).toHaveBeenCalledWith("inv-1", {
-        amount: 37.25,
-        method: "CREDIT_CARD",
-        reference: "auth-77",
-      });
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        {
+          amount: 37.25,
+          method: "CREDIT_CARD",
+          reference: "auth-77",
+          paidAt: expect.any(String), // SA-750r3: dated from the database clock
+        },
+        { tillLockHeld: true },
+      );
       expect(r.change).toBeUndefined();
       expect(r.balanceDue).toBe(0);
     });
@@ -576,11 +587,16 @@ describe("CounterSaleService.ring", () => {
 
     it("CASH 20 on a 37.25 sale: a PARTIAL payment of 20, paid 20, balanceDue read back from storage, no change", async () => {
       const r = await service.ring(named({ method: "CASH", amount: 20 }) as never, staff);
-      expect(recordPayment).toHaveBeenCalledWith("inv-1", {
-        amount: 20,
-        method: "CASH",
-        reference: undefined,
-      });
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        {
+          amount: 20,
+          method: "CASH",
+          reference: undefined,
+          paidAt: expect.any(String), // SA-750r3: dated from the database clock
+        },
+        { tillLockHeld: true },
+      );
       expect(r).toMatchObject({
         paid: 20,
         balanceDue: 17.25,
@@ -616,7 +632,9 @@ describe("CounterSaleService.ring", () => {
         inv("inv-1", 40, [{ id: "cn-pay", amount: 10, method: "CREDIT_NOTE", status: "PAID" }]),
       ];
       const r = await service.ring(named({ method: "CASH", amount: 30 }) as never, staff);
-      expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 30 }));
+      expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 30 }), {
+        tillLockHeld: true,
+      });
       expect(r).toMatchObject({ total: 40, paid: 40, balanceDue: 0, paymentRecorded: true });
       // a 30 cash tender on the 30 left after the credit: nothing handed back
       expect(r.change).toBe(0);
@@ -814,7 +832,9 @@ describe("CounterSaleService.ring", () => {
       recordPayment.mockClear();
       const second = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff, "k");
       expect(recordPayment).toHaveBeenCalledTimes(1);
-      expect(recordPayment).toHaveBeenCalledWith("inv-2", expect.objectContaining({ amount: 20 }));
+      expect(recordPayment).toHaveBeenCalledWith("inv-2", expect.objectContaining({ amount: 20 }), {
+        tillLockHeld: true,
+      });
       expect(second).toMatchObject({
         total: 50,
         paid: 50,

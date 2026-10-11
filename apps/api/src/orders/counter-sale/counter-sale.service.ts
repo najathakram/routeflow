@@ -14,6 +14,7 @@ import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { configuredTaxRatePercent } from "../../common/tax-rate";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
+import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import type { CounterSaleDto } from "./counter-sale.dto";
@@ -50,6 +51,7 @@ import {
 } from "../../credit-notes/auto-apply-candidates";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import { WalkInCustomerService } from "./walk-in-customer";
+import { counterCloseShared, counterTenderPaidAt } from "./counter-tender-window";
 
 // A customer id no row holds: lets the tenant-wide steps of the replay lookup answer by key alone.
 const NO_CUSTOMER = "00000000-0000-0000-0000-000000000000";
@@ -176,6 +178,7 @@ export class CounterSaleService {
       select: {
         id: true,
         orderNumber: true,
+        registerKey: true, // SA-750r3: the till this sale is counted on
         tax: true,
         // POS-5: only the lines a staff price change produced (read back from storage for the audit row).
         lineItems: {
@@ -203,9 +206,17 @@ export class CounterSaleService {
       invoices = await this.readInvoices(orderId);
     } else {
       try {
+        // SA-750r3: the SHARED end-of-day close lock rides this pinned connection (lock order: counter-tender -> counter-close
+        // -> Invoice FOR UPDATE), so a close waits for a tender in flight and the tender never lands behind its cutoff.
+        const till = { counterSale: true, registerKey: order?.registerKey };
         const locked = await withAdvisoryLock(
-          { family: "counter-tender", key: orderId, mode: "wait" },
-          () => this.tender(dto, orderId),
+          {
+            family: "counter-tender",
+            key: orderId,
+            mode: "wait",
+            sharedAlso: counterCloseShared(this.prisma.getTenantId(), till),
+          },
+          () => this.tender(dto, orderId, till),
         );
         if (!locked.acquired) throw new LockTimeoutError("counter-tender", orderId, 0);
         ({ invoices, planError } = locked.value);
@@ -307,6 +318,7 @@ export class CounterSaleService {
   private async tender(
     dto: CounterSaleDto,
     orderId: string,
+    till: { counterSale: boolean; registerKey?: string | null },
   ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
@@ -331,14 +343,38 @@ export class CounterSaleService {
       // A refusal only stands when nothing was taken yet: a stored tender means a payment already went in.
       if (!invoices.some((i) => (i.payments ?? []).some(isTender))) planError = plan.code;
     } else if (plan.kind === "pay") {
+      // The allocation is pure, so it is made first: the closed-day check below must run before ANY write.
+      const writes = allocateOldestFirst(balances, plan.amount)
+        .map((part) => {
+          const row = invoices.find((i) => i.id === part.invoiceId)!;
+          const stored = roundMoney(
+            (row.payments ?? [])
+              .filter((p) => isTender(p))
+              .reduce((sum, p) => sum + Number(p.amount), 0),
+          );
+          const due = roundMoney(
+            Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
+          );
+          return { invoiceId: part.invoiceId, due };
+        })
+        .filter((w) => w.due > 0);
+      // SA-750r3: with the shared close lock held, the instant the payment is dated (the DATABASE clock) must not sit in a
+      // closed window: 409 COUNTER_SALE_DAY_CLOSED, nothing written. It runs BEFORE the SA-764 cash-tendered write below, so a
+      // closed-day refusal leaves nothing stored, and outside the try so it is not mapped to "not recorded". A replay with
+      // nothing left to record writes nothing and is never refused.
+      const paidAt = writes.length
+        ? await counterTenderPaidAt(this.prisma, this.prisma.getTenantId(), till)
+        : undefined;
       // SA-764: the CASH handed over is stored BEFORE any money moves, so a paid sale can never lack its tender.
       // Until a CASH tender row anchors it the amount is overwritten (a failed first attempt's stale figure must
-      // not survive a retry); once one exists it is frozen (only a NULL is filled). Same lock, no transaction.
+      // not survive a retry); once one exists it is frozen (only a NULL is filled). A replay with NOTHING left to record
+      // (`writes` empty) is frozen too, anchored or not: it only fills a NULL. Same lock, no transaction.
       if (method === "CASH") {
         const anchored = invoices.some((i) => (i.payments ?? []).some(isCounterTenderCashRow));
+        const fillNullOnly = anchored || writes.length === 0;
         try {
           await this.prisma.forTenant().order.updateMany({
-            where: anchored ? { id: orderId, counterCashTendered: null } : { id: orderId },
+            where: fillNullOnly ? { id: orderId, counterCashTendered: null } : { id: orderId },
             data: { counterCashTendered: roundMoney(plan.tendered) },
           });
         } catch (e) {
@@ -351,22 +387,18 @@ export class CounterSaleService {
       // A tender that could not be stored takes NO money: the payment loop is skipped entirely.
       if (!planError) {
         try {
-          for (const part of allocateOldestFirst(balances, plan.amount)) {
-            const row = invoices.find((i) => i.id === part.invoiceId)!;
-            const stored = roundMoney(
-              (row.payments ?? [])
-                .filter((p) => isTender(p))
-                .reduce((sum, p) => sum + Number(p.amount), 0),
+          for (const { invoiceId, due } of writes) {
+            // SA-750r3: the shared close lock is already held on the pinned connection (tillLockHeld)
+            await this.invoices.recordPayment(
+              invoiceId,
+              {
+                amount: due,
+                method: toPrismaMethod(method)!,
+                reference: dto.payment.reference,
+                ...(paidAt ? { paidAt } : {}),
+              } as never,
+              { tillLockHeld: TILL_LOCK_HELD },
             );
-            const due = roundMoney(
-              Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
-            );
-            if (due <= 0) continue;
-            await this.invoices.recordPayment(part.invoiceId, {
-              amount: due,
-              method: toPrismaMethod(method)!,
-              reference: dto.payment.reference,
-            } as never);
           }
         } catch (e) {
           this.logger.warn(

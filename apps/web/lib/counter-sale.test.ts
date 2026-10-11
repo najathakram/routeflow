@@ -18,6 +18,8 @@ import {
   counterSaleGate,
   PAYMENT_PROBLEM_COPY,
   paymentMethodOptions,
+  PICKUP_DAY_CLOSED_COPY,
+  isPickupHandledError,
   PICKUP_NOT_READY_COPY,
   PICKUP_ONLY_COPY,
   PICKUP_KEY_CONFLICT_COPY,
@@ -448,6 +450,26 @@ describe("pickupCompleteErrorCopy", () => {
     expect(PICKUP_WALK_IN_CREDIT_COPY).toBe(
       "This walk-in has open credit. Resolve it on the customer before handing over.",
     );
+  });
+  it("409 COUNTER_SALE_DAY_CLOSED: the order IS handed over, the payment is not (fixed copy, never the server text)", () => {
+    expect(PICKUP_DAY_CLOSED_COPY).toBe(
+      "Handed over. Payment not taken: the till for that day is closed.",
+    );
+    expect(
+      pickupCompleteErrorCopy({
+        response: {
+          status: 409,
+          data: { code: "COUNTER_SALE_DAY_CLOSED", message: "raw server text" },
+        },
+      }),
+    ).toBe(PICKUP_DAY_CLOSED_COPY);
+  });
+  it("COUNTER_SALE_DAY_CLOSED is a code the dialog answers itself (no global toast)", () => {
+    expect(
+      isPickupHandledError({
+        response: { status: 409, data: { code: "COUNTER_SALE_DAY_CLOSED" } },
+      }),
+    ).toBe(true);
   });
   it("anything else is the generic retry copy, never the server message", () => {
     expect(
