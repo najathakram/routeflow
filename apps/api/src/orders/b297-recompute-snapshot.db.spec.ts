@@ -37,6 +37,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "./orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
+import { foldMergeItems } from "./merge-items";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -521,16 +522,78 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
     });
     const id = await createOrder(12);
     const [l0] = await lines(id);
-    await raiseCategoryRate(LIVE_RATE);
-    await raw.product.update({ where: { id: productId }, data: { trackedCategoryId: other.id } });
-    await fold(id, [{ productId, qty: 20, sourceLineId: l0.id }]);
-    const [l1] = await lines(id);
-    expect(l1.qty).toBe(20);
-    expect(l1.trackedCategoryId).toBe(categoryId); // master: the product's current category
-    expect(l1.rate).toBe(SNAPSHOT_RATE); // master: stamped from the live category
-    expect(l1.amount).toBe(1); // 20 x 0.05 at the line's own trio
-    await raw.product.update({ where: { id: productId }, data: { trackedCategoryId: categoryId } });
-    await raw.trackedCategory.deleteMany({ where: { id: other.id } });
+    try {
+      await raiseCategoryRate(LIVE_RATE);
+      await raw.product.update({ where: { id: productId }, data: { trackedCategoryId: other.id } });
+      await fold(id, [{ productId, qty: 20, sourceLineId: l0.id }]);
+      const [l1] = await lines(id);
+      expect(l1.qty).toBe(20);
+      expect(l1.trackedCategoryId).toBe(categoryId); // master: the product's current category
+      expect(l1.rate).toBe(SNAPSHOT_RATE); // master: stamped from the live category
+      expect(l1.amount).toBe(1); // 20 x 0.05 at the line's own trio
+    } finally {
+      await raw.product.update({
+        where: { id: productId },
+        data: { trackedCategoryId: categoryId },
+      });
+      await raw.orderItem.deleteMany({ where: { tenantId } });
+      await raw.trackedCategory.deleteMany({ where: { id: other.id } }).catch(() => undefined);
+    }
+  }, 120_000);
+
+  it("row 340: a fold keeps a NULL-trio legacy line in ITS category and stamps that category's live trio (the product has since left it)", async () => {
+    const id = await createOrder(12);
+    const [l0] = await lines(id);
+    await raw.orderItem.update({
+      where: { id: l0.id },
+      data: { categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null },
+    });
+    await raw.product.update({ where: { id: productId }, data: { trackedCategoryId: null } });
+    try {
+      await raiseCategoryRate(LIVE_RATE);
+      await fold(id, [{ productId, qty: 20, sourceLineId: l0.id }]);
+      const [l1] = await lines(id);
+      expect(l1.trackedCategoryId).toBe(categoryId); // the product's current category is none
+      expect(l1.rate).toBe(LIVE_RATE); // stamped from the line's own category, once
+      expect(l1.amount).toBe(1.4); // 20 x 0.07; without the carry the levy is dropped to 0
+    } finally {
+      await raw.product.update({
+        where: { id: productId },
+        data: { trackedCategoryId: categoryId },
+      });
+    }
+  }, 120_000);
+
+  it("row 340 (foldTarget): a scan folded into a line sold at an older rate goes on a NEW live line; the old line keeps its units and trio", async () => {
+    const id = await createOrder(12);
+    await raiseCategoryRate(0.08);
+    const existing = await raw.orderItem.findMany({ where: { orderId: id } });
+    const trio = await orders.liveTrioByProduct([productId]);
+    const folded = foldMergeItems(existing as any, [{ productId, qty: 8 }], undefined, trio);
+    await fold(id, folded.items as any[]);
+    const ls = await lines(id);
+    expect(ls.map((l) => [l.qty, l.rate, l.amount]).sort()).toEqual(
+      [
+        [12, SNAPSHOT_RATE, 0.6], // 12 @ 0.05
+        [8, 0.08, 0.64], // 8 @ 0.08, a sale made today (master: one line of 20 @ 0.05 = 1.00)
+      ].sort(),
+    );
+  }, 120_000);
+
+  it("row 340 (foldTarget): mergeAllPendingForCustomer does not sum two lines sold at different rates", async () => {
+    await createOrder(12);
+    await raiseCategoryRate(0.08);
+    await createOrder(8);
+    await mergeAuto();
+    const survivors = await raw.order.findMany({ where: { tenantId } });
+    expect(survivors).toHaveLength(1);
+    const ls = await lines(survivors[0].id);
+    expect(ls.map((l) => [l.qty, l.rate, l.amount]).sort()).toEqual(
+      [
+        [12, SNAPSHOT_RATE, 0.6],
+        [8, 0.08, 0.64],
+      ].sort(),
+    );
   }, 120_000);
 
   it("row 340: a fold keeps a no-category line category-less with its stored levy; a NEW line stamps live", async () => {

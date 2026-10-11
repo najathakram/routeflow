@@ -50,14 +50,21 @@ describe("carriedCategory", () => {
     });
   });
 
-  it("carries nothing for a NULL or partly NULL trio (it stamps live, like a new sale)", () => {
+  it("a NULL or partly NULL trio keeps the line's OWN category with an empty trio (the recompute stamps it from that category)", () => {
+    const expected = {
+      trackedCategoryId: "cat-1",
+      trackedSubcategoryId: "sub-1",
+      categoryTaxType: null,
+      categoryTaxRate: null,
+      categoryPriceIncludesTax: null,
+    };
     expect(
       carriedCategory(
         own({ categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null }),
         "p1",
       ),
-    ).toBeNull();
-    expect(carriedCategory(own({ categoryPriceIncludesTax: null }), "p1")).toBeNull();
+    ).toEqual(expected);
+    expect(carriedCategory(own({ categoryPriceIncludesTax: null }), "p1")).toEqual(expected);
   });
 
   it("carries nothing when the source line is another product, or missing (a genuinely new line)", () => {

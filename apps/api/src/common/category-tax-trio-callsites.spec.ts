@@ -104,7 +104,7 @@ const ALLOWLIST: { file: string; count: number; note: string }[] = [
   {
     file: "orders/replace-all-line-build.ts",
     count: 2,
-    note: "B297 row 340: the existing-line map's categoryTaxAmount read + the builder's carry spread; the amount is a carried stored levy, the trio the line's own (copyCategoryTaxSnapshot) or the live stamp for a new line",
+    note: "B297 row 340: both matches are on the existing-line map entry (the `categoryTaxAmount:` key and the `li.categoryTaxAmount,` member read); the carry itself is carriedCategory in carry-line-category.ts",
   },
   {
     file: "orders/unit-line-build.ts",

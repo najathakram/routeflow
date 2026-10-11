@@ -167,6 +167,7 @@ import {
   type StockLineUnits,
 } from "./order-stock";
 import { recomputeLineCategoryTaxes } from "./recompute-line-category-taxes";
+import { loadLiveTrioByProduct } from "./fold-target";
 import { dateAndShipmentFilters } from "./list-filters";
 import { resolveOversellAllowed } from "./oversell-policy";
 import { PolicyOversellReader } from "./policy-oversell-reader";
@@ -338,6 +339,11 @@ export class OrdersService implements OnApplicationBootstrap {
    * snapshot (never the live category) and return the order-level Σ. The rule, the NULL-trio stamp and
    * the no-category keep live in `recompute-line-category-taxes.ts`; this binds the service's logger.
    */
+  /** B297 row 340: the trio a new sale of each product takes today (a fold's `foldTarget` input). */
+  liveTrioByProduct(productIds: string[]) {
+    return loadLiveTrioByProduct(this.prisma.forTenant() as any, productIds);
+  }
+
   private recomputeLineCategoryTaxes(tx: any, lines: any[]): Promise<number> {
     return recomputeLineCategoryTaxes(tx, lines, this.logger);
   }

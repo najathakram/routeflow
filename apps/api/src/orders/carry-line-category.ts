@@ -12,9 +12,10 @@ import { copyCategoryTaxSnapshot, hasNullTrio } from "@routeflow/pricing";
  *  - a full trio: its category, subcategory and trio, verbatim (never re-stamped);
  *  - NO category (sold uncategorised, L1): stays category-less and keeps its stored levy, which the
  *    recompute that follows keeps (a created row's levy would otherwise start at 0);
- *  - a category with a NULL / partly NULL trio: nothing to carry, it stamps live like a new sale
- *    (SA-096a: price at the live category once and stamp).
- * Returns null when nothing is carried.
+ *  - a category with a NULL / partly NULL trio: it keeps ITS category and subcategory (never the product's
+ *    current one) and carries an empty trio, which the recompute that follows stamps from that category's live
+ *    rate once, exactly as a NULL-trio line is handled everywhere else (SA-096a / SA-098b; row 338's rule).
+ * Returns null only when there is no source line, or it is another product (a genuinely new line).
  */
 export interface CarriedCategorySource {
   productId?: string | null;
@@ -34,14 +35,22 @@ export function carriedCategory(
   if (!own.trackedCategoryId) {
     return {
       trackedCategoryId: null,
-      trackedSubcategoryId: null,
+      trackedSubcategoryId: own.trackedSubcategoryId ?? null,
       categoryTaxType: null,
       categoryTaxRate: null,
       categoryPriceIncludesTax: null,
       categoryTaxAmount: Number(own.categoryTaxAmount ?? 0),
     };
   }
-  if (hasNullTrio(own as any)) return null;
+  if (hasNullTrio(own as any)) {
+    return {
+      trackedCategoryId: own.trackedCategoryId,
+      trackedSubcategoryId: own.trackedSubcategoryId ?? null,
+      categoryTaxType: null,
+      categoryTaxRate: null,
+      categoryPriceIncludesTax: null,
+    };
+  }
   return {
     trackedCategoryId: own.trackedCategoryId,
     trackedSubcategoryId: own.trackedSubcategoryId ?? null,

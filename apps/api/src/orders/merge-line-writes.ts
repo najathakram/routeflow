@@ -14,6 +14,7 @@ import {
 import { mergeBoxedContributions } from "./buyer-merge-pricing";
 import { groupContributionsByPack, type PackCandidate } from "./merge-pack-resolve";
 import { compositionStampOf } from "./order-composition";
+import { foldTarget } from "./fold-target";
 
 export { compositionStampOf };
 
@@ -140,21 +141,40 @@ export function buildMergeLineWrites(
 
   // #2717 M3 (C9a/C9b): split every product's contributions by composition first, so a FIXED line
   // never folds across a recipe version (or with a plain line). One bucket per product otherwise.
-  const buckets: Array<{ productId: string; winner: MergeLine[]; losers: MergeLine[] }> = [];
+  const versionBuckets: Array<{ productId: string; winner: MergeLine[]; losers: MergeLine[] }> = [];
   for (const productId of productIds) {
     const w = winnerByProduct.get(productId) ?? [];
     const l = loserByProduct.get(productId) ?? [];
     const keys = new Set([...w, ...l].map(versionKey));
-    if (keys.size <= 1) buckets.push({ productId, winner: w, losers: l });
+    if (keys.size <= 1) versionBuckets.push({ productId, winner: w, losers: l });
     else {
       for (const k of keys) {
-        buckets.push({
+        versionBuckets.push({
           productId,
           winner: w.filter((li) => versionKey(li) === k),
           losers: l.filter((li) => versionKey(li) === k),
         });
       }
     }
+  }
+  // B297 row 340 (SA MED-3, `foldTarget`): lines fold only at an equal rate trio. A loser line whose own trio
+  // differs from the winner's (a rate change, a category move, newly regulated) is NOT summed into it: it
+  // forms its own bucket and moves over as a line of its own, trio copied (a merge is not a new sale).
+  const buckets: Array<{ productId: string; winner: MergeLine[]; losers: MergeLine[] }> = [];
+  for (const vb of versionBuckets) {
+    const clusters: Array<{ rep: MergeLine; winner: MergeLine[]; losers: MergeLine[] }> = [];
+    const place = (li: MergeLine, asWinner: boolean) => {
+      let c = clusters.find((x) => foldTarget(x.rep, li) === "ADD");
+      if (!c) {
+        c = { rep: li, winner: [], losers: [] };
+        clusters.push(c);
+      }
+      (asWinner ? c.winner : c.losers).push(li);
+    };
+    vb.winner.forEach((li) => place(li, true));
+    vb.losers.forEach((li) => place(li, false));
+    for (const c of clusters)
+      buckets.push({ productId: vb.productId, winner: c.winner, losers: c.losers });
   }
 
   for (const { productId, winner: winnerLinesForProduct, losers } of buckets) {
