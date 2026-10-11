@@ -69,11 +69,13 @@ describe("isCounterTenderRow / isForeignPaymentRow (table)", () => {
     const kinds: Array<
       [string, { counterSale?: boolean | null }, string | null | undefined, boolean]
     > = [
-      // clause (i): a counter-sale order: ungrouped only (the leg ids join at SA-749r2)
+      // clause (i): a counter-sale order: ungrouped, or its OWN pickup hand-over id (pickup-complete runs on counter sales too)
       ["counter order, ungrouped", COUNTER, null, true],
       ["counter order, undefined group", COUNTER, undefined, true],
       ["counter order, a random group (office payment)", COUNTER, RANDOM, false],
-      ["counter order, the pickup group id is NOT a counter tender", COUNTER, PICKUP, false],
+      ["counter order, its OWN pickup group id (the hand-over cash)", COUNTER, PICKUP, true],
+      ["counter order, another order's pickup group id", COUNTER, OTHER_PICKUP, false],
+      ["counter order, the order id used as a group id", COUNTER, ORDER, false],
       // clause (ii): a NON-counter order: ONLY the deterministic pickup group id of THIS order
       ["non-counter order, ungrouped (an office or driver payment)", NON_COUNTER, null, false],
       ["non-counter order, undefined group", NON_COUNTER, undefined, false],
@@ -99,6 +101,20 @@ describe("isCounterTenderRow / isForeignPaymentRow (table)", () => {
       expect(
         isCounterTenderRow(ORDER, own({ method: "CHECK", checkStatus: "DEPOSITED" }), NON_COUNTER),
       ).toBe(false);
+    });
+
+    it("a counter order's own-pickup-group rows follow the method rules (CASH / card tender, DRAFT / ACH / deposited check not)", () => {
+      const own = (over: Partial<TenderRowShape>) => row({ paymentGroupId: PICKUP, ...over });
+      expect(isCounterTenderRow(ORDER, own({}), COUNTER)).toBe(true);
+      expect(isCounterTenderRow(ORDER, own({ method: "CREDIT_CARD" }), COUNTER)).toBe(true);
+      expect(isCounterTenderRow(ORDER, own({ status: "PENDING" }), COUNTER)).toBe(true);
+      expect(isCounterTenderRow(ORDER, own({ status: "DRAFT" }), COUNTER)).toBe(false);
+      expect(isCounterTenderRow(ORDER, own({ method: "ACH" }), COUNTER)).toBe(false);
+      expect(
+        isCounterTenderRow(ORDER, own({ method: "CHECK", checkStatus: "DEPOSITED" }), COUNTER),
+      ).toBe(false);
+      expect(isForeignPaymentRow(ORDER, own({}), COUNTER)).toBe(false);
+      expect(isForeignPaymentRow(ORDER, own({ paymentGroupId: OTHER_PICKUP }), COUNTER)).toBe(true);
     });
 
     it("isForeignPaymentRow follows: a non-counter order's ungrouped CASH row is foreign, its pickup-group row is not", () => {

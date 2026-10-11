@@ -26,6 +26,26 @@ describe("isTillCashRow", () => {
   });
 
   it.each([
+    [
+      "its own pickup-group CASH row (the hand-over cash)",
+      row({ paymentGroupId: pickupTenderGroupId("ord-1") }),
+      true,
+    ],
+    [
+      "its own pickup-group CREDIT_CARD row (a tender, not cash)",
+      row({ method: "CREDIT_CARD", paymentGroupId: pickupTenderGroupId("ord-1") }),
+      false,
+    ],
+    [
+      "another order's pickup-group CASH row",
+      row({ paymentGroupId: pickupTenderGroupId("ord-2") }),
+      false,
+    ],
+  ])("on a counter order: %s -> %s", (_name, p, expected) => {
+    expect(isTillCashRow("ord-1", p as never, { counterSale: true })).toBe(expected);
+  });
+
+  it.each([
     ["its own pickup-group CASH row", row({ paymentGroupId: pickupTenderGroupId("ord-1") }), true],
     [
       "its own pickup-group CREDIT_CARD row (a tender, not cash)",

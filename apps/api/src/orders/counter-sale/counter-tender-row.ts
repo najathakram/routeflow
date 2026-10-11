@@ -8,20 +8,22 @@ import { pickupTenderGroupId } from "./pickup-tender-group";
  *
  * A counter tender row is a PAID or PENDING CASH / CREDIT_CARD / CHECK row that carries no foreign payment group:
  *  - `paymentGroupId == null` is how `recordPayment` stores a single-invoice counter tender on master today;
+ *  - `paymentGroupId === pickupTenderGroupId(orderId)` is the hand-over cash pickup-complete takes on a counter sale (a counter
+ *    sale is a PICKUP order too; the group id is written for every order kind);
  *  - EXTENSION POINT (SA-749r2, not on this base): once the split tender lands, its rows carry
  *    `paymentGroupId === uuidv5(`${orderId}:${i}`, COUNTER_TENDER_NS)` for some i < 4. Neither the namespace nor a
- *    uuid dependency exists here, so `isCounterTenderGroup` accepts null only; add the derived ids THERE and nowhere
- *    else (see the test.todo in counter-tender-row.spec.ts).
+ *    uuid dependency exists here, so `isCounterTenderGroup` accepts null and the order's own pickup id only; add the derived
+ *    ids THERE and nowhere else (see the test.todo in counter-tender-row.spec.ts).
  * Known gap until SA-749r2: an ungrouped single-invoice OFFICE payment is indistinguishable from the counter's own
  * tender and is handed back with it.
  *
  * SA-750r3 r-note (Train 4 meets day close): ONE predicate, TWO clauses, keyed on the ORDER'S KIND, which every caller must
  * state (`order`, never defaulted):
- *  (i) a counter-sale order (`counterSale === true`): the rule above, ungrouped rows only (the SA-749r2 leg ids join here);
+ *  (i) a counter-sale order (`counterSale === true`): the rule above, ungrouped rows or its own pickup id (the SA-749r2 leg ids join here);
  *  (ii) any other order (a POS-mode pickup hand-over): ONLY a row whose `paymentGroupId === pickupTenderGroupId(orderId)`.
  *       Driver, route and office payments never carry that deterministic id, so on a non-counter order an ungrouped or
  *       random-group row is NOT a tender (it stays "not taken at the till"); the ungrouped acceptance is scoped to counter
- *       sales and never spreads to regular orders.
+ *       sales and never spreads to regular orders. Another order's pickup id is foreign on either kind.
  *
  * Anything else that is not VOID is FOREIGN: CREDIT_NOTE / ADVANCE rows, an office payment with a random group id, a
  * CHECK already DEPOSITED or CLEARED, an ACH / ZELLE / OTHER row, a DRAFT row.
@@ -41,16 +43,18 @@ export interface TenderOrderKind {
 }
 
 /**
- * The group ids a tender may carry for `orderId`. A counter-sale order: none (null) today, SA-749r2 adds the derived split ids
- * here. A non-counter order: only its own pickup hand-over id.
+ * The group ids a tender may carry for `orderId`. A counter-sale order: none (null), its OWN pickup hand-over id (pickup-complete
+ * runs on counter sales too and stamps `pickupTenderGroupId(orderId)` on every order kind), and, once SA-749r2 lands, the derived
+ * split ids here. A non-counter order: only its own pickup hand-over id.
  */
 export function isCounterTenderGroup(
   orderId: string,
   paymentGroupId: string | null | undefined,
   order: TenderOrderKind,
 ) {
-  if (order.counterSale === true) return paymentGroupId == null;
-  return paymentGroupId != null && paymentGroupId === pickupTenderGroupId(orderId);
+  const ownPickup = paymentGroupId != null && paymentGroupId === pickupTenderGroupId(orderId);
+  if (order.counterSale === true) return paymentGroupId == null || ownPickup;
+  return ownPickup;
 }
 
 export function isCounterTenderRow(
