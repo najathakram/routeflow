@@ -239,4 +239,40 @@ describe("InlineReturnsService.capture: the refundable remainder before an immed
       expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("issueCredit() (the replay re-issue of an unheld RECEIVED return) reads the remainder before it mints", () => {
+    it("a stuck return whose goods an amount-only note already credited: 409, nothing minted", async () => {
+      amountOnly = [{ id: "cn-manual", invoiceId: "inv-1", amount: 50, status: "ISSUED" }];
+      const stuck = {
+        id: "ret-stuck",
+        kind: "INLINE",
+        status: "RECEIVED",
+        holdReason: null,
+        heldAmount: null,
+        refundMethod: null,
+        creditNoteId: null,
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        creditSubtotal: 50,
+        creditTax: 0,
+        creditCategoryTax: 0,
+        items: [
+          {
+            productId: "prod-1",
+            qty: 5,
+            sourceOrderId: "src-order-1",
+            sourceInvoiceItemId: "invitem-1",
+            subtotal: 50,
+            taxAmount: 0,
+            categoryTax: 0,
+          },
+        ],
+      };
+      prisma.return.findFirst.mockResolvedValue(stuck);
+      const err = await failure((service as any).issueCredit("ret-stuck"));
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({ code: "RETURN_EXCEEDS_REFUNDABLE" });
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -244,8 +244,8 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
       "returns/inline-returns.service.ts::storeCreditInstead",
     ]);
     const issue = (fn: string) => inlineSvc.get(fn)!;
-    // approve() and storeCreditInstead() ask the remainder themselves, before they mint
-    for (const fn of ["approve", "storeCreditInstead"]) {
+    // approve(), storeCreditInstead() and issueCredit() (the replay re-issue) ask the remainder themselves, before they mint
+    for (const fn of ["approve", "storeCreditInstead", "issueCredit"]) {
       const f = issue(fn);
       expect(firstPos(f, "assertInlineReturnWithinRemainder")).toBeGreaterThan(-1);
       expect(firstPos(f, "assertInlineReturnWithinRemainder")).toBeLessThan(
@@ -260,9 +260,6 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
     expect(firstPos(issue("captureAndIssueInTx"), "captureInTx")).toBeLessThan(
       firstPos(issue("captureAndIssueInTx"), "issueCreditInTx"),
     );
-    // issueCredit() is the one TRANSITIONAL unchecked caller (the immediate issue after a checked capture; see its comment): it must
-    // stay the only one, and never grow a second way in
-    expect(firstPos(issue("issueCredit"), "assertInlineReturnWithinRemainder")).toBe(-1);
   });
 
   // ─── the inventory is closed ─────────────────────────────────────────────

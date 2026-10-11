@@ -462,6 +462,32 @@ describeDb("SA-773 the refund paths read the refundable remainder - real Postgre
     expect(await prisma.creditNote.count({ where: { tenantId: s.tenantId } })).toBe(0);
   });
 
+  it("T17: an unheld RECEIVED return with no credit note, no refund intent (a replay re-issues it), whose pool already has a manual amount-only credit: issueCredit is 409 and mints nothing", async () => {
+    const s = await seed("t17", [{ lines: [{ product: "A", qty: 5, subtotal: 50 }] }]);
+    await addCreditNote(prisma, s, { number: cn(), invoice: 0, amount: 50 });
+    const stuck = await addInlineReturn(prisma, s, {
+      number: rtn(),
+      status: "RECEIVED",
+      items: [{ line: 0, qty: 5, subtotal: 50 }],
+    });
+    const err = await fail(asTenant(s, () => inline.issueCredit(stuck.id)));
+    expect(body(err)).toMatchObject({ code: "RETURN_EXCEEDS_REFUNDABLE", remainingValue: 0 });
+    const after = await row(stuck.id);
+    expect([after.status, after.creditNoteId]).toEqual(["RECEIVED", null]);
+    expect(await prisma.creditNote.count({ where: { tenantId: s.tenantId } })).toBe(1);
+  });
+
+  it("T18: the same stuck return with nothing else taken is re-issued and mints", async () => {
+    const s = await seed("t18", [{ lines: [{ product: "A", qty: 5, subtotal: 50 }] }]);
+    const stuck = await addInlineReturn(prisma, s, {
+      number: rtn(),
+      status: "RECEIVED",
+      items: [{ line: 0, qty: 5, subtotal: 50 }],
+    });
+    await asTenant(s, () => inline.issueCredit(stuck.id));
+    expect((await row(stuck.id)).creditNoteId).not.toBeNull();
+  });
+
   it("T16: a hold nothing else has taken the goods of is approved and mints", async () => {
     const s = await seed("t16", [{ lines: [{ product: "A", qty: 5, subtotal: 50 }] }]);
     const held = await heldReturn(s, "DRIVER_CAP");

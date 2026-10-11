@@ -1283,7 +1283,10 @@ export class InlineReturnsService {
     await this.prisma.tenantTransaction(async (tx: any) => {
       // N-1: the Return row lock IS the shared issue/cancel claim.
       await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${returnId} FOR UPDATE`;
-      const fresh = await tx.return.findFirst({ where: { id: returnId, kind: "INLINE" } });
+      const fresh = await tx.return.findFirst({
+        where: { id: returnId, kind: "INLINE" },
+        include: { items: true },
+      });
       // cancel() (or a racing issue) already moved this return out of RECEIVED/no-CN/no-hold —
       // "cancel between re-read and link ⇒ no CN": mint nothing.
       if (
@@ -1294,12 +1297,23 @@ export class InlineReturnsService {
         fresh.holdReason
       )
         return;
-      // SA-706c (house order Return → Order): the Order BEFORE the intent insert below takes KEY SHARE on it.
-      await lockOrderRow(tx, tenantId, fresh.orderId);
+      // SA-706c (house order Return → Order): the Order BEFORE the intent insert below takes KEY SHARE on it. SA-773: the items'
+      // SOURCE Orders go in the same single id-sorted statement, as approve() takes them.
+      await lockRefundOrders(tx, tenantId, [
+        fresh.orderId,
+        ...((fresh.items ?? []) as Array<{ sourceOrderId?: string | null }>)
+          .map((i) => i.sourceOrderId)
+          .filter((o): o is string => !!o),
+      ]);
 
-      // SA-773, TRANSITIONAL: no remainder check here. This is the immediate issue right after a capture that already asked it
-      // (captureInTx); the only return that reaches it unchecked is an unheld RECEIVED one captured BEFORE that check shipped and
-      // re-issued by a replay (HIGH-2). It ages out with those rows; do not add callers that skip the capture.
+      // SA-773: the remainder is read here too. The immediate issue after a fresh capture was just checked by captureInTx, but a
+      // replay (HIGH-2) re-issues a RECEIVED return with no credit note that may predate that check, or whose pool has since been
+      // credited (a manual amount-only note): minting it unchecked paid the same goods twice. The return excludes itself.
+      await assertInlineReturnWithinRemainder(tx, tenantId, {
+        returnId,
+        items: (fresh.items ?? []) as any[],
+        lockSourceInvoices: true,
+      });
       const amount = roundMoney(
         Number(fresh.creditSubtotal ?? 0) +
           Number(fresh.creditTax ?? 0) +
