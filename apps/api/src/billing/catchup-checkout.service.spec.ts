@@ -130,27 +130,44 @@ describe("plan() is a read-only dry-run", () => {
     expect(r.rfInvoices).toEqual({ open: 1, paid: 0 });
   });
 
-  it("October PAID => refused CATCHUP_MANUAL_PERIOD_AHEAD (paid coverage past the first charged service start; the service never plans a prepaid shape)", async () => {
+  it("October PAID => the trial shape, $0 stub, eligible (ruling 8(e): paid coverage landing exactly on an anchor 1st)", async () => {
     const r = await make({ invoices: [OCT_PAID] }).svc.plan("t1", NOW);
+    expect(r.plan).toMatchObject({ ok: true, shape: "trial" });
+    expect(r.plan.ok && r.plan.stub.totalCents).toBe(0);
+    expect(r.plan.ok && r.plan.trialEndAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    expect(r.eligible).toBe(true);
+  });
+
+  it("paid to a partial (a PAID window to Oct 5) => refused CATCHUP_MANUAL_PERIOD_AHEAD", async () => {
+    const partial = { ...OCT_PAID, periodEnd: new Date("2026-10-05T12:00:00Z") };
+    const r = await make({ invoices: [partial] }).svc.plan("t1", NOW);
     expect(r.plan).toEqual({ ok: false, reason: "manual_period_ahead" });
     expect(r.eligible).toBe(false);
     expect(catchupReportJson(r).refusals).toEqual([API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]);
   });
 
-  it("PIN: through the service the plan is NEVER a prepaid shape (trial / anchor_no_line) - they are not reachable while paid coverage past the start refuses", async () => {
+  it("PIN: through the service a prepaid shape is never STUB-bearing (a trial-with-stub / anchor_no_line-with-stub is unreachable); the stub-free 8(e) trial is reachable", async () => {
     const states: Record<string, unknown>[][] = [
       [OCT_OPEN],
       [OCT_PAID],
       [{ ...OCT_PAID, periodEnd: new Date("2026-11-14T12:00:00Z") }],
       [{ ...OCT_PAID, periodEnd: new Date("2026-10-30T12:00:00Z") }],
+      [{ ...OCT_PAID, periodEnd: new Date("2026-12-01T12:00:00Z") }],
       [],
     ];
+    let reachedTrial = false;
     for (const invoices of states) {
       for (const day of ["2026-10-09T10:00:00Z", "2026-10-29T04:00:00Z", "2026-10-30T09:00:00Z"]) {
         const r = await make({ invoices }).svc.plan("t1", new Date(day));
-        expect(r.plan.ok ? r.plan.shape : "refused").not.toMatch(/^(trial|anchor_no_line)$/);
+        if (!r.plan.ok) continue;
+        if (r.plan.shape === "trial" || r.plan.shape === "anchor_no_line") {
+          expect(r.plan.stub.totalCents).toBe(0);
+          expect(r.plan.stub.lines).toEqual([]);
+          if (r.plan.shape === "trial") reachedTrial = true;
+        }
       }
     }
+    expect(reachedTrial).toBe(true);
   });
 
   it("the add-on lines (the ones the recurring subscription will bill) are part of the stub", async () => {
@@ -476,8 +493,17 @@ describe("open()", () => {
     });
   });
 
-  it("ruling item 8(e), amended by the SA r-note (10-11): a tenant who ALREADY PAID October is never charged it again - the catch-up is REFUSED (409 CATCHUP_MANUAL_PERIOD_AHEAD), nothing claimed or sent", async () => {
+  it("ruling item 8(e): a tenant who ALREADY PAID October gets the trial shape - no one-time line, the trial ends Nov 1, the card bills from then", async () => {
     const h = make({ invoices: [OCT_PAID] });
+    const out = await h.svc.open("t1", { now: NOW, expectedStubCents: 0 });
+    expect(out).toMatchObject({ shape: "trial", stubCents: 0 });
+    const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+    expect(params.line_items.filter((l: any) => !l.price_data.recurring)).toHaveLength(0);
+    expect(params.subscription_data.trial_end).toBe(Date.UTC(2026, 10, 1, 12) / 1000);
+  });
+
+  it("a PAID window to a partial (Oct 5): the open is refused 409 CATCHUP_MANUAL_PERIOD_AHEAD, nothing claimed or sent", async () => {
+    const h = make({ invoices: [{ ...OCT_PAID, periodEnd: new Date("2026-10-05T12:00:00Z") }] });
     await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 0 })).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD },
     });

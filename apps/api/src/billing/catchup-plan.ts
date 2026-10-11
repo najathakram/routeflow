@@ -168,6 +168,20 @@ export interface ActivationRecord {
 /** An activation is TWO audit rows (the in-tx marker and the post-commit trail row) seconds apart. */
 const ACTIVATION_CLUSTER_GAP_MS = 10 * 60 * 1000;
 
+/**
+ * Is `d` an ANCHOR 1st: the 1st of a month at exactly 12:00:00.000Z (the boundary every window uses) or its legacy
+ * 00:00:00.000Z spelling? UTC only - a local-time spelling of "midnight on the 1st" is not an anchor.
+ */
+export function isAnchorFirst(d: Date): boolean {
+  return (
+    d.getUTCDate() === 1 &&
+    (d.getUTCHours() === BOUNDARY_HOUR_UTC || d.getUTCHours() === 0) &&
+    d.getUTCMinutes() === 0 &&
+    d.getUTCSeconds() === 0 &&
+    d.getUTCMilliseconds() === 0
+  );
+}
+
 export type ManualCoverage =
   { ok: true; latestEnd: Date | null } | { ok: false; reason: "manual_marker_without_period" };
 
@@ -385,8 +399,9 @@ export function planCatchup(i: {
   billableRows?: readonly CatchupAddonRow[];
   /**
    * The tenant's manual activation rows (MF2). Present = the paid-coverage rule applies: paid coverage - every PAID
-   * RfInvoice window and every activation's recorded period - must not reach past the first charged service start
-   * (the floor), by ANY amount. Omitted = the pure planner, no such rule (used by the shape/builder unit specs).
+   * RfInvoice window and every activation's recorded period - that reaches past the first charged service start (the
+   * floor) must land EXACTLY on an anchor 1st (ruling 8(e): the trial shape, nothing charged before it); a partial
+   * strictly inside a month is refused. Omitted = the pure planner, no such rule (the shape/builder unit specs).
    */
   manual?: { activations: readonly ActivationRecord[] };
 }): CatchupPlanResult {
@@ -401,32 +416,45 @@ export function planCatchup(i: {
     const refusal = addonCardRefusal(i.billableRows, i.addons);
     if (refusal) return { ok: false, reason: refusal };
   }
+  let paidThrough = pt.paidThrough;
+  let paidFromInvoices = pt.fromInvoices;
   if (i.manual) {
-    // SA-733r5 r-note 10-11: paid coverage is measured UNSNAPPED, from EVERY paid source - each PAID RfInvoice
-    // window and each manual activation's own recorded period. Past the first charged service start by any amount
-    // = already-paid days that the one-time line would charge again, so refuse. There is no "covered by a PAID
-    // window" exemption. OPEN windows (rollCycles periods) are unpaid REQUIREMENTS, not coverage.
+    // SA-733r5 r-notes 10-11: paid coverage is measured UNSNAPPED, from EVERY paid source - each PAID RfInvoice
+    // window and each manual activation's own recorded period; the LATEST end decides. OPEN windows (rollCycles
+    // periods) are unpaid REQUIREMENTS, not coverage.
+    //  - at or before the floor: nothing paid beyond the first charged service start - the normal catch-up;
+    //  - landing EXACTLY on an anchor 1st (12:00Z or the legacy 00:00Z): ruling 8(e) - the trial shape, nothing is
+    //    charged for days already paid and the card starts at that 1st;
+    //  - strictly inside a month (a partial: Sep 10 -> Oct 10, a PAID window to Oct 5): already-paid days the
+    //    one-time line would charge again - refused until the prorated catch-up (row 339) exists.
     const cov = manualCoverage(i.manual.activations);
     if (!cov.ok) return { ok: false, reason: cov.reason };
     const ends = i.invoices
       .filter((x) => x.status === "PAID" && x.periodEnd)
       .map((x) => x.periodEnd!.getTime());
     if (cov.latestEnd) ends.push(cov.latestEnd.getTime());
-    if (ends.length > 0 && Math.max(...ends) > floor.getTime()) {
-      return { ok: false, reason: "manual_period_ahead" };
+    const latest = ends.length > 0 ? Math.max(...ends) : null;
+    if (latest !== null && latest > floor.getTime()) {
+      if (!isAnchorFirst(new Date(latest))) return { ok: false, reason: "manual_period_ahead" };
+      // paid through an anchor 1st: an ACTIVATION's payment counts even when no PAID RfInvoice shows it, or the
+      // one-time line would charge the days it already covers
+      if (latest > paidThrough.getTime()) {
+        paidThrough = snapToBoundary(new Date(latest));
+        paidFromInvoices = true;
+      }
     }
   }
 
   const anchorAt = nextCheckoutAnchor(i.now);
-  const t = firstBoundaryNotBefore(pt.paidThrough);
+  const t = firstBoundaryNotBefore(paidThrough);
   const a = firstBoundaryNotBefore(new Date(i.now.getTime() + CATCHUP_TRIAL_MIN_LEAD_MS));
   const notes: string[] = [];
-  let shape = catchupShape({ paidThrough: pt.paidThrough, now: i.now });
+  let shape = catchupShape({ paidThrough: paidThrough, now: i.now });
 
   // where the stub ends: A (>= now + 72 h) for trial_one_time, T for the prepaid trial, the anchor otherwise
   let trialEndAt = shape === "trial_one_time" ? a : t;
   let stubTo = shape === "trial_one_time" ? a : shape === "trial" ? t : anchorAt;
-  let lines = stubLines(i.monthly, i.addons, pt.paidThrough, stubTo);
+  let lines = stubLines(i.monthly, i.addons, paidThrough, stubTo);
   let totalCents = lines.reduce((s, l) => s + l.cents, 0);
 
   // prepaid but a real stub before the anchor (paid through mid-month, 1-3 days from a 1st): anchor_no_line would
@@ -435,7 +463,7 @@ export function planCatchup(i: {
     shape = "trial_one_time";
     trialEndAt = a;
     stubTo = a;
-    lines = stubLines(i.monthly, i.addons, pt.paidThrough, stubTo);
+    lines = stubLines(i.monthly, i.addons, paidThrough, stubTo);
     totalCents = lines.reduce((s, l) => s + l.cents, 0);
     notes.push("paid through mid-month with under 72 h to the 1st: the stub rides a one-time line");
   }
@@ -448,20 +476,20 @@ export function planCatchup(i: {
     );
   }
 
-  const superseded = supersededOpenInvoiceIds(i.invoices, pt.paidThrough);
+  const superseded = supersededOpenInvoiceIds(i.invoices, paidThrough);
 
   return {
     ok: true,
     now: i.now,
-    paidThrough: pt.paidThrough,
-    paidFromInvoices: pt.fromInvoices,
+    paidThrough: paidThrough,
+    paidFromInvoices: paidFromInvoices,
     anchorAt,
     trialEndAt,
     shape,
     stub: {
-      from: pt.paidThrough,
+      from: paidThrough,
       to: stubTo,
-      label: describeStub(pt.paidThrough, stubTo),
+      label: describeStub(paidThrough, stubTo),
       lines,
       totalCents,
       belowStripeMinimum,

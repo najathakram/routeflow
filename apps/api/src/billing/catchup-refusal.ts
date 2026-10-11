@@ -33,7 +33,7 @@ const MESSAGE: Record<string, string> = {
   [API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG]:
     "NEEDS RULING: this tenant's add-on price or quantity differs from what the card checkout would bill. Keep it on the manual path. Nothing was created.",
   [API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]:
-    "NEEDS RULING: this tenant's manual period runs past what its invoices show paid (a payment may have been recorded by an activation). Charging October again could double-bill. Keep it on the manual path. Nothing was created.",
+    "NEEDS RULING: this tenant has paid days that end part-way through a month (a partial period from an activation or a paid invoice). A catch-up would charge those days again. Keep it on the manual path until the prorated catch-up exists. Nothing was created.",
 };
 
 /** The code an internal refusal reason maps to; anything unlisted is the generic "not eligible". */

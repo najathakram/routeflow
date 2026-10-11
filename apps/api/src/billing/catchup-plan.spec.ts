@@ -556,12 +556,100 @@ describe("MF2 (SA-733r5 r-note 10-11): paid coverage is measured UNSNAPPED, from
     expect(run([], [paid, OPEN_OCT])).toEqual(AHEAD);
   });
 
-  it("a PAID October window ([Oct 1, Nov 1)) is paid coverage past the start too: refused (the SA text, 10-11 r-note)", () => {
-    const paidOct = inv("po", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
-    expect(run([], [paidOct])).toEqual(AHEAD);
-    // ... and the legacy 00:00Z spelling of the same window
-    const legacy = inv("pl", "PAID", "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z");
-    expect(run([], [legacy])).toEqual(AHEAD);
+  describe("ruling 8(e), SA correction 10-11: paid coverage that lands EXACTLY on an anchor 1st is the trial shape", () => {
+    const trialTo = (r: ReturnType<typeof run>, iso: string) => {
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.shape).toBe("trial");
+      expect(r.trialEndAt.toISOString()).toBe(iso);
+      expect(r.stub.totalCents).toBe(0); // nothing is charged for days that are already paid
+      expect(r.stub.lines).toEqual([]);
+    };
+
+    it("a PAID October window ending Nov 1 12:00Z: eligible, trial to Nov 1, no stub, no one-time line (the original 8(e) shape)", () => {
+      const paidOct = inv("po", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
+      trialTo(run([], [paidOct]), "2026-11-01T12:00:00.000Z");
+    });
+
+    it("... and the same window in the legacy 00:00Z spelling", () => {
+      const legacy = inv("pl", "PAID", "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z");
+      trialTo(run([], [legacy]), "2026-11-01T12:00:00.000Z");
+    });
+
+    it("two months paid (to Dec 1): eligible, trial to Dec 1", () => {
+      const paid2 = inv("p2", "PAID", "2026-10-01T12:00:00Z", "2026-12-01T12:00:00Z");
+      trialTo(run([], [paid2]), "2026-12-01T12:00:00.000Z");
+    });
+
+    it("paid by an ACTIVATION alone to an anchor 1st (a 365-day one from Sep 1 12:00Z): eligible, trial to that 1st - October is NOT charged again", () => {
+      trialTo(
+        run(activation("2026-09-01T12:00:00Z", "2027-09-01T12:00:00Z"), [OPEN_OCT]),
+        "2027-09-01T12:00:00.000Z",
+      );
+    });
+
+    it("a PAID window to Oct 5 (strictly inside a month) is refused", () => {
+      const paid = inv("p", "PAID", "2026-09-05T12:00:00Z", "2026-10-05T12:00:00Z");
+      expect(run([], [paid, OPEN_OCT])).toEqual(AHEAD);
+    });
+
+    it("timezone-safe: ONLY the 1st at 12:00Z or 00:00Z UTC counts; any other time on the 1st, or the next day, is a partial", () => {
+      const ends = [
+        "2026-11-01T06:00:00Z", // 06:00Z
+        "2026-11-01T12:00:01Z", // a second past
+        "2026-11-01T11:59:59Z", // a second short
+        "2026-11-02T12:00:00Z", // the 2nd
+        "2026-11-01T00:00:01Z",
+        "2026-10-31T23:59:59Z",
+      ];
+      for (const end of ends) {
+        const paid = inv("x", "PAID", "2026-10-01T12:00:00Z", end);
+        expect(run([], [paid])).toEqual(AHEAD);
+      }
+      // a local-time spelling of the 1st (Nov 1 00:00 at UTC-05:00 = 05:00Z) is not an anchor
+      expect(run([], [inv("tz", "PAID", "2026-10-01T05:00:00Z", "2026-11-01T05:00:00Z")])).toEqual(
+        AHEAD,
+      );
+    });
+
+    it("an anchor 1st plus a later partial anywhere in the paid coverage is still refused (the LATEST end decides)", () => {
+      const paidOct = inv("po", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
+      expect(run(activation("2026-10-05T09:00:00Z", "2026-11-04T09:00:00Z"), [paidOct])).toEqual(
+        AHEAD,
+      );
+    });
+
+    it("through the planner a stub-bearing prepaid shape never comes out: a trial / anchor_no_line is always stub-free, a partial is refused", () => {
+      const days = [
+        "2026-10-09T10:00:00Z",
+        "2026-10-28T04:00:00Z",
+        "2026-10-29T04:00:00Z",
+        "2026-10-30T09:00:00Z",
+      ];
+      const paidEnds = [
+        "2026-10-05T12:00:00Z",
+        "2026-10-30T12:00:00Z",
+        "2026-11-01T12:00:00Z",
+        "2026-11-14T12:00:00Z",
+        "2026-12-01T12:00:00Z",
+      ];
+      for (const end of paidEnds) {
+        for (const day of days) {
+          const r = planCatchup({
+            now: d(day),
+            monthly: 310,
+            addons: [],
+            invoices: [inv("p", "PAID", "2026-10-01T12:00:00Z", end)],
+            manual: { activations: [] },
+          });
+          if (!r.ok) continue; // refused
+          if (r.shape === "trial" || r.shape === "anchor_no_line") {
+            expect(r.stub.totalCents).toBe(0);
+            expect(r.stub.lines).toEqual([]);
+          }
+        }
+      }
+    });
   });
 
   it("a PAID window ending exactly at the start (Sept) is the normal paid-up state and stays eligible", () => {
