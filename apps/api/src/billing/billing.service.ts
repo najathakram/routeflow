@@ -2733,7 +2733,7 @@ ${updateLine}
   // ─── Cron: suspend tenants with expired trials / overdue payments ─────────
 
   /**
-   * Runs every hour. Suspends tenants that:
+   * Runs every hour. Suspends tenants whose Stripe subscription was canceled (A2: never for past_due / unpaid):
    *  1. Are in TRIAL status with trialEndsAt in the past, OR
    *  2. Have a subscription whose periodEnd is past + grace period and still ACTIVE
    */
@@ -2762,11 +2762,10 @@ ${updateLine}
       // Double-check with Stripe that the subscription is actually past-due or unpaid
       try {
         const stripeSub = await this.stripe.getSubscription(sub.stripeSubId!);
-        if (
-          stripeSub.status === "past_due" ||
-          stripeSub.status === "unpaid" ||
-          stripeSub.status === "canceled"
-        ) {
+        // SA r-note 5 A2: ONLY `canceled` (a subscription the tenant ended). past_due / unpaid are payment-overdue
+        // states and never suspend, in any BILLING_PAUSE_MODE: dunning owns non-payment (the 7-day grace, then
+        // READ_ONLY + pay).
+        if (stripeSub.status === "canceled") {
           // Atomic ACTIVE→SUSPENDED: emits the −MRR delta exactly once even if a concurrent
           // subscription.deleted webhook already churned this tenant (count 0 → no double). The
           // suspension is reversible — onPaymentSucceeded re-adds a matching +delta on reinstatement.

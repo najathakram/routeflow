@@ -147,6 +147,20 @@ async function main() {
         AND t."deletedAt" IS NULL`,
   );
 
+  // SA r-note 5 A2: `suspendOverdueTenants` no longer acts on Stripe past_due / unpaid (dunning owns non-payment).
+  // This counts the tenants the OLD cron would have examined (ACTIVE, Stripe-billed, period ended over the 3-day grace
+  // ago) - an upper bound, because Stripe's own status is not readable from here - and, of those, the ones that already
+  // carry failed payments, which are the ones it would actually have suspended. SELECT-only.
+  const [{ n: oldSuspendCronCandidates, failed: oldSuspendCronWithFailedPayments }] = await q(
+    `SELECT COUNT(*)::int AS n,
+            COUNT(*) FILTER (WHERE s."failedPaymentCount" > 0)::int AS failed
+       FROM "TenantSubscription" s
+       JOIN "Tenant" t ON t.id = s."tenantId"
+      WHERE s."stripeSubId" IS NOT NULL
+        AND t.status = 'ACTIVE' AND t."deletedAt" IS NULL
+        AND s."periodEnd" < now() - interval '3 days'`,
+  );
+
   const wouldPause = stamped.filter((r) => r.onFlip.startsWith("pause after")).length;
   const summary = {
     eligibleTenants: eligible.length,
@@ -155,6 +169,8 @@ async function main() {
     wouldReceiveFinalNoticeOnFlip: wouldPause,
     outOfScopeActive: outOfScope.length,
     discoveryPopulation, // an upper bound: the discovery sweep reads Stripe, this report cannot
+    oldSuspendCronCandidates, // tenants master's suspend-overdue cron would have examined (upper bound)
+    oldSuspendCronWithFailedPayments, // ...of which carry failed payments: the ones it would have suspended
   };
 
   if (json) {

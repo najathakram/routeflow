@@ -477,6 +477,13 @@ describe("SA-733r7 PR-B3 structural pins", () => {
       expect(sql).toMatch(/episodeKey\(/);
     });
 
+    it("A2: counts the tenants master's suspend-overdue cron would have acted on (past_due / unpaid), read-only", () => {
+      expect(script).toMatch(/oldSuspendCronCandidates/);
+      expect(script).toMatch(/oldSuspendCronWithFailedPayments/);
+      expect(script).toMatch(/"failedPaymentCount" > 0/);
+      expect(script).toMatch(/interval '3 days'/); // PAYMENT_GRACE_DAYS of the old cron
+    });
+
     it("never hardcodes a tenant or a connection string", () => {
       expect(script).not.toMatch(/postgres(ql)?:\/\//i);
       expect(script).toMatch(/resolveReportDbUrl\("report-billing-pause-blast-radius"\)/);
