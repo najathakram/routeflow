@@ -57,3 +57,20 @@ export function carriedCategory(
     ...copyCategoryTaxSnapshot(own as any),
   };
 }
+
+/**
+ * The overlay for one folded payload item: `item.sourceLineId` (emitted by `foldMergeItems` for a bucket seeded
+ * from an existing line; never a public DTO field) resolved against the order's PRE-edit lines. `{}` for an item
+ * with no source line, an unknown id or another product: it is a genuinely new line and stamps live.
+ */
+export function carriedCategoryFor(
+  lineItems:
+    ReadonlyArray<(CarriedCategorySource & { id?: string | null }) | null> | null | undefined,
+  item: unknown,
+  productId: string,
+): Record<string, unknown> {
+  const sourceLineId = (item as { sourceLineId?: string } | null)?.sourceLineId;
+  if (!sourceLineId) return {};
+  const own = (lineItems ?? []).find((li) => li?.id === sourceLineId);
+  return carriedCategory(own, productId) ?? {};
+}

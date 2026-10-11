@@ -56,6 +56,7 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
   let tenantId = "";
   let operatorUserId = "";
   let driverUserId = "";
+  let buyerUserId = "";
   let driverId = "";
   let customerId = "";
   let categoryId = "";
@@ -206,6 +207,7 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
         tenantId,
       },
     });
+    buyerUserId = buyer.id;
     customerId = (
       await raw.customer.create({
         data: { userId: buyer.id, businessName: "Acme Retail", contactName: "Tester", tenantId },
@@ -588,6 +590,59 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
     const survivors = await raw.order.findMany({ where: { tenantId } });
     expect(survivors).toHaveLength(1);
     const ls = await lines(survivors[0].id);
+    expect(ls.map((l) => [l.qty, l.rate, l.amount]).sort()).toEqual(
+      [
+        [12, SNAPSHOT_RATE, 0.6],
+        [8, 0.08, 0.64],
+      ].sort(),
+    );
+  }, 120_000);
+
+  const buyer = (): JwtPayload =>
+    ({
+      sub: buyerUserId,
+      username: `buyer-${run}`,
+      role: "CUSTOMER",
+      status: "ACTIVE",
+      forcePasswordChange: false,
+      tenantId,
+      tenantSlug: slug,
+    }) as JwtPayload;
+  const buyerFold = (orderId: string, items: any[]) =>
+    inTenant(() => orders.updateOrderItems(orderId, { replaceAll: true, items } as any, buyer()));
+
+  it("row 343: the BUYER cart-submit fold carries an existing line's own category and trio after a rate raise and a re-categorisation", async () => {
+    const other = await raw.trackedCategory.create({
+      data: { tenantId, name: `Other343 ${run}`, taxType: "PERCENT_OF_SALE", rate: 0.5 },
+    });
+    const id = await createOrder(12);
+    const [l0] = await lines(id);
+    try {
+      await raiseCategoryRate(LIVE_RATE);
+      await raw.product.update({ where: { id: productId }, data: { trackedCategoryId: other.id } });
+      await buyerFold(id, [{ productId, qty: 12, sourceLineId: l0.id }]);
+      const [l1] = await lines(id);
+      expect(l1.trackedCategoryId).toBe(categoryId); // master: the product's current category
+      expect(l1.rate).toBe(SNAPSHOT_RATE); // master: stamped from the live category
+      expect(l1.amount).toBe(0.6);
+    } finally {
+      await raw.product.update({
+        where: { id: productId },
+        data: { trackedCategoryId: categoryId },
+      });
+      await raw.orderItem.deleteMany({ where: { tenantId } });
+      await raw.trackedCategory.deleteMany({ where: { id: other.id } }).catch(() => undefined);
+    }
+  }, 120_000);
+
+  it("row 343 (foldTarget): the buyer fold puts a scan on a NEW live line when the existing line was sold at an older rate", async () => {
+    const id = await createOrder(12);
+    await raiseCategoryRate(0.08);
+    const existing = await raw.orderItem.findMany({ where: { orderId: id } });
+    const trio = await orders.liveTrioByProduct([productId]);
+    const folded = foldMergeItems(existing as any, [{ productId, qty: 8 }], undefined, trio);
+    await buyerFold(id, folded.items as any[]);
+    const ls = await lines(id);
     expect(ls.map((l) => [l.qty, l.rate, l.amount]).sort()).toEqual(
       [
         [12, SNAPSHOT_RATE, 0.6],

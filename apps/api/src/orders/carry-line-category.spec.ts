@@ -1,4 +1,4 @@
-import { carriedCategory } from "./carry-line-category";
+import { carriedCategory, carriedCategoryFor } from "./carry-line-category";
 import { buildExistingLineMaps } from "./replace-all-line-build";
 
 /**
@@ -101,5 +101,21 @@ describe("buildExistingLineMaps keeps each existing line's own category", () => 
       trackedCategoryId: "cat-1",
       categoryTaxRate: 0.05,
     });
+  });
+});
+
+describe("carriedCategoryFor (the buyer cart-submit fold's lookup, row 343)", () => {
+  const lines = [{ id: "li-1", ...own() }];
+  it("resolves sourceLineId against the pre-edit lines and carries that line's own trio", () => {
+    expect(carriedCategoryFor(lines as any, { sourceLineId: "li-1" }, "p1")).toMatchObject({
+      trackedCategoryId: "cat-1",
+      categoryTaxRate: 0.05,
+    });
+  });
+  it("is empty for a new line, an unknown id or another product (it stamps live)", () => {
+    expect(carriedCategoryFor(lines as any, {}, "p1")).toEqual({});
+    expect(carriedCategoryFor(lines as any, { sourceLineId: "nope" }, "p1")).toEqual({});
+    expect(carriedCategoryFor(lines as any, { sourceLineId: "li-1" }, "p2")).toEqual({});
+    expect(carriedCategoryFor(undefined, { sourceLineId: "li-1" }, "p1")).toEqual({});
   });
 });

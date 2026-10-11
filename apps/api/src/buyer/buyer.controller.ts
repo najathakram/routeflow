@@ -703,6 +703,11 @@ export class BuyerController {
               // SA-124e(3): the price basis follows the RESOLVED pack, not the live one —
               // already built above for the denomination normalizers.
               upbByProduct,
+              // B297 row 343 (foldTarget): the rate trio a NEW sale of each incoming product takes today —
+              // an existing line sold at a different trio does not absorb the added quantity.
+              await this.ordersService.liveTrioByProduct(
+                incomingItems.map((i) => i.productId).filter(Boolean) as string[],
+              ),
             );
             if (foldResult.livePackFallbackProductIds.length > 0) {
               this.logger.warn(

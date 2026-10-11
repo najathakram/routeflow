@@ -289,6 +289,20 @@ describe("MED-A/MED-B (review): clustering and pack refusal under a split", () =
 });
 
 describe("caller pin: every quantity-folding site goes through foldTarget", () => {
+  it("the buyer controller hands foldMergeItems the product's live trio too (row 343)", () => {
+    const src = fs
+      .readFileSync(path.resolve(__dirname, "../buyer/buyer.controller.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+    expect(src).toMatch(/foldMergeItems\([\s\S]{0,900}liveTrioByProduct\(/);
+  });
+
+  it("the customer branch of updateOrderItems carries a folded line's own category (row 343)", () => {
+    const src = fs
+      .readFileSync(path.resolve(__dirname, "orders.service.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+    expect(src).toMatch(/carriedCategoryFor\(order\.lineItems, item, item\.productId\)/);
+  });
+
   it("the staff controller hands foldMergeItems the product's live trio", () => {
     const src = fs
       .readFileSync(path.resolve(__dirname, "orders.controller.ts"), "utf8")

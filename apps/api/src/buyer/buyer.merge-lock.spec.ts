@@ -130,6 +130,7 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
 
     ordersService = {
       findActiveOrder: jest.fn().mockResolvedValue(ACTIVE_ORDER),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn(async () => {
         mockCallOrder.push("updateOrderItems");
       }),

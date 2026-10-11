@@ -168,6 +168,7 @@ import {
 } from "./order-stock";
 import { recomputeLineCategoryTaxes } from "./recompute-line-category-taxes";
 import { loadLiveTrioByProduct } from "./fold-target";
+import { carriedCategoryFor } from "./carry-line-category";
 import { dateAndShipmentFilters } from "./list-filters";
 import { resolveOversellAllowed } from "./oversell-policy";
 import { PolicyOversellReader } from "./policy-oversell-reader";
@@ -3287,6 +3288,10 @@ export class OrdersService implements OnApplicationBootstrap {
                     ? (buyerCategoryMap.get(product.trackedCategoryId) ?? null)
                     : null,
                 ),
+                // B297 row 343: a folded line that comes from an existing line (`sourceLineId`, the buyer
+                // cart-submit fold) carries that line's own category and trio, never the product's current
+                // ones; a genuinely new line (no sourceLineId) keeps the live stamp above.
+                ...carriedCategoryFor(order.lineItems, item, item.productId),
                 // R2: preserve the client's line order on full replace.
                 position: pos++,
               },

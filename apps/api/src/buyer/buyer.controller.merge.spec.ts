@@ -92,6 +92,7 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
   let controller: BuyerController;
   let ordersService: {
     findActiveOrder: jest.Mock;
+    liveTrioByProduct: jest.Mock;
     updateOrderItems: jest.Mock;
     applyBuyerMergeHeader: jest.Mock;
     mergeAllPendingForCustomer: jest.Mock;
@@ -103,6 +104,7 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
   beforeEach(async () => {
     ordersService = {
       findActiveOrder: jest.fn().mockResolvedValue(null),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn().mockResolvedValue(undefined),
       applyBuyerMergeHeader: jest.fn().mockResolvedValue(undefined),
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
