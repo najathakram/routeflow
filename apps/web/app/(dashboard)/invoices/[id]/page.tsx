@@ -63,6 +63,7 @@ import {
   type CheckStatus,
 } from "@/lib/api/invoices";
 import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
+import { canSendReminder } from "@/lib/invoice-reminder";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
@@ -2040,7 +2041,7 @@ export default function InvoiceDetailPage() {
               Send
             </Button>
           )}
-          {(status === "SENT" || status === "VIEWED" || status === "OVERDUE") && (
+          {canSendReminder({ status, balanceDue }) && (
             <Button
               size="sm"
               variant="secondary"
