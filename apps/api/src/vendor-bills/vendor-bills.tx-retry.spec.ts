@@ -1,4 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
+import { ServiceUnavailableException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { VendorBillsService } from "./vendor-bills.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -15,9 +16,10 @@ jest.mock("sharp", () => ({ __esModule: true, default: jest.fn(() => ({})) }));
 
 /**
  * SA-767 L-1 (B908): the vendor-bill stock txs (receive, revertToDraft, voidBill's reversal) run
- * inside retryOnTxConflict. A 40P01 / P2034 mid-body (after some writes) re-runs the WHOLE tx:
+ * inside retryStockTx. A 40P01 / P2034 mid-body (after some writes) re-runs the WHOLE tx:
  * the failed attempt's writes are rolled back by Postgres, so exactly one attempt's stock / cost
- * writes commit; a non-conflict error propagates after ONE attempt.
+ * writes commit; a non-conflict error propagates after ONE attempt; a conflict on EVERY attempt is a
+ * coded 503 LOCK_UNAVAILABLE with nothing committed (SA-767 Nit 6).
  */
 const D = (n: number | string) => new Prisma.Decimal(n);
 const item = {
@@ -161,6 +163,45 @@ describe("vendor-bill stock txs retry on a conflict (SA-767 L-1)", () => {
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
     expect(committed()).toMatchObject({ movement: 1, product: 1 });
   });
+
+  it.each([
+    ["receive", () => service.receive("bill-1", undefined, "user-1"), pending],
+    ["revertToDraft", () => service.revertToDraft("bill-1"), received],
+    ["voidBill", () => service.voidBill("bill-1", "user-1"), received],
+  ])(
+    "%s: a 40P01 on EVERY attempt is a coded 503 LOCK_UNAVAILABLE; nothing commits, no alerts",
+    async (_n, call, mk) => {
+      prisma.vendorBill.findUnique.mockResolvedValue(mk());
+      prisma.product.update.mockRejectedValue(deadlock());
+      const real = prisma.tenantTransaction.getMockImplementation()!;
+      const rolledBack = { movement: 0, lot: 0, product: 0 };
+      prisma.tenantTransaction.mockImplementation(async (fn: any, opts?: any) => {
+        const before = writes();
+        try {
+          return await real(fn, opts);
+        } catch (e) {
+          const after = writes();
+          rolledBack.movement += after.movement - before.movement;
+          rolledBack.lot += after.lot - before.lot;
+          rolledBack.product += after.product - before.product;
+          throw e;
+        }
+      });
+
+      const err: any = await call().catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ServiceUnavailableException);
+      expect(err.getResponse()).toMatchObject({ code: "LOCK_UNAVAILABLE" });
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
+      const t = writes();
+      expect({
+        movement: t.movement - rolledBack.movement,
+        lot: t.lot - rolledBack.lot,
+        product: t.product - rolledBack.product,
+      }).toEqual({ movement: 0, lot: 0, product: 0 });
+      expect(inventory.fireStockAlerts).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["receive", () => service.receive("bill-1", undefined, "user-1"), pending],

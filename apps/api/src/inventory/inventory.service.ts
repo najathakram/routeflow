@@ -49,7 +49,7 @@ import { SetCostBasisDto } from "./dto/set-cost-basis.dto";
 import { BulkSetCostBasisDto } from "./dto/bulk-set-cost-basis.dto";
 import { RecomputeCostsDto } from "./dto/recompute-costs.dto";
 import { VariantAssignDto } from "./dto/variant-assign.dto";
-import { retryOnTxConflict } from "../common/tx-retry";
+import { retryOnTxConflict, retryStockTx } from "../common/tx-retry";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
 
@@ -1465,7 +1465,7 @@ export class InventoryService {
         },
       });
     };
-    const result = await retryOnTxConflict("inventory.receivePurchaseOrder", () =>
+    const result = await retryStockTx("inventory.receivePurchaseOrder", () =>
       this.prisma.tenantTransaction(runBody),
     );
 
@@ -1832,7 +1832,12 @@ export class InventoryService {
   async updatePurchaseOrder(id: string, dto: UpdatePurchaseOrderDto, userId: string) {
     const restockedProductIds: string[] = [];
 
-    const result = await this.prisma.tenantTransaction(async (tx) => {
+    // SA-767 Nit 5 / Nit 6: a stock writer (the re-apply leg reverses and re-posts the receipts), so
+    // the whole tx re-runs on a 40P01 / 40001 / P2034 and exhausting the attempts is a coded 503. The
+    // body is idempotent (a rolled-back attempt wrote nothing) and has no effect outside the tx; the
+    // id list is cleared per attempt and the alerts fire after commit.
+    const runBody = async (tx: Prisma.TransactionClient) => {
+      restockedProductIds.length = 0;
       await this.lockPurchaseOrder(tx, id);
       const po = await tx.purchaseOrder.findUnique({ where: { id }, include: { items: true } });
       if (!po) throw new NotFoundException("Purchase order not found");
@@ -2072,7 +2077,10 @@ export class InventoryService {
       }
 
       return this.loadPoForResponse(tx, id);
-    });
+    };
+    const result = await retryStockTx("inventory.updatePurchaseOrder", () =>
+      this.prisma.tenantTransaction(runBody),
+    );
 
     this.fireStockAlerts([...new Set(restockedProductIds)]);
     return result;

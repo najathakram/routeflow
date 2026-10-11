@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { InventoryService } from "./inventory.service";
+import { PRODUCT_LOCK_RANK_SQL } from "../common/product-locks";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
@@ -142,7 +143,7 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
     expect(sql(0)).toMatch(/"PurchaseOrder".*FOR UPDATE/);
     expect(sql(1)).toMatch(/"Product"[\s\S]*FOR UPDATE/);
     // SA-767 L-1: one tenant-filtered statement, (tenantId, ids)
-    expect(lock.mock.calls[1].slice(1)).toEqual(["test-tenant", ["prod-1"]]);
+    expect(lock.mock.calls[1].slice(1)).toEqual(["test-tenant", ["prod-1"], PRODUCT_LOCK_RANK_SQL]);
     expect(lock.mock.invocationCallOrder[0]).toBeLessThan(
       prisma.purchaseOrder.findUnique.mock.invocationCallOrder[0],
     );
@@ -655,7 +656,11 @@ describe("InventoryService.updatePurchaseOrder (LANE-U step 6)", () => {
       expect(sql(0)).toMatch(/"PurchaseOrder"/);
       // SA-767 L-1: ONE tenant-filtered statement for every product (the SQL orders the rows)
       expect(lock).toHaveBeenCalledTimes(2);
-      expect(lock.mock.calls[1].slice(1)).toEqual(["test-tenant", ["prod-1", "prod-2"]]);
+      expect(lock.mock.calls[1].slice(1)).toEqual([
+        "test-tenant",
+        ["prod-1", "prod-2"],
+        PRODUCT_LOCK_RANK_SQL,
+      ]);
       expect(lock.mock.invocationCallOrder[1]).toBeLessThan(
         prisma.stockMovement.create.mock.invocationCallOrder[0],
       );

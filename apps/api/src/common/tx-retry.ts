@@ -85,3 +85,21 @@ export async function retryRouteTx<T>(label: string, run: () => Promise<T>): Pro
     });
   }
 }
+
+/**
+ * `retryOnTxConflict` for the stock-writer transactions (PO receive / edit, vendor-bill receive /
+ * revert / void; SA-767 Nit 6): when the retries are EXHAUSTED the caller gets a coded, retryable
+ * 503 (nothing was saved) instead of the raw 40P01 / 40001 / P2034 that surfaced as an uncoded 500.
+ * Any other error propagates untouched.
+ */
+export async function retryStockTx<T>(label: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await retryOnTxConflict(label, run);
+  } catch (err) {
+    if (!txConflictState(err)) throw err;
+    throw new ServiceUnavailableException({
+      code: API_ERROR_CODES.LOCK_UNAVAILABLE,
+      message: "Another stock change was in progress. Nothing was saved; please retry.",
+    });
+  }
+}

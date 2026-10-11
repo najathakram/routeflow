@@ -1,4 +1,4 @@
-import { retryOnTxConflict } from "../common/tx-retry";
+import { retryStockTx } from "../common/tx-retry";
 import {
   BadRequestException,
   ConflictException,
@@ -1366,7 +1366,7 @@ export class VendorBillsService {
 
       return { updatedBill, restockedIds, gapsDetected };
     };
-    const updated = await retryOnTxConflict("vendorBills.receive", () =>
+    const updated = await retryStockTx("vendorBills.receive", () =>
       this.prisma.tenantTransaction(runBody),
     );
 
@@ -1484,9 +1484,7 @@ export class VendorBillsService {
         },
       });
     };
-    return retryOnTxConflict("vendorBills.revertToDraft", () =>
-      this.prisma.tenantTransaction(runBody),
-    );
+    return retryStockTx("vendorBills.revertToDraft", () => this.prisma.tenantTransaction(runBody));
   }
 
   /**
@@ -1599,9 +1597,7 @@ export class VendorBillsService {
           },
         });
       };
-      return retryOnTxConflict("vendorBills.voidBill", () =>
-        this.prisma.tenantTransaction(runBody),
-      );
+      return retryStockTx("vendorBills.voidBill", () => this.prisma.tenantTransaction(runBody));
     }
 
     // Transactional (it used to be a bare update) so the credit refund and the

@@ -92,6 +92,10 @@ export async function lockBarcodeCodes(
  * propagateFamilyPrice (recipe products before variants), RecipesService
  * create/update/activate (family, recipe product, components), InventoryService.assignToVariants
  * (family before the target loop) and createVariant.
+ *
+ * Stock-side twin: every stock / cost writer locks Product rows through `lockProductsForStock`
+ * (common/product-locks.ts), whose `PRODUCT_LOCK_RANK_SQL` is this same order by ROLE (family role
+ * -> recipe-product role -> the rest, ties by id). Change one, change the other.
  */
 
 /**
