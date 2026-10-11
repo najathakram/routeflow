@@ -1,4 +1,5 @@
 import * as React from "react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import ReturnDetailPage from "./page";
 import type { Return } from "@/lib/api/returns";
@@ -82,6 +83,22 @@ describe("ReturnDetailPage (#2406)", () => {
     renderWithProviders(<ReturnDetailPage />);
     expect(screen.getAllByRole("button", { name: /resolve/i }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: /cancel/i }).length).toBeGreaterThan(0);
+  });
+
+  it("SA-773: a RECEIVED return whose goods are already returned or credited previews $0 with the reason in Resolve", async () => {
+    mockReturn = {
+      ...baseReturn,
+      kind: "STANDARD",
+      status: "RECEIVED",
+      refundEstimate: 0,
+      refundEstimateReason: "EXCEEDS_REFUNDABLE",
+    } as unknown as Return;
+    const user = userEvent.setup();
+    renderWithProviders(<ReturnDetailPage />);
+    await user.click(screen.getAllByRole("button", { name: /resolve/i })[0]);
+    expect(
+      await screen.findByText(/already returned or credited, so nothing more can be refunded/),
+    ).toBeInTheDocument();
   });
 
   it("Train 4: a refunded return offers Print slip (from this same record)", async () => {

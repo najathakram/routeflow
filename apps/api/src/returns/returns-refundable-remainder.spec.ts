@@ -50,6 +50,7 @@ describe("SA-773: the STANDARD refund claim reads the refundable remainder under
   let returnQty: number;
   /** inline return items already out of the order, as the remainder's read sees them */
   let priorInlineItems: any[];
+  let returnStatus: string;
   let remainderReads: number[];
 
   beforeEach(async () => {
@@ -61,6 +62,7 @@ describe("SA-773: the STANDARD refund claim reads the refundable remainder under
     invoiceLines = [billedLine()];
     returnQty = 2;
     priorInlineItems = [];
+    returnStatus = "RECEIVED";
     prisma.tenantTransaction.mockImplementation((fn: any) =>
       fn({
         ...prisma,
@@ -108,7 +110,7 @@ describe("SA-773: the STANDARD refund claim reads the refundable remainder under
         ? {
             id: "ret-1",
             returnNumber: "RET-1",
-            status: "RECEIVED",
+            status: returnStatus,
             kind: "STANDARD",
             customerId: "cust-1",
             orderId: "ord-1",
@@ -257,6 +259,66 @@ describe("SA-773: the STANDARD refund claim reads the refundable remainder under
       returnQty = 10;
       await refund("EXTERNAL_REFUND");
       expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("the preview never shows a figure the claim would refuse (findOne's refundEstimate)", () => {
+    const premiumOut = () => [
+      {
+        productId: "p1",
+        qty: 10,
+        sourceOrderId: "ord-1",
+        subtotal: 100,
+        taxAmount: 0,
+        categoryTax: 0,
+        return: { id: "ret-in", kind: "INLINE", status: "RECEIVED" },
+      },
+    ];
+    const mixedPool = () => [
+      billedLine({ id: "il-cheap", qty: 10, subtotal: 10 }),
+      billedLine({ id: "il-premium", qty: 10, subtotal: 100 }),
+    ];
+
+    it("a RECEIVED return whose priced figure ($55) is above what the pool has left ($10) previews the $10, with the reason", async () => {
+      invoiceLines = mixedPool();
+      returnQty = 10;
+      priorInlineItems = premiumOut();
+      const out = await service.findOne("ret-1");
+      expect(out.refundEstimate).toBe(10);
+      expect(out.refundEstimateReason).toBe("EXCEEDS_REFUNDABLE");
+    });
+
+    it("nothing left in the pool previews $0 with the reason; the claim itself is not clamped (it still refuses)", async () => {
+      invoiceLines = [billedLine({ id: "il-1", qty: 10, subtotal: 20 })];
+      returnQty = 9.99;
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          invoiceItemId: "il-1",
+          creditNoteId: "cn-1",
+          qty: 0.001,
+          amount: 20,
+          categoryTax: 0,
+          creditNote: { status: "ISSUED" },
+        },
+      ]);
+      const out = await service.findOne("ret-1");
+      expect(out.refundEstimate).toBe(0);
+      expect(out.refundEstimateReason).toBe("EXCEEDS_REFUNDABLE");
+    });
+
+    it("a figure that fits is the priced figure, untouched, with no reason", async () => {
+      invoiceLines = mixedPool();
+      returnQty = 10;
+      const out = await service.findOne("ret-1");
+      expect(out.refundEstimate).toBe(55);
+      expect(out.refundEstimateReason).toBeNull();
+    });
+
+    it("a return that is not RECEIVED (nothing to refund yet) reads no remainder", async () => {
+      returnStatus = "PENDING";
+      const before = remainderReads.length;
+      await service.findOne("ret-1");
+      expect(remainderReads.length).toBe(before);
     });
   });
 

@@ -282,6 +282,32 @@ describeDb("SA-773 the refund paths read the refundable remainder - real Postgre
     expect((await row(mine.id)).status).toBe("RECEIVED");
   });
 
+  it("T12: the preview of that same T8 return shows the $10 the claim would accept, not the $55 it would refuse", async () => {
+    const s = await seed("t12", [
+      {
+        lines: [
+          { product: "A", qty: 10, subtotal: 10 },
+          { product: "A", qty: 10, subtotal: 100 },
+        ],
+      },
+    ]);
+    await addInlineReturn(prisma, s, {
+      number: rtn(),
+      status: "RECEIVED",
+      items: [{ line: 1, qty: 10, subtotal: 100 }],
+    });
+    const mine = await addStandardReturn(prisma, s, {
+      number: rtn(),
+      status: "RECEIVED",
+      items: [{ product: "A", qty: 10 }],
+    });
+    const view: any = await asTenant(s, () => returns.findOne(mine.id));
+    expect(view.refundEstimate).toBe(10);
+    expect(view.refundEstimateReason).toBe("EXCEEDS_REFUNDABLE");
+    const err = await fail(standardCashRefund(s, mine.id)); // and the claim itself still refuses (it is never clamped)
+    expect(body(err)).toMatchObject({ code: "RETURN_EXCEEDS_REFUNDABLE", remainingValue: 10 });
+  });
+
   it("T9: a credit note item with an explicit qty of 0.001 that took the whole $20 line: a cash refund of the line's units is refused on VALUE (the qty has 9.999 left)", async () => {
     const s = await seed("t9", [{ lines: [{ product: "A", qty: 10, subtotal: 20 }] }]);
     await addCreditNote(prisma, s, { number: cn(), items: [{ line: 0, amount: 20, qty: 0.001 }] });

@@ -7,12 +7,15 @@
  */
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockRefundInvoices, resolveRefundInvoiceIds } from "./inline-return-refund";
+import { roundMoney } from "@routeflow/pricing";
 import {
   assertWithinRefundable,
   creditNoteRequests,
   creditableGroupInvoiceIds,
   inlineReturnRequests,
+  refundableRefusal,
   refundableRemainder,
+  selectedGoodsRemainder,
   standardReturnRequests,
 } from "./refundable-remainder";
 import type { ProductPackBasis } from "./returns-restock-pieces";
@@ -103,4 +106,42 @@ export async function assertCreditWithinRemainder(
     await creditNoteRequests(tx, args),
     API_ERROR_CODES.CREDIT_EXCEEDS_REFUNDABLE,
   );
+}
+
+/**
+ * The PREVIEW of a STANDARD return's refund (display only, no lock, never a gate): the priced figure, or - when the claim would
+ * refuse it for the remainder - what the selected goods still have left, so the screen never offers a figure the claim then
+ * refuses. `capped` says which. The claim itself is never clamped: it refuses (409 RETURN_EXCEEDS_REFUNDABLE).
+ */
+export async function previewStandardRefund(
+  db: any,
+  args: {
+    returnId: string;
+    invoiceIds: readonly string[];
+    items: ReadonlyArray<{ productId: string; qty: unknown }>;
+    bases: Map<string, ProductPackBasis>;
+    amount: number;
+  },
+): Promise<{ amount: number; capped: boolean }> {
+  if (args.invoiceIds.length === 0 || !(args.amount > 0))
+    return { amount: args.amount, capped: false };
+  const rem = await refundableRemainder(db, {
+    invoiceIds: args.invoiceIds,
+    excludeReturnId: args.returnId,
+  });
+  const requests = standardReturnRequests(
+    rem,
+    args.invoiceIds,
+    args.items,
+    args.bases,
+    args.amount,
+  );
+  if (!refundableRefusal(rem, requests)) return { amount: args.amount, capped: false };
+  const left = selectedGoodsRemainder(
+    rem,
+    requests
+      .filter((r) => r.productId)
+      .map((r) => ({ invoiceId: r.invoiceId, productId: r.productId as string })),
+  );
+  return { amount: roundMoney(Math.min(args.amount, left)), capped: true };
 }

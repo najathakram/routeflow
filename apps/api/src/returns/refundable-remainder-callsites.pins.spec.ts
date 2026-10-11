@@ -129,6 +129,19 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
     expect(firstPos(claim, "lockRefundInvoices")).toBeLessThan(check);
   });
 
+  it("the refund preview (findOne's refundEstimate) reads the remainder through the preview helper, only for a return that can be refunded", () => {
+    const findOne = returnsSvc.get("findOne")!;
+    expect(firstPos(findOne, "previewStandardRefund")).toBeGreaterThan(-1);
+    // priceReturn itself stays pure and synchronous (the list prices a page without a query per row); the quote reads
+    // selectedGoodsRemainder on the split-payment branch, so that helper has no caller here by design
+    const priceReturn = returnsSvc.get("priceReturn")!;
+    expect(
+      priceReturn.calls.some((c) =>
+        ["findMany", "findFirst", "refundableRemainder"].includes(c.name),
+      ),
+    ).toBe(false);
+  });
+
   it.each(["refund", "storeCreditInstead"])(
     "the inline %s() checks the remainder after its locks and before its claim",
     (method) => {

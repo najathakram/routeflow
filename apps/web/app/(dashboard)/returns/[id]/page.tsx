@@ -95,6 +95,9 @@ const REFUND_ESTIMATE_REASON_LABELS: Record<string, string> = {
   NOTHING_CREDITABLE: "Nothing billed on this order can be refunded.",
   NOTHING_BILLED:
     "None of the returned items were billed on this order, so there is nothing to refund.",
+  // SA-773: the goods were already returned or credited; the estimate shown is what is still left (0 = nothing)
+  EXCEEDS_REFUNDABLE:
+    "These goods were already returned or credited, so nothing more can be refunded for them.",
 };
 
 function refundEstimateReasonText(reason: string): string {

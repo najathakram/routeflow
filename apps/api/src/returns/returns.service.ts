@@ -58,7 +58,10 @@ import {
   type RefundTender,
 } from "./inline-return-refund";
 import { assertCashRefundWithinCap } from "./cash-refund-cap";
-import { assertStandardRefundWithinRemainder } from "./refund-remainder-guard";
+import {
+  assertStandardRefundWithinRemainder,
+  previewStandardRefund,
+} from "./refund-remainder-guard";
 import {
   NOTHING_CREDITABLE_MESSAGE,
   REFUND_LOCK_TIMEOUT_MS,
@@ -1741,11 +1744,28 @@ export class ReturnsService {
       refundEstimate = null;
       refusal = "INLINE";
     } else {
+      const bases = await this.packBasesOf(ret.order);
       ({ amount: refundEstimate, refusal } = this.priceReturn(
         ret.items,
         ret.order ?? undefined,
-        await this.packBasesOf(ret.order),
+        bases,
       ));
+      // SA-773: a return that can be refunded now previews what the claim would accept (display only; the claim is never clamped)
+      if (ret.status === "RECEIVED" && !refusal && refundEstimate > 0) {
+        const preview = await previewStandardRefund(this.prisma.forTenant(), {
+          returnId: ret.id,
+          invoiceIds: (ret.order?.invoices ?? [])
+            .filter((inv: any) => !CREDIT_SOURCE_EXCLUDED.includes(inv.status))
+            .map((inv: any) => inv.id as string),
+          items: ret.items,
+          bases,
+          amount: refundEstimate,
+        });
+        if (preview.capped) {
+          refundEstimate = preview.amount;
+          refusal = "EXCEEDS_REFUNDABLE";
+        }
+      }
     }
 
     // The invoice graph is fetched only to price the row — strip it back out (this
