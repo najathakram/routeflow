@@ -568,14 +568,15 @@ describe("POS-5 price edit: a customer pick keeps the edited price (POS-2 surviv
     );
   });
 
-  it("a kept net equal to the new tier price is no override: the chip and the Discounts row go", async () => {
+  it("a kept net equal to the new tier price is no override: the chip and Reset go, and the tier line's own 2.00 off the list stays in Discounts (as on the receipt)", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     await editPrice("Cola", { label: "Price per item", value: "8" });
     expect(screen.getByTestId("running-discounts")).toHaveTextContent("-$2.00");
     await pickAcme();
     await waitFor(() => expect(screen.queryByTestId("line-price-chip")).toBeNull());
-    expect(screen.queryByTestId("running-discounts")).toBeNull();
+    // a plain tier-2 line (8.00 against a 10.00 list) is stored SPECIAL with the list as its original: the receipt counts it
+    expect(screen.getByTestId("running-discounts")).toHaveTextContent("-$2.00");
     expect(screen.queryByRole("button", { name: "Reset price" })).toBeNull();
     expect(total()).toHaveTextContent("$8.00");
   });
