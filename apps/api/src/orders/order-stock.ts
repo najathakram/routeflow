@@ -4,6 +4,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { recordSaleMovement } from "../inventory/sale-movement";
 import { linePieceQty } from "./line-piece-qty";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { lockProductsForStock } from "../common/product-locks";
 import { saleMarkers } from "./backorder-marker";
 import {
   applyCarriedMarkers,
@@ -132,12 +133,8 @@ export async function decrementStockForSale(
 ): Promise<Map<StockLine, number>> {
   if (stockLines.length === 0) return new Map();
   const productIds = stockLines.map((li) => li.productId);
-  // SELECT … FOR UPDATE acquires row-level locks in the current transaction.
-  await tx.$executeRaw`
-    SELECT id FROM "Product"
-    WHERE id IN (${Prisma.join(productIds)})
-    FOR UPDATE
-  `;
+  // SA-767 L-1 (#2841): one tenant-filtered statement in the catalog house lock order (family first).
+  await lockProductsForStock(tx, deps.tenantId, productIds);
 
   const lockedProducts = await tx.product.findMany({
     where: { id: { in: productIds } },
@@ -616,11 +613,7 @@ export async function settleStockForEdit(
 
   // RF-017 parity: lock the touched product rows BEFORE reading
   // currentStock, mirroring create()'s lock (:1863-1867).
-  await db.$executeRaw`
-    SELECT id FROM "Product"
-    WHERE id IN (${Prisma.join(touched)})
-    FOR UPDATE
-  `;
+  await lockProductsForStock(db, deps.tenantId, touched);
   const products = await db.product.findMany({
     where: { id: { in: touched } },
     select: { id: true, name: true, currentStock: true, unitsPerBox: true },

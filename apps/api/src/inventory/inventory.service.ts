@@ -1,4 +1,5 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { lockProductsForStock } from "../common/product-locks";
 import { productNameViolation } from "../common/text-cell-guards";
 import {
   BadRequestException,
@@ -1369,7 +1370,11 @@ export class InventoryService {
   async receivePurchaseOrder(id: string, dto: any, userId: string) {
     const restockedProductIds: string[] = [];
 
-    const result = await this.prisma.tenantTransaction(async (tx) => {
+    // SA-767 L-1: the whole tx re-runs on a 40P01 / 40001 / P2034 (the lock order removes the
+    // deadlock, this is the backstop). The body is idempotent (a rolled-back attempt wrote nothing)
+    // and has no effect outside the tx; the id list is cleared per attempt, alerts fire after commit.
+    const runBody = async (tx: any) => {
+      restockedProductIds.length = 0;
       // Serialize against a concurrent receive / edit-and-re-apply of the SAME
       // PO: without the row lock both read the same qtyReceived and post twice.
       await this.lockPurchaseOrder(tx, id);
@@ -1459,7 +1464,10 @@ export class InventoryService {
           },
         },
       });
-    });
+    };
+    const result = await retryOnTxConflict("inventory.receivePurchaseOrder", () =>
+      this.prisma.tenantTransaction(runBody),
+    );
 
     this.fireStockAlerts(restockedProductIds);
     return result;
@@ -1494,10 +1502,8 @@ export class InventoryService {
    * the read - the lock is what keeps that read consistent with the write.
    */
   async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
-    const tenantId = this.prisma.getTenantId();
-    for (const productId of [...new Set(productIds)].sort()) {
-      await tx.$executeRaw`SELECT id FROM "Product" WHERE id = ${productId} AND "tenantId" = ${tenantId} FOR UPDATE`;
-    }
+    // SA-767 L-1: a thin delegate of the one stock lock (house order: family -> recipe product -> rest).
+    await lockProductsForStock(tx, this.prisma.getTenantId(), productIds);
   }
 
   private async postPoReceipt(

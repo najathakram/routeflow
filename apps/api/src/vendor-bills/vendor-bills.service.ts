@@ -1,3 +1,4 @@
+import { retryOnTxConflict } from "../common/tx-retry";
 import {
   BadRequestException,
   ConflictException,
@@ -1205,7 +1206,10 @@ export class VendorBillsService {
       return this.lineReceivedQty(bill, item).add(adding).gte(new Prisma.Decimal(item.qty));
     });
 
-    const updated = await this.prisma.tenantTransaction(async (tx) => {
+    // SA-767 L-1: re-run the whole tx on a 40P01 / 40001 / P2034. Every local the body fills
+    // (restockedIds, gapsDetected) is declared inside it, the plan was computed before it, and the
+    // alerts below fire after the commit, so a rolled-back attempt leaves nothing behind.
+    const runBody = async (tx: any) => {
       await this.lockBillAndAssertReceiptState(tx, bill);
       // Sync inventory for each line in the plan. The whole block works in
       // INVENTORY denomination: lineInventoryDelta converts a case-priced line
@@ -1361,7 +1365,10 @@ export class VendorBillsService {
       });
 
       return { updatedBill, restockedIds, gapsDetected };
-    });
+    };
+    const updated = await retryOnTxConflict("vendorBills.receive", () =>
+      this.prisma.tenantTransaction(runBody),
+    );
 
     // Bill receive is the main restock path — fire the same low-stock-cleared
     // alerts a manual purchase does (it never did).
@@ -1401,7 +1408,8 @@ export class VendorBillsService {
     // there is nothing to reverse — the PO owns its own movements and lots.
     const movesStock = bill.purchaseOrderId == null;
 
-    return this.prisma.tenantTransaction(async (tx) => {
+    // SA-767 L-1: the whole reversal tx re-runs on a 40P01 / 40001 / P2034 (nothing leaves the tx).
+    const runBody = async (tx: any) => {
       await this.lockBillAndAssertReceiptState(tx, bill);
       // B285: the reversal below read-modify-writes the product's average — lock it first.
       await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
@@ -1475,7 +1483,10 @@ export class VendorBillsService {
           payments: { orderBy: { createdAt: "desc" } },
         },
       });
-    });
+    };
+    return retryOnTxConflict("vendorBills.revertToDraft", () =>
+      this.prisma.tenantTransaction(runBody),
+    );
   }
 
   /**
@@ -1520,7 +1531,8 @@ export class VendorBillsService {
       bill.receivedDate != null &&
       bill.purchaseOrderId == null;
     if (needsReversal) {
-      return this.prisma.tenantTransaction(async (tx) => {
+      // SA-767 L-1: the whole reversal tx re-runs on a 40P01 / 40001 / P2034 (nothing leaves the tx).
+      const runBody = async (tx: any) => {
         await this.lockBillAndAssertReceiptState(tx, bill);
         await this.inventory.lockProducts(tx, this.productIdsOf(bill.items));
         for (const item of bill.items) {
@@ -1586,7 +1598,10 @@ export class VendorBillsService {
             ...(await this.unlinkPurchaseOrderOnVoid(tx, bill)),
           },
         });
-      });
+      };
+      return retryOnTxConflict("vendorBills.voidBill", () =>
+        this.prisma.tenantTransaction(runBody),
+      );
     }
 
     // Transactional (it used to be a bare update) so the credit refund and the
