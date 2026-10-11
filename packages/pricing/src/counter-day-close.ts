@@ -101,6 +101,8 @@ interface DayCloseWindowTotals {
   storeCreditUsed: number;
   storeCreditIssued: { count: number };
   notAtTill: number;
+  /** absent on closes made before the field existed */
+  handOver?: { count: number };
 }
 
 /**
@@ -115,6 +117,7 @@ export function dayCloseWindowIsEmpty(t: DayCloseWindowTotals): boolean {
     t.refunds.count === 0 &&
     t.storeCreditUsed === 0 &&
     t.storeCreditIssued.count === 0 &&
-    t.notAtTill === 0
+    t.notAtTill === 0 &&
+    (t.handOver?.count ?? 0) === 0
   );
 }

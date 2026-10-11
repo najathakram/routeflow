@@ -324,7 +324,7 @@ describe("CounterDayCloseService: registers", () => {
 
   it("latestClose returns the register's newest close, 404 when it has none, and ignores another register's", async () => {
     const { service, fake } = setup();
-    await expect(service.latestClose()).resolves.toBeNull();
+    await expect(service.latestClose()).resolves.toEqual({ close: null });
     fake.seedClose(standingClose());
     fake.seedClose(
       standingClose({
@@ -334,17 +334,17 @@ describe("CounterDayCloseService: registers", () => {
         closedAt: T("2026-10-09T16:00:00.000Z"),
       }),
     );
-    const latest = await service.latestClose();
-    expect(latest.windowEnd).toBe("2026-10-09T16:00:00.000Z");
-    expect(latest.totals).toBeDefined();
-    await expect(service.latestClose("b")).resolves.toBeNull();
+    const { close: latest } = await service.latestClose();
+    expect(latest!.windowEnd).toBe("2026-10-09T16:00:00.000Z");
+    expect(latest!.totals).toBeDefined();
+    await expect(service.latestClose("b")).resolves.toEqual({ close: null });
   });
 
   it("latestClose carries reopenedAt and a live salesSinceCount counted after the close's windowEnd", async () => {
     const { service, fake } = setup();
     fake.seedClose(standingClose());
     (countSalesSince as jest.Mock).mockResolvedValue(2);
-    const latest = await service.latestClose("main", T("2026-10-08T20:00:00.000Z"));
+    const { close: latest } = await service.latestClose("main", T("2026-10-08T20:00:00.000Z"));
     expect(latest?.salesSinceCount).toBe(2);
     expect(latest).toHaveProperty("reopenedAt", null);
     const call = (countSalesSince as jest.Mock).mock.calls.at(-1)!;

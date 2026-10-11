@@ -1,4 +1,4 @@
-import { InvoiceStatus } from "@prisma/client";
+import { InvoiceStatus, OrderStatus } from "@prisma/client";
 import type { PrismaService } from "../../../prisma/prisma.service";
 import {
   creditNotesInWindowWhere,
@@ -65,6 +65,8 @@ export async function readWindowFacts(
           invoice: { ...handOverBase.invoice, status: { not: InvoiceStatus.VOID } },
         },
         { invoice: { order: reg } },
+        // the same rule as a counter sale: a cancelled order's money is not the day's
+        { invoice: { order: { status: { not: OrderStatus.CANCELLED } } } },
       ],
     },
     select: paymentSelect,

@@ -36,6 +36,7 @@ const snap = (over: Partial<DayCloseSnapshot> = {}): DayCloseSnapshot => ({
     onAccount: 30.5,
     netCollected: 417.5,
     notAtTill: 64,
+    handOver: { count: 3, cash: 45.25 },
   },
   notes: null,
   reopenedAt: null,
@@ -90,6 +91,33 @@ describe("buildZReportEmail", () => {
       expect(mail.text).toContain(needle);
       expect(mail.html).toContain(needle);
     }
+  });
+
+  it("prints the pickup hand-over line (count and cash, in the till cash), in both bodies", () => {
+    const line = "Pickup hand-overs: 3 · $45.25 (in till cash)";
+    expect(mail.text).toContain(`  ${line}`);
+    expect(mail.html).toContain("Pickup hand-overs");
+    expect(mail.html).toContain("3 · $45.25 (in till cash)");
+  });
+
+  it("a stored close WITHOUT handOver prints 'Not recorded' (never a dash, never $0.00)", () => {
+    const { handOver: _omit, ...legacyTotals } = snap().totals;
+    const legacy = buildZReportEmail({
+      businessName: "Acme",
+      snapshot: snap({ totals: legacyTotals }),
+    });
+    expect(legacy.text).toContain("  Pickup hand-overs: Not recorded");
+    expect(legacy.html).toContain("Not recorded");
+    expect(legacy.text).not.toMatch(/Pickup hand-overs: (-|\$0\.00)/);
+    expect(legacy.text).not.toContain("in till cash");
+  });
+
+  it("a recorded zero prints 0 · $0.00, which is different from not recorded", () => {
+    const m = buildZReportEmail({
+      businessName: "Acme",
+      snapshot: snap({ totals: { ...snap().totals, handOver: { count: 0, cash: 0 } } }),
+    });
+    expect(m.text).toContain("Pickup hand-overs: 0 · $0.00 (in till cash)");
   });
 
   it("warns when a refund had no recorded tender, and not otherwise", () => {

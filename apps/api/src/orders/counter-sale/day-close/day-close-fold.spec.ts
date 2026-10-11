@@ -1,4 +1,5 @@
 import { pickupTenderGroupId } from "../pickup-tender-group";
+import { dayCloseWindowIsEmpty } from "@routeflow/pricing";
 import {
   foldDayClose,
   expectedCashOf,
@@ -201,6 +202,7 @@ describe("foldDayClose: the summary", () => {
         "onAccount",
         "netCollected",
         "notAtTill",
+        "handOver",
       ].sort(),
     );
     expect(JSON.stringify(f.totals)).not.toMatch(/customer|invoice|order/i);
@@ -274,7 +276,7 @@ describe("foldDayClose: a POS-mode pickup hand-over (a NON-counter order)", () =
     expect(f.totals.notAtTill).toBe(9);
   });
 
-  it("(5) a counter order's ungrouped cash still counts, and its pickup-group row does not", () => {
+  it("(5) a counter order's ungrouped cash counts, and so does its OWN pickup-group hand-over cash", () => {
     const f = foldDayClose(
       facts({
         payments: [
@@ -283,7 +285,24 @@ describe("foldDayClose: a POS-mode pickup hand-over (a NON-counter order)", () =
         ],
       }),
     );
-    expect(f.tillCash).toBe(30);
+    expect(f.tillCash).toBe(35);
+    expect(f.totals.moneyIn).toEqual({ cash: 35, card: 0, check: 0, other: 0, total: 35 });
+    expect(f.totals.notAtTill).toBe(0);
+  });
+
+  it("a counter order's row with ANOTHER order's pickup id is not till cash", () => {
+    const f = foldDayClose(
+      facts({
+        payments: [
+          pay({
+            amount: 5,
+            paymentGroupId: pickupTenderGroupId("o-other"),
+            invoice: { orderId: "o-1", order: { counterSale: true } },
+          }),
+        ],
+      }),
+    );
+    expect(f.tillCash).toBe(0);
     expect(f.totals.notAtTill).toBe(5);
   });
 
@@ -291,5 +310,121 @@ describe("foldDayClose: a POS-mode pickup hand-over (a NON-counter order)", () =
     const f = foldDayClose(facts({ payments: [pay({ amount: 8, invoice: { orderId: "o-1" } })] }));
     expect(f.tillCash).toBe(0);
     expect(f.totals.notAtTill).toBe(8);
+  });
+});
+
+/** SA ruling: `totals.handOver` is an informational breakdown of the till money that came from POS pickup hand-overs. */
+describe("foldDayClose: totals.handOver", () => {
+  const PICKUP_ORDER = "o-pickup";
+  const nonCounter = (orderId: string) => ({ orderId, order: { counterSale: false } });
+  const handOver = (amount: number, over: Partial<WindowPayment> = {}) =>
+    pay({
+      amount,
+      paymentGroupId: pickupTenderGroupId(PICKUP_ORDER),
+      invoice: nonCounter(PICKUP_ORDER),
+      ...over,
+    });
+
+  it("is zero on a window with only counter sales", () => {
+    const f = foldDayClose(facts({ payments: [pay({ amount: 30 })] }));
+    expect(f.totals.handOver).toEqual({ count: 0, cash: 0 });
+  });
+
+  it("counts every hand-over row; cash is the CASH ones only (a card hand-over counts, adds no cash)", () => {
+    const f = foldDayClose(
+      facts({
+        payments: [
+          handOver(20.1),
+          handOver(10.2),
+          handOver(15, { method: "CREDIT_CARD" }),
+          handOver(5, { method: "CHECK", checkStatus: "RECORDED" }),
+        ],
+      }),
+    );
+    expect(f.totals.handOver).toEqual({ count: 4, cash: 30.3 });
+  });
+
+  it("ungrouped non-counter cash is NOT a hand-over (it is not a tender at all)", () => {
+    const f = foldDayClose(
+      facts({ payments: [pay({ amount: 12.5, invoice: nonCounter(PICKUP_ORDER) })] }),
+    );
+    expect(f.totals.handOver).toEqual({ count: 0, cash: 0 });
+    expect(f.totals.notAtTill).toBe(12.5);
+  });
+
+  it("a counter sale's own cash is not a hand-over; a driver's random-group row is not either", () => {
+    const f = foldDayClose(
+      facts({
+        payments: [
+          pay({ amount: 30 }),
+          pay({
+            amount: 40,
+            paymentGroupId: "5b0f4a6e-2b0a-4c53-9a54-6f1c8d1f2a11",
+            invoice: nonCounter("o-delivery"),
+          }),
+        ],
+      }),
+    );
+    expect(f.totals.handOver).toEqual({ count: 0, cash: 0 });
+  });
+
+  it("a COUNTER order's own pickup-group cash is ordinary till cash: in tillCash and moneyIn.cash, NOT in handOver", () => {
+    const counterHandOver = (amount: number, over: Partial<WindowPayment> = {}) =>
+      pay({
+        amount,
+        paymentGroupId: pickupTenderGroupId("o-counter"),
+        invoice: { orderId: "o-counter", order: { counterSale: true } },
+        ...over,
+      });
+    const f = foldDayClose(
+      facts({
+        payments: [
+          pay({ amount: 30 }),
+          counterHandOver(20),
+          counterHandOver(8, { method: "CREDIT_CARD" }),
+        ],
+      }),
+    );
+    expect(f.tillCash).toBe(50);
+    expect(f.totals.moneyIn).toEqual({ cash: 50, card: 8, check: 0, other: 0, total: 58 });
+    expect(f.totals.notAtTill).toBe(0);
+    expect(f.totals.handOver).toEqual({ count: 0, cash: 0 });
+    // a non-counter POS pickup row beside it still counts as a hand-over, and only that one
+    const both = foldDayClose(facts({ payments: [counterHandOver(20), handOver(15)] }));
+    expect(both.tillCash).toBe(35);
+    expect(both.totals.handOver).toEqual({ count: 1, cash: 15 });
+  });
+
+  it("a non-PAID hand-over row is ignored", () => {
+    const f = foldDayClose(facts({ payments: [handOver(20, { status: "PENDING" })] }));
+    expect(f.totals.handOver).toEqual({ count: 0, cash: 0 });
+  });
+
+  it("a deposited hand-over check is not a tender, so not a hand-over", () => {
+    const f = foldDayClose(
+      facts({ payments: [handOver(20, { method: "CHECK", checkStatus: "DEPOSITED" })] }),
+    );
+    expect(f.totals.handOver).toEqual({ count: 0, cash: 0 });
+  });
+
+  it("hand-over rows stay in moneyIn and tillCash exactly once (not added or subtracted again)", () => {
+    const f = foldDayClose(
+      facts({
+        payments: [pay({ amount: 30 }), handOver(20), handOver(15, { method: "CREDIT_CARD" })],
+      }),
+    );
+    expect(f.tillCash).toBe(50);
+    expect(f.totals.moneyIn).toEqual({ cash: 50, card: 15, check: 0, other: 0, total: 65 });
+    expect(f.totals.netCollected).toBe(65);
+    expect(f.totals.handOver).toEqual({ count: 2, cash: 20 });
+    expect(expectedCashOf(10, f)).toBe(60);
+  });
+
+  it("a window with only a hand-over is not empty (the close is not refused as 'nothing new')", () => {
+    const f = foldDayClose(facts({ payments: [handOver(20)] }));
+    expect(dayCloseWindowIsEmpty(f.totals)).toBe(false);
+    const zero = foldDayClose(facts({ payments: [handOver(0)] }));
+    expect(zero.totals.handOver).toEqual({ count: 1, cash: 0 });
+    expect(dayCloseWindowIsEmpty(zero.totals)).toBe(false);
   });
 });

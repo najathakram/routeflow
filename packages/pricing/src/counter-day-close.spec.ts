@@ -105,14 +105,23 @@ describe("dayCloseWindowIsEmpty", () => {
     expect(dayCloseWindowIsEmpty(empty)).toBe(true);
     expect(dayCloseWindowIsEmpty({ ...empty, salesCount: 1 })).toBe(false);
     expect(
-      dayCloseWindowIsEmpty({ ...empty, moneyIn: { ...empty.moneyIn, total: 5, cash: 5 } }),
+      dayCloseWindowIsEmpty({
+        ...empty,
+        moneyIn: { ...empty.moneyIn, total: 5, cash: 5 },
+      } as typeof empty),
     ).toBe(false);
     expect(dayCloseWindowIsEmpty({ ...empty, refunds: { ...empty.refunds, count: 1 } })).toBe(
       false,
     );
-    expect(dayCloseWindowIsEmpty({ ...empty, storeCreditIssued: { count: 1, amount: 3 } })).toBe(
-      false,
-    );
+    expect(
+      dayCloseWindowIsEmpty({
+        ...empty,
+        storeCreditIssued: { count: 1, amount: 3 },
+      } as typeof empty),
+    ).toBe(false);
     expect(dayCloseWindowIsEmpty({ ...empty, notAtTill: 2 })).toBe(false);
+    // a hand-over row is activity even when its amount is zero (the stored field is optional: older closes lack it)
+    expect(dayCloseWindowIsEmpty({ ...empty, handOver: { count: 1 } })).toBe(false);
+    expect(dayCloseWindowIsEmpty({ ...empty, handOver: { count: 0 } })).toBe(true);
   });
 });

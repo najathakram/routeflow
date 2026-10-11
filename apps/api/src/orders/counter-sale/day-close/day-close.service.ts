@@ -213,22 +213,24 @@ export class CounterDayCloseService {
    */
   async latestClose(
     rawRegisterKey?: string,
-    now: Date = new Date(),
-  ): Promise<(DayCloseSnapshot & { salesSinceCount: number }) | null> {
+    now?: Date,
+  ): Promise<{ close: (DayCloseSnapshot & { salesSinceCount: number }) | null }> {
     const tenantId = this.tenantId();
     await this.assertCounterOn(tenantId);
     const registerKey = parseRegisterKey(rawRegisterKey);
     const db = this.prisma.forTenant();
     const row = await this.latest(db, tenantId, registerKey);
-    if (!row) return null;
+    if (!row) return { close: null };
+    // the upper bound is the DATABASE clock (the clock every payment and close is dated from), not this process's
+    const until = now ?? (await dbClockNow(this.prisma as never));
     const salesSinceCount = await countSalesSince(
       db,
       tenantId,
       registerKey,
       row.windowEnd,
-      new Date(now.getTime() + 1),
+      new Date(until.getTime() + 1),
     );
-    return { ...(await this.snapshotOf(row)), salesSinceCount };
+    return { close: { ...(await this.snapshotOf(row)), salesSinceCount } };
   }
 
   /** GET .../day-close/:id: one past close (404 for an unknown id or another tenant's). */
@@ -257,8 +259,7 @@ export class CounterDayCloseService {
     const window = reopened
       ? { start: last.windowStart, end: last.windowEnd }
       : { start: last ? last.windowEnd : calendarDayBounds(zone, now).start, end: now };
-    const facts = await readWindowFacts(db, tenantId, registerKey, window);
-    const fold = foldDayClose(facts);
+    const fold = foldDayClose(await readWindowFacts(db, tenantId, registerKey, window));
     const salesSince = last
       ? await countSalesSince(
           db,

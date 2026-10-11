@@ -42,6 +42,14 @@ export interface DayCloseTotals {
   netCollected: number;
   /** payments on counter invoices taken at the office or by a driver (not at this till): shown, never in the expected cash */
   notAtTill: number;
+  /**
+   * The POS pickup hand-over rows the close counted as till money: PAID rows of non-counter PICKUP orders whose own pickup tender
+   * group id matched. `count` is every such row (any method); `cash` is the CASH ones. An informational breakdown: these rows are
+   * ALREADY inside `moneyIn` and the expected cash, never added or subtracted again.
+   * OPTIONAL: absent on closes made before this field existed (a stored snapshot is never rewritten); the fold always writes it,
+   * so a new snapshot always carries it. A reader must treat a missing value as "not recorded", never as zero.
+   */
+  handOver?: { count: number; cash: number };
 }
 
 export interface DayCloseSnapshot {

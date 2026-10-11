@@ -8,7 +8,8 @@
  *       are NOT till cash;
  *   (3) a non-counter order's UNGROUPED cash row is NOT till cash and is not read at all (notAtTill stays 0);
  *   (4) two registers: a hand-over on an order stamped 'b' counts only in b's window; a null-key hand-over counts in 'main';
- *   (5) a counter order's ungrouped cash still counts, and its (impossible) pickup-group row is "not taken at the till";
+ *   (5) a counter order's ungrouped cash counts, and so does its OWN pickup-group hand-over cash (pickup-complete runs on counter
+ *       sales too): ordinary till cash, never counted into totals.handOver;
  *   plus the window and invoice rules: a VOID invoice drops its payments, a WRITTEN_OFF one keeps them, a payment outside the
  *   window counts for nothing, and a hand-over is never a counter sale (salesCount, countSalesSince).
  *
@@ -195,21 +196,24 @@ describeDb("counter day close: POS-mode pickup hand-overs on real Postgres", () 
     });
     // (4) a hand-over stamped on register 'b'
     await order({ counterSale: false, registerKey: "b", payments: [{ amount: 15, group: "v5" }] });
-    // (5) a counter sale's ungrouped cash counts; a pickup-group row on a COUNTER order is not its tender
+    // (5) a counter sale's ungrouped cash counts; so does its own pickup-group hand-over cash (ordinary counter till cash)
     await order({ counterSale: true, payments: [{ amount: 30, group: null }] });
     await order({ counterSale: true, payments: [{ amount: 3, group: "v5" }] });
 
     const main = await as(() => service.state("main", NOW));
     expect(main.preview.windowStart).toBe("2026-10-08T04:00:00.000Z");
-    expect(main.preview.tillCash).toBe(54); // 20 + 4 (hand-overs) + 30 (counter sale); not 'b', driver, office, ungrouped
+    expect(main.preview.tillCash).toBe(57); // 20 + 4 (hand-overs) + 30 + 3 (counter sale); not 'b', driver, office, ungrouped
     expect(main.preview.totals.moneyIn).toEqual({
-      cash: 54,
+      cash: 57,
       card: 8,
       check: 0,
       other: 0,
-      total: 62,
+      total: 65,
     });
-    expect(main.preview.totals.notAtTill).toBe(3); // only the counter order's pickup-group row; hand-overs never add to it
+    expect(main.preview.totals.notAtTill).toBe(0); // the counter order's own pickup-group cash is till cash, not apart
+    // totals.handOver: the real queries found 3 hand-over rows (cash 20, card 8, written-off cash 4); cash is the CASH ones only.
+    // The counter order's pickup-group row (ordinary counter till cash), the driver / office / ungrouped rows and register 'b' are not hand-overs of main.
+    expect(main.preview.totals.handOver).toEqual({ count: 3, cash: 24 });
     expect(main.preview.totals.salesCount).toBe(2); // the two counter sales: a hand-over is not a counter sale
     expect(main.preview.cashRefunds).toBe(0);
 
@@ -218,6 +222,7 @@ describeDb("counter day close: POS-mode pickup hand-overs on real Postgres", () 
     expect(b.preview.tillCash).toBe(15);
     expect(b.preview.totals.moneyIn).toEqual({ cash: 15, card: 0, check: 0, other: 0, total: 15 });
     expect(b.preview.totals.notAtTill).toBe(0);
+    expect(b.preview.totals.handOver).toEqual({ count: 1, cash: 15 });
     expect(b.preview.totals.salesCount).toBe(0);
 
     // the sheet's "N sales since" is unchanged by hand-overs

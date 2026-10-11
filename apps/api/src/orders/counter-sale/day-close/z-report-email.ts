@@ -67,6 +67,13 @@ function sectionsOf(s: DayCloseSnapshot): Section[] {
         ["Check", zMoney(t.moneyIn.check)],
         ["Other", zMoney(t.moneyIn.other)],
         ["Total in", zMoney(t.moneyIn.total)],
+        // already inside the figures above; a close made before the field existed has no value, which is not zero
+        [
+          "Pickup hand-overs",
+          t.handOver
+            ? `${t.handOver.count} · ${zMoney(t.handOver.cash)} (in till cash)`
+            : "Not recorded",
+        ],
       ],
     },
     {

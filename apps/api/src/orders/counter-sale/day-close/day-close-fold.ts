@@ -54,6 +54,8 @@ const CREDIT_APPLICATIONS: readonly string[] = ["CREDIT_NOTE", "ADVANCE"];
 export function foldDayClose(facts: WindowFacts): DayCloseFold {
   const groups = new Map<string, number>();
   let notAtTill = 0;
+  let handOverCount = 0;
+  let handOverCash = 0;
   for (const p of facts.payments) {
     if (p.status !== "PAID") continue; // sumConfirmed rule: PAID only
     const amount = num(p.amount);
@@ -65,6 +67,12 @@ export function foldDayClose(facts: WindowFacts): DayCloseFold {
       })
     ) {
       groups.set(p.method, roundMoney((groups.get(p.method) ?? 0) + amount));
+      // Only the NON-counter clause makes a POS pickup hand-over: a counter order's own pickup cash is ordinary counter till
+      // cash (already in the groups above) and must not be counted a second time here (informational, never added to the money).
+      if (p.invoice?.order?.counterSale !== true) {
+        handOverCount += 1;
+        if (p.method === "CASH") handOverCash = roundMoney(handOverCash + amount);
+      }
     } else {
       notAtTill = roundMoney(notAtTill + amount);
     }
@@ -93,8 +101,13 @@ export function foldDayClose(facts: WindowFacts): DayCloseFold {
     onAccount: summary.onAccount,
     netCollected: summary.netCollected,
     notAtTill,
+    handOver: { count: handOverCount, cash: handOverCash },
   };
-  return { totals, tillCash: totals.moneyIn.cash, cashRefunds: totals.refunds.cash };
+  return {
+    totals,
+    tillCash: totals.moneyIn.cash,
+    cashRefunds: totals.refunds.cash,
+  };
 }
 
 /** `expected = openingFloat + till cash - cash refunds`, to the cent. */

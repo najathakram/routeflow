@@ -201,6 +201,7 @@ export function makeFakeDayCloseDb(opts: FakeOptions = {}) {
     forTenant: () => db,
     tenant: db.tenant,
     tenantConfig: db.tenantConfig,
+    $queryRaw: tx.$queryRaw,
     tenantTransaction: async (fn: (t: any) => Promise<any>) => {
       const saved = {
         closes: closes.map((r) => ({ ...r })),
