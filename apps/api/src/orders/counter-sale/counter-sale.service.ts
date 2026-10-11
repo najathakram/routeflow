@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { FulfillPath } from "@prisma/client";
-import { centsToDollars } from "@routeflow/pricing";
+import { centsToDollars, dollarsToCents, roundMoney } from "@routeflow/pricing";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { configuredTaxRatePercent } from "../../common/tax-rate";
@@ -301,9 +301,11 @@ export class CounterSaleService {
   }
 
   /**
-   * The locked half of the tender. Replay-safe by comparing what is STORED per (leg, invoice) with the planned
-   * placement and recording only the shortfall. That comparison is sound here because a counter sale's
-   * invoices are born in the same request as the tender, so a stored tender row is this sale's own earlier
+   * The locked half of the tender. Replay-safe: what is STORED per (leg, invoice) is compared with the planned
+   * placement, only a pair with no row yet is recorded (a resume), and ANY difference between the replay and the
+   * stored tender is 409 COUNTER_TENDER_CHANGED with nothing written (`assertStoredTenderMatches`: the fingerprint is
+   * derived from the stored rows and `Order.counterCashTendered`, no column). That comparison is sound here because a
+   * counter sale's invoices are born in the same request as the tender, so a stored tender row is this sale's own earlier
    * attempt (pickup-complete's invoice pre-exists, so it must key on the request instead). Each leg's rows
    * carry the server-built group id written in the payment's own create, so a replay knows which leg a row is.
    */
@@ -319,7 +321,20 @@ export class CounterSaleService {
     // not "recorded": a first call that paid sibling 1 and failed on sibling 2 is resumed, never repeated.
     const plan = planSaleTender(invoices, legs);
     const stored = readStoredTender(orderId, invoices);
-    assertStoredTenderMatches(stored, legs, plan.placements);
+    // the handed-over amount as the first call stored it (written BEFORE any money moves): half of the replay fingerprint
+    const storedRow = stored.byLeg.size
+      ? await this.prisma
+          .forTenant()
+          .order.findFirst({ where: { id: orderId }, select: { counterCashTendered: true } })
+      : null;
+    const storedTendered = storedRow?.counterCashTendered;
+    assertStoredTenderMatches(
+      stored,
+      legs,
+      plan.placements,
+      storedTendered == null ? null : dollarsToCents(roundMoney(Number(storedTendered))),
+      plan.cashTenderedCents,
+    );
     if (!plan.refusal) assertNonCashShortfallsFit(invoices, stored, legs, plan.placements);
     if (plan.refusal) {
       // A refusal only stands when nothing was taken yet: a stored tender means a payment already went in.

@@ -590,7 +590,7 @@ describe("CounterSaleService.ring", () => {
       expect(createSale).not.toHaveBeenCalled();
     });
 
-    it("CASH 20 on a 37.25 sale: a PARTIAL payment of 20, paid 20, balanceDue read back from storage, no change", async () => {
+    it("CASH 20 on a 37.25 sale: a PARTIAL payment of 20, paid 20, balanceDue read back from storage, Change 0", async () => {
       const r = await service.ring(named({ method: "CASH", amount: 20 }) as never, staff);
       expect(recordPayment).toHaveBeenCalledWith(
         "inv-1",
@@ -607,7 +607,7 @@ describe("CounterSaleService.ring", () => {
         paymentRecorded: true,
         paymentId: "pay-inv-1",
       });
-      expect(r.change).toBeUndefined();
+      expect(r.change).toBe(0); // all the cash handed over (20) went in: Change 0, no balance gate
       expect(r.paymentErrorCode).toBeUndefined();
     });
 

@@ -62,6 +62,7 @@ describe("planSaleTender: one leg keeps the rule from before split payments", ()
     expect(planSaleTender([overCredited], [{ method: "CASH", amount: 20 }])).toEqual({
       placements: [],
       changeCents: 0,
+      cashTenderedCents: 2000,
     });
     // a split over an over-credited sibling plans against the other invoice only
     const out = planSaleTender(
@@ -113,6 +114,7 @@ describe("planSaleTender: a split", () => {
     expect(out).toEqual({
       placements: [],
       changeCents: 0,
+      cashTenderedCents: 4000,
       refusal: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
     });
   });

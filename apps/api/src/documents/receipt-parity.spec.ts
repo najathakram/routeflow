@@ -38,6 +38,7 @@ const moneyRows = (m: ReceiptModel) => Object.fromEntries(MONEY_ROWS.map((k) => 
 interface Pay {
   method: string;
   amount: string;
+  status?: string;
 }
 interface Scenario {
   total: string;
@@ -82,7 +83,7 @@ function build(s: Scenario) {
     id: `pay-${i + 1}`,
     method: p.method,
     amount: p.amount,
-    status: "PAID",
+    status: p.status ?? "PAID",
   }));
   const invoice = {
     id: "inv-1",
@@ -604,6 +605,17 @@ describe("cash handed over: ONE change figure (the server's servedChange) on eve
     expect(moneyRows(s.emailModel)).toEqual(moneyRows(s.reprint));
   });
 
+  it("S1 a card payment voided after the sale does not move the change: it is the stored CASH row's (32.75) on every surface", () => {
+    const s = cash({
+      payments: [
+        { method: "CREDIT_CARD", amount: "20.00", status: "VOID" },
+        { method: "CASH", amount: "17.25" },
+      ],
+    });
+    expect(s.row.change).toBe(32.75);
+    for (const m of [s.reprint, s.emailModel]) expect(m.change).toBe(32.75);
+  });
+
   it("a card-only sale with a stale stored tendered serves no change anywhere", () => {
     const s = cash({ payments: [{ method: "CREDIT_CARD", amount: "37.25" }] });
     expect(s.row.change).toBeNull();
@@ -639,10 +651,10 @@ describe("cash handed over: ONE change figure (the server's servedChange) on eve
     expect(s.live.changeAsEntered).toBe(true);
   });
 
-  it("a partly paid cash sale (all the cash handed over went in) serves no change anywhere", () => {
+  it("a partly paid cash sale (all the cash handed over went in) serves Change 0 everywhere (no balance gate)", () => {
     const s = cash({ tendered: "20.00", payments: [{ method: "CASH", amount: "20.00" }] });
-    expect(s.row.change).toBeNull();
-    for (const m of [s.reprint, s.emailModel]) expect(m.change).toBeNull();
+    expect(s.row.change).toBe(0);
+    for (const m of [s.reprint, s.emailModel]) expect(m.change).toBe(0);
   });
 
   it("the order the payments were taken in does not matter (cash first, card second)", () => {
