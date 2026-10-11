@@ -77,17 +77,26 @@ export class PosFinishError extends Error {
 }
 
 /**
- * "Confirm & invoice": PATCH status CONFIRMED, then POST /invoices/from-order/:id. Both are idempotent on the
+ * "Confirm & invoice": (DRAFT target only: PATCH status PENDING first,) PATCH status CONFIRMED, then POST /invoices/from-order/:id. Both are idempotent on the
  * server, so a retry of either is safe. A failure names the step so the caller can say which half is missing
  * (the order page offers "Create invoice" when only the second failed).
  */
 export function usePosFinish() {
   const qc = useQueryClient();
-  return useMutation<Order, PosFinishError, { orderId: string; invoice: boolean }>({
+  return useMutation<
+    Order,
+    PosFinishError,
+    { orderId: string; invoice: boolean; fromStatus?: string | null }
+  >({
     meta: { localErrorToast: true }, // the Create Order modal toasts which half is missing
-    mutationFn: async ({ orderId, invoice }) => {
+    mutationFn: async ({ orderId, invoice, fromStatus }) => {
       let order: Order;
       try {
+        // The API's table has no DRAFT -> CONFIRMED edge (DRAFT -> PENDING only), so a merge into an open
+        // DRAFT promotes it first. Idempotent: a retry finds PENDING and skips this.
+        if (fromStatus === "DRAFT") {
+          await apiClient.patch(`/orders/${orderId}/status`, { status: "PENDING" });
+        }
         order = (await apiClient.patch(`/orders/${orderId}/status`, { status: "CONFIRMED" })).data;
       } catch (e) {
         throw new PosFinishError("confirm", e);

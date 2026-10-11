@@ -273,6 +273,58 @@ describe("CreateOrderModal: POS mode switch", () => {
   });
 });
 
+describe("CreateOrderModal: POS mode merge into an open DRAFT (row 311)", () => {
+  const mergeIntoDraft = async () => {
+    mockPrefs = { "orders.posMode": "true" };
+    mockActive = { id: "a1", orderNumber: "SO-9", status: "DRAFT", itemCount: 2, total: 20 };
+    post.mockImplementation((url: string) =>
+      Promise.resolve({
+        data: url === "/orders" ? { id: "a1", orderNumber: "SO-9", status: "DRAFT" } : [],
+      }),
+    );
+    const view = await openWithLine();
+    await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
+    fireEvent.click(screen.getByRole("button", { name: "Confirm & invoice" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add to it" }));
+    return view;
+  };
+  const statusPatches = () =>
+    patch.mock.calls.filter((c) => String(c[0]).includes("/status")).map((c) => c[1].status);
+
+  it("promotes the DRAFT to PENDING before CONFIRMED, then invoices", async () => {
+    await mergeIntoDraft();
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/invoices/from-order/a1"));
+    expect(statusPatches()).toEqual(["PENDING", "CONFIRMED"]);
+    expect(mockToast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Order confirmed and invoiced" }),
+    );
+  });
+
+  it("when the confirm is refused, the toast says the merged order is unconfirmed and offers View Order", async () => {
+    patch.mockImplementation((url: string) =>
+      String(url).includes("/status")
+        ? Promise.reject({ response: { status: 400, data: { message: "raw server text" } } })
+        : Promise.resolve({ data: {} }),
+    );
+    const { onViewOrder } = await mergeIntoDraft();
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: expect.stringMatching(/merged, but it couldn't be confirmed/i),
+          variant: "warning",
+        }),
+      ),
+    );
+    const t = mockToast.mock.calls.find((c) => /couldn't be confirmed/.test(c[0].title))![0];
+    expect(t.title).not.toMatch(/raw server text/);
+    t.action.onClick();
+    expect(onViewOrder).toHaveBeenCalledWith("a1");
+    expect(post.mock.calls.some((c) => String(c[0]).startsWith("/invoices/from-order"))).toBe(
+      false,
+    );
+  });
+});
+
 describe("CreateOrderModal: POS mode landing and Enter", () => {
   it("lands on the new order's page after Confirm & invoice (not the list)", async () => {
     mockPrefs = { "orders.posMode": "true" };

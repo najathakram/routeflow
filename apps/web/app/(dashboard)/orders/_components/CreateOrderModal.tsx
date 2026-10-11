@@ -1438,15 +1438,20 @@ export function CreateOrderModal({
 
   /** POS "Confirm & invoice" / "Confirm only": the order exists (PENDING); confirm it, then invoice it. */
   const finishPosOrder = (
-    created: { id: string; orderNumber?: string | null },
+    created: { id: string; orderNumber?: string | null; status?: string | null },
     finish: "invoice" | "confirm",
     viewOrder?: (orderId: string) => void,
+    merged?: { fromStatus?: string | null },
   ) => {
     const action = viewOrder
       ? { label: "View Order", onClick: () => viewOrder(created.id) }
       : undefined;
     posFinish
-      .mutateAsync({ orderId: created.id, invoice: finish === "invoice" })
+      .mutateAsync({
+        orderId: created.id,
+        invoice: finish === "invoice",
+        fromStatus: created.status ?? merged?.fromStatus,
+      })
       .then(() => {
         toast({
           title: finish === "invoice" ? POS_COPY.confirmedInvoiced : POS_COPY.confirmedOnly,
@@ -1457,7 +1462,12 @@ export function CreateOrderModal({
       .catch((err: unknown) => {
         const step = err instanceof PosFinishError ? err.step : "confirm";
         toast({
-          title: step === "invoice" ? POS_COPY.invoiceMissing : POS_COPY.confirmMissing,
+          title:
+            step === "invoice"
+              ? POS_COPY.invoiceMissing
+              : merged
+                ? POS_COPY.mergedConfirmMissing
+                : POS_COPY.confirmMissing,
           variant: "warning",
           action,
         });
@@ -1549,7 +1559,13 @@ export function CreateOrderModal({
         onSuccess: (created: any) => {
           submitKey.settle("success");
           if (posMode && !asDraft && created?.id) {
-            finishPosOrder(created, posFinishRef.current, onViewOrder);
+            // A merge returns the target order; its status (else the prompt's) says if it is still a DRAFT.
+            finishPosOrder(
+              created,
+              posFinishRef.current,
+              onViewOrder,
+              mergeChoice === "merge" ? { fromStatus: mergePrompt?.status } : undefined,
+            );
           } else {
             toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
           }

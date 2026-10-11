@@ -39,4 +39,15 @@ describe("usePosFinish", () => {
     expect((err as PosFinishError).response).toBe(response);
     expect(qc.getMutationCache().getAll()[0].options.meta).toEqual({ localErrorToast: true });
   });
+  it("a DRAFT target is promoted to PENDING before CONFIRMED (the API has no DRAFT -> CONFIRMED edge)", async () => {
+    (apiClient.patch as jest.Mock).mockResolvedValue({ data: { id: "o1" } });
+    const { result } = renderHook(() => usePosFinish(), { wrapper: wrapper(new QueryClient()) });
+    await act(async () => {
+      await result.current.mutateAsync({ orderId: "o1", invoice: false, fromStatus: "DRAFT" });
+    });
+    expect((apiClient.patch as jest.Mock).mock.calls.map((c) => c[1].status)).toEqual([
+      "PENDING",
+      "CONFIRMED",
+    ]);
+  });
 });
