@@ -284,10 +284,7 @@ describe("OrdersService", () => {
         // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
         {
           provide: RegulatedLedgerService,
-          useValue: {
-            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
-            syncInvoiceEntries: jest.fn(),
-          },
+          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
         },
         // B323: sweepAllPendingOrders() re-enters each group's own tenant scope via
         // tenantCtx.run() before calling into anything ambient-scoped.
