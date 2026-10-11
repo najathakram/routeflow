@@ -50,7 +50,7 @@ describe("SA-773 census script", () => {
     const final = sql.slice(sql.indexOf("\nSELECT 'pool'"));
     const outer = final.replace(/count\([^)]*\)/g, "count()");
     expect(outer).not.toMatch(
-      /\bid\b|"id"|slug|name|email|customer|"orderId"|"productId"|round\(/i,
+      /\bid\b|"id"|slug|name|email|customer|"orderId"|"productId"|invoiceId|round\(/i,
     );
     expect(final).toContain(`count(*)::int AS "cases"`);
   });
@@ -59,6 +59,7 @@ describe("SA-773 census script", () => {
     const sql = String(run(["--print-sql", "--list"]).stdout);
     const final = sql.slice(sql.indexOf("\nSELECT 'pool'"));
     expect(final).toContain(`o."tenantId"`);
+    expect(final).toContain(`o."invoiceId"`); // listed by INVOICE id
     expect(final).not.toMatch(/slug|"name"|businessName|contactName|email|Number|Number"/i);
   });
 
@@ -68,6 +69,22 @@ describe("SA-773 census script", () => {
     expect(sql).toContain(`c."status"::text <> 'VOID'`);
     expect(sql).toContain(`r."creditNoteId" = c."id"`);
     expect(sql).toContain(`NOT IN ('REJECTED', 'CANCELLED')`);
+  });
+
+  it("--list prints ids, so it is refused (exit 2, before any connection) unless stdout is a terminal or the run acknowledges ids-only output", () => {
+    const refused = run(["--list"]); // spawnSync pipes stdout: not a terminal
+    expect(refused.status).toBe(2);
+    expect(refused.stderr).toMatch(/--ack-ids-only/);
+    expect(String(refused.stdout)).toBe("");
+    // acknowledged, by flag or by env: it gets past the gate and then fails closed on the missing database instead
+    for (const r of [
+      run(["--list", "--ack-ids-only"]),
+      run(["--list"], { SA773_ACK_IDS_ONLY: "1" }),
+    ]) {
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).not.toMatch(/--ack-ids-only/);
+      expect(r.stderr).toMatch(/no usable database URL|DATABASE/i);
+    }
   });
 
   it("fails closed (non-zero) when no database is configured, before any connection", () => {

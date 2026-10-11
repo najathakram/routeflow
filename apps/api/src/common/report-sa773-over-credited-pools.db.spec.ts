@@ -57,7 +57,7 @@ describeDb("SA-773 census SQL - real Postgres", () => {
 
   /** The census rows of this run's tenants: `section orderId pool overage`. */
   const census = (): string[] => {
-    const r = spawnSync(process.execPath, [SCRIPT, "--list"], {
+    const r = spawnSync(process.execPath, [SCRIPT, "--list", "--ack-ids-only"], {
       encoding: "utf8",
       env: { ...process.env, DATABASE_URL: requireLocalDatabaseUrl() },
       timeout: 120_000,
@@ -114,7 +114,10 @@ describeDb("SA-773 census SQL - real Postgres", () => {
 
     const rows = census();
     expect(rows.sort()).toEqual(
-      [`pool ${x1.orderId} ${x1.products.A} 20.00`, `order ${x1.orderId}  20.00`].sort(),
+      [
+        `pool ${x1.invoices[0].id} ${x1.products.A} 20.00`,
+        `order ${x1.invoices[0].id}  20.00`,
+      ].sort(),
     );
   });
 });

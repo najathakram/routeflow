@@ -13,15 +13,17 @@
 // A STANDARD return that issued a credit note is in both sections through that credit note; one still open (not yet refunded) is
 // not money out and is not counted.
 //
-// Output is an overage bucket and integers ONLY. `--list` additionally prints one row per case with the tenant id, order id,
-// product id (pool section) and the overage, for the owner's per-case decision: ids only, never a name, slug, customer or number.
+// Output is an overage bucket and integers ONLY. `--list` additionally prints one row per case with the tenant id, the INVOICE id
+// (the order's first live invoice), the product id (pool section) and the overage, for the owner's per-case decision: ids only,
+// never a name, slug, customer or number. Ids leave the terminal only on purpose: `--list` is refused unless stdout is a TTY
+// or the run says `--ack-ids-only` (or SA773_ACK_IDS_ONLY=1), i.e. the caller knows the output is ids only and where it goes.
 // One READ ONLY transaction, always rolled back; the SQL has no parameters. Safety rests on READ ONLY + ROLLBACK, NOT on a target
 // check: it does not refuse a non-local database (the B768 ruling: owner-run reports reach prod through the shared resolver on
 // purpose). Run it against production ONLY with the owner's yes.
 //
 //   node apps/api/scripts/report-sa773-over-credited-pools.mjs --self-test
 //   node apps/api/scripts/report-sa773-over-credited-pools.mjs --print-sql [--list]   # no connection: paste into psql
-//   node apps/api/scripts/report-sa773-over-credited-pools.mjs [--list]               # local compose DB (B768 resolver)
+//   node apps/api/scripts/report-sa773-over-credited-pools.mjs [--list [--ack-ids-only]]   # local compose DB (B768 resolver)
 //   railway run --service postgres node apps/api/scripts/report-sa773-over-credited-pools.mjs   # owner-run, with the owner's yes
 
 import { pathToFileURL } from "node:url";
@@ -39,7 +41,7 @@ const WITH_CLAUSE = [
   `  FROM "Invoice" i`,
   `  WHERE i."orderId" IS NOT NULL AND i."status"::text NOT IN ('VOID', 'WRITTEN_OFF')`,
   `), billed AS (`,
-  `  SELECT l."tenantId", l."orderId", ii."productId",`,
+  `  SELECT l."tenantId", l."orderId", ii."productId", min(l."invoiceId") AS "invoiceId",`,
   `         sum(round(ii."subtotal", 2) + round(round(ii."subtotal", 2) * ii."taxRate", 2) + ii."categoryTaxAmount") AS "gross",`,
   `         sum(round(ii."subtotal", 2)) AS "net"`,
   `  FROM live l JOIN "InvoiceItem" ii ON ii."invoiceId" = l."invoiceId"`,
@@ -63,13 +65,13 @@ const WITH_CLAUSE = [
   `  WHERE r."kind"::text = 'INLINE' AND r."status"::text NOT IN ('REJECTED', 'CANCELLED') AND ri."sourceOrderId" IS NOT NULL`,
   `  GROUP BY ri."tenantId", ri."sourceOrderId", ri."productId"`,
   `), pool_over AS (`,
-  `  SELECT b."tenantId", b."orderId", b."productId",`,
+  `  SELECT b."tenantId", b."orderId", b."productId", b."invoiceId",`,
   `         coalesce(s."credited", 0) + coalesce(n."credited", 0) - b."gross" AS "over"`,
   `  FROM billed b`,
   `  LEFT JOIN standalone s ON s."tenantId" = b."tenantId" AND s."orderId" = b."orderId" AND s."productId" = b."productId"`,
   `  LEFT JOIN inline n ON n."tenantId" = b."tenantId" AND n."orderId" = b."orderId" AND n."productId" = b."productId"`,
   `), order_billed AS (`,
-  `  SELECT "tenantId", "orderId", sum("net") AS "net" FROM billed GROUP BY "tenantId", "orderId"`,
+  `  SELECT "tenantId", "orderId", min("invoiceId") AS "invoiceId", sum("net") AS "net" FROM billed GROUP BY "tenantId", "orderId"`,
   `), order_cn AS (`,
   `  SELECT l."tenantId", l."orderId", sum(c."amount") AS "credited"`,
   `  FROM "CreditNote" c JOIN live l ON l."invoiceId" = c."invoiceId"`,
@@ -84,7 +86,7 @@ const WITH_CLAUSE = [
   `    AND r."refundMethod" = 'EXTERNAL_REFUND' AND r."creditNoteId" IS NULL`,
   `  GROUP BY r."tenantId", r."orderId"`,
   `), order_over AS (`,
-  `  SELECT b."tenantId", b."orderId",`,
+  `  SELECT b."tenantId", b."orderId", b."invoiceId",`,
   `         coalesce(c."credited", 0) + coalesce(n."credited", 0) + coalesce(e."credited", 0) - b."net" AS "over"`,
   `  FROM order_billed b`,
   `  LEFT JOIN order_cn c ON c."tenantId" = b."tenantId" AND c."orderId" = b."orderId"`,
@@ -97,10 +99,10 @@ const WITH_CLAUSE = [
 export function buildSql({ list = false } = {}) {
   const tail = list
     ? [
-        `SELECT 'pool' AS "section", o."tenantId", o."orderId", o."productId" AS "pool", round(o."over", 2) AS "overage"`,
+        `SELECT 'pool' AS "section", o."tenantId", o."invoiceId", o."productId" AS "pool", round(o."over", 2) AS "overage"`,
         `FROM pool_over o WHERE o."over" > ${NOISE}`,
         `UNION ALL`,
-        `SELECT 'order', o."tenantId", o."orderId", NULL, round(o."over", 2)`,
+        `SELECT 'order', o."tenantId", o."invoiceId", NULL, round(o."over", 2)`,
         `FROM order_over o WHERE o."over" > ${NOISE}`,
         `ORDER BY 1, 5 DESC, 2, 3`,
       ]
@@ -151,13 +153,30 @@ export function formatReport(rows) {
 
 /** `--list`: one line per case, ids and the overage only. */
 export function formatList(rows) {
-  const lines = ["section\ttenantId\torderId\tpool\toverage"];
+  const lines = ["section\ttenantId\tinvoiceId\tpool\toverage"];
   for (const r of rows)
-    lines.push([r.section, r.tenantId, r.orderId, r.pool ?? "", r.overage].join("\t"));
+    lines.push([r.section, r.tenantId, r.invoiceId, r.pool ?? "", r.overage].join("\t"));
   return lines.join("\n");
 }
 
+/** `--list` is allowed on a terminal, or when the caller acknowledged that the output is ids only. */
+export function listIdsAcknowledged(
+  args,
+  { stdoutIsTty = process.stdout.isTTY, env = process.env } = {},
+) {
+  return Boolean(stdoutIsTty) || args.includes("--ack-ids-only") || env.SA773_ACK_IDS_ONLY === "1";
+}
+
 function selfTest() {
+  if (listIdsAcknowledged(["--list"], { stdoutIsTty: false, env: {} }))
+    throw new Error("self-test: --list was allowed without a terminal or an acknowledgement");
+  for (const ok of [
+    [["--list", "--ack-ids-only"], { stdoutIsTty: false, env: {} }],
+    [["--list"], { stdoutIsTty: true, env: {} }],
+    [["--list"], { stdoutIsTty: false, env: { SA773_ACK_IDS_ONLY: "1" } }],
+  ])
+    if (!listIdsAcknowledged(ok[0], ok[1]))
+      throw new Error("self-test: an acknowledged --list was refused");
   assertReadOnlySql(buildSql());
   assertReadOnlySql(buildSql({ list: true }));
   for (const bad of ['DELETE FROM "User"', "SELECT 1; SELECT 2", 'UPDATE "User" SET a = 1']) {
@@ -179,6 +198,13 @@ async function main() {
   if (args.includes("--print-sql")) {
     console.log(`${assertReadOnlySql(buildSql({ list }))};`);
     return;
+  }
+  // ids leave the terminal only on purpose: before any connection
+  if (list && !listIdsAcknowledged(args)) {
+    console.error(
+      `${TAG}: --list prints tenant, invoice and product IDS (no names). Run it in a terminal, or add --ack-ids-only (or set SA773_ACK_IDS_ONLY=1) to say the output is ids only and where it goes.`,
+    );
+    process.exit(2);
   }
   // B768: owner-run read-only reports reach the database through the ONE shared resolver.
   const { resolveReportDbUrl } = await import("./lib/report-db-url.mjs");

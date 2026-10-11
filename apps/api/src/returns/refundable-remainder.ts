@@ -14,6 +14,10 @@
  *       a pending, approved or received return already reserves the goods). An INLINE return counts its stored item money
  *       (subtotal + taxAmount + categoryTax). A STANDARD return stores no item money, so its value is its qty at the pool's own
  *       gross average, the figure the goods are worth;
+ *       DEVIATION FROM THE RULING TEXT (declared, for the Lead to sign off): a return whose OWN credit note is VOID reserves
+ *       nothing - the credit was taken back, so the goods are creditable again (the per-line headroom has always reopened on a
+ *       void, and this keeps that). It stays money-safe because a VOID note's credit can no longer be spent; a return with NO credit note
+ *       (a recorded refund) always reserves;
  *   (b) standalone CreditNoteItem rows on the pool's lines whose credit note is not VOID and is not a counted Return's own credit
  *       note (that money is already in (a); never twice). Gross = amount + categoryTax + roundMoney(amount x the line's stored
  *       taxRate);
