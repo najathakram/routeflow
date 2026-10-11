@@ -42,7 +42,7 @@ const USES_CLASSIFIER: Record<string, string> = {
   "invoices/invoices.service.ts": "list enrichment (findAll), sendEmail and sendReminder balances",
   "invoices/invoice-kpi-summary.ts": "KPI tiles: per-invoice balance (confirmedBalance)",
   "customers/customer-statement.ts":
-    "statement overdueAmount (row 309), buyer's and operator's: classifyInvoiceBalance in the statement's tenant zone, one zone lookup per statement",
+    "statement overdueAmount (row 309), buyer's and operator's: classifyInvoiceBalance in the statement's tenant zone, one zone lookup per statement. SIGNED by design (row 326): the statement's outstandingAmount (the Balance Due tile) is the net position over open invoices, sum(total - confirmed) with no clamp, so an overpaid open invoice nets the figure down (a customer in credit reads <= 0, which the tile colours as credit); it reconciles with the ledger's per-invoice signed runningBalance, and overdueAmount stays clamped at 0",
   "bookkeeping/bookkeeping.service.ts":
     "receivables / aging / AR / per-customer balances: clamped confirmedBalance per invoice (row 310). SIGNED by design: the per-customer closingBalance (invoiced - received, the Dr/Cr net position) and recordPayment's capacity guard (totalOwed - alreadyPaid)",
   "buyer/buyer.controller.ts":
@@ -259,6 +259,30 @@ describe("SA-770 — BALANCE_CLAMPED readers behave (overpaid adds 0; a genuinel
       const want = rows.length === 1 ? 0 : 50;
       expect((await svc.getMyStatement({ sub: "u1" } as any)).overdueAmount).toBe(want);
       expect((await svc.getStatementForOperator("c1")).overdueAmount).toBe(want);
+    }
+  });
+
+  // Row 326: the statement's outstandingAmount is the SIGNED net position (by design, see the
+  // USES_CLASSIFIER note on customers/customer-statement.ts): an overpaid open invoice nets it down
+  // (overpaid 100 - 110 = -10; with a 50 invoice owed = 40), unlike overdueAmount, which is clamped.
+  it("customers: outstandingAmount is the signed net over open invoices (overpaid nets down)", async () => {
+    const prisma = createMockPrisma();
+    prisma.customer.findFirst.mockResolvedValue({ id: "c1", userId: "u1", businessName: "Acme" });
+    prisma.creditNote.findMany.mockResolvedValue([]);
+    prisma.advancePayment.findMany.mockResolvedValue([]);
+    prisma.order.findMany.mockResolvedValue([]);
+    const svc = Object.create(CustomersService.prototype) as CustomersService;
+    Object.assign(svc as any, {
+      prisma,
+      findCustomerOrThrow: jest.fn().mockResolvedValue({ id: "c1" }),
+    });
+    for (const [rows, want] of [
+      [[overpaid], -10],
+      [[overpaid, owes], 40],
+    ] as const) {
+      prisma.invoice.findMany.mockResolvedValue(rows);
+      expect((await svc.getMyStatement({ sub: "u1" } as any)).outstandingAmount).toBe(want);
+      expect((await svc.getStatementForOperator("c1")).outstandingAmount).toBe(want);
     }
   });
 
