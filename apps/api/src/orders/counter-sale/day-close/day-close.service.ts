@@ -365,6 +365,7 @@ export class CounterDayCloseService {
           totals: fold.totals as unknown as Prisma.InputJsonValue,
           notes: a.notes,
           closedAt: cutoff,
+          closedById: a.user.sub, // the user who RE-closed is the closer of this report
           reopenedAt: null,
         },
       });

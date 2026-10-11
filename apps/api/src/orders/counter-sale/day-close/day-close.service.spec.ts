@@ -504,6 +504,25 @@ describe("CounterDayCloseService: reopen and re-close", () => {
     ]);
   });
 
+  it("a re-close names the user who RE-closed as the closer (not the original closer), in the stored row and the snapshot", async () => {
+    const other = { ...user, sub: "u-2", username: "op-two" } as unknown as JwtPayload;
+    const { service, fake } = setup({
+      users: { "u-op": "op-acme", "u-2": "op-two" },
+      clock: [
+        T("2026-10-08T16:00:00.000Z"),
+        T("2026-10-08T17:00:00.000Z"),
+        T("2026-10-08T18:30:00.000Z"),
+      ],
+    });
+    const first = await service.close({ openingFloat: 20, denominations: tens(3) }, user);
+    expect(first.closedById).toBe("u-op");
+    await service.reopen(first.id, user);
+    const again = await service.close({ openingFloat: 20, denominations: tens(3) }, other);
+    expect(again.closedById).toBe("u-2");
+    expect(again.closedByName).toBe("op-two");
+    expect(fake.closes[0].closedById).toBe("u-2");
+  });
+
   it("a re-close whose compare-and-set loses (the row is no longer reopened) is a 409 DAY_ALREADY_CLOSED", async () => {
     const { service, fake } = setup();
     fake.seedClose(
