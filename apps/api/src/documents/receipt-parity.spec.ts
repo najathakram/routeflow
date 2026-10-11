@@ -605,6 +605,12 @@ describe("cash handed over: ONE change figure (the server's servedChange) on eve
     expect(moneyRows(s.emailModel)).toEqual(moneyRows(s.reprint));
   });
 
+  it("an interrupted tender (cash 10 of 37.25 recorded, 50 handed over) serves no change on any stored surface", () => {
+    const s = cash({ payments: [{ method: "CASH", amount: "10.00" }] });
+    expect(s.row.change).toBeNull();
+    for (const m of [s.reprint, s.emailModel]) expect(m.change).toBeNull();
+  });
+
   it("S1 a card payment voided after the sale does not move the change: it is the stored CASH row's (32.75) on every surface", () => {
     const s = cash({
       payments: [

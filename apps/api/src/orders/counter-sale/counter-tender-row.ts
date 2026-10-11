@@ -103,6 +103,39 @@ export function counterTenderCashRows<
 }
 
 /**
+ * What the sale's tender HAD TAKEN at its peak: the counter-tender rows (CASH / CREDIT_CARD / CHECK of this sale's set) plus
+ * the credit applied up front (CREDIT_NOTE / ADVANCE), counting a row that was voided afterwards. A tender that reached the
+ * total "completed at the time", so a card payment voided later or a total cut later does not reopen it; an interrupted
+ * tender (one leg's rows only part-written) stays short of the total for good. Pass every payment row of the sale.
+ * scan-ok: draft-payment-not-void — a VOID row is counted on purpose here (the tender completed when it was taken), a DRAFT
+ * row is never a taken payment.
+ */
+export function tenderTakenCents(
+  orderId: string,
+  payments: ReadonlyArray<{
+    method?: string;
+    status?: string;
+    amount: unknown;
+    paymentGroupId?: string | null;
+  }>,
+): number {
+  // group membership is judged with the voided rows in the set (a sale whose leg rows were all voided is still a grouped sale)
+  const set = tenderSetOf(
+    orderId,
+    payments.map((p) => ({ paymentGroupId: p.paymentGroupId, status: "PAID" })),
+  );
+  const taken = payments
+    .filter((p) => p.status === "PAID" || p.status === "VOID" || p.status === "PENDING")
+    .filter((p) =>
+      p.method === "CREDIT_NOTE" || p.method === "ADVANCE"
+        ? p.status !== "PENDING"
+        : TENDER_METHODS.has(p.method ?? "") && isCounterTenderGroup(set, p.paymentGroupId),
+    )
+    .reduce((sum, p) => sum + Number(p.amount ?? 0), 0);
+  return Math.round(taken * 100);
+}
+
+/**
  * A live (non-VOID) payment row that is not the counter's tender.
  * scan-ok: draft-payment-not-void — a DRAFT row is live and NOT a settled tender, so it reads FOREIGN (it refuses a void).
  */

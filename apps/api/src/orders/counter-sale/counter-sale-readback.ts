@@ -8,7 +8,7 @@ import type {
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { CounterLeg } from "./counter-sale-legs";
 import { isTender, readStoredTender, type InvoiceRow } from "./counter-sale-tender";
-import { counterTenderCashRows } from "./counter-tender-row";
+import { counterTenderCashRows, tenderTakenCents } from "./counter-tender-row";
 
 export { isTender, type InvoiceRow };
 
@@ -26,21 +26,34 @@ type PayRow = {
  * whichever leg index it is. The cash APPLIED is what the sale's own counter-tender CASH rows hold
  * (`counterTenderCashRows`, the set-level tender rule, PAID rows only): that stored row, never `total - other methods`, so a
  * card row voided later or a total cut later can not move a past sale's change. (That is `counterChange` with
- * `nonCashApplied = total - cash rows`; the total cancels, so no surface needs to pick a total.) null when nothing was
- * tendered or the sale has no cash tender row (a card-only sale). There is no first-tender gate (a card-first split serves
- * change) and no "nothing left to pay" gate. The cash APPLIED (a payment row) is what the till counts, never `tendered`.
+ * `nonCashApplied = total - cash rows`; the total cancels.) null when nothing was tendered or the sale has no cash tender
+ * row (a card-only sale). There is no first-tender gate (a card-first split serves change).
+ *
+ * A POSITIVE change is served only when the tender COMPLETED at the time (`tenderTakenCents`: the sale's tender rows,
+ * voided ones included, reached `total`): the cash handed over beyond a half-written tender is money still owed, not change
+ * (an interrupted cash leg across sibling invoices, 20 of 50 recorded, serves null). A later void or total cut does not
+ * reopen a completed tender. Change 0 needs no such proof. The cash APPLIED (a payment row) is what the till counts,
+ * never `tendered`.
  */
 export function servedChange(
   orderId: string,
   tendered: unknown,
   payments: PayRow[],
+  total: number,
 ): number | null {
   if (tendered == null) return null;
   const cash = counterTenderCashRows(orderId, payments);
   if (cash.length === 0) return null;
   const cashApplied = roundMoney(sumConfirmed(cash));
-  return counterChange({ total: cashApplied, nonCashApplied: 0, tendered: Number(tendered) })
-    .change;
+  const { change } = counterChange({
+    total: cashApplied,
+    nonCashApplied: 0,
+    tendered: Number(tendered),
+  });
+  if (change > 0 && tenderTakenCents(orderId, payments) < Math.round(roundMoney(total) * 100)) {
+    return null;
+  }
+  return change;
 }
 
 /** The counter method of a stored tender (Prisma CREDIT_CARD reads back as CARD); undefined for any other. */
@@ -125,13 +138,11 @@ export function buildCounterSaleResponse(input: {
   }
 
   // Change comes from the STORED cash handed over and the sale's own cash rows (`servedChange`, pricing's
-  // `counterChange`): the same figure the Today's-sales row and the receipt serve.
-  // The LIVE tender response (POST: `legs` present) never hands back money that is still owed: not when the payment was not
-  // recorded, and not a positive change while the stored balance is open (an interrupted tender's unrecorded part is
-  // owed, not change). A stored sale read later (by-key, Today's row, the receipt) reports the stored rows' change as it was.
-  const served = servedChange(order.id, order.counterCashTendered, payments);
-  const change =
-    legs && (!settled || (served != null && served > 0 && balanceDue > 0)) ? null : served;
+  // `counterChange`): the same figure the Today's-sales row and the receipt serve. A response that says the payment was
+  // NOT recorded (live or by-key) carries none; `servedChange` itself withholds a positive change for an interrupted tender.
+  const change = settled
+    ? servedChange(order.id, order.counterCashTendered, payments, total)
+    : null;
 
   // Every leg of the tender in leg order, from STORAGE: the money RECORDED against it (change is not in it)
   // and the rows that hold it. A request leg that recorded nothing (refused, or ON_ACCOUNT) reads amount 0.

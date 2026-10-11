@@ -68,11 +68,11 @@ describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
   it("change is the stored tendered less the cash the sale took (counterChange); null with no cash row", () => {
     const o = rec({ counterCashTendered: "50.00" });
     o.invoices[0].payments = [
-      { method: "CASH", amount: "41.27", status: "PAID" },
+      { method: "CASH", amount: "36.27", status: "PAID" },
       { method: "CREDIT_NOTE", amount: "5.00", status: "PAID" },
     ];
-    // the change is measured against the stored CASH row (41.27), not the total less other methods
-    expect(toTodaysSaleRow(o).change).toBe(8.73);
+    // the credit note covered 5.00 up front, the cash row is 36.27: 50.00 handed over gives back 13.73
+    expect(toTodaysSaleRow(o).change).toBe(13.73);
     expect(toTodaysSaleRow(rec({ counterCashTendered: "50.00" })).change).toBeNull();
     expect(toTodaysSaleRow(rec()).change).toBeNull();
   });
@@ -104,6 +104,14 @@ describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
       { method: "CASH", amount: "20.00", status: "PAID" },
     ];
     expect(toTodaysSaleRow(o).change).toBe(0);
+  });
+
+  it("(SHOULD 1) an interrupted tender (one cash leg across invoices, 20 of 50 recorded, 50 handed over) serves no change", () => {
+    const o = rec({ counterCashTendered: "50.00", total: "50.00" });
+    o.invoices[0].payments = [{ method: "CASH", amount: "20.00", status: "PAID" }];
+    const row = toTodaysSaleRow(o);
+    expect(row.balanceDue).toBe(30);
+    expect(row.change).toBeNull();
   });
 
   it("(S1) a later total cut or a voided card row can not move a past sale's change", () => {

@@ -95,8 +95,6 @@ export function readStoredTender(orderId: string, invoices: InvoiceRow[]): Store
 
 export interface SaleTenderPlan {
   placements: TenderPlacement[];
-  /** Cash handed over beyond what the cash leg places. */
-  changeCents: number;
   /**
    * The cash HANDED OVER by the cash leg (whichever leg index it is), in cents, as requested: `Order.counterCashTendered`.
    * Undefined when the request has no cash leg. At most one cash leg exists (TENDER_RULES), so it is never a sum.
@@ -152,7 +150,6 @@ export function planSaleTender(
   const cashLeg = planned.find((l) => l.method === "CASH");
   const none: SaleTenderPlan = {
     placements: [],
-    changeCents: 0,
     ...(cashLeg ? { cashTenderedCents: cashLeg.amountCents } : {}),
   };
   if (single && (legs[0].method === "ON_ACCOUNT" || owing <= 0)) return none;
@@ -169,7 +166,7 @@ export function planSaleTender(
   if (plan.refusedLegIndexes.length > 0 || cashPlacedNothing) {
     return { ...none, refusal: API_ERROR_CODES.COUNTER_PAYMENT_EXCEEDS_TOTAL };
   }
-  return { ...none, placements: plan.placements, changeCents: plan.changeCents };
+  return { ...none, placements: plan.placements };
 }
 
 const changed = (why: string) =>
@@ -227,9 +224,10 @@ export function assertStoredTenderMatches(
   const cashStored = [...stored.byLeg.values()].some((rows) =>
     rows.some((r) => r.payment.method === "CASH"),
   );
-  // The handed-over amount is compared for a pre-split (ungrouped) sale too: its CASH row plus a stored tendered is a
-  // finished cash sale, and a different amount is another request.
-  if (cashStored && storedTenderedCents != null) {
+  // The handed-over amount is compared whenever one is stored and the request has a cash leg, grouped sale or pre-split,
+  // cash row written or not: an interrupted split (card recorded, cash missing, tendered 40 stored) replayed with Cash 60
+  // is another request, and the unanchored write would otherwise overwrite the 40 and serve the wrong change.
+  if (storedTenderedCents != null && requestCashTenderedCents != null) {
     if (requestCashTenderedCents !== storedTenderedCents) {
       throw changed("the cash handed over is not the amount already taken");
     }

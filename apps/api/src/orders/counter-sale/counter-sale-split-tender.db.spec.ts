@@ -309,6 +309,55 @@ describeDb("split payment — counter sale tender on real Postgres", () => {
     expect(await rowsOf(orderId)).toHaveLength(rows.length);
   });
 
+  const refusedReplay = async (body: unknown, key: string) => {
+    const err: any = await ring(body as never, key).then(
+      () => null,
+      (e) => e,
+    );
+    expect(err?.getStatus?.()).toBe(409);
+    expect(err.getResponse().code).toBe("COUNTER_TENDER_CHANGED");
+  };
+  const storedTendered = async (orderId: string) =>
+    (await raw.order.findFirstOrThrow({ where: { id: orderId } })).counterCashTendered;
+
+  it("an interrupted split (card recorded, cash missing, 50 handed) replayed with a DIFFERENT cash amount is 409 and changes nothing", async () => {
+    twoInvoices();
+    const key = `split-${randomUUID()}`;
+    recordCalls = 0;
+    failRecordAt = 2; // the card lands, the cash leg's first row fails
+    await ring({ payments: split }, key);
+    failRecordAt = null;
+    const orderId = salesByKey.get(key)!;
+    expect(await rowsOf(orderId)).toHaveLength(1);
+    expect(Number(await storedTendered(orderId))).toBe(50);
+
+    await refusedReplay(
+      {
+        payments: [
+          { method: "CARD", amount: 30 },
+          { method: "CASH", amount: 60 },
+        ],
+      },
+      key,
+    );
+    expect(await rowsOf(orderId)).toHaveLength(1);
+    expect(Number(await storedTendered(orderId))).toBe(50);
+    // the same body still finishes it
+    const done = await ring({ payments: split }, key);
+    expect(done).toMatchObject({ paid: 70, change: 10, paymentRecorded: true });
+  });
+
+  it("the legs replayed in another ORDER are 409 (the leg index is the stored identity) and write nothing", async () => {
+    twoInvoices();
+    const key = `split-${randomUUID()}`;
+    await ring({ payments: split }, key);
+    const orderId = salesByKey.get(key)!;
+    const before = await rowsOf(orderId);
+    await refusedReplay({ payments: [...split].reverse() }, key);
+    expect(await rowsOf(orderId)).toHaveLength(before.length);
+    expect(Number(await storedTendered(orderId))).toBe(50);
+  });
+
   it("a held pre-split attempt (an ungrouped CARD row) replayed as the old {payment} never double-charges", async () => {
     nextInvoices = [{ id: randomUUID(), total: 70 }];
     const key = `old-${randomUUID()}`;
