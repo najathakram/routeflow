@@ -4,8 +4,8 @@
  * recordPayment on a COUNTER invoice takes the SHARED counter-close lock as its first statement and refuses 409
  * DAY_CLOSED_FOR_PAYMENT_DATE (with `closedThrough`) a till-CASH payment dated before the latest STANDING close's cutoff.
  * Every other method keeps its true paidAt; a non-counter invoice is unchanged. The counter tender and the pickup tender
- * already hold the shared lock on their pinned connection, so they pass `{ tillLockHeld: true }`: no second lock request
- * (it would queue behind a waiting EXCLUSIVE close), no refusal.
+ * already hold the shared lock on their pinned connection, so they pass `{ tillLockHeld: TILL_LOCK_HELD }`: no second lock
+ * request (it would queue behind a waiting EXCLUSIVE close); the closed-date check still runs.
  */
 jest.mock("./invoice-pdf.service", () => ({
   InvoicePdfService: jest.fn().mockImplementation(() => ({
@@ -17,6 +17,7 @@ jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
 import { Test, TestingModule } from "@nestjs/testing";
 import { InvoiceStatus } from "@prisma/client";
 import { InvoicesService } from "./invoices.service";
+import { TILL_LOCK_HELD } from "./counter-payment-guard";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { NumberingService } from "../import/numbering.service";
@@ -249,18 +250,40 @@ describe("InvoicesService.recordPayment — counter invoice and the day close (S
     });
   });
 
-  describe("{ tillLockHeld: true } (the counter tender and the pickup tender)", () => {
-    it("issues NO lock statement, reads no scope and no close, and does not refuse a dated CASH", async () => {
-      await service.recordPayment("inv-1", pay() as any, { tillLockHeld: true });
+  describe("TILL_LOCK_HELD (the counter tender and the pickup tender)", () => {
+    it("issues NO lock statement but still reads the scope and the close", async () => {
+      await service.recordPayment("inv-1", pay({ paidAt: AFTER }) as any, {
+        tillLockHeld: TILL_LOCK_HELD,
+      });
       expect(lockSql()).toHaveLength(1); // the Invoice FOR UPDATE alone
       expect(lockSql()[0]).toContain("FOR UPDATE");
-      expect(prisma.order.findFirst).not.toHaveBeenCalled();
-      expect(prisma.counterDayClose.findFirst).not.toHaveBeenCalled();
-      expect(written().paidAt).toEqual(new Date(BEFORE));
+      expect(prisma.order.findFirst).toHaveBeenCalled();
+      expect(prisma.counterDayClose.findFirst).toHaveBeenCalled();
     });
 
-    it("without it (opts omitted, or false), the shared lock is the first statement", async () => {
-      await service.recordPayment("inv-1", pay({ paidAt: AFTER }) as any, { tillLockHeld: false });
+    it("still refuses 409 DAY_CLOSED_FOR_PAYMENT_DATE for a CASH payment dated before the latest standing close", async () => {
+      const err: any = await service
+        .recordPayment("inv-1", pay() as any, { tillLockHeld: TILL_LOCK_HELD })
+        .catch((e: unknown) => e);
+      expect(err.getStatus?.()).toBe(409);
+      expect(err.getResponse()).toEqual({
+        code: "DAY_CLOSED_FOR_PAYMENT_DATE",
+        message: "That day is closed. Record it with today's date.",
+        closedThrough: CUTOFF.toISOString(),
+      });
+      expect(lockSql().some((q) => q.includes("pg_advisory_xact_lock_shared"))).toBe(false);
+      expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+    });
+
+    it("the counter tender (paidAt = the DB clock stamped after the lock) still passes", async () => {
+      await service.recordPayment("inv-1", pay({ paidAt: AFTER }) as any, {
+        tillLockHeld: TILL_LOCK_HELD,
+      });
+      expect(written().paidAt).toEqual(new Date(AFTER));
+    });
+
+    it("without it (opts omitted), the shared lock is the first statement", async () => {
+      await service.recordPayment("inv-1", pay({ paidAt: AFTER }) as any, {});
       expect(lockSql()[0]).toContain("pg_advisory_xact_lock_shared");
     });
   });

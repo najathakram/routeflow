@@ -13,6 +13,7 @@ import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
+import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import type { CounterSaleDto } from "./counter-sale.dto";
@@ -347,7 +348,7 @@ export class CounterSaleService {
               reference: dto.payment.reference,
               ...(paidAt ? { paidAt } : {}),
             } as never,
-            { tillLockHeld: true },
+            { tillLockHeld: TILL_LOCK_HELD },
           );
         }
       } catch (e) {

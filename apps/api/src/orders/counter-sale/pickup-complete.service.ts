@@ -13,6 +13,7 @@ import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
+import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import { settleOrderInvoice } from "../order-status-invoicing";
@@ -409,7 +410,7 @@ export class PickupCompleteService {
               reference: payment.reference,
               ...(paidAt ? { paidAt } : {}),
             } as never,
-            { tillLockHeld: true },
+            { tillLockHeld: TILL_LOCK_HELD },
           );
         }
       } catch (e) {

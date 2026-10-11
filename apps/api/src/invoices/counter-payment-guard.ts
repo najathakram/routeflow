@@ -45,12 +45,18 @@ async function scope(
   return registerKey ? { tenantId, registerKey } : null;
 }
 
-/** The transaction's FIRST statement for a counter invoice (the SHARED close lock); a no-op for any other. */
+/**
+ * The transaction's FIRST statement for a counter invoice (the SHARED close lock); a no-op for any other. `held` (only the
+ * `TILL_LOCK_HELD` token) skips JUST this statement: the caller already holds the session-level shared lock on its pinned
+ * connection, and a second shared request from this connection would queue behind a waiting EXCLUSIVE close. It never skips the
+ * scope or the closed-date check.
+ */
 async function lock(
   tx: Parameters<typeof lockCounterClose>[0],
   scope: CounterPaymentScope | null,
+  held?: TillLockHeld,
 ): Promise<void> {
-  if (scope) await lockCounterClose(tx, scope.tenantId, scope.registerKey);
+  if (scope && !held) await lockCounterClose(tx, scope.tenantId, scope.registerKey);
 }
 
 /**
@@ -69,9 +75,16 @@ async function assertOpen(
   }
 }
 
+declare const tillLockHeldBrand: unique symbol;
+/** Type-only brand over `true`: the one value `recordPayment` accepts for "the SHARED close lock is already held". */
+export type TillLockHeld = true & { readonly [tillLockHeldBrand]: never };
+/** Only the counter tender and the pickup hand-over (which hold the lock on their pinned connection) may use this
+ *  (`till-lock-held-callers.spec.ts` pins the importers). */
+export const TILL_LOCK_HELD = true as TillLockHeld;
+
 /** `recordPayment`'s third parameter: the counter tender / pickup already hold the SHARED close lock on their pinned connection. */
 export interface CounterPayOpts {
-  tillLockHeld?: boolean;
+  tillLockHeld?: TillLockHeld;
 }
 
 type DatedTx = Parameters<typeof dbClockNow>[0] & {
@@ -97,13 +110,14 @@ async function assertDatedOk(
   orderId: string | null,
   dto: { method: string; paidAt?: Date | string | null },
   status: string,
+  paymentGroupId: string | null = null, // the STORED group of an edited row (a new payment is ungrouped)
 ): Promise<Date> {
   const given = dto.paidAt ? new Date(dto.paidAt) : null;
   // The row recordPayment is about to store: ungrouped, and a CHECK is stored RECORDED.
   const row = {
     method: dto.method,
     status,
-    paymentGroupId: null,
+    paymentGroupId,
     checkStatus: dto.method === "CHECK" ? "RECORDED" : null,
   };
   if (!scope || !isTillCashRow(orderId ?? "", row)) return given ?? new Date();
@@ -122,5 +136,37 @@ async function assertDatedOk(
   return at;
 }
 
+/**
+ * `updatePayment`, under the shared lock: an edit that TURNS a payment into a till-CASH row (`isTillCashRow`) dated before the
+ * latest standing close (moves a CASH row's `paidAt` earlier, or changes a CHECK / card to CASH while dated before it, or
+ * confirms a DRAFT one) is refused 409 DAY_CLOSED_FOR_PAYMENT_DATE, `assertDatedOk`'s body. A row that already was till-CASH and
+ * keeps its date is not judged here: a date inside a closed window is `assertOpen`'s refusal. A no-op for a non-counter invoice.
+ */
+async function assertEditDated(
+  tx: DatedTx,
+  scope: CounterPaymentScope | null,
+  orderId: string | null,
+  stored: {
+    method: string;
+    status: string;
+    paymentGroupId?: string | null;
+    checkStatus?: string | null;
+    paidAt: Date;
+  },
+  dto: { method: string; status?: string | null; paidAt?: Date | string | null },
+): Promise<void> {
+  if (!scope) return;
+  if (!dto.paidAt && isTillCashRow(orderId ?? "", stored)) return;
+  const status = dto.status ?? stored.status ?? "PAID";
+  await assertDatedOk(
+    tx,
+    scope,
+    orderId,
+    { method: dto.method, paidAt: dto.paidAt ?? stored.paidAt },
+    status,
+    stored.paymentGroupId ?? null,
+  );
+}
+
 /** One namespace so the 5.9k-line invoices service imports it in a single line (size ratchet). */
-export const counterPay = { scope, lock, assertOpen, assertDatedOk };
+export const counterPay = { scope, lock, assertOpen, assertDatedOk, assertEditDated };

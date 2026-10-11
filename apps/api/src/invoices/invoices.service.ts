@@ -4573,10 +4573,10 @@ export class InvoicesService {
     // Refuse a null tenant BEFORE the transaction opens — same policy as sites
     // 2/3 (D3): a PAY number is never minted from the shared "singleton" row.
     const { tenantId, tenantShort } = this.requirePaymentTenant();
-    const till = await counterPay.scope(this.prisma, id, !opts?.tillLockHeld); // SA-750r3
+    const till = await counterPay.scope(this.prisma, id); // SA-750r3: always (the closed-date check runs even when the lock is held)
     return withAfterCommit(this.prisma, async (tx, after) => {
       // SA-750r3: a counter sale's shared close lock first (the tender/pickup hold it already), then the invoice row
-      await counterPay.lock(tx, till);
+      await counterPay.lock(tx, till, opts?.tillLockHeld);
       await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
 
       const inv = await tx.invoice.findUnique({
@@ -4994,6 +4994,7 @@ export class InvoicesService {
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
       await counterPay.assertOpen(tx, till, payment.paidAt, dto.paidAt); // old AND new date
+      await counterPay.assertEditDated(tx, till, inv.orderId, payment, dto); // till-CASH before the close
 
       // F03/R5/T-B81: read the STORED method, not just the incoming dto — the same
       // guard deletePayment (:4653) and voidPayment (:4941) already have. Neither
@@ -5443,8 +5444,7 @@ export class InvoicesService {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const till = await counterPay.scope(this.prisma, invoiceId); // SA-750r3: counter sales only
     return withAfterCommit(this.prisma, async (tx, after) => {
-      // SA-750r3: a counter sale's shared close lock is the FIRST statement, then the closed-window check on the payment's date,
-      // then the shared single-payment void (payment-void-tx.ts, which takes the Invoice FOR UPDATE).
+      // SA-750r3: the shared close lock FIRST, then the window check on the payment's date, then the void (payment-void-tx.ts).
       await counterPay.lock(tx, till);
       if (till) {
         const dated = await tx.invoicePayment.findFirst({

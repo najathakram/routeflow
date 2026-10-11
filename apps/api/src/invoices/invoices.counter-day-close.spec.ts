@@ -82,6 +82,13 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
     prisma.tenantTransaction.mockImplementation((fn: any) => fn(prisma));
     // The fake close table: the row `counterWindowClosed` asks for (in force, covering `at`, same register).
     prisma.counterDayClose.findFirst.mockImplementation(async ({ where }: any) => {
+      if (!where.windowStart) {
+        // assertDatedOk: the latest STANDING close of the register (its windowEnd is the cutoff)
+        const standing = closes
+          .filter((c) => c.registerKey === where.registerKey && c.reopenedAt == null)
+          .sort((a, b) => b.windowEnd.getTime() - a.windowEnd.getTime());
+        return standing[0] ? { windowEnd: standing[0].windowEnd } : null;
+      }
       const at: Date = where.windowStart.lte;
       return (
         closes.find(
@@ -274,6 +281,77 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
       paths[2].arrange(AFTER);
       await edit("2026-10-10T09:00:00Z");
       expect(prisma.invoicePayment.update).toHaveBeenCalled();
+    });
+  });
+
+  describe("updatePayment turning a payment into a till-CASH row dated before the latest standing close", () => {
+    const ANCIENT = new Date("2026-10-01T12:00:00Z"); // before the first closed window: assertOpen has nothing to say
+    const editTo = (dto: Record<string, unknown>) =>
+      service.updatePayment("inv-1", "pay-1", { amount: 30, method: "CASH", ...dto } as any);
+    const stored = (over: Record<string, unknown>) => {
+      paths[2].arrange(AFTER);
+      prisma.invoice.findUnique.mockResolvedValue(
+        invoiceRow([payRow({ paidAt: ANCIENT, ...over })]),
+      );
+    };
+    const refusal = {
+      response: {
+        code: "DAY_CLOSED_FOR_PAYMENT_DATE",
+        message: "That day is closed. Record it with today's date.",
+        closedThrough: WINDOW.end.toISOString(),
+      },
+    };
+
+    it("moving a CASH payment's paidAt earlier than the cutoff is refused 409 DAY_CLOSED_FOR_PAYMENT_DATE", async () => {
+      counterOrder();
+      paths[2].arrange(AFTER);
+      await expect(editTo({ paidAt: ANCIENT.toISOString() })).rejects.toMatchObject(refusal);
+      expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("changing a CHECK dated before the cutoff to CASH is refused", async () => {
+      counterOrder();
+      stored({ method: "CHECK" });
+      await expect(editTo({})).rejects.toMatchObject(refusal);
+      expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
+    });
+
+    it("changing that CHECK to a card (moves no close total) is allowed", async () => {
+      counterOrder();
+      stored({ method: "CHECK" });
+      await editTo({ method: "CREDIT_CARD" });
+      expect(prisma.invoicePayment.update).toHaveBeenCalled();
+    });
+
+    it("an amount edit of a CASH row that already was till cash and keeps its date is not judged here", async () => {
+      counterOrder();
+      stored({});
+      await editTo({ amount: 25 });
+      expect(prisma.invoicePayment.update).toHaveBeenCalled();
+    });
+
+    it("moving a CASH payment to a date after the cutoff is allowed", async () => {
+      counterOrder();
+      paths[2].arrange(AFTER);
+      await editTo({ paidAt: "2026-10-10T09:00:00Z" });
+      expect(prisma.invoicePayment.update).toHaveBeenCalled();
+    });
+
+    it("with the latest close REOPENED there is no standing cutoff: allowed", async () => {
+      counterOrder();
+      closes[0].reopenedAt = new Date();
+      paths[2].arrange(AFTER);
+      await editTo({ paidAt: ANCIENT.toISOString() });
+      expect(prisma.invoicePayment.update).toHaveBeenCalled();
+    });
+
+    it("a NON-counter invoice behaves as today: no close read", async () => {
+      prisma.order.findFirst.mockResolvedValue(null);
+      paths[2].arrange(AFTER);
+      await editTo({ paidAt: ANCIENT.toISOString() });
+      expect(prisma.invoicePayment.update).toHaveBeenCalled();
+      expect(prisma.counterDayClose.findFirst).not.toHaveBeenCalled();
     });
   });
 
