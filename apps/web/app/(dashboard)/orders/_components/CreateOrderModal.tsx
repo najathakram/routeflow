@@ -1856,14 +1856,15 @@ export function CreateOrderModal({
         // B564: the Modal footer is a `justify-end` flex row, so four buttons wider than a
         // 390px sheet overflowed off the LEFT edge and clipped Minimize. Under `sm` the save
         // actions get their own row and Minimize sits below them, full-width; from `sm` up
-        // this is the original single row with Minimize pinned left.
+        // this is the original single row with Minimize pinned left. Every footer button is a 44px touch
+        // target under `sm` (max-sm:h-11); from `sm` up the Button's own height is untouched.
         <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
           {/* Minimize parks the whole builder into the bottom-left draft dock
               (pos-cost-roles-spec §2). Left-aligned, away from the save actions. */}
           <Button
             variant="ghost"
             type="button"
-            className="w-full sm:mr-auto sm:w-auto"
+            className="w-full max-sm:h-11 sm:mr-auto sm:w-auto"
             onClick={handleMinimize}
             disabled={!canMinimize || savingDraft}
             loading={savingDraft}
@@ -1875,12 +1876,13 @@ export function CreateOrderModal({
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
           <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-            <Button variant="ghost" type="button" onClick={handleDismiss}>
+            <Button variant="ghost" type="button" className="max-sm:h-11" onClick={handleDismiss}>
               Cancel
             </Button>
             <Button
               variant="secondary"
               type="button"
+              className="max-sm:h-11"
               loading={createOrder.isPending}
               disabled={createOrder.isPending || fulfilmentPending}
               onClick={onSaveDraft}
@@ -1891,6 +1893,7 @@ export function CreateOrderModal({
               <Button
                 variant="secondary"
                 type="button"
+                className="max-sm:h-11"
                 loading={createOrder.isPending}
                 disabled={
                   createOrder.isPending || fulfilmentPending || lineItems.some(isPendingDefaultUnit)
@@ -1906,6 +1909,7 @@ export function CreateOrderModal({
             <Button
               type="submit"
               form="create-order-form"
+              className="max-sm:h-11"
               onClick={() => {
                 posFinishRef.current = "invoice";
               }}
