@@ -1,3 +1,4 @@
+import { pickupTenderGroupId } from "../pickup-tender-group";
 import {
   foldDayClose,
   expectedCashOf,
@@ -13,7 +14,7 @@ const pay = (over: Partial<WindowPayment> & { amount: number }): WindowPayment =
   status: "PAID",
   paymentGroupId: null,
   checkStatus: null,
-  invoice: { orderId: "o-1" },
+  invoice: { orderId: "o-1", order: { counterSale: true } }, // a counter sale unless a test says otherwise
   ...over,
 });
 const facts = (over: Partial<WindowFacts> = {}): WindowFacts => ({
@@ -203,5 +204,92 @@ describe("foldDayClose: the summary", () => {
       ].sort(),
     );
     expect(JSON.stringify(f.totals)).not.toMatch(/customer|invoice|order/i);
+  });
+});
+
+/** SA-750r3 r-note (Train 4 meets day close): a POS-mode pickup hand-over's cash is till cash; a driver / office row is not. */
+describe("foldDayClose: a POS-mode pickup hand-over (a NON-counter order)", () => {
+  const PICKUP_ORDER = "o-pickup";
+  const nonCounter = (orderId: string) => ({ orderId, order: { counterSale: false } });
+  const handOver = (amount: number, over: Partial<WindowPayment> = {}) =>
+    pay({
+      amount,
+      paymentGroupId: pickupTenderGroupId(PICKUP_ORDER),
+      invoice: nonCounter(PICKUP_ORDER),
+      ...over,
+    });
+
+  it("(1) its own-group cash row is in tillCash, moneyIn.cash and the expected cash", () => {
+    const f = foldDayClose(facts({ payments: [pay({ amount: 30 }), handOver(20)] }));
+    expect(f.tillCash).toBe(50);
+    expect(f.totals.moneyIn).toEqual({ cash: 50, card: 0, check: 0, other: 0, total: 50 });
+    expect(f.totals.notAtTill).toBe(0);
+    expect(expectedCashOf(100, f)).toBe(150);
+  });
+
+  it("a hand-over card tender is money in by method, never cash", () => {
+    const f = foldDayClose(facts({ payments: [handOver(15, { method: "CREDIT_CARD" })] }));
+    expect(f.tillCash).toBe(0);
+    expect(f.totals.moneyIn).toEqual({ cash: 0, card: 15, check: 0, other: 0, total: 15 });
+  });
+
+  it("(2) a driver / route cash row on a non-counter order (random group) is NOT till cash: not taken at the till", () => {
+    const f = foldDayClose(
+      facts({
+        payments: [
+          pay({
+            amount: 40,
+            paymentGroupId: "5b0f4a6e-2b0a-4c53-9a54-6f1c8d1f2a11",
+            invoice: nonCounter("o-delivery"),
+          }),
+        ],
+      }),
+    );
+    expect(f.tillCash).toBe(0);
+    expect(f.totals.moneyIn.cash).toBe(0);
+    expect(f.totals.notAtTill).toBe(40);
+  });
+
+  it("(3) a non-counter order's UNGROUPED cash row (an office payment) is NOT till cash: not taken at the till", () => {
+    const f = foldDayClose(
+      facts({ payments: [pay({ amount: 12.5, invoice: nonCounter(PICKUP_ORDER) })] }),
+    );
+    expect(f.tillCash).toBe(0);
+    expect(f.totals.notAtTill).toBe(12.5);
+  });
+
+  it("another order's pickup group id on this order is not its tender", () => {
+    const f = foldDayClose(
+      facts({
+        payments: [
+          pay({
+            amount: 9,
+            paymentGroupId: pickupTenderGroupId("o-other"),
+            invoice: nonCounter(PICKUP_ORDER),
+          }),
+        ],
+      }),
+    );
+    expect(f.tillCash).toBe(0);
+    expect(f.totals.notAtTill).toBe(9);
+  });
+
+  it("(5) a counter order's ungrouped cash still counts, and its pickup-group row does not", () => {
+    const f = foldDayClose(
+      facts({
+        payments: [
+          pay({ amount: 30 }),
+          pay({ amount: 5, paymentGroupId: pickupTenderGroupId("o-1") }),
+        ],
+      }),
+    );
+    expect(f.tillCash).toBe(30);
+    expect(f.totals.notAtTill).toBe(5);
+  });
+
+  it("a payment row with no order kind reads as non-counter: an ungrouped row never silently counts", () => {
+    const f = foldDayClose(facts({ payments: [pay({ amount: 8, invoice: { orderId: "o-1" } })] }));
+    expect(f.tillCash).toBe(0);
+    expect(f.totals.notAtTill).toBe(8);
   });
 });

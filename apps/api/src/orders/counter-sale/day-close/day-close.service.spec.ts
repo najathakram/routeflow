@@ -40,7 +40,7 @@ const cash = (amount: number): WindowPayment => ({
   method: "CASH",
   status: "PAID",
   paymentGroupId: null,
-  invoice: { orderId: "o-1" },
+  invoice: { orderId: "o-1", order: { counterSale: true } },
 });
 const facts = (over: Partial<WindowFacts> = {}): WindowFacts => ({
   sales: { _count: { _all: 2 }, _sum: { total: 40 } },

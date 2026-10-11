@@ -232,6 +232,22 @@ describe("InvoicesService.recordPayment — counter invoice and the day close (S
     });
   });
 
+  describe("the payment's REAL group id decides whether it is till cash (isTillCashRow)", () => {
+    it("a backdated CASH row recorded WITH a foreign payment group is not till cash: it keeps its true date", async () => {
+      await service.recordPayment("inv-1", pay() as any, {
+        paymentGroupId: "5b0f4a6e-2b0a-4c53-9a54-6f1c8d1f2a11",
+      });
+      expect(written().paidAt).toEqual(new Date(BEFORE));
+      expect(written().paymentGroupId).toBe("5b0f4a6e-2b0a-4c53-9a54-6f1c8d1f2a11");
+    });
+
+    it("the same row UNGROUPED is till cash and is refused", async () => {
+      await expect(service.recordPayment("inv-1", pay() as any, {})).rejects.toMatchObject({
+        response: { code: "DAY_CLOSED_FOR_PAYMENT_DATE" },
+      });
+    });
+  });
+
   describe("a NON-counter invoice is unchanged", () => {
     it("backdated CASH: no close-lock statement, no close read, written with its date", async () => {
       prisma.order.findFirst.mockResolvedValue({ counterSale: false, registerKey: null });

@@ -346,6 +346,19 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
       expect(prisma.invoicePayment.update).toHaveBeenCalled();
     });
 
+    it("a stored CASH row that carries a foreign payment group is not till cash: moving it earlier is allowed", async () => {
+      counterOrder();
+      stored({ paymentGroupId: "5b0f4a6e-2b0a-4c53-9a54-6f1c8d1f2a11" });
+      await editTo({ paidAt: ANCIENT.toISOString() });
+      expect(prisma.invoicePayment.update).toHaveBeenCalled();
+    });
+
+    it("the same stored CASH row UNGROUPED is till cash: moving it earlier is refused", async () => {
+      counterOrder();
+      stored({ paymentGroupId: null });
+      await expect(editTo({ paidAt: ANCIENT.toISOString() })).rejects.toMatchObject(refusal);
+    });
+
     it("a NON-counter invoice behaves as today: no close read", async () => {
       prisma.order.findFirst.mockResolvedValue(null);
       paths[2].arrange(AFTER);

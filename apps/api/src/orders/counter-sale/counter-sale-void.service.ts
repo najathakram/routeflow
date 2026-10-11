@@ -35,6 +35,9 @@ import { registerKeyOfOrder } from "../../returns/counter-close-lock";
 import { counterCloseShared } from "./counter-tender-window";
 import { isCounterTenderRow, isForeignPaymentRow } from "./counter-tender-row";
 
+/** The void only ever sees a counter-sale order (step 1 refuses any other): the kind the tender predicate must be told. */
+const COUNTER_ORDER = { counterSale: true } as const;
+
 /** How long a void waits for the sale's counter-tender lock before answering 503 (SA-762r F2, G6). */
 const VOID_LOCK_WAIT_MS = 10_000;
 
@@ -229,7 +232,8 @@ export class CounterSaleVoidService {
             },
             orderBy: [{ invoiceId: "asc" }, { createdAt: "asc" }, { id: "asc" }],
           });
-    if (payments.some((p) => isForeignPaymentRow(orderId, p))) throw counterVoidForeignPayment();
+    if (payments.some((p) => isForeignPaymentRow(orderId, p, COUNTER_ORDER)))
+      throw counterVoidForeignPayment();
 
     // 7. The window: the sale's createdAt on today's day in the tenant zone, read again here in the tx.
     const tz = await tenantTimeZone({
@@ -243,12 +247,16 @@ export class CounterSaleVoidService {
     });
     if (!allowed) throw counterVoidNotToday();
 
-    const tender = payments.filter((p) => isCounterTenderRow(orderId, p));
+    const tender = payments.filter((p) => isCounterTenderRow(orderId, p, COUNTER_ORDER));
     // 7b. A closed day's totals never move (SA-750r3), evaluated under the shared close lock before any write: the sale's own
     // time (it counts as a sale of its day) and every tender payment this void reverses (money in, dated by paidAt).
     await counterPay.assertOpen(
       tx,
-      { tenantId: this.prisma.getTenantId()!, registerKey: registerKeyOfOrder(order)! },
+      {
+        tenantId: this.prisma.getTenantId()!,
+        registerKey: registerKeyOfOrder(order)!,
+        counterSale: true,
+      },
       order.createdAt,
       ...tender.map((p) => p.paidAt),
     );

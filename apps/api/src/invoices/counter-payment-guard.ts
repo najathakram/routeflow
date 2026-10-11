@@ -15,6 +15,8 @@ import { isTillCashRow } from "../orders/counter-sale/counter-till-cash";
 export interface CounterPaymentScope {
   tenantId: string;
   registerKey: string;
+  /** The order's kind, for the till-cash predicate (the scope exists for counter sales only today). */
+  counterSale: boolean;
 }
 
 type ScopeReader = {
@@ -42,7 +44,7 @@ async function scope(
     select: { counterSale: true, registerKey: true },
   });
   const registerKey = registerKeyOfOrder(order);
-  return registerKey ? { tenantId, registerKey } : null;
+  return registerKey ? { tenantId, registerKey, counterSale: order?.counterSale === true } : null;
 }
 
 /**
@@ -120,7 +122,7 @@ async function assertDatedOk(
     paymentGroupId,
     checkStatus: dto.method === "CHECK" ? "RECORDED" : null,
   };
-  if (!scope || !isTillCashRow(orderId ?? "", row)) return given ?? new Date();
+  if (!scope || !isTillCashRow(orderId ?? "", row, scope)) return given ?? new Date();
   const at = given ?? (await dbClockNow(tx));
   const close = await tx.counterDayClose.findFirst({
     where: { tenantId: scope.tenantId, registerKey: scope.registerKey, reopenedAt: null },
@@ -156,7 +158,7 @@ async function assertEditDated(
   dto: { method: string; status?: string | null; paidAt?: Date | string | null },
 ): Promise<void> {
   if (!scope) return;
-  if (!dto.paidAt && isTillCashRow(orderId ?? "", stored)) return;
+  if (!dto.paidAt && isTillCashRow(orderId ?? "", stored, scope)) return;
   const status = dto.status ?? stored.status ?? "PAID";
   await assertDatedOk(
     tx,

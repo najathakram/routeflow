@@ -2,13 +2,15 @@ import { InvoiceStatus } from "@prisma/client";
 import type { PrismaService } from "../../../prisma/prisma.service";
 import {
   creditNotesInWindowWhere,
+  handOverCandidatesWhere,
   liveCounterSalesWhere,
   paidOnDaysSalesWhere,
   salePaymentsWhere,
   windowReturnsWhere,
   type DayWindow,
 } from "../counter-sale-today";
-import type { WindowFacts } from "./day-close-fold";
+import { pickupTenderGroupId } from "../pickup-tender-group";
+import type { WindowFacts, WindowPayment } from "./day-close-fold";
 import { registerOrderWhere } from "./day-close-register";
 
 type Db = ReturnType<PrismaService["forTenant"]>;
@@ -38,17 +40,40 @@ export async function readWindowFacts(
     ...inWindow,
     invoice: { ...inWindow.invoice, status: { not: InvoiceStatus.VOID } },
   };
-  const payments = await db.invoicePayment.findMany({
+  const paymentSelect = {
+    amount: true,
+    method: true,
+    status: true,
+    paymentGroupId: true,
+    checkStatus: true,
+    invoice: { select: { orderId: true, order: { select: { counterSale: true } } } },
+  } as const;
+  const counterPayments = await db.invoicePayment.findMany({
     where: { AND: [taken, { invoice: { order: reg } }] },
-    select: {
-      amount: true,
-      method: true,
-      status: true,
-      paymentGroupId: true,
-      checkStatus: true,
-      invoice: { select: { orderId: true } },
-    },
+    select: paymentSelect,
   });
+  // SA-750r3 r-note (Train 4): a POS-mode pickup hand-over's tender is till cash of the register its order is stamped on. The
+  // candidates are the Today's-sales hand-over query (PAID, dated in the window, non-counter PICKUP orders, group id set) with
+  // the close's own rules on top (only a VOID invoice drops its payments; the register filter on the order); the v5 group id
+  // cannot be computed in SQL, so the rows are matched here. Counter sales are not read twice: `counterSale: false` is disjoint.
+  const handOverBase = handOverCandidatesWhere(tenantId, w);
+  const handOverRows = await db.invoicePayment.findMany({
+    where: {
+      AND: [
+        {
+          ...handOverBase,
+          invoice: { ...handOverBase.invoice, status: { not: InvoiceStatus.VOID } },
+        },
+        { invoice: { order: reg } },
+      ],
+    },
+    select: paymentSelect,
+  });
+  const handOvers: WindowPayment[] = handOverRows.filter(
+    (r) =>
+      r.invoice?.orderId != null && r.paymentGroupId === pickupTenderGroupId(r.invoice.orderId),
+  );
+  const payments: WindowPayment[] = [...counterPayments, ...handOvers];
   const paidOnSales = await db.invoicePayment.aggregate({
     where: { AND: [paidOnDaysSalesWhere(tenantId, w), { invoice: { order: reg } }] },
     _sum: { amount: true },

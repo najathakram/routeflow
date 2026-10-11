@@ -12,19 +12,23 @@ import {
 
 /**
  * Counter day close: the PURE half. The Today's-sales fold (`foldSummary`) over a close window, with the till-cash rules applied:
- * a payment is TILL money only when it is a counter tender row (`isCounterTenderRow`, the one predicate the void shares); a
+ * a payment is TILL money only when it is a counter tender row (`isCounterTenderRow`, the one predicate the void shares, told the
+ * order's kind: a counter sale's ungrouped row, or a POS-mode pickup hand-over's own-group row); a
  * payment on a counter invoice that is not (an office or driver payment, a deposited check) is shown apart as `notAtTill` and
  * never enters the expected cash. Store-credit applications are not money in. A refund with no recorded tender is never cash.
  */
 
-/** One PAID payment read in the window, with the invoice's order id (the predicate's first argument). */
+/**
+ * One PAID payment read in the window, with the invoice's order id and the order's kind (the predicate's arguments). The facts read
+ * a counter sale's payments AND a POS-mode pickup hand-over's tender (a non-counter order's row carrying its pickup group id).
+ */
 export interface WindowPayment {
   amount: unknown;
   method: string;
   status: string;
   paymentGroupId?: string | null;
   checkStatus?: string | null;
-  invoice?: { orderId: string | null } | null;
+  invoice?: { orderId: string | null; order?: { counterSale: boolean | null } | null } | null;
 }
 
 /** What the window's queries returned; `foldDayClose` is the only thing that reads it. */
@@ -54,7 +58,11 @@ export function foldDayClose(facts: WindowFacts): DayCloseFold {
     const amount = num(p.amount);
     if (CREDIT_APPLICATIONS.includes(p.method)) {
       groups.set(p.method, roundMoney((groups.get(p.method) ?? 0) + amount));
-    } else if (isCounterTenderRow(p.invoice?.orderId ?? "", p)) {
+    } else if (
+      isCounterTenderRow(p.invoice?.orderId ?? "", p, {
+        counterSale: p.invoice?.order?.counterSale,
+      })
+    ) {
       groups.set(p.method, roundMoney((groups.get(p.method) ?? 0) + amount));
     } else {
       notAtTill = roundMoney(notAtTill + amount);
