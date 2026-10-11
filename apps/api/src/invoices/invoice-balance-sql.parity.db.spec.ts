@@ -15,7 +15,14 @@
  * application. All are SENT (an open status): the TS `isSettled` shortcut (PAID / VOID /
  * WRITTEN_OFF => 0) is a STATUS rule the readers apply through their status filter, not part of
  * the payment arithmetic this predicate pins.
+ *
+ * Rows 308 / 309 / 318b (the overdue-area sweep) add three cases at the end: the tenant-ZONE case (Auckland
+ * and Chicago around the cutoff instant: SQL ids, classifier, findAll row flag, filter and KPI agree), a past-due
+ * DRAFT with a balance (overdue in no path) and the customer statement's overdue figure for an invoice due today.
  */
+jest.mock("./invoice-pdf.service", () => ({ InvoicePdfService: jest.fn() }));
+jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
+
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -33,6 +40,8 @@ import { overdueCutoff } from "../common/calendar-date";
 import { markOverdueForTenant } from "./overdue-sweep.service";
 import { applyInvoiceStatusFilters } from "./invoice-list-query";
 import { computeInvoiceKpiSummary } from "./invoice-kpi-summary";
+import { InvoicesService } from "./invoices.service";
+import { buildMyStatement, buildOperatorStatement } from "../customers/customer-statement";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -152,7 +161,7 @@ describeDb("balanceDueSql — SQL <-> TS parity (SA-770), real Postgres", () => 
         tenantId: tenant.id,
       },
     });
-    return { tenantId: tenant.id, customerId: customer.id };
+    return { tenantId: tenant.id, customerId: customer.id, userId: user.id };
   }
 
   async function seedInvoice(
@@ -420,5 +429,171 @@ describeDb("balanceDueSql — SQL <-> TS parity (SA-770), real Postgres", () => 
       ),
     );
     expect(kpi.overdue).toBe(35);
+  });
+
+  // ─── Rows 308 / 309 / 318b: the overdue-area sweep ───────────────────────────────────────────────────────
+
+  /** Fake ONLY `Date` (timers, ticks and microtasks stay real so the pg driver never stalls), then restore. */
+  async function atClock<T>(now: Date, fn: () => Promise<T>): Promise<T> {
+    jest.useFakeTimers({
+      now,
+      doNotFake: [
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "setImmediate",
+        "clearImmediate",
+        "nextTick",
+        "queueMicrotask",
+        "performance",
+      ],
+    });
+    try {
+      return await fn();
+    } finally {
+      jest.useRealTimers();
+    }
+  }
+
+  /** A bare InvoicesService over the real PrismaService: findAll / findOne only touch `prisma` here. */
+  function listingService(): InvoicesService {
+    const service = Object.create(InvoicesService.prototype) as InvoicesService;
+    Object.assign(service as any, {
+      prisma,
+      systemConfig: { get: async () => null },
+    });
+    return service;
+  }
+
+  const OPEN = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"] as const;
+  const DUE_SEP_20 = new Date("2026-09-20T00:00:00.000Z");
+
+  it.each([
+    // Pacific/Auckland is UTC+12 in September: 20:00Z on Sep 20 is 08:00 on Sep 21 there. The due day has ENDED
+    // for the tenant (overdue) while UTC is still inside it (not overdue).
+    ["Pacific/Auckland", "auc", new Date("2026-09-20T20:00:00.000Z"), true],
+    // America/Chicago is UTC-5: 03:00Z on Sep 21 is 22:00 on Sep 20 there. The tenant is still INSIDE the due day
+    // (grace) while UTC has moved on.
+    ["America/Chicago", "chi", new Date("2026-09-21T03:00:00.000Z"), false],
+  ])(
+    "row 308 zone case %s: SQL ids, classifier, findAll row flag, list filter and KPI agree at the cutoff instant",
+    async (zone, tag, now, overdueForTenant) => {
+      const s = await seedTenant(`zone-${tag}`);
+      await prisma.tenantConfig.create({ data: { tenantId: s.tenantId, timezone: zone } });
+      const id = await seedInvoice(
+        s,
+        { label: `zone-${tag}`, total: 100, payments: [] },
+        { dueDate: DUE_SEP_20 },
+      );
+      const tenantCutoff = overdueCutoff(now, zone);
+      const utcCutoff = overdueCutoff(now, null);
+
+      // SQL reader: the tenant cutoff selects it iff overdue for the tenant; the UTC cutoff says the opposite
+      const sqlTenant = await overdueInvoiceIds(prisma, s.tenantId, tenantCutoff, {
+        statuses: OPEN,
+      });
+      const sqlUtc = await overdueInvoiceIds(prisma, s.tenantId, utcCutoff, { statuses: OPEN });
+      expect(sqlTenant.includes(id)).toBe(overdueForTenant);
+      expect(sqlUtc.includes(id)).toBe(!overdueForTenant);
+
+      // TS classifier on the same row, same cutoff
+      const row = await prisma.invoice.findUniqueOrThrow({
+        where: { id },
+        include: { payments: true },
+      });
+      expect(classifyInvoiceBalance(row, tenantCutoff).isOverdue).toBe(overdueForTenant);
+
+      await tenantCtx.run(s.tenantId, async () => {
+        const service = listingService();
+        // findAll with the Overdue filter selects the row iff overdue for the tenant
+        const filtered: any = await atClock(now, () => service.findAll({ isOverdue: true } as any));
+        expect(filtered.data.map((r: any) => r.id).includes(id)).toBe(overdueForTenant);
+        // the plain list ships the tenant-zone flag on the row (was the UTC flag)
+        const plain: any = await atClock(now, () => service.findAll({} as any));
+        expect(plain.data.find((r: any) => r.id === id).isOverdue).toBe(overdueForTenant);
+        // the detail read agrees with the list row
+        const detail: any = await atClock(now, () => service.findOne(id));
+        expect(detail.isOverdue).toBe(overdueForTenant);
+        // the KPI tiles bucket it the same way (overdue vs due-today), whatever day the viewer sends
+        const kpi = await atClock(now, () =>
+          computeInvoiceKpiSummary(
+            { prisma, resolveTenantInvoiceDefaults: async () => ({ timezone: zone }) },
+            "2026-09-20",
+            { sub: "op", role: "OPERATOR" } as any,
+          ),
+        );
+        expect(kpi.overdue).toBe(overdueForTenant ? 100 : 0);
+        expect(kpi.dueToday).toBe(overdueForTenant ? 0 : 100);
+      });
+    },
+  );
+
+  it("row 318b: a past-due DRAFT with a balance is overdue in NO path (SQL, classifier, list row, filter, KPI, sweep)", async () => {
+    const s = await seedTenant("draft-overdue");
+    const id = await seedInvoice(
+      s,
+      { label: "draft-past-due", total: 100, payments: [] },
+      { status: "DRAFT", dueDate: new Date("2026-09-01T00:00:00.000Z") },
+    );
+    const now = new Date("2026-10-02T12:00:00.000Z");
+    const cutoff = overdueCutoff(now, null);
+
+    // the SQL readers enter only the open statuses, so a DRAFT is never selected
+    expect(await overdueInvoiceIds(prisma, s.tenantId, cutoff, { statuses: OPEN })).not.toContain(
+      id,
+    );
+    // the classifier keeps the balance but is not overdue (was isOverdue:true)
+    const row = await prisma.invoice.findUniqueOrThrow({
+      where: { id },
+      include: { payments: true },
+    });
+    expect(classifyInvoiceBalance(row, cutoff)).toEqual({ balanceDue: 100, isOverdue: false });
+    expect(deriveInvoiceDetailFields(row, now).isOverdue).toBe(false);
+
+    await tenantCtx.run(s.tenantId, async () => {
+      const service = listingService();
+      const plain: any = await atClock(now, () => service.findAll({} as any));
+      const draft = plain.data.find((r: any) => r.id === id);
+      expect(draft).toMatchObject({ status: "DRAFT", balanceDue: 100, isOverdue: false });
+      const filtered: any = await atClock(now, () => service.findAll({ isOverdue: true } as any));
+      expect(filtered.data.map((r: any) => r.id)).not.toContain(id);
+      const kpi = await atClock(now, () =>
+        computeInvoiceKpiSummary(
+          { prisma, resolveTenantInvoiceDefaults: async () => ({ timezone: null }) },
+          "2026-10-02",
+          { sub: "op", role: "OPERATOR" } as any,
+        ),
+      );
+      expect(kpi.overdue).toBe(0);
+    });
+    // the sweep leaves it a DRAFT
+    expect(await markOverdueForTenant(prisma, s.tenantId, now)).toBe(0);
+    expect(
+      (await prisma.invoice.findUniqueOrThrow({ where: { id }, select: { status: true } })).status,
+    ).toBe("DRAFT");
+  });
+
+  it("row 309: the customer statement's overdue figure for an invoice due TODAY is 0 (both statements); the next day it is the balance", async () => {
+    const s = await seedTenant("stmt-today");
+    await seedInvoice(
+      s,
+      { label: "stmt-due-today", total: 100, payments: [{ amount: 40 }] },
+      { status: "PARTIAL", dueDate: DUE_SEP_20 },
+    );
+    const dueDay = new Date("2026-09-20T15:00:00.000Z"); // mid due day (UTC tenant)
+    const nextDay = new Date("2026-09-21T00:00:01.000Z");
+
+    await tenantCtx.run(s.tenantId, async () => {
+      const buyer = { sub: s.userId, role: "CUSTOMER" } as any;
+      const operatorAt = (now: Date) =>
+        atClock(now, () => buildOperatorStatement(prisma, s.customerId));
+      const buyerAt = (now: Date) => atClock(now, () => buildMyStatement(prisma, buyer));
+
+      expect((await operatorAt(dueDay)).overdueAmount).toBe(0); // was 60 from 00:00Z on the due day
+      expect((await buyerAt(dueDay)).overdueAmount).toBe(0);
+      expect((await operatorAt(nextDay)).overdueAmount).toBe(60); // the $60 still owed, once the day ended
+      expect((await buyerAt(nextDay)).overdueAmount).toBe(60);
+    });
   });
 });
