@@ -441,6 +441,30 @@ describe("CounterTodaysSales", () => {
     expect(r).toHaveTextContent("Cash + Store credit");
   });
 
+  it("a split sale reads the amount applied per method, card first then cash (cash net of change)", async () => {
+    serve({
+      1: page1([
+        row({
+          methods: [
+            { method: "CASH", amount: 40 },
+            { method: "CARD", amount: 30 },
+          ],
+        }),
+      ]),
+    });
+    await open();
+    const r = await screen.findByTestId("today-row-o1");
+    expect(r).toHaveTextContent("Card $30.00 + Cash $40.00");
+  });
+
+  it("a one-method sale keeps the plain label with no amount", async () => {
+    serve({ 1: page1([row({ methods: [{ method: "CASH", amount: 40 }] })]) });
+    await open();
+    const r = await screen.findByTestId("today-row-o1");
+    expect(r).toHaveTextContent("Cash");
+    expect(r).not.toHaveTextContent("Cash $40.00");
+  });
+
   it("formats times in the server's timezone", async () => {
     await open();
     // 15:15Z in America/New_York (EDT) is 11:15 AM

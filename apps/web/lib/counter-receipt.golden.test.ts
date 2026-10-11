@@ -113,13 +113,13 @@ describe("receipt golden: live vs reprint", () => {
     expect(live("CASH").cashier).toBe("pat");
     expect(b.cashier).toBeNull();
   });
-  it("a split tender reads 'Cash + Card'", () => {
+  it("a split tender reads 'Card + Cash' (non-cash first, then cash), whatever order the server sent", () => {
     expect(
       reprint([
         { method: "CASH", amount: 10 },
         { method: "CARD", amount: 14.5 },
       ]).methodLabel,
-    ).toBe("Cash + Card");
+    ).toBe("Card + Cash");
   });
   it("store credit is labelled, not hidden, and the date reads in the sale timezone", () => {
     const b = reprint([{ method: "STORE_CREDIT", amount: 24.5 }]);

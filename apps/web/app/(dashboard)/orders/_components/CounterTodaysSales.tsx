@@ -19,6 +19,7 @@ import {
   receiptModelFromOrder,
   type ReceiptBusinessProfile,
 } from "@/lib/counter-receipt";
+import { isSplitTender, tenderDisplayOrder } from "@/lib/counter-split-tender";
 import { CounterReceiptView } from "./CounterReceiptView";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { CounterVoidSaleAction, CounterVoidSaleDialog } from "./CounterVoidSaleDialog";
@@ -227,7 +228,11 @@ function SaleRow({
     }
   }, [focusReprint, onFocused]);
   const who = row.isWalkIn ? "Walk-in" : (row.customerName ?? "Customer");
-  const methods = row.methods.map((m) => METHOD_LABEL[m.method]).join(" + ");
+  // One tender reads "Cash"; a split reads the amount applied to each ("Card $30.00 + Cash $40.00": cash net of change).
+  const split = isSplitTender(row.methods);
+  const methods = (split ? tenderDisplayOrder(row.methods) : row.methods)
+    .map((m) => (split ? `${METHOD_LABEL[m.method]} ${money(m.amount)}` : METHOD_LABEL[m.method]))
+    .join(" + ");
   const returnLabel = row.voided ? null : RETURN_LABEL[row.returned.state];
   const router = useRouter();
   return (

@@ -41,16 +41,11 @@ import {
 } from "@/lib/api/counter-sale";
 import { displayProductName } from "@/lib/product-display";
 import {
-  addLeg,
   attemptTender,
   buildSplitPayments,
-  newSplitRows,
-  patchLeg,
-  removeLeg,
   rowsFromWire,
-  summarizeSplit,
+  splitBarText,
   totalToCents,
-  type SplitLegRow,
 } from "@/lib/counter-split-tender";
 import {
   COUNTER_LOOKUP_FAILED_COPY,
@@ -109,6 +104,7 @@ import { useCounterSaleScan } from "./useCounterSaleScan";
 import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { SplitTenderPanel } from "./SplitTenderPanel";
+import { useSplitRows, useSplitView } from "./useSplitTender";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 import { ParkedSales } from "./ParkedSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
@@ -174,14 +170,14 @@ export function CounterSaleScreen() {
   const awaitingCustomerRef = React.useRef(false);
 
   const [customer, setCustomer] = React.useState<PickedCustomer | null>(null); // null = Walk-in customer
+  const splitState = useSplitRows(); // the open split lines (null = the plain single tender)
+  const restoreSplit = splitState.restore;
   const [customerSearch, setCustomerSearch] = React.useState("");
   const [lines, setLines] = React.useState<SaleLine[]>([]);
   const [scanText, setScanText] = React.useState("");
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
   const [tendered, setTendered] = React.useState("");
   const [reference, setReference] = React.useState("");
-  // Split payment: null = the plain single tender (unchanged); rows = the "Split payment" panel is open.
-  const [splitRows, setSplitRows] = React.useState<SplitLegRow[] | null>(null);
   const [error, setError] = React.useState("");
   const [receipt, setReceipt] = React.useState<CounterSaleResponse | null>(null);
   // Set only when the receipt came from "Check sale status": the cash the clerk ENTERED on the attempt (the server stores
@@ -212,11 +208,11 @@ export function CounterSaleScreen() {
     setMethod(held.method as CounterSalePaymentMethod);
     // a held SPLIT sale shows (and replays) the exact legs it was rung with
     const heldLegs = (held.dto as CounterSaleRequest | undefined)?.payments;
-    setSplitRows(Array.isArray(heldLegs) ? rowsFromWire(heldLegs) : null);
+    restoreSplit(Array.isArray(heldLegs) ? rowsFromWire(heldLegs) : null);
     setTendered(held.tendered ?? "");
     setReference(held.reference ?? "");
     setOutcomeUnknown(true);
-  }, [heldKey]);
+  }, [heldKey, restoreSplit]);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
   // While a walk-in sale waits for the customer to ship to, the customer field keeps focus instead.
   const { refocus, focusCustomerFind, refocusFromActive } = useCounterScanFocus({
@@ -310,11 +306,13 @@ export function CounterSaleScreen() {
   const totals = cartTotals(lines, taxRate);
   const discounts = discountsTotal(lines); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
-  const splitSummary = splitRows
-    ? summarizeSplit({ rows: splitRows, totalCents: totalToCents(totals.total), isWalkIn })
-    : null;
-  // The split panel decides when Complete is offered: every rule holds (a walk-in has paid in full).
-  const splitBlocked = splitSummary !== null && splitSummary.problem !== null;
+  // Split payment: rows === null is the plain single tender (unchanged); rows = the "Split payment" lines are open.
+  const splitView = useSplitView(splitState, { totalCents: totalToCents(totals.total), isWalkIn });
+  const split = { ...splitState, ...splitView };
+  const splitRows = split.rows;
+  const splitSummary = split.summary;
+  // The split lines decide when Complete is offered: every rule holds (a walk-in has paid in full).
+  const splitBlocked = split.blocked;
 
   const { data: customersData } = useCustomers({ search: customerSearch.trim() || undefined });
   const matches = customerSearch.trim() ? (customersData?.data ?? []).slice(0, 6) : [];
@@ -555,7 +553,7 @@ export function CounterSaleScreen() {
     setMethod("CASH");
     setTendered("");
     setReference("");
-    setSplitRows(null);
+    split.restore(null);
     setError("");
     setReceipt(null);
     setEnteredTender(null);
@@ -654,7 +652,9 @@ export function CounterSaleScreen() {
       return null;
     }
     if (splitSummary?.problem) {
-      setError(PAYMENT_PROBLEM_COPY[splitSummary.problem]);
+      // the inline line under the leg says what is missing; a rule with no leg of its own goes to the sale error
+      split.markAttempted();
+      if (!splitSummary.problemRowId) setError(PAYMENT_PROBLEM_COPY[splitSummary.problem]);
       return null;
     }
     const problem = splitRows
@@ -1260,27 +1260,40 @@ export function CounterSaleScreen() {
               <SplitTenderPanel
                 rows={splitRows}
                 summary={splitSummary}
+                issue={split.issue}
                 isWalkIn={isWalkIn}
                 locked={locked}
-                onPatch={(id, patch) => setSplitRows((rows) => rows && patchLeg(rows, id, patch))}
-                onAdd={() => setSplitRows((rows) => rows && addLeg(rows))}
-                onRemove={(id) => setSplitRows((rows) => rows && removeLeg(rows, id))}
-                onBack={() => setSplitRows(null)}
+                focusFirst={split.focusFirst}
+                onPatch={split.patch}
+                onAdd={() => split.add(splitSummary.remainingCents)}
+                onRemove={split.remove}
+                onPayOneWay={() => {
+                  // back to one payment on the first line's method; every amount is cleared
+                  const back = split.closeToSingle();
+                  if (!back) return;
+                  setMethod(back.method);
+                  setReference(back.reference);
+                  setTendered("");
+                  setError("");
+                }}
+                onSubmit={() => void completeSale(false)}
+                onAttempt={split.markAttempted}
                 onPointer={refocusAfterPointer}
               />
-            ) : (
+            ) : lines.length > 0 ? (
               <button
                 type="button"
-                className={cn(TAP_TARGET, "text-sm text-brand-700 underline disabled:opacity-40")}
+                data-testid="split-payment-link"
+                className={cn(
+                  TAP_TARGET,
+                  "flex w-full items-center justify-center text-sm text-brand-700 underline disabled:opacity-40",
+                )}
                 disabled={locked}
-                onClick={(e) => {
-                  setSplitRows(newSplitRows(method));
-                  refocusAfterPointer(e);
-                }}
+                onClick={split.open}
               >
                 Split payment
               </button>
-            )}
+            ) : null}
           </section>
 
           <label className="flex min-h-[44px] items-center gap-2 text-sm">
@@ -1382,7 +1395,12 @@ export function CounterSaleScreen() {
               <span>{money(totals.total)}</span>
             </div>
 
-            {method === "CASH" ? (
+            {splitSummary ? (
+              // split: Remaining $40.00 -> Change $10.00 -> Change $0.00, in the same slot (never a dash)
+              <p className="text-3xl font-bold" data-testid="change-due" role="status">
+                {splitBarText(splitSummary)}
+              </p>
+            ) : method === "CASH" ? (
               <p className="text-3xl font-bold" data-testid="change-due" role="status">
                 {amountDue(totals.total, tenderedNum) > 0
                   ? `Amount due ${money(amountDue(totals.total, tenderedNum))}`

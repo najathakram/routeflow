@@ -3,7 +3,7 @@ import { adjustmentLabel, receiptModelFromOrder } from "./counter-receipt";
 const reprint = (
   total: number,
   facts: { cashTendered?: number | null; taxRatePercent?: number | null },
-  methods: Array<{ method: "CASH" | "CARD"; amount: number }>,
+  methods: Array<{ method: "CASH" | "CARD" | "STORE_CREDIT"; amount: number }>,
   tax?: number,
 ) =>
   receiptModelFromOrder({
@@ -31,11 +31,24 @@ describe("SA-764 reprint: Tendered / Change and Tax (r%)", () => {
     expect(m.tendered).toBe(50);
     expect(m.change).toBe(6.7);
   });
-  it("change is tendered minus the CASH applied, so a split sale's card leg is not change", () => {
+  it("a split sale reprints the amount applied per method (card first) and no Tendered / Change line (G7)", () => {
     const m = reprint(43.3, { cashTendered: 30 }, [
       { method: "CASH", amount: 20 },
       { method: "CARD", amount: 23.3 },
     ]);
+    expect(m.tendered).toBeNull();
+    expect(m.change).toBeNull();
+    expect(m.tenderLines.map((t) => [t.label, t.amount])).toEqual([
+      ["Card", 23.3],
+      ["Cash", 20],
+    ]);
+  });
+  it("cash plus store credit is not a split: it keeps the one-method reprint and its change", () => {
+    const m = reprint(43.3, { cashTendered: 30 }, [
+      { method: "CASH", amount: 20 },
+      { method: "STORE_CREDIT", amount: 23.3 },
+    ]);
+    expect(m.tenderLines).toEqual([]);
     expect(m.change).toBe(10);
   });
   it("legacy and card sales (null or absent) keep today's behaviour: no Tendered, no Change", () => {
