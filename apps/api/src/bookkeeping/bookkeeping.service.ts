@@ -44,6 +44,7 @@ import {
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { lockInvoicesForPayment } from "../invoices/invoice-send-guard";
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
+import { confirmedBalance } from "../invoices/invoice-balance-classify";
 
 /**
  * Receipt-extraction model. Receipts are small documents where a misread line
@@ -1179,7 +1180,7 @@ export class BookkeepingService implements OnModuleInit {
             // must agree with getMobileDashboard/getFinanceDashboard — the same
             // tenant reads /bookkeeping/summary and /bookkeeping/dashboard side
             // by side and they must not disagree.
-            payments: { where: CONFIRMED_PAYMENT, select: { amount: true } },
+            payments: { where: CONFIRMED_PAYMENT, select: { amount: true, status: true } },
           },
         }),
         // F03/R1/T-B11s: weekly receipts are CONFIRMED (PAID) money only —
@@ -1209,10 +1210,11 @@ export class BookkeepingService implements OnModuleInit {
       ],
     );
 
-    const outstandingReceivables = outstandingInvoices.reduce((sum, inv) => {
-      const paid = inv.payments.reduce((s: number, p: any) => s + Number(p.amount), 0);
-      return sum + (Number(inv.total) - paid);
-    }, 0);
+    // SA-770 row 310: each open invoice adds its CLAMPED balance, so an overpaid one never nets against
+    // what other customers owe (and float dust is not a receivable).
+    const outstandingReceivables = roundMoney(
+      outstandingInvoices.reduce((sum, inv) => sum + confirmedBalance(inv.total, inv.payments), 0),
+    );
 
     return {
       totalRevenue: netSales.net,
@@ -1283,7 +1285,7 @@ export class BookkeepingService implements OnModuleInit {
             total: true,
             // F03/R1: only a CONFIRMED payment actually reduces what's outstanding —
             // a DRAFT one hasn't been collected yet, so the balance still stands.
-            payments: { where: CONFIRMED_PAYMENT, select: { amount: true } },
+            payments: { where: CONFIRMED_PAYMENT, select: { amount: true, status: true } },
           },
         }),
         // B440: revenue = accrual net sales, never totalCollected.
@@ -1297,10 +1299,9 @@ export class BookkeepingService implements OnModuleInit {
     const totalInvoiced = Number(invoiceAgg._sum.total ?? 0);
     const totalCollected = Number(paymentAgg._sum.amount ?? 0);
     const totalExpenses = Number(expenseAgg._sum.amount ?? 0);
-    const totalOutstanding = outstandingInvoices.reduce((sum, inv) => {
-      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
-      return sum + Math.max(0, Number(inv.total) - paid);
-    }, 0);
+    const totalOutstanding = roundMoney(
+      outstandingInvoices.reduce((sum, inv) => sum + confirmedBalance(inv.total, inv.payments), 0),
+    );
 
     return {
       revenue: netSales.net,
@@ -1347,8 +1348,7 @@ export class BookkeepingService implements OnModuleInit {
       ar31_45 = 0,
       ar45plus = 0;
     for (const inv of unpaidInvoices) {
-      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
-      const bal = Number(inv.total) - paid;
+      const bal = confirmedBalance(inv.total, inv.payments);
       if (bal <= 0) continue;
       if (!inv.dueDate || !isOverdue(inv.dueDate, now, tz)) {
         arCurrent += bal;
@@ -1360,7 +1360,14 @@ export class BookkeepingService implements OnModuleInit {
       else if (daysPast <= 45) ar31_45 += bal;
       else ar45plus += bal;
     }
-    const totalReceivables = arCurrent + ar1_15 + ar16_30 + ar31_45 + ar45plus;
+    // Each contribution is a cents-exact clamped balance; round the running sums so the buckets and the
+    // total agree to the cent (no float dust between them).
+    arCurrent = roundMoney(arCurrent);
+    ar1_15 = roundMoney(ar1_15);
+    ar16_30 = roundMoney(ar16_30);
+    ar31_45 = roundMoney(ar31_45);
+    ar45plus = roundMoney(ar45plus);
+    const totalReceivables = roundMoney(arCurrent + ar1_15 + ar16_30 + ar31_45 + ar45plus);
 
     const monthlyData: Array<{ month: string; sales: number; receipts: number; expenses: number }> =
       [];
@@ -1459,10 +1466,9 @@ export class BookkeepingService implements OnModuleInit {
         // excluding VOID (bounced) ones (P5-12).
         include: { payments: { where: CONFIRMED_PAYMENT } },
       });
-      const due = dueInvoices.reduce((sum, inv) => {
-        const b = Number(inv.total) - inv.payments.reduce((s, p) => s + Number(p.amount), 0);
-        return sum + Math.max(0, b);
-      }, 0);
+      const due = roundMoney(
+        dueInvoices.reduce((sum, inv) => sum + confirmedBalance(inv.total, inv.payments), 0),
+      );
       return { sales: netSales.net, receipts: Number(r._sum.amount ?? 0), due };
     };
     const [today, thisWeek, thisMonth, thisQuarter, thisYear] = await Promise.all([
@@ -1533,8 +1539,8 @@ export class BookkeepingService implements OnModuleInit {
     const depositOverdue = { count: 0, outstanding: 0 };
 
     for (const inv of invoices) {
-      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
-      const balance = Number(inv.total) - paid;
+      const paid = sumConfirmed(inv.payments); // the deposit check's full confirmed total
+      const balance = confirmedBalance(inv.total, inv.payments);
       if (balance <= 0) continue;
       // #1529: the deposit rides each row (the invoice list's own read-time math); the buckets
       // below still age by dueDate, so an overdue deposit on a not-yet-due invoice stays CURRENT
@@ -1727,24 +1733,25 @@ export class BookkeepingService implements OnModuleInit {
           indicator: "\u2014",
         };
 
-      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      const paid = sumConfirmed(inv.payments);
       byCustomer[key].invoicedAmount += Number(inv.total);
       byCustomer[key].receivedAmount += paid;
 
       if (unpaidStatuses.has(inv.status)) {
-        const bal = Number(inv.total) - paid;
+        // SA-770 row 310: `balance` (what the customer still OWES) and `overdue` add the CLAMPED invoice
+        // balance, so an overpaid open invoice never nets against the customer's other invoices.
+        const bal = confirmedBalance(inv.total, inv.payments);
         byCustomer[key].invoiceCount++;
-        byCustomer[key].balance += bal;
-        // SA-770: an overpaid open invoice owes nothing, so it adds 0 (never a negative) to overdue.
+        byCustomer[key].balance = roundMoney(byCustomer[key].balance + bal);
         if (isOverdue(inv.dueDate, now, tz)) {
-          byCustomer[key].overdue = roundMoney(
-            byCustomer[key].overdue + Math.max(0, roundMoney(bal)),
-          );
+          byCustomer[key].overdue = roundMoney(byCustomer[key].overdue + bal);
         }
       }
     }
 
-    // Compute closing balance and indicator for each customer
+    // Compute closing balance and indicator for each customer. SIGNED BY DESIGN (a NET position, never
+    // clamped): invoiced minus received over every non-draft invoice, shown with a Dr/Cr indicator, so an
+    // overpayment reads as a credit (Cr).
     for (const cust of Object.values(byCustomer)) {
       cust.closingBalance = cust.invoicedAmount - cust.receivedAmount;
       if (cust.closingBalance > 0) cust.indicator = "Dr";
@@ -1779,7 +1786,7 @@ export class BookkeepingService implements OnModuleInit {
     });
     return {
       data: invoices.map((inv) => {
-        const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+        const paid = sumConfirmed(inv.payments);
         return {
           id: inv.id,
           invoiceNumber: inv.invoiceNumber,
@@ -1789,7 +1796,8 @@ export class BookkeepingService implements OnModuleInit {
           status: inv.status,
           total: Number(inv.total),
           paid,
-          balance: Number(inv.total) - paid,
+          // display: the owed balance, clamped (an overpayment stays visible as paid > total)
+          balance: confirmedBalance(inv.total, inv.payments),
         };
       }),
       period: { from: fromDate, to: toDate },
@@ -1836,7 +1844,7 @@ export class BookkeepingService implements OnModuleInit {
       }),
     ]);
     const data = invoices.map((inv) => {
-      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      const paid = sumConfirmed(inv.payments);
       return {
         id: inv.id,
         invoiceNumber: inv.invoiceNumber,
@@ -1847,14 +1855,14 @@ export class BookkeepingService implements OnModuleInit {
         writeOffReason: inv.writeOffReason,
         total: Number(inv.total),
         paid,
-        balance: Number(inv.total) - paid,
+        balance: confirmedBalance(inv.total, inv.payments),
       };
     });
     return {
       data,
       // Gross — Σ balance over `data`, so the web footer always equals the
       // column it's summing. Never the pre-tax/windowed `expense` figure.
-      total: data.reduce((sum, d) => sum + d.balance, 0),
+      total: roundMoney(data.reduce((sum, d) => sum + d.balance, 0)),
       expense,
     };
   }
@@ -2169,8 +2177,7 @@ export class BookkeepingService implements OnModuleInit {
 
     const data = invoices
       .map((inv) => {
-        const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
-        const balance = Number(inv.total) - paid;
+        const balance = confirmedBalance(inv.total, inv.payments);
         const refDate = inv.dueDate ?? inv.issueDate;
         const ageDays = Math.max(0, Math.floor((now.getTime() - refDate.getTime()) / 86400000));
         return {
@@ -2357,7 +2364,6 @@ export class BookkeepingService implements OnModuleInit {
     }> = [];
 
     for (const inv of invoices) {
-      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
       rows.push({
         customerName: inv.customer.businessName,
         date: inv.issueDate,
@@ -2365,7 +2371,7 @@ export class BookkeepingService implements OnModuleInit {
         type: "INVOICE",
         status: inv.status,
         total: Number(inv.total),
-        balance: Number(inv.total) - paid,
+        balance: confirmedBalance(inv.total, inv.payments),
       });
     }
 

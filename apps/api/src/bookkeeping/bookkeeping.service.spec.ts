@@ -1322,7 +1322,15 @@ describe("BookkeepingService", () => {
       prisma.invoice.findMany.mockImplementation((args: any) => {
         if (args?.where?.writtenOffAt) {
           // balance 300: cash 150 + credit-note-applied 50, same as REG-B456-basis.
-          return Promise.resolve([{ total: 500, payments: [{ amount: 150 }, { amount: 50 }] }]);
+          return Promise.resolve([
+            {
+              total: 500,
+              payments: [
+                { amount: 150, status: "PAID" },
+                { amount: 50, status: "PAID" },
+              ],
+            },
+          ]);
         }
         return Promise.resolve([]); // outstanding receivables: none
       });
@@ -1458,7 +1466,10 @@ describe("BookkeepingService", () => {
       // (which keys on issueDate, so it correctly excludes this invoice).
       const writtenOffInvoice = {
         total: 500,
-        payments: [{ amount: 150 }, { amount: 50 }], // cash 150 + credit-note-applied 50 -> balance 300
+        payments: [
+          { amount: 150, status: "PAID" },
+          { amount: 50, status: "PAID" },
+        ], // cash 150 + credit-note-applied 50 -> balance 300
       };
       prisma.invoice.findMany.mockImplementation((args: any) => {
         if (args?.where?.writtenOffAt) return Promise.resolve([writtenOffInvoice]);
@@ -1544,7 +1555,10 @@ describe("BookkeepingService", () => {
         // gross `total` (300) -- proves the two fields are genuinely split,
         // not coincidentally equal.
         taxAmount: 50,
-        payments: [{ amount: 150 }, { amount: 50 }], // cash 150 + credit-note-applied 50 -> balance 300
+        payments: [
+          { amount: 150, status: "PAID" },
+          { amount: 50, status: "PAID" },
+        ], // cash 150 + credit-note-applied 50 -> balance 300
       };
       prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 0, taxAmount: 0 } });
       prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });

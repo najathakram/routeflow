@@ -31,12 +31,12 @@ export const PAYABLE: InvoiceStatus[] = [
  * An ISSUED invoice that can still be owed (SA-770): the buyer receivables readers fetch these and the
  * classifier decides who actually owes (an overpaid or exactly-paid one reads as paid in substance).
  */
-export const OPEN_INVOICE_STATUSES: InvoiceStatus[] = [
+export const OPEN_INVOICE_STATUSES = [
   InvoiceStatus.SENT,
   InvoiceStatus.VIEWED,
   InvoiceStatus.PARTIAL,
   InvoiceStatus.OVERDUE,
-];
+] as const;
 /**
  * "Open" invoices for an aggregate/summary read (KPI tiles, dashboards):
  * excludes settled/dead/forgiven (PAID/VOID/WRITTEN_OFF, same as

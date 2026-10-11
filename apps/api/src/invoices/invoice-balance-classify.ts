@@ -24,7 +24,6 @@ const SETTLED: readonly string[] = [
   InvoiceStatus.WRITTEN_OFF,
 ];
 
-/** The statuses of an issued invoice that can still be owed. */
 export interface ClassifiableInvoice {
   status: string;
   total: unknown;
