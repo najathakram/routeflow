@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
@@ -655,6 +656,10 @@ export class CreditNotesService {
             // B947: with 2+ creditable invoices on the order, the Order and ALL of them are locked FIRST (Order -> Invoice,
             // id-sorted), so a refund on Y and a credit note on X serialise and no writer takes an Invoice then the Order.
             if (internal.returnId) {
+              // SA-773 row 333(b), house order Return -> Order -> invoices: the Return row FIRST (the parked-reversal resolve, the
+              // refund claim, cancel and the inline refund all take it before the Order), so the pooled mint and a resolve on
+              // the same return queue instead of each holding what the other wants
+              await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${internal.returnId} AND "tenantId" = ${tenantId} FOR UPDATE`;
               // the in-transaction read of the link: a request that linked it since the pre-read is the one to hand back
               const linked = await creditNoteLinkedToReturn(tx, internal.returnId);
               if (linked) {
@@ -745,6 +750,13 @@ export class CreditNotesService {
         `Credit note create exhausted ${MAX_CN_TX_ATTEMPTS} attempts on serialization conflict ` +
           `[${creditNoteNumber}] customer=${dto.customerId} invoice=${dto.invoiceId ?? "-"}: ${serializationErr?.message ?? serializationErr}`,
       );
+      // a return's mint that ran out of retries is the coded, retryable 503 (nothing saved); any other create keeps its 409
+      if (internal.returnId)
+        throw new ServiceUnavailableException({
+          code: API_ERROR_CODES.LOCK_UNAVAILABLE,
+          message:
+            "Another change to this return's credit was in progress. Nothing was saved; please retry.",
+        });
       throw new ConflictException("Concurrent credit note for this invoice, please retry");
     }
 

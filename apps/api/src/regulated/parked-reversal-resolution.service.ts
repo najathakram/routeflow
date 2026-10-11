@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RegulatedLedgerService } from "./regulated-ledger.service";
 import { periodBucketOf } from "./period";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { retryTxBusy } from "../common/tx-retry";
 
 /**
  * SA-089/SA-089a/SA-089b — B660 PR B: the OPERATOR resolution of a parked regulated-ledger
@@ -75,6 +76,16 @@ export class ParkedReversalResolutionService {
    * row parked and unresolved, exactly like the restock service's cancelled-return refusal.
    */
   async resolve(id: string, pack: number, reason: string, actor: { id: string }) {
+    // SA-773 row 333(b): the whole resolve is idempotent (its claim is a CAS on resolvedAt), so a deadlock or serialization
+    // conflict re-runs it; exhausted retries are a coded, retryable 503 (nothing saved), never a raw 40P01 as an uncoded 500
+    return retryTxBusy(
+      `parked reversal resolve ${id}`,
+      () => this.resolveOnce(id, pack, reason, actor),
+      "Another change to this return was in progress. Nothing was saved; please retry.",
+    );
+  }
+
+  private async resolveOnce(id: string, pack: number, reason: string, actor: { id: string }) {
     if (!this.prisma.getTenantId())
       throw new BadRequestException("Parked reversals are tenant-scoped");
     const result = await this.prisma.tenantTransaction(async (tx: any) => {
