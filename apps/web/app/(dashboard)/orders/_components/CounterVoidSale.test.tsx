@@ -211,6 +211,20 @@ describe("Void sale: the dialog", () => {
     },
   );
 
+  it("409 COUNTER_SALE_DAY_CLOSED: the closed-day sentence that points at Return, not the generic conflict line", async () => {
+    reject(409, "COUNTER_SALE_DAY_CLOSED");
+    await openSheet();
+    fireEvent.click(rowVoidButton());
+    typeReason("because");
+    fireEvent.click(confirmVoid());
+    const err = await screen.findByTestId("counter-void-error");
+    expect(err).toHaveTextContent("This sale is in a closed day. Use Return items instead.");
+    expect(document.body.textContent).not.toMatch(/conflicts with something/i);
+    expect(document.body.textContent).not.toContain(RAW);
+    expect(screen.queryByTestId("counter-void-done")).toBeNull();
+    expect(confirmVoid()).toBeEnabled();
+  });
+
   it("a 400 validation and an unknown 500 get the app's generic fixed copy, never the server text", async () => {
     reject(400);
     await openSheet();

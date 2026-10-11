@@ -8622,6 +8622,10 @@ describe("InvoicesService", () => {
         // boundary: today+31 is OUTSIDE every bucket
         { id: "inv-day31", total: 17, dueDate: new Date("2026-09-26T00:00:00.000Z"), payments: [] },
       ]);
+      // Row 318b: the real KPI read selects `status`, and only an OPEN-status invoice can be overdue.
+      const rows = (await prisma.invoice.findMany()) as Array<Record<string, unknown>>;
+      prisma.invoice.findMany.mockResolvedValue(rows.map((r) => ({ status: "SENT", ...r })));
+      prisma.invoice.findMany.mockClear(); // the call above only read the fixture back
       prisma.invoicePayment.count.mockResolvedValue(3);
       prisma.$queryRaw.mockResolvedValue([{ avgDays: 12.5 }]);
 
@@ -8840,7 +8844,13 @@ describe("InvoicesService", () => {
     it("scopes all three reads to the caller's own customer when the viewer is a CUSTOMER", async () => {
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-9" });
       prisma.invoice.findMany.mockResolvedValue([
-        { id: "inv-mine", total: 100, dueDate: new Date("2026-08-25T00:00:00.000Z"), payments: [] },
+        {
+          id: "inv-mine",
+          status: "SENT", // row 318b: only an open-status invoice can be overdue
+          total: 100,
+          dueDate: new Date("2026-08-25T00:00:00.000Z"),
+          payments: [],
+        },
       ]);
       prisma.invoicePayment.count.mockResolvedValue(1);
       prisma.$queryRaw.mockResolvedValue([{ avgDays: 4 }]);

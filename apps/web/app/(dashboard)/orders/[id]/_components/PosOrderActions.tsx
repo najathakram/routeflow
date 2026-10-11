@@ -97,6 +97,7 @@ export function PosOrderActions({
     <ActionTier tier="secondary">
       <Button
         size="sm"
+        className="h-11"
         variant="secondary"
         leftIcon={<Truck className="h-4 w-4" />}
         onClick={onSwitchToDelivery}
@@ -112,6 +113,7 @@ export function PosOrderActions({
     <ActionTier tier="secondary">
       <Button
         size="sm"
+        className="h-11"
         variant="secondary"
         leftIcon={<Bell className="h-4 w-4" />}
         onClick={onReadyForPickup}
@@ -127,6 +129,7 @@ export function PosOrderActions({
       <ActionTier tier={primary ? "primary" : "secondary"}>
         <Button
           size="sm"
+          className="h-11"
           variant={primary ? undefined : "secondary"}
           leftIcon={<CheckCircle2 className="h-4 w-4" />}
           onClick={onHandOver}
@@ -144,6 +147,7 @@ export function PosOrderActions({
             <ActionTier tier="primary">
               <Button
                 size="sm"
+                className="h-11"
                 leftIcon={<FileText className="h-4 w-4" />}
                 loading={createInvoice.isPending}
                 onClick={() =>
@@ -175,6 +179,7 @@ export function PosOrderActions({
       <ActionTier tier="primary">
         <Button
           size="sm"
+          className="h-11"
           href={`/invoices/${firstInvoice.id}`}
           leftIcon={paid ? <Printer className="h-4 w-4" /> : <Wallet className="h-4 w-4" />}
         >
@@ -216,6 +221,7 @@ export function ConfirmedPrimaryAction({
       <div className="flex flex-col items-start gap-1">
         <Button
           size="sm"
+          className="h-11"
           variant={v2 ? undefined : "secondary"}
           leftIcon={<Truck className="h-4 w-4" />}
           onClick={onMarkShipped}
@@ -258,6 +264,7 @@ export function OutForDeliveryPrimary({
       ) : (
         <Button
           size="sm"
+          className="h-11"
           leftIcon={<CheckCircle2 className="h-4 w-4" />}
           onClick={onDeliver}
           loading={pending}

@@ -346,6 +346,30 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
       expect(raw[1].text).toMatch(/FROM "Return" WHERE id/);
     });
 
+    it("SA-750r3: a refund dated inside a closed window of the register is 409 COUNTER_SALE_DAY_CLOSED and the claim is never made", async () => {
+      setReturn({ counterSale: true, registerKey: "till-2" });
+      prisma.counterDayClose.findFirst.mockResolvedValue({ id: "close-1" });
+      expect(await codeOf(refund())).toBe("COUNTER_SALE_DAY_CLOSED");
+      expect(prisma.counterDayClose.findFirst.mock.calls[0][0].where).toMatchObject({
+        tenantId: "test-tenant",
+        registerKey: "till-2",
+        reopenedAt: null,
+      });
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("SA-750r3: a refund outside every closed window (or a non-counter order) is recorded; a non-counter order reads no window", async () => {
+      setReturn({ counterSale: true, registerKey: null });
+      await expect(refund()).resolves.toBeDefined();
+      expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
+      prisma.return.updateMany.mockClear();
+      prisma.counterDayClose.findFirst.mockClear();
+      prisma.counterDayClose.findFirst.mockResolvedValue({ id: "close-1" });
+      setReturn({ counterSale: false });
+      await expect(refund()).resolves.toBeDefined();
+      expect(prisma.counterDayClose.findFirst).not.toHaveBeenCalled();
+    });
+
     it("a named register is keyed tenant:register; refundedAt is set after the lock (the claim is the last write)", async () => {
       setReturn({ counterSale: true, registerKey: "till-2" });
       await refund();

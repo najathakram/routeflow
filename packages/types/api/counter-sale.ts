@@ -45,7 +45,9 @@ export interface CounterSaleRequest {
 /**
  * The stored price facts of one sale line (the invoice line the sale produced): what the receipt needs to apply the invoices'
  * own original-price rule (`showOriginalPrice` in @routeflow/pricing). `originalPrice` is the LIST price (never the tier
- * price), `priceType` one of STANDARD / SPECIAL / DISCOUNTED / MANUAL / PROMO.
+ * price), `priceType` one of STANDARD / SPECIAL / DISCOUNTED / MANUAL / PROMO. `unitPrice` is the NET unit price the line was
+ * stored at: the live receipt matches a cart line to its stored line by product + this price (two lines of one product at
+ * different prices must not swap their list prices).
  */
 export interface CounterSaleLinePrice {
   productId: string | null;
@@ -144,6 +146,8 @@ export interface CounterSaleVoidResponse {
 export interface PickupCompleteRequest {
   /** omit to hand the order over unpaid (an open invoice on account); a walk-in must pay */
   payment?: CounterSalePayment;
+  /** SA-750r3: the till register this hand-over's cash counts on when the order has none stamped yet; default 'main' */
+  registerKey?: string;
 }
 
 export interface PickupCompleteResponse {
@@ -166,7 +170,7 @@ export interface PickupCompleteResponse {
 
 // ─── Today's sales (register panel) — GET /orders/counter-sale/today ──────────────────────────
 //
-// Every counter sale of the tenant's calendar day (all registers and clerks: Order has no createdById), one lean
+// Every counter sale of the tenant's calendar day (all registers and clerks; each row names its cashier), one lean
 // row each (no line items), plus a whole-day summary on page 1. Read-only; the server owns the day window, the
 // web formats times in `meta.timezone` and does no money math.
 
@@ -197,6 +201,12 @@ export interface TodaysSaleRow {
   customerId: string;
   customerName: string;
   isWalkIn: boolean;
+  /**
+   * Who rang the sale: the staff user's display name (`Order.soldBy.username`, stamped by the counter write). null for a sale
+   * rung before it was stamped, or when the stored name looks like an email (a receipt never prints an address). Omitted by an
+   * older server.
+   */
+  cashierName?: string | null;
   status: string;
   total: number;
   /** every PAID payment on the sale's live invoices, store credit included */

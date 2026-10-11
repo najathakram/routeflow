@@ -3,6 +3,10 @@
  * ratchet: a new surface must not read `.response.data.message`).
  */
 export const POS_COPY = {
+  /** The builder's title and subtitle when POS mode is forced by the capability (a store-only business). */
+  builderTitle: "Invoice a customer",
+  builderSubtitle:
+    "Sold in store. The invoice is made when you confirm; hand the goods over when they collect.",
   switchLabel: "POS mode",
   switchHint: "A named customer, invoiced now. For walk-in, pay-now sales use Counter.",
   switchFailed: "Couldn't save your POS mode setting. Try again.",

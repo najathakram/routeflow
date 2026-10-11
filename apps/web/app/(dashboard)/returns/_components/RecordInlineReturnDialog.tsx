@@ -93,12 +93,14 @@ const PENDING_ON_CLOSE: ReadonlySet<RefundErrorKind> = new Set([
   "notRefundable",
   "paidWithCredit",
   "exceedsCash",
+  "dayClosed",
 ]);
 /** Refusals where the saved return can still be given as store credit (not a 403). */
 const CREDIT_INSTEAD: ReadonlySet<RefundErrorKind> = new Set([
   "needsPaid",
   "notRefundable",
   "paidWithCredit",
+  "dayClosed",
 ]);
 
 export interface RecordedInfo {
@@ -490,7 +492,9 @@ export function RecordInlineReturnDialog({
             saved &&
             (refundError === "failed" ||
               refundError === "exceedsCash" ||
-              CREDIT_INSTEAD.has(refundError)) ? (
+              (CREDIT_INSTEAD.has(refundError) &&
+                // a walk-in can't hold store credit: a closed day leaves only the later date
+                !(refundError === "dayClosed" && walkIn))) ? (
               <>
                 <Button
                   variant="secondary"
@@ -710,7 +714,7 @@ function RefundChoice({
       )}
       {error && (
         <p role="alert" className="text-sm font-medium text-danger">
-          {REFUND_COPY[error]}
+          {error === "dayClosed" && walkIn ? REFUND_COPY.dayClosedWalkIn : REFUND_COPY[error]}
         </p>
       )}
     </fieldset>

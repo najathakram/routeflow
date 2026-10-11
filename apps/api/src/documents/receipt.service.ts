@@ -97,6 +97,8 @@ export class ReceiptService {
         counterCashTendered: true,
         // the name and the walk-in flag only: the customer's email is never read, a typed address is never kept
         customer: { select: { businessName: true, isWalkIn: true } },
+        // row 317: the cashier's username only, printed as "Cashier: <name>" (never an email)
+        soldBy: { select: { username: true } },
         lineItems: {
           orderBy: { createdAt: "asc" },
           select: {
@@ -117,6 +119,8 @@ export class ReceiptService {
                 variantName: true,
                 parentProductId: true,
                 parent: { select: { name: true } },
+                // row 317b: the unit word a plain line's detail prints
+                unit: true,
               },
             },
           },
