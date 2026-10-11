@@ -412,6 +412,7 @@ function analyzeClasses(rel: string, text: string): Map<string, MethodInfo> {
   const out = new Map<string, MethodInfo>();
   ts.forEachChild(sf, (top) => {
     if (!ts.isClassDeclaration(top) || !top.name) return;
+    const className = top.name.text;
     for (const m of top.members) {
       if (!ts.isMethodDeclaration(m) || !m.body) continue;
       const info: MethodInfo = {
@@ -433,14 +434,14 @@ function analyzeClasses(rel: string, text: string): Map<string, MethodInfo> {
         ts.forEachChild(n, visit);
       };
       visit(m.body);
-      out.set(`${top.name.text}.${m.name.getText(sf)}`, info);
+      out.set(`${className}.${m.name.getText(sf)}`, info);
     }
     // A method that calls a writer is a writer entry point too (its own body may write nothing).
     for (let grew = true; grew;) {
       grew = false;
       for (const [k, info] of out) {
-        if (info.writes || !k.startsWith(`${top.name.text}.`)) continue;
-        if ([...info.calls.keys()].some((c) => out.get(`${top.name.text}.${c}`)?.writes)) {
+        if (info.writes || !k.startsWith(`${className}.`)) continue;
+        if ([...info.calls.keys()].some((c) => out.get(`${className}.${c}`)?.writes)) {
           info.writes = true;
           grew = true;
         }
