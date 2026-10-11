@@ -5,7 +5,9 @@
  * written. This module takes no lock of its own beyond the order's other creditable invoices, which the inline path adds so the
  * whole pool is held (the STANDARD claim already locks them all).
  */
+import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
 import { lockRefundInvoices, resolveRefundInvoiceIds } from "./inline-return-refund";
 import { roundMoney } from "@routeflow/pricing";
 import {
@@ -55,6 +57,43 @@ export async function assertInlineReturnWithinRemainder(
     await inlineReturnRequests(tx, args.items),
     API_ERROR_CODES.RETURN_EXCEEDS_REFUNDABLE,
   );
+}
+
+/**
+ * SA-773 N4: a HELD inline return is approved some time after it was captured, and its source invoice can have been voided or
+ * written off in between. A dead invoice has no pool in the refundable remainder (it is not in the creditable set), so a request
+ * on it is never checked and the approval would mint store credit for goods nobody owes for. Refused 409 RETURN_NOTHING_BILLED
+ * (nothing is billed on that invoice any more; the exit is rejecting or cancelling the hold) before anything is restocked,
+ * reversed or minted. Runs under the Orders and the source invoices the caller holds, so a void cannot slip in after it.
+ * An item with no source line, or whose line is gone, has no invoice to be dead and is not asked about here.
+ */
+export async function assertInlineSourcesOpen(
+  tx: any,
+  items: ReadonlyArray<{ sourceInvoiceItemId?: string | null }>,
+): Promise<void> {
+  const lineIds = [
+    ...new Set(items.map((i) => i.sourceInvoiceItemId).filter((i): i is string => !!i)),
+  ];
+  if (lineIds.length === 0) return;
+  const lines: Array<{ invoiceId: string }> =
+    (await tx.invoiceItem.findMany({
+      where: { id: { in: lineIds } },
+      select: { invoiceId: true },
+    })) ?? [];
+  const invoiceIds = [...new Set(lines.map((l) => l.invoiceId))].sort();
+  if (invoiceIds.length === 0) return;
+  const dead: { id: string } | null = await tx.invoice.findFirst({
+    where: { id: { in: invoiceIds }, status: { in: [...CREDIT_SOURCE_EXCLUDED] } },
+    select: { id: true },
+    orderBy: { id: "asc" },
+  });
+  if (!dead) return;
+  throw new ConflictException({
+    code: API_ERROR_CODES.RETURN_NOTHING_BILLED,
+    message:
+      "The invoice these goods were sold on was voided or written off after the return was held, so there is nothing to credit for them. Reject or cancel the return.",
+    invoiceId: dead.id,
+  });
 }
 
 /** A STANDARD return's refund (store credit or recorded): its qty per product and its net amount, on the order's invoices. */

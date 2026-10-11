@@ -1338,6 +1338,47 @@ describe("InlineReturnsService", () => {
       );
     });
 
+    it("SA-773 N4: a source invoice voided or written off since the capture is refused 409 RETURN_NOTHING_BILLED before any restock, reversal or mint", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        ...HELD,
+        items: [{ ...HELD.items[0], sourceInvoiceItemId: "line-1" }],
+      });
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoiceItem.findMany.mockResolvedValue([{ id: "line-1", invoiceId: "inv-dead" }]);
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-dead" });
+
+      const err: any = await service.approve("ret-held", OPERATOR).catch((e: any) => e);
+
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({
+        code: "RETURN_NOTHING_BILLED",
+        invoiceId: "inv-dead",
+      });
+      // the dead statuses are asked for by the shared set (VOID, WRITTEN_OFF), not by a literal in the guard
+      expect(prisma.invoice.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ["inv-dead"] }, status: { in: ["VOID", "WRITTEN_OFF"] } },
+        }),
+      );
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(ledger.reverseReturnEntries).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("SA-773 N4: a live source invoice (no dead one found) is approved as before", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        ...HELD,
+        items: [{ ...HELD.items[0], sourceInvoiceItemId: "line-1" }],
+      });
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoiceItem.findMany.mockResolvedValue([{ id: "line-1", invoiceId: "inv-live" }]);
+      prisma.invoice.findFirst.mockResolvedValue(null);
+
+      await service.approve("ret-held", OPERATOR);
+
+      expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledTimes(1);
+    });
+
     it("REG-B735-api-approve-parked: approve() reverses the ledger it deferred from capture, and its own response carries any resulting park", async () => {
       prisma.return.findFirst.mockResolvedValue(HELD);
       prisma.return.updateMany.mockResolvedValue({ count: 1 });

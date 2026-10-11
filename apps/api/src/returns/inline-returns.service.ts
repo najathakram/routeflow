@@ -79,7 +79,10 @@ import {
   type RefundTender,
 } from "./inline-return-refund";
 import { assertCashRefundWithinCap, refundAmountsBySale } from "./cash-refund-cap";
-import { assertInlineReturnWithinRemainder } from "./refund-remainder-guard";
+import {
+  assertInlineReturnWithinRemainder,
+  assertInlineSourcesOpen,
+} from "./refund-remainder-guard";
 import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
 import {
   refundTenderColumn,
@@ -1432,6 +1435,9 @@ export class InlineReturnsService {
         items: fresh.items as any[],
         lockSourceInvoices: true,
       });
+      // SA-773 N4: a source invoice voided or written off since the capture has no pool above, so its request was unchecked:
+      // refuse before anything is restocked, reversed or minted (the source invoices are locked by the call above)
+      await assertInlineSourcesOpen(tx, fresh.items as any[]);
 
       // HIGH-4: apply what capture() deferred — restock + regulated-ledger reversal — now
       // that an operator has actually approved the credit.

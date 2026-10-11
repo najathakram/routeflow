@@ -504,6 +504,14 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
     expect(firstPos(issue("approve"), "assertInlineReturnWithinRemainder")).toBeLessThan(
       firstPos(issue("approve"), "restockReturnItems"),
     );
+    // SA-773 N4: approve() also refuses a held return whose source invoice went VOID / WRITTEN_OFF, after the source invoices are
+    // locked by the remainder read and before it restocks, reverses the ledger or mints
+    const approve = issue("approve");
+    const open = firstPos(approve, "assertInlineSourcesOpen");
+    expect(open).toBeGreaterThan(firstPos(approve, "assertInlineReturnWithinRemainder"));
+    expect(open).toBeLessThan(firstPos(approve, "restockReturnItems"));
+    expect(open).toBeLessThan(firstPos(approve, "reverseLedgerForReturn"));
+    expect(open).toBeLessThan(firstPos(approve, "issueCreditInTx"));
     // captureAndIssueInTx runs the capture (which asks it) before it mints
     expect(firstPos(issue("captureAndIssueInTx"), "captureInTx")).toBeLessThan(
       firstPos(issue("captureAndIssueInTx"), "issueCreditInTx"),

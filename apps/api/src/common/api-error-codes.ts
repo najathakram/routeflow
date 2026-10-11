@@ -82,6 +82,10 @@ export const API_ERROR_CODES = {
   CUSTOMER_NOT_LINKED: "CUSTOMER_NOT_LINKED",
   BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
   BILL_VOID: "BILL_VOID",
+  /**
+   * B959: nothing the return names is billed (400 from a STANDARD return's refund). SA-773 N4: the same code, as a 409, when an
+   * inline hold's approval finds its source invoice voided or written off since the capture; carries `invoiceId`.
+   */
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
   INVOICE_TAX_STATE_STALE: "INVOICE_TAX_STATE_STALE",
