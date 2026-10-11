@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
+import { staffMay } from "@routeflow/types";
 import { usePageTitle } from "@/lib/page-title-context";
 import { humanizeEnum } from "@/lib/format";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
@@ -309,7 +310,9 @@ export default function OrdersPage() {
       !resume &&
       action === "new" &&
       counterGate.opensAsCounter &&
-      searchParams.get("ship") !== "1"
+      searchParams.get("ship") !== "1" &&
+      // ?builder=1 (the /orders/new target and the "Invoice order" link) asks for the builder itself.
+      searchParams.get("builder") !== "1"
     ) {
       router.replace("/orders/counter-sale");
       return;
@@ -330,6 +333,7 @@ export default function OrdersPage() {
     params.delete("resumeDraft");
     params.delete("scan");
     params.delete("ship");
+    params.delete("builder");
     params.delete("preselect");
     const qs = params.toString();
     router.replace(qs ? `/orders?${qs}` : "/orders", { scroll: false });
@@ -694,6 +698,11 @@ export default function OrdersPage() {
             {counterGate.showButton ? (
               <Button variant="secondary" onClick={() => router.push("/orders/counter-sale")}>
                 Counter sale
+              </Button>
+            ) : null}
+            {counterGate.offerInvoiceOrder && staffMay(user?.role, "USE_POS_MODE") ? (
+              <Button variant="secondary" onClick={() => setIsCreateOpen(true)}>
+                Invoice order
               </Button>
             ) : null}
             <Button

@@ -302,3 +302,62 @@ describe("CreateOrderModal: POS mode landing and Enter", () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith("/invoices/from-order/o1"));
   });
 });
+
+describe("CreateOrderModal: a store-only tenant (row 331)", () => {
+  // capabilities.fulfilment of an in-store business: PICKUP is the only method and the counter is always on.
+  const STORE_ONLY = {
+    capabilities: {
+      fulfilment: {
+        methods: ["PICKUP"],
+        staffDefault: "PICKUP",
+        staffOpensAs: "counter",
+        portalMethods: [],
+        portalDefault: null,
+        counter: "always",
+        fleet: false,
+        consistent: true,
+      },
+    },
+  };
+  const asStoreOnly = () =>
+    get.mockImplementation((url: string) =>
+      Promise.resolve({
+        data:
+          url === "/tenants/me/features"
+            ? STORE_ONLY
+            : url === "/users/me/preferences"
+              ? mockPrefs
+              : { taxRate: 0 },
+      }),
+    );
+
+  it("is in POS mode with no stored preference: Confirm & invoice, no delivery steps, no switch", async () => {
+    asStoreOnly();
+    await openWithLine();
+    expect(await screen.findByRole("button", { name: "Confirm & invoice" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /pos mode/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Requested Delivery Date/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^create order$/i })).not.toBeInTheDocument();
+  });
+
+  it("sends the order as PICKUP", async () => {
+    asStoreOnly();
+    await openWithLine();
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm & invoice" }));
+    await waitFor(() => expect(orderPosts().length).toBe(1));
+    expect(orderPosts()[0][1].fulfillPath).toBe("PICKUP");
+  });
+
+  it("a role without POS mode is left on the normal builder", async () => {
+    asStoreOnly();
+    mockRole = "SUPER_ADMIN";
+    await openWithLine();
+    expect(screen.queryByRole("button", { name: "Confirm & invoice" })).not.toBeInTheDocument();
+  });
+
+  it("a delivery tenant is unchanged: POS mode stays an opt-in switch", async () => {
+    await openWithLine();
+    expect(await posSwitch()).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm & invoice" })).not.toBeInTheDocument();
+  });
+});
