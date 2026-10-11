@@ -427,11 +427,15 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     expect(codeOf(await fail(refund(s, r.id, "CASH", 40)))).toBe("RETURN_ALREADY_RESOLVED");
     expect(codeOf(await fail(refund(s, r.id, "CARD", 30)))).toBe("RETURN_ALREADY_RESOLVED");
     expect(await auditRows(s)).toHaveLength(1);
-    // a stored audit row with NO tender in its meta is a mismatch (409), never a replay
+    // SA-740r: the COLUMN is the tender of record, so a replay trusts it even when the audit meta lost its tender
     await prisma.auditLog.updateMany({
       where: { tenantId: s.tenantId, action: "inline_return.refund" },
       data: { meta: { amount: 40 } },
     });
+    await expect(refund(s, r.id, "CARD", 40)).resolves.toMatchObject({ refundTender: "CARD" });
+    expect(codeOf(await fail(refund(s, r.id, "CASH", 40)))).toBe("RETURN_ALREADY_RESOLVED");
+    // a row the backfill has not reached (column null) with an audit row that has NO tender is a mismatch (409), never a replay
+    await prisma.return.update({ where: { id: r.id }, data: { refundTender: null } });
     expect(codeOf(await fail(refund(s, r.id, "CARD", 40)))).toBe("RETURN_ALREADY_RESOLVED");
   }, 60_000);
 
@@ -676,6 +680,7 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
       inline.quoteService.quote(
         {
           customerId: s.customerId,
+          sourceOrderId: s.orderId,
           items: [{ productId: s.productId, qty: 4, boxes: 0, pieces: 4 }],
         },
         staff(s),
@@ -693,6 +698,7 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
       inline.quoteService.quote(
         {
           customerId: u.customerId,
+          sourceOrderId: u.orderId,
           items: [{ productId: u.productId, qty: 4, boxes: 0, pieces: 4 }],
         },
         staff(u),
@@ -806,6 +812,7 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
       inline.quoteService.quote(
         {
           customerId: a.customerId,
+          sourceOrderId: a.orderId,
           items: [{ productId: a.productId, qty: 4, boxes: 0, pieces: 4 }],
         },
         staff(a),

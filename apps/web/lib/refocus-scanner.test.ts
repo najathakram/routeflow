@@ -217,3 +217,19 @@ describe("scheduleScannerRefocus", () => {
     expect(select).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("scheduleScannerRefocus yieldFrom (SA-762r: the register's own fields)", () => {
+  it("takes focus from a listed text-entry field, and still protects an unlisted one", () => {
+    const { input, ref } = scanTarget();
+    const own = mount<HTMLInputElement>('<input type="text" />');
+    const other = mount<HTMLInputElement>('<input type="text" />');
+    own.focus();
+    scheduleScannerRefocus(ref, 0, { yieldFrom: [{ current: own }] });
+    jest.advanceTimersByTime(1);
+    expect(document.activeElement).toBe(input);
+    other.focus();
+    scheduleScannerRefocus(ref, 0, { yieldFrom: [{ current: own }] });
+    jest.advanceTimersByTime(1);
+    expect(document.activeElement).toBe(other);
+  });
+});

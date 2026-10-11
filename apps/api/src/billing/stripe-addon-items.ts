@@ -1,4 +1,4 @@
-import { roundMoney } from "@routeflow/pricing";
+import { toCents } from "@routeflow/pricing";
 
 /**
  * SA-690 option A: a trial's add-ons are billed at the CARD CHECKOUT. Each unbilled self-serve
@@ -19,16 +19,6 @@ export const CHECKOUT_ADDON_SKUS_KEY = "addonSkus";
 /** The `expand` list that makes a retrieved subscription carry each item's product metadata. */
 export const CHECKOUT_ADDON_EXPAND = ["items.data.price.product"];
 
-/** A dollar price as integer cents — rounded to cents first, so float noise never moves a cent. */
-export function toCents(dollars: unknown): number {
-  return Math.round(roundMoney(Number(dollars)) * 100);
-}
-
-/** Integer cents as a dollar figure, rounded like every other money write. */
-export function fromCents(cents: number): number {
-  return roundMoney(cents / 100);
-}
-
 /** One add-on's checkout line: a MONTHLY inline price at the catalog amount, tagged with its SKU. */
 export function checkoutAddonLineItem(a: {
   sku: string;
@@ -39,7 +29,7 @@ export function checkoutAddonLineItem(a: {
   return {
     price_data: {
       currency: "usd",
-      unit_amount: toCents(a.monthlyPrice),
+      unit_amount: toCents(Number(a.monthlyPrice)),
       recurring: { interval: "month" as const },
       product_data: {
         name: `RouteFlow add-on — ${a.name}`,
@@ -48,6 +38,31 @@ export function checkoutAddonLineItem(a: {
     },
     quantity: a.quantity,
   };
+}
+
+/**
+ * ONE rule for "which of a subscription's items are add-ons" (L-167): the items a tenant add-on row owns
+ * (`stripeItemId`) PLUS the checkout-made add-on lines the completion has not adopted onto a row yet. Every
+ * reader that must find the BASE item (the scheduled price push, the pre-flip check, the post-flip verify)
+ * calls this - a second copy that forgets the checkout lines picks an add-on as the base.
+ */
+export async function stripeAddonItemIds(
+  prisma: {
+    tenantAddon: {
+      findMany(args: any): Promise<unknown>;
+    };
+  },
+  tenantId: string,
+  stripeSub: unknown,
+): Promise<Set<string>> {
+  const owned = (await prisma.tenantAddon.findMany({
+    where: { tenantId, stripeItemId: { not: null } },
+    select: { stripeItemId: true },
+  })) as { stripeItemId: string | null }[];
+  return new Set<string>([
+    ...owned.map((r) => r.stripeItemId as string),
+    ...checkoutAddonItems(stripeSub).map((i) => i.itemId),
+  ]);
 }
 
 /** A subscription item Stripe made from a checkout add-on line. */

@@ -4,13 +4,16 @@
  *
  * A refund is a RESOLUTION OF THE RETURN (the existing EXTERNAL_REFUND method), never a negative
  * InvoicePayment and never a new model: the invoice stays PAID, AR is untouched, and net sales already
- * nets an EXTERNAL_REFUND return by `refundedAt` (common/invoiced-sales.ts). The tender lives ONLY in
- * the awaited audit row (`Return.refundMethod` stays the literal EXTERNAL_REFUND until a column lands).
+ * nets an EXTERNAL_REFUND return by `refundedAt` (common/invoiced-sales.ts). The tender of record is the
+ * `Return.refundTender` column (SA-740r, see refund-tender.ts), written in the same CAS as `refundedAt`; the awaited audit row
+ * carries it too. `Return.refundMethod` stays the literal EXTERNAL_REFUND.
  */
+import { ConflictException } from "@nestjs/common";
 import { Prisma, UserRole } from "@prisma/client";
 import { CONFIRMED_STATUS, roundMoney, sumConfirmed } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
-import { DEAD_RETURN_STATUSES } from "../orders/counter-sale/counter-sale-today";
+import { DEAD_RETURN_STATUSES } from "./return-statuses";
 
 /** The only tenders a counter refund can record. A card refund is RECORDED only; no processor is called. */
 export const REFUND_TENDERS = ["CASH", "CARD", "CHECK"] as const;
@@ -139,24 +142,43 @@ export const sourcesAreRefundable = (
 ): boolean => src.paidInFull && !src.paidWithStoreCredit;
 
 /**
- * M3: reads the source invoices of the returned lines and answers "paid in full". FAILS CLOSED: no
- * lines, an unreferenced line (goods on no invoice), a source line that no longer exists, or an invoice
- * that is VOID / written off / owing anything is `paidInFull: false` (the caller falls back to store credit).
- * Balance is the CONFIRMED-basis one (`sumConfirmed`, the way `isOrderMetInTx` decides "paid off"): a
- * DRAFT or PENDING payment is not money received. Takes no lock itself; the refund locks the invoices first.
+ * Where a refund's invoices come from. INLINE names the returned lines' own source invoice items; STANDARD has no line link
+ * (`ReturnItem.sourceInvoiceItemId` is null on every STANDARD row), so it takes the order's invoices that can still source a
+ * credit (not VOID, not WRITTEN_OFF).
  */
-export async function loadSourceInvoicesState(
-  db: any,
-  sourceInvoiceItemIds: ReadonlyArray<string | null | undefined>,
-  // The refund locks the resolved invoices here, between resolving them and reading their balances.
-  opts: { beforeInvoiceRead?: (invoiceIds: string[]) => Promise<void> } = {},
-): Promise<SourceInvoicesState> {
-  const wanted = [...new Set(sourceInvoiceItemIds.filter((i): i is string => !!i))];
-  const hasUnreferenced = sourceInvoiceItemIds.some((i) => !i);
-  if (wanted.length === 0) {
-    return { invoiceIds: [], paidInFull: false, paidMethods: [], paidWithStoreCredit: false };
-  }
+export type RefundInvoiceSource =
+  | { kind: "LINES"; sourceInvoiceItemIds: ReadonlyArray<string | null | undefined> }
+  | { kind: "ORDER"; orderId: string };
 
+export interface ResolvedRefundInvoices {
+  /** Distinct invoice ids (sorted), to be locked before they are read. */
+  invoiceIds: string[];
+  /** False when the set cannot vouch for the whole return: an unreferenced line, a source line that is gone, or no invoice. */
+  complete: boolean;
+}
+
+/**
+ * THE one resolver of "which invoices does this refund need paid" (SA-740r2 item 1), for INLINE and STANDARD alike. Takes no
+ * lock; the caller locks `invoiceIds` and then reads their state with {@link loadInvoiceRefundState}. FAILS CLOSED: an
+ * unreferenced line, a deleted source line or an order with no creditable invoice is `complete: false`.
+ */
+export async function resolveRefundInvoiceIds(
+  db: any,
+  source: RefundInvoiceSource,
+): Promise<ResolvedRefundInvoices> {
+  if (source.kind === "ORDER") {
+    const rows: Array<{ id: string }> =
+      (await db.invoice.findMany({
+        where: { orderId: source.orderId, status: { notIn: [...CREDIT_SOURCE_EXCLUDED] } },
+        select: { id: true },
+      })) ?? [];
+    const invoiceIds = [...new Set(rows.map((r) => r.id))].sort();
+    return { invoiceIds, complete: invoiceIds.length > 0 };
+  }
+  const ids = source.sourceInvoiceItemIds;
+  const wanted = [...new Set(ids.filter((i): i is string => !!i))];
+  const hasUnreferenced = ids.some((i) => !i);
+  if (wanted.length === 0) return { invoiceIds: [], complete: false };
   const lines: Array<{ id: string; invoiceId: string }> =
     (await db.invoiceItem.findMany({
       where: { id: { in: wanted } },
@@ -164,7 +186,21 @@ export async function loadSourceInvoicesState(
     })) ?? [];
   const invoiceIds = [...new Set(lines.map((l) => l.invoiceId))].sort();
   // a source line that was deleted since the sale has no invoice to be paid: not refundable in cash
-  const allLinesFound = lines.length === wanted.length;
+  return { invoiceIds, complete: lines.length === wanted.length && !hasUnreferenced };
+}
+
+/**
+ * Reads the state of the resolved invoices: paid in full (non-VOID, not written off, balance 0 on the CONFIRMED basis,
+ * `sumConfirmed`, the way `isOrderMetInTx` decides "paid off": a DRAFT or PENDING payment is not money received), the payment
+ * methods, and whether any of it was paid with store credit (F4). Takes no lock itself; the refund locks the invoices first
+ * (`beforeInvoiceRead`, between resolving them and reading their balances).
+ */
+export async function loadInvoiceRefundState(
+  db: any,
+  resolved: ResolvedRefundInvoices,
+  opts: { beforeInvoiceRead?: (invoiceIds: string[]) => Promise<void> } = {},
+): Promise<SourceInvoicesState> {
+  const { invoiceIds } = resolved;
   if (invoiceIds.length === 0) {
     return { invoiceIds, paidInFull: false, paidMethods: [], paidWithStoreCredit: false };
   }
@@ -204,10 +240,51 @@ export async function loadSourceInvoicesState(
   }
   return {
     invoiceIds,
-    paidInFull: allPaid && allLinesFound && !hasUnreferenced,
+    paidInFull: allPaid && resolved.complete,
     paidMethods: [...methods].sort(),
     paidWithStoreCredit,
   };
+}
+
+/**
+ * M3: reads the source invoices of the returned lines and answers "paid in full". FAILS CLOSED: no
+ * lines, an unreferenced line (goods on no invoice), a source line that no longer exists, or an invoice
+ * that is VOID / written off / owing anything is `paidInFull: false` (the caller falls back to store credit).
+ * The INLINE composition of {@link resolveRefundInvoiceIds} + {@link loadInvoiceRefundState}.
+ */
+export async function loadSourceInvoicesState(
+  db: any,
+  sourceInvoiceItemIds: ReadonlyArray<string | null | undefined>,
+  // The refund locks the resolved invoices here, between resolving them and reading their balances.
+  opts: { beforeInvoiceRead?: (invoiceIds: string[]) => Promise<void> } = {},
+): Promise<SourceInvoicesState> {
+  return loadInvoiceRefundState(
+    db,
+    await resolveRefundInvoiceIds(db, { kind: "LINES", sourceInvoiceItemIds }),
+    opts,
+  );
+}
+
+/**
+ * The refusal of a refund whose sources are not refundable (the ONE definition: INLINE refund, REFUND capture and STANDARD
+ * `processRefund` all throw it): 409 REFUND_NEEDS_PAID_INVOICE, or REFUND_PAID_WITH_STORE_CREDIT for store credit that must
+ * not become cash. The operator's exits are named in the copy: store credit when the goods are billable, else cancel the return.
+ */
+export function refundSourcesRefusal(
+  src: Pick<SourceInvoicesState, "paidInFull" | "paidWithStoreCredit">,
+): ConflictException | null {
+  if (sourcesAreRefundable(src)) return null; // the ONE predicate (G4): below only chooses WHICH refusal
+  if (!src.paidInFull) {
+    return new ConflictException({
+      code: API_ERROR_CODES.REFUND_NEEDS_PAID_INVOICE,
+      message:
+        "A refund needs every invoice the goods were sold on to be paid in full. Issue store credit instead, or cancel the return.",
+    });
+  }
+  return new ConflictException({
+    code: API_ERROR_CODES.REFUND_PAID_WITH_STORE_CREDIT,
+    message: "Paid with store credit, so it goes back as store credit. Issue store credit instead.",
+  });
 }
 
 /**

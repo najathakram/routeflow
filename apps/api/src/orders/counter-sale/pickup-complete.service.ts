@@ -29,6 +29,7 @@ import {
   type CounterPaymentInput,
 } from "./counter-sale-payment";
 import { isHandOverTender, tenderFigures, type InvoiceRow } from "./pickup-tender";
+import { pickupTenderGroupId } from "./pickup-tender-group";
 import type { PickupCompleteDto } from "./pickup-complete.dto";
 
 type OrderRow = {
@@ -379,11 +380,16 @@ export class PickupCompleteService {
             Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
           );
           if (due <= 0) continue;
-          await this.invoices.recordPayment(part.invoiceId, {
-            amount: due,
-            method: toPrismaMethod(payment.method)!,
-            reference: payment.reference,
-          } as never);
+          // SA-763r R7: the tender's group id is written IN the create, so Today's sales finds it.
+          await this.invoices.recordPayment(
+            part.invoiceId,
+            {
+              amount: due,
+              method: toPrismaMethod(payment.method)!,
+              reference: payment.reference,
+            } as never,
+            { paymentGroupId: pickupTenderGroupId(orderId) },
+          );
         }
       } catch (e) {
         this.logger.warn(

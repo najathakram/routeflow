@@ -1,4 +1,4 @@
-import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import { computeLineSubtotal, roundMoney, validCustomer, validLine } from "@routeflow/pricing";
 import {
   API_ERROR_CODES,
   type CounterSalePaymentMethod,
@@ -387,27 +387,9 @@ export const COUNTER_DISCARD_COPY =
 export function heldAttemptKey(tenant?: string | null, userId?: string | null): string | null {
   return tenant && userId ? `${HELD_ATTEMPT_KEY}:${tenant}:${userId}` : null;
 }
-const isNum = (n: unknown): boolean => typeof n === "number" && Number.isFinite(n);
-const optNum = (n: unknown): boolean => n === undefined || isNum(n);
-export function validLine(l: unknown): boolean {
-  if (!l || typeof l !== "object") return false;
-  const o = l as Record<string, unknown>;
-  return (
-    typeof o.productId === "string" &&
-    !!o.productId &&
-    isNum(o.qty) &&
-    isNum(o.unitPrice) &&
-    optNum(o.boxes) &&
-    optNum(o.pieces) &&
-    optNum(o.unitsPerBox)
-  );
-}
-export function validCustomer(c: unknown): boolean {
-  if (c === null || c === undefined) return true;
-  if (typeof c !== "object") return false;
-  const o = c as Record<string, unknown>;
-  return typeof o.id === "string" && typeof o.businessName === "string";
-}
+// The two shape checks live in @routeflow/pricing (the park contract shares them with the API); re-exported so every caller
+// of the held-attempt snapshot keeps importing them from here.
+export { validLine, validCustomer } from "@routeflow/pricing";
 /**
  * The held attempt, null when none is stored, or "corrupt" when something IS stored but is not a valid attempt: the payload is
  * dropped and the caller must keep the sale LOCKED as "outcome unknown" (never silently unlock: a sale may have been written).

@@ -63,7 +63,7 @@ const GROUPS: HubGroup[] = [
     items: [
       {
         label: "Business profile",
-        desc: "Name, address, logo & default tax rate",
+        desc: "Name, address, logo, receipt footer & default tax rate",
         href: "/settings?tab=profile",
       },
       {

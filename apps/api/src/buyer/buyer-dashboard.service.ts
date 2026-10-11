@@ -5,6 +5,11 @@ import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { getTierPrice } from "@routeflow/pricing";
 import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
 import { firstSignableImageKey } from "../products/product-image-keys";
+import { overdueCutoff } from "../common/calendar-date";
+import { tenantTimeZone } from "../common/tenant-time-zone";
+import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
+import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 
 @Injectable()
 export class BuyerDashboardService {
@@ -59,7 +64,8 @@ export class BuyerDashboardService {
       spend30d,
       spend90d,
       spendAllTime,
-      unpaidAgg,
+      openInvoices,
+      sellerZone,
     ] = await Promise.all([
       // Recent orders (last 5)
       this.prisma.forTenant().order.findMany({
@@ -169,15 +175,25 @@ export class BuyerDashboardService {
         _sum: { total: true },
       }),
 
-      // Unpaid invoices — count + total over the open statuses, matching
-      // getAnalytics' summary (unpaidCount + overdueCount / unpaidTotal) so the
-      // dashboard strip and the Finances screen never diverge.
-      this.prisma.forTenant().invoice.aggregate({
-        where: { customerId, status: { in: ["SENT", "VIEWED", "PARTIAL", "OVERDUE"] } },
-        _count: { _all: true },
-        _sum: { total: true },
+      // Unpaid invoices over the open statuses (SA-770 r-note): the strip counts what is still OWED, via the
+      // same classifier as getAnalytics' summary, so the dashboard strip and the Finances screen never
+      // diverge and an overpaid or part-paid invoice shows its balance, never the gross.
+      this.prisma.forTenant().invoice.findMany({
+        where: { customerId, status: { in: [...OPEN_INVOICE_STATUSES] } },
+        select: {
+          status: true,
+          total: true,
+          dueDate: true,
+          payments: {
+            where: CONFIRMED_PAYMENT,
+            select: { amount: true, status: true, method: true },
+          },
+        },
       }),
+      // The seller's own due day (SA-488): an invoice is overdue once ITS tenant's day has ended.
+      tenantTimeZone(this.prisma),
     ]);
+    const unpaid = summarizeOpenInvoices(openInvoices, overdueCutoff(now, sellerZone));
 
     // Enrich frequently ordered products with product details + buyer pricing.
     // Unlisted (catalog-free) lines have no productId and can't be reordered.
@@ -369,8 +385,8 @@ export class BuyerDashboardService {
         spend30d: Number(spend30d._sum.total ?? 0),
         spend90d: Number(spend90d._sum.total ?? 0),
         spendAllTime: Number(spendAllTime._sum.total ?? 0),
-        unpaidInvoiceCount: unpaidAgg._count._all,
-        unpaidInvoiceTotal: Number(unpaidAgg._sum.total ?? 0),
+        unpaidInvoiceCount: unpaid.unpaidCount + unpaid.overdueCount,
+        unpaidInvoiceTotal: unpaid.unpaidTotal,
       },
       frequentlyOrdered,
       newFromSeller,

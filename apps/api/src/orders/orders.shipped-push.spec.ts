@@ -206,6 +206,8 @@ describe("OrdersService.changeStatus: customer push wording for a SHIP order (F1
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+            followPartialPrices: jest.fn().mockResolvedValue({ issuedPartialsUnchanged: [] }),
+            projectEditedInvoiceTotals: jest.fn().mockResolvedValue([]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
             voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),

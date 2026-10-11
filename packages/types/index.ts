@@ -174,6 +174,7 @@ export * from "./api/staff-order-email";
 export * from "./api/us-states";
 export * from "./api/config-snapshots";
 export * from "./api/counter-sale";
+export * from "./api/receipt";
 export * from "./api/counter-quick-keys";
 export * from "./api/import";
 export * from "./api/analytics-insights";
@@ -191,7 +192,9 @@ export * from "./api/inventory-settings";
 export * from "./api/preferences";
 export * from "./api/settings-registry";
 export * from "./api/rf-invoices";
+export * from "./api/tenant-zone";
 export * from "./api/permissions";
+export * from "./api/staff-capabilities";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 

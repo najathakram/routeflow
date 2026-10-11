@@ -1,5 +1,9 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
-import { IsNumber, IsOptional, Max, Min, ValidateIf } from "class-validator";
+import { IsIn, IsNumber, IsOptional, Max, Min, ValidateIf } from "class-validator";
+import {
+  PRICE_OVERRIDE_EFFECTIVE,
+  type PriceOverrideEffective,
+} from "../../billing/price-override";
 
 /**
  * Set or clear a tenant's custom price override (Platform billing — catalog-driven
@@ -28,4 +32,15 @@ export class UpdateTenantPriceDto {
   @Min(0)
   @Max(100000)
   annual?: number | null;
+
+  @ApiPropertyOptional({
+    enum: PRICE_OVERRIDE_EFFECTIVE,
+    default: "next_cycle",
+    description:
+      "When a live Stripe subscription takes the new price: `next_cycle` (default) = proration_behavior none; " +
+      "`now_prorated` = create_prorations (the adjustment lands on the next invoice).",
+  })
+  @IsOptional()
+  @IsIn(PRICE_OVERRIDE_EFFECTIVE)
+  effective?: PriceOverrideEffective;
 }

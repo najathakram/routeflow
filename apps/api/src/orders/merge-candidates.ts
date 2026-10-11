@@ -14,7 +14,7 @@
 import { BadRequestException } from "@nestjs/common";
 import { FulfillPath, ItemStatus, OrderStatus } from "@prisma/client";
 import type { PrismaService } from "../prisma/prisma.service";
-import { resolveFulfilPath, type FulfilPathDeps } from "./fulfil-path-resolver";
+import { resolveFulfilPath, type FulfilCaller, type FulfilPathDeps } from "./fulfil-path-resolver";
 
 /** An order's path; a row with none (never the case in production: the column is NOT NULL) is ROUTE. */
 export function effectiveFulfilPath(o: { fulfillPath?: FulfillPath | null }): FulfillPath {
@@ -85,11 +85,17 @@ async function incomingFulfilPath(
   return resolve(explicit, customer?.fulfillPath);
 }
 
+/**
+ * The incoming order's path: `explicit` when it asked for one, else the customer's stored path. The
+ * audience and the role are REQUIRED (SA-763r M1) so the search resolves the path exactly as create
+ * does, POS mode included.
+ */
+export type MergeAs = { explicit?: FulfillPath | null } & FulfilCaller;
+
 export interface MergeSearchOpts {
   /** A merge-target search: exclude orders a merge must not touch (unit-aware lines). */
   forMerge?: boolean;
-  /** The incoming order's path: `explicit` when it asked for one, else the customer's stored path. */
-  mergeAs?: { explicit?: FulfillPath | null; audience?: "staff" | "buyer" };
+  mergeAs?: MergeAs;
 }
 
 /**
@@ -106,16 +112,18 @@ export async function findActiveOrderImpl(
   /** The shared resolver's inputs (`fulfil-path-resolver.ts`): the incoming path resolves EXACTLY as create's. */
   fulfilDeps: FulfilPathDeps = { tenantId: null },
 ) {
-  const resolve: ResolveIncomingPath = (explicit, stored) =>
-    resolveFulfilPath(fulfilDeps, {
-      explicit,
-      stored,
-      audience: opts.mergeAs?.audience ?? "staff",
-    });
   // `mergeAs`: the caller is about to fold an incoming order in; resolve ITS path (explicit, else the
   // customer's stored one) and only consider orders on the same path.
-  const fulfillPath = opts.mergeAs
-    ? await incomingFulfilPath(prisma, customerId, opts.mergeAs.explicit, resolve)
+  const { mergeAs } = opts;
+  const fulfillPath = mergeAs
+    ? await incomingFulfilPath(prisma, customerId, mergeAs.explicit, (explicit, stored) =>
+        resolveFulfilPath(fulfilDeps, {
+          explicit,
+          stored,
+          audience: mergeAs.audience,
+          role: mergeAs.role,
+        }),
+      )
     : undefined;
   // Orders flagged skipAutoMerge are intentionally kept separate by an operator —
   // do NOT propose them as a merge target. The next operator-initiated create for
@@ -149,9 +157,9 @@ export async function findActiveOrderImpl(
 export async function assertNoBackdatedMerge(
   orders: { findActiveOrder(customerId: string, opts: MergeSearchOpts): Promise<unknown> },
   customerId: string,
-  explicit?: FulfillPath | null,
+  mergeAs: MergeAs,
 ): Promise<void> {
-  if (await orders.findActiveOrder(customerId, { forMerge: true, mergeAs: { explicit } })) {
+  if (await orders.findActiveOrder(customerId, { forMerge: true, mergeAs })) {
     throw new BadRequestException(
       "This customer has an open order. Enter a backdated order as a separate order.",
     );

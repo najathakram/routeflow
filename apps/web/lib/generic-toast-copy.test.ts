@@ -126,6 +126,8 @@ describe("genericToastCopy: codes users rely on", () => {
     ["CREDIT_NOTE_OVER_HEADROOM", /more than the source invoice still allows/],
     ["UNIT_AWARE_LINE", /sold by a unit/],
     ["ORDER_CHANGED_DURING_EDIT", /changed while you were editing/],
+    ["ORDER_BILLING_CHANGED", /billing changed/],
+    ["ORDER_EDIT_WOULD_OVERPAY", /overpaid on the invoice/],
     ["ORDER_WITH_CARRIER_NO_CANCEL", /already with the carrier/],
     // B1135: the change-request refusal for an order that has shipped, pinned word for word.
     [
@@ -305,7 +307,15 @@ describe("genericToastCopy: codes users rely on", () => {
       ["UNIT_AWARE_LINE_UNVERIFIABLE", /lines couldn't be verified.*Ask an admin/],
       ["CHANGE_REQUEST_PACK_CHANGED", /pack size changed.*Decline it and re-add/],
       ["INVOICE_CHANGED_CONCURRENTLY", /invoice changed.*Refresh and try again/],
+      ["INVOICE_TAX_STATE_STALE", /tax no longer matches.*Re-save the invoice lines/],
+      [
+        "INVOICE_TOTAL_BELOW_PAID",
+        /total below what is already paid or credited.*change the lines or discount/,
+      ],
       ["FAMILY_NOT_PRICEABLE", /family can't be priced or promoted.*variants/],
+      // SA-770: the overdue list refuses past its id cap (422) and says how to narrow it.
+      ["OVERDUE_FILTER_TOO_BROAD", /Too many invoices are overdue.*customer/],
+      ["REMINDER_NO_BALANCE_DUE", /no balance due.*nothing to remind/],
     ])("%s", (c, re) => {
       const copy = genericToastCopy(code(c));
       expect(copy).toMatch(re);
@@ -464,6 +474,8 @@ describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODE
     "UNIT_AWARE_LINE_UNVERIFIABLE",
     "CHANGE_REQUEST_PACK_CHANGED",
     "INVOICE_CHANGED_CONCURRENTLY",
+    "INVOICE_TAX_STATE_STALE",
+    "INVOICE_TOTAL_BELOW_PAID",
   ];
   it.each(REGISTERED)("%s is a computed [API_ERROR_CODES.X] key", (code) => {
     expect(src).toContain(`[API_ERROR_CODES.${code}]:`);
@@ -472,5 +484,13 @@ describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODE
   it("CREDIT_LIMIT_EXCEEDED is compared through the constant", () => {
     expect(src).toContain("code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED");
     expect(src).not.toMatch(/["'`]CREDIT_LIMIT_EXCEEDED["'`]/);
+  });
+});
+
+describe("P-4: ORDER_EDIT_WOULD_OVERPAY", () => {
+  it("is fixed copy, never the server sentence", () => {
+    const copy = genericToastCopy(err(409, { code: "ORDER_EDIT_WOULD_OVERPAY", excess: 5 }));
+    expect(copy).toMatch(/overpaid/);
+    expect(copy).not.toContain(RAW);
   });
 });

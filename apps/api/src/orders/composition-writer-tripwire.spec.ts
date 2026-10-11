@@ -36,7 +36,11 @@ const REGISTRY: Record<string, Entry> = {
     reason: "manual invoice lines carry no order provenance and are never composed",
   },
   "invoices/invoices.service.ts::createSplitInvoices": { kind: "invoice" },
-  "invoices/invoices.service.ts::reconcileOrderDraftInvoice": { kind: "invoice" },
+  "invoices/invoices.service.ts::reconcileOrderDraftInvoiceLocked": { kind: "invoice" },
+  // SA-760 Q-760-1: the DRAFT-partial price follow. Its lines come from the shared builder (planned via
+  // deps.buildItem = buildInvoiceItemData) and a FIXED composed line keeps its component rows through the
+  // DRAFT-edit step applyComposedLineEdits, called in this same writer, in the follow tx under the R-1 locks.
+  "invoices/partial-price-follow.ts::applyPartialPriceFollow": { kind: "invoice" },
   "invoices/invoices.service.ts::rebuildSiblingDrafts": { kind: "invoice" },
   "invoices/invoices.service.ts::createPartialFromOrder": { kind: "invoice" },
   "invoices/invoices.service.ts::duplicate": {
@@ -50,7 +54,16 @@ const REGISTRY: Record<string, Entry> = {
     reason:
       "the writer itself: stamps compositionMode/recipeId/recipeVersion after it writes the rows",
   },
-  "orders/orders.service.ts::changeStatus": { kind: "exempt", reason: "status only" },
+  // SA-762r F1: the cancel's line-status flip, moved verbatim out of changeStatus into the shared unwind.
+  "orders/order-cancel-tx.ts::cancelOrderInTx": { kind: "exempt", reason: "status only" },
+  "orders/delivered-stamp.ts::clearUnevidencedDelivered": {
+    kind: "exempt",
+    reason: "deliveredQty reset to 0 only; no qty, price or composition column",
+  },
+  "orders/delivered-stamp.ts::stampDeliveredInFull": {
+    kind: "exempt",
+    reason: "SA-763r: writes only OrderItem.deliveredQty, on lines with no delivery evidence",
+  },
   "orders/orders.service.ts::reopenOrder": { kind: "exempt", reason: "status only" },
   "orders/orders.service.ts::recomputeLineCategoryTaxes": {
     kind: "exempt",
@@ -132,6 +145,11 @@ const SITE =
 const FN_START =
   /^(?: {2}(?:async |private |public |protected |static )*[A-Za-z_][A-Za-z0-9_]*\(|(?:export )?(?:async )?function [A-Za-z0-9_]+|export const [A-Za-z0-9_]+ = (?:async )?\()/;
 
+/** The same starts without the 2-space method form: in a file with no class, an indented call is a statement, not a method. */
+const FREE_FN_START =
+  /^(?:(?:export )?(?:async )?function [A-Za-z0-9_]+|export const [A-Za-z0-9_]+ = (?:async )?\()/;
+const DECLARES_CLASS = /^(?:export )?(?:abstract )?class /m;
+
 function fnName(line: string): string {
   const m = line.startsWith("  ")
     ? line.match(/([A-Za-z_][A-Za-z0-9_]*)\(/)
@@ -156,8 +174,9 @@ function listTsFiles(dir: string): string[] {
 function scanSites(rel: string, text: string, found: Map<string, string>): Map<string, string> {
   const lines = text.split("\n");
   const starts: Array<{ at: number; name: string }> = [];
+  const startRe = DECLARES_CLASS.test(text) ? FN_START : FREE_FN_START;
   lines.forEach((l, i) => {
-    if (FN_START.test(l)) starts.push({ at: i, name: fnName(l) });
+    if (startRe.test(l)) starts.push({ at: i, name: fnName(l) });
   });
   lines.forEach((l, i) => {
     if (!SITE.test(l) || /^\s*(\/\/|\*)/.test(l)) return;
