@@ -2,6 +2,7 @@ import { makeStampDb } from "../common/testing/delivered-stamp-fake-db";
 import {
   captureRecreatedCarry,
   clearUnevidencedDelivered,
+  heldAtBookedFloor,
   hasDeliveryEvidence,
   markSaleDelivered,
   stampDeliveredInFull,
@@ -418,5 +419,79 @@ describe("stampDeliveredInFull — recreated (replace-all, M2)", () => {
       [],
     );
     expect(carry).toBeNull();
+  });
+});
+
+describe("the carry and the settle input leave a CANCELLED line out", () => {
+  const dbOf = (
+    mutations: Array<{ orderItemId: string; type: string; quantityDelivered: number }> = [],
+  ) =>
+    makeStampDb({
+      status: "DELIVERED",
+      lines: [{ id: "l1", productId: "p1", qty: 10, deliveredQty: 0 }],
+      mutations,
+    });
+
+  it("a legacy CANCELLED row with qty > 0 does not inflate the recreated carry", async () => {
+    const db = dbOf();
+    const carry = await captureRecreatedCarry(
+      {
+        order: { findFirst: async () => ({ ...db.committed.order }) },
+        deliveryMutation: { findMany: async () => [] },
+      } as never,
+      "o1",
+      [
+        { id: "old1", productId: "p1", qty: 10, deliveredQty: 0, status: "PENDING" },
+        { id: "old2", productId: "p1", qty: 5, deliveredQty: 0, status: "CANCELLED" },
+      ],
+    );
+    // 10 for the live legacy line, 0 for the cancelled one: red before the guard (15 for the product)
+    expect(carry!.held.map((h) => h.deliveredQty)).toEqual([10, 0]);
+  });
+
+  it("heldAtBookedFloor leaves a CANCELLED line's delivered quantity as stored", async () => {
+    const db = dbOf();
+    const out = await db.prisma.tenantTransaction((tx: any) =>
+      heldAtBookedFloor(tx, "o1", [
+        { id: "a", productId: "p1", qty: 10, deliveredQty: 0, status: "PENDING" },
+        { id: "b", productId: "p1", qty: 5, deliveredQty: 0, status: "CANCELLED" },
+      ]),
+    );
+    expect(out.map((h) => h.deliveredQty)).toEqual([10, 0]);
+  });
+});
+
+describe("heldAtBookedFloor — the settle input", () => {
+  const held = (rows: Array<[string, number, number]>) =>
+    rows.map(([id, qty, deliveredQty]) => ({ id, productId: "p1", qty, deliveredQty }));
+  const feed = (db: ReturnType<typeof makeStampDb>, rows: ReturnType<typeof held>) =>
+    db.prisma.tenantTransaction((tx: any) => heldAtBookedFloor(tx, "o1", rows));
+
+  it("a line WITH evidence rows on a non-route DELIVERED order is left exactly as recorded", async () => {
+    const db = makeStampDb({
+      status: "DELIVERED",
+      lines: [
+        { id: "route", qty: 10, deliveredQty: 6 },
+        { id: "legacy", qty: 4, deliveredQty: 0 },
+      ],
+      mutations: [{ orderItemId: "route", type: "PARTIAL", quantityDelivered: 6 }],
+    });
+    const rows = held([
+      ["route", 10, 6],
+      ["legacy", 4, 0],
+    ]);
+    const out = await feed(db, rows);
+    expect(out[0]).toBe(rows[0]); // the evidence line is the SAME object: d 6 untouched
+    expect(out[0].deliveredQty).toBe(6);
+    expect(out[1].deliveredQty).toBe(4); // the no-record line is fed at its booked floor
+    expect(rows[1].deliveredQty).toBe(0); // the caller's rows are never mutated
+  });
+
+  it("returns the rows unchanged unless the order is DELIVERED and non-route", async () => {
+    const rows = held([["a", 10, 0]]);
+    expect(await feed(makeStampDb({ status: "CONFIRMED", lines: [] }), rows)).toBe(rows);
+    expect(
+      await feed(makeStampDb({ status: "DELIVERED", routeRunStopId: "s1", lines: [] }), rows),
+    ).toBe(rows);
   });
 });
