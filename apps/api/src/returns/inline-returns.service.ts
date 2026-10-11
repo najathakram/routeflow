@@ -79,6 +79,7 @@ import {
   type RefundTender,
 } from "./inline-return-refund";
 import { assertCashRefundWithinCap, refundAmountsBySale } from "./cash-refund-cap";
+import { assertInlineReturnWithinRemainder } from "./refund-remainder-guard";
 import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
 import {
   refundTenderColumn,
@@ -1444,6 +1445,12 @@ export class InlineReturnsService {
       // paid in full AND none of it store credit (F4, read under the same invoice locks)
       const refusal = refundSourcesRefusal(src);
       if (refusal) throw refusal;
+      // SA-773: and the goods' remainder (what other returns and credit notes already took), read under the same locks
+      await assertInlineReturnWithinRemainder(tx, tenantId, {
+        returnId: id,
+        invoiceIds: src.invoiceIds,
+        items: fresh.items as any[],
+      });
       // SA-749r2 item 9: a CASH refund may not exceed the cash applied to each source sale minus earlier cash refunds on it
       // (read under the order and invoice locks held here, so two refunds cannot both spend the same room)
       await assertCashRefundWithinCap(tx, {
@@ -1626,6 +1633,12 @@ export class InlineReturnsService {
             select: { id: true, invoiceId: true },
           })) ?? [];
         await lockRefundInvoices(tx, tenantId, [...new Set(lines.map((l) => l.invoiceId))]);
+        // SA-773: store credit gives the same value back, so it fits the same remainder (this return itself excluded)
+        await assertInlineReturnWithinRemainder(tx, tenantId, {
+          returnId: id,
+          invoiceIds: [...new Set(lines.map((l) => l.invoiceId))],
+          items: items as any[],
+        });
       }
 
       const amount = inlineReturnAmount(fresh);

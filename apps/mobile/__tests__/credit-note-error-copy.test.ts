@@ -1,6 +1,8 @@
 import { API_ERROR_CODES } from "@routeflow/types";
 import {
+  CREDIT_EXCEEDS_REFUNDABLE_COPY,
   CREDIT_NOTE_ERROR_COPY,
+  RETURN_EXCEEDS_REFUNDABLE_COPY,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
   RETURN_MIXED_UNIT_PRODUCT_COPY,
   RETURN_NOTHING_BILLED_COPY,
@@ -147,4 +149,26 @@ describe("SA-740r2: the refund refusals have fixed copy that names the exits", (
       expect(copy).not.toMatch(/outside RouteFlow|manually/i);
     }
   });
+});
+
+describe("SA-773: the refundable-remainder refusals have fixed copy that names what is left", () => {
+  const err = (code: string, extra: Record<string, unknown> = {}) => ({
+    response: { data: { code, message: "RAW SERVER TEXT", ...extra } },
+  });
+
+  it.each([
+    ["RETURN_EXCEEDS_REFUNDABLE", RETURN_EXCEEDS_REFUNDABLE_COPY],
+    ["CREDIT_EXCEEDS_REFUNDABLE", CREDIT_EXCEEDS_REFUNDABLE_COPY],
+  ])(
+    "%s is the fixed copy, never the server text, plus 'up to' when the body has it",
+    (code, copy) => {
+      expect(refundErrorMessage(err(code), "other")).toBe(copy);
+      expect(refundErrorMessage(err(code, { remainingValue: 12 }), "other")).toBe(
+        `${copy} Up to $12.00 can still be given back.`,
+      );
+      expect(refundErrorMessage(err(code, { remainingValue: "12" }), "other")).toBe(copy);
+      expect(refundErrorMessage(err(code, { remainingValue: -1 }), "other")).toBe(copy);
+      expect(copy).not.toMatch(/RAW SERVER|outside RouteFlow|manually/i);
+    },
+  );
 });

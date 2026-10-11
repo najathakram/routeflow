@@ -15,7 +15,7 @@ import {
   seedRefundable,
   type Seeded,
   type SeedInvoice,
-} from "../common/testing/refundable-seed";
+} from "../../test/refundable-seed";
 import {
   creditableGroupInvoiceIds,
   poolKey,

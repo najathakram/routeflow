@@ -1,6 +1,8 @@
 import { API_ERROR_CODES, CREDITS_PENDING_COPY, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
 import {
+  CREDIT_EXCEEDS_REFUNDABLE_COPY,
   CREDIT_NOTE_ERROR_COPY,
+  RETURN_EXCEEDS_REFUNDABLE_COPY,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
   UNCONFIRMED_COPY,
   noResponse,
@@ -26,6 +28,8 @@ import { safeTextErrorCopy } from "./safe-text-error-copy";
 /** Daily-work refusals, by `body.code`. The sentences name the cause and the next step. */
 const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  [API_ERROR_CODES.RETURN_EXCEEDS_REFUNDABLE]: RETURN_EXCEEDS_REFUNDABLE_COPY,
+  [API_ERROR_CODES.CREDIT_EXCEEDS_REFUNDABLE]: CREDIT_EXCEEDS_REFUNDABLE_COPY,
   INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED:
     "This item was already returned. Add a reason to confirm another return.",
   INLINE_RETURN_KEY_CONFLICT: "This return was already submitted. Refresh to see it.",

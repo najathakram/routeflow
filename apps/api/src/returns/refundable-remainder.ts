@@ -27,7 +27,9 @@
  * invoices id-sorted) and the remainder is read under them. Row filters on status and exclusions run here in code, over the rows
  * the queries scope by id, so the formula is the same one the specs pin.
  */
+import { ConflictException } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { piecesPerQtyOf } from "../credit-notes/line-credit-headroom";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
 import { DEAD_RETURN_STATUSES } from "./return-statuses";
@@ -49,6 +51,8 @@ export interface PoolRemainder {
   qtyTol: number;
   /** Tolerance on `value` (one cent plus the rounding drift of the items already subtracted). */
   valueTol: number;
+  /** Pieces per qty of the pool's lines when they agree, else 1: what a STANDARD qty with no pack proof is counted at. */
+  unitFactor: number;
 }
 
 /** What is left of a billing group's invoices as a whole (includes the amount-only credit notes of (c)). */
@@ -86,11 +90,12 @@ interface Pool {
 }
 interface Group {
   invoiceIds: string[];
-  invoiceTotal: number;
   pools: Map<string, Pool>;
   amountOnlyOut: number;
   amountOnlyItems: number;
 }
+
+const poolUnitFactor = (pool: Pool): number => (pool.ppqs.size === 1 ? [...pool.ppqs][0] : 1);
 
 /** The gross value of one invoice line: its net subtotal, its regular tax at the line's stored rate, its category tax. */
 export function lineGrossValue(line: {
@@ -105,7 +110,7 @@ export function lineGrossValue(line: {
 const INVOICE_SELECT = {
   id: true,
   orderId: true,
-  total: true,
+  status: true,
   items: {
     select: {
       id: true,
@@ -163,7 +168,6 @@ export async function refundableRemainder(
   const invoices: Array<{
     id: string;
     orderId: string | null;
-    total: unknown;
     status?: string;
     items?: any[];
   }> =
@@ -184,7 +188,6 @@ export async function refundableRemainder(
     if (!group) {
       group = {
         invoiceIds: [],
-        invoiceTotal: 0,
         pools: new Map(),
         amountOnlyOut: 0,
         amountOnlyItems: 0,
@@ -194,7 +197,6 @@ export async function refundableRemainder(
       if (inv.orderId) groupOfOrder.set(inv.orderId, group);
     }
     group.invoiceIds.push(inv.id);
-    group.invoiceTotal += roundMoney(num(inv.total));
     groupOfInvoice.set(inv.id, group);
     for (const it of inv.items ?? []) {
       if (!it.id || !it.productId) continue;
@@ -297,7 +299,7 @@ export async function refundableRemainder(
       const pool = group.pools.get(it.productId);
       if (!pool) continue;
       const f = packFactorOrReason(bases, it.productId);
-      const factor = "factor" in f ? f.factor : pool.ppqs.size === 1 ? [...pool.ppqs][0] : 1;
+      const factor = "factor" in f ? f.factor : poolUnitFactor(pool);
       const pieces = num(it.qty) * factor;
       pool.qtyOut += pieces;
       pool.valueOut += pool.billedQty > 0 ? (pieces * pool.billedValue) / pool.billedQty : 0;
@@ -397,9 +399,14 @@ export async function refundableRemainder(
 
   // 4. the remainders
   for (const group of groups.values()) {
+    // a group that bills no goods (no product lines) has nothing to reason about: it caps nothing, as before
+    if (group.pools.size === 0) continue;
+    // the invoice-level figure is the product lines' gross value: header discounts, shipping and fee lines are not goods
+    let billed = 0;
     let poolValueOut = 0;
     let items = group.amountOnlyItems;
     for (const [productId, pool] of group.pools) {
+      billed += pool.billedValue;
       poolValueOut += pool.valueOut;
       items += pool.items;
       const remainder: PoolRemainder = {
@@ -407,12 +414,13 @@ export async function refundableRemainder(
         value: roundMoney(pool.billedValue - pool.valueOut),
         qtyTol: Math.max(0.001, pool.qtyTol),
         valueTol: valueTolerance(pool.items),
+        unitFactor: poolUnitFactor(pool),
       };
       for (const invoiceId of pool.invoiceIds)
         result.byInvoiceProduct.set(poolKey(invoiceId, productId), remainder);
     }
     const invoiceLevel: InvoiceRemainder = {
-      value: roundMoney(group.invoiceTotal - poolValueOut - group.amountOnlyOut),
+      value: roundMoney(billed - poolValueOut - group.amountOnlyOut),
       valueTol: valueTolerance(items),
     };
     for (const invoiceId of group.invoiceIds) result.byInvoice.set(invoiceId, invoiceLevel);
@@ -495,4 +503,102 @@ export function refundableRefusal(
       };
   }
   return null;
+}
+
+const REFUSAL_MESSAGE: Record<string, string> = {
+  [API_ERROR_CODES.RETURN_EXCEEDS_REFUNDABLE]:
+    "This is more than what is still refundable for these goods: part of it was already returned or credited. Reduce the amount, or cancel the return.",
+  [API_ERROR_CODES.CREDIT_EXCEEDS_REFUNDABLE]:
+    "This credit is more than what is still creditable for these goods: part of it was already returned or credited. Reduce the amount.",
+};
+
+export type RefundableRefusalCode =
+  | typeof API_ERROR_CODES.RETURN_EXCEEDS_REFUNDABLE
+  | typeof API_ERROR_CODES.CREDIT_EXCEEDS_REFUNDABLE;
+
+/** 409 `code` { invoiceId, productId?, remainingQty, remainingValue } when the requests exceed the remainder; else nothing. */
+export function assertWithinRefundable(
+  rem: RefundableRemainder,
+  requests: readonly RefundableRequest[],
+  code: RefundableRefusalCode,
+): void {
+  const refusal = refundableRefusal(rem, requests);
+  if (refusal) throw new ConflictException({ code, message: REFUSAL_MESSAGE[code], ...refusal });
+}
+
+/** The invoice id of `invoiceIds` whose group has a pool for `productId` (the key a STANDARD request reads), else undefined. */
+export function invoiceIdForProduct(
+  rem: RefundableRemainder,
+  invoiceIds: readonly string[],
+  productId: string,
+): string | undefined {
+  return invoiceIds.find((id) => rem.byInvoiceProduct.has(poolKey(id, productId)));
+}
+
+/**
+ * The requests of a STANDARD return: its qty per product in PIECES (the order line's unit through its pack basis, the same
+ * conversion the over-return cap uses; an unknown basis counts the typed qty as it is) plus the refund's net `value` against the
+ * invoice-level remainder. A product billed on none of the invoices has no pool and is not requested here.
+ */
+export function standardReturnRequests(
+  rem: RefundableRemainder,
+  invoiceIds: readonly string[],
+  items: ReadonlyArray<{ productId: string; qty: unknown }>,
+  bases: Map<string, ProductPackBasis>,
+  value: number,
+): RefundableRequest[] {
+  const qtyByProduct = new Map<string, number>();
+  for (const it of items)
+    qtyByProduct.set(it.productId, (qtyByProduct.get(it.productId) ?? 0) + num(it.qty));
+  const requests: RefundableRequest[] = [];
+  for (const [productId, qty] of qtyByProduct) {
+    const invoiceId = invoiceIdForProduct(rem, invoiceIds, productId);
+    if (!invoiceId) continue;
+    const f = packFactorOrReason(bases, productId);
+    const unit = rem.byInvoiceProduct.get(poolKey(invoiceId, productId))?.unitFactor ?? 1;
+    requests.push({ invoiceId, productId, qty: qty * ("factor" in f ? f.factor : unit) });
+  }
+  const anchor = invoiceIds.find((id) => rem.byInvoice.has(id));
+  if (anchor && value > 0) requests.push({ invoiceId: anchor, value: roundMoney(value) });
+  return requests;
+}
+
+/**
+ * The requests of an INLINE return: each stored item's pieces and money (subtotal + tax + category tax) against the pool of the
+ * invoice its source line sits on. An item with no source line (unreferenced) or whose line is gone has no pool; the refund's
+ * paid-in-full check already fails closed on those.
+ */
+export async function inlineReturnRequests(
+  tx: any,
+  items: ReadonlyArray<{
+    productId: string;
+    qty: unknown;
+    sourceInvoiceItemId?: string | null;
+    subtotal?: unknown;
+    taxAmount?: unknown;
+    categoryTax?: unknown;
+  }>,
+): Promise<RefundableRequest[]> {
+  const lineIds = [
+    ...new Set(items.map((i) => i.sourceInvoiceItemId).filter((i): i is string => !!i)),
+  ];
+  if (lineIds.length === 0) return [];
+  const lines: Array<{ id: string; invoiceId: string }> =
+    (await tx.invoiceItem?.findMany?.({
+      where: { id: { in: lineIds } },
+      select: { id: true, invoiceId: true },
+    })) ?? [];
+  const invoiceOf = new Map(lines.map((l) => [l.id, l.invoiceId]));
+  const requests: RefundableRequest[] = [];
+  for (const it of items) {
+    const invoiceId = it.sourceInvoiceItemId ? invoiceOf.get(it.sourceInvoiceItemId) : undefined;
+    if (!invoiceId) continue;
+    requests.push({
+      invoiceId,
+      productId: it.productId,
+      qty: num(it.qty),
+      value: roundMoney(num(it.subtotal) + num(it.taxAmount) + num(it.categoryTax)),
+    });
+  }
+  return requests;
 }

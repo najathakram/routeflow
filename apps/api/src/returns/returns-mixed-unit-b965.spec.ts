@@ -234,7 +234,8 @@ describe("ReturnsService.processRefund — the order pool in PIECES (B967)", () 
   ];
   const poolRead = () =>
     prisma.invoice.findMany.mockResolvedValue(
-      twoBoxInvoices().map((i) => ({ id: i.id, items: i.items })),
+      // SA-773: the refundable remainder pools an order's invoices, so the rows carry their order (as stored rows do)
+      twoBoxInvoices().map((i) => ({ id: i.id, orderId: "ord-1", items: i.items })),
     );
   const withReturn = (qty: number) =>
     prisma.return.findUnique.mockResolvedValue({

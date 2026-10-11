@@ -530,6 +530,26 @@ describe("refundableRemainder (SA-773): the one formula", () => {
     expect(poolOf(rem, "i2", "pA")).toBeUndefined();
   });
 
+  it("the invoice-level figure is the product lines' gross: a header discount or a fee line does not move it", async () => {
+    const tx = fakeTx({
+      invoices: [
+        invoice("i1", "o1", 90, [
+          line("l1", "pA", 10, 100),
+          { ...line("l2", "pNull", 1, 25), productId: null },
+        ]),
+      ],
+    });
+    const rem = await refundableRemainder(tx, { invoiceIds: ["i1"] });
+    expect(rem.byInvoice.get("i1")?.value).toBe(100);
+  });
+
+  it("an invoice that bills no goods (no product line) caps nothing", async () => {
+    const tx = fakeTx({ invoices: [invoice("i1", "o1", 40, [])] });
+    const rem = await refundableRemainder(tx, { invoiceIds: ["i1"] });
+    expect(rem.byInvoice.size).toBe(0);
+    expect(refundableRefusal(rem, [{ invoiceId: "i1", value: 999 }])).toBeNull();
+  });
+
   it("creditableGroupInvoiceIds adds the order's other creditable invoices to the ones given, id-sorted", async () => {
     const tx = fakeTx({ invoices: [] });
     tx.invoice.findMany.mockResolvedValueOnce([{ id: "i3" }, { id: "i1" }]);

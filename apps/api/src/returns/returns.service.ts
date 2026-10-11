@@ -58,6 +58,7 @@ import {
   type RefundTender,
 } from "./inline-return-refund";
 import { assertCashRefundWithinCap } from "./cash-refund-cap";
+import { assertStandardRefundWithinRemainder } from "./refund-remainder-guard";
 import {
   NOTHING_CREDITABLE_MESSAGE,
   REFUND_LOCK_TIMEOUT_MS,
@@ -1416,6 +1417,14 @@ export class ReturnsService {
           if (!locked) throw new NotFoundException("Return not found");
           const basis = await this.basisUnderLock(method, locked, tx, firstBasis);
           const refundAmount = roundMoney(basis.amount);
+          // SA-773: both methods give value back, so both fit the goods' remainder (read under the locks held here)
+          await assertStandardRefundWithinRemainder(tx, {
+            returnId: id,
+            invoiceIds: resolved.invoiceIds,
+            items: locked.items ?? [],
+            bases: await this.packBasesOf(locked.order ?? undefined, tx),
+            amount: refundAmount,
+          });
 
           if (external) {
             const state = await loadInvoiceRefundState(tx, resolved);

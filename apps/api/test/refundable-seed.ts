@@ -2,10 +2,9 @@
  * SA-773: rows for the refundable-remainder DB specs - one throwaway tenant per case with an order, its invoices (paid in full
  * in cash, so a cash refund is allowed), their lines at a given qty / net subtotal / tax rate, and builders for credit notes and
  * returns. Every tenant slug goes through `assertTestTenant` (`qa-*`), and `cleanupSeeded` deletes exactly the tenants a run
- * created. Never imported by production code (this folder is outside the build).
+ * created. Never imported by production code (this folder is outside src and the build; eslint and the source scanners do not walk it).
  */
-// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-const { assertTestTenant } = require("../../../../../scripts/lib/test-tenants.cjs") as {
+const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs") as {
   assertTestTenant: (slug: string, file: string) => string;
 };
 
@@ -263,6 +262,10 @@ export async function addInlineReturn(
       kind: "INLINE",
       returnNumber: opts.number,
       refundMethod: opts.refundMethod ?? null,
+      // the priced total, split as the capture stores it (the refund answers with exactly this figure)
+      creditSubtotal: round2(opts.items.reduce((t, i) => t + i.subtotal, 0)),
+      creditTax: round2(opts.items.reduce((t, i) => t + (i.taxAmount ?? 0), 0)),
+      creditCategoryTax: round2(opts.items.reduce((t, i) => t + (i.categoryTax ?? 0), 0)),
       items: {
         create: opts.items.map((i) => ({
           tenantId: s.tenantId,
