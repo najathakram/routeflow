@@ -425,14 +425,26 @@ describe("BookkeepingService", () => {
       expect(create).not.toHaveBeenCalled();
     });
 
-    it("counter invoice: a CHECK under the same standing close is accepted (moves no close total)", async () => {
+    it("counter invoice: a CHECK dated AFTER the standing close's cutoff is accepted", async () => {
       const { create } = setup({
         counter: true,
         closeEnd: CLOSE_END,
-        dbNow: new Date("2026-10-09T16:00:00.000Z"),
+        dbNow: new Date("2026-10-09T18:00:00.000Z"), // the database clock, after windowEnd
       });
       await service.recordPayment("inv-c", { amount: 10, method: "CHECK" as any });
       expect(create).toHaveBeenCalledTimes(1);
+    });
+
+    it("counter invoice: a CHECK whose date falls INSIDE the closed window is refused (a check moves the closed Z's money in)", async () => {
+      const { create } = setup({
+        counter: true,
+        closeEnd: CLOSE_END,
+        dbNow: new Date("2026-10-09T16:00:00.000Z"), // before windowEnd: inside the closed day
+      });
+      await expect(
+        service.recordPayment("inv-c", { amount: 10, method: "CHECK" as any }),
+      ).rejects.toMatchObject({ response: { code: "COUNTER_SALE_DAY_CLOSED" } });
+      expect(create).not.toHaveBeenCalled();
     });
 
     it("non-counter invoice: no close lock, no DB clock read, app-clock paidAt, behaviour unchanged", async () => {
