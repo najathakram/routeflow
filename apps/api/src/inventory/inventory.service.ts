@@ -2620,7 +2620,7 @@ export class InventoryService {
 
     const product = await this.prisma.forTenant().product.findFirst({
       where: { id: dto.productId },
-      select: { id: true, name: true, kind: true, currentStock: true, unitsPerBox: true },
+      select: { id: true, name: true, kind: true, unitsPerBox: true },
     });
     if (!product) throw new NotFoundException("Product not found");
     assertSellableLines([product]); // WS8: a counted FAMILY must not reach assignToVariants
@@ -2636,6 +2636,15 @@ export class InventoryService {
     const incoming = fromSplit ? fromSplit.qty : (dto.countedQty ?? 0);
 
     return this.prisma.tenantTransaction(async (tx) => {
+      // The baseline stamp (SA-767 L-2.4 A): the product's LIVE stock, read in THIS tx. It is a stamp,
+      // not a stock write, so a plain read is enough (no Product lock). The read above only validated
+      // the product and sized the split.
+      const live = await tx.product.findFirst({
+        where: { id: dto.productId },
+        select: { currentStock: true },
+      });
+      if (!live) throw new NotFoundException("Product not found");
+
       const existing = await tx.stockCountLine.findUnique({
         where: { sessionId_productId: { sessionId, productId: dto.productId } },
       });
@@ -2661,7 +2670,12 @@ export class InventoryService {
       if (existing) {
         return tx.stockCountLine.update({
           where: { id: existing.id },
-          data,
+          // The baseline is the stock when this line's counting BEGAN: its create or its last ABSOLUTE
+          // write (a typed / set total or a recount that replaces `countedQty`). An absolute write
+          // re-stamps it, otherwise a sale between two counts would be subtracted twice (the REPLACE
+          // delta is `countedQty - expectedQty`). An increment scan is one physical count
+          // accumulating: it keeps the baseline. ADD-mode lines never read it.
+          data: dto.increment ? data : { ...data, expectedQty: live.currentStock },
           select: this.stockCountLineSelect(),
         });
       }
@@ -2669,10 +2683,8 @@ export class InventoryService {
         data: {
           sessionId,
           productId: dto.productId,
-          // Snapshot on FIRST count only: the variance must mean "what changed
-          // since you started counting", not silently track stock moving under
-          // the counter mid-session.
-          expectedQty: product.currentStock,
+          // The create stamps the live stock (rule 1); see the update branch for the absolute writes.
+          expectedQty: live.currentStock,
           ...data,
         },
         select: this.stockCountLineSelect(),

@@ -1337,7 +1337,7 @@ describe("InventoryService", () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it("snapshots expectedQty on FIRST count only, so later stock drift can't move the baseline", async () => {
+    it("stamps expectedQty on the first count and re-stamps it on an absolute recount (SA-767 L-2.4 A)", async () => {
       prisma.stockCountSession.findFirst.mockResolvedValue({ id: "sess-1", status: "OPEN" });
       prisma.product.findFirst.mockResolvedValue({
         id: "prod-1",
@@ -1354,7 +1354,7 @@ describe("InventoryService", () => {
 
       expect(Number(prisma.stockCountLine.create.mock.calls[0][0].data.expectedQty)).toBe(10);
 
-      // Second touch updates the count but must NOT re-snapshot the expectation.
+      // An absolute recount re-stamps the baseline from the live stock (10); a scan does not.
       prisma.stockCountLine.findUnique.mockResolvedValue(line({ countedQty: D(4) }));
       await service.upsertStockCountLine(
         "sess-1",
@@ -1362,7 +1362,7 @@ describe("InventoryService", () => {
         { sub: "user-1" },
       );
       expect(prisma.stockCountLine.update).toHaveBeenCalled();
-      expect(prisma.stockCountLine.update.mock.calls[0][0].data.expectedQty).toBeUndefined();
+      expect(Number(prisma.stockCountLine.update.mock.calls[0][0].data.expectedQty)).toBe(10);
     });
 
     it("increment adds to the running count; without it the value replaces", async () => {

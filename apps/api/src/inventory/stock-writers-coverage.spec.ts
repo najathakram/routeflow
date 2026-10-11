@@ -645,6 +645,20 @@ describe("SA-767 L-2.2 - the batched count committer (structural pins)", () => {
     expect(m).toMatch(/expectedQty: l\.expectedQty/);
   });
 
+  it("upsertStockCountLine stamps expectedQty from the in-tx live stock: on create and on an ABSOLUTE write, never on an increment", () => {
+    const m = body("upsertStockCountLine");
+    const read = m.search(/tx\.product\.findFirst\(/);
+    const existing = m.search(/tx\.stockCountLine\.findUnique\(/);
+    expect(read).toBeGreaterThan(m.search(/this\.prisma\.tenantTransaction\(/));
+    expect(read).toBeLessThan(existing);
+    expect(m).toMatch(
+      /data: dto\.increment \? data : \{ \.\.\.data, expectedQty: live\.currentStock \}/,
+    );
+    expect(m).toMatch(/expectedQty: live\.currentStock,\n\s+\.\.\.data,/);
+    // the read is a baseline stamp, not a stock write: no Product lock for it
+    expect(m).not.toMatch(/lockProducts|lockProductsForStock/);
+  });
+
   it.each(["upsertStockCountLine", "removeStockCountLine", "discardStockCountSession"])(
     "%s refuses a committing count through assertNotCommitting",
     (name) => {
