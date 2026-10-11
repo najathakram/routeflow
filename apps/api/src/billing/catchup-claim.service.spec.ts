@@ -3,6 +3,8 @@ jest.mock("./coupon-state", () => ({
 }));
 import * as fs from "fs";
 import * as path from "path";
+import { Logger } from "@nestjs/common";
+import { CATCHUP_LATE_ALERT_DAYS } from "./catchup-claim";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { applyCouponStateTx } from "./coupon-state";
 import { fakeCatchupDb } from "../testing/fake-catchup-db";
@@ -73,8 +75,10 @@ function make(
       ...stripeSeed.sessions,
     },
   });
-  const svc = new CatchupClaimService(db.prisma, stripe as any, { emit: jest.fn() } as any);
+  const events = { emit: jest.fn() };
+  const svc = new CatchupClaimService(db.prisma, stripe as any, events as any);
   return {
+    events,
     db,
     stripe,
     svc,
@@ -1201,61 +1205,131 @@ describe("Opus SHOULD-FIX 5: a failed payment with no stored invoice id still vo
   });
 });
 
-describe("Opus SHOULD-FIX 6: a completed catch-up session the ordinary completion refused must not strand the claim", () => {
+describe("MF4 (Opus SHOULD-FIX 6, tightened): a completed catch-up session is cleared ONLY once the ordinary handler has decided against it", () => {
   const sessionExpiresAt = Math.floor(Date.parse("2026-10-10T10:00:00Z") / 1000);
-  const stuck = () =>
+  const sessionOf2 = (sub: string) => ({
+    id: SESSION,
+    subscription: sub,
+    status: "complete",
+    expires_at: sessionExpiresAt,
+    metadata: { tenantId: "t1", catchup: "period" },
+  });
+  const stuck = (o: { otherLive?: boolean } = {}) =>
     make(
       { stripeSubId: "sub_other", catchupState: "SESSION_OPEN", catchupSessionId: SESSION },
       [octOpen],
       {
-        sessions: {
-          [SESSION]: {
-            id: SESSION,
-            subscription: "sub_dup",
-            status: "complete",
-            expires_at: sessionExpiresAt,
-            metadata: { tenantId: "t1", catchup: "period" },
+        sessions: { [SESSION]: sessionOf2("sub_dup") },
+        subs: {
+          [SUB]: {
+            id: SUB,
+            customer: "cus_1",
+            latest_invoice: null,
+            default_payment_method: "pm_1",
           },
+          ...(o.otherLive
+            ? { sub_other: { id: "sub_other", status: "active", customer: "cus_1" } }
+            : {}),
         },
       },
     );
+  const decide = (h: ReturnType<typeof make>, action: string) =>
+    h.db.audits.push({
+      tenantId: null,
+      action,
+      entityType: "stripe_checkout_session",
+      entityId: SESSION,
+      meta: {},
+    });
+  const lateAlerts = (h: ReturnType<typeof make>) =>
+    h.db.audits.filter((a) => a.meta?.kind === "billing_catchup_late_completion");
 
-  it("before the webhook has had a day to land: untouched", async () => {
+  it("no decision on record and no different LIVE subscription stored: HELD at expires_at + 2 h (Stripe retries for 3 days)", async () => {
     const h = stuck();
     await h.svc.sweep(new Date("2026-10-10T11:00:00Z"));
-    expect(h.sub().catchupState).toBe("SESSION_OPEN");
+    await h.svc.sweep(new Date("2026-10-10T13:00:00Z"));
+    expect(h.sub()).toMatchObject({ catchupState: "SESSION_OPEN", catchupSessionId: SESSION });
+    expect(
+      h.db.audits.filter((a) => a.meta?.kind === "billing_catchup_stuck_completed"),
+    ).toHaveLength(0);
+    expect(lateAlerts(h)).toHaveLength(0);
   });
 
-  it("after expires_at + 2 h: a NEEDS RULING alert (once) and the claim is cleared; RfInvoices untouched", async () => {
-    const h = stuck();
-    const later = new Date("2026-10-10T13:00:00Z");
-    await h.svc.sweep(later);
+  it.each(["STRIPE_CHECKOUT_DUPLICATE", "STRIPE_CHECKOUT_REFUSED"])(
+    "the ordinary handler's %s record for that session: NEEDS RULING (once) and the claim is cleared; RfInvoices untouched",
+    async (action) => {
+      const h = stuck();
+      decide(h, action);
+      await h.svc.sweep(new Date("2026-10-10T13:00:00Z"));
+      await h.svc.sweep(new Date("2026-10-10T14:00:00Z"));
+      expect(h.sub()).toMatchObject({ catchupState: null, catchupSessionId: null });
+      expect(h.sub().stripeSubId).toBe("sub_other"); // the stored subscription is not touched
+      expect(h.inv("inv_oct").status).toBe("OPEN");
+      const notices = h.db.audits.filter((a) => a.meta?.kind === "billing_catchup_stuck_completed");
+      expect(notices).toHaveLength(1);
+      expect(notices[0].meta).toMatchObject({ subscriptionId: "sub_dup" });
+    },
+  );
+
+  it("a DIFFERENT live subscription stored (not the session's): cleared with the NEEDS RULING alert", async () => {
+    const h = stuck({ otherLive: true });
+    await h.svc.sweep(new Date("2026-10-10T13:00:00Z"));
     expect(h.sub()).toMatchObject({ catchupState: null, catchupSessionId: null });
-    expect(h.sub().stripeSubId).toBe("sub_other"); // the stored subscription is not touched
-    expect(h.inv("inv_oct").status).toBe("OPEN");
-    const notices = h.db.audits.filter((a) => a.meta?.kind === "billing_catchup_stuck_completed");
-    expect(notices).toHaveLength(1);
-    expect(notices[0].meta).toMatchObject({ subscriptionId: "sub_dup" });
+    expect(
+      h.db.audits.filter((a) => a.meta?.kind === "billing_catchup_stuck_completed"),
+    ).toHaveLength(1);
   });
 
   it("a completed session whose sub IS the stored one is not 'stuck' (it advances instead)", async () => {
     const h = make(
       { stripeSubId: SUB, catchupState: "SESSION_OPEN", catchupSessionId: SESSION },
       [octOpen],
-      {
-        sessions: {
-          [SESSION]: {
-            id: SESSION,
-            subscription: SUB,
-            status: "complete",
-            expires_at: sessionExpiresAt,
-            metadata: { tenantId: "t1", catchup: "period" },
-          },
-        },
-      },
+      { sessions: { [SESSION]: sessionOf2(SUB) } },
     );
     await h.svc.sweep(new Date("2026-10-11T00:00:00Z"));
     expect(h.sub().catchupState).toBe("AWAITING_FIRST_PAYMENT");
+  });
+
+  it("CATCHUP_LATE_ALERT_DAYS = 3: still undecided after that long, ONE structured operator alert (never a tenant email), the claim stays held", async () => {
+    expect(CATCHUP_LATE_ALERT_DAYS).toBe(3);
+    const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    try {
+      const h = stuck();
+      const justBefore = new Date((sessionExpiresAt + 3 * 24 * 3600 - 3600) * 1000);
+      await h.svc.sweep(justBefore);
+      expect(lateAlerts(h)).toHaveLength(0);
+
+      const late = new Date((sessionExpiresAt + 3 * 24 * 3600 + 3600) * 1000);
+      await h.svc.sweep(late);
+      await h.svc.sweep(new Date(late.getTime() + 3600_000)); // the hourly sweep must not re-raise it
+      expect(lateAlerts(h)).toHaveLength(1);
+      expect(lateAlerts(h)[0].meta).toMatchObject({
+        sessionId: SESSION,
+        subscriptionId: "sub_dup",
+        dedupeKey: SESSION,
+      });
+      const logged = errorSpy.mock.calls
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes("billing.catchup.late_completion"));
+      expect(logged).toHaveLength(1);
+      expect(JSON.parse(logged[0].slice(logged[0].indexOf("{")))).toMatchObject({
+        tenantId: "t1",
+        sessionId: SESSION,
+        subscriptionId: "sub_dup",
+        days: CATCHUP_LATE_ALERT_DAYS,
+      });
+      // held, not cleared; nothing was emitted (the events bus is the only outbound channel the service has)
+      expect(h.sub()).toMatchObject({ catchupState: "SESSION_OPEN", catchupSessionId: SESSION });
+      expect(h.events.emit).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("the claim service has no email / notification dependency at all (dark is silent)", () => {
+    const src = fs.readFileSync(path.join(__dirname, "catchup-claim.service.ts"), "utf8");
+    expect(src).not.toMatch(/from "[^"]*(email|mail|notification)[^"]*"/i);
+    expect(CatchupClaimService.length).toBe(3); // prisma, stripe, events: no mailer in the constructor
   });
 });
 
@@ -1400,6 +1474,11 @@ describe("Lead delta review", () => {
             expires_at: exp,
             metadata: { tenantId: "t1", catchup: "period" },
           },
+        },
+        // MF4: a DIFFERENT LIVE subscription stored is what makes the stuck claim clearable
+        subs: {
+          [SUB]: { id: SUB, customer: "cus_1", latest_invoice: null },
+          sub_ordinary: { id: "sub_ordinary", status: "active", customer: "cus_1" },
         },
       },
     );

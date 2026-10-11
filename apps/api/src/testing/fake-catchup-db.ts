@@ -84,12 +84,13 @@ export function fakeCatchupDb(seed: { subs?: Row[]; invoices?: Row[] } = {}): Fa
         const hit = audits.find((a) => {
           if (where.tenantId !== undefined && a.tenantId !== where.tenantId) return false;
           if (where.entityType !== undefined && a.entityType !== where.entityType) return false;
+          if (where.entityId !== undefined && a.entityId !== where.entityId) return false;
           if (where.action !== undefined && a.action !== where.action) return false;
           return (where.AND ?? []).every(
             (c: any) => c.meta?.path && a.meta?.[c.meta.path[0]] === c.meta.equals,
           );
         });
-        return hit ? { id: "audit-hit" } : null;
+        return hit ? { id: "audit-hit", ...hit } : null;
       }),
     },
     $queryRaw: jest.fn(async (_s: TemplateStringsArray, ...v: unknown[]) => {

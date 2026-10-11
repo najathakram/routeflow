@@ -10,6 +10,7 @@ import { applyCouponStateTx } from "./coupon-state";
 import { NO_COUPON } from "./coupon-unbilled";
 import { lockTenantForLedger } from "./addon-ledger";
 import {
+  CATCHUP_LATE_ALERT_DAYS,
   CATCHUP_META,
   CATCHUP_ORPHAN_AFTER_MS,
   claimRefusal,
@@ -19,8 +20,17 @@ import {
   type InvoiceFacts,
 } from "./catchup-claim";
 import { paidThroughOf, supersededOpenInvoiceIds, type CatchupInvoice } from "./catchup-plan";
+import {
+  STRIPE_CHECKOUT_DUPLICATE_ACTION,
+  STRIPE_CHECKOUT_ENTITY,
+  STRIPE_CHECKOUT_REFUSED_ACTION,
+} from "./config-snapshot-audit.constants";
 import { writeAdminNotice } from "./manual-invoice-notice";
-import { stripeInvoiceSubscriptionId, stripeRefId } from "./stripe-period";
+import {
+  isLiveStripeSubscriptionStatus,
+  stripeInvoiceSubscriptionId,
+  stripeRefId,
+} from "./stripe-period";
 import { StripeService } from "./stripe.service";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -940,11 +950,13 @@ export class CatchupClaimService {
   }
 
   /**
-   * Opus SHOULD-FIX 6. A catch-up session COMPLETED (and may have been paid) but the ordinary completion refused it
-   * (a duplicate / stale_checkout_manual): the subscription the session made is not the stored one, so the claim can
-   * never advance. After the webhook has had a full day to land (the session's own life + 2 h), raise a NEEDS
-   * RULING alert (once) and clear the claim - never silently. The refusal trail row from the ordinary handler names
-   * the subscription to refund / cancel.
+   * Opus SHOULD-FIX 6 + MF4. A catch-up session COMPLETED (and may have been paid) but its subscription is not the
+   * stored one, so the claim cannot advance. It is cleared ONLY when the ordinary completion has DECIDED against the
+   * session - its refusal / duplicate record exists for that session id - or a DIFFERENT live subscription is the
+   * stored one. A bare timer is not enough: Stripe retries a webhook for up to 3 days, so a completion that has
+   * simply not arrived yet must keep the claim (clearing it would unfreeze RouteFlow invoicing while a card
+   * subscription is about to land). Otherwise the claim is HELD, and after CATCHUP_LATE_ALERT_DAYS past the session's
+   * expiry ONE internal alert is raised (see {@link holdUndecidedCompletion}).
    */
   private async releaseStuckCompleted(row: ClaimRow, session: any, now: Date): Promise<boolean> {
     const sessionSub = stripeRefId(session?.subscription);
@@ -957,9 +969,13 @@ export class CatchupClaimService {
       return true; // it advanced (or was released) meanwhile
     }
     if (!sessionSub || after.stripeSubId === sessionSub) return true; // not stuck: the sub is the stored one
-    const expiresAt = Number(session?.expires_at);
-    const graceMs = 2 * 60 * 60 * 1000;
-    if (!Number.isFinite(expiresAt) || now.getTime() < expiresAt * 1000 + graceMs) return false;
+
+    const refused = await this.ordinaryHandlerRefused(String(row.catchupSessionId));
+    const otherLive = refused ? false : await this.storedSubscriptionIsLive(after.stripeSubId);
+    if (!refused && !otherLive) {
+      await this.holdUndecidedCompletion(row, session, sessionSub, now);
+      return false;
+    }
     await this.inTenantTx(row.tenantId, async (tx) => {
       const { count } = await tx.tenantSubscription.updateMany({
         where: {
@@ -986,6 +1002,67 @@ export class CatchupClaimService {
       }
     });
     return true;
+  }
+
+  /** Did the ordinary checkout handler record a duplicate / refusal decision for this session? */
+  private async ordinaryHandlerRefused(sessionId: string): Promise<boolean> {
+    for (const action of [STRIPE_CHECKOUT_DUPLICATE_ACTION, STRIPE_CHECKOUT_REFUSED_ACTION]) {
+      const hit = await this.prisma.auditLog.findFirst({
+        where: { entityType: STRIPE_CHECKOUT_ENTITY, entityId: sessionId, action },
+        select: { id: true },
+      });
+      if (hit) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Is the tenant's stored subscription a LIVE one at Stripe? Only `resource_missing` means "no": any other error
+   * says nothing, so it is rethrown (the row is left for the next run) rather than read as "not live".
+   */
+  private async storedSubscriptionIsLive(subId: string | null): Promise<boolean> {
+    if (!subId) return false;
+    try {
+      return isLiveStripeSubscriptionStatus((await this.stripe.getSubscription(subId))?.status);
+    } catch (err) {
+      const e = err as { code?: string; statusCode?: number };
+      if (e?.code === "resource_missing" || e?.statusCode === 404) return false;
+      throw err;
+    }
+  }
+
+  /**
+   * The claim is held. Past CATCHUP_LATE_ALERT_DAYS after the session's expiry, one structured operator alert (log +
+   * a once-per-session admin notice). INTERNAL ONLY: no tenant is emailed - an unresolved catch-up is the owner's to
+   * chase, and a dark / unverified billing path stays silent to customers.
+   */
+  private async holdUndecidedCompletion(
+    row: ClaimRow,
+    session: any,
+    sessionSub: string,
+    now: Date,
+  ): Promise<void> {
+    const expiresAt = Number(session?.expires_at);
+    if (!Number.isFinite(expiresAt)) return;
+    if (now.getTime() < expiresAt * 1000 + CATCHUP_LATE_ALERT_DAYS * DAY_MS) return;
+    const first = await this.noticeOnce(
+      this.prisma,
+      row.tenantId,
+      "billing_catchup_late_completion",
+      String(row.catchupSessionId),
+      `NEEDS RULING: the catch-up Checkout ${row.catchupSessionId} completed on subscription ${sessionSub} more than ${CATCHUP_LATE_ALERT_DAYS} days ago, but the ordinary completion has neither applied nor refused it. The claim is HELD (RouteFlow invoicing stays frozen for this tenant). Check Stripe's webhook deliveries for the session, then cancel ${sessionSub} or clear the claim by the runbook.`,
+      { sessionId: row.catchupSessionId, subscriptionId: sessionSub },
+    ).catch(() => false);
+    if (first) {
+      this.logger.error(
+        `billing.catchup.late_completion ${JSON.stringify({
+          tenantId: row.tenantId,
+          sessionId: row.catchupSessionId,
+          subscriptionId: sessionSub,
+          days: CATCHUP_LATE_ALERT_DAYS,
+        })}`,
+      );
+    }
   }
 
   private async releaseOrphan(row: ClaimRow): Promise<boolean> {

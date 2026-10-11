@@ -23,6 +23,14 @@ export const isCatchupState = (v: unknown): v is CatchupState =>
 /** A claim whose session id was never stored is an orphan after this long (a session lives at most 24 h). */
 export const CATCHUP_ORPHAN_AFTER_MS = 25 * 60 * 60 * 1000;
 
+/**
+ * MF4. A COMPLETED catch-up session whose subscription is not the stored one is held until the ordinary completion
+ * has DECIDED against it. Stripe retries a failed webhook for up to 3 days, so "it has not arrived yet" is not "it
+ * will never apply". This many days past the session's expiry with no decision, the operator gets ONE structured
+ * alert (log + a platform-admin notice). Internal only: never a tenant email.
+ */
+export const CATCHUP_LATE_ALERT_DAYS = 3;
+
 /** The Stripe-side facts a claim is judged from. */
 export interface InvoiceFacts {
   status: string | null;
