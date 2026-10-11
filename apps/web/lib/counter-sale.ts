@@ -23,24 +23,45 @@ export interface CounterSaleGate {
   opensAsCounter: boolean;
   /** "Ship this order instead": only when SHIP is a method of this business */
   offerShipInstead: boolean;
+  /** "Invoice order": a store-only business's way into the order builder (row 331) */
+  offerInvoiceOrder: boolean;
 }
 
 const NO_COUNTER: CounterSaleGate = {
   showButton: false,
   opensAsCounter: false,
   offerShipInstead: false,
+  offerInvoiceOrder: false,
 };
+
+/**
+ * A store-only business: PICKUP is its only fulfilment method (no route, no shipping). Read from
+ * `capabilities.fulfilment`, never from the profile key; a missing or partial answer is NOT store-only.
+ */
+export function isStoreOnly(
+  cap: Pick<FulfilmentCapability, "methods"> | null | undefined,
+): boolean {
+  const methods = (cap?.methods ?? []) as readonly string[];
+  return methods.length > 0 && methods.every((m) => m === "PICKUP");
+}
 
 /** always -> the button and New order opens as the counter; optional -> the button only; off / unknown / loading -> nothing. */
 export function counterSaleGate(cap: FulfilmentCapability | null | undefined): CounterSaleGate {
   if (!cap) return NO_COUNTER;
   if (cap.counter === "optional")
-    return { showButton: true, opensAsCounter: false, offerShipInstead: false };
+    return {
+      showButton: true,
+      opensAsCounter: false,
+      offerShipInstead: false,
+      offerInvoiceOrder: false,
+    };
   if (cap.counter === "always")
     return {
       showButton: true,
       opensAsCounter: true,
       offerShipInstead: (cap.methods ?? []).includes("SHIP"), // `?? []`: a partial answer must not crash the till
+      // A business with no delivery at all has nowhere else to build an invoiced order from: give it the entry.
+      offerInvoiceOrder: isStoreOnly(cap),
     };
   return NO_COUNTER;
 }
@@ -185,7 +206,14 @@ const ORDER_EXISTS_CODES: ReadonlySet<unknown> = new Set([
   API_ERROR_CODES.COUNTER_SALE_ORDER_CHANGED,
   API_ERROR_CODES.IDEMPOTENCY_KEY_OTHER_ORDER,
   API_ERROR_CODES.IDEMPOTENCY_KEY_CART_MISMATCH,
+  // The sale is committed BEFORE its tender: a tender dated inside a closed day is refused afterwards, so the sale exists
+  // (unpaid). A fresh key would ring it twice; the SAME key finishes it once the close is reopened.
+  API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
 ]);
+
+/** 409 COUNTER_SALE_DAY_CLOSED from the till's sale: the sale is saved, only its payment was refused (the tender's day is closed). */
+export const COUNTER_SALE_DAY_CLOSED_TILL_COPY =
+  "This day is closed, so no payment was taken. The sale is saved. Ask the office to reopen the close, then use Try again.";
 
 /**
  * True only for a 4xx that PROVES nothing was written (the auth guard, the throttler and validation all reject BEFORE the
@@ -271,6 +299,8 @@ export function counterSaleErrorCopy(err: unknown): string {
     return "You don't have permission to complete a counter sale.";
   const final = finalCounterSaleCopy(err);
   if (final) return final;
+  if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)
+    return COUNTER_SALE_DAY_CLOSED_TILL_COPY;
   if (status === 409 && ORDER_EXISTS_CODES.has(res?.data?.code))
     return COUNTER_OUTCOME_UNKNOWN_COPY; // the order exists
   if (status === 409 && res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT)
@@ -345,6 +375,9 @@ export const PICKUP_NOT_READY_COPY =
 export const PICKUP_ONLY_COPY = "Only a pickup order can be handed over this way.";
 export const PICKUP_GENERIC_COPY = "Couldn't complete the pickup. Check the order and try again.";
 
+/** 409 COUNTER_SALE_DAY_CLOSED from pickup-complete: the hand-over stands, only the payment was refused (the tender's day is closed). */
+export const PICKUP_DAY_CLOSED_COPY =
+  "Handed over. Payment not taken: the till for that day is closed.";
 export const PICKUP_PAYMENT_REQUIRED_COPY =
   "A balance is due on this order now. Take payment to finish.";
 export const PICKUP_TENDER_SHORT_COPY = "A walk-in customer must pay the full balance.";
@@ -371,6 +404,8 @@ export function pickupCompleteErrorCopy(err: unknown): string {
   if (res?.data?.code === API_ERROR_CODES.PICKUP_INVOICE_MISSING)
     return PICKUP_INVOICE_MISSING_COPY;
   if (res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT) return PICKUP_WALK_IN_CREDIT_COPY;
+  if (res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)
+    return PICKUP_DAY_CLOSED_COPY;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_NOT_READY) return PICKUP_NOT_READY_COPY;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_ONLY) return PICKUP_ONLY_COPY;
   if (res?.data?.code === API_ERROR_CODES.WALK_IN_NO_ACCOUNT)
@@ -482,6 +517,7 @@ const PICKUP_HANDLED_CODES: ReadonlySet<string> = new Set([
   API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED,
   API_ERROR_CODES.PICKUP_NOT_READY,
   API_ERROR_CODES.PICKUP_ONLY,
+  API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
 ]);
 export function isPickupHandledError(err: unknown): boolean {
   const code = pickupErrorCode(err);

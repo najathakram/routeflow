@@ -41,6 +41,8 @@ const USES_CLASSIFIER: Record<string, string> = {
   "invoices/invoice-detail-read.ts": "detail read: balanceDue / isOverdue",
   "invoices/invoices.service.ts": "list enrichment (findAll), sendEmail and sendReminder balances",
   "invoices/invoice-kpi-summary.ts": "KPI tiles: per-invoice balance (confirmedBalance)",
+  "customers/customer-statement.ts":
+    "statement overdueAmount (row 309), buyer's and operator's: classifyInvoiceBalance in the statement's tenant zone, one zone lookup per statement",
   "bookkeeping/bookkeeping.service.ts":
     "receivables / aging / AR / per-customer balances: clamped confirmedBalance per invoice (row 310). SIGNED by design: the per-customer closingBalance (invoiced - received, the Dr/Cr net position) and recordPayment's capacity guard (totalOwed - alreadyPaid)",
   "buyer/buyer.controller.ts":
@@ -75,11 +77,6 @@ const FOLLOW_UP_READERS: Record<string, string> = {
  * which invoices count is unchanged). The spec asserts the clamp is still in the source.
  */
 const BALANCE_CLAMPED: Record<string, { clamp: RegExp; reason: string; method?: string }> = {
-  "customers/customer-statement.ts": {
-    clamp: /Math\.max\(0, roundMoney\(Number\(i\.total\) - i\.amountPaid\)\)/g,
-    reason:
-      "statement overdueAmount, both the buyer's (getMyStatement) and the operator's statement",
-  },
   "bookkeeping/bookkeeping.service.ts": {
     clamp: /confirmedBalance\(inv\.total, inv\.payments\)/g,
     method: "getCustomerBalanceSummary",
@@ -174,7 +171,6 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
     // pinned to the overdue site's own method when one is named, not to any call in the file
     const src = c.method ? methodSource(whole, c.method) : whole;
     expect(src.match(c.clamp)?.length ?? 0).toBeGreaterThanOrEqual(1);
-    if (rel.startsWith("customers/")) expect(src.match(c.clamp)).toHaveLength(2); // both statements
     // the raw, unclamped accumulations are gone
     expect(src).not.toMatch(/overdue\s*\+=\s*bal\b/);
   });
@@ -198,6 +194,7 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
     "invoices/invoice-detail-read.ts": /\bclassifyInvoiceBalance\(/,
     "invoices/invoices.service.ts": /\bclassifyInvoiceBalance\([\s\S]*\bconfirmedBalance\(/,
     "invoices/invoice-kpi-summary.ts": /\bclassifyInvoiceBalance\(/,
+    "customers/customer-statement.ts": /\bclassifyInvoiceBalance\(/,
     "bookkeeping/bookkeeping.service.ts": /\bconfirmedBalance\(/,
     "buyer/buyer.controller.ts": /\bsummarizeOpenInvoices\(/,
     "buyer/buyer-dashboard.service.ts": /\bsummarizeOpenInvoices\(/,

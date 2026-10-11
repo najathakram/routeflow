@@ -48,6 +48,7 @@ import {
   isPaymentEditable,
   isPendingOrderMirror,
 } from "../../../../lib/invoices-logic";
+import { reminderErrorCopy } from "../../../../lib/invoice-reminder-error-copy";
 import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-notes-logic";
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
@@ -205,6 +206,7 @@ export default function InvoiceDetailScreen() {
     status: invoice.status,
     paymentCount: invoice.payments?.length ?? 0,
     isOrderLinked: invoice.orderId != null,
+    balanceDue: invoice.balanceDue,
   });
   // Computed BEFORE canSend: a pending mirror is locked server-side, so Send has
   // to know about it or it offers a guaranteed 400.
@@ -532,7 +534,7 @@ export default function InvoiceDetailScreen() {
           if (notice) alertInfo("Reminder sent", notice);
           else showToast(`Reminder emailed to ${res.sentTo}`);
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: unknown) => showToast(reminderErrorCopy(e)), // fixed copy by code, never server text
       },
     );
   };

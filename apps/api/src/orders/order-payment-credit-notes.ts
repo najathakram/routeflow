@@ -16,6 +16,32 @@ export const ORDER_CREDIT_PAYMENT_SELECT = {
   createdAt: true,
 } as const;
 
+/**
+ * The order read's invoice select (moved out of orders.service.ts for the size ratchet). Row 329a: `items.taxRate` is each
+ * invoice line's stored tax rate (and nothing else of the line), the web edit panel's only source for naming a tax rate.
+ */
+export const ORDER_INVOICES_SELECT = {
+  id: true,
+  invoiceNumber: true,
+  status: true,
+  total: true,
+  deliveryBatchId: true, // the invoice stage (pdfVariant) keys on it
+  items: { select: { taxRate: true } },
+  // Applied credit-note payments, so clients can show per-credit dollars
+  // actually applied without a second roundtrip.
+  // Classification pending: whether this credit-note-application read
+  // should count DRAFT rows is decided by campaign batch F03's
+  // confirmed-payment sweep (sums go PAID-only, listings keep not-VOID
+  // with visible status). F03 converts this site or writes the reasoned
+  // exemption here.
+  // scan-ok: draft-payment-not-void — pending F03 classification, see above.
+  payments: {
+    where: { method: "CREDIT_NOTE", status: { not: "VOID" } },
+    // #2404: autoApplied (SA-436 PR-1) labels each credit Automatic / Manual.
+    select: ORDER_CREDIT_PAYMENT_SELECT,
+  },
+} as const;
+
 interface CreditNoteReader {
   creditNote: {
     findMany(args: {

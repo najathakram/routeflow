@@ -8,7 +8,7 @@ import type {
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { CounterLeg } from "./counter-sale-legs";
 import { isTender, readStoredTender, type InvoiceRow } from "./counter-sale-tender";
-import { counterTenderCashRows, tenderTakenCents } from "./counter-tender-row";
+import { counterTenderCashRows, tenderTakenCents, type TenderEvidence } from "./counter-tender-row";
 
 export { isTender, type InvoiceRow };
 
@@ -19,13 +19,37 @@ type PayRow = {
   paymentGroupId?: string | null;
 };
 
+type ScanOrdered = {
+  id?: string;
+  createdAt?: Date | string;
+  orderItem?: { position?: number | null } | null;
+};
+
+/**
+ * Row 322a: the stored lines in the order the clerk SCANNED them: by the order line's `position` (a legacy line with none
+ * comes after the positioned ones), then `createdAt`, then `id`. Lines created in one transaction share `createdAt` and the
+ * id is a random uuid, so the database order alone is repeatable but arbitrary; the web's "first unused stored line of the
+ * product" fallback is only meaningful against scan order. Stable: rows that tie keep the order they arrived in.
+ */
+export function inScanOrder<T extends ScanOrdered>(rows: readonly T[]): T[] {
+  const time = (r: T) => (r.createdAt == null ? 0 : new Date(r.createdAt).getTime());
+  return [...rows].sort((a, b) => {
+    const pa = a.orderItem?.position ?? Number.POSITIVE_INFINITY;
+    const pb = b.orderItem?.position ?? Number.POSITIVE_INFINITY;
+    if (pa !== pb) return pa < pb ? -1 : 1;
+    if (time(a) !== time(b)) return time(a) - time(b);
+    return (a.id ?? "") < (b.id ?? "") ? -1 : (a.id ?? "") > (b.id ?? "") ? 1 : 0;
+  });
+}
+
 /**
  * SA-764 + SA-749r2: the change every surface shows, from STORAGE alone. The ONE gate shared by the POST / by-key
  * read-back, the Today's-sales row and the receipt document so they can not drift, and the formula is pricing's
  * `counterChange` (no second one anywhere). `tendered` is `Order.counterCashTendered`, the CASH LEG's handed-over amount
  * whichever leg index it is. The cash APPLIED is what the sale's own counter-tender CASH rows hold
- * (`counterTenderCashRows`, the set-level tender rule, PAID rows only): that stored row, never `total - other methods`, so a
- * card row voided later or a total cut later can not move a past sale's change. (That is `counterChange` with
+ * (`counterTenderCashRows`: the predicate's own-tender clause judged against the SALE'S SET, every payment row of the
+ * order incl. VOID rows and `evidence` from voided sibling invoices; PAID rows only): that stored row, never
+ * `total - other methods`, so a card row voided later or a total cut later can not move a past sale's change. (That is `counterChange` with
  * `nonCashApplied = total - cash rows`; the total cancels.) null when nothing was tendered or the sale has no cash tender
  * row (a card-only sale). There is no first-tender gate (a card-first split serves change).
  *
@@ -40,9 +64,11 @@ export function servedChange(
   tendered: unknown,
   payments: PayRow[],
   total: number,
+  /** the order's OTHER payment rows (a voided sibling invoice's): they only decide "is this sale grouped" */
+  evidence: TenderEvidence = [],
 ): number | null {
   if (tendered == null) return null;
-  const cash = counterTenderCashRows(orderId, payments);
+  const cash = counterTenderCashRows(orderId, payments, evidence);
   if (cash.length === 0) return null;
   const cashApplied = roundMoney(sumConfirmed(cash));
   const { change } = counterChange({
@@ -50,7 +76,10 @@ export function servedChange(
     nonCashApplied: 0,
     tendered: Number(tendered),
   });
-  if (change > 0 && tenderTakenCents(orderId, payments) < Math.round(roundMoney(total) * 100)) {
+  if (
+    change > 0 &&
+    tenderTakenCents(orderId, payments, evidence) < Math.round(roundMoney(total) * 100)
+  ) {
     return null;
   }
   return change;
@@ -79,8 +108,9 @@ export function counterMethodOf(
  * - Both: `change` is `servedChange` of the STORED tendered (a sale with a cash tender and nothing left to
  *   pay), never this call's request.
  *
- * Which stored row belongs to which leg is `readStoredTender`'s rule (the sale's own group ids; a pre-split
- * attempt's ungrouped rows are leg 0's), so an office payment on the same invoice is never the sale's tender.
+ * Which stored row belongs to which leg is `readStoredTender`'s rule (the sale's own group ids; with no grouped row
+ * anywhere on the order, only the ONE predicate's ungrouped tender rows are leg 0's), so an office payment, a pickup
+ * hand-over's cash or an ACH row on the same invoice is never the sale's tender.
  */
 export function buildCounterSaleResponse(input: {
   legs?: ReadonlyArray<Pick<CounterLeg, "method" | "amount">>;
@@ -96,8 +126,10 @@ export function buildCounterSaleResponse(input: {
   planError?: string;
   /** the tenant's configured rate in percent: a stored line rate is named only when it equals this */
   configuredTaxPercent?: number | null;
+  /** the order's payment rows on its voided / written-off invoices: group-id evidence for the sale's set only */
+  evidence?: TenderEvidence;
 }): CounterSaleResponse {
-  const { legs, order, invoices, replayed, planError } = input;
+  const { legs, order, invoices, replayed, planError, evidence } = input;
   const first = invoices[0];
   if (!order || !first) {
     throw new InternalServerErrorException(
@@ -108,7 +140,7 @@ export function buildCounterSaleResponse(input: {
   const total = roundMoney(invoices.reduce((s, i) => s + Number(i.total), 0));
   const paid = roundMoney(sumConfirmed(payments));
   const balanceDue = Math.max(0, roundMoney(total - paid));
-  const stored = readStoredTender(order.id, invoices);
+  const stored = readStoredTender(order.id, invoices, evidence);
   const lowestLeg = [...stored.byLeg.keys()].sort((a, b) => a - b)[0];
   const legZeroRow = (stored.byLeg.get(legs ? 0 : (lowestLeg ?? 0)) ?? [])[0];
   const anyTender = stored.byLeg.size > 0;
@@ -141,7 +173,7 @@ export function buildCounterSaleResponse(input: {
   // `counterChange`): the same figure the Today's-sales row and the receipt serve. A response that says the payment was
   // NOT recorded (live or by-key) carries none; `servedChange` itself withholds a positive change for an interrupted tender.
   const change = settled
-    ? servedChange(order.id, order.counterCashTendered, payments, total)
+    ? servedChange(order.id, order.counterCashTendered, payments, total, evidence)
     : null;
 
   // Every leg of the tender in leg order, from STORAGE: the money RECORDED against it (change is not in it)
@@ -190,14 +222,12 @@ export function buildCounterSaleResponse(input: {
         }
       : {}),
     // the stored lines' price facts, so the live receipt applies the invoices' own original-price rule (not the cart's tier price)
-    lines: invoices.flatMap((i) =>
-      (i.items ?? []).map((l) => ({
-        productId: l.productId ?? null,
-        unitPrice: roundMoney(Number(l.unitPrice ?? 0)),
-        originalPrice: l.originalPrice == null ? null : roundMoney(Number(l.originalPrice)),
-        priceType: l.priceType ?? "STANDARD",
-      })),
-    ),
+    lines: inScanOrder(invoices.flatMap((i) => i.items ?? [])).map((l) => ({
+      productId: l.productId ?? null,
+      unitPrice: roundMoney(Number(l.unitPrice ?? 0)),
+      originalPrice: l.originalPrice == null ? null : roundMoney(Number(l.originalPrice)),
+      priceType: l.priceType ?? "STANDARD",
+    })),
     ...(replayed ? { replayed: true } : {}),
   };
 }

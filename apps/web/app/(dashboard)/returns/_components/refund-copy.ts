@@ -17,9 +17,10 @@ export type RefundErrorKind =
   | "notRefundable"
   | "paidWithCredit"
   | "exceedsCash"
+  | "dayClosed"
   | "failed";
 
-/** Every kind except "failed" (retry) and "changed" (re-quote, fresh confirm) ends the refund: Close only. */
+/** Every kind except "failed" / "exceedsCash" (retry) and "changed" (re-quote, fresh confirm) ends the refund here. */
 export const TERMINAL_REFUND_ERRORS: ReadonlySet<RefundErrorKind> = new Set([
   "resolved",
   "resolvedAfterRetry",
@@ -28,6 +29,8 @@ export const TERMINAL_REFUND_ERRORS: ReadonlySet<RefundErrorKind> = new Set([
   "refundedCash",
   "notRefundable",
   "paidWithCredit",
+  // SA-750r3: the day's close is in force, so Retry would be refused again: store credit, or close and refund on a later date.
+  "dayClosed",
 ]);
 
 export const REFUND_COPY = {
@@ -48,6 +51,12 @@ export const REFUND_COPY = {
   /** SA-749r2 #9: the cash refund is more than the cash taken for the sale (less cash already refunded). Not terminal: switch the tender. */
   exceedsCash:
     "Return saved. That's more cash than was taken for this sale. Refund the rest by card or check, or give store credit.",
+  /** SA-750r3: the refund is dated inside a closed day (409 COUNTER_SALE_DAY_CLOSED). The return is saved; nothing was paid out. */
+  dayClosed:
+    "Return saved. This day is closed, so the refund can't be paid out now. Give store credit instead, or record the refund on a later date.",
+  /** The same refusal for a walk-in, who can't hold store credit: only the later date is left. */
+  dayClosedWalkIn:
+    "Return saved. This day is closed, so the refund can't be paid out now. Record the refund on a later date.",
   /** W21b: the quote-step note when Refund is the chosen resolution (store credit keeps the credit-note line). */
   quoteRefundNote: "This will be refunded to the customer, not added to their balance.",
   /** SA-727b: a saved REFUND-intent return with no refund yet (shown on the receipt; no amount paid). */
@@ -72,6 +81,8 @@ export function refundErrorKind(err: unknown): RefundErrorKind {
     return "paidWithCredit";
   if (res?.status === 409 && res.data?.code === API_ERROR_CODES.REFUND_EXCEEDS_CASH_PAID)
     return "exceedsCash";
+  if (res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)
+    return "dayClosed";
   return "failed";
 }
 

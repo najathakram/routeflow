@@ -9,7 +9,15 @@ import {
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { CounterLeg } from "./counter-sale-legs";
 import { toPrismaMethod } from "./counter-sale-payment";
-import { tenderSetOf } from "./counter-tender-row";
+import {
+  isCounterTenderRowIn,
+  tenderSetOf,
+  type TenderEvidence,
+  type TenderRowShape,
+} from "./counter-tender-row";
+
+/** The kind the stored-tender read tells the one predicate: the sale is a counter sale by construction. */
+const COUNTER_ORDER = { counterSale: true } as const;
 
 export type InvoiceRow = {
   id: string;
@@ -17,6 +25,10 @@ export type InvoiceRow = {
   total: unknown;
   /** the stored lines: the rate the tax rate is read from (`storedTaxRatePercent`) and the price facts a receipt strikes a list price from */
   items?: Array<{
+    id?: string;
+    createdAt?: Date | string;
+    /** the order line this invoice line came from: its scan `position` is the order the clerk rang the lines in */
+    orderItem?: { position?: number | null } | null;
     taxRate?: unknown;
     productId?: string | null;
     unitPrice?: unknown;
@@ -29,6 +41,7 @@ export type InvoiceRow = {
     method?: string;
     status?: string;
     paymentGroupId?: string | null;
+    checkStatus?: string | null;
   }>;
 };
 
@@ -62,35 +75,42 @@ export interface StoredTender {
 /**
  * A row is this sale's grouped tender only if its paymentGroupId is one of this order's leg ids
  * (`tenderSetOf`, the SAME set-level rule the counter void's predicate reads, in counter-tender-row.ts). With NO
- * grouped row, every other tender row counts toward leg 0 (the rule before split payments, so a held attempt from
- * before the deploy never double-charges). Once ANY grouped row exists, rows without this sale's group id (an
- * office payment made later) are not part of the tender.
+ * grouped row (a VOID leg row or `evidence` from the order's other invoices counts as one) the sale is a pre-split
+ * attempt and its tender is exactly what the ONE predicate calls the counter's own ungrouped tender: an ungrouped
+ * PAID / PENDING CASH / CARD / CHECK row (a check still RECORDED), leg 0's, so a held attempt never double-charges.
+ * Anything else on the invoice is not the sale's tender: the order's own pickup hand-over cash, an office row with a
+ * random group id, an ACH / ZELLE row, a deposited check. Once ANY grouped row exists, rows without this sale's
+ * group id (an office payment made later) are not part of the tender either.
  */
-export function readStoredTender(orderId: string, invoices: InvoiceRow[]): StoredTender {
-  const set = tenderSetOf(
-    orderId,
-    invoices.flatMap((inv) => inv.payments ?? []),
-  );
-  const all: Array<StoredLegRow & { leg: number | null }> = invoices.flatMap((inv) =>
-    (inv.payments ?? []).filter(isTender).map((p) => ({
-      invoiceId: inv.id,
-      amountCents: dollarsToCents(roundMoney(Number(p.amount))),
-      payment: p,
-      leg: set.legOf(p.paymentGroupId),
-    })),
-  );
+export function readStoredTender(
+  orderId: string,
+  invoices: InvoiceRow[],
+  /** the order's OTHER payment rows (a voided sibling invoice's): they only decide "is this sale grouped" */
+  evidence: TenderEvidence = [],
+): StoredTender {
+  const set = tenderSetOf(orderId, [...invoices.flatMap((inv) => inv.payments ?? []), ...evidence]);
   const byLeg = new Map<number, StoredLegRow[]>();
   const push = (leg: number, row: StoredLegRow) => byLeg.set(leg, [...(byLeg.get(leg) ?? []), row]);
-  const grouped = all.filter((r) => r.leg != null);
-  const rows = grouped.length > 0 ? grouped : all;
-  for (const r of rows) {
-    push(grouped.length > 0 ? r.leg! : 0, {
-      invoiceId: r.invoiceId,
-      amountCents: r.amountCents,
-      payment: r.payment,
-    });
+  for (const inv of invoices) {
+    for (const p of inv.payments ?? []) {
+      if (!isTender(p)) continue;
+      const leg = set.legOf(p.paymentGroupId);
+      const own = set.hasGrouped
+        ? leg
+        : // legacy: only an UNGROUPED row the one predicate accepts (own pickup / random-group rows never pass)
+          p.paymentGroupId == null &&
+            isCounterTenderRowIn(orderId, p as TenderRowShape, COUNTER_ORDER, set)
+          ? 0
+          : null;
+      if (own == null) continue;
+      push(own, {
+        invoiceId: inv.id,
+        amountCents: dollarsToCents(roundMoney(Number(p.amount))),
+        payment: p,
+      });
+    }
   }
-  return { byLeg, legacy: grouped.length === 0 && all.length > 0 };
+  return { byLeg, legacy: !set.hasGrouped && byLeg.size > 0 };
 }
 
 export interface SaleTenderPlan {

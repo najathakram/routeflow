@@ -94,6 +94,7 @@ function bodyHtmlOf(m: ReceiptModel): string {
     ? `<p style="margin:16px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700;color:#1D2A3D;">On account: ${escapeHtml(money(m.balanceDue))} balance due on account</p>`
     : "";
   // the customer line is a named customer's only (null for a walk-in), as in the print header
+  // owner ruling: the cashier is staff-facing (the on-screen view); the customer's copy never prints it
   const customer = m.customerName ? `<br>Customer: ${escapeHtml(m.customerName)}` : "";
   const footer = m.footer
     ? `<p style="margin:24px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#536579;white-space:pre-line;">${escapeHtml(m.footer)}</p>`

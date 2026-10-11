@@ -109,6 +109,7 @@ import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
+import { EditTaxLabel } from "./_components/EditTaxLabel";
 import { EditScanBar } from "./_components/EditScanBar";
 import {
   findLockedUnitLineEdit,
@@ -2954,7 +2955,7 @@ export default function OrderDetailPage() {
                     <span className="money text-navy/70">{formatMoney(editSubtotal)}</span>
                   </div>
                   <div className="flex justify-between text-sm text-navy/70 mt-1">
-                    <span>Tax ({(taxRate * 100).toFixed(0)}%)</span>
+                    <EditTaxLabel order={order} />
                     <span className="money text-navy/70">{formatMoney(editTax)}</span>
                   </div>
                   {orderCategoryTax > 0 && (

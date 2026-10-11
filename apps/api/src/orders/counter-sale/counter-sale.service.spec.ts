@@ -73,7 +73,8 @@ const cap = (counter: "always" | "optional" | "off", over: Partial<FulfilmentCap
 const staff = { sub: "op-1", role: "OPERATOR", tenantId: "t-1" } as never;
 const item = { productId: "p1", qty: 2, unitPrice: 5 };
 // Every leg-0 payment row is written with the sale's server-built group id, in the same create.
-const LEG0 = { paymentGroupId: legGroupId("ord-1", 0) };
+// SA-750r3: the shared close lock is held on the pinned connection (tillLockHeld); SA-749r2: the leg's group id
+const LEG0 = { tillLockHeld: true, paymentGroupId: legGroupId("ord-1", 0) };
 
 type Inv = { id: string; total: number; status: string; createdAt: Date; payments: any[] };
 
@@ -547,6 +548,7 @@ describe("CounterSaleService.ring", () => {
           amount: 37.25,
           method: "CASH",
           reference: undefined,
+          paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
         LEG0,
       );
@@ -576,6 +578,7 @@ describe("CounterSaleService.ring", () => {
           amount: 37.25,
           method: "CREDIT_CARD",
           reference: "auth-77",
+          paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
         LEG0,
       );
@@ -598,6 +601,7 @@ describe("CounterSaleService.ring", () => {
           amount: 20,
           method: "CASH",
           reference: undefined,
+          paidAt: expect.any(String), // SA-750r3: dated from the database clock
         },
         LEG0,
       );
@@ -1572,6 +1576,63 @@ describe("CounterSaleService.ring", () => {
       it("an order that carries no line detail (older fixture) is not judged", async () => {
         await expect(ringWith(priced, { id: "ord-1", counterSale: true })).resolves.toBeDefined();
       });
+    });
+  });
+  // Row 322a: the read-back serves the stored lines in the SCAN order (the order lines' `position`), whatever order the
+  // rows come back in: two lines of one product keep their order across the POST, a replay and GET .../by-key, so the web's
+  // "first unused stored line" fallback is the line the clerk scanned first, not an arbitrary one.
+  describe("the stored lines are served in scan order", () => {
+    const row = (id: string, productId: string, position: number | null, createdAt: string) => ({
+      id,
+      productId,
+      taxRate: "0.08",
+      unitPrice: "5.00",
+      originalPrice: null,
+      priceType: "STANDARD",
+      createdAt: new Date(createdAt),
+      orderItem: position === null ? null : { position },
+    });
+    const SAME = "2026-10-11T10:00:00.000Z";
+    const ringWithItems = async (items: any[]) => {
+      invoices = [{ ...inv("inv-1", 37.25), items } as any];
+      return service.ring(named({ method: "ON_ACCOUNT" }) as never, staff);
+    };
+
+    it("sorts shuffled rows by position, whatever order the database returned them in", async () => {
+      const res = await ringWithItems([
+        row("z", "p-third", 2, SAME),
+        row("a", "p-first", 0, SAME),
+        row("m", "p-second", 1, SAME),
+      ]);
+      expect(res.lines!.map((l) => l.productId)).toEqual(["p-first", "p-second", "p-third"]);
+    });
+
+    it("lines that share a createdAt (one transaction) keep position order, never the random id order", async () => {
+      const res = await ringWithItems([
+        row("a-id", "p-late", 5, SAME),
+        row("b-id", "p-early", 1, SAME),
+      ]);
+      expect(res.lines!.map((l) => l.productId)).toEqual(["p-early", "p-late"]);
+    });
+
+    it("a line with no position (a legacy row) comes after the positioned ones, then by createdAt", async () => {
+      const res = await ringWithItems([
+        row("n2", "p-legacy-2", null, "2026-10-11T10:00:02.000Z"),
+        row("n1", "p-legacy-1", null, "2026-10-11T10:00:01.000Z"),
+        row("p", "p-scanned", 3, SAME),
+      ]);
+      expect(res.lines!.map((l) => l.productId)).toEqual(["p-scanned", "p-legacy-1", "p-legacy-2"]);
+    });
+
+    it("still asks the database for a deterministic order and the position it sorts by", async () => {
+      await ringWithItems([row("a", "p1", 0, SAME)]);
+      const reads = prisma.invoice.findMany.mock.calls.map(([a]: [any]) => a);
+      for (const a of reads) {
+        expect(a.include.items.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+        expect(a.include.items.select.orderItem).toEqual({ select: { position: true } });
+        expect(a.include.items.select.createdAt).toBe(true);
+        expect(a.include.items.select.id).toBe(true);
+      }
     });
   });
 });

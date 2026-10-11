@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 import {
   COUNTER_TENDER_DISPLAY_ORDER,
+  cashierNameOf,
   roundMoney,
   storedTaxRatePercent,
   sumConfirmed,
@@ -230,6 +231,8 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
       customerId: true,
       counterCashTendered: true,
       customer: { select: { businessName: true, isWalkIn: true } },
+      // row 317: the cashier's username only (their display name); never the email or any other user column
+      soldBy: { select: { username: true } },
       invoices: {
         orderBy: { createdAt: "asc" },
         select: {
@@ -278,6 +281,8 @@ export interface TodayOrderRecord {
   /** SA-764: the cash handed over (null = not a cash sale / rung before it was stored) */
   counterCashTendered?: unknown;
   customer: { businessName: string | null; isWalkIn: boolean | null } | null;
+  /** row 317: the staff user who rang the sale (`Order.soldBy`); null/absent on a sale rung before it was stamped */
+  soldBy?: { username: string | null } | null;
   invoices: Array<{
     id: string;
     invoiceNumber: string | null;
@@ -398,6 +403,7 @@ export function toTodaysSaleRow(
     customerId: o.customerId,
     customerName: o.customer?.businessName ?? "",
     isWalkIn,
+    cashierName: cashierNameOf(o.soldBy),
     status: o.status,
     total,
     paid,
@@ -405,7 +411,13 @@ export function toTodaysSaleRow(
     methods,
     paymentState,
     cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
-    change: servedChange(o.id, o.counterCashTendered, payments, total),
+    change: servedChange(
+      o.id,
+      o.counterCashTendered,
+      payments,
+      total,
+      o.invoices.flatMap((i) => i.payments), // the sale's whole set: a voided sibling invoice's leg rows count too
+    ),
     // ONE home for the rate (pricing): a STORED line rate, corroborated by the configured rate; never inferred
     taxRatePercent: storedTaxRatePercent(
       live.map((i) => ({ lines: i.items ?? [] })),

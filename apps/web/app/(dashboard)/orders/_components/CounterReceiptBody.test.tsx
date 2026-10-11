@@ -138,12 +138,21 @@ describe("CounterReceiptBody", () => {
     expect(screen.getByTestId("receipt-numbers")).toHaveTextContent("Invoice INV-1");
     expect(screen.getByTestId("receipt-date")).toHaveTextContent(/\d{4}.*\d:\d{2}/);
     expect(screen.getByTestId("receipt-cashier")).toHaveTextContent("Cashier: pat");
+    // owner ruling (A): staff see the cashier on screen, but the PRINTED copy (the customer's) never carries it
+    expect(screen.getByTestId("receipt-cashier")).toHaveClass("print:hidden");
     expect(screen.getByTestId("receipt-method")).toHaveTextContent("Cash");
     expect(screen.getByTestId("receipt-tendered")).toHaveTextContent("$30.00");
     expect(screen.getByTestId("receipt-change")).toHaveTextContent("$7.50");
     expect(screen.getByTestId("receipt-total")).toHaveTextContent("$22.50");
     expect(screen.getByTestId("receipt-subtotal")).toHaveTextContent("$22.50");
     expect(screen.queryByTestId("receipt-adjustment")).not.toBeInTheDocument();
+  });
+
+  it("the live receipt names the cashier by the shared rule: an email-shaped username prints no Cashier line", () => {
+    authUser = { id: "u1", username: "pat@acme.test" };
+    show();
+    expect(screen.queryByTestId("receipt-cashier")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("pat@acme.test");
   });
 
   it("a repriced sale adds up: Subtotal + Adjustments = the server total", () => {

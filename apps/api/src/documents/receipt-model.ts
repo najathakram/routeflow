@@ -1,8 +1,11 @@
 import { InvoiceStatus } from "@prisma/client";
 import {
   COUNTER_TENDER_DISPLAY_ORDER,
+  cashierNameOf,
   explainedTaxRatePercent,
+  formatReceiptMoney,
   receiptLineAmounts,
+  receiptLineDetail,
   roundMoney,
   storedTaxRatePercent,
   sumConfirmed,
@@ -43,6 +46,8 @@ export interface ReceiptLineInput {
     variantName: string | null;
     parentProductId: string | null;
     parent: { name: string } | null;
+    /** the product's own selling unit ("each", "lb"): the unit word a plain line's detail prints (row 317b) */
+    unit?: string | null;
   } | null;
 }
 
@@ -59,6 +64,8 @@ export interface ReceiptOrderInput {
   counterCashTendered?: unknown;
   /** only the name and the walk-in flag: the customer's email is never read (the address is the cashier's to type) */
   customer: { businessName: string | null; isWalkIn: boolean | null } | null;
+  /** row 317: the staff user who rang the sale (`Order.soldBy`, the username only); absent/null on an older sale */
+  soldBy?: { username: string | null } | null;
   lineItems: ReceiptLineInput[];
 }
 
@@ -111,9 +118,8 @@ const METHOD_LABEL: Record<(typeof METHOD_ORDER)[number], string> = {
   STORE_CREDIT: "Store credit",
 };
 
-/** Sign first: a downward reprice reads "-$1.00", never "$-1.00". Same text as the web's `formatReceiptMoney`. */
-export const formatReceiptMoney = (n: number): string =>
-  `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
+/** Sign first: a downward reprice reads "-$1.00", never "$-1.00". The ONE formatter (pricing), shared with the web. */
+export { formatReceiptMoney };
 
 const clean = (s: string | null | undefined): string => (s ?? "").trim();
 const num = (v: unknown): number => (v == null ? 0 : Number(v));
@@ -151,15 +157,16 @@ function lineName(l: ReceiptLineInput): string {
   return base || "Item";
 }
 
-/** "3 × $2.50" or "1 box + 3 pcs × $12.00 per box" */
+/** "3 × $2.50 / each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the web prints. */
 function lineDetail(l: ReceiptLineInput): string {
-  const price = formatReceiptMoney(num(l.unitPrice));
-  if ((l.unitsPerBox ?? 0) <= 1) return `${num(l.qty)} × ${price}`;
-  const boxes = l.boxes ?? 0;
-  const pieces = l.pieces ?? 0;
-  const parts = [`${boxes} box${boxes === 1 ? "" : "es"}`];
-  if (pieces) parts.push(`${pieces} pcs`);
-  return `${parts.join(" + ")} × ${price} per box`;
+  return receiptLineDetail({
+    unitPrice: num(l.unitPrice),
+    qty: num(l.qty),
+    unitsPerBox: l.unitsPerBox,
+    boxes: l.boxes,
+    pieces: l.pieces,
+    unit: l.product?.unit,
+  });
 }
 
 function receiptHeader(b: ReceiptBranding) {
@@ -259,7 +266,7 @@ export function buildReceiptModel(
     invoiceId: shown?.id ?? "",
     dateLabel: formatSaleTime(soldAt, zone),
     lines,
-    cashier: null,
+    cashier: cashierNameOf(order.soldBy),
     customerName: customerName || null,
     subtotal: roundMoney(netSubtotal + discounts),
     discounts,
@@ -277,7 +284,7 @@ export function buildReceiptModel(
     methodLabel: hasTender ? methods.map((m) => METHOD_LABEL[m]).join(" + ") : null,
     tendered,
     tenderedAsEntered: false,
-    change: servedChange(order.id, order.counterCashTendered, livePayments, total),
+    change: servedChange(order.id, order.counterCashTendered, livePayments, total, payments),
     changeAsEntered: false,
   };
 }

@@ -14,6 +14,7 @@ import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { configuredTaxRatePercent } from "../../common/tax-rate";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
+import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import type { CounterSaleDto } from "./counter-sale.dto";
@@ -34,7 +35,7 @@ import {
   readStoredTender,
   type InvoiceRow,
 } from "./counter-sale-tender";
-import { counterTenderCashRows, legGroupId } from "./counter-tender-row";
+import { counterTenderCashRows, legGroupId, legGroupIds } from "./counter-tender-row";
 import {
   assertLegsAgainstTotal,
   assertLegsShape,
@@ -53,6 +54,7 @@ import {
 } from "../../credit-notes/auto-apply-candidates";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import { WalkInCustomerService } from "./walk-in-customer";
+import { counterCloseShared, counterTenderPaidAt } from "./counter-tender-window";
 
 // A customer id no row holds: lets the tenant-wide steps of the replay lookup answer by key alone.
 const NO_CUSTOMER = "00000000-0000-0000-0000-000000000000";
@@ -179,6 +181,7 @@ export class CounterSaleService {
       select: {
         id: true,
         orderNumber: true,
+        registerKey: true, // SA-750r3: the till this sale is counted on
         tax: true,
         // POS-5: only the lines a staff price change produced (read back from storage for the audit row).
         lineItems: {
@@ -205,9 +208,17 @@ export class CounterSaleService {
       invoices = await this.readInvoices(orderId);
     } else {
       try {
+        // SA-750r3: the SHARED end-of-day close lock rides this pinned connection (lock order: counter-tender -> counter-close
+        // -> Invoice FOR UPDATE), so a close waits for a tender in flight and the tender never lands behind its cutoff.
+        const till = { counterSale: true, registerKey: order?.registerKey };
         const locked = await withAdvisoryLock(
-          { family: "counter-tender", key: orderId, mode: "wait" },
-          () => this.tender(legs, orderId),
+          {
+            family: "counter-tender",
+            key: orderId,
+            mode: "wait",
+            sharedAlso: counterCloseShared(this.prisma.getTenantId(), till),
+          },
+          () => this.tender(legs, orderId, till),
         );
         if (!locked.acquired) throw new LockTimeoutError("counter-tender", orderId, 0);
         ({ invoices, planError } = locked.value);
@@ -232,6 +243,7 @@ export class CounterSaleService {
     });
     return buildCounterSaleResponse({
       legs,
+      evidence: await this.readTenderEvidence(orderId),
       order: order && {
         ...order,
         counterCashTendered: tendered?.counterCashTendered,
@@ -313,6 +325,7 @@ export class CounterSaleService {
   private async tender(
     legs: readonly CounterLeg[],
     orderId: string,
+    till: { counterSale: boolean; registerKey?: string | null },
   ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
@@ -321,7 +334,9 @@ export class CounterSaleService {
     // stored per (leg, invoice) is then subtracted and only the SHORTFALL is recorded. "A tender exists" is
     // not "recorded": a first call that paid sibling 1 and failed on sibling 2 is resumed, never repeated.
     const plan = planSaleTender(invoices, legs);
-    const stored = readStoredTender(orderId, invoices);
+    // the order's leg rows on voided sibling invoices: they only decide whether the sale is grouped (the ONE set)
+    const evidence = await this.readTenderEvidence(orderId);
+    const stored = readStoredTender(orderId, invoices, evidence);
     // the handed-over amount as the first call stored it (written BEFORE any money moves): half of the replay fingerprint
     const storedRow = stored.byLeg.size
       ? await this.prisma
@@ -341,19 +356,45 @@ export class CounterSaleService {
       // A refusal only stands when nothing was taken yet: a stored tender means a payment already went in.
       if (stored.byLeg.size === 0) planError = plan.refusal;
     } else if (plan.placements.length > 0) {
+      // The allocation is pure, so it is made first: the closed-day check below must run before ANY write. What each
+      // placement still owes is its planned amount less what is stored for that (leg, invoice), capped by the room the
+      // invoice has left after the placements before it (the same arithmetic the payment loop always used).
+      const takenNow = new Map<string, number>();
+      const writes: Array<{ invoiceId: string; legIndex: number; dueCents: number }> = [];
+      for (const part of plan.placements) {
+        const row = invoices.find((i) => i.id === part.invoiceId)!;
+        const have = (stored.byLeg.get(part.legIndex) ?? [])
+          .filter((r) => r.invoiceId === part.invoiceId)
+          .reduce((sum, r) => sum + r.amountCents, 0);
+        const room = invoiceRoomCents(row) - (takenNow.get(row.id) ?? 0);
+        const dueCents = Math.min(part.amountCents - have, room);
+        if (dueCents <= 0) continue;
+        takenNow.set(row.id, (takenNow.get(row.id) ?? 0) + dueCents);
+        writes.push({ invoiceId: part.invoiceId, legIndex: part.legIndex, dueCents });
+      }
+      // SA-750r3: with the shared close lock held, the instant the payment is dated (the DATABASE clock) must not sit in a
+      // closed window: 409 COUNTER_SALE_DAY_CLOSED, nothing written. It runs BEFORE the SA-764 cash-tendered write below, so a
+      // closed-day refusal leaves nothing stored, and outside the try so it is not mapped to "not recorded". A replay with
+      // nothing left to record writes nothing and is never refused.
+      const paidAt = writes.length
+        ? await counterTenderPaidAt(this.prisma, this.prisma.getTenantId(), till)
+        : undefined;
       // SA-764 + SA-749r2: the CASH handed over (the cash LEG's requested amount, whichever leg index it is; null
       // when the sale has no cash leg) is stored BEFORE any money moves, so a paid sale can never lack its tender.
       // Until a CASH tender row anchors it the amount is overwritten (a failed first attempt's stale figure must
-      // not survive a retry); once one exists it is frozen (only a NULL is filled). Same lock, no transaction.
+      // not survive a retry); once one exists it is frozen (only a NULL is filled). A replay with NOTHING left to record
+      // (`writes` empty) is frozen too, anchored or not: it only fills a NULL. Same lock, no transaction.
       if (plan.cashTenderedCents != null) {
         const anchored =
           counterTenderCashRows(
             orderId,
             invoices.flatMap((i) => i.payments ?? []),
+            evidence,
           ).length > 0;
+        const fillNullOnly = anchored || writes.length === 0;
         try {
           await this.prisma.forTenant().order.updateMany({
-            where: anchored ? { id: orderId, counterCashTendered: null } : { id: orderId },
+            where: fillNullOnly ? { id: orderId, counterCashTendered: null } : { id: orderId },
             data: { counterCashTendered: centsToDollars(plan.cashTenderedCents) },
           });
         } catch (e) {
@@ -363,31 +404,27 @@ export class CounterSaleService {
           planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
         }
       }
-      const takenNow = new Map<string, number>();
       // A tender that could not be stored takes NO money: the payment loop is skipped entirely.
       if (!planError) {
         try {
-          for (const part of plan.placements) {
-            const row = invoices.find((i) => i.id === part.invoiceId)!;
-            const have = (stored.byLeg.get(part.legIndex) ?? [])
-              .filter((r) => r.invoiceId === part.invoiceId)
-              .reduce((sum, r) => sum + r.amountCents, 0);
-            const room = invoiceRoomCents(row) - (takenNow.get(row.id) ?? 0);
-            const due = Math.min(part.amountCents - have, room);
-            if (due <= 0) continue;
-            const leg = legs[part.legIndex];
+          for (const { invoiceId, legIndex, dueCents } of writes) {
+            const leg = legs[legIndex];
             await this.invoices.recordPayment(
-              part.invoiceId,
+              invoiceId,
               {
-                amount: centsToDollars(due),
+                amount: centsToDollars(dueCents),
                 method: toPrismaMethod(leg.method)!,
                 reference: leg.reference,
+                ...(paidAt ? { paidAt } : {}),
               } as never,
-              // A pre-split attempt's rows are ungrouped: finishing it with a grouped row would make the replay rule
-              // (once any grouped row exists, ungrouped rows are not the tender) drop the rows already taken.
-              stored.legacy ? undefined : { paymentGroupId: legGroupId(orderId, part.legIndex) },
+              {
+                // SA-750r3: the shared close lock is already held on the pinned connection (tillLockHeld)
+                tillLockHeld: TILL_LOCK_HELD,
+                // A pre-split attempt's rows are ungrouped: finishing it with a grouped row would make the replay rule
+                // (once any grouped row exists, ungrouped rows are not the tender) drop the rows already taken.
+                ...(stored.legacy ? {} : { paymentGroupId: legGroupId(orderId, legIndex) }),
+              },
             );
-            takenNow.set(row.id, (takenNow.get(row.id) ?? 0) + due);
           }
         } catch (e) {
           this.logger.warn(
@@ -447,6 +484,7 @@ export class CounterSaleService {
     // With the till's own method the SAME rule POST applies decides paymentRecorded (one function, no copy).
     return buildCounterSaleResponse({
       legs: method ? [{ method }] : undefined,
+      evidence: await this.readTenderEvidence(order.id),
       order,
       invoices,
       replayed: true,
@@ -486,6 +524,24 @@ export class CounterSaleService {
     }
   }
 
+  /**
+   * The order's leg rows on its VOID / WRITTEN_OFF invoices (any payment status): group-id evidence only. The sale's set
+   * is every payment row of the order, the same one the void, the day close and the closed-day guard read, so a leg row
+   * that sits on a voided sibling still makes the sale "grouped" here too.
+   */
+  private async readTenderEvidence(
+    orderId: string,
+  ): Promise<Array<{ paymentGroupId: string | null; status: string }>> {
+    const rows = await this.prisma.forTenant().invoicePayment.findMany({
+      where: {
+        paymentGroupId: { in: legGroupIds(orderId) },
+        invoice: { orderId, status: { in: ["VOID", "WRITTEN_OFF"] } },
+      },
+      select: { paymentGroupId: true, status: true },
+    });
+    return rows ?? [];
+  }
+
   private async readInvoices(orderId: string): Promise<InvoiceRow[]> {
     return this.prisma.forTenant().invoice.findMany({
       // A VOID / WRITTEN_OFF invoice is not part of the sale (recordPayment refuses both): reading it
@@ -496,12 +552,18 @@ export class CounterSaleService {
         // the stored lines: the rate the sale's tax rate is read from, and the price facts a receipt strikes a list price from
         items: {
           select: {
+            id: true,
+            createdAt: true,
+            // the order line's scan position: the read-back sorts by it (lines of one transaction share createdAt)
+            orderItem: { select: { position: true } },
             taxRate: true,
             productId: true,
             unitPrice: true,
             originalPrice: true,
             priceType: true,
           },
+          // a deterministic base order (row 322a); the read-back then sorts by scan position (inScanOrder)
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         },
       },
       // Oldest first, with the id as the tie-break: two invoices of one order can share a createdAt, and the
