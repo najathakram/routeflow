@@ -1448,7 +1448,6 @@ export class InvoicesService {
     return {
       buildItem: (li, qty, tenantId, o) => this.buildInvoiceItemData(li, qty, tenantId, o),
       taxRateOf: (order, exempt) => this.orderDerivedTaxRate(order, exempt),
-      foldCategoryTax: (items, exempt) => this.foldCategoryTax(items, exempt),
       applyMsrp: (db, customerId, items) => this.applyMsrpSnapshots(db, customerId, items),
       tenantId: this.prisma.getTenantId(),
     };

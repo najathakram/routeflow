@@ -93,7 +93,9 @@ const TABLE: Record<string, Row> = {
       "import-invoices-restrictions.spec.ts), never blocked",
   ),
   [inv("applyPriceAdjustment")]: X("price only"),
-  [inv("reconcileOrderDraftInvoice")]: X("mirrors the order's own goods (checked at the order)"),
+  [inv("reconcileOrderDraftInvoiceLocked")]: X(
+    "mirrors the order's own goods (checked at the order)",
+  ),
   [inv("rebuildSiblingDrafts")]: X("mirrors the order's own goods"),
   [inv("createPartialFromOrder")]: X("copies lines of an existing, already-checked order"),
   [inv("recomputeOrderFromInvoices")]: X(

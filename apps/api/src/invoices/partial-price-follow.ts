@@ -1,10 +1,9 @@
 import { BadRequestException, Logger } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
 import { draftBillsLessThanOrder } from "./invoice-partition";
 import { isNsfLine } from "./nsf-line";
 import { applyComposedLineEdits } from "./invoice-composed-edit";
-import { regularTaxShare } from "./manual-invoice-context";
+import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { UnitLineSplitError } from "../orders/unit-line-split";
 
 const logger = new Logger("PartialPriceFollow");
@@ -35,8 +34,6 @@ export interface FollowDeps {
   ): any;
   /** InvoicesService.orderDerivedTaxRate, bound. */
   taxRateOf(order: { tax?: unknown; subtotal?: unknown }, isTaxExempt: boolean): number;
-  /** foldCategoryTax (manual-invoice-context.ts). */
-  foldCategoryTax(items: Array<{ categoryTaxAmount?: number }>, isTaxExempt: boolean): number;
   /** InvoicesService.applyMsrpSnapshots, bound (stamps each rebuilt line's MSRP like every other builder). */
   applyMsrp(db: any, customerId: string, items: any[]): Promise<void>;
   tenantId: string | null;
@@ -187,41 +184,29 @@ export async function planPartialPriceFollow(
             categoryPriceIncludesTax: f.categoryPriceIncludesTax,
           },
         }));
-        // The draft's money after the follow: stale lines at their fresh figures, the rest as stored.
-        const after = inv.items.map((it: any) => {
+        // The draft's money after the follow, by the ONE totals formula (sumInvoiceTotals, B1043): stale lines at
+        // their fresh figures, the rest as stored; the NSF fee line is untaxed (rate 0).
+        const priced = inv.items.map((it: any) => {
           const f = fresh.get(it.id);
-          return f
-            ? { nsf: false, subtotal: f.subtotal, categoryTaxAmount: f.categoryTaxAmount }
-            : {
-                nsf: isNsfLine(it),
-                subtotal: Number(it.subtotal),
-                categoryTaxAmount: Number(it.categoryTaxAmount ?? 0),
-              };
+          return {
+            subtotal: f ? f.subtotal : it.subtotal,
+            taxRate: !f && isNsfLine(it) ? 0 : rate,
+            categoryTaxAmount: f ? f.categoryTaxAmount : it.categoryTaxAmount,
+          };
         });
-        const lineSubtotal = roundMoney(
-          after.filter((a: any) => !a.nsf).reduce((s: number, a: any) => s + a.subtotal, 0),
-        );
-        const nsfFee = roundMoney(
-          after.filter((a: any) => a.nsf).reduce((s: number, a: any) => s + a.subtotal, 0),
-        );
-        const regularTax = regularTaxShare(order, lineSubtotal, isTaxExempt);
-        const categoryTax = deps.foldCategoryTax(
-          after.filter((a: any) => !a.nsf),
+        const sums = sumInvoiceTotalsStrict(priced, {
+          discount: Number(inv.discount ?? 0),
+          shipping: Number(inv.shippingFee ?? 0),
           isTaxExempt,
-        );
-        const taxAmount = roundMoney(regularTax + categoryTax);
-        const subtotal = roundMoney(lineSubtotal + nsfFee);
-        const total = roundMoney(
-          subtotal - Number(inv.discount ?? 0) + Number(inv.shippingFee ?? 0) + taxAmount,
-        );
+        });
         plan.drafts.push({
           invoiceId: inv.id,
           invoiceNumber: inv.invoiceNumber,
           itemUpdates,
           storedRows: inv.items,
-          subtotal,
-          taxAmount,
-          total,
+          subtotal: sums.subtotal,
+          taxAmount: sums.tax,
+          total: sums.total,
         });
       }
     }
