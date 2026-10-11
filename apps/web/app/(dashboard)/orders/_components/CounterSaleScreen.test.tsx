@@ -235,6 +235,52 @@ describe("CounterSaleScreen", () => {
       await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
     });
 
+    it("row 330a: the scroll container keeps a focused control clear of the bar (scroll-padding-bottom), and lets go on unmount", async () => {
+      const main = document.createElement("main");
+      main.id = "main-content";
+      main.style.paddingBottom = "96px"; // the shell's pb-24: the bar sticks above it
+      document.body.appendChild(main);
+      try {
+        const view = renderWithProviders(<CounterSaleScreen />);
+        await waitFor(() =>
+          expect(main.style.getPropertyValue("scroll-padding-bottom")).toBe("292px"),
+        ); // bar 180 + the shell pb-24 (96) + 1rem
+        view.unmount();
+        expect(main.style.getPropertyValue("scroll-padding-bottom")).toBe("");
+      } finally {
+        main.remove();
+      }
+    });
+
+    it("row 330a: at md and wider the bar is static, so no scroll padding is reserved", async () => {
+      const real = window.matchMedia;
+      window.matchMedia = ((q: string) => ({
+        matches: q === "(min-width: 768px)",
+        media: q,
+        addEventListener() {},
+        removeEventListener() {},
+      })) as never;
+      const main = document.createElement("main");
+      main.id = "main-content";
+      document.body.appendChild(main);
+      try {
+        const view = renderWithProviders(<CounterSaleScreen />);
+        const root = screen.getByTestId("counter-sale-screen");
+        await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
+        expect(main.style.getPropertyValue("scroll-padding-bottom")).toBe("");
+        view.unmount();
+      } finally {
+        window.matchMedia = real;
+        main.remove();
+      }
+    });
+
+    it("row 330a: below md the bar clears the home indicator (safe-area inset), so its measured height includes it", () => {
+      renderWithProviders(<CounterSaleScreen />);
+      const bar = screen.getByTestId("counter-checkout-bar");
+      expect(bar.className).toContain("env(safe-area-inset-bottom");
+    });
+
     it("a cold load (gate loading first) still measures the bar once it mounts", async () => {
       const loaded = gate;
       gate = { ...loaded, loading: true };

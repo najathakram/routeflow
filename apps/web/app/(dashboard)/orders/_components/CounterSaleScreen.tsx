@@ -314,6 +314,21 @@ export function CounterSaleScreen() {
     barObserver.current = new ResizeObserver(measure);
     barObserver.current.observe(el);
   }, []);
+  // Row 330a: the bar's padding keeps the END of the page clear, but a control that takes focus mid-page (tapping a quantity,
+  // Tab, the keyboard opening) is scrolled to the scroll container's bottom edge, under the floating bar. The container's
+  // scroll-padding makes the browser stop that scroll above the bar (+ 1rem); it is let go when the screen leaves.
+  React.useEffect(() => {
+    const main = document.getElementById("main-content");
+    // md+ lays the bar out in the payment column (static), so only the floating one needs this
+    const floating = !window.matchMedia?.("(min-width: 768px)").matches;
+    if (!main || barHeight === 0 || !floating) return;
+    // the bar sticks above the container's own bottom padding (the shell's pb-24), so that padding counts too
+    const inset = parseFloat(getComputedStyle(main).paddingBottom) || 0;
+    main.style.setProperty("scroll-padding-bottom", `${barHeight + inset + 16}px`);
+    return () => {
+      main.style.removeProperty("scroll-padding-bottom");
+    };
+  }, [barHeight]);
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
   };
@@ -1339,7 +1354,7 @@ export function CounterSaleScreen() {
 
           <div
             ref={barRef}
-            className="sticky bottom-0 z-20 space-y-2 border-t bg-white py-2 md:static md:border-t-0 md:py-0"
+            className="sticky bottom-0 z-20 space-y-2 border-t bg-white pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-2 md:static md:border-t-0 md:py-0"
             data-testid="counter-checkout-bar"
           >
             {discounts > 0 ? (
