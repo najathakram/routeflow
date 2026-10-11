@@ -87,6 +87,10 @@ const relationNames = (target: string): Set<string> => {
 };
 const TO_CREDIT_NOTE = relationNames("CreditNote"); // creditNotes, creditNote
 const TO_RETURN = relationNames("Return"); // returns, return
+/** `tenant.update({ data: { creditNoteItems: { create } } })`: items reached by their own relation (`items` is model-specific). */
+const TO_CREDIT_NOTE_ITEM = new Set(
+  [...relationNames("CreditNoteItem")].filter((n) => n !== "items"),
+);
 /** Nested verbs that create a row (a value-bearing write when the row is a credit note / a return). */
 const NESTED_CREATING = new Set(["create", "createMany", "connectOrCreate", "upsert"]);
 const NESTED_UPDATING = new Set(["update", "updateMany", "upsert"]);
@@ -170,6 +174,16 @@ function factsOfSource(text: string, fileName = "fixture.ts"): Map<string, FnFac
     ts.forEachChild(node, collect);
   };
   collect(sf);
+  // `const c = this.creditNotes; c.create(dto, opts)`: a simple const alias of the credit note service is the same owner
+  const mintAliases = new Set<string>();
+  const collectMintAliases = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const last = propChain(node.initializer).pop();
+      if (last && MINT_OWNER.test(last)) mintAliases.add(node.name.text);
+    }
+    ts.forEachChild(node, collectMintAliases);
+  };
+  collectMintAliases(sf);
   const record = (
     f: FnFacts,
     model: Model,
@@ -190,8 +204,13 @@ function factsOfSource(text: string, fileName = "fixture.ts"): Map<string, FnFac
       if (isRefunded) f.refundedWrites.push(pos);
     }
   };
-  const propName = (p: ts.PropertyName): string | null =>
-    ts.isIdentifier(p) || ts.isStringLiteralLike(p) ? p.text : null;
+  const propName = (p: ts.PropertyName): string | null => {
+    if (ts.isIdentifier(p) || ts.isStringLiteralLike(p)) return p.text;
+    // `{ ["ledgerReversedByReturn"]: true }`: a computed key that is a string literal is the same key
+    if (ts.isComputedPropertyName(p) && ts.isStringLiteralLike(p.expression))
+      return p.expression.text;
+    return null;
+  };
   /** The value-bearing writes nested inside a write call's argument: `{ data: { creditNotes: { create: … } } }`. */
   const nestedWrites = (arg: ts.Expression, model: Model | null, f: FnFacts): void => {
     const walk = (node: ts.Node): void => {
@@ -204,6 +223,7 @@ function factsOfSource(text: string, fileName = "fixture.ts"): Map<string, FnFac
             .filter((v): v is string => !!v);
           const toCreditNote =
             TO_CREDIT_NOTE.has(name) ||
+            TO_CREDIT_NOTE_ITEM.has(name) ||
             // a credit note's own items: `creditNote.update({ data: { items: { create } } })` adds lines to an existing note
             (name === "items" && model === "creditNote");
           if (toCreditNote && verbs.some((v) => NESTED_CREATING.has(v)))
@@ -244,7 +264,7 @@ function factsOfSource(text: string, fileName = "fixture.ts"): Map<string, FnFac
       // the credit note service's mint: its internal options must be readable here (see remainderSkips)
       if (
         callee === "create" &&
-        /^credit_?notes?(service)?$/i.test(owner ?? "") &&
+        (MINT_OWNER.test(owner ?? "") || mintAliases.has(owner ?? "")) &&
         node.arguments.length >= 2
       ) {
         if (!readableOptions(node.arguments[1])) current.opaqueMintOptions.push(node.getStart(sf));
@@ -300,6 +320,8 @@ function factsOfSource(text: string, fileName = "fixture.ts"): Map<string, FnFac
   return out;
 }
 
+/** The name the credit note service is held under (`this.creditNotes`, `creditNotesService`). */
+const MINT_OWNER = /^credit_?notes?(service)?$/i;
 /** The flag a `creditNotes.create(dto, { ledgerReversedByReturn })` caller sets so the mint skips the remainder check. */
 const SKIP_FLAG = "ledgerReversedByReturn";
 /**
@@ -313,13 +335,17 @@ const readableOptions = (e: ts.Expression): boolean => {
   if (!ts.isObjectLiteralExpression(e)) return false;
   return e.properties.every((pr) => !ts.isSpreadAssignment(pr) || readableOptions(pr.expression));
 };
-/** A raw statement that writes one of the tables, with or without the schema qualifier or the identifier quotes. */
-const rawStatement = (verbs: string, table: string): RegExp =>
-  new RegExp(`(?:${verbs})\\s+(?:"?public"?\\.)?"?${table}"?(?![A-Za-z0-9_])`, "i");
+/**
+ * A raw statement that writes one of the tables: the keyword and the QUOTED table identifier (optionally schema-qualified), the
+ * only form that reaches these camel-case tables (an unquoted name folds to lower case and is another table). Case-insensitive
+ * on the keyword only, so a message like 'Could not update return' never reads as SQL.
+ */
+const rawStatement = (table: string): RegExp =>
+  new RegExp(`\\b(?:INSERT\\s+INTO|UPDATE)\\s+(?:"public"\\.)?"${table}"(?![A-Za-z0-9_])`, "i");
 const RAW_WRITE = {
-  creditNote: rawStatement("INSERT\\s+INTO|UPDATE", "CreditNote"),
-  creditNoteItem: rawStatement("INSERT\\s+INTO|UPDATE", "CreditNoteItem"),
-  return: rawStatement("INSERT\\s+INTO|UPDATE", "Return"),
+  creditNote: rawStatement("CreditNote"),
+  creditNoteItem: rawStatement("CreditNoteItem"),
+  return: rawStatement("Return"),
 };
 
 function factsOf(rel: string): Map<string, FnFacts> {
@@ -512,6 +538,23 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
     expect(open).toBeLessThan(firstPos(approve, "restockReturnItems"));
     expect(open).toBeLessThan(firstPos(approve, "reverseLedgerForReturn"));
     expect(open).toBeLessThan(firstPos(approve, "issueCreditInTx"));
+    // the other two mints that take a return captured earlier ask the same question: storeCreditInstead() right after it
+    // locked the source invoices (before its remainder read, its CAS and the mint), issueCredit() after its remainder read
+    const sci = issue("storeCreditInstead");
+    expect(firstPos(sci, "assertInlineSourcesOpen")).toBeGreaterThan(
+      firstPos(sci, "lockRefundInvoices"),
+    );
+    expect(firstPos(sci, "assertInlineSourcesOpen")).toBeLessThan(
+      firstPos(sci, "assertInlineReturnWithinRemainder"),
+    );
+    expect(firstPos(sci, "assertInlineSourcesOpen")).toBeLessThan(firstPos(sci, "issueCreditInTx"));
+    const replayIssue = issue("issueCredit");
+    expect(firstPos(replayIssue, "assertInlineSourcesOpen")).toBeGreaterThan(
+      firstPos(replayIssue, "assertInlineReturnWithinRemainder"),
+    );
+    expect(firstPos(replayIssue, "assertInlineSourcesOpen")).toBeLessThan(
+      firstPos(replayIssue, "issueCreditInTx"),
+    );
     // captureAndIssueInTx runs the capture (which asks it) before it mints
     expect(firstPos(issue("captureAndIssueInTx"), "captureInTx")).toBeLessThan(
       firstPos(issue("captureAndIssueInTx"), "issueCreditInTx"),
@@ -675,7 +718,7 @@ describe("SA-773 pin helper: each shape of write the inventory must see turns it
         .creditNoteWrites.length,
     ).toBeGreaterThan(0);
     expect(
-      raw(`const q = Prisma.raw("UPDATE CreditNote SET amount = 1");\nawait tx.$executeRaw(q);`)
+      raw(`const q = Prisma.raw('UPDATE "CreditNote" SET amount = 1');\nawait tx.$executeRaw(q);`)
         .creditNoteWrites.length,
     ).toBeGreaterThan(0);
     expect(
@@ -701,6 +744,39 @@ describe("SA-773 pin helper: each shape of write the inventory must see turns it
     expect(f.creditNoteWrites).toEqual([]);
     expect(f.refundedWrites).toEqual([]);
     expect(f.returnWrites).toEqual([]);
+  });
+
+  it("the Tenant's own item relation is a nested writer, and a prose message is not SQL", () => {
+    expect(
+      writesCreditNote(
+        `await tx.tenant.update({ where: { id: "t" }, data: { creditNoteItems: { create: [] } } });`,
+      ),
+    ).toBe(true);
+    const prose = facts(`
+      throw new Error("Could not update return");
+      throw new Error("failed to insert into credit note");
+      log("update Return failed");
+    `);
+    expect(prose.creditNoteWrites).toEqual([]);
+    expect(prose.returnWrites).toEqual([]);
+    // an unquoted identifier is another (non-existent) table in Postgres, so it is not a write to these
+    expect(facts("await tx.$executeRawUnsafe('UPDATE Return SET x = 1');").returnWrites).toEqual(
+      [],
+    );
+  });
+
+  it("a computed string key and a const alias of the credit note service do not hide the flag or the mint", () => {
+    expect(
+      facts(`await svc.creditNotes.create({}, { ["ledgerReversedByReturn"]: true });`)
+        .remainderSkips,
+    ).toHaveLength(1);
+    expect(
+      facts(`const c = this.creditNotes;\nawait c.create(dto, opts);`).opaqueMintOptions,
+    ).toHaveLength(1);
+    expect(
+      facts(`const c = this.creditNotesService;\nawait c.create(dto, { returnId });`)
+        .opaqueMintOptions,
+    ).toHaveLength(0);
   });
 
   it("the remainder-skip flag is seen in a literal, a shorthand, an assignment and a computed-string key; false skips nothing", () => {
