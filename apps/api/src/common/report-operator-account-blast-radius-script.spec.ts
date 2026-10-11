@@ -333,14 +333,21 @@ describe("report-operator-account-blast-radius.mjs contract", () => {
 });
 
 describe("the real AuditInterceptor output is what the classifier expects", () => {
-  async function audited(method: string, url: string, userId = "u-1") {
+  async function audited(method: string, url: string, userId = "u-1", template?: string) {
     const logged: Array<Record<string, unknown>> = [];
     const interceptor = new AuditInterceptor({
       log: async (dto: Record<string, unknown>) => {
         logged.push(dto);
       },
     } as never);
-    const req = { method, url, ip: "127.0.0.1", user: { sub: userId, tenantId: "t-1" } };
+    // Nest populates `req.route.path` with the matched ROUTE TEMPLATE (global prefix included): the interceptor stores that, never the raw URL.
+    const req = {
+      method,
+      url,
+      ip: "127.0.0.1",
+      route: { path: template ?? url.split("?")[0] },
+      user: { sub: userId, tenantId: "t-1" },
+    };
     const context = { switchToHttp: () => ({ getRequest: () => req }) };
     interceptor.intercept(context as never, { handle: () => ({}) } as never);
     await new Promise((resolve) => setImmediate(resolve));
@@ -355,13 +362,13 @@ describe("the real AuditInterceptor output is what the classifier expects", () =
   }
 
   it("PATCH /api/v1/users/u-2?q=1 by u-1 classifies as users.update (non-self); by u-2 it does not", async () => {
-    const other = await audited("PATCH", "/api/v1/users/u-2?q=1", "u-1");
+    const other = await audited("PATCH", "/api/v1/users/u-2?q=1", "u-1", "/api/v1/users/:id");
     expect(other).toMatchObject({
-      action: "PATCH /users/u-2",
+      action: "PATCH /users/:id",
       entityType: "users",
       entityId: "u-2",
     });
-    const self = await audited("PATCH", "/api/v1/users/u-2?q=1", "u-2");
+    const self = await audited("PATCH", "/api/v1/users/u-2?q=1", "u-2", "/api/v1/users/:id");
     const got = evalLib<Array<string | null>>(`
       console.log(JSON.stringify([
         lib.classifyAction(${JSON.stringify(other.action)}, { nonSelf: ${other.entityId !== other.userId} }),
@@ -373,10 +380,10 @@ describe("the real AuditInterceptor output is what the classifier expects", () =
 
   it("classifies what the interceptor writes for other prefixed and aliased closed routes", async () => {
     const rows = await Promise.all([
-      audited("DELETE", "/api/v1/customers/all?x=1"),
+      audited("DELETE", "/api/v1/customers/all?x=1", "u-1", "/api/v1/customers/all"),
       audited("POST", "/api/v1/tenant/settings/email/test"),
-      audited("PUT", "/api/v1/import/numbering/INVOICE"),
-      audited("PATCH", "/api/v1/users/u-9/status"),
+      audited("PUT", "/api/v1/import/numbering/INVOICE", "u-1", "/api/v1/import/numbering/:type"),
+      audited("PATCH", "/api/v1/users/u-9/status", "u-1", "/api/v1/users/:id/status"),
     ]);
     const got = evalLib<Array<string | null>>(`
       const actions = ${JSON.stringify(rows.map((r) => r.action))};
