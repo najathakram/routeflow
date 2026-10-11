@@ -21,7 +21,7 @@ export function CounterReceiptActions({
   onNewSale,
 }: {
   orderId: string;
-  customer: { email?: string | null } | null;
+  customer: { email?: string | null; user?: { email?: string | null } | null } | null;
   onNewSale: () => void;
 }) {
   const email = useEmailReceipt({ orderId, prefill: receiptEmailPrefill(customer) });

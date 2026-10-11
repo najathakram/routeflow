@@ -479,6 +479,7 @@ export class OrdersService implements OnApplicationBootstrap {
             mobile: true,
             email: true,
             isWalkIn: true,
+            user: { select: { email: true } }, // account email: the receipt pre-fill fallback
           },
         },
         // Include `unitsPerBox` + `pricePerUnit` so the mobile/web edit UIs can render the boxes/pieces
