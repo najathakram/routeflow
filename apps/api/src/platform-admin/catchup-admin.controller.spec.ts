@@ -41,10 +41,43 @@ describe("CatchupAdminController", () => {
       plan: jest.fn().mockResolvedValue(report),
       open: jest.fn().mockResolvedValue({ sessionId: "cs_1" }),
     };
-    const c = new CatchupAdminController(svc as any);
+    const admin = { recordAdminAction: jest.fn().mockResolvedValue(undefined) };
+    const c = new CatchupAdminController(svc as any, admin as any);
     expect(await c.plan(ID)).toMatchObject({ tenantId: ID, plan: { ok: false } });
-    await c.open(ID, { expectedStubCents: 1234 });
+    await c.open(ID, { expectedStubCents: 1234 }, { sub: "sa-1" } as any);
     expect(svc.open).toHaveBeenCalledWith(ID, { expectedStubCents: 1234 });
+  });
+
+  it("nit: a successful POST writes an admin audit row naming the admin, the session and the amount; a refusal writes none", async () => {
+    const admin = { recordAdminAction: jest.fn().mockResolvedValue(undefined) };
+    const svc = {
+      open: jest
+        .fn()
+        .mockResolvedValueOnce({
+          checkoutUrl: "https://pay.test/cs_1",
+          sessionId: "cs_1",
+          stubCents: 31000,
+          shape: "trial_one_time",
+        })
+        .mockRejectedValueOnce(new Error("refused")),
+    };
+    const c = new CatchupAdminController(svc as any, admin as any);
+    const out = await c.open(ID, { expectedStubCents: 31000 }, { sub: "sa-1" } as any);
+    expect(out).toMatchObject({ sessionId: "cs_1" });
+    expect(admin.recordAdminAction).toHaveBeenCalledTimes(1);
+    expect(admin.recordAdminAction).toHaveBeenCalledWith(ID, "sa-1", "TENANT_CONFIG_UPDATED", {
+      kind: "billing_catchup_checkout_opened",
+      sessionId: "cs_1",
+      shape: "trial_one_time",
+      stubCents: 31000,
+    });
+    // the checkout URL (a payment link) is never written to the audit trail
+    expect(JSON.stringify(admin.recordAdminAction.mock.calls)).not.toContain("pay.test");
+
+    await expect(c.open(ID, { expectedStubCents: 31000 }, { sub: "sa-1" } as any)).rejects.toThrow(
+      "refused",
+    );
+    expect(admin.recordAdminAction).toHaveBeenCalledTimes(1);
   });
 
   it("the DTO accepts whole non-negative cents only", async () => {

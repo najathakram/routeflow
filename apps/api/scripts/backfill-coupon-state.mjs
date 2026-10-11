@@ -34,6 +34,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
+import { roundMoney } from "@routeflow/pricing";
 import { resolveDatabaseUrl, redactUrl, scrubSecrets } from "./lib/railway-db-url.mjs";
 
 const SCRIPT = "backfill-coupon-state";
@@ -71,8 +72,6 @@ export function parseTenantList(argv) {
   return [...new Set(ids)];
 }
 
-const round2 = (n) => Math.round(n * 100) / 100;
-
 /**
  * Pure: the ledger move a change will book, from the same inputs the writer prices (base + billable add-ons
  * - discount, for an ACTIVE PRODUCTION row with a planKey): -X entering couponFull, +X leaving, else 0.
@@ -80,7 +79,7 @@ const round2 = (n) => Math.round(n * 100) / 100;
 export function expectedDelta(change, pricing) {
   if (!pricing || pricing.status !== "ACTIVE" || pricing.class !== "PRODUCTION" || !pricing.planKey)
     return 0;
-  const contribution = round2(
+  const contribution = roundMoney(
     Number(pricing.basePriceSnapshot ?? 0) +
       Number(pricing.addonSum ?? 0) -
       Number(pricing.discount ?? 0),
@@ -192,6 +191,7 @@ function loadDist() {
   try {
     return {
       state: requireCjs(join(here, "..", "dist", "billing", "coupon-state.js")),
+      addonRow: requireCjs(join(here, "..", "dist", "billing", "addon-row.js")),
       stripeMod: requireCjs(join(here, "..", "dist", "billing", "stripe.service.js")),
       eventsMod: requireCjs(join(here, "..", "dist", "billing", "billing-event.service.js")),
     };
@@ -236,7 +236,7 @@ async function main() {
   }
   console.log(`Resolved database host: ${redactUrl(databaseUrl)}`);
   const { isTestTenant } = requireCjs("../../../scripts/lib/test-tenants.cjs");
-  const { state, stripeMod, eventsMod } = loadDist();
+  const { state, addonRow, stripeMod, eventsMod } = loadDist();
   const stripe = new stripeMod.StripeService({
     get: (key) => (key === "stripe" ? { secretKey: process.env.STRIPE_SECRET_KEY } : undefined),
   });
@@ -264,14 +264,20 @@ async function main() {
       },
     });
     const addonRows = await prisma.tenantAddon.findMany({
-      where: { tenantId: { in: rows.map((r) => r.tenantId) }, active: true, isComp: false },
+      // the ONE predicate for "a row the platform bills" (a comp is never billed)
+      where: addonRow.billableAddonWhere({
+        tenantId: { in: rows.map((r) => r.tenantId) },
+        active: true,
+      }),
       select: { tenantId: true, priceSnapshot: true, quantity: true },
     });
     const addonSum = new Map();
     for (const a of addonRows) {
       addonSum.set(
         a.tenantId,
-        (addonSum.get(a.tenantId) ?? 0) + Number(a.priceSnapshot ?? 0) * a.quantity,
+        roundMoney(
+          (addonSum.get(a.tenantId) ?? 0) + roundMoney(Number(a.priceSnapshot ?? 0) * a.quantity),
+        ),
       );
     }
     const pricingById = new Map(

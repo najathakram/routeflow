@@ -110,7 +110,10 @@ export const CATCHUP_KINDS = ["period", "prepaid"] as const;
 
 /** What the catch-up checkout stamps on the Stripe session / subscription so the webhook can act on it. */
 export const CATCHUP_META = {
-  /** "2026-10" (the month the stub starts in) or "prepaid" (the trial branch). */
+  /**
+   * One of CATCHUP_KINDS: "period" (trial_one_time - a one-time line covers [from, to)) or "prepaid" (the `trial`
+   * and `anchor_no_line` shapes - nothing is owed for the period before the trial end).
+   */
   catchup: "catchup",
   shape: "catchup_shape",
   stubCents: "catchup_stub_cents",

@@ -35,6 +35,15 @@ describe("backfill-coupon-state.mjs", () => {
     expect(code).not.toMatch(/data:\s*\{[^}]*coupon/);
   });
 
+  it("nit: money goes through @routeflow/pricing roundMoney, and the add-on sum reads billable rows with the ONE billableAddonWhere predicate", () => {
+    expect(code).toMatch(/import \{[^}]*\broundMoney\b[^}]*\} from "@routeflow\/pricing"/);
+    expect(code).not.toMatch(/const round2\b|Math\.round\(/);
+    expect(code).toContain("billableAddonWhere(");
+    expect(code).toContain('"dist", "billing", "addon-row.js"');
+    // no hand-spelled comp filter beside it
+    expect(code).not.toMatch(/isComp:\s*false/);
+  });
+
   it("the dry run is the default: writing needs --apply AND --tenants AND --confirm-count", () => {
     const r = spawnSync(process.execPath, [SCRIPT, "--apply"], {
       cwd: API_DIR,

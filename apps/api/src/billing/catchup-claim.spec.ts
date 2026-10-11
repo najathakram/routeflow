@@ -102,7 +102,7 @@ describe("invoiceDefinitivelyFailed (r3 N2: payment_failed with no next attempt)
 
 describe("isCatchupSession", () => {
   it("reads the catchup metadata marker", () => {
-    expect(isCatchupSession({ metadata: { catchup: "2026-10" } })).toBe(true);
+    expect(isCatchupSession({ metadata: { catchup: "period" } })).toBe(true);
     expect(isCatchupSession({ metadata: { catchup: "prepaid" } })).toBe(true);
     expect(isCatchupSession({ metadata: {} })).toBe(false);
     expect(isCatchupSession({})).toBe(false);

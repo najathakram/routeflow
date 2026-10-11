@@ -49,7 +49,7 @@ const sessionOf = (over: Record<string, unknown> = {}) => ({
   subscription: SUB,
   payment_status: "unpaid",
   expires_at: SESSION_EXPIRES_AT,
-  metadata: { tenantId: "t1", catchup: "2026-10", ...(over.metadata as object) },
+  metadata: { tenantId: "t1", catchup: "period", ...(over.metadata as object) },
   ...over,
 });
 
@@ -74,7 +74,7 @@ function make(
         id: SESSION,
         subscription: SUB,
         status: "complete",
-        metadata: { tenantId: "t1", catchup: "2026-10" },
+        metadata: { tenantId: "t1", catchup: "period" },
       },
       ...stripeSeed.sessions,
     },
@@ -664,7 +664,7 @@ describe("the hourly sweep", () => {
         [SESSION]: {
           id: SESSION,
           status: "expired",
-          metadata: { tenantId: "t1", catchup: "2026-10" },
+          metadata: { tenantId: "t1", catchup: "period" },
         },
       },
     });
@@ -678,7 +678,7 @@ describe("the hourly sweep", () => {
         [SESSION]: {
           id: SESSION,
           status: "open",
-          metadata: { tenantId: "t1", catchup: "2026-10" },
+          metadata: { tenantId: "t1", catchup: "period" },
         },
       },
     });
@@ -694,7 +694,7 @@ describe("the hourly sweep", () => {
             id: SESSION,
             status: "complete",
             subscription: SUB,
-            metadata: { tenantId: "t1", catchup: "2026-10" },
+            metadata: { tenantId: "t1", catchup: "period" },
           },
         },
       },

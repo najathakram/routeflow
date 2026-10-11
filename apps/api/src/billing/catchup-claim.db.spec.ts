@@ -370,8 +370,8 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
       catchupSessionId: "cs_done",
     });
     const { svc } = svcWith();
-    await svc.onSessionExpired({ id: "cs_exp", metadata: { tenantId: open, catchup: "2026-10" } });
-    await svc.onSessionExpired({ id: "cs_done", metadata: { tenantId: done, catchup: "2026-10" } });
+    await svc.onSessionExpired({ id: "cs_exp", metadata: { tenantId: open, catchup: "period" } });
+    await svc.onSessionExpired({ id: "cs_done", metadata: { tenantId: done, catchup: "period" } });
     expect((await sub(open)).catchupState).toBeNull();
     expect((await sub(done)).catchupState).toBe("AWAITING_FIRST_PAYMENT");
     expect((await sub(done)).stripeSubId).toBe("sub_d");
