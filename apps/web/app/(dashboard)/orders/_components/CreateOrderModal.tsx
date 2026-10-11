@@ -258,6 +258,8 @@ export function CreateOrderModal({
   // the builder is simply POS mode, with no switch and no preference involved (row 331).
   const storeOnly = isStoreOnly(useFulfilmentCaps());
   const posMode = posAllowed && (storeOnly || pos.posMode);
+  // POS mode forced by the capability (not an opt-in): the builder talks about invoicing in store, not delivery.
+  const storeOnlyPos = posAllowed && storeOnly;
   const posFinish = usePosFinish();
   // Which POS finishing action the operator pressed ("Confirm & invoice" vs "Confirm only"); survives the merge prompt.
   const posFinishRef = React.useRef<"invoice" | "confirm">("invoice");
@@ -1845,8 +1847,10 @@ export function CreateOrderModal({
       open={isOpen && !scanScreenActive}
       onClose={handleDismiss}
       onEscapeKeyDown={handleEscape}
-      title={resumeDraftId ? "Resume draft" : "Create Order"}
-      description="Create a new order on behalf of a customer."
+      title={resumeDraftId ? "Resume draft" : storeOnlyPos ? POS_COPY.builderTitle : "Create Order"}
+      description={
+        storeOnlyPos ? POS_COPY.builderSubtitle : "Create a new order on behalf of a customer."
+      }
       className="max-w-2xl"
       footer={
         // B564: the Modal footer is a `justify-end` flex row, so four buttons wider than a
@@ -2600,7 +2604,9 @@ export function CreateOrderModal({
 
             <Textarea
               label="Notes"
-              placeholder="Special instructions, delivery notes…"
+              placeholder={
+                storeOnlyPos ? "Special instructions…" : "Special instructions, delivery notes…"
+              }
               register={register("notes")}
             />
 

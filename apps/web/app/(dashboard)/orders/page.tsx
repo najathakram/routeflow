@@ -23,6 +23,7 @@ import {
 import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { staffMay } from "@routeflow/types";
+import { OrdersMoreMenu } from "./_components/OrdersMoreMenu";
 import { usePageTitle } from "@/lib/page-title-context";
 import { humanizeEnum } from "@/lib/format";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
@@ -654,6 +655,10 @@ export default function OrdersPage() {
     }
   };
 
+  // A store-only tenant (capabilities.fulfilment: PICKUP only): "New Order" went to the same place as "Counter sale",
+  // so the header has Counter sale (primary) and Invoice a customer (secondary) and nothing else duplicated.
+  const storeOnlyHeader = counterGate.offerInvoiceOrder === true;
+
   const headerSubtitle = meta
     ? `${meta.total.toLocaleString("en-US")} order${meta.total !== 1 ? "s" : ""}${
         urgentCount > 0 ? ` · ${urgentCount} urgent` : ""
@@ -682,12 +687,16 @@ export default function OrdersPage() {
               onClick={handleExport}
               disabled={isExporting}
               title="Export filtered orders as CSV"
+              className={cn(storeOnlyHeader && "max-sm:hidden")}
             >
               {isExporting ? "Exporting…" : "Export"}
             </Button>
             <Button
               variant="secondary"
-              className={cn(selectMode && "border-brand-600 bg-brand-50 text-brand-700")}
+              className={cn(
+                selectMode && "border-brand-600 bg-brand-50 text-brand-700",
+                storeOnlyHeader && "max-sm:hidden",
+              )}
               leftIcon={
                 selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
               }
@@ -695,25 +704,52 @@ export default function OrdersPage() {
             >
               {selectMode ? "Cancel" : "Select"}
             </Button>
+            {storeOnlyHeader ? (
+              <OrdersMoreMenu
+                className="sm:hidden"
+                items={[
+                  {
+                    label: isExporting ? "Exporting…" : "Export",
+                    onSelect: handleExport,
+                    disabled: isExporting,
+                  },
+                  {
+                    label: selectMode ? "Cancel selection" : "Select",
+                    onSelect: () => (selectMode ? exitSelectMode() : setSelectMode(true)),
+                  },
+                ]}
+              />
+            ) : null}
             {counterGate.showButton ? (
-              <Button variant="secondary" onClick={() => router.push("/orders/counter-sale")}>
+              <Button
+                // A store-only tenant has one place to ring a sale: the counter is the filled primary (UX G7).
+                variant={storeOnlyHeader ? undefined : "secondary"}
+                className={cn(storeOnlyHeader && "max-sm:h-11")}
+                onClick={() => router.push("/orders/counter-sale")}
+              >
                 Counter sale
               </Button>
             ) : null}
-            {counterGate.offerInvoiceOrder && staffMay(user?.role, "USE_POS_MODE") ? (
-              <Button variant="secondary" onClick={() => setIsCreateOpen(true)}>
-                Invoice order
+            {storeOnlyHeader && staffMay(user?.role, "USE_POS_MODE") ? (
+              <Button
+                variant="secondary"
+                className="max-sm:h-11"
+                onClick={() => setIsCreateOpen(true)}
+              >
+                Invoice a customer
               </Button>
             ) : null}
-            <Button
-              onClick={() =>
-                counterGate.opensAsCounter
-                  ? router.push("/orders/counter-sale")
-                  : setIsCreateOpen(true)
-              }
-            >
-              New Order
-            </Button>
+            {storeOnlyHeader ? null : (
+              <Button
+                onClick={() =>
+                  counterGate.opensAsCounter
+                    ? router.push("/orders/counter-sale")
+                    : setIsCreateOpen(true)
+                }
+              >
+                New Order
+              </Button>
+            )}
           </div>
         }
       />

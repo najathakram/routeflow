@@ -348,6 +348,22 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
     expect(orderPosts()[0][1].fulfillPath).toBe("PICKUP");
   });
 
+  it("is titled Invoice a customer, with the in-store subtitle and no delivery wording in Notes", async () => {
+    asStoreOnly();
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    expect(await screen.findByRole("dialog", { name: "Invoice a customer" })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Sold in store. The invoice is made when you confirm; hand the goods over when they collect.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Create a new order on behalf of a customer."),
+    ).not.toBeInTheDocument();
+    const notes = screen.getByLabelText("Notes");
+    expect(notes).toHaveAttribute("placeholder", "Special instructions…");
+  });
+
   it("a role without POS mode is left on the normal builder", async () => {
     asStoreOnly();
     mockRole = "SUPER_ADMIN";
@@ -359,5 +375,12 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
     await openWithLine();
     expect(await posSwitch()).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirm & invoice" })).not.toBeInTheDocument();
+
+    expect(screen.getByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
+    expect(screen.getByText("Create a new order on behalf of a customer.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Notes")).toHaveAttribute(
+      "placeholder",
+      "Special instructions, delivery notes…",
+    );
   });
 });
