@@ -8,6 +8,8 @@
  *   X3  a VOID credit note item and a REJECTED inline return: clean.
  *   X4  a STANDARD return refunded by a credit note that carries the items: counted once, clean.
  *   X5  a TAXED line ($100 + 10%) credited by an item of $100: gross $110 billed against $110 credited, clean.
+ *   X6  SA ruling S4: an INLINE return whose OWN credit note is VOID contributes 0 value (nothing was given back), so a live
+ *       credit note for the same $20 plus that return is clean; the same return with a LIVE own note is a double pay.
  *
  * Collected only by jest.db.config.js (`.db.spec.ts$`), run via `npm run local:test:db`.
  */
@@ -112,11 +114,38 @@ describeDb("SA-773 census SQL - real Postgres", () => {
     const x5 = await seed("x5", { qty: 10, subtotal: 100, taxRate: 0.1 });
     await addCreditNote(prisma, x5, { number: cn(), items: [{ line: 0, amount: 100, qty: 10 }] });
 
+    // X6: the return's own note is VOID (its value is 0), and a live standalone note takes the $20: clean
+    const x6 = await seed("x6", { qty: 4, subtotal: 20 });
+    // (an inline return's own note is the amount-only store credit its approval minted: no invoice, no items)
+    const voided = await addCreditNote(prisma, x6, { number: cn(), amount: 20, status: "VOID" });
+    await addInlineReturn(prisma, x6, {
+      number: rtn(),
+      status: "RECEIVED",
+      creditNoteId: voided.id,
+      refundMethod: "CREDIT_NOTE",
+      items: [{ line: 0, qty: 4, subtotal: 20 }],
+    });
+    await addCreditNote(prisma, x6, { number: cn(), items: [{ line: 0, amount: 20, qty: 4 }] });
+
+    // X6b: the same shape with a LIVE own note is counted: the return's $20 and the standalone $20 are a double pay
+    const x6b = await seed("x6b", { qty: 4, subtotal: 20 });
+    const live = await addCreditNote(prisma, x6b, { number: cn(), amount: 20 });
+    await addInlineReturn(prisma, x6b, {
+      number: rtn(),
+      status: "RECEIVED",
+      creditNoteId: live.id,
+      refundMethod: "CREDIT_NOTE",
+      items: [{ line: 0, qty: 4, subtotal: 20 }],
+    });
+    await addCreditNote(prisma, x6b, { number: cn(), items: [{ line: 0, amount: 20, qty: 4 }] });
+
     const rows = census();
     expect(rows.sort()).toEqual(
       [
         `pool ${x1.invoices[0].id} ${x1.products.A} 20.00`,
         `order ${x1.invoices[0].id}  20.00`,
+        `pool ${x6b.invoices[0].id} ${x6b.products.A} 20.00`,
+        `order ${x6b.invoices[0].id}  20.00`,
       ].sort(),
     );
   });

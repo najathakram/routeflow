@@ -71,6 +71,18 @@ describe("SA-773 census script", () => {
     expect(sql).toContain(`NOT IN ('REJECTED', 'CANCELLED')`);
   });
 
+  it("S4: an inline return's value is 0 when its OWN credit note is VOID (the statement joins the note and zeroes both money sums)", () => {
+    const sql = String(run(["--print-sql"]).stdout);
+    const inline = sql.slice(sql.indexOf("), inline AS ("), sql.indexOf("), pool_over AS ("));
+    expect(inline).toContain(`LEFT JOIN "CreditNote" c ON c."id" = r."creditNoteId"`);
+    // both sums (the pool's gross and the order's net) are guarded; the DB spec proves the rows (X6)
+    expect(inline.match(/c\."status"::text = 'VOID' THEN 0/g)).toHaveLength(2);
+    // the order's inline side is built on those two sums, never on the raw item columns
+    expect(
+      sql.slice(sql.indexOf("), order_inline AS ("), sql.indexOf("), order_external AS (")),
+    ).toContain(`sum("creditedNet")`);
+  });
+
   it("--list prints ids, so it is refused (exit 2, before any connection) unless stdout is a terminal or the run acknowledges ids-only output", () => {
     const refused = run(["--list"]); // spawnSync pipes stdout: not a terminal
     expect(refused.status).toBe(2);

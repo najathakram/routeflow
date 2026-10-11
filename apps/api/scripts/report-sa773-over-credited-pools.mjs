@@ -12,6 +12,10 @@
 //          the recorded (EXTERNAL_REFUND) STANDARD refunds that issued no credit note.
 // A STANDARD return that issued a credit note is in both sections through that credit note; one still open (not yet refunded) is
 // not money out and is not counted.
+// SA ruling S4 (the refundable remainder's own rule): the census counts MONEY, so an INLINE return whose OWN credit note is VOID
+// (the credit was taken back; nothing was given for those goods) counts 0 value in both sections: it is not a double pay and is not
+// reported as overage. Its QTY is still reserved by the application's remainder (the goods did come back), which a value census
+// has no use for.
 // Money-safe reading: the application's pool is GROSS (tax at the line's stored rate) while a STANDARD refund is priced NET, so a
 // pool can read zero or negative in the application (it fails closed and refuses) where this census, which counts a STANDARD
 // refund net, reads it clean. The two can differ by the tax on STANDARD refunds, never by more: read the census as a sizing
@@ -63,9 +67,11 @@ const WITH_CLAUSE = [
   `  GROUP BY l."tenantId", l."orderId", ii."productId"`,
   `), inline AS (`,
   `  SELECT ri."tenantId", ri."sourceOrderId" AS "orderId", ri."productId",`,
-  `         sum(coalesce(ri."subtotal", 0) + coalesce(ri."taxAmount", 0) + coalesce(ri."categoryTax", 0)) AS "credited",`,
-  `         sum(coalesce(ri."subtotal", 0)) AS "creditedNet"`,
+  `         sum(CASE WHEN c."status"::text = 'VOID' THEN 0`,
+  `                  ELSE coalesce(ri."subtotal", 0) + coalesce(ri."taxAmount", 0) + coalesce(ri."categoryTax", 0) END) AS "credited",`,
+  `         sum(CASE WHEN c."status"::text = 'VOID' THEN 0 ELSE coalesce(ri."subtotal", 0) END) AS "creditedNet"`,
   `  FROM "ReturnItem" ri JOIN "Return" r ON r."id" = ri."returnId"`,
+  `  LEFT JOIN "CreditNote" c ON c."id" = r."creditNoteId"`,
   `  WHERE r."kind"::text = 'INLINE' AND r."status"::text NOT IN ('REJECTED', 'CANCELLED') AND ri."sourceOrderId" IS NOT NULL`,
   `  GROUP BY ri."tenantId", ri."sourceOrderId", ri."productId"`,
   `), pool_over AS (`,

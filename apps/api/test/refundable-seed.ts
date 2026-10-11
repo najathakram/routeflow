@@ -240,6 +240,8 @@ export async function addInlineReturn(
     number: string;
     status: string;
     refundMethod?: string | null;
+    /** the credit note this return's store credit was minted as (its own note) */
+    creditNoteId?: string | null;
     /** a driver-cap / already-returned hold awaiting approval: the held credit */
     hold?: { reason: "DRIVER_CAP" | "ALREADY_RETURNED"; amount: number };
     items: Array<{
@@ -264,6 +266,7 @@ export async function addInlineReturn(
       kind: "INLINE",
       returnNumber: opts.number,
       refundMethod: opts.refundMethod ?? null,
+      creditNoteId: opts.creditNoteId ?? null,
       holdReason: opts.hold?.reason ?? null,
       heldAmount: opts.hold?.amount ?? null,
       // the priced total, split as the capture stores it (the refund answers with exactly this figure)
