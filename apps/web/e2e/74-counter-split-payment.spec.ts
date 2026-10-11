@@ -214,6 +214,7 @@ test.describe("split payment: ring one sale @ 1440", () => {
     await expect(rows.nth(0)).toContainText(`Card${dollars(cardCents)}`);
     await expect(rows.nth(1)).toContainText(`Cash${dollars(cashHandedCents)}`);
     await expect(page.getByTestId("receipt-change")).toContainText("$10.00");
+    await expect(page.getByTestId("receipt-tendered")).toHaveCount(0); // the Cash line IS the cash handed over
     await expect(page.getByTestId("receipt-method")).toContainText("Card + Cash");
 
     // Today's sales: the amount applied per method (cash net of change)
