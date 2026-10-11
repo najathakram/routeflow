@@ -6,7 +6,7 @@
  * the catalog house order by ROLE (family role -> recipe-product role -> everything else), spelled
  * once as `PRODUCT_LOCK_RANK_SQL` (the stock-side twin of the HOUSE LOCK ORDER comment in
  * products/product-catalog-sync.ts). Before it,
- * order-stock.ts locked `WHERE id IN (...) FOR UPDATE` in line order with no tenant filter, and
+ * order-stock.ts locked `WHERE id IN (...) FOR UPDATE` (index scan order) with no tenant filter, and
  * `lockProducts` locked one id at a time in id order: a stock writer holding a component and then
  * asking for the family deadlocks (40P01) against a catalog writer (B908).
  *

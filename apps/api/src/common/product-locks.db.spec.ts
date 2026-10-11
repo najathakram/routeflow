@@ -15,8 +15,14 @@
  *     F_std = STANDARD ranked 2). `PRODUCT_LOCK_RANK_SQL` ranks the family role 0 through an EXISTS on
  *     Recipe(familyProductId) / Product(parentProductId), so the sale waits on F_std holding nothing.
  * (ii) OPPOSITE LINE ORDER: two sales (the real `decrementStockForSale`) over the same two products
- *     in opposite line orders, 10 rounds, never deadlock and both land.
+ *     in opposite line orders, 10 rounds, never deadlock and both land. This is a REGRESSION GUARD,
+ *     not a red: the old `WHERE id IN (...) FOR UPDATE` statement did not lock in line order, it
+ *     locked in index scan order, so it did not fail this case either. The real red for B908 is (i).
  * (iii) TENANT: another tenant's product id in the list is not locked.
+ * (iv) TENANT, END TO END: the defect of the old order-stock statement that WAS real. It had no
+ *     tenant filter, so a foreign product id in a sale's lines locked another tenant's row. An inline
+ *     copy of the old statement locks the foreign row (probe: 55P03); `decrementStockForSale` with
+ *     the same lines does not, and moves only the tenant's own stock.
  *
  * Throwaway `qa-sa767-<run>-*` tenants (assertTestTenant); only the rows this spec creates are removed.
  */
@@ -313,7 +319,7 @@ describeDb("SA-767 L-1 — lockProductsForStock (real Postgres)", () => {
     ]);
   }, 60_000);
 
-  it("(ii) two sales over the same two products in opposite line orders never deadlock (10 rounds)", async () => {
+  it("(ii) REGRESSION GUARD: two sales over the same two products in opposite line orders never deadlock (10 rounds)", async () => {
     const tenantId = await seedTenant("sales");
     const p1 = `${run}-s1-${seq}`;
     const p2 = `${run}-s2-${seq}`;
@@ -376,6 +382,86 @@ describeDb("SA-767 L-1 — lockProductsForStock (real Postgres)", () => {
       release();
       await holder;
     }
+  }, 60_000);
+
+  it("(iv) the OLD order-stock IN() statement locked a foreign tenant's row; decrementStockForSale does not", async () => {
+    const a = await seedTenant("iv-own");
+    const b = await seedTenant("iv-other");
+    const own = `${run}-ivown-${seq}`;
+    const foreign = `${run}-ivforeign-${seq}`;
+    await mkProduct(a, own, "STANDARD", 100);
+    await mkProduct(b, foreign, "STANDARD", 100);
+
+    /** Runs `body` inside a tx that stays open (locks held) until `probe` has run. */
+    async function holding(
+      body: (tx: any) => Promise<void>,
+      probe: () => Promise<void>,
+      tenantId: string,
+    ) {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let entered!: () => void;
+      const inside = new Promise<void>((r) => (entered = r));
+      const holder = tenantCtx.run(tenantId, () =>
+        prisma.tenantTransaction(
+          async (tx: any) => {
+            await body(tx);
+            entered();
+            await gate;
+          },
+          { timeout: 15_000 },
+        ),
+      );
+      await inside;
+      try {
+        await probe();
+      } finally {
+        release();
+        await holder;
+      }
+    }
+
+    // RED: the pre-SA-767 statement, verbatim shape (no tenant predicate), locks the foreign row.
+    await holding(
+      async (tx) => {
+        await tx.$executeRaw`SELECT id FROM "Product" WHERE id IN (${Prisma.join([own, foreign])}) FOR UPDATE`;
+      },
+      async () => {
+        expect(await isFree(own)).toBe(false);
+        expect(await isFree(foreign)).toBe(false); // 55P03: the other tenant's row is held
+      },
+      a,
+    );
+
+    // GREEN: the real sale path does not touch the foreign row, and ignores it consistently with a
+    // missing product (no refusal, no movement, no stock change); the tenant's own line lands.
+    const deps = { logger: new Logger("sa767-lock"), tenantId: a };
+    await holding(
+      async (tx) => {
+        await decrementStockForSale(
+          deps,
+          tx,
+          [
+            { productId: own, qty: 3 },
+            { productId: foreign, qty: 5 },
+          ],
+          true,
+          { orderId: randomUUID(), notes: "CREATE", performedById: null },
+        );
+      },
+      async () => {
+        expect(await isFree(own)).toBe(false);
+        expect(await isFree(foreign)).toBe(true);
+      },
+      a,
+    );
+
+    const stock = async (id: string) =>
+      Number((await prisma.product.findFirstOrThrow({ where: { id } })).currentStock);
+    expect(await stock(own)).toBe(97);
+    expect(await stock(foreign)).toBe(100);
+    expect(await prisma.stockMovement.count({ where: { productId: foreign } })).toBe(0);
+    expect(await prisma.stockMovement.count({ where: { productId: own } })).toBe(1);
   }, 60_000);
 
   it("refuses an empty tenant id, and an empty id list issues no statement", async () => {
