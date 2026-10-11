@@ -52,3 +52,18 @@ export function billingPauseMode(
   const raw = (env.BILLING_PAUSE_MODE ?? "").trim().toLowerCase();
   return raw === "off" || raw === "enforced" ? raw : "dark";
 }
+
+/** Which email path tells a tenant about an unpaid invoice. */
+export type DunningEmailPath = "legacy_failed_payment" | "milestones";
+
+/**
+ * SA r-note 5 A1: dark is SILENT to tenants. This ONE switch decides which path may email a tenant, and every
+ * sender asks it:
+ *   - `off` and `dark`: master's failed-payment email (#2440), one per real `invoice.payment_failed`, and nothing
+ *     else - the sweep and discovery only stamp and log;
+ *   - `enforced`: the d0 / d3 / d6 / final / paused / paused-still-owed series REPLACES that email (a tenant is never
+ *     told by both). The series starts only after the owner flips the mode, following the blast-radius report.
+ */
+export function dunningEmailsFor(mode: BillingPauseMode): DunningEmailPath {
+  return mode === "enforced" ? "milestones" : "legacy_failed_payment";
+}

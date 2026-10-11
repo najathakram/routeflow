@@ -4,6 +4,7 @@ import {
   DUNNING_D6_HOURS,
   DUNNING_FINAL_LEAD_HOURS,
   DUNNING_MILESTONES,
+  dunningEmailsFor,
   DUNNING_PAUSE_HOURS,
   PAUSE_LOCAL_HOUR,
 } from "./dunning-config";
@@ -26,6 +27,12 @@ describe("dunning-config (SA-733r7 PR-B3)", () => {
       PAUSED: "DUNNING_PAUSED",
       PAUSED_STILL_OWED: "DUNNING_PAUSED_STILL_OWED",
     });
+  });
+
+  it("dunningEmailsFor (SA r-note 5 A1): off and dark send master's failed-payment email only; enforced sends the milestone series only", () => {
+    expect(dunningEmailsFor("off")).toBe("legacy_failed_payment");
+    expect(dunningEmailsFor("dark")).toBe("legacy_failed_payment");
+    expect(dunningEmailsFor("enforced")).toBe("milestones");
   });
 
   it("BILLING_PAUSE_MODE defaults to dark; only an exact off / enforced changes it", () => {

@@ -29,9 +29,11 @@ const token = jwt.sign({ sub: "buyer-a", email: "a@example.test", name: "A", typ
 
 let app: INestApplication;
 let sellerStatus: string;
+const savedGate = process.env.SELLER_READ_ONLY_BUYER_GATE;
 let payments: { createCardRequest: jest.Mock; createCashRequest: jest.Mock; cancelOwn: jest.Mock };
 
 beforeEach(async () => {
+  process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced"; // A3: the refusal is the enforced behaviour; dark is pinned below
   sellerStatus = "READ_ONLY";
   payments = {
     createCardRequest: jest.fn(async () => ({ checkoutUrl: "https://pay.example/c/1" })),
@@ -73,6 +75,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await app.close();
+  if (savedGate === undefined) delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+  else process.env.SELLER_READ_ONLY_BUYER_GATE = savedGate;
 });
 
 const post = (path: string, body: object = {}) =>
@@ -125,6 +129,20 @@ describe("a READ_ONLY seller refuses everything else a buyer writes", () => {
       .send({});
     expect(res.status).toBe(403);
     expect(res.body.code).toBe("SELLER_UNAVAILABLE");
+  });
+});
+
+describe("A3: SELLER_READ_ONLY_BUYER_GATE", () => {
+  it("dark (the default): the buyer's order is NOT refused by the guard (it reaches the handler)", async () => {
+    delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+    const res = await post("/buyer/orders", { items: [] });
+    expect(res.status).not.toBe(403);
+    expect(res.body.code).not.toBe("SELLER_UNAVAILABLE");
+  });
+
+  it("enforced: the buyer's own order cancel passes the guard (200, not 403)", async () => {
+    const res = await post("/buyer/orders/o1/cancel");
+    expect(res.status).not.toBe(403);
   });
 });
 

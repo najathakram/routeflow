@@ -268,6 +268,17 @@ describe("BillingNotificationService", () => {
       await expect(svc.notifySuspended("t1", "overdue payment")).resolves.toBeUndefined();
     });
 
+    it("notifySuspended passes the reason through: 'subscription canceled' gets the choose-a-plan copy", async () => {
+      const { svc, sendPlatform } = makeService();
+      await svc.notifySuspended("t1", "subscription canceled");
+      expect(sendPlatform).toHaveBeenCalledTimes(1);
+      const mail = sendPlatform.mock.calls[0][0];
+      expect(mail.text).toContain(
+        "Your subscription was canceled. Choose a plan to restore access.",
+      );
+      expect(mail.text).not.toMatch(/payment details/i);
+    });
+
     it("notifyCheckoutPlanNotApplied emails the admin once per checkout session and never throws", async () => {
       const { svc, sendPlatform } = makeService();
       await svc.notifyCheckoutPlanNotApplied("t1", "SCALE", "cs_1");

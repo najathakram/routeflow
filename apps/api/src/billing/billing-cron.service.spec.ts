@@ -1204,6 +1204,29 @@ describe("BillingCronService", () => {
     });
   });
 
+  it("N4: the churn delta never includes a COMP add-on (a platform grant: never billed, never in MRR)", async () => {
+    const { svc, tx, events } = make({
+      cancellations: [
+        { tenantId: "t1", planKey: "BUSINESS", basePriceSnapshot: 349, discount: 10 },
+      ],
+    });
+    const rows = [
+      { priceSnapshot: 12, quantity: 2, isComp: false },
+      { priceSnapshot: 20, quantity: 1, isComp: true },
+    ];
+    tx.tenantAddon.findMany.mockImplementation(async (a: any) =>
+      rows.filter((r) => (a?.where?.isComp === false ? !r.isComp : true)),
+    );
+    await svc.applyScheduledCancellations();
+    // -(349 + 12x2 - 10) = -363; the comp's 20 is not in it (-383 would be the bug)
+    expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-363);
+    expect(tx.tenantAddon.findMany.mock.calls[0][0].where).toEqual({
+      tenantId: "t1",
+      active: true,
+      isComp: false,
+    });
+  });
+
   it("rollCycles advances the billing period so meters bucket into the new cycle", async () => {
     const periodEnd = new Date("2026-06-01T00:00:00Z"); // in the past
     const { svc, prisma } = make({

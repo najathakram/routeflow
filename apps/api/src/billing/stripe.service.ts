@@ -267,6 +267,7 @@ export class StripeService implements OnModuleInit {
       hostedInvoiceUrl: typeof inv?.hosted_invoice_url === "string" ? inv.hosted_invoice_url : null,
       invoiceNumber: typeof inv?.number === "string" ? inv.number : null,
       currency: typeof inv?.currency === "string" ? inv.currency : null,
+      periodLabel: invoicePeriodLabel(inv),
     };
   }
 
@@ -364,4 +365,27 @@ export class StripeService implements OnModuleInit {
   constructWebhookEvent(payload: Buffer, signature: string): any {
     return this.client.webhooks.constructEvent(payload, signature, this.webhookSecret);
   }
+}
+
+const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+/** "October 2026": the month (UTC) the invoice's first line bills, or null when Stripe sent no line period. */
+function invoicePeriodLabel(inv: any): string | null {
+  const start = inv?.lines?.data?.[0]?.period?.start;
+  if (typeof start !== "number" || !(start > 0)) return null;
+  const d = new Date(start * 1000);
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }

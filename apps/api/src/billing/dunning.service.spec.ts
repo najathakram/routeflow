@@ -165,8 +165,8 @@ describe("DunningService", () => {
   describe("invoice.payment_failed: the clock is stamped once per invoice", () => {
     const now = new Date("2026-11-01T14:00:00Z");
 
-    it("stamps pastDueSince + pastDueInvoiceId, then sends the d0 notice (B410's direct email is gone)", async () => {
-      mode("dark");
+    it("stamps pastDueSince + pastDueInvoiceId, then (enforced) sends the d0 notice in place of the direct failed-payment email", async () => {
+      mode("enforced");
       const d = make({ row: row({ pastDueInvoiceId: null, pastDueSince: null }) });
       expect(await d.svc.onPaymentFailed(invoice(), now)).toBe("stamped");
       expect(d.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
@@ -181,7 +181,7 @@ describe("DunningService", () => {
         "d0",
         expect.objectContaining({ payUrl: "https://pay.example.test/i/in_1" }),
       );
-      expect(d.transition).not.toHaveBeenCalled(); // dark: no status change, ever
+      expect(d.transition).not.toHaveBeenCalled(); // a stamp never changes a status
     });
 
     it("matches invoice -> row by stripeInvoiceSubscriptionId == stripeSubId (dahlia has no invoice.subscription)", async () => {
@@ -199,7 +199,7 @@ describe("DunningService", () => {
 
     // SA r-note 3 (supersedes r-note 2's keep-original clause): a re-stamp after an exit is a NEW episode
     it("(ii) a webhook re-stamp after an exit: pastDueSince = the stamp time, d0 goes out AGAIN under the new episode key", async () => {
-      mode("dark");
+      mode("enforced");
       const oldEpisode = new Date("2026-10-20T00:00:00Z");
       const d = make({
         row: row({ pastDueInvoiceId: null, pastDueSince: null }),
@@ -225,7 +225,7 @@ describe("DunningService", () => {
     });
 
     it("the lookup of already-sent milestones is by the CURRENT episode key", async () => {
-      mode("dark");
+      mode("enforced");
       const d = make({ row: row({ pastDueInvoiceId: null, pastDueSince: null }) });
       await d.svc.onPaymentFailed(invoice(), now);
       expect(d.prisma.billingNotificationLog.findMany.mock.calls[0][0].where).toMatchObject({
@@ -335,7 +335,7 @@ describe("DunningService", () => {
     });
 
     it("a failing d0 email never fails the webhook", async () => {
-      mode("dark");
+      mode("enforced");
       const d = make({ row: row({ pastDueInvoiceId: null }) });
       d.notifications.notifyDunning.mockRejectedValue(new Error("smtp"));
       expect(await d.svc.onPaymentFailed(invoice(), now)).toBe("stamped");
@@ -351,14 +351,14 @@ describe("DunningService", () => {
       d.notifications.notifyDunning.mock.calls.map((c: any[]) => [c[1], c[2], c[3]]);
 
     it("at +1 h only d0 is due", async () => {
-      mode("dark");
+      mode("enforced");
       const d = make({ sweepRows: [row()] });
       await d.svc.sweep(at(1));
       expect(sentMilestones(d)).toEqual([["DUNNING_D0", EP, "d0"]]);
     });
 
     it("at +80 h d0 and d3 are both due, so ONLY d3 is sent; d0 is recorded as skipped so it never sends later", async () => {
-      mode("dark");
+      mode("enforced");
       const d = make({ sweepRows: [row()] });
       await d.svc.sweep(at(80));
       expect(sentMilestones(d)).toEqual([["DUNNING_D3", EP, "d3"]]);
@@ -367,17 +367,6 @@ describe("DunningService", () => {
 
     // deploy day (Opus re-review): a clock that keeps an OLD finalization time (discovery, a moved clock) must not
     // mail d0 + d3 + d6 in one sweep - only the highest milestone due goes out
-    it("deploy day, dark, 200 h clock and nothing logged: ONLY d6 is sent; d0 and d3 are recorded as skipped", async () => {
-      mode("dark");
-      const d = make({ sweepRows: [row()] });
-      await d.svc.sweep(at(200));
-      expect(sentMilestones(d)).toEqual([["DUNNING_D6", EP, "d6"]]);
-      const recorded = d.notifications.recordDunningMilestone.mock.calls
-        .map((c: any[]) => c[1])
-        .sort();
-      expect(recorded).toEqual(["DUNNING_D0", "DUNNING_D3"]);
-    });
-
     it("deploy day, enforced, 200 h clock and nothing logged: ONE email (the final notice); d0/d3 skipped, dunning_final recorded", async () => {
       mode("enforced");
       const d = make({ sweepRows: [row()] });
@@ -390,52 +379,15 @@ describe("DunningService", () => {
       expect(out.paused).toBe(0); // the 24 h lead still starts now
     });
 
-    it("the by-date in dark's d6 is never in the past: clamped to now + 24 h", async () => {
-      mode("dark");
-      const d = make({ sweepRows: [row()] });
-      const now = at(200); // since + 168 h is 32 h ago
-      await d.svc.sweep(now);
-      const labelled = d.notifications.localDateLabel.mock.calls[0][1] as Date;
-      expect(labelled.getTime()).toBe(now.getTime() + 24 * 3_600_000);
-      // the milestone is due from 144 h, where since + 168 h == now + 24 h: the floor never lowers the date
-      const fresh = make({ sweepRows: [row()] });
-      await fresh.svc.sweep(at(145));
-      expect((fresh.notifications.localDateLabel.mock.calls[0][1] as Date).getTime()).toBe(
-        at(145).getTime() + 24 * 3_600_000,
-      );
-    });
-
-    it("at +150 h in dark: d6 names no date; there is no final notice and no pause", async () => {
-      mode("dark");
-      const d = make({
-        sweepRows: [row()],
-        logged: [
-          { milestone: "DUNNING_D0", sentAt: at(0) },
-          { milestone: "DUNNING_D3", sentAt: at(72) },
-        ],
-      });
-      await d.svc.sweep(at(150));
-      expect(sentMilestones(d)).toEqual([["DUNNING_D6", EP, "d6"]]);
-      expect(d.notifications.recordDunningMilestone).not.toHaveBeenCalled();
-      // neutral copy, with the date the card should be updated by (pastDueSince + 168 h), and no read-only line
-      const extra = d.notifications.notifyDunning.mock.calls[0][4];
-      expect(extra.readOnlyOn).toBeUndefined();
-      expect(extra.byDate).toBe("Nov 9, 2026");
-      // the clamp: since + 168 h (Nov 8 00:00Z) is earlier than now + 24 h (Nov 8 06:00Z), so now + 24 h wins
-      expect(d.notifications.localDateLabel).toHaveBeenCalledWith(
-        "t1",
-        new Date(at(150).getTime() + 24 * 3_600_000),
-      );
-    });
-
     it("an already-logged milestone is never re-sent (the sweep is hourly)", async () => {
-      mode("dark");
+      mode("enforced");
       const d = make({
         sweepRows: [row()],
         logged: [
           { milestone: "DUNNING_D0", sentAt: at(0) },
           { milestone: "DUNNING_D3", sentAt: at(72) },
           { milestone: "DUNNING_D6", sentAt: at(144) },
+          { milestone: "DUNNING_FINAL", sentAt: at(144) },
         ],
       });
       await d.svc.sweep(at(151));
@@ -485,7 +437,7 @@ describe("DunningService", () => {
     });
 
     it("no email is sent over an invoice Stripe shows paid or processing (M8 / N6)", async () => {
-      mode("dark");
+      mode("enforced");
       const processing = make({
         sweepRows: [row()],
         facts: { ...OPEN_FACTS, paymentProcessing: true },
@@ -961,13 +913,13 @@ describe("DunningService", () => {
       expect(d.transition).not.toHaveBeenCalled();
     });
 
-    it("the flip sequence: dark d6 -> enforced sends a SEPARATE final notice; no pause until +24 h AND the 03:00-local sweep", async () => {
+    it("the flip sequence: days 0-6 in DARK send nothing; the flip to enforced sends the final notice (d6) and pauses NOBODY in hour one; the pause follows >= 24 h later at 03:00+ local", async () => {
       // America/Chicago, CST (UTC-6) from Nov 1 2026
       const log: { milestone: string; sentAt: Date }[] = [];
-      const base = make({ sweepRows: [row({ pastDueSince: since })], tz: "America/Chicago" });
-      const d = base;
+      const d = make({ sweepRows: [row({ pastDueSince: since })], tz: "America/Chicago" });
       d.prisma.billingNotificationLog.findMany.mockImplementation(async () => [...log]);
       let clock = new Date();
+      const sentKinds: [string, string][] = [];
       d.notifications.notifyDunning.mockImplementation(
         async (_t: string, milestone: string, _i: string, kind: string) => {
           log.push({ milestone, sentAt: clock });
@@ -979,27 +931,26 @@ describe("DunningService", () => {
         log.push({ milestone: m, sentAt: clock });
         return true;
       });
-      const sentKinds: [string, string][] = [];
       const sweepAt = async (iso: string) => {
         clock = new Date(iso);
         return d.svc.sweep(clock);
       };
 
-      // days 0-6 in DARK: d0, d3, d6 go out; the d6 copy names no read-only date
+      // days 0-6 in DARK: stamp and log only - no tenant email at all (A1)
       mode("dark");
-      await sweepAt("2026-11-07T20:00:00Z"); // +164 h: only the highest due milestone goes out
-      expect(sentKinds.map((k) => k[1])).toEqual(["d6"]);
-      expect(sentKinds.map((k) => k[0])).not.toContain("DUNNING_FINAL");
+      await sweepAt("2026-11-07T20:00:00Z"); // +164 h
+      expect(sentKinds).toEqual([]);
+      expect(log).toEqual([]);
 
-      // the owner flips to ENFORCED at 2026-11-08 21:00Z (15:00 local): a separate final notice, NO pause now
+      // the owner flips to ENFORCED at 2026-11-08 21:00Z (15:00 local): d6 IS the final notice, NO pause now
       mode("enforced");
       const flip = await sweepAt("2026-11-08T21:00:00Z");
-      expect(sentKinds.at(-1)).toEqual(["DUNNING_FINAL", "final"]);
+      expect(sentKinds.at(-1)).toEqual(["DUNNING_D6", "final"]);
+      expect(log.some((l) => l.milestone === "DUNNING_FINAL")).toBe(true);
       expect(flip.paused).toBe(0);
 
       // +23 h (20:00Z next day, 14:00 local): still no pause
       expect((await sweepAt("2026-11-09T20:00:00Z")).paused).toBe(0);
-      // +24 h exactly but 02:00 local the NEXT day is later still; first check +27 h = 2026-11-09T24:00 = 18:00 local: pause allowed?
       // the final notice is >= 24 h old at 2026-11-09T21:00Z (15:00 local, hour >= 3): pause.
       const out = await sweepAt("2026-11-09T21:00:00Z");
       expect(out.paused).toBe(1);
@@ -1155,7 +1106,7 @@ describe("DunningService", () => {
     });
 
     it("(iii) within ONE episode a replayed sweep sends nothing twice: one row per milestone", async () => {
-      mode("dark");
+      mode("enforced");
       const w = world();
       await w.sweepAt(1);
       await w.sweepAt(1);
@@ -1182,6 +1133,108 @@ describe("DunningService", () => {
         ep(T1),
         "paused",
         expect.anything(),
+      );
+    });
+  });
+
+  describe("A1 (SA r-note 5): dark and off are SILENT to tenants - stamp and log only", () => {
+    const H = 3_600_000;
+    const T = new Date("2026-11-09T04:00:00Z");
+    const pausedRowT = () =>
+      row({
+        pastDueSince: T,
+        pausedAt: new Date("2026-11-08T09:00:00Z"),
+        tenant: {
+          status: "READ_ONLY",
+          readOnlyReason: "payment_overdue",
+          deletedAt: null,
+          class: "PRODUCTION",
+        },
+      });
+    const noMail = (d: ReturnType<typeof make>) => {
+      expect(d.notifications.notifyDunning).not.toHaveBeenCalled();
+      expect(d.notifications.recordDunningMilestone).not.toHaveBeenCalled();
+    };
+
+    it.each(["dark", "off"])(
+      "%s: a real payment_failed stamps (dark) and sends NO dunning notice",
+      async (m) => {
+        mode(m);
+        const d = make({ row: row({ pastDueInvoiceId: null, pastDueSince: null }) });
+        const out = await d.svc.onPaymentFailed(invoice(), T);
+        expect(out).toBe(m === "dark" ? "stamped" : "off");
+        noMail(d);
+      },
+    );
+
+    it.each([1, 80, 150, 200])(
+      "dark: an ACTIVE clocked tenant at +%i h gets no d0/d3/d6/final and nothing is recorded as skipped",
+      async (h) => {
+        mode("dark");
+        const d = make({ sweepRows: [row({ pastDueSince: T })] });
+        await d.svc.sweep(new Date(T.getTime() + h * H));
+        noMail(d);
+      },
+    );
+
+    it("dark: a PAUSED tenant (paused while enforced) gets no PAUSED_STILL_OWED either", async () => {
+      mode("dark");
+      const d = make({ sweepRows: [pausedRowT()] });
+      await d.svc.sweep(new Date(T.getTime() + 3 * H));
+      noMail(d);
+    });
+
+    it("off sweeps nothing at all", async () => {
+      mode("off");
+      const d = make({ sweepRows: [row({ pastDueSince: T })] });
+      await d.svc.sweep(new Date(T.getTime() + 200 * H));
+      noMail(d);
+    });
+
+    it("enforced: the milestone series still goes out (d0 on the stamp)", async () => {
+      mode("enforced");
+      const d = make({ row: row({ pastDueInvoiceId: null, pastDueSince: null }) });
+      await d.svc.onPaymentFailed(invoice(), T);
+      expect(d.notifications.notifyDunning).toHaveBeenCalledWith(
+        "t1",
+        "DUNNING_D0",
+        ep(T),
+        "d0",
+        expect.anything(),
+      );
+    });
+
+    it("enforced: d0 is told whether Stripe ATTEMPTED the invoice (attempt_count > 0) so the copy stays truthful", async () => {
+      mode("enforced");
+      const tried = make({ row: row({ pastDueInvoiceId: null, pastDueSince: null }) });
+      await tried.svc.onPaymentFailed(invoice(), T); // OPEN_FACTS.attemptCount = 3
+      expect(tried.notifications.notifyDunning.mock.calls[0][4]).toMatchObject({ attempted: true });
+
+      const untried = make({
+        row: row({ pastDueInvoiceId: null, pastDueSince: null }),
+        facts: { ...OPEN_FACTS, attemptCount: 0 },
+      });
+      await untried.svc.onPaymentFailed(invoice(), T);
+      expect(untried.notifications.notifyDunning.mock.calls[0][4]).toMatchObject({
+        attempted: false,
+        amountCents: 4900,
+        invoiceNumber: "INV-0042",
+      });
+    });
+
+    it("enforced sweep: a discovery-stamped (never attempted) clock's d0 carries attempted:false", async () => {
+      mode("enforced");
+      const d = make({
+        sweepRows: [row({ pastDueSince: T })],
+        facts: { ...OPEN_FACTS, attemptCount: 0 },
+      });
+      await d.svc.sweep(new Date(T.getTime() + 1 * H));
+      expect(d.notifications.notifyDunning).toHaveBeenCalledWith(
+        "t1",
+        "DUNNING_D0",
+        ep(T),
+        "d0",
+        expect.objectContaining({ attempted: false }),
       );
     });
   });
@@ -1272,10 +1325,10 @@ describe("DunningService", () => {
       );
     });
 
-    it("dark sends it too (a tenant paused earlier is still read-only), and off sends nothing", async () => {
+    it("dark and off send nothing (A1: dark is silent to tenants, even to a tenant paused earlier)", async () => {
       const dark = pausedWorld("dark");
       await dark.d.svc.sweep(new Date(P.getTime() + 1 * H));
-      expect(calls(dark.d)).toEqual([["DUNNING_PAUSED_STILL_OWED", ep(P), "paused_still_owed"]]);
+      expect(dark.d.notifications.notifyDunning).not.toHaveBeenCalled();
       const off = pausedWorld("off");
       await off.d.svc.sweep(new Date(P.getTime() + 1 * H));
       expect(off.d.notifications.notifyDunning).not.toHaveBeenCalled();

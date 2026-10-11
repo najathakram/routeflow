@@ -20,6 +20,7 @@ import {
   UnknownPlanKeyError,
 } from "./plan-catalog.constants";
 import { addCycle } from "./billing-math";
+import { billableAddonWhere } from "./addon-row";
 import { effectiveCycle, nextBillingWindow } from "./rf-invoice/calendar-windows";
 import { lockTenantForLedger } from "./addon-ledger";
 import { isPayingRow } from "./mrr.service";
@@ -647,8 +648,9 @@ export class BillingCronService {
         // MRR delta (base + active add-ons − discount) so the append-only ledger nets down with
         // churn instead of over-counting the tenant's last plan forever. Booked only for a row in
         // the shared paying set (isPayingRow) — any other class was never counted, so Δ0.
+        // N4: only BILLABLE add-ons were ever in the run-rate (a comp is a platform grant, never booked).
         const addons = await tx.tenantAddon.findMany({
-          where: { tenantId: s.tenantId, active: true },
+          where: billableAddonWhere({ tenantId: s.tenantId, active: true }),
           select: { priceSnapshot: true, quantity: true },
         });
         const addonMrr = addons.reduce(

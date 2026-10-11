@@ -50,6 +50,8 @@ export interface InvoiceFacts {
   /** The invoice's display number and currency: the paused-still-owed notice names them. */
   invoiceNumber?: string | null;
   currency?: string | null;
+  /** The billed period's month ("October 2026", UTC) from the first invoice line, for the never-attempted d0 copy. */
+  periodLabel?: string | null;
 }
 
 /** An invoice is settled when Stripe says paid. */

@@ -15,6 +15,8 @@ import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../com
 import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { escapeHtml, safeLinkHref } from "../common/html-escape";
+import { billingPauseMode, dunningEmailsFor } from "./dunning-config";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { fromCents, roundMoney } from "@routeflow/pricing";
 import {
@@ -65,6 +67,7 @@ import { armNeedsReconcile, clearNeedsReconcile } from "./needs-reconcile";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isStripeResourceMissing } from "./addon.service";
 import { billableAddonWhere } from "./addon-row";
+import { SUSPENDED_REASON_SUBSCRIPTION_CANCELED } from "./billing-notification.templates";
 import { writeAdminNotice } from "./manual-invoice-notice";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { retryOnTxConflict } from "../common/tx-retry";
@@ -91,6 +94,9 @@ import {
 
 /** Grace period (in days) after a payment failure before suspending the tenant. */
 const PAYMENT_GRACE_DAYS = 3;
+/** #2476: the payment-failed email's portal call runs inside the webhook's claim lease - cap it so a
+ *  slow Stripe can never hold the claim for minutes; on timeout the email falls back to plain text. */
+const PAYMENT_FAILED_PORTAL_REQUEST = { timeoutMs: 10_000, maxNetworkRetries: 0 };
 /**
  * Clock skew allowed between a manual-activation marker (our database clock) and `session.created` (Stripe's):
  * a marker within this many seconds BEFORE the session counts as AFTER it, i.e. stale. Deliberately lopsided:
@@ -2518,8 +2524,8 @@ export class BillingService {
       throw err;
     }
 
-    // SA-733r7 PR-B3: the dunning clock is stamped once per invoice (and the d0 notice goes out - B410's direct
-    // email is gone). BEFORE the non-idempotent increment below, like the coupon sync: a throw here (an unreadable
+    // SA-733r7 PR-B3: the dunning clock is stamped once per invoice (in enforced the d0 notice goes out; in off/dark
+    // master's direct email below is the only tenant email). BEFORE the non-idempotent increment below, like the coupon sync: a throw here (an unreadable
     // Stripe) aborts before the count moves and the redelivery runs the whole handler once.
     await this.dunning?.onPaymentFailed(invoice);
 
@@ -2533,6 +2539,63 @@ export class BillingService {
     this.logger.warn(
       `Payment failed for tenant ${sub.tenantId} (${sub.tenant.slug}). Grace period: ${PAYMENT_GRACE_DAYS} days.`,
     );
+
+    // SA r-note 5 A1: in off/dark this is the ONLY tenant email (master's #2440, one per real payment_failed: dark
+    // is silent to tenants); the dunning milestone series replaces it in enforced. #2476 / SA-472: the increment
+    // above IS the event's effect, so everything after it is best-effort and never throws - a throw would record
+    // "error:" and make a redelivery re-run the increment.
+    const mode = billingPauseMode();
+    if (dunningEmailsFor(mode) === "legacy_failed_payment") {
+      try {
+        await this.sendPaymentFailedEmail(sub);
+      } catch (e) {
+        this.logger.warn(
+          `payment-failed email for tenant ${sub.tenantId} not sent: ${(e as Error)?.message}`,
+        );
+      }
+    }
+  }
+
+  /** The admin warning for a failed payment (#2440): portal link best-effort, plain-text fallback. */
+  private async sendPaymentFailedEmail(sub: {
+    tenantId: string;
+    tenant: { slug: string; name: string | null };
+  }): Promise<void> {
+    const adminUser = await this.prisma.user.findFirst({
+      where: { tenantId: sub.tenantId, role: "TENANT_ADMIN", deletedAt: null },
+      select: { email: true, username: true },
+    });
+    if (!adminUser?.email) return;
+    // Best-effort billing-portal link; any portal error (or a non-http(s) URL, which
+    // safeLinkHref refuses) falls back to today's plain text.
+    const href = safeLinkHref(await this.portalUrlOrEmpty(sub.tenantId), "onPaymentFailed");
+    const updateLine = href
+      ? `<p><a href="${escapeHtml(href)}">Update your payment method in the billing portal</a>.</p>`
+      : `<p>You can update your payment details by contacting support or visiting your billing portal.</p>`;
+    await this.email.send({
+      to: adminUser.email,
+      subject: `Payment failed — ${sub.tenant.name ?? sub.tenant.slug}`,
+      html: `<p>Hello ${escapeHtml(adminUser.username)},</p>
+<p>We were unable to process your subscription payment for <strong>${escapeHtml(sub.tenant.name ?? sub.tenant.slug)}</strong>.</p>
+<p>Please update your payment method to avoid service interruption.</p>
+${updateLine}
+<p>RouteFlow Platform</p>`,
+    });
+  }
+
+  /** #2440: the tenant's billing-portal URL, or "" on any portal error (logged, never thrown). */
+  private async portalUrlOrEmpty(tenantId: string): Promise<string> {
+    try {
+      // #2476: capped - this runs inside the webhook's claim lease, and the link is best-effort.
+      return (
+        await this.createBillingPortalSession(tenantId, undefined, PAYMENT_FAILED_PORTAL_REQUEST)
+      ).portalUrl;
+    } catch (e) {
+      this.logger.warn(
+        `Billing portal link unavailable for tenant ${tenantId}: ${(e as Error).message}`,
+      );
+      return "";
+    }
   }
 
   private async onSubscriptionDeleted(subscription: any): Promise<void> {
@@ -2671,7 +2734,7 @@ export class BillingService {
   // ─── Cron: suspend tenants with expired trials / overdue payments ─────────
 
   /**
-   * Runs every hour. Suspends tenants that:
+   * Runs every hour. Suspends tenants whose Stripe subscription was canceled (A2: never for past_due / unpaid):
    *  1. Are in TRIAL status with trialEndsAt in the past, OR
    *  2. Have a subscription whose periodEnd is past + grace period and still ACTIVE
    */
@@ -2700,11 +2763,10 @@ export class BillingService {
       // Double-check with Stripe that the subscription is actually past-due or unpaid
       try {
         const stripeSub = await this.stripe.getSubscription(sub.stripeSubId!);
-        if (
-          stripeSub.status === "past_due" ||
-          stripeSub.status === "unpaid" ||
-          stripeSub.status === "canceled"
-        ) {
+        // SA r-note 5 A2: ONLY `canceled` (a subscription the tenant ended). past_due / unpaid are payment-overdue
+        // states and never suspend, in any BILLING_PAUSE_MODE: dunning owns non-payment (the 7-day grace, then
+        // READ_ONLY + pay).
+        if (stripeSub.status === "canceled") {
           // Atomic ACTIVE→SUSPENDED: emits the −MRR delta exactly once even if a concurrent
           // subscription.deleted webhook already churned this tenant (count 0 → no double). The
           // suspension is reversible — onPaymentSucceeded re-adds a matching +delta on reinstatement.
@@ -2723,7 +2785,10 @@ export class BillingService {
             );
             // N3: best-effort admin notification, never blocks the suspension above.
             try {
-              await this.billingNotification.notifySuspended(sub.tenantId, "overdue payment");
+              await this.billingNotification.notifySuspended(
+                sub.tenantId,
+                SUSPENDED_REASON_SUBSCRIPTION_CANCELED,
+              );
             } catch (e) {
               this.logger.error(
                 `N3 notifySuspended threw unexpectedly for tenant ${sub.tenantId}`,

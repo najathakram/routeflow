@@ -3,7 +3,7 @@ import {
   DUNNING_D3_HOURS,
   DUNNING_D6_HOURS,
   DUNNING_MILESTONES,
-  DUNNING_PAUSE_HOURS,
+  dunningEmailsFor,
   HOUR_MS,
 } from "./dunning-config";
 import { episodeKey } from "./dunning-clock";
@@ -14,10 +14,10 @@ import { hoursSince } from "./dunning-time";
  * SA-733r7 PR-B3 (brief item 2 / SA-733r M4): the d0 / d3 / d6 reminders, keyed in `BillingNotificationLog` by
  * (tenant, milestone, episode key = `<invoiceId>:<pastDueSince ISO>`) so an hourly sweep or a redelivered webhook sends each once per invoice.
  *
- *   - They send in `dark` too; `off` sends nothing. The copy is truthful for the mode: `dark`'s d6 names no date.
- *   - In `enforced` the d6 notice IS the final notice ("read-only tomorrow") and also records `dunning_final` in
- *     the log. If d6 already went out in `dark`, the flip sends a separate final notice instead - so flipping to
- *     `enforced` pauses nobody in hour one: the pause waits for a `dunning_final` that is >= 24 h old.
+ *   - They send ONLY in `enforced` (SA r-note 5 A1: dark is silent to tenants; `dunningEmailsFor` is the one switch).
+ *     In `off` / `dark` the sweep stamps and logs, and master's failed-payment email is the only tenant email.
+ *   - The d6 notice IS the final notice ("read-only tomorrow") and also records `dunning_final` in the log. The
+ *     pause waits for a `dunning_final` that is >= 24 h old, so flipping to `enforced` pauses nobody in hour one.
  *   - Every send re-reads the invoice first (the caller passes the fresh facts): paid / void / processing = no email.
  *
  *   - A tenant that is already PAUSED (SA G8) gets none of d0/d3/d6/final - there is nothing left to warn about. The
@@ -33,8 +33,8 @@ export async function runMilestones(
   now: Date,
   opts: { paused?: boolean } = {},
 ): Promise<Date | null> {
-  const mode = deps.mode();
-  if (mode === "off") return null;
+  // SA r-note 5 A1: dark (and off) are SILENT to tenants - the sweep stamps and logs only; the series sends in enforced.
+  if (dunningEmailsFor(deps.mode()) !== "milestones") return null;
   const { tenantId, pastDueInvoiceId: invoiceId } = row;
   // the notice key of THIS episode (SA r-note 3): a re-stamp after an exit notifies afresh
   const key = episodeKey(invoiceId, row.pastDueSince);
@@ -98,11 +98,22 @@ export async function runMilestones(
     return null;
   }
 
+  // `attempted` keys the d0 copy: an invoice Stripe never tried (a discovery stamp) is "open - pay it here", never
+  // "we couldn't process your payment".
   const send = (
     milestone: string,
-    kind: "d0" | "d3" | "d6" | "final",
-    dates: { readOnlyOn?: string; byDate?: string } = {},
-  ) => deps.notifications.notifyDunning(tenantId, milestone, key, kind, { payUrl, ...dates });
+    kind: "d0" | "d3" | "final",
+    dates: { readOnlyOn?: string } = {},
+  ) =>
+    deps.notifications.notifyDunning(tenantId, milestone, key, kind, {
+      payUrl,
+      attempted: facts.attemptCount > 0,
+      amountCents: remainingCents(facts),
+      currency: facts.currency ?? null,
+      periodLabel: facts.periodLabel ?? null,
+      invoiceNumber: facts.invoiceNumber ?? null,
+      ...dates,
+    });
   const readOnlyOn = () =>
     deps.notifications.localDateLabel(tenantId, new Date(now.getTime() + 24 * HOUR_MS));
 
@@ -127,29 +138,15 @@ export async function runMilestones(
   } else if (top === M.D3) {
     warnUndeliverable(await send(M.D3, "d3"));
   } else if (top === M.D6) {
-    if (mode === "dark") {
-      // dark: nothing will happen, so the copy names no read-only date - only when to update the card by, never
-      // in the past: at least a day from now
-      const byDate = await deps.notifications.localDateLabel(
-        tenantId,
-        new Date(
-          Math.max(
-            row.pastDueSince.getTime() + DUNNING_PAUSE_HOURS * HOUR_MS,
-            now.getTime() + 24 * HOUR_MS,
-          ),
-        ),
-      );
-      warnUndeliverable(await send(M.D6, "d6", { byDate }));
-    } else {
-      // enforced, first time: this d6 email is the final notice - record both.
-      const res = warnUndeliverable(await send(M.D6, "final", { readOnlyOn: await readOnlyOn() }));
-      if (res.status === "sent" && !finalSentAt) {
-        await deps.notifications.recordDunningMilestone(tenantId, M.FINAL, key);
-        finalSentAt = now;
-      }
+    // enforced, first time: this d6 email IS the final notice - record both.
+    const res = warnUndeliverable(await send(M.D6, "final", { readOnlyOn: await readOnlyOn() }));
+    if (res.status === "sent" && !finalSentAt) {
+      await deps.notifications.recordDunningMilestone(tenantId, M.FINAL, key);
+      finalSentAt = now;
     }
-  } else if (mode === "enforced" && elapsed >= DUNNING_D6_HOURS && !finalSentAt) {
-    // enforced after a dark d6: a separate final notice, then the 24 h lead starts.
+  } else if (elapsed >= DUNNING_D6_HOURS && !finalSentAt) {
+    // d6 already logged without a final notice (it went out by another route): a separate final notice, then the
+    // 24 h lead starts.
     const res = warnUndeliverable(await send(M.FINAL, "final", { readOnlyOn: await readOnlyOn() }));
     if (res.status === "sent") finalSentAt = now;
   }

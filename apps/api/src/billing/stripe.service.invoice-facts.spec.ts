@@ -45,7 +45,17 @@ describe("StripeService.getInvoiceFacts (dahlia shape)", () => {
       hostedInvoiceUrl: null,
       invoiceNumber: null,
       currency: null,
+      periodLabel: null,
     });
+  });
+
+  it("reads the billed period's month from the first invoice line (UTC), for the never-attempted d0 copy", async () => {
+    const { svc } = make(
+      invoice({ lines: { data: [{ period: { start: Date.UTC(2026, 9, 1) / 1000 } }] } }),
+    );
+    expect(await svc.getInvoiceFacts("in_1")).toMatchObject({ periodLabel: "October 2026" });
+    const none = make(invoice());
+    expect((await none.svc.getInvoiceFacts("in_1")).periodLabel).toBeNull();
   });
 
   it("reads the invoice number and currency (the paused-still-owed notice names them)", async () => {

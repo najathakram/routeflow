@@ -171,6 +171,15 @@ describe("BuyerSellerContextGuard — the buyer's own account (#2142 R1)", () =>
 // it has just resolved the seller. One boolean-grade refusal: coded SELLER_UNAVAILABLE, neutral wording, never the
 // reason (payment_overdue, trial_expired, cancelled ... all look the same to a buyer).
 describe("BuyerSellerContextGuard - a read-only seller (B4)", () => {
+  // A3: the refusal is the ENFORCED behaviour of SELLER_READ_ONLY_BUYER_GATE (default dark, see the gate block below)
+  const savedGate = process.env.SELLER_READ_ONLY_BUYER_GATE;
+  beforeEach(() => {
+    process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced";
+  });
+  afterEach(() => {
+    if (savedGate === undefined) delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+    else process.env.SELLER_READ_ONLY_BUYER_GATE = savedGate;
+  });
   const live = () => [link("ACTIVE", null)];
 
   it.each(["POST", "PATCH", "PUT", "DELETE"])(
@@ -213,6 +222,15 @@ describe("BuyerSellerContextGuard - a read-only seller (B4)", () => {
 // the buyer's own money moving to the seller's Stripe account or a cash declaration. The exemption is ONE named
 // constant of exact method + route; orders, the cart and every other buyer write stay SELLER_UNAVAILABLE.
 describe("BuyerSellerContextGuard - read-only seller: payments exempt, everything else refused (B4)", () => {
+  // A3: the refusal itself is the ENFORCED behaviour of SELLER_READ_ONLY_BUYER_GATE (default dark, see the next block)
+  const savedGate = process.env.SELLER_READ_ONLY_BUYER_GATE;
+  beforeEach(() => {
+    process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced";
+  });
+  afterEach(() => {
+    if (savedGate === undefined) delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+    else process.env.SELLER_READ_ONLY_BUYER_GATE = savedGate;
+  });
   const live = () => [link("ACTIVE", null)];
   const run = (method: string, path: string) =>
     boot(live(), { tenantStatus: "READ_ONLY", method, path });
@@ -222,6 +240,8 @@ describe("BuyerSellerContextGuard - read-only seller: payments exempt, everythin
       ["POST", /^\/api\/v1\/buyer\/payments\/card$/],
       ["POST", /^\/api\/v1\/buyer\/payments\/cash$/],
       ["POST", /^\/api\/v1\/buyer\/payments\/requests\/[^/]+\/cancel$/],
+      // A3: a buyer cancelling their OWN order reduces the seller's obligations - exempt even when enforced
+      ["POST", /^\/api\/v1\/buyer\/orders\/[^/]+\/cancel$/],
     ]);
   });
 
@@ -229,6 +249,7 @@ describe("BuyerSellerContextGuard - read-only seller: payments exempt, everythin
     ["POST", "/api/v1/buyer/payments/card"],
     ["POST", "/api/v1/buyer/payments/cash"],
     ["POST", "/api/v1/buyer/payments/requests/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/cancel"],
+    ["POST", "/api/v1/buyer/orders/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/cancel"],
   ])(
     "%s %s passes for a READ_ONLY seller and populates the buyer context",
     async (method, path) => {
@@ -241,7 +262,9 @@ describe("BuyerSellerContextGuard - read-only seller: payments exempt, everythin
   it.each([
     ["POST", "/api/v1/buyer/orders"],
     ["PATCH", "/api/v1/buyer/orders/o1/items"],
-    ["POST", "/api/v1/buyer/orders/o1/cancel"],
+    ["POST", "/api/v1/buyer/orders/o1/cancel/extra"],
+    ["PATCH", "/api/v1/buyer/orders/o1/cancel"],
+    ["POST", "/api/v1/buyer/orders/o1/change-requests"],
     ["POST", "/api/v1/buyer/templates/t1/reorder"],
     ["POST", "/api/v1/buyer/favorites/p1"],
     // look-alikes of the exempt routes stay refused
@@ -263,6 +286,101 @@ describe("BuyerSellerContextGuard - read-only seller: payments exempt, everythin
 
   it("a query string on an exempt route does not change the verdict", async () => {
     const { guard, ctx } = run("POST", "/api/v1/buyer/payments/card?x=1");
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+  });
+});
+
+// SA ruling 10-11 A3 (N6): the buyer-side READ_ONLY refusal ships DARK under SELLER_READ_ONLY_BUYER_GATE.
+describe("BuyerSellerContextGuard - SELLER_READ_ONLY_BUYER_GATE (dark | enforced, default dark)", () => {
+  const saved = {
+    gate: process.env.SELLER_READ_ONLY_BUYER_GATE,
+    pause: process.env.BILLING_PAUSE_MODE,
+  };
+  let warn: jest.SpyInstance;
+  beforeEach(() => {
+    delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+    warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+    for (const [k, v] of [
+      ["SELLER_READ_ONLY_BUYER_GATE", saved.gate],
+      ["BILLING_PAUSE_MODE", saved.pause],
+    ] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+  const live = () => [link("ACTIVE", null)];
+  const wouldDeny = () =>
+    warn.mock.calls.map((c: any[]) => String(c[0])).filter((l: string) => /would_deny/.test(l));
+
+  it("dark (the default) + a READ_ONLY seller: a buyer order SUCCEEDS and exactly one would-deny line names the seller tenant id and the route", async () => {
+    const { guard, req, ctx } = boot(live(), {
+      tenantStatus: "READ_ONLY",
+      method: "POST",
+      path: "/api/v1/buyer/orders",
+    });
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect(req.buyerCustomer.customerId).toBe("c-1");
+    expect(wouldDeny()).toEqual([
+      "seller_read_only.would_deny code=SELLER_UNAVAILABLE seller=tn-1 route=POST /api/v1/buyer/orders",
+    ]);
+  });
+
+  it("an explicit 'dark' is the same", async () => {
+    process.env.SELLER_READ_ONLY_BUYER_GATE = "dark";
+    const { guard, ctx } = boot(live(), {
+      tenantStatus: "READ_ONLY",
+      method: "PATCH",
+      path: "/api/v1/buyer/orders/o1/items",
+    });
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect(wouldDeny()).toHaveLength(1);
+  });
+
+  it("enforced: 403 SELLER_UNAVAILABLE and no would-deny line", async () => {
+    process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced";
+    const { guard, ctx } = boot(live(), {
+      tenantStatus: "READ_ONLY",
+      method: "POST",
+      path: "/api/v1/buyer/orders",
+    });
+    const err: any = await guard.canActivate(ctx).catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect(err.getResponse().code).toBe("SELLER_UNAVAILABLE");
+    expect(wouldDeny()).toHaveLength(0);
+  });
+
+  it("enforced + the buyer's own order cancel: passes (200 path), no would-deny line", async () => {
+    process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced";
+    const { guard, ctx } = boot(live(), {
+      tenantStatus: "READ_ONLY",
+      method: "POST",
+      path: "/api/v1/buyer/orders/o1/cancel",
+    });
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect(wouldDeny()).toHaveLength(0);
+  });
+
+  it.each([
+    ["an ACTIVE seller", "ACTIVE", "POST", "/api/v1/buyer/orders"],
+    ["a READ_ONLY seller's read", "READ_ONLY", "GET", "/api/v1/buyer/orders"],
+    ["an exempt payment", "READ_ONLY", "POST", "/api/v1/buyer/payments/card"],
+  ])("dark: %s logs no would-deny line", async (_l, status, method, path) => {
+    const { guard, ctx } = boot(live(), { tenantStatus: status, method, path });
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect(wouldDeny()).toHaveLength(0);
+  });
+
+  it("an unknown value is dark (a typo can never turn the refusal on), and BILLING_PAUSE_MODE=enforced does not turn it on either", async () => {
+    process.env.SELLER_READ_ONLY_BUYER_GATE = "enforce";
+    process.env.BILLING_PAUSE_MODE = "enforced";
+    const { guard, ctx } = boot(live(), {
+      tenantStatus: "READ_ONLY",
+      method: "POST",
+      path: "/api/v1/buyer/orders",
+    });
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
 });

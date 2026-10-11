@@ -747,8 +747,10 @@ export class PlatformAdminService {
       const wasPaying = isPayingRow(before, priorPlanKey, couponFull);
       const isPaying = isPayingRow({ ...before, status: updated.status }, finalPlanKey, couponFull);
       if (wasPaying !== isPaying) {
+        // SA r-note 5 A5 (N4): only BILLABLE add-ons cross the paying-set boundary - a comp is a platform grant,
+        // never billed and never in MRR.
         const addons = await tx.tenantAddon.findMany({
-          where: { tenantId: id, active: true },
+          where: billableAddonWhere({ tenantId: id, active: true }),
           select: { priceSnapshot: true, quantity: true },
         });
         // basePriceSnapshot/discount are never touched by a bare status write, so the same
@@ -1112,8 +1114,9 @@ export class PlatformAdminService {
       // crosses in/out of the paying set — only then is the extra query worth making.
       let extras = 0;
       if (wasPaying !== isPaying) {
+        // N4: only BILLABLE add-ons are in the run-rate - a comp is a platform grant (billableAddonWhere).
         const addons = await tx.tenantAddon.findMany({
-          where: { tenantId: id, active: true },
+          where: billableAddonWhere({ tenantId: id, active: true }),
           select: { priceSnapshot: true, quantity: true },
         });
         extras =

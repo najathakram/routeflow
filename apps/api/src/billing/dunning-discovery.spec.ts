@@ -375,6 +375,23 @@ describe("DunningService.discover (daily open-invoice discovery)", () => {
     }
   });
 
+  it("A1: dark + discovery stamps 5 tenants -> 0 emails and 5 log lines", async () => {
+    const rows = ["t1", "t2", "t3", "t4", "t5"].map((t) => subRow(t));
+    const invoices = Object.fromEntries(
+      rows.map((r) => [r.stripeSubId, [inv(`in_${r.tenantId}`, 30)]]),
+    );
+    const d = make({ rows, invoices });
+    const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
+    const out = await d.svc.discover(NOW);
+    expect(out.stamped).toBe(5);
+    expect(d.notifications.notifyDunning).not.toHaveBeenCalled();
+    expect(d.notifications.recordDunningMilestone).not.toHaveBeenCalled();
+    const lines = warn.mock.calls
+      .map((c: any[]) => String(c[0]))
+      .filter((l: string) => /billing\.dunning\.discovered /.test(l));
+    expect(lines).toHaveLength(5);
+  });
+
   it("sends no email itself (the hourly sweep owns the reminders) and never changes a status", async () => {
     const d = make({ rows: [subRow("t1")], invoices: { sub_t1: [inv("in_a", 30)] } });
     await d.svc.discover(NOW);
