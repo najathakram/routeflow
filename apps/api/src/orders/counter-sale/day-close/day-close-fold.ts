@@ -35,7 +35,7 @@ export interface WindowPayment {
     order?: {
       counterSale: boolean | null;
       /**
-       * The order's other payments that carry a group id (any invoice, never a VOID one): the SET the one tender predicate
+       * The order's other payments that carry a group id (any invoice, a VOID row or a voided invoice's too): the SET the one tender predicate
        * judges an ungrouped row against (is this sale's tender grouped, or a legacy ungrouped one?). Absent reads as none.
        */
       invoices?: ReadonlyArray<{

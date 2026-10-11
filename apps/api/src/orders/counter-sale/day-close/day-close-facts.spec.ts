@@ -145,7 +145,8 @@ describe("readWindowFacts: what is sent", () => {
               invoices: {
                 select: {
                   payments: {
-                    where: { status: { not: "VOID" }, paymentGroupId: { not: null } },
+                    // every payment of the order's invoices, VOID ones too: they still make the sale "grouped"
+                    where: { paymentGroupId: { not: null } },
                     select: { paymentGroupId: true, status: true },
                   },
                 },

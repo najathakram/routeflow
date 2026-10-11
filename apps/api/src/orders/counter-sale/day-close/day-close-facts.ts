@@ -1,4 +1,4 @@
-import { InvoiceStatus, OrderStatus, PaymentStatus } from "@prisma/client";
+import { InvoiceStatus, OrderStatus } from "@prisma/client";
 import type { PrismaService } from "../../../prisma/prisma.service";
 import {
   creditNotesInWindowWhere,
@@ -48,7 +48,7 @@ export async function readWindowFacts(
     checkStatus: true,
     invoice: { select: { orderId: true, order: { select: { counterSale: true } } } },
   } as const;
-  // The counter query also reads, per order, the group ids of its OTHER live payments: the one tender predicate judges an
+  // The counter query also reads, per order, the group ids of its OTHER payments (VOID ones too): the one tender predicate judges an
   // ungrouped row against the sale's set (a grouped sale's ungrouped row is an office payment, not till money).
   const counterPaymentSelect = {
     ...paymentSelect,
@@ -61,9 +61,9 @@ export async function readWindowFacts(
             invoices: {
               select: {
                 payments: {
-                  // scan-ok: draft-payment-not-void — group ids only, to build the sale's set (money is summed from the
-                  // window's own PAID rows in the fold): only a VOIDED row is no part of the set.
-                  where: { status: { not: PaymentStatus.VOID }, paymentGroupId: { not: null } },
+                  // every payment row of the order's invoices, VOID ones too (the sale's set; money is summed from the
+                  // window's own PAID rows in the fold): a voided leg still makes the sale "grouped"
+                  where: { paymentGroupId: { not: null } },
                   select: { paymentGroupId: true, status: true },
                 },
               },

@@ -34,9 +34,10 @@ export interface CounterPaymentScope {
   /** The order's id: a pickup hand-over's group id (`pickupTenderGroupId`) derives from it. */
   orderId: string;
   /**
-   * The sale's payment rows as the one predicate needs them as a SET: every live row that carries one of the order's tender
-   * leg ids (at most one is read: it only says "this sale's tender is grouped"). Without it an ungrouped office payment on a
-   * grouped sale would read as legacy till tender here and as foreign money in the day close.
+   * The sale's payment rows as the one predicate needs them as a SET: a row that carries one of the order's tender leg ids
+   * on ANY invoice of the order, VOID row or voided invoice included (at most one is read: it only says "this sale's tender
+   * is grouped"). Without it an ungrouped office payment on a grouped sale would read as legacy till tender here and as
+   * foreign money in the day close.
    */
   saleRows: ReadonlyArray<{ paymentGroupId?: string | null; status?: string }>;
 }
@@ -45,10 +46,8 @@ type ScopeReader = {
   getTenantId: () => string | null;
   forTenant: () => {
     invoicePayment: {
-      // scan-ok: draft-payment-not-void — an existence probe: "does this sale carry a leg-grouped (non-VOID) row?"
       findMany: (args: {
         where: {
-          status: { not: "VOID" };
           paymentGroupId: { in: string[] };
           invoice: { orderId: string };
         };
@@ -92,10 +91,8 @@ async function scope(
   // Only a counter sale's tender can carry a leg id; a POS pickup order's rows are judged by its own pickup id alone.
   let saleRows: CounterPaymentScope["saleRows"] = [];
   if (counterSale) {
-    // scan-ok: draft-payment-not-void — an existence probe, never a money sum: only a VOIDED row is no part of the sale's set.
     saleRows = await prisma.forTenant().invoicePayment.findMany({
       where: {
-        status: { not: "VOID" },
         paymentGroupId: { in: legGroupIds(orderId) },
         invoice: { orderId },
       },

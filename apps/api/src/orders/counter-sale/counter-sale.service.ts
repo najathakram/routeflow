@@ -35,7 +35,7 @@ import {
   readStoredTender,
   type InvoiceRow,
 } from "./counter-sale-tender";
-import { counterTenderCashRows, legGroupId } from "./counter-tender-row";
+import { counterTenderCashRows, legGroupId, legGroupIds } from "./counter-tender-row";
 import {
   assertLegsAgainstTotal,
   assertLegsShape,
@@ -243,6 +243,7 @@ export class CounterSaleService {
     });
     return buildCounterSaleResponse({
       legs,
+      evidence: await this.readTenderEvidence(orderId),
       order: order && {
         ...order,
         counterCashTendered: tendered?.counterCashTendered,
@@ -333,7 +334,9 @@ export class CounterSaleService {
     // stored per (leg, invoice) is then subtracted and only the SHORTFALL is recorded. "A tender exists" is
     // not "recorded": a first call that paid sibling 1 and failed on sibling 2 is resumed, never repeated.
     const plan = planSaleTender(invoices, legs);
-    const stored = readStoredTender(orderId, invoices);
+    // the order's leg rows on voided sibling invoices: they only decide whether the sale is grouped (the ONE set)
+    const evidence = await this.readTenderEvidence(orderId);
+    const stored = readStoredTender(orderId, invoices, evidence);
     // the handed-over amount as the first call stored it (written BEFORE any money moves): half of the replay fingerprint
     const storedRow = stored.byLeg.size
       ? await this.prisma
@@ -386,6 +389,7 @@ export class CounterSaleService {
           counterTenderCashRows(
             orderId,
             invoices.flatMap((i) => i.payments ?? []),
+            evidence,
           ).length > 0;
         const fillNullOnly = anchored || writes.length === 0;
         try {
@@ -480,6 +484,7 @@ export class CounterSaleService {
     // With the till's own method the SAME rule POST applies decides paymentRecorded (one function, no copy).
     return buildCounterSaleResponse({
       legs: method ? [{ method }] : undefined,
+      evidence: await this.readTenderEvidence(order.id),
       order,
       invoices,
       replayed: true,
@@ -517,6 +522,24 @@ export class CounterSaleService {
           "The walk-in customer holds open credit, which would be applied to this sale. Resolve it first.",
       });
     }
+  }
+
+  /**
+   * The order's leg rows on its VOID / WRITTEN_OFF invoices (any payment status): group-id evidence only. The sale's set
+   * is every payment row of the order, the same one the void, the day close and the closed-day guard read, so a leg row
+   * that sits on a voided sibling still makes the sale "grouped" here too.
+   */
+  private async readTenderEvidence(
+    orderId: string,
+  ): Promise<Array<{ paymentGroupId: string | null; status: string }>> {
+    const rows = await this.prisma.forTenant().invoicePayment.findMany({
+      where: {
+        paymentGroupId: { in: legGroupIds(orderId) },
+        invoice: { orderId, status: { in: ["VOID", "WRITTEN_OFF"] } },
+      },
+      select: { paymentGroupId: true, status: true },
+    });
+    return rows ?? [];
   }
 
   private async readInvoices(orderId: string): Promise<InvoiceRow[]> {

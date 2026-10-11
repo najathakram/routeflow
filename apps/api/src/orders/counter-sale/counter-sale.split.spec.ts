@@ -25,6 +25,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../../audit/audit.service";
 import { createMockPrisma } from "../../testing/prisma-mock";
 import { legGroupId } from "./counter-tender-row";
+import { pickupTenderGroupId } from "./pickup-tender-group";
 import { assertCashRefundWithinCap } from "../../returns/cash-refund-cap";
 
 /**
@@ -1362,6 +1363,56 @@ describe("CounterSaleService.ring: split payments", () => {
           { method: "CARD", amount: 30 },
         ],
       });
+    });
+  });
+  // A1 (Opus review of the merge): the legacy branch of readStoredTender is the ONE predicate's, not "every tender row".
+  describe("a sale with no leg-grouped row: other till events and office rows are not the sale's tender", () => {
+    const SALE_ROW = { id: "ord-1", counterSale: true, status: "DELIVERED", orderNumber: "ORD-1" };
+    const stored = (payments: Pay[]) => {
+      invoices = [inv("inv-1", 37.25, 1, payments)];
+      (service as any).orders.findReplayCandidateByKey.mockResolvedValue(SALE_ROW);
+    };
+    const handOver = (): Pay => ({
+      id: "handover",
+      amount: 37.25,
+      method: "CASH",
+      status: "PAID",
+      paymentGroupId: pickupTenderGroupId("ord-1"),
+    });
+
+    it("scenario 1: an ON_ACCOUNT sale, then a pickup hand-over's cash: by-key still reads ON_ACCOUNT, no leg, no paymentId", async () => {
+      stored([handOver()]);
+      const r = await service.byKey("key-1");
+      expect(r.method).toBe("ON_ACCOUNT");
+      expect(r.paymentId).toBeUndefined();
+      expect(r.payments ?? []).toEqual([]);
+    });
+
+    it("scenario 1: the ON_ACCOUNT same-key replay reads ON_ACCOUNT and records nothing", async () => {
+      stored([handOver()]);
+      replay = true;
+      const r = await service.ring(named({ payment: { method: "ON_ACCOUNT" } }), staff, "key-1");
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r.method).toBe("ON_ACCOUNT");
+      expect(r.paymentId).toBeUndefined();
+      expect(r.payments ?? []).toEqual([]);
+    });
+
+    it("scenario 2: a legacy CASH sale, then an office ACH row on the invoice: the same-key retry is a replay, not 409", async () => {
+      stored([
+        { id: "till", amount: 37.25, method: "CASH", status: "PAID", paymentGroupId: null },
+        { id: "ach", amount: 5, method: "ACH", status: "PAID", paymentGroupId: null },
+      ]);
+      replay = true;
+      storedTendered = 50;
+      const r = await service.ring(
+        walkInSale({ payment: { method: "CASH", amount: 50 } }),
+        staff,
+        "key-1",
+      );
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({ replayed: true, method: "CASH", paymentId: "till" });
+      expect(r.payments).toEqual([{ method: "CASH", amount: 37.25, paymentIds: ["till"] }]);
     });
   });
 });

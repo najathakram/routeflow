@@ -411,7 +411,13 @@ export function toTodaysSaleRow(
     methods,
     paymentState,
     cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
-    change: servedChange(o.id, o.counterCashTendered, payments, total),
+    change: servedChange(
+      o.id,
+      o.counterCashTendered,
+      payments,
+      total,
+      o.invoices.flatMap((i) => i.payments), // the sale's whole set: a voided sibling invoice's leg rows count too
+    ),
     // ONE home for the rate (pricing): a STORED line rate, corroborated by the configured rate; never inferred
     taxRatePercent: storedTaxRatePercent(
       live.map((i) => ({ lines: i.items ?? [] })),

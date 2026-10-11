@@ -14,8 +14,8 @@ import { pickupTenderGroupId } from "./pickup-tender-group";
  *  (i) a counter-sale order (`counterSale === true`) takes a row when it is
  *      - one of THIS order's leg rows: `paymentGroupId === legGroupId(orderId, i)` for some i < TENDER_RULES.counter.maxLegs
  *        (every new sale's tender is grouped on the split base, single-method sales included); or
- *      - ungrouped (no group id) while the sale has NO leg-grouped row at all: the legacy single-tender rule (a sale rung
- *        before the split deploy). Once any leg-grouped row exists, an ungrouped row is something the office added later:
+ *      - ungrouped (no group id) while the sale has NO leg-grouped row at all (a VOID leg row, or one on a voided sibling
+ *        invoice, still counts as one): the legacy single-tender rule (a sale rung before the split deploy). Once any leg-grouped row exists, an ungrouped row is something the office added later:
  *        foreign; or
  *      - the order's OWN pickup hand-over id (`pickupTenderGroupId(orderId)`): a counter sale is a PICKUP order too, and the
  *        hand-over cash is till cash;
@@ -63,13 +63,22 @@ export function legGroupIds(orderId: string): string[] {
 }
 
 /**
- * The sale's payment rows seen as a SET. Pass every non-VOID payment of the sale (a VOID row is no part of it);
- * rows that are not tenders at all (a credit note) can ride along, they never carry a leg group id.
+ * Group-id evidence from the order's OTHER payment rows (a leg row on a voided sibling invoice, a VOIDED payment): rows
+ * that are no part of a reader's money figures but still say "this sale's tender was grouped".
+ */
+export type TenderEvidence = ReadonlyArray<{ paymentGroupId?: string | null }>;
+
+/**
+ * The sale's payment rows seen as a SET: EVERY payment row of the order, a VOID row and a voided invoice's too. A VOID row
+ * never counts as tender itself (the predicate asks PAID / PENDING), but a leg row that was voided still makes the sale
+ * "grouped": once a sale was rung on the split base an ungrouped row is never its legacy tender, so voiding the legs
+ * cannot turn a later office cash row into one. Every reader (the void, the day close facts, the closed-day guard,
+ * the receipt and Today's rows) hands over the same thing: all of the order's payment rows.
  */
 export interface TenderSet {
   /** The leg a group id belongs to for this order, or null when it is not one of this order's leg ids. */
   legOf(paymentGroupId: string | null | undefined): number | null;
-  /** True when at least one row carries one of this order's leg ids (a sale rung on the split base). */
+  /** True when at least one row (VOID or not, on any invoice of the order) carries one of this order's leg ids. */
   hasGrouped: boolean;
 }
 
@@ -80,12 +89,7 @@ export function tenderSetOf(
   const ids = new Map<string, number>();
   legGroupIds(orderId).forEach((g, i) => ids.set(g, i));
   const legOf = (g: string | null | undefined) => (g == null ? null : (ids.get(g) ?? null));
-  // scan-ok: draft-payment-not-void — only a VOIDED grouped row is left out of the set (it no longer holds money); a
-  // DRAFT row never carries a leg group id, so it cannot make a sale read as grouped.
-  return {
-    legOf,
-    hasGrouped: rows.some((r) => r.status !== "VOID" && legOf(r.paymentGroupId) != null),
-  };
+  return { legOf, hasGrouped: rows.some((r) => legOf(r.paymentGroupId) != null) };
 }
 
 /**
@@ -133,8 +137,9 @@ export function isCounterTenderRowIn(
 }
 
 /**
- * `saleRows` = the sale's non-VOID payment rows, or at least every one that carries a group id (the set the row is judged
- * against; a row with a leg id needs none of the others, an ungrouped row needs to know whether any leg-grouped row exists).
+ * `saleRows` = the order's payment rows, or at least every one that carries a group id, VOID ones included (the set the
+ * row is judged against; a row with a leg id needs none of the others, an ungrouped row needs to know whether any
+ * leg-grouped row exists).
  */
 export function isCounterTenderRow(
   orderId: string,
@@ -155,8 +160,8 @@ export function isCounterTenderRow(
  */
 export function counterTenderCashRows<
   T extends { method?: string; status?: string; paymentGroupId?: string | null },
->(orderId: string, payments: readonly T[]): T[] {
-  const set = tenderSetOf(orderId, payments);
+>(orderId: string, payments: readonly T[], evidence: TenderEvidence = []): T[] {
+  const set = tenderSetOf(orderId, [...payments, ...evidence]);
   return payments.filter(
     (p) => p.status !== "VOID" && p.method === "CASH" && isTenderLegGroup(set, p.paymentGroupId),
   );
@@ -179,12 +184,10 @@ export function tenderTakenCents(
     amount: unknown;
     paymentGroupId?: string | null;
   }>,
+  evidence: TenderEvidence = [],
 ): number {
   // group membership is judged with the voided rows in the set (a sale whose leg rows were all voided is still a grouped sale)
-  const set = tenderSetOf(
-    orderId,
-    payments.map((p) => ({ paymentGroupId: p.paymentGroupId, status: "PAID" })),
-  );
+  const set = tenderSetOf(orderId, [...payments, ...evidence]);
   const taken = payments
     .filter((p) => p.status === "PAID" || p.status === "VOID" || p.status === "PENDING")
     .filter((p) =>

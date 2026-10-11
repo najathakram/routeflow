@@ -178,6 +178,8 @@ describe("InvoicesService.recordPayment — counter invoice and the day close (S
       const where = (prisma.invoicePayment.findMany.mock.calls[0][0] as any).where;
       expect(where.paymentGroupId.in).toEqual(legGroupIds("ord-1"));
       expect(where.invoice).toEqual({ orderId: "ord-1" });
+      // every payment row of the order counts toward "has a leg-grouped row", a VOID one too: no status filter
+      expect(where.status).toBeUndefined();
     });
 
     it("takes the SHARED close lock for the order's register as the FIRST statement, before the Invoice FOR UPDATE", async () => {

@@ -3,6 +3,7 @@ import { buildOrdersService } from "../testing/orders-service-harness";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { RouteFlowGateway } from "../../gateways/routeflow.gateway";
 import { CounterSaleVoidService } from "./counter-sale-void.service";
+import { legGroupId, legGroupIds } from "./counter-tender-row";
 import { pickupTenderGroupId } from "./pickup-tender-group";
 
 jest.mock("../../common/db-locks", () => ({
@@ -149,5 +150,36 @@ describe("counter void: a counter order's pickup hand-over cash is its own tende
     expect(b.invoices.voidPaymentInTx).not.toHaveBeenCalled();
     expect(b.prisma.order.updateMany).not.toHaveBeenCalled();
     expect(b.prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  // A2: the void judges rows against the SAME set the day close and the closed-day guard read: every payment row of the
+  // ORDER (a voided sibling invoice's, and VOID rows too) decides "has a leg-grouped row", not the live invoices' alone.
+  it("an ungrouped cash row beside a leg row that sits on a VOIDED sibling invoice is FOREIGN: 409, nothing written", async () => {
+    const office = pay({ id: "office", amount: 12 });
+    const b = await build([office]);
+    const evidence = [{ paymentGroupId: legGroupId(ORDER_ID, 0), status: "VOID" }];
+    b.prisma.invoicePayment.findMany.mockImplementation(async (args: any) =>
+      args?.where?.paymentGroupId ? evidence : [office],
+    );
+    const e: any = await run(b).catch((x) => x);
+    expect(e?.getStatus?.()).toBe(409);
+    expect(e?.getResponse?.()).toMatchObject({ code: "COUNTER_SALE_VOID_FOREIGN_PAYMENT" });
+    expect(b.invoices.voidPaymentInTx).not.toHaveBeenCalled();
+    // the evidence is asked for by the order's own leg ids over EVERY invoice of the order (no status filter)
+    const ask = b.prisma.invoicePayment.findMany.mock.calls
+      .map((c: any[]) => c[0])
+      .find((a: any) => a?.where?.paymentGroupId);
+    expect(ask.where.paymentGroupId.in).toEqual(legGroupIds(ORDER_ID));
+    expect(ask.where.invoice).toEqual({ orderId: ORDER_ID });
+    expect(ask.where.status).toBeUndefined();
+  });
+
+  it("the same ungrouped row on a sale with NO leg row anywhere is still its legacy tender (voided and handed back)", async () => {
+    const office = pay({ id: "office", amount: 12 });
+    const b = await build([office]);
+    b.prisma.invoicePayment.findMany.mockImplementation(async (args: any) =>
+      args?.where?.paymentGroupId ? [] : [office],
+    );
+    await expect(run(b)).resolves.toEqual({ voided: true, handBack: { CASH: 12 } });
   });
 });
