@@ -7,6 +7,7 @@ import {
   STOCK_COUNT_LOCK_FAMILY,
   stockCountCommitting,
   stockCountReference,
+  stockCountSkipNote,
 } from "./stock-count-commit";
 
 /** SA-767 L-2.2: the shared vocabulary of the batched stock-count commit. */
@@ -35,6 +36,21 @@ describe("stock-count-commit: SA-767 L-2.4 vocabulary", () => {
     expect(STOCK_COUNT_LOCK_FAMILY).toBe("stock-count");
     expect(LOCK_FAMILIES).toContain(STOCK_COUNT_LOCK_FAMILY);
     expect(COUNT_LOCK_ATTEMPTS * COUNT_LOCK_RETRY_MS).toBeLessThanOrEqual(1000);
+  });
+
+  it("a skip note is ONE line that names the product and says what to do", () => {
+    const named = stockCountSkipNote({
+      productId: "p1",
+      name: "Acme\nWidget",
+      reason: "PRODUCT_IS_FAMILY",
+    });
+    expect(named).toBe(
+      "Skipped Acme Widget (p1): is now a product family, not counted. Recount it in a new session.",
+    );
+    expect(named).not.toContain("\n");
+    expect(stockCountSkipNote({ productId: "p2", reason: "PRODUCT_DELETED" })).toBe(
+      "Skipped p2: no longer exists, not counted. Recount it in a new session.",
+    );
   });
 });
 

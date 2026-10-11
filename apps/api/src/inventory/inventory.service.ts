@@ -64,7 +64,10 @@ import {
   STOCK_COUNT_LOCK_FAMILY,
   stockCountCommitting,
   stockCountReference,
+  stockCountSkipNote,
   type StockCountCommitOutcome,
+  type StockCountSkippedProduct,
+  type StockCountSkipReason,
 } from "./stock-count-commit";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
@@ -2773,8 +2776,11 @@ export class InventoryService {
       throw new BadRequestException("Nothing counted yet");
     }
     // A product that can never be counted (gone, or a FAMILY: WS8) is refused HERE, before a lock
-    // connection is spent. The same check runs again on the lines re-read under the lock.
-    this.refuseUncountableProducts(await this.readCountProducts(session.lines));
+    // connection is spent. The same check runs again on the lines re-read under the lock. "Finish with skips" decides this
+    // under the lock instead.
+    if (dto.finishWithSkips !== true) {
+      this.refuseUncountableProducts(await this.readCountProducts(session.lines));
+    }
 
     const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
     const reference = stockCountReference(id);
@@ -2787,6 +2793,7 @@ export class InventoryService {
           reference,
           effectiveDate,
           notes: dto.notes,
+          finishWithSkips: dto.finishWithSkips === true,
           user,
         }),
       );
@@ -2831,9 +2838,10 @@ export class InventoryService {
     reference: string;
     effectiveDate: Date;
     notes?: string;
+    finishWithSkips: boolean;
     user: { sub: string };
   }): Promise<StockCountCommitOutcome> {
-    const { id, reference, effectiveDate, notes, user } = args;
+    const { id, reference, effectiveDate, notes, finishWithSkips, user } = args;
 
     // Under the lock: no edit is in flight and none can start. Re-read the session AND its lines - a
     // committer that waited out an edit sees the finished edit; one that waited out another committer
@@ -2855,14 +2863,55 @@ export class InventoryService {
       a.productId === b.productId ? (a.id < b.id ? -1 : 1) : a.productId < b.productId ? -1 : 1;
     const lines = [...fresh.lines].sort(byProductThenId);
 
-    this.refuseUncountableProducts(await this.readCountProducts(lines));
+    const countProducts = await this.readCountProducts(lines);
+    const { productMap } = countProducts;
+
+    // Which lines go to the batches. Normally all of them, after the pre-check: a missing product is a
+    // 404 naming the ids, a FAMILY is the WS8 400 - the commit stops and writes nothing new.
+    // "Finish with skips" (SA-767 L-2.4 C, r-note 4 C) instead SKIPS and RECORDS every line whose
+    // product is permanently uncountable (a FAMILY now, or gone) and commits the rest. A line whose
+    // movement already exists is done and is never a skip. Only a partly saved count may use it.
+    // Transient errors (lock timeouts, deadlocks) are not classified here at all: they come out of the
+    // batches as the retry / 503 they always were.
+    let batchLines = lines;
+    const skippedProducts: StockCountSkippedProduct[] = [];
+    if (finishWithSkips) {
+      const started = await this.prisma.forTenant().stockMovement.findMany({
+        where: { reference, ...(fresh.startedAt ? { createdAt: { gte: fresh.startedAt } } : {}) },
+        select: { productId: true },
+      });
+      if (started.length === 0) {
+        throw new BadRequestException(
+          "Finish with skips is only for a count that was partly saved. Fix or remove the line instead.",
+        );
+      }
+      const done = new Set(started.map((m) => m.productId));
+      batchLines = lines.filter((l) => {
+        if (done.has(l.productId)) return true;
+        const product = productMap.get(l.productId);
+        const reason: StockCountSkipReason | null = !product
+          ? "PRODUCT_DELETED"
+          : product.kind === "FAMILY"
+            ? "PRODUCT_IS_FAMILY"
+            : null;
+        if (!reason) return true;
+        skippedProducts.push({
+          productId: l.productId,
+          ...(product ? { name: product.name } : {}),
+          reason,
+        });
+        return false;
+      });
+    } else {
+      this.refuseUncountableProducts(countProducts);
+    }
 
     const movementIds: string[] = [];
     const costMovementIds: string[] = [];
     let skipped = 0;
-    for (let i = 0; i < lines.length; i += COUNT_COMMIT_BATCH) {
+    for (let i = 0; i < batchLines.length; i += COUNT_COMMIT_BATCH) {
       // eslint-disable-next-line no-await-in-loop
-      const batch = await this.commitStockCountBatch(lines.slice(i, i + COUNT_COMMIT_BATCH), {
+      const batch = await this.commitStockCountBatch(batchLines.slice(i, i + COUNT_COMMIT_BATCH), {
         reference,
         effectiveDate,
         notes,
@@ -2875,6 +2924,14 @@ export class InventoryService {
       if (batch.restockedProductIds.length > 0) this.fireStockAlerts(batch.restockedProductIds);
     }
 
+    // Each skip is a line in the session's notes (appended after the committer's own note), written
+    // by the same CAS that commits the session: the record cannot be lost between the two.
+    const skipNotes = skippedProducts.map(stockCountSkipNote);
+    const finalNotes =
+      skipNotes.length > 0
+        ? [notes ?? fresh.notes, ...skipNotes].filter((n) => !!n).join("\n")
+        : notes;
+
     // The CAS: only the committer that still finds the session OPEN / REVIEW flips it.
     const flipped = await this.prisma.forTenant().stockCountSession.updateMany({
       where: { id, status: { in: ["OPEN", "REVIEW"] } },
@@ -2883,7 +2940,7 @@ export class InventoryService {
         committedAt: new Date(),
         committedById: user.sub,
         movementReference: reference,
-        ...(notes !== undefined ? { notes } : {}),
+        ...(finalNotes !== undefined ? { notes: finalNotes } : {}),
       },
     });
     if (flipped.count === 0) {
@@ -2895,6 +2952,20 @@ export class InventoryService {
       return this.alreadyCommittedOutcome(id, reference, lines.length);
     }
 
+    // One audit row per skipped line, only by the committer whose CAS landed (a lost CAS recorded
+    // nothing above, so nothing is audited twice). AuditService.log never throws.
+    for (const skip of skippedProducts) {
+      // eslint-disable-next-line no-await-in-loop
+      await this.audit?.log({
+        tenantId: this.prisma.getTenantId() ?? null,
+        userId: user.sub,
+        action: "stock-count.line-skipped",
+        entityType: "stock-count",
+        entityId: id,
+        meta: { sessionId: id, productId: skip.productId, reason: skip.reason },
+      });
+    }
+
     return {
       sessionId: id,
       reference,
@@ -2902,6 +2973,7 @@ export class InventoryService {
       skipped,
       movementIds,
       costMovementIds,
+      skippedProducts,
     };
   }
 

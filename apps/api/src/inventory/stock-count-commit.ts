@@ -31,6 +31,31 @@ export const STOCK_COUNT_LOCK_FAMILY = "stock-count" as const;
 export const COUNT_LOCK_ATTEMPTS = 3;
 export const COUNT_LOCK_RETRY_MS = 200;
 
+/**
+ * Why "Finish with skips" (SA-767 L-2.4 C) left a line out: the product can NEVER be counted by this
+ * session. PRODUCT_IS_FAMILY: it is now a product family (a container, never stocked; WS8).
+ * PRODUCT_DELETED: it no longer exists. An inactive product is NOT a reason - the committer has always
+ * counted those - and a lock timeout or a deadlock is never one (those retry, then 503).
+ */
+export type StockCountSkipReason = "PRODUCT_IS_FAMILY" | "PRODUCT_DELETED";
+
+export interface StockCountSkippedProduct {
+  productId: string;
+  name?: string;
+  reason: StockCountSkipReason;
+}
+
+/** The one line a skip adds to the session's `notes` (single line: notes are newline-separated). */
+export function stockCountSkipNote(skip: StockCountSkippedProduct): string {
+  const what = (skip.name ?? "").replace(/\s+/g, " ").trim();
+  const label = what ? `${what} (${skip.productId})` : skip.productId;
+  const why =
+    skip.reason === "PRODUCT_IS_FAMILY"
+      ? "is now a product family, not counted"
+      : "no longer exists, not counted";
+  return `Skipped ${label}: ${why}. Recount it in a new session.`;
+}
+
 /** What a committed (or already committed) count answers. */
 export interface StockCountCommitOutcome {
   sessionId: string;
@@ -40,6 +65,8 @@ export interface StockCountCommitOutcome {
   movementIds: string[];
   costMovementIds?: string[];
   alreadyCommitted?: boolean;
+  /** Lines "Finish with skips" left out (always present, empty, on a normal commit). */
+  skippedProducts?: StockCountSkippedProduct[];
 }
 
 /** The `StockMovement.reference` of every movement a count session writes (also its movementReference). */

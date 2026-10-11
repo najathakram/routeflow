@@ -631,6 +631,20 @@ describe("SA-767 L-2.2 - the batched count committer (structural pins)", () => {
     expect(body("commitStockCountSession")).not.toMatch(/commitStockCountBatch\(/);
   });
 
+  it("finish with skips: classifies only lines with no movement, never on a transient error, and audits after the CAS", () => {
+    const m = body("commitStockCountBatches");
+    expect(m).toMatch(/if \(finishWithSkips\) \{/);
+    expect(m).toMatch(/if \(done\.has\(l\.productId\)\) return true;/);
+    // the permanent reasons are decided from the product row only (family / missing), never from a thrown error
+    expect(m).toMatch(/"PRODUCT_DELETED"/);
+    expect(m).toMatch(/"PRODUCT_IS_FAMILY"/);
+    expect(m).not.toMatch(/stockTxRetryState|55P03|40P01/);
+    const cas = m.search(/stockCountSession\.updateMany\(/);
+    const audit = m.search(/"stock-count\.line-skipped"/);
+    expect(cas).toBeGreaterThan(-1);
+    expect(audit).toBeGreaterThan(cas);
+  });
+
   it("the batch loop steps by COUNT_COMMIT_BATCH and flips the session by CAS only after it", () => {
     const m = body("commitStockCountBatches");
     expect(m).toMatch(/i \+= COUNT_COMMIT_BATCH/);
