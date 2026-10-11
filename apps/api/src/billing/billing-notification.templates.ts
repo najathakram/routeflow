@@ -244,15 +244,31 @@ export function cancelledTemplate(params: {
   };
 }
 
+/** The `notifySuspended` reason of a suspension that follows a canceled Stripe subscription (not a payment problem). */
+export const SUSPENDED_REASON_SUBSCRIPTION_CANCELED = "subscription canceled";
+
 export function suspendedTemplate(params: {
   businessName: string;
   adminName: string;
-  reason: string; // e.g. "overdue payment"
+  reason: string; // e.g. "overdue payment" | SUSPENDED_REASON_SUBSCRIPTION_CANCELED
 }): BillingEmailTemplate {
   const manageUrl = billingSettingsUrl();
+  // Lead ruling: a canceled subscription is not a payment problem. Its body says so and the CTA picks a plan
+  // (the same "Choose a plan" wording and link as the trial notices); any other reason keeps the payment copy.
+  const canceled = params.reason === SUSPENDED_REASON_SUBSCRIPTION_CANCELED;
+  const canceledSentence = "Your subscription was canceled. Choose a plan to restore access.";
   const html = baseLayout({
     tagline: "Account suspended",
-    bodyHtml: `
+    bodyHtml: canceled
+      ? `
+      <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
+      <p style="margin:0 0 16px;font-size:15px;color:#374151;">
+        Your RouteFlow account for <strong>${escapeHtml(params.businessName)}</strong> has been suspended.
+        ${canceledSentence}
+      </p>
+      ${ctaButtonHtml(manageUrl, "Choose a plan")}
+    `
+      : `
       <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
       <p style="margin:0 0 16px;font-size:15px;color:#374151;">
         Your RouteFlow account for <strong>${escapeHtml(params.businessName)}</strong> has been suspended
@@ -261,7 +277,17 @@ export function suspendedTemplate(params: {
       ${ctaButtonHtml(manageUrl, "Update payment details")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\nYour RouteFlow account for ${params.businessName} has been suspended (${params.reason}). Please update your payment details to restore access.\n\nUpdate payment details: ${manageUrl}`;
+  const text = canceled
+    ? `Hi ${params.adminName},
+
+Your RouteFlow account for ${params.businessName} has been suspended. ${canceledSentence}
+
+Choose a plan: ${manageUrl}`
+    : `Hi ${params.adminName},
+
+Your RouteFlow account for ${params.businessName} has been suspended (${params.reason}). Please update your payment details to restore access.
+
+Update payment details: ${manageUrl}`;
   return {
     subject: `Account suspended — ${params.businessName}`,
     html,

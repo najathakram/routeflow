@@ -67,6 +67,7 @@ import { armNeedsReconcile, clearNeedsReconcile } from "./needs-reconcile";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isStripeResourceMissing } from "./addon.service";
 import { billableAddonWhere } from "./addon-row";
+import { SUSPENDED_REASON_SUBSCRIPTION_CANCELED } from "./billing-notification.templates";
 import { writeAdminNotice } from "./manual-invoice-notice";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { retryOnTxConflict } from "../common/tx-retry";
@@ -2784,7 +2785,10 @@ ${updateLine}
             );
             // N3: best-effort admin notification, never blocks the suspension above.
             try {
-              await this.billingNotification.notifySuspended(sub.tenantId, "subscription canceled");
+              await this.billingNotification.notifySuspended(
+                sub.tenantId,
+                SUSPENDED_REASON_SUBSCRIPTION_CANCELED,
+              );
             } catch (e) {
               this.logger.error(
                 `N3 notifySuspended threw unexpectedly for tenant ${sub.tenantId}`,
