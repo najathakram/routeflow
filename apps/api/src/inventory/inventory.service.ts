@@ -1370,7 +1370,11 @@ export class InventoryService {
   async receivePurchaseOrder(id: string, dto: any, userId: string) {
     const restockedProductIds: string[] = [];
 
-    const result = await this.prisma.tenantTransaction(async (tx) => {
+    // SA-767 L-1: the whole tx re-runs on a 40P01 / 40001 / P2034 (the lock order removes the
+    // deadlock, this is the backstop). The body is idempotent (a rolled-back attempt wrote nothing)
+    // and has no effect outside the tx; the id list is cleared per attempt, alerts fire after commit.
+    const runBody = async (tx: any) => {
+      restockedProductIds.length = 0;
       // Serialize against a concurrent receive / edit-and-re-apply of the SAME
       // PO: without the row lock both read the same qtyReceived and post twice.
       await this.lockPurchaseOrder(tx, id);
@@ -1460,7 +1464,10 @@ export class InventoryService {
           },
         },
       });
-    });
+    };
+    const result = await retryOnTxConflict("inventory.receivePurchaseOrder", () =>
+      this.prisma.tenantTransaction(runBody),
+    );
 
     this.fireStockAlerts(restockedProductIds);
     return result;
