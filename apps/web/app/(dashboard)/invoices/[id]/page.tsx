@@ -62,7 +62,9 @@ import {
   type InvoicePayment,
   type CheckStatus,
 } from "@/lib/api/invoices";
-import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
+import { isPendingMirrorInvoice, pendingMirrorCopy } from "@/lib/invoice-pending-mirror";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { isStoreOnly } from "@/lib/counter-sale";
 import { canSendReminder } from "@/lib/invoice-reminder";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
@@ -1408,6 +1410,9 @@ export default function InvoiceDetailPage() {
   const setCheckStatus = useSetCheckStatus();
   const unapplyCreditNote = useUnapplyCreditNote();
   const { user } = useAuth();
+  // A store-only business is POS-forced: its order is handed over, never delivered (the draft's wording follows).
+  const { capability: fulfilmentCapability } = useCounterSaleGate();
+  const mirrorCopy = pendingMirrorCopy(isStoreOnly(fulfilmentCapability));
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
@@ -2019,7 +2024,7 @@ export default function InvoiceDetailPage() {
           {isPendingMirror && (
             <span className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-700">
               <Info className="h-3.5 w-3.5" />
-              Mirrors the order — ready to send after delivery
+              {mirrorCopy.badge}
             </span>
           )}
 
@@ -2245,8 +2250,9 @@ export default function InvoiceDetailPage() {
             >
               order #{invoice.order?.orderNumber ?? ""}
             </Link>{" "}
-            and updates automatically until it&apos;s delivered. To change what&apos;s billed, edit
-            the order — you&apos;ll review and send this invoice after delivery.
+            and updates automatically until it&apos;s{" "}
+            {isStoreOnly(fulfilmentCapability) ? "handed over" : "delivered"}. To change what&apos;s
+            billed, edit the order — {mirrorCopy.note}
           </div>
         </div>
       )}
