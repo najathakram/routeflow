@@ -6,7 +6,9 @@ import {
   POS_COPY,
   POS_MODE_PREF_KEY,
   pickupCompleteErrorCopy,
+  decidePickupResponse,
   planPosTender,
+  posMergeAlert,
   posMayHandOverUnpaid,
   posBalanceDue,
   posCanSwitchToDelivery,
@@ -233,5 +235,62 @@ describe("no-payment hand-over needs a known-named customer", () => {
         response: { status: 400, data: { code: "WALK_IN_NO_ACCOUNT", message: "x" } },
       }),
     ).toMatch(/can't be charged on account/);
+  });
+});
+
+describe("pickup-complete 200 response decision (money)", () => {
+  const res = (over: Record<string, unknown>) =>
+    ({
+      orderId: "o",
+      orderNumber: "1",
+      invoiceId: "i",
+      invoiceNumber: "I-1",
+      total: 40,
+      paid: 0,
+      balanceDue: 40,
+      paymentRecorded: true,
+      ...over,
+    }) as never;
+
+  it("a recorded payment (or none requested) is done and releases the Idempotency-Key", () => {
+    expect(decidePickupResponse(res({ paid: 40, balanceDue: 0 }))).toMatchObject({
+      kind: "done",
+      releaseKey: true,
+      message: "Handed over",
+    });
+  });
+  it("PICKUP_PAYMENT_REQUIRED on a 200 returns to the tender step, SAME key, owing balanceDue", () => {
+    expect(
+      decidePickupResponse(
+        res({ paymentRecorded: false, paymentErrorCode: "PICKUP_PAYMENT_REQUIRED" }),
+      ),
+    ).toEqual({
+      kind: "retry-tender",
+      releaseKey: false,
+      owed: 40,
+      message: "A balance is due on this order now. Take payment to finish.",
+    });
+  });
+  it("COUNTER_TENDER_SHORT on a 200 is the same retry, with the walk-in copy", () => {
+    const d = decidePickupResponse(
+      res({ paymentRecorded: false, paymentErrorCode: "COUNTER_TENDER_SHORT", balanceDue: 12.5 }),
+    );
+    expect(d).toMatchObject({ kind: "retry-tender", releaseKey: false, owed: 12.5 });
+    expect((d as { message: string }).message).toBe(
+      "A walk-in customer must pay the full balance.",
+    );
+  });
+  it("any other unrecorded payment is done (hand-over committed) but says so, and releases the key", () => {
+    const d = decidePickupResponse(res({ paymentRecorded: false, paymentErrorCode: "SOMETHING" }));
+    expect(d).toMatchObject({ kind: "done", releaseKey: true });
+    expect((d as { message: string }).message).toMatch(/payment wasn't recorded/);
+  });
+});
+
+describe("POS merge alert buttons", () => {
+  const labels = (b: boolean) => posMergeAlert(b, () => {}).buttons.map((x) => x.label);
+  it("offers Add to it only when not backdated", () => {
+    expect(labels(false)).toEqual(["Cancel", "Add to it", "Start a new one"]);
+    expect(labels(true)).toEqual(["Cancel", "Start a new one"]);
   });
 });

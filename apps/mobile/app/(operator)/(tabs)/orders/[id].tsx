@@ -80,6 +80,7 @@ import {
   POS_READY_FAILED,
   POS_SWITCH_FAILED,
   pickupCompleteErrorCopy,
+  decidePickupResponse,
   posBalanceDue,
   posCanSwitchToDelivery,
   posCutNote,
@@ -89,7 +90,11 @@ import {
 } from "../../../../lib/pos-mode";
 import { PosHandOverSheet } from "../../../../components/PosHandOverSheet";
 import { useCustomer } from "../../../../lib/api/customers";
-import { usePickupComplete, useSwitchOrderToDelivery } from "../../../../lib/api/pos-orders";
+import {
+  releasePickupKey,
+  usePickupComplete,
+  useSwitchOrderToDelivery,
+} from "../../../../lib/api/pos-orders";
 import { statusActions, type StatusAction } from "../../../../lib/order-actions";
 import { useRecordReturn } from "../../../../hooks/useRecordReturn";
 
@@ -184,6 +189,8 @@ export default function OrderDetailScreen() {
   // POS hand-over tender sheet (open flag + the last failure, as fixed copy).
   const [handOverOpen, setHandOverOpen] = useState(false);
   const [handOverError, setHandOverError] = useState<string | null>(null);
+  // Balance the server says is still owed after a 200 whose payment was not recorded (same key retry).
+  const [handOverOwed, setHandOverOwed] = useState<number | null>(null);
 
   if (isLoading) {
     return (
@@ -341,6 +348,7 @@ export default function OrderDetailScreen() {
         return;
       case "handOver":
         setHandOverError(null);
+        setHandOverOwed(null);
         setHandOverOpen(true);
         return;
       case "readyForPickup":
@@ -1228,15 +1236,25 @@ export default function OrderDetailScreen() {
       <PosHandOverSheet
         visible={handOverOpen}
         isWalkIn={walkInCustomer?.isWalkIn}
-        balanceDue={posBalanceDue(Number(order.total), order.invoices)}
+        balanceDue={handOverOwed ?? posBalanceDue(Number(order.total), order.invoices)}
         submitting={pickupMut.isPending}
         error={handOverError}
         onCancel={() => setHandOverOpen(false)}
         onSubmit={(body) =>
           pickupMut.mutate(body, {
-            onSuccess: () => {
+            onSuccess: (res) => {
+              const d = decidePickupResponse(res);
+              if (d.kind === "retry-tender") {
+                // Committed but unpaid: back to the tender step, same Idempotency-Key.
+                setHandOverOwed(d.owed);
+                setHandOverError(d.message);
+                refetch();
+                return;
+              }
+              releasePickupKey(order.id);
+              setHandOverOwed(null);
               setHandOverOpen(false);
-              showToast("Handed over");
+              showToast(d.message);
               refetch();
             },
             onError: (e) => setHandOverError(pickupCompleteErrorCopy(e)),

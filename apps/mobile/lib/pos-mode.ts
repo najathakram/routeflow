@@ -4,7 +4,7 @@
  * and `PosOrderActions.tsx`. The order's `fulfillPath` is the snapshot: see `isPosOrder`.
  */
 import { API_ERROR_CODES } from "@routeflow/types";
-import type { PickupCompleteRequest } from "@routeflow/types";
+import type { PickupCompleteRequest, PickupCompleteResponse } from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
 
 export { isPosOrder } from "./order-status-flow";
@@ -367,4 +367,36 @@ export function posMergeAlert(backdated: boolean, submit: (choice: "merge" | "se
 export function posConfirmLabel(posMode: boolean, saving: boolean): string {
   if (saving) return "Saving…";
   return posMode ? POS_COPY.confirmAndInvoice : "Confirm";
+}
+
+export type PickupDecision =
+  | { kind: "retry-tender"; releaseKey: false; owed: number | null; message: string }
+  | { kind: "done"; releaseKey: true; message: string };
+
+/**
+ * What a 200 from pickup-complete means. The hand-over can commit while the payment is NOT recorded
+ * (`paymentRecorded: false`): when the tender was required or short, go back to the tender step with the
+ * SAME Idempotency-Key (so the retry adds the payment to this hand-over) owing `balanceDue`. The key is
+ * released only when the payment was recorded (or none was requested). Mirrors web's PickupCompleteDialog.
+ */
+export function decidePickupResponse(res: PickupCompleteResponse): PickupDecision {
+  const code = res.paymentRecorded ? undefined : res.paymentErrorCode;
+  if (
+    code === API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED ||
+    code === API_ERROR_CODES.COUNTER_TENDER_SHORT
+  ) {
+    return {
+      kind: "retry-tender",
+      releaseKey: false,
+      owed: res.balanceDue > 0 ? res.balanceDue : null,
+      message: pickupCompleteErrorCopy({ response: { data: { code } } }),
+    };
+  }
+  return {
+    kind: "done",
+    releaseKey: true,
+    message: res.paymentRecorded
+      ? "Handed over"
+      : "Handed over, but the payment wasn't recorded. Record it on the invoice.",
+  };
 }

@@ -65,9 +65,14 @@ export function usePosFinish() {
   });
 }
 
+/** Release the hand-over's Idempotency-Key (see `decidePickupResponse`). */
+export function releasePickupKey(orderId: string): void {
+  resetOrderSubmitKey(`pickup:${orderId}`);
+}
+
 /**
  * "Hand over": `POST /orders/:id/pickup-complete` (DELIVERED + the invoice issued). The Idempotency-Key
- * is REQUIRED; it is one per order and kept across retries, reset once the hand-over succeeds.
+ * is REQUIRED; it is one per order and kept across retries, released by the caller once the payment is recorded.
  */
 export function usePickupComplete(orderId: string) {
   const qc = useQueryClient();
@@ -78,8 +83,9 @@ export function usePickupComplete(orderId: string) {
           headers: { "Idempotency-Key": getOrderSubmitKey(`pickup:${orderId}`) },
         })
         .then((r) => r.data),
+    // The Idempotency-Key is released by the caller (`releasePickupKey`) only once the payment is
+    // recorded: a 200 with `paymentRecorded: false` must be retried with the SAME key.
     onSuccess: () => {
-      resetOrderSubmitKey(`pickup:${orderId}`);
       invalidateOrderCaches(qc);
       void qc.invalidateQueries({ queryKey: ["invoices"] });
       void qc.invalidateQueries({ queryKey: ["admin", "invoices"] });

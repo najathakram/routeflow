@@ -149,8 +149,6 @@ export interface AdminOrder {
   customer?: {
     id: string;
     businessName: string;
-    /** Walk-in counter customer: a hand-over must carry a tender. */
-    isWalkIn?: boolean | null;
     contactName?: string;
     phone?: string;
     /** Mobile number — preferred for WhatsApp/SMS over the landline `phone`. */
