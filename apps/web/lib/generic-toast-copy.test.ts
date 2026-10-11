@@ -101,6 +101,8 @@ describe("genericToastCopy: codes users rely on", () => {
       API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP,
       API_ERROR_CODES.CATCHUP_SESSION_OPEN,
       API_ERROR_CODES.CATCHUP_PENDING,
+      API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE,
+      API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
     ]) {
       const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
       expect(copy).not.toContain("raw server text");

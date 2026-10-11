@@ -128,6 +128,12 @@ const CODE_COPY: Record<string, string> = {
     "A card checkout is open for this account (October catch-up), so this change isn't available yet. Wait for it to complete or expire, then try again.",
   [API_ERROR_CODES.CATCHUP_PENDING]:
     "This account's card payment is being confirmed (October catch-up). This change is available once it clears.",
+  // SA-733r5 r-note: a catch-up the plan refuses because card billing would lose or change a charge. The account
+  // stays on invoiced billing; fixed sentences, no ids.
+  [API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE]:
+    "This account has an add-on that card billing can't carry yet, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  [API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG]:
+    "This account's add-on price or quantity differs from the standard one, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
   // SA-733r7 PR-B3 (dunning): a plan change is refused while an invoice is overdue; paying it restores everything.
   [API_ERROR_CODES.PAYMENT_OVERDUE]:
     "An invoice on this account is overdue. Pay it to continue; plan changes are available again right after.",

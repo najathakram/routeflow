@@ -28,6 +28,7 @@ function make(
     invoices?: Record<string, unknown>[];
     monthly?: number | null;
     addonLines?: any[];
+    addonRows?: Record<string, unknown>[];
   } = {},
 ) {
   const db = fakeCatchupDb({
@@ -36,6 +37,7 @@ function make(
   });
   const prisma: any = {
     ...db.prisma,
+    tenantAddon: { findMany: jest.fn(async () => o.addonRows ?? []) },
     tenant: {
       findUnique: jest.fn(async () => ({
         id: "t1",
@@ -149,6 +151,65 @@ describe("plan() is a read-only dry-run", () => {
     const json = catchupReportJson(r);
     expect(JSON.parse(JSON.stringify(json))).toEqual(json);
     expect(JSON.stringify(json)).not.toContain("qa-acme");
+  });
+});
+
+describe("MF1: add-ons the card checkout cannot bill", () => {
+  const manualOcr = { sku: "OCR_PACK_250", addonKey: null, quantity: 1, priceSnapshot: 25 };
+  const forecasting = {
+    price_data: { unit_amount: 3100, product_data: { metadata: { addonSku: "FORECASTING" } } },
+    quantity: 1,
+  };
+
+  it("plan(): a priced billable row with no checkout line is refused (coded) and listed by code, not by name", async () => {
+    const h = make({ invoices: [OCT_OPEN], addonRows: [manualOcr] });
+    const r = await h.svc.plan("t1", NOW);
+    expect(r.plan).toEqual({ ok: false, reason: "billable_addon_not_card_billable" });
+    expect(r.eligible).toBe(false);
+    const json = catchupReportJson(r);
+    expect(json.refusals).toEqual([API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE]);
+    expect(JSON.stringify(json)).not.toContain("qa-acme");
+    // the rows were read with the billable predicate (comps never count)
+    const where = (h.prisma.tenantAddon.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(where).toMatchObject({ tenantId: "t1", active: true, isComp: false });
+  });
+
+  it("open(): 409 CATCHUP_ADDON_NOT_CARD_BILLABLE with fixed copy (no internal reason string), no claim, no Stripe call", async () => {
+    const h = make({ invoices: [OCT_OPEN], addonRows: [manualOcr] });
+    const err: any = await h.svc.open("t1", { now: NOW, expectedStubCents: 31000 }).catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE,
+    });
+    expect(JSON.stringify(err.getResponse())).not.toMatch(/billable_addon_not_card_billable/);
+    expect(h.sub().catchupState).toBeNull();
+    expect(h.db.locks).toHaveLength(0);
+    expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+
+  it("a self-serve row whose snapshot is not the catalog price: 409 CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG", async () => {
+    const h = make({
+      invoices: [OCT_OPEN],
+      addonLines: [forecasting],
+      addonRows: [{ sku: "FORECASTING", addonKey: null, quantity: 1, priceSnapshot: 29 }],
+    });
+    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 34100 })).rejects.toMatchObject({
+      response: { code: API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG },
+    });
+    expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+
+  it("a matching self-serve row is eligible; the generic not-eligible 409 carries no internal reason text", async () => {
+    const ok = make({
+      invoices: [OCT_OPEN],
+      addonLines: [forecasting],
+      addonRows: [{ sku: "FORECASTING", addonKey: null, quantity: 1, priceSnapshot: 31 }],
+    });
+    expect((await ok.svc.plan("t1", NOW)).eligible).toBe(true);
+    const h = make({ tenant: { status: "READ_ONLY" } });
+    const err: any = await h.svc.open("t1", { now: NOW, expectedStubCents: 0 }).catch((e) => e);
+    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.CATCHUP_NOT_ELIGIBLE });
+    expect(err.getResponse().message).not.toMatch(/tenant_not_active/);
   });
 });
 

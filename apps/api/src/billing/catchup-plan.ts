@@ -89,6 +89,52 @@ export interface CatchupAddon {
   quantity: number;
 }
 
+/**
+ * A priced, billable add-on ROW the tenant holds today (what the manual RfInvoice bills: every billable active row at
+ * its snapshot x quantity - rf-invoice-builder). `unitPrice` is the row's snapshot in dollars, null when unpriced.
+ */
+export interface CatchupAddonRow {
+  code: string;
+  quantity: number;
+  unitPrice: number | null;
+}
+
+/**
+ * Money (MF1). The card subscription bills ONLY the checkout add-on lines (self-serve SKUs at the CATALOG price,
+ * oldest row's quantity); the settlement then voids WHOLE RfInvoices. A priced billable row with no checkout line (a
+ * platform-admin-only SKU) would be billed on the invoice, voided, and never billed again - so the plan refuses:
+ *   - "billable_addon_not_card_billable"  a priced billable row has no checkout line;
+ *   - "addon_snapshot_not_catalog"        its snapshot (or its quantity across duplicate rows) is not what the
+ *                                          checkout line will bill.
+ * Unpriced rows (snapshot null / 0) and zero quantities bill nothing on the invoice either, so they never refuse.
+ */
+export function addonCardRefusal(
+  rows: readonly CatchupAddonRow[],
+  lines: readonly CatchupAddon[],
+): "billable_addon_not_card_billable" | "addon_snapshot_not_catalog" | null {
+  const byCode = new Map<string, { quantity: number; prices: Set<number> }>();
+  for (const r of rows) {
+    if (!(r.unitPrice != null && r.unitPrice > 0) || !(r.quantity >= 1)) continue;
+    const cur = byCode.get(r.code) ?? { quantity: 0, prices: new Set<number>() };
+    cur.quantity += r.quantity;
+    cur.prices.add(toCents(r.unitPrice));
+    byCode.set(r.code, cur);
+  }
+  let snapshotMismatch = false;
+  for (const [code, row] of byCode) {
+    const line = lines.find((l) => l.sku === code);
+    if (!line) return "billable_addon_not_card_billable";
+    if (
+      row.prices.size !== 1 ||
+      !row.prices.has(toCents(line.unitPrice)) ||
+      row.quantity !== line.quantity
+    ) {
+      snapshotMismatch = true;
+    }
+  }
+  return snapshotMismatch ? "addon_snapshot_not_catalog" : null;
+}
+
 export interface StubLine {
   kind: "PLAN" | "ADDON";
   code: string;
@@ -232,9 +278,15 @@ export interface CatchupPlan {
   notes: string[];
 }
 
-export type CatchupPlanResult =
-  | CatchupPlan
-  | { ok: false; reason: "paid_after_gap" | "paid_invoice_without_period" | "no_monthly_price" };
+/** Why a plan cannot be made. Internal reason values only: a client or admin sees the mapped coded refusal. */
+export type CatchupPlanRefusal =
+  | "paid_after_gap"
+  | "paid_invoice_without_period"
+  | "no_monthly_price"
+  | "billable_addon_not_card_billable"
+  | "addon_snapshot_not_catalog";
+
+export type CatchupPlanResult = CatchupPlan | { ok: false; reason: CatchupPlanRefusal };
 
 /** The OPEN RfInvoice ids a settlement voids: period end (snapped) after paid-through. */
 export function supersededOpenInvoiceIds(
@@ -257,6 +309,8 @@ export function planCatchup(i: {
   invoices: readonly CatchupInvoice[];
   /** The tenant's billing start (first manual activation), when known; the floor is max(go-live, this). */
   billingStart?: Date | null;
+  /** The tenant's priced billable add-on ROWS (MF1). Omitted = the check is skipped (pure unit tests only). */
+  billableRows?: readonly CatchupAddonRow[];
 }): CatchupPlanResult {
   if (i.monthly == null || !(i.monthly >= 0)) return { ok: false, reason: "no_monthly_price" };
   const floor =
@@ -265,6 +319,10 @@ export function planCatchup(i: {
       : CATCHUP_GO_LIVE;
   const pt = paidThroughOf(i.invoices, floor);
   if (!pt.ok) return pt;
+  if (i.billableRows) {
+    const refusal = addonCardRefusal(i.billableRows, i.addons);
+    if (refusal) return { ok: false, reason: refusal };
+  }
 
   const anchorAt = nextCheckoutAnchor(i.now);
   const t = firstBoundaryNotBefore(pt.paidThrough);

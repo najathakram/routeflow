@@ -9,15 +9,18 @@ import { fromCents, toCents } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { PrismaService } from "../prisma/prisma.service";
+import { billableAddonWhere } from "./addon-row";
 import { BillingService } from "./billing.service";
 import { CatchupClaimService } from "./catchup-claim.service";
 import {
   CATCHUP_GO_LIVE,
   planCatchup,
   type CatchupAddon,
+  type CatchupAddonRow,
   type CatchupPlan,
   type CatchupPlanResult,
 } from "./catchup-plan";
+import { planRefusalException, refusalCodesOf } from "./catchup-refusal";
 import { buildCatchupSessionParams } from "./catchup-session-params";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { StripeService } from "./stripe.service";
@@ -38,6 +41,8 @@ export interface CatchupReport {
   tenantStatus: string;
   eligible: boolean;
   ineligible: string[];
+  /** The coded refusals (UPPER_SNAKE) behind `ineligible`: what the owner's list prints per tenant id. */
+  refusals?: string[];
   claimState: string | null;
   hasStripeSubscription: boolean;
   externalPayment: boolean;
@@ -70,6 +75,7 @@ export function catchupReportJson(r: CatchupReport) {
     tenantStatus: r.tenantStatus,
     eligible: r.eligible,
     ineligible: r.ineligible,
+    refusals: refusalCodesOf(r.ineligible),
     claimState: r.claimState,
     hasStripeSubscription: r.hasStripeSubscription,
     externalPayment: r.externalPayment,
@@ -160,6 +166,22 @@ export class CatchupCheckoutService {
       quantity: Number(li.quantity ?? 0),
     }));
 
+    // MF1: the priced billable ROWS the manual invoice bills today, against the lines the card will bill.
+    const addonRows = (await this.prisma.tenantAddon.findMany({
+      where: billableAddonWhere({ tenantId, active: true }),
+      select: { sku: true, addonKey: true, quantity: true, priceSnapshot: true },
+    })) as {
+      sku: string | null;
+      addonKey: string | null;
+      quantity: number;
+      priceSnapshot: unknown;
+    }[];
+    const billableRows: CatchupAddonRow[] = addonRows.map((r) => ({
+      code: String(r.sku ?? r.addonKey ?? "ADDON"),
+      quantity: Number(r.quantity),
+      unitPrice: r.priceSnapshot == null ? null : Number(r.priceSnapshot),
+    }));
+
     const rows = (await this.prisma.rfInvoice.findMany({
       where: { tenantId, status: { in: ["OPEN", "PAID"] } },
       select: { id: true, status: true, periodStart: true, periodEnd: true },
@@ -182,7 +204,7 @@ export class CatchupCheckoutService {
       select: { createdAt: true },
     });
     const billingStart = activation?.createdAt ?? null;
-    const plan = planCatchup({ now, monthly, addons, invoices: rows, billingStart });
+    const plan = planCatchup({ now, monthly, addons, invoices: rows, billingStart, billableRows });
     if (!plan.ok) ineligible.push(plan.reason);
     else {
       if (billingStart && billingStart.getTime() > CATCHUP_GO_LIVE.getTime()) {
@@ -276,25 +298,21 @@ export class CatchupCheckoutService {
     }
     const report = await this.plan(tenantId, now);
     if (!report.plan.ok) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.CATCHUP_NEEDS_RULING,
-        message: `This tenant's catch-up cannot be planned (${report.plan.reason}): needs a ruling.`,
-      });
+      // a coded refusal with fixed copy: never the internal reason string
+      throw planRefusalException(report.plan.reason);
     }
     const plan: CatchupPlan = report.plan;
     const blockers = report.ineligible;
     if (blockers.includes("has_stripe_subscription")) {
       // r2 / r5: an existing stripeSubId is a census item the owner rules on, never silently converted
-      throw new ConflictException({
-        code: API_ERROR_CODES.CATCHUP_NEEDS_RULING,
-        message:
-          "NEEDS RULING: this tenant already has a Stripe subscription. Nothing was created.",
-      });
+      throw planRefusalException("has_stripe_subscription");
     }
     if (blockers.length) {
       throw new ConflictException({
         code: API_ERROR_CODES.CATCHUP_NOT_ELIGIBLE,
-        message: `This tenant is not eligible for a catch-up checkout (${blockers.join(", ")}).`,
+        message: "This tenant is not eligible for a catch-up checkout. Nothing was created.",
+        // structured, for the operator's tool - never shown as copy
+        reasons: blockers,
       });
     }
     const changed = () =>

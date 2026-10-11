@@ -161,6 +161,45 @@ describe("the printed report (anonymised)", () => {
     expect(lines).toContain("NEEDS RULING: tenants with a stripeSubId");
   });
 
+  it("SA r-note (2): the census lists the refused tenants by ID and CODE (no names, no slugs), eligible ones not", () => {
+    const refusedId = "22222222-2222-4222-8222-222222222222";
+    const text = core
+      .formatCensus({
+        counts: {
+          total: 2,
+          planned: 2,
+          failed: 0,
+          eligible: 1,
+          trialOneTime: 1,
+          trial: 0,
+          anchorNoLine: 0,
+          needsRuling: 1,
+          withStripeSubscription: 0,
+          neitherManualNorStripe: 0,
+          claimHeld: 0,
+        },
+        tenants: [
+          report(),
+          report({
+            tenantId: refusedId,
+            eligible: false,
+            ineligible: ["billable_addon_not_card_billable"],
+            refusals: ["CATCHUP_ADDON_NOT_CARD_BILLABLE"],
+            plan: { ok: false, reason: "billable_addon_not_card_billable" },
+          }),
+        ],
+        failed: [],
+      })
+      .join("\n");
+    expect(text).toContain("refused tenants (route to the manual path)");
+    expect(text).toContain(`  ${refusedId}  CATCHUP_ADDON_NOT_CARD_BILLABLE`);
+    const list = text.slice(text.indexOf("refused tenants"), text.indexOf("tenant 1111"));
+    expect(list).not.toContain("11111111-1111-4111-8111-111111111111");
+    expect(text).not.toMatch(/qa-acme|slug/i);
+    // and the per-tenant verdict carries the code too
+    expect(text).toContain("[CATCHUP_ADDON_NOT_CARD_BILLABLE]");
+  });
+
   it("money() is integer arithmetic", () => {
     expect(core.money(31000)).toBe("$310.00");
     expect(core.money(5)).toBe("$0.05");

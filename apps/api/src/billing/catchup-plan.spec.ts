@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   CATCHUP_GO_LIVE,
+  addonCardRefusal,
   catchupShape,
   firstBoundaryNotBefore,
   paidThroughOf,
@@ -379,5 +380,54 @@ describe("Opus item 9: the go-live floor is max(go-live, the tenant's billing st
       floor,
     );
     expect(r.ok && r.paidThrough.getTime()).toBe(floor.getTime());
+  });
+});
+
+describe("MF1: the manual invoice's add-ons vs the card checkout's lines", () => {
+  const line = (sku: string, unitPrice: number, quantity = 1) => ({ sku, unitPrice, quantity });
+  const row = (code: string, unitPrice: number | null, quantity = 1) => ({
+    code,
+    unitPrice,
+    quantity,
+  });
+
+  it("a priced billable row with NO checkout line (a platform-admin-only SKU) is refused - it would be voided and never billed", () => {
+    expect(addonCardRefusal([row("OCR_PACK_250", 25)], [])).toBe(
+      "billable_addon_not_card_billable",
+    );
+    expect(addonCardRefusal([row("SEAT_EXTRA", 10, 3)], [line("FORECASTING", 31)])).toBe(
+      "billable_addon_not_card_billable",
+    );
+  });
+
+  it("a self-serve row whose snapshot differs from the catalog line (or whose duplicate rows change the quantity) is refused", () => {
+    expect(addonCardRefusal([row("FORECASTING", 29)], [line("FORECASTING", 31)])).toBe(
+      "addon_snapshot_not_catalog",
+    );
+    expect(
+      addonCardRefusal([row("FORECASTING", 31), row("FORECASTING", 31)], [line("FORECASTING", 31)]),
+    ).toBe("addon_snapshot_not_catalog");
+    expect(
+      addonCardRefusal(
+        [row("FORECASTING", 31), row("FORECASTING", 30)],
+        [line("FORECASTING", 31, 2)],
+      ),
+    ).toBe("addon_snapshot_not_catalog");
+  });
+
+  it("matching rows, unpriced rows and zero quantities never refuse", () => {
+    expect(addonCardRefusal([row("FORECASTING", 31, 2)], [line("FORECASTING", 31, 2)])).toBeNull();
+    expect(addonCardRefusal([row("OCR_PACK_250", null), row("SEAT_EXTRA", 0)], [])).toBeNull();
+    expect(addonCardRefusal([row("SEAT_EXTRA", 10, 0)], [])).toBeNull();
+    expect(addonCardRefusal([], [line("FORECASTING", 31)])).toBeNull();
+  });
+
+  it("planCatchup carries the refusal as a plan reason (and skips the check when no rows are passed)", () => {
+    const base = { now: NOW, monthly: 310, addons: [], invoices: [] };
+    expect(planCatchup({ ...base, billableRows: [row("OCR_PACK_250", 25)] })).toEqual({
+      ok: false,
+      reason: "billable_addon_not_card_billable",
+    });
+    expect(planCatchup(base).ok).toBe(true);
   });
 });

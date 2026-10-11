@@ -122,7 +122,10 @@ function formatTenantReport(r) {
     lines.push(`  void on paid  ${p.voidInvoiceIds.length} OPEN RfInvoice(s)`);
     for (const n of p.notes) lines.push(`  note          ${n}`);
   }
-  lines.push(`  verdict       ${r.eligible ? "ELIGIBLE" : `refused: ${r.ineligible.join(", ")}`}`);
+  const codes = Array.isArray(r.refusals) && r.refusals.length ? ` [${r.refusals.join(", ")}]` : "";
+  lines.push(
+    `  verdict       ${r.eligible ? "ELIGIBLE" : `refused: ${r.ineligible.join(", ")}${codes}`}`,
+  );
   return lines;
 }
 
@@ -138,6 +141,17 @@ function formatCensus(c) {
     lines.push(
       "  NEEDS RULING: tenants with a stripeSubId are refused by the catch-up (census first).",
     );
+  }
+  // SA r-note (2): the refused tenants by id and CODE, so the owner can route each to the manual path. Ids and
+  // codes only - never a name or a slug.
+  const refused = c.tenants.filter((t) => !t.eligible);
+  if (refused.length > 0) {
+    lines.push("", `refused tenants (route to the manual path) - id and code: ${refused.length}`);
+    for (const t of refused) {
+      lines.push(
+        `  ${t.tenantId}  ${(t.refusals && t.refusals.length ? t.refusals : []).join(", ") || "-"}`,
+      );
+    }
   }
   for (const t of c.tenants) lines.push("", ...formatTenantReport(t));
   for (const id of c.failed) lines.push("", `tenant ${id}\n  could not be planned`);
