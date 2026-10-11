@@ -352,7 +352,7 @@ describe("BookkeepingService", () => {
             opts.counter ? { counterSale: true, registerKey: "r1" } : null,
           ),
         },
-      });
+      } as never);
       prisma.tenantTransaction.mockImplementation(async (fn: any) =>
         fn({
           $executeRaw: jest.fn(async (strings: TemplateStringsArray) => {
@@ -1014,7 +1014,7 @@ describe("BookkeepingService", () => {
       customerId: "cust-1",
       customer: { id: "cust-1", businessName: "Acme" },
     };
-    const payment = (over: Record<string, any>) => ({
+    const payment = (over: Record<string, any>): Record<string, any> => ({
       status: "PAID",
       method: "CASH",
       settledAt: null,

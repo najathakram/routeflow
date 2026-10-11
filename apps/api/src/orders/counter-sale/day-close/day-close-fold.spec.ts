@@ -213,7 +213,7 @@ describe("foldDayClose: the summary", () => {
 describe("foldDayClose: a POS-mode pickup hand-over (a NON-counter order)", () => {
   const PICKUP_ORDER = "o-pickup";
   const nonCounter = (orderId: string) => ({ orderId, order: { counterSale: false } });
-  const handOver = (amount: number, over: Partial<WindowPayment> = {}) =>
+  const handOver = (amount: number, over: Partial<Omit<WindowPayment, "amount">> = {}) =>
     pay({
       amount,
       paymentGroupId: pickupTenderGroupId(PICKUP_ORDER),
@@ -317,7 +317,7 @@ describe("foldDayClose: a POS-mode pickup hand-over (a NON-counter order)", () =
 describe("foldDayClose: totals.handOver", () => {
   const PICKUP_ORDER = "o-pickup";
   const nonCounter = (orderId: string) => ({ orderId, order: { counterSale: false } });
-  const handOver = (amount: number, over: Partial<WindowPayment> = {}) =>
+  const handOver = (amount: number, over: Partial<Omit<WindowPayment, "amount">> = {}) =>
     pay({
       amount,
       paymentGroupId: pickupTenderGroupId(PICKUP_ORDER),
@@ -369,7 +369,7 @@ describe("foldDayClose: totals.handOver", () => {
   });
 
   it("a COUNTER order's own pickup-group cash is ordinary till cash: in tillCash and moneyIn.cash, NOT in handOver", () => {
-    const counterHandOver = (amount: number, over: Partial<WindowPayment> = {}) =>
+    const counterHandOver = (amount: number, over: Partial<Omit<WindowPayment, "amount">> = {}) =>
       pay({
         amount,
         paymentGroupId: pickupTenderGroupId("o-counter"),
