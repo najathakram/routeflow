@@ -142,7 +142,11 @@ describeDb("completeStop and completeWithPayment lock the stop's Orders first (S
         { provide: SystemConfigService, useValue: mockSystemConfig },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            syncInvoiceEntries: jest.fn(),
+          },
         },
         {
           provide: AuthorizationGuardService,

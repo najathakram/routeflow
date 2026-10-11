@@ -31,7 +31,11 @@ describe("assertEditCannotOverpay", () => {
   let sql: string[];
   let payments: Array<{ invoiceId: string; amount: number; method: string; status: string }>;
   let tx: any;
-  const mockLedger = { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() };
+  const mockLedger = {
+    writeSaleEntries: jest.fn(),
+    reverseInvoiceEntries: jest.fn(),
+    syncInvoiceEntries: jest.fn(),
+  };
 
   beforeEach(async () => {
     sql = [];

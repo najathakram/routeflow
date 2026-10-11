@@ -98,7 +98,11 @@ describe("InvoicesService — B661/B671", () => {
         { provide: SystemConfigService, useValue: mockSystemConfig },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            syncInvoiceEntries: jest.fn(),
+          },
         },
         {
           provide: AuthorizationGuardService,

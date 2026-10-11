@@ -111,7 +111,11 @@ describe("InvoicesService — #2175 realtime emits leave the transaction only af
         { provide: SystemConfigService, useValue: mockSystemConfig },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            syncInvoiceEntries: jest.fn(),
+          },
         },
         {
           provide: AuthorizationGuardService,

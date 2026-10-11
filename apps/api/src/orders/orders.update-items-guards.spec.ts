@@ -258,7 +258,10 @@ describe("OrdersService — F06 guards (TP2)", () => {
         // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            syncInvoiceEntries: jest.fn(),
+          },
         },
       ],
     }).compile();

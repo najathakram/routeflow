@@ -142,7 +142,10 @@ describeDb(
           { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(null) } },
           { provide: MeterService, useValue: { read: jest.fn().mockResolvedValue(0) } },
           { provide: CommissionEngineService, useValue: {} },
-          { provide: RegulatedLedgerService, useValue: { reverseInvoiceEntries: jest.fn() } },
+          {
+            provide: RegulatedLedgerService,
+            useValue: { reverseInvoiceEntries: jest.fn(), syncInvoiceEntries: jest.fn() },
+          },
           { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
         ],
       }).compile();

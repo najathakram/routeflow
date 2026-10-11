@@ -283,7 +283,10 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            syncInvoiceEntries: jest.fn(),
+          },
         },
       ],
     }).compile();

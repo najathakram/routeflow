@@ -14,6 +14,116 @@ import { periodBucketOf } from "./period";
 /** Round a quantity to 3 decimals (matches the Decimal(12,3) ledger columns). */
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
+/** One invoice line's remaining ledger net, with a SALE row kept for its metadata. */
+export interface HeldNet {
+  sale: any;
+  qty: number;
+  unitBasisQty: number;
+  netSales: number;
+  categoryTax: number;
+}
+
+/**
+ * THE net-held computation (B297 PR4; extracted verbatim from `reverseInvoiceEntries` so the void/delete
+ * reversal and the changed-only re-sync share ONE netting implementation): per `invoiceItemId`, Σ of ALL
+ * the line's signed rows (SALE positive + any REVERSAL negative, corrections included). With
+ * `preserveReturns`, return / credit-note REVERSALs (those carrying a `returnId` / `creditNoteId`) are left
+ * standing, i.e. not counted, so a re-sync cancels only the sale-record. A prior re-sync's own REVERSAL
+ * (no returnId / creditNoteId) IS counted, which is what makes a repeat re-sync idempotent.
+ */
+export function netHeldByLine(
+  rows: any[],
+  opts: { preserveReturns?: boolean } = {},
+): Map<string, HeldNet> {
+  const { preserveReturns = false } = opts;
+  const byItem = new Map<string, HeldNet>();
+  for (const r of rows) {
+    const key = r.invoiceItemId as string | null;
+    if (key == null) continue;
+    const cur = byItem.get(key) ?? {
+      sale: null,
+      qty: 0,
+      unitBasisQty: 0,
+      netSales: 0,
+      categoryTax: 0,
+    };
+    if (r.entryType === "SALE" && !cur.sale) cur.sale = r;
+    const isReturnOrCredit =
+      r.entryType === "REVERSAL" && (r.returnId != null || r.creditNoteId != null);
+    if (!(preserveReturns && isReturnOrCredit)) {
+      cur.qty += Number(r.qty);
+      cur.unitBasisQty += Number(r.unitBasisQty);
+      cur.netSales += Number(r.netSales);
+      cur.categoryTax += Number(r.categoryTax);
+    }
+    byItem.set(key, cur);
+  }
+  return byItem;
+}
+
+const HELD_EPS = 0.0005;
+
+/**
+ * Square in every dimension: the line's sale is fully reversed.
+ *
+ * `unitBasisQty` is one of those dimensions. Since B661 it is a PIECE count while `qty` is in the line's
+ * own unit, so a line can be square on money, qty and tax while still carrying a piece residue (every row a
+ * pre-fix credit note wrote against a box-unaware line is exactly that shape). Leaving it out of this guard
+ * is what made those rows permanent: a later void read the line as already reversed and never cleared the
+ * phantom pieces off the filing.
+ */
+function isSquare(h: HeldNet): boolean {
+  return (
+    Math.abs(h.qty) < HELD_EPS &&
+    Math.abs(h.unitBasisQty) < HELD_EPS &&
+    Math.abs(h.netSales) < HELD_EPS &&
+    Math.abs(h.categoryTax) < HELD_EPS
+  );
+}
+
+/** The REVERSAL row that brings `held` back to zero, booked into the CURRENT period (never backdated). */
+function reversalRowFor(held: HeldNet, invoiceItemId: string, now: Date, bucket: string) {
+  const s = held.sale;
+  return {
+    tenantId: s.tenantId,
+    trackedCategoryId: s.trackedCategoryId,
+    // RF-3: carry the SALE's reporting breakdown onto the REVERSAL (pure passthrough).
+    trackedSubcategoryId: s.trackedSubcategoryId ?? null,
+    entryType: "REVERSAL" as const,
+    orderId: s.orderId,
+    orderItemId: s.orderItemId,
+    invoiceId: s.invoiceId,
+    invoiceItemId,
+    // round3 like every other quantity writer: these are Decimal(12,3) columns and an unrounded float sum
+    // lands as e.g. -39.995999999999995 (Postgres rounds it, but no other writer relies on that).
+    qty: -round3(held.qty),
+    unitBasisQty: -round3(held.unitBasisQty),
+    netSales: roundMoney(-held.netSales),
+    categoryTax: roundMoney(-held.categoryTax),
+    soldAt: now,
+    periodBucket: bucket,
+  };
+}
+
+/** What a line's SALE row would hold, derived exactly as `writeSaleEntries` derives it. */
+function targetOf(l: SaleLedgerLine) {
+  return {
+    qty: l.qty,
+    unitBasisQty: regulatedUnitBasis(l, l.packAtSale).unitBasisQty,
+    netSales: roundMoney(l.netSales),
+    categoryTax: roundMoney(l.categoryTax),
+  };
+}
+
+function matchesTarget(h: HeldNet, t: ReturnType<typeof targetOf>): boolean {
+  return (
+    Math.abs(h.qty - t.qty) < HELD_EPS &&
+    Math.abs(h.unitBasisQty - t.unitBasisQty) < HELD_EPS &&
+    Math.abs(h.netSales - t.netSales) < 0.005 &&
+    Math.abs(h.categoryTax - t.categoryTax) < 0.005
+  );
+}
+
 /**
  * One regulated invoice line, as seen at invoice-creation time. B661: the caller passes the
  * line's own STORED SHAPE (never a pre-computed unit basis — see `writeSaleEntries`, which is
@@ -210,81 +320,63 @@ export class RegulatedLedgerService {
     const all = await db.regulatedSalesLedger.findMany({ where: { invoiceId } });
     if (all.length === 0) return;
 
-    // Aggregate the remaining net per invoice line; keep a SALE row for its metadata.
-    const byItem = new Map<
-      string,
-      { sale: any; qty: number; unitBasisQty: number; netSales: number; categoryTax: number }
-    >();
-    for (const r of all) {
-      const key = r.invoiceItemId as string | null;
-      if (key == null) continue;
-      const cur = byItem.get(key) ?? {
-        sale: null,
-        qty: 0,
-        unitBasisQty: 0,
-        netSales: 0,
-        categoryTax: 0,
-      };
-      if (r.entryType === "SALE" && !cur.sale) cur.sale = r;
-      // On a preserve-returns re-sync, a return / credit-note reversal is left standing
-      // (not counted toward the remaining to reverse) so its reduction survives.
-      const isReturnOrCredit =
-        r.entryType === "REVERSAL" && (r.returnId != null || r.creditNoteId != null);
-      if (!(preserveReturns && isReturnOrCredit)) {
-        cur.qty += Number(r.qty);
-        cur.unitBasisQty += Number(r.unitBasisQty);
-        cur.netSales += Number(r.netSales);
-        cur.categoryTax += Number(r.categoryTax);
-      }
-      byItem.set(key, cur);
-    }
-
     const now = new Date();
     const bucket = periodBucketOf(now);
-    const EPS = 0.0005;
     const rows: any[] = [];
-    for (const [invoiceItemId, agg] of byItem) {
-      if (!agg.sale) continue; // no SALE for this line — nothing of ours to reverse
-      // Skip a line whose sale is already fully reversed (net ~0 in every dimension).
-      //
-      // `unitBasisQty` is one of those dimensions. Since B661 it is a PIECE count while `qty` is in the
-      // line's own unit, so a line can be square on money, qty and tax while still carrying a piece
-      // residue — every row a pre-fix credit note wrote against a box-unaware line is exactly that shape.
-      // Leaving it out of this guard is what made those rows permanent: a later void read the line as
-      // already reversed and never cleared the phantom pieces off the filing. Including it means the void
-      // books a row that is zero in money and non-zero only on the axis that is actually outstanding.
-      if (
-        Math.abs(agg.qty) < EPS &&
-        Math.abs(agg.unitBasisQty) < EPS &&
-        Math.abs(agg.netSales) < EPS &&
-        Math.abs(agg.categoryTax) < EPS
-      ) {
-        continue;
-      }
-      const s = agg.sale;
-      rows.push({
-        tenantId: s.tenantId,
-        trackedCategoryId: s.trackedCategoryId,
-        // RF-3: carry the SALE's reporting breakdown onto the REVERSAL (pure passthrough).
-        trackedSubcategoryId: s.trackedSubcategoryId ?? null,
-        entryType: "REVERSAL" as const,
-        orderId: s.orderId,
-        orderItemId: s.orderItemId,
-        invoiceId: s.invoiceId,
-        invoiceItemId,
-        // round3 like every other quantity writer: these are Decimal(12,3) columns and an unrounded
-        // float sum lands as e.g. -39.995999999999995 (Postgres rounds it, but no other writer relies
-        // on that).
-        qty: -round3(agg.qty),
-        unitBasisQty: -round3(agg.unitBasisQty),
-        netSales: roundMoney(-agg.netSales),
-        categoryTax: roundMoney(-agg.categoryTax),
-        soldAt: now,
-        periodBucket: bucket,
-      });
+    for (const [invoiceItemId, held] of netHeldByLine(all, { preserveReturns })) {
+      if (!held.sale) continue; // no SALE for this line — nothing of ours to reverse
+      if (isSquare(held)) continue; // the sale is already fully reversed in every dimension
+      rows.push(reversalRowFor(held, invoiceItemId, now, bucket));
     }
     if (rows.length === 0) return;
     await db.regulatedSalesLedger.createMany({ data: rows });
+  }
+
+  /**
+   * B297 PR4 (SA-734r2 B5 / D5): bring an invoice's SALE rows to its lines WRITING ONLY WHAT CHANGED. The
+   * reconcile / re-price re-sync used to reverse every held line and book a fresh SALE into TODAY's period for
+   * all of them, so one note edit on a delivered order put a REVERSAL + SALE pair per regulated line into the
+   * current period. Per line, keyed on `invoiceItemId` (stable only while the caller keeps the InvoiceItem row):
+   *   - target == the held net (qty, piece basis, net sales and category tax; return / credit-note
+   *     reversals stay standing, as `reverseInvoiceEntries({ preserveReturns })`): WRITE NOTHING;
+   *   - it differs: ONE REVERSAL of the held net and ONE fresh SALE, for that line only;
+   *   - a held line that is no longer a regulated target (removed, or its item id replaced): reversed.
+   * The net-held arithmetic is `netHeldByLine`, the same helper `reverseInvoiceEntries` runs, so there is no
+   * second netting implementation. A re-sync of an unchanged state is idempotent (a second call finds every
+   * line square against its target).
+   */
+  async syncInvoiceEntries(params: {
+    invoiceId: string;
+    orderId: string | null;
+    tenantId: string | null;
+    soldAt: Date;
+    lines: SaleLedgerLine[];
+    db: any;
+  }): Promise<void> {
+    const { invoiceId, orderId, tenantId, soldAt, lines, db } = params;
+    if (!tenantId) return;
+    const all = await db.regulatedSalesLedger.findMany({ where: { invoiceId } });
+    const held = netHeldByLine(all, { preserveReturns: true });
+    const regulated = lines.filter((l) => l.trackedCategoryId);
+    const targetIds = new Set(regulated.map((l) => l.invoiceItemId));
+    const now = new Date();
+    const bucket = periodBucketOf(now);
+    const reversals: any[] = [];
+    const toWrite: SaleLedgerLine[] = [];
+    for (const [invoiceItemId, h] of held) {
+      if (!h.sale || isSquare(h) || targetIds.has(invoiceItemId)) continue;
+      reversals.push(reversalRowFor(h, invoiceItemId, now, bucket)); // the line left the invoice
+    }
+    for (const l of regulated) {
+      const h = held.get(l.invoiceItemId);
+      const outstanding = !!h && !!h.sale && !isSquare(h);
+      if (outstanding && matchesTarget(h!, targetOf(l))) continue; // unchanged: write nothing
+      if (outstanding) reversals.push(reversalRowFor(h!, l.invoiceItemId, now, bucket));
+      toWrite.push(l);
+    }
+    if (reversals.length > 0) await db.regulatedSalesLedger.createMany({ data: reversals });
+    if (toWrite.length > 0)
+      await this.writeSaleEntries({ tenantId, orderId, invoiceId, soldAt, lines: toWrite, db });
   }
 
   /**

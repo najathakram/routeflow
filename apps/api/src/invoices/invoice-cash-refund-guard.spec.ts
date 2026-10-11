@@ -110,7 +110,10 @@ function makeTx(returns: FakeReturn[]) {
 /** The real `voidInvoice` over a fake tx: the guard sits in the CALLER now, so the pins drive the caller. */
 function makeVoidHarness(returns: FakeReturn[], orderId: string | null = ORDER_ID) {
   const { tx, writes } = makeTx(returns);
-  const ledger = { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) };
+  const ledger = {
+    reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+    syncInvoiceEntries: jest.fn(),
+  };
   const commissionEngine = { syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined) };
   const release = jest.fn().mockResolvedValue({ credits: [], advances: 0 });
   const prisma = {

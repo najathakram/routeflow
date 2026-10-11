@@ -65,7 +65,11 @@ describe("InvoicesService — split restricted-lines flag (F-05 #2093)", () => {
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            syncInvoiceEntries: jest.fn(),
+          },
         },
         {
           provide: AuthorizationGuardService,

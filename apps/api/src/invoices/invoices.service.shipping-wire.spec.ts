@@ -105,7 +105,11 @@ describe("InvoicesService — shipping fields on the wire (F3, fold 1)", () => {
         { provide: SystemConfigService, useValue: mockSystemConfig },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            syncInvoiceEntries: jest.fn(),
+          },
         },
         {
           provide: AuthorizationGuardService,

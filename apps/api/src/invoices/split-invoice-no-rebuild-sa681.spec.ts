@@ -38,7 +38,11 @@ describe("SA-681: partial invoices are never rebuilt to the full order", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let db: SplitInvoiceFakeDb;
 
-  const mockLedger = { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() };
+  const mockLedger = {
+    writeSaleEntries: jest.fn(),
+    reverseInvoiceEntries: jest.fn(),
+    syncInvoiceEntries: jest.fn(),
+  };
 
   beforeEach(async () => {
     prisma = createMockPrisma();

@@ -162,7 +162,10 @@ describe("OrdersService merge paths — customer advisory lock (T3, R3)", () => 
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            syncInvoiceEntries: jest.fn(),
+          },
         },
       ],
     }).compile();

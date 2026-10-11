@@ -230,7 +230,10 @@ describe("OrdersService — units_v1 fail-closed guard on rewrite paths", () => 
         // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            syncInvoiceEntries: jest.fn(),
+          },
         },
       ],
     }).compile();

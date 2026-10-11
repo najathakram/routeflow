@@ -148,6 +148,7 @@ import {
 } from "./order-billing-lock";
 import { reconcileSplitOrderDrafts, type SplitReconcileDeps } from "./split-draft-reconcile";
 import { auditDeliberateOverpayment, auditRestatement, countLinesChanged } from "./invoice-audit";
+import { splitKeptItems } from "./kept-invoice-lines";
 import {
   applyPartialPriceFollow,
   planPartialPriceFollow,
@@ -1936,12 +1937,12 @@ export class InvoicesService {
    * each draft owns a disjoint set of lines — never from the group-unaware legacy rebuild,
    * which would double-count a folded regulated line against its live sibling SALE.
    *
-   * Uses `reverseInvoiceEntries({preserveReturns: true})` — it cancels only the
-   * sale-record and LEAVES any prior RETURN / credit-note reversal standing, so a
-   * re-reconcile after a received return nets to (delivered − returned), not delivered.
-   * Idempotent across repeat re-syncs (a prior re-sync reversal has no returnId, so it's
-   * counted; the old line finds 0 remaining and is skipped). The delivered-payment path
-   * runs at delivery before any return exists, so it's unaffected either way.
+   * B297 PR4: uses `RegulatedLedgerService.syncInvoiceEntries` — it writes ONLY what changed (an
+   * unchanged line, still the same InvoiceItem row, writes nothing; a changed line gets one
+   * REVERSAL + SALE pair; a removed line is reversed) and, like `reverseInvoiceEntries({preserveReturns})`,
+   * LEAVES any prior RETURN / credit-note reversal standing, so a re-reconcile after a received return nets
+   * to (delivered − returned). Idempotent across repeat re-syncs. The delivered-payment path runs at
+   * delivery before any return exists, so it's unaffected either way.
    */
   private async resyncInvoiceLedger(
     invoiceId: string,
@@ -1949,11 +1950,11 @@ export class InvoicesService {
     items: any[],
     db: any,
   ): Promise<void> {
-    // preserveReturns: cancel only the sale-record, leave any return/credit-note reversal
-    // standing, so a re-reconcile after a return nets to (delivered − returned).
-    await this.ledger.reverseInvoiceEntries({ invoiceId, db, preserveReturns: true });
+    // B297 PR4: write only what changed. A line whose held net (return / credit-note reversals left
+    // standing, so a re-reconcile after a return nets to delivered − returned) already equals its target
+    // writes NOTHING; a changed line gets one REVERSAL + SALE pair; a removed line is reversed.
     const packMap = await packAtSaleByProduct(db, items ?? []);
-    await this.ledger.writeSaleEntries({
+    await this.ledger.syncInvoiceEntries({
       tenantId: this.prisma.getTenantId(),
       orderId,
       invoiceId,
@@ -2101,9 +2102,21 @@ export class InvoicesService {
           "NOT_PAID",
         );
       }
+      // B297 PR4: a line whose rebuilt data equals the stored row is KEPT as the same row (its ledger rows
+      // stay valid and re-sync to a no-op); every other order-derived line is re-created as before.
+      const {
+        keepIds: keptLineIds,
+        updates: keptLineUpdates,
+        create: createLines,
+      } = splitKeptItems(
+        await db.invoiceItem.findMany({ where: { invoiceId: pd.draft.id } }), // the FULL stored rows
+        pd.itemsData,
+      );
       await db.invoiceItem.deleteMany({
-        where: { invoiceId: pd.draft.id, id: { notIn: pd.nsf.keepIds } },
+        where: { invoiceId: pd.draft.id, id: { notIn: [...pd.nsf.keepIds, ...keptLineIds] } },
       });
+      for (const u of keptLineUpdates)
+        await db.invoiceItem.update({ where: { id: u.id }, data: u.data });
       const inv = await db.invoice.update({
         where: { id: pd.draft.id },
         data: {
@@ -2115,7 +2128,7 @@ export class InvoicesService {
           // Invalidate a cached PDF only when the invoice is (re)opened as a DRAFT; a
           // preserved finalized invoice keeps regenerating on demand anyway.
           pdfUrl: null,
-          items: { create: pd.itemsData },
+          items: { create: createLines },
         },
         include: { items: true },
       });

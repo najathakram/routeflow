@@ -29,7 +29,11 @@ describe("SA-760 Q-760-1: a DRAFT partial follows order price edits (price only)
   let service: InvoicesService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let db: SplitInvoiceFakeDb;
-  const mockLedger = { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() };
+  const mockLedger = {
+    writeSaleEntries: jest.fn(),
+    reverseInvoiceEntries: jest.fn(),
+    syncInvoiceEntries: jest.fn(),
+  };
 
   beforeEach(async () => {
     prisma = createMockPrisma();

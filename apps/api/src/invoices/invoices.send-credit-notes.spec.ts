@@ -163,6 +163,7 @@ describe("InvoicesService", () => {
           useValue: {
             writeSaleEntries: jest.fn(),
             reverseInvoiceEntries: jest.fn(),
+            syncInvoiceEntries: jest.fn(),
             correctSaleForPriceChange: jest.fn(),
           },
         },

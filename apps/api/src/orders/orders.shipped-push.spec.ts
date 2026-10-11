@@ -291,7 +291,10 @@ describe("OrdersService.changeStatus: customer push wording for a SHIP order (F1
         // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            syncInvoiceEntries: jest.fn(),
+          },
         },
         // B323: sweepAllPendingOrders() re-enters each group's own tenant scope via
         // tenantCtx.run() before calling into anything ambient-scoped.

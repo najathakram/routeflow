@@ -249,7 +249,10 @@ describe("OrdersService — F07 lifecycle-conservation pins (green pre-fix)", ()
         // module definitions stay diff-able.
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            syncInvoiceEntries: jest.fn(),
+          },
         },
       ],
     }).compile();

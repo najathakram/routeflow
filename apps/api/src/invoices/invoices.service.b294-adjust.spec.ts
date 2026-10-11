@@ -57,7 +57,11 @@ describe("B294 — applyPriceAdjustment keeps a legacy invoice's sales tax (REG-
         { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            syncInvoiceEntries: jest.fn(),
+          },
         },
         {
           provide: AuthorizationGuardService,

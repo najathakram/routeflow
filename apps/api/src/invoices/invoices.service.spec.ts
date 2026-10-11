@@ -169,6 +169,7 @@ describe("InvoicesService", () => {
           useValue: {
             writeSaleEntries: jest.fn(),
             reverseInvoiceEntries: jest.fn(),
+            syncInvoiceEntries: jest.fn(), // B297 PR4: the changed-only re-sync
             correctSaleForPriceChange: jest.fn(),
           },
         },
@@ -976,11 +977,9 @@ describe("InvoicesService", () => {
         items: [{ productId: "prod-tob", description: "Cigs", qty: 5, unitPrice: 10 }],
       });
 
-      // Prior SALE reversed (preserveReturns), then a fresh SALE written from new items.
-      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "inv-e", preserveReturns: true }),
-      );
-      expect(ledger.writeSaleEntries).toHaveBeenCalledWith(
+      // B297 PR4: the draft edit re-syncs the ledger to the new lines (changed-only: the prior SALE is
+      // reversed and a fresh SALE written by `syncInvoiceEntries` for a changed line).
+      expect(ledger.syncInvoiceEntries).toHaveBeenCalledWith(
         expect.objectContaining({
           invoiceId: "inv-e",
           lines: [
@@ -4748,16 +4747,17 @@ describe("InvoicesService", () => {
 
       await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
 
-      // Prior SALE rows reversed for BOTH drafts (nets the full-qty entries to 0).
-      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
+      // B297 PR4: BOTH drafts re-sync through the changed-only sync (it nets the held full-qty entries
+      // to the delivered target).
+      expect(ledger.syncInvoiceEntries).toHaveBeenCalledWith(
         expect.objectContaining({ invoiceId: "d-base" }),
       );
-      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
+      expect(ledger.syncInvoiceEntries).toHaveBeenCalledWith(
         expect.objectContaining({ invoiceId: "d-r1" }),
       );
-      // Fresh SALE rows written; the regulated line (R1) now reports the DELIVERED qty (4)
-      // and its prorated netSales (20 = 4/10 of 50), not the full 10 / 50.
-      const r1Write = ledger.writeSaleEntries.mock.calls.find(
+      // The regulated line (R1) now targets the DELIVERED qty (4) and its prorated netSales
+      // (20 = 4/10 of 50), not the full 10 / 50.
+      const r1Write = ledger.syncInvoiceEntries.mock.calls.find(
         (c: any) => c[0].invoiceId === "d-r1",
       )?.[0];
       expect(r1Write).toBeDefined();
@@ -5098,10 +5098,7 @@ describe("InvoicesService", () => {
 
       await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
 
-      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "inv-1", preserveReturns: true }),
-      );
-      expect(ledger.writeSaleEntries).toHaveBeenCalledWith(
+      expect(ledger.syncInvoiceEntries).toHaveBeenCalledWith(
         expect.objectContaining({ invoiceId: "inv-1" }),
       );
     });
@@ -5336,8 +5333,7 @@ describe("InvoicesService", () => {
       expect(oiUpdOf("oi-std").data.invoicedQty).toBe(10);
       expect(oiUpdOf("oi-reg").data.invoicedQty).toBe(4);
       // The regulated-sales ledger is re-synced on the order basis too.
-      expect((service as any).ledger.reverseInvoiceEntries).toHaveBeenCalled();
-      expect((service as any).ledger.writeSaleEntries).toHaveBeenCalled();
+      expect((service as any).ledger.syncInvoiceEntries).toHaveBeenCalled();
     });
 
     it("an edit that ADDED a standard line bills it on the base (grouping, not provenance)", async () => {

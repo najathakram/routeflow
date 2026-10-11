@@ -166,7 +166,10 @@ describe("OrdersService.findOne — tier-price leak (SA-085f)", () => {
           useValue: { syncInvoiceCommissionSafe: jest.fn() },
         },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
-        { provide: RegulatedLedgerService, useValue: { reverseInvoiceEntries: jest.fn() } },
+        {
+          provide: RegulatedLedgerService,
+          useValue: { reverseInvoiceEntries: jest.fn(), syncInvoiceEntries: jest.fn() },
+        },
       ],
     }).compile();
 

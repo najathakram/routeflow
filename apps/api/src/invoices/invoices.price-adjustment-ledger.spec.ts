@@ -120,6 +120,7 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
     });
     // one mechanism per state: an issued invoice never re-syncs
     expect(ledger.reverseInvoiceEntries).not.toHaveBeenCalled();
+    expect(ledger.syncInvoiceEntries).not.toHaveBeenCalled();
     expect(ledger.writeSaleEntries).not.toHaveBeenCalled();
   });
 
@@ -133,10 +134,11 @@ describe("InvoicesService.applyPriceAdjustment — regulated ledger sync (B662)"
   it("DRAFT: re-syncs with the SAME routine update() uses, and books NO correction row", async () => {
     arrange(InvoiceStatus.DRAFT, [regulated("li-1"), ordinary("li-2")]);
     await adjust(["li-1"]);
-    expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
-      expect.objectContaining({ invoiceId: "inv-1", preserveReturns: true }),
+    // B297 PR4: the changed-only sync (it reverses and re-books only a line whose target moved)
+    expect(ledger.syncInvoiceEntries).toHaveBeenCalledTimes(1);
+    expect(ledger.syncInvoiceEntries).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceId: "inv-1" }),
     );
-    expect(ledger.writeSaleEntries).toHaveBeenCalledTimes(1);
     expect(ledger.correctSaleForPriceChange).not.toHaveBeenCalled();
   });
 

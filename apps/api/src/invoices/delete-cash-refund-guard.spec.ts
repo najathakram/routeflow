@@ -50,7 +50,10 @@ describe("deleteInvoice: refuses a cash-refunded sale before any write", () => {
     });
     self = {
       prisma,
-      ledger: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+      ledger: {
+        reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+        syncInvoiceEntries: jest.fn(),
+      },
       commissionEngine: { removeInvoiceCommission: jest.fn().mockResolvedValue(undefined) },
       gateway: { emitInvoiceUpdated: jest.fn() },
       adjustInvoicedQtyForInvoice: jest.fn().mockResolvedValue(undefined),
@@ -126,7 +129,7 @@ describe("deleteOrder: refuses a cash-refunded order before any write", () => {
       cancelImpact: jest.fn().mockResolvedValue({ blockingPayments: [] }),
       creditNotes: { releaseOrderCreditsInTx: jest.fn() },
       invoicesService: { releaseWalletPaymentsInTx: jest.fn() },
-      ledger: { reverseInvoiceEntries: jest.fn() },
+      ledger: { reverseInvoiceEntries: jest.fn(), syncInvoiceEntries: jest.fn() },
       commissionEngine: { removeInvoiceCommission: jest.fn() },
     };
     return { self, tx };

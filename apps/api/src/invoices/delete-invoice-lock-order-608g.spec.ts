@@ -49,7 +49,10 @@ describe("InvoicesService.deleteInvoice: SA-608g lock order", () => {
     });
     self = {
       prisma,
-      ledger: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+      ledger: {
+        reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+        syncInvoiceEntries: jest.fn(),
+      },
       commissionEngine: { removeInvoiceCommission: jest.fn().mockResolvedValue(undefined) },
       gateway: { emitInvoiceUpdated: jest.fn() },
       adjustInvoicedQtyForInvoice: jest.fn().mockResolvedValue(undefined),

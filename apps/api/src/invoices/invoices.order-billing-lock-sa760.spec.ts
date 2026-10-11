@@ -37,7 +37,11 @@ describe("SA-760 R-1: one lock order for every billing-state writer", () => {
   let db: SplitInvoiceFakeDb;
   let log: string[];
   let onInvoiceLock: (() => void) | null;
-  const mockLedger = { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() };
+  const mockLedger = {
+    writeSaleEntries: jest.fn(),
+    reverseInvoiceEntries: jest.fn(),
+    syncInvoiceEntries: jest.fn(),
+  };
 
   const sqlOf = (strings: TemplateStringsArray) => strings.join("?").replace(/\s+/g, " ").trim();
 

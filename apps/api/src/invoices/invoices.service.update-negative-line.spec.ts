@@ -65,7 +65,11 @@ describe("InvoicesService.update() — B1026 a negative line subtotal is refused
         { provide: SystemConfigService, useValue: { get: jest.fn(), set: jest.fn() } },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            syncInvoiceEntries: jest.fn(),
+          },
         },
         {
           provide: AuthorizationGuardService,

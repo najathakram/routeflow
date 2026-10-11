@@ -77,7 +77,8 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
   const mockLedger = {
     reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
     unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
-    reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined), // deleteInvoice (case 15)
+    reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+    syncInvoiceEntries: jest.fn(), // deleteInvoice (case 15)
   };
   const mockCommissionEngine = {
     syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
