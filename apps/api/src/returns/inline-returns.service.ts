@@ -54,6 +54,8 @@ import {
   type HeadroomLine,
 } from "../credit-notes/line-credit-headroom";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { isLockUnavailableError } from "../common/db-locks";
+import { isTransactionExpired, refundBusy } from "./standard-refund-claim";
 import { IdempotencyService } from "../common/idempotency.service";
 import { AddonService } from "../billing/addon.service";
 import { NO_RESTOCK_REASONS } from "./returns.service";
@@ -137,6 +139,13 @@ export const ALREADY_RETURNED_REASON_MESSAGE =
 
 /** The 409 code of a returnKey already held (create's preflight: a replay, or a real collision). */
 export const INLINE_RETURN_KEY_TAKEN = API_ERROR_CODES.INLINE_RETURN_KEY_TAKEN;
+
+/**
+ * The standalone capture is ONE transaction now (row 347: capture, restock, ledger reversal, mint and settle, behind the
+ * customer advisory lock): the budget of the order-create path that runs the same work (orders.service.ts), not Prisma's
+ * 5 s default.
+ */
+const CAPTURE_TX_OPTIONS = { timeout: 15_000 } as const;
 
 @Injectable()
 export class InlineReturnsService {
@@ -1130,8 +1139,11 @@ export class InlineReturnsService {
             sourceOrderIds,
             capIntentToOrderBalance: false,
           });
-        });
+        }, CAPTURE_TX_OPTIONS);
       } catch (err: any) {
+        // a transaction that ran out of budget (P2028) or a lock wait that gave up (55P03) wrote nothing: the same retryable 409
+        // the refund claims answer, never an uncoded 500 (the caller retries with the same returnKey)
+        if (isLockUnavailableError(err) || isTransactionExpired(err)) throw refundBusy();
         if (this.isReturnKeyConflict(err) && dto.returnKey) {
           const raced = await this.prisma.forTenant().return.findFirst({
             where: { returnKey: dto.returnKey, kind: "INLINE" },

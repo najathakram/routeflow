@@ -1085,6 +1085,42 @@ describe("InlineReturnsService", () => {
     expect(out).toMatchObject({ creditNoteId: "cn-1" });
   });
 
+  describe("row 347 (1): the capture's one transaction has the order-create budget and its expiry / lock wait is a retryable 409", () => {
+    it("opens it with a 15 s timeout (capture, restock, ledger, mint and settle in one transaction)", async () => {
+      await service.capture(CAPTURE_DTO as any, OPERATOR);
+      expect(prisma.tenantTransaction).toHaveBeenCalledWith(expect.any(Function), {
+        timeout: 15_000,
+      });
+    });
+
+    const refuses = async (err: unknown) => {
+      prisma.tenantTransaction.mockRejectedValueOnce(err);
+      const e: any = await service.capture(CAPTURE_DTO as any, OPERATOR).then(
+        () => null,
+        (x) => x,
+      );
+      expect(e?.getStatus?.()).toBe(409);
+      expect(e?.getResponse?.()).toMatchObject({ code: "CONCURRENT_UPDATE", retryable: true });
+    };
+
+    it("an expired transaction (Prisma P2028) is 409 CONCURRENT_UPDATE, never an uncoded 500", async () => {
+      await refuses(Object.assign(new Error("Transaction API error"), { code: "P2028" }));
+    });
+
+    it("a lock wait that gave up (55P03) is the same retryable 409", async () => {
+      await refuses(
+        Object.assign(new Error("canceling statement due to lock timeout"), {
+          meta: { code: "55P03" },
+        }),
+      );
+    });
+
+    it("any other failure still propagates as it was", async () => {
+      prisma.tenantTransaction.mockRejectedValueOnce(new Error("boom"));
+      await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow("boom");
+    });
+  });
+
   it("row 347 (1): a source that went dead before the mint rolls the capture back (409 RETURN_NOTHING_BILLED), no credit note and no event", async () => {
     prisma.invoiceItem.findMany.mockResolvedValue([{ id: "invitem-1", invoiceId: "inv-dead" }]);
     prisma.invoice.findFirst.mockResolvedValue({ id: "inv-dead" });
