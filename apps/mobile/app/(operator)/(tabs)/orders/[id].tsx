@@ -147,7 +147,9 @@ export default function OrderDetailScreen() {
   const createInvoiceMut = useCreateInvoiceFromOrder();
   const pickupMut = usePickupComplete(id ?? "");
   // GET /orders/:id does not carry customer.isWalkIn: read it from the customer record (same as web).
-  const { data: walkInCustomer } = useCustomer(order?.customer?.id ?? order?.customerId ?? "");
+  const { data: walkInCustomer } = useCustomer(
+    isPosOrder(order) ? (order?.customer?.id ?? order?.customerId ?? "") : "",
+  );
   const switchToDeliveryMut = useSwitchOrderToDelivery();
   const sendMut = useSendInvoice();
   const pdfMut = useInvoicePdf();

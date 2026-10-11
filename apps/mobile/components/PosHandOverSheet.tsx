@@ -103,20 +103,28 @@ export function PosHandOverSheet({
               </Pressable>
             ))}
           </View>
-          <Text style={styles.label}>Amount ($)</Text>
-          <TextInput
-            value={amount}
-            onChangeText={setAmount}
-            keyboardType="decimal-pad"
-            placeholder={balanceDue.toFixed(2)}
-            placeholderTextColor={ios.label3}
-            style={styles.input}
-          />
+          {method === "CASH" ? (
+            <>
+              <Text style={styles.label}>Amount ($)</Text>
+              <TextInput
+                value={amount}
+                accessibilityLabel="Amount"
+                onChangeText={setAmount}
+                keyboardType="decimal-pad"
+                placeholder={balanceDue.toFixed(2)}
+                placeholderTextColor={ios.label3}
+                style={styles.input}
+              />
+            </>
+          ) : (
+            <Text style={styles.hint}>Pays the balance: ${balanceDue.toFixed(2)}</Text>
+          )}
           {method === "CHECK" ? (
             <>
               <Text style={styles.label}>Check number</Text>
               <TextInput
                 value={reference}
+                accessibilityLabel="Check number"
                 onChangeText={setReference}
                 placeholderTextColor={ios.label3}
                 style={styles.input}

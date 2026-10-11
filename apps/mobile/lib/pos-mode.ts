@@ -7,7 +7,9 @@ import { API_ERROR_CODES, PREF, staffMay } from "@routeflow/types";
 import type { PickupCompleteRequest, PickupCompleteResponse } from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
 
-export { isPosOrder } from "./order-status-flow";
+import { isPosOrder } from "./order-status-flow";
+
+export { isPosOrder };
 
 /** The per-user preference key, from the shared `PREF` (a `PREFERENCE_KEYS` entry). */
 export const POS_MODE_PREF_KEY = PREF.ordersPosMode;
@@ -178,9 +180,7 @@ export function posCutNote(
   order: { fulfillPath?: string | null; counterSale?: boolean | null },
   status: string,
 ): string | null {
-  return order.fulfillPath === "PICKUP" && order.counterSale !== true && status === "DELIVERED"
-    ? POS_COPY.cutAfterHandOver
-    : null;
+  return isPosOrder(order) && status === "DELIVERED" ? POS_COPY.cutAfterHandOver : null;
 }
 
 export type PosFinishStep = "confirm" | "invoice";
@@ -265,7 +265,7 @@ export const POS_TENDER_METHODS: { method: PosTenderMethod; label: string }[] = 
 
 /**
  * What is left to collect at the hand-over: the sum over live (not VOID / WRITTEN_OFF) invoices of
- * `balanceDue`, else total minus recorded payments; with no invoice, the order total. Display default
+ * `balanceDue`, else its total (the client never derives total minus payments); with no invoice, the order total. Display default
  * only: the server judges the real balance and never over-collects.
  */
 export function posBalanceDue(
@@ -282,11 +282,7 @@ export function posBalanceDue(
 ): number {
   const live = (invoices ?? []).filter((i) => i.status !== "VOID" && i.status !== "WRITTEN_OFF");
   if (live.length === 0) return roundMoney(orderTotal);
-  const sum = live.reduce((acc, i) => {
-    if (typeof i.balanceDue === "number") return acc + i.balanceDue;
-    const paid = (i.payments ?? []).reduce((p, x) => p + Number(x.amount || 0), 0);
-    return acc + Math.max(0, i.total - paid);
-  }, 0);
+  const sum = live.reduce((acc, i) => acc + (i.balanceDue ?? i.total), 0);
   return roundMoney(sum);
 }
 
@@ -321,21 +317,19 @@ export function planPosTender(input: {
       ? { ok: true, body: {} }
       : { ok: false, problem: "TENDER_REQUIRED" };
   }
+  const reference = input.reference.trim();
+  if (input.method === "CHECK" && !reference) return { ok: false, problem: "CHECK_NUMBER" };
+  if (input.method !== "CASH") {
+    // Card and check pay the balance exactly (the server never over-collects): no amount is sent.
+    return {
+      ok: true,
+      body: { payment: { method: input.method, ...(reference ? { reference } : {}) } },
+    };
+  }
   const raw = input.amountRaw.trim();
   const amount = raw === "" ? input.balanceDue : Number(raw);
   if (!Number.isFinite(amount) || amount <= 0) return { ok: false, problem: "AMOUNT" };
-  const reference = input.reference.trim();
-  if (input.method === "CHECK" && !reference) return { ok: false, problem: "CHECK_NUMBER" };
-  return {
-    ok: true,
-    body: {
-      payment: {
-        method: input.method,
-        amount: roundMoney(amount),
-        ...(reference ? { reference } : {}),
-      },
-    },
-  };
+  return { ok: true, body: { payment: { method: "CASH", amount: roundMoney(amount) } } };
 }
 
 export const POS_TENDER_PROBLEM_COPY = {

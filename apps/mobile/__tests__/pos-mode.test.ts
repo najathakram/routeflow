@@ -165,11 +165,13 @@ describe("hand-over tender and fixed error copy", () => {
       ok: false,
       problem: "CHECK_NUMBER",
     });
+    // card / check send no amount (cash only), like web
     expect(
       planPosTender({ ...base, isWalkIn: true, method: "CHECK", reference: " 1042 " }),
-    ).toEqual({
+    ).toEqual({ ok: true, body: { payment: { method: "CHECK", reference: "1042" } } });
+    expect(planPosTender({ ...base, isWalkIn: true, method: "CARD" })).toEqual({
       ok: true,
-      body: { payment: { method: "CHECK", amount: 42.5, reference: "1042" } },
+      body: { payment: { method: "CARD" } },
     });
     expect(planPosTender({ ...base, isWalkIn: false, amountRaw: "0" })).toEqual({
       ok: false,
@@ -183,7 +185,7 @@ describe("hand-over tender and fixed error copy", () => {
     expect(posBalanceDue(10, [])).toBe(10);
     expect(
       posBalanceDue(99, [
-        { status: "SENT", total: 30, payments: [{ amount: "10" }] },
+        { status: "SENT", total: 30, balanceDue: 20 },
         { status: "DRAFT", total: 5, balanceDue: 5 },
         { status: "VOID", total: 100 },
       ]),

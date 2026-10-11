@@ -42,7 +42,12 @@ export function PosModeSwitch({
 /** The footer's "Confirm only" link (POS mode, a saveable cart). */
 export function PosConfirmOnly({ onPress }: { onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} hitSlop={6}>
+    <Pressable
+      onPress={onPress}
+      hitSlop={6}
+      accessibilityRole="button"
+      style={{ minHeight: 44, minWidth: 44, justifyContent: "center" }}
+    >
       <Text style={{ color: ios.brand, fontSize: 13, fontFamily: "Inter_600SemiBold" }}>
         {POS_COPY.confirmOnly}
       </Text>
