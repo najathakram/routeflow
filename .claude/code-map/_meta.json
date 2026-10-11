@@ -1,6 +1,6 @@
 {
-  "mappedSha": "3e7d8b9dd0b7f48b435ace82407fdee2e133a43a",
-  "generatedAt": "2026-10-09T19:00:00.000Z",
+  "mappedSha": "ef8c02f688adc3002cc8878dc59c92e3ed58a695",
+  "generatedAt": "2026-10-11T12:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 15,
-    "web": 11,
-    "mobile": 7,
+    "api": 17,
+    "web": 13,
+    "mobile": 9,
     "packages": 0
   },
-  "fileCount": 1053,
-  "notes": "**2026-10-09 \u2014 W21b #3347 (master `5584e2f4f`) and W22a-1 #3362 (master `3e7d8b9dd0b7f48b435ace82407fdee2e133a43a`, 13 PRs; docs-only bookkeeping).** New `api/`, `web/` and `mobile/landing-2026-10-09-w21b-w22a1.md` (counter price edit POS-5, cash-refund void/cancel guard, Today's sales by credit note, B1054 replay, B1157/B1158 parked-checkout reconcile, units P0a schema, invoice payment paidAt index, protected-tenant script guard, operator feature groups (report only), self-service audit and admin-account rule, variant rules B1211 to B1216, web leave guard / live-cart persist / discount re-apply / family-aware pickers, mobile Store credit pill and cascade confirm) and a W21b/W22a-1 section in `packages.md`. The oldest changelog bullet (train A, 2026-09-27) moved to `CHANGELOG-ARCHIVE.md` to stay at 30. `mappedSha` = `3e7d8b9dd0b7f48b435ace82407fdee2e133a43a`."
+  "fileCount": 1059,
+  "notes": "**2026-10-11 \u2014 Release 4 #3378 (master `ef8c02f688adc3002cc8878dc59c92e3ed58a695`, train/w23-r4; docs-only bookkeeping).** New `api/`, `web/` and `mobile/landing-2026-10-11-r4.md` (TOC row in each area file) and a Release 4 section in `packages.md`: digital receipt (SA-751r; `documents/` receipt model, email send with three caps, shared `ReceiptModel`, one tax-rate home and one lowered-price rule in `@routeflow/pricing`), SA-764 stored cash tendered and served change on counter replays and Today's sales rows, counter pass 2 (#3364), refund slip (#3367), last 7 days (#3368), POS mode (staff PICKUP, `orders.posMode`, `DISPATCH_PATH_WHERE`, POS order page, delivered-floor stamp, P-3 edit-after-final overpay judge and `statusFromPayments`, P-4 revision marks), SA-770 overdue by balance due (`classifyInvoiceBalance`, `balanceDueSql`), billing B1 (#3360; Stripe-first plan change, price override and scheduled downgrade under the `tenant-price` lock; `toCents`/`fromCents` moved to pricing). No new migration. Older notes corrected in place: Today's sales row fields now sent, `counterCashTendered` now written, `recomputeInvoiceStatus` renamed, `toCents`/`fromCents` location, the overdue-sweep and staff-capability notes. The oldest changelog bullet (merge train D, 2026-09-27) moved to `CHANGELOG-ARCHIVE.md` to stay at 30. `mappedSha` = `ef8c02f688adc3002cc8878dc59c92e3ed58a695`."
 }

@@ -338,6 +338,133 @@ describe("BookkeepingService", () => {
     });
   });
 
+  describe("recordPayment — G4: a counter invoice joins the end-of-day close like the office door", () => {
+    const DB_NOW = new Date("2026-10-09T17:30:00.000Z");
+    const CLOSE_END = new Date("2026-10-09T17:00:00.000Z");
+
+    function setup(opts: { counter: boolean; closeEnd?: Date; dbNow?: Date }) {
+      const log: string[] = [];
+      const create = jest.fn(async () => ({ id: "pay-1" }));
+      // counterPay.scope reads the order, and the sale's leg-grouped tender rows (the one tender predicate judges a row
+      // against the sale as a set), through forTenant() BEFORE the transaction.
+      prisma.forTenant.mockReturnValue({
+        order: {
+          findFirst: jest.fn(async () =>
+            opts.counter ? { counterSale: true, registerKey: "r1" } : null,
+          ),
+        },
+        invoicePayment: { findMany: jest.fn(async () => []) },
+      } as never);
+      prisma.tenantTransaction.mockImplementation(async (fn: any) =>
+        fn({
+          $executeRaw: jest.fn(async (strings: TemplateStringsArray) => {
+            const q = strings.join("?");
+            log.push(
+              q.includes("counter-close")
+                ? "lock close"
+                : q.includes('"Order"')
+                  ? "lock Order"
+                  : "lock Invoice",
+            );
+          }),
+          $queryRaw: jest.fn(async () => {
+            log.push("db clock");
+            return [{ now: opts.dbNow ?? DB_NOW }];
+          }),
+          counterDayClose: {
+            // The latest-standing-close read answers with its windowEnd; the closed-window question (assertOpen: is this
+            // instant inside a window?) is answered from the same close, whose window ends at closeEnd.
+            findFirst: jest.fn(async ({ where }: any) => {
+              if (!opts.closeEnd) return null;
+              if (where?.windowEnd?.gt)
+                return where.windowEnd.gt < opts.closeEnd ? { id: "close" } : null;
+              return { windowEnd: opts.closeEnd };
+            }),
+          },
+          invoice: {
+            findMany: jest.fn(async () => [{ orderId: "ord-1" }]),
+            findUnique: jest.fn(async () => ({
+              id: "inv-c",
+              orderId: "ord-1",
+              status: "SENT",
+              total: 100,
+              payments: [],
+            })),
+            update: jest.fn().mockResolvedValue({ id: "inv-c" }),
+          },
+          invoicePayment: { create },
+        }),
+      );
+      return { log, create };
+    }
+
+    it("counter invoice: the shared close lock is the FIRST statement and paidAt is the database clock", async () => {
+      const { log, create } = setup({ counter: true });
+      const fixedApp = new Date("2020-01-01T00:00:00.000Z");
+      jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] }).setSystemTime(fixedApp);
+      try {
+        await service.recordPayment("inv-c", { amount: 10, method: "CASH" as any });
+      } finally {
+        jest.useRealTimers();
+      }
+      expect(log[0]).toBe("lock close");
+      expect(log.slice(0, 3)).toEqual(["lock close", "lock Order", "lock Invoice"]);
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ paidAt: DB_NOW }) }),
+      );
+    });
+
+    it("counter invoice: CASH dated before a standing close is refused DAY_CLOSED_FOR_PAYMENT_DATE and nothing is created", async () => {
+      // the DB clock reads BEFORE the standing close's cutoff, so the row would land inside a closed window
+      const { create } = setup({
+        counter: true,
+        closeEnd: CLOSE_END,
+        dbNow: new Date("2026-10-09T16:00:00.000Z"),
+      });
+      await expect(
+        service.recordPayment("inv-c", { amount: 10, method: "CASH" as any }),
+      ).rejects.toMatchObject({ response: { code: "DAY_CLOSED_FOR_PAYMENT_DATE" } });
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("counter invoice: a CHECK dated AFTER the standing close's cutoff is accepted", async () => {
+      const { create } = setup({
+        counter: true,
+        closeEnd: CLOSE_END,
+        dbNow: new Date("2026-10-09T18:00:00.000Z"), // the database clock, after windowEnd
+      });
+      await service.recordPayment("inv-c", { amount: 10, method: "CHECK" as any });
+      expect(create).toHaveBeenCalledTimes(1);
+    });
+
+    it("counter invoice: a CHECK whose date falls INSIDE the closed window is refused (a check moves the closed Z's money in)", async () => {
+      const { create } = setup({
+        counter: true,
+        closeEnd: CLOSE_END,
+        dbNow: new Date("2026-10-09T16:00:00.000Z"), // before windowEnd: inside the closed day
+      });
+      await expect(
+        service.recordPayment("inv-c", { amount: 10, method: "CHECK" as any }),
+      ).rejects.toMatchObject({ response: { code: "COUNTER_SALE_DAY_CLOSED" } });
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("non-counter invoice: no close lock, no DB clock read, app-clock paidAt, behaviour unchanged", async () => {
+      const { log, create } = setup({ counter: false });
+      const fixedApp = new Date("2020-01-01T00:00:00.000Z");
+      jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] }).setSystemTime(fixedApp);
+      try {
+        await service.recordPayment("inv-c", { amount: 10, method: "CASH" as any });
+      } finally {
+        jest.useRealTimers();
+      }
+      expect(log).toEqual(["lock Order", "lock Invoice"]);
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ paidAt: fixedApp }) }),
+      );
+    });
+  });
+
   describe("getPdfUrl", () => {
     it("should return url when PDF exists", async () => {
       invoiceService.getPresignedUrl.mockResolvedValue("https://r2.example.com/invoice.pdf");
@@ -901,7 +1028,7 @@ describe("BookkeepingService", () => {
       customerId: "cust-1",
       customer: { id: "cust-1", businessName: "Acme" },
     };
-    const payment = (over: Record<string, any>) => ({
+    const payment = (over: Record<string, any>): Record<string, any> => ({
       status: "PAID",
       method: "CASH",
       settledAt: null,

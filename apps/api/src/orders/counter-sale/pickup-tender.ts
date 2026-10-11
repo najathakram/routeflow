@@ -65,15 +65,13 @@ export function tenderFigures(
   const settled = method === "ON_ACCOUNT" || balanceDue <= 0 || (!planError && !!firstTender);
   // sumConfirmed counts PAID rows only, so a voided cash payment is already out.
   const cashTaken = roundMoney(sumConfirmed(handOverTenders.filter((p) => p.method === "CASH")));
-  // SA-773 split N3: the change is pricing's `counterChange`, the ONE formula every counter surface serves. Its inputs are the
-  // STORED cash taken (this hand-over's CASH rows: `cashApplied`) and the amount the till says it was handed:
-  // `change = max(0, tendered - cashApplied)`. With the cash rows as the `total` and nothing else applied, `cashApplied` IS
-  // the stored cash, exactly as `servedChange` feeds it.
-  const owed =
+  // The ONE change formula (pricing's `counterChange`, the counter sale's own): the cash handed over less the cash this
+  // hand-over took. Served only for a CASH tender once the stored balance is covered; a positive figure only.
+  const { change: handedBack } =
     payment.amount != null
-      ? counterChange({ total: cashTaken, nonCashApplied: 0, tendered: payment.amount }).change
-      : 0;
-  const change = method === "CASH" && balanceDue <= 0 && owed > 0 ? owed : undefined;
+      ? counterChange({ total: cashTaken, nonCashApplied: 0, tendered: payment.amount })
+      : { change: 0 };
+  const change = method === "CASH" && balanceDue <= 0 && handedBack > 0 ? handedBack : undefined;
   return {
     total,
     paid,

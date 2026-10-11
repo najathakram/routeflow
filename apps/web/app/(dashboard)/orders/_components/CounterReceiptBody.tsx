@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { cashierNameOf } from "@routeflow/pricing";
 import type { CounterSalePaymentMethod, CounterSaleResponse } from "@routeflow/types";
 import { useTenant } from "@/components/tenant-provider";
 import { useOptionalAuth } from "@/lib/auth-context";
@@ -36,7 +37,7 @@ export function CounterReceiptBody({
   headingRef?: React.Ref<HTMLHeadingElement>;
 }) {
   const { branding } = useTenant();
-  const cashier = useOptionalAuth()?.user?.username ?? null;
+  const cashier = cashierNameOf(useOptionalAuth()?.user);
   const [now] = React.useState(() => new Date());
   const m = buildCounterReceipt({
     receipt,

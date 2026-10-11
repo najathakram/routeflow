@@ -62,7 +62,9 @@ import {
   type InvoicePayment,
   type CheckStatus,
 } from "@/lib/api/invoices";
-import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
+import { isPendingMirrorInvoice, pendingMirrorCopy } from "@/lib/invoice-pending-mirror";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { isStoreOnly } from "@/lib/counter-sale";
 import { canSendReminder } from "@/lib/invoice-reminder";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
@@ -78,6 +80,7 @@ import type { LineComponentView } from "@routeflow/types";
 import { CHECK_TRANSITIONS } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import { InvoiceLineAmount } from "./InvoiceLineAmount";
+import { InvoiceLinePrice } from "./InvoiceLinePrice";
 import { TenantInvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
 import { RemoveCreditButton } from "./RemoveCreditButton";
 import { AdjustPricesPanel } from "./AdjustPricesPanel";
@@ -96,6 +99,7 @@ import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
+import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
@@ -1406,6 +1410,9 @@ export default function InvoiceDetailPage() {
   const setCheckStatus = useSetCheckStatus();
   const unapplyCreditNote = useUnapplyCreditNote();
   const { user } = useAuth();
+  // A store-only business is POS-forced: its order is handed over, never delivered (the draft's wording follows).
+  const { capability: fulfilmentCapability } = useCounterSaleGate();
+  const mirrorCopy = pendingMirrorCopy(isStoreOnly(fulfilmentCapability));
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
@@ -1790,7 +1797,7 @@ export default function InvoiceDetailPage() {
         onError: (err: any) => {
           toast({
             title: "Failed to record payment",
-            description: err?.response?.data?.message ?? "Please try again.",
+            description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
             variant: "error",
           });
         },
@@ -1827,7 +1834,7 @@ export default function InvoiceDetailPage() {
         onError: (err: any) => {
           toast({
             title: "Failed to update payment",
-            description: err?.response?.data?.message ?? "Please try again.",
+            description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
             variant: "error",
           });
         },
@@ -1844,8 +1851,12 @@ export default function InvoiceDetailPage() {
           setDeletingPayment(null);
           toast({ title: "Payment deleted", variant: "info" });
         },
-        onError: () => {
-          toast({ title: "Failed to delete payment", variant: "error" });
+        onError: (err: any) => {
+          toast({
+            title: "Failed to delete payment",
+            description: dayClosedCopy(err) ?? undefined,
+            variant: "error",
+          });
         },
       },
     );
@@ -1868,7 +1879,7 @@ export default function InvoiceDetailPage() {
         onError: (err: any) => {
           toast({
             title: "Failed to update check status",
-            description: err?.response?.data?.message ?? "Please try again.",
+            description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
             variant: "error",
           });
         },
@@ -2013,7 +2024,7 @@ export default function InvoiceDetailPage() {
           {isPendingMirror && (
             <span className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-700">
               <Info className="h-3.5 w-3.5" />
-              Mirrors the order — ready to send after delivery
+              {mirrorCopy.badge}
             </span>
           )}
 
@@ -2239,8 +2250,9 @@ export default function InvoiceDetailPage() {
             >
               order #{invoice.order?.orderNumber ?? ""}
             </Link>{" "}
-            and updates automatically until it&apos;s delivered. To change what&apos;s billed, edit
-            the order — you&apos;ll review and send this invoice after delivery.
+            and updates automatically until it&apos;s{" "}
+            {isStoreOnly(fulfilmentCapability) ? "handed over" : "delivered"}. To change what&apos;s
+            billed, edit the order — {mirrorCopy.note}
           </div>
         </div>
       )}
@@ -2398,76 +2410,8 @@ export default function InvoiceDetailPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          {item.priceType === "SPECIAL" && !hideOriginal ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className="strike text-xs">
-                                {fmt(Number(item.originalPrice))}
-                              </span>
-                              <span className="money text-success">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success ring-1 ring-success/20">
-                                Special price
-                              </span>
-                            </div>
-                          ) : item.priceType === "DISCOUNTED" && !hideOriginal ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className="strike text-xs">
-                                {fmt(Number(item.originalPrice))}
-                              </span>
-                              <span className="money text-warning">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/20">
-                                Discounted price
-                              </span>
-                            </div>
-                          ) : item.priceType === "PROMO" &&
-                            item.originalPrice != null &&
-                            !hideOriginal ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className="strike text-xs">
-                                {fmt(Number(item.originalPrice))}
-                              </span>
-                              <span className="money text-brand-600">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 ring-1 ring-brand-200">
-                                Promo price
-                              </span>
-                            </div>
-                          ) : item.priceType === "MANUAL" &&
-                            item.originalPrice != null &&
-                            Number(item.unitPrice) > Number(item.originalPrice) ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              {/* Upsell (above list): green, no strikethrough — the base
-                                is never shown to the buyer. */}
-                              <span className="money text-success">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success ring-1 ring-success/20">
-                                Upsell
-                              </span>
-                            </div>
-                          ) : item.priceType === "MANUAL" &&
-                            item.originalPrice != null &&
-                            !hideOriginal ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className="strike text-xs">
-                                {fmt(Number(item.originalPrice))}
-                              </span>
-                              <span className="money text-warning">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/20">
-                                Adjusted
-                              </span>
-                            </div>
-                          ) : (
-                            <span className="money text-navy/70">
-                              {fmt(Number(item.unitPrice))}
-                            </span>
-                          )}
+                          {/* Row 322c: the struck original follows pricing's showOriginalPrice (the PDF's rule). */}
+                          <InvoiceLinePrice item={item} hideOriginal={hideOriginal} />
                           {/* Suggested retail price, snapshotted at line creation — appears
                               regardless of priceType. Keyed off data presence, not the flag,
                               so an issued invoice keeps rendering it even if the tenant later

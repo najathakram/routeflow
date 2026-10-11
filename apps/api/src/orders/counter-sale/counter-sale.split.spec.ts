@@ -25,6 +25,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../../audit/audit.service";
 import { createMockPrisma } from "../../testing/prisma-mock";
 import { legGroupId } from "./counter-tender-row";
+import { pickupTenderGroupId } from "./pickup-tender-group";
 import { assertCashRefundWithinCap } from "../../returns/cash-refund-cap";
 
 /**
@@ -186,8 +187,8 @@ describe("CounterSaleService.ring: split payments", () => {
         "key-1",
       );
       expect(recordPayment.mock.calls.map((c) => c[2])).toEqual([
-        { paymentGroupId: legGroupId("ord-1", 0) },
-        { paymentGroupId: legGroupId("ord-1", 1) },
+        { tillLockHeld: true, paymentGroupId: legGroupId("ord-1", 0) },
+        { tillLockHeld: true, paymentGroupId: legGroupId("ord-1", 1) },
       ]);
       expect(legGroupId("ord-1", 0)).not.toBe(legGroupId("ord-1", 1));
       // never from the idempotency key: the same sale under another key groups identically
@@ -203,7 +204,10 @@ describe("CounterSaleService.ring: split payments", () => {
         staff,
         "another-key",
       );
-      expect(recordPayment.mock.calls[0][2]).toEqual({ paymentGroupId: legGroupId("ord-1", 0) });
+      expect(recordPayment.mock.calls[0][2]).toEqual({
+        tillLockHeld: true,
+        paymentGroupId: legGroupId("ord-1", 0),
+      });
     });
 
     it("two invoices: card 30 + cash 50 on inv1 50 / inv2 20 -> card {inv1 30}, cash {inv1 20, inv2 20}, change 10", async () => {
@@ -457,7 +461,10 @@ describe("CounterSaleService.ring: split payments", () => {
       const r = await service.ring(walkInSale({ payment: { method: "CASH", amount: 100 } }), staff);
       expect(recordPayment).toHaveBeenCalledTimes(1);
       expect(recordPayment.mock.calls[0][1]).toMatchObject({ amount: 70, method: "CASH" });
-      expect(recordPayment.mock.calls[0][2]).toEqual({ paymentGroupId: legGroupId("ord-1", 0) });
+      expect(recordPayment.mock.calls[0][2]).toEqual({
+        tillLockHeld: true,
+        paymentGroupId: legGroupId("ord-1", 0),
+      });
       expect(r).toMatchObject({ method: "CASH", paid: 70, change: 30, paymentRecorded: true });
     });
 
@@ -491,7 +498,7 @@ describe("CounterSaleService.ring: split payments", () => {
       replay = true;
       const r = await service.ring(walkInSale({ payments: split() }), staff, "key-1");
       expect(recordPayment.mock.calls.map((c) => [c[1].method, c[1].amount, c[2]])).toEqual([
-        ["CASH", 40, { paymentGroupId: G1 }],
+        ["CASH", 40, { tillLockHeld: true, paymentGroupId: G1 }],
       ]);
       expect(r).toMatchObject({
         replayed: true,
@@ -586,7 +593,7 @@ describe("CounterSaleService.ring: split payments", () => {
       );
       // inv2's 20 is written WITHOUT a group id: a grouped row would make readStoredTender drop the legacy 50
       expect(recordPayment.mock.calls.map((c) => [c[0], c[1].amount, c[2]])).toEqual([
-        ["inv-2", 20, undefined],
+        ["inv-2", 20, { tillLockHeld: true }],
       ]);
       expect(r).toMatchObject({
         paid: 70,
@@ -682,7 +689,7 @@ describe("CounterSaleService.ring: split payments", () => {
       );
       // office's 20 never counts as leg 1's cash: the cash leg's 70 is recorded, capped by capacity (50)
       expect(recordPayment.mock.calls.map((c) => [c[1].method, c[2]])).toEqual([
-        ["CASH", { paymentGroupId: G1 }],
+        ["CASH", { tillLockHeld: true, paymentGroupId: G1 }],
       ]);
     });
   });
@@ -1356,6 +1363,56 @@ describe("CounterSaleService.ring: split payments", () => {
           { method: "CARD", amount: 30 },
         ],
       });
+    });
+  });
+  // A1 (Opus review of the merge): the legacy branch of readStoredTender is the ONE predicate's, not "every tender row".
+  describe("a sale with no leg-grouped row: other till events and office rows are not the sale's tender", () => {
+    const SALE_ROW = { id: "ord-1", counterSale: true, status: "DELIVERED", orderNumber: "ORD-1" };
+    const stored = (payments: Pay[]) => {
+      invoices = [inv("inv-1", 37.25, 1, payments)];
+      (service as any).orders.findReplayCandidateByKey.mockResolvedValue(SALE_ROW);
+    };
+    const handOver = (): Pay => ({
+      id: "handover",
+      amount: 37.25,
+      method: "CASH",
+      status: "PAID",
+      paymentGroupId: pickupTenderGroupId("ord-1"),
+    });
+
+    it("scenario 1: an ON_ACCOUNT sale, then a pickup hand-over's cash: by-key still reads ON_ACCOUNT, no leg, no paymentId", async () => {
+      stored([handOver()]);
+      const r = await service.byKey("key-1");
+      expect(r.method).toBe("ON_ACCOUNT");
+      expect(r.paymentId).toBeUndefined();
+      expect(r.payments ?? []).toEqual([]);
+    });
+
+    it("scenario 1: the ON_ACCOUNT same-key replay reads ON_ACCOUNT and records nothing", async () => {
+      stored([handOver()]);
+      replay = true;
+      const r = await service.ring(named({ payment: { method: "ON_ACCOUNT" } }), staff, "key-1");
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r.method).toBe("ON_ACCOUNT");
+      expect(r.paymentId).toBeUndefined();
+      expect(r.payments ?? []).toEqual([]);
+    });
+
+    it("scenario 2: a legacy CASH sale, then an office ACH row on the invoice: the same-key retry is a replay, not 409", async () => {
+      stored([
+        { id: "till", amount: 37.25, method: "CASH", status: "PAID", paymentGroupId: null },
+        { id: "ach", amount: 5, method: "ACH", status: "PAID", paymentGroupId: null },
+      ]);
+      replay = true;
+      storedTendered = 50;
+      const r = await service.ring(
+        walkInSale({ payment: { method: "CASH", amount: 50 } }),
+        staff,
+        "key-1",
+      );
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(r).toMatchObject({ replayed: true, method: "CASH", paymentId: "till" });
+      expect(r.payments).toEqual([{ method: "CASH", amount: 37.25, paymentIds: ["till"] }]);
     });
   });
 });

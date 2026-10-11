@@ -198,3 +198,22 @@ describe("servedTendered: the ONE gate, next to servedChange", () => {
     expect(servedTendered(ORDER, 40, [])).toBeNull();
   });
 });
+
+// A2 (Opus review of the split merge): the gate reads the SAME set the void, the day close and the guard read: a leg row on
+// a voided sibling invoice (evidence) or a VOID leg row still makes the sale grouped, so an ungrouped office cash row is
+// never a cash row that backs the figure.
+describe("servedTendered: the sale's set includes voided rows and a voided sibling invoice's leg rows", () => {
+  const office: Pay = pay("CASH", "20.00", { id: "office", paymentGroupId: null });
+
+  it("an ungrouped CASH row on a legacy sale backs the figure; with a leg row on a voided sibling it does not", () => {
+    expect(servedTendered(ORDER, "50.00", [office as never])).toBe(50);
+    const evidence = [{ paymentGroupId: legGroupId(ORDER, 0) }];
+    expect(servedTendered(ORDER, "50.00", [office as never], evidence)).toBeNull();
+    expect(servedChange(ORDER, "50.00", [office as never], 20, evidence)).toBeNull();
+  });
+
+  it("a VOID leg row on the same invoice does the same, with no evidence needed", () => {
+    const voidedLeg = leg(1, "CASH", "20.00", "VOID");
+    expect(servedTendered(ORDER, "50.00", [voidedLeg as never, office as never])).toBeNull();
+  });
+});

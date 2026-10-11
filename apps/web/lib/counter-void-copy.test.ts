@@ -19,7 +19,7 @@ describe("counter void copy (SA-762r)", () => {
       expect(counterVoidErrorCopy(err(409, code))).toBe(COUNTER_VOID_ERROR_COPY[code]);
       expect(counterVoidErrorCopy(err(409, code))).not.toMatch(/RAW SERVER TEXT/);
     }
-    expect(new Set(COUNTER_VOID_ERROR_CODES).size).toBe(8);
+    expect(new Set(COUNTER_VOID_ERROR_CODES).size).toBe(9);
   });
 
   it("the four void-only codes are in the app-wide coded copy map too (same sentences)", () => {

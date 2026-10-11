@@ -1,3 +1,5 @@
+import { OPEN_INVOICE_STATUS_VALUES } from "@routeflow/types";
+
 /**
  * Whether the invoice detail page offers "Send Reminder" (R4 / SA-770).
  *
@@ -11,7 +13,7 @@
  * PAID) hides the button here instead of failing on click. DRAFT / PAID / VOID / WRITTEN_OFF never qualify.
  * An unknown balance hides the button: never offer an action whose precondition cannot be shown.
  */
-const REMINDABLE_STATUSES: readonly string[] = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+const REMINDABLE_STATUSES: readonly string[] = OPEN_INVOICE_STATUS_VALUES;
 
 export function canSendReminder(inv: {
   status: string;

@@ -360,6 +360,47 @@ describe("refund flow", () => {
     expect(captureMutate).toHaveBeenCalledTimes(1);
   });
 
+  it("SA-750r3: a refund dated inside a closed day gets its own fixed copy; Retry is not offered, store credit is", async () => {
+    refundReturn.mockRejectedValueOnce(apiErr(409, "COUNTER_SALE_DAY_CLOSED"));
+    const { onRecorded } = await refundFlow();
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByText(REFUND_COPY.dayClosed);
+    expect(REFUND_COPY.dayClosed).toBe(
+      "Return saved. This day is closed, so the refund can't be paid out now. Give store credit instead, or record the refund on a later date.",
+    );
+    expect(document.body.textContent).not.toContain("SERVER RAW TEXT");
+    expect(screen.queryByText(REFUND_COPY.failed)).toBeNull();
+    // a retry would be refused again: only store credit (or closing) is the way out
+    expect(screen.queryByRole("button", { name: "Retry refund" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Give store credit instead" })).toBeInTheDocument();
+    expect(refundReturn).toHaveBeenCalledTimes(1);
+    // closing leaves the saved return reported as a pending refund (nothing was paid out)
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Close" }).find((b) => b.textContent === "Close")!,
+    );
+    expect(onRecorded).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "ret-1" }),
+      expect.objectContaining({ resolution: "REFUND", pending: true }),
+    );
+  });
+
+  it("SA-750r3: a walk-in (no store credit) on a closed day is told only the later date, with no store-credit button", async () => {
+    refundReturn.mockRejectedValueOnce(apiErr(409, "COUNTER_SALE_DAY_CLOSED"));
+    await refundFlow(quote({ customerIsWalkIn: true, paidMethods: ["CASH"] }));
+    fireEvent.click(confirmBtn(/^return & refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await screen.findByText(REFUND_COPY.dayClosedWalkIn);
+    expect(REFUND_COPY.dayClosedWalkIn).not.toMatch(/store credit/i);
+    expect(screen.queryByRole("button", { name: "Give store credit instead" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry refund" })).toBeNull();
+    expect(
+      screen.getAllByRole("button", { name: "Close" }).some((b) => b.textContent === "Close"),
+    ).toBe(true);
+  });
+
   it("REFUND_AMOUNT_CHANGED re-quotes and needs a fresh confirm with the new amount", async () => {
     refundReturn
       .mockRejectedValueOnce(apiErr(409, "REFUND_AMOUNT_CHANGED"))

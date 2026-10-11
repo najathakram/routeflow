@@ -17,12 +17,15 @@ const err = {
   },
 };
 
-function Harness({ error }: { error: unknown }) {
-  const guard = useOrderOverpayGuard({
-    id: "o1",
-    customerId: "c1",
-    customer: { businessName: "Acme" },
-  });
+function Harness({ error, editing = true }: { error: unknown; editing?: boolean }) {
+  const guard = useOrderOverpayGuard(
+    {
+      id: "o1",
+      customerId: "c1",
+      customer: { businessName: "Acme" },
+    },
+    editing,
+  );
   return (
     <div>
       <button onClick={() => guard.capture(error)}>go</button>
@@ -52,6 +55,25 @@ describe("useOrderOverpayGuard", () => {
   it("ignores other errors", () => {
     render(<Harness error={{ response: { status: 409, data: { code: "X" } } }} />);
     fireEvent.click(screen.getByText("go"));
+    expect(screen.queryByTestId("order-overpay-notice")).toBeNull();
+  });
+  it("Record a return and Dismiss are 44 px touch targets (jsdom has no layout, so the size class is asserted)", () => {
+    render(<Harness error={err} />);
+    fireEvent.click(screen.getByText("go"));
+    for (const name of ["Record a return", "Dismiss"]) {
+      expect(screen.getByRole("button", { name }).className).toMatch(/\bh-11\b/);
+    }
+  });
+  it("leaving edit mode clears a shown notice, and its return dialog", () => {
+    const { rerender } = render(<Harness error={err} editing />);
+    fireEvent.click(screen.getByText("go"));
+    fireEvent.click(screen.getByRole("button", { name: "Record a return" }));
+    expect(screen.getByTestId("order-overpay-notice")).toBeInTheDocument();
+    rerender(<Harness error={err} editing={false} />);
+    expect(screen.queryByTestId("order-overpay-notice")).toBeNull();
+    expect(screen.queryByTestId("return-dialog")).toBeNull();
+    // and coming back to edit mode does not resurrect it
+    rerender(<Harness error={err} editing />);
     expect(screen.queryByTestId("order-overpay-notice")).toBeNull();
   });
 });

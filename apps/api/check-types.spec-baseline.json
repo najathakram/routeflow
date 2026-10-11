@@ -5,7 +5,6 @@
   "src/billing/feature-config.spec.ts": 1,
   "src/billing/subscription-mutation.service.spec.ts": 1,
   "src/billing/tenant-config-snapshot-admin.service.spec.ts": 1,
-  "src/bookkeeping/bookkeeping.service.spec.ts": 4,
   "src/buyer/buyer-connect.spec.ts": 8,
   "src/common/invoiced-sales.spec.ts": 7,
   "src/common/list-params-sql-injection.security.spec.ts": 1,

@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 import {
   COUNTER_TENDER_DISPLAY_ORDER,
+  cashierNameOf,
   roundMoney,
   storedTaxRatePercent,
   sumConfirmed,
@@ -230,6 +231,8 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
       customerId: true,
       counterCashTendered: true,
       customer: { select: { businessName: true, isWalkIn: true } },
+      // row 317: the cashier's username only (their display name); never the email or any other user column
+      soldBy: { select: { username: true } },
       invoices: {
         orderBy: { createdAt: "asc" },
         select: {
@@ -278,6 +281,8 @@ export interface TodayOrderRecord {
   /** SA-764: the cash handed over (null = not a cash sale / rung before it was stored) */
   counterCashTendered?: unknown;
   customer: { businessName: string | null; isWalkIn: boolean | null } | null;
+  /** row 317: the staff user who rang the sale (`Order.soldBy`); null/absent on a sale rung before it was stamped */
+  soldBy?: { username: string | null } | null;
   invoices: Array<{
     id: string;
     invoiceNumber: string | null;
@@ -353,6 +358,8 @@ export function toTodaysSaleRow(
   const live = o.invoices.filter((i) => !isDeadInvoice(i.status));
   const voided = o.status === OrderStatus.CANCELLED || (o.invoices.length > 0 && live.length === 0);
   const payments = live.flatMap((i) => i.payments);
+  // the sale's whole set (every payment row of the order, a voided sibling invoice's too): it decides "is this sale grouped"
+  const saleRows = o.invoices.flatMap((i) => i.payments);
   const total = roundMoney(num(o.total));
   const paid = roundMoney(
     sumConfirmed(payments.map((p) => ({ amount: p.amount, status: p.status }))),
@@ -398,6 +405,7 @@ export function toTodaysSaleRow(
     customerId: o.customerId,
     customerName: o.customer?.businessName ?? "",
     isWalkIn,
+    cashierName: cashierNameOf(o.soldBy),
     status: o.status,
     total,
     paid,
@@ -405,8 +413,8 @@ export function toTodaysSaleRow(
     methods,
     paymentState,
     // row 347: the figure only while a counter-tender cash row backs it (the gate `change` below uses)
-    cashTendered: servedTendered(o.id, o.counterCashTendered, payments),
-    change: servedChange(o.id, o.counterCashTendered, payments, total),
+    cashTendered: servedTendered(o.id, o.counterCashTendered, payments, saleRows),
+    change: servedChange(o.id, o.counterCashTendered, payments, total, saleRows),
     // ONE home for the rate (pricing): a STORED line rate, corroborated by the configured rate; never inferred
     taxRatePercent: storedTaxRatePercent(
       live.map((i) => ({ lines: i.items ?? [] })),

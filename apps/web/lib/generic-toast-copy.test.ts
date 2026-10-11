@@ -321,6 +321,7 @@ describe("genericToastCopy: codes users rely on", () => {
         "RETURN_CAPTURE_SOURCE_CLOSED",
         /^Nothing was recorded: the sale this return refers to was voided or is no longer open\. Capture it against another sale, or without a reference\.$/,
       ],
+      ["REMINDER_NOT_ISSUED", /issued and is still unpaid/],
     ])("%s", (c, re) => {
       const copy = genericToastCopy(code(c));
       expect(copy).toMatch(re);

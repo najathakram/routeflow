@@ -1,6 +1,8 @@
 import {
   explainedTaxRatePercent,
+  formatReceiptMoney,
   receiptLineAmounts,
+  receiptLineDetail,
   roundMoney,
   taxRowLabel,
 } from "@routeflow/pricing";
@@ -12,7 +14,6 @@ import type {
   TodaysSaleMethod,
 } from "@routeflow/types";
 import { displayProductName } from "./product-display";
-import { priceUnitWord } from "./product-unit-label";
 
 /**
  * The counter-sale receipt as a pure view model. Line money goes through pricing's `receiptLineAmounts` (a boxed line is prorated,
@@ -72,9 +73,8 @@ export type CounterReceiptModel = ReceiptModel;
  */
 export const adjustmentLabel = taxRowLabel;
 
-/** Sign first: a downward reprice reads "-$1.00", never "$-1.00". */
-export const formatReceiptMoney = (n: number): string =>
-  `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
+/** Sign first: a downward reprice reads "-$1.00", never "$-1.00". The ONE formatter (pricing), shared with the emailed receipt. */
+export { formatReceiptMoney };
 
 const METHOD_LABEL: Record<CounterSalePaymentMethod, string> = {
   CASH: "Cash",
@@ -83,20 +83,8 @@ const METHOD_LABEL: Record<CounterSalePaymentMethod, string> = {
   ON_ACCOUNT: "On account",
 };
 
-const isBoxed = (l: ReceiptLineInput) => (l.unitsPerBox ?? 0) > 1;
-
-function lineDetail(l: ReceiptLineInput): string {
-  const price = formatReceiptMoney(l.unitPrice);
-  if (!isBoxed(l)) {
-    const unit = (l.unit ?? "").trim() ? ` / ${priceUnitWord(l.unit)}` : "";
-    return `${l.qty} × ${price}${unit}`;
-  }
-  const boxes = l.boxes ?? 0;
-  const pieces = l.pieces ?? 0;
-  const parts = [`${boxes} box${boxes === 1 ? "" : "es"}`];
-  if (pieces) parts.push(`${pieces} pcs`);
-  return `${parts.join(" + ")} × ${price} per box`;
-}
+/** "3 × $2.50 / each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the email prints. */
+const lineDetail = (l: ReceiptLineInput): string => receiptLineDetail(l);
 
 /** GET /orders/:id serialises Prisma Decimals as strings ("3.30"): coerce, and treat anything non-numeric as 0. */
 const num = (v: unknown): number => Number(v ?? 0) || 0;
@@ -194,21 +182,41 @@ export function buildCounterReceipt(input: {
     }
   }
 
-  // The stored lines the response serves (the invoice lines): the LIST price and type each cart line was sold at. A cart
-  // line takes the first unused stored line of its product; none (an older server) means nothing is struck, never the tier price.
-  const stored = [...(receipt.lines ?? [])];
-  const takeStored = (productId: string | undefined) => {
-    const i = productId ? stored.findIndex((s) => s.productId === productId) : -1;
-    return i < 0 ? undefined : stored.splice(i, 1)[0];
+  // The stored lines the response serves (the invoice lines): the LIST price and type each cart line was sold at. Matched in
+  // two passes so a fallback can never take a line a later cart line matches exactly: (1) EVERY cart line takes the first
+  // unused stored line of its product AT ITS OWN NET PRICE (two lines of one product at different prices must not swap their
+  // list prices); (2) a line whose price the server did not store (a re-priced tier) takes the first unused line of the
+  // product. None (an older server) means nothing is struck, never the tier price.
+  const stored = receipt.lines ?? [];
+  const taken = new Set<number>();
+  const facts: Array<(typeof stored)[number] | undefined> = lines.map(() => undefined);
+  const claim = (at: number, row: number) => {
+    taken.add(at);
+    facts[row] = stored[at];
   };
-  const rows = lines.map((l) => {
+  lines.forEach((l, row) => {
+    if (!l.productId) return;
+    const at = stored.findIndex(
+      (s, k) =>
+        !taken.has(k) &&
+        s.productId === l.productId &&
+        roundMoney(s.unitPrice) === roundMoney(l.unitPrice),
+    );
+    if (at >= 0) claim(at, row);
+  });
+  lines.forEach((l, row) => {
+    if (!l.productId || facts[row]) return;
+    const at = stored.findIndex((s, k) => !taken.has(k) && s.productId === l.productId);
+    if (at >= 0) claim(at, row);
+  });
+  const rows = lines.map((l, row) => {
     // ONE rule for a lowered price (pricing's receiptLineAmounts, shared with the reprint and the emailed receipt), on the
     // invoices' own original-price rule: the struck base is the stored list price.
-    const facts = takeStored(l.productId);
+    const sold = facts[row];
     const { total, original, discount } = receiptLineAmounts({
       unitPrice: l.unitPrice,
-      originalPrice: facts?.originalPrice ?? null,
-      priceType: facts?.priceType,
+      originalPrice: sold?.originalPrice ?? null,
+      priceType: sold?.priceType,
       hideOriginalPrice: !!profile?.hideOriginalPrice,
       qty: l.qty,
       boxes: l.boxes,
@@ -358,7 +366,7 @@ export function formatSaleTime(at: string | Date, timeZone: string = "UTC"): str
 export function receiptModelFromOrder(input: {
   order: ReprintOrderLike;
   sale: ReprintSaleFacts;
-  /** Omit on a reprint: the Order stores no creator, so the original cashier is unknown. */
+  /** The sale's stored cashier (the Today's-sales row's `cashierName`); null/omitted on a sale rung before it was stamped. */
   cashier?: string | null;
   profile: ReceiptBusinessProfile | null | undefined;
 }): CounterReceiptModel {

@@ -30,6 +30,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { TenantContextService } from "../../tenant/tenant-context.service";
 import { CounterSaleService } from "./counter-sale.service";
 import { legGroupId } from "./counter-tender-row";
+import { pickupTenderGroupId } from "./pickup-tender-group";
 import { assertCashRefundWithinCap } from "../../returns/cash-refund-cap";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 
@@ -400,6 +401,59 @@ describeDb("split payment — counter sale tender on real Postgres", () => {
     expect(err?.getStatus?.()).toBe(409);
     expect(err.getResponse().code).toBe("COUNTER_TENDER_CHANGED");
     expect(await rowsOf(orderId)).toHaveLength(1);
+  });
+
+  // A1: with no leg-grouped row, only the ONE predicate's ungrouped tender is the sale's (readStoredTender's legacy branch).
+  describe("a sale with no leg-grouped row: a hand-over's cash and office rows are not its tender", () => {
+    const addRow = async (
+      orderId: string,
+      p: { amount: number; method: string; group?: string | null; checkStatus?: string },
+    ) => {
+      const invoice = await raw.invoice.findFirstOrThrow({ where: { orderId } });
+      return raw.invoicePayment.create({
+        data: {
+          invoiceId: invoice.id,
+          tenantId,
+          amount: p.amount,
+          method: p.method as never,
+          status: "PAID",
+          paidAt: new Date(),
+          paymentGroupId: p.group ?? null,
+          ...(p.checkStatus ? { checkStatus: p.checkStatus as never } : {}),
+        },
+      });
+    };
+
+    it("an ON_ACCOUNT sale, then the pickup hand-over's cash: by-key still reads ON_ACCOUNT (the named-customer replay is pinned in the unit spec)", async () => {
+      nextInvoices = [{ id: randomUUID(), total: 37.25 }];
+      const key = `onacct-${randomUUID()}`;
+      const orderId = await seedSale(key);
+      const handOver = await addRow(orderId, {
+        amount: 37.25,
+        method: "CASH",
+        group: pickupTenderGroupId(orderId),
+      });
+      const byKey = await tenantCtx.run(tenantId, () => service.byKey(key));
+      expect(byKey.method).toBe("ON_ACCOUNT");
+      expect(byKey.paymentId).toBeUndefined();
+      expect(byKey.payments ?? []).toEqual([]);
+      expect(byKey.paymentId).not.toBe(handOver.id);
+      expect(await rowsOf(orderId)).toHaveLength(1);
+    });
+
+    it("a legacy CASH sale, then an office ACH row on the invoice: the same-key retry is a replay, never 409", async () => {
+      nextInvoices = [{ id: randomUUID(), total: 37.25 }];
+      const key = `legacy-${randomUUID()}`;
+      const orderId = await seedSale(key);
+      const till = await addRow(orderId, { amount: 37.25, method: "CASH" });
+      await raw.order.update({ where: { id: orderId }, data: { counterCashTendered: 50 } });
+      await addRow(orderId, { amount: 5, method: "ACH" });
+      await addRow(orderId, { amount: 7, method: "CHECK", checkStatus: "DEPOSITED" });
+      const r = await ring({ payment: { method: "CASH", amount: 50 } }, key);
+      expect(r).toMatchObject({ replayed: true, method: "CASH", paymentId: till.id });
+      expect(r.payments).toEqual([{ method: "CASH", amount: 37.25, paymentIds: [till.id] }]);
+      expect(await rowsOf(orderId)).toHaveLength(3);
+    });
   });
 
   it("two concurrent same-key submits take the real counter-tender lock and record ONE tender", async () => {

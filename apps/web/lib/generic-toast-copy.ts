@@ -9,6 +9,7 @@ import {
 } from "./credit-note-error-copy";
 import { creditLimitSentence } from "./credit-limit-copy";
 import { COUNTER_VOID_ERROR_COPY } from "./counter-void-copy";
+import { COUNTER_SALE_DAY_CLOSED_COPY, DAY_CLOSED_FOR_PAYMENT_DATE_COPY } from "./day-closed-copy";
 import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
 import { ORDER_OVERPAY_GENERIC_COPY } from "./order-overpay";
 import { parsePlanGate } from "./plan-gate";
@@ -75,6 +76,8 @@ const CODE_COPY: Record<string, string> = {
     "Too many invoices are overdue to list at once. Filter by customer, then try again.",
   [API_ERROR_CODES.REMINDER_NO_BALANCE_DUE]:
     "This invoice has no balance due, so there is nothing to remind about.",
+  [API_ERROR_CODES.REMINDER_NOT_ISSUED]:
+    "A reminder can only be sent for an invoice that has been issued and is still unpaid.",
   EMAIL_NOT_CONFIGURED:
     "Email isn't set up for this workspace yet. Connect it under Settings → Email, then try again.",
   EMAIL_SEND_FAILED:
@@ -120,6 +123,10 @@ const CODE_COPY: Record<string, string> = {
     COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_NOT_TODAY],
   [API_ERROR_CODES.COUNTER_SALE_VOID_BUSY]:
     COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_BUSY],
+  // SA-750r3: the end-of-day close refusals. The FALLBACK for any dialog with no copy of its own (a void-payment, a bookkeeping
+  // payment, a refund): a surface with a better next step (Void: Return, Refund: store credit) says it itself.
+  [API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED]: COUNTER_SALE_DAY_CLOSED_COPY,
+  [API_ERROR_CODES.DAY_CLOSED_FOR_PAYMENT_DATE]: DAY_CLOSED_FOR_PAYMENT_DATE_COPY,
   // P-4: the one overpay copy (order-overpay.ts); a surface with the structured numbers uses orderOverpayCopy.
   [API_ERROR_CODES.ORDER_EDIT_WOULD_OVERPAY]: ORDER_OVERPAY_GENERIC_COPY,
   HANDOFF_CODE_INVALID: "This sign-in link is invalid or has expired. Sign in again.",
