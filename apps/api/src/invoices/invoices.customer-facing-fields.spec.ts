@@ -42,6 +42,8 @@ function serviceReading(row: ReturnType<typeof invoiceRow>) {
   const findMany = jest.fn().mockResolvedValue([row]);
   Object.assign(service, {
     prisma: {
+      // SA-770: findAll resolves the tenant for the overdue balance filter (a no-op without isOverdue)
+      getTenantId: () => "tenant-1",
       forTenant: () => ({
         invoice: {
           findUnique: jest.fn().mockResolvedValue(row),

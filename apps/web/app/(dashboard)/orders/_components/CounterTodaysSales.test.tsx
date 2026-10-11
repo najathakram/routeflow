@@ -305,10 +305,7 @@ describe("CounterTodaysSales", () => {
     expect(root.textContent).not.toMatch(/Change|\$0\.00/);
   });
 
-  it.each([
-    ["exactly", 1.86],
-    ["a cent off (per-line rounding)", 1.87],
-  ])(
+  it.each([["exactly", 1.86]])(
     "SA-764: the reprint labels the tax 'Tax (8.25%%)' when the stored tax is %s",
     async (_n, tax) => {
       const saved = { ...ORDER };

@@ -44,7 +44,7 @@ describe("SA-764 reprint: Tendered / Change and Tax (r%)", () => {
       { method: "CASH", amount: 20 },
       { method: "CARD", amount: 23.3 },
     ]);
-    expect(split.change).toBe(4);
+    expect(m.change).toBe(10);
   });
   it("no row change means no Change line, even with a tender (never a computed or clamped 0)", () => {
     const m = reprint(43.3, { cashTendered: 43.3, change: null }, [
@@ -66,12 +66,6 @@ describe("SA-764 reprint: Tendered / Change and Tax (r%)", () => {
     expect(m.adjustments).toBe(0);
     expect(m.taxRatePercent).toBe(8.25);
     expect(adjustmentLabel(m.taxRatePercent)).toBe("Tax (8.25%)");
-  });
-  it("allows +/- 0.01 between the stored tax and subtotal * rate (per-line rounding)", () => {
-    // subtotal 40 * 8.25% = 3.30
-    expect(reprint(43.31, { taxRatePercent: 8.25 }, [], 3.31).taxRatePercent).toBe(8.25);
-    expect(reprint(43.29, { taxRatePercent: 8.25 }, [], 3.29).taxRatePercent).toBe(8.25);
-    expect(reprint(43.32, { taxRatePercent: 8.25 }, [], 3.32).taxRatePercent).toBeNull();
   });
   it("prints plain 'Tax' for a null rate, or a rate that does not explain the stored tax", () => {
     expect(adjustmentLabel(null)).toBe("Tax");

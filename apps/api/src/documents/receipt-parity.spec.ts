@@ -1,13 +1,3 @@
-// The web receipt builders import the product-name helper through the web app's `@/` alias, which this package's Jest does not
-// map; it is only reached for a catalogue product, and the fixture's lines are ad-hoc, so a virtual stand-in is enough.
-jest.mock(
-  "@/lib/product-display",
-  () => ({ displayProductName: (p: { name: string }) => p.name }),
-  {
-    virtual: true,
-  },
-);
-
 import { roundMoney } from "@routeflow/pricing";
 import type { ReceiptModel } from "@routeflow/types";
 import {

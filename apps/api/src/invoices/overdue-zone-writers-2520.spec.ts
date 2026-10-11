@@ -221,9 +221,9 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       return { svc, tenantCtx, log, warn };
     };
     const valuesOf = (c: any[]) => c[0].values as unknown[];
-    const callFor = (fn: jest.Mock, tenantId: string) =>
+    const callFor = (fn: { mock: { calls: any[][] } }, tenantId: string) =>
       fn.mock.calls.find((c: any[]) => valuesOf(c).includes(tenantId))!;
-    const cutoffFor = (fn: jest.Mock, tenantId: string) =>
+    const cutoffFor = (fn: { mock: { calls: any[][] } }, tenantId: string) =>
       new Date(
         valuesOf(callFor(fn, tenantId)).find(
           (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v),
@@ -245,7 +245,7 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       expect(due < cutoffFor(prisma.$executeRaw, "t-utc")).toBe(true);
       // #2567: the write itself: one UPDATE per tenant, and it sets OVERDUE and nothing else.
       expect(prisma.$executeRaw).toHaveBeenCalledTimes(3);
-      for (const c of prisma.$executeRaw.mock.calls) {
+      for (const c of prisma.$executeRaw.mock.calls as any[][]) {
         expect(valuesOf(c)).toContain("OVERDUE");
         expect(c[0].sql).toMatch(
           /^\s*UPDATE "Invoice"[\s\S]*SET "status"\s*=\s*\?::"InvoiceStatus",\s*"updatedAt"\s*=\s*NOW\(\)\s+WHERE/,
@@ -257,7 +257,7 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
       process.env.OVERDUE_SWEEP_MODE = "enforced";
       const { svc } = sweep();
       await svc.markOverdue(now, "enforced");
-      for (const c of prisma.$executeRaw.mock.calls) {
+      for (const c of prisma.$executeRaw.mock.calls as any[][]) {
         // total - SUM(confirmed payments) > 0.005, decided by Postgres inside the one statement
         expect(c[0].sql).toMatch(/"i"\."total"\s*-\s*COALESCE\(/);
         expect(c[0].sql).toMatch(/,\s*0\)\s*>\s*0\.005/);
@@ -268,7 +268,7 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
     it("B2: only SENT and VIEWED are ever flipped (never PARTIAL)", async () => {
       const { svc } = sweep();
       await svc.markOverdue(now, "enforced");
-      for (const c of prisma.$executeRaw.mock.calls) {
+      for (const c of prisma.$executeRaw.mock.calls as any[][]) {
         expect(valuesOf(c)).toEqual(expect.arrayContaining(["SENT", "VIEWED"]));
         expect(valuesOf(c)).not.toContain("PARTIAL");
       }
@@ -284,7 +284,7 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
         await svc.runScheduled();
         expect(prisma.$executeRaw).not.toHaveBeenCalled();
         expect(prisma.$queryRaw).toHaveBeenCalledTimes(3);
-        for (const c of prisma.$queryRaw.mock.calls) {
+        for (const c of prisma.$queryRaw.mock.calls as any[][]) {
           expect(valuesOf(c)).toEqual(expect.arrayContaining(["SENT", "VIEWED", "PAID"]));
           expect(c[0].sql).toMatch(/COUNT\(\*\)/i);
         }

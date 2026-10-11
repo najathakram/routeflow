@@ -11,8 +11,8 @@ import type {
   ReceiptModel,
   TodaysSaleMethod,
 } from "@routeflow/types";
-import { displayProductName } from "@/lib/product-display";
-import { priceUnitWord } from "@/lib/product-unit-label";
+import { displayProductName } from "./product-display";
+import { priceUnitWord } from "./product-unit-label";
 
 /**
  * The counter-sale receipt as a pure view model. Line money goes through `computeLineSubtotal` (a boxed line is prorated,
