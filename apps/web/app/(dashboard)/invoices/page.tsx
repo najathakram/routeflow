@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { PageHeader, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { resolveConfirmedAmounts } from "@routeflow/pricing";
+import { OPEN_INVOICE_STATUS_LIST } from "@/lib/open-invoice-status";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
@@ -99,7 +100,7 @@ export function resolveInvoiceListBalance(
  * due-window query doesn't surface invoices that are already settled or not
  * yet issued — reusing the existing mechanism rather than inventing a new one.
  */
-const UNPAID_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+const UNPAID_STATUSES: string[] = [...OPEN_INVOICE_STATUS_LIST];
 
 type DueChipKey = "today" | "tomorrow" | "7d";
 

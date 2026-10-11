@@ -15,7 +15,8 @@ import {
   type PaymentListParams,
   type StandalonePaymentDto,
 } from "@/lib/api/invoices";
-import { useInvoices, type InvoiceStatus } from "@/lib/api/invoices";
+import { useInvoices } from "@/lib/api/invoices";
+import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { clampAllocationInput } from "@/lib/payment-allocation";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
@@ -40,10 +41,8 @@ const BANK_DATE_LABEL = "Money received in bank";
 const BANK_DATE_HELP =
   "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
 
-/** Statuses a payment can land on. Filtered CLIENT-side: ListInvoicesDto
- *  validates `status` as a single enum value, so a comma-list 400s server-side
- *  (mirrors mobile payments/record). */
-const OPEN_STATUSES: InvoiceStatus[] = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+// A payment can land on the open statuses (isOpenInvoiceStatus). Filtered CLIENT-side: ListInvoicesDto
+// validates `status` as a single enum value, so a comma-list 400s server-side (mirrors mobile payments/record).
 
 // ─── Sort helper ───────────────────────────────────────────────────────────────
 
@@ -87,7 +86,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const customerInvoices = React.useMemo(() => {
     if (!customerId || !invoicesData?.data) return [];
     return invoicesData.data
-      .filter((inv) => OPEN_STATUSES.includes(inv.status) && (inv.balanceDue ?? 0) > 0.001)
+      .filter((inv) => isOpenInvoiceStatus(inv.status) && (inv.balanceDue ?? 0) > 0.001)
       .sort((a, b) =>
         (a.issueDate ?? a.createdAt ?? "").localeCompare(b.issueDate ?? b.createdAt ?? ""),
       );
