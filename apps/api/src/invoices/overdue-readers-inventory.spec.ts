@@ -105,8 +105,14 @@ const BOOKKEEPING_BALANCE_READERS = [
   "getInvoiceDetailsReport",
   "getBadDebtsReport",
   "getArAgingDetails",
-  "getReceivableSummary",
 ];
+
+/**
+ * OWNER RULING 2026-10-11: the Receivable Summary report (and ONLY that report) shows an overpayment as a
+ * NEGATIVE invoice-row balance via `signedBalance`. It is the one reader that uses it, and it no longer
+ * calls confirmedBalance (so it is deliberately NOT in BOOKKEEPING_BALANCE_READERS).
+ */
+const SIGNED_BALANCE_READER = "getReceivableSummary";
 
 const CUTOFF_READER = [
   /\boverdueCutoff\s*\(/,
@@ -192,6 +198,51 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
       );
     },
   );
+
+  // OWNER RULING 2026-10-11 — signed (unclamped) balance is a Receivable-Summary-only exception to row 310.
+  describe("signedBalance is the Receivable Summary's alone (owner ruling 2026-10-11)", () => {
+    const bookkeeping = () =>
+      stripComments(
+        fs.readFileSync(path.join(SRC_ROOT, "bookkeeping/bookkeeping.service.ts"), "utf8"),
+      );
+
+    it(`${SIGNED_BALANCE_READER} computes its invoice-row balance through signedBalance`, () => {
+      const body = methodSource(bookkeeping(), SIGNED_BALANCE_READER);
+      expect(body).toMatch(/\bsignedBalance\(inv\.total, inv\.payments\)/);
+      expect(body).not.toMatch(/\bconfirmedBalance\(/);
+      expect(body).not.toMatch(
+        /Number\((inv|i|invoice)\.total\)\s*-\s*(paid|inv\.payments|sumConfirmed)/,
+      );
+    });
+
+    it.each(BOOKKEEPING_BALANCE_READERS)(
+      "bookkeeping %s stays on the clamped confirmedBalance and never calls signedBalance (row 310)",
+      (name) => {
+        const body = methodSource(bookkeeping(), name);
+        expect(body).toMatch(/\bconfirmedBalance\(/);
+        expect(body).not.toMatch(/\bsignedBalance\b/);
+      },
+    );
+
+    it("signedBalance appears in no other source file than its definition, bookkeeping.service.ts and the one reader", () => {
+      const files = walk(SRC_ROOT)
+        .filter((f) => /\bsignedBalance\b/.test(stripComments(fs.readFileSync(f, "utf8"))))
+        .map(norm)
+        .sort();
+      // owner ruling 2026-10-11: Receivable Summary only; every other surface uses the clamped
+      // confirmedBalance. A new reader of signedBalance needs a new owner ruling, not a quiet import.
+      expect(files).toEqual([
+        "bookkeeping/bookkeeping.service.ts",
+        "invoices/invoice-balance-classify.ts",
+      ]);
+      // and inside bookkeeping.service.ts every use is in the one method
+      const src = bookkeeping();
+      const body = methodSource(src, SIGNED_BALANCE_READER);
+      const total = src.match(/\bsignedBalance\(/g)?.length ?? 0;
+      expect(total).toBe(body.match(/\bsignedBalance\(/g)?.length ?? -1);
+      expect(total).toBe(1);
+    });
+  });
 
   // What each classifier user must actually CALL (an import alone proves nothing).
   const REQUIRED_CALL: Record<string, RegExp> = {

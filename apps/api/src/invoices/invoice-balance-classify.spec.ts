@@ -8,6 +8,7 @@ import { overdueCutoff } from "../common/calendar-date";
 import {
   classifyInvoiceBalance,
   confirmedBalance,
+  signedBalance,
   summarizeOpenInvoices,
 } from "./invoice-balance-classify";
 
@@ -41,6 +42,39 @@ describe("confirmedBalance — total minus CONFIRMED payments, floored at zero, 
   it("tolerates a missing payments relation", () => {
     expect(confirmedBalance(50, undefined)).toBe(50);
     expect(confirmedBalance("50.00", null)).toBe(50);
+  });
+});
+
+describe("signedBalance — owner ruling 2026-10-11: the Receivable Summary's unclamped balance", () => {
+  it.each([
+    ["unpaid", 100, [], 100],
+    ["partial", 100, [pay(60)], 40],
+    ["exactly paid", 100, [pay(100)], 0],
+    ["overpaid by $10 is -10, not 0", 100, [pay(110)], -10],
+    [
+      "a VOID / DRAFT / PENDING payment never counts",
+      100,
+      [pay(100, "VOID"), pay(5, "DRAFT")],
+      100,
+    ],
+    ["a credit-note application counts like cash", 100, [pay(110, "PAID", "CREDIT_NOTE")], -10],
+    [
+      "11 x $0.10 against $1.10 is 0 (cents first), not 2e-16",
+      1.1,
+      Array.from({ length: 11 }, () => pay(0.1)),
+      0,
+    ],
+  ])("%s", (_l, total, payments, want) => {
+    const got = signedBalance(total, payments);
+    expect(got).toBe(want);
+    expect(Object.is(got, -0)).toBe(false);
+  });
+
+  it("agrees with confirmedBalance wherever the balance is not negative", () => {
+    for (const p of [[], [pay(40)], [pay(100)], [pay(99.99)]]) {
+      expect(signedBalance(100, p)).toBe(confirmedBalance(100, p));
+    }
+    expect(confirmedBalance(100, [pay(110)])).toBe(0); // the clamp stays the default everywhere else
   });
 });
 
