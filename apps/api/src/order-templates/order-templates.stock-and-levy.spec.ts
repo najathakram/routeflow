@@ -194,8 +194,8 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
         { orderId: "o1", notes: "TEMPLATE:t1", performedById: null },
       );
 
-      // $executeRaw = the FOR UPDATE lock; $queryRaw = the aggregated UPDATE … RETURNING.
-      expect(executeRaw).toHaveBeenCalledTimes(1);
+      // $executeRaw = SET LOCAL lock_timeout, then the FOR UPDATE lock; $queryRaw = the aggregated UPDATE … RETURNING.
+      expect(executeRaw).toHaveBeenCalledTimes(2);
       expect(queryRaw).toHaveBeenCalledTimes(1);
       const updateValues = queryRaw.mock.calls[0][1]; // first interpolated value: the VALUES row
       // Prisma.sql's join of a single-entry array yields ONE Sql fragment whose own

@@ -35,6 +35,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { decrementStockForSale } from "../orders/order-stock";
 import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
 import { lockProductsForStock, PRODUCT_LOCK_RANK_SQL } from "./product-locks";
+import { stockTxRetryState } from "./tx-retry";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -44,6 +45,10 @@ const sqlState = (err: any): string | undefined =>
 const isDeadlock = (err: unknown) =>
   err !== undefined &&
   (sqlState(err) === "40P01" || /deadlock/i.test(String((err as any)?.message)));
+const isLockTimeout = (err: any) =>
+  sqlState(err) === "55P03" ||
+  err?.meta?.code === "55P03" ||
+  /lock timeout/i.test(String(err?.message));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** The pre-SA-767 `InventoryService.lockProducts`: sorted ids, one lock statement per id. */
@@ -462,6 +467,60 @@ describeDb("SA-767 L-1 — lockProductsForStock (real Postgres)", () => {
     expect(await stock(foreign)).toBe(100);
     expect(await prisma.stockMovement.count({ where: { productId: foreign } })).toBe(0);
     expect(await prisma.stockMovement.count({ where: { productId: own } })).toBe(1);
+  }, 60_000);
+
+  it("(v) a Product row held past STOCK_LOCK_TIMEOUT makes the helper fail with 55P03, holding nothing", async () => {
+    // r-note 2 (c): the helper's SET LOCAL lock_timeout bounds EVERY stock writer's lock wait. The old
+    // helper waited for as long as the holder held the row. Tx timeout 30 s so the 55P03 (not
+    // Prisma's own 5 s budget, P2028) is what ends the wait; one 5.5 s wait, a single case.
+    const tenantId = await seedTenant("lto");
+    const id = `${run}-lto-${seq}`;
+    await mkProduct(tenantId, id, "STANDARD", 10);
+    const holder = await pool.connect();
+    try {
+      await holder.query("BEGIN");
+      await holder.query('SELECT id FROM "Product" WHERE id = $1 FOR UPDATE', [id]);
+
+      const started = Date.now();
+      let settled: { err?: any; ms: number } | undefined;
+      const attempt = tenantCtx
+        .run(tenantId, () =>
+          prisma.tenantTransaction(
+            async (tx: any) => {
+              await lockProductsForStock(tx, tenantId, [id]);
+            },
+            { timeout: 30_000, maxWait: 15_000 },
+          ),
+        )
+        .then(
+          () => (settled = { ms: Date.now() - started }),
+          (err) => (settled = { err, ms: Date.now() - started }),
+        );
+      await sleep(5_500 + 1_000);
+      const observed = settled; // still pending here on the old helper (it waits for the holder)
+      await holder.query("ROLLBACK");
+      await attempt;
+      console.log(
+        `SA-767(v) observed: settledBeforeRelease=${!!observed} ms=${settled?.ms} ` +
+          `code=${(settled?.err as any)?.code} state=${sqlState(settled?.err)} ` +
+          `name=${settled?.err?.name} adapterCode=${settled?.err?.meta?.driverAdapterError?.cause?.originalCode} ` +
+          `msg=${String(settled?.err?.message).slice(0, 160)}`,
+      );
+
+      expect(observed).toBeDefined();
+      expect(observed!.err).toBeDefined();
+      expect(isLockTimeout(observed!.err)).toBe(true);
+      // ...and the stock retry recognises the exact shape Prisma 7 + the pg adapter produce
+      expect(stockTxRetryState(observed!.err)).toBe("55P03");
+      expect(observed!.ms).toBeGreaterThanOrEqual(4_500);
+      expect(observed!.ms).toBeLessThan(7_000);
+      // the helper's SET LOCAL ended with its tx: a plain connection is untouched
+      const { rows } = await pool.query("SHOW lock_timeout");
+      expect(rows[0].lock_timeout).toBe("0");
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      holder.release();
+    }
   }, 60_000);
 
   it("refuses an empty tenant id, and an empty id list issues no statement", async () => {

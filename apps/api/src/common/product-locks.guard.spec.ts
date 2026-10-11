@@ -102,6 +102,18 @@ describe("SA-767 L-1 — lockProductsForStock is the one Product stock lock", ()
     expect(comment).toMatch(/common\/product-locks\.ts/);
   });
 
+  it("SET LOCAL lock_timeout is the helper's FIRST statement, before the lock (r-note 2 (c))", () => {
+    expect(helper).toMatch(/export const STOCK_LOCK_TIMEOUT\s*=\s*"5s"/);
+    const set = helper.search(/SET LOCAL lock_timeout\s*=/);
+    const lock = helper.search(/FOR UPDATE/);
+    expect(set).toBeGreaterThan(-1);
+    expect(set).toBeLessThan(lock);
+    // after the empty-tenant / empty-ids guards (nothing to lock = no statement), before the lock
+    expect(helper.search(/if\s*\(\s*ids\.length === 0\s*\)\s*return/)).toBeLessThan(set);
+    // SET LOCAL only: a session-level SET would leak the timeout to the pooled connection
+    expect(helper).not.toMatch(/SET lock_timeout/);
+  });
+
   it("refuses an empty tenant id (never an unfiltered lock)", () => {
     expect(helper).toMatch(/if\s*\(\s*!tenantId\s*\)\s*throw/);
   });

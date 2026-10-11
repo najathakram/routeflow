@@ -18,6 +18,10 @@ import { StockAlertService } from "../stock-alerts/stock-alert.service";
 const D = (n: number | string) => new Prisma.Decimal(n);
 const deadlock = () => Object.assign(new Error("deadlock detected"), { code: "40P01" });
 const conflict = () => Object.assign(new Error("write conflict"), { code: "P2034" });
+// SA-767 r-note 2 (c): SET LOCAL lock_timeout gives up with 55P03; Prisma's tx budget expires as P2028.
+const lockTimeout = () =>
+  Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" });
+const txTimeout = () => Object.assign(new Error("Transaction API error"), { code: "P2028" });
 
 interface Writer {
   name: string;
@@ -191,6 +195,8 @@ describe.each(WRITERS)("$name tx retry (SA-767 L-2)", (writer) => {
   it.each([
     ["40P01 deadlock", deadlock],
     ["P2034 conflict", conflict],
+    ["55P03 lock timeout", lockTimeout],
+    ["P2028 tx timeout", txTimeout],
   ])("a %s mid-body re-runs the whole tx; the write lands exactly once", async (_n, mk) => {
     // The first product write fails: the attempt has already taken its lock and (for a purchase) its lot.
     prisma.product.update.mockRejectedValueOnce(mk());
@@ -206,18 +212,25 @@ describe.each(WRITERS)("$name tx retry (SA-767 L-2)", (writer) => {
     }
   });
 
-  it("a 40P01 on EVERY attempt is a coded 503 LOCK_UNAVAILABLE; nothing commits, no alerts", async () => {
-    prisma.product.update.mockRejectedValue(deadlock());
-    const committed = trackRollbacks();
+  it.each([
+    ["40P01", deadlock],
+    ["55P03", lockTimeout],
+    ["P2028", txTimeout],
+  ])(
+    "a %s on EVERY attempt is a coded 503 LOCK_UNAVAILABLE; nothing commits, no alerts",
+    async (_n, mk) => {
+      prisma.product.update.mockRejectedValue(mk());
+      const committed = trackRollbacks();
 
-    const err: any = await writer.call(service).catch((e) => e);
+      const err: any = await writer.call(service).catch((e) => e);
 
-    expect(err).toBeInstanceOf(ServiceUnavailableException);
-    expect(err.getResponse()).toMatchObject({ code: "LOCK_UNAVAILABLE" });
-    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
-    expect(committed()).toEqual({ movement: 0, lot: 0, product: 0 });
-    expect(alerts).not.toHaveBeenCalled();
-  });
+      expect(err).toBeInstanceOf(ServiceUnavailableException);
+      expect(err.getResponse()).toMatchObject({ code: "LOCK_UNAVAILABLE" });
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
+      expect(committed()).toEqual({ movement: 0, lot: 0, product: 0 });
+      expect(alerts).not.toHaveBeenCalled();
+    },
+  );
 
   it("a non-conflict error propagates after ONE attempt and fires no alerts", async () => {
     prisma.product.update.mockRejectedValueOnce(new BadRequestException("nope"));

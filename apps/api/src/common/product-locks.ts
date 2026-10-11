@@ -51,6 +51,14 @@ export const PRODUCT_LOCK_RANK_SQL = Prisma.sql`CASE
     ELSE 2
   END`;
 
+/**
+ * How long a stock-writer tx waits for ANY lock (this helper's row locks and the later row writes)
+ * before Postgres gives up with 55P03. Bounds the wait behind a long holder (a count commit, a
+ * stuck session) to 5 s instead of the 120 s of a hung request; `retryStockTx` re-runs the tx and
+ * an exhausted retry is the coded 503 LOCK_UNAVAILABLE (SA-767 r-note 2 (c)).
+ */
+export const STOCK_LOCK_TIMEOUT = "5s";
+
 export async function lockProductsForStock(
   tx: LockTx,
   tenantId: string | null | undefined,
@@ -59,6 +67,8 @@ export async function lockProductsForStock(
   if (!tenantId) throw new Error("lockProductsForStock: tenantId is required");
   const ids = [...new Set(productIds)];
   if (ids.length === 0) return;
+  // SET LOCAL: ends with this tx, so the pooled connection never carries the timeout out.
+  await tx.$executeRaw`SET LOCAL lock_timeout = ${Prisma.raw(`'${STOCK_LOCK_TIMEOUT}'`)}`;
   await tx.$executeRaw`
     SELECT p.id FROM "Product" p
     WHERE p."tenantId" = ${tenantId} AND p.id = ANY(${ids}::text[])

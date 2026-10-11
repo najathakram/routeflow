@@ -51,9 +51,18 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
     jest.spyOn(service, "fireStockAlerts").mockImplementation(() => undefined);
   });
 
+  /** The `FOR UPDATE` statements among the raw calls (the helper's `SET LOCAL lock_timeout` is not one). */
+  const lockCalls = () =>
+    lockStatement.mock.calls
+      .map((c, i) => ({
+        sql: (c[0] as string[]).join("?"),
+        order: lockStatement.mock.invocationCallOrder[i],
+      }))
+      .filter((c) => c.sql.includes("FOR UPDATE"));
+
   /** The lock statement ran before the call number `n` (1-based) of `fn`. */
   const lockedBefore = (fn: jest.Mock, n: number) =>
-    lockStatement.mock.invocationCallOrder[0] < fn.mock.invocationCallOrder[n - 1];
+    lockCalls()[0].order < fn.mock.invocationCallOrder[n - 1];
 
   it("recordPurchase blends from the locked 20 @ 3.00, not the stale 10 @ 2.00", async () => {
     prisma.product.findUnique
@@ -67,7 +76,7 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
     expect(prisma.product.update.mock.calls[0][0].data.averageCost.toString()).toBe("3.2");
     expect(prisma.stockMovement.create.mock.calls[0][0].data.avgCostAfter.toString()).toBe("3.2");
     expect(prisma.stockMovement.create.mock.calls[0][0].data.stockAfter.toString()).toBe("25");
-    expect(lockStatement).toHaveBeenCalledTimes(1);
+    expect(lockCalls()).toHaveLength(1);
     expect(lockedBefore(prisma.product.findUnique, 2)).toBe(true);
     expect(lockedBefore(prisma.product.update, 1)).toBe(true);
   });
@@ -104,7 +113,7 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
     expect(movement.quantity.toString()).toBe("20");
     expect(movement.stockAfter.toString()).toBe("90"); // the counter the update RETURNED
     expect(lockedBefore(prisma.product.findMany, 2)).toBe(true);
-    expect(lockStatement).toHaveBeenCalledTimes(1);
+    expect(lockCalls()).toHaveLength(1);
   });
 
   it("the movement's stockAfter is the counter the update returned, whatever the delta implied", async () => {
@@ -145,7 +154,7 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
       "u-1",
     );
 
-    expect(lockStatement).toHaveBeenCalledTimes(1);
+    expect(lockCalls()).toHaveLength(1);
     expect(prisma.stockMovement.create).toHaveBeenCalledTimes(2);
   });
 
@@ -167,7 +176,7 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
 
     await service.commitStockCountSession("sess-1", {} as any, { sub: "u-1" });
 
-    expect(lockStatement).toHaveBeenCalledTimes(1);
+    expect(lockCalls()).toHaveLength(1);
     const types = prisma.stockMovement.create.mock.calls.map((c) => c[0].data.type);
     expect(types).toEqual(["COST_BASIS", "ADJUSTMENT", "ADJUSTMENT"]);
     // the REPLACE line: 90 counted - 70 locked = +20, valued at the corrected 5.00
