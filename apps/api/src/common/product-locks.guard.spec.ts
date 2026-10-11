@@ -254,3 +254,42 @@ describe("SA-767 Nit 6 — the stock writers use retryStockTx", () => {
     expect(bills).not.toMatch(/\bretryOnTxConflict\b/);
   });
 });
+
+/**
+ * SA-767 r-note 3 (b): the order sale sites (create, the DRAFT<->PENDING moves, cancel, reopen, edit,
+ * the at-door merge, standing-order generation) run their stock tx inside `retryStockTx`, so a lock
+ * wait that gave up re-runs the tx and an exhausted retry is the coded 503. Behaviour is pinned in
+ * orders/orders.lock-retry.spec.ts; this is the placement pin, next to the L-2 sites above.
+ */
+describe("SA-767 r-note 3 (b) — the order sale sites use retryStockTx", () => {
+  // raw (unstripped): the comment stripper trips on glob-like text in this very large file
+  const orders = fs.readFileSync(path.join(SRC, "orders/orders.service.ts"), "utf8");
+
+  it.each([
+    "orders.create",
+    "orders.promoteDraft",
+    "orders.demoteToDraft",
+    "orders.cancel",
+    "orders.reopen",
+    "orders.approveChangeRequestAtStop",
+  ])("orders.service runs %s through stockTx", (label) => {
+    const at = orders.indexOf(`"${label}"`);
+    expect(at).toBeGreaterThan(-1);
+    expect(orders.slice(Math.max(0, at - 40), at)).toMatch(/this\.stockTx\(\s*$/);
+  });
+
+  it("stockTx is retryStockTx around the unchanged tenantTransaction(fn, opts)", () => {
+    expect(orders).toContain("retryStockTx(label, () => this.prisma.tenantTransaction(fn, opts))");
+  });
+
+  it.each([
+    ["orders/order-inline-return.ts", "orders.updateOrderItems"],
+    ["order-templates/order-templates.service.ts", "orderTemplates.generate"],
+  ])("%s wraps %s in retryStockTx", (rel, label) => {
+    expect(read(rel)).toContain(`retryStockTx("${label}"`);
+  });
+
+  it("the orders service no longer uses the bare retryOnTxConflict", () => {
+    expect(orders).not.toMatch(/\bretryOnTxConflict\b/);
+  });
+});
