@@ -310,7 +310,7 @@ describe("renderOrderReceipt (email)", () => {
 
   it("returns the model it rendered, a subject naming the business and the order, and html + a plain-text alternative", () => {
     expect(out.model.total).toBe(28.62);
-    expect(out.subject).toBe("Your receipt from Acme Test Store (Order ORD-1001)");
+    expect(out.subject).toBe("Your receipt from Acme Test Store for order ORD-1001");
     expect(out.html).toContain("<!DOCTYPE html>");
     expect(out.text.length).toBeGreaterThan(0);
   });

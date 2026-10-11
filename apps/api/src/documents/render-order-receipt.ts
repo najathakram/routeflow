@@ -151,7 +151,7 @@ export function renderOrderReceipt(
   const model = buildReceiptModel(order, invoices, payments, tenantBranding, zone);
   const name = oneLine(model.header.name ?? "");
   const subject = name
-    ? `Your receipt from ${name} (Order ${model.orderNumber})`
+    ? `Your receipt from ${name} for order ${model.orderNumber}`
     : `Your receipt for order ${model.orderNumber}`;
   const { html, text } = renderBrandedEmail({
     headerHtml: tenantHeaderHtml(name || "Receipt"),
