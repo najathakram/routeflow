@@ -1,6 +1,6 @@
 {
-  "mappedSha": "3ba0d16a97b47b0b2de3a5567b09b0c67854a13a",
-  "generatedAt": "2026-10-10T20:00:00.000Z",
+  "mappedSha": "ef8c02f688adc3002cc8878dc59c92e3ed58a695",
+  "generatedAt": "2026-10-11T12:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 16,
-    "web": 12,
-    "mobile": 8,
+    "api": 17,
+    "web": 13,
+    "mobile": 9,
     "packages": 0
   },
-  "fileCount": 1056,
-  "notes": "**2026-10-10 \u2014 W22a-2 #3373 (master `47f34cd22`) and W23 #3377 (master `3ba0d16a97b47b0b2de3a5567b09b0c67854a13a`, Train 3; docs-only bookkeeping).** New `api/`, `web/` and `mobile/landing-2026-10-10-w22a2-w23.md` (TOC row in each area file) and a W22a-2/W23 section in `packages.md`: sitting-3 schema bundle (dunning and coupon columns, `Return.refundTender`, cart fingerprint, import marker, auth link hardening, `CounterDayClose`, `CounterParkedCart`, `Order.registerKey/soldById/counterCashTendered`, indexes), counter quick keys (SA-747), create-business page and readiness card (SA-1/2/3), order-template cron and replay lock, tenant zone resolver and writers (SA-738), counter return attribution (source sale, `Return.refundTender`, cash-refund cap, counter-close lock), counter sale void and `staffMay` capability table (SA-762; `can-edit-prices.ts` deleted on api and web), receipt footer, counter park and resume (SA-748), B1043 one invoice-totals builder (`sumInvoiceTotals`), `unitWords()` (U-3a), create-order keyboard v2 and backdate link, shared anchored dropdown list, buyer `QtyStepper`, overdue sweep enforced by default. #3360 (billing B1) and #3364 (counter pass 2) were ejected and are not on master. Two older notes were corrected in place (price-edit gate, `REFUND_TENDER_KNOWN`). The oldest changelog bullet (trains B and C, 2026-09-27) moved to `CHANGELOG-ARCHIVE.md` to stay at 30. `mappedSha` = `3ba0d16a97b47b0b2de3a5567b09b0c67854a13a`."
+  "fileCount": 1059,
+  "notes": "**2026-10-11 \u2014 Release 4 #3378 (master `ef8c02f688adc3002cc8878dc59c92e3ed58a695`, train/w23-r4; docs-only bookkeeping).** New `api/`, `web/` and `mobile/landing-2026-10-11-r4.md` (TOC row in each area file) and a Release 4 section in `packages.md`: digital receipt (SA-751r; `documents/` receipt model, email send with three caps, shared `ReceiptModel`, one tax-rate home and one lowered-price rule in `@routeflow/pricing`), SA-764 stored cash tendered and served change on counter replays and Today's sales rows, counter pass 2 (#3364), refund slip (#3367), last 7 days (#3368), POS mode (staff PICKUP, `orders.posMode`, `DISPATCH_PATH_WHERE`, POS order page, delivered-floor stamp, P-3 edit-after-final overpay judge and `statusFromPayments`, P-4 revision marks), SA-770 overdue by balance due (`classifyInvoiceBalance`, `balanceDueSql`), billing B1 (#3360; Stripe-first plan change, price override and scheduled downgrade under the `tenant-price` lock; `toCents`/`fromCents` moved to pricing). No new migration. Older notes corrected in place: Today's sales row fields now sent, `counterCashTendered` now written, `recomputeInvoiceStatus` renamed, `toCents`/`fromCents` location, the overdue-sweep and staff-capability notes. The oldest changelog bullet (merge train D, 2026-09-27) moved to `CHANGELOG-ARCHIVE.md` to stay at 30. `mappedSha` = `ef8c02f688adc3002cc8878dc59c92e3ed58a695`."
 }
