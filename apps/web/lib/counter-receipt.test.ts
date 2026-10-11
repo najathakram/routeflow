@@ -119,6 +119,38 @@ describe("buildCounterReceipt", () => {
     }
   });
 
+  it("row 347 N1: a recovered split (card 30 + cash 20 on 50) keeps its as-entered Change, measured from the CASH leg", () => {
+    const split = {
+      method: "CARD" as const, // leg 0 is the card; a split is not a "CASH" sale by method
+      total: 50,
+      paid: 50,
+      payments: [
+        { method: "CARD" as const, amount: 30, paymentIds: ["p1"] },
+        { method: "CASH" as const, amount: 20, paymentIds: ["p2"] },
+      ],
+    };
+    const m = build(split, { enteredTender: 40 });
+    expect(m.tendered).toBe(40);
+    expect(m.change).toBe(20);
+    expect(m.changeAsEntered).toBe(true);
+  });
+
+  it("row 347 N1: a card + check split with a typed amount has no cash leg: no invented Change", () => {
+    const m = build(
+      {
+        method: "CARD" as const,
+        paid: 22.5,
+        payments: [
+          { method: "CARD" as const, amount: 10, paymentIds: ["p1"] },
+          { method: "CHECK" as const, amount: 12.5, paymentIds: ["p2"] },
+        ],
+      },
+      { enteredTender: 40 },
+    );
+    expect(m.change).toBeNull();
+    expect(m.changeAsEntered).toBe(false);
+  });
+
   it("on account and payment-not-recorded show no tender", () => {
     const acct = build({ method: "ON_ACCOUNT", paid: 0, balanceDue: 22.5 });
     expect(acct.onAccount).toBe(true);

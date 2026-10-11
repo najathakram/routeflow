@@ -819,6 +819,12 @@ export class InlineReturnsService {
    * the order's remaining balance under the Order lock the caller holds, and settle. A replay (the
    * credit already exists) and a DRIVER_CAP hold issue nothing. `minted` is null in those cases and
    * for a zero-total return; the caller emits the CN event after ITS commit.
+   *
+   * Numbering (row 347, N2, no change): the RETURN number row (reserved inside captureInTx) and the CREDIT_NOTE number row
+   * (reserved here, unless the caller pre-reserved) are row-locked by `reserveNext` until the transaction ends, and the
+   * transaction now also covers the mint and the settle. Tenant-wide numbering of returns and credit notes therefore waits
+   * for the whole capture, where it waited for each of two shorter transactions before. Lock order stays RETURN number ->
+   * Product rows -> CREDIT_NOTE number everywhere (approve() takes the same tail), so it queues, never deadlocks.
    */
   async captureAndIssueInTx(
     tx: any,

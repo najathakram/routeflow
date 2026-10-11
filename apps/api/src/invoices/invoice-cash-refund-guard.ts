@@ -137,7 +137,7 @@ export async function assertNoCashRefundOnOrder(tx: any, orderId: string): Promi
       where: { invoice: { orderId } },
       select: { id: true, orderItemId: true, invoice: { select: { status: true } } },
     })) ?? [];
-  const lines = all.filter((l) => l.invoice?.status !== "VOID");
+  const lines = all.filter((l) => !(l.invoice?.status === "VOID")); // Invoice's own status, not a payment's
   const sources = inlineSourceFrom(
     lines,
     orderId,
