@@ -295,4 +295,158 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     expect(Number(adj.avgCostAfter)).toBe(3); // the old code stamped the stale 2.00
     expect(Number(lot.unitCost)).toBe(3);
   }, 60_000);
+
+  /** A SALE in flight (what `decrementStockForSale` does): holds the Product row, decremented, uncommitted. */
+  async function openSale(w: World, qty: number, productId = w.productId) {
+    const c = await pool.connect();
+    openClients.push(c);
+    await c.query("BEGIN");
+    await c.query('SELECT id FROM "Product" WHERE id = $1 AND "tenantId" = $2 FOR UPDATE', [
+      productId,
+      w.tenantId,
+    ]);
+    await c.query(
+      'UPDATE "Product" SET "currentStock" = "currentStock" - $2 WHERE id = $1 RETURNING "currentStock"',
+      [productId, qty],
+    );
+    return {
+      async commit() {
+        await c.query("COMMIT");
+        openClients.splice(openClients.indexOf(c), 1);
+        c.release();
+      },
+    };
+  }
+
+  /** A sale that arrives while a writer holds the row: blocks on it, lands after, returns the counter it left. */
+  async function saleAfter(w: World, qty: number): Promise<number> {
+    const c = await pool.connect();
+    try {
+      await c.query("BEGIN");
+      await c.query('SELECT id FROM "Product" WHERE id = $1 AND "tenantId" = $2 FOR UPDATE', [
+        w.productId,
+        w.tenantId,
+      ]);
+      const { rows } = await c.query(
+        'UPDATE "Product" SET "currentStock" = "currentStock" - $2 WHERE id = $1 RETURNING "currentStock"',
+        [w.productId, qty],
+      );
+      await c.query("COMMIT");
+      return Number(rows[0].currentStock);
+    } finally {
+      c.release();
+    }
+  }
+
+  async function addProduct(w: World, stock: number, avg: number | null) {
+    return A.prisma.product.create({
+      data: {
+        name: `Widget ${randomUUID().slice(0, 8)}`,
+        unit: "ea",
+        pricePerUnit: 10,
+        currentStock: stock,
+        averageCost: avg,
+        costingMethod: "AVCO",
+        tenantId: w.tenantId,
+      },
+    });
+  }
+
+  const countDto = (qty: number, productId: string) => ({
+    sessionId: randomUUID(),
+    items: [{ productId, quantity: qty, mode: "REPLACE" as const }],
+  });
+
+  it("(b1) a count that lands AFTER a sale replaces the post-sale stock: counted 90, not 100 - 10 - 30", async () => {
+    const w = await seedWorld("b1", 100, 2);
+    const sale = await openSale(w, 30); // stock 70, uncommitted, row held
+
+    // The count validates against the committed 100 (the stale read), then enters its tx.
+    const count = inTenant(A, w, () =>
+      A.inventory.commitStockCount(countDto(90, w.productId), w.userId),
+    );
+    const waited = await sawLockWait();
+    await sale.commit();
+    await count;
+
+    const p = await productOf(w);
+    const [m] = await movementsOf(w);
+    console.log(
+      `SA-767(b1) observed: lockWait=${waited} stock=${p.currentStock} delta=${m.quantity} ` +
+        `stockAfter=${m.stockAfter}`,
+    );
+    expect(waited).toBe(true);
+    // The count asserts 90 on hand and landed after the sale: the row is 90, the delta is 90 - 70.
+    expect(Number(p.currentStock)).toBe(90);
+    expect(Number(m.quantity)).toBe(20);
+    expect(Number(m.stockAfter)).toBe(Number(p.currentStock));
+  }, 60_000);
+
+  it("(b2) a sale that lands AFTER a count is not erased: counted 90 - 30 = 60 (regression guard, not a red)", async () => {
+    // Old code is already correct here (the count's increment commits before the sale's row lock
+    // is granted); this pins that the fix keeps it so.
+    const w = await seedWorld("b2", 100, 2);
+    const gateA = holdFirstTxOpen(A);
+
+    const count = inTenant(A, w, () =>
+      A.inventory.commitStockCount(countDto(90, w.productId), w.userId),
+    );
+    await gateA.parked; // the count is written (stock 90) and still holds the row
+    const sale = saleAfter(w, 30);
+    const waited = await sawLockWait();
+    gateA.release();
+    const [, left] = await Promise.all([count, sale]);
+
+    const p = await productOf(w);
+    const [m] = await movementsOf(w);
+    expect(waited).toBe(true);
+    expect(Number(p.currentStock)).toBe(60);
+    expect(left).toBe(60);
+    expect(Number(m.quantity)).toBe(-10);
+    expect(Number(m.stockAfter)).toBe(90);
+  }, 60_000);
+
+  it("(b3) a durable-session commit after a sale: stock = counted, cost row + adjustment from the locked rows", async () => {
+    const w = await seedWorld("b3", 100, 2);
+    const session = await A.prisma.stockCountSession.create({
+      data: { tenantId: w.tenantId, startedById: w.userId, name: "sa767" },
+    });
+    await A.prisma.stockCountLine.create({
+      data: {
+        tenantId: w.tenantId,
+        sessionId: session.id,
+        productId: w.productId,
+        mode: "REPLACE",
+        countedQty: 90,
+        expectedQty: 100,
+        unitCostOverride: 5,
+        countedById: w.userId,
+      },
+    });
+    const sale = await openSale(w, 30); // stock 70, uncommitted
+
+    const commit = inTenant(A, w, () =>
+      A.inventory.commitStockCountSession(session.id, {}, { sub: w.userId }),
+    );
+    const waited = await sawLockWait();
+    await sale.commit();
+    await commit;
+
+    const p = await productOf(w);
+    const moves = await movementsOf(w);
+    const cost = moves.find((m) => m.type === "COST_BASIS")!;
+    const adj = moves.find((m) => m.type === "ADJUSTMENT")!;
+    console.log(
+      `SA-767(b3) observed: lockWait=${waited} stock=${p.currentStock} avg=${p.averageCost} ` +
+        `costStockAfter=${cost.stockAfter} adjDelta=${adj.quantity} adjStockAfter=${adj.stockAfter}`,
+    );
+    expect(waited).toBe(true);
+    expect(Number(p.currentStock)).toBe(90);
+    expect(Number(cost.stockAfter)).toBe(70); // the stock the cost row was written at
+    expect(Number(adj.quantity)).toBe(20);
+    expect(Number(adj.stockAfter)).toBe(90);
+    expect(Number(adj.avgCostAfter)).toBe(5); // the corrected cost
+    const lot = await A.prisma.stockLot.findFirstOrThrow({ where: { tenantId: w.tenantId } });
+    expect(Number(lot.unitCost)).toBe(5);
+  }, 60_000);
 });

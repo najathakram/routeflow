@@ -51,6 +51,37 @@ const WRITERS: Writer[] = [
     alerts: ["prod-1"],
     clean: { movement: 1, lot: 1, product: 1 },
   },
+  {
+    name: "commitStockCount",
+    label: "inventory.commitStockCount",
+    method: "commitStockCount",
+    call: (svc) =>
+      svc.commitStockCount(
+        {
+          sessionId: "s-1",
+          items: [{ productId: "prod-1", quantity: 15, mode: "REPLACE" }],
+        } as any,
+        "user-1",
+      ),
+    alerts: ["prod-1"],
+    clean: { movement: 1, lot: 1, product: 1 },
+  },
+  {
+    name: "commitStockCountSession",
+    label: "inventory.commitStockCountSession",
+    method: "commitStockCountSession",
+    setup: (prisma) =>
+      prisma.stockCountSession.findUnique.mockResolvedValue({
+        id: "sess-1",
+        status: "OPEN",
+        lines: [
+          { productId: "prod-1", mode: "REPLACE", countedQty: D(15), unitCostOverride: null },
+        ],
+      }),
+    call: (svc) => svc.commitStockCountSession("sess-1", {} as any, { sub: "user-1" }),
+    alerts: ["prod-1"],
+    clean: { movement: 1, lot: 1, product: 1 },
+  },
 ];
 
 describe.each(WRITERS)("$name tx retry (SA-767 L-2)", (writer) => {

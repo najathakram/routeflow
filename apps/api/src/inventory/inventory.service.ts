@@ -907,44 +907,55 @@ export class InventoryService {
     const reference = `STOCK_COUNT-${dto.sessionId}`;
     const restockedProductIds: string[] = [];
 
-    const result = await this.prisma.tenantTransaction(async (tx) => {
-      // Idempotency: a client whose response was lost (timeout / 502) may re-post
-      // the SAME sessionId. Without this, every ADD delta would be applied twice
-      // and lots duplicated. If this session already wrote movements, return the
-      // prior result instead of re-applying.
-      const already = await tx.stockMovement.findMany({
-        where: { reference },
-        select: { id: true },
-      });
-      if (already.length > 0) {
+    // SA-767 L-2: every counted product is locked in one statement, THEN read inside the tx, so the
+    // REPLACE delta is `counted - the locked stock` (not the stock read above, which a sale may have
+    // moved). The whole tx re-runs on a 40P01 / 40001 / P2034: the id list is cleared per attempt and
+    // the alerts fire once, after the commit.
+    const result = await retryStockTx("inventory.commitStockCount", () =>
+      this.prisma.tenantTransaction(async (tx) => {
+        restockedProductIds.length = 0;
+        await this.lockProducts(tx, productIds);
+        const lockedMap = await this.readLockedStockRows(tx, productIds);
+
+        // Idempotency: a client whose response was lost (timeout / 502) may re-post
+        // the SAME sessionId. Without this, every ADD delta would be applied twice
+        // and lots duplicated. If this session already wrote movements, return the
+        // prior result instead of re-applying. Read AFTER the lock, so a duplicate that
+        // waited behind the first commit sees its movements.
+        const already = await tx.stockMovement.findMany({
+          where: { reference },
+          select: { id: true },
+        });
+        if (already.length > 0) {
+          return {
+            sessionId: dto.sessionId,
+            reference,
+            applied: already.length,
+            skipped: 0,
+            movementIds: already.map((m) => m.id),
+            alreadyCommitted: true,
+          };
+        }
+
+        const { movementIds, skipped } = await this.applyStockCountItemsInTx(tx, {
+          items: dto.items,
+          lockedMap,
+          reference,
+          effectiveDate,
+          notes: dto.notes,
+          performedById,
+          restockedProductIds,
+        });
+
         return {
           sessionId: dto.sessionId,
           reference,
-          applied: already.length,
-          skipped: 0,
-          movementIds: already.map((m) => m.id),
-          alreadyCommitted: true,
+          applied: movementIds.length,
+          skipped,
+          movementIds,
         };
-      }
-
-      const { movementIds, skipped } = await this.applyStockCountItemsInTx(tx, {
-        items: dto.items,
-        productMap,
-        reference,
-        effectiveDate,
-        notes: dto.notes,
-        performedById,
-        restockedProductIds,
-      });
-
-      return {
-        sessionId: dto.sessionId,
-        reference,
-        applied: movementIds.length,
-        skipped,
-        movementIds,
-      };
-    });
+      }),
+    );
 
     this.fireStockAlerts(restockedProductIds);
     return result;
@@ -957,6 +968,11 @@ export class InventoryService {
    * durable-session commit (PR-C) apply IDENTICAL stock semantics — there must
    * never be two commit formulas that can drift apart.
    *
+   * SA-767 L-2: the caller has LOCKED every counted product and read `lockedMap` in its own tx
+   * (`lockProducts` then `readLockedStockRows`), so a REPLACE delta is `counted - the locked stock`.
+   * The counter moves by that delta as an increment and each movement's `stockAfter` is the counter
+   * the update RETURNED (SA-136 §1), never the value the delta was computed from.
+   *
    * `restockedProductIds` is appended in place; the caller fires stock alerts
    * AFTER the transaction commits (never inside it).
    */
@@ -964,7 +980,7 @@ export class InventoryService {
     tx: Prisma.TransactionClient,
     args: {
       items: Array<{ productId: string; quantity: number; mode: "REPLACE" | "ADD" }>;
-      productMap: Map<
+      lockedMap: Map<
         string,
         { id: string; currentStock: Prisma.Decimal; averageCost: Prisma.Decimal | null }
       >;
@@ -982,15 +998,16 @@ export class InventoryService {
       correctedCosts?: Map<string, Prisma.Decimal>;
     },
   ): Promise<{ movementIds: string[]; skipped: number }> {
-    const { items, productMap, reference, effectiveDate, notes, performedById } = args;
+    const { items, lockedMap, reference, effectiveDate, notes, performedById } = args;
     const movementIds: string[] = [];
     let skipped = 0;
     // Running stock per product so repeated items in one count session
-    // produce truthful stockAfter snapshots.
+    // produce truthful deltas against the stock left by the previous item.
     const runningStock = new Map<string, Prisma.Decimal>();
 
     for (const item of items) {
-      const product = productMap.get(item.productId)!;
+      const product = lockedMap.get(item.productId);
+      if (!product) throw new NotFoundException("Product not found");
       const stockBefore = runningStock.get(item.productId) ?? product.currentStock;
       const counted = new Prisma.Decimal(item.quantity);
       const delta = item.mode === "REPLACE" ? counted.minus(stockBefore) : counted;
@@ -999,8 +1016,6 @@ export class InventoryService {
         skipped += 1;
         continue;
       }
-      const stockAfter = stockBefore.add(delta);
-      runningStock.set(item.productId, stockAfter);
 
       const itemNotes = notes
         ? `${notes} (mode=${item.mode} counted=${counted.toString()})`
@@ -1010,6 +1025,14 @@ export class InventoryService {
       // and any new lot are valued at — otherwise the correction is stamped
       // stale on the very rows it was meant to fix.
       const avgCost = args.correctedCosts?.get(item.productId) ?? product.averageCost ?? null;
+
+      const updated = await tx.product.update({
+        where: { id: item.productId },
+        data: { currentStock: { increment: delta } },
+        select: { currentStock: true },
+      });
+      const stockAfter = updated.currentStock;
+      runningStock.set(item.productId, stockAfter);
 
       const movement = await tx.stockMovement.create({
         data: {
@@ -1026,11 +1049,6 @@ export class InventoryService {
         },
       });
       movementIds.push(movement.id);
-
-      await tx.product.update({
-        where: { id: item.productId },
-        data: { currentStock: { increment: delta } },
-      });
 
       if (delta.gt(0)) {
         await tx.stockLot.create({
@@ -1529,6 +1547,19 @@ export class InventoryService {
   async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
     // SA-767 L-1: a thin delegate of the one stock lock (house order: family -> recipe product -> rest).
     await lockProductsForStock(tx, this.prisma.getTenantId(), productIds);
+  }
+
+  /**
+   * SA-767 L-2: the stock / cost values a writer decides from, read INSIDE its tx and AFTER
+   * {@link lockProducts} - the locked rows, one query for all ids. Calling it before the lock reads
+   * a value another writer can still change (the structural pin refuses that order).
+   */
+  private async readLockedStockRows(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
+    const rows = await tx.product.findMany({
+      where: { id: { in: [...new Set(productIds)] } },
+      select: { id: true, currentStock: true, averageCost: true, costingMethod: true },
+    });
+    return new Map(rows.map((r) => [r.id, r]));
   }
 
   private async postPoReceipt(
@@ -2641,87 +2672,97 @@ export class InventoryService {
     const reference = `STOCK_COUNT-${id}`;
     const restockedProductIds: string[] = [];
 
-    const result = await this.prisma.tenantTransaction(
-      async (tx) => {
-        // Same guard as the legacy path: if movements already carry this
-        // reference, the commit landed and only the response was lost.
-        const already = await tx.stockMovement.findMany({
-          where: { reference },
-          select: { id: true },
-        });
-        if (already.length > 0) {
+    // SA-767 L-2: lock every counted product (one statement), read them INSIDE the tx, then the
+    // idempotency check, the cost corrections and the quantity adjustments all work from the locked
+    // rows. The whole tx re-runs on a 40P01 / 40001 / P2034: per-attempt state is reset at the top and
+    // the alerts fire once, after the commit.
+    const result = await retryStockTx("inventory.commitStockCountSession", () =>
+      this.prisma.tenantTransaction(
+        async (tx) => {
+          restockedProductIds.length = 0;
+          await this.lockProducts(tx, productIds);
+          const lockedMap = await this.readLockedStockRows(tx, productIds);
+
+          // Same guard as the legacy path: if movements already carry this
+          // reference, the commit landed and only the response was lost.
+          const already = await tx.stockMovement.findMany({
+            where: { reference },
+            select: { id: true },
+          });
+          if (already.length > 0) {
+            return {
+              sessionId: id,
+              reference,
+              applied: already.length,
+              skipped: 0,
+              movementIds: already.map((m) => m.id),
+              costMovementIds: [] as string[],
+              alreadyCommitted: true,
+            };
+          }
+
+          // 1) Cost corrections first — see the ordering note above.
+          const costMovementIds: string[] = [];
+          const correctedCosts = new Map<string, Prisma.Decimal>();
+          for (const line of session.lines) {
+            if (line.unitCostOverride == null) continue;
+            const unitCost = costDecimal(Number(line.unitCostOverride));
+            const movement = await this.setCostBasisInTx(
+              tx,
+              lockedMap.get(line.productId)!,
+              {
+                unitCost: Number(line.unitCostOverride),
+                notes: `Stock count ${reference}`,
+              } as SetCostBasisDto,
+              user.sub,
+            );
+            costMovementIds.push(movement.id);
+            correctedCosts.set(line.productId, unitCost);
+          }
+
+          // 2) Then the quantity adjustments, through the SHARED routine so the
+          //    durable path can never drift from the legacy one.
+          const { movementIds, skipped } = await this.applyStockCountItemsInTx(tx, {
+            items: session.lines.map((l) => ({
+              productId: l.productId,
+              quantity: Number(l.countedQty),
+              mode: l.mode as "REPLACE" | "ADD",
+            })),
+            lockedMap,
+            reference,
+            effectiveDate,
+            notes: dto.notes,
+            performedById: user.sub,
+            restockedProductIds,
+            correctedCosts,
+          });
+
+          await tx.stockCountSession.update({
+            where: { id },
+            data: {
+              status: "COMMITTED",
+              committedAt: new Date(),
+              committedById: user.sub,
+              movementReference: reference,
+              ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
+            },
+          });
+
           return {
             sessionId: id,
             reference,
-            applied: already.length,
-            skipped: 0,
-            movementIds: already.map((m) => m.id),
-            costMovementIds: [] as string[],
-            alreadyCommitted: true,
+            applied: movementIds.length,
+            skipped,
+            movementIds,
+            costMovementIds,
           };
-        }
-
-        // 1) Cost corrections first — see the ordering note above.
-        const costMovementIds: string[] = [];
-        const correctedCosts = new Map<string, Prisma.Decimal>();
-        for (const line of session.lines) {
-          if (line.unitCostOverride == null) continue;
-          const unitCost = costDecimal(Number(line.unitCostOverride));
-          const movement = await this.setCostBasisInTx(
-            tx,
-            productMap.get(line.productId)!,
-            {
-              unitCost: Number(line.unitCostOverride),
-              notes: `Stock count ${reference}`,
-            } as SetCostBasisDto,
-            user.sub,
-          );
-          costMovementIds.push(movement.id);
-          correctedCosts.set(line.productId, unitCost);
-        }
-
-        // 2) Then the quantity adjustments, through the SHARED routine so the
-        //    durable path can never drift from the legacy one.
-        const { movementIds, skipped } = await this.applyStockCountItemsInTx(tx, {
-          items: session.lines.map((l) => ({
-            productId: l.productId,
-            quantity: Number(l.countedQty),
-            mode: l.mode as "REPLACE" | "ADD",
-          })),
-          productMap,
-          reference,
-          effectiveDate,
-          notes: dto.notes,
-          performedById: user.sub,
-          restockedProductIds,
-          correctedCosts,
-        });
-
-        await tx.stockCountSession.update({
-          where: { id },
-          data: {
-            status: "COMMITTED",
-            committedAt: new Date(),
-            committedById: user.sub,
-            movementReference: reference,
-            ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
-          },
-        });
-
-        return {
-          sessionId: id,
-          reference,
-          applied: movementIds.length,
-          skipped,
-          movementIds,
-          costMovementIds,
-        };
-      },
-      // A warehouse-wide count is hundreds of lines, each doing a movement
-      // create + product update (+ a lot on a positive delta). Prisma's 5s
-      // default would abort a real audit part-way; the whole commit must be
-      // all-or-nothing.
-      { timeout: 120_000 },
+        },
+        // A warehouse-wide count is hundreds of lines, each doing a movement
+        // create + product update (+ a lot on a positive delta). Prisma's 5s
+        // default would abort a real audit part-way; the whole commit must be
+        // all-or-nothing.
+        { timeout: 120_000 },
+      ),
     );
 
     this.fireStockAlerts(restockedProductIds);

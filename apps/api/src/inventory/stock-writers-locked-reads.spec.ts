@@ -84,4 +84,66 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
     expect(prisma.stockLot.create.mock.calls[0][0].data.unitCost.toString()).toBe("3");
     expect(lockedBefore(prisma.product.findUnique, 2)).toBe(true);
   });
+
+  it("a count REPLACE is counted minus the LOCKED stock, written as an increment", async () => {
+    // validation read: 100 on hand; by the time the lock is granted a sale left 70
+    prisma.product.findMany
+      .mockResolvedValueOnce([row({ currentStock: D(100) })])
+      .mockResolvedValue([row({ currentStock: D(70) })]);
+    prisma.product.update.mockResolvedValue({ currentStock: D(90) });
+
+    await service.commitStockCount(
+      { sessionId: "s-1", items: [{ productId: "prod-1", quantity: 90, mode: "REPLACE" }] } as any,
+      "u-1",
+    );
+
+    expect(prisma.product.update.mock.calls[0][0].data).toEqual({
+      currentStock: { increment: D(20) },
+    });
+    const movement = prisma.stockMovement.create.mock.calls[0][0].data;
+    expect(movement.quantity.toString()).toBe("20");
+    expect(movement.stockAfter.toString()).toBe("90"); // the counter the update RETURNED
+    expect(lockedBefore(prisma.product.findMany, 2)).toBe(true);
+    expect(lockStatement).toHaveBeenCalledTimes(1);
+  });
+
+  it("the movement's stockAfter is the counter the update returned, whatever the delta implied", async () => {
+    prisma.product.findMany.mockResolvedValue([row({ currentStock: D(70) })]);
+    prisma.product.update.mockResolvedValue({ currentStock: D(88) });
+
+    await service.commitStockCount(
+      { sessionId: "s-2", items: [{ productId: "prod-1", quantity: 90, mode: "REPLACE" }] } as any,
+      "u-1",
+    );
+
+    expect(prisma.stockMovement.create.mock.calls[0][0].data.stockAfter.toString()).toBe("88");
+  });
+
+  it("a session commit locks every counted product once, before the cost row and the adjustment", async () => {
+    prisma.stockCountSession.findUnique.mockResolvedValue({
+      id: "sess-1",
+      status: "OPEN",
+      lines: [
+        { productId: "prod-1", mode: "REPLACE", countedQty: D(90), unitCostOverride: D(5) },
+        { productId: "prod-2", mode: "ADD", countedQty: D(4), unitCostOverride: null },
+      ],
+    });
+    const rows = [
+      row({ currentStock: D(70) }),
+      row({ id: "prod-2", name: "Sugar", currentStock: D(6) }),
+    ];
+    prisma.product.findMany.mockResolvedValue(rows);
+    prisma.product.update.mockResolvedValue({ currentStock: D(90) });
+
+    await service.commitStockCountSession("sess-1", {} as any, { sub: "u-1" });
+
+    expect(lockStatement).toHaveBeenCalledTimes(1);
+    const types = prisma.stockMovement.create.mock.calls.map((c) => c[0].data.type);
+    expect(types).toEqual(["COST_BASIS", "ADJUSTMENT", "ADJUSTMENT"]);
+    // the REPLACE line: 90 counted - 70 locked = +20, valued at the corrected 5.00
+    const adj = prisma.stockMovement.create.mock.calls[1][0].data;
+    expect(adj.quantity.toString()).toBe("20");
+    expect(adj.avgCostAfter.toString()).toBe("5");
+    expect(lockedBefore(prisma.product.update, 1)).toBe(true);
+  });
 });
