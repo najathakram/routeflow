@@ -365,12 +365,14 @@ export class CounterSaleService {
         : undefined;
       // SA-764: the CASH handed over is stored BEFORE any money moves, so a paid sale can never lack its tender.
       // Until a CASH tender row anchors it the amount is overwritten (a failed first attempt's stale figure must
-      // not survive a retry); once one exists it is frozen (only a NULL is filled). Same lock, no transaction.
+      // not survive a retry); once one exists it is frozen (only a NULL is filled). A replay with NOTHING left to record
+      // (`writes` empty) is frozen too, anchored or not: it only fills a NULL. Same lock, no transaction.
       if (method === "CASH") {
         const anchored = invoices.some((i) => (i.payments ?? []).some(isCounterTenderCashRow));
+        const fillNullOnly = anchored || writes.length === 0;
         try {
           await this.prisma.forTenant().order.updateMany({
-            where: anchored ? { id: orderId, counterCashTendered: null } : { id: orderId },
+            where: fillNullOnly ? { id: orderId, counterCashTendered: null } : { id: orderId },
             data: { counterCashTendered: roundMoney(plan.tendered) },
           });
         } catch (e) {

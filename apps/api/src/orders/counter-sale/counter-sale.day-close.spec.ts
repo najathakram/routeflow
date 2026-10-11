@@ -243,7 +243,7 @@ describe("CounterSaleService.ring — the day-close lock and window (SA-750r3)",
       expect(events).toEqual(["lock", "cash-tendered", "record", "unlock"]);
     });
 
-    it("a replay with nothing left to record still writes the cash-tendered figure and is never refused", async () => {
+    it("a replay with nothing left to record never overwrites the stored figure (only a NULL is filled) and is never refused", async () => {
       await service.ring(body({ method: "CASH", amount: 40 }), staff, "k");
       recordPayment.mockClear();
       prisma.order.updateMany.mockClear();
@@ -252,11 +252,39 @@ describe("CounterSaleService.ring — the day-close lock and window (SA-750r3)",
       replay = true;
       const r = await service.ring(body({ method: "CASH", amount: 40 }), staff, "k");
       expect(r).toMatchObject({ replayed: true, paymentRecorded: true });
-      expect(prisma.order.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { counterCashTendered: 40 } }),
-      );
+      expect(prisma.order.updateMany).toHaveBeenCalledWith({
+        where: { id: "ord-1", counterCashTendered: null },
+        data: { counterCashTendered: 40 },
+      });
       expect(recordPayment).not.toHaveBeenCalled();
       expect(prisma.counterDayClose.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("a replay with nothing left to record and NO cash tender row anchoring it still only fills a NULL", async () => {
+      // the stored tender is a card row that already covers the balance: nothing to record, and no CASH row to anchor the figure
+      invoices[0].payments.push({
+        id: "pay-card",
+        amount: 37.25,
+        method: "CREDIT_CARD",
+        status: "PAID",
+      });
+      replay = true;
+      const r = await service.ring(body({ method: "CASH", amount: 40 }), staff, "k");
+      expect(r).toMatchObject({ replayed: true });
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.order.updateMany).toHaveBeenCalledWith({
+        where: { id: "ord-1", counterCashTendered: null },
+        data: { counterCashTendered: 40 },
+      });
+    });
+
+    it("with something to record and no CASH tender row anchoring it, the figure is still overwritten (a failed first attempt's stale figure)", async () => {
+      await service.ring(body({ method: "CASH", amount: 40 }), staff, "k");
+      expect(prisma.order.updateMany).toHaveBeenCalledWith({
+        where: { id: "ord-1" },
+        data: { counterCashTendered: 40 },
+      });
     });
   });
 

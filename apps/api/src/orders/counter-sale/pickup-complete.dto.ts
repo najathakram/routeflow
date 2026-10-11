@@ -8,7 +8,10 @@ const IsRegisterKey = () => (target: object, propertyName: string) =>
     name: "isRegisterKey",
     target: target.constructor,
     propertyName,
-    options: { message: "registerKey must be 1-64 letters, digits, '_', '-' or ':'" },
+    options: {
+      message:
+        "registerKey must be 1-64 letters, digits, '_', '-' or ':' (a ':' cannot come first)",
+    },
     validator: { validate: (v: unknown) => typeof v === "string" && REGISTER_KEY_PATTERN.test(v) },
   });
 
