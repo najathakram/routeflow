@@ -80,6 +80,28 @@ export function fakeCatchupDb(seed: { subs?: Row[]; invoices?: Row[] } = {}): Fa
         return {};
       }),
       /** tenantId / entityType / action equality plus `AND: [{ meta: { path: [k], equals } }]` (the noticeOnce shape). */
+      /** tenantId / entityType / action (equality or { in }), ascending by createdAt when the rows carry one. */
+      findMany: jest.fn(async ({ where = {}, select }: any = {}) => {
+        const hit = audits.filter((a) => {
+          if (where.tenantId !== undefined && a.tenantId !== where.tenantId) return false;
+          if (where.entityType !== undefined && a.entityType !== where.entityType) return false;
+          const act = where.action;
+          if (act !== undefined) {
+            if (act && typeof act === "object" && "in" in act) {
+              if (!act.in.includes(a.action)) return false;
+            } else if (a.action !== act) return false;
+          }
+          return true;
+        });
+        hit.sort(
+          (x, y) =>
+            (x.createdAt instanceof Date ? x.createdAt.getTime() : 0) -
+            (y.createdAt instanceof Date ? y.createdAt.getTime() : 0),
+        );
+        return hit.map((r) =>
+          select ? Object.fromEntries(Object.keys(select).map((k) => [k, r[k]])) : { ...r },
+        );
+      }),
       findFirst: jest.fn(async ({ where = {}, orderBy }: any = {}) => {
         const matching = audits.filter((a) => {
           if (where.tenantId !== undefined && a.tenantId !== where.tenantId) return false;

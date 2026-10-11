@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   CATCHUP_GO_LIVE,
+  activationInstants,
   addonCardRefusal,
   catchupShape,
   firstBoundaryNotBefore,
@@ -420,7 +421,21 @@ describe("MF1: the manual invoice's add-ons vs the card checkout's lines", () =>
     expect(addonCardRefusal([row("FORECASTING", 31, 2)], [line("FORECASTING", 31, 2)])).toBeNull();
     expect(addonCardRefusal([row("OCR_PACK_250", null), row("SEAT_EXTRA", 0)], [])).toBeNull();
     expect(addonCardRefusal([row("SEAT_EXTRA", 10, 0)], [])).toBeNull();
-    expect(addonCardRefusal([], [line("FORECASTING", 31)])).toBeNull();
+    expect(addonCardRefusal([], [])).toBeNull();
+  });
+
+  it("the reverse direction: a checkout line with NO priced billable row would charge something the invoice never billed - refused", () => {
+    expect(addonCardRefusal([], [line("FORECASTING", 31)])).toBe(
+      "checkout_addon_without_priced_row",
+    );
+    // an unpriced row (snapshot null / 0) bills nothing on the invoice either: the card line is still new money
+    expect(addonCardRefusal([row("FORECASTING", 0)], [line("FORECASTING", 31)])).toBe(
+      "checkout_addon_without_priced_row",
+    );
+    expect(addonCardRefusal([row("FORECASTING", null)], [line("FORECASTING", 31)])).toBe(
+      "checkout_addon_without_priced_row",
+    );
+    expect(addonCardRefusal([row("FORECASTING", 31)], [line("FORECASTING", 31)])).toBeNull();
   });
 
   it("planCatchup carries the refusal as a plan reason (and skips the check when no rows are passed)", () => {
@@ -544,5 +559,29 @@ describe("MF2: a payment recorded outside the RfInvoices (manual activation / re
       }),
     ).toEqual({ ok: false, reason: "manual_period_ahead" });
     expect(planCatchup(b).ok).toBe(true);
+  });
+});
+
+describe("activationInstants: one activation is TWO audit rows (marker in the tx, trail row after the commit)", () => {
+  const t = (iso: string) => d(iso);
+  it("a marker and its trail row seconds apart are ONE activation: first === latest", () => {
+    const r = activationInstants([t("2026-08-02T10:00:00Z"), t("2026-08-02T10:00:03Z")]);
+    expect(r.first!.toISOString()).toBe("2026-08-02T10:00:00.000Z");
+    expect(r.latest!.toISOString()).toBe("2026-08-02T10:00:00.000Z");
+  });
+
+  it("a later, separate activation (a renewal) is a new cluster: latest is ITS start", () => {
+    const r = activationInstants([
+      t("2026-10-05T09:00:03Z"),
+      t("2026-08-02T10:00:00Z"),
+      t("2026-08-02T10:00:03Z"),
+      t("2026-10-05T09:00:00Z"),
+    ]);
+    expect(r.first!.toISOString()).toBe("2026-08-02T10:00:00.000Z");
+    expect(r.latest!.toISOString()).toBe("2026-10-05T09:00:00.000Z");
+  });
+
+  it("no rows: nothing", () => {
+    expect(activationInstants([])).toEqual({ first: null, latest: null });
   });
 });

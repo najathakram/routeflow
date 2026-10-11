@@ -19,6 +19,7 @@ import {
   type CatchupAddonRow,
   type CatchupPlan,
   type CatchupPlanResult,
+  activationInstants,
 } from "./catchup-plan";
 import { planRefusalException, refusalCodesOf } from "./catchup-refusal";
 import { buildCatchupSessionParams } from "./catchup-session-params";
@@ -204,7 +205,9 @@ export class CatchupCheckoutService {
 
     // The tenant's billing start (its first manual activation): a tenant activated AFTER go-live is not charged
     // from Oct 1, and is not plainly eligible - the owner confirms the start (Opus item 9).
-    const activation = await this.prisma.auditLog.findFirst({
+    // One activation is TWO audit rows (the in-tx marker and the post-commit trail row): cluster them, so a single
+    // activation is not mistaken for an activation plus a renewal (MF2).
+    const activations = (await this.prisma.auditLog.findMany({
       where: {
         tenantId,
         entityType: ADMIN_AUDIT_ENTITY,
@@ -217,23 +220,10 @@ export class CatchupCheckoutService {
       },
       orderBy: { createdAt: "asc" },
       select: { createdAt: true },
-    });
-    const billingStart = activation?.createdAt ?? null;
-    // MF2: a payment recorded by a later (re)activation moves the period and writes no RfInvoice.
-    const latestActivation = await this.prisma.auditLog.findFirst({
-      where: {
-        tenantId,
-        entityType: ADMIN_AUDIT_ENTITY,
-        action: {
-          in: [
-            AdminAuditAction.TENANT_MANUAL_ACTIVATION_MARKER,
-            AdminAuditAction.TENANT_SUBSCRIPTION_ACTIVATED,
-          ],
-        },
-      },
-      orderBy: { createdAt: "desc" },
-      select: { createdAt: true },
-    });
+    })) as { createdAt: Date }[];
+    const { first: billingStart, latest: latestMarkerAt } = activationInstants(
+      activations.map((r) => r.createdAt),
+    );
     const plan = planCatchup({
       now,
       monthly,
@@ -242,7 +232,7 @@ export class CatchupCheckoutService {
       billingStart,
       billableRows,
       manual: {
-        latestMarkerAt: latestActivation?.createdAt ?? null,
+        latestMarkerAt,
         periodEnd: sub?.periodEnd ?? null,
       },
     });

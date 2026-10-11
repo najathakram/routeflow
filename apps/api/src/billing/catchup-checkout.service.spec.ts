@@ -116,6 +116,7 @@ describe("plan() is a read-only dry-run", () => {
     const h = make({
       invoices: [{ ...OCT_PAID, periodEnd: new Date("2026-11-14T12:00:00Z") }],
       addonLines: [addon],
+      addonRows: [{ sku: "FORECASTING", addonKey: null, quantity: 2, priceSnapshot: 31 }],
     });
     const r = await h.svc.plan("t1", NOW);
     expect(r.plan.ok && r.plan.stub.lines.map((l) => l.code)).toEqual(["PLAN", "FORECASTING"]);
@@ -151,6 +152,27 @@ describe("plan() is a read-only dry-run", () => {
     const json = catchupReportJson(r);
     expect(JSON.parse(JSON.stringify(json))).toEqual(json);
     expect(JSON.stringify(json)).not.toContain("qa-acme");
+  });
+});
+
+describe("MF1 (reverse): a checkout line with no priced billable row", () => {
+  it("is refused with the add-on family code - the card would charge something the invoice never billed", async () => {
+    const line = {
+      price_data: { unit_amount: 3100, product_data: { metadata: { addonSku: "FORECASTING" } } },
+      quantity: 1,
+    };
+    const h = make({ invoices: [OCT_OPEN], addonLines: [line], addonRows: [] });
+    const r = await h.svc.plan("t1", NOW);
+    expect(r.plan).toEqual({ ok: false, reason: "checkout_addon_without_priced_row" });
+    expect(catchupReportJson(r).refusals).toEqual([
+      API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
+    ]);
+    const err: any = await h.svc.open("t1", { now: NOW, expectedStubCents: 34100 }).catch((e) => e);
+    expect(err.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
+    });
+    expect(JSON.stringify(err.getResponse())).not.toMatch(/checkout_addon_without_priced_row/);
+    expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
   });
 });
 
@@ -215,12 +237,15 @@ describe("MF1: add-ons the card checkout cannot bill", () => {
 
 describe("MF2: manual activation / renewal payments", () => {
   /** audit rows: first activation, then (optionally) a later one; asc / desc by the query's orderBy. */
+  /** an activation is a marker row and a trail row seconds apart; a later one is a renewal. */
+  const activation = (at: string) => [
+    { createdAt: new Date(at) },
+    { createdAt: new Date(new Date(at).getTime() + 3000) },
+  ];
   const markers = (h: ReturnType<typeof make>, first: string, latest: string) => {
-    h.prisma.auditLog.findFirst = jest.fn(async (a: any) =>
-      a.where?.action?.in
-        ? { createdAt: new Date(a.orderBy?.createdAt === "desc" ? latest : first) }
-        : null,
-    );
+    const rows =
+      first === latest ? activation(first) : [...activation(first), ...activation(latest)];
+    h.prisma.auditLog.findMany = jest.fn(async (a: any) => (a.where?.action?.in ? rows : []));
   };
 
   it("a renewal on Oct 5 with no RfInvoice for it: plan() refuses (period printed), open() is 409 CATCHUP_MANUAL_PERIOD_AHEAD, nothing claimed or sent", async () => {
@@ -267,6 +292,35 @@ describe("MF2: manual activation / renewal payments", () => {
     };
     const after = make({ invoices: [nextWindow], sub });
     expect((await after.svc.plan("t1", NOW)).plan).toEqual({
+      ok: false,
+      reason: "manual_period_ahead",
+    });
+  });
+
+  it("ONE activation is not a renewal (its marker row and trail row are seconds apart), even through the real audit-log fake", async () => {
+    const h = make({
+      invoices: [OCT_OPEN],
+      sub: {
+        periodStart: new Date("2026-10-01T12:00:00Z"),
+        periodEnd: new Date("2026-11-01T12:00:00Z"),
+      },
+    });
+    for (const [action, at] of [
+      ["TENANT_MANUAL_ACTIVATION_MARKER", "2026-08-02T10:00:00Z"],
+      ["TENANT_SUBSCRIPTION_ACTIVATED", "2026-08-02T10:00:04Z"],
+    ] as const) {
+      h.db.audits.push({ tenantId: "t1", entityType: "tenant", action, createdAt: new Date(at) });
+    }
+    const r = await h.svc.plan("t1", NOW);
+    expect(r.eligible).toBe(true);
+    // a second activation on Oct 5 IS a renewal
+    for (const [action, at] of [
+      ["TENANT_MANUAL_ACTIVATION_MARKER", "2026-10-05T09:00:00Z"],
+      ["TENANT_SUBSCRIPTION_ACTIVATED", "2026-10-05T09:00:03Z"],
+    ] as const) {
+      h.db.audits.push({ tenantId: "t1", entityType: "tenant", action, createdAt: new Date(at) });
+    }
+    expect((await h.svc.plan("t1", NOW)).plan).toEqual({
       ok: false,
       reason: "manual_period_ahead",
     });
@@ -464,8 +518,13 @@ describe("Opus review: planning under the claim, the plan key, billing start", (
 
   it("SHOULD-FIX 9: a tenant activated AFTER go-live is charged from its billing start and is NOT plainly eligible", async () => {
     const h = make({ invoices: [] });
-    h.prisma.auditLog.findFirst = jest.fn(async (a: any) =>
-      a.where?.action?.in ? { createdAt: new Date("2026-10-20T08:30:00Z") } : null,
+    h.prisma.auditLog.findMany = jest.fn(async (a: any) =>
+      a.where?.action?.in
+        ? [
+            { createdAt: new Date("2026-10-20T08:30:00Z") },
+            { createdAt: new Date("2026-10-20T08:30:02Z") },
+          ]
+        : [],
     );
     const r = await h.svc.plan("t1", NOW);
     expect(r.eligible).toBe(false);
@@ -477,9 +536,10 @@ describe("Opus review: planning under the claim, the plan key, billing start", (
 
   it("a tenant activated before go-live is unaffected", async () => {
     const h = make({ invoices: [OCT_OPEN] });
-    h.prisma.auditLog.findFirst = jest.fn(async () => ({
-      createdAt: new Date("2026-08-02T00:00:00Z"),
-    }));
+    h.prisma.auditLog.findMany = jest.fn(async () => [
+      { createdAt: new Date("2026-08-02T00:00:00Z") },
+      { createdAt: new Date("2026-08-02T00:00:02Z") },
+    ]);
     const r = await h.svc.plan("t1", NOW);
     expect(r.eligible).toBe(true);
     expect(r.plan.ok && r.plan.stub.from.toISOString()).toBe("2026-10-01T12:00:00.000Z");

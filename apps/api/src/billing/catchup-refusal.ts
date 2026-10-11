@@ -17,6 +17,8 @@ export const CATCHUP_REFUSAL = {
   has_stripe_subscription: API_ERROR_CODES.CATCHUP_NEEDS_RULING,
   billable_addon_not_card_billable: API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE,
   addon_snapshot_not_catalog: API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
+  // the reverse direction: a card line the manual invoice never billed. Same family, same fixed copy.
+  checkout_addon_without_priced_row: API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
   manual_period_ahead: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD,
 } as const;
 

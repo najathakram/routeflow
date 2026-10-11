@@ -105,13 +105,18 @@ export interface CatchupAddonRow {
  * platform-admin-only SKU) would be billed on the invoice, voided, and never billed again - so the plan refuses:
  *   - "billable_addon_not_card_billable"  a priced billable row has no checkout line;
  *   - "addon_snapshot_not_catalog"        its snapshot (or its quantity across duplicate rows) is not what the
- *                                          checkout line will bill.
+ *                                          checkout line will bill;
+ *   - "checkout_addon_without_priced_row" (the reverse) a checkout line has no priced billable row behind it.
  * Unpriced rows (snapshot null / 0) and zero quantities bill nothing on the invoice either, so they never refuse.
  */
 export function addonCardRefusal(
   rows: readonly CatchupAddonRow[],
   lines: readonly CatchupAddon[],
-): "billable_addon_not_card_billable" | "addon_snapshot_not_catalog" | null {
+):
+  | "billable_addon_not_card_billable"
+  | "addon_snapshot_not_catalog"
+  | "checkout_addon_without_priced_row"
+  | null {
   const byCode = new Map<string, { quantity: number; prices: Set<number> }>();
   for (const r of rows) {
     if (!(r.unitPrice != null && r.unitPrice > 0) || !(r.quantity >= 1)) continue;
@@ -132,7 +137,11 @@ export function addonCardRefusal(
       snapshotMismatch = true;
     }
   }
-  return snapshotMismatch ? "addon_snapshot_not_catalog" : null;
+  if (snapshotMismatch) return "addon_snapshot_not_catalog";
+  // The reverse: a checkout line for a SKU with no priced billable row. The invoice never billed it, so the card
+  // would charge NEW money (an unpriced / zero-priced row bills nothing on the invoice either).
+  if (lines.some((l) => !byCode.has(l.sku))) return "checkout_addon_without_priced_row";
+  return null;
 }
 
 /**
@@ -185,6 +194,29 @@ export function manualPeriodAhead(i: {
   }
   if (!i.periodEnd) return false;
   return !windowsCover(i.invoices, i.paidThrough, snapToBoundary(i.periodEnd));
+}
+
+/** A manual activation writes its marker (in the tx) and its trail row (after the commit) seconds apart. */
+const ACTIVATION_CLUSTER_GAP_MS = 10 * 60 * 1000;
+
+/**
+ * The tenant's activation history as INSTANTS: rows closer than ACTIVATION_CLUSTER_GAP_MS are the same activation
+ * (its marker row + trail row). `first` is the earliest activation, `latest` the START of the last one - so a
+ * single activation has first === latest, and only a genuine second one (a renewal) moves `latest` past `first`.
+ */
+export function activationInstants(times: readonly Date[]): {
+  first: Date | null;
+  latest: Date | null;
+} {
+  if (times.length === 0) return { first: null, latest: null };
+  const sorted = [...times].sort((a, b) => a.getTime() - b.getTime());
+  let clusterStart = sorted[0];
+  let prev = sorted[0];
+  for (const t of sorted) {
+    if (t.getTime() - prev.getTime() > ACTIVATION_CLUSTER_GAP_MS) clusterStart = t;
+    prev = t;
+  }
+  return { first: sorted[0], latest: clusterStart };
 }
 
 export interface StubLine {
@@ -337,6 +369,7 @@ export type CatchupPlanRefusal =
   | "no_monthly_price"
   | "billable_addon_not_card_billable"
   | "addon_snapshot_not_catalog"
+  | "checkout_addon_without_priced_row"
   | "manual_period_ahead";
 
 export type CatchupPlanResult = CatchupPlan | { ok: false; reason: CatchupPlanRefusal };

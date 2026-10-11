@@ -7,6 +7,8 @@ import { AuditModule } from "../audit/audit.module";
 import { CommonModule } from "../common/common.module";
 import { TenantModule } from "../tenant/tenant.module";
 import { FeatureConfigModule } from "./feature-config.module";
+import { PlatformAdminModule } from "../platform-admin/platform-admin.module";
+import { RfInvoicesAdminService } from "../platform-admin/rf-invoices.service";
 import { BillingModule } from "./billing.module";
 import { BillingService } from "./billing.service";
 import { CatchupCheckoutService } from "./catchup-checkout.service";
@@ -59,6 +61,34 @@ describe("BillingModule wiring: the @Optional collaborators are really provided"
       const mutations = moduleRef.get(SubscriptionMutationService, { strict: false }) as any;
       expect(mutations.scheduledPrice).toBeInstanceOf(ScheduledPriceChangeService);
       expect(mutations.dunning).toBeInstanceOf(DunningService);
+    } finally {
+      await moduleRef.close();
+    }
+  });
+
+  it("RfInvoicesAdminService (the admin queue) gets a REAL CatchupClaimService: its @Optional catch-up guard is not silently off", async () => {
+    // PlatformAdminModule must keep wiring it ...
+    const imports: unknown[] = Reflect.getMetadata("imports", PlatformAdminModule);
+    const providers: unknown[] = Reflect.getMetadata("providers", PlatformAdminModule);
+    expect(imports).toContain(BillingModule);
+    expect(providers).toContain(RfInvoicesAdminService);
+    // ... and BillingModule must keep exporting what it needs: compile the same pair.
+    @Module({ imports: [BillingModule], providers: [RfInvoicesAdminService] })
+    class AdminQueueWiring {}
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        StubPrismaModule,
+        AuditModule,
+        CommonModule,
+        TenantModule,
+        FeatureConfigModule,
+        AdminQueueWiring,
+      ],
+    }).compile();
+    try {
+      const svc = moduleRef.get(RfInvoicesAdminService, { strict: false }) as any;
+      expect(svc.catchup).toBeInstanceOf(CatchupClaimService);
     } finally {
       await moduleRef.close();
     }
