@@ -223,17 +223,19 @@ describe("ZReportView", () => {
   });
 });
 
-describe("ZReportView: actions (Print, Resend, Back to sales)", () => {
+describe("ZReportView: actions (Back to sales, Resend, Print)", () => {
   const actions = () => screen.getByTestId("z-actions");
 
-  it("puts Print first and primary, then Resend, then Back to sales, above the report", () => {
+  it("puts Print LAST and primary (the app's footer convention), after Back to sales and Resend, above the report", () => {
     renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
     const buttons = within(actions()).getAllByRole("button");
-    expect(buttons.map((b) => b.textContent)).toEqual(["Print", "Resend", "Back to sales"]);
-    // Print is the primary action: the filled variant, Resend and Back to sales the quiet one
-    expect(buttons[0].className).toMatch(/bg-accent-strong/);
+    expect(buttons.map((b) => b.textContent)).toEqual(["Back to sales", "Resend", "Print"]);
+    // Print is the primary action: the filled variant, Back to sales and Resend the quiet one
+    expect(buttons[0].className).not.toMatch(/bg-accent-strong/);
     expect(buttons[1].className).not.toMatch(/bg-accent-strong/);
-    expect(buttons[2].className).not.toMatch(/bg-accent-strong/);
+    expect(buttons[2].className).toMatch(/bg-accent-strong/);
+    // rightmost, like a Modal footer
+    expect(actions().className).toMatch(/justify-end/);
     expect(
       actions().compareDocumentPosition(screen.getByTestId("z-report")) &
         Node.DOCUMENT_POSITION_FOLLOWING,

@@ -134,7 +134,7 @@ export function ZReportBody({ snapshot }: { snapshot: DayCloseSnapshot }) {
 }
 
 /**
- * Print, Resend, Back to sales: the Z view's own actions (SA-750r3 §3), pinned at the top of the sheet so a phone never scrolls
+ * Back to sales, Resend, Print (primary, trailing): the Z view's own actions (SA-750r3 §3), pinned at the top of the sheet so a phone never scrolls
  * to reach them. Resend is always offered (it re-sends the stored report); its outcome is a fixed line, never the server's text.
  */
 function ZReportContent({
@@ -164,11 +164,12 @@ function ZReportContent({
   return (
     <div className="space-y-4">
       <div
-        className="sticky top-0 z-10 -mx-1 flex flex-wrap gap-2 bg-white px-1 pb-2 print:hidden"
+        className="sticky top-0 z-10 -mx-1 flex flex-wrap justify-end gap-2 bg-white px-1 pb-2 print:hidden"
         data-testid="z-actions"
       >
-        <Button type="button" className="min-h-11" onClick={() => window.print()}>
-          Print
+        {/* The primary action trails, like every other dialog's footer: quiet actions first, Print last. */}
+        <Button type="button" variant="secondary" className="min-h-11" onClick={onClose}>
+          Back to sales
         </Button>
         <Button
           type="button"
@@ -179,8 +180,8 @@ function ZReportContent({
         >
           Resend
         </Button>
-        <Button type="button" variant="secondary" className="min-h-11" onClick={onClose}>
-          Back to sales
+        <Button type="button" className="min-h-11" onClick={() => window.print()}>
+          Print
         </Button>
       </div>
       {outcome === "sent" ? (

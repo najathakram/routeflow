@@ -436,7 +436,7 @@ describe("CounterDayClose: the closed state", () => {
       within(actions)
         .getAllByRole("button")
         .map((b) => b.textContent),
-    ).toEqual(["Print", "Resend", "Back to sales"]);
+    ).toEqual(["Back to sales", "Resend", "Print"]);
     fireEvent.click(within(actions).getByRole("button", { name: "Back to sales" }));
     await waitFor(() => expect(screen.queryByTestId("z-report")).toBeNull());
     expect(screen.getByRole("dialog", { name: "Today's sales" })).toBeInTheDocument();
