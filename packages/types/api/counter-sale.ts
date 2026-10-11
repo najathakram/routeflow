@@ -126,6 +126,8 @@ export interface CounterSaleVoidResponse {
 export interface PickupCompleteRequest {
   /** omit to hand the order over unpaid (an open invoice on account); a walk-in must pay */
   payment?: CounterSalePayment;
+  /** SA-750r3: the till register this hand-over's cash counts on when the order has none stamped yet; default 'main' */
+  registerKey?: string;
 }
 
 export interface PickupCompleteResponse {

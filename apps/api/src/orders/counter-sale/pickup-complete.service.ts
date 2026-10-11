@@ -32,7 +32,7 @@ import {
 import { isHandOverTender, tenderFigures, type InvoiceRow } from "./pickup-tender";
 import { pickupTenderGroupId } from "./pickup-tender-group";
 import type { PickupCompleteDto } from "./pickup-complete.dto";
-import { counterCloseShared, counterTenderPaidAt } from "./counter-tender-window";
+import { counterCloseShared, counterTenderPaidAt, pickupRegisterOf } from "./counter-tender-window";
 
 type OrderRow = {
   id: string;
@@ -202,16 +202,17 @@ export class PickupCompleteService {
       if (owedNow) planError = API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED;
     } else if (sent && sent.method !== "ON_ACCOUNT" && owedNow) {
       try {
-        // SA-750r3: a COUNTER order's tender also takes the SHARED end-of-day close lock on this pinned connection; any
-        // other PICKUP order is not a till event and takes none.
+        // SA-750r3: EVERY hand-over tender (counter or POS-mode PICKUP) takes the SHARED end-of-day close lock on this pinned
+        // connection, for the order's stamped register, else the request's, else 'main'.
+        const register = pickupRegisterOf(order, dto.registerKey);
         const locked = await withAdvisoryLock(
           {
             family: "counter-tender",
             key: id,
             mode: "wait",
-            sharedAlso: counterCloseShared(this.prisma.getTenantId(), order),
+            sharedAlso: counterCloseShared(this.prisma.getTenantId(), order, register),
           },
-          () => this.tender(id, sent, handedOverAt, walkIn, order),
+          () => this.tender(id, sent, handedOverAt, walkIn, order, register),
         );
         if (!locked.acquired) throw new LockTimeoutError("counter-tender", id, 0);
         ({ invoices, planError } = locked.value);
@@ -353,6 +354,7 @@ export class PickupCompleteService {
     handedOverAt: Date | null,
     walkIn: boolean,
     till: OrderRow,
+    register: string,
   ): Promise<{ invoices: InvoiceRow[]; planError?: string }> {
     let invoices = await this.readInvoices(orderId);
     let planError: string | undefined;
@@ -394,12 +396,29 @@ export class PickupCompleteService {
           return { invoiceId: part.invoiceId, due };
         })
         .filter((w) => w.due > 0);
-      // SA-750r3: a COUNTER order's payment is dated from the DATABASE clock read with the shared close lock held, and a
-      // closed window refuses it (409 COUNTER_SALE_DAY_CLOSED, nothing recorded). Outside the try below so it is not mapped
-      // to "not recorded"; a replay with nothing left to record writes nothing and is never refused.
-      const paidAt = writes.length
-        ? await counterTenderPaidAt(this.prisma, this.prisma.getTenantId(), till)
-        : undefined;
+      // SA-750r3: the payment is dated from the DATABASE clock read with the shared close lock held, and a closed window of
+      // the tender's register refuses it (409 COUNTER_SALE_DAY_CLOSED, nothing stamped or recorded). Outside the try below
+      // so it is not mapped to "not recorded"; a replay with nothing left to record writes nothing and is never refused.
+      let paidAt: string | undefined;
+      if (writes.length) {
+        paidAt = await counterTenderPaidAt(this.prisma, this.prisma.getTenantId(), till, register);
+        // Stamp the register on a POS-mode (non-counter) order that has none, tenant-scoped, only after the window check and
+        // before the payment; a stamp that is already set is never overwritten (the tender counts toward it).
+        if (till.counterSale !== true && !till.registerKey) {
+          const stamped = await this.prisma.forTenant().order.updateMany({
+            where: { id: orderId, tenantId: this.prisma.getTenantId(), registerKey: null },
+            data: { registerKey: register },
+          });
+          if (stamped?.count === 0) {
+            // A concurrent hand-over stamped another register first: the lock held is the wrong one. Record nothing; the
+            // retry reads the stamp and locks the right register.
+            const now = await this.readOrder(orderId);
+            if (now?.registerKey && now.registerKey !== register) {
+              return { invoices, planError: API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED };
+            }
+          }
+        }
+      }
       try {
         for (const { invoiceId, due } of writes) {
           // SA-763r R7: the tender's group id is written IN the create, so Today's sales finds it. SA-750r3: the shared close

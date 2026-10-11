@@ -216,6 +216,50 @@ describe("CounterSaleService.ring — the day-close lock and window (SA-750r3)",
     ).rejects.not.toBeInstanceOf(BadRequestException);
   });
 
+  describe("SA-764 ordering: the closed-day check runs before the cash-tendered write", () => {
+    beforeEach(() => {
+      prisma.order.updateMany.mockImplementation(async () => {
+        events.push("cash-tendered");
+        return { count: 1 };
+      });
+    });
+
+    it("a CASH tender into a closed window is 409 COUNTER_SALE_DAY_CLOSED and counterCashTendered is NEVER written", async () => {
+      closedWindow();
+      const err: any = await service
+        .ring(body({ method: "CASH", amount: 40 }), staff, "k")
+        .catch((e) => e);
+      expect(err.getStatus?.()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(recordPayment).not.toHaveBeenCalled();
+    });
+
+    it("a tender after the window writes the cash-tendered figure BEFORE the payment", async () => {
+      await service.ring(body({ method: "CASH", amount: 40 }), staff, "k");
+      expect(prisma.order.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { counterCashTendered: 40 } }),
+      );
+      expect(events).toEqual(["lock", "cash-tendered", "record", "unlock"]);
+    });
+
+    it("a replay with nothing left to record still writes the cash-tendered figure and is never refused", async () => {
+      await service.ring(body({ method: "CASH", amount: 40 }), staff, "k");
+      recordPayment.mockClear();
+      prisma.order.updateMany.mockClear();
+      prisma.counterDayClose.findFirst.mockClear();
+      closedWindow();
+      replay = true;
+      const r = await service.ring(body({ method: "CASH", amount: 40 }), staff, "k");
+      expect(r).toMatchObject({ replayed: true, paymentRecorded: true });
+      expect(prisma.order.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { counterCashTendered: 40 } }),
+      );
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(prisma.counterDayClose.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
   it("ON_ACCOUNT takes no money: no tender lock, no clock read, no window read", async () => {
     await service.ring(body({ method: "ON_ACCOUNT" }), staff, "k");
     expect(lockCalls).toHaveLength(0);
