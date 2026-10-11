@@ -12,7 +12,7 @@ export function buyerHomeInvoiceParams(): { statuses: string[]; limit: number } 
 }
 
 export function buyerHomeOverdueCount(
-  invoices: ReadonlyArray<{ isOverdue?: boolean }> | undefined,
+  invoices: ReadonlyArray<{ status?: string; isOverdue?: boolean }> | undefined,
 ): number {
   return (invoices ?? []).filter((inv) => inv.isOverdue === true).length;
 }
