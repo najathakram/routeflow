@@ -24,17 +24,44 @@ interface FnFacts {
   creditNoteWrites: number[];
 }
 
+/** Property names an expression chain walks through: `a.b.c`, `a["b"].c`, and `this`; a trailing `.call/.apply/.bind` is dropped. */
 const propChain = (e: ts.Expression): string[] => {
   const out: string[] = [];
   let cur: ts.Expression = e;
-  while (ts.isPropertyAccessExpression(cur)) {
-    out.unshift(cur.name.text);
-    cur = cur.expression;
+  for (;;) {
+    if (ts.isPropertyAccessExpression(cur)) {
+      out.unshift(cur.name.text);
+      cur = cur.expression;
+    } else if (
+      ts.isElementAccessExpression(cur) &&
+      ts.isStringLiteralLike(cur.argumentExpression)
+    ) {
+      out.unshift(cur.argumentExpression.text);
+      cur = cur.expression;
+    } else if (ts.isNonNullExpression(cur) || ts.isParenthesizedExpression(cur)) {
+      cur = cur.expression;
+    } else break;
   }
   if (ts.isIdentifier(cur)) out.unshift(cur.text);
   else if (cur.kind === ts.SyntaxKind.ThisKeyword) out.unshift("this");
+  while (out.length > 2 && ["call", "apply", "bind"].includes(out[out.length - 1])) out.pop();
   return out;
 };
+
+/** Every Prisma write verb: a model's create/update/upsert family. */
+const WRITE_METHODS = new Set([
+  "create",
+  "createMany",
+  "createManyAndReturn",
+  "update",
+  "updateMany",
+  "updateManyAndReturn",
+  "upsert",
+]);
+/** A credit note row is VALUE only when created; an update/void gives nothing back, so only the creating verbs count for it. */
+const CREATING = new Set(["create", "createMany", "createManyAndReturn", "upsert"]);
+type Model = "creditNote" | "return";
+const MODELS: Model[] = ["creditNote", "return"];
 
 /**
  * A return write that can set status REFUNDED: its source mentions REFUNDED anywhere (a literal, a constant named for it), or its
@@ -52,47 +79,127 @@ const hasRefundedStatus = (call: ts.CallExpression, sf: ts.SourceFile): boolean 
   );
   if (!data) return arg.properties.some((p) => ts.isSpreadAssignment(p));
   if (!ts.isObjectLiteralExpression(data.initializer)) return true;
+  // a spread, a shorthand `status`, or a `status` that is not a string literal (a constant, a call) could carry REFUNDED
   return data.initializer.properties.some(
-    (p) => ts.isSpreadAssignment(p) || (ts.isPropertyAssignment(p) && !ts.isIdentifier(p.name)),
+    (p) =>
+      ts.isSpreadAssignment(p) ||
+      (ts.isShorthandPropertyAssignment(p) && p.name.text === "status") ||
+      (ts.isPropertyAssignment(p) &&
+        ts.isIdentifier(p.name) &&
+        p.name.text === "status" &&
+        !ts.isStringLiteralLike(p.initializer)),
   );
 };
 
-/** Facts per named function / method of a source file (a call belongs to its nearest named enclosing declaration). */
+/** The name a function-like node is known by: a method / function name, or the property / variable an arrow is assigned to. */
+const nameOfFunction = (node: ts.Node): string | null => {
+  if (
+    (ts.isMethodDeclaration(node) || ts.isFunctionDeclaration(node)) &&
+    node.name &&
+    ts.isIdentifier(node.name)
+  )
+    return node.name.text;
+  if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+    const p = node.parent;
+    if (
+      (ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p) || ts.isVariableDeclaration(p)) &&
+      ts.isIdentifier(p.name)
+    )
+      return p.name.text;
+  }
+  return null;
+};
+
+/**
+ * Facts per named function of a source file (a call belongs to its nearest named enclosing declaration; code outside any is
+ * "<module>"). Writers are found through plain calls, element access, .call/.bind, a model alias (`const m = tx.creditNote;
+ * m.create()`), destructured verbs (`const { create } = tx.creditNote`), and raw INSERT / UPDATE statements on the two tables.
+ */
 function factsOf(rel: string): Map<string, FnFacts> {
   const file = path.join(SRC, rel);
   const sf = ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.ES2022, true);
   const out = new Map<string, FnFacts>();
-  const visit = (node: ts.Node, fn: FnFacts | null): void => {
-    let current = fn;
-    if (
-      (ts.isMethodDeclaration(node) || ts.isFunctionDeclaration(node)) &&
-      node.name &&
-      ts.isIdentifier(node.name)
-    ) {
-      current = {
-        name: node.name.text,
-        calls: [],
-        refundedWrites: [],
-        returnWrites: [],
-        creditNoteWrites: [],
-      };
-      out.set(`${node.name.text}`, current);
+  const fresh = (name: string): FnFacts => {
+    const f = out.get(name) ?? {
+      name,
+      calls: [],
+      refundedWrites: [],
+      returnWrites: [],
+      creditNoteWrites: [],
+    };
+    out.set(name, f);
+    return f;
+  };
+  // pre-pass: model aliases (`const m = <x>.creditNote`)
+  const aliases = new Map<string, Model>();
+  const collect = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const last = propChain(node.initializer).pop();
+      if (last && (MODELS as string[]).includes(last)) aliases.set(node.name.text, last as Model);
     }
-    if (ts.isCallExpression(node) && current) {
+    ts.forEachChild(node, collect);
+  };
+  collect(sf);
+  const record = (
+    f: FnFacts,
+    model: Model,
+    verb: string,
+    pos: number,
+    call?: ts.CallExpression,
+  ): void => {
+    if (model === "creditNote") {
+      if (CREATING.has(verb)) f.creditNoteWrites.push(pos);
+    } else {
+      f.returnWrites.push(pos);
+      if (!call || hasRefundedStatus(call, sf)) f.refundedWrites.push(pos);
+    }
+  };
+  const visit = (node: ts.Node, fn: FnFacts): void => {
+    let current = fn;
+    const name = nameOfFunction(node);
+    if (name) current = fresh(name);
+    if (ts.isCallExpression(node)) {
       const chain = propChain(node.expression);
       const callee = chain[chain.length - 1];
       if (callee) current.calls.push({ name: callee, pos: node.getStart(sf) });
       const owner = chain[chain.length - 2];
-      if (owner === "return" && (callee === "updateMany" || callee === "update")) {
-        current.returnWrites.push(node.getStart(sf));
-        if (hasRefundedStatus(node, sf)) current.refundedWrites.push(node.getStart(sf));
-      }
-      if (owner === "creditNote" && (callee === "create" || callee === "createMany"))
-        current.creditNoteWrites.push(node.getStart(sf));
+      const model = (MODELS as string[]).includes(owner ?? "")
+        ? (owner as Model)
+        : aliases.get(owner ?? "");
+      if (model && callee && WRITE_METHODS.has(callee))
+        record(current, model, callee, node.getStart(sf), node);
+      // raw SQL passed as a string: $executeRawUnsafe("INSERT INTO ...")
+      if ((callee === "$executeRawUnsafe" || callee === "$queryRawUnsafe") && node.arguments[0])
+        rawWrite(current, node.arguments[0].getText(sf), node.getStart(sf));
+    }
+    if (ts.isTaggedTemplateExpression(node)) {
+      const tag = propChain(node.tag).pop();
+      if (tag === "$executeRaw" || tag === "$queryRaw")
+        rawWrite(current, node.template.getText(sf), node.getStart(sf));
+    }
+    // destructured verbs: const { create } = tx.creditNote
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.initializer
+    ) {
+      const last = propChain(node.initializer).pop();
+      const model = (MODELS as string[]).includes(last ?? "")
+        ? (last as Model)
+        : aliases.get(last ?? "");
+      if (model)
+        for (const e of node.name.elements) {
+          const verb = (e.propertyName ?? e.name).getText(sf);
+          if (WRITE_METHODS.has(verb)) record(current, model, verb, node.getStart(sf));
+        }
     }
     ts.forEachChild(node, (c) => visit(c, current));
   };
-  visit(sf, null);
+  const rawWrite = (f: FnFacts, text: string, pos: number): void => {
+    if (/INSERT\s+INTO\s+"CreditNote"/i.test(text)) record(f, "creditNote", "create", pos);
+    if (/(UPDATE|INSERT\s+INTO)\s+"Return"/i.test(text)) record(f, "return", "update", pos);
+  };
+  visit(sf, fresh("<module>"));
   return out;
 }
 
@@ -269,7 +376,6 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
     const out: string[] = [];
     for (const file of walkSources(SRC)) {
       const rel = path.relative(SRC, file).replace(/\\/g, "/");
-      if (!fs.readFileSync(file, "utf8").includes("creditNote")) continue;
       for (const f of factsOf(rel).values())
         if (f.creditNoteWrites.length > 0) out.push(`${rel}::${f.name}`);
     }
@@ -279,7 +385,6 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
     const out: string[] = [];
     for (const file of walkSources(SRC)) {
       const rel = path.relative(SRC, file).replace(/\\/g, "/");
-      if (!fs.readFileSync(file, "utf8").includes("REFUNDED")) continue;
       for (const f of factsOf(rel).values())
         if (f.refundedWrites.length > 0) out.push(`${rel}::${f.name}`);
     }
@@ -309,6 +414,7 @@ describe("SA-773: every value-giver reads the refundable remainder under its loc
         "returns/returns.service.ts::claimRefund",
         // over-reported by the broad heuristic, each reviewed: none of them sets REFUNDED
         "returns/refund-tender.ts::setRefundTender", // writes the tender column of an already-resolved return
+        "returns/inline-returns.service.ts::captureInTx", // CREATES the return RECEIVED (held or not); never REFUNDED
         "returns/returns.service.ts::cancel", // the CAS to CANCELLED (a REFUNDED return cannot be cancelled)
         "returns/returns.service.ts::processRefund", // the compensation: REFUNDED back to RECEIVED when the mint failed
       ].sort(),
