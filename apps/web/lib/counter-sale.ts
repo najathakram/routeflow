@@ -17,24 +17,45 @@ export interface CounterSaleGate {
   opensAsCounter: boolean;
   /** "Ship this order instead": only when SHIP is a method of this business */
   offerShipInstead: boolean;
+  /** "Invoice order": a store-only business's way into the order builder (row 331) */
+  offerInvoiceOrder: boolean;
 }
 
 const NO_COUNTER: CounterSaleGate = {
   showButton: false,
   opensAsCounter: false,
   offerShipInstead: false,
+  offerInvoiceOrder: false,
 };
+
+/**
+ * A store-only business: PICKUP is its only fulfilment method (no route, no shipping). Read from
+ * `capabilities.fulfilment`, never from the profile key; a missing or partial answer is NOT store-only.
+ */
+export function isStoreOnly(
+  cap: Pick<FulfilmentCapability, "methods"> | null | undefined,
+): boolean {
+  const methods = (cap?.methods ?? []) as readonly string[];
+  return methods.length > 0 && methods.every((m) => m === "PICKUP");
+}
 
 /** always -> the button and New order opens as the counter; optional -> the button only; off / unknown / loading -> nothing. */
 export function counterSaleGate(cap: FulfilmentCapability | null | undefined): CounterSaleGate {
   if (!cap) return NO_COUNTER;
   if (cap.counter === "optional")
-    return { showButton: true, opensAsCounter: false, offerShipInstead: false };
+    return {
+      showButton: true,
+      opensAsCounter: false,
+      offerShipInstead: false,
+      offerInvoiceOrder: false,
+    };
   if (cap.counter === "always")
     return {
       showButton: true,
       opensAsCounter: true,
       offerShipInstead: (cap.methods ?? []).includes("SHIP"), // `?? []`: a partial answer must not crash the till
+      // A business with no delivery at all has nowhere else to build an invoiced order from: give it the entry.
+      offerInvoiceOrder: isStoreOnly(cap),
     };
   return NO_COUNTER;
 }

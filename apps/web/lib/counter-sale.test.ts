@@ -16,6 +16,7 @@ import {
   isCounterSaleNotFound,
   isDefinitiveCounterSaleRefusal,
   counterSaleGate,
+  isStoreOnly,
   PAYMENT_PROBLEM_COPY,
   paymentMethodOptions,
   PICKUP_DAY_CLOSED_COPY,
@@ -59,12 +60,14 @@ describe("counterSaleGate: reads capabilities.fulfilment only (SA-650)", () => {
       showButton: true,
       opensAsCounter: true,
       offerShipInstead: false,
+      offerInvoiceOrder: true, // PICKUP is the only method: a store-only business (row 331)
     });
   });
   it("always + SHIP in methods: 'Ship this order instead' is offered", () => {
     expect(counterSaleGate(cap({ counter: "always", methods: ["PICKUP", "SHIP"] }))).toMatchObject({
       opensAsCounter: true,
       offerShipInstead: true,
+      offerInvoiceOrder: false, // it can ship, so the normal builder is already reachable
     });
   });
   it("optional: the button only; never opens as the counter, never offers the ship switch", () => {
@@ -72,14 +75,34 @@ describe("counterSaleGate: reads capabilities.fulfilment only (SA-650)", () => {
       showButton: true,
       opensAsCounter: false,
       offerShipInstead: false,
+      offerInvoiceOrder: false,
     });
   });
   it("off, missing or still loading: nothing", () => {
-    const none = { showButton: false, opensAsCounter: false, offerShipInstead: false };
+    const none = {
+      showButton: false,
+      opensAsCounter: false,
+      offerShipInstead: false,
+      offerInvoiceOrder: false,
+    };
     expect(counterSaleGate(cap({ counter: "off" }))).toEqual(none);
     expect(counterSaleGate(undefined)).toEqual(none);
     expect(counterSaleGate(null)).toEqual(none);
     expect(counterSaleGate(cap({ counter: "bogus" as never }))).toEqual(none);
+  });
+});
+
+describe("isStoreOnly: PICKUP is the only fulfilment method (row 331)", () => {
+  it("true only when every method is PICKUP", () => {
+    expect(isStoreOnly({ methods: ["PICKUP"] })).toBe(true);
+    expect(isStoreOnly({ methods: ["PICKUP", "SHIP"] })).toBe(false);
+    expect(isStoreOnly({ methods: ["ROUTE", "SHIP"] })).toBe(false);
+  });
+  it("a missing, empty or partial answer is not store-only", () => {
+    expect(isStoreOnly(undefined)).toBe(false);
+    expect(isStoreOnly(null)).toBe(false);
+    expect(isStoreOnly({ methods: [] })).toBe(false);
+    expect(isStoreOnly({} as never)).toBe(false);
   });
 });
 
