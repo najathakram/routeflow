@@ -322,7 +322,10 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
       create: { tenantId, key: "settings.taxRate", value: "8.25" },
       update: { value: "8.25" },
     });
-    const res = await tenantCtx.run(tenantId, () => today.today({} as never));
+    // read only: later tests ring sales with no configured tax, so remove it again before asserting
+    const res = await tenantCtx
+      .run(tenantId, () => today.today({} as never))
+      .finally(() => raw.systemConfig.deleteMany({ where: { tenantId, key: "settings.taxRate" } }));
     const row = (id: string) => res.data.find((d) => d.orderId === id)!;
     expect(row(cashOrderId).cashTendered).toBe(50);
     expect(row(cashOrderId).taxRatePercent).toBe(8.25);
