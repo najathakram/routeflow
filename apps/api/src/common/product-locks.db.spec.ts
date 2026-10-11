@@ -9,6 +9,11 @@
  *     - `lockProductsForStock` ranks FAMILY -> recipe product -> the rest: it blocks on F while
  *       holding NOTHING (asserted with NOWAIT probes on C and R), the catalog writer takes C and
  *       commits, then the stock writer finishes. No 40P01.
+ * (i-b) RANK BY ROLE, NOT BY kind (SA-767 r-note Nit 1). A recipe's `familyProductId` is a FAMILY
+ *     *role* even when that product's kind is STANDARD. A sale of [R, F_std] against a catalog writer
+ *     that holds F_std and then wants R deadlocked under the old kind-only rank (R = RECIPE ranked 1,
+ *     F_std = STANDARD ranked 2). `PRODUCT_LOCK_RANK_SQL` ranks the family role 0 through an EXISTS on
+ *     Recipe(familyProductId) / Product(parentProductId), so the sale waits on F_std holding nothing.
  * (ii) OPPOSITE LINE ORDER: two sales (the real `decrementStockForSale`) over the same two products
  *     in opposite line orders, 10 rounds, never deadlock and both land.
  * (iii) TENANT: another tenant's product id in the list is not locked.
@@ -17,12 +22,13 @@
  */
 import { randomUUID } from "crypto";
 import { Logger } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { Pool } from "pg";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { decrementStockForSale } from "../orders/order-stock";
 import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
-import { lockProductsForStock } from "./product-locks";
+import { lockProductsForStock, PRODUCT_LOCK_RANK_SQL } from "./product-locks";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -61,6 +67,11 @@ describeDb("SA-767 L-1 — lockProductsForStock (real Postgres)", () => {
     for (const tenantId of tenantIds) {
       /* eslint-disable no-await-in-loop */
       await prisma.stockMovement.deleteMany({ where: { tenantId } }).catch(() => undefined);
+      await prisma.recipeComponent.deleteMany({ where: { tenantId } }).catch(() => undefined);
+      await prisma.recipe.deleteMany({ where: { tenantId } }).catch(() => undefined);
+      await prisma.product
+        .deleteMany({ where: { tenantId, parentProductId: { not: null } } })
+        .catch(() => undefined);
       await prisma.product.deleteMany({ where: { tenantId } }).catch(() => undefined);
       await prisma.tenant.deleteMany({ where: { id: tenantId } }).catch(() => undefined);
       /* eslint-enable no-await-in-loop */
@@ -80,8 +91,9 @@ describeDb("SA-767 L-1 — lockProductsForStock (real Postgres)", () => {
   const mkProduct = (
     tenantId: string,
     id: string,
-    kind: "STANDARD" | "FAMILY" | "RECIPE",
+    kind: "STANDARD" | "FAMILY" | "RECIPE" | "VARIANT",
     stock = 0,
+    parentProductId?: string,
   ) =>
     prisma.product.create({
       data: {
@@ -92,6 +104,7 @@ describeDb("SA-767 L-1 — lockProductsForStock (real Postgres)", () => {
         unit: "ea",
         pricePerUnit: 5,
         currentStock: stock,
+        ...(parentProductId ? { parentProductId } : {}),
       },
     });
 
@@ -108,6 +121,35 @@ describeDb("SA-767 L-1 — lockProductsForStock (real Postgres)", () => {
     await mkProduct(tenantId, ids.r, "RECIPE");
     await mkProduct(tenantId, ids.f, "FAMILY");
     return { tenantId, ...ids };
+  }
+
+  /**
+   * Role-based world: the recipe's family F_std is a STANDARD-kind product (kind says nothing about
+   * its role), R is the recipe product (kind RECIPE), C a component. Ids sort C < R < F_std, so id
+   * order alone would also take R before F_std; the old kind rank (R 1, F_std 2) did too.
+   * The writer-first row (`f`) is F_std; the row it asks for next (`c`) is R; `r` is C.
+   */
+  async function seedRecipeWorld() {
+    const tenantId = await seedTenant("role");
+    const ids = {
+      comp: `${run}-a-comp-${seq}`,
+      rec: `${run}-m-recipe-${seq}`,
+      fam: `${run}-z-famstd-${seq}`,
+    };
+    await mkProduct(tenantId, ids.fam, "STANDARD");
+    await mkProduct(tenantId, ids.rec, "RECIPE");
+    await mkProduct(tenantId, ids.comp, "STANDARD");
+    await prisma.recipe.create({
+      data: {
+        tenantId,
+        productId: ids.rec,
+        familyProductId: ids.fam,
+        version: 1,
+        unitsPerPack: 1,
+        components: { create: [{ tenantId, componentProductId: ids.comp, qty: 1 }] },
+      },
+    });
+    return { tenantId, f: ids.fam, c: ids.rec, r: ids.comp };
   }
 
   /** Polls until some backend is blocked by `blockerPid`. */
@@ -149,8 +191,9 @@ describeDb("SA-767 L-1 — lockProductsForStock (real Postgres)", () => {
    */
   async function interleave(
     lockStock: (tx: any, w: Awaited<ReturnType<typeof seedCatalog>>) => Promise<void>,
+    seed: () => Promise<Awaited<ReturnType<typeof seedCatalog>>> = seedCatalog,
   ) {
-    const w = await seedCatalog();
+    const w = await seed();
     const writer = await pool.connect();
     let writerError: unknown;
     let stockError: unknown;
@@ -201,6 +244,73 @@ describeDb("SA-767 L-1 — lockProductsForStock (real Postgres)", () => {
     expect(r.stockHoldsR).toBe(false);
     expect(r.writerError).toBeUndefined();
     expect(r.stockError).toBeUndefined();
+  }, 60_000);
+
+  it("(i-b) a sale of [R, F_std] vs a catalog writer holding F_std then R: waits on the family role, no 40P01", async () => {
+    const r = await interleave(
+      (tx, w) => lockProductsForStock(tx, w.tenantId, [w.c, w.f]),
+      seedRecipeWorld as any,
+    );
+    expect(r.blocked).toBe(true);
+    expect(r.stockHoldsC).toBe(false); // holds nothing while it waits on the family role
+    expect(r.writerError).toBeUndefined();
+    expect(r.stockError).toBeUndefined();
+  }, 60_000);
+
+  it("(i-b) the rank is by ROLE: recipe family 0 (kind STANDARD), variant parent 0, recipe product 1, rest 2, both roles 0", async () => {
+    const tenantId = await seedTenant("rank");
+    const id = (k: string) => `${run}-${k}-${seq}`;
+    const ids = {
+      plain: id("a-plain"), // rank 2, sorts first
+      recProd: id("b-recprod"), // kind RECIPE -> 1
+      stdRecProd: id("c-stdrecprod"), // kind STANDARD but a recipe's productId -> 1
+      famStd: id("d-famstd"), // recipe familyProductId, kind STANDARD -> 0
+      parentStd: id("e-parentstd"), // has a child (variant parent), kind STANDARD -> 0
+      child: id("f-child"), // the child, kind VARIANT -> 2
+      both: id("g-both"), // family of one recipe AND product of another -> 0
+      kindFam: id("h-kindfam"), // kind FAMILY, no children -> 0
+    };
+    await mkProduct(tenantId, ids.plain, "STANDARD");
+    await mkProduct(tenantId, ids.recProd, "RECIPE");
+    await mkProduct(tenantId, ids.stdRecProd, "STANDARD");
+    await mkProduct(tenantId, ids.famStd, "STANDARD");
+    await mkProduct(tenantId, ids.parentStd, "STANDARD");
+    await mkProduct(tenantId, ids.child, "VARIANT", 0, ids.parentStd);
+    await mkProduct(tenantId, ids.both, "RECIPE");
+    await mkProduct(tenantId, ids.kindFam, "FAMILY");
+    const recipe = (productId: string, familyProductId: string) =>
+      prisma.recipe.create({
+        data: { tenantId, productId, familyProductId, version: 1, unitsPerPack: 1 },
+      });
+    await recipe(ids.stdRecProd, ids.famStd);
+    await recipe(ids.recProd, ids.both);
+    await recipe(ids.both, ids.kindFam);
+    const rows = await prisma.$queryRaw<Array<{ id: string; rank: number }>>(Prisma.sql`
+      SELECT p.id, (${PRODUCT_LOCK_RANK_SQL})::int AS rank FROM "Product" p
+      WHERE p."tenantId" = ${tenantId}
+      ORDER BY ${PRODUCT_LOCK_RANK_SQL}, p.id
+    `);
+    const rank = Object.fromEntries(rows.map((x) => [x.id, x.rank]));
+    expect(rank).toEqual({
+      [ids.famStd]: 0,
+      [ids.parentStd]: 0,
+      [ids.both]: 0,
+      [ids.kindFam]: 0,
+      [ids.recProd]: 1,
+      [ids.stdRecProd]: 1,
+      [ids.plain]: 2,
+      [ids.child]: 2,
+    });
+    expect(rows.map((x) => x.id)).toEqual([
+      ids.famStd,
+      ids.parentStd,
+      ids.both,
+      ids.kindFam,
+      ids.recProd,
+      ids.stdRecProd,
+      ids.plain,
+      ids.child,
+    ]);
   }, 60_000);
 
   it("(ii) two sales over the same two products in opposite line orders never deadlock (10 rounds)", async () => {

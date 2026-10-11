@@ -3,7 +3,9 @@
  *
  * `lockProductsForStock` (common/product-locks.ts) is the only place a stock / cost writer takes
  * Product row locks: ONE statement, tenant-filtered, `ORDER BY rank, id FOR UPDATE`, where rank is
- * the catalog house order (FAMILY parents -> recipe products -> everything else). Before it,
+ * the catalog house order by ROLE (family role -> recipe-product role -> everything else), spelled
+ * once as `PRODUCT_LOCK_RANK_SQL` (the stock-side twin of the HOUSE LOCK ORDER comment in
+ * products/product-catalog-sync.ts). Before it,
  * order-stock.ts locked `WHERE id IN (...) FOR UPDATE` in line order with no tenant filter, and
  * `lockProducts` locked one id at a time in id order: a stock writer holding a component and then
  * asking for the family deadlocks (40P01) against a catalog writer (B908).
@@ -57,16 +59,47 @@ const RAW_LOCK_ALLOW_LIST: Record<string, string> = {
 describe("SA-767 L-1 — lockProductsForStock is the one Product stock lock", () => {
   const helper = read("common/product-locks.ts");
 
-  it("the helper statement is tenant-filtered, ranked (house order) then id, and FOR UPDATE", () => {
+  it("the helper statement is tenant-filtered, ranked by PRODUCT_LOCK_RANK_SQL then id, FOR UPDATE", () => {
     expect(helper).toMatch(/"tenantId"\s*=\s*\$\{tenantId\}/);
-    expect(helper).toMatch(/id\s*=\s*ANY\(\$\{ids\}::text\[\]\)/);
-    // ORDER BY <rank CASE>, id FOR UPDATE — the rank is FAMILY 0, RECIPE 1, rest 2.
-    expect(helper).toMatch(
-      /ORDER BY\s+CASE\s+kind\s+WHEN\s+'FAMILY'\s+THEN\s+0\s+WHEN\s+'RECIPE'\s+THEN\s+1\s+ELSE\s+2\s+END\s*,\s*id\s+FOR UPDATE/,
-    );
+    expect(helper).toMatch(/p\.id\s*=\s*ANY\(\$\{ids\}::text\[\]\)/);
+    expect(helper).toMatch(/ORDER BY\s+\$\{PRODUCT_LOCK_RANK_SQL\}\s*,\s*p\.id\s+FOR UPDATE/);
     // One statement: a single lock call, never a per-id loop.
     expect((helper.match(/FOR UPDATE/g) ?? []).length).toBe(1);
     expect(helper).toMatch(/export async function lockProductsForStock\b/);
+  });
+
+  it("the rank fragment is exported, by role, and the ONLY ORDER BY expression in the helper", () => {
+    expect(helper).toMatch(/export const PRODUCT_LOCK_RANK_SQL\s*=\s*Prisma\.sql`/);
+    // Exactly one ORDER BY in the whole helper: ORDER BY <rank>, id; the fragment has none.
+    expect((helper.match(/ORDER BY/gi) ?? []).length).toBe(1);
+    const fragment = helper.slice(
+      helper.indexOf("export const PRODUCT_LOCK_RANK_SQL"),
+      helper.indexOf("export async function lockProductsForStock"),
+    );
+    expect(fragment).not.toMatch(/ORDER BY/i);
+    expect(fragment).toMatch(/kind\s*=\s*'FAMILY'/);
+    expect(fragment).toMatch(/kind\s*=\s*'RECIPE'/);
+    // The family role: a child Product (parentProductId) or a Recipe (familyProductId), same tenant.
+    expect(fragment).toMatch(
+      /c\."parentProductId"\s*=\s*p\.id\s+AND\s+c\."tenantId"\s*=\s*p\."tenantId"/,
+    );
+    expect(fragment).toMatch(
+      /rf\."familyProductId"\s*=\s*p\.id\s+AND\s+rf\."tenantId"\s*=\s*p\."tenantId"/,
+    );
+    // The recipe-product role: a Recipe (productId), same tenant.
+    expect(fragment).toMatch(
+      /rp\."productId"\s*=\s*p\.id\s+AND\s+rp\."tenantId"\s*=\s*p\."tenantId"/,
+    );
+    // First match wins (family role 0 before recipe-product role 1), the rest is 2.
+    expect(fragment.replace(/\s+/g, " ")).toMatch(/WHEN .*THEN 0 WHEN .*THEN 1 ELSE 2 END/);
+  });
+
+  it("the HOUSE LOCK ORDER comment in product-catalog-sync.ts names PRODUCT_LOCK_RANK_SQL as its stock-side twin", () => {
+    const raw = fs.readFileSync(path.join(SRC, "products/product-catalog-sync.ts"), "utf8");
+    const block = raw.slice(raw.indexOf("HOUSE LOCK ORDER"));
+    const comment = block.slice(0, block.indexOf("*/"));
+    expect(comment).toMatch(/PRODUCT_LOCK_RANK_SQL/);
+    expect(comment).toMatch(/common\/product-locks\.ts/);
   });
 
   it("refuses an empty tenant id (never an unfiltered lock)", () => {
