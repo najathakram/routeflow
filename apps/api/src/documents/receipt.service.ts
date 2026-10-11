@@ -104,6 +104,7 @@ export class ReceiptService {
             qty: true,
             unitPrice: true,
             originalPrice: true,
+            priceType: true,
             notes: true,
             unitsPerBox: true,
             boxes: true,

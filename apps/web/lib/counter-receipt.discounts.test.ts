@@ -56,10 +56,15 @@ describe("reprint: a lowered price is struck and summed into Discounts (like the
         taxRatePercent: null,
         method: "CARD",
         paymentRecorded: true,
+        // the stored lines the response serves: the Pc line was rung at 10.00 off the 14.99 LIST price
+        lines: [
+          { productId: "pa", unitPrice: 2.5, originalPrice: null, priceType: "STANDARD" },
+          { productId: "pb", unitPrice: 10, originalPrice: 14.99, priceType: "DISCOUNTED" },
+        ],
       },
       lines: [
-        { tempId: "a", name: "Each", unitPrice: 2.5, qty: 1 },
-        { tempId: "b", name: "Pc", unitPrice: 10, qty: 2, tierPrice: 14.99, override: {} },
+        { tempId: "a", productId: "pa", name: "Each", unitPrice: 2.5, qty: 1 },
+        { tempId: "b", productId: "pb", name: "Pc", unitPrice: 10, qty: 2 },
       ],
       enteredTender: null,
       profile: null,

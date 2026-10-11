@@ -47,6 +47,8 @@ interface Scenario {
   /** the tenant's configured rate in percent (`settings.taxRate`); default 8, what the fixture lines carry */
   configured?: number | null;
   invoiceSubtotal?: string;
+  /** the tenant's `invoice.hideOriginalPrice` */
+  hide?: boolean;
   payments?: Pay[];
   tendered?: string | null;
   /** what the clerk typed at the till (the live screen's `enteredTender`); every other surface never sees it */
@@ -63,6 +65,7 @@ const DEFAULT_PAYMENTS: Pay[] = [
 const DEFAULT_LIVE: NonNullable<Scenario["live"]> = [
   { tempId: "li-1", name: "Cola", unitPrice: 2.5, qty: 3 },
   { tempId: "li-2", name: "Chips", unitPrice: 12, qty: 15, unitsPerBox: 12, boxes: 1, pieces: 3 },
+  // the cart carries its own TIER price (5, here the list); the receipt never strikes it, only the stored list
   { tempId: "li-3", name: "Loose candy", unitPrice: 4, qty: 1, tierPrice: 5, override: {} },
 ];
 
@@ -86,7 +89,16 @@ function build(s: Scenario) {
     invoiceNumber: "INV-2001",
     status: "PAID",
     total: s.total,
-    items: rates.map((taxRate) => ({ taxRate })),
+    // the stored invoice lines: the rate, and the price facts the sale was rung at (InvoiceItem copies the order line's)
+    items: order.lineItems
+      .filter((l) => l.status !== "CANCELLED")
+      .map((l, i) => ({
+        taxRate: rates[Math.min(i, rates.length - 1)],
+        productId: `p-${l.id}`,
+        unitPrice: l.unitPrice,
+        originalPrice: l.originalPrice ?? null,
+        priceType: l.priceType ?? "STANDARD",
+      })),
     payments,
   };
 
@@ -95,7 +107,7 @@ function build(s: Scenario) {
     order,
     [invoice],
     payments.map((p) => ({ ...p, invoiceId: "inv-1" })),
-    { ...BRANDING, configuredTaxPercent: configured },
+    { ...BRANDING, configuredTaxPercent: configured, hideOriginalPrice: !!s.hide },
     ZONE,
   );
 
@@ -125,6 +137,7 @@ function build(s: Scenario) {
         qty: Number(l.qty),
         unitPrice: Number(l.unitPrice),
         originalPrice: l.originalPrice == null ? null : Number(l.originalPrice),
+        priceType: l.priceType,
         unitsPerBox: l.unitsPerBox,
         boxes: l.boxes,
         pieces: l.pieces,
@@ -144,7 +157,7 @@ function build(s: Scenario) {
       taxRatePercent: row.taxRatePercent,
       timezone: ZONE,
     },
-    profile: { businessName: BRANDING.businessName },
+    profile: { businessName: BRANDING.businessName, hideOriginalPrice: !!s.hide },
   });
 
   // the live receipt, from the POST / by-key response
@@ -161,9 +174,10 @@ function build(s: Scenario) {
   } as unknown as Parameters<typeof buildCounterSaleResponse>[0]);
   const live = buildCounterReceipt({
     receipt: response,
-    lines: s.live ?? DEFAULT_LIVE,
+    // the cart's lines carry their product id (the receipt matches them to the stored lines the response serves)
+    lines: (s.live ?? DEFAULT_LIVE).map((l) => ({ productId: `p-${l.tempId}`, ...l })),
     enteredTender: s.entered ?? null,
-    profile: { businessName: BRANDING.businessName, timezone: ZONE },
+    profile: { businessName: BRANDING.businessName, timezone: ZONE, hideOriginalPrice: !!s.hide },
     now: order.createdAt,
   });
   return { emailModel, reprint, live, row, response };
@@ -217,13 +231,14 @@ describe("the proof sale: a $14.99 Pc line rung at $10.00 x 2 reads the same on 
     unitPrice: string,
     qty: string,
     originalPrice?: string,
+    priceType?: string,
   ) => ({
     id,
     name,
     status: "DELIVERED",
     qty,
     unitPrice,
-    ...(originalPrice ? { originalPrice } : {}),
+    ...(originalPrice ? { originalPrice, priceType: priceType ?? "DISCOUNTED" } : {}),
     unitsPerBox: null,
     boxes: null,
     pieces: null,
@@ -238,7 +253,8 @@ describe("the proof sale: a $14.99 Pc line rung at $10.00 x 2 reads the same on 
     lines: [line("a", "Each", "2.50", "1"), line("b", "Pc", "10.00", "2", "14.99")],
     live: [
       { tempId: "a", name: "Each", unitPrice: 2.5, qty: 1 },
-      { tempId: "b", name: "Pc", unitPrice: 10, qty: 2, tierPrice: 14.99, override: {} },
+      // the cart's tier price is 12 (a tier customer), the stored LIST is 14.99: the receipt strikes the list
+      { tempId: "b", name: "Pc", unitPrice: 10, qty: 2, tierPrice: 12, override: {} },
     ],
   });
 
@@ -278,6 +294,135 @@ describe("the proof sale: a $14.99 Pc line rung at $10.00 x 2 reads the same on 
       expect(m.subtotal).toBe(22.5);
       expect(m.lines.every((l) => l.original === null)).toBe(true);
     }
+  });
+});
+
+describe("ONE original-price rule (the invoices'): the struck base is the stored LIST price, on every surface", () => {
+  // Chips-like single line, qty 2. Stored facts differ by case; the cart's own tier price never decides what is struck.
+  const one = (
+    unitPrice: string,
+    originalPrice: string | undefined,
+    priceType: string,
+    cartTier: number,
+    over: Partial<Scenario> = {},
+    qty = "2",
+  ) => {
+    const net = Number(unitPrice) * Number(qty);
+    const total = (net * 1.08).toFixed(2);
+    return build({
+      total,
+      tax: (Number(total) - net).toFixed(2),
+      configured: 8,
+      rates: ["0.0800"],
+      payments: [{ method: "CASH", amount: total }],
+      lines: [
+        {
+          id: "x",
+          name: "Item",
+          status: "DELIVERED",
+          qty,
+          unitPrice,
+          ...(originalPrice ? { originalPrice } : {}),
+          priceType,
+          unitsPerBox: null,
+          boxes: null,
+          pieces: null,
+          product: null,
+        },
+      ],
+      live: [
+        {
+          tempId: "x",
+          name: "Item",
+          unitPrice: Number(unitPrice),
+          qty: Number(qty),
+          tierPrice: cartTier,
+          override: priceType === "DISCOUNTED" || priceType === "MANUAL" ? {} : null,
+        },
+      ],
+      ...over,
+    });
+  };
+  const all = (s: ReturnType<typeof one>) => [s.live, s.reprint, s.emailModel];
+  const struck = (m: ReceiptModel) => m.lines[0];
+
+  it("(a) an UNEDITED special-tier line (stored SPECIAL, charged 10, list 12): the list is struck, 4.00 off, like an invoice", () => {
+    const s = one("10.00", "12.00", "SPECIAL", 10);
+    for (const m of all(s)) {
+      expect(struck(m)).toMatchObject({ total: 20, original: 24, discount: 4 });
+      expect(m).toMatchObject({ subtotal: 24, discounts: 4 });
+    }
+  });
+
+  it("(b) a tier customer with a cashier override where tier (10) differs from list (12): the LIST 12 is struck, never the tier 10", () => {
+    const s = one("8.00", "12.00", "DISCOUNTED", 10);
+    for (const m of all(s)) {
+      expect(struck(m)).toMatchObject({ total: 16, original: 24, discount: 8 });
+      expect(m).toMatchObject({ subtotal: 24, discounts: 8 });
+    }
+  });
+
+  it("(c) a plain list customer with an override (list 12, charged 8): the list is struck", () => {
+    const s = one("8.00", "12.00", "DISCOUNTED", 12);
+    for (const m of all(s))
+      expect(struck(m)).toMatchObject({ total: 16, original: 24, discount: 8 });
+  });
+
+  it("every case agrees row by row across the three surfaces", () => {
+    for (const s of [
+      one("10.00", "12.00", "SPECIAL", 10),
+      one("8.00", "12.00", "DISCOUNTED", 10),
+      one("8.00", "12.00", "DISCOUNTED", 12),
+    ]) {
+      const money = (m: ReceiptModel) => [m.subtotal, m.discounts, m.tax, m.adjustments, m.total];
+      expect(money(s.live)).toEqual(money(s.emailModel));
+      expect(money(s.reprint)).toEqual(money(s.emailModel));
+      const lineRow = (m: ReceiptModel) => [
+        struck(m).total,
+        struck(m).original,
+        struck(m).discount,
+      ];
+      expect(lineRow(s.live)).toEqual(lineRow(s.emailModel));
+      expect(lineRow(s.reprint)).toEqual(lineRow(s.emailModel));
+    }
+  });
+
+  it("a MANUAL upsell (charged 14 over a stored base of 12) never exposes the lower base: nothing struck anywhere", () => {
+    const s = one("14.00", "12.00", "MANUAL", 12);
+    for (const m of all(s)) {
+      expect(struck(m)).toMatchObject({ original: null, discount: 0 });
+      expect(m.discounts).toBe(0);
+    }
+  });
+
+  it("a plain standard line (no stored list) and a list at or below the charge show nothing struck", () => {
+    for (const s of [
+      one("12.00", undefined, "STANDARD", 12),
+      one("12.00", "12.00", "STANDARD", 12),
+    ])
+      for (const m of all(s)) expect(struck(m)).toMatchObject({ original: null, discount: 0 });
+  });
+
+  it("an older server that serves no stored lines strikes nothing on the live receipt (it never invents a base from the cart's tier price)", () => {
+    const s = one("8.00", "12.00", "DISCOUNTED", 10);
+    const bare = buildCounterReceipt({
+      receipt: { ...s.response, lines: undefined },
+      lines: [
+        {
+          tempId: "x",
+          productId: "p-x",
+          name: "Item",
+          unitPrice: 8,
+          qty: 2,
+          tierPrice: 10,
+          override: {},
+        },
+      ],
+      enteredTender: null,
+      profile: { businessName: BRANDING.businessName, timezone: ZONE },
+      now: new Date(),
+    });
+    expect(struck(bare)).toMatchObject({ original: null, discount: 0 });
   });
 });
 

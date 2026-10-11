@@ -21,6 +21,8 @@ import { priceUnitWord } from "./product-unit-label";
 
 export interface ReceiptLineInput {
   tempId: string;
+  /** the product sold: matches the cart line to the stored line the response serves */
+  productId?: string;
   name: string;
   unitPrice: number;
   qty: number;
@@ -52,6 +54,8 @@ export interface ReceiptBusinessProfile {
   timezone?: string | null;
   /** SA-762r: the business's receipt footer (`GET /settings` `receiptFooter`; server-stripped). Printed as plain text only. */
   receiptFooter?: string | null;
+  /** the tenant's `invoice.hideOriginalPrice` (`GET /settings`): no struck list price and no Discounts row */
+  hideOriginalPrice?: boolean;
 }
 
 /**
@@ -174,12 +178,22 @@ export function buildCounterReceipt(input: {
     }
   }
 
+  // The stored lines the response serves (the invoice lines): the LIST price and type each cart line was sold at. A cart
+  // line takes the first unused stored line of its product; none (an older server) means nothing is struck, never the tier price.
+  const stored = [...(receipt.lines ?? [])];
+  const takeStored = (productId: string | undefined) => {
+    const i = productId ? stored.findIndex((s) => s.productId === productId) : -1;
+    return i < 0 ? undefined : stored.splice(i, 1)[0];
+  };
   const rows = lines.map((l) => {
-    // ONE rule for a lowered price (pricing's receiptLineAmounts, shared with the reprint and the emailed receipt): only a
-    // LOWERED price is shown against the system price; a raised one must not reveal the lower figure.
+    // ONE rule for a lowered price (pricing's receiptLineAmounts, shared with the reprint and the emailed receipt), on the
+    // invoices' own original-price rule: the struck base is the stored list price.
+    const facts = takeStored(l.productId);
     const { total, original, discount } = receiptLineAmounts({
       unitPrice: l.unitPrice,
-      listUnitPrice: !!l.override && l.tierPrice != null ? l.tierPrice : null,
+      originalPrice: facts?.originalPrice ?? null,
+      priceType: facts?.priceType,
+      hideOriginalPrice: !!profile?.hideOriginalPrice,
       qty: l.qty,
       boxes: l.boxes,
       pieces: l.pieces,
@@ -258,6 +272,8 @@ export interface ReprintOrderLike {
     unitPrice: number;
     /** the list price the line was lowered from (`OrderItem.originalPrice`; a Decimal arrives as a string) */
     originalPrice?: number | string | null;
+    /** the stored price type: the invoices' original-price rule reads it */
+    priceType?: string | null;
     unitsPerBox?: number | null;
     boxes?: number | null;
     pieces?: number | null;
@@ -349,7 +365,9 @@ export function receiptModelFromOrder(input: {
       // when the price was LOWERED (a raised or equal list price prints plain)
       const { total, original, discount } = receiptLineAmounts({
         unitPrice: line.unitPrice,
-        listUnitPrice: l.originalPrice == null ? null : num(l.originalPrice),
+        originalPrice: l.originalPrice == null ? null : num(l.originalPrice),
+        priceType: l.priceType,
+        hideOriginalPrice: !!profile?.hideOriginalPrice,
         qty: line.qty,
         boxes: line.boxes,
         pieces: line.pieces,

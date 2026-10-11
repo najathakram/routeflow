@@ -34,6 +34,7 @@ export function orderFixture(over: Partial<ReceiptOrderInput> = {}): ReceiptOrde
     lineItems: [
       {
         id: "li-1",
+        productId: "p-li-1",
         name: null,
         status: "DELIVERED",
         qty: "3",
@@ -45,6 +46,7 @@ export function orderFixture(over: Partial<ReceiptOrderInput> = {}): ReceiptOrde
       },
       {
         id: "li-2",
+        productId: "p-li-2",
         name: null,
         status: "DELIVERED",
         qty: "15",
@@ -56,12 +58,14 @@ export function orderFixture(over: Partial<ReceiptOrderInput> = {}): ReceiptOrde
       },
       {
         id: "li-3",
+        productId: "p-li-3",
         name: "Loose candy",
         status: "DELIVERED",
         qty: "1",
         unitPrice: "4.00",
-        // rung at $4.00 off the $5.00 list: the order stores the list as originalPrice
+        // rung at $4.00 off the $5.00 LIST price: the order stores the list as originalPrice, the type DISCOUNTED
         originalPrice: "5.00",
+        priceType: "DISCOUNTED",
         unitsPerBox: null,
         boxes: null,
         pieces: null,
@@ -69,6 +73,7 @@ export function orderFixture(over: Partial<ReceiptOrderInput> = {}): ReceiptOrde
       },
       {
         id: "li-4",
+        productId: "p-li-4",
         name: "Cancelled item",
         status: "CANCELLED",
         qty: "9",

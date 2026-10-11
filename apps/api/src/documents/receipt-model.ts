@@ -28,8 +28,10 @@ export interface ReceiptLineInput {
   status: string;
   qty: unknown;
   unitPrice: unknown;
-  /** the list price the line was lowered from (`OrderItem.originalPrice`); null = never lowered */
+  /** the stored LIST price (`OrderItem.originalPrice`); null = none */
   originalPrice?: unknown;
+  /** the stored price type: the invoices' original-price rule (`showOriginalPrice`) reads it */
+  priceType?: string | null;
   /** the cashier's per-line note (`OrderItem.notes`), printed under the line */
   notes?: string | null;
   unitsPerBox: number | null;
@@ -86,6 +88,8 @@ export interface ReceiptBranding {
   footer?: string | null;
   /** the tenant's configured rate in percent (`settings.taxRate`): a stored line rate is named only when it equals this */
   configuredTaxPercent?: number | null;
+  /** the tenant's `invoice.hideOriginalPrice`: no struck price and no Discounts row (the invoices' own setting) */
+  hideOriginalPrice?: boolean;
 }
 
 const DEAD_INVOICE_STATUSES: readonly string[] = [InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF];
@@ -184,7 +188,9 @@ export function buildReceiptModel(
       // stored list price is struck and the difference is a Discounts row, only when the price was LOWERED
       const { total, original, discount } = receiptLineAmounts({
         unitPrice: num(l.unitPrice),
-        listUnitPrice: l.originalPrice == null ? null : num(l.originalPrice),
+        originalPrice: l.originalPrice == null ? null : num(l.originalPrice),
+        priceType: l.priceType,
+        hideOriginalPrice: !!branding.hideOriginalPrice,
         qty: num(l.qty),
         boxes: l.boxes,
         pieces: l.pieces,

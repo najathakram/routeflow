@@ -541,6 +541,7 @@ describe("CounterSaleService.ring", () => {
       });
       expect(r).toEqual({
         orderId: "ord-1",
+        lines: [],
         orderNumber: "ORD-1",
         invoiceId: "inv-1",
         invoiceNumber: "N-inv-1",
@@ -941,6 +942,7 @@ describe("CounterSaleService.ring", () => {
       const r = await service.byKey("k1");
       expect(r).toEqual({
         orderId: "ord-1",
+        lines: [],
         orderNumber: "ORD-1",
         invoiceId: "inv-1",
         invoiceNumber: "N-inv-1",

@@ -472,8 +472,16 @@ export class CounterSaleService {
       where: { orderId, status: { notIn: ["VOID", "WRITTEN_OFF"] } },
       include: {
         payments: { orderBy: { createdAt: "asc" } },
-        // the stored line rates the sale's tax rate is read from
-        items: { select: { taxRate: true } },
+        // the stored lines: the rate the sale's tax rate is read from, and the price facts a receipt strikes a list price from
+        items: {
+          select: {
+            taxRate: true,
+            productId: true,
+            unitPrice: true,
+            originalPrice: true,
+            priceType: true,
+          },
+        },
       },
       orderBy: { createdAt: "asc" },
     });

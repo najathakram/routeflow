@@ -57,3 +57,33 @@ describe("counter-sale response: tax and taxRatePercent (SA-762r)", () => {
     expect(build("0.00", [inv([{ taxRate: "0" }], { taxAmount: "0.00" })]).tax).toBe(0);
   });
 });
+
+describe("counter-sale response: the stored lines' price facts (the invoices' original-price rule)", () => {
+  const line = (over: Record<string, unknown> = {}) => ({
+    taxRate: "0.08",
+    productId: "p-1",
+    unitPrice: "8.00",
+    originalPrice: "12.00",
+    priceType: "DISCOUNTED",
+    ...over,
+  });
+  it("serves each stored line's product, net price, LIST price and type, in invoice order", () => {
+    const r = build("2.12", [
+      inv([
+        line(),
+        line({ productId: "p-2", unitPrice: "2.50", originalPrice: null, priceType: "STANDARD" }),
+      ]),
+      inv([line({ productId: "p-3", unitPrice: "10.00", priceType: "SPECIAL" })], { id: "inv-2" }),
+    ]);
+    expect(r.lines).toEqual([
+      { productId: "p-1", unitPrice: 8, originalPrice: 12, priceType: "DISCOUNTED" },
+      { productId: "p-2", unitPrice: 2.5, originalPrice: null, priceType: "STANDARD" },
+      { productId: "p-3", unitPrice: 10, originalPrice: 12, priceType: "SPECIAL" },
+    ]);
+  });
+  it("a line with no stored type reads STANDARD", () => {
+    expect(
+      build("2.12", [inv([line({ priceType: undefined, originalPrice: undefined })])]).lines,
+    ).toEqual([{ productId: "p-1", unitPrice: 8, originalPrice: null, priceType: "STANDARD" }]);
+  });
+});

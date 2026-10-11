@@ -8,8 +8,14 @@ export type InvoiceRow = {
   id: string;
   invoiceNumber?: string;
   total: unknown;
-  /** the stored line rates the sale's tax rate is read from (`storedTaxRatePercent`) */
-  items?: Array<{ taxRate?: unknown }>;
+  /** the stored lines: the rate the tax rate is read from (`storedTaxRatePercent`) and the price facts a receipt strikes a list price from */
+  items?: Array<{
+    taxRate?: unknown;
+    productId?: string | null;
+    unitPrice?: unknown;
+    originalPrice?: unknown;
+    priceType?: string | null;
+  }>;
   payments?: Array<{ id: string; amount: unknown; method?: string; status?: string }>;
 };
 
@@ -162,6 +168,15 @@ export function buildCounterSaleResponse(input: {
           ),
         }
       : {}),
+    // the stored lines' price facts, so the live receipt applies the invoices' own original-price rule (not the cart's tier price)
+    lines: invoices.flatMap((i) =>
+      (i.items ?? []).map((l) => ({
+        productId: l.productId ?? null,
+        unitPrice: roundMoney(Number(l.unitPrice ?? 0)),
+        originalPrice: l.originalPrice == null ? null : roundMoney(Number(l.originalPrice)),
+        priceType: l.priceType ?? "STANDARD",
+      })),
+    ),
     ...(replayed ? { replayed: true } : {}),
   };
 }
