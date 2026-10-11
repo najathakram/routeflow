@@ -31,6 +31,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import {
   addCredits,
   piecesPerQtyOf,
@@ -680,6 +681,10 @@ export class ReturnsService {
       if (claimed.count === 0) {
         throw new BadRequestException("Only APPROVED or IN_TRANSIT returns can be received");
       }
+      // B848 (a sibling of SA-737): the Order row lock, in the house order Return (the claim above) -> Order, BEFORE the restock
+      // and the ledger reversal. The reversal is pro-rated from the order's per-line remaining balances; two receives on one
+      // order, or a receive beside a void, a cancel or a refund of it, must not read the same balance. Row lock only.
+      if (ret.orderId) await lockOrderRow(tx, this.prisma.getTenantId(), ret.orderId);
 
       if (opts?.restock === false) {
         // "We are not keeping these goods": skip restocking entirely, and persist
