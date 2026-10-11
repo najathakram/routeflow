@@ -314,11 +314,10 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         ? (row.trackedCategoryId as string)
         : null;
     // A kept row with a NULL trio is the row's OWN category's line (C), whatever its product's category is now:
-    // pricing it at the product's current category D would move the line to D. A kept row with NO category but a
-    // stored levy keeps it (L1, B297 row 338): the recompute returns the stored amount, never re-prices it at
-    // its product's current category.
-    const keepsStoredLevy =
-      keepsRow && !row.trackedCategoryId && Math.abs(Number(row.categoryTaxAmount ?? 0)) >= 0.005;
+    // pricing it at the product's current category D would move the line to D. A kept row with NO category is a line
+    // SOLD uncategorised (B297 row 338, L1): it stays category-less at its stored amount, 0 included, instead of
+    // being filed under its product's current category and re-priced at the live rate.
+    const keepsStoredLevy = keepsRow && !row.trackedCategoryId;
     const lineCategoryId =
       ownCategoryId ??
       (keepsRow && row.trackedCategoryId
