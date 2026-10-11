@@ -622,8 +622,8 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
       await raw.product.update({ where: { id: productId }, data: { trackedCategoryId: other.id } });
       await buyerFold(id, [{ productId, qty: 12, sourceLineId: l0.id }]);
       const [l1] = await lines(id);
-      expect(l1.trackedCategoryId).toBe(categoryId); // master: the product's current category
-      expect(l1.rate).toBe(SNAPSHOT_RATE); // master: stamped from the live category
+      expect(l1.trackedCategoryId).toBe(categoryId); // without the fix: the product's current category
+      expect(l1.rate).toBe(SNAPSHOT_RATE); // without the fix: stamped from the live category
       expect(l1.amount).toBe(0.6);
     } finally {
       await raw.product.update({
