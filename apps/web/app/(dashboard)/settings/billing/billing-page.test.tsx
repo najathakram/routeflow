@@ -1107,3 +1107,72 @@ describe("BillingSettingsPage - owed invoice / autopay (B4)", () => {
     expect(screen.queryByRole("button", { name: /^pay/i })).toBeNull();
   });
 });
+
+// ─── Row 350 / SA-693: a comp add-on reads "Included", never a price ───────────────────────────
+
+describe("BillingSettingsPage — comp add-ons (row 350)", () => {
+  const rowOf = (name: string) => {
+    const row = screen.getByText(name).closest(".py-3");
+    if (!row) throw new Error(`no add-on row for ${name}`);
+    return within(row as HTMLElement);
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthUser = { role: "TENANT_ADMIN" };
+    mockPlansAddons = [ADDON, { ...ADDON, sku: "OCR_PACK", name: "OCR Pack", sortOrder: 2 }];
+  });
+
+  it("a comp catalog add-on shows Included and no price; a paid one beside it is unchanged", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [
+        { sku: "ROUTE_PLUS", name: "Route Plus", quantity: 1, comp: true, monthly: null },
+        { sku: "OCR_PACK", name: "OCR Pack", quantity: 1, comp: false, monthly: 49 },
+      ],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Route Plus");
+
+    const comp = rowOf("Route Plus");
+    expect(comp.getByText("Included")).toBeInTheDocument();
+    expect(comp.getByText("Active")).toBeInTheDocument();
+    expect(comp.queryByText(/\$/)).toBeNull();
+
+    const paid = rowOf("OCR Pack");
+    expect(paid.getByText("$49/mo")).toBeInTheDocument();
+    expect(paid.queryByText("Included")).toBeNull();
+  });
+
+  it("an active add-on with no comp flag (an older server) still shows its price", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [{ sku: "ROUTE_PLUS", name: "Route Plus", quantity: 1, monthly: 49 }],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Route Plus");
+
+    const row = rowOf("Route Plus");
+    expect(row.getByText("$49/mo")).toBeInTheDocument();
+    expect(row.queryByText("Included")).toBeNull();
+  });
+
+  it("a comp add-on outside the catalog reads Included · Managed by RouteFlow with no price", async () => {
+    mockPlansAddons = [ADDON];
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [
+        { sku: "SALES_AGENTS", name: "Sales agents", quantity: 1, comp: true, monthly: null },
+        { sku: "MSRP", name: "MSRP", quantity: 1, comp: false, monthly: 29 },
+      ],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Sales agents");
+
+    const comp = rowOf("Sales agents");
+    expect(comp.getByText(/^Included · Managed by RouteFlow$/)).toBeInTheDocument();
+    expect(comp.queryByText(/\$/)).toBeNull();
+
+    expect(rowOf("MSRP").getByText("$29/mo · Managed by RouteFlow")).toBeInTheDocument();
+  });
+});
