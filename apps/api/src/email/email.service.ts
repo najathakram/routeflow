@@ -242,7 +242,7 @@ function brandHeaderHtml(): string {
  *  (invoices, the low-stock digest). Shows the tenant's business name, not the RouteFlow
  *  mark: this is the tenant's own correspondence: RouteFlow is the platform underneath it,
  *  not the sender the recipient should see. */
-function tenantHeaderHtml(businessName: string): string {
+export function tenantHeaderHtml(businessName: string): string {
   return `<span style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:${BRAND_WHITE};letter-spacing:-0.3px;">${escapeHtml(businessName)}</span>`;
 }
 
@@ -256,7 +256,7 @@ function tenantHeaderHtml(businessName: string): string {
  * structured pieces the caller supplies — never derived by stripping tags, which could
  * silently drop a dollar figure or a link — so the two can never drift apart.
  */
-function renderBrandedEmail(params: {
+export function renderBrandedEmail(params: {
   headerHtml: string;
   heading: string;
   bodyHtml: string;

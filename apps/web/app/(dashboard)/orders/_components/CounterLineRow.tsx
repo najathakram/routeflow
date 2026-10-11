@@ -1,6 +1,7 @@
 import * as React from "react";
 import { TAP_TARGET, cn } from "@routeflow/ui/web";
 import { unitWords } from "@routeflow/pricing";
+import { priceUnitWord } from "@/lib/product-unit-label";
 import { cartTotals } from "@/lib/counter-sale";
 import { NOTE_MAX, isBoxedLine, lineQtyLabel, type TypedQty } from "./counter-sale-line-edit";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
@@ -9,7 +10,7 @@ import { editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
-// The counter has no per-product label on a sale line yet, so its price unit prints the default words.
+// A boxed line prints the default pack word; a plain line prints its product's own unit (row 298), else the default base word.
 const UW = unitWords();
 
 /** Every compact line control is a full 44 px target (TAP_TARGET) however small it looks. */
@@ -69,12 +70,15 @@ function QtyField({
   locked,
   onCommit,
   onEnter,
+  tabOut = false,
 }: {
   label: string;
   value: number;
   locked: boolean;
   onCommit: (text: string) => boolean;
   onEnter?: () => void;
+  /** The LAST quantity field of the line: Tab with a typed draft commits it and hands focus to the scan box. */
+  tabOut?: boolean;
 }) {
   const [draft, setDraft] = React.useState<string | null>(null);
   const commit = () => {
@@ -96,7 +100,8 @@ function QtyField({
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
-        if (e.key === "Enter") {
+        // Tab is redirected only to finish an uncommitted typed edit; a plain Tab moves on normally
+        if (e.key === "Enter" || (tabOut && e.key === "Tab" && !e.shiftKey && draft !== null)) {
           e.preventDefault();
           commit();
           onEnter?.();
@@ -136,6 +141,7 @@ function LineQtyEditor({
         locked={locked}
         onCommit={(t) => onQty(line.tempId, { pieces: t })}
         onEnter={onEnter}
+        tabOut
       />
     </span>
   ) : (
@@ -145,6 +151,7 @@ function LineQtyEditor({
       locked={locked}
       onCommit={(t) => onQty(line.tempId, { qty: t })}
       onEnter={onEnter}
+      tabOut
     />
   );
 }
@@ -208,7 +215,10 @@ export function CounterLineRow({
               </s>
             ) : null}
             <span className="tabular-nums" data-testid="line-unit-price">
-              {money(l.unitPrice)} {isBoxedLine(l) ? `/ ${UW.pack.lower}` : `/ ${UW.base.lower}`}
+              {money(l.unitPrice)}{" "}
+              {isBoxedLine(l)
+                ? `/ ${UW.pack.lower}`
+                : `/ ${l.unit ? priceUnitWord(l.unit) : UW.base.lower}`}
             </span>
           </span>
         </span>
@@ -302,6 +312,11 @@ export function CounterLineRow({
               onNote(l.tempId, noteAtOpenRef.current);
               closeNote();
             }
+          }}
+          onBlur={(e) => {
+            // Focus lost to nowhere (a click on blank space): save, close, back to the scan box. Moving to another
+            // control on purpose is left alone.
+            if (e.relatedTarget === null) closeNote();
           }}
           data-counter-note=""
           autoFocus // opening the note puts the cursor in it: the next keys are the note, never a page shortcut

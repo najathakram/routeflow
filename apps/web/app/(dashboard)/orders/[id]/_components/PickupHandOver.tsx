@@ -5,6 +5,7 @@ import { Button } from "@routeflow/ui/web";
 import { CheckCircle2 } from "lucide-react";
 import type { Order } from "@/lib/api/orders";
 import { useOptionalAuth } from "@/lib/auth-context";
+import { isPosOrder } from "@/lib/api/pos-orders";
 import { heldPickupStoreKey } from "@/lib/counter-sale";
 import { PickupCompleteDialog, type HeldPickupKey } from "./PickupCompleteDialog";
 
@@ -14,10 +15,16 @@ import { PickupCompleteDialog, type HeldPickupKey } from "./PickupCompleteDialog
  * refetches the order as DELIVERED, which unmounts those rows, and the dialog's result (cash change, "Payment not
  * recorded" + Retry) must outlive that.
  */
-export function PickupHandOverButton({ onOpen }: { onOpen: () => void }) {
+export function PickupHandOverButton({
+  onOpen,
+  label = "Picked up",
+}: {
+  onOpen: () => void;
+  label?: string;
+}) {
   return (
     <Button size="sm" leftIcon={<CheckCircle2 className="h-4 w-4" />} onClick={onOpen}>
-      Picked up
+      {label}
     </Button>
   );
 }
@@ -46,6 +53,7 @@ export function PickupHandOverDialog({
       total={Number(order.total)}
       invoices={order.invoices ?? []}
       isWalkIn={order.customer?.isWalkIn === true}
+      handOver={isPosOrder(order)}
     />
   );
 }

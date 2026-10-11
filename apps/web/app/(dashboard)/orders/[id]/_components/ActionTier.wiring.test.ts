@@ -12,13 +12,20 @@ import ts from "typescript";
  * It is deliberately a structural pin: adding or renaming an action must update the table below.
  */
 
-const PAGE = path.resolve(__dirname, "../page.tsx");
-const source = ts.createSourceFile(
-  PAGE,
-  fs.readFileSync(PAGE, "utf8"),
-  ts.ScriptTarget.Latest,
-  true,
-  ts.ScriptKind.TSX,
+// The page plus the action groups it delegates to (ConfirmedPrimaryAction / OutForDeliveryPrimary live beside PosOrderActions).
+const FILES = [
+  path.resolve(__dirname, "../page.tsx"),
+  path.resolve(__dirname, "./PosOrderActions.tsx"),
+  path.resolve(__dirname, "./DeleteOrderTier.tsx"),
+];
+const sources = FILES.map((f) =>
+  ts.createSourceFile(
+    f,
+    fs.readFileSync(f, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  ),
 );
 
 interface Found {
@@ -30,7 +37,7 @@ interface Found {
 /** String literals + plain JSX text directly inside a <Button>'s children. */
 function labelsOf(button: ts.JsxElement): string[] {
   const out: string[] = [];
-  const visit = (n: ts.Node) => {
+  const visit = (n: ts.Node): void => {
     if (ts.isJsxText(n)) {
       const t = n.getText().replace(/\s+/g, " ").trim();
       if (t) out.push(t);
@@ -58,9 +65,11 @@ function tierName(el: ts.JsxOpeningLikeElement): string | null {
 
 function collect(): Found[] {
   const found: Found[] = [];
-  const visit = (n: ts.Node) => {
+  const visit = (n: ts.Node): void => {
     if (ts.isJsxElement(n) && n.openingElement.tagName.getText() === "ActionTier") {
       const tier = tierName(n.openingElement);
+      // A tier chosen at runtime (`tier={…}`) lives in a delegated component, not in the page's own wiring.
+      if (tier === null && n.getSourceFile() !== sources[0]) return ts.forEachChild(n, visit);
       const buttons: string[] = [];
       let deleteCalls = 0;
       const inner = (c: ts.Node) => {
@@ -79,9 +88,19 @@ function collect(): Found[] {
       n.children.forEach(inner);
       found.push({ tier: tier ?? "?", buttons, deleteCalls });
     }
+    if (ts.isJsxSelfClosingElement(n) && n.tagName.getText() === "DeleteOrderTier") {
+      // DeleteOrderTier renders its own danger tier; its idle button label is the `idleLabel` prop.
+      const attr = n.attributes.properties.find(
+        (p): p is ts.JsxAttribute => ts.isJsxAttribute(p) && p.name.getText() === "idleLabel",
+      );
+      const init = attr?.initializer;
+      if (init && ts.isStringLiteral(init)) {
+        found.push({ tier: "danger", buttons: [init.text], deleteCalls: 0 });
+      }
+    }
     ts.forEachChild(n, visit);
   };
-  visit(source);
+  sources.forEach((src) => visit(src));
   return found;
 }
 
@@ -111,7 +130,14 @@ describe("order-detail action bar tiers (page wiring)", () => {
 
   it("SECONDARY holds only reversible, non-destructive actions", () => {
     expect(labels("secondary")).toEqual(
-      new Set(["Edit Items", "Unconfirm", "Unmark shipped", "Return to Confirmed", "Reopen Order"]),
+      new Set([
+        "Edit Items",
+        "Edit order", // the POS-mode label of the same button
+        "Unconfirm",
+        "Unmark shipped",
+        "Return to Confirmed",
+        "Reopen Order",
+      ]),
     );
   });
 

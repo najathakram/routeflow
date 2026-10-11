@@ -479,6 +479,8 @@ export function useBuyerCreateChangeRequest() {
 export interface BuyerInvoiceDetail {
   id: string;
   invoiceNumber: string;
+  revisedAt?: string | null;
+  overpaidBy?: number | null;
   status: InvoiceStatus;
   subtotal: number;
   taxAmount: number;
