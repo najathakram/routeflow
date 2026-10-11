@@ -73,6 +73,7 @@ import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { ReplenishmentService } from "./replenishment.service";
 import { ShelfService } from "./shelf.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { INVOICE_EDIT_STUBS } from "../orders/testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -184,6 +185,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       invoicesService: {
         revertLinkedInvoicesForOrderEdit: async () => undefined,
         resyncOrderInvoicesForEdit: async () => [],
+        ...INVOICE_EDIT_STUBS,
         reconcileOrderDraftInvoice: async () => undefined,
       },
       creditNotes: { settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }) },

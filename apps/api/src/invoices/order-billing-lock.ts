@@ -27,6 +27,9 @@ import { AfterCommit } from "../common/after-commit";
  * (the merge winner, completeWithPayment's stop-order lock) pays nothing for the second call.
  */
 
+/** The transaction client a billing writer runs on (tenantTransaction hands one to its callback). */
+export type OrderBillingTx = Prisma.TransactionClient;
+
 /** The statements only: an op-log double or any tx client with `$executeRaw` will do. */
 type BillingLockTx = { $executeRaw: (...args: any[]) => unknown };
 
@@ -55,9 +58,9 @@ export async function inOrderBillingTx<T>(
     getTenantId(): string | null;
     tenantTransaction<R>(fn: (tx: any) => Promise<R>, options?: { timeout?: number }): Promise<R>;
   },
-  tx: any | undefined,
+  tx: OrderBillingTx | undefined,
   orderId: string,
-  fn: (tx: any) => Promise<T>,
+  fn: (tx: OrderBillingTx) => Promise<T>,
 ): Promise<T> {
   const tenantId = prisma.getTenantId() ?? null;
   if (tx) {
@@ -81,10 +84,10 @@ export async function inOrderBillingTx<T>(
  */
 export async function inOrderBillingTxAfter<T>(
   prisma: Parameters<typeof inOrderBillingTx>[0],
-  tx: any | undefined,
+  tx: OrderBillingTx | undefined,
   after: AfterCommit | undefined,
   orderId: string,
-  fn: (tx: any, after: AfterCommit | undefined) => Promise<T>,
+  fn: (tx: OrderBillingTx, after: AfterCommit | undefined) => Promise<T>,
 ): Promise<T> {
   if (tx) return inOrderBillingTx(prisma, tx, orderId, (t) => fn(t, after));
   const own = new AfterCommit();

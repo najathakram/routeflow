@@ -33,6 +33,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PickupCompleteService } from "./counter-sale/pickup-complete.service";
 import { clearUnevidencedDelivered, unevidencedDeliveredFloor } from "./delivered-stamp";
 import { OrdersService } from "./orders.service";
+import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -152,6 +153,7 @@ describeDb("SA-763r — the delivered stamp through the real writers, real Postg
       invoicesService: {
         revertLinkedInvoicesForOrderEdit: async () => undefined,
         resyncOrderInvoicesForEdit: async () => [],
+        ...INVOICE_EDIT_STUBS,
         reconcileOrderDraftInvoice: async () => undefined,
         findOpenOrderDraft: async () => null,
         createInvoiceFromOrderWithTenant: async () => [{ id: "stub" }],
