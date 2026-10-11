@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Test } from "@nestjs/testing";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ServiceUnavailableException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -9,10 +9,11 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 
 /**
- * SA-767 L-1 (B908): receivePurchaseOrder runs its whole tx inside retryOnTxConflict. A 40P01 /
+ * SA-767 L-1 (B908): receivePurchaseOrder runs its whole tx inside retryStockTx. A 40P01 /
  * P2034 mid-body (after the movement / lot writes) re-runs it; Postgres rolls the failed attempt
  * back, so exactly one attempt's stock / cost writes commit and alerts fire once, with the
- * successful attempt's ids only. A non-conflict error propagates after ONE attempt.
+ * successful attempt's ids only. A non-conflict error propagates after ONE attempt. A conflict on
+ * EVERY attempt (SA-767 Nit 6) is a coded 503 LOCK_UNAVAILABLE with nothing committed.
  */
 const D = (n: number) => new Prisma.Decimal(n);
 const po = {
@@ -104,11 +105,11 @@ describe("receivePurchaseOrder retry (SA-767 L-1)", () => {
     };
   }
 
-  it("placement: the PO receive transaction runs inside retryOnTxConflict", () => {
+  it("placement: the PO receive transaction runs inside retryStockTx", () => {
     const src = fs.readFileSync(path.join(__dirname, "inventory.service.ts"), "utf8");
     const body = src.slice(src.indexOf("async receivePurchaseOrder("));
     expect(body.slice(0, body.indexOf("\n  }\n"))).toMatch(
-      /retryOnTxConflict\(\s*["'`]inventory\.receivePurchaseOrder["'`]\s*,\s*\(\)\s*=>\s*this\.prisma\.tenantTransaction\(runBody\)/,
+      /retryStockTx\(\s*["'`]inventory\.receivePurchaseOrder["'`]\s*,\s*\(\)\s*=>\s*this\.prisma\.tenantTransaction\(runBody\)/,
     );
   });
 
@@ -128,6 +129,39 @@ describe("receivePurchaseOrder retry (SA-767 L-1)", () => {
       expect(alerts).toHaveBeenCalledWith(["prod-1"]);
     },
   );
+
+  it("a 40P01 on EVERY attempt is a coded 503 LOCK_UNAVAILABLE; nothing commits, no alerts", async () => {
+    // Every stock write throws a deadlock: all 3 attempts roll back.
+    prisma.product.update.mockRejectedValue(deadlock());
+    const real = prisma.tenantTransaction.getMockImplementation()!;
+    const rolledBack = { movement: 0, lot: 0, product: 0 };
+    prisma.tenantTransaction.mockImplementation(async (fn: any, opts?: any) => {
+      const before = writes();
+      poReads = 0;
+      try {
+        return await real(fn, opts);
+      } catch (e) {
+        const after = writes();
+        rolledBack.movement += after.movement - before.movement;
+        rolledBack.lot += after.lot - before.lot;
+        rolledBack.product += after.product - before.product;
+        throw e;
+      }
+    });
+
+    const err: any = await service.receivePurchaseOrder("po-1", dto, "user-1").catch((e) => e);
+
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect(err.getResponse()).toMatchObject({ code: "LOCK_UNAVAILABLE" });
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
+    const t = writes();
+    expect({
+      movement: t.movement - rolledBack.movement,
+      lot: t.lot - rolledBack.lot,
+      product: t.product - rolledBack.product,
+    }).toEqual({ movement: 0, lot: 0, product: 0 });
+    expect(alerts).not.toHaveBeenCalled();
+  });
 
   it("a non-conflict error propagates after ONE attempt and fires no alerts", async () => {
     prisma.product.update.mockRejectedValueOnce(new BadRequestException("nope"));

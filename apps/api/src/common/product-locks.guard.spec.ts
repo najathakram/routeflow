@@ -207,3 +207,26 @@ describe("SA-767 L-1 / B908 — domain row, then Products, then reads", () => {
     expect(domainThenProducts(readFirst, re)).toBe(false);
   });
 });
+
+/**
+ * SA-767 Nit 6: every wrapped stock writer retries through `retryStockTx` (exhausted attempts are a
+ * coded 503 LOCK_UNAVAILABLE), never the bare `retryOnTxConflict`.
+ */
+describe("SA-767 Nit 6 — the stock writers use retryStockTx", () => {
+  const inv = read("inventory/inventory.service.ts");
+  const bills = read("vendor-bills/vendor-bills.service.ts");
+
+  it.each([
+    ["inventory.receivePurchaseOrder", inv],
+    ["inventory.updatePurchaseOrder", inv],
+    ["vendorBills.receive", bills],
+    ["vendorBills.revertToDraft", bills],
+    ["vendorBills.voidBill", bills],
+  ])("%s runs inside retryStockTx", (label, src) => {
+    expect(src).toContain(`retryStockTx("${label}"`);
+  });
+
+  it("the vendor-bill service no longer imports the bare retryOnTxConflict", () => {
+    expect(bills).not.toMatch(/\bretryOnTxConflict\b/);
+  });
+});
