@@ -58,20 +58,39 @@ export function useResendZReport() {
   });
 }
 
-export const DAY_ALREADY_CLOSED_COPY = "This day was already closed. Refresh to see it.";
+export const DAY_ALREADY_CLOSED_COPY = "Closed on another device.";
 export const DAY_CLOSE_FAILED_COPY = "Could not close the day. Check the connection and try again.";
+export const DAY_CLOSE_BUSY_COPY = "A sale is finishing. Try again.";
+export const DAY_CLOSE_NETWORK_COPY = "Couldn't close the day. Your count is still here.";
+export const DAY_REOPENED_CLOSE_AGAIN_COPY = "Day reopened. Close it again.";
+export const DAY_OFFLINE_COPY = "You're offline. Your count stays here.";
 export const DAY_REOPEN_FAILED_COPY = "Could not reopen the day. Try again.";
 export const Z_REPORT_RESEND_FAILED_COPY = "Could not send the report. Try again.";
 
+type ApiErrorShape = { response?: { status?: number; data?: { code?: unknown } } };
+const responseOf = (err: unknown) => (err as ApiErrorShape | null | undefined)?.response;
+
 /** 409 DAY_ALREADY_CLOSED: another request closed this window first. */
 export function isDayAlreadyClosed(err: unknown): boolean {
-  const res = (
-    err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
-  )?.response;
+  const res = responseOf(err);
   return res?.status === 409 && res.data?.code === API_ERROR_CODES.DAY_ALREADY_CLOSED;
+}
+
+/** A 503 or a lock timeout: a sale is mid-flight and holds the window. Retrying is right. */
+export function isDayCloseBusy(err: unknown): boolean {
+  const res = responseOf(err);
+  return res?.status === 503 || res?.data?.code === API_ERROR_CODES.LOCK_UNAVAILABLE;
+}
+
+/** No response at all: the request never reached the server (offline, dropped, timed out). */
+export function isDayCloseNetworkError(err: unknown): boolean {
+  return responseOf(err) == null;
 }
 
 /** Fixed copy for a failed close; the server's own message is never shown. */
 export function dayCloseErrorCopy(err: unknown): string {
-  return isDayAlreadyClosed(err) ? DAY_ALREADY_CLOSED_COPY : DAY_CLOSE_FAILED_COPY;
+  if (isDayAlreadyClosed(err)) return DAY_ALREADY_CLOSED_COPY;
+  if (isDayCloseBusy(err)) return DAY_CLOSE_BUSY_COPY;
+  if (isDayCloseNetworkError(err)) return DAY_CLOSE_NETWORK_COPY;
+  return DAY_CLOSE_FAILED_COPY;
 }

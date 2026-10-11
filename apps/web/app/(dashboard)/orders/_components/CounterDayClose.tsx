@@ -9,6 +9,7 @@ import {
   DAY_CLOSE_MAX_COUNT,
   DAY_CLOSE_NOTES_MAX,
   dayCloseWindowIsEmpty,
+  dayCloseZSections,
   roundMoney,
   sumDenominations,
   validOpeningFloat,
@@ -17,8 +18,11 @@ import type { DayCloseSnapshot, DayCloseState } from "@routeflow/types";
 import { Button, Input, Modal, Textarea, cn } from "@routeflow/ui/web";
 import {
   Z_REPORT_RESEND_FAILED_COPY,
+  DAY_OFFLINE_COPY,
   DAY_REOPEN_FAILED_COPY,
+  DAY_REOPENED_CLOSE_AGAIN_COPY,
   dayCloseErrorCopy,
+  isDayAlreadyClosed,
   useCloseCounterDay,
   useCounterDayClose,
   useReopenCounterDay,
@@ -26,6 +30,7 @@ import {
 } from "@/lib/api/counter-day-close";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { formatReceiptMoney as money } from "@/lib/counter-receipt";
+import { ZReportView, zHeadlineText, zTime } from "./ZReportView";
 
 const FORM_ID = "counter-day-close-form";
 const ROW_KEY = (d: { kind: string; value: number }) => `${d.kind}:${d.value}`;
@@ -53,13 +58,24 @@ function varianceView(variance: number): { word: string; text: string; tone: str
   return { word: "Under", text: `Under ${money(Math.abs(variance))}`, tone: "text-red-700" };
 }
 
-const timeIn = (iso: string, timeZone: string) =>
-  new Intl.DateTimeFormat("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZoneName: "short",
-    timeZone,
-  }).format(new Date(iso));
+/** The browser's own online flag, kept live: false = the close cannot reach the server and the button says so. */
+function useOnline(): boolean {
+  const [online, setOnline] = React.useState(
+    () => typeof navigator === "undefined" || navigator.onLine !== false,
+  );
+  React.useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+    };
+  }, []);
+  return online;
+}
+
 const dayIn = (d: Date, timeZone: string) =>
   new Intl.DateTimeFormat("en-CA", {
     year: "numeric",
@@ -92,18 +108,27 @@ function Figure({
 function DayCloseForm({
   state,
   open,
+  editing,
   onClose,
+  onViewZ,
 }: {
   state: DayCloseState;
   open: boolean;
+  /** Edit count: the closed day being corrected (reopen, then close again over the same window). Null = a plain close. */
+  editing: DayCloseSnapshot | null;
   onClose: () => void;
+  onViewZ: () => Promise<void>;
 }) {
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="Close day"
-      description="Count the drawer. The totals are checked again when you close."
+      title={editing ? "Edit count" : "Close day"}
+      description={
+        editing
+          ? "Fix the count. The window stays the same and a corrected report is sent."
+          : "Count the drawer. The totals are checked again when you close."
+      }
       scroll
       closeClassName="min-h-11 min-w-11 flex items-center justify-center"
       className={cn(
@@ -111,62 +136,118 @@ function DayCloseForm({
         "sm:left-1/2 sm:top-1/2 sm:h-auto sm:max-h-[92vh] sm:w-full sm:max-w-lg sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:p-6",
       )}
     >
-      {open ? <DayCloseFormBody state={state} onClose={onClose} /> : null}
+      {open ? (
+        <DayCloseFormBody state={state} editing={editing} onClose={onClose} onViewZ={onViewZ} />
+      ) : null}
     </Modal>
   );
 }
 
 // The fields and the pinned submit row share one form state, so they are one component; the Modal only frames them.
-function DayCloseFormBody({ state, onClose }: { state: DayCloseState; onClose: () => void }) {
+function DayCloseFormBody({
+  state,
+  editing,
+  onClose,
+  onViewZ,
+}: {
+  state: DayCloseState;
+  editing: DayCloseSnapshot | null;
+  onClose: () => void;
+  onViewZ: () => Promise<void>;
+}) {
   const { preview, lastClose } = state;
-  // A reopened close is re-closed over its STORED window: start from what was stored.
-  const reopened = lastClose?.reopenedAt ? lastClose : null;
+  // A reopened (or being-edited) close is re-closed over its STORED window: start from what was stored. Taken once, at open:
+  // the Edit count reopen refetches the state under this form, and the counts typed so far must survive that.
+  const [seed] = React.useState<DayCloseSnapshot | null>(
+    () => editing ?? (lastClose?.reopenedAt ? lastClose : null),
+  );
   const [floatText, setFloatText] = React.useState(() =>
-    (reopened ? reopened.openingFloat : preview.suggestedOpeningFloat).toFixed(2),
+    (seed ? seed.openingFloat : preview.suggestedOpeningFloat).toFixed(2),
   );
   const [counts, setCounts] = React.useState<Record<string, number>>(() => {
     const init: Record<string, number> = {};
-    for (const d of reopened?.denominations ?? []) init[ROW_KEY(d)] = d.count;
+    for (const d of seed?.denominations ?? []) init[ROW_KEY(d)] = d.count;
     return init;
   });
-  const [notes, setNotes] = React.useState(reopened?.notes ?? "");
-  const mutation = useCloseCounterDay();
-  const [error, setError] = React.useState<string | null>(null);
+  const [notes, setNotes] = React.useState(seed?.notes ?? "");
+  const closeMutation = useCloseCounterDay();
+  const reopenMutation = useReopenCounterDay();
+  const [pending, setPending] = React.useState(false);
+  const didReopen = React.useRef(false);
+  const inFlight = React.useRef(false);
+  const online = useOnline();
+  const [error, setError] = React.useState<{ text: string; elsewhere: boolean } | null>(null);
+  const [viewing, setViewing] = React.useState(false);
 
   const rows = DAY_CLOSE_DENOMINATIONS.map((d) => ({ ...d, count: counts[ROW_KEY(d)] ?? 0 }));
   const openingFloat = parseFloatInput(floatText);
   const counted = sumDenominations(rows);
-  const expected =
-    openingFloat === null
+  // Edit count: the preview describes the window AFTER this close, so the stored close's own figures stand in until the reopen
+  // moves the preview onto the stored window. The float is locked, so the stored expected cash stays right.
+  const expected = editing
+    ? editing.expectedCash
+    : openingFloat === null
       ? null
       : roundMoney(openingFloat + preview.tillCash - preview.cashRefunds);
   const variance = expected === null ? null : roundMoney(counted - expected);
   const view = variance === null ? null : varianceView(variance);
-  const refunds = preview.totals.refunds;
+  const shownTotals = editing ? editing.totals : preview.totals;
+  const refunds = shownTotals.refunds;
   const setCount = (key: string, n: number) =>
     setCounts((c) => ({ ...c, [key]: Math.min(DAY_CLOSE_MAX_COUNT, Math.max(0, n)) }));
-  const canSubmit = openingFloat !== null && !mutation.isPending;
+  const canSubmit = openingFloat !== null && !pending && online;
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (openingFloat === null || mutation.isPending) return;
+    if (openingFloat === null || inFlight.current || !online) return;
+    inFlight.current = true;
     setError(null);
+    setPending(true);
     const trimmed = notes.trim();
-    mutation.mutate(
-      {
+    // Edit count = reopen, then close again over the stored window. A retry after a half-done save skips the reopen.
+    const mustReopen = editing != null && !didReopen.current && !lastClose?.reopenedAt;
+    if (mustReopen && editing) {
+      try {
+        await reopenMutation.mutateAsync(editing.id);
+        didReopen.current = true;
+      } catch {
+        setError({ text: DAY_REOPEN_FAILED_COPY, elsewhere: false });
+        inFlight.current = false;
+        setPending(false);
+        return;
+      }
+    }
+    try {
+      await closeMutation.mutateAsync({
         openingFloat,
         denominations: rows
           .filter((r) => r.count > 0)
           .map((r) => ({ kind: r.kind, value: r.value, count: r.count })),
         ...(trimmed ? { notes: trimmed } : {}),
-      },
-      { onSuccess: onClose, onError: (err) => setError(dayCloseErrorCopy(err)) },
-    );
+      });
+      inFlight.current = false;
+      setPending(false);
+      onClose();
+    } catch (err) {
+      inFlight.current = false;
+      setPending(false);
+      // the reopen already went through: say so, keep the counts, and leave the form open to close again
+      setError(
+        didReopen.current
+          ? { text: DAY_REOPENED_CLOSE_AGAIN_COPY, elsewhere: false }
+          : { text: dayCloseErrorCopy(err), elsewhere: isDayAlreadyClosed(err) },
+      );
+    }
   };
 
   return (
-    <form id={FORM_ID} onSubmit={submit} className="space-y-4" data-testid="day-close-form">
-      {reopened ? (
+    <form
+      id={FORM_ID}
+      onSubmit={(e) => void submit(e)}
+      className="space-y-4"
+      data-testid="day-close-form"
+    >
+      {seed && !editing ? (
         <p role="status" className="rounded border bg-navy/5 p-2 text-sm">
           This day was reopened. Count the drawer again to close it.
         </p>
@@ -189,7 +270,7 @@ function DayCloseFormBody({ state, onClose }: { state: DayCloseState; onClose: (
           className={cn("font-semibold", view?.tone)}
         />
         <p className="pt-1 text-xs text-navy/70" data-testid="close-not-at-till">
-          Not taken at the till: {money(preview.totals.notAtTill)}
+          Not taken at the till: {money(shownTotals.notAtTill)}
         </p>
         {refunds.tenderKnown === false ? (
           <p className="text-xs text-navy/70" data-testid="close-tender-note">
@@ -199,12 +280,12 @@ function DayCloseFormBody({ state, onClose }: { state: DayCloseState; onClose: (
       </dl>
 
       <Input
-        label={reopened ? "Opening float (kept from the first close)" : "Opening float"}
+        label={seed ? "Opening float (kept from the first close)" : "Opening float"}
         inputMode="decimal"
         autoComplete="off"
         className="h-11"
         value={floatText}
-        readOnly={reopened != null}
+        readOnly={seed != null}
         onChange={(e) => setFloatText(e.target.value)}
         error={
           openingFloat === null ? "Enter an amount in dollars and cents, 0.00 or more." : undefined
@@ -273,21 +354,35 @@ function DayCloseFormBody({ state, onClose }: { state: DayCloseState; onClose: (
 
       <div className="sticky bottom-0 -mx-1 space-y-2 border-t bg-white px-1 pb-1 pt-3">
         {error ? (
-          <p role="alert" className="text-sm text-red-700">
-            {error}
-          </p>
+          <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-red-700">
+            <p>{error.text}</p>
+            {error.elsewhere ? (
+              <Button
+                type="button"
+                variant="secondary"
+                className="min-h-11"
+                loading={viewing}
+                onClick={() => {
+                  setViewing(true);
+                  void onViewZ().finally(() => setViewing(false));
+                }}
+              >
+                View Z
+              </Button>
+            ) : null}
+          </div>
         ) : null}
+        {online ? null : (
+          <p role="status" className="text-sm text-amber-700" data-testid="day-close-offline">
+            {DAY_OFFLINE_COPY}
+          </p>
+        )}
         <div className="flex flex-wrap justify-end gap-2">
           <Button type="button" variant="secondary" className="min-h-11" onClick={onClose}>
             Cancel
           </Button>
-          <Button
-            type="submit"
-            className="min-h-11"
-            disabled={!canSubmit}
-            loading={mutation.isPending}
-          >
-            Close day
+          <Button type="submit" className="min-h-11" disabled={!canSubmit} loading={pending}>
+            {editing ? "Save count" : "Close day"}
           </Button>
         </div>
       </div>
@@ -299,22 +394,28 @@ function ClosedCard({
   close,
   zone,
   salesSince,
-  canReopen,
+  canEdit,
+  onViewZ,
+  onEdit,
 }: {
   close: DayCloseSnapshot;
   zone: string;
   salesSince: number;
-  canReopen: boolean;
+  canEdit: boolean;
+  onViewZ: () => void;
+  onEdit: () => void;
 }) {
   const resend = useResendZReport();
-  const reopen = useReopenCounterDay();
-  const [confirming, setConfirming] = React.useState(false);
   const [failure, setFailure] = React.useState<string | null>(null);
   const v = varianceView(close.variance);
+  const head = zHeadlineText(dayCloseZSections(close).headline);
   return (
     <div className="space-y-2 rounded border bg-navy/5 p-3 text-sm" data-testid="day-close-closed">
-      <p className="font-semibold">
-        Closed at {timeIn(close.closedAt, zone)} ·{" "}
+      <p className="font-semibold" data-testid="closed-headline">
+        Closed {zTime(close.closedAt, zone)}
+        {close.closedByName ? ` by ${close.closedByName}` : ""} · {head.verdict}
+      </p>
+      <p className="text-xs text-navy/70" data-testid="closed-sales-since">
         {salesSince === 1 ? "1 sale since" : `${salesSince} sales since`}
       </p>
       <dl className="space-y-1">
@@ -333,6 +434,7 @@ function ClosedCard({
           <span className="font-medium text-amber-700" data-testid="closed-report-not-sent">
             Report not sent
           </span>
+          <span aria-hidden="true">·</span>
           <Button
             type="button"
             variant="secondary"
@@ -349,61 +451,21 @@ function ClosedCard({
       ) : close.reportSent === true ? (
         <p className="text-xs text-navy/70">Report sent to the admins</p>
       ) : null}
-      {canReopen ? (
-        <Button
-          type="button"
-          variant="secondary"
-          className="min-h-11"
-          onClick={() => {
-            setFailure(null);
-            setConfirming(true);
-          }}
-        >
-          Reopen day
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="secondary" className="min-h-11" onClick={onViewZ}>
+          View Z
         </Button>
-      ) : null}
+        {canEdit ? (
+          <Button type="button" variant="secondary" className="min-h-11" onClick={onEdit}>
+            Edit count
+          </Button>
+        ) : null}
+      </div>
       {failure ? (
         <p role="alert" className="text-sm text-red-700">
           {failure}
         </p>
       ) : null}
-      <Modal
-        open={confirming}
-        onClose={() => setConfirming(false)}
-        title="Reopen this day?"
-        description="The counted figures stay stored until you close the day again."
-        closeClassName="min-h-11 min-w-11 flex items-center justify-center"
-        footer={
-          <>
-            <Button
-              type="button"
-              variant="secondary"
-              className="min-h-11"
-              onClick={() => setConfirming(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              className="min-h-11"
-              loading={reopen.isPending}
-              onClick={() =>
-                reopen.mutate(close.id, {
-                  onSuccess: () => setConfirming(false),
-                  onError: () => {
-                    setConfirming(false);
-                    setFailure(DAY_REOPEN_FAILED_COPY);
-                  },
-                })
-              }
-            >
-              Reopen day
-            </Button>
-          </>
-        }
-      >
-        <p>Sales and refunds dated in this window can change again until it is closed.</p>
-      </Modal>
     </div>
   );
 }
@@ -412,12 +474,25 @@ export function CounterDayClose() {
   const q = useCounterDayClose(true);
   const role = useOptionalAuth()?.user?.role;
   const [formOpen, setFormOpen] = React.useState(false);
+  // the closed day being corrected (Edit count), or null for a plain close / re-close
+  const [editing, setEditing] = React.useState<DayCloseSnapshot | null>(null);
+  const [zOpen, setZOpen] = React.useState(false);
   const openerRef = React.useRef<HTMLButtonElement>(null);
   const { refetch } = q;
   const openForm = React.useCallback(() => {
     // a fresh preview for the figures: the window ends "now"
     void refetch();
+    setEditing(null);
     setFormOpen(true);
+  }, [refetch]);
+  // Closed on another device: load that close through the state refetch, then show its Z report.
+  const viewZAfterRefetch = React.useCallback(async () => {
+    const r = await refetch();
+    const lc = r.data?.lastClose;
+    if (lc && !lc.reopenedAt) {
+      setFormOpen(false);
+      setZOpen(true);
+    }
   }, [refetch]);
 
   if (q.isError && !q.data) {
@@ -450,7 +525,12 @@ export function CounterDayClose() {
           close={closed}
           zone={state.zone}
           salesSince={state.salesSince}
-          canReopen={role !== undefined && REOPEN_ROLES.has(role)}
+          canEdit={role !== undefined && REOPEN_ROLES.has(role)}
+          onViewZ={() => setZOpen(true)}
+          onEdit={() => {
+            setEditing(closed);
+            setFormOpen(true);
+          }}
         />
       ) : null}
       {reopened ? (
@@ -458,12 +538,26 @@ export function CounterDayClose() {
           This day was reopened. Close it again to finish.
         </p>
       ) : null}
+      {closed && !offerClose ? (
+        <p className="text-sm text-navy/70" data-testid="day-close-nothing-new">
+          Already closed. Nothing new since {zTime(closed.closedAt, state.zone)}.
+        </p>
+      ) : null}
       {offerClose ? (
         <Button ref={openerRef} className="min-h-11 w-full sm:w-auto" onClick={openForm}>
-          Close day
+          {closed ? "Close again" : "Close day"}
         </Button>
       ) : null}
-      <DayCloseForm state={state} open={formOpen} onClose={() => setFormOpen(false)} />
+      <DayCloseForm
+        state={state}
+        open={formOpen}
+        editing={editing}
+        onClose={() => setFormOpen(false)}
+        onViewZ={viewZAfterRefetch}
+      />
+      {closed ? (
+        <ZReportView snapshot={closed} open={zOpen} onClose={() => setZOpen(false)} />
+      ) : null}
     </section>
   );
 }

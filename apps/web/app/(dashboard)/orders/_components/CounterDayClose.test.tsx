@@ -336,9 +336,7 @@ describe("CounterDayClose: submit", () => {
     post.mockRejectedValue(apiError(409, "DAY_ALREADY_CLOSED", "PG boom: unique violation"));
     await openForm();
     fireEvent.click(submitButton());
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "This day was already closed. Refresh to see it.",
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Closed on another device.");
     expect(document.body.textContent).not.toMatch(/PG boom/);
     expect(submitButton()).toBeEnabled();
   });
@@ -361,7 +359,7 @@ describe("CounterDayClose: submit", () => {
     await openForm();
     fireEvent.click(submitButton());
     const closed = await screen.findByTestId("day-close-closed");
-    expect(closed).toHaveTextContent("Closed at 11:30 AM EDT · 0 sales since");
+    expect(closed).toHaveTextContent("Closed 11:30 AM by Pat · Short $2.00");
     expect(screen.queryByTestId("day-close-form")).toBeNull();
   });
 });
@@ -371,21 +369,59 @@ describe("CounterDayClose: the closed state", () => {
     dayState = stateOf({ lastClose: snapshot(over), salesSince: since });
   };
 
-  it("shows the close time in the tenant zone, the sales since, and the stored figures", async () => {
+  it("shows the close time in the tenant zone, who closed it, the verdict, and the stored figures", async () => {
     withClose();
     await openSheet();
     const closed = await screen.findByTestId("day-close-closed");
-    expect(closed).toHaveTextContent("Closed at 11:30 AM EDT · 3 sales since");
+    expect(closed).toHaveTextContent("Closed 11:30 AM by Pat · Short $2.00");
+    expect(within(closed).getByTestId("closed-sales-since")).toHaveTextContent("3 sales since");
     expect(within(closed).getByTestId("closed-float")).toHaveTextContent("$100.00");
     expect(within(closed).getByTestId("closed-expected")).toHaveTextContent("$130.00");
     expect(within(closed).getByTestId("closed-counted")).toHaveTextContent("$128.00");
     expect(within(closed).getByTestId("closed-variance")).toHaveTextContent("Under $2.00");
   });
 
+  it.each([
+    [0, "Closed 11:30 AM by Pat · Even $0.00"],
+    [1, "Closed 11:30 AM by Pat · Over $1.00"],
+  ])("a variance of %s reads '%s'", async (variance, text) => {
+    withClose({ variance, countedCash: 130 + variance });
+    await openSheet();
+    expect(await screen.findByTestId("closed-headline")).toHaveTextContent(text);
+  });
+
+  it("leaves out 'by ...' when the closer is unknown", async () => {
+    withClose({ closedByName: null });
+    await openSheet();
+    expect(await screen.findByTestId("closed-headline")).toHaveTextContent(
+      /^Closed 11:30\sAM · Short \$2\.00$/,
+    );
+  });
+
   it("says '1 sale since' for one sale", async () => {
     withClose({}, 1);
     await openSheet();
-    expect(await screen.findByTestId("day-close-closed")).toHaveTextContent("1 sale since");
+    expect(await screen.findByTestId("closed-sales-since")).toHaveTextContent("1 sale since");
+  });
+
+  it("View Z opens the Z report for the stored close, in the plan's four groups", async () => {
+    withClose({ day: "2026-10-07" });
+    await openSheet();
+    fireEvent.click(await screen.findByRole("button", { name: "View Z" }));
+    const dialog = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
+    expect(within(dialog).getByTestId("z-headline")).toHaveTextContent(
+      "Counted $128.00 · Short $2.00",
+    );
+    expect(
+      within(dialog)
+        .getAllByRole("heading", { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual(["Money in", "Credit & account", "Refunds & net", "Drawer"]);
+    // the stored expected cash, not a re-derived one
+    expect(within(dialog).getByTestId("z-row-Cash in drawer")).toHaveTextContent("$130.00");
+    expect(within(dialog).getByTestId("z-note")).toHaveTextContent("ok");
+    // no customer names, no sale lines
+    expect(within(dialog).queryAllByRole("listitem")).toHaveLength(0);
   });
 
   it("shows 'Report not sent' with Resend only when reportSent === false", async () => {
@@ -431,68 +467,33 @@ describe("CounterDayClose: the closed state", () => {
     expect(document.body.textContent).not.toMatch(/smtp password/);
   });
 
-  it.each(["OPERATOR", "TENANT_ADMIN"])("%s sees Reopen day", async (r) => {
+  it.each(["OPERATOR", "TENANT_ADMIN"])("%s sees View Z and Edit count", async (r) => {
     role = r;
     withClose();
     await openSheet();
     await screen.findByTestId("day-close-closed");
-    expect(screen.getByRole("button", { name: "Reopen day" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View Z" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit count" })).toBeInTheDocument();
   });
 
-  it.each([undefined, "DRIVER", "CUSTOMER"])("role %s sees no Reopen day", async (r) => {
+  it.each([undefined, "DRIVER", "CUSTOMER"])("role %s sees View Z but no Edit count", async (r) => {
     role = r;
+    withClose();
+    await openSheet();
+    await screen.findByTestId("day-close-closed");
+    expect(screen.getByRole("button", { name: "View Z" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit count" })).toBeNull();
+  });
+
+  it("has no Reopen day button or confirm dialog any more: the reopen path is Edit count", async () => {
     withClose();
     await openSheet();
     await screen.findByTestId("day-close-closed");
     expect(screen.queryByRole("button", { name: "Reopen day" })).toBeNull();
-  });
-
-  it("Reopen asks first, then posts to the reopen route and offers the form again", async () => {
-    withClose({ day: "2000-01-01" });
-    post.mockImplementation(() => {
-      dayState = stateOf({ lastClose: snapshot({ reopenedAt: "2026-10-07T16:00:00.000Z" }) });
-      return Promise.resolve({ data: {} });
-    });
-    await openSheet();
-    fireEvent.click(await screen.findByRole("button", { name: "Reopen day" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit count" }));
+    await screen.findByTestId("day-close-form");
+    expect(screen.queryByRole("dialog", { name: "Reopen this day?" })).toBeNull();
     expect(post).not.toHaveBeenCalled();
-    const confirm = await screen.findByRole("dialog", { name: "Reopen this day?" });
-    fireEvent.click(within(confirm).getByRole("button", { name: "Reopen day" }));
-    await waitFor(() =>
-      expect(post).toHaveBeenCalledWith("/orders/counter-sale/day-close/dc1/reopen"),
-    );
-    await waitFor(() => expect(screen.queryByTestId("day-close-closed")).toBeNull());
-    // the re-close form starts from the stored float, counts and notes
-    fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
-    const floatInput = await screen.findByLabelText("Opening float (kept from the first close)");
-    expect(floatInput).toHaveValue("100.00");
-    expect(floatInput).toHaveAttribute("readonly");
-    expect(screen.getByLabelText("$100 bill count")).toHaveValue("1");
-    expect(screen.getByLabelText("$1.00 coin count")).toHaveValue("3");
-    expect(screen.getByLabelText("$1 bill count")).toHaveValue("0");
-    expect(screen.getByLabelText("Notes")).toHaveValue("ok");
-  });
-
-  it("Cancel in the Reopen confirm posts nothing", async () => {
-    withClose();
-    await openSheet();
-    fireEvent.click(await screen.findByRole("button", { name: "Reopen day" }));
-    const confirm = await screen.findByRole("dialog", { name: "Reopen this day?" });
-    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
-    expect(post).not.toHaveBeenCalled();
-  });
-
-  it("a failed Reopen shows fixed copy", async () => {
-    withClose();
-    post.mockRejectedValue(apiError(403, "FORBIDDEN", "internal detail"));
-    await openSheet();
-    fireEvent.click(await screen.findByRole("button", { name: "Reopen day" }));
-    const confirm = await screen.findByRole("dialog", { name: "Reopen this day?" });
-    fireEvent.click(within(confirm).getByRole("button", { name: "Reopen day" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not reopen the day. Try again.",
-    );
-    expect(document.body.textContent).not.toMatch(/internal detail/);
   });
 
   it("offers no second close for a quiet window on the same day, but does once anything happened", async () => {
@@ -515,7 +516,11 @@ describe("CounterDayClose: the closed state", () => {
     dayState = stateOf({ lastClose: snapshot({ day: today }), salesSince: 0 }, { totals: quiet });
     const { unmount } = await openSheet();
     await screen.findByTestId("day-close-closed");
+    expect(screen.queryByRole("button", { name: "Close again" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Close day" })).toBeNull();
+    expect(screen.getByTestId("day-close-nothing-new")).toHaveTextContent(
+      "Already closed. Nothing new since 11:30 AM.",
+    );
     unmount();
     // a refund with no new sale is activity
     dayState = stateOf(
@@ -523,7 +528,14 @@ describe("CounterDayClose: the closed state", () => {
       { totals: { ...quiet, refunds: { ...quiet.refunds, count: 1, cash: 5, total: 5 } } },
     );
     await openSheet();
+    expect(await screen.findByRole("button", { name: "Close again" })).toBeInTheDocument();
+    expect(screen.queryByTestId("day-close-nothing-new")).toBeNull();
+  });
+
+  it("offers a plain 'Close day' when nothing has been closed yet", async () => {
+    await openSheet();
     expect(await screen.findByRole("button", { name: "Close day" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close again" })).toBeNull();
   });
 });
 
@@ -553,5 +565,282 @@ describe("CounterDayClose: loading and failure", () => {
     const btn = await screen.findByRole("button", { name: "Close day" });
     const summary = await screen.findByTestId("today-summary");
     expect(btn.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+const REOPEN_URL = "/orders/counter-sale/day-close/dc1/reopen";
+const CLOSE_URL = "/orders/counter-sale/day-close";
+const postedUrls = () => post.mock.calls.map((c) => c[0]);
+
+describe("CounterDayClose: a state that is already reopened", () => {
+  it("shows Close day with the stored float locked and the stored counts, float and notes prefilled", async () => {
+    dayState = stateOf({
+      lastClose: snapshot({ reopenedAt: "2026-10-07T16:00:00.000Z" }),
+      salesSince: 0,
+    });
+    await openSheet();
+    fireEvent.click(await screen.findByRole("button", { name: "Close day" }));
+    const floatInput = await screen.findByLabelText("Opening float (kept from the first close)");
+    expect(floatInput).toHaveValue("100.00");
+    expect(floatInput).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("$100 bill count")).toHaveValue("1");
+    expect(screen.getByLabelText("$1.00 coin count")).toHaveValue("3");
+    expect(screen.getByLabelText("$1 bill count")).toHaveValue("0");
+    expect(screen.getByLabelText("Notes")).toHaveValue("ok");
+  });
+});
+
+describe("CounterDayClose: Edit count (reopen, then close again)", () => {
+  // the preview after a close describes the NEXT window, so its numbers must not leak into an edit of the closed one
+  const closedWithQuietNextWindow = () => {
+    dayState = stateOf({ lastClose: snapshot(), salesSince: 0 }, { tillCash: 999 });
+  };
+  const serveEdit = (closeResult: "ok" | Error | unknown = "ok") =>
+    post.mockImplementation((url: string) => {
+      if (url === REOPEN_URL) {
+        dayState = stateOf({
+          lastClose: snapshot({ reopenedAt: "2026-10-07T16:00:00.000Z" }),
+          salesSince: 0,
+        });
+        return Promise.resolve({ data: {} });
+      }
+      if (closeResult !== "ok") return Promise.reject(closeResult);
+      const fixed = snapshot({ countedCash: 133, variance: 3, notes: "ok" });
+      dayState = stateOf({ lastClose: fixed, salesSince: 0 });
+      return Promise.resolve({ data: fixed });
+    });
+  const openEdit = async () => {
+    await openSheet();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit count" }));
+    return screen.findByTestId("day-close-form");
+  };
+
+  it("opens the count form prefilled from the stored close, float locked, and posts nothing yet", async () => {
+    closedWithQuietNextWindow();
+    await openEdit();
+    expect(screen.getByRole("dialog", { name: "Edit count" })).toBeInTheDocument();
+    const floatInput = screen.getByLabelText("Opening float (kept from the first close)");
+    expect(floatInput).toHaveValue("100.00");
+    expect(floatInput).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("$100 bill count")).toHaveValue("1");
+    expect(screen.getByLabelText("$20 bill count")).toHaveValue("1");
+    expect(screen.getByLabelText("$5 bill count")).toHaveValue("1");
+    expect(screen.getByLabelText("$1.00 coin count")).toHaveValue("3");
+    expect(screen.getByLabelText("Notes")).toHaveValue("ok");
+    // live figures: counted 128 against the STORED expected 130, not the next window's preview
+    expect(screen.getByTestId("close-counted")).toHaveTextContent("$128.00");
+    expect(screen.getByTestId("close-expected")).toHaveTextContent("$130.00");
+    expect(screen.getByTestId("close-variance")).toHaveTextContent("Under $2.00");
+    expect(screen.getByRole("button", { name: "Save count" })).toBeEnabled();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("Save count posts the reopen, then the close with the kept float, new counts and notes, and refetches", async () => {
+    closedWithQuietNextWindow();
+    serveEdit();
+    await openEdit();
+    setCount("$5 bill", 2);
+    fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "  fixed a five " } });
+    expect(screen.getByTestId("close-variance")).toHaveTextContent("Over $3.00");
+    const before = stateCalls().length;
+    fireEvent.click(screen.getByRole("button", { name: "Save count" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(postedUrls()).toEqual([REOPEN_URL, CLOSE_URL]);
+    expect(post).toHaveBeenNthCalledWith(2, CLOSE_URL, {
+      openingFloat: 100,
+      denominations: [
+        { kind: "bill", value: 100, count: 1 },
+        { kind: "bill", value: 20, count: 1 },
+        { kind: "bill", value: 5, count: 2 },
+        { kind: "coin", value: 1, count: 3 },
+      ],
+      notes: "fixed a five",
+    });
+    // success: the form closes and the closed card shows the new figures
+    const closed = await screen.findByTestId("day-close-closed");
+    expect(closed).toHaveTextContent("Closed 11:30 AM by Pat · Over $3.00");
+    expect(within(closed).getByTestId("closed-counted")).toHaveTextContent("$133.00");
+    expect(screen.queryByTestId("day-close-form")).toBeNull();
+    expect(stateCalls().length).toBeGreaterThan(before);
+  });
+
+  it("does not reopen first when the first call fails: fixed copy, close never posted, counts kept", async () => {
+    closedWithQuietNextWindow();
+    post.mockRejectedValue(apiError(403, "FORBIDDEN", "internal detail"));
+    await openEdit();
+    setCount("$5 bill", 4);
+    fireEvent.click(screen.getByRole("button", { name: "Save count" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not reopen the day. Try again.",
+    );
+    expect(document.body.textContent).not.toMatch(/internal detail/);
+    expect(postedUrls()).toEqual([REOPEN_URL]);
+    expect(screen.getByLabelText("$5 bill count")).toHaveValue("4");
+    expect(screen.getByRole("button", { name: "Save count" })).toBeEnabled();
+  });
+
+  it("reopened but the close failed: 'Day reopened. Close it again.', the form stays open with the counts, and a retry does not reopen twice", async () => {
+    closedWithQuietNextWindow();
+    serveEdit(apiError(500, "INTERNAL", "stack trace: secret"));
+    await openEdit();
+    setCount("$5 bill", 2);
+    fireEvent.click(screen.getByRole("button", { name: "Save count" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Day reopened. Close it again.");
+    expect(document.body.textContent).not.toMatch(/secret/);
+    expect(screen.getByTestId("day-close-form")).toBeInTheDocument();
+    expect(screen.getByLabelText("$5 bill count")).toHaveValue("2");
+    expect(screen.getByLabelText("Notes")).toHaveValue("ok");
+    expect(screen.getByRole("button", { name: "Save count" })).toBeEnabled();
+    // the stored float is still locked and the stored expected still stands
+    expect(screen.getByLabelText("Opening float (kept from the first close)")).toHaveAttribute(
+      "readonly",
+    );
+    expect(screen.getByTestId("close-expected")).toHaveTextContent("$130.00");
+    expect(postedUrls()).toEqual([REOPEN_URL, CLOSE_URL]);
+
+    // retry: only the close goes out this time
+    serveEdit();
+    post.mockClear();
+    dayState = stateOf({
+      lastClose: snapshot({ reopenedAt: "2026-10-07T16:00:00.000Z" }),
+      salesSince: 0,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save count" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(postedUrls()).toEqual([CLOSE_URL]);
+    expect(await screen.findByTestId("day-close-closed")).toBeInTheDocument();
+  });
+
+  it("posts the reopen and the close once each even when Save count is hit twice", async () => {
+    closedWithQuietNextWindow();
+    serveEdit();
+    await openEdit();
+    const save = screen.getByRole("button", { name: "Save count" });
+    fireEvent.click(save);
+    fireEvent.submit(screen.getByTestId("day-close-form"));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 25));
+    });
+    expect(postedUrls()).toEqual([REOPEN_URL, CLOSE_URL]);
+  });
+});
+
+describe("CounterDayClose: close failures (fixed copy per cause, counts kept)", () => {
+  const failWith = async (err: unknown) => {
+    post.mockRejectedValue(err);
+    await openForm();
+    setCount("$20 bill", 3);
+    fireEvent.click(submitButton());
+    return screen.findByRole("alert");
+  };
+
+  it.each([
+    ["a 503", apiError(503, "SERVICE_UNAVAILABLE", "pool timeout 10000ms")],
+    ["a lock timeout", apiError(409, "LOCK_UNAVAILABLE", "could not obtain lock")],
+  ])("%s says a sale is finishing", async (_name, err) => {
+    const alert = await failWith(err);
+    expect(alert).toHaveTextContent("A sale is finishing. Try again.");
+    expect(document.body.textContent).not.toMatch(/pool timeout|could not obtain/);
+    expect(screen.getByLabelText("$20 bill count")).toHaveValue("3");
+    expect(submitButton()).toBeEnabled();
+  });
+
+  it("a network error (no response) keeps the count and says so", async () => {
+    const alert = await failWith(new Error("Network Error"));
+    expect(alert).toHaveTextContent("Couldn't close the day. Your count is still here.");
+    expect(screen.getByLabelText("$20 bill count")).toHaveValue("3");
+    expect(submitButton()).toBeEnabled();
+  });
+
+  it("anything else shows the generic fixed copy", async () => {
+    const alert = await failWith(apiError(400, "BAD", "validation: secret"));
+    expect(alert).toHaveTextContent("Could not close the day. Check the connection and try again.");
+    expect(document.body.textContent).not.toMatch(/secret/);
+    expect(screen.getByLabelText("$20 bill count")).toHaveValue("3");
+  });
+
+  it("DAY_ALREADY_CLOSED keeps the count and offers View Z, which loads the latest close and opens it", async () => {
+    post.mockImplementation(() => {
+      // the other device's close is what the refetch will return
+      dayState = stateOf({ lastClose: snapshot({ closedByName: "Sam" }), salesSince: 0 });
+      return Promise.reject(apiError(409, "DAY_ALREADY_CLOSED", "PG boom"));
+    });
+    await openForm();
+    setCount("$20 bill", 3);
+    fireEvent.click(submitButton());
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Closed on another device.");
+    expect(screen.getByLabelText("$20 bill count")).toHaveValue("3");
+    const before = stateCalls().length;
+    fireEvent.click(within(alert).getByRole("button", { name: "View Z" }));
+    const z = await screen.findByRole("dialog", { name: "Z report · Wed, Oct 7" });
+    expect(stateCalls().length).toBeGreaterThan(before);
+    expect(within(z).getByTestId("z-closed-line")).toHaveTextContent("Closed 11:30 AM by Sam");
+    expect(screen.queryByTestId("day-close-form")).toBeNull();
+  });
+
+  it("only DAY_ALREADY_CLOSED offers View Z in the form", async () => {
+    const alert = await failWith(apiError(500, "INTERNAL"));
+    expect(within(alert).queryByRole("button", { name: "View Z" })).toBeNull();
+  });
+});
+
+describe("CounterDayClose: offline", () => {
+  const setOnline = (v: boolean) => {
+    Object.defineProperty(window.navigator, "onLine", { configurable: true, value: v });
+    act(() => {
+      window.dispatchEvent(new Event(v ? "online" : "offline"));
+    });
+  };
+  afterEach(() => setOnline(true));
+
+  it("disables Close day and says the count stays here, then re-enables when the connection returns", async () => {
+    setOnline(false);
+    await openForm();
+    expect(screen.getByTestId("day-close-offline")).toHaveTextContent(
+      "You're offline. Your count stays here.",
+    );
+    expect(submitButton()).toBeDisabled();
+    fireEvent.submit(screen.getByTestId("day-close-form"));
+    expect(post).not.toHaveBeenCalled();
+    setOnline(true);
+    expect(screen.queryByTestId("day-close-offline")).toBeNull();
+    expect(submitButton()).toBeEnabled();
+  });
+
+  it("Save count is disabled offline too", async () => {
+    dayState = stateOf({ lastClose: snapshot(), salesSince: 0 });
+    await openSheet();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit count" }));
+    await screen.findByTestId("day-close-form");
+    setOnline(false);
+    expect(screen.getByRole("button", { name: "Save count" })).toBeDisabled();
+    expect(screen.getByTestId("day-close-offline")).toBeInTheDocument();
+  });
+});
+
+describe("CounterDayClose: phone layout", () => {
+  it("every button and input on the closed card and in the edit form is a 44px target", async () => {
+    dayState = stateOf({ lastClose: snapshot({ reportSent: false }), salesSince: 0 });
+    await openSheet();
+    const card = await screen.findByTestId("day-close-closed");
+    for (const name of ["Resend", "View Z", "Edit count"]) {
+      expect(within(card).getByRole("button", { name }).className).toMatch(/min-h-11/);
+    }
+    fireEvent.click(within(card).getByRole("button", { name: "Edit count" }));
+    const form = await screen.findByTestId("day-close-form");
+    const dialogs = screen.getAllByRole("dialog");
+    expect(dialogs[dialogs.length - 1].className).toMatch(/h-\[100dvh\]/);
+    for (const name of ["Save count", "Cancel"]) {
+      expect(within(form).getByRole("button", { name }).className).toMatch(/min-h-11/);
+    }
+    expect(within(form).getByLabelText("$20 bill count").className).toMatch(/h-11/);
+    expect(
+      within(form).getByLabelText("Opening float (kept from the first close)").className,
+    ).toMatch(/h-11/);
+    expect(within(form).getByRole("button", { name: "More $20 bill" }).className).toMatch(
+      /min-h-11/,
+    );
   });
 });
