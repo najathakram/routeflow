@@ -81,6 +81,7 @@ import {
 import { assertCashRefundWithinCap, refundAmountsBySale } from "./cash-refund-cap";
 import { assertInlineReturnWithinRemainder } from "./refund-remainder-guard";
 import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
+import { assertCounterWindowOpen } from "./counter-close-window";
 import {
   refundTenderColumn,
   refundTenderData,
@@ -1575,6 +1576,8 @@ export class InlineReturnsService {
 
       // SA-758 CR-2: refundedAt is the DATABASE clock, read after the close lock (the close reads its cutoff from the same clock)
       const refundedAt = await dbClockNow(tx);
+      // SA-750r3: a refund dated inside a closed window is refused (a closed day's totals never move)
+      if (registerKey) await assertCounterWindowOpen(tx, tenantId, registerKey, refundedAt);
       // M1: the CAS - store credit XOR refund, once
       const claimed = await tx.return.updateMany({
         where: {

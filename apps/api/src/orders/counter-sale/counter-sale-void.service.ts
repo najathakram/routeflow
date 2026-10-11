@@ -14,6 +14,7 @@ import {
 } from "../../auth/permissions/staff-capabilities";
 import { AUDIT_ACTIONS } from "../../audit/audit-actions.constant";
 import { RouteFlowGateway } from "../../gateways/routeflow.gateway";
+import { counterPay } from "../../invoices/counter-payment-guard";
 import { assertNoCashRefundOnOrder } from "../../invoices/invoice-cash-refund-guard";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -30,7 +31,12 @@ import {
 } from "./counter-sale-void-errors";
 import { handBackOf } from "./counter-sale-void-handback";
 import { tenantDayWindow } from "./counter-sale-void-window";
+import { registerKeyOfOrder } from "../../returns/counter-close-lock";
+import { counterCloseShared } from "./counter-tender-window";
 import { isCounterTenderRow, isForeignPaymentRow } from "./counter-tender-row";
+
+/** The void only ever sees a counter-sale order (step 1 refuses any other): the kind the tender predicate must be told. */
+const COUNTER_ORDER = { counterSale: true } as const;
 
 /** How long a void waits for the sale's counter-tender lock before answering 503 (SA-762r F2, G6). */
 const VOID_LOCK_WAIT_MS = 10_000;
@@ -42,7 +48,10 @@ const VOID_LOCK_WAIT_MS = 10_000;
  * writer) and the order unwind is `OrdersService.cancelOrderInTx` (the same body the office cancel runs).
  *
  * Locks: `counter-tender` advisory lock keyed on the order (the SAME lock the tender takes, so a void and a
- * same-key tender replay serialize) wraps `retryOnTxConflict(tenantTransaction(Serializable))`; inside the tx the row
+ * same-key tender replay serialize) plus the SHARED end-of-day close lock of the order's register on the same pinned
+ * connection (`sharedAlso`, like the tender; lock order counter-tender -> counter-close -> Order/Invoice rows). Under both,
+ * before any write, the void refuses 409 COUNTER_SALE_DAY_CLOSED when the sale's own time or any tender payment it reverses
+ * is dated inside a closed window of the register: a closed day's totals never move. It wraps `retryOnTxConflict(tenantTransaction(Serializable))`; inside the tx the row
  * order is Order -> Invoice -> Product. A lock timeout or an unavailable lock connection is a 503
  * COUNTER_SALE_VOID_BUSY with nothing written. No in-process lock, no order-merge/customer lock, and no tx is
  * threaded into updateOrderItems. Gateway emits are queued and flushed after the commit.
@@ -75,14 +84,21 @@ export class CounterSaleVoidService {
     }
     // A tenant-scoped read BEFORE any lock: another tenant's id (or an ordinary order) is a plain 404 and never
     // takes a lock. The same checks run again under the lock below.
-    const known = await this.prisma
-      .forTenant()
-      .order.findFirst({ where: { id: orderId, counterSale: true }, select: { id: true } });
+    const known = await this.prisma.forTenant().order.findFirst({
+      where: { id: orderId, counterSale: true },
+      select: { id: true, counterSale: true, registerKey: true },
+    });
     if (!known) throw saleNotFound();
 
     try {
       const locked = await withAdvisoryLock(
-        { family: "counter-tender", key: orderId, mode: "wait", waitMs: VOID_LOCK_WAIT_MS },
+        {
+          family: "counter-tender",
+          key: orderId,
+          mode: "wait",
+          waitMs: VOID_LOCK_WAIT_MS,
+          sharedAlso: counterCloseShared(this.prisma.getTenantId(), known),
+        },
         () => this.voidLocked(orderId, dto.reason, user),
       );
       if (!locked.acquired)
@@ -141,6 +157,7 @@ export class CounterSaleVoidService {
         customerId: true,
         status: true,
         counterSale: true,
+        registerKey: true,
         createdAt: true,
         routeRunStopId: true,
       },
@@ -189,6 +206,7 @@ export class CounterSaleVoidService {
     const payments: Array<{
       id: string;
       invoiceId: string;
+      paidAt: Date | null;
       method: string;
       status: string;
       amount: unknown;
@@ -205,6 +223,7 @@ export class CounterSaleVoidService {
             select: {
               id: true,
               invoiceId: true,
+              paidAt: true,
               method: true,
               status: true,
               amount: true,
@@ -213,7 +232,8 @@ export class CounterSaleVoidService {
             },
             orderBy: [{ invoiceId: "asc" }, { createdAt: "asc" }, { id: "asc" }],
           });
-    if (payments.some((p) => isForeignPaymentRow(orderId, p))) throw counterVoidForeignPayment();
+    if (payments.some((p) => isForeignPaymentRow(orderId, p, COUNTER_ORDER)))
+      throw counterVoidForeignPayment();
 
     // 7. The window: the sale's createdAt on today's day in the tenant zone, read again here in the tx.
     const tz = await tenantTimeZone({
@@ -223,12 +243,26 @@ export class CounterSaleVoidService {
     const allowed = voidWindowAllows(COUNTER_VOID_WINDOW, {
       saleCreatedAt: order.createdAt,
       nowTenantDay: tenantDayWindow(new Date(), tz),
-      windowClosed: false, // the SA-750 day close feeds this when it lands
+      windowClosed: false, // the closed-window refusal is step 7b (409 COUNTER_SALE_DAY_CLOSED)
     });
     if (!allowed) throw counterVoidNotToday();
 
+    const tender = payments.filter((p) => isCounterTenderRow(orderId, p, COUNTER_ORDER));
+    // 7b. A closed day's totals never move (SA-750r3), evaluated under the shared close lock before any write: the sale's own
+    // time (it counts as a sale of its day) and every tender payment this void reverses (money in, dated by paidAt).
+    await counterPay.assertDatesOpen(
+      tx,
+      {
+        tenantId: this.prisma.getTenantId()!,
+        registerKey: registerKeyOfOrder(order)!,
+        counterSale: true,
+        orderId,
+      },
+      order.createdAt,
+      ...tender.map((p) => p.paidAt),
+    );
+
     // 8. Void the counter tender rows with the one payment-void writer (split legs each voided).
-    const tender = payments.filter((p) => isCounterTenderRow(orderId, p));
     // voidPaymentInTx queues an invoice.updated with the status the payment void leaves (SENT / OVERDUE). Every invoice
     // of this sale ends VOID in this same transaction, so that event would tell operators AND the customer room about a
     // state that never lasts: it is handed a queue that is never flushed. (The order's CANCELLED event, queued on

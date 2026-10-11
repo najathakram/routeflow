@@ -16,8 +16,12 @@ import {
   isCounterSaleNotFound,
   isDefinitiveCounterSaleRefusal,
   counterSaleGate,
+  isStoreOnly,
   PAYMENT_PROBLEM_COPY,
   paymentMethodOptions,
+  COUNTER_SALE_DAY_CLOSED_TILL_COPY,
+  PICKUP_DAY_CLOSED_COPY,
+  isPickupHandledError,
   PICKUP_NOT_READY_COPY,
   PICKUP_ONLY_COPY,
   PICKUP_KEY_CONFLICT_COPY,
@@ -57,12 +61,14 @@ describe("counterSaleGate: reads capabilities.fulfilment only (SA-650)", () => {
       showButton: true,
       opensAsCounter: true,
       offerShipInstead: false,
+      offerInvoiceOrder: true, // PICKUP is the only method: a store-only business (row 331)
     });
   });
   it("always + SHIP in methods: 'Ship this order instead' is offered", () => {
     expect(counterSaleGate(cap({ counter: "always", methods: ["PICKUP", "SHIP"] }))).toMatchObject({
       opensAsCounter: true,
       offerShipInstead: true,
+      offerInvoiceOrder: false, // it can ship, so the normal builder is already reachable
     });
   });
   it("optional: the button only; never opens as the counter, never offers the ship switch", () => {
@@ -70,14 +76,34 @@ describe("counterSaleGate: reads capabilities.fulfilment only (SA-650)", () => {
       showButton: true,
       opensAsCounter: false,
       offerShipInstead: false,
+      offerInvoiceOrder: false,
     });
   });
   it("off, missing or still loading: nothing", () => {
-    const none = { showButton: false, opensAsCounter: false, offerShipInstead: false };
+    const none = {
+      showButton: false,
+      opensAsCounter: false,
+      offerShipInstead: false,
+      offerInvoiceOrder: false,
+    };
     expect(counterSaleGate(cap({ counter: "off" }))).toEqual(none);
     expect(counterSaleGate(undefined)).toEqual(none);
     expect(counterSaleGate(null)).toEqual(none);
     expect(counterSaleGate(cap({ counter: "bogus" as never }))).toEqual(none);
+  });
+});
+
+describe("isStoreOnly: PICKUP is the only fulfilment method (row 331)", () => {
+  it("true only when every method is PICKUP", () => {
+    expect(isStoreOnly({ methods: ["PICKUP"] })).toBe(true);
+    expect(isStoreOnly({ methods: ["PICKUP", "SHIP"] })).toBe(false);
+    expect(isStoreOnly({ methods: ["ROUTE", "SHIP"] })).toBe(false);
+  });
+  it("a missing, empty or partial answer is not store-only", () => {
+    expect(isStoreOnly(undefined)).toBe(false);
+    expect(isStoreOnly(null)).toBe(false);
+    expect(isStoreOnly({ methods: [] })).toBe(false);
+    expect(isStoreOnly({} as never)).toBe(false);
   });
 });
 
@@ -255,6 +281,14 @@ describe("counterSaleErrorCopy: an UNKNOWN outcome never claims nothing was char
     const err = { response: { status: 409, data: { code } } };
     expect(isDefinitiveCounterSaleRefusal(err)).toBe(false);
     expect(counterSaleErrorCopy(err)).toBe(COUNTER_OUTCOME_UNKNOWN_COPY);
+  });
+  it("a 409 COUNTER_SALE_DAY_CLOSED: the sale is saved and unpaid (never a fresh key), with its own fixed copy", () => {
+    const err = {
+      response: { status: 409, data: { code: "COUNTER_SALE_DAY_CLOSED", message: "RAW" } },
+    };
+    expect(isDefinitiveCounterSaleRefusal(err)).toBe(false);
+    expect(counterSaleErrorCopy(err)).toBe(COUNTER_SALE_DAY_CLOSED_TILL_COPY);
+    expect(counterSaleErrorCopy(err)).not.toMatch(/nothing was charged|RAW/i);
   });
   it("only a 404 COUNTER_SALE_NOT_FOUND from the by-key lookup is 'not found'", () => {
     expect(
@@ -448,6 +482,26 @@ describe("pickupCompleteErrorCopy", () => {
     expect(PICKUP_WALK_IN_CREDIT_COPY).toBe(
       "This walk-in has open credit. Resolve it on the customer before handing over.",
     );
+  });
+  it("409 COUNTER_SALE_DAY_CLOSED: the order IS handed over, the payment is not (fixed copy, never the server text)", () => {
+    expect(PICKUP_DAY_CLOSED_COPY).toBe(
+      "Handed over. Payment not taken: the till for that day is closed.",
+    );
+    expect(
+      pickupCompleteErrorCopy({
+        response: {
+          status: 409,
+          data: { code: "COUNTER_SALE_DAY_CLOSED", message: "raw server text" },
+        },
+      }),
+    ).toBe(PICKUP_DAY_CLOSED_COPY);
+  });
+  it("COUNTER_SALE_DAY_CLOSED is a code the dialog answers itself (no global toast)", () => {
+    expect(
+      isPickupHandledError({
+        response: { status: 409, data: { code: "COUNTER_SALE_DAY_CLOSED" } },
+      }),
+    ).toBe(true);
   });
   it("anything else is the generic retry copy, never the server message", () => {
     expect(

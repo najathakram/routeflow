@@ -24,6 +24,14 @@ export function useOrderOverpayGuard(
   const [returnOpen, setReturnOpen] = React.useState(false);
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
 
+  // The notice belongs to edit mode: leaving it (Cancel, a successful save, a status change) must not leave a
+  // stale "this edit would overpay" notice, or its open return dialog, on the read-only page.
+  React.useEffect(() => {
+    if (editing) return;
+    setInfo(null);
+    setReturnOpen(false);
+  }, [editing]);
+
   // The notice renders only in edit mode, so only an edit-mode 409 is ours; anywhere else it falls through
   // to the global toast (mutation-error-toast.ts no longer swallows the code).
   const capture = (err: unknown): boolean => {
@@ -43,11 +51,16 @@ export function useOrderOverpayGuard(
       <p>{orderOverpayCopy(info, hasInlineReturns)}</p>
       <div className="mt-2 flex gap-2">
         {hasInlineReturns && (
-          <Button variant="secondary" size="sm" onClick={() => setReturnOpen(true)}>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="h-11"
+            onClick={() => setReturnOpen(true)}
+          >
             Record a return
           </Button>
         )}
-        <Button variant="ghost" size="sm" onClick={() => setInfo(null)}>
+        <Button variant="ghost" size="sm" className="h-11" onClick={() => setInfo(null)}>
           Dismiss
         </Button>
       </div>

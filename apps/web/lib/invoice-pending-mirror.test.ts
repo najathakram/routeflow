@@ -1,4 +1,4 @@
-import { isPendingMirrorInvoice } from "./invoice-pending-mirror";
+import { isPendingMirrorInvoice, pendingMirrorCopy } from "./invoice-pending-mirror";
 
 const draft = {
   orderId: "o1",
@@ -21,5 +21,19 @@ describe("isPendingMirrorInvoice", () => {
     expect(
       isPendingMirrorInvoice({ ...draft, order: { status: "DELIVERED" }, pendingMirror: true }),
     ).toBe(true);
+  });
+});
+
+describe("pendingMirrorCopy: no delivery on a store-only order", () => {
+  it("a delivery business keeps 'after delivery'", () => {
+    const c = pendingMirrorCopy(false);
+    expect(c.badge).toBe("Mirrors the order \u2014 ready to send after delivery");
+    expect(c.note).toBe("you'll review and send this invoice after delivery.");
+  });
+  it("a store-only (POS-forced) business says 'after hand-over', never 'delivery'", () => {
+    const c = pendingMirrorCopy(true);
+    expect(c.badge).toBe("Mirrors the order \u2014 ready to send after hand-over");
+    expect(c.note).toBe("you'll review and send this invoice after hand-over.");
+    expect(`${c.badge} ${c.note}`).not.toMatch(/deliver/i);
   });
 });
