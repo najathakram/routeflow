@@ -330,7 +330,7 @@ export function CounterSaleScreen() {
   });
   const taxRate = (settings?.taxRate ?? 0) / 100;
   const totals = cartTotals(lines, taxRate);
-  const discounts = discountsTotal(lines); // POS-5: the `Discounts` row (display only; the total already includes it)
+  const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
 
   const { data: customersData } = useCustomers({ search: customerSearch.trim() || undefined });
@@ -1121,6 +1121,7 @@ export function CounterSaleScreen() {
                 onPriceClosed={refocus}
                 onNoteClosed={refocus}
                 onQtyEnter={refocusFromActive}
+                hideOriginalPrice={settings?.hideOriginalPrice === true}
               />
             ))}
           </ul>

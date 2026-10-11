@@ -1,10 +1,10 @@
-import { decideStaffOverride, isSpecialTier, roundMoney } from "@routeflow/pricing";
 import {
-  lineDiscount,
-  lineTotalAt,
-  priceEditChip,
-  type PriceEditLine,
-} from "@/lib/counter-price-edit";
+  decideStaffOverride,
+  isSpecialTier,
+  roundMoney,
+  showOriginalPrice,
+} from "@routeflow/pricing";
+import { lineTotalAt, priceEditChip, type PriceEditLine } from "@/lib/counter-price-edit";
 import type { CounterPriceEdit } from "./CounterLinePriceEdit";
 import type { SaleLine } from "./counter-sale-scan";
 
@@ -72,30 +72,61 @@ export function resetPriceEdit(lines: readonly SaleLine[], tempId: string): Sale
 }
 
 export interface EditedLineFigures {
-  /** the line total at the system price (the struck figure) */
-  original: number;
+  /** the line total at the LIST price (the struck figure, the receipt's reference); null when nothing is struck */
+  original: number | null;
   /** the line total at the net price */
   net: number;
-  /** money taken off; 0 for a raised price */
+  /** money taken off the LIST total; 0 when nothing is struck (a raised price, or the tenant hides original prices) */
   discount: number;
   chip: string;
 }
 
-/** Display figures of an edited line; null for a plain line. */
-export function editedLineFigures(l: SaleLine): EditedLineFigures | null {
+/**
+ * Does the cart strike the catalogue (LIST) price beside this line's unit price? Row 322d: the SAME decision the receipt makes
+ * (pricing's `showOriginalPrice`, with the tenant's `invoice.hideOriginalPrice`) and only when the price was LOWERED below
+ * the list: the cart's old private rule is gone. A line with no known list price strikes nothing.
+ */
+export function cartStrikesList(
+  l: Pick<SaleLine, "unitPrice" | "listPrice">,
+  hideOriginalPrice = false,
+): boolean {
+  if (l.listPrice === undefined || !(l.unitPrice < l.listPrice)) return false;
+  return showOriginalPrice(
+    { unitPrice: l.unitPrice, originalPrice: l.listPrice },
+    hideOriginalPrice,
+  );
+}
+
+/**
+ * Display figures of an edited line; null for a plain line. The struck "original" is the line total at the LIST price, the
+ * very figure the receipt strikes (`receiptLineAmounts`), so the cart and the receipt never read two different originals.
+ */
+export function editedLineFigures(
+  l: SaleLine,
+  hideOriginalPrice = false,
+): EditedLineFigures | null {
   if (!l.override) return null;
   const view = priceEditLineOf(l, 1);
+  const net = lineTotalAt(view, l.unitPrice);
+  const atList = lineTotalAt(view, view.listPrice);
+  const struck = cartStrikesList(
+    { unitPrice: l.unitPrice, listPrice: view.listPrice },
+    hideOriginalPrice,
+  );
+  const discount = struck ? Math.max(0, roundMoney(atList - net)) : 0;
   return {
-    original: lineTotalAt(view, view.tierPrice),
-    net: lineTotalAt(view, l.unitPrice),
-    discount: lineDiscount(view, l.unitPrice),
+    original: discount > 0 ? atList : null,
+    net,
+    discount,
     chip: priceEditChip(l.override, view.tierPrice, l.unitPrice),
   };
 }
 
 /** The `Discounts` totals row: the rounded sum of the positive line discounts (0 = no row). */
-export function discountsTotal(lines: readonly SaleLine[]): number {
-  return roundMoney(lines.reduce((sum, l) => sum + (editedLineFigures(l)?.discount ?? 0), 0));
+export function discountsTotal(lines: readonly SaleLine[], hideOriginalPrice = false): number {
+  return roundMoney(
+    lines.reduce((sum, l) => sum + (editedLineFigures(l, hideOriginalPrice)?.discount ?? 0), 0),
+  );
 }
 
 /** How many lines carry an edited price. */

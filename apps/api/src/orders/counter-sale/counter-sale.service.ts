@@ -481,6 +481,8 @@ export class CounterSaleService {
             originalPrice: true,
             priceType: true,
           },
+          // a STABLE line order (row 322a): the web matches its cart lines to these by product + price
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         },
       },
       orderBy: { createdAt: "asc" },

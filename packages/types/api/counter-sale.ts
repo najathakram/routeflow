@@ -45,7 +45,9 @@ export interface CounterSaleRequest {
 /**
  * The stored price facts of one sale line (the invoice line the sale produced): what the receipt needs to apply the invoices'
  * own original-price rule (`showOriginalPrice` in @routeflow/pricing). `originalPrice` is the LIST price (never the tier
- * price), `priceType` one of STANDARD / SPECIAL / DISCOUNTED / MANUAL / PROMO.
+ * price), `priceType` one of STANDARD / SPECIAL / DISCOUNTED / MANUAL / PROMO. `unitPrice` is the NET unit price the line was
+ * stored at: the live receipt matches a cart line to its stored line by product + this price (two lines of one product at
+ * different prices must not swap their list prices).
  */
 export interface CounterSaleLinePrice {
   productId: string | null;

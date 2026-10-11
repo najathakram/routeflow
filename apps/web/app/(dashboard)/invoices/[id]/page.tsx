@@ -78,6 +78,7 @@ import type { LineComponentView } from "@routeflow/types";
 import { CHECK_TRANSITIONS } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import { InvoiceLineAmount } from "./InvoiceLineAmount";
+import { InvoiceLinePrice } from "./InvoiceLinePrice";
 import { TenantInvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
 import { RemoveCreditButton } from "./RemoveCreditButton";
 import { AdjustPricesPanel } from "./AdjustPricesPanel";
@@ -2398,76 +2399,8 @@ export default function InvoiceDetailPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          {item.priceType === "SPECIAL" && !hideOriginal ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className="strike text-xs">
-                                {fmt(Number(item.originalPrice))}
-                              </span>
-                              <span className="money text-success">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success ring-1 ring-success/20">
-                                Special price
-                              </span>
-                            </div>
-                          ) : item.priceType === "DISCOUNTED" && !hideOriginal ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className="strike text-xs">
-                                {fmt(Number(item.originalPrice))}
-                              </span>
-                              <span className="money text-warning">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/20">
-                                Discounted price
-                              </span>
-                            </div>
-                          ) : item.priceType === "PROMO" &&
-                            item.originalPrice != null &&
-                            !hideOriginal ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className="strike text-xs">
-                                {fmt(Number(item.originalPrice))}
-                              </span>
-                              <span className="money text-brand-600">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 ring-1 ring-brand-200">
-                                Promo price
-                              </span>
-                            </div>
-                          ) : item.priceType === "MANUAL" &&
-                            item.originalPrice != null &&
-                            Number(item.unitPrice) > Number(item.originalPrice) ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              {/* Upsell (above list): green, no strikethrough — the base
-                                is never shown to the buyer. */}
-                              <span className="money text-success">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success ring-1 ring-success/20">
-                                Upsell
-                              </span>
-                            </div>
-                          ) : item.priceType === "MANUAL" &&
-                            item.originalPrice != null &&
-                            !hideOriginal ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className="strike text-xs">
-                                {fmt(Number(item.originalPrice))}
-                              </span>
-                              <span className="money text-warning">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/20">
-                                Adjusted
-                              </span>
-                            </div>
-                          ) : (
-                            <span className="money text-navy/70">
-                              {fmt(Number(item.unitPrice))}
-                            </span>
-                          )}
+                          {/* Row 322c: the struck original follows pricing's showOriginalPrice (the PDF's rule). */}
+                          <InvoiceLinePrice item={item} hideOriginal={hideOriginal} />
                           {/* Suggested retail price, snapshotted at line creation — appears
                               regardless of priceType. Keyed off data presence, not the flag,
                               so an issued invoice keeps rendering it even if the tenant later

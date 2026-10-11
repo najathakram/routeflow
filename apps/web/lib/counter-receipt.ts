@@ -167,16 +167,21 @@ export function buildCounterReceipt(input: {
   }
 
   // The stored lines the response serves (the invoice lines): the LIST price and type each cart line was sold at. A cart
-  // line takes the first unused stored line of its product; none (an older server) means nothing is struck, never the tier price.
+  // line takes the first unused stored line of its product AT ITS OWN NET PRICE (two lines of one product at different prices
+  // must not swap their list prices); a price the server did not store falls back to the first unused line of the product.
+  // None (an older server) means nothing is struck, never the tier price.
   const stored = [...(receipt.lines ?? [])];
-  const takeStored = (productId: string | undefined) => {
-    const i = productId ? stored.findIndex((s) => s.productId === productId) : -1;
+  const takeStored = (productId: string | undefined, unitPrice: number) => {
+    if (!productId) return undefined;
+    const same = (s: (typeof stored)[number]) => s.productId === productId;
+    let i = stored.findIndex((s) => same(s) && roundMoney(s.unitPrice) === roundMoney(unitPrice));
+    if (i < 0) i = stored.findIndex(same);
     return i < 0 ? undefined : stored.splice(i, 1)[0];
   };
   const rows = lines.map((l) => {
     // ONE rule for a lowered price (pricing's receiptLineAmounts, shared with the reprint and the emailed receipt), on the
     // invoices' own original-price rule: the struck base is the stored list price.
-    const facts = takeStored(l.productId);
+    const facts = takeStored(l.productId, l.unitPrice);
     const { total, original, discount } = receiptLineAmounts({
       unitPrice: l.unitPrice,
       originalPrice: facts?.originalPrice ?? null,

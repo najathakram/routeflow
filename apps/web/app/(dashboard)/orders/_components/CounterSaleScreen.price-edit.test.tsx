@@ -547,7 +547,8 @@ describe("POS-5 price edit: a customer pick keeps the edited price (POS-2 surviv
     await pickAcme();
     await waitFor(() => expect(total()).toHaveTextContent("$9.00")); // cola kept 5.00, juice re-priced to 4.00
     const li = lineOf("Cola");
-    expect(within(li).getByTestId("line-original-total")).toHaveTextContent("$8.00");
+    // row 322d: the struck figure is the LIST total (10.00), the receipt's reference, not the customer's tier total (8.00)
+    expect(within(li).getByTestId("line-original-total")).toHaveTextContent("$10.00");
     expect(within(li).getByTestId("line-net-total")).toHaveTextContent("$5.00");
     expect(within(li).getByTestId("line-price-chip")).toHaveTextContent("37.5% off");
     expect(within(lineOf("Juice")).queryByTestId("line-price-chip")).toBeNull();
@@ -588,7 +589,8 @@ describe("POS-5 price edit: a customer pick keeps the edited price (POS-2 surviv
         "Price changed",
       ),
     );
-    expect(screen.queryByTestId("running-discounts")).toBeNull();
+    // row 322d: Discounts is measured from the LIST price (10.00) like the receipt: 9.00 is still 1.00 off it
+    expect(screen.getByTestId("running-discounts")).toHaveTextContent("-$1.00");
     expect(total()).toHaveTextContent("$9.00");
   });
 
