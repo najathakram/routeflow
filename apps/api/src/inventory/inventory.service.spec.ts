@@ -741,7 +741,8 @@ describe("InventoryService", () => {
       prisma.product.findUnique.mockResolvedValue(product({ averageCost: null }));
       // SA-767 L-2: the movement is stamped from the counter the update returned (the locked row).
       prisma.product.findMany.mockResolvedValue([product({ averageCost: null })]);
-      prisma.product.update.mockResolvedValue({ currentStock: D(10) } as any);
+      // Deliberately NOT the fixture's 10: the movement must carry the counter the UPDATE returned.
+      prisma.product.update.mockResolvedValue({ currentStock: D(7) } as any);
 
       await service.setCostBasis("prod-1", { unitCost: 3.15, notes: "opening basis" }, "user-1");
 
@@ -750,7 +751,7 @@ describe("InventoryService", () => {
       expect(movementArgs.quantity).toBe(0);
       expect(movementArgs.unitCost.toString()).toBe("3.15");
       expect(movementArgs.avgCostAfter.toString()).toBe("3.15");
-      expect(movementArgs.stockAfter.toString()).toBe("10");
+      expect(movementArgs.stockAfter.toString()).toBe("7");
       expect(movementArgs.performedById).toBe("user-1");
 
       expect(prisma.product.update).toHaveBeenCalledWith({

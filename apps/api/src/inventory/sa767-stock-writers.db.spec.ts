@@ -12,8 +12,30 @@
  * On the old code B is blocked at its first Product write; on the new code at the lock statement.
  * Either way the contention is real and the final state tells the two apart.
  *
- *  (a) two concurrent recordPurchase: the final average is the TRUE weighted average of both applied
- *      in the serialized order, and the second movement's avgCostAfter derives from the first's.
+ *  (a)  two concurrent recordPurchase: the final average is the TRUE weighted average of both applied
+ *       in the serialized order, and the second movement's avgCostAfter derives from the first's.
+ *  (b1) commitStockCount (legacy client session) landing AFTER a sale replaces the post-sale stock
+ *       (counted 90, delta 90 - 70).
+ *  (b2) a sale landing AFTER a count is not erased (regression guard, the old code was already right).
+ *  (b3) commitStockCountSession after a sale: cost row and adjustment come from the locked rows; the
+ *       REPLACE delta is counted - the line's expectedQty (90 - 100), so the sale survives (60).
+ *  (c)  setCostBasis racing a sale stamps the locked stock (stockAfter 70), not the stale read.
+ *  (c-bulk) bulkSetCostBasis locks every product in one statement and stamps each locked stock.
+ *  (d)  recordAdjustment racing a purchase takes avgCostAfter and the lot cost from the locked row.
+ *  SA-767 L-2.2 - the batched count committer (50-line batches under one advisory lock):
+ *  (r1) 120 counted products, a sale mid-commit: the commit holds <= 50 Product rows at a time (the
+ *       old single tx held all 120), a sale of a counted product waits one batch, a sale of a product
+ *       in a later batch does not wait at all, and the final stock is counted - the sale.
+ *  (r2) a commit killed after batch 1 (injected failure): batch-1 lines applied once, the re-run
+ *       finishes the rest, one movement per product, the session ends COMMITTED once.
+ *  (r3) two concurrent commits: exactly one wins, the other is 409 STOCK_COUNT_COMMITTING.
+ *  (r4) line save / remove and discard are refused 409 STOCK_COUNT_COMMITTING once movements exist and
+ *       the session is not COMMITTED; nothing changes.
+ *  (r5) an all-zero-delta session committed twice applies once (regression guard, not a red), and a
+ *       line added before the commit starts is included.
+ *
+ * `sawLockWait(holderPid)` only counts a backend blocked BY the holder's connection, so another DB
+ * lane waiting on its own locks in the same database cannot fake the observation.
  *
  * Collected only by `jest.db.config.js`, run via `npm run test:db`. `requireLocalDatabaseUrl()`
  * refuses any non-local host. Tenants are throwaway `qa-sa767-l2-<run>-<n>-<label>` slugs approved by
@@ -213,15 +235,20 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     return gate;
   }
 
-  /** True once some backend of this database is genuinely WAITING on another backend's lock. */
-  async function sawLockWait(withinMs = 5_000): Promise<boolean> {
+  /**
+   * True once some backend is genuinely WAITING on a lock held by `holderPid` (the holder
+   * connection's pg_backend_pid()). Filtering on the blocker means a parallel DB lane waiting on its
+   * own locks in the same database can never produce a false true.
+   */
+  async function sawLockWait(holderPid: number, withinMs = 5_000): Promise<boolean> {
     const deadline = Date.now() + withinMs;
     while (Date.now() < deadline) {
       // eslint-disable-next-line no-await-in-loop
       const { rows } = await pool.query(
         `SELECT count(*)::int AS n FROM pg_stat_activity
           WHERE datname = current_database() AND pid <> pg_backend_pid()
-            AND cardinality(pg_blocking_pids(pid)) > 0`,
+            AND pg_blocking_pids(pid) @> ARRAY[$1::int]`,
+        [holderPid],
       );
       if (rows[0].n > 0) return true;
       // eslint-disable-next-line no-await-in-loop
@@ -242,7 +269,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     const purchaseB = inTenant(B, w, () =>
       B.inventory.recordPurchase({ productId: w.productId, quantity: 20, unitCost: 6 }, w.userId),
     );
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(gateA.holderPid);
     gateA.release();
     await Promise.all([purchaseA, purchaseB]);
 
@@ -271,6 +298,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     const c = await pool.connect();
     openClients.push(c);
     await c.query("BEGIN");
+    const { rows: pidRows } = await c.query("SELECT pg_backend_pid() AS pid");
     await c.query('SELECT id FROM "Product" WHERE id = $1 AND "tenantId" = $2 FOR UPDATE', [
       productId,
       w.tenantId,
@@ -280,6 +308,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
       [productId, qty],
     );
     return {
+      pid: pidRows[0].pid as number,
       async commit() {
         await c.query("COMMIT");
         openClients.splice(openClients.indexOf(c), 1);
@@ -334,7 +363,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     const adjustment = inTenant(B, w, () =>
       B.inventory.recordAdjustment({ productId: w.productId, quantity: 5 }, w.userId),
     );
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(gateA.holderPid);
     gateA.release();
     await Promise.all([purchase, adjustment]);
 
@@ -369,7 +398,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     const count = inTenant(A, w, () =>
       A.inventory.commitStockCount(countDto(90, w.productId), w.userId),
     );
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(sale.pid);
     await sale.commit();
     await count;
 
@@ -397,7 +426,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     );
     await gateA.parked; // the count is written (stock 90) and still holds the row
     const sale = saleAfter(w, 30);
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(gateA.holderPid);
     gateA.release();
     const [, left] = await Promise.all([count, sale]);
 
@@ -432,7 +461,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     const commit = inTenant(A, w, () =>
       A.inventory.commitStockCountSession(session.id, {}, { sub: w.userId }),
     );
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(sale.pid);
     await sale.commit();
     await commit;
 
@@ -462,7 +491,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     const setCost = inTenant(A, w, () =>
       A.inventory.setCostBasis(w.productId, { unitCost: 5 }, w.userId),
     );
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(sale.pid);
     await sale.commit();
     await setCost;
 
@@ -495,7 +524,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
         w.userId,
       ),
     );
-    const waited = await sawLockWait();
+    const waited = await sawLockWait(sale.pid);
     await sale.commit();
     await bulk;
 
@@ -509,24 +538,6 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
   }, 60_000);
 
   // ─── SA-767 L-2.2: the batched count committer (r1-r5) ──────────────────────────────────────────
-
-  /** True once a backend is WAITING on a lock held by `holderPid` (the holder's pg_backend_pid()). */
-  async function sawLockWaitBy(holderPid: number, withinMs = 5_000): Promise<boolean> {
-    const deadline = Date.now() + withinMs;
-    while (Date.now() < deadline) {
-      // eslint-disable-next-line no-await-in-loop
-      const { rows } = await pool.query(
-        `SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE datname = current_database() AND pid <> pg_backend_pid()
-            AND pg_blocking_pids(pid) @> ARRAY[$1::int]`,
-        [holderPid],
-      );
-      if (rows[0].n > 0) return true;
-      // eslint-disable-next-line no-await-in-loop
-      await sleep(25);
-    }
-    return false;
-  }
 
   /** Settles to the value, or to "pending" if it has not settled within `ms` (never hangs a case). */
   const settleWithin = <T>(p: Promise<T>, ms: number) =>
@@ -696,7 +707,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
       }
     })();
     saleOn70.catch(() => undefined);
-    const waitedOn70 = await sawLockWaitBy(park.inside.holderPid);
+    const waitedOn70 = await sawLockWait(park.inside.holderPid);
     const saleOn110 = (async () => {
       const c = await pool.connect();
       try {

@@ -104,6 +104,8 @@ describe("the skipped line / stock writers now refuse a FAMILY (400 FAMILY_NOT_S
             findUnique: jest.fn().mockResolvedValue(FAMILY),
           },
           stockCountSession: { findUnique: jest.fn().mockResolvedValue(session) },
+          // SA-767 L-2.2: every line edit first asks whether the count is committing (no movements).
+          stockMovement: { findFirst: jest.fn().mockResolvedValue(null) },
         }),
         tenantTransaction,
       },

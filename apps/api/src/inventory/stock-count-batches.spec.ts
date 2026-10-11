@@ -316,6 +316,28 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
     expect(events[events.length - 1]).toBe("lock-released");
   });
 
+  it("a cost line whose product is gone from the LOCKED read is a 404, not a TypeError", async () => {
+    seed([pid(1)]);
+    prisma.stockCountSession.findUnique.mockResolvedValue(
+      session([line(1, { unitCostOverride: D(5) })]),
+    );
+    // present at the pre-tx validation read, deleted before the batch tx reads it under the lock
+    const base = prisma.product.findMany.getMockImplementation()!;
+    prisma.product.findMany.mockImplementationOnce(async (args: any) => {
+      const rows = await base(args);
+      stock.delete(pid(1));
+      return rows;
+    });
+
+    const err: any = await commit().catch((e) => e);
+
+    expect(err).toBeInstanceOf(NotFoundException);
+    expect(err).not.toBeInstanceOf(TypeError);
+    expect(prisma.product.update).not.toHaveBeenCalled();
+    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    expect(prisma.stockCountSession.updateMany).not.toHaveBeenCalled();
+  });
+
   it("a CAS that matches no row (someone else finished) returns the alreadyCommitted outcome", async () => {
     seed([pid(1)]);
     // pre-check: OPEN; the re-read under the lock: OPEN; the re-read after the failed CAS: COMMITTED

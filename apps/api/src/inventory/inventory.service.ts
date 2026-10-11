@@ -2906,9 +2906,12 @@ export class InventoryService {
           for (const line of pending) {
             if (line.unitCostOverride == null) continue;
             const unitCost = costDecimal(Number(line.unitCostOverride));
+            // Present at the pre-tx validation read, gone under the lock: a 404, not a TypeError.
+            const locked = lockedMap.get(line.productId);
+            if (!locked) throw new NotFoundException("Product not found");
             const movement = await this.setCostBasisInTx(
               tx,
-              lockedMap.get(line.productId)!,
+              locked,
               {
                 unitCost: Number(line.unitCostOverride),
                 notes: `Stock count ${reference}`,
