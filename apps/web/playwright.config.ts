@@ -508,6 +508,14 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── PKG-4: Create Order customer keyboard (ArrowDown+Enter, Tab parity, Escape closes the list) + Change customer Undo (spec 68).
+    {
+      name: "create-order-customer-keyboard",
+      testMatch: /68-create-order-customer-keyboard\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).
     {
       name: "invoice-edit-pending-mirror",

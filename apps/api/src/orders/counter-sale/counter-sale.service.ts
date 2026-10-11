@@ -11,20 +11,26 @@ import { FulfillPath } from "@prisma/client";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { configuredTaxRatePercent } from "../../common/tax-rate";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import type { CounterSaleDto } from "./counter-sale.dto";
-import { counterSaleGate } from "./capability-shape";
+import { assertCounterSalesEnabled } from "./counter-sale-gate";
 import { resolveLineUnits, type LineUnitsProduct } from "../../products/line-units";
 import { saleChangedConflict, saleVoidedConflict, storedSaleState } from "../sale-replay-guard";
 import { toCounterOrderItem } from "./counter-sale-lines";
-import { canEditPrices } from "./can-edit-prices";
 import { resolveTierPrices } from "./counter-sale-tier-price";
 import { assertReplaySamePrices } from "./counter-sale-replay-price";
 import { AuditService } from "../../audit/audit.service";
-import { buildCounterSaleResponse, isTender, type InvoiceRow } from "./counter-sale-readback";
+import { staffMay } from "../../auth/permissions/staff-capabilities";
+import {
+  buildCounterSaleResponse,
+  isCounterTenderCashRow,
+  isTender,
+  type InvoiceRow,
+} from "./counter-sale-readback";
 import {
   FULFILMENT_CAPABILITY_READER,
   type FulfilmentCapabilityReader,
@@ -93,13 +99,7 @@ export class CounterSaleService {
     idempotencyKey?: string,
   ): Promise<CounterSaleResponse> {
     // 1. Gate: the tenant's capability must offer a counter.
-    const cap = await this.capability.get(this.prisma.getTenantId());
-    if (!counterSaleGate(cap)) {
-      throw new ForbiddenException({
-        code: API_ERROR_CODES.COUNTER_SALES_DISABLED,
-        message: "Counter sales are not turned on for this business.",
-      });
-    }
+    await assertCounterSalesEnabled(this.capability, this.prisma.getTenantId());
 
     // 2. Request-only validation: nothing is written until all of it passes.
     if (dto.walkIn && dto.customerId) {
@@ -147,7 +147,7 @@ export class CounterSaleService {
         counterSale: true,
         // POS-5: create() refuses a real price change from a caller who may not make one (403
         // PRICE_EDIT_NOT_PERMITTED), against its own server-resolved price and before any write.
-        priceEditAllowed: canEditPrices(user),
+        priceEditAllowed: staffMay(user.role, "EDIT_LINE_PRICE"),
         // B1209: a walk-in's tender is judged against the SERVER total inside create(), before anything is written.
         beforeWrite: walkIn
           ? ({ total }) => assertWalkInTenderCoversTotal(dto.payment, total)
@@ -176,6 +176,7 @@ export class CounterSaleService {
       select: {
         id: true,
         orderNumber: true,
+        tax: true,
         // POS-5: only the lines a staff price change produced (read back from storage for the audit row).
         lineItems: {
           where: { overriddenBy: { not: null } },
@@ -219,7 +220,26 @@ export class CounterSaleService {
       }
     }
 
-    return buildCounterSaleResponse({ payment: dto.payment, order, invoices, replayed, planError });
+    // SA-764: the stored tendered as the tender left it (the pre-tender read above may hold a stale figure).
+    // EVERY request method (row 290), so a CARD or ON_ACCOUNT replay on a sale first tendered in CASH serves
+    // what by-key serves. A new ON_ACCOUNT sale stores no tendered (null): nothing is served, nothing is written.
+    const tendered = await this.prisma.forTenant().order.findFirst({
+      where: { id: orderId },
+      select: { counterCashTendered: true, tax: true },
+    });
+    return buildCounterSaleResponse({
+      payment: dto.payment,
+      order: order && {
+        ...order,
+        counterCashTendered: tendered?.counterCashTendered,
+        // the tax as the tender left it (the invoice back-sync can move it)
+        tax: tendered?.tax ?? order.tax,
+      },
+      configuredTaxPercent: await configuredTaxRatePercent(this.prisma),
+      invoices,
+      replayed,
+      planError,
+    });
   }
 
   /**
@@ -311,29 +331,49 @@ export class CounterSaleService {
       // A refusal only stands when nothing was taken yet: a stored tender means a payment already went in.
       if (!invoices.some((i) => (i.payments ?? []).some(isTender))) planError = plan.code;
     } else if (plan.kind === "pay") {
-      try {
-        for (const part of allocateOldestFirst(balances, plan.amount)) {
-          const row = invoices.find((i) => i.id === part.invoiceId)!;
-          const stored = roundMoney(
-            (row.payments ?? [])
-              .filter((p) => isTender(p))
-              .reduce((sum, p) => sum + Number(p.amount), 0),
+      // SA-764: the CASH handed over is stored BEFORE any money moves, so a paid sale can never lack its tender.
+      // Until a CASH tender row anchors it the amount is overwritten (a failed first attempt's stale figure must
+      // not survive a retry); once one exists it is frozen (only a NULL is filled). Same lock, no transaction.
+      if (method === "CASH") {
+        const anchored = invoices.some((i) => (i.payments ?? []).some(isCounterTenderCashRow));
+        try {
+          await this.prisma.forTenant().order.updateMany({
+            where: anchored ? { id: orderId, counterCashTendered: null } : { id: orderId },
+            data: { counterCashTendered: roundMoney(plan.tendered) },
+          });
+        } catch (e) {
+          this.logger.warn(
+            `counter sale ${orderId}: cash tendered not stored (${(e as Error)?.message ?? e})`,
           );
-          const due = roundMoney(
-            Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
-          );
-          if (due <= 0) continue;
-          await this.invoices.recordPayment(part.invoiceId, {
-            amount: due,
-            method: toPrismaMethod(method)!,
-            reference: dto.payment.reference,
-          } as never);
+          planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
         }
-      } catch (e) {
-        this.logger.warn(
-          `counter sale ${orderId}: payment not recorded (${(e as Error)?.message ?? e})`,
-        );
-        planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+      }
+      // A tender that could not be stored takes NO money: the payment loop is skipped entirely.
+      if (!planError) {
+        try {
+          for (const part of allocateOldestFirst(balances, plan.amount)) {
+            const row = invoices.find((i) => i.id === part.invoiceId)!;
+            const stored = roundMoney(
+              (row.payments ?? [])
+                .filter((p) => isTender(p))
+                .reduce((sum, p) => sum + Number(p.amount), 0),
+            );
+            const due = roundMoney(
+              Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
+            );
+            if (due <= 0) continue;
+            await this.invoices.recordPayment(part.invoiceId, {
+              amount: due,
+              method: toPrismaMethod(method)!,
+              reference: dto.payment.reference,
+            } as never);
+          }
+        } catch (e) {
+          this.logger.warn(
+            `counter sale ${orderId}: payment not recorded (${(e as Error)?.message ?? e})`,
+          );
+          planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+        }
       }
       invoices = await this.readInvoices(orderId);
     }
@@ -389,6 +429,7 @@ export class CounterSaleService {
       order,
       invoices,
       replayed: true,
+      configuredTaxPercent: await configuredTaxRatePercent(this.prisma),
     });
   }
 
@@ -429,7 +470,19 @@ export class CounterSaleService {
       // A VOID / WRITTEN_OFF invoice is not part of the sale (recordPayment refuses both): reading it
       // back would put its id, total and balance into the response and the tender plan.
       where: { orderId, status: { notIn: ["VOID", "WRITTEN_OFF"] } },
-      include: { payments: true },
+      include: {
+        payments: { orderBy: { createdAt: "asc" } },
+        // the stored lines: the rate the sale's tax rate is read from, and the price facts a receipt strikes a list price from
+        items: {
+          select: {
+            taxRate: true,
+            productId: true,
+            unitPrice: true,
+            originalPrice: true,
+            priceType: true,
+          },
+        },
+      },
       orderBy: { createdAt: "asc" },
     });
   }

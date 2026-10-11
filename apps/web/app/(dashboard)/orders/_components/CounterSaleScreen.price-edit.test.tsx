@@ -5,7 +5,8 @@ import { cartTotals } from "@/lib/counter-sale";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
- * POS-5: price edit at the counter. ONE gate (`canEditPrices`, admin-only today): an operator, a missing user or an unknown
+ * POS-5 / SA-762r: price edit at the counter. ONE gate (`staffMay(role, "EDIT_LINE_PRICE")`: OPERATOR and TENANT_ADMIN): a
+ * SUPER_ADMIN (until perms PR7), a driver, a missing user or an unknown
  * role never gets the control (hidden, not disabled). An admin's edit resolves to ONE net unit price through
  * @routeflow/pricing; the line, totals, payload and receipt all follow it; a customer pick keeps it (the survive rule).
  */
@@ -160,7 +161,8 @@ const sentItems = (call = 0) =>
 
 describe("POS-5 price edit: hidden without the grant (the ONE gate)", () => {
   it.each([
-    ["an OPERATOR", OPERATOR],
+    ["a SUPER_ADMIN", { ...ADMIN, role: "SUPER_ADMIN" }],
+    ["a DRIVER", { ...ADMIN, role: "DRIVER" }],
     ["a signed-in user with no role", { id: "u-x", tenantSlug: "acme" }],
     ["no user at all", undefined],
     ["a null user", null],
@@ -181,20 +183,20 @@ describe("POS-5 price edit: hidden without the grant (the ONE gate)", () => {
     },
   );
 
-  it("a TENANT_ADMIN and a SUPER_ADMIN get the button", async () => {
-    mockUser = ADMIN;
+  it("an OPERATOR and a TENANT_ADMIN get the button", async () => {
+    mockUser = OPERATOR;
     const first = renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     expect(editBtn("Cola")).toBeEnabled();
     first.unmount();
-    mockUser = { ...ADMIN, role: "SUPER_ADMIN" };
+    mockUser = ADMIN;
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     expect(editBtn("Cola")).toBeEnabled();
   });
 
-  it("an operator's sale carries no price on any line", async () => {
-    mockUser = OPERATOR;
+  it("a sale rung by a user without the control carries no price on any line", async () => {
+    mockUser = { ...ADMIN, role: "DRIVER" };
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     fireEvent.click(screen.getByRole("button", { name: "Card" }));
@@ -495,7 +497,14 @@ describe("POS-5 price edit: the estimate matches the server, so 'next sale' rese
 
 describe("POS-5 price edit: the receipt", () => {
   it("shows the struck original, the net and the discount for the edited line only, and a Discounts row", async () => {
-    mutateAsync.mockResolvedValue(saleResponse(14));
+    // the server serves the stored lines: Cola was rung at 9.00 off its 10.00 LIST price (the struck base is the list, not the cart's tier)
+    mutateAsync.mockResolvedValue({
+      ...saleResponse(14),
+      lines: [
+        { productId: "p-cola", unitPrice: 9, originalPrice: 10, priceType: "DISCOUNTED" },
+        { productId: "p-juice", unitPrice: 5, originalPrice: null, priceType: "STANDARD" },
+      ],
+    });
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");
     await scan("JUICE");

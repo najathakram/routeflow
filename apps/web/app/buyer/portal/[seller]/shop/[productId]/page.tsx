@@ -192,6 +192,7 @@ export default function BuyerProductDetailPage() {
               })
             }
             onUpdateQty={(qty) => cart.updateQty(product.id, qty)}
+            onRestore={cartItem ? () => cart.addItem(cartItem) : undefined}
             isAlertSubscribed={isAlertSubscribed}
             onToggleStockAlert={toggleStockAlert}
           />

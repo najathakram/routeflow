@@ -512,7 +512,9 @@ export class OrderTemplatesService {
         }
 
         for (const template of templates) {
-          // Idempotency: skip if order already generated today for this template
+          // Idempotency: skip if ANY order (even a since-CANCELLED one) was already generated today for
+          // this template. Cron-only rule: an order the operator cancelled is not placed again at 06:00.
+          // Manual "Generate now" is different on purpose (findReplayOrder ignores cancelled orders).
           const existing = await this.prisma.forTenant().order.findFirst({
             where: {
               templateId: template.id,
@@ -555,8 +557,14 @@ export class OrderTemplatesService {
               err instanceof Error ? err.stack : String(err),
             );
           } finally {
+            // A replay means today's order exists (a manual run placed it; that path sends no ban
+            // notice), so the customer is told it went ahead, not that it was held.
             if (ctx.ban)
-              await this.notifyBanSkipped(template, ctx.ban, ctx.placed ? "ordered" : "held");
+              await this.notifyBanSkipped(
+                template,
+                ctx.ban,
+                ctx.placed || ctx.replayed ? "ordered" : "held",
+              );
           }
         }
       });
@@ -898,12 +906,18 @@ export class OrderTemplatesService {
         tenantId: this.prisma.getTenantId(),
         logger: this.logger,
       },
-      { stored: storedPath, audience: "staff" },
+      // role null: a system caller never gets POS mode (SA-763r M1).
+      { stored: storedPath, audience: "staff", role: null },
     );
     const created = await this.prisma.tenantTransaction(async (tx) => {
       if (replaySince) {
         // B1054: first statement. A concurrent twin that committed while we waited is returned as is.
-        const prior = await lockTemplateThenFindReplay(tx, template.id, replaySince);
+        const prior = await lockTemplateThenFindReplay(
+          tx,
+          template.id,
+          restrictionTenantId,
+          replaySince,
+        );
         if (prior) {
           replayed = true;
           if (ctx) ctx.replayed = true;

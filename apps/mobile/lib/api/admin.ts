@@ -152,6 +152,8 @@ export interface AdminOrder {
     /** Mobile number — preferred for WhatsApp/SMS over the landline `phone`. */
     mobile?: string;
     email?: string;
+    /** SA-740: the shared counter walk-in customer (a return from its order must name that sale). */
+    isWalkIn?: boolean | null;
   };
   lineItems: Array<{
     id: string;
@@ -361,6 +363,9 @@ export function useAdminCustomer(id: string) {
 export interface AdminInvoice {
   id: string;
   invoiceNumber: string;
+  /** P-4: derived by the API; absent = never revised / not overpaid (nothing shown). */
+  revisedAt?: string | null;
+  overpaidBy?: number | null;
   status: string;
   total: number;
   subtotal: number;
@@ -1175,6 +1180,8 @@ export interface BusinessSettings {
   city?: string;
   zip?: string;
   taxRate?: number;
+  /** IANA zone of the business (GET /settings). */
+  timezone?: string | null;
 }
 
 export interface AppUser {

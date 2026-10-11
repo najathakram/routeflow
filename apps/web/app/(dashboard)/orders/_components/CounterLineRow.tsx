@@ -1,5 +1,7 @@
 import * as React from "react";
 import { TAP_TARGET, cn } from "@routeflow/ui/web";
+import { unitWords } from "@routeflow/pricing";
+import { priceUnitWord } from "@/lib/product-unit-label";
 import { cartTotals } from "@/lib/counter-sale";
 import { NOTE_MAX, isBoxedLine, lineQtyLabel, type TypedQty } from "./counter-sale-line-edit";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
@@ -7,6 +9,9 @@ import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceE
 import { editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
+
+// A boxed line prints the default pack word; a plain line prints its product's own unit (row 298), else the default base word.
+const UW = unitWords();
 
 /** Every compact line control is a full 44 px target (TAP_TARGET) however small it looks. */
 const LINE_BTN = cn(TAP_TARGET, "rounded border px-2 text-xs disabled:opacity-40");
@@ -65,12 +70,15 @@ function QtyField({
   locked,
   onCommit,
   onEnter,
+  tabOut = false,
 }: {
   label: string;
   value: number;
   locked: boolean;
   onCommit: (text: string) => boolean;
   onEnter?: () => void;
+  /** The LAST quantity field of the line: Tab with a typed draft commits it and hands focus to the scan box. */
+  tabOut?: boolean;
 }) {
   const [draft, setDraft] = React.useState<string | null>(null);
   const commit = () => {
@@ -92,7 +100,8 @@ function QtyField({
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
-        if (e.key === "Enter") {
+        // Tab is redirected only to finish an uncommitted typed edit; a plain Tab moves on normally
+        if (e.key === "Enter" || (tabOut && e.key === "Tab" && !e.shiftKey && draft !== null)) {
           e.preventDefault();
           commit();
           onEnter?.();
@@ -132,6 +141,7 @@ function LineQtyEditor({
         locked={locked}
         onCommit={(t) => onQty(line.tempId, { pieces: t })}
         onEnter={onEnter}
+        tabOut
       />
     </span>
   ) : (
@@ -141,6 +151,7 @@ function LineQtyEditor({
       locked={locked}
       onCommit={(t) => onQty(line.tempId, { qty: t })}
       onEnter={onEnter}
+      tabOut
     />
   );
 }
@@ -162,6 +173,7 @@ export function CounterLineRow({
   onPriceEdit,
   onPriceReset,
   onPriceClosed,
+  onNoteClosed,
   onQtyEnter,
 }: {
   line: SaleLine;
@@ -170,7 +182,7 @@ export function CounterLineRow({
   onRemove: (tempId: string) => void;
   onNote: (tempId: string, note: string) => void;
   onQty: (tempId: string, typed: TypedQty) => boolean;
-  /** POS-5: the ONE gate (`canEditPrices(user)`). False = the price control does not exist (hidden, never disabled). */
+  /** POS-5: the ONE gate (`staffMay(role, "EDIT_LINE_PRICE")`). False = the price control does not exist (hidden, never disabled). */
   canEditPrices?: boolean;
   /** POS-5: the customer's pricing tier for this product (a special tier needs a reason for a real change) */
   priceTier?: number;
@@ -178,10 +190,17 @@ export function CounterLineRow({
   onPriceEdit?: (tempId: string, edit: CounterPriceEdit) => void;
   onPriceReset?: (tempId: string) => void;
   onPriceClosed?: () => void;
+  /** The note field closed (Enter, Escape, Clear note or the toggle): the screen re-arms the scan field (SA-762r #8). */
+  onNoteClosed?: () => void;
   /** Enter on a typed quantity: the screen hands focus back to the scan field. */
   onQtyEnter?: () => void;
 }) {
   const [editing, setEditing] = React.useState(false);
+  const noteAtOpenRef = React.useRef(""); // Escape puts the note back to what it was when the field opened
+  const closeNote = () => {
+    setEditing(false);
+    onNoteClosed?.();
+  };
   const hasNote = !!l.note?.trim();
   const edited = editedLineFigures(l);
   return (
@@ -189,6 +208,19 @@ export function CounterLineRow({
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0 break-words">
           {l.name} · {lineQtyLabel(l)}
+          <span className="block text-xs text-navy/70">
+            {l.listPrice !== undefined && l.unitPrice < l.listPrice ? (
+              <s className="mr-1 tabular-nums text-navy/50" data-testid="line-unit-price-was">
+                {money(l.listPrice)}
+              </s>
+            ) : null}
+            <span className="tabular-nums" data-testid="line-unit-price">
+              {money(l.unitPrice)}{" "}
+              {isBoxedLine(l)
+                ? `/ ${UW.pack.lower}`
+                : `/ ${l.unit ? priceUnitWord(l.unit) : UW.base.lower}`}
+            </span>
+          </span>
         </span>
         <span className="flex shrink-0 items-center gap-2">
           {edited ? (
@@ -238,7 +270,11 @@ export function CounterLineRow({
           aria-label={`${hasNote ? "Edit the note on" : "Add a note to"} ${l.name}`}
           aria-expanded={editing}
           disabled={locked}
-          onClick={() => setEditing((v) => !v)}
+          onClick={() => {
+            if (editing) return closeNote();
+            noteAtOpenRef.current = l.note ?? "";
+            setEditing(true);
+          }}
         >
           {hasNote ? "Edit note" : "Add note"}
         </button>
@@ -250,7 +286,7 @@ export function CounterLineRow({
             disabled={locked}
             onClick={() => {
               onNote(l.tempId, "");
-              setEditing(false);
+              closeNote();
             }}
           >
             Clear note
@@ -267,6 +303,21 @@ export function CounterLineRow({
           disabled={locked}
           value={l.note ?? ""}
           onChange={(e) => onNote(l.tempId, e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              closeNote(); // saved (each keystroke already is): close and re-arm the scan field
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              onNote(l.tempId, noteAtOpenRef.current);
+              closeNote();
+            }
+          }}
+          onBlur={(e) => {
+            // Focus lost to nowhere (a click on blank space): save, close, back to the scan box. Moving to another
+            // control on purpose is left alone.
+            if (e.relatedTarget === null) closeNote();
+          }}
           data-counter-note=""
           autoFocus // opening the note puts the cursor in it: the next keys are the note, never a page shortcut
         />

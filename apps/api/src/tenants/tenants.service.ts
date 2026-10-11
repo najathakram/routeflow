@@ -32,6 +32,8 @@ import { mayUseVerificationLink } from "../auth/verification-link-eligibility";
 import { RESEND_LIMITER, mayResendTo } from "./resend-verification-limit";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
+import { FALLBACK_ZONE } from "../common/tenant-time-zone";
+import { assertValidTenantTimeZone } from "../system-config/tenant-timezone.writer";
 
 const RESERVED_SLUGS = new Set([
   "api",
@@ -126,6 +128,8 @@ export class TenantsService {
   async register(dto: RegisterTenantDto) {
     const { slug, businessName, adminEmail, adminUsername, adminPassword } = dto;
     assertSafeTextCell({ businessName }); // B956: the name is mirrored into a Customer row
+    // SA-738: an explicit zone is ALWAYS written (never the column default): the client's, else UTC.
+    const timezone = dto.timezone ? assertValidTenantTimeZone(dto.timezone) : FALLBACK_ZONE;
 
     if (RESERVED_SLUGS.has(slug)) {
       throw new ConflictException(`Slug "${slug}" is reserved`);
@@ -166,7 +170,7 @@ export class TenantsService {
         data: { tenantId: tenant.id, currentPlan: "STARTER", planKey: planKeyFromEnum("STARTER") },
       });
 
-      await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName } });
+      await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName, timezone } });
 
       // Seed IRS Schedule C expense categories so new tenants have a curated
       // list to pick from immediately.

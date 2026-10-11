@@ -86,6 +86,16 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
     "register :: href escapeHtml(verifyUrl)": { reason: ENV_LINK, count: 2 },
     "performResend :: href escapeHtml(verifyUrl)": ENV_LINK,
   },
+  "documents/receipt.service.ts": {
+    "send :: html":
+      "built in documents/render-order-receipt.ts (every dynamic value escapeHtml'd), which this guard scans (0 hits)",
+  },
+  "documents/render-order-receipt.ts": {
+    'renderOrderReceipt :: tenantHeaderHtml(name || "Receipt")':
+      "tenantHeaderHtml escapes the name (email/email.service.ts, which this guard scans)",
+    "renderOrderReceipt :: html":
+      "the shell renderBrandedEmail returns (email/email.service.ts): its heading and footer note are escaped there, the body is built and scanned here",
+  },
   "customers/customers.service.ts": {
     "sendPortalInvite :: portalInviteEmailHtml(sellerName, inviteUrl)":
       "built in customers/portal-invite-email.ts, which this guard scans (0 hits)",

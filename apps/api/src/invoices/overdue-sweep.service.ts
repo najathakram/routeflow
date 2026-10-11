@@ -2,13 +2,17 @@ import { Injectable, Logger } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { LeaderCron } from "../common/cron-lock";
 import { overdueCutoff } from "../common/calendar-date";
+import { markInvoicesOverdue, overdueInvoiceCount } from "./invoice-balance-sql";
+import { resolveZone } from "../common/tenant-time-zone";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 
 /**
- * SA-506a (#2556, owner policy): the sweep ships DARK. One env var; a rename is this one line.
+ * SA-506a (#2556, owner policy): the sweep shipped DARK; the owner turned it ON on 2026-10-10
+ * (read-only count first: 16 live past-due invoices across 2 tenants; "overdue flag only", the
+ * flip is the ONLY effect). One env var.
  *   off       the sweep runs NO query; it logs one line that it is off.
- *   dark      (the default) COUNT the rows the sweep would flip, with the SAME per-tenant where,
+ *   dark      (emergency dark-back: set OVERDUE_SWEEP_MODE=dark) COUNT the rows the sweep would flip, with the SAME per-tenant where,
  *             and log ONE line per run: the aggregate plus per-tenant counts keyed by tenant id
  *             (never a slug or name). Nothing is written.
  *   enforced  write the flip. Turning it on is an OWNER action, after the read-only count
@@ -19,7 +23,10 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 export const OVERDUE_SWEEP_ENV = "OVERDUE_SWEEP_MODE";
 export const OVERDUE_SWEEP_MODES = ["off", "dark", "enforced"] as const;
 export type OverdueSweepMode = (typeof OVERDUE_SWEEP_MODES)[number];
-export const OVERDUE_SWEEP_DEFAULT: OverdueSweepMode = "dark";
+/** The mode when the variable is UNSET (owner 2026-10-10). */
+export const OVERDUE_SWEEP_DEFAULT: OverdueSweepMode = "enforced";
+/** The mode for a set-but-unrecognised value: never writes. */
+export const OVERDUE_SWEEP_FAIL_CLOSED: OverdueSweepMode = "dark";
 
 /** The mode, and whether the raw value was unrecognised (the caller warns). */
 export function overdueSweepMode(env: NodeJS.ProcessEnv = process.env): {
@@ -33,8 +40,9 @@ export function overdueSweepMode(env: NodeJS.ProcessEnv = process.env): {
   if ((OVERDUE_SWEEP_MODES as readonly string[]).includes(v))
     return { mode: v as OverdueSweepMode, unknown: null };
   // #2567: only an UNSET variable is the silent default; a set-but-blank value warns like any
-  // other unrecognised one.
-  return { mode: OVERDUE_SWEEP_DEFAULT, unknown: raw === undefined ? null : String(raw) };
+  // other unrecognised one, and fails closed (dark) rather than taking the enforced default.
+  if (raw === undefined) return { mode: OVERDUE_SWEEP_DEFAULT, unknown: null };
+  return { mode: OVERDUE_SWEEP_FAIL_CLOSED, unknown: String(raw) };
 }
 
 /** The tenant statuses whose open invoices are aged (billing-live tenants only). */
@@ -42,7 +50,7 @@ const SWEPT_TENANT_STATUSES = ["TRIAL", "ACTIVE"] as const;
 
 /**
  * The invoice statuses the sweep may flip: issued and UNPAID only. PARTIAL is deliberately absent
- * (#2556 B2): `recomputeInvoiceStatus` keeps a part-paid invoice PARTIAL, so flipping it here
+ * (#2556 B2): `statusFromPayments` keeps a part-paid invoice PARTIAL, so flipping it here
  * would flip-flop on every payment and move it into sets that exclude PARTIAL on purpose (the
  * order-edit revert set, bookkeeping's "UNPAID" filter).
  */
@@ -67,7 +75,7 @@ export class OverdueSweepService {
     private readonly tenantCtx: TenantContextService,
   ) {}
 
-  /** Hourly, one replica. Dark (count only) unless OVERDUE_SWEEP_MODE=enforced; off runs nothing. */
+  /** Hourly, one replica. Enforced unless OVERDUE_SWEEP_MODE says dark (count only) or off (no query). */
   @LeaderCron("5 * * * *", "invoices.markOverdue")
   async runScheduled(): Promise<void> {
     const { mode, unknown } = overdueSweepMode();
@@ -121,22 +129,18 @@ export class OverdueSweepService {
  * Fails closed without a tenant. `dryRun` COUNTS with the same where and writes nothing.
  */
 export async function markOverdueForTenant(
-  prisma: Pick<PrismaService, "tenantConfig" | "invoice">,
+  prisma: Pick<PrismaService, "tenantConfig" | "$queryRaw" | "$executeRaw">,
   tenantId: string,
   now: Date,
   opts: { dryRun?: boolean } = {},
 ): Promise<number> {
   if (!tenantId) throw new Error("markOverdue needs a tenant id (never an unscoped sweep)");
-  const cfg = await prisma.tenantConfig.findUnique({
-    where: { tenantId },
-    select: { timezone: true },
-  });
-  const where = {
-    tenantId,
-    status: { in: [...SWEPT_INVOICE_STATUSES] },
-    dueDate: { lt: overdueCutoff(now, cfg?.timezone ?? null) },
-  };
-  if (opts.dryRun) return prisma.invoice.count({ where });
-  const res = await prisma.invoice.updateMany({ where, data: { status: InvoiceStatus.OVERDUE } });
-  return res.count;
+  const { zone } = await resolveZone(prisma, { tenantId });
+  const cutoff = overdueCutoff(now, zone);
+  // SA-770 (row 294): "overdue" means a balance is owed. The count and the write share ONE predicate
+  // (invoice-balance-sql.ts), and the write is a single UPDATE, so a fully-paid or overpaid SENT/VIEWED
+  // invoice (P-3 keeps an overpaid one out of PAID) is never flipped, even if a payment lands mid-run.
+  const statuses = [...SWEPT_INVOICE_STATUSES];
+  if (opts.dryRun) return overdueInvoiceCount(prisma, tenantId, cutoff, { statuses });
+  return markInvoicesOverdue(prisma, tenantId, cutoff, statuses);
 }

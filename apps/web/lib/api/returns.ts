@@ -1,6 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type { CreateReturnItemDto, ReturnKind, UnbilledReturnItem } from "@routeflow/types";
+import type {
+  CreateReturnItemDto,
+  InlineRefundTender,
+  ReturnKind,
+  UnbilledReturnItem,
+} from "@routeflow/types";
 export type { CreateReturnItemDto, UnbilledReturnItem } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -47,7 +52,7 @@ export interface Return {
   customerId: string;
   customer?: { id: string; businessName: string; contactName?: string };
   orderId: string;
-  order?: { id: string; orderNumber: string };
+  order?: { id: string; orderNumber: string; counterSale?: boolean | null };
   status: ReturnStatus;
   reason: ReturnReason;
   notes?: string;
@@ -60,6 +65,8 @@ export interface Return {
   creditNote?: { id: string; creditNoteNumber: string; amount: number; status: string };
   refundAmount?: number | null;
   refundMethod?: RefundMethod | null;
+  /** The tender an EXTERNAL_REFUND was paid out in (SA-740r2, `Return.refundTender`); null when none was recorded. */
+  refundTender?: "CASH" | "CARD" | "CHECK" | null;
   refundedAt?: string | null;
   /**
    * Server-computed Σ qty × (subtotal/qty) across the return's items — the same
@@ -192,6 +199,8 @@ export interface ProcessRefundDto {
   id: string;
   /** CREDIT_NOTE (default) mints store credit; EXTERNAL_REFUND records nothing minted. */
   method?: RefundMethod;
+  /** SA-740r2: how a recorded refund (EXTERNAL_REFUND) was paid out. Optional; never sent with store credit (the server 400s). */
+  tender?: InlineRefundTender;
 }
 
 export type ProcessRefundResult = Return & { unbilledItems?: UnbilledReturnItem[] };

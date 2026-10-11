@@ -34,6 +34,7 @@ import { EncryptionService } from "../common/encryption.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "./orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -156,6 +157,7 @@ describeDb(
         invoicesService: {
           revertLinkedInvoicesForOrderEdit: async () => undefined,
           resyncOrderInvoicesForEdit: hooks.resync,
+          ...INVOICE_EDIT_STUBS,
           reconcileOrderDraftInvoice: hooks.reconcileDraft,
         },
         logger: new Logger(OrdersService.name),

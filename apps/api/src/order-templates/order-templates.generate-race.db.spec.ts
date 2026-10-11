@@ -37,6 +37,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
 import { OrderTemplatesService } from "./order-templates.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { INVOICE_EDIT_STUBS } from "../orders/testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -169,6 +170,7 @@ describeDb("cron vs manual generate of one template places ONE order (B1054)", (
         findOpenOrderDraft: async () => null,
         revertLinkedInvoicesForOrderEdit: async () => undefined,
         resyncOrderInvoicesForEdit: async () => [],
+        ...INVOICE_EDIT_STUBS,
         reconcileOrderDraftInvoice: async () => undefined,
       },
       creditNotes: { settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }) },
@@ -268,13 +270,17 @@ describeDb("cron vs manual generate of one template places ONE order (B1054)", (
     } finally {
       await holder.query("COMMIT").catch(() => undefined);
       await holder.end().catch(() => undefined);
+      // Never leave a run in flight past a barrier timeout: its writes would overlap reset()/afterAll.
+      await Promise.allSettled([cron, manual].filter(Boolean));
     }
     const [cronResult, manualResult] = await Promise.allSettled([cron!, manual!]);
     expect(cronResult.status).toBe("fulfilled");
     expect(manualResult.status).toBe("fulfilled");
 
-    // The persisted numbers first, so a red run names the wrong value: before the fix two orders
-    // were placed and the merge folded them into one carrying qty 10 and stock 90.
+    // The persisted numbers are asserted before the manual caller's answer. With the template lock
+    // reverted, the red run is usually the barrier above timing out (nothing blocks on the lock), not
+    // a wrong value here; without the replay re-read two orders are placed and the merge folds them
+    // into one carrying qty 10 and stock 90.
     const all = await orders();
     expect(all.filter((o) => o.templateId === templateId).map((o) => qtyOf(o))).toEqual([
       TEMPLATE_QTY,

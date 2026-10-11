@@ -62,6 +62,11 @@ import {
   normalizeBoxUnawareSnapshots,
 } from "../orders/merge-items";
 import { withAdvisoryLock } from "../common/db-locks";
+import { overdueCutoff } from "../common/calendar-date";
+import { tenantTimeZone } from "../common/tenant-time-zone";
+import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
+import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import {
@@ -533,7 +538,7 @@ export class BuyerController {
     const order = path
       ? await this.ordersService.findActiveOrder(ctx.customerId, {
           forMerge: true,
-          mergeAs: { audience: "buyer", explicit: path },
+          mergeAs: { audience: "buyer", role: UserRole.CUSTOMER, explicit: path },
         })
       : await this.ordersService.findActiveOrder(ctx.customerId);
     return toCustomerOrder(order);
@@ -617,6 +622,7 @@ export class BuyerController {
               // The cart folds only into an order on the path it asked for (the SAME resolver as create).
               mergeAs: {
                 audience: "buyer",
+                role: UserRole.CUSTOMER,
                 ...(dto.fulfillPath ? { explicit: dto.fulfillPath } : {}),
               },
             });
@@ -1174,33 +1180,29 @@ export class BuyerController {
     const totalSpend = allOrders.reduce((s, o) => s + Number(o.total), 0);
     const avgOrderValue = totalOrders > 0 ? totalSpend / totalOrders : 0;
 
-    // Invoice breakdown
-    const invoices = await db.invoice.findMany({
-      where: { customerId },
-      select: { status: true, total: true, dueDate: true },
-    });
-    const now = new Date();
-    let paidCount = 0,
-      unpaidCount = 0,
-      overdueCount = 0,
-      unpaidTotal = 0;
-    for (const inv of invoices) {
-      if (inv.status === "PAID") {
-        paidCount++;
-      } else if (
-        inv.status === "SENT" ||
-        inv.status === "VIEWED" ||
-        inv.status === "PARTIAL" ||
-        inv.status === "OVERDUE"
-      ) {
-        if (inv.status === "OVERDUE" || (inv.dueDate && inv.dueDate < now)) {
-          overdueCount++;
-        } else {
-          unpaidCount++;
-        }
-        unpaidTotal += Number(inv.total);
-      }
-    }
+    // Invoice breakdown (SA-770 r-note): the staff rule - an open invoice that still owes a balance and
+    // whose due day has ended in THIS seller's zone is overdue; the total is BALANCE due, never gross.
+    // Bounded: PAID invoices are only counted, and only OPEN ones are fetched, each with just the
+    // confirmed payments (amount, status, method) the classifier nets.
+    const [paidInvoiceCount, openInvoices, zone] = await Promise.all([
+      db.invoice.count({ where: { customerId, status: "PAID" } }),
+      db.invoice.findMany({
+        where: { customerId, status: { in: [...OPEN_INVOICE_STATUSES] } },
+        select: {
+          status: true,
+          total: true,
+          dueDate: true,
+          payments: {
+            where: CONFIRMED_PAYMENT,
+            select: { amount: true, status: true, method: true },
+          },
+        },
+      }),
+      tenantTimeZone(this.prisma),
+    ]);
+    const summary = summarizeOpenInvoices(openInvoices, overdueCutoff(new Date(), zone));
+    const paidCount = paidInvoiceCount + summary.settledCount;
+    const { unpaidCount, overdueCount, unpaidTotal } = summary;
 
     // Recent payments (last 20)
     const payments = await db.invoicePayment.findMany({

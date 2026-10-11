@@ -60,6 +60,7 @@ export function RunningLowStrip({
       <div className="flex gap-3 overflow-x-auto p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {low.map((e) => {
           const qty = cart.getItemQty(e.productId);
+          const line = cart.items.find((i) => i.productId === e.productId);
           return (
             <div
               key={e.productId}
@@ -84,8 +85,10 @@ export function RunningLowStrip({
               {qty > 0 ? (
                 <QtyStepper
                   qty={qty}
+                  name={e.name}
                   onUpdate={(n) => cart.updateQty(e.productId, n)}
                   onRemove={() => cart.updateQty(e.productId, 0)}
+                  onRestore={line ? () => cart.addItem(line) : undefined}
                   size="sm"
                 />
               ) : (

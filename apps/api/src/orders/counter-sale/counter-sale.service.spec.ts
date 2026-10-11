@@ -85,6 +85,8 @@ describe("CounterSaleService.ring", () => {
   let reader: { get: jest.Mock };
   let invoices: Inv[];
   let replay: boolean;
+  // SA-764: the Order.counterCashTendered column, which the CASH tender writes before paying and the read-back serves change from
+  let storedTendered: number | null;
   let replayOrder: { id: string; counterSale?: boolean };
 
   const inv = (id: string, total: number, payments: any[] = [], at = 1): Inv => ({
@@ -111,6 +113,7 @@ describe("CounterSaleService.ring", () => {
     prisma = createMockPrisma();
     invoices = [inv("inv-1", 37.25)];
     replay = false;
+    storedTendered = null;
     replayOrder = { id: "ord-1", counterSale: true };
     createSale = jest.fn(async (_dto: any, _u: any, sale: any) => {
       if (replay) sale?.onReplay?.(replayOrder);
@@ -139,7 +142,16 @@ describe("CounterSaleService.ring", () => {
     // SA-436: the tenant's send-time sweep switch. ON here so the open-credit guard specs mean something;
     // the OFF case is pinned on its own below.
     prisma.tenantConfig.findUnique.mockResolvedValue({ creditAutoApplyOnSend: true });
-    prisma.order.findFirst.mockResolvedValue({ id: "ord-1", orderNumber: "ORD-1" });
+    prisma.order.findFirst.mockImplementation(async () => ({
+      id: "ord-1",
+      orderNumber: "ORD-1",
+      counterCashTendered: storedTendered,
+    }));
+    prisma.order.updateMany.mockImplementation(async ({ where, data }: any) => {
+      if (where.counterCashTendered === null && storedTendered !== null) return { count: 0 };
+      storedTendered = data.counterCashTendered;
+      return { count: 1 };
+    });
     prisma.invoice.findMany.mockImplementation(async ({ where }: any = {}) =>
       invoices
         .filter((i) => !where?.status?.notIn?.includes(i.status))
@@ -529,6 +541,7 @@ describe("CounterSaleService.ring", () => {
       });
       expect(r).toEqual({
         orderId: "ord-1",
+        lines: [],
         orderNumber: "ORD-1",
         invoiceId: "inv-1",
         invoiceNumber: "N-inv-1",
@@ -536,6 +549,7 @@ describe("CounterSaleService.ring", () => {
         paid: 37.25,
         balanceDue: 0,
         change: 12.75,
+        cashTendered: 50,
         paymentId: "pay-inv-1",
         method: "CASH",
         paymentRecorded: true,
@@ -604,7 +618,8 @@ describe("CounterSaleService.ring", () => {
       const r = await service.ring(named({ method: "CASH", amount: 30 }) as never, staff);
       expect(recordPayment).toHaveBeenCalledWith("inv-1", expect.objectContaining({ amount: 30 }));
       expect(r).toMatchObject({ total: 40, paid: 40, balanceDue: 0, paymentRecorded: true });
-      expect(r.change).toBeUndefined();
+      // a 30 cash tender on the 30 left after the credit: nothing handed back
+      expect(r.change).toBe(0);
     });
 
     it("mixed regulated order: sibling invoices are paid oldest-first from one tender", async () => {
@@ -927,6 +942,7 @@ describe("CounterSaleService.ring", () => {
       const r = await service.byKey("k1");
       expect(r).toEqual({
         orderId: "ord-1",
+        lines: [],
         orderNumber: "ORD-1",
         invoiceId: "inv-1",
         invoiceNumber: "N-inv-1",
@@ -945,16 +961,15 @@ describe("CounterSaleService.ring", () => {
       expect(walkIn.getOrCreateWalkIn).not.toHaveBeenCalled();
     });
 
-    it("matches what the POST replay returns for the same stored sale (modulo change, which needs the tender)", async () => {
+    it("matches what the POST replay returns for the same stored sale (change included: both serve it from storage)", async () => {
       invoices = [inv("inv-1", 37.25)];
       const first = await service.ring(
         named({ method: "CASH", amount: 37.25 }) as never,
         staff,
         "k",
       );
-      findReplayCandidateByKey.mockResolvedValue(sale);
-      const { change: _c, ...expected } = { ...first, replayed: true } as any;
-      expect(await service.byKey("k")).toEqual(expected);
+      findReplayCandidateByKey.mockResolvedValue({ ...sale, counterCashTendered: storedTendered });
+      expect(await service.byKey("k")).toEqual({ ...first, replayed: true });
     });
 
     it("a PARTIAL stored tender (balance still owing) is NOT paymentRecorded: storage cannot tell an intended partial from an interrupted allocation, so the till must see money is owed", async () => {
@@ -989,15 +1004,18 @@ describe("CounterSaleService.ring", () => {
       ["CARD", { method: "CARD" }, "CREDIT_CARD"],
       ["CHECK", { method: "CHECK", reference: "1042" }, "CHECK"],
     ])("a recovered %s sale", (label, payment, _prisma) => {
-      it("byKey body equals the POST body (except replayed:true and the cash-only change)", async () => {
+      it("byKey body equals the POST body (except replayed:true)", async () => {
         invoices = [inv("inv-1", 37.25)];
         const posted = await service.ring(
           { customerId: "cust-1", items: [item], payment } as never,
           staff,
           `k-${label}`,
         );
-        findReplayCandidateByKey.mockResolvedValue(sale);
-        const { change: _c, replayed: _r, ...expected } = posted as any;
+        findReplayCandidateByKey.mockResolvedValue({
+          ...sale,
+          counterCashTendered: storedTendered,
+        });
+        const { replayed: _r, ...expected } = posted as any;
         const recovered = await service.byKey(`k-${label}`);
         expect(recovered).toEqual({ ...expected, replayed: true });
         expect(recovered.method).toBe(label);
@@ -1282,13 +1300,50 @@ describe("CounterSaleService.ring", () => {
     };
     const sendOpts = () => createSale.mock.calls[0][2];
 
+    // SA-762r Ruling A: the gate is staffMay(role, "EDIT_LINE_PRICE"). Owner ruling 10-07: an operator may reprice
+    // (F4: SUPER_ADMIN is not in the row until the other price paths move onto staffMay).
+    const driver = { sub: "drv-1", role: "DRIVER", tenantId: "t-1" } as never;
     it.each([
-      ["OPERATOR", staff, false],
+      ["OPERATOR", staff, true],
       ["TENANT_ADMIN", admin, true],
-      ["SUPER_ADMIN", superAdmin, true],
+      ["SUPER_ADMIN", superAdmin, false],
+      ["DRIVER", driver, false],
     ])("%s: create() is told priceEditAllowed = %s", async (_r, user, allowed) => {
       await service.ring(named({ method: "CASH" }) as never, user);
       expect(sendOpts().priceEditAllowed).toBe(allowed);
+    });
+
+    it("an OPERATOR rings a sale with a changed price: rung (not 403 PRICE_EDIT_NOT_PERMITTED), price applied, ONE price-edited audit row", async () => {
+      // createSale stands in for create()'s own gate (pinned in orders.counter-price-edit.spec.ts): it refuses a
+      // real price change exactly when the counter passed priceEditAllowed === false.
+      createSale.mockImplementation(async (_dto: any, _u: any, sale: any) => {
+        if (sale.priceEditAllowed === false) {
+          const { ForbiddenException } = jest.requireActual("@nestjs/common");
+          throw new ForbiddenException({ code: "PRICE_EDIT_NOT_PERMITTED", message: "no" });
+        }
+        return { id: "inv-1", orderId: "ord-1", invoiceNumber: "INV-1" };
+      });
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        lineItems: [{ ...storedLine, overriddenBy: "op-1" }],
+      });
+      const res = await service.ring(
+        named({ method: "CASH" }, { items: [priced] }) as never,
+        staff,
+        "k-1",
+      );
+      expect(res).toMatchObject({ orderId: "ord-1" });
+      expect(sendOpts().priceEditAllowed).toBe(true);
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      expect(audit.log.mock.calls[0][0]).toMatchObject({
+        userId: "op-1",
+        action: "counter-sale.price-edited",
+        entityId: "ord-1",
+        meta: {
+          lines: [{ productId: "p1", originalPrice: 10, unitPrice: 9, reason: "damaged box" }],
+        },
+      });
     });
 
     it("a refusal from create() (403 PRICE_EDIT_NOT_PERMITTED) leaves everything unwritten: no payment, no audit row", async () => {

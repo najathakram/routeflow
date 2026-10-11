@@ -42,6 +42,18 @@ export interface CounterSaleRequest {
   notes?: string;
 }
 
+/**
+ * The stored price facts of one sale line (the invoice line the sale produced): what the receipt needs to apply the invoices'
+ * own original-price rule (`showOriginalPrice` in @routeflow/pricing). `originalPrice` is the LIST price (never the tier
+ * price), `priceType` one of STANDARD / SPECIAL / DISCOUNTED / MANUAL / PROMO.
+ */
+export interface CounterSaleLinePrice {
+  productId: string | null;
+  unitPrice: number;
+  originalPrice: number | null;
+  priceType: string;
+}
+
 export interface CounterSaleResponse {
   orderId: string;
   orderNumber: string;
@@ -50,6 +62,12 @@ export interface CounterSaleResponse {
   total: number;
   paid: number;
   balanceDue: number;
+  /**
+   * Cash handed back. Server-owned: on the POST and on GET .../by-key/:key it is the STORED `cashTendered` less the sale's
+   * own original CASH tender rows (so a same-key replay reads the stored amount's change). Omitted (not null) unless the
+   * sale's first stored tender is CASH, nothing is left to pay, and a non-negative change is stored (a legacy CASH sale
+   * with no stored `cashTendered` serves none).
+   */
   change?: number;
   paymentId?: string;
   /**
@@ -63,8 +81,56 @@ export interface CounterSaleResponse {
    */
   paymentRecorded: boolean;
   paymentErrorCode?: string;
+  /**
+   * The cash handed over, as stored on the order. Optional because it is OMITTED (never null) when nothing was stored
+   * (card / check / on account / a sale rung before it was stored); the Today's-sales row carries `number | null`.
+   */
+  cashTendered?: number;
+  /**
+   * The order's tax (`Order.tax`), server-owned: the counter receipt prints it as the Tax row and the remainder as
+   * Adjustments, exactly like the reprint and the emailed receipt. Omitted by an older server; then no Tax row prints.
+   */
+  tax?: number;
+  /**
+   * The sale's stored tax rate in percent (`@routeflow/pricing` `storedTaxRatePercent`), a CANDIDATE: the receipt names it
+   * only through `explainedTaxRatePercent`. null = mixed / none; omitted with `tax`.
+   */
+  taxRatePercent?: number | null;
+  /**
+   * The sale's stored lines, in invoice order, with the price facts the receipt strikes a list price from. The live receipt
+   * matches its cart lines to these by product, so it shows exactly what the reprint and the emailed receipt show. Omitted by
+   * an older server: then nothing is struck (the cart's tier price is never a base).
+   */
+  lines?: CounterSaleLinePrice[];
   /** true when this response is a replay of an earlier request carrying the same Idempotency-Key. */
   replayed?: boolean;
+}
+
+// ─── Void a counter sale — POST /orders/counter-sale/:orderId/void ────────────────────────────────
+//
+// One call voids today's sale: its counter tender, its invoices and the order (stock goes back). `reason` is 3-200
+// characters (trimmed, control characters stripped). The call is idempotent: a second void of the same sale answers
+// 200 with `replayed: true` and the same `handBack`. Refusals are 409s with their own codes (COUNTER_SALE_VOIDED,
+// COUNTER_SALE_VOID_HAS_RETURN, COUNTER_SALE_VOID_FOREIGN_PAYMENT, COUNTER_SALE_VOID_NOT_TODAY, ORDER_HAS_CASH_REFUND)
+// and COUNTER_SALE_VOID_BUSY (503, nothing written: retry).
+
+export interface CounterSaleVoidRequest {
+  reason: string;
+}
+
+/** The PAID tender voided, per method (a method with nothing to hand back is absent). */
+export interface CounterSaleHandBack {
+  CASH?: number;
+  CARD?: number;
+  CHECK?: number;
+}
+
+export interface CounterSaleVoidResponse {
+  voided: true;
+  /** true when the sale was already voided by this endpoint: nothing was written, `handBack` is the first call's. */
+  replayed?: boolean;
+  /** UI copy: "Give back $X cash · Void the card payment on the card terminal". */
+  handBack: CounterSaleHandBack;
 }
 
 // ─── Pickup complete (order ahead, pick up) — POST /orders/:id/pickup-complete ────────────────
@@ -138,6 +204,21 @@ export interface TodaysSaleRow {
   balanceDue: number;
   methods: Array<{ method: TodaysSaleMethod; amount: number }>;
   paymentState: TodaysSalePaymentState;
+  /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
+  cashTendered: number | null;
+  /**
+   * Server-owned, the same value and gate as `CounterSaleResponse.change`: the stored `cashTendered` minus the sale's own
+   * original counter-tender CASH rows (credit-note, advance and voided rows never count), served only for a CASH sale with
+   * nothing left to pay; null otherwise (card / check / on account, partly paid, nothing tendered, or a negative result).
+   */
+  change: number | null;
+  /**
+   * The sale's single stored tax rate as a percent (0.0825 -> 8.25), from `@routeflow/pricing` `storedTaxRatePercent`: the one
+   * distinct non-zero line rate on its live invoices; for a legacy invoice whose lines ALL store 0, the flat rate its header
+   * tax implies (when that rate reproduces the tax); null when the lines carry several rates or none. A CANDIDATE: a receipt
+   * names it only through `explainedTaxRatePercent`.
+   */
+  taxRatePercent: number | null;
   returned: {
     amount: number;
     state: TodaysSaleReturnState;
@@ -156,14 +237,21 @@ export interface TodaysSalesSummary {
    * day 1's. (`sales` stays "rung this day".) `other` is ACH / Zelle / other recorded against a counter invoice.
    */
   moneyIn: { cash: number; card: number; check: number; other: number; total: number };
+  /**
+   * The "Hand-overs" line: the tenders of POS-mode pickup hand-overs (a named customer's order handed over at
+   * the till) that came in this day. Already INCLUDED in `moneyIn` and `cashExpectedInDrawer`; a counter sale is
+   * never counted here. `count` is hand-overs (orders), `total` the money.
+   */
+  handOvers: { count: number; total: number };
   /** credit-note and advance applications dated inside the day: NOT money in */
   storeCreditUsed: number;
   /** this day's sales total minus everything paid on those sales (any payment date, store credit included), never below 0 */
   onAccount: number;
   /**
    * Money given back, counted on the day it was given (an earlier day's sale included).
-   * `tenderKnown` is false while the refund tender is not stored: the whole amount then sits in `other`,
-   * cash / card / check are 0 and `cashExpectedInDrawer` does NOT subtract it.
+   * The tender is read from `Return.refundTender`. A refund with no recorded tender sits in `other` and is NOT subtracted
+   * from `cashExpectedInDrawer`; `tenderKnown` is false while ANY refund in the window has no recorded tender (true when
+   * every refund has one, and for a window with no refund at all).
    */
   refunds: {
     count: number;

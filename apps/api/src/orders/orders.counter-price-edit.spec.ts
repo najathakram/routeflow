@@ -1,7 +1,7 @@
 /**
  * POS-5: the counter sale's price-edit rule inside OrdersService.create (`options.priceEditAllowed`).
  *
- *  - `false` (a caller without `canEditPrices`): a line that WOULD be a real override (decideStaffOverride says
+ *  - `false` (a caller `staffMay(role, "EDIT_LINE_PRICE")` refuses): a line that WOULD be a real override (decideStaffOverride says
  *    DISCOUNTED / MANUAL) is refused 403 PRICE_EDIT_NOT_PERMITTED before any write; a typed price within 1/2 cent
  *    of the server's own price is no override and passes;
  *  - `true` / absent (every other caller): the existing override path is byte-identical (a PIN, green on master).
@@ -195,6 +195,26 @@ describe("POS-5 priceEditAllowed in create()", () => {
         true,
       );
       expect(line()).toMatchObject({ unitPrice: 6, overrideReason: "damaged" });
+    });
+  });
+
+  describe("priceEditAllowed: true for an OPERATOR (SA-762r: staffMay admits the operator)", () => {
+    it("an operator's real price change is DISCOUNTED and attributed to them", async () => {
+      seed();
+      await create([{ productId: "prod-1", qty: 2, unitPrice: 9 }], operator, true);
+      expect(line()).toMatchObject({
+        unitPrice: 9,
+        priceType: "DISCOUNTED",
+        overriddenBy: "user-op",
+      });
+    });
+
+    it("a special-tier override WITHOUT a reason is still refused (400), nothing written", async () => {
+      seed(3);
+      await expect(
+        create([{ productId: "prod-1", qty: 1, unitPrice: 6 }], operator, true),
+      ).rejects.toThrow(/reason is required/);
+      nothingWritten();
     });
   });
 

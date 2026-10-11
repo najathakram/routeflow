@@ -3624,3 +3624,218 @@ citations, closed-out with its own post-init assertion guard).
   `git merge-base <branch> master`, never `master` directly, and warns when two open PRs' diffs
   touch the same file.
   (Archived 2026-10-07 whole and verbatim to make room at cap: L-195 is fully guarded (the merge session's live post-deploy verification caught this one, plus the   pre-existing e2e T13 opacity assertion. Propose: the landing t...); least-cited.)
+
+### L-212 · 2026-09-21 · testing · a Playwright selector keyed to a responsive utility class rots silently (B620)
+
+- **Symptom:** the boxed-proration e2e spec's line-total reader matched nothing and reported
+  nothing — a selector that matches zero elements raised no error.
+- **Root cause:** the selector was keyed to a layout utility class (`span.w-16`); a later UI
+  change (#946) replaced it with a breakpoint-prefixed variant (`sm:w-16`), so the literal class
+  no longer existed and the query silently returned an empty set.
+- **Lesson:** **Never select by a layout or responsive utility class — a breakpoint prefix added
+  later makes the selector match nothing with no error. Select by `data-testid`, which no styling
+  change can rename.**
+- **Guard:** #1133 (b8765689) added `data-testid="line-total"`; spec 13's `readLineTotal` reads it
+  via `getByTestId`.
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-212 is fully guarded (#1133 (b8765689) added `data-testid="line-total"`; spec 13's `readLineTotal` reads it via `getByTestId`.) and is among the least-cited active entries.)
+
+### L-209 · 2026-09-19 · process · read the shared review channel immediately before every merge
+
+- **Symptom:** three PRs were squash-merged on green CI plus an in-session review while an
+  independent reviewer had already posted a ship-after-fixes verdict with blockers on the shared
+  coordination issue minutes earlier. The blockers (a prod E2E gate that goes red on unseeded
+  fixtures, a script that sent live-tenant addresses to a third party before its test-tenant
+  gate, a vendor verdict accepted without checking its inferred components) landed on master and
+  needed fix-forward PRs plus a manual prod re-seed.
+- **Root cause:** the merge gate checked CI plus one commissioned review, not the channel where
+  independent reviews are posted — a green CI cannot see a blocker that lives in prose.
+- **Lesson:** **A merge gate must include a fresh read of the shared review channel for that
+  specific PR — re-fetch it and filter for REVIEW / BLOCKED / HOLD lines naming the PR,
+  immediately before `gh pr merge`, not once at window open. Any unresolved blocker line, or a
+  REVIEW line newer than the last commit reviewed, holds the merge.**
+- **Guard:** landing-coordinator routine step "read the coordination issue for REVIEW lines on
+  this PR" before each merge (no code guard).
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-209 is fully guarded (landing-coordinator routine step "read the coordination issue for REVIEW lines on this PR" before each merge (no code guard).) and is among the least-cited active entries.)
+
+### L-170 · 2026-09-16 · domain · #743 fix round F3 (roundMoney before comparison)
+
+- **Symptom:** a fully-settled invoice rendered a red "Balance Due $0.00" badge instead of the
+  green paid state — the number was right but its color-coding read non-zero.
+- **Root cause:** the balance summed three independently-derived floats before subtracting from
+  total; the color-coding ran on that raw sum, where a sub-cent float remnant survives `Math.max`
+  and still reads non-zero. `roundMoney` was applied only at display-formatting time.
+- **Lesson:** **`roundMoney` must wrap a sum of independently-derived floats BEFORE the value
+  drives any comparison or branch — color-coding, `>0` checks, conditional rendering — never
+  only where it's formatted for display.**
+- **Guard:** `invoices.service.ts`'s two `balanceDue` sites and the PDF template now wrap in
+  `roundMoney()` before the comparison. Also fixed at `customers.service.ts`'s
+  `applyAdvancePaymentToInvoiceLocked` (#814), same class.
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-170 is fully guarded (`invoices.service.ts`'s two `balanceDue` sites and the PDF template now wrap in `roundMoney()` before the comparison. Also fixed at `customers.service.ts`'s `applyAdvancePaymentToInvoiceLocked` (#814)) and is among the least-cited active entries.)
+
+### L-241 · 2026-09-28 · process · text with backticks goes through a quoted heredoc to a file, never an unquoted heredoc or --body "…" (#2707)
+
+- **Symptom:** a lane wrote a PR body through an unquoted heredoc (`<<EOF`). The shell ran the
+  backticked commands in the text, including an owner-only `railway run … audit-tenant-entitlements.mjs`,
+  which was stopped only by a missing CLI on that machine (MacBook, #2707; no damage).
+- **Root cause:** shell command substitution runs inside an unquoted heredoc and inside a
+  double-quoted `--body "…"`, so any backticked command in prose is executed, not quoted.
+- **Lesson:** **Any PR, board or brief text that contains backticks is written with a QUOTED heredoc
+  (`<<'EOF'`) or the file-write tool to a file, then passed as `--body-file` / `gh … -F body=@file`.
+  Never interpolate such text into a command line.**
+- **Guard:** the lane brief rule (write bodies to a file first); production commands are owner-run on
+  the Mac mini only, with no railway CLI or link on the MacBook.
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-241 is fully guarded (the lane brief rule (write bodies to a file first); production commands are owner-run on the Mac mini only, with no railway CLI or link on the MacBook.) and is among the least-cited active entries.)
+
+### L-222 · 2026-09-26 · domain · a line's unitPrice and unitsPerBox are ONE denomination (SA-330)
+
+- **Symptom:** a rolled-over next-delivery line was split and priced at the LIVE product pack, so after a repack it was re-split and re-priced from the source line.
+- **Root cause:** the copy carried the price without its pack, or the pack without its price; a live price converted to an old pack is a second pricing formula.
+- **Lesson:** **When a line is copied, snapshot BOTH unitPrice and unitsPerBox or neither. Carrying the pack with a live price under-bills after a repack; converting a live price to an old pack is refused.**
+- **Guard:** `next-delivery-pack.db.spec.ts` (a repack with a price change, plus an AT_STOP vs NEXT_DELIVERY parity pin).
+- **Recurrence (2026-09-30, #2781):** the PO receive path read the LIVE product pack while the detail
+  screen used `linePack`; web modal, mobile form and API now all resolve the stored pack through `linePack`.
+- **Recurrence (2026-10-01, B965/B967/B969, #2988):** every quantity crossing a money door carries its unit axis (boxes, pieces, or the order line's own unit); mixed pack factors are converted ONCE at the boundary with one shared helper (`standardReturnPieces` / `poolPieces` / `toPiecesPool`) or refused (`RETURN_MIXED_UNIT_PRODUCT`), never summed raw (30 pieces on a 2-box x 12 plus a 12-piece line refunded $300 instead of $250; a box-unaware line under-refunds by the pack).
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-222 is fully guarded (`next-delivery-pack.db.spec.ts` (a repack with a price change, plus an AT_STOP vs NEXT_DELIVERY parity pin).) and is among the least-cited active entries.)
+
+### L-228 · 2026-09-27 · process · a merge train must leave master's tree equal to the tree that was verified (train A)
+
+- **Symptom:** a train of 14 PRs merged `--no-ff` and verified as one head (tree e98a41e8) was landed as a single squash; nothing but a deliberate check said the squash equalled what had been tested.
+- **Root cause:** a squash-merge builds its own tree from the PR diff against the current base, so anything that moved on master after the train was built (or a hand-resolved conflict) changes what lands without changing what was verified.
+- **Lesson:** **Land a train only after its head is verified and any hand hunk (import unions, ratchet rows) is confirmed against the merge-tree; after the squash, compare `git rev-parse origin/master^{tree}` with the verified tree and stop on any difference.**
+- **Guard:** the train PR body states the expected tree; the landing coordinator runs the comparison (train A: master's tree equals e98a41e8, checked). Dropped PRs are named with their reason so they re-enter the next train. Cf. [[L-197]].
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-228: superseded by L-268 (the train is built off master and landed by rebase-merge, so master equals the verified tree) and guarded by the landing coordinator tree comparison.)
+
+### L-246 · 2026-09-29 · process · a code-map stamp never goes inside a PR that gets squashed
+
+- **Symptom:** a code-map `mappedSha` (or a sha in a landing bullet) written inside a PR that was then
+  squash-merged named a commit that never reached master, so the map read as stale from the moment it
+  landed and its cited sha resolved to nothing.
+- **Root cause:** a squash merge replaces the branch's commits with one new commit; any sha a PR
+  records about itself, or about its own branch, does not exist on master afterwards.
+- **Lesson:** **Stamp `mappedSha` and cite shas only from the docs follow-up PR, and only shas that are
+  already on master (the squash commit). Never write the PR's own head or a branch sha into the map.**
+- **Guard:** Bookkeeping Option B (the code PR carries `Bookkeeping-Follow-Up: pending`; the follow-up
+  cites the merged sha). No script yet: propose `git merge-base --is-ancestor <sha> origin/master`
+  before any stamp.
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-246: fully guarded by Bookkeeping Option B (the code PR carries `Bookkeeping-Follow-Up: pending` and the follow-up cites the merged sha), which is a standing rule in CLAUDE.md.)
+
+### L-240 · 2026-09-27 · process · a board issue has a 2,500-comment cap; roll to a successor at ~2,300
+
+- **Symptom:** the review board of record (#938) reached GitHub's 2,500-comment limit mid-window,
+  and commenting on it was disabled. PASS verdicts and gate messages had nowhere to go until a
+  successor (#2554) was opened, pinned and pointed at from every skill and script that named #938.
+- **Root cause:** the board was a single ever-growing issue, and nothing tracked its comment count
+  against GitHub's hard limit. The number was hardcoded in skills and in `fleet-status.mjs`.
+- **Lesson:** **A long-lived coordination issue is a capped resource: GitHub stops accepting
+  comments at 2,500. Watch the count and roll to a pinned successor at ~2,300, before the cap. Name
+  the live board in one place (a constant or config) and have skills point at it; leave the old
+  issue's comment links as history.**
+- **Guard:** `fleet-lead/scripts/fleet-status.mjs` reads the board from one `BOARD_ISSUE` constant
+  (env `FLEET_BOARD_ISSUE`), and `fleet-lead/SKILL.md` names #2554 as the live board. Proposed:
+  `fleet-status.mjs` prints the board's comment count and warns at 2,300.
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-240: guarded by `fleet-lead/scripts/fleet-status.mjs` (one `BOARD_ISSUE` constant) and `fleet-lead/SKILL.md`, which names the live board.)
+
+### L-244 · 2026-09-29 · process · a merge reads every ruling posted after the last PASS, not only the PASS (#2678)
+
+- **Symptom:** #2678 landed on a PASS that predated a binding fold ruling (SA-551a, #2554
+  5867986094); the fold it required never shipped.
+- **Root cause:** the merge decision read the PR's last PASS and stopped, so a later ruling on the
+  same PR (a fold, HOLD or FAIL) was invisible to it.
+- **Lesson:** **A PASS is only current until the next comment that names the PR. Before a merge, list
+  every board comment that names the PR and was posted after its last PASS; an open fold, HOLD or
+  FAIL blocks the merge.**
+- **Guard:** the coordinator's pre-merge step (fleet-lead log entry 2026-09-29 #2678); no script yet.
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-244: guarded by the coordinator's standing pre-merge step (list every board comment that names the PR after its last PASS), recorded in `.claude/skills/fleet-lead/references/LEAD-LOG.md`.)
+
+### L-271 · 2026-10-07 · process · a train of several PRs runs check-types and every PR's specs on the combined tree before the push
+
+- **Symptom:** squashing several PRs into one train, a later PR's guard spec failed because an earlier PR had added a new file the guard now covered; no single PR was red on its own.
+- **Root cause:** each PR was verified alone against its own base, so a cross-PR interaction (a new file meeting another PR's guard or type) was invisible until the combined tree.
+- **Lesson:** **Before pushing a train, run `check-types` and the specs of EVERY PR in the train on the combined tree, not only the last PR's; a later PR's guard can be violated by an earlier PR's new file.**
+- **Guard:** the train's pre-push list names each PR's guard specs and `npm run check-types`; cf. [[L-228]], [[L-268]].
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-271: superseded by L-268 (the train is verified as ONE tree, with check-types and the specs run on the exact landing tree).)
+
+### L-226 · 2026-09-27 · testing · a money fixture must be shaped by the production writer (#2274, #2245, #2305)
+
+- **Symptom:** ledger and unit-line specs built rows by hand in shapes the writer never produces (credit overshoot legs the per-line and header caps would refuse; quantities not in base pieces), so they proved a state that cannot exist and could miss the one the writer can.
+- **Root cause:** a hand-built fixture encodes the author's model of the writer, not the writer's output; the spec can only agree with the model (cf. [[L-220]]).
+- **Lesson:** **Build every money or unit fixture with the production writer (or copy its exact shape: base-piece qty, `net + tax` amounts, the maps it stores). Before asserting an overshoot or edge state, confirm the writer can reach it; if only a downstream clamp stops it, test that clamp.**
+- **Guard:** review checks each fixture against the writer's call site (train A: `credit-notes.service.ts` caps, `returns.service.ts` return maps); `regulated-ledger-price-correction.db.spec.ts` drives the real writers.
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-226: guarded by `regulated-ledger-price-correction.db.spec.ts`, which drives the real writers, plus the writer-shaped fixtures in `line-composition.spec.ts`.)
+
+### L-119 · 2026-09-13 · process · F38 round 4
+
+- **Symptom:** an independent pre-merge review found a door quote collecting excise on cancelled
+  and already-delivered lines — after three in-lane review rounds had passed that code.
+- **Root cause:** the two halves of one money figure came from differently filtered line sets;
+  each file read correctly alone, so the defect lived only in the seam between them.
+- **Lesson:** **Both halves of one money figure must derive from ONE collection — pass the
+  filtered array, never re-derive the filter at the second call site. A reviewer inside the lane
+  is the wrong instrument for a seam; it takes an independent pre-merge pass to see across two
+  files that are each individually right.**
+- **Guard:** REG-B305 round 4 + the source pin `short-pick-category-tax.pins.test.ts`.
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-119: guarded by REG-B305 round 4 and the source pin `short-pick-category-tax.pins.test.ts`, and the independent pre-merge pass is now the standing `pre-merge-review` gate.)
+
+### L-159 · 2026-09-15 · domain · B421 (PDF + web-detail rounds, independent review)
+
+- **Symptom:** a PDF template's fallback re-derived `totalPaid`/`creditApplied`/`advanceApplied`
+  independently, each gated on its OWN `!= null` check — a caller passing an old,
+  credit-inclusive `totalPaid` alone got the other two re-split from raw payments too,
+  double-subtracting. A web page reinvented the identical bug independently right after.
+- **Root cause:** three related figures each checked their own presence instead of sharing ONE
+  gate, so a partially-precomputed payload silently mixed two inconsistent bases.
+- **Lesson:** **When a fallback re-derives several related figures from raw data, gate ALL of
+  them on ONE presence check, never per-field — a caller must get either the full precomputed
+  set or the full re-derived set, never a mix.**
+- **Guard:** `payment-predicates.ts`'s `resolveConfirmedAmounts(precomputed, payments)` and the
+  web mirror both gate on one field's presence; each has a red-first regression test pinning
+  the double-subtraction case.
+  (Archived 2026-10-08 whole and verbatim to make room at cap: L-159: guarded by the red-first regression tests on `resolveConfirmedAmounts` in `packages/pricing/src/payment-confirmation.spec.ts` (the double-subtraction case) and its web mirror.)
+
+### L-268 · 2026-10-06 · process · a merge train is built off master, verified as ONE tree, and rebase-merged so master equals the verified tree (W13 to W16)
+
+- **Symptom:** landing N ready PRs one by one made each PR re-run CI against a moving master (the L-266 re-run for every PR), and a squash built its own tree, so what landed was never the tree that had been tested.
+- **Root cause:** serial landing re-verifies every PR N times against a different base, and a squash-merge rebuilds the diff against the current base, so the verified tree and the landed tree can differ ([[L-228]]).
+- **Lesson:** **Build `train/wNN` off master; per PR run `git merge --squash <exact sha>` and commit "<PR title> (#N)", asserting each commit's tree equals `git merge-tree --write-tree HEAD <sha>`. Run ONE CI on the exact landing tree (plus the DB lane on that tree when DB code is touched) and pass the bug-hunt gate (scan-signatures and the lead's cross-PR hunt) before merging. REBASE-merge the train PR, then `git diff train origin/master` must be empty; close the originals naming their master commits.**
+- **Guard:** the train PR body states the expected tree and the empty diff is checked after the merge; a red run drops the culprit PR (its per-PR run names it), rebuilds and re-runs once. Cf. [[L-228]], [[L-266]].
+  (Archived 2026-10-09 whole and verbatim to make room at cap: L-268: superseded by L-288 (trains merge with a merge commit, not rebase-merge); the empty-diff proof lives on in L-288's Guard.)
+
+### L-279 · 2026-10-08 · testing · an undecorated DTO field is an own `undefined` key under ES2023 and the global pipe refuses it (B1224)
+
+- **Symptom:** the New sale screen could not save: every `POST /orders/sell` returned 400 "property idempotencyKey should not exist", although the client never sends that field. Unit specs were green because they called the service and never ran the DTO through the pipe.
+- **Root cause:** the api compiles to ES2023 (class-field define semantics), so an undecorated `idempotencyKey?: string;` is emitted as an own `undefined` property on every class-transformer instance, and the global `ValidationPipe` (`whitelist` plus `forbidNonWhitelisted`) rejects a key without a validator.
+- **Lesson:** **A DTO property that carries no validator (an internal field the server sets in code) must be written `declare x?: T;` so no own key is emitted. Prove a new or changed DTO through the real global pipe options, not only through the service, and keep one guard that instantiates every exported DTO from `{}`.**
+- **Guard:** `apps/api/src/common/dto-no-own-undefined-keys.guard.spec.ts` (every exported `*.dto.ts` class has no own undefined key without a validator) and `apps/api/src/orders/dto/create-sale.dto.pipe.spec.ts` (the exact `main.ts` pipe options accept a body without the key and still refuse a client-sent one).
+  (Archived 2026-10-09 whole and verbatim to make room at cap: L-279: guarded by `apps/api/src/common/dto-no-own-undefined-keys.guard.spec.ts` (every exported `*Dto` field is covered); no outside citation.)
+
+### L-285 · 2026-10-08 · security · a scoping argument is required, never optional (B1211, #3322)
+
+- **Symptom:** a cross-tenant link was followed: the sellable-parent and buyer-visibility predicates took an optional tenant parameter, and every call site that forgot it silently lost the scope.
+- **Root cause:** an optional scope parameter makes "no scope" a valid call, so the check disappears without an error at exactly the sites that omit it.
+- **Lesson:** **Make a tenant (or other scope) parameter required in the type, throw (fail closed) at runtime when it is missing, and let the compiler list every site. Making the two predicates tenant-required surfaced 11 production sites plus the order-write gate, all fixed.**
+- **Guard:** `apps/api/src/buyer/buyer-tenant-required.spec.ts`.
+  (Archived 2026-10-09 whole and verbatim to make room at cap: L-285: guarded by `apps/api/src/buyer/buyer-tenant-required.spec.ts`; no outside citation.)
+
+### L-266 · 2026-10-06 · process · a close/reopen CI re-run can replay a cached merge commit: read "Merge X into Y" in the run log before landing (#3223)
+
+- **Symptom:** #3223's CI re-run after close/reopen went green, yet its checkout log read "Merge <head> into <an older master>": GitHub replayed its cached merge commit although `refs/pull/N/merge` already showed the new master as a parent.
+- **Root cause:** a close/reopen re-runs against the cached merge commit; a fresh one is built only when master moves or a branch is pushed. The green run therefore proved the PR against the older master, not the one the landing rule allows. Related: [[L-198]] (`gh run rerun` replays the original merge ref).
+- **Lesson:** **Before landing, read the run log's "HEAD is now at … Merge X into Y" line and require Y to be the master the landing rule allows. Close/reopen can replay a cached merge commit; a fresh one comes only from master moving or a push.**
+- **Guard:** the landing script's merge-base check.
+  (Archived 2026-10-10 whole and verbatim to make room at cap: L-266: guarded by the landing script's merge-base check; no outside citation.)
+
+### L-277 · 2026-10-07 · domain · a scan resolves through the exact-code ladder, never `data[0]` of a fuzzy search
+
+- **Symptom:** a scanned code added a different product, or a duplicate, because the first row of a contains-style search was taken as the match.
+- **Root cause:** a fuzzy or prefix search returns several rows ordered by name; the first is not the product that owns the code.
+- **Lesson:** **Resolve a scan through the exact-code ladder (SKU, barcode, exact code) and use a fuzzy hit only when it is the sole result and the user confirms it; an ambiguous hit opens a picker.**
+- **Guard:** `products/scan-prefix-exact.db.spec.ts` and `CounterSaleScreen.scan.test.tsx`.
+  (Archived 2026-10-10 whole and verbatim to make room at cap: L-277: guarded by `products/scan-prefix-exact.db.spec.ts` and `CounterSaleScreen.scan.test.tsx`; no outside citation.)
+
+### L-278 · 2026-10-07 · domain · a queued lookup in front of a money action blocks the action until the queue drains
+
+- **Symptom:** a counter sale was paid while a scan was still resolving, and the lookup's line landed after the total was taken.
+- **Root cause:** scans resolve asynchronously one at a time, but Pay read the cart as it stood, not as it would be.
+- **Lesson:** **Any async lookup that can add or change lines must disable the money action until its queue is empty, and the server must judge the tender against its own total, not the screen's.**
+- **Guard:** `useCounterSaleScan` queue state gates Pay; `assertWalkInTenderCoversTotal` and its db spec.
+  (Archived 2026-10-10 whole and verbatim to make room at cap: L-278: guarded by the `useCounterSaleScan` queue state gating Pay and `assertWalkInTenderCoversTotal` with its db spec; no outside citation.)
