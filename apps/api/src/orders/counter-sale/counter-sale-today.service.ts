@@ -10,6 +10,7 @@ import {
   startOfLocalDay,
 } from "../../common/calendar-date";
 import { resolveTenantZone, resolveZone } from "../../common/tenant-time-zone";
+import { configuredTaxRatePercent } from "../../common/tax-rate";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { CounterSaleTodayDto } from "./counter-sale-today.dto";
 import {
@@ -78,14 +79,16 @@ export class CounterSaleTodayService {
     const limit = query.limit ?? TODAYS_SALES_DEFAULT_LIMIT;
     const db = this.prisma.forTenant();
 
-    const [rows, total, summary] = await Promise.all([
+    const [rows, total, summary, configuredTaxPercent] = await Promise.all([
       db.order.findMany(pageQuery(tenantId, window, page, limit)) as Promise<TodayOrderRecord[]>,
       db.order.count({ where: counterSalesWhere(tenantId, window) }),
       page === 1 ? this.summary(db, tenantId, window) : Promise.resolve(null),
+      // one read per page: the rate a stored line rate must equal before a row names it
+      configuredTaxRatePercent(this.prisma),
     ]);
 
     return {
-      data: rows.map(toTodaysSaleRow),
+      data: rows.map((r) => toTodaysSaleRow(r, configuredTaxPercent)),
       meta: {
         total,
         page,

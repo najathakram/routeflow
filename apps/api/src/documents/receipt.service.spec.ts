@@ -238,11 +238,10 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
       const select = prisma.order.findFirst.mock.calls[0][0].select;
       expect(select.tax).toBe(true);
       expect(select.counterCashTendered).toBe(true);
-      expect(select.invoices.select.items.select).toMatchObject({
-        taxRate: true,
-        categoryTaxAmount: true,
-      });
-      expect(select.invoices.select).toMatchObject({ subtotal: true, taxAmount: true });
+      // the STORED line rate only: a rate is never inferred from the invoice header
+      expect(select.invoices.select.items.select).toEqual({ taxRate: true });
+      expect(select.invoices.select).not.toHaveProperty("subtotal");
+      expect(select.invoices.select).not.toHaveProperty("taxAmount");
     });
 
     it("reads the payments in the order they were taken (the first stored tender decides whether change is served)", async () => {
@@ -252,8 +251,18 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
       expect(sel.payments.orderBy).toEqual({ createdAt: "asc" });
     });
 
-    it("emails the split money rows: Tax (8%) from the stored line rate, no Adjustments when nothing remains", async () => {
-      const { email, send } = setup({});
+    it("a stored line rate that is not the tenant's configured rate is plain Tax (the rate is never inferred)", async () => {
+      const { email, send } = setup({ settings: { "settings.taxRate": "8.25" } });
+      await send();
+      const { html, text } = email.send.mock.calls[0][0];
+      for (const body of [html, text]) {
+        expect(body).not.toContain("Tax (");
+        expect(body).toContain("$2.12");
+      }
+    });
+
+    it("emails the split money rows: Tax (8%) from the stored line rate the configured rate corroborates, no Adjustments when nothing remains", async () => {
+      const { email, send } = setup({ settings: { "settings.taxRate": "8" } });
       await send();
       const { html, text } = email.send.mock.calls[0][0];
       for (const body of [html, text]) {
@@ -272,6 +281,18 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
       expect(html).toContain("Thanks &lt;b&gt;&amp;&lt;/b&gt; come again");
       expect(html).not.toContain("<b>&</b>");
       expect(text).toContain("Thanks <b>&</b> come again");
+    });
+
+    it("shows the struck list price and a Discounts row for a lowered line (the invoices' rule), unless the tenant hides original prices (invoice.hideOriginalPrice)", async () => {
+      const shown = setup({});
+      await shown.send();
+      expect(shown.email.send.mock.calls[0][0].text).toContain("Discounts");
+      const hidden = setup({ settings: { "invoice.hideOriginalPrice": "true" } });
+      await hidden.send();
+      const { html, text } = hidden.email.send.mock.calls[0][0];
+      for (const body of [html, text]) expect(body).not.toContain("Discount");
+      const read = hidden.prisma.systemConfig.findMany.mock.calls[0][0].where.key.in;
+      expect(read).toContain("invoice.hideOriginalPrice");
     });
 
     it("prints the cash handed over when the sale stored it", async () => {

@@ -2404,6 +2404,27 @@ describe("digital receipt on the live receipt (SA-751r)", () => {
     resolve({ data: {} });
   });
 
+  it("a named customer whose own email is empty but whose sign-in account has one: that address is pre-filled with Send focused", async () => {
+    customersFor = [
+      {
+        id: "c1",
+        businessName: "Acme Co",
+        email: null,
+        user: { id: "u1", email: "login@example.com" },
+        fulfillPath: "ROUTE",
+      },
+    ];
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: "Acme Co" }));
+    await finishCashSale();
+    fireEvent.click(screen.getByRole("button", { name: "Email receipt" }));
+    expect((screen.getByRole("textbox", { name: "Email address" }) as HTMLInputElement).value).toBe(
+      "login@example.com",
+    );
+    expect(screen.getByRole("button", { name: "Send" })).toHaveFocus();
+  });
+
   it("Print is still the receipt's one primary action and still prints once", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await finishCashSale();

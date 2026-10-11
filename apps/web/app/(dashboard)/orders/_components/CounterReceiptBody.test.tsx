@@ -113,6 +113,16 @@ describe("CounterReceiptBody", () => {
     expect(screen.queryByTestId("receipt-customer")).not.toBeInTheDocument();
   });
 
+  it("exact cash: the server's served change of 0 prints Tendered and a Change $0.00 row (null would print none)", () => {
+    const { unmount } = show({ ...RECEIPT, total: 22.5, paid: 22.5, change: 0 });
+    expect(screen.getByTestId("receipt-tendered")).toHaveTextContent("$22.50");
+    expect(screen.getByTestId("receipt-change")).toHaveTextContent("Change");
+    expect(screen.getByTestId("receipt-change")).toHaveTextContent("$0.00");
+    unmount();
+    show({ ...RECEIPT, total: 22.5, paid: 22.5, change: undefined as never });
+    expect(screen.queryByTestId("receipt-change")).not.toBeInTheDocument();
+  });
+
   it("header falls back to the settings name, then to name only, then to nothing", () => {
     const { unmount } = show(RECEIPT, { businessName: "Settings Name" });
     expect(screen.getByTestId("receipt-header")).toHaveTextContent("Settings Name");

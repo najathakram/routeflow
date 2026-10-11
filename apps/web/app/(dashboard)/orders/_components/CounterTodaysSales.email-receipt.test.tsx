@@ -21,7 +21,11 @@ jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useOptionalAuth: () => ({ user: { role: "OPERATOR", username: "pat" } }),
 }));
-let orderCustomer: { businessName: string; email?: string | null } = { businessName: "Walk-in" };
+let orderCustomer: {
+  businessName: string;
+  email?: string | null;
+  user?: { email?: string | null } | null;
+} = { businessName: "Walk-in" };
 jest.mock("@/lib/api/orders", () => ({
   useOrder: () => ({
     data: {
@@ -131,6 +135,20 @@ describe("Today's sales > Reprint > Email receipt (SA-751r)", () => {
       channel: "email",
       to: "buyer@example.com",
     });
+  });
+
+  it("a named customer with no email of their own but a sign-in account email: that address is the suggestion", async () => {
+    orderCustomer = {
+      businessName: "Acme Test Customer",
+      email: null,
+      user: { email: "login@example.com" },
+    };
+    await openReprint([row({ isWalkIn: false, customerName: "Acme Test Customer" })]);
+    fireEvent.click(screen.getByRole("button", { name: "Email receipt" }));
+    expect((screen.getByRole("textbox", { name: "Email address" }) as HTMLInputElement).value).toBe(
+      "login@example.com",
+    );
+    expect(screen.getByRole("button", { name: "Send" })).toHaveFocus();
   });
 
   it("a walk-in typed address is sent as typed and is not written to any customer endpoint", async () => {

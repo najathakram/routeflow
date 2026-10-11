@@ -54,12 +54,36 @@ function totalsOf(m: ReceiptModel): Array<[string, string, boolean]> {
   return rows;
 }
 
+/** The line's name cell: name, detail, and the cashier's note under it (as the print view). Every value is escaped. */
+function lineNameHtml(l: ReceiptModel["lines"][number]): string {
+  const span = (text: string) => '<br><span style="' + SUB + '">' + escapeHtml(text) + "</span>";
+  return escapeHtml(l.name) + span(l.detail) + (l.note ? span(l.note) : "");
+}
+
+/** The line's amount cell: the net total, with the struck list price above it and "Discount" below it for a lowered price. */
+function lineAmountHtml(l: ReceiptModel["lines"][number]): string {
+  if (l.original == null) return escapeHtml(money(l.total));
+  return (
+    '<s style="' +
+    SUB +
+    '">' +
+    escapeHtml(money(l.original)) +
+    "</s><br>" +
+    escapeHtml(money(l.total)) +
+    '<br><span style="' +
+    SUB +
+    '">Discount -' +
+    escapeHtml(money(l.discount)) +
+    "</span>"
+  );
+}
+
 function bodyHtmlOf(m: ReceiptModel): string {
   const lineRows = m.lines
     .map(
       (l) => `<tr>
-    <td style="${CELL}border-bottom:1px solid #f0f0f0;">${escapeHtml(l.name)}<br><span style="${SUB}">${escapeHtml(l.detail)}</span></td>
-    <td style="${CELL}border-bottom:1px solid #f0f0f0;${RIGHT}">${escapeHtml(money(l.total))}</td>
+    <td style="${CELL}border-bottom:1px solid #f0f0f0;">${lineNameHtml(l)}</td>
+    <td style="${CELL}border-bottom:1px solid #f0f0f0;${RIGHT}">${lineAmountHtml(l)}</td>
   </tr>`,
     )
     .join("");
@@ -95,7 +119,15 @@ function bodyTextOf(m: ReceiptModel): string[] {
   const parts = [
     ...(head.length ? [head.join("\n")] : []),
     `Order ${m.orderNumber} · Invoice ${m.invoiceNumber}\n${m.dateLabel}${m.customerName ? `\nCustomer: ${m.customerName}` : ""}`,
-    m.lines.map((l) => `${l.name}\n  ${l.detail}  ${money(l.total)}`).join("\n"),
+    m.lines
+      .map((l) => {
+        const amount =
+          l.original != null
+            ? `was ${money(l.original)}  ${money(l.total)} (Discount -${money(l.discount)})`
+            : money(l.total);
+        return `${l.name}\n  ${l.detail}  ${amount}${l.note ? `\n  ${l.note}` : ""}`;
+      })
+      .join("\n"),
     totalsOf(m)
       .map(([label, value]) => `${label}: ${value}`)
       .join("\n"),

@@ -11,6 +11,7 @@ import {
 import type { SendReceiptResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { calendarDayBounds } from "../common/calendar-date";
+import { taxRatePercentFrom } from "../common/tax-rate";
 import { resolveZone } from "../common/tenant-time-zone";
 import { EmailService } from "../email/email.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -44,6 +45,9 @@ const SETTING_KEYS = [
   "settings.zip",
   "settings.phone",
   "settings.receiptFooter",
+  "settings.taxRate",
+  // the invoices' own switch: no struck list price and no Discounts row
+  "invoice.hideOriginalPrice",
 ];
 
 const tooMany = (code: string, message: string) =>
@@ -101,6 +105,9 @@ export class ReceiptService {
             status: true,
             qty: true,
             unitPrice: true,
+            originalPrice: true,
+            priceType: true,
+            notes: true,
             unitsPerBox: true,
             boxes: true,
             pieces: true,
@@ -120,10 +127,8 @@ export class ReceiptService {
             id: true,
             invoiceNumber: true,
             status: true,
-            // the stored header and line rates the receipt names its tax rate from (pricing's explainedTaxRatePercent)
-            subtotal: true,
-            taxAmount: true,
-            items: { select: { taxRate: true, categoryTaxAmount: true } },
+            // the stored line rates the receipt names its tax rate from (pricing's storedTaxRatePercent)
+            items: { select: { taxRate: true } },
             // in the order they were taken: the first stored tender decides whether change is served
             payments: {
               orderBy: { createdAt: "asc" },
@@ -135,16 +140,12 @@ export class ReceiptService {
     });
     if (!order) throw new NotFoundException("Order not found");
 
-    const invoices = order.invoices.map(
-      ({ id, invoiceNumber, status, subtotal, taxAmount, items }) => ({
-        id,
-        invoiceNumber,
-        status,
-        subtotal,
-        taxAmount,
-        items,
-      }),
-    );
+    const invoices = order.invoices.map(({ id, invoiceNumber, status, items }) => ({
+      id,
+      invoiceNumber,
+      status,
+      items,
+    }));
     if (order.status === "CANCELLED" || !invoices.some(isLiveInvoice)) {
       throw new ConflictException({
         code: API_ERROR_CODES.RECEIPT_NOT_AVAILABLE,
@@ -249,6 +250,8 @@ export class ReceiptService {
       zip: config?.zip ?? settings["settings.zip"],
       phone: config?.phone ?? settings["settings.phone"],
       footer: settings["settings.receiptFooter"],
+      configuredTaxPercent: taxRatePercentFrom(settings["settings.taxRate"]),
+      hideOriginalPrice: settings["invoice.hideOriginalPrice"] === "true",
     };
     const { subject, html, text } = renderOrderReceipt(order, invoices, payments, branding, zone);
 

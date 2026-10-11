@@ -14,6 +14,8 @@ export const BRANDING: ReceiptBranding = {
   zip: "62701",
   phone: "555-0100",
   footer: null,
+  /** the tenant rate the fixture invoice lines were stamped with (0.08) */
+  configuredTaxPercent: 8,
 };
 
 /** A counter sale: 3 x $2.50 (7.50) + 1 box and 3 pcs of a 12-pack at $12.00 a box (15.00) + a $4.00 line = 26.50, tax 2.12. */
@@ -58,6 +60,9 @@ export function orderFixture(over: Partial<ReceiptOrderInput> = {}): ReceiptOrde
         status: "DELIVERED",
         qty: "1",
         unitPrice: "4.00",
+        // rung at $4.00 off the $5.00 LIST price: the order stores the list as originalPrice, the type DISCOUNTED
+        originalPrice: "5.00",
+        priceType: "DISCOUNTED",
         unitsPerBox: null,
         boxes: null,
         pieces: null,
@@ -84,8 +89,6 @@ export const INVOICE: ReceiptInvoiceInput = {
   id: "inv-1",
   invoiceNumber: "INV-2001",
   status: "PAID",
-  subtotal: "26.50",
-  taxAmount: "2.12",
   items: [{ taxRate: "0.0800" }, { taxRate: "0.0800" }, { taxRate: "0.0800" }],
 };
 

@@ -41,11 +41,23 @@ export function isValidReceiptEmail(raw: string): boolean {
  * is a suggestion the cashier presses Send on: it is never sent on its own.
  */
 export function receiptEmailPrefill(
-  customer: { email?: string | null; isWalkIn?: boolean | null } | null | undefined,
+  customer:
+    | {
+        email?: string | null;
+        isWalkIn?: boolean | null;
+        /** the customer's sign-in account: its email is the fallback when the customer record has none */
+        user?: { email?: string | null } | null;
+      }
+    | null
+    | undefined,
 ): string {
   if (!customer || customer.isWalkIn) return "";
-  const email = (customer.email ?? "").trim();
-  return email && !isInternalEmail(email) ? email : "";
+  // the customer's own address first, then the account's (the customer form's rule); a placeholder never counts
+  for (const candidate of [customer.email, customer.user?.email]) {
+    const email = (candidate ?? "").trim();
+    if (email && !isInternalEmail(email)) return email;
+  }
+  return "";
 }
 
 /** How a failed send is told. Anything that is not a limit is "failed": the cashier can try again. */

@@ -8,10 +8,14 @@ export type InvoiceRow = {
   id: string;
   invoiceNumber?: string;
   total: unknown;
-  /** the stored header and line rates the sale's tax rate is read from (`storedTaxRatePercent`) */
-  subtotal?: unknown;
-  taxAmount?: unknown;
-  items?: Array<{ taxRate?: unknown; categoryTaxAmount?: unknown }>;
+  /** the stored lines: the rate the tax rate is read from (`storedTaxRatePercent`) and the price facts a receipt strikes a list price from */
+  items?: Array<{
+    taxRate?: unknown;
+    productId?: string | null;
+    unitPrice?: unknown;
+    originalPrice?: unknown;
+    priceType?: string | null;
+  }>;
   payments?: Array<{ id: string; amount: unknown; method?: string; status?: string }>;
 };
 
@@ -98,6 +102,8 @@ export function buildCounterSaleResponse(input: {
   invoices: InvoiceRow[];
   replayed: boolean;
   planError?: string;
+  /** the tenant's configured rate in percent: a stored line rate is named only when it equals this */
+  configuredTaxPercent?: number | null;
 }): CounterSaleResponse {
   const { payment, order, invoices, replayed, planError } = input;
   const first = invoices[0];
@@ -157,14 +163,20 @@ export function buildCounterSaleResponse(input: {
       ? {
           tax: roundMoney(Number(order.tax)),
           taxRatePercent: storedTaxRatePercent(
-            invoices.map((i) => ({
-              subtotal: i.subtotal,
-              taxAmount: i.taxAmount,
-              lines: i.items ?? [],
-            })),
+            invoices.map((i) => ({ lines: i.items ?? [] })),
+            input.configuredTaxPercent,
           ),
         }
       : {}),
+    // the stored lines' price facts, so the live receipt applies the invoices' own original-price rule (not the cart's tier price)
+    lines: invoices.flatMap((i) =>
+      (i.items ?? []).map((l) => ({
+        productId: l.productId ?? null,
+        unitPrice: roundMoney(Number(l.unitPrice ?? 0)),
+        originalPrice: l.originalPrice == null ? null : roundMoney(Number(l.originalPrice)),
+        priceType: l.priceType ?? "STANDARD",
+      })),
+    ),
     ...(replayed ? { replayed: true } : {}),
   };
 }

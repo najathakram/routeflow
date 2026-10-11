@@ -30,8 +30,8 @@ describe("buildReceiptModel (stored rows -> the shared ReceiptModel)", () => {
 
   it("carries ONE money model: Subtotal - Discounts + Tax + Adjustments = Total, with the stored 8% named", () => {
     expect(model).toMatchObject({
-      subtotal: 26.5,
-      discounts: 0,
+      subtotal: 27.5,
+      discounts: 1,
       tax: 2.12,
       adjustments: 0,
       taxRatePercent: 8,
@@ -232,7 +232,7 @@ describe("buildReceiptModel (stored rows -> the shared ReceiptModel)", () => {
     expect(noRows.taxRatePercent).toBeNull();
   });
 
-  it("a legacy invoice whose lines all store a 0 rate falls back to the flat rate its header tax implies", () => {
+  it("a legacy invoice whose lines all store a 0 rate names no rate (never inferred from the header tax)", () => {
     const legacy = buildReceiptModel(
       orderFixture(),
       [{ ...INVOICE, items: [{ taxRate: "0" }, { taxRate: "0" }, { taxRate: "0" }] }],
@@ -240,7 +240,7 @@ describe("buildReceiptModel (stored rows -> the shared ReceiptModel)", () => {
       BRANDING,
       ZONE,
     );
-    expect(legacy.taxRatePercent).toBe(8);
+    expect(legacy.taxRatePercent).toBeNull();
   });
 
   it("no tax at all: Tax 0 (row hidden) and no rate", () => {
@@ -324,7 +324,10 @@ describe("renderOrderReceipt (email)", () => {
       expect(body).toContain("1 box + 3 pcs × $12.00 per box");
       expect(body).toContain("$15.00");
       expect(body).toContain("Subtotal");
-      expect(body).toContain("$26.50");
+      expect(body).toContain("$27.50");
+      expect(body).toContain("Discounts");
+      expect(body).toContain("-$1.00");
+      expect(body).toContain("$5.00"); // the struck list price of the discounted line
       expect(body).toContain("Tax (8%)");
       expect(body).toContain("$2.12");
       expect(body).not.toContain("Adjustments");

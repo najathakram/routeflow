@@ -12,6 +12,8 @@ export * from "./regulated-unit-basis";
 export * from "./legacy-box-axis";
 export * from "./inferred-flat-rate";
 export * from "./explained-tax-rate";
+export * from "./show-original-price";
+export * from "./receipt-line";
 export * from "./units-label";
 export * from "./unit-line-count";
 export * from "./po-display-total";

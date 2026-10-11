@@ -60,6 +60,25 @@ describe("receiptEmailPrefill", () => {
       "buyer@example.com",
     );
   });
+  it("a customer whose own email is empty but whose sign-in account has a real one pre-fills that (the customer form's rule)", () => {
+    expect(receiptEmailPrefill({ email: null, user: { email: "login@example.com" } })).toBe(
+      "login@example.com",
+    );
+    expect(receiptEmailPrefill({ email: "", user: { email: " login@example.com " } })).toBe(
+      "login@example.com",
+    );
+    // the customer's own address wins; an account placeholder never pre-fills
+    expect(
+      receiptEmailPrefill({ email: "own@example.com", user: { email: "login@example.com" } }),
+    ).toBe("own@example.com");
+    expect(
+      receiptEmailPrefill({ email: null, user: { email: "no-email+1@placeholder.local" } }),
+    ).toBe("");
+    expect(
+      receiptEmailPrefill({ email: "x@imported.local", user: { email: "real@example.com" } }),
+    ).toBe("real@example.com");
+    expect(receiptEmailPrefill({ email: null, user: null })).toBe("");
+  });
   it("a walk-in, no customer, no email and an internal placeholder address all open empty", () => {
     expect(receiptEmailPrefill(null)).toBe("");
     expect(receiptEmailPrefill(undefined)).toBe("");

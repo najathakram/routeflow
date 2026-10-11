@@ -42,6 +42,18 @@ export interface CounterSaleRequest {
   notes?: string;
 }
 
+/**
+ * The stored price facts of one sale line (the invoice line the sale produced): what the receipt needs to apply the invoices'
+ * own original-price rule (`showOriginalPrice` in @routeflow/pricing). `originalPrice` is the LIST price (never the tier
+ * price), `priceType` one of STANDARD / SPECIAL / DISCOUNTED / MANUAL / PROMO.
+ */
+export interface CounterSaleLinePrice {
+  productId: string | null;
+  unitPrice: number;
+  originalPrice: number | null;
+  priceType: string;
+}
+
 export interface CounterSaleResponse {
   orderId: string;
   orderNumber: string;
@@ -84,6 +96,12 @@ export interface CounterSaleResponse {
    * only through `explainedTaxRatePercent`. null = mixed / none; omitted with `tax`.
    */
   taxRatePercent?: number | null;
+  /**
+   * The sale's stored lines, in invoice order, with the price facts the receipt strikes a list price from. The live receipt
+   * matches its cart lines to these by product, so it shows exactly what the reprint and the emailed receipt show. Omitted by
+   * an older server: then nothing is struck (the cart's tier price is never a base).
+   */
+  lines?: CounterSaleLinePrice[];
   /** true when this response is a replay of an earlier request carrying the same Idempotency-Key. */
   replayed?: boolean;
 }
