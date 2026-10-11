@@ -134,7 +134,8 @@ describe("Portal approvals — decline endpoint + richer pending payloads", () =
       // invitee's emailed link keeps working — declining the requester must not destroy it.
       prisma.customerLink.findFirst.mockResolvedValue({
         ...PENDING_LINK,
-        inviteToken: "secret-token",
+        inviteToken: null,
+        inviteTokenHash: "a".repeat(64),
         inviteExpiresAt: new Date("2099-01-01T00:00:00.000Z"),
       });
 
@@ -151,7 +152,8 @@ describe("Portal approvals — decline endpoint + richer pending payloads", () =
     it("deletes the row when its invite token has already expired", async () => {
       prisma.customerLink.findFirst.mockResolvedValue({
         ...PENDING_LINK,
-        inviteToken: "stale-token",
+        inviteToken: null,
+        inviteTokenHash: "b".repeat(64),
         inviteExpiresAt: new Date("2020-01-01T00:00:00.000Z"),
       });
 
@@ -213,6 +215,7 @@ describe("Portal approvals — decline endpoint + richer pending payloads", () =
           status: "ACTIVE",
           linkedAt: expect.any(Date),
           inviteToken: null,
+          inviteTokenHash: null,
           inviteExpiresAt: null,
         },
       });

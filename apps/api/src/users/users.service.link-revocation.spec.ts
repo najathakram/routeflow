@@ -30,6 +30,14 @@ describe("UsersService — link revocation on standing changes", () => {
       )
       .map(([, id]) => id as string);
 
+  /** The userIds whose UserEmailVerificationToken rows the tx was asked to burn. */
+  const verificationBurnedFor = () =>
+    tx.$executeRaw.mock.calls
+      .filter(([strings]) =>
+        (strings as TemplateStringsArray).join("").includes("UserEmailVerificationToken"),
+      )
+      .map(([, id]) => id as string);
+
   const existing = (over: Record<string, unknown> = {}) => ({
     id: "u1",
     username: "acme_op",
@@ -111,6 +119,14 @@ describe("UsersService — link revocation on standing changes", () => {
       expect(burnedFor()).toEqual(["u1"]);
     });
 
+    it("INACTIVE -> INACTIVE also burns the email-verification links of the account", async () => {
+      prisma.user.findUnique.mockResolvedValue(existing({ status: "INACTIVE" }) as any);
+
+      await service.changeStatus("u1", { status: "INACTIVE" } as any, "TENANT_ADMIN" as any);
+
+      expect(verificationBurnedFor()).toEqual(["u1"]);
+    });
+
     it("reactivation (to ACTIVE) writes the status and burns nothing", async () => {
       prisma.user.findUnique.mockResolvedValue(existing({ status: "SUSPENDED" }) as any);
 
@@ -146,7 +162,21 @@ describe("UsersService — link revocation on standing changes", () => {
         expect.objectContaining({ where: { id: "u1" }, data: { email: "new@acme.example" } }),
       );
       expect(burnedFor()).toEqual(["u1"]);
-      expect(tx.events).toEqual(["write", "revoke"]);
+      // one write, then the helper's two statements (reset links, verification links)
+      expect(tx.events).toEqual(["write", "revoke", "revoke"]);
+    });
+
+    it("an email change also burns the email-verification links of the account", async () => {
+      prisma.user.findUnique.mockResolvedValue(existing() as any);
+
+      await service.updateUser(
+        "u1",
+        { email: "new@acme.example" } as any,
+        undefined,
+        "TENANT_ADMIN" as any,
+      );
+
+      expect(verificationBurnedFor()).toEqual(["u1"]);
     });
 
     it("a role change burns the links inside the same transaction as the write", async () => {
@@ -158,7 +188,8 @@ describe("UsersService — link revocation on standing changes", () => {
         expect.objectContaining({ where: { id: "u1" }, data: { role: "DRIVER" } }),
       );
       expect(burnedFor()).toEqual(["u1"]);
-      expect(tx.events).toEqual(["write", "revoke"]);
+      // one write, then the helper's two statements (reset links, verification links)
+      expect(tx.events).toEqual(["write", "revoke", "revoke"]);
     });
 
     describe("a role change re-issues a link only when the user still needs one (forcePasswordChange and ACTIVE)", () => {

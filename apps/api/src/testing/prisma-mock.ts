@@ -174,6 +174,7 @@ export function createMockPrisma(): MockPrisma {
     // orders.merge-idempotency.spec.ts.
     orderIdempotencyKey: modelProxy(),
     passwordResetToken: modelProxy(),
+    userEmailVerificationToken: modelProxy(),
     saleDraft: modelProxy(),
     trackedCategory: modelProxy(),
     trackedSubcategory: modelProxy(),

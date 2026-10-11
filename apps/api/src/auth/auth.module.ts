@@ -19,6 +19,7 @@ import { EntitlementsModule } from "../billing/entitlements.module";
 import { AppConfig } from "../config/configuration";
 import { HandoffCodeService } from "./handoff/handoff-code.service";
 import { StaffHandoffService } from "./handoff/staff-handoff.service";
+import { LinkTokenSweepService } from "./link-token-sweep.service";
 
 @Module({
   imports: [
@@ -51,6 +52,8 @@ import { StaffHandoffService } from "./handoff/staff-handoff.service";
     // #2653 in-app sign-in handoff (staff realm). HandoffCodeService is stateless and shared.
     HandoffCodeService,
     StaffHandoffService,
+    // Daily cleanup of expired single-use account links (all four token tables).
+    LinkTokenSweepService,
   ],
   exports: [
     AuthService,

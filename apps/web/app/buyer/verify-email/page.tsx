@@ -2,24 +2,20 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import { CheckCircle2, MailCheck } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { AuthShell } from "@/components/auth";
 import { buyerVerifyEmail } from "@/lib/buyer-auth";
+import { useAccountLinkToken } from "@/lib/account-link-token";
 
-// ─── Inner (useSearchParams requires a Suspense boundary) ─────────────────────
+// Fixed copy only: a failed verification never shows server text.
+const VERIFY_FAILED_COPY = "Could not verify your email. The link may have expired.";
 
 function BuyerVerifyEmailInner() {
-  const searchParams = useSearchParams();
-  // F3-004 (mirrors reset-password): capture the single-use token once, then
-  // strip it from the visible URL — it's kept in state and POSTed in the body.
-  const [token] = React.useState(() => searchParams.get("token") ?? "");
-  React.useEffect(() => {
-    if (typeof window !== "undefined" && window.location.search) {
-      window.history.replaceState(null, "", window.location.pathname);
-    }
-  }, []);
+  // The single-use token arrives in the URL fragment (`#t=`; legacy `?token=` for links emailed
+  // before the change). It is read once, scrubbed from the address bar, kept in memory and
+  // POSTed in the body — never re-read from the URL, never logged.
+  const { token, ready } = useAccountLinkToken("buyerVerifyEmail");
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [done, setDone] = React.useState(false);
@@ -34,15 +30,14 @@ function BuyerVerifyEmailInner() {
     try {
       await buyerVerifyEmail(token);
       setDone(true);
-    } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        "Could not verify your email. The link may have expired.";
-      setApiError(typeof msg === "string" ? msg : "Could not verify your email.");
+    } catch {
+      setApiError(VERIFY_FAILED_COPY);
     } finally {
       setSubmitting(false);
     }
   };
+
+  if (!ready) return null;
 
   return (
     <AuthShell audience="retailer" kicker="Retailer account" title="Confirm your email.">
@@ -94,9 +89,5 @@ function BuyerVerifyEmailInner() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function BuyerVerifyEmailPage() {
-  return (
-    <React.Suspense fallback={null}>
-      <BuyerVerifyEmailInner />
-    </React.Suspense>
-  );
+  return <BuyerVerifyEmailInner />;
 }

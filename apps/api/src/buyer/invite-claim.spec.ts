@@ -9,6 +9,7 @@ import { EmailService } from "../email/email.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { FakeCall, FakeTable, installFakeTables } from "../testing/claim-fake";
+import { hashInviteToken } from "./invite-token";
 
 jest.mock("google-auth-library", () => ({ OAuth2Client: jest.fn() }));
 
@@ -19,6 +20,7 @@ jest.mock("google-auth-library", () => ({ OAuth2Client: jest.fn() }));
  * its writes.
  */
 const TOKEN = "invite-token-1";
+const HASH = hashInviteToken(TOKEN);
 const GENERIC = "Invite not found or already used";
 
 describe("invite link — claimed atomically by both consumers", () => {
@@ -34,7 +36,8 @@ describe("invite link — claimed atomically by both consumers", () => {
     customerId: "cust-1",
     status: "INVITED",
     buyerAccountId: null as string | null,
-    inviteToken: TOKEN as string | null,
+    inviteToken: null as string | null,
+    inviteTokenHash: HASH as string | null,
     inviteExpiresAt: new Date(Date.now() + 3_600_000) as Date | null,
     inviteMethod: "EMAIL",
     linkedAt: null as Date | null,
@@ -103,7 +106,11 @@ describe("invite link — claimed atomically by both consumers", () => {
     const winner = (results.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<any>)
       .value;
     expect(winner).toMatchObject({ tenantSlug: "acme-foods", linkId: "link-1" });
-    expect(links.rows[0]).toMatchObject({ status: "ACTIVE", inviteToken: null });
+    expect(links.rows[0]).toMatchObject({
+      status: "ACTIVE",
+      inviteToken: null,
+      inviteTokenHash: null,
+    });
     expect(["buyer-a", "buyer-b"]).toContain(links.rows[0]!.buyerAccountId);
     // Exactly one write ever matched.
     const claims = log.filter((c) => c.op === "link.updateMany");
@@ -118,7 +125,11 @@ describe("invite link — claimed atomically by both consumers", () => {
     const webWon = web.status === "fulfilled";
     // Google's accept never throws: a lost claim is ignored, as an expired invite is.
     expect(goog.status).toBe("fulfilled");
-    expect(links.rows[0]).toMatchObject({ status: "ACTIVE", inviteToken: null });
+    expect(links.rows[0]).toMatchObject({
+      status: "ACTIVE",
+      inviteToken: null,
+      inviteTokenHash: null,
+    });
     expect(links.rows[0]!.buyerAccountId).toBe(webWon ? "buyer-web" : "buyer-g");
     if (!webWon) {
       expect((web as PromiseRejectedResult).reason).toBeInstanceOf(NotFoundException);
@@ -142,7 +153,11 @@ describe("invite link — claimed atomically by both consumers", () => {
 
     await Promise.all([googleAccept("buyer-a"), googleAccept("buyer-b")]);
 
-    expect(links.rows[0]).toMatchObject({ status: "ACTIVE", inviteToken: null });
+    expect(links.rows[0]).toMatchObject({
+      status: "ACTIVE",
+      inviteToken: null,
+      inviteTokenHash: null,
+    });
     expect(["buyer-a", "buyer-b"]).toContain(links.rows[0]!.buyerAccountId);
     const matched = log.filter((c) => c.op === "link.updateMany");
     expect(matched).toHaveLength(2);
@@ -156,16 +171,19 @@ describe("invite link — claimed atomically by both consumers", () => {
     const claim = log.find((c) => c.op === "link.updateMany" && c.inTx)!;
     expect(claim.args.where).toEqual({
       id: "link-1",
-      inviteToken: TOKEN,
       status: { in: ["INVITED", "PENDING_SELLER_APPROVAL"] },
       customer: { deletedAt: null },
-      OR: [{ inviteExpiresAt: null }, { inviteExpiresAt: { gt: expect.any(Date) } }],
+      AND: [
+        { OR: [{ inviteTokenHash: HASH }, { inviteToken: TOKEN }] },
+        { OR: [{ inviteExpiresAt: null }, { inviteExpiresAt: { gt: expect.any(Date) } }] },
+      ],
     });
     expect(claim.args.data).toEqual({
       buyerAccountId: "buyer-a",
       status: "ACTIVE",
       linkedAt: expect.any(Date),
       inviteToken: null,
+      inviteTokenHash: null,
       inviteExpiresAt: null,
     });
   });
@@ -178,15 +196,18 @@ describe("invite link — claimed atomically by both consumers", () => {
     const claim = log.find((c) => c.op === "link.updateMany")!;
     expect(claim.args.where).toEqual({
       id: "link-1",
-      inviteToken: TOKEN,
       status: { in: ["INVITED", "PENDING_SELLER_APPROVAL"] },
       customer: { deletedAt: null },
-      OR: [{ inviteExpiresAt: null }, { inviteExpiresAt: { gt: expect.any(Date) } }],
+      AND: [
+        { OR: [{ inviteTokenHash: HASH }, { inviteToken: TOKEN }] },
+        { OR: [{ inviteExpiresAt: null }, { inviteExpiresAt: { gt: expect.any(Date) } }] },
+      ],
     });
     expect(claim.args.data).toEqual({
       buyerAccountId: "buyer-g",
       status: "ACTIVE",
       inviteToken: null,
+      inviteTokenHash: null,
       inviteExpiresAt: null,
       linkedAt: expect.any(Date),
     });
@@ -202,6 +223,7 @@ describe("invite link — claimed atomically by both consumers", () => {
         status: "ACTIVE",
         buyerAccountId: "buyer-a",
         inviteToken: null,
+        inviteTokenHash: null,
         inviteExpiresAt: null,
         customer: { id: "cust-2", deletedAt: null },
       }),
@@ -212,7 +234,7 @@ describe("invite link — claimed atomically by both consumers", () => {
     expect(err).toBeInstanceOf(ConflictException);
     expect(links.rows[0]).toMatchObject({
       status: "INVITED",
-      inviteToken: TOKEN,
+      inviteTokenHash: HASH,
       buyerAccountId: null,
     });
   });
@@ -255,8 +277,8 @@ describe("invite link — claimed atomically by both consumers", () => {
       const view = links.view.bind(links);
       links.view = (undo) => {
         const v = view(undo);
-        const read = v.findUnique;
-        v.findUnique = async (a) => {
+        const read = v.findFirst;
+        v.findFirst = async (a) => {
           const found = await read(a);
           const snapshot = found && { ...found };
           if (found) found.inviteExpiresAt = new Date(Date.now() - 1000);
@@ -270,7 +292,7 @@ describe("invite link — claimed atomically by both consumers", () => {
 
       expect(err).toBeInstanceOf(NotFoundException);
       expect(err.message).toBe(GENERIC);
-      expect(links.rows[0]).toMatchObject({ status: "INVITED", inviteToken: TOKEN });
+      expect(links.rows[0]).toMatchObject({ status: "INVITED", inviteTokenHash: HASH });
     });
   });
 

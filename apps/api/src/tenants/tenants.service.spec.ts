@@ -1,6 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
-import { JwtService } from "@nestjs/jwt";
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { TenantsService } from "./tenants.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -109,7 +108,6 @@ describe("TenantsService", () => {
             }),
           },
         },
-        { provide: JwtService, useValue: { sign: jest.fn().mockReturnValue("mock.jwt.token") } },
         { provide: RESEND_LIMITER, useValue: limiter },
       ],
     }).compile();
@@ -359,8 +357,7 @@ describe("TenantsService", () => {
           {} as any,
           {} as any,
           email as any,
-          { get: jest.fn(() => "test-jwt-secret-0123456789-abcdefghijklmnop") } as any,
-          {} as any,
+          { get: jest.fn(() => "https://app.test") } as any,
         );
         expect(await bare.performResend("owner@acme.example")).toBe(false);
         expect(email.send).not.toHaveBeenCalled();

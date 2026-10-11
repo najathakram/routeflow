@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { FakeTable, installFakeTables } from "../testing/claim-fake";
 
 jest.mock("bcrypt", () => ({ compare: jest.fn(), hash: jest.fn() }));
 
@@ -116,11 +117,13 @@ describe("BuyerAuthService — registration email verification", () => {
 
       const sendArg = emailService.send.mock.calls[0]![0];
       expect(sendArg.to).toBe("buyer@example.com");
-      expect(sendArg.html).toContain("https://web.test/buyer/verify-email?token=");
+      expect(sendArg.html).toContain("https://web.test/buyer/verify-email#t=");
+      // The token rides in the fragment: never in a query string or a path.
+      expect(sendArg.html).not.toContain("?token=");
       expect(sendArg.senderClass).toBe("platform");
 
       // The DB stores only the sha256 of the raw token that was emailed.
-      const rawToken = /token=([0-9a-f]{64})/.exec(sendArg.html)![1]!;
+      const rawToken = /#t=([0-9a-f]{64})/.exec(sendArg.html)![1]!;
       const expectedHash = crypto.createHash("sha256").update(rawToken).digest("hex");
       expect(createArg.data.tokenHash).toBe(expectedHash);
     });
@@ -161,54 +164,46 @@ describe("BuyerAuthService — registration email verification", () => {
       baseRecord = makeBaseRecord();
     });
 
-    beforeEach(() => {
-      (prisma.$transaction as jest.Mock).mockImplementation((ops: any[]) =>
-        Promise.all(ops.map(() => ({}))),
-      );
-    });
+    // The consume is a transaction callback; the claim semantics (concurrency, rollback, account
+    // status) are pinned against in-memory tables in buyer-verify-link-claim.spec.ts.
+    let tokens: FakeTable;
+    let accounts: FakeTable;
+    const seed = (token: Record<string, unknown> | null) => {
+      tokens = new FakeTable(token ? [token] : [], "token");
+      accounts = new FakeTable([{ id: "buyer-1", status: "ACTIVE", deletedAt: null }], "account");
+      installFakeTables(prisma, { buyerEmailVerificationToken: tokens, buyerAccount: accounts });
+    };
 
     it("marks the token used and flips emailVerified in one transaction", async () => {
-      prisma.buyerEmailVerificationToken.findUnique.mockResolvedValue(baseRecord as any);
+      seed(baseRecord);
 
       const result = await service.verifyEmail(rawToken);
 
       expect(result.message).toContain("Email verified");
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-      expect(prisma.buyerEmailVerificationToken.update).toHaveBeenCalledWith({
-        where: { tokenHash: fakeHash },
-        data: { usedAt: expect.any(Date) },
-      });
-      expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
-        where: { id: "buyer-1" },
-        data: { emailVerified: true },
-      });
+      expect(tokens.rows[0]!.usedAt).toBeInstanceOf(Date);
+      expect(accounts.rows[0]!.emailVerified).toBe(true);
     });
 
     it("throws 400 when the token is not found", async () => {
-      prisma.buyerEmailVerificationToken.findUnique.mockResolvedValue(null);
+      seed(null);
 
       await expect(service.verifyEmail("badtoken")).rejects.toThrow(BadRequestException);
-      expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
+      expect(accounts.rows[0]!.emailVerified).toBeUndefined();
     });
 
     it("throws 400 when the token has already been used", async () => {
-      prisma.buyerEmailVerificationToken.findUnique.mockResolvedValue({
-        ...baseRecord,
-        usedAt: new Date(Date.now() - 60_000),
-      } as any);
+      seed({ ...baseRecord, usedAt: new Date(Date.now() - 60_000) });
 
       await expect(service.verifyEmail(rawToken)).rejects.toThrow(BadRequestException);
-      expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
+      expect(accounts.rows[0]!.emailVerified).toBeUndefined();
     });
 
     it("throws 400 when the token has expired", async () => {
-      prisma.buyerEmailVerificationToken.findUnique.mockResolvedValue({
-        ...baseRecord,
-        expiresAt: new Date(Date.now() - 60_000),
-      } as any);
+      seed({ ...baseRecord, expiresAt: new Date(Date.now() - 60_000) });
 
       await expect(service.verifyEmail(rawToken)).rejects.toThrow(BadRequestException);
-      expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
+      expect(accounts.rows[0]!.emailVerified).toBeUndefined();
     });
   });
 
@@ -227,7 +222,7 @@ describe("BuyerAuthService — registration email verification", () => {
       });
       expect(prisma.buyerEmailVerificationToken.create).toHaveBeenCalledTimes(1);
       expect(emailService.send.mock.calls[0]![0].html).toContain(
-        "https://web.test/buyer/verify-email?token=",
+        "https://web.test/buyer/verify-email#t=",
       );
     });
 

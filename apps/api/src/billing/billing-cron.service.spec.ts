@@ -976,10 +976,12 @@ describe("BillingCronService", () => {
   });
 
   describe("seat-free bulk deactivation burns the freed users' account links", () => {
-    const burnedIds = (tx: any) =>
-      tx.$executeRaw.mock.calls
-        .filter(([strings]: any[]) => strings.join("").includes('UPDATE "PasswordResetToken"'))
-        .map((c: any[]) => c[1]);
+    // ONE statement burns the whole batch: `ANY(${ids}::text[])` binds the id list as one array.
+    const burnStatements = (tx: any) =>
+      tx.$executeRaw.mock.calls.filter(([strings]: any[]) =>
+        strings.join("").includes('UPDATE "PasswordResetToken"'),
+      );
+    const burnedIds = (tx: any) => burnStatements(tx).flatMap((c: any[]) => c[1]);
     const downgrade = (over: Record<string, unknown> = {}) => ({
       tenantId: "t1",
       planKey: "BUSINESS",
@@ -999,6 +1001,9 @@ describe("BillingCronService", () => {
       await svc.applyScheduledDowngrades();
 
       expect(burnedIds(tx)).toEqual(["u2", "u3"]);
+      // one statement for the whole batch, not one per seat
+      expect(burnStatements(tx)).toHaveLength(1);
+      expect(burnStatements(tx)[0][0].join("?")).toContain('"userId" = ANY(?::text[])');
       // the write is keyed on the very ids that were burned (never a re-evaluated predicate)
       const write = tx.user.updateMany.mock.calls[0][0];
       expect(write.where.id).toMatchObject({ in: ["u2", "u3"], notIn: ["u1"] });

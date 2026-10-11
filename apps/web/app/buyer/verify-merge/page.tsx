@@ -1,42 +1,53 @@
 "use client";
 
 import * as React from "react";
-import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { CheckCircle, XCircle, Loader2, ShieldCheck } from "lucide-react";
 import { AuthShell } from "@/components/auth";
+import { useAccountLinkToken } from "@/lib/account-link-token";
 
-// useSearchParams() requires Suspense — force dynamic rendering to avoid
-// Next.js static-generation export error at build time.
-export const dynamic = "force-dynamic";
+// Fixed copy only: the page never displays server text.
+const MERGE_VERIFIED_COPY = "Your account ownership is confirmed.";
+const MERGE_FAILED_COPY = "We could not verify this link. It may be invalid or have expired.";
+const MERGE_MISSING_COPY = "This verification link is invalid or incomplete.";
 
 function VerifyMergeContent() {
-  const params = useSearchParams();
-  const token = params.get("token");
+  // The single-use token arrives in the URL fragment (`#t=`; legacy `?token=` for links emailed
+  // before the change). It is read once, scrubbed from the address bar and POSTed in the body —
+  // never placed in a request URL, never logged.
+  const { token, ready } = useAccountLinkToken("buyerMerge");
 
   const [status, setStatus] = React.useState<"loading" | "success" | "error">("loading");
   const [message, setMessage] = React.useState("");
 
+  // The token is single-use: React strict mode's double effect run must not POST it twice.
+  const posted = React.useRef(false);
+
   React.useEffect(() => {
+    if (!ready || posted.current) return;
+    posted.current = true;
     if (!token) {
       setStatus("error");
-      setMessage("No verification token provided.");
+      setMessage(MERGE_MISSING_COPY);
       return;
     }
 
     const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
-    fetch(`${apiBase}/buyer/auth/verify-merge/${token}`)
-      .then(async (res) => {
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.message ?? "Verification failed");
+    fetch(`${apiBase}/buyer/auth/verify-merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("verify-merge failed");
         setStatus("success");
-        setMessage(data.message ?? "Your account ownership is confirmed.");
+        setMessage(MERGE_VERIFIED_COPY);
       })
-      .catch((err: unknown) => {
+      .catch(() => {
         setStatus("error");
-        setMessage(err instanceof Error ? err.message : "Verification failed.");
+        setMessage(MERGE_FAILED_COPY);
       });
-  }, [token]);
+  }, [token, ready]);
 
   // The shell owns the page heading: it announces the state the card is showing,
   // exactly as the old page's own per-state heading did (MED-1).
@@ -105,9 +116,5 @@ function VerifyMergeContent() {
 }
 
 export default function VerifyMergePage() {
-  return (
-    <React.Suspense fallback={null}>
-      <VerifyMergeContent />
-    </React.Suspense>
-  );
+  return <VerifyMergeContent />;
 }

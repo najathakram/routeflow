@@ -7,6 +7,7 @@ import { EmailService } from "../email/email.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
 import type { RequestSellerDto } from "./dto/request-seller.dto";
+import { hashInviteToken } from "./invite-token";
 
 /**
  * Security regression pin for `BuyerService.requestSeller` (buyer-connect
@@ -363,13 +364,17 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
       tenantId: "tenant-1",
       status: "PENDING_SELLER_APPROVAL",
       buyerAccountId: "buyer-7", // the un-proven requester currently on the row
-      inviteToken: "secret-token",
+      inviteToken: null,
+      inviteTokenHash: hashInviteToken("secret-token"),
       inviteExpiresAt: new Date("2099-01-01"),
       inviteMethod: "EMAIL",
       tenant: { id: "tenant-1", name: "Acme Foods", slug: "acme-foods" },
     };
-    prisma.customerLink.findUnique.mockResolvedValue(requestedAgainstInvite as any);
-    prisma.customerLink.findFirst.mockResolvedValue(null); // invitee has no other link here
+    // The token lookup finds the row by its hash; the invitee has no other link here (null).
+    prisma.customerLink.findFirst.mockImplementation((async (args: any) =>
+      args?.where?.inviteTokenHash === hashInviteToken("secret-token")
+        ? requestedAgainstInvite
+        : null) as any);
     prisma.customerLink.updateMany.mockResolvedValue({ count: 1 } as any);
 
     await expect(service.getInviteDetails("secret-token")).resolves.toMatchObject({
@@ -382,11 +387,12 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     // The invitee — not the requester — ends up owning the ACTIVE link, token consumed.
     expect(prisma.customerLink.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ id: "link-7", inviteToken: "secret-token" }),
+        where: expect.objectContaining({ id: "link-7" }),
         data: expect.objectContaining({
           buyerAccountId: "true-invitee",
           status: "ACTIVE",
           inviteToken: null,
+          inviteTokenHash: null,
         }),
       }),
     );
@@ -422,13 +428,14 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
         status: "PENDING_SELLER_APPROVAL",
         buyerAccountId: "buyer-7c",
         inviteToken: null,
+        inviteTokenHash: null,
         inviteExpiresAt: null,
       },
     });
     expect(result.pending).toBe(true);
 
     // With the token gone the emailed link no longer resolves to anything.
-    prisma.customerLink.findUnique.mockResolvedValue(null);
+    prisma.customerLink.findFirst.mockResolvedValue(null);
     await expect(service.getInviteDetails("revoked-token")).rejects.toThrow(NotFoundException);
   });
 
@@ -716,14 +723,16 @@ describe("BuyerService reconnect paths — removed customer (B141)", () => {
       tenantId: "tenant-1",
       status: "INVITED",
       buyerAccountId: null,
-      inviteToken: "secret-token",
+      inviteToken: null,
+      inviteTokenHash: hashInviteToken("secret-token"),
       inviteExpiresAt: new Date("2099-01-01"),
       inviteMethod: "EMAIL",
       tenant: { id: "tenant-1", name: "Acme Foods", slug: "acme-foods" },
       customer: { id: "cust-1", deletedAt },
     };
     prisma.customerLink.updateMany.mockResolvedValue({ count: 1 } as any);
-    prisma.customerLink.findUnique.mockImplementation((async (args: any) => {
+    prisma.customerLink.findFirst.mockImplementation((async (args: any) => {
+      if (args?.where?.inviteTokenHash !== row.inviteTokenHash) return null;
       const rel = args?.where?.customer;
       if (rel?.deletedAt === null && row.customer.deletedAt !== null) return null;
       return row;

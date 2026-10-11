@@ -28,7 +28,7 @@ const PERMANENT_EXPECTED: Record<string, number> = {
   "lib/reason-copy.ts": 1,
 };
 /** The exact pending total (reads still to be converted by the B986 area PRs). */
-const PENDING_TOTAL = 226;
+const PENDING_TOTAL = 217;
 
 describe("no raw server message in apps/web UI (B986 ratchet)", () => {
   const found = scanTree(WEB);

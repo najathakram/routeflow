@@ -47,6 +47,7 @@ const EXPECTED_NAMES = [
   "mailbox-alert.sweepPending",
   "email.pruneDeliveries",
   "counter.parkSweep",
+  "auth.linkTokenSweep",
 ].sort();
 
 function collectSourceFiles(dir: string, out: string[] = [], includeSpecs = false): string[] {
@@ -124,7 +125,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("has exactly 30 `@LeaderCron(` sites, every one of them well-formed", () => {
+  it("has exactly 31 `@LeaderCron(` sites, every one of them well-formed", () => {
     const declared = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON), 0);
     const wellFormed = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON_SITE), 0);
 
@@ -141,7 +142,8 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     // B1158 added billing.reconcileParkedCheckouts (parked ACH/SEPA checkouts), 27 -> 28.
     // R1 option B added billing-cron.pushUpcomingDowngradePrices (the pre-renewal downgrade price push), 28 -> 29.
     // SA-748 added counter.parkSweep (hourly parked-cart cleanup), 29 -> 30.
-    expect(declared).toBe(30);
+    // Account-link PR-1 added auth.linkTokenSweep (daily expired-link cleanup, four tables), 30 -> 31.
+    expect(declared).toBe(31);
     // A site that does not match the full `(expr, "name")` shape would be invisible to the name
     // assertions below, so pin the two counts together.
     expect(wellFormed).toBe(declared);

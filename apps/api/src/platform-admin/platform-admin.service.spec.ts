@@ -3660,8 +3660,9 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(created.tokenHash).toMatch(/^[0-9a-f]{64}$/);
       expect(created.expiresAt.getTime() - Date.now()).toBeGreaterThan(71.9 * 3600_000);
       const call = emailServiceMock.sendTenantWelcomeEmail.mock.calls[0][0];
-      const rawToken = String(call.setPasswordUrl).split("token=")[1];
-      expect(call.setPasswordUrl).toBe(`http://localhost:3001/reset-password?token=${rawToken}`);
+      const rawToken = String(call.setPasswordUrl).split("#t=")[1];
+      expect(call.setPasswordUrl).toBe(`http://localhost:3001/reset-password#t=${rawToken}`);
+      expect(call.setPasswordUrl).not.toContain("?token=");
       expect(rawToken).toMatch(/^[0-9a-f]{64}$/);
       expect(created.tokenHash).not.toBe(rawToken);
       expect(call).toMatchObject({
@@ -3784,7 +3785,7 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(result.welcomeEmail).toMatchObject({ delivered: true });
       const call = emailServiceMock.sendTenantWelcomeEmail.mock.calls[0][0];
       expect(call.loginUrl).toBe("https://app.example.com/login");
-      expect(call.setPasswordUrl).toMatch(/^https:\/\/app\.example\.com\/reset-password\?token=/);
+      expect(call.setPasswordUrl).toMatch(/^https:\/\/app\.example\.com\/reset-password#t=/);
     });
 
     it("outside production the localhost fallback still sends (local dev)", async () => {

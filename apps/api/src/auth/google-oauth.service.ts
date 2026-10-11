@@ -24,6 +24,8 @@ import type { DeviceInfo } from "./auth.service";
 import { escapeHtml } from "../common/html-escape";
 import { DERIVED_JWT_LABELS, derivedJwtKey } from "../common/derived-jwt-key";
 import { casLinkProviderId, resolveBySubThenEmail } from "./oauth-account-link";
+import { decodeNonceValue, encodeNonceValue } from "./oauth-nonce-value";
+import { clearInvite, findLiveInvite, inviteClaimWhere } from "../buyer/invite-token";
 import {
   BUYER_ACCESS_AUDIENCE,
   BUYER_REFRESH_AUDIENCE,
@@ -37,7 +39,6 @@ interface OAuthState {
   type: "platform" | "tenant";
   nonce: string;
   tenantSlug?: string;
-  inviteToken?: string;
   /** "portal" = buyer portal via invite; "staff" = tenant dashboard; "buyer-standalone" = buyer portal without seller context */
   context?: "portal" | "staff" | "buyer-standalone";
   /** When set, this is a link-account flow for an already-authenticated user. */
@@ -72,7 +73,12 @@ export interface GoogleProfile {
   picture: string;
   type: "platform" | "tenant";
   tenantSlug?: string;
-  inviteToken?: string;
+  /**
+   * The invite the buyer arrived with. It is NEVER part of the signed `state` (which is visible in
+   * the browser URL, history and logs): it rides in the server-side nonce entry and is read back
+   * at the callback.
+   */
+  inviteSecret?: string;
   context?: "portal" | "staff" | "buyer-standalone";
   /** When set, this is a link-account flow — attach Google to this existing user ID. */
   linkUserId?: string;
@@ -246,7 +252,7 @@ export class GoogleOAuthService {
   async generateAuthUrl(
     type: "platform" | "tenant",
     tenantSlug?: string,
-    inviteToken?: string,
+    inviteSecret?: string,
     context?: "portal" | "staff" | "buyer-standalone",
     mobile?: boolean,
     deviceState?: string,
@@ -259,7 +265,6 @@ export class GoogleOAuthService {
       type,
       nonce,
       ...(tenantSlug && { tenantSlug }),
-      ...(inviteToken && { inviteToken }),
       ...(context && { context }),
       ...(mobile && { mobile: true }),
       // F12-005: carry the device state nonce through Google (opaque round-trip).
@@ -274,8 +279,15 @@ export class GoogleOAuthService {
     // bare presence flag, so the callback can reject a nonce presented alongside a
     // payload it wasn't minted for.
     const payloadHash = crypto.createHash("sha256").update(payloadJson).digest("hex");
+    // The state carries only the nonce reference. An invite token (a secret) is stored in the
+    // nonce entry next to the payload hash, so it never appears in the state or the Google URL.
     this.redis
-      .set(`oauth:nonce:${nonce}`, payloadHash, "EX", NONCE_TTL_SECS)
+      .set(
+        `oauth:nonce:${nonce}`,
+        encodeNonceValue(payloadHash, inviteSecret),
+        "EX",
+        NONCE_TTL_SECS,
+      )
       .catch((e: Error) => this.logger.warn(`Nonce write failed: ${e.message}`));
 
     const redirectUri = this.resolveRedirectUri(type);
@@ -414,7 +426,8 @@ export class GoogleOAuthService {
     // The MAC above already proves the payload wasn't tampered with post-mint; this
     // additionally proves it's the SAME payload the nonce was issued for.
     const presentedHash = crypto.createHash("sha256").update(payloadJson).digest("hex");
-    const storedBuf = Buffer.from(stored, "utf-8");
+    const { payloadHash: storedHash, inviteSecret } = decodeNonceValue(stored);
+    const storedBuf = Buffer.from(storedHash, "utf-8");
     const presentedBuf = Buffer.from(presentedHash, "utf-8");
     if (
       storedBuf.length !== presentedBuf.length ||
@@ -458,7 +471,7 @@ export class GoogleOAuthService {
       picture: idPayload.picture ?? "",
       type: stateObj.type,
       tenantSlug: stateObj.tenantSlug,
-      inviteToken: stateObj.inviteToken,
+      inviteSecret,
       context: stateObj.context,
       linkUserId: stateObj.linkUserId,
       mobile: stateObj.mobile,
@@ -836,9 +849,9 @@ export class GoogleOAuthService {
       this.logger.log(`BuyerAccount created via Google: ${buyer.id}`);
     }
 
-    // Process an invite token embedded in the OAuth state
-    if (profile.inviteToken) {
-      await this.acceptInviteToken(profile.inviteToken, buyer.id).catch((e: Error) =>
+    // Process the invite token carried in the server-side nonce entry
+    if (profile.inviteSecret) {
+      await this.acceptInviteToken(profile.inviteSecret, buyer.id).catch((e: Error) =>
         this.logger.warn(`Invite token processing failed: ${e.message}`),
       );
     }
@@ -875,40 +888,26 @@ export class GoogleOAuthService {
   private async acceptInviteToken(token: string, buyerAccountId: string): Promise<void> {
     // PENDING_SELLER_APPROVAL is redeemable too: a buyer-initiated request against an
     // INVITED row flips the status while PRESERVING the token, and the true invitee's
-    // emailed link must keep working. Mirrors BuyerService.acceptInvite's gate, including
-    // REG-B141's `customer: { deletedAt: null }`: a removed customer's invite is not
-    // redeemable, so the link is left untouched and the token is NOT consumed — restore has
-    // to be able to bring the pending invite back with the customer. The Google path ignores
-    // a non-redeemable token silently (`return`), exactly as it does an expired one.
-    const redeemable = {
-      inviteToken: token,
-      status: {
-        in: ["INVITED", "PENDING_SELLER_APPROVAL"] as ("INVITED" | "PENDING_SELLER_APPROVAL")[],
-      },
-      customer: { deletedAt: null },
-    };
-    const link = await this.prisma.customerLink.findFirst({
-      where: redeemable,
-      select: { id: true },
-    });
+    // emailed link must keep working. Mirrors BuyerService.acceptInvite's gate (the shared
+    // inviteClaimWhere), including REG-B141's removed-customer rule: a removed customer's
+    // invite is not redeemable, so the link is left untouched and the token is NOT consumed —
+    // restore has to be able to bring the pending invite back with the customer. The Google path
+    // ignores a non-redeemable token silently (`return`), exactly as it does an expired one.
+    const now = new Date();
+    const link = await findLiveInvite(this.prisma, token, now, { select: { id: true } });
     if (!link) return;
 
-    // The claim is the gate: one conditional update consumes the token, so a concurrent accept
-    // of the same link (Google or web) gets count 0 and is ignored here, as an expired one is.
-    const now = new Date();
+    // The claim is the gate: one conditional update consumes the token (both columns), so a
+    // concurrent accept of the same link (Google or web) gets count 0 and is ignored here, as an
+    // expired one is.
     const claim = await this.prisma.customerLink.updateMany({
-      where: {
-        id: link.id,
-        ...redeemable,
-        OR: [{ inviteExpiresAt: null }, { inviteExpiresAt: { gt: now } }],
-      },
-      data: {
+      where: inviteClaimWhere(link.id, token, now),
+      data: clearInvite({
         buyerAccountId,
-        status: "ACTIVE",
-        inviteToken: null,
+        status: "ACTIVE" as const,
         inviteExpiresAt: null,
         linkedAt: now,
-      },
+      }),
     });
     if (claim.count !== 1) return;
     this.logger.log(`CustomerLink accepted via Google invite: buyer=${buyerAccountId}`);

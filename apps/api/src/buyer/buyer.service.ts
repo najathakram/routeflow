@@ -14,6 +14,7 @@ import type { RequestSellerDto } from "./dto/request-seller.dto";
 import type { Prisma } from "@prisma/client";
 import { excludeWalkIn } from "../customers/walk-in-protected";
 import { escapeHtml } from "../common/html-escape";
+import { clearInvite, findLiveInvite, inviteClaimWhere } from "./invite-token";
 
 @Injectable()
 export class BuyerService {
@@ -80,21 +81,20 @@ export class BuyerService {
   // ─── Invite details (public, no auth needed) ──────────────────────────────────
 
   async getInviteDetails(token: string) {
-    const link = await this.prisma.customerLink.findUnique({
-      // REG-B141: an invite for a removed (soft-deleted) customer is not redeemable — it reads as
-      // "not found", the same shape as a consumed token, so a removed customer can never be
-      // reconnected into a portal the seller-context guard refuses. Stateless: restore re-enables it.
-      where: { inviteToken: token, customer: { deletedAt: null } },
-      include: {
-        tenant: { select: { id: true, name: true, slug: true } },
-      },
+    // REG-B141: an invite for a removed (soft-deleted) customer is not redeemable — it reads as
+    // "not found", the same shape as a consumed token, so a removed customer can never be
+    // reconnected into a portal the seller-context guard refuses. Stateless: restore re-enables it.
+    // (findLiveInvite applies that gate; it matches the stored hash, else a legacy plaintext value
+    // while the legacy window is open.)
+    const link = await findLiveInvite(this.prisma, token, new Date(), {
+      include: { tenant: { select: { id: true, name: true, slug: true } } },
     });
     if (!link) throw new NotFoundException("Invite not found or already used");
     if (link.inviteExpiresAt && link.inviteExpiresAt < new Date()) {
       throw new GoneException("This invite link has expired");
     }
     // PENDING_SELLER_APPROVAL is also redeemable: a buyer-initiated request against an
-    // INVITED row flips the status but PRESERVES inviteToken/inviteExpiresAt, and the
+    // INVITED row flips the status but PRESERVES the invite token and expiry, and the
     // true invitee's emailed link must keep working (acceptInvite then flips the row to
     // ACTIVE under THEIR account). Any other status means the token was consumed.
     if (link.status !== "INVITED" && link.status !== "PENDING_SELLER_APPROVAL") {
@@ -120,11 +120,10 @@ export class BuyerService {
 
   async acceptInvite(token: string, buyerAccountId: string) {
     return this.prisma.$transaction(async (tx) => {
-      const link = await tx.customerLink.findUnique({
-        // REG-B141: same gate as getInviteDetails — a removed customer's invite is not redeemable,
-        // so acceptInvite can never flip its link back to ACTIVE (no write, no tenantSlug handed
-        // back to the client) while the guard refuses every seller-scoped route.
-        where: { inviteToken: token, customer: { deletedAt: null } },
+      // REG-B141: same gate as getInviteDetails — a removed customer's invite is not redeemable,
+      // so acceptInvite can never flip its link back to ACTIVE (no write, no tenantSlug handed
+      // back to the client) while the guard refuses every seller-scoped route.
+      const link = await findLiveInvite(tx, token, new Date(), {
         include: { tenant: { select: { name: true, slug: true } } },
       });
 
@@ -144,20 +143,13 @@ export class BuyerService {
       // that throws after this point rolls the claim back with the rest of the transaction.
       const now = new Date();
       const claim = await tx.customerLink.updateMany({
-        where: {
-          id: link.id,
-          inviteToken: token,
-          status: { in: ["INVITED", "PENDING_SELLER_APPROVAL"] },
-          customer: { deletedAt: null },
-          OR: [{ inviteExpiresAt: null }, { inviteExpiresAt: { gt: now } }],
-        },
-        data: {
+        where: inviteClaimWhere(link.id, token, now),
+        data: clearInvite({
           buyerAccountId,
-          status: "ACTIVE",
+          status: "ACTIVE" as const,
           linkedAt: now,
-          inviteToken: null,
           inviteExpiresAt: null,
-        },
+        }),
       });
       if (claim.count !== 1) throw new NotFoundException("Invite not found or already used");
 
@@ -286,13 +278,12 @@ export class BuyerService {
           status: "ACTIVE",
           linkedAt: now,
         },
-        update: {
+        update: clearInvite({
           buyerAccountId,
-          status: "ACTIVE",
+          status: "ACTIVE" as const,
           linkedAt: now,
-          inviteToken: null,
           inviteExpiresAt: null,
-        },
+        }),
       });
 
       this.logger.log(
@@ -314,7 +305,7 @@ export class BuyerService {
 
     // Not proven — this becomes a request the seller must review, not a connection.
     // `update` (rather than a fresh create) when a row already exists — e.g. an
-    // INVITED link — so inviteToken/inviteExpiresAt are left untouched and the true
+    // INVITED link — so the invite token and expiry are left untouched and the true
     // invitee's link still works.
     //
     // ONLY an INVITED row keeps its token. Every other status is cleared, so a
@@ -329,12 +320,11 @@ export class BuyerService {
           data:
             existing.status === "INVITED"
               ? { status: "PENDING_SELLER_APPROVAL", buyerAccountId }
-              : {
-                  status: "PENDING_SELLER_APPROVAL",
+              : clearInvite({
+                  status: "PENDING_SELLER_APPROVAL" as const,
                   buyerAccountId,
-                  inviteToken: null,
                   inviteExpiresAt: null,
-                },
+                }),
         })
       : // `customerId` is @unique, and two concurrent requests for the same customer both
         // read `existing === null` — upsert so the loser of that race resolves to the same
@@ -401,15 +391,14 @@ export class BuyerService {
 
     await this.prisma.customerLink.update({
       where: { id: link.id },
-      data: {
-        status: "DISCONNECTED",
-        disconnectedBy: "SELLER",
+      data: clearInvite({
+        status: "DISCONNECTED" as const,
+        disconnectedBy: "SELLER" as const,
         disconnectedAt: new Date(),
         // Disconnecting revokes the link — burn any outstanding invite token with it,
         // so it can never be redeemed or revived by a later connect request.
-        inviteToken: null,
         inviteExpiresAt: null,
-      },
+      }),
     });
 
     this.logger.log(`Operator disconnected customer ${customerId} from buyer portal`);
@@ -450,7 +439,11 @@ export class BuyerService {
     await this.prisma.customerLink.update({
       where: { id: link.id },
       // Approving consumes the slot — any invite token the pending row inherited is spent.
-      data: { status: "ACTIVE", linkedAt: new Date(), inviteToken: null, inviteExpiresAt: null },
+      data: clearInvite({
+        status: "ACTIVE" as const,
+        linkedAt: new Date(),
+        inviteExpiresAt: null,
+      }),
     });
 
     return { message: "Buyer connection approved" };
@@ -471,14 +464,13 @@ export class BuyerService {
 
     await this.prisma.customerLink.update({
       where: { id: link.id },
-      data: {
-        status: "DISCONNECTED",
-        disconnectedBy: "BUYER",
+      data: clearInvite({
+        status: "DISCONNECTED" as const,
+        disconnectedBy: "BUYER" as const,
         disconnectedAt: new Date(),
         // See disconnectPortal: a severed link must not leave a redeemable token behind.
-        inviteToken: null,
         inviteExpiresAt: null,
-      },
+      }),
     });
 
     return { message: "Disconnected from seller. Your order history remains accessible to them." };

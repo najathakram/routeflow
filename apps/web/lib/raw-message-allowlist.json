@@ -7,10 +7,6 @@
     "count": 1,
     "why": "B986-3 settings + auth: per-surface raw message read, pending"
   },
-  "app/(auth)/reset-password/page.tsx": {
-    "count": 1,
-    "why": "B986-3 settings + auth: per-surface raw message read, pending"
-  },
   "app/(auth)/signup/page.tsx": {
     "count": 1,
     "why": "B986-3 settings + auth: per-surface raw message read, pending"
@@ -280,10 +276,6 @@
     "count": 1,
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
   },
-  "app/buyer/invite/[token]/page.tsx": {
-    "count": 2,
-    "why": "B986-4 buyer portal: per-surface raw message read, pending"
-  },
   "app/buyer/login/page.tsx": {
     "count": 1,
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
@@ -320,23 +312,7 @@
     "count": 2,
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
   },
-  "app/buyer/reset-password/page.tsx": {
-    "count": 1,
-    "why": "B986-4 buyer portal: per-surface raw message read, pending"
-  },
-  "app/buyer/verify-email/page.tsx": {
-    "count": 1,
-    "why": "B986-4 buyer portal: per-surface raw message read, pending"
-  },
-  "app/buyer/verify-merge/page.tsx": {
-    "count": 3,
-    "why": "B986-4 buyer portal: per-surface raw message read, pending"
-  },
   "app/change-password/page.tsx": {
-    "count": 1,
-    "why": "B986-3 settings + auth: per-surface raw message read, pending"
-  },
-  "app/verify-email/page.tsx": {
     "count": 1,
     "why": "B986-3 settings + auth: per-surface raw message read, pending"
   },

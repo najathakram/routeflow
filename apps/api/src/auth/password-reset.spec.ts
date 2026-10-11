@@ -141,7 +141,10 @@ describe("AuthService — password reset (RF-018)", () => {
       await Promise.resolve();
 
       const html = emailService.send.mock.calls[0]![0].html as string;
-      expect(html).toContain("https://mobile.test/reset-password?token=");
+      expect(html).toContain("https://mobile.test/reset-password#t=");
+      // The token rides in the fragment: never in a query string or a path.
+      expect(html).not.toContain("?token=");
+      expect(html).not.toMatch(/reset-password\/[0-9a-f]{16}/);
       // The URL comes from config, never a hardcoded domain
       expect(html).not.toContain("routeflowmobile-production");
     });
@@ -153,7 +156,8 @@ describe("AuthService — password reset (RF-018)", () => {
       await Promise.resolve();
 
       const html = emailService.send.mock.calls[0]![0].html as string;
-      expect(html).toContain("https://web.test/reset-password?token=");
+      expect(html).toContain("https://web.test/reset-password#t=");
+      expect(html).not.toContain("?token=");
     });
   });
 

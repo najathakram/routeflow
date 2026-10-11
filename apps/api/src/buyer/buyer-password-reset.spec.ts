@@ -102,7 +102,8 @@ describe("BuyerAuthService — password reset", () => {
       await Promise.resolve(); // email is fire-and-forget
       const sendArg = emailService.send.mock.calls[0]![0];
       expect(sendArg.to).toBe("buyer@example.com");
-      expect(sendArg.html).toContain("https://web.test/buyer/reset-password?token=");
+      expect(sendArg.html).toContain("https://web.test/buyer/reset-password#t=");
+      expect(sendArg.html).not.toContain("?token=");
       expect(sendArg.senderClass).toBe("platform");
     });
 

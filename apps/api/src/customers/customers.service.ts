@@ -53,6 +53,13 @@ import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { UpdateBuyerProfileDto } from "../buyer/dto/update-buyer-profile.dto";
+import {
+  clearInvite,
+  hasLiveInviteToken,
+  issueInviteData,
+  newInviteToken,
+  withoutInviteSecrets,
+} from "../buyer/invite-token";
 import { omitStaffOnlyCustomerFields } from "./self-service-fields";
 import { type SelfServiceWriteArgs, writeSelfServiceProfile } from "./self-service-audit";
 import { toCustomerOrder } from "../common/staff-only-fields";
@@ -2480,7 +2487,9 @@ export class CustomersService {
     // (redundant with that import) and, incidentally, threw under Jest's CJS
     // transform (`--experimental-vm-modules` required for dynamic import of a
     // built-in), which is exactly why zero tests ever exercised this method.
-    const token = crypto.randomBytes(32).toString("hex");
+    // The token is stored only as its hash (issueInviteData nulls the plaintext column); the
+    // plain value exists here and in the emailed/returned link, nowhere else.
+    const token = newInviteToken();
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     await this.prisma.customerLink.upsert({
@@ -2490,14 +2499,14 @@ export class CustomersService {
         tenantId,
         buyerAccountId: null,
         status: "INVITED",
-        inviteToken: token,
+        ...issueInviteData(token),
         inviteExpiresAt: expiresAt,
         inviteMethod: dto.method as any,
       },
       update: {
         buyerAccountId: null,
         status: "INVITED",
-        inviteToken: token,
+        ...issueInviteData(token),
         inviteExpiresAt: expiresAt,
         inviteMethod: dto.method as any,
         disconnectedAt: null,
@@ -2512,11 +2521,11 @@ export class CustomersService {
     });
     const sellerName = tenantCfg?.businessName ?? "Your supplier";
     const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
-    const inviteUrl = `${webUrl}/buyer/invite/${token}`;
+    // The token rides in the URL fragment: a fragment is never sent to a server, a proxy log or
+    // a Referer. The invite page reads it client-side and posts it in a request body.
+    const inviteUrl = `${webUrl}/buyer/invite#t=${token}`;
 
-    this.logger.log(
-      `Portal invite for customer ${customerId} → ${toEmail} | token ${token.slice(0, 8)}...`,
-    );
+    this.logger.log(`Portal invite for customer ${customerId} → ${toEmail}`);
 
     // B212-class fix (2026-09-12): this used to claim "Email sending is
     // best-effort — if no email transport, it logs only" and then never sent
@@ -2575,16 +2584,15 @@ export class CustomersService {
     }
     await this.prisma.customerLink.update({
       where: { id: link.id },
-      data: {
-        status: "DISCONNECTED",
-        disconnectedBy: "SELLER",
+      data: clearInvite({
+        status: "DISCONNECTED" as const,
+        disconnectedBy: "SELLER" as const,
         disconnectedAt: new Date(),
         // Disconnecting revokes the link (this button also cancels an outstanding INVITED
         // invite) — burn the token with it so it can never be redeemed, or revived by a
         // later buyer connect request flipping the row to PENDING_SELLER_APPROVAL.
-        inviteToken: null,
         inviteExpiresAt: null,
-      },
+      }),
     });
     return { message: "Customer disconnected from buyer portal. All business data preserved." };
   }
@@ -2624,7 +2632,11 @@ export class CustomersService {
     await this.prisma.customerLink.update({
       where: { id: link.id },
       // Approving consumes the link slot: an inherited INVITED invite token is spent with it.
-      data: { status: "ACTIVE", linkedAt: new Date(), inviteToken: null, inviteExpiresAt: null },
+      data: clearInvite({
+        status: "ACTIVE" as const,
+        linkedAt: new Date(),
+        inviteExpiresAt: null,
+      }),
     });
     return { message: "Buyer connection approved" };
   }
@@ -2637,8 +2649,8 @@ export class CustomersService {
     }
     // A row with a LIVE invite token was an INVITED link a buyer requested against (the request keeps the token
     // so the invitee's emailed link works): revert it to INVITED and drop the requester. An expired token falls through to the delete.
-    const inviteStillLive =
-      !!link.inviteToken && (!link.inviteExpiresAt || link.inviteExpiresAt > new Date());
+    // Live = either token column holds one (the plaintext one only inside the legacy window).
+    const inviteStillLive = hasLiveInviteToken(link, new Date());
     if (inviteStillLive) {
       await this.prisma.customerLink.update({
         where: { id: link.id },
@@ -2667,8 +2679,9 @@ export class CustomersService {
     });
     // Additive: flatten the requesting buyer's identity onto each row so consumers (the
     // web bell's pinned "Action needed" list) don't need to reach into nested relations.
+    // The token columns are secrets of the invitee: never echoed to the seller's staff.
     return links.map((link) => ({
-      ...link,
+      ...withoutInviteSecrets(link),
       customerName: link.customer?.businessName || link.customer?.contactName || "Unknown customer",
       buyerName: link.buyerAccount?.name ?? null,
       buyerEmail: link.buyerAccount?.email ?? null,

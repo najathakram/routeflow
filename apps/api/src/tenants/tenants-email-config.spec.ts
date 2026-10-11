@@ -17,7 +17,7 @@ function makeService(cfg: any) {
   } as any;
   const encryption = { encrypt: (v: string) => `enc(${v})` } as any;
   const config = { get: () => "tenants-email-config-test-secret-0123456789" } as any;
-  const svc = new TenantsService(prisma, encryption, {} as any, {} as any, config, {} as any);
+  const svc = new TenantsService(prisma, encryption, {} as any, {} as any, config);
   return { svc, update };
 }
 

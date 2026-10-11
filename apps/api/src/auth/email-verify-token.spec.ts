@@ -39,6 +39,8 @@ const user = {
   createdAt: new Date("2026-10-01T00:00:00Z"),
   tenant: { id: "tenant-1", name: "Acme", slug: "acme" },
 };
+/** A clock inside the window in which a signed (legacy) verification link is still accepted. */
+const IN_WINDOW = new Date("2026-10-12T00:00:00.000Z");
 const claims = { sub: "user-1", tenantId: "tenant-1", type: "email_verify" };
 
 describe("email-verify token keys and audience", () => {
@@ -84,7 +86,7 @@ describe("email-verify token keys and audience", () => {
     tenants = mod.get(TenantsService);
   });
 
-  const verify = (token: string) => auth.verifyEmailAndLogin(token);
+  const verify = (token: string) => auth.verifyEmailAndLogin(token, undefined, IN_WINDOW);
   const refused = (token: string) => expect(verify(token)).rejects.toMatchObject({ status: 400 });
 
   it("accepts a token signed with the derived key and the email-verify audience", async () => {
@@ -96,7 +98,7 @@ describe("email-verify token keys and audience", () => {
     await expect(verify(token)).resolves.toHaveProperty("accessToken");
   });
 
-  it("round-trips a link minted by the signup service", async () => {
+  it("the signup service no longer mints a signed link: it emails a stored token in the fragment", async () => {
     (prisma.user.findFirst as jest.Mock).mockResolvedValue(null);
     (prisma.tenant.findUnique as jest.Mock).mockResolvedValue(null);
     (prisma.tenant.create as jest.Mock).mockImplementation(({ data }: any) => ({
@@ -112,6 +114,8 @@ describe("email-verify token keys and audience", () => {
     (prisma.$transaction as jest.Mock).mockImplementation((fn: any) =>
       fn({ ...prisma, tenantSubscription: (prisma as any).tenantSubscription }),
     );
+    (prisma.userEmailVerificationToken.create as jest.Mock).mockResolvedValue({ id: "evt-1" });
+    const sign = jest.spyOn(jwt, "sign");
     await tenants.register({
       slug: "acme-distribution",
       businessName: "Acme Distribution",
@@ -120,14 +124,16 @@ describe("email-verify token keys and audience", () => {
       adminPassword: "Sup3rSecret!",
     });
     const html: string = email.send.mock.calls[0][0].html;
-    const token = html.match(/token=([\w-]+\.[\w-]+\.[\w-]+)/)![1]!;
-    (prisma.user.findUnique as jest.Mock).mockResolvedValue(user);
-    await expect(verify(token)).resolves.toHaveProperty("accessToken");
-    // and it carries the derived-key signature + audience, not the raw secret
-    expect(() => jwt.verify(token)).toThrow();
-    expect(jwt.verify(token, { secret: verifyKey, audience: "email-verify" })).toMatchObject({
-      type: "email_verify",
-    });
+    const token = html.match(/verify-email#t=([\w-]+)/)![1]!;
+    expect(html).not.toContain("?token=");
+    expect(token).toHaveLength(43); // 32 random bytes, base64url
+    expect(token.split(".")).toHaveLength(1);
+    // only the SHA-256 is stored, never the emailed token itself
+    const stored = (prisma.userEmailVerificationToken.create as jest.Mock).mock.calls[0][0].data;
+    expect(stored.tokenHash).toBe(crypto.createHash("sha256").update(token).digest("hex"));
+    expect(JSON.stringify(stored)).not.toContain(token);
+    expect(stored.userId).toBe("user-1");
+    expect(sign).not.toHaveBeenCalled();
   });
 
   it("refuses a raw-secret token that carries the email-verify audience", async () => {

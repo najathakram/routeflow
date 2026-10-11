@@ -183,7 +183,7 @@ test.describe("Buyer Portal", () => {
     // Capture the invite link from the response or clipboard
     // Try finding the invite URL in page content
     const inviteLink = await page.evaluate(() => {
-      const el = document.querySelector("[data-invite-url], input[value*='/buyer/invite/']");
+      const el = document.querySelector("[data-invite-url], input[value*='/buyer/invite']");
       return el ? (el as HTMLInputElement).value || el.textContent : null;
     });
 

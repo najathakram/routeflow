@@ -9,10 +9,12 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 import { BuyerMergeService } from "./buyer-merge.service";
 import { BuyerJwtAuthGuard } from "./guards/buyer-jwt-auth.guard";
 import { CurrentBuyer } from "./decorators/current-buyer.decorator";
 import type { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
+import { BuyerVerifyMergeDto } from "./dto/buyer-verify-merge.dto";
 
 @ApiTags("buyer-merge")
 @Controller("buyer/auth")
@@ -31,9 +33,25 @@ export class BuyerMergeController {
     return this.mergeService.initiateMerge(buyer.sub, dto.secondaryEmail, dto.notes);
   }
 
+  @Post("verify-merge")
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 900_000, limit: 5 } }) // 5 per 15 min per IP — matches verify-email
+  @ApiOperation({ summary: "Verify ownership of secondary account via emailed token (POST body)" })
+  verifyMergeByBody(@Body() dto: BuyerVerifyMergeDto) {
+    return this.mergeService.verifyMergeToken(dto.token);
+  }
+
+  /**
+   * LEGACY (path token): links emailed before the fragment format carry the token in the URL
+   * path. Kept only until those 24h links have expired (audit redacts the path by route
+   * template); remove together with the web page's legacy query read.
+   */
   @Get("verify-merge/:token")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Verify ownership of secondary account via email link" })
+  @ApiOperation({
+    summary: "Verify ownership of secondary account via a legacy emailed link (deprecated)",
+    deprecated: true,
+  })
   verifyMerge(@Param("token") token: string) {
     return this.mergeService.verifyMergeToken(token);
   }

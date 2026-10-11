@@ -117,7 +117,8 @@ export class BuyerAuthService {
     });
 
     const urls = this.configService.get<AppConfig["urls"]>("urls")!;
-    const verifyUrl = `${urls.web}/buyer/verify-email?token=${rawToken}`;
+    // Fragment, not query: the token never reaches a server log or a Referer header.
+    const verifyUrl = `${urls.web}/buyer/verify-email#t=${rawToken}`;
 
     return this.emailService.send({
       to: account.email,
@@ -136,33 +137,47 @@ export class BuyerAuthService {
    * Consumes a verification token and flips `emailVerified` — the flag
    * `BuyerService.requestSeller` requires before a sign-in-email match may
    * auto-connect to a seller's customer record.
+   *
+   * The link is CLAIMED atomically: the first statement of the transaction is a conditional
+   * `updateMany` on the unused, unexpired token row (of any number of concurrent uses exactly one
+   * sees count 1), then the account is flipped only while it is ACTIVE and not deleted (the
+   * statuses that can resend, sign in or register today). Either miss throws, which rolls the
+   * claim back. Every failure carries the same message. On success the account's other
+   * outstanding verification links are burned.
    */
   async verifyEmail(token: string): Promise<{ message: string }> {
     const tokenHash = this.hashToken(token);
+    // One refusal for every way a link can fail (unknown, used, expired, account not eligible).
+    const refuse = () =>
+      new BadRequestException("Verification link is invalid or has already been used.");
+
+    // Cheap early exit that also names the account; the claim below is what decides.
     const record = await this.prisma.buyerEmailVerificationToken.findUnique({
       where: { tokenHash },
     });
+    if (!record || record.usedAt || record.expiresAt < new Date()) throw refuse();
 
-    if (!record) {
-      throw new BadRequestException("Verification link is invalid or has already been used.");
-    }
-    if (record.usedAt) throw new BadRequestException("Verification link has already been used.");
-    if (record.expiresAt < new Date()) {
-      throw new BadRequestException(
-        "Verification link has expired. Sign in and request a new one from your portal.",
-      );
-    }
+    await this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const claim = await tx.buyerEmailVerificationToken.updateMany({
+        where: { tokenHash, usedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now },
+      });
+      if (claim.count !== 1) throw refuse();
 
-    await this.prisma.$transaction([
-      this.prisma.buyerEmailVerificationToken.update({
-        where: { tokenHash },
-        data: { usedAt: new Date() },
-      }),
-      this.prisma.buyerAccount.update({
-        where: { id: record.buyerAccountId },
+      // Only an active, not-deleted account may verify. Throwing here rolls the claim back.
+      const updated = await tx.buyerAccount.updateMany({
+        where: { id: record.buyerAccountId, status: "ACTIVE", deletedAt: null },
         data: { emailVerified: true },
-      }),
-    ]);
+      });
+      if (updated.count !== 1) throw refuse();
+
+      // The mailbox is proven: any sibling link for this account has nothing left to do.
+      await tx.buyerEmailVerificationToken.updateMany({
+        where: { buyerAccountId: record.buyerAccountId, usedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now },
+      });
+    });
 
     this.logger.log(`BuyerAccount ${record.buyerAccountId} verified their email`);
     return {
@@ -576,7 +591,8 @@ export class BuyerAuthService {
     // The base URL is resolved strictly server-side from config — accepting a
     // client-supplied URL here would let an attacker exfiltrate reset tokens.
     const urls = this.configService.get<AppConfig["urls"]>("urls")!;
-    const resetUrl = `${urls.web}/buyer/reset-password?token=${rawToken}`;
+    // Fragment, not query: the token never reaches a server log or a Referer header.
+    const resetUrl = `${urls.web}/buyer/reset-password#t=${rawToken}`;
 
     // B212-class fix: a real delivery failure for a real buyer used to leave
     // zero trace anywhere. Still fire-and-forget (NOT awaited): the response

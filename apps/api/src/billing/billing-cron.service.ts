@@ -25,7 +25,7 @@ import { lockTenantForLedger } from "./addon-ledger";
 import { isPayingRow } from "./mrr.service";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transition-config.service";
-import { revokeUserLinkTokens } from "../common/revoke-user-link-tokens";
+import { revokeUserLinkTokensMany } from "../common/revoke-user-link-tokens";
 import { StripeService } from "./stripe.service";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { markNeedsReconcile } from "./plan-change-stripe";
@@ -438,8 +438,8 @@ export class BillingCronService {
               },
             });
             if (activeTeam > seatCap) {
-              // Account links die with the seat: select the ids FIRST (inside this tx), burn each
-              // one's outstanding set-password / reset links, then deactivate exactly those ids.
+              // Account links die with the seat: select the ids FIRST (inside this tx), burn all
+              // of their outstanding set-password / reset links in one statement, then deactivate exactly those ids.
               const seatWhere: Prisma.UserWhereInput = {
                 tenantId: s.tenantId,
                 role: { in: ["OPERATOR", "DRIVER"] },
@@ -452,7 +452,7 @@ export class BillingCronService {
                 select: { id: true },
               });
               const freeIds = toFree.map((u) => u.id);
-              for (const userId of freeIds) await revokeUserLinkTokens(tx, userId);
+              await revokeUserLinkTokensMany(tx, freeIds);
               const freed =
                 freeIds.length > 0
                   ? await tx.user.updateMany({

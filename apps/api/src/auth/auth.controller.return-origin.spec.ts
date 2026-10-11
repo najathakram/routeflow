@@ -167,15 +167,7 @@ describe("AuthController — B825 resolveReturnOrigin allow-list", () => {
     it("REG-B825: no return_origin query param resolves to WEB_URL", async () => {
       const { controller, googleOAuth } = buildController();
       const res = { status: jest.fn() };
-      await controller.googleAuthUrl(
-        "acme",
-        "staff",
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        res,
-      );
+      await controller.googleAuthUrl("acme", "staff", undefined, undefined, undefined, res);
       expect(googleOAuth.generateAuthUrl).toHaveBeenCalledWith(
         "tenant",
         "acme",
@@ -190,15 +182,7 @@ describe("AuthController — B825 resolveReturnOrigin allow-list", () => {
     it("REG-B825: the mobile-web origin round-trips into generateAuthUrl unchanged", async () => {
       const { controller, googleOAuth } = buildController();
       const res = { status: jest.fn() };
-      await controller.googleAuthUrl(
-        "acme",
-        "staff",
-        undefined,
-        undefined,
-        undefined,
-        MOBILE_WEB_URL,
-        res,
-      );
+      await controller.googleAuthUrl("acme", "staff", undefined, undefined, MOBILE_WEB_URL, res);
       expect(googleOAuth.generateAuthUrl).toHaveBeenCalledWith(
         "tenant",
         "acme",
@@ -218,7 +202,6 @@ describe("AuthController — B825 resolveReturnOrigin allow-list", () => {
         "staff",
         undefined,
         undefined,
-        undefined,
         "https://evil.example",
         res,
       );
@@ -236,15 +219,7 @@ describe("AuthController — B825 resolveReturnOrigin allow-list", () => {
     it("REG-B825: the native mobile deep-link flow (mobile=1) never resolves a return_origin", async () => {
       const { controller, googleOAuth } = buildController();
       const res = { status: jest.fn() };
-      await controller.googleAuthUrl(
-        "acme",
-        "staff",
-        undefined,
-        "1",
-        undefined,
-        MOBILE_WEB_URL,
-        res,
-      );
+      await controller.googleAuthUrl("acme", "staff", "1", undefined, MOBILE_WEB_URL, res);
       expect(googleOAuth.generateAuthUrl).toHaveBeenCalledWith(
         "tenant",
         "acme",

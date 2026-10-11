@@ -84,7 +84,8 @@ export class BuyerMergeService {
     });
 
     const appUrl = process.env.WEB_APP_URL ?? process.env.NEXTAUTH_URL ?? "http://localhost:3001";
-    const verifyUrl = `${appUrl}/buyer/verify-merge?token=${token}`;
+    // Fragment, not query: the token never reaches a server log or a Referer header.
+    const verifyUrl = `${appUrl}/buyer/verify-merge#t=${token}`;
 
     const sendResult = await this.emailService.sendMergeVerificationEmail({
       to: secondary.email,

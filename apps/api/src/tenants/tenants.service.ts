@@ -10,12 +10,6 @@ import {
 import type { ThrottlerStorage } from "@nestjs/throttler";
 import * as bcrypt from "bcrypt";
 import { ConfigService } from "@nestjs/config";
-import { JwtService } from "@nestjs/jwt";
-import {
-  DERIVED_JWT_AUDIENCES,
-  DERIVED_JWT_LABELS,
-  derivedJwtKey,
-} from "../common/derived-jwt-key";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 import { StorageService } from "../storage/storage.service";
@@ -28,7 +22,9 @@ import { UpdateBrandingDto } from "./dto/update-branding.dto";
 import { compressImage } from "../storage/compress.util";
 import { TRIAL_LENGTH_DAYS, planKeyFromEnum } from "../billing/plan-catalog.constants";
 import { escapeHtml } from "../common/html-escape";
-import { mayUseVerificationLink } from "../auth/verification-link-eligibility";
+import { mayIssueVerificationLink } from "../auth/verification-link-eligibility";
+import { emailVerifyUrl, issueEmailVerificationToken } from "../auth/email-verification-token";
+import type { AppConfig } from "../config/configuration";
 import { RESEND_LIMITER, mayResendTo } from "./resend-verification-limit";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
@@ -88,7 +84,6 @@ function scrubAddress(err: unknown, email: unknown): string {
 @Injectable()
 export class TenantsService {
   private readonly logger = new Logger(TenantsService.name);
-  private readonly emailVerifyKey: Buffer;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -96,17 +91,19 @@ export class TenantsService {
     private readonly storage: StorageService,
     private readonly email: EmailService,
     private readonly config: ConfigService,
-    private readonly jwt: JwtService,
     // Optional only so a module that never resends can build this service; without a limiter the
     // resend refuses (fails closed), it never sends unthrottled.
     @Optional()
     @Inject(RESEND_LIMITER)
     private readonly resendLimiter?: Pick<ThrottlerStorage, "increment">,
-  ) {
-    // Fails the boot on a missing or short secret (see derived-jwt-key.ts).
-    this.emailVerifyKey = derivedJwtKey(
-      DERIVED_JWT_LABELS.emailVerify,
-      config.get<string>("jwt.secret") ?? "",
+  ) {}
+
+  /** The web origin an emailed link points at, resolved server-side from config only. */
+  private webBase(): string {
+    return (
+      this.config.get<AppConfig["urls"]>("urls")?.web ??
+      this.config.get<string>("WEB_URL") ??
+      "http://localhost:3001"
     );
   }
 
@@ -206,7 +203,7 @@ export class TenantsService {
       return { tenant, user };
     });
 
-    // Generate a 24-hour email verification JWT and send it. Registration itself
+    // Issue a 24-hour single-use email verification link and send it. Registration itself
     // must never fail over a mail-transport problem (the tenant+user rows are
     // already committed above), but a failed send used to be swallowed here with
     // NO trace anywhere: not logged, not reported to the caller, not visible to
@@ -217,17 +214,8 @@ export class TenantsService {
     // with the reason `EmailService.send()` already computed.
     let emailSent = false;
     try {
-      const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
-      const verifyToken = this.jwt.sign(
-        { sub: result.user.id, tenantId: result.tenant.id, type: "email_verify" },
-        {
-          secret: this.emailVerifyKey,
-          audience: DERIVED_JWT_AUDIENCES.emailVerify,
-          expiresIn: "24h",
-        },
-      );
-
-      const verifyUrl = `${webUrl}/verify-email?token=${verifyToken}`;
+      const issued = await issueEmailVerificationToken(this.prisma, result.user.id);
+      const verifyUrl = emailVerifyUrl(this.webBase(), issued.token);
 
       const sendResult = await this.email.send({
         to: result.user.email,
@@ -293,7 +281,9 @@ export class TenantsService {
    * daily cap can be used up for one address by a third party; the fallback is the back office.
    *
    * Only an account eligible for the verification link (verification-link-eligibility.ts) is sent
-   * one.
+   * one: that includes the issue-time cut-off, so an account created before
+   * `VERIFY_RESEND_CUTOFF` gets nothing here and stays on the back-office path. A new link is a
+   * stored single-use token; the newest two live ones are kept and older ones are burned.
    */
   async resendVerification(email: string): Promise<void> {
     void this.performResend(email).catch((err: unknown) => {
@@ -325,20 +315,11 @@ export class TenantsService {
     if (!user || !user.tenant) return false;
     // The same eligibility test the link itself is checked against; a refused class gets the
     // same silent answer as an unknown address.
-    if (!(await mayUseVerificationLink(this.prisma, user))) return false;
+    if (!(await mayIssueVerificationLink(this.prisma, user))) return false;
 
     try {
-      const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
-      const verifyToken = this.jwt.sign(
-        { sub: user.id, tenantId: user.tenant.id, type: "email_verify" },
-        {
-          secret: this.emailVerifyKey,
-          audience: DERIVED_JWT_AUDIENCES.emailVerify,
-          expiresIn: "24h",
-        },
-      );
-
-      const verifyUrl = `${webUrl}/verify-email?token=${verifyToken}`;
+      const issued = await issueEmailVerificationToken(this.prisma, user.id);
+      const verifyUrl = emailVerifyUrl(this.webBase(), issued.token);
 
       const sendResult = await this.email.send({
         to: user.email,

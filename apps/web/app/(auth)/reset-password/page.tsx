@@ -5,11 +5,11 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import { CheckCircle2 } from "lucide-react";
 import { PasswordInput, Button } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 import { AuthShell } from "@/components/auth";
+import { useAccountLinkToken } from "@/lib/account-link-token";
 
 // ─── Schema (matches the API's complexity policy) ─────────────────────────────
 
@@ -31,19 +31,14 @@ const schema = z
 
 type FormValues = z.infer<typeof schema>;
 
-// ─── Inner (useSearchParams requires a Suspense boundary) ─────────────────────
+// Fixed copy only: a failed reset never shows server text.
+const RESET_FAILED_COPY = "Could not reset your password. The link may have expired.";
 
 function ResetPasswordInner() {
-  const searchParams = useSearchParams();
-  // F3-004: capture the single-use token once, then strip it from the visible URL
-  // (history / back button / copy-paste / same-origin Referer) — it's kept in state
-  // for the submit and POSTed in the body, never re-read from the URL.
-  const [token] = React.useState(() => searchParams.get("token") ?? "");
-  React.useEffect(() => {
-    if (typeof window !== "undefined" && window.location.search) {
-      window.history.replaceState(null, "", window.location.pathname);
-    }
-  }, []);
+  // The single-use token arrives in the URL fragment (`#t=`; legacy `?token=` for links emailed
+  // before the change). It is read once, scrubbed from the address bar, kept in memory and
+  // POSTed in the body — never re-read from the URL, never logged.
+  const { token, ready } = useAccountLinkToken("staffReset");
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [done, setDone] = React.useState(false);
 
@@ -58,13 +53,12 @@ function ResetPasswordInner() {
     try {
       await apiClient.post("/auth/reset-password", { token, newPassword: data.newPassword });
       setDone(true);
-    } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        "Could not reset your password. The link may have expired.";
-      setApiError(typeof msg === "string" ? msg : "Could not reset your password.");
+    } catch {
+      setApiError(RESET_FAILED_COPY);
     }
   };
+
+  if (!ready) return null;
 
   return (
     <AuthShell audience="distributor" kicker="Distributor workspace" title="Choose a new password">
@@ -125,9 +119,5 @@ function ResetPasswordInner() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ResetPasswordPage() {
-  return (
-    <React.Suspense fallback={null}>
-      <ResetPasswordInner />
-    </React.Suspense>
-  );
+  return <ResetPasswordInner />;
 }

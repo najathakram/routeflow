@@ -143,6 +143,7 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "buyer/forgot-password": { mobile: ["(auth)/forgot-password"] },
   "buyer/reset-password": { mobile: ["(auth)/reset-password"] },
   "buyer/change-password": { mobile: ["(customer)/change-password"] },
+  "buyer/invite": { missing: "W>M, needs a routeflow:// deep link" },
   "buyer/invite/[token]": { missing: "W>M, needs a routeflow:// deep link" },
   "buyer/verify-email": { webOnly: "email-link flow stays on web" },
   "buyer/verify-merge": { webOnly: "email-link flow stays on web" },

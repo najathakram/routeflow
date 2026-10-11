@@ -137,6 +137,7 @@ describe("AuthService.resetPassword — the link is claimed atomically", () => {
     expect(txCalls.map((c) => c.op)).toEqual([
       "token.updateMany",
       "user.updateMany",
+      "user.updateMany",
       "session.deleteMany",
     ]);
     expect(txCalls[0]!.args.where).toEqual({
@@ -147,6 +148,21 @@ describe("AuthService.resetPassword — the link is claimed atomically", () => {
     expect(txCalls[0]!.args.data).toEqual({ usedAt: expect.any(Date) });
     expect(txCalls[1]!.args.where).toEqual({ id: "user-1", status: "ACTIVE", deletedAt: null });
     expect(txCalls[1]!.args.data).toEqual({ password: "new-hash", forcePasswordChange: false });
+    // the one-time verified stamp is conditional on it still being null
+    expect(txCalls[2]!.args.where).toEqual({ id: "user-1", emailVerifiedAt: null });
+    expect(txCalls[2]!.args.data).toEqual({ emailVerifiedAt: expect.any(Date) });
+  });
+
+  it("(a) a consumed reset link stamps emailVerifiedAt once and never overwrites an earlier one", async () => {
+    seed({ user: { emailVerifiedAt: null } });
+    await service.resetPassword(rawToken, "NewPass1!");
+    const first = users.rows[0]!.emailVerifiedAt;
+    expect(first).toBeInstanceOf(Date);
+
+    const earlier = new Date("2026-01-01T00:00:00.000Z");
+    seed({ user: { emailVerifiedAt: earlier } });
+    await service.resetPassword(rawToken, "NewPass1!");
+    expect(users.rows[0]!.emailVerifiedAt).toBe(earlier);
   });
 
   it.each([

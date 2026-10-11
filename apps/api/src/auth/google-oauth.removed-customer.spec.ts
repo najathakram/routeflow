@@ -2,6 +2,7 @@ import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { GoogleOAuthService } from "./google-oauth.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { hashInviteToken } from "../buyer/invite-token";
 
 jest.mock("google-auth-library", () => ({
   OAuth2Client: jest.fn(),
@@ -125,12 +126,13 @@ describe("GoogleOAuthService — a removed customer's invite is not redeemed (B1
     googleId: "google-1",
     email: "buyer@example.test",
     name: "Buyer",
-    inviteToken: "tok-invite",
+    inviteSecret: "tok-invite",
   };
 
   const inviteLink = (deletedAt: Date | null) => ({
     id: "link-1",
-    inviteToken: "tok-invite",
+    inviteToken: null as string | null,
+    inviteTokenHash: hashInviteToken("tok-invite"),
     status: "INVITED",
     inviteExpiresAt: null,
     customer: { id: "c-1", deletedAt },
@@ -154,8 +156,7 @@ describe("GoogleOAuthService — a removed customer's invite is not redeemed (B1
     prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
     prisma.customerLink.findFirst.mockImplementation((async (args: any) => {
       const where = args?.where ?? {};
-      if (where.inviteToken !== row.inviteToken) return null;
-      if (!where.status?.in?.includes(row.status)) return null;
+      if (where.inviteTokenHash !== row.inviteTokenHash) return null;
       const rel = where.customer?.is ?? where.customer;
       if (rel?.deletedAt === null && row.customer.deletedAt !== null) return null;
       return row;
@@ -164,7 +165,10 @@ describe("GoogleOAuthService — a removed customer's invite is not redeemed (B1
     prisma.customerLink.updateMany.mockImplementation((async (args: any) => {
       const where = args?.where ?? {};
       const rel = where.customer?.is ?? where.customer;
-      if (where.id !== row.id || where.inviteToken !== row.inviteToken) return { count: 0 };
+      const hashHit = (where.AND ?? []).some((c: any) =>
+        (c.OR ?? []).some((o: any) => o.inviteTokenHash === row.inviteTokenHash),
+      );
+      if (where.id !== row.id || !hashHit) return { count: 0 };
       if (!where.status?.in?.includes(row.status)) return { count: 0 };
       if (rel?.deletedAt === null && row.customer.deletedAt !== null) return { count: 0 };
       return { count: 1 };
@@ -192,11 +196,12 @@ describe("GoogleOAuthService — a removed customer's invite is not redeemed (B1
 
     expect(prisma.customerLink.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ id: "link-1", inviteToken: "tok-invite" }),
+        where: expect.objectContaining({ id: "link-1" }),
         data: expect.objectContaining({
           buyerAccountId: "buyer-1",
           status: "ACTIVE",
           inviteToken: null,
+          inviteTokenHash: null,
         }),
       }),
     );

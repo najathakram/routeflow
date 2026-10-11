@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -8,6 +8,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -15,6 +16,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import axios from "axios";
 import { audienceFromParam, resetPasswordEndpoint, signInRouteFor } from "../../lib/password-form";
+import { applyNoReferrerMeta, resolveLinkToken, scrubLinkTokenFromUrl } from "../../lib/link-token";
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
 
@@ -22,11 +24,37 @@ export default function ResetPasswordScreen() {
   const router = useRouter();
   // ?audience=buyer → buyer endpoints + buyer sign-in on success (the buyer
   // reset email links here with the param); staff otherwise.
-  const { token, audience: audienceParam } = useLocalSearchParams<{
+  const params = useLocalSearchParams<{
     token?: string;
     audience?: string;
+    "#"?: string;
   }>();
-  const audience = audienceFromParam(audienceParam);
+  const audience = audienceFromParam(params.audience);
+  const isWeb = Platform.OS === "web";
+
+  // The single-use token arrives in the URL fragment on web (`#t=`; expo-router also keeps it in
+  // the route params under "#") and as the `token` param in a native deep link or a legacy
+  // `?token=` web link. Captured once into state; it is POSTed in the body and never logged.
+  const [token] = useState(() =>
+    resolveLinkToken({
+      platform: isWeb ? "web" : "native",
+      fragmentParam: params["#"],
+      locationHash: isWeb && typeof window !== "undefined" ? window.location.hash : "",
+      queryToken: params.token,
+    }),
+  );
+
+  // Web only: never leave the token in the address bar or the router's own params (the router
+  // writes its params back to the URL on every navigation), and send no Referer from this page.
+  useEffect(() => {
+    if (!isWeb || typeof window === "undefined") return;
+    scrubLinkTokenFromUrl(window);
+    if (params["#"] || params.token) {
+      router.setParams({ "#": undefined, token: undefined } as never);
+    }
+    return applyNoReferrerMeta(document as never);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [newPassword, setNewPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -55,11 +83,9 @@ export default function ResetPasswordScreen() {
         newPassword,
       });
       setDone(true);
-    } catch (e: any) {
-      const msg =
-        e?.response?.data?.message ??
-        "Reset failed. The link may have expired — please request a new one.";
-      setError(typeof msg === "string" ? msg : "Reset failed.");
+    } catch {
+      // Fixed copy only: never the server's text.
+      setError("Reset failed. The link may have expired — please request a new one.");
     } finally {
       setLoading(false);
     }

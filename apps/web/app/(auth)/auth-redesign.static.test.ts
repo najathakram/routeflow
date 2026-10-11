@@ -24,7 +24,7 @@ const AUTH_PAGE_PATHS = [
   "app/buyer/verify-email/page.tsx",
   "app/buyer/verify-merge/page.tsx",
   "app/buyer/change-password/page.tsx",
-  "app/buyer/invite/[token]/page.tsx",
+  "app/buyer/invite/invite-flow.tsx",
   "app/change-password/page.tsx",
   "app/verify-email/page.tsx",
 ];
@@ -242,7 +242,7 @@ describe("primary and secondary buttons use rf-btn — T2h (R7)", () => {
   });
 
   it.each([
-    ["app/buyer/invite/[token]/page.tsx", "bg-buyer-600"],
+    ["app/buyer/invite/invite-flow.tsx", "bg-buyer-600"],
     ["app/buyer/verify-merge/page.tsx", "bg-brand-600"],
     ["app/verify-email/page.tsx", "bg-brand-600"],
   ])("%s no longer carries %s (T2h)", (relPath, banned) => {
@@ -276,7 +276,7 @@ const SUCCESS_STATE_PAGES = [
   "app/buyer/verify-email/page.tsx",
   "app/buyer/verify-merge/page.tsx",
   "app/buyer/change-password/page.tsx",
-  "app/buyer/invite/[token]/page.tsx",
+  "app/buyer/invite/invite-flow.tsx",
   "app/verify-email/page.tsx",
 ];
 
@@ -297,7 +297,7 @@ describe("success/done blocks carry rf-auth-success — T2i (R13)", () => {
 // ---------------------------------------------------------------------------
 
 const D1_PAGES_WITH_STATES: Array<{ path: string; states: string[] }> = [
-  { path: "app/buyer/invite/[token]/page.tsx", states: ["Invalid Invite", "Invite Accepted!"] },
+  { path: "app/buyer/invite/invite-flow.tsx", states: ["Invalid Invite", "Invite Accepted!"] },
   {
     path: "app/verify-email/page.tsx",
     states: ["Verifying your email…", "Email verified!", "Verification failed"],
@@ -329,7 +329,7 @@ function authShellTitleAttr(source: string): string | null {
 // check below. Do not fold this back into D1_PAGES_WITH_STATES — that array
 // still drives the "state string appears once" check for all five pages.
 const D1_NON_LITERAL_TITLE_PAGES = [
-  "app/buyer/invite/[token]/page.tsx",
+  "app/buyer/invite/invite-flow.tsx",
   "app/verify-email/page.tsx",
   "app/buyer/verify-merge/page.tsx",
 ];

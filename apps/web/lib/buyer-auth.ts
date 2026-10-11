@@ -296,7 +296,8 @@ export async function requestSellerConnection(
 export async function getInviteDetails(
   token: string,
 ): Promise<{ name: string; slug: string; logoKey: string | null }> {
-  const { data } = await axios.get(`${BASE_URL}/buyer/invites/${token}/details`);
+  // The invite token goes in the request BODY: a token in a URL reaches access logs and history.
+  const { data } = await axios.post(`${BASE_URL}/buyer/invites/details`, { token });
   return {
     name:
       (data as { sellerName?: string; name?: string }).sellerName ??
@@ -312,12 +313,27 @@ export async function getInviteDetails(
 
 export async function acceptInvite(token: string, accessToken: string): Promise<void> {
   await axios.post(
-    `${BASE_URL}/buyer/invites/${token}/accept`,
-    {},
+    `${BASE_URL}/buyer/invites/accept`,
+    { token },
     {
       headers: { Authorization: `Bearer ${accessToken}` },
     },
   );
+}
+
+/**
+ * Starts Google sign-in for an invite and returns the Google consent URL. The invite token is
+ * POSTed in the body; the API keeps it server-side against the OAuth nonce, so neither this
+ * request's URL nor the OAuth state ever carries it.
+ */
+export async function startInviteGoogleSignIn(token: string, tenantSlug: string): Promise<string> {
+  const { data } = await axios.post<{ url?: string }>(`${BASE_URL}/auth/google/start`, {
+    tenant: tenantSlug,
+    context: "portal",
+    inviteToken: token,
+  });
+  if (!data?.url) throw new Error("No URL returned");
+  return data.url;
 }
 
 export async function getBuyerSellers(accessToken: string): Promise<BuyerSeller[]> {

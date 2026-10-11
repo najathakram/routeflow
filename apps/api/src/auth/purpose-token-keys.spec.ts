@@ -8,14 +8,15 @@ import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { JwtStrategy } from "./strategies/jwt.strategy";
-import { TenantsService } from "../tenants/tenants.service";
 import { StripeConnectService } from "../stripe-connect/stripe-connect.service";
 import { CONNECT_OAUTH_PROVIDER } from "../stripe-connect/provider/connect-oauth.interface";
 import { PrismaService } from "../prisma/prisma.service";
-import { EmailService } from "../email/email.service";
-import { EncryptionService } from "../common/encryption.service";
-import { StorageService } from "../storage/storage.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import {
+  DERIVED_JWT_AUDIENCES,
+  DERIVED_JWT_LABELS,
+  derivedJwtKey,
+} from "../common/derived-jwt-key";
 
 // Predicate DISABLED: only the key can refuse these tokens.
 jest.mock("./session-token", () => ({
@@ -42,42 +43,20 @@ function configMock(extra: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * No service signs an email-verify link any more (the verification links are stored tokens); the
+ * legacy link is still DECODED until its window ends, so one signed the old way is built here with
+ * the same per-purpose key and audience the verifier accepts.
+ */
 async function mintEmailVerifyToken(): Promise<string> {
-  const prisma = createMockPrisma();
-  (prisma.tenant.findUnique as jest.Mock).mockResolvedValue(null);
-  (prisma.user.findFirst as jest.Mock).mockResolvedValue(null);
-  (prisma.tenant.create as jest.Mock).mockImplementation(({ data }: any) => ({
-    id: "t1",
-    ...data,
-  }));
-  (prisma.user.create as jest.Mock).mockImplementation(({ data }: any) => ({ id: "u1", ...data }));
-  (prisma as any).tenantSubscription = { create: jest.fn().mockResolvedValue({}) };
-  (prisma.$transaction as jest.Mock).mockImplementation((fn: any) =>
-    fn({ ...prisma, tenantSubscription: (prisma as any).tenantSubscription }),
+  return new JwtService({ secret: SECRET }).sign(
+    { sub: "u1", tenantId: "t1", type: "email_verify" },
+    {
+      secret: derivedJwtKey(DERIVED_JWT_LABELS.emailVerify, SECRET),
+      audience: DERIVED_JWT_AUDIENCES.emailVerify,
+      expiresIn: "24h",
+    },
   );
-  const email = { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) };
-  const mod = await Test.createTestingModule({
-    providers: [
-      TenantsService,
-      { provide: PrismaService, useValue: prisma },
-      { provide: EncryptionService, useValue: {} },
-      { provide: StorageService, useValue: {} },
-      { provide: EmailService, useValue: email },
-      { provide: ConfigService, useValue: configMock() },
-      { provide: JwtService, useValue: new JwtService({ secret: SECRET }) },
-    ],
-  }).compile();
-  await mod.get(TenantsService).register({
-    slug: "acme-distribution",
-    businessName: "Acme Distribution",
-    adminEmail: "owner@acme.example",
-    adminUsername: "acme_admin",
-    adminPassword: "Sup3rSecret!",
-  });
-  const html: string = email.send.mock.calls[0][0].html;
-  const m = html.match(/token=([\w-]+\.[\w-]+\.[\w-]+)/);
-  if (!m) throw new Error("no token in email html");
-  return m[1]!;
 }
 
 async function mintConnectState(): Promise<string> {
@@ -129,16 +108,19 @@ describe("purpose tokens are not session tokens", () => {
   } as unknown as ConstructorParameters<typeof JwtStrategy>[0]);
 
   const cases: Array<[string, () => Promise<string>]> = [
-    ["email-verify link", mintEmailVerifyToken],
+    ["legacy email-verify link", mintEmailVerifyToken],
     ["connect state", mintConnectState],
   ];
 
-  it.each(cases)("%s: sanity - it is a real token minted by the real service", async (_n, mint) => {
-    const token = await mint();
-    expect(token.split(".")).toHaveLength(3);
-    // not the session key's output: the raw secret must not verify it
-    expect(() => new JwtService({ secret: SECRET }).verify(token)).toThrow();
-  });
+  it.each(cases)(
+    "%s: sanity - it is a signed token the session key cannot verify",
+    async (_n, mint) => {
+      const token = await mint();
+      expect(token.split(".")).toHaveLength(3);
+      // not the session key's output: the raw secret must not verify it
+      expect(() => new JwtService({ secret: SECRET }).verify(token)).toThrow();
+    },
+  );
 
   it.each(cases)(
     "%s: the passport strategy refuses it with the predicate disabled",

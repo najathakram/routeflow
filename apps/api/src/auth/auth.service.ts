@@ -24,6 +24,9 @@ import {
 } from "../common/derived-jwt-key";
 import { isLoginEligible, isSignInBlocked } from "./login-eligibility";
 import { mayUseVerificationLink, VERIFICATION_REFUSED } from "./verification-link-eligibility";
+import { legacyVerifyAccepted } from "./legacy-link-windows";
+import { looksLikeLegacySignedLink } from "./email-verification-token";
+import { consumeEmailVerificationToken, deadVerifyLink } from "./email-verification-consume";
 import { hasForeignAudience, STAFF_ACCESS_AUDIENCE, STAFF_REFRESH_AUDIENCE } from "./session-token";
 
 export interface DeviceInfo {
@@ -130,11 +133,26 @@ export class AuthService {
    * checks read it. Best-effort: a failed stamp never blocks a sign-in. Platform impersonation
    * mints its own tokens elsewhere and deliberately does not come through here.
    */
-  private async touchLastLogin(userId: string): Promise<void> {
+  private async touchLastLogin(userId: string, emailVerifiedAt?: Date | null): Promise<void> {
     try {
       await this.prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
     } catch (err) {
       this.logger.warn(`lastLoginAt stamp failed for user ${userId}: ${(err as Error).message}`);
+    }
+    // Informational only: a signed-in ACTIVE account has demonstrably reached its mailbox or a
+    // trusted provider. It never gates recovery or an email change, and a failure here can never
+    // fail the sign-in. A row already known to be stamped skips the write.
+    if (emailVerifiedAt == null) {
+      try {
+        await this.prisma.user.updateMany({
+          where: { id: userId, emailVerifiedAt: null },
+          data: { emailVerifiedAt: new Date() },
+        });
+      } catch (err) {
+        this.logger.warn(
+          `emailVerifiedAt stamp failed for user ${userId}: ${(err as Error).message}`,
+        );
+      }
     }
   }
 
@@ -172,7 +190,7 @@ export class AuthService {
     if (!user.tenantId && user.role !== "SUPER_ADMIN") {
       throw new UnauthorizedException("Tenant not found");
     }
-    await this.touchLastLogin(user.id);
+    await this.touchLastLogin(user.id, (user as { emailVerifiedAt?: Date | null }).emailVerifiedAt);
 
     // Fetch tenant slug if user belongs to a tenant
     let tenantSlug: string | null = null;
@@ -471,8 +489,30 @@ export class AuthService {
   /**
    * Verifies a self-service signup email token, activates the user, and
    * returns a full auth token pair so the frontend can auto-log in.
+   *
+   * A stored single-use token (opaque, no dots) goes through the atomic claim in
+   * email-verification-consume.ts. A signed link from before that change (three dot-separated
+   * parts) takes the legacy path below, which is accepted only until
+   * `LEGACY_VERIFY_ACCEPT_UNTIL` and cannot be revoked in the meantime. `now` is injectable so a
+   * spec can pin the clock.
    */
-  async verifyEmailAndLogin(token: string, deviceInfo?: DeviceInfo) {
+  async verifyEmailAndLogin(token: string, deviceInfo?: DeviceInfo, now: Date = new Date()) {
+    if (typeof token === "string" && looksLikeLegacySignedLink(token)) {
+      return this.verifyLegacySignedLink(token, deviceInfo, now);
+    }
+    const activated = await consumeEmailVerificationToken(this.prisma, token, now);
+    const { password: _pw, ...safeUser } = activated;
+    return this.login(safeUser, deviceInfo);
+  }
+
+  /** The pre-existing stateless signed link. Verify-only: nothing signs this kind any more. */
+  private async verifyLegacySignedLink(
+    token: string,
+    deviceInfo: DeviceInfo | undefined,
+    now: Date,
+  ) {
+    // Past its window the link is as dead as any other, with the same copy.
+    if (!legacyVerifyAccepted(now)) throw deadVerifyLink();
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
     let payload: { sub: string; type: string; tenantId: string; aud?: unknown };
@@ -489,9 +529,7 @@ export class AuthService {
         payload = this.jwtService.verify(token, { secret: jwtConfig.secret });
         if (payload.aud !== undefined) throw new Error("audience on a legacy-key token");
       } catch {
-        throw new BadRequestException(
-          "Verification link is invalid or has expired. Please sign up again or request a new link.",
-        );
+        throw deadVerifyLink();
       }
     }
 
@@ -520,9 +558,14 @@ export class AuthService {
           role: "TENANT_ADMIN",
           deletedAt: null,
         },
-        data: { status: "ACTIVE" },
+        data: { status: "ACTIVE", emailVerifiedAt: now },
       });
       if (res.count !== 1) return false;
+      // A used link retires the account's stored ones too.
+      await tx.userEmailVerificationToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: now },
+      });
       await tx.auditLog.create({
         data: {
           tenantId: user.tenantId ?? null,
@@ -538,7 +581,7 @@ export class AuthService {
     if (!claimed) {
       throw new BadRequestException({ ...VERIFICATION_REFUSED });
     }
-    const activeUser = { ...user, status: "ACTIVE" as const };
+    const activeUser = { ...user, status: "ACTIVE" as const, emailVerifiedAt: now };
 
     const { password: _pw, ...safeUser } = activeUser;
     return this.login(safeUser, deviceInfo);
@@ -580,7 +623,9 @@ export class AuthService {
     // client-supplied URL here would let an attacker exfiltrate reset tokens.
     const urls = this.configService.get<AppConfig["urls"]>("urls")!;
     const base = surface === "web" ? urls.web : urls.mobileWeb;
-    const resetUrl = `${base}/reset-password?token=${rawToken}`;
+    // The token rides in the URL fragment: a fragment is never sent to a server, never
+    // written to an access log and never carried in a Referer header.
+    const resetUrl = `${base}/reset-password#t=${rawToken}`;
 
     // B212-class fix: this used to be fire-and-forget with the result
     // discarded (`.catch(() => {})`) — a real delivery failure had zero trace
@@ -650,6 +695,12 @@ export class AuthService {
         data: { password: newHash, forcePasswordChange: false },
       });
       if (updated.count !== 1) throw refuse();
+
+      // Using a link that arrived by email proves the mailbox: stamp the verified time once.
+      await tx.user.updateMany({
+        where: { id: record.userId, emailVerifiedAt: null },
+        data: { emailVerifiedAt: now },
+      });
 
       await tx.refreshToken.deleteMany({ where: { userId: record.userId } });
     });
@@ -760,7 +811,7 @@ export class AuthService {
    */
   private async mintSessionForUser(user: User, deviceInfo?: DeviceInfo) {
     await this.prisma.refreshToken.deleteMany({ where: { userId: user.id } });
-    await this.touchLastLogin(user.id);
+    await this.touchLastLogin(user.id, user.emailVerifiedAt);
 
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 

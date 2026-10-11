@@ -49,8 +49,9 @@ const ALLOWED: Allowed[] = [
   {
     file: "auth/auth.service.ts",
     fn: "touchLastLogin",
-    sites: 1,
-    reason: "stamps lastLoginAt only; no standing column is written",
+    sites: 2,
+    reason:
+      "stamps lastLoginAt, and emailVerifiedAt when it is still null (informational); no standing column is written",
   },
   {
     file: "auth/auth.service.ts",
@@ -60,17 +61,24 @@ const ALLOWED: Allowed[] = [
   },
   {
     file: "auth/auth.service.ts",
-    fn: "verifyEmailAndLogin",
+    fn: "verifyLegacySignedLink",
     sites: 1,
     reason:
-      "activation claim: writes status ACTIVE only (INACTIVE -> ACTIVE); a reactivation restores nothing and burns nothing",
+      "legacy signed-link activation claim: writes status ACTIVE and emailVerifiedAt only (INACTIVE -> ACTIVE); a reactivation restores nothing and burns nothing",
+  },
+  {
+    file: "auth/email-verification-consume.ts",
+    fn: "consumeEmailVerificationToken",
+    sites: 1,
+    reason:
+      "stored-token activation claim: writes status ACTIVE and emailVerifiedAt only (INACTIVE -> ACTIVE); a reactivation restores nothing and burns nothing",
   },
   {
     file: "auth/auth.service.ts",
     fn: "resetPassword",
-    sites: 1,
+    sites: 2,
     reason:
-      "the password change itself, in the transaction that marks the consumed link used; status, role, email and deletedAt are untouched",
+      "the password change itself and the one-time emailVerifiedAt stamp, in the transaction that marks the consumed link used; status, role, email and deletedAt are untouched",
   },
   {
     file: "auth/auth.service.ts",
@@ -267,7 +275,7 @@ const ALLOWED: Allowed[] = [
 // ─── The scanner ───────────────────────────────────────────────────────────────────────────────
 
 const SITE = /\b(user|buyerAccount)\s*\??\.\s*(updateMany|update|upsert)\b/g;
-const HELPER_CALL = /\brevoke(?:User|Buyer)LinkTokens\s*\(/;
+const HELPER_CALL = /\brevoke(?:User|Buyer)LinkTokens(?:Many)?\s*\(/;
 
 /** Blanks comments, string literals and template literals (keeping offsets and newlines). */
 export function blank(src: string): string {
@@ -540,6 +548,15 @@ describe("the inventory guard bites (planted sources)", () => {
     await this.prisma.user.update({ where: { id }, data: { status: "SUSPENDED" } });
   }`);
     expect(violations(onlyAComment, [])).toHaveLength(1);
+  });
+
+  it("accepts the many-user helper as the helper", () => {
+    const covered = planted(`
+  async freeSeats(tx: any, ids: string[]) {
+    await revokeUserLinkTokensMany(tx, ids);
+    await tx.user.updateMany({ where: { id: { in: ids } }, data: { status: "INACTIVE" } });
+  }`);
+    expect(violations(covered, [])).toEqual([]);
   });
 
   it("passes an allow-listed unit, but fails a SECOND writer added to it", () => {

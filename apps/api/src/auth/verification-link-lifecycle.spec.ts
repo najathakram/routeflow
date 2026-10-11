@@ -12,6 +12,8 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { EncryptionService } from "../common/encryption.service";
 import { StorageService } from "../storage/storage.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { LEGACY_VERIFY_ACCEPT_UNTIL } from "./legacy-link-windows";
+import { VERIFY_LINK_DEAD_MESSAGE } from "./email-verification-consume";
 
 const JWT_CONFIG = {
   secret: "test-jwt-secret-0123456789-abcdefghijklmnop",
@@ -19,6 +21,10 @@ const JWT_CONFIG = {
   expiresIn: "15m",
   refreshExpiresIn: "7d",
 };
+
+/** A signed link from before stored tokens (three dot-separated parts), consumed inside its window. */
+const LEGACY_LINK = "legacy.signed.link";
+const IN_WINDOW = new Date("2026-10-12T00:00:00.000Z");
 
 const base = {
   id: "user-1",
@@ -116,15 +122,18 @@ describe("verification link lifecycle", () => {
 
   it("verifies a signup admin who never signed in, once: active and a session", async () => {
     (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
-    const res: any = await auth.verifyEmailAndLogin("t");
+    const res: any = await auth.verifyEmailAndLogin(LEGACY_LINK, undefined, IN_WINDOW);
     expect(res).toHaveProperty("accessToken");
     expect(statusWrites()).toHaveLength(1);
-    expect(statusWrites()[0][0].data).toEqual({ status: "ACTIVE" });
+    expect(statusWrites()[0][0].data).toEqual({
+      status: "ACTIVE",
+      emailVerifiedAt: IN_WINDOW,
+    });
   });
 
   it("the activation is conditional on a live signup admin who never signed in", async () => {
     (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
-    await auth.verifyEmailAndLogin("t");
+    await auth.verifyEmailAndLogin(LEGACY_LINK, undefined, IN_WINDOW);
     expect(statusWrites()[0][0].where).toEqual({
       id: "user-1",
       status: "INACTIVE",
@@ -136,7 +145,7 @@ describe("verification link lifecycle", () => {
 
   it("writes an audit row for the activation, actor is the user", async () => {
     (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
-    await auth.verifyEmailAndLogin("t");
+    await auth.verifyEmailAndLogin(LEGACY_LINK, undefined, IN_WINDOW);
     expect(prisma.auditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         userId: "user-1",
@@ -151,7 +160,9 @@ describe("verification link lifecycle", () => {
   it("activation and its audit record commit together", async () => {
     (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
     (prisma.auditLog.create as jest.Mock).mockRejectedValue(new Error("audit write failed"));
-    await expect(auth.verifyEmailAndLogin("t")).rejects.toThrow("audit write failed");
+    await expect(auth.verifyEmailAndLogin(LEGACY_LINK, undefined, IN_WINDOW)).rejects.toThrow(
+      "audit write failed",
+    );
     // Both writes ran inside one transaction, so the failed audit write rolls the activation back.
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
     expect(prisma.refreshToken.upsert).not.toHaveBeenCalled();
@@ -164,13 +175,17 @@ describe("verification link lifecycle", () => {
       status: "ACTIVE",
       lastLoginAt: new Date(),
     });
-    await expect(auth.verifyEmailAndLogin("t")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      auth.verifyEmailAndLogin(LEGACY_LINK, undefined, IN_WINDOW),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it("refuses when a concurrent use already claimed the activation", async () => {
     (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
     (prisma.user.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
-    await expect(auth.verifyEmailAndLogin("t")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      auth.verifyEmailAndLogin(LEGACY_LINK, undefined, IN_WINDOW),
+    ).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
   });
 
@@ -182,7 +197,9 @@ describe("verification link lifecycle", () => {
     });
 
     it("link is refused with a coded 400 and no session or status change", async () => {
-      const err: any = await auth.verifyEmailAndLogin("t").catch((e) => e);
+      const err: any = await auth
+        .verifyEmailAndLogin(LEGACY_LINK, undefined, IN_WINDOW)
+        .catch((e) => e);
       expect(err).toBeInstanceOf(BadRequestException);
       expect(err.getResponse()).toEqual(
         expect.objectContaining({
@@ -199,7 +216,65 @@ describe("verification link lifecycle", () => {
       const sent = await tenants.performResend("owner@acme.example");
       expect(sent).toBe(false);
       expect(email.send).not.toHaveBeenCalled();
-      expect(jwt.sign).not.toHaveBeenCalled();
+      expect(prisma.userEmailVerificationToken.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the legacy signed link is accepted only inside its window", () => {
+    const lastMoment = new Date(LEGACY_VERIFY_ACCEPT_UNTIL.getTime() - 1);
+
+    it("is accepted one millisecond before LEGACY_VERIFY_ACCEPT_UNTIL, and stamps emailVerifiedAt", async () => {
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+
+      await expect(
+        auth.verifyEmailAndLogin(LEGACY_LINK, undefined, lastMoment),
+      ).resolves.toHaveProperty("accessToken");
+      expect(statusWrites()[0][0].data).toEqual({ status: "ACTIVE", emailVerifiedAt: lastMoment });
+    });
+
+    it.each([
+      ["at the boundary", LEGACY_VERIFY_ACCEPT_UNTIL],
+      ["a day after", new Date(LEGACY_VERIFY_ACCEPT_UNTIL.getTime() + 86_400_000)],
+    ])(
+      "is refused %s with the same generic copy as any dead link, touching nothing",
+      async (_n, now) => {
+        (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+
+        const err: any = await auth
+          .verifyEmailAndLogin(LEGACY_LINK, undefined, now)
+          .catch((e) => e);
+
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.message).toBe(VERIFY_LINK_DEAD_MESSAGE);
+        expect(jwt.verify).not.toHaveBeenCalled();
+        expect(prisma.user.findUnique).not.toHaveBeenCalled();
+        expect(statusWrites()).toHaveLength(0);
+        expect(prisma.refreshToken.upsert).not.toHaveBeenCalled();
+      },
+    );
+
+    it("a stored token is not subject to that window", async () => {
+      // an opaque token (no dots) never reaches the legacy path: it is looked up by hash
+      const after = new Date(LEGACY_VERIFY_ACCEPT_UNTIL.getTime() + 86_400_000);
+      (prisma.userEmailVerificationToken.findUnique as jest.Mock).mockResolvedValue(null);
+
+      const err: any = await auth
+        .verifyEmailAndLogin("S".repeat(43), undefined, after)
+        .catch((e) => e);
+
+      expect(err.message).toBe(VERIFY_LINK_DEAD_MESSAGE);
+      expect(prisma.userEmailVerificationToken.findUnique).toHaveBeenCalledTimes(1);
+    });
+
+    it("a legacy consume retires the account's stored links in the same transaction", async () => {
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+
+      await auth.verifyEmailAndLogin(LEGACY_LINK, undefined, IN_WINDOW);
+
+      expect(prisma.userEmailVerificationToken.updateMany).toHaveBeenCalledWith({
+        where: { userId: "user-1", usedAt: null },
+        data: { usedAt: IN_WINDOW },
+      });
     });
   });
 
@@ -207,5 +282,7 @@ describe("verification link lifecycle", () => {
     (prisma.user.findFirst as jest.Mock).mockResolvedValue(base);
     expect(await tenants.performResend("owner@acme.example")).toBe(true);
     expect(email.send).toHaveBeenCalledTimes(1);
+    expect(prisma.userEmailVerificationToken.create).toHaveBeenCalledTimes(1);
+    expect(jwt.sign).not.toHaveBeenCalled(); // no signed link is minted any more
   });
 });

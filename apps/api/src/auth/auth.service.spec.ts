@@ -23,6 +23,9 @@ const JWT_CONFIG = {
   refreshExpiresIn: "7d",
 };
 
+/** A clock inside the window in which a signed (legacy) verification link is still accepted. */
+const IN_WINDOW = new Date("2026-10-12T00:00:00.000Z");
+
 const MOCK_USER = {
   id: "user-1",
   email: "admin@test.com",
@@ -300,7 +303,7 @@ describe("AuthService", () => {
     it("activates an INACTIVE user and logs them in", async () => {
       prisma.user.findUnique.mockResolvedValue(INACTIVE_USER as any);
 
-      const result = await service.verifyEmailAndLogin("valid.jwt.token");
+      const result = await service.verifyEmailAndLogin("valid.jwt.token", undefined, IN_WINDOW);
 
       expect(prisma.user.updateMany).toHaveBeenCalledWith({
         where: {
@@ -310,7 +313,7 @@ describe("AuthService", () => {
           role: "TENANT_ADMIN",
           deletedAt: null,
         },
-        data: { status: "ACTIVE" },
+        data: { status: "ACTIVE", emailVerifiedAt: IN_WINDOW },
       });
       expect(result).toHaveProperty("accessToken");
       expect(result.user.id).toBe("user-1");
@@ -319,9 +322,9 @@ describe("AuthService", () => {
     it("an already-ACTIVE user is refused: no session, no status change", async () => {
       prisma.user.findUnique.mockResolvedValue({ ...INACTIVE_USER, status: "ACTIVE" } as any);
 
-      await expect(service.verifyEmailAndLogin("valid.jwt.token")).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(
+        service.verifyEmailAndLogin("valid.jwt.token", undefined, IN_WINDOW),
+      ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.user.update).not.toHaveBeenCalled();
       expect(prisma.user.updateMany).not.toHaveBeenCalled();
     });
@@ -329,9 +332,9 @@ describe("AuthService", () => {
     it("REFUSES to reactivate a SUSPENDED user, even with a still-valid unexpired token", async () => {
       prisma.user.findUnique.mockResolvedValue({ ...INACTIVE_USER, status: "SUSPENDED" } as any);
 
-      await expect(service.verifyEmailAndLogin("valid.jwt.token")).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(
+        service.verifyEmailAndLogin("valid.jwt.token", undefined, IN_WINDOW),
+      ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.user.update).not.toHaveBeenCalled();
     });
 
@@ -340,25 +343,25 @@ describe("AuthService", () => {
         throw new Error("jwt expired");
       });
 
-      await expect(service.verifyEmailAndLogin("bad.token")).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(
+        service.verifyEmailAndLogin("bad.jwt.token", undefined, IN_WINDOW),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it("rejects a token whose type is not email_verify", async () => {
       jwtService.verify.mockReturnValue({ sub: "user-1", type: "password_reset" });
 
-      await expect(service.verifyEmailAndLogin("wrong-type.token")).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(
+        service.verifyEmailAndLogin("wrong-type.jwt.token", undefined, IN_WINDOW),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it("rejects when the user no longer exists", async () => {
       prisma.user.findUnique.mockResolvedValue(null);
 
-      await expect(service.verifyEmailAndLogin("valid.jwt.token")).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(
+        service.verifyEmailAndLogin("valid.jwt.token", undefined, IN_WINDOW),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 

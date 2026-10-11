@@ -1,13 +1,14 @@
 /**
- * Burns an account's outstanding single-use links (set-password / password-reset and the buyer
- * email-verification link) so they stop working the moment the account's standing changes.
+ * Burns an account's outstanding single-use links (set-password / password-reset, the staff and the buyer
+ * email-verification links) so they stop working the moment the account's standing changes.
  *
  * Every writer of a non-ACTIVE status, a deletion, a role change or an email change calls this in
  * the SAME transaction as that write (guarded by `link-token-revocation.inventory.spec.ts`).
  * Reactivation does not restore a burned link: a fresh one has to be issued.
  *
  * Two entry points, one per account kind:
- *  - `revokeUserLinkTokens(tx, userId)`        staff / customer `User` rows (PasswordResetToken)
+ *  - `revokeUserLinkTokens(tx, userId)`        staff / customer `User` rows (PasswordResetToken +
+ *                                              UserEmailVerificationToken)
  *  - `revokeBuyerLinkTokens(tx, buyerAccountId)` portal `BuyerAccount` rows (both buyer twins)
  *
  * Both run on the caller's client (`tx`), mark rows used instead of deleting them (the rows stay
@@ -35,16 +36,22 @@ function requireId(label: string, value: unknown): string {
   return value;
 }
 
-/** Burns every unused, unexpired set-password / reset link of one User. */
+/** Burns every unused, unexpired set-password / reset / email-verification link of one User. */
 export async function revokeUserLinkTokens(tx: LinkTokenExecutor, userId: string): Promise<number> {
   const id = requireId("userId", userId);
-  const burned = await tx.$executeRaw`
+  const reset = await tx.$executeRaw`
     UPDATE "PasswordResetToken"
     SET "usedAt" = (NOW() AT TIME ZONE 'UTC')
     WHERE "userId" = ${id}
       AND "usedAt" IS NULL
       AND "expiresAt" > (NOW() AT TIME ZONE 'UTC')`;
-  return Number(burned ?? 0);
+  const verification = await tx.$executeRaw`
+    UPDATE "UserEmailVerificationToken"
+    SET "usedAt" = (NOW() AT TIME ZONE 'UTC')
+    WHERE "userId" = ${id}
+      AND "usedAt" IS NULL
+      AND "expiresAt" > (NOW() AT TIME ZONE 'UTC')`;
+  return Number(reset ?? 0) + Number(verification ?? 0);
 }
 
 /** Burns every unused, unexpired reset and email-verification link of one BuyerAccount. */
@@ -66,4 +73,32 @@ export async function revokeBuyerLinkTokens(
       AND "usedAt" IS NULL
       AND "expiresAt" > (NOW() AT TIME ZONE 'UTC')`;
   return Number(reset ?? 0) + Number(verification ?? 0);
+}
+
+/**
+ * Burns the outstanding links of MANY Users in ONE statement (the billing cron frees a whole seat
+ * batch at once; a per-user loop would issue one round trip per seat). Same table set and the same
+ * filters as `revokeUserLinkTokens`, keyed on `"userId" = ANY(<ids>)`; an empty list issues no
+ * statement at all. Every id is validated like the single-user entry point.
+ */
+export async function revokeUserLinkTokensMany(
+  tx: LinkTokenExecutor,
+  userIds: readonly string[],
+): Promise<number> {
+  if (!Array.isArray(userIds)) throw new TypeError("userIds must be an array of ids");
+  const ids = [...new Set(userIds.map((id) => requireId("userId", id)))];
+  if (ids.length === 0) return 0;
+  const burned = await tx.$executeRaw`
+    UPDATE "PasswordResetToken"
+    SET "usedAt" = (NOW() AT TIME ZONE 'UTC')
+    WHERE "userId" = ANY(${ids}::text[])
+      AND "usedAt" IS NULL
+      AND "expiresAt" > (NOW() AT TIME ZONE 'UTC')`;
+  const verification = await tx.$executeRaw`
+    UPDATE "UserEmailVerificationToken"
+    SET "usedAt" = (NOW() AT TIME ZONE 'UTC')
+    WHERE "userId" = ANY(${ids}::text[])
+      AND "usedAt" IS NULL
+      AND "expiresAt" > (NOW() AT TIME ZONE 'UTC')`;
+  return Number(burned ?? 0) + Number(verification ?? 0);
 }

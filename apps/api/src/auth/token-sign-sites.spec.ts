@@ -64,7 +64,6 @@ const SHAPES: Record<string, Record<string, unknown>> = {
     impersonatedBy: "sa1",
   },
   "buyer-access": { sub: "b1", email: "b@example.test", name: "B", type: "BUYER" },
-  "email-link": { sub: "u1", tenantId: "t1", type: "email_verify" },
   "staff-refresh": { sub: "u1", type: "staff", jti: "j1" },
   "buyer-refresh": { sub: "b1", type: "buyer" },
   "connect-state": { purpose: "stripe-connect", tid: "t1", by: null, jti: "j1" },
@@ -81,10 +80,6 @@ const STAFF_ACCESS = { key: "access", aud: STAFF_ACCESS_AUDIENCE } as const;
 const BUYER_ACCESS = { key: "access", aud: BUYER_ACCESS_AUDIENCE } as const;
 const STAFF_REFRESH = { key: "refresh", aud: STAFF_REFRESH_AUDIENCE } as const;
 const BUYER_REFRESH = { key: "refresh", aud: BUYER_REFRESH_AUDIENCE } as const;
-const EMAIL_LINK = {
-  key: `derived:${DERIVED_JWT_LABELS.emailVerify}`,
-  aud: "email-verify",
-} as const;
 
 /** "<file relative to src>#<n-th sign call in that file>" -> classification + payload shape + key. */
 const SITES: Record<string, Site> = {
@@ -120,8 +115,6 @@ const SITES: Record<string, Site> = {
     shape: "buyer-refresh",
     ...BUYER_REFRESH,
   },
-  "tenants/tenants.service.ts#1": { cls: "non-session", shape: "email-link", ...EMAIL_LINK },
-  "tenants/tenants.service.ts#2": { cls: "non-session", shape: "email-link", ...EMAIL_LINK },
   "platform-admin/platform-admin.service.ts#1": {
     cls: "session-impersonation",
     shape: "staff-impersonation",
@@ -168,7 +161,7 @@ function scanSites(): string[] {
 describe("token signing inventory", () => {
   it("classifies every signing site, and only those", () => {
     expect(scanSites()).toEqual(Object.keys(SITES).sort());
-    expect(Object.keys(SITES)).toHaveLength(22);
+    expect(Object.keys(SITES)).toHaveLength(20);
   });
 
   it("gives every derived-key site a known label and an audience, and a session site its realm audience", () => {

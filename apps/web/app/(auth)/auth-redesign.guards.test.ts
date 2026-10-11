@@ -26,7 +26,7 @@ const AUTH_PAGE_PATHS = [
   "app/buyer/verify-email/page.tsx",
   "app/buyer/verify-merge/page.tsx",
   "app/buyer/change-password/page.tsx",
-  "app/buyer/invite/[token]/page.tsx",
+  "app/buyer/invite/invite-flow.tsx",
   "app/change-password/page.tsx",
   "app/verify-email/page.tsx",
 ];

@@ -229,8 +229,9 @@ describe("UsersService", () => {
         expect.objectContaining({ to: "op@acme.example", username: "acme_op", expiryHours: 72 }),
       );
       expect(email.sendSetPasswordEmail.mock.calls[0][0].setPasswordUrl).toContain(
-        "https://app.example.com/reset-password?token=",
+        "https://app.example.com/reset-password#t=",
       );
+      expect(email.sendSetPasswordEmail.mock.calls[0][0].setPasswordUrl).not.toContain("?token=");
     });
 
     it("still returns the created user + tempPassword when the email fails to send", async () => {
@@ -425,11 +426,15 @@ describe("UsersService", () => {
 
       // Burned by the shared helper, in the same transaction as the email write (the per-writer
       // pins live in users.service.link-revocation.spec.ts).
-      expect(executeRaw).toHaveBeenCalledTimes(1);
+      expect(executeRaw).toHaveBeenCalledTimes(2);
       expect((executeRaw.mock.calls[0][0] as TemplateStringsArray).join("")).toContain(
         'UPDATE "PasswordResetToken"',
       );
       expect(executeRaw.mock.calls[0][1]).toBe("u1");
+      expect((executeRaw.mock.calls[1][0] as TemplateStringsArray).join("")).toContain(
+        'UPDATE "UserEmailVerificationToken"',
+      );
+      expect(executeRaw.mock.calls[1][1]).toBe("u1");
     });
 
     it("N2 review fix (#811): sends a fresh set-password invite to the corrected address when the user never set their own password", async () => {

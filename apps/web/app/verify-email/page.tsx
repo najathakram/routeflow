@@ -1,21 +1,30 @@
 "use client";
 
 import * as React from "react";
-import { useSearchParams } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { AuthShell } from "@/components/auth";
 import { adoptTokenPair } from "@/lib/auth";
+import { useAccountLinkToken } from "@/lib/account-link-token";
 
 // ─── States ───────────────────────────────────────────────────────────────────
 
 type VerifyState = "verifying" | "success" | "error";
 
+// ─── Copy ─────────────────────────────────────────────────────────────────────
+
+// Fixed copy only: a failed verification never shows server text.
+const NO_TOKEN_COPY = "No verification token found. Please use the link from your email.";
+const FAILED_COPY =
+  "This link is invalid, has expired or was already used. If you have already verified your email, sign in.";
+const NETWORK_COPY = "Something went wrong. Please try again.";
+
 // ─── Inner page ───────────────────────────────────────────────────────────────
 
 function VerifyEmailInner() {
-  const params = useSearchParams();
-
-  const token = params.get("token");
+  // The single-use token arrives in the URL fragment (`#t=`; the legacy `?token=` form only for
+  // links emailed before the change). It is read once, scrubbed from the address bar, kept in
+  // memory and POSTed in the body: never re-read from the URL and never logged.
+  const { token, ready } = useAccountLinkToken("staffVerifyEmail");
 
   const apiUrl =
     process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:3000/api/v1";
@@ -23,14 +32,26 @@ function VerifyEmailInner() {
   const [state, setState] = React.useState<VerifyState>("verifying");
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
 
+  // The link is single-use, so the POST must go out exactly once per page load, even when React
+  // strict mode runs the effect twice in development. `mounted` (not a per-run flag) tells the
+  // in-flight request whether anything is still on screen to update.
+  const started = React.useRef(false);
+  const mounted = React.useRef(true);
   React.useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (!ready || started.current) return;
+    started.current = true;
     if (!token) {
       setState("error");
-      setErrorMsg("No verification token found. Please use the link from your email.");
+      setErrorMsg(NO_TOKEN_COPY);
       return;
     }
-
-    let cancelled = false;
 
     (async () => {
       try {
@@ -40,7 +61,7 @@ function VerifyEmailInner() {
           body: JSON.stringify({ token }),
         });
 
-        if (cancelled) return;
+        if (!mounted.current) return;
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -49,11 +70,8 @@ function VerifyEmailInner() {
             window.location.replace("/login");
             return;
           }
-          const msg =
-            (body as { message?: string }).message ??
-            "Verification failed. The link may have expired.";
           setState("error");
-          setErrorMsg(msg);
+          setErrorMsg(FAILED_COPY);
           return;
         }
 
@@ -70,20 +88,16 @@ function VerifyEmailInner() {
         // router.push would leave it unauthenticated and the dashboard AuthGuard
         // would bounce straight to /login (same constraint as (auth)/callback).
         setTimeout(() => {
-          if (!cancelled) window.location.replace("/dashboard");
+          if (mounted.current) window.location.replace("/dashboard");
         }, 1500);
       } catch {
-        if (!cancelled) {
+        if (mounted.current) {
           setState("error");
-          setErrorMsg("Something went wrong. Please try again.");
+          setErrorMsg(NETWORK_COPY);
         }
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [token, apiUrl]);
+  }, [token, ready, apiUrl]);
 
   // The shell owns the page heading: it announces the state the card is showing,
   // exactly as the old page's own per-state heading did (MED-1).
@@ -149,9 +163,5 @@ function VerifyEmailInner() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function VerifyEmailPage() {
-  return (
-    <React.Suspense fallback={null}>
-      <VerifyEmailInner />
-    </React.Suspense>
-  );
+  return <VerifyEmailInner />;
 }

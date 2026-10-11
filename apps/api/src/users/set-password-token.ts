@@ -26,7 +26,7 @@ export async function issueSetPasswordLink(
   });
   await prisma.passwordResetToken.create({ data: { userId, tokenHash, expiresAt } });
   return {
-    url: `${webBaseUrl.replace(/\/+$/, "")}/reset-password?token=${rawToken}`,
+    url: `${webBaseUrl.replace(/\/+$/, "")}/reset-password#t=${rawToken}`,
     expiresAt,
     expiryHours: SET_PASSWORD_TOKEN_TTL_MS / (60 * 60 * 1000),
   };

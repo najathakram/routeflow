@@ -11,7 +11,11 @@ import { randomUUID } from "crypto";
 import { UserRole } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
-import { revokeBuyerLinkTokens, revokeUserLinkTokens } from "./revoke-user-link-tokens";
+import {
+  revokeBuyerLinkTokens,
+  revokeUserLinkTokens,
+  revokeUserLinkTokensMany,
+} from "./revoke-user-link-tokens";
 import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -95,6 +99,75 @@ describeDb("revokeUserLinkTokens / revokeBuyerLinkTokens — real Postgres", () 
     expect(await after(other.id)).toBeNull(); // another account's link is untouched
     // idempotent
     expect(await prisma.$transaction((tx) => revokeUserLinkTokens(tx, a.id))).toBe(0);
+  });
+
+  it("burns the account's unused unexpired email-verification links and nothing else", async () => {
+    const a = await seedUser("rev-verify-a");
+    const b = await seedUser("rev-verify-b");
+    const live = await prisma.userEmailVerificationToken.create({ data: token({ userId: a.id }) });
+    const used = await prisma.userEmailVerificationToken.create({
+      data: token({ userId: a.id, usedAt: new Date(Date.now() - HOUR) }),
+    });
+    const expired = await prisma.userEmailVerificationToken.create({
+      data: token({ userId: a.id, expiresAt: new Date(Date.now() - HOUR) }),
+    });
+    const other = await prisma.userEmailVerificationToken.create({ data: token({ userId: b.id }) });
+    const manyLive = await prisma.userEmailVerificationToken.create({
+      data: token({ userId: b.id }),
+    });
+
+    expect(await prisma.$transaction((tx) => revokeUserLinkTokens(tx, a.id))).toBe(1);
+
+    const after = async (id: string) =>
+      (await prisma.userEmailVerificationToken.findUniqueOrThrow({ where: { id } })).usedAt;
+    expect(await after(live.id)).not.toBeNull();
+    expect(await after(used.id)).toEqual(used.usedAt); // not re-stamped
+    expect(await after(expired.id)).toBeNull(); // already dead; left as it was
+    expect(await after(other.id)).toBeNull(); // another account's link is untouched
+
+    // the many-user variant covers the same table
+    expect(await prisma.$transaction((tx) => revokeUserLinkTokensMany(tx, [b.id]))).toBe(2);
+    expect(await after(other.id)).not.toBeNull();
+    expect(await after(manyLive.id)).not.toBeNull();
+  });
+
+  it("the many-user variant burns only the listed users' live links (both tables)", async () => {
+    const a = await seedUser("many-a");
+    const b = await seedUser("many-b");
+    const c = await seedUser("many-c");
+    const liveA = await prisma.passwordResetToken.create({ data: token({ userId: a.id }) });
+    const liveB = await prisma.passwordResetToken.create({ data: token({ userId: b.id }) });
+    const liveC = await prisma.passwordResetToken.create({ data: token({ userId: c.id }) });
+    const usedA = await prisma.passwordResetToken.create({
+      data: token({ userId: a.id, usedAt: new Date(Date.now() - HOUR) }),
+    });
+    const expiredB = await prisma.passwordResetToken.create({
+      data: token({ userId: b.id, expiresAt: new Date(Date.now() - HOUR) }),
+    });
+    const verifyA = await prisma.userEmailVerificationToken.create({
+      data: token({ userId: a.id }),
+    });
+    const verifyC = await prisma.userEmailVerificationToken.create({
+      data: token({ userId: c.id }),
+    });
+
+    const burned = await prisma.$transaction((tx) => revokeUserLinkTokensMany(tx, [a.id, b.id]));
+
+    expect(burned).toBe(3);
+    const reset = async (id: string) =>
+      (await prisma.passwordResetToken.findUniqueOrThrow({ where: { id } })).usedAt;
+    const verify = async (id: string) =>
+      (await prisma.userEmailVerificationToken.findUniqueOrThrow({ where: { id } })).usedAt;
+    expect(await reset(liveA.id)).not.toBeNull();
+    expect(await reset(liveB.id)).not.toBeNull();
+    expect(await verify(verifyA.id)).not.toBeNull();
+    expect(await reset(usedA.id)).toEqual(usedA.usedAt); // not re-stamped
+    expect(await reset(expiredB.id)).toBeNull(); // already dead; left as it was
+    expect(await reset(liveC.id)).toBeNull(); // an unlisted user's links are untouched
+    expect(await verify(verifyC.id)).toBeNull();
+    // idempotent, and an empty list is a no-op
+    expect(await prisma.$transaction((tx) => revokeUserLinkTokensMany(tx, [a.id, b.id]))).toBe(0);
+    expect(await prisma.$transaction((tx) => revokeUserLinkTokensMany(tx, []))).toBe(0);
   });
 
   it("works inside the tenant transaction proxy, and rolls back with the caller", async () => {

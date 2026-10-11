@@ -18,7 +18,7 @@ const ENTRY_POINTS: Array<{ file: string; handler: string }> = [
   { file: "app/(auth)/admin-login/page.tsx", handler: "handleGoogleSignIn" },
   { file: "app/buyer/login/page.tsx", handler: "handleGoogleSignIn" },
   { file: "app/buyer/register/page.tsx", handler: "handleGoogleSignUp" },
-  { file: "app/buyer/invite/[token]/page.tsx", handler: "handleGoogleSignIn" },
+  { file: "app/buyer/invite/invite-flow.tsx", handler: "handleGoogleSignIn" },
   { file: "app/(dashboard)/settings/page.tsx", handler: "handleLinkGoogle" },
   { file: "components/ReAuthProvider.tsx", handler: "onGoogle" },
 ];

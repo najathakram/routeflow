@@ -6,8 +6,13 @@
  * recorded) is refused and must sign in the normal way.
  */
 
-/** Earliest creation date for which the sign-in timestamp (`User.lastLoginAt`) is reliable. */
-export const SIGN_IN_TIMESTAMP_RELIABLE_FROM = new Date("2026-09-29T00:00:00.000Z");
+import { VERIFY_RESEND_CUTOFF } from "./legacy-link-windows";
+
+/**
+ * Earliest creation date for which the sign-in timestamp (`User.lastLoginAt`) is reliable. It is
+ * an ISSUE-time cut-off: it decides who is sent a new link and never refuses a stored token.
+ */
+export const SIGN_IN_TIMESTAMP_RELIABLE_FROM = VERIFY_RESEND_CUTOFF;
 
 /** Coded 400 payload for a refused link. Same copy for every refused class. */
 export const VERIFICATION_REFUSED = {
@@ -29,7 +34,7 @@ export interface SessionRowCounter {
   refreshToken: { count(args: { where: { userId: string } }): Promise<number> };
 }
 
-export async function mayUseVerificationLink(
+export async function mayIssueVerificationLink(
   db: SessionRowCounter,
   user: VerificationCandidate,
 ): Promise<boolean> {
@@ -41,3 +46,6 @@ export async function mayUseVerificationLink(
   }
   return (await db.refreshToken.count({ where: { userId: user.id } })) === 0;
 }
+
+/** The legacy stateless-link consume applies the same test as the resend does at issue. */
+export const mayUseVerificationLink = mayIssueVerificationLink;

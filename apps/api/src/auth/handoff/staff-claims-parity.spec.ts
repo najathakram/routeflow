@@ -26,7 +26,10 @@ function makeAuth(userRow: Record<string, unknown>) {
     configService: { get: () => JWT },
     prisma: {
       tenant: { findUnique: jest.fn().mockResolvedValue({ slug: "acme" }) },
-      user: { update: jest.fn().mockResolvedValue({}) },
+      user: {
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
       refreshToken: { count: jest.fn().mockResolvedValue(1) },
     },
     usersService: { findByUsername: jest.fn().mockResolvedValue(userRow) },

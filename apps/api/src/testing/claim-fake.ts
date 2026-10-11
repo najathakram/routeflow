@@ -3,7 +3,8 @@
  * `where` a service actually sends to stored rows, so a conditional `updateMany` returns a real
  * count (0 for the loser of a race) and a transaction that throws undoes its own writes.
  *
- * Supported `where` shapes: equality (including `null`), `{ gt }`, `{ in }`, `{ not }`, `OR`, `AND`, and a
+ * Supported `where` shapes: equality (including `null`), `{ gt }`, `{ in }`, `{ not }`, `{ none }` (a to-many
+ * relation key holding an array of rows), `OR`, `AND`, and a
  * nested relation filter (a plain object on a key whose stored value is an object).
  *
  * `installFakeTables(prisma, tables)` points the listed models of a `createMockPrisma()` at the
@@ -33,6 +34,10 @@ export function rowMatches(row: Row, where: Row | undefined): boolean {
         if (actual === (cond as any).not) return false;
       } else if ("in" in cond) {
         if (!(cond as any).in.includes(actual)) return false;
+      } else if ("none" in cond) {
+        // relation filter on a to-many key: no related row matches (`none: {}` = no related row)
+        const related = Array.isArray(actual) ? (actual as Row[]) : [];
+        if (related.some((r) => rowMatches(r, (cond as any).none))) return false;
       } else if ("is" in cond) {
         if (!rowMatches(actual ?? {}, (cond as any).is)) return false;
       } else if (!rowMatches(actual ?? {}, cond as Row)) {

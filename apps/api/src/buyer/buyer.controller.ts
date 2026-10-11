@@ -32,6 +32,8 @@ import type { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { ForbiddenException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RequestSellerDto } from "./dto/request-seller.dto";
+import { InviteTokenDto } from "./dto/invite-token.dto";
+import { legacyInviteAccepted } from "./invite-token";
 import { PrismaService } from "../prisma/prisma.service";
 import { BuyerCreateOrderDto } from "./dto/buyer-create-order.dto";
 import { UpdateBuyerProfileDto } from "./dto/update-buyer-profile.dto";
@@ -154,18 +156,50 @@ export class BuyerController {
     return this.buyerService.getSellers(buyer.sub);
   }
 
-  @Get("invites/:token/details")
+  // The invite token travels in the request BODY (POST /buyer/invites/details and /accept), so it
+  // never lands in an access log, a browser history entry or a Referer. The two path-token routes
+  // below are the legacy form, kept only until LEGACY_INVITE_ACCEPT_UNTIL for links already emailed.
+
+  @Post("invites/details")
+  @HttpCode(HttpStatus.OK)
   @PublicBuyer()
   @ApiOperation({ summary: "Preview invite details before accepting (no auth required)" })
+  getInviteDetailsByBody(@Body() dto: InviteTokenDto) {
+    return this.buyerService.getInviteDetails(dto.token);
+  }
+
+  @Post("invites/accept")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Accept a seller invite and link the buyer account" })
+  acceptInviteByBody(@Body() dto: InviteTokenDto, @CurrentBuyer() buyer: BuyerJwtPayload) {
+    return this.buyerService.acceptInvite(dto.token, buyer.sub);
+  }
+
+  @Get("invites/:token/details")
+  @PublicBuyer()
+  @ApiOperation({
+    summary: "Legacy: preview invite details (token in the path; removed after the legacy window)",
+  })
   getInviteDetails(@Param("token") token: string) {
+    this.assertLegacyInvitePathOpen();
     return this.buyerService.getInviteDetails(token);
   }
 
   @Post("invites/:token/accept")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Accept a seller invite and link the buyer account" })
+  @ApiOperation({
+    summary: "Legacy: accept a seller invite (token in the path; removed after the legacy window)",
+  })
   acceptInvite(@Param("token") token: string, @CurrentBuyer() buyer: BuyerJwtPayload) {
+    this.assertLegacyInvitePathOpen();
     return this.buyerService.acceptInvite(token, buyer.sub);
+  }
+
+  /** After the legacy window the path form answers exactly like any dead link. */
+  private assertLegacyInvitePathOpen(): void {
+    if (!legacyInviteAccepted(new Date())) {
+      throw new NotFoundException("Invite not found or already used");
+    }
   }
 
   @Post("sellers/request")

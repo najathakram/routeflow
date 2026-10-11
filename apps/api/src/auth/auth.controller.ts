@@ -36,6 +36,7 @@ import { SetPasswordDto } from "./dto/set-password.dto";
 import { RequestPasswordResetDto } from "./dto/request-password-reset.dto";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { ExchangeCodeDto } from "./dto/exchange-code.dto";
+import { GoogleStartDto } from "./dto/google-start.dto";
 import { resolveLoginThrottle } from "./login-throttle.config";
 import { extractDeviceInfo } from "./device-info.util";
 import { StaffHandoffService } from "./handoff/staff-handoff.service";
@@ -312,7 +313,6 @@ export class AuthController {
   async googleAuthUrl(
     @Query("tenant") tenantSlug: string,
     @Query("context") context: "portal" | "staff" | "buyer-standalone" = "staff",
-    @Query("invite_token") inviteToken: string | undefined,
     @Query("mobile") mobileFlag: string | undefined,
     @Query("device_state") deviceState: string | undefined,
     // B825: the Expo mobile-web build passes its own origin so a browser-based
@@ -321,6 +321,8 @@ export class AuthController {
     @Query("return_origin") returnOrigin: string | undefined,
     @Res({ passthrough: true }) res: any,
   ) {
+    // The invite token is deliberately NOT accepted here: a token in a query string reaches access
+    // logs, history and Referer headers. Invite sign-ins use POST /auth/google/start.
     if (!this.googleOAuth.isConfigured()) {
       res.status(503);
       return { message: "Google sign-in is not configured for this environment.", statusCode: 503 };
@@ -337,12 +339,44 @@ export class AuthController {
     const url = await this.googleOAuth.generateAuthUrl(
       "tenant",
       tenantSlug,
-      inviteToken,
+      undefined,
       context,
       mobile,
       // F12-005: only meaningful on the mobile deep-link flow; echoed back to the app.
       mobile ? deviceState : undefined,
       resolvedReturnOrigin,
+    );
+    return { url };
+  }
+
+  /**
+   * POST /api/v1/auth/google/start
+   *
+   * Same as the GET above for a web sign-in, but the (optional) invite token comes in the BODY and
+   * is kept server-side against the OAuth nonce; the signed `state` and the Google URL carry only
+   * the nonce reference. No authentication required.
+   */
+  @Post("google/start")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Start Google sign-in for a seller invite (token in the body)" })
+  async googleStart(@Body() dto: GoogleStartDto, @Res({ passthrough: true }) res: any) {
+    if (!this.googleOAuth.isConfigured()) {
+      res.status(503);
+      return { message: "Google sign-in is not configured for this environment.", statusCode: 503 };
+    }
+    const context = dto.context ?? "staff";
+    if (context !== "buyer-standalone" && !dto.tenant) {
+      res.status(400);
+      return { message: "tenant is required", statusCode: 400 };
+    }
+    const url = await this.googleOAuth.generateAuthUrl(
+      "tenant",
+      dto.tenant,
+      dto.inviteToken,
+      context,
+      false,
+      undefined,
+      this.resolveReturnOrigin(undefined),
     );
     return { url };
   }
@@ -439,7 +473,7 @@ export class AuthController {
           refreshToken: r.refreshToken,
           type: "BUYER",
           sellerCount: String(r.sellerCount),
-          linked: profile.inviteToken ? "true" : "false",
+          linked: profile.inviteSecret ? "true" : "false",
         };
       }
 

@@ -9,8 +9,11 @@
  *   1. Operator on the e2e tenant creates a fresh customer and sends a portal invite,
  *      capturing the invite token from the `POST .../portal-invite` response body (its
  *      `inviteUrl` field) rather than scraping the DOM for it.
- *   2. A fresh buyer registers with `?redirect=/buyer/invite/<token>` (the placeholders below —
- *      field placeholders, button labels — are copied from the WORKING 04 flow) and accepts.
+ *   2. A fresh buyer opens the invite link (`/buyer/invite#t=<token>`: the token rides in the URL
+ *      fragment), follows "Create account to accept" (the register link carries
+ *      `?redirect=/buyer/invite` only; the invite page hands the token over through
+ *      sessionStorage), registers (the placeholders below — field placeholders, button labels —
+ *      are copied from the WORKING 04 flow) and accepts.
  *   3. Selects the seller (sets the buyer's activeSeller + persists it), then exercises the
  *      shop grid: density control (persistence across reload) and tile → detail navigation.
  *
@@ -72,20 +75,21 @@ test.describe("Buyer shop density + product detail", () => {
     await page.getByRole("button", { name: "Send Portal Invite" }).click();
     const inviteResponse = await inviteResponsePromise;
     const inviteBody = (await inviteResponse.json()) as { inviteUrl?: string };
-    const inviteToken = inviteBody.inviteUrl?.split("/buyer/invite/")[1];
+    const inviteToken = inviteBody.inviteUrl?.split("/buyer/invite#t=")[1];
     expect(inviteToken, "portal-invite response must include inviteUrl").toBeTruthy();
 
     // ── 2. Fresh buyer: register (redirect param carries the invite) → accept ─
     // Placeholders below are load-bearing — copied verbatim from 04-buyer-portal.spec.ts's
     // working BY-01 registration flow.
-    const inviteHref = `/buyer/invite/${inviteToken}`;
-    await page.goto(`/buyer/register?redirect=${encodeURIComponent(inviteHref)}`);
+    await page.goto(`/buyer/invite#t=${inviteToken}`);
+    await page.getByRole("link", { name: "Create account to accept" }).click();
+    await page.waitForURL(/\/buyer\/register/, { timeout: 20_000 });
     await page.getByPlaceholder("Enter your full name").fill(buyerName);
     await page.getByPlaceholder("Enter your email").fill(buyerEmail);
     await page.getByPlaceholder("8+ chars, upper & lower case, number or symbol").fill(buyerPass);
     await page.getByPlaceholder("Re-enter your password").fill(buyerPass);
     await page.getByRole("button", { name: "Create Account" }).click();
-    await page.waitForURL(/\/buyer\/invite\//, { timeout: 20_000 });
+    await page.waitForURL(/\/buyer\/invite(\?|$)/, { timeout: 20_000 });
 
     await page.getByRole("button", { name: /accept invite/i }).click();
     await page.waitForURL(/\/buyer\/portal(\?|$)/, { timeout: 20_000 });
