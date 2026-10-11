@@ -502,4 +502,150 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
     expect(stockAfter(other.id)).toBe(40);
     expect(Number((await productOf(w)).averageCost)).toBe(5);
   }, 60_000);
+
+  /** A durable session with one REPLACE line per `[productId, counted, expected, costOverride?]`. */
+  async function seedSession(
+    w: World,
+    lines: Array<[string, number, number, number?]>,
+  ): Promise<string> {
+    const session = await A.prisma.stockCountSession.create({
+      data: { tenantId: w.tenantId, startedById: w.userId, name: "sa767-e" },
+    });
+    for (const [productId, counted, expected, cost] of lines) {
+      // eslint-disable-next-line no-await-in-loop
+      await A.prisma.stockCountLine.create({
+        data: {
+          tenantId: w.tenantId,
+          sessionId: session.id,
+          productId,
+          mode: "REPLACE",
+          countedQty: counted,
+          expectedQty: expected,
+          unitCostOverride: cost ?? null,
+          countedById: w.userId,
+        },
+      });
+    }
+    return session.id;
+  }
+
+  const commitSession = (s: Services, w: World, sessionId: string) =>
+    inTenant(s, w, () => s.inventory.commitStockCountSession(sessionId, {}, { sub: w.userId }));
+
+  it("(e1) one all-zero-delta session committed twice concurrently applies ONCE (session CAS)", async () => {
+    const w = await seedWorld("e1", 100, 2);
+    // counted == current stock (delta 0) with a cost correction: the case the movement-reference
+    // idempotency check cannot see, because COST_BASIS rows carry no reference.
+    const sessionId = await seedSession(w, [[w.productId, 100, 100, 5]]);
+    const gateA = holdFirstTxOpen(A);
+
+    const first = commitSession(A, w, sessionId);
+    await gateA.parked; // A applied the cost row and flipped the session, uncommitted
+    // B's pre-tx read still sees the session OPEN (A has not committed).
+    const second = commitSession(B, w, sessionId);
+    const waited = await sawLockWait();
+    gateA.release();
+    const [r1, r2] = await Promise.all([first, second]);
+
+    const moves = await movementsOf(w);
+    const costRows = moves.filter((m) => m.type === "COST_BASIS");
+    const p = await productOf(w);
+    console.log(
+      `SA-767(e1) observed: lockWait=${waited} costRows=${costRows.length} moves=${moves.length} ` +
+        `stock=${p.currentStock} second.alreadyCommitted=${(r2 as any).alreadyCommitted}`,
+    );
+    expect(waited).toBe(true);
+    expect((r1 as any).alreadyCommitted).toBeUndefined();
+    expect((r2 as any).alreadyCommitted).toBe(true);
+    expect(costRows).toHaveLength(1); // the old code re-ran the COST_BASIS row: 2
+    expect(moves.filter((m) => m.type === "ADJUSTMENT")).toHaveLength(0);
+    expect(Number(p.currentStock)).toBe(100);
+    const s = await A.prisma.stockCountSession.findUniqueOrThrow({ where: { id: sessionId } });
+    expect(s.status).toBe("COMMITTED");
+  }, 60_000);
+
+  it("(e1b) a duplicate commit that read the session before the first landed does not erase a later sale", async () => {
+    const w = await seedWorld("e1b", 100, 2);
+    const sessionId = await seedSession(w, [[w.productId, 100, 100, 5]]);
+
+    // B's pre-tx read sees the session OPEN; B is then parked right before it enters its tx.
+    let enterB!: () => void;
+    const bMayEnter = new Promise<void>((r) => {
+      enterB = r;
+    });
+    let bPreReadDone!: () => void;
+    const bParked = new Promise<void>((r) => {
+      bPreReadDone = r;
+    });
+    const originalB = B.prisma.tenantTransaction.bind(B.prisma) as any;
+    jest.spyOn(B.prisma, "tenantTransaction").mockImplementation((async (fn: any, opts?: any) => {
+      bPreReadDone();
+      await bMayEnter;
+      return originalB(fn, opts);
+    }) as any);
+    const second = commitSession(B, w, sessionId);
+    await bParked;
+
+    // The first commit lands completely (no delta), then a sale of 30 commits: stock 70.
+    await commitSession(A, w, sessionId);
+    const sale = await openSale(w, 30);
+    await sale.commit();
+
+    enterB(); // the duplicate now runs against stock 70
+    const r2 = await second;
+
+    const p = await productOf(w);
+    const moves = await movementsOf(w);
+    console.log(
+      `SA-767(e1b) observed: stock=${p.currentStock} alreadyCommitted=${(r2 as any).alreadyCommitted} ` +
+        `moves=${moves.map((m) => `${m.type}:${m.quantity}`).join(" ")}`,
+    );
+    expect((r2 as any).alreadyCommitted).toBe(true);
+    expect(Number(p.currentStock)).toBe(70); // the old code REPLACEd 70 -> 100, erasing the sale
+    expect(moves.filter((m) => m.type === "ADJUSTMENT")).toHaveLength(0);
+    expect(moves.filter((m) => m.type === "COST_BASIS")).toHaveLength(1);
+  }, 60_000);
+
+  it("(e2) a line saved after the pre-tx read is committed with the session, never dropped", async () => {
+    const w = await seedWorld("e2", 100, 2);
+    const other = await addProduct(w, 50, 1);
+    const sessionId = await seedSession(w, [[w.productId, 90, 100]]);
+
+    // The line for `other` lands AFTER commitStockCountSession's pre-tx read and BEFORE its tx.
+    const original = A.prisma.tenantTransaction.bind(A.prisma) as any;
+    let injected = false;
+    jest.spyOn(A.prisma, "tenantTransaction").mockImplementation((async (fn: any, opts?: any) => {
+      if (!injected) {
+        injected = true;
+        await A.prisma.stockCountLine.create({
+          data: {
+            tenantId: w.tenantId,
+            sessionId,
+            productId: other.id,
+            mode: "REPLACE",
+            countedQty: 45,
+            expectedQty: 50,
+            countedById: w.userId,
+          },
+        });
+      }
+      return original(fn, opts);
+    }) as any);
+
+    await commitSession(A, w, sessionId);
+
+    const s = await A.prisma.stockCountSession.findUniqueOrThrow({ where: { id: sessionId } });
+    const otherNow = await A.prisma.product.findUniqueOrThrow({ where: { id: other.id } });
+    const moves = await movementsOf(w);
+    console.log(
+      `SA-767(e2) observed: status=${s.status} otherStock=${otherNow.currentStock} ` +
+        `adjustments=${moves.filter((m) => m.type === "ADJUSTMENT").length}`,
+    );
+    expect(injected).toBe(true);
+    expect(s.status).toBe("COMMITTED");
+    // the old code flipped the session to COMMITTED but left `other` at 50 (the line silently dropped)
+    expect(Number(otherNow.currentStock)).toBe(45);
+    expect(Number((await productOf(w)).currentStock)).toBe(90);
+    expect(moves.filter((m) => m.type === "ADJUSTMENT")).toHaveLength(2);
+  }, 60_000);
 });

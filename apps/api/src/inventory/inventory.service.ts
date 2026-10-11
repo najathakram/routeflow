@@ -17,7 +17,7 @@ import {
 } from "../products/product-parent";
 import type { PurchaseOrderReceipt } from "@routeflow/types";
 import * as crypto from "crypto";
-import { CostingMethod, MovementType, Prisma } from "@prisma/client";
+import { CostingMethod, MovementType, Prisma, type StockCountLine } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import {
@@ -2682,12 +2682,12 @@ export class InventoryService {
       throw new BadRequestException("Nothing counted yet");
     }
 
-    const productIds = Array.from(new Set(session.lines.map((l) => l.productId)));
+    const preReadProductIds = Array.from(new Set(session.lines.map((l) => l.productId)));
     const products = await this.prisma
       .forTenant()
-      .product.findMany({ where: { id: { in: productIds } } });
+      .product.findMany({ where: { id: { in: preReadProductIds } } });
     const productMap = new Map(products.map((p) => [p.id, p]));
-    const missingProductIds = productIds.filter((pid) => !productMap.has(pid));
+    const missingProductIds = preReadProductIds.filter((pid) => !productMap.has(pid));
     if (missingProductIds.length > 0) {
       throw new NotFoundException({
         message: "One or more products could not be found",
@@ -2700,16 +2700,73 @@ export class InventoryService {
     const reference = `STOCK_COUNT-${id}`;
     const restockedProductIds: string[] = [];
 
-    // SA-767 L-2: lock every counted product (one statement), read them INSIDE the tx, then the
-    // idempotency check, the cost corrections and the quantity adjustments all work from the locked
-    // rows. The whole tx re-runs on a 40P01 / 40001 / P2034: per-attempt state is reset at the top and
-    // the alerts fire once, after the commit.
+    // SA-767 L-2 / L-2.1: the session row is CLAIMED first (a compare-and-swap that takes its row lock),
+    // then its lines are read INSIDE the tx, then every counted product is locked (one statement) and
+    // read, and only then are the idempotency check, the cost corrections and the quantity adjustments
+    // applied - all from the locked rows. Lock order: domain row (the session) -> Products. The pre-tx
+    // read above only fast-fails; nothing that decides stock, cost or lines comes from it. The whole tx
+    // re-runs on a 40P01 / 40001 / P2034 (the claim rolls back with it): per-attempt state is reset at
+    // the top and the alerts fire once, after the commit.
     const result = await retryStockTx("inventory.commitStockCountSession", () =>
       this.prisma.tenantTransaction(
         async (tx) => {
           restockedProductIds.length = 0;
+
+          // The single claim: only a session still OPEN / REVIEW is committed. A second committer
+          // blocks here on the first one's row lock and, once it has committed, matches nothing.
+          const claimed = await tx.stockCountSession.updateMany({
+            where: { id, status: { in: ["OPEN", "REVIEW"] } },
+            data: { updatedAt: new Date() },
+          });
+          if (claimed.count === 0) {
+            const current = await tx.stockCountSession.findFirst({
+              where: { id },
+              select: { status: true, movementReference: true },
+            });
+            if (!current) throw new NotFoundException("Stock count session not found");
+            if (current.status === "DISCARDED") {
+              throw new BadRequestException("This count was discarded");
+            }
+            if (current.status !== "COMMITTED") {
+              throw new ConflictException("This count changed while committing - try again");
+            }
+            return {
+              sessionId: id,
+              reference: current.movementReference,
+              applied: 0,
+              skipped: await tx.stockCountLine.count({ where: { sessionId: id } }),
+              movementIds: [] as string[],
+              costMovementIds: [] as string[],
+              alreadyCommitted: true,
+            };
+          }
+
+          // The lines as they are NOW, under the claim - a line saved after the pre-tx read is part of
+          // this commit, never silently dropped while the session flips to COMMITTED.
+          const lines: StockCountLine[] = await tx.stockCountLine.findMany({
+            where: { sessionId: id },
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          });
+          if (lines.length === 0) throw new BadRequestException("Nothing counted yet");
+
+          const productIds = Array.from(new Set(lines.map((l) => l.productId)));
           await this.lockProducts(tx, productIds);
           const lockedMap = await this.readLockedStockRows(tx, productIds);
+
+          // Products the pre-tx check never saw (their line was saved after it) get the same checks now.
+          const unchecked = productIds.filter((pid) => !productMap.has(pid));
+          if (unchecked.length > 0) {
+            const late = await tx.product.findMany({ where: { id: { in: unchecked } } });
+            const lateIds = new Set(late.map((p) => p.id));
+            const lateMissing = unchecked.filter((pid) => !lateIds.has(pid));
+            if (lateMissing.length > 0) {
+              throw new NotFoundException({
+                message: "One or more products could not be found",
+                missingProductIds: lateMissing,
+              });
+            }
+            assertSellableLines(late); // WS8
+          }
 
           // Same guard as the legacy path: if movements already carry this
           // reference, the commit landed and only the response was lost.
@@ -2732,7 +2789,7 @@ export class InventoryService {
           // 1) Cost corrections first — see the ordering note above.
           const costMovementIds: string[] = [];
           const correctedCosts = new Map<string, Prisma.Decimal>();
-          for (const line of session.lines) {
+          for (const line of lines) {
             if (line.unitCostOverride == null) continue;
             const unitCost = costDecimal(Number(line.unitCostOverride));
             const movement = await this.setCostBasisInTx(
@@ -2751,7 +2808,7 @@ export class InventoryService {
           // 2) Then the quantity adjustments, through the SHARED routine so the
           //    durable path can never drift from the legacy one.
           const { movementIds, skipped } = await this.applyStockCountItemsInTx(tx, {
-            items: session.lines.map((l) => ({
+            items: lines.map((l) => ({
               productId: l.productId,
               quantity: Number(l.countedQty),
               mode: l.mode as "REPLACE" | "ADD",

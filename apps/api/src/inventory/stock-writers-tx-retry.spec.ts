@@ -70,14 +70,19 @@ const WRITERS: Writer[] = [
     name: "commitStockCountSession",
     label: "inventory.commitStockCountSession",
     method: "commitStockCountSession",
-    setup: (prisma) =>
+    setup: (prisma) => {
+      const lines = [
+        { productId: "prod-1", mode: "REPLACE", countedQty: D(15), unitCostOverride: null },
+      ];
+      // the pre-tx read only fast-fails; the claim (CAS) and the applied lines come from inside the tx
       prisma.stockCountSession.findUnique.mockResolvedValue({
         id: "sess-1",
         status: "OPEN",
-        lines: [
-          { productId: "prod-1", mode: "REPLACE", countedQty: D(15), unitCostOverride: null },
-        ],
-      }),
+        lines,
+      });
+      prisma.stockCountSession.updateMany.mockResolvedValue({ count: 1 });
+      prisma.stockCountLine.findMany.mockResolvedValue(lines);
+    },
     call: (svc) => svc.commitStockCountSession("sess-1", {} as any, { sub: "user-1" }),
     alerts: ["prod-1"],
     clean: { movement: 1, lot: 1, product: 1 },

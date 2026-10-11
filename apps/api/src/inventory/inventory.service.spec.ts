@@ -1222,6 +1222,15 @@ describe("InventoryService", () => {
       lines: [line()],
       ...over,
     });
+    /**
+     * SA-767 L-2.1: the pre-tx read (`findUnique`) only fast-fails; the claim (`updateMany`) and the
+     * lines the commit applies come from INSIDE the tx (`stockCountLine.findMany`).
+     */
+    const givenSession = (sess: ReturnType<typeof session>, claim = 1) => {
+      prisma.stockCountSession.findUnique.mockResolvedValue(sess);
+      prisma.stockCountSession.updateMany.mockResolvedValue({ count: claim });
+      prisma.stockCountLine.findMany.mockResolvedValue(sess.lines);
+    };
 
     it("a committed session short-circuits instead of re-applying its deltas", async () => {
       prisma.stockCountSession.findUnique.mockResolvedValue(
@@ -1236,7 +1245,7 @@ describe("InventoryService", () => {
     });
 
     it("existing movements for the reference short-circuit a lost-response retry", async () => {
-      prisma.stockCountSession.findUnique.mockResolvedValue(session());
+      givenSession(session());
       prisma.product.findMany.mockResolvedValue([product()]);
       prisma.stockMovement.findMany.mockResolvedValue([{ id: "m-existing" }]);
 
@@ -1247,7 +1256,7 @@ describe("InventoryService", () => {
     });
 
     it("REPLACE commits the counted-minus-expected delta and never touches uncounted products", async () => {
-      prisma.stockCountSession.findUnique.mockResolvedValue(session());
+      givenSession(session());
       prisma.product.findMany.mockResolvedValue([product()]); // currentStock 10
       prisma.stockMovement.findMany.mockResolvedValue([]);
       prisma.product.findUnique.mockResolvedValue(product());
@@ -1266,7 +1275,7 @@ describe("InventoryService", () => {
     });
 
     it("a zero-variance line is skipped, writing no movement at all", async () => {
-      prisma.stockCountSession.findUnique.mockResolvedValue(
+      givenSession(
         session({ lines: [line({ countedQty: D(10) })] }), // equals on-hand
       );
       prisma.product.findMany.mockResolvedValue([product()]);
@@ -1280,7 +1289,7 @@ describe("InventoryService", () => {
     });
 
     it("a unitCostOverride writes COST_BASIS BEFORE the adjustment, so the lot is valued at the corrected cost", async () => {
-      prisma.stockCountSession.findUnique.mockResolvedValue(
+      givenSession(
         // Counted 15 vs on-hand 10 ⇒ +5, so a lot is opened.
         session({ lines: [line({ countedQty: D(15), unitCostOverride: D(3.5) })] }),
       );
@@ -1301,6 +1310,121 @@ describe("InventoryService", () => {
       const lot = prisma.stockLot.create.mock.calls[0][0].data;
       expect(Number(lot.qty)).toBe(5);
       expect(Number(lot.unitCost)).toBe(3.5);
+    });
+
+    // ── SA-767 L-2.1: the session is claimed (CAS) first; the lines are read inside the tx ──
+
+    it("claims the session with a compare-and-swap on OPEN / REVIEW before it locks any product", async () => {
+      givenSession(session());
+      prisma.product.findMany.mockResolvedValue([product()]);
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+      const order: string[] = [];
+      prisma.stockCountSession.updateMany.mockImplementation(async () => {
+        order.push("claim");
+        return { count: 1 };
+      });
+      prisma.tenantTransaction.mockImplementation((fn: any) =>
+        fn({
+          ...prisma,
+          $executeRaw: jest.fn(async () => {
+            order.push("lock");
+            return 0;
+          }),
+          $queryRaw: jest.fn().mockResolvedValue([]),
+        }),
+      );
+
+      await service.commitStockCountSession("sess-1", {}, { sub: "user-1" });
+
+      expect(prisma.stockCountSession.updateMany).toHaveBeenCalledWith({
+        where: { id: "sess-1", status: { in: ["OPEN", "REVIEW"] } },
+        data: { updatedAt: expect.any(Date) },
+      });
+      expect(order[0]).toBe("claim");
+      expect(order.indexOf("claim")).toBeLessThan(order.indexOf("lock"));
+    });
+
+    it("a commit that loses the claim to a concurrent one returns alreadyCommitted and writes nothing", async () => {
+      // the pre-tx read still saw OPEN; by the time this tx claims, the first commit has landed
+      givenSession(session(), 0);
+      prisma.product.findMany.mockResolvedValue([product()]);
+      prisma.stockCountSession.findFirst.mockResolvedValue({
+        status: "COMMITTED",
+        movementReference: "STOCK_COUNT-sess-1",
+      });
+      prisma.stockCountLine.count.mockResolvedValue(1);
+
+      const res = await service.commitStockCountSession("sess-1", {}, { sub: "user-1" });
+
+      expect(res).toMatchObject({
+        sessionId: "sess-1",
+        reference: "STOCK_COUNT-sess-1",
+        applied: 0,
+        skipped: 1,
+        alreadyCommitted: true,
+      });
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(prisma.stockLot.create).not.toHaveBeenCalled();
+    });
+
+    it("a claim lost to a discard is refused, not reported as committed", async () => {
+      givenSession(session(), 0);
+      prisma.product.findMany.mockResolvedValue([product()]);
+      prisma.stockCountSession.findFirst.mockResolvedValue({
+        status: "DISCARDED",
+        movementReference: null,
+      });
+
+      await expect(
+        service.commitStockCountSession("sess-1", {}, { sub: "user-1" }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+
+    it("applies the lines read INSIDE the tx: a line saved after the pre-tx read is not dropped", async () => {
+      // pre-tx read: one line (prod-1). In the tx, under the claim: that line AND a late one (prod-2).
+      const late = line({
+        id: "line-2",
+        productId: "prod-2",
+        countedQty: D(45),
+        expectedQty: D(50),
+      });
+      givenSession(session());
+      prisma.stockCountLine.findMany.mockResolvedValue([line(), late]);
+      prisma.product.findMany.mockImplementation(async (args: any) => {
+        const ids: string[] = args?.where?.id?.in ?? [];
+        return [product(), product({ id: "prod-2", currentStock: D(50) })].filter((p) =>
+          ids.includes(p.id),
+        );
+      });
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+
+      const res = await service.commitStockCountSession("sess-1", {}, { sub: "user-1" });
+
+      const touched = prisma.stockMovement.create.mock.calls.map((c: any) => c[0].data.productId);
+      expect(touched).toEqual(["prod-1", "prod-2"]);
+      expect(res.applied).toBe(2);
+    });
+
+    it("a late line for a product that is gone is refused with the missing id", async () => {
+      givenSession(session());
+      prisma.stockCountLine.findMany.mockResolvedValue([
+        line(),
+        line({ id: "line-2", productId: "prod-gone" }),
+      ]);
+      prisma.product.findMany.mockImplementation(async (args: any) => {
+        const ids: string[] = args?.where?.id?.in ?? [];
+        return [product()].filter((p) => ids.includes(p.id));
+      });
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.commitStockCountSession("sess-1", {}, { sub: "user-1" }),
+      ).rejects.toMatchObject({
+        response: { missingProductIds: ["prod-gone"] },
+      });
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
     });
 
     it("refuses to commit an empty count and a discarded one", async () => {

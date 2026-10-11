@@ -150,14 +150,14 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
   });
 
   it("a session commit locks every counted product once, before the cost row and the adjustment", async () => {
-    prisma.stockCountSession.findUnique.mockResolvedValue({
-      id: "sess-1",
-      status: "OPEN",
-      lines: [
-        { productId: "prod-1", mode: "REPLACE", countedQty: D(90), unitCostOverride: D(5) },
-        { productId: "prod-2", mode: "ADD", countedQty: D(4), unitCostOverride: null },
-      ],
-    });
+    const lines = [
+      { productId: "prod-1", mode: "REPLACE", countedQty: D(90), unitCostOverride: D(5) },
+      { productId: "prod-2", mode: "ADD", countedQty: D(4), unitCostOverride: null },
+    ];
+    prisma.stockCountSession.findUnique.mockResolvedValue({ id: "sess-1", status: "OPEN", lines });
+    // L-2.1: the claim (CAS) wins, and the applied lines are the ones read inside the tx
+    prisma.stockCountSession.updateMany.mockResolvedValue({ count: 1 });
+    prisma.stockCountLine.findMany.mockResolvedValue(lines);
     const rows = [
       row({ currentStock: D(70) }),
       row({ id: "prod-2", name: "Sugar", currentStock: D(6) }),
