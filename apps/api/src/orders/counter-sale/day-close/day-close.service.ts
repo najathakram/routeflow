@@ -204,14 +204,29 @@ export class CounterDayCloseService {
 
   // ─── GET ────────────────────────────────────────────────────────────────────────────────────────
 
-  /** GET .../day-close/latest: the latest close of the register (windowEnd is its `closedThrough`), or 404 when it has none. */
-  async latestClose(rawRegisterKey?: string): Promise<DayCloseSnapshot> {
+  /**
+   * GET .../day-close/latest: the newest close of the register (`windowEnd` is its `closedThrough`, `reopenedAt` is in the
+   * snapshot) plus a live `salesSinceCount` (counter sales rung after `windowEnd`, the same predicate as the close); null when the
+   * register has no close yet.
+   */
+  async latestClose(
+    rawRegisterKey?: string,
+    now: Date = new Date(),
+  ): Promise<(DayCloseSnapshot & { salesSinceCount: number }) | null> {
     const tenantId = this.tenantId();
     await this.assertCounterOn(tenantId);
     const registerKey = parseRegisterKey(rawRegisterKey);
-    const row = await this.latest(this.prisma.forTenant(), tenantId, registerKey);
-    if (!row) throw new NotFoundException("No close yet");
-    return this.snapshotOf(row);
+    const db = this.prisma.forTenant();
+    const row = await this.latest(db, tenantId, registerKey);
+    if (!row) return null;
+    const salesSinceCount = await countSalesSince(
+      db,
+      tenantId,
+      registerKey,
+      row.windowEnd,
+      new Date(now.getTime() + 1),
+    );
+    return { ...(await this.snapshotOf(row)), salesSinceCount };
   }
 
   /** GET .../day-close/:id: one past close (404 for an unknown id or another tenant's). */

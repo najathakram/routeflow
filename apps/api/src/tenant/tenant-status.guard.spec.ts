@@ -1,5 +1,5 @@
 import { ExecutionContext, ForbiddenException } from "@nestjs/common";
-import { TenantStatusGuard } from "./tenant-status.guard";
+import { READ_ONLY_ALLOWED_ROUTES, TenantStatusGuard } from "./tenant-status.guard";
 import { PrismaService } from "../prisma/prisma.service";
 
 const token = `h.${Buffer.from(JSON.stringify({ tenantId: "t1" })).toString("base64url")}.s`;
@@ -50,8 +50,10 @@ describe("TenantStatusGuard — READ_ONLY enforcement", () => {
     ).resolves.toBe(true);
     for (const blocked of [
       "/api/v1/orders/counter-sale", // a sale stays blocked
-      "/api/v1/orders/counter-sale/day-close/x/reopen",
-      "/api/v1/orders/counter-sale/day-close/x/report",
+      "/api/v1/orders/counter-sale/day-close/x/reopen", // not a uuid
+      "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/report",
+      "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/reopen/",
+      "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/reopen/x",
       "/api/v1/orders/counter-sale/day-close/",
       "/api/v1/orders/counter-sale/day-closed",
     ]) {
@@ -61,6 +63,26 @@ describe("TenantStatusGuard — READ_ONLY enforcement", () => {
       expect(err).toBeInstanceOf(ForbiddenException);
       expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
     }
+  });
+
+  it("the allow-list is exactly the close and the reopen, and the reopen is allowed (SA-750r3 O1)", async () => {
+    expect(READ_ONLY_ALLOWED_ROUTES.map((r) => `${r.method} ${r.path.source}`)).toEqual([
+      "POST ^\\/api\\/v1\\/orders\\/counter-sale\\/day-close$",
+      "POST ^\\/api\\/v1\\/orders\\/counter-sale\\/day-close\\/[0-9a-fA-F-]{36}\\/reopen$",
+    ]);
+    await expect(
+      guardFor("READ_ONLY").canActivate(
+        ctx(
+          "POST",
+          "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/reopen",
+        ),
+      ),
+    ).resolves.toBe(true);
+    // a read-only tenant's sale is still refused
+    const err = await guardFor("READ_ONLY")
+      .canActivate(ctx("POST", "/api/v1/orders/counter-sale"))
+      .catch((e) => e);
+    expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
   });
 
   it("the day-close exemption is POST only: DELETE, PUT and PATCH on that exact path stay blocked", async () => {
