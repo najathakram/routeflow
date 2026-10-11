@@ -65,6 +65,9 @@ export const API_ERROR_CODES = {
   CREDIT_NOTE_CREDIT_CONSUMED: "CREDIT_NOTE_CREDIT_CONSUMED",
   CREDIT_NOTE_OVER_HEADROOM: "CREDIT_NOTE_OVER_HEADROOM",
   RETURN_REFUND_OVER_LINE_HEADROOM: "RETURN_REFUND_OVER_LINE_HEADROOM",
+  RETURN_REFUND_BASIS_CHANGED: "RETURN_REFUND_BASIS_CHANGED",
+  RETURN_EXCEEDS_REFUNDABLE: "RETURN_EXCEEDS_REFUNDABLE",
+  CREDIT_EXCEEDS_REFUNDABLE: "CREDIT_EXCEEDS_REFUNDABLE",
   RETURN_MIXED_UNIT_PRODUCT: "RETURN_MIXED_UNIT_PRODUCT",
   CREDIT_NOTE_SOURCE_GONE: "CREDIT_NOTE_SOURCE_GONE",
   CREDIT_NOTE_NO_SOURCE_CAP: "CREDIT_NOTE_NO_SOURCE_CAP",
@@ -79,7 +82,18 @@ export const API_ERROR_CODES = {
   CUSTOMER_NOT_LINKED: "CUSTOMER_NOT_LINKED",
   BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
   BILL_VOID: "BILL_VOID",
+  /**
+   * B959: nothing the return names is billed (400 from a STANDARD return's refund). SA-773 N4: the same code, as a 409, when an
+   * inline hold's approval finds its source invoice voided or written off since the capture; carries `invoiceId`.
+   */
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
+  /**
+   * Row 347 (S2): a CAPTURE (standalone or inside an order create/edit) whose source sale was voided / written off, or whose
+   * source line is gone, in the instant before its credit was minted. The capture's one transaction rolled back, so NOTHING was
+   * recorded and there is no return to cancel (unlike RETURN_NOTHING_BILLED, which the approve / store-credit paths answer for
+   * a return that exists). Definite refusal: the offline nonce settles.
+   */
+  RETURN_CAPTURE_SOURCE_CLOSED: "RETURN_CAPTURE_SOURCE_CLOSED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
   INVOICE_TAX_STATE_STALE: "INVOICE_TAX_STATE_STALE",
   INVOICE_TOTAL_BELOW_PAID: "INVOICE_TOTAL_BELOW_PAID",

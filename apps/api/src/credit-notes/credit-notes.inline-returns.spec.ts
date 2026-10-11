@@ -330,6 +330,47 @@ describe("CreditNotesService — PR-1c (m-1 mintStandaloneInTx, §6.3 met exclus
       expect(prisma.creditNote.updateMany).not.toHaveBeenCalled();
     });
 
+    it("SA-773 follow-up (A): an application OUTSIDE the locks the caller took is refused 409, nothing written", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        {
+          id: "pay-1",
+          invoiceId: "inv-held",
+          creditNoteId: "cn-1",
+          amount: 30,
+          invoice: { orderId: "ord-held" },
+        },
+        {
+          id: "pay-2",
+          invoiceId: "inv-new",
+          creditNoteId: "cn-1",
+          amount: 20,
+          invoice: { orderId: "ord-new" },
+        },
+      ]);
+      const err: any = await service
+        .cancelStandaloneInTx(prisma, "cn-1", {
+          orderIds: ["ord-held"],
+          invoiceIds: ["inv-held"],
+        })
+        .catch((e: any) => e);
+      expect(err?.getStatus?.()).toBe(409);
+      expect(err?.getResponse?.().code).toBe("CREDIT_NOTE_CHANGED_CONCURRENTLY");
+      expect(prisma.invoicePayment.delete).not.toHaveBeenCalled();
+      expect(prisma.creditNote.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("SA-773 follow-up (A): cancelLockSet is the orders and invoices of the live applications, each sorted and unique", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { id: "p1", invoiceId: "inv-b", invoice: { orderId: "ord-2" } },
+        { id: "p2", invoiceId: "inv-a", invoice: { orderId: "ord-2" } },
+        { id: "p3", invoiceId: "inv-c", invoice: { orderId: "ord-1" } },
+      ]);
+      await expect(service.cancelLockSet(prisma, "cn-1")).resolves.toEqual({
+        orderIds: ["ord-1", "ord-2"],
+        invoiceIds: ["inv-a", "inv-b", "inv-c"],
+      });
+    });
+
     it("is a no-op on an already-VOID note", async () => {
       prisma.invoicePayment.findMany.mockResolvedValue([]);
       prisma.creditNote.findFirst.mockResolvedValue({ status: "VOID", amountUsed: 0 });

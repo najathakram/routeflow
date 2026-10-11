@@ -43,3 +43,20 @@ export function refundTenderChoiceActions(
     { label: "Cancel", style: "cancel" as const },
   ];
 }
+
+/**
+ * SA-773: a STANDARD return whose goods were already returned or credited (`refundEstimateReason` EXCEEDS_REFUNDABLE) is
+ * refused by the refund claim, so the screen blocks Resolve and says what is left instead of offering the priced amount.
+ * Null when the return can be resolved.
+ */
+export function refundBlockedText(ret: {
+  refundEstimate?: number | null;
+  refundEstimateReason?: string | null;
+}): string | null {
+  if (ret.refundEstimateReason !== "EXCEEDS_REFUNDABLE") return null;
+  const left =
+    ret.refundEstimate && ret.refundEstimate > 0
+      ? `Up to $${ret.refundEstimate.toFixed(2)} can still be given back for these goods.`
+      : "Nothing more can be given back for these goods.";
+  return `These goods were already returned or credited, so this return can't be resolved as it stands. ${left} Cancel the return and give an inline return or a credit note for what is left.`;
+}

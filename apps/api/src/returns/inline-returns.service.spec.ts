@@ -109,6 +109,7 @@ describe("InlineReturnsService", () => {
     mintStandaloneInTx: jest.Mock;
     settleOrderCreditsInTx: jest.Mock;
     cancelStandaloneInTx: jest.Mock;
+    cancelLockSet: jest.Mock;
   };
   let ledger: { reverseReturnEntries: jest.Mock; unreverseReturnEntries: jest.Mock };
   let addonService: { hasAddon: jest.Mock };
@@ -133,6 +134,7 @@ describe("InlineReturnsService", () => {
       ),
       settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
       cancelStandaloneInTx: jest.fn().mockResolvedValue({ restored: 30 }),
+      cancelLockSet: jest.fn().mockResolvedValue({ orderIds: [], invoiceIds: [] }),
     };
     ledger = {
       reverseReturnEntries: jest.fn().mockResolvedValue(undefined),
@@ -191,6 +193,13 @@ describe("InlineReturnsService", () => {
     });
     // sumInlineReturnCredit's own query — empty by default (no prior committed credit).
     prisma.return.findMany.mockResolvedValue([]);
+    // Row 347 (1): the capture mints in its OWN transaction, so assertInlineSourcesOpen now asks about the captured chunk's source
+    // line ("invitem-1") before the mint: by default it exists, on a live invoice (tests that drive a dead / lost source override).
+    prisma.invoiceItem.findMany.mockImplementation(async ({ where }: any) =>
+      (where?.id?.in ?? []).includes("invitem-1")
+        ? [{ id: "invitem-1", invoiceId: "inv-live" }]
+        : [],
+    );
     // The final "read back the row" call at the end of capture()/approve() — a realistic
     // stand-in so a test that doesn't care about the exact returned shape still gets a
     // truthy object back instead of the mock's bare `null` default.
@@ -480,6 +489,35 @@ describe("InlineReturnsService", () => {
         data: expect.objectContaining({ status: "REFUNDED", creditNoteId: "cn-1" }),
       }),
     );
+  });
+
+  it("SA-773 N4: the replay re-issue of a STUCK return whose source invoice was voided mints nothing (409 RETURN_NOTHING_BILLED)", async () => {
+    const stuck = {
+      id: "ret-stuck",
+      returnKey: "nonce-1",
+      kind: "INLINE",
+      customerId: "cust-1",
+      orderId: "ord-carrying",
+      status: "RECEIVED",
+      creditNoteId: null,
+      holdReason: null,
+      returnNumber: "RET-STUCK",
+      creditSubtotal: 28,
+      creditTax: 2,
+      creditCategoryTax: 0,
+      items: [{ productId: "prod-1", qty: 6, sourceInvoiceItemId: "line-1" }],
+    };
+    prisma.return.findFirst.mockImplementation(async ({ where }: any) =>
+      where?.returnKey === "nonce-1" || where?.id === "ret-stuck" ? stuck : null,
+    );
+    prisma.invoiceItem.findMany.mockResolvedValue([{ id: "line-1", invoiceId: "inv-dead" }]);
+    prisma.invoice.findFirst.mockResolvedValue({ id: "inv-dead" });
+
+    const err: any = await service.capture(CAPTURE_DTO as any, OPERATOR).catch((e: any) => e);
+
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "RETURN_NOTHING_BILLED" });
+    expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
   });
 
   it("a returnKey belonging to a DIFFERENT customer/order (found only at the PRE-tx check, gone by the in-tx re-check) is never treated as a replay", async () => {
@@ -1000,32 +1038,128 @@ describe("InlineReturnsService", () => {
 
   // ─── N-1: cancel racing between the re-read and the link ────────────────────
 
-  it("N-1: a return that moved out of RECEIVED between issueCredit's lock and the mint mints NOTHING (revert ⇒ orphaned CN)", async () => {
-    // The unlocked pre-read (m-2) still sees RECEIVED — issueCredit proceeds to open its tx.
+  it("N-1: a REPLAY re-issue (issueCredit) of a return that moved out of RECEIVED between its pre-read and its lock mints NOTHING (revert ⇒ orphaned CN)", async () => {
+    // A fresh capture mints in its own transaction (row 347: nothing can move the return before it is visible), so the
+    // cancel-vs-issue race lives on the replay path: a stuck RECEIVED return re-issued by a retry. The unlocked pre-read (m-2)
+    // still sees RECEIVED, so issueCredit proceeds to open its tx.
+    const stuck = {
+      id: "ret-stuck",
+      returnKey: "nonce-1",
+      kind: "INLINE",
+      status: "RECEIVED",
+      creditNoteId: null,
+      holdReason: null,
+      customerId: "cust-1",
+      orderId: "ord-carrying",
+      creditSubtotal: 28,
+      creditTax: 2,
+      creditCategoryTax: 0,
+      items: [],
+    };
     prisma.return.findFirst
-      .mockResolvedValueOnce(null) // capture()'s own pre-tx replay check
-      .mockResolvedValueOnce(null) // capture()'s in-tx replay check (kind INLINE) — none found, proceeds to create
-      .mockResolvedValueOnce({
-        id: "ret-1",
-        status: "RECEIVED",
-        creditNoteId: null,
-        holdReason: null,
-        customerId: "cust-1",
-        orderId: "ord-carrying",
-        creditSubtotal: 28,
-        creditTax: 2,
-        creditCategoryTax: 0,
-      }) // issueCredit's own unlocked pre-read (m-2) — carries the priced amount ($30) so it clears the amount>0 gate and actually opens the tx
-      .mockResolvedValueOnce({ id: "ret-1", status: "CANCELLED", creditNoteId: null }); // issueCredit's in-tx FOR-UPDATE re-read: cancel() won the race
+      .mockResolvedValueOnce(stuck) // capture()'s own pre-tx replay check: the stuck row
+      .mockResolvedValueOnce(stuck) // issueCredit's own unlocked pre-read (m-2): still RECEIVED
+      .mockResolvedValueOnce({ id: "ret-stuck", status: "CANCELLED", creditNoteId: null }); // its in-tx FOR-UPDATE re-read: cancel() won the race
 
     await service.capture(CAPTURE_DTO as any, OPERATOR);
 
+    expect(prisma.return.create).not.toHaveBeenCalled();
     expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
     expect(prisma.return.updateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ creditNoteId: expect.anything() }),
       }),
     );
+  });
+
+  it("row 347 (1): a fresh STORE_CREDIT capture mints in the capture's OWN transaction: one transaction, no issueCredit re-read", async () => {
+    const out = await service.capture(CAPTURE_DTO as any, OPERATOR);
+
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+    expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledTimes(1);
+    // the intent keeps its full amount (the standalone path is not capped at the order's balance)
+    expect(prisma.orderCreditNote.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ amount: 30 }) }),
+    );
+    expect(gateway.emitCreditNoteCreated).toHaveBeenCalledTimes(1);
+    expect(out).toMatchObject({ creditNoteId: "cn-1" });
+  });
+
+  describe("row 347 (1): the capture's one transaction has the order-create budget and its expiry / lock wait is a retryable 409", () => {
+    it("opens it with a 15 s timeout (capture, restock, ledger, mint and settle in one transaction)", async () => {
+      await service.capture(CAPTURE_DTO as any, OPERATOR);
+      expect(prisma.tenantTransaction).toHaveBeenCalledWith(expect.any(Function), {
+        timeout: 15_000,
+      });
+    });
+
+    const refuses = async (err: unknown) => {
+      prisma.tenantTransaction.mockRejectedValueOnce(err);
+      const e: any = await service.capture(CAPTURE_DTO as any, OPERATOR).then(
+        () => null,
+        (x) => x,
+      );
+      expect(e?.getStatus?.()).toBe(409);
+      expect(e?.getResponse?.()).toMatchObject({ code: "CONCURRENT_UPDATE", retryable: true });
+    };
+
+    it("an expired transaction (Prisma P2028) is 409 CONCURRENT_UPDATE, never an uncoded 500", async () => {
+      await refuses(Object.assign(new Error("Transaction API error"), { code: "P2028" }));
+    });
+
+    it("a lock wait that gave up (55P03) is the same retryable 409", async () => {
+      await refuses(
+        Object.assign(new Error("canceling statement due to lock timeout"), {
+          meta: { code: "55P03" },
+        }),
+      );
+    });
+
+    it("a write conflict / deadlock (Prisma P2034, SQLSTATE 40P01 and 40001) is the same retryable 409, never an uncoded 500", async () => {
+      await refuses(
+        Object.assign(new Error("Transaction failed due to a write conflict"), { code: "P2034" }),
+      );
+      await refuses(Object.assign(new Error("deadlock detected"), { meta: { code: "40P01" } }));
+      await refuses(
+        Object.assign(new Error("could not serialize"), {
+          cause: { originalCode: "40001" },
+        }),
+      );
+    });
+
+    it("any other failure still propagates as it was", async () => {
+      prisma.tenantTransaction.mockRejectedValueOnce(new Error("boom"));
+      await expect(service.capture(CAPTURE_DTO as any, OPERATOR)).rejects.toThrow("boom");
+    });
+  });
+
+  it("row 347 (1): a source that went dead before the mint rolls the capture back (409 RETURN_CAPTURE_SOURCE_CLOSED, not the approve wording), no credit note and no event", async () => {
+    prisma.invoiceItem.findMany.mockResolvedValue([{ id: "invitem-1", invoiceId: "inv-dead" }]);
+    prisma.invoice.findFirst.mockResolvedValue({ id: "inv-dead" });
+
+    const err: any = await service.capture(CAPTURE_DTO as any, OPERATOR).then(
+      () => null,
+      (e) => e,
+    );
+
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse().code).toBe("RETURN_CAPTURE_SOURCE_CLOSED");
+    // nothing exists to cancel or reject: the capture rolled back, and the words say so
+    expect(err.getResponse().message).toMatch(/Nothing was recorded/);
+    expect(err.getResponse().message).not.toMatch(/cancel|reject/i);
+    // the source line itself gone: the same capture refusal and words
+    prisma.invoiceItem.findMany.mockResolvedValue([]);
+    const gone: any = await service.capture(CAPTURE_DTO as any, OPERATOR).then(
+      () => null,
+      (e) => e,
+    );
+    expect(gone.getResponse().code).toBe("RETURN_CAPTURE_SOURCE_CLOSED");
+    expect(gone.getResponse().message).not.toMatch(/cancel|reject/i);
+    prisma.invoiceItem.findMany.mockResolvedValue([{ id: "invitem-1", invoiceId: "inv-dead" }]);
+    expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    expect(gateway.emitCreditNoteCreated).not.toHaveBeenCalled();
+    // the whole refusal is inside the one transaction (two captures were driven above: the dead invoice and the lost line)
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
   });
 
   // ─── the N-1 guarded link's exact refusal literal — pinned cross-boundary (SA-091b) ──
@@ -1334,6 +1468,123 @@ describe("InlineReturnsService", () => {
           data: expect.objectContaining({ approvedById: OPERATOR.sub }),
         }),
       );
+    });
+
+    it("SA-773 N4: a source invoice voided or written off since the capture is refused 409 RETURN_NOTHING_BILLED before any restock, reversal or mint", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        ...HELD,
+        items: [{ ...HELD.items[0], sourceInvoiceItemId: "line-1" }],
+      });
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoiceItem.findMany.mockResolvedValue([{ id: "line-1", invoiceId: "inv-dead" }]);
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-dead" });
+
+      const err: any = await service.approve("ret-held", OPERATOR).catch((e: any) => e);
+
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({
+        code: "RETURN_NOTHING_BILLED",
+        invoiceId: "inv-dead",
+      });
+      // the dead statuses are asked for by the shared set (VOID, WRITTEN_OFF), not by a literal in the guard
+      expect(prisma.invoice.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ["inv-dead"] }, status: { in: ["VOID", "WRITTEN_OFF"] } },
+        }),
+      );
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(ledger.reverseReturnEntries).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("SA-773 N4: a source line that no longer exists fails closed the same way (no pool, so it would be minted unchecked)", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        ...HELD,
+        items: [{ ...HELD.items[0], sourceInvoiceItemId: "line-gone" }],
+      });
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoiceItem.findMany.mockResolvedValue([]);
+
+      const err: any = await service.approve("ret-held", OPERATOR).catch((e: any) => e);
+
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({ code: "RETURN_NOTHING_BILLED" });
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("SA-773 N4: a rebuilt invoice (the stored line id is gone, the same order line lives on a new line) is re-resolved and approved; the re-resolved invoice is the one checked", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        ...HELD,
+        items: [{ ...HELD.items[0], sourceInvoiceItemId: "line-old", sourceOrderItemId: "oi-1" }],
+      });
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoiceItem.findMany.mockImplementation(async ({ where }: any) =>
+        where?.orderItemId
+          ? [
+              {
+                id: "line-new",
+                invoiceId: "inv-live",
+                orderItemId: "oi-1",
+                invoice: { orderId: "src-order-1", status: "PAID" },
+              },
+            ]
+          : [],
+      );
+      prisma.invoice.findFirst.mockResolvedValue(null);
+
+      await service.approve("ret-held", OPERATOR);
+
+      expect(prisma.invoice.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ["inv-live"] }, status: { in: ["VOID", "WRITTEN_OFF"] } },
+        }),
+      );
+      expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledTimes(1);
+    });
+
+    it("SA-773 N4: a rebuilt line on a dead invoice is still dead (it is the re-resolved invoice that is refused)", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        ...HELD,
+        items: [{ ...HELD.items[0], sourceInvoiceItemId: "line-old", sourceOrderItemId: "oi-1" }],
+      });
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoiceItem.findMany.mockImplementation(async ({ where }: any) =>
+        where?.orderItemId
+          ? [
+              {
+                id: "line-new",
+                invoiceId: "inv-dead",
+                orderItemId: "oi-1",
+                invoice: { orderId: "src-order-1", status: "VOID" },
+              },
+            ]
+          : [],
+      );
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-dead" });
+
+      const err: any = await service.approve("ret-held", OPERATOR).catch((e: any) => e);
+
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toMatchObject({
+        code: "RETURN_NOTHING_BILLED",
+        invoiceId: "inv-dead",
+      });
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("SA-773 N4: a live source invoice (no dead one found) is approved as before", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        ...HELD,
+        items: [{ ...HELD.items[0], sourceInvoiceItemId: "line-1" }],
+      });
+      prisma.return.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoiceItem.findMany.mockResolvedValue([{ id: "line-1", invoiceId: "inv-live" }]);
+      prisma.invoice.findFirst.mockResolvedValue(null);
+
+      await service.approve("ret-held", OPERATOR);
+
+      expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledTimes(1);
     });
 
     it("REG-B735-api-approve-parked: approve() reverses the ledger it deferred from capture, and its own response carries any resulting park", async () => {
@@ -1646,10 +1897,77 @@ describe("InlineReturnsService", () => {
 
       await service.cancel("ret-refunded", OPERATOR);
 
-      expect(creditNotes.cancelStandaloneInTx).toHaveBeenCalledWith(expect.anything(), "cn-1");
+      expect(creditNotes.cancelStandaloneInTx).toHaveBeenCalledWith(expect.anything(), "cn-1", {
+        orderIds: ["ord-carrying"],
+        invoiceIds: [],
+      });
       expect(prisma.orderCreditNote.deleteMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { orderId: "ord-carrying", creditNoteId: "cn-1" } }),
       );
+    });
+
+    it("SA-773 follow-up (A): locks the carrying Order and every order the note was applied to in ONE id-sorted statement, then those invoices, before the pull-back writes", async () => {
+      const events: string[] = [];
+      const text = (strings: TemplateStringsArray, values: any[]) =>
+        strings.reduce((acc, str, i) => acc + str + (i < values.length ? "?" : ""), "");
+      const ids = (values: any[]) =>
+        values.flatMap((v) => (v && Array.isArray(v.values) ? v.values : [v])).join(",");
+      prisma.tenantTransaction.mockImplementation((fn: any) =>
+        fn({
+          ...prisma,
+          $executeRaw: jest.fn((strings: TemplateStringsArray, ...values: any[]) => {
+            const t = text(strings, values);
+            if (/FROM "Order"/.test(t)) events.push(`orders:${ids(values.slice(0, 1))}`);
+            else if (/FROM "Invoice"/.test(t)) events.push(`invoices:${ids(values.slice(0, 1))}`);
+            else if (/FROM "Return"/.test(t)) events.push("return");
+            return Promise.resolve(0);
+          }),
+        }),
+      );
+      creditNotes.cancelLockSet.mockResolvedValue({
+        orderIds: ["ord-other-a", "ord-other-b"],
+        invoiceIds: ["inv-other-a", "inv-other-b"],
+      });
+      creditNotes.cancelStandaloneInTx.mockImplementation(async () => {
+        events.push("restore");
+        return { restored: 30 };
+      });
+      prisma.return.findFirst.mockResolvedValue({
+        id: "ret-refunded",
+        status: "REFUNDED",
+        holdReason: null,
+        items: [],
+        orderId: "ord-carrying",
+        creditNoteId: "cn-1",
+      });
+
+      await service.cancel("ret-refunded", OPERATOR);
+
+      // ONE Order statement (the carrying order sorted among the others by the lock helper), the invoices after it,
+      // and the restore only after both: nothing of another order's invoice is written before its Order is held
+      expect(events).toEqual([
+        "return",
+        "orders:ord-carrying,ord-other-a,ord-other-b",
+        "invoices:inv-other-a,inv-other-b",
+        "restore",
+      ]);
+      expect(creditNotes.cancelStandaloneInTx).toHaveBeenCalledWith(expect.anything(), "cn-1", {
+        orderIds: ["ord-carrying", "ord-other-a", "ord-other-b"],
+        invoiceIds: ["inv-other-a", "inv-other-b"],
+      });
+    });
+
+    it("a return that is not REFUNDED never reads a note's lock set", async () => {
+      prisma.return.findFirst.mockResolvedValue({
+        id: "ret-received",
+        status: "RECEIVED",
+        holdReason: null,
+        items: [],
+        orderId: "ord-carrying",
+        creditNoteId: null,
+      });
+      await service.cancel("ret-received", OPERATOR);
+      expect(creditNotes.cancelLockSet).not.toHaveBeenCalled();
     });
 
     it("refuses cancelling an already-cancelled return", async () => {

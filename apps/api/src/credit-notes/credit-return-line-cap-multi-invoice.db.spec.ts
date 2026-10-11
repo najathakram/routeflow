@@ -321,7 +321,7 @@ describeDb(
       expect(await mintedNotes(s)).toHaveLength(before);
     }, 60_000);
 
-    it("8. the headroom RE-OPENS when the refund's lump note is VOID: the credit note item on A then succeeds", async () => {
+    it("8. the per-line headroom RE-OPENS when the refund's lump note is VOID; the refundable remainder (SA S4) keeps the returned QTY reserved but gives the VALUE back: the credit note item on A is refused on qty with the full value left", async () => {
       // A refund's note backs a REFUNDED return, so voidWithReversal refuses it (CREDIT_NOTE_RETURN_BACKED: cancel the return
       // instead, and a REFUNDED return cannot be cancelled). This case tests the pool's VOID filter, so the note is set VOID
       // directly (the state an invoice-destroying or legacy void leaves).
@@ -335,7 +335,15 @@ describeDb(
         response: { code: "CREDIT_NOTE_OVER_HEADROOM" },
       });
       await prisma.creditNote.update({ where: { id: refundNote.id }, data: { status: "VOID" } });
-      await expect(creditItemOnX(s, s.lineA, 100)).resolves.toBeDefined();
+      // the old per-line headroom would let it through now. The refundable remainder, by the SA's S4 ruling, keeps the QTY of a
+      // return with a VOID own credit note reserved (the goods came back) while its VALUE is 0: the item still carries A's qty, so
+      // it is refused, but the refusal reports ZERO pieces left and the line's FULL value left (the literal reading said 0 value)
+      const refused: any = await creditItemOnX(s, s.lineA, 100).catch((e) => e);
+      expect(refused?.response).toMatchObject({
+        code: "CREDIT_EXCEEDS_REFUNDABLE",
+        remainingQty: 0,
+      });
+      expect(refused?.response.remainingValue).toBeGreaterThan(0);
     }, 60_000);
 
     it("9. a credit note item on a DIFFERENT product on X (B) is unaffected by a refund of A", async () => {

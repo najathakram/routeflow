@@ -656,7 +656,8 @@ describe("cash handed over: ONE change figure (the server's servedChange) on eve
       entered: 50,
       payments: [{ method: "CREDIT_CARD", amount: "37.25" }],
     });
-    expect(s.response.cashTendered).toBe(50); // stored, and the server serves no change for it
+    // row 347 item 2: a stored figure no counter-tender cash row backs is served on no surface (a card-only sale)
+    expect(s.response.cashTendered).toBeUndefined();
     expect(s.response.change).toBeUndefined();
     expect(s.live.change).toBeNull();
     expect(s.live.changeAsEntered).toBe(false);

@@ -41,7 +41,11 @@ type FakeReturn = {
   refundMethod: string | null;
   refundedAt: Date | null;
   creditNoteId?: string | null;
-  items: Array<{ sourceInvoiceItemId: string | null }>;
+  items: Array<{
+    sourceInvoiceItemId: string | null;
+    sourceOrderItemId?: string | null;
+    sourceOrderId?: string | null;
+  }>;
 };
 
 const NOW = new Date("2026-10-01T12:00:00Z");
@@ -333,8 +337,8 @@ describe("assertNoCashRefundOnOrder (order cancel): the same refusal for every l
 
     // the lines come from the order's non-VOID invoices in ONE query (no invoice.findMany)
     expect(tx.invoiceItem.findMany).toHaveBeenCalledWith({
-      where: { invoice: { orderId: ORDER_ID, status: { not: "VOID" } } },
-      select: { id: true },
+      where: { invoice: { orderId: ORDER_ID } },
+      select: { id: true, orderItemId: true, invoice: { select: { status: true } } },
     });
     expect(tx.invoice.findMany).not.toHaveBeenCalled();
   });
@@ -519,5 +523,113 @@ describe("voiding a PAYMENT on a cash-refunded invoice stays allowed", () => {
     expect(body).not.toContain("voidInvoiceInTx");
     expect(body).not.toContain("voidInvoice(");
     expect(body).not.toContain("INVOICE_HAS_CASH_REFUND");
+  });
+});
+
+describe("row 347 (3): the guard follows a rebuilt invoice line (the reverse of the refund's resolution)", () => {
+  // a post-delivery order edit gave the invoice a new line id; the cash-refunded return still holds the OLD id
+  const OLD_LINE = "line-before-the-edit";
+  const NEW_LINE = "line-after-the-edit";
+  const ORDER_LINE = "order-line-1";
+  const rotatedRefund = (over: Partial<FakeReturn> = {}) =>
+    cashRefunded({
+      items: [
+        { sourceInvoiceItemId: OLD_LINE, sourceOrderItemId: ORDER_LINE, sourceOrderId: ORDER_ID },
+      ],
+      ...over,
+    });
+  const txOf = (returns: FakeReturn[]) => ({
+    invoiceItem: {
+      findMany: jest.fn().mockResolvedValue([{ id: NEW_LINE, orderItemId: ORDER_LINE }]),
+    },
+    return: returnTable(returns),
+  });
+
+  it("a cash refund whose stored line id dangles still blocks the invoice void (matched by the order line)", async () => {
+    await expectRefused(assertNoCashRefundOnInvoice(txOf([rotatedRefund()]), INVOICE_ID, ORDER_ID));
+  });
+
+  it("and the order cancel", async () => {
+    await expectRefused(
+      assertNoCashRefundOnOrder(txOf([rotatedRefund()]), ORDER_ID),
+      "ORDER_HAS_CASH_REFUND",
+      ORDER_HAS_CASH_REFUND_MESSAGE,
+    );
+  });
+
+  it("an item whose order line sits on ANOTHER order's sale does not block this invoice", async () => {
+    const elsewhere = rotatedRefund({
+      items: [
+        {
+          sourceInvoiceItemId: OLD_LINE,
+          sourceOrderItemId: ORDER_LINE,
+          sourceOrderId: "ord-other",
+        },
+      ],
+    });
+    await expect(
+      assertNoCashRefundOnInvoice(txOf([elsewhere]), INVOICE_ID, ORDER_ID),
+    ).resolves.toBeUndefined();
+  });
+
+  describe("one order line billed on TWO invoices (6 + 4): a stored line that is ALIVE on the sibling is the sibling's", () => {
+    const LINE_A = "line-on-invoice-a";
+    const LINE_B = "line-on-invoice-b";
+    // both invoices' lines carry the SAME order line; the cash-refunded return holds B's stored line id
+    const siblingTx = (returns: FakeReturn[]) => ({
+      invoiceItem: {
+        findMany: jest.fn(async ({ where }: any) =>
+          where?.invoiceId === "inv-a"
+            ? [{ id: LINE_A, orderItemId: ORDER_LINE }]
+            : where?.invoiceId === "inv-b"
+              ? [{ id: LINE_B, orderItemId: ORDER_LINE }]
+              : [
+                  { id: LINE_A, orderItemId: ORDER_LINE, invoice: { status: "SENT" } },
+                  { id: LINE_B, orderItemId: ORDER_LINE, invoice: { status: "SENT" } },
+                ],
+        ),
+      },
+      return: returnTable(returns),
+    });
+    const refundOfB = cashRefunded({
+      items: [
+        { sourceInvoiceItemId: LINE_B, sourceOrderItemId: ORDER_LINE, sourceOrderId: ORDER_ID },
+      ],
+    });
+
+    it("voiding sibling A is allowed after a cash refund of B's goods; B itself stays blocked", async () => {
+      await expect(
+        assertNoCashRefundOnInvoice(siblingTx([refundOfB]), "inv-a", ORDER_ID),
+      ).resolves.toBeUndefined();
+      await expectRefused(assertNoCashRefundOnInvoice(siblingTx([refundOfB]), "inv-b", ORDER_ID));
+    });
+
+    it("the order cancel is still blocked (a live invoice of the order holds the refunded line)", async () => {
+      await expectRefused(
+        assertNoCashRefundOnOrder(siblingTx([refundOfB]), ORDER_ID),
+        "ORDER_HAS_CASH_REFUND",
+        ORDER_HAS_CASH_REFUND_MESSAGE,
+      );
+    });
+
+    it("a stored line that is gone (rebuilt) still follows the order line to A", async () => {
+      const rebuilt = cashRefunded({
+        items: [
+          {
+            sourceInvoiceItemId: "line-gone",
+            sourceOrderItemId: ORDER_LINE,
+            sourceOrderId: ORDER_ID,
+          },
+        ],
+      });
+      await expectRefused(assertNoCashRefundOnInvoice(siblingTx([rebuilt]), "inv-a", ORDER_ID));
+    });
+  });
+
+  it("a PENDING refund (refundedAt null) of a rebuilt line still moves no money: it does not block", async () => {
+    const pending = rotatedRefund({ refundedAt: null, status: "RECEIVED" });
+    await expect(
+      assertNoCashRefundOnInvoice(txOf([pending]), INVOICE_ID, ORDER_ID),
+    ).resolves.toBeUndefined();
   });
 });

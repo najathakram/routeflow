@@ -61,6 +61,8 @@ export function noResponse(err: unknown): boolean {
  * may have gone through) is the "couldn't confirm" line; anything else is `fallback`. Never the server message.
  */
 export function creditNoteErrorCopy(err: unknown, fallback: string): string {
+  const refundable = refundableCopy(err);
+  if (refundable) return refundable;
   const code = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
     ?.data?.code;
   if (
@@ -92,11 +94,58 @@ export const RETURN_NOTHING_BILLED_COPY =
   "None of the returned items were billed on this order, so there is nothing to refund. Cancel the return.";
 
 /**
+ * Row 347: a capture (standalone, or inside an order create / edit) whose source sale was voided or lost its line before the
+ * credit was minted. The capture's one transaction rolled back, so there is no return to cancel (the RETURN_NOTHING_BILLED
+ * copy above is for a return that exists).
+ */
+export const RETURN_CAPTURE_SOURCE_CLOSED_COPY =
+  "Nothing was recorded: the sale this return refers to was voided or is no longer open. Capture it against another sale, or without a reference.";
+
+/**
  * SA-740r2 item 2: a recorded (cash / card / check) refund of a STANDARD return needs the order's invoices paid in full. The exits
  * are named: store credit when billable, else cancel the return (never "refund it outside RouteFlow").
  */
 export const REFUND_NEEDS_PAID_INVOICE_COPY =
   "A cash, card or check refund needs every invoice for these goods to be paid in full. Give store credit instead, or cancel the return.";
+
+/** SA-737: the order's invoices were voided (or the order cancelled) while the refund was being recorded, so the refund no longer matches what is billed. */
+export const RETURN_REFUND_BASIS_CHANGED_COPY =
+  "The invoices for this order changed while the refund was being recorded, so nothing was refunded. Review the order and try again, or give store credit or cancel the return.";
+
+/**
+ * SA-773: a refund or store credit for goods whose value was already given back (returned or credited). The server answers with
+ * what is left (`remainingValue`); the copy never prints the server message, only that number formatted here.
+ */
+export const RETURN_EXCEEDS_REFUNDABLE_COPY =
+  "That is more than what is still refundable for these goods, because part of it was already returned or credited. Reduce the amount, or cancel the return.";
+
+/** SA-773: a credit note for goods whose value was already given back (returned or credited). */
+export const CREDIT_EXCEEDS_REFUNDABLE_COPY =
+  "That credit is more than what is still creditable for these goods, because part of it was already returned or credited. Reduce the amount.";
+
+/** " Up to $12.00 can still be given back." from the refusal body's `remainingValue`, or "" when the body has none. */
+export function refundableLeftSentence(err: unknown): string {
+  const left = (err as { response?: { data?: { remainingValue?: unknown } } } | null | undefined)
+    ?.response?.data?.remainingValue;
+  return typeof left === "number" && Number.isFinite(left) && left >= 0
+    ? ` Up to $${left.toFixed(2)} can still be given back.`
+    : "";
+}
+
+/**
+ * The copy for RETURN_EXCEEDS_REFUNDABLE / CREDIT_EXCEEDS_REFUNDABLE with "Up to $X can still be given back." from the body, else
+ * null for any other error. The ONE place the amount is added: every credit note screen (create, picker, edit, reissue) and the
+ * refund toast read it, so the figure is never lost to a generic line.
+ */
+export function refundableCopy(err: unknown): string | null {
+  const code = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
+    ?.data?.code;
+  if (code === API_ERROR_CODES.RETURN_EXCEEDS_REFUNDABLE)
+    return RETURN_EXCEEDS_REFUNDABLE_COPY + refundableLeftSentence(err);
+  if (code === API_ERROR_CODES.CREDIT_EXCEEDS_REFUNDABLE)
+    return CREDIT_EXCEEDS_REFUNDABLE_COPY + refundableLeftSentence(err);
+  return null;
+}
 
 /** F4: a sale paid (partly) with store credit goes back as store credit. */
 export const REFUND_PAID_WITH_STORE_CREDIT_COPY =
@@ -108,7 +157,8 @@ export const REFUND_EXCEEDS_CASH_PAID_COPY =
 
 /**
  * The refund toast text: the fixed copy for REFUND_NEEDS_PAID_INVOICE, REFUND_PAID_WITH_STORE_CREDIT, REFUND_EXCEEDS_CASH_PAID,
- * RETURN_REFUND_OVER_LINE_HEADROOM, RETURN_NOTHING_BILLED, RETURN_MIXED_UNIT_PRODUCT and COUNTER_SALE_DAY_CLOSED (by `response.data.code`), else the
+ * RETURN_REFUND_OVER_LINE_HEADROOM, RETURN_REFUND_BASIS_CHANGED, RETURN_EXCEEDS_REFUNDABLE, CREDIT_EXCEEDS_REFUNDABLE,
+ * RETURN_NOTHING_BILLED, RETURN_MIXED_UNIT_PRODUCT and COUNTER_SALE_DAY_CLOSED (by `response.data.code`), else the
  * caller's own text. Never the server message for these codes.
  */
 export function refundErrorMessage(err: unknown, otherwise?: string): string | undefined {
@@ -121,6 +171,11 @@ export function refundErrorMessage(err: unknown, otherwise?: string): string | u
   // SA-750r3: a refund dated inside a closed day (a counter sale's register): store credit or a later date.
   if (code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED) return REFUND_DAY_CLOSED_COPY;
   if (code === API_ERROR_CODES.RETURN_NOTHING_BILLED) return RETURN_NOTHING_BILLED_COPY;
+  if (code === API_ERROR_CODES.RETURN_CAPTURE_SOURCE_CLOSED)
+    return RETURN_CAPTURE_SOURCE_CLOSED_COPY;
+  if (code === API_ERROR_CODES.RETURN_REFUND_BASIS_CHANGED) return RETURN_REFUND_BASIS_CHANGED_COPY;
+  const refundable = refundableCopy(err);
+  if (refundable) return refundable;
   if (code === API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT) return RETURN_MIXED_UNIT_PRODUCT_COPY;
   return code === API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM
     ? RETURN_REFUND_OVER_LINE_HEADROOM_COPY

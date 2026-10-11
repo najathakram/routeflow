@@ -84,11 +84,13 @@ describe("CreditNotesService.validateAndBuildCnItems: B960 own-line check vs the
         findMany: jest.fn(async (args: any) =>
           (f.cnItems ?? []).filter(
             (r) =>
-              args.where.creditNote.invoiceId === r.invoiceId &&
+              args.where.creditNote?.invoiceId === r.invoiceId &&
               args.where.invoiceItemId.in.includes(r.invoiceItemId),
           ),
         ),
       },
+      // SA-773: the refundable remainder's reads (a money guard reads plain: a fake without a model fails closed)
+      invoiceItem: { findMany: jest.fn().mockResolvedValue([]) },
       returnItem: { findMany: jest.fn().mockResolvedValue([]) },
       return: { findMany: jest.fn().mockResolvedValue([{ items: [{ productId: "pp", qty: 1 }] }]) },
       $executeRaw: jest.fn().mockResolvedValue(0),
@@ -136,7 +138,8 @@ describe("CreditNotesService.validateAndBuildCnItems: B960 own-line check vs the
     await service.validateAndBuildCnItems(db, onY(50), { excludeCreditNoteId: "cn-old" });
     const own = db.creditNoteItem.findMany.mock.calls
       .map((c: any[]) => c[0].where.creditNote)
-      .filter((w: any) => w.invoiceId === "inv-y");
+      // (SA-773's remainder read has no credit note relation filter: it filters VOID in code)
+      .filter((w: any) => w?.invoiceId === "inv-y");
     expect(own.length).toBeGreaterThan(0);
     for (const w of own) expect(w.id).toEqual({ not: "cn-old" });
   });
@@ -144,8 +147,9 @@ describe("CreditNotesService.validateAndBuildCnItems: B960 own-line check vs the
   it("6. the pool alone attributes the lump: with the pool active the own-line read never queries the per-invoice legacy term (no itemless-note read by invoiceId)", async () => {
     const db = fakeDb();
     await service.validateAndBuildCnItems(db, onY(100), {});
+    // the legacy term reads ONE invoice id (a string); SA-773's remainder reads the amount-only notes of a set (`{ in }`)
     const byInvoice = db.creditNote.findMany.mock.calls.filter(
-      (c: any[]) => c[0].where.invoiceId !== undefined,
+      (c: any[]) => typeof c[0].where.invoiceId === "string",
     );
     expect(byInvoice).toEqual([]);
   });
@@ -184,11 +188,13 @@ describe("CreditNotesService.validateAndBuildCnItems: B960 own-line check vs the
         findMany: jest.fn(async (args: any) =>
           cn.filter(
             (r) =>
-              args.where.creditNote.invoiceId === r.invoiceId &&
+              args.where.creditNote?.invoiceId === r.invoiceId &&
               args.where.invoiceItemId.in.includes(r.invoiceItemId),
           ),
         ),
       },
+      // SA-773: the refundable remainder's reads (a money guard reads plain: a fake without a model fails closed)
+      invoiceItem: { findMany: jest.fn().mockResolvedValue([]) },
       returnItem: { findMany: jest.fn().mockResolvedValue([]) },
       return: {
         findMany: jest.fn().mockResolvedValue([{ items: [{ productId: "pp", qty: 10 }] }]),

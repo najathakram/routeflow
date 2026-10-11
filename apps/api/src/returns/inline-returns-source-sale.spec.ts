@@ -296,7 +296,7 @@ describe("SA-740 §1: counter return source-sale pinning", () => {
 });
 
 describe("SA-740: the refusal codes the mobile capture classifier settles on", () => {
-  it("the mobile SOURCE_SALE_REFUSAL_CODES are exactly the three codes this service throws", () => {
+  it("the mobile SOURCE_SALE_REFUSAL_CODES are exactly the four codes this service throws", () => {
     const mobile = readFileSync(
       join(__dirname, "..", "..", "..", "mobile", "lib", "inline-return-submit-key.ts"),
       "utf8",
@@ -307,6 +307,7 @@ describe("SA-740: the refusal codes the mobile capture classifier settles on", (
       .map((m) => m[1]!)
       .sort();
     expect(mobileKeys).toEqual([
+      "RETURN_CAPTURE_SOURCE_CLOSED",
       "RETURN_EXCEEDS_SALE",
       "SOURCE_SALE_INVALID",
       "SOURCE_SALE_REQUIRED",

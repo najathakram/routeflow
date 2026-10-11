@@ -6,6 +6,10 @@ describe("AUDIT_ACTIONS", () => {
     expect(AUDIT_ACTIONS.COUNTER_SALE_VOIDED).toBe("counter-sale.voided");
   });
 
+  it("pins the STANDARD recorded-refund action name (SA-737)", () => {
+    expect(AUDIT_ACTIONS.STANDARD_REFUND_RECORDED).toBe("return.refund-recorded");
+  });
+
   it("has unique values and none collides with an API error code (the parity spec bans bare code literals)", () => {
     const values = Object.values(AUDIT_ACTIONS);
     expect(new Set(values).size).toBe(values.length);

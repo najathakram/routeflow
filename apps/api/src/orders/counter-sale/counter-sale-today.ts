@@ -23,7 +23,7 @@ import type {
   TodaysSalesSummary,
 } from "@routeflow/types";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
-import { counterMethodOf, servedChange } from "./counter-sale-readback";
+import { counterMethodOf, servedChange, servedTendered } from "./counter-sale-readback";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
 import { pickupTenderGroupId } from "./pickup-tender-group";
@@ -358,6 +358,8 @@ export function toTodaysSaleRow(
   const live = o.invoices.filter((i) => !isDeadInvoice(i.status));
   const voided = o.status === OrderStatus.CANCELLED || (o.invoices.length > 0 && live.length === 0);
   const payments = live.flatMap((i) => i.payments);
+  // the sale's whole set (every payment row of the order, a voided sibling invoice's too): it decides "is this sale grouped"
+  const saleRows = o.invoices.flatMap((i) => i.payments);
   const total = roundMoney(num(o.total));
   const paid = roundMoney(
     sumConfirmed(payments.map((p) => ({ amount: p.amount, status: p.status }))),
@@ -410,14 +412,9 @@ export function toTodaysSaleRow(
     balanceDue,
     methods,
     paymentState,
-    cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
-    change: servedChange(
-      o.id,
-      o.counterCashTendered,
-      payments,
-      total,
-      o.invoices.flatMap((i) => i.payments), // the sale's whole set: a voided sibling invoice's leg rows count too
-    ),
+    // row 347: the figure only while a counter-tender cash row backs it (the gate `change` below uses)
+    cashTendered: servedTendered(o.id, o.counterCashTendered, payments, saleRows),
+    change: servedChange(o.id, o.counterCashTendered, payments, total, saleRows),
     // ONE home for the rate (pricing): a STORED line rate, corroborated by the configured rate; never inferred
     taxRatePercent: storedTaxRatePercent(
       live.map((i) => ({ lines: i.items ?? [] })),

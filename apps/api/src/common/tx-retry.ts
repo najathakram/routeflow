@@ -52,21 +52,34 @@ export async function retryOnTxConflict<T>(label: string, run: () => Promise<T>)
 }
 
 /**
- * `retryOnTxConflict` for the credit-spend transactions: when the retries are EXHAUSTED the caller
- * gets a coded, retryable 503 (nothing was saved) instead of the raw P2034 that surfaced as an
- * uncoded 500. Any other error propagates untouched.
+ * `retryOnTxConflict` whose EXHAUSTED retries answer a coded, retryable 503 LOCK_UNAVAILABLE with `message` (nothing was
+ * saved), instead of the raw 40P01 / 40001 / P2034 that surfaced as an uncoded 500. Any other error propagates untouched. The
+ * one mapping behind `retryCreditTx`, `retryRouteTx` and the parked-reversal resolve.
  */
-export async function retryCreditTx<T>(label: string, run: () => Promise<T>): Promise<T> {
+export async function retryTxBusy<T>(
+  label: string,
+  run: () => Promise<T>,
+  message: string,
+): Promise<T> {
   try {
     return await retryOnTxConflict(label, run);
   } catch (err) {
     if (!txConflictState(err)) throw err;
-    throw new ServiceUnavailableException({
-      code: API_ERROR_CODES.LOCK_UNAVAILABLE,
-      message: "Another change to these credits was in progress. Nothing was saved; please retry.",
-    });
+    throw new ServiceUnavailableException({ code: API_ERROR_CODES.LOCK_UNAVAILABLE, message });
   }
 }
+
+/**
+ * `retryOnTxConflict` for the credit-spend transactions: when the retries are EXHAUSTED the caller
+ * gets a coded, retryable 503 (nothing was saved) instead of the raw P2034 that surfaced as an
+ * uncoded 500. Any other error propagates untouched.
+ */
+export const retryCreditTx = <T>(label: string, run: () => Promise<T>): Promise<T> =>
+  retryTxBusy(
+    label,
+    run,
+    "Another change to these credits was in progress. Nothing was saved; please retry.",
+  );
 
 /**
  * `retryOnTxConflict` for the route / run / stop transactions (completeStop, completeWithPayment, a
@@ -74,14 +87,9 @@ export async function retryCreditTx<T>(label: string, run: () => Promise<T>): Pr
  * (nothing was saved) instead of the raw 40P01 / 40001 / P2034 that surfaced as an uncoded 500.
  * Any other error propagates untouched.
  */
-export async function retryRouteTx<T>(label: string, run: () => Promise<T>): Promise<T> {
-  try {
-    return await retryOnTxConflict(label, run);
-  } catch (err) {
-    if (!txConflictState(err)) throw err;
-    throw new ServiceUnavailableException({
-      code: API_ERROR_CODES.LOCK_UNAVAILABLE,
-      message: "Someone else is updating this route. Nothing was saved; please try again.",
-    });
-  }
-}
+export const retryRouteTx = <T>(label: string, run: () => Promise<T>): Promise<T> =>
+  retryTxBusy(
+    label,
+    run,
+    "Someone else is updating this route. Nothing was saved; please try again.",
+  );

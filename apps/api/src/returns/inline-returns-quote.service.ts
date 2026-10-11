@@ -158,10 +158,7 @@ export class InlineReturnsQuoteService {
         where: { id: dto.customerId, deletedAt: null },
         select: { isWalkIn: true },
       }),
-      loadSourceInvoicesState(
-        db,
-        priced.chunks.map((c) => c.sourceInvoiceItemId),
-      ),
+      loadSourceInvoicesState(db, priced.chunks),
       // SA-749r2: the cash each source sale can still give back, by the SAME function the 409 cap uses (cash-refund-cap.ts)
       cashRefundRooms(db, { orderIds: sourceOrderIds }),
     ]);

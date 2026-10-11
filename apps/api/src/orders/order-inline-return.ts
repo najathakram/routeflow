@@ -28,6 +28,8 @@ export interface PreparedInlineReturn {
   creditNoteNumber?: string;
   /** Edit path: the preflight's dry-run total (null = a replay of this return). */
   preflightTotal?: number | null;
+  /** SA-773: the source Orders the preflight priced from, locked by captureInTx's first statement (no discovery inside the tx). */
+  sourceOrderIds?: string[];
 }
 
 /**
@@ -82,7 +84,7 @@ export async function reserveInlineReturnNumber(
   if (!p) return null;
   let total: number;
   try {
-    total = await p.svc.preflightNewOrderReturn(p.lines, customerId, user as JwtPayload);
+    total = await p.svc.preflightNewOrderReturn(p.lines, customerId, user as JwtPayload, p);
   } catch (e) {
     const code = e instanceof ConflictException ? (e.getResponse() as any)?.code : undefined;
     const twin =
@@ -188,7 +190,11 @@ export async function applyInlineReturnInTx(
     tx,
     { ...p.lines, customerId: ctx.customerId, orderId: ctx.orderId },
     ctx.user as JwtPayload,
-    { creditNoteNumber: p.creditNoteNumber, orderRouteRunId: ctx.orderRouteRunId },
+    {
+      creditNoteNumber: p.creditNoteNumber,
+      orderRouteRunId: ctx.orderRouteRunId,
+      sourceOrderIds: p.sourceOrderIds,
+    },
   );
   return out.minted;
 }
@@ -221,6 +227,7 @@ export async function preflightInlineReturn(
     user as JwtPayload,
     { routeRunId: order.routeRunId },
     willRevert ? { revertOrderId: order.id } : {},
+    p,
   );
 }
 

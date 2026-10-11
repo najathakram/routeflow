@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
@@ -29,6 +30,12 @@ import {
   lockOrderCreditSettle,
 } from "./credit-note-locks";
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
+import { assertCreditWithinRemainder } from "../returns/refund-remainder-guard";
+import {
+  ReturnLinkLost,
+  creditNoteLinkedToReturn,
+  returnLinkConflict,
+} from "./credit-note-return-link";
 import {
   loadLineCredits,
   countCreditableInvoices,
@@ -193,7 +200,10 @@ export class CreditNotesService {
           });
       }
 
-    if (!lineItems) return [];
+    if (!lineItems) {
+      await this.assertWithinRemainder(db, dto, [], opts);
+      return [];
+    }
 
     const lineById = new Map((invoice.items ?? []).map((it: any) => [it.id, it]));
     // Merge duplicate line references so there is exactly ONE CreditNoteItem per
@@ -348,7 +358,27 @@ export class CreditNotesService {
         API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
         `Credit line amounts (${roundMoney(sum)}) must sum to the credit note amount (${dto.amount})`,
       );
+    await this.assertWithinRemainder(db, dto, cnItemsData, opts);
     return cnItemsData;
+  }
+
+  /**
+   * SA-773: a standalone credit also fits the goods' remainder (what returns and other credit notes already took), under the
+   * invoice lock the transaction holds. A return's own refund mint was checked by its claim and is not asked again.
+   */
+  private async assertWithinRemainder(
+    db: any,
+    dto: { invoiceId?: string; amount: number },
+    items: Array<{ invoiceItemId: string; amount: number; qty: number; categoryTax: number }>,
+    opts: { ledgerReversedByReturn?: boolean; excludeCreditNoteId?: string },
+  ): Promise<void> {
+    if (opts.ledgerReversedByReturn || !dto.invoiceId) return;
+    await assertCreditWithinRemainder(db, {
+      invoiceId: dto.invoiceId,
+      amount: dto.amount,
+      items,
+      excludeCreditNoteId: opts.excludeCreditNoteId,
+    });
   }
 
   /**
@@ -558,6 +588,13 @@ export class CreditNotesService {
     // check fired.
     if (!tenantId) throw new BadRequestException("A tenant context is required.");
 
+    // SA-773 row 333(a): a retry for a return that already has its credit note gets THAT note back: no validation (its goods are
+    // spent by that very note), no number burned, no second mint
+    if (internal.returnId) {
+      const already = await creditNoteLinkedToReturn(this.prisma.forTenant(), internal.returnId);
+      if (already) return already;
+    }
+
     // REG-B267-E: the customer summary the response carries is read HERE, ahead
     // of the reservation, through the tenant-scoped `findFirst` — `findFirst` is
     // in SCOPED_METHODS so `tenantId` is injected into `where`, whereas
@@ -589,6 +626,7 @@ export class CreditNotesService {
     });
 
     let cn: any;
+    let reused = false; // the winner of a lost link CAS: already announced by whoever minted it
     // F1 (REG-B267-F/G, cause-ruling.md §2 D2 follow-up): the SERIALIZABLE tx
     // re-reads CreditNote (validateAndBuildCnItems's aggregate) then inserts
     // into it, a textbook rw-antidependency — PostgreSQL SSI cancels one
@@ -617,6 +655,18 @@ export class CreditNotesService {
             // (a stale snapshot aborts 40001 and re-reads the shared per-line headroom).
             // B947: with 2+ creditable invoices on the order, the Order and ALL of them are locked FIRST (Order -> Invoice,
             // id-sorted), so a refund on Y and a credit note on X serialise and no writer takes an Invoice then the Order.
+            if (internal.returnId) {
+              // SA-773 row 333(b), house order Return -> Order -> invoices: the Return row FIRST (the parked-reversal resolve, the
+              // refund claim, cancel and the inline refund all take it before the Order), so the pooled mint and a resolve on
+              // the same return queue instead of each holding what the other wants
+              await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${internal.returnId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+              // the in-transaction read of the link: a request that linked it since the pre-read is the one to hand back
+              const linked = await creditNoteLinkedToReturn(tx, internal.returnId);
+              if (linked) {
+                reused = true;
+                return linked;
+              }
+            }
             if (dto.invoiceId) await lockOrderPoolRows(tx, dto.invoiceId, tenantId);
             if (dto.invoiceId) {
               await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} AND "tenantId" = ${tenantId} FOR UPDATE`;
@@ -649,11 +699,13 @@ export class CreditNotesService {
             // B947: a lump-sum refund is attributed to its product only THROUGH its Return's link, so the link is written in
             // the SAME transaction as the note: a credit note item that reads the pool after the commit can never see the
             // lump with no return (and a crash between the mint and a later link cannot leave it uncounted).
-            if (internal.returnId)
-              await tx.return.updateMany({
+            if (internal.returnId) {
+              const linkedNow = await tx.return.updateMany({
                 where: { id: internal.returnId, creditNoteId: null },
                 data: { creditNoteId: created.id },
               });
+              if (linkedNow.count === 0) throw new ReturnLinkLost(); // rolls the insert back; the winner's note is handed back
+            }
             return created;
           },
           { isolationLevel: "Serializable" },
@@ -661,6 +713,14 @@ export class CreditNotesService {
         serializationErr = undefined;
         break;
       } catch (err: any) {
+        if (err instanceof ReturnLinkLost && internal.returnId) {
+          const winner = await creditNoteLinkedToReturn(this.prisma.forTenant(), internal.returnId);
+          if (!winner) throw returnLinkConflict();
+          cn = winner;
+          reused = true;
+          serializationErr = undefined;
+          break;
+        }
         if (err?.code === "P2002") {
           // The try above spans five statements, so a P2002 here is only a NUMBER
           // conflict when the violated constraint actually names creditNoteNumber.
@@ -690,15 +750,23 @@ export class CreditNotesService {
         `Credit note create exhausted ${MAX_CN_TX_ATTEMPTS} attempts on serialization conflict ` +
           `[${creditNoteNumber}] customer=${dto.customerId} invoice=${dto.invoiceId ?? "-"}: ${serializationErr?.message ?? serializationErr}`,
       );
+      // a return's mint that ran out of retries is the coded, retryable 503 (nothing saved); any other create keeps its 409
+      if (internal.returnId)
+        throw new ServiceUnavailableException({
+          code: API_ERROR_CODES.LOCK_UNAVAILABLE,
+          message:
+            "Another change to this return's credit was in progress. Nothing was saved; please retry.",
+        });
       throw new ConflictException("Concurrent credit note for this invoice, please retry");
     }
 
-    this.gateway.emitCreditNoteCreated(this.prisma.getTenantId(), {
-      creditNoteId: cn.id,
-      creditNoteNumber: cn.creditNoteNumber,
-      customerId: cn.customerId,
-      amount: Number(cn.amount),
-    });
+    if (!reused)
+      this.gateway.emitCreditNoteCreated(this.prisma.getTenantId(), {
+        creditNoteId: cn.id,
+        creditNoteNumber: cn.creditNoteNumber,
+        customerId: cn.customerId,
+        amount: Number(cn.amount),
+      });
 
     return cn;
   }
@@ -1059,6 +1127,24 @@ export class CreditNotesService {
   }
 
   /**
+   * SA-773 follow-up (A): the Orders and Invoices a cancel of this note must hold BEFORE `cancelStandaloneInTx` writes: the
+   * orders of the invoices its live applications sit on, and those invoices (the same set `voidWithReversalInTx` locks). Read
+   * unlocked; `cancelStandaloneInTx` re-reads under the locks and refuses an application outside what was taken.
+   */
+  async cancelLockSet(
+    tx: any,
+    creditNoteId: string,
+  ): Promise<{ orderIds: string[]; invoiceIds: string[] }> {
+    const payments: any[] = await this.liveCreditPayments(tx, creditNoteId);
+    return {
+      orderIds: [
+        ...new Set(payments.map((p) => p.invoice?.orderId).filter(Boolean) as string[]),
+      ].sort(),
+      invoiceIds: [...new Set(payments.map((p) => p.invoiceId as string))].sort(),
+    };
+  }
+
+  /**
    * Returns Inside Order Creation — PR-1c (m-5): cancels ONE standalone credit note an
    * inline return minted, inside the CALLER's own transaction (`InlineReturnsService.
    * cancel()`, which already holds the Return + carrying-Order locks) — never opens one of
@@ -1073,17 +1159,36 @@ export class CreditNotesService {
    * non-zero after restoring everything a payment row could account for — money consumed
    * through some path this couldn't find and restore, which must block the cancel rather than
    * silently void a note that's still "used" on paper (m-5's "restore < amountUsed" case).
+   *
+   * SA-773 follow-up (A): every restore writes the invoice its payment sat on, and that invoice can belong to ANOTHER order
+   * than the carrying one. The caller therefore locks `cancelLockSet()` (those orders, in ONE statement with its carrying
+   * order, then those invoices) before its first write and passes it back as `held`; an application that appeared since
+   * (another apply racing the cancel) is outside what is held and is refused 409 CREDIT_NOTE_CHANGED_CONCURRENTLY with
+   * nothing written, never written unlocked. Without `held` the caller owns the locks (the specs).
    */
-  async cancelStandaloneInTx(tx: any, creditNoteId: string): Promise<{ restored: number }> {
+  async cancelStandaloneInTx(
+    tx: any,
+    creditNoteId: string,
+    held?: { orderIds: readonly string[]; invoiceIds: readonly string[] },
+  ): Promise<{ restored: number }> {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: once per call, before any loop
-    // scan-ok: draft-payment-not-void — a CREDIT_NOTE-method InvoicePayment is an
-    // internal ledger write this service itself creates atomically as CONFIRMED;
-    // it is never written as DRAFT/PENDING like an imported bank row or a
-    // post-dated check, so not-VOID is the correct (and only reachable) filter here.
-    const payments = await tx.invoicePayment.findMany({
-      where: { creditNoteId, method: PaymentMethod.CREDIT_NOTE, status: { not: "VOID" } },
-      orderBy: { createdAt: "desc" },
-    });
+    // CREDIT_NOTE payments are only ever written CONFIRMED (liveCreditPayments: not-VOID is the complete filter).
+    const payments: any[] = await this.liveCreditPayments(tx, creditNoteId);
+    if (held) {
+      const heldOrders = new Set(held.orderIds);
+      const heldInvoices = new Set(held.invoiceIds);
+      const outside = payments.some(
+        (p) =>
+          !heldInvoices.has(p.invoiceId) ||
+          (p.invoice?.orderId != null && !heldOrders.has(p.invoice.orderId)),
+      );
+      if (outside) {
+        throw cnConflict(
+          API_ERROR_CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY,
+          "This credit note was applied to another invoice while its return was being cancelled. Nothing was changed; try again.",
+        );
+      }
+    }
     let restored = 0;
     for (const p of payments) {
       restored = roundMoney(

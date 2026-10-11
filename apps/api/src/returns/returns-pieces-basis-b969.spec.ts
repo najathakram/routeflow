@@ -63,6 +63,8 @@ describe("ReturnsService — a STANDARD return is priced in PIECES on both sides
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-737: the claim re-reads the Return's status under its row lock
+    prisma.return.findFirst.mockResolvedValue({ id: "ret", status: "RECEIVED", kind: "STANDARD" });
     creditNotesCreate = jest.fn().mockResolvedValue({ id: "cn-1" });
     const mod = await Test.createTestingModule({
       providers: [
@@ -127,7 +129,7 @@ describe("ReturnsService — a STANDARD return is priced in PIECES on both sides
         invoiceId: "inv-1",
         items: [{ invoiceItemId: "i1", amount: 60, qty: 12 }],
       }),
-      { ledgerReversedByReturn: true },
+      { ledgerReversedByReturn: true, returnId: "ret-1" },
     );
   });
 

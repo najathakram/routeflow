@@ -22,7 +22,7 @@
  */
 
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { ReturnsService } from "./returns.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -83,6 +83,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-737: the claim re-reads the Return's status under its row lock
+    prisma.return.findFirst.mockResolvedValue({ id: "ret", status: "RECEIVED", kind: "STANDARD" });
     creditNotesCreate = jest.fn();
     ledger = { reverseReturnEntries: jest.fn(), unreverseReturnEntries: jest.fn() };
 
@@ -148,7 +150,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     // persists the resolution snapshot in the same write, so a concurrent double-refund
     // can't mint two credits or record two resolutions; update() is only the linkage.
     expect(prisma.return.updateMany).toHaveBeenCalledWith({
-      where: { id: "ret-1", status: "RECEIVED" },
+      where: { id: "ret-1", status: "RECEIVED", refundedAt: null, creditNoteId: null },
       data: {
         status: "REFUNDED",
         refundMethod: "CREDIT_NOTE",
@@ -159,11 +161,9 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     // T16 pin (REG-B68): a successful mint never triggers the compensation path — the
     // claim fires exactly once.
     expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
-    expect(prisma.return.update).toHaveBeenCalledTimes(1);
-    expect(prisma.return.update).toHaveBeenCalledWith({
-      where: { id: "ret-1" },
-      data: { creditNoteId: "cn-1" },
-    });
+    // SA-773 row 333(a): the link is written by the mint itself (the return id goes with the call), not by a second write here
+    expect(prisma.return.update).not.toHaveBeenCalled();
+    expect(creditNotesCreate.mock.calls[0][1]).toMatchObject({ returnId: "ret-1" });
     expect(result.creditNoteId).toBe("cn-1");
   });
 
@@ -243,10 +243,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     expect(creditNotesCreate).toHaveBeenCalledTimes(1);
     const dto = creditNotesCreate.mock.calls[0][0];
     expect(dto.invoiceId).toBeUndefined();
-    expect(prisma.return.update).toHaveBeenCalledWith({
-      where: { id: "ret-12" },
-      data: { creditNoteId: "cn-12" },
-    });
+    expect(prisma.return.update).not.toHaveBeenCalled();
+    expect(creditNotesCreate.mock.calls[0][1]).toMatchObject({ returnId: "ret-12" });
     expect(result.creditNoteId).toBe("cn-12");
   });
 
@@ -330,7 +328,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     });
     prisma.return.updateMany.mockResolvedValue({ count: 0 });
 
-    await expect(service.processRefund("ret-5")).rejects.toBeInstanceOf(BadRequestException);
+    // SA-737: a claim that matches nothing is the lost race: 409, same text
+    await expect(service.processRefund("ret-5")).rejects.toBeInstanceOf(ConflictException);
     expect(creditNotesCreate).not.toHaveBeenCalled();
   });
 
@@ -404,7 +403,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
 
     expect(creditNotesCreate).not.toHaveBeenCalled();
     expect(prisma.return.updateMany).toHaveBeenCalledWith({
-      where: { id: "ret-9", status: "RECEIVED" },
+      where: { id: "ret-9", status: "RECEIVED", refundedAt: null, creditNoteId: null },
       data: {
         status: "REFUNDED",
         refundMethod: "EXTERNAL_REFUND",
@@ -444,7 +443,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
 
     await expect(
       service.processRefund("ret-10", { method: "EXTERNAL_REFUND" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ConflictException);
     expect(prisma.return.updateMany).toHaveBeenCalledTimes(1); // the claim itself was attempted and lost
     expect(creditNotesCreate).not.toHaveBeenCalled();
   });
@@ -488,7 +487,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     const dto = creditNotesCreate.mock.calls[0][0];
     expect(dto.amount).toBe(60); // billed basis (6 × 10), NOT the order line's 10 × 10 = 100
     expect(prisma.return.updateMany).toHaveBeenCalledWith({
-      where: { id: "ret-53a", status: "RECEIVED" },
+      where: { id: "ret-53a", status: "RECEIVED", refundedAt: null, creditNoteId: null },
       data: {
         status: "REFUNDED",
         refundMethod: "CREDIT_NOTE",

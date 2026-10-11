@@ -376,6 +376,56 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
     expect(row(mixed.orderId).taxRatePercent).toBeNull();
   }, 60_000);
 
+  it("(6b) SA-773 N6: a crash after the tendered write, then a CARD-only retry on the SAME key: no stale cashTendered on any surface, and the column is cleared", async () => {
+    const key = `cs-crash-card-${randomUUID()}`;
+    failNextPayment = true;
+    const first = await ring({ method: "CASH", amount: 50 }, key);
+    expect(first.paymentRecorded).toBe(false);
+    expect(Number(await stored(first.orderId))).toBe(50); // written before the payment; the crash left it
+    const retry = await ring({ method: "CARD" }, key);
+    expect(retry.orderId).toBe(first.orderId);
+    expect(retry.paymentRecorded).toBe(true);
+    expect(retry.cashTendered).toBeUndefined();
+    expect(retry.change).toBeUndefined();
+    expect(await stored(first.orderId)).toBeNull();
+    const byKey = await tenantCtx.run(tenantId, () => service.byKey(key));
+    expect(byKey.cashTendered).toBeUndefined();
+    expect(byKey.change).toBeUndefined();
+    const row = (await tenantCtx.run(tenantId, () => today.today({} as never))).data.find(
+      (d) => d.orderId === first.orderId,
+    )!;
+    expect(row.cashTendered).toBeNull();
+    expect(row.change).toBeNull();
+  }, 60_000);
+
+  it("(6c) row 347: a crash after the tendered write, then an ON_ACCOUNT retry and a plain by-key read: the stored figure is served on NO surface", async () => {
+    const key = `cs-crash-acct-${randomUUID()}`;
+    failNextPayment = true;
+    const first = await ring({ method: "CASH", amount: 50 }, key);
+    expect(first.paymentRecorded).toBe(false);
+    expect(Number(await stored(first.orderId))).toBe(50); // written before the payment; the crash left it
+
+    // by-key BEFORE any retry: the by-key read serves what storage holds, and no cash row backs the figure
+    const plain = await tenantCtx.run(tenantId, () => service.byKey(key));
+    expect(plain.cashTendered).toBeUndefined();
+    expect(plain.change).toBeUndefined();
+
+    // an ON_ACCOUNT retry takes no counter-tender lock and runs no tender step, so nothing clears the column ...
+    const retry = await ring({ method: "ON_ACCOUNT" }, key);
+    expect(retry.orderId).toBe(first.orderId);
+    expect(Number(await stored(first.orderId))).toBe(50);
+    // ... and the figure is still served on none of the readers
+    expect(retry.cashTendered).toBeUndefined();
+    expect(retry.change).toBeUndefined();
+    const byKey = await tenantCtx.run(tenantId, () => service.byKey(key));
+    expect(byKey.cashTendered).toBeUndefined();
+    const row = (await tenantCtx.run(tenantId, () => today.today({} as never))).data.find(
+      (d) => d.orderId === first.orderId,
+    )!;
+    expect(row.cashTendered).toBeNull();
+    expect(row.change).toBeNull();
+  }, 60_000);
+
   it("(6) a first attempt whose payment fails, retried on the SAME key with a new amount, stores the NEW amount and its change", async () => {
     const key = `cs-retry-${randomUUID()}`;
     failNextPayment = true;

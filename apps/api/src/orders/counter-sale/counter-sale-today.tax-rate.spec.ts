@@ -26,9 +26,16 @@ const rec = (over: Partial<TodayOrderRecord> = {}, rates: string[] = ["0.0825", 
 
 describe("Today's sales row: cashTendered and taxRatePercent (SA-764)", () => {
   it("(d) all lines at 0.0825 -> 8.25, and the stored tendered is returned as a number", () => {
-    const row = toTodaysSaleRow(rec({ counterCashTendered: "50.00" }), 8.25);
+    // a counter-tender cash row backs the figure (row 347 item 2: an unbacked figure is not served)
+    const withCash = rec({ counterCashTendered: "50.00" });
+    withCash.invoices[0].payments = [{ method: "CASH", amount: "41.27", status: "PAID" }] as never;
+    const row = toTodaysSaleRow(withCash, 8.25);
     expect(row.taxRatePercent).toBe(8.25);
     expect(row.cashTendered).toBe(50);
+  });
+
+  it("(d) a stored tendered with no counter-tender cash row on the sale reads null (row 347 item 2)", () => {
+    expect(toTodaysSaleRow(rec({ counterCashTendered: "50.00" }), 8.25).cashTendered).toBeNull();
   });
 
   it("(d) a null column reads null", () => {

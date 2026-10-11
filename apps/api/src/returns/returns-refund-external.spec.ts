@@ -120,7 +120,7 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
     await expect(refund()).resolves.toBeDefined();
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
     expect(prisma.return.updateMany).toHaveBeenCalledWith({
-      where: { id: "ret-1", status: "RECEIVED" },
+      where: { id: "ret-1", status: "RECEIVED", refundedAt: null, creditNoteId: null },
       data: {
         status: "REFUNDED",
         refundMethod: "EXTERNAL_REFUND",
@@ -260,7 +260,7 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
       );
       await refund();
       expect(prisma.return.updateMany.mock.calls[0][0].data.refundedAt).toEqual(dbTime);
-      expect(raw[0].text).toMatch(/pg_advisory_xact_lock_shared/);
+      expect(raw[1].text).toMatch(/pg_advisory_xact_lock_shared/);
     });
   });
 
@@ -338,12 +338,14 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
     it("counter order: counter-close (tenant:register), then Return, Order, Invoices", async () => {
       setReturn({ counterSale: true, registerKey: null });
       await refund();
-      expect(raw[0].text).toBe(
+      // SA-737: the bound on every lock wait is set first (it takes no lock), so the close lock wait is bounded too
+      expect(raw[0].text).toMatch(/set_config\('lock_timeout'/);
+      expect(raw[1].text).toBe(
         "SELECT pg_advisory_xact_lock_shared(hashtext('counter-close'), hashtext(?))",
       );
-      expect(raw[0].values).toEqual(["test-tenant:main"]);
-      expect(raw).toHaveLength(4);
-      expect(raw[1].text).toMatch(/FROM "Return" WHERE id/);
+      expect(raw[1].values).toEqual(["test-tenant:main"]);
+      expect(raw).toHaveLength(5);
+      expect(raw[2].text).toMatch(/FROM "Return" WHERE id/);
     });
 
     it("SA-750r3: a refund dated inside a closed window of the register is 409 COUNTER_SALE_DAY_CLOSED and the claim is never made", async () => {
@@ -373,7 +375,7 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
     it("a named register is keyed tenant:register; refundedAt is set after the lock (the claim is the last write)", async () => {
       setReturn({ counterSale: true, registerKey: "till-2" });
       await refund();
-      expect(raw[0].values).toEqual(["test-tenant:till-2"]);
+      expect(raw[1].values).toEqual(["test-tenant:till-2"]);
       expect(prisma.return.updateMany.mock.invocationCallOrder[0]).toBeGreaterThan(0);
     });
   });
@@ -383,6 +385,7 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
       setReturn();
       await refund();
       expect(raw.map((r) => r.text)).toEqual([
+        expect.stringMatching(/set_config\('lock_timeout'/),
         expect.stringMatching(/FROM "Return" WHERE id = \? AND .* FOR UPDATE/),
         expect.stringMatching(/FROM "Order" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/),
         expect.stringMatching(/FROM "Invoice" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/),

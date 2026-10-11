@@ -75,6 +75,8 @@ describe("CreditNotesService.validateAndBuildCnItems: B947 the pooled take is in
         ),
       },
       creditNoteItem: { findMany: jest.fn().mockResolvedValue([]) },
+      // SA-773: the refundable remainder's reads (a money guard reads plain: a fake without a model fails closed)
+      invoiceItem: { findMany: jest.fn().mockResolvedValue([]) },
       returnItem: { findMany: jest.fn().mockResolvedValue([]) },
       return: {
         findMany: jest.fn().mockResolvedValue([{ items: [{ productId: "pm", qty: 12 }] }]),

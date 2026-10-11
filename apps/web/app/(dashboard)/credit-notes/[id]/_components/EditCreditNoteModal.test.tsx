@@ -4,7 +4,10 @@ import { renderWithProviders, screen, within } from "@/test-utils/render";
 import { EditCreditNoteModal } from "./EditCreditNoteModal";
 import type { CreditNote } from "@/lib/api/credit-notes";
 import { API_ERROR_CODES } from "@routeflow/types";
-import { CREDIT_NOTE_ERROR_COPY } from "@/lib/credit-note-error-copy";
+import {
+  CREDIT_EXCEEDS_REFUNDABLE_COPY,
+  CREDIT_NOTE_ERROR_COPY,
+} from "@/lib/credit-note-error-copy";
 
 const push = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
@@ -298,5 +301,39 @@ describe("EditCreditNoteModal (#2648 / SA-535(c))", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/RAW SERVER TEXT/)).not.toBeInTheDocument();
+  });
+
+  describe("SA-773: a credit past what the goods have left says how much is left", () => {
+    const refusal = {
+      response: {
+        data: { code: "CREDIT_EXCEEDS_REFUNDABLE", message: SECRET, remainingValue: 12 },
+      },
+    };
+    const expected = `${CREDIT_EXCEEDS_REFUNDABLE_COPY} Up to $12.00 can still be given back.`;
+
+    it("a reissue (the amount change) toasts the copy with the amount, never the server message", async () => {
+      previewData = { refusal: null, refusalCode: null, restoresTotal: 0, invoices: [] };
+      reissueMutate.mockImplementation((_vars: unknown, opts: any) => opts.onError(refusal));
+      const user = userEvent.setup();
+      open(note());
+      const dialog = within(await screen.findByRole("dialog"));
+      await user.clear(dialog.getByLabelText("Credit amount"));
+      await user.type(dialog.getByLabelText("Credit amount"), "40");
+      await user.click(dialog.getByRole("button", { name: "Continue" }));
+      await user.click(await screen.findByRole("button", { name: "Void and issue new" }));
+      expect(await screen.findByText(expected)).toBeInTheDocument();
+      expect(screen.queryByText(/RAW SERVER TEXT/)).not.toBeInTheDocument();
+    });
+
+    it("an in-place save toasts the copy with the amount too", async () => {
+      updateMutate.mockImplementation((_vars: unknown, opts: any) => opts.onError(refusal));
+      const user = userEvent.setup();
+      open(note());
+      const dialog = within(await screen.findByRole("dialog"));
+      await user.clear(dialog.getByLabelText("Reason"));
+      await user.type(dialog.getByLabelText("Reason"), "Wrong item");
+      await user.click(dialog.getByRole("button", { name: "Save" }));
+      expect(await screen.findByText(expected)).toBeInTheDocument();
+    });
   });
 });

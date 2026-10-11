@@ -54,6 +54,9 @@ import {
   type HeadroomLine,
 } from "../credit-notes/line-credit-headroom";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { isLockUnavailableError } from "../common/db-locks";
+import { txConflictState } from "../common/tx-retry";
+import { isTransactionExpired, refundBusy } from "./standard-refund-claim";
 import { IdempotencyService } from "../common/idempotency.service";
 import { AddonService } from "../billing/addon.service";
 import { NO_RESTOCK_REASONS } from "./returns.service";
@@ -79,6 +82,11 @@ import {
   type RefundTender,
 } from "./inline-return-refund";
 import { assertCashRefundWithinCap, refundAmountsBySale } from "./cash-refund-cap";
+import {
+  assertInlineReturnWithinRemainder,
+  assertInlineSourcesOpen,
+} from "./refund-remainder-guard";
+import { resolveInlineSourceInvoices } from "./refundable-remainder";
 import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
 import { assertCounterWindowOpen } from "./counter-close-window";
 import {
@@ -114,6 +122,11 @@ export const INLINE_RETURN_ERROR_CODES = {
   ALREADY_RETURNED_REASON_REQUIRED: API_ERROR_CODES.INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED,
 } as const;
 
+/** SA-773: the distinct source Order ids of priced chunks. */
+const sourceOrdersOf = (chunks: ReadonlyArray<{ sourceOrderId?: string | null }>): string[] => [
+  ...new Set(chunks.map((c) => c.sourceOrderId).filter((o): o is string => !!o)),
+];
+
 /** B961 (SA-071f N3): the hold reasons of an INLINE return awaiting staff approval. ALREADY_RETURNED wins over DRIVER_CAP (it needs a reason). */
 export const ALREADY_RETURNED_HOLD_REASON = "ALREADY_RETURNED";
 const INLINE_HOLD_REASONS = ["DRIVER_CAP", ALREADY_RETURNED_HOLD_REASON] as const;
@@ -128,6 +141,13 @@ export const ALREADY_RETURNED_REASON_MESSAGE =
 
 /** The 409 code of a returnKey already held (create's preflight: a replay, or a real collision). */
 export const INLINE_RETURN_KEY_TAKEN = API_ERROR_CODES.INLINE_RETURN_KEY_TAKEN;
+
+/**
+ * The standalone capture is ONE transaction now (row 347: capture, restock, ledger reversal, mint and settle, behind the
+ * customer advisory lock): the budget of the order-create path that runs the same work (orders.service.ts), not Prisma's
+ * 5 s default.
+ */
+const CAPTURE_TX_OPTIONS = { timeout: 15_000 } as const;
 
 @Injectable()
 export class InlineReturnsService {
@@ -269,6 +289,8 @@ export class InlineReturnsService {
     lines: InlineReturnLinesDto,
     customerId: string,
     user: JwtPayload,
+    /** receives the source Orders the dry run priced from, for captureInTx's first lock statement (SA-773) */
+    found?: { sourceOrderIds?: string[] },
   ): Promise<number> {
     const db = this.prisma.forTenant();
     if (lines.returnKey) {
@@ -292,6 +314,7 @@ export class InlineReturnsService {
     );
     // B961: a staff order create without the already-returned reason refuses HERE, before the number is reserved.
     this.alreadyReturnedPolicy(lines.items, priced.chunks, user);
+    if (found) found.sourceOrderIds = sourceOrdersOf(priced.chunks);
     return priced.total;
   }
 
@@ -315,19 +338,30 @@ export class InlineReturnsService {
     tx: any,
     dto: CaptureInlineReturnDto,
     user: JwtPayload,
-    opts: { orderRouteRunId?: string | null; forRefund?: boolean } = {},
+    opts: {
+      orderRouteRunId?: string | null;
+      forRefund?: boolean;
+      /**
+       * SA-773: the source Orders the chunks will be priced from, found by the caller's UNLOCKED preflight (never inside this
+       * transaction: a second pooled connection per in-flight capture exhausts the pool). Taken in the first lock statement.
+       */
+      sourceOrderIds?: readonly string[];
+    } = {},
   ): Promise<{ replayed: boolean; ret: any; overCap: boolean }> {
     const tenantId = this.prisma.getTenantId();
     // SA-740 (row 190): lock the carrying order, plus the SOURCE sale when it is a different one, in ONE id-sorted,
     // tenant-bound statement (the set and order `refund()` takes, so a capture and a refund cannot deadlock). It replaces
     // the old carrying-only lock, which had no tenant predicate. The customer advisory lock the caller holds stays first.
-    await lockRefundOrders(
-      tx,
-      tenantId,
-      dto.sourceOrderId && dto.sourceOrderId !== dto.orderId
-        ? [dto.orderId, dto.sourceOrderId]
-        : [dto.orderId],
-    );
+    // SA-773: a named customer's capture with no named source prices chunks from OTHER orders. The caller's preflight found their
+    // Orders (opts.sourceOrderIds); they are locked in this same first statement (id-sorted with the rest), BEFORE any source
+    // invoice is written and the order's sibling invoices are asked for: the order a credit note create (Order, then its
+    // invoices) takes. Nothing is discovered in here: the pricing under the locks is authoritative.
+    const lockedOrders = new Set<string>([
+      dto.orderId,
+      ...(dto.sourceOrderId ? [dto.sourceOrderId] : []),
+      ...(opts.sourceOrderIds ?? []),
+    ]);
+    await lockRefundOrders(tx, tenantId, [...lockedOrders]);
     const order = await tx.order.findFirst({
       where: { id: dto.orderId },
       select: { id: true, customerId: true, total: true, status: true, routeRunId: true },
@@ -402,6 +436,20 @@ export class InlineReturnsService {
       { defaultSourceOrderId: dto.orderId },
     );
 
+    // Fallback: the priced chunks name an Order the preflight did not (a walk-in's new order, whose preflight cannot price, or data
+    // that moved in between): lock it now, before any source invoice is written. RESIDUAL RISK, a 40P01 and nothing worse (the
+    // caller's retry or a 500 surfaces it; no write is lost): this second statement is not id-ordered against the first, so it
+    // can cross another locker of the same Orders. The edges that exist today: an ORDER EDIT takes its own Order C FOR UPDATE and
+    // then captureInTx locks the SOURCE Order S of the chunks; approve / issueCredit lock {S, C} sorted in ONE statement, so with
+    // S < C an approve holds S and asks for C while the edit holds C and asks for S. (Inline cancel was a third party to this
+    // until SA-773 follow-up (A): its restore wrote the invoices of the orders the note was applied to without their Order
+    // lock; it now takes them with the carrying order in one sorted statement, so it is on the approve side of the edge.) The
+    // preflight is what keeps the common case in ONE id-sorted statement.
+    const lateOrders = priced.chunks
+      .map((c) => c.sourceOrderId)
+      .filter((o): o is string => !!o && !lockedOrders.has(o));
+    if (lateOrders.length > 0) await lockRefundOrders(tx, tenantId, lateOrders);
+
     // B948 / SA-628a (c): a source line may never be credited past its value by a credit note + an inline return.
     await this.assertWithinLineHeadroom(tx, priced.chunks);
 
@@ -427,6 +475,21 @@ export class InlineReturnsService {
     const alreadyReturned = this.alreadyReturnedPolicy(dto.items, priced.chunks, user);
     const arHeld = alreadyReturned.held && priced.total > 0.001;
     const overCap = driverCap || arHeld;
+
+    // SA-773: a capture that is NOT held credits at once (store credit is minted next, or a refund is recorded), so it fits the
+    // goods' remainder first: the per-line headroom above never sees an amount-only (manual) credit note. The source Orders are
+    // locked and the source invoices written by now. A held capture reserves its goods instead (counted in the remainder).
+    if (!overCap)
+      await assertInlineReturnWithinRemainder(tx, tenantId, {
+        items: priced.chunks.map((c) => ({
+          productId: c.productId,
+          qty: c.pieces,
+          sourceInvoiceItemId: c.sourceInvoiceItemId,
+          subtotal: c.subtotal,
+          taxAmount: c.taxAmount,
+          categoryTax: c.categoryTax,
+        })),
+      });
 
     const year = new Date().getFullYear();
     const returnNumber = await this.numbering.reserveNext("RETURN", {
@@ -601,7 +664,14 @@ export class InlineReturnsService {
   /** SA-727 (M3): a refund needs every source invoice paid in full; a $0 return has nothing to refund. */
   private async assertRefundable(
     tx: any,
-    priced: { total: number; chunks: Array<{ sourceInvoiceItemId: string | null }> },
+    priced: {
+      total: number;
+      chunks: Array<{
+        sourceInvoiceItemId: string | null;
+        sourceOrderItemId?: string | null;
+        sourceOrderId?: string | null;
+      }>;
+    },
   ): Promise<void> {
     if (!(priced.total > 0.001)) {
       throw new ConflictException({
@@ -609,10 +679,7 @@ export class InlineReturnsService {
         message: "This return is worth $0.00, so there is nothing to refund.",
       });
     }
-    const src = await loadSourceInvoicesState(
-      tx,
-      priced.chunks.map((c) => c.sourceInvoiceItemId),
-    );
+    const src = await loadSourceInvoicesState(tx, priced.chunks);
     // paid in full AND none of it store credit (F4): the ONE refusal, shared with the STANDARD refund
     const refusal = refundSourcesRefusal(src);
     if (refusal) throw refusal;
@@ -700,6 +767,8 @@ export class InlineReturnsService {
     // the matching set as it will be AFTER that revert (the reverted invoices left out), so a return
     // whose only pack evidence is this order's own SENT invoice refuses HERE, before the revert.
     opts: { revertOrderId?: string } = {},
+    /** receives the source Orders the dry run priced from, for captureInTx's first lock statement (SA-773) */
+    found?: { sourceOrderIds?: string[] },
   ): Promise<number | null> {
     const db = this.prisma.forTenant();
     if (dto.returnKey) {
@@ -738,6 +807,7 @@ export class InlineReturnsService {
     );
     // B961: staff without the reason refuse HERE too (before the caller's revert commits); a driver is held at capture.
     this.alreadyReturnedPolicy(dto.items, priced.chunks, user);
+    if (found) found.sourceOrderIds = sourceOrdersOf(priced.chunks);
     // B948 (Opus r1, B215 class): the SAME line-headroom refusal, read-only (no Invoice write, no lock), BEFORE the caller's
     // un-tx'd revert commits SENT->DRAFT; the in-tx check stays as the race backstop.
     await this.assertWithinLineHeadroom(db, priced.chunks, { readOnly: true });
@@ -751,18 +821,45 @@ export class InlineReturnsService {
    * the order's remaining balance under the Order lock the caller holds, and settle. A replay (the
    * credit already exists) and a DRIVER_CAP hold issue nothing. `minted` is null in those cases and
    * for a zero-total return; the caller emits the CN event after ITS commit.
+   *
+   * Numbering (row 347, N2, no change): the RETURN number row (reserved inside captureInTx) and the CREDIT_NOTE number row
+   * (reserved here, unless the caller pre-reserved) are row-locked by `reserveNext` until the transaction ends, and the
+   * transaction now also covers the mint and the settle. Tenant-wide numbering of returns and credit notes therefore waits
+   * for the whole capture, where it waited for each of two shorter transactions before.
+   *
+   * Lock order, exactly: the standalone capture takes the RETURN number, then the Product rows, then the CREDIT_NOTE number
+   * (approve() takes Product rows then CREDIT_NOTE number). It is NOT the order everywhere: an order create locks the Product
+   * rows FIRST (decrementStockForSale) and reaches the RETURN number later, through applyReturn -> captureInTx. A sale of
+   * product P can therefore deadlock a standalone capture restocking P (a pre-existing pair; holding the RETURN number row
+   * through mint and settle widens its window). The capture maps that 40P01 / P2034 to the retryable 409 CONCURRENT_UPDATE
+   * (capture()'s catch), as the order-create side retries it on `txConflictState`.
    */
   async captureAndIssueInTx(
     tx: any,
     dto: CaptureInlineReturnDto,
     user: JwtPayload,
-    opts: { creditNoteNumber?: string; orderRouteRunId?: string | null } = {},
+    opts: {
+      creditNoteNumber?: string;
+      orderRouteRunId?: string | null;
+      sourceOrderIds?: readonly string[];
+      /**
+       * Cap the system-owned intent at the carrying order's remaining balance (default: true, the order create/edit path). The
+       * standalone capture() passes false: its intent has always been the whole credit, as issueCredit() writes it.
+       */
+      capIntentToOrderBalance?: boolean;
+    } = {},
   ): Promise<{ replayed: boolean; ret: any; overCap: boolean; minted: any }> {
     const captured = await this.captureInTx(tx, dto, user, {
       orderRouteRunId: opts.orderRouteRunId,
+      sourceOrderIds: opts.sourceOrderIds,
     });
     if (captured.replayed || captured.overCap) return { ...captured, minted: null };
     const ret = captured.ret;
+    // Row 347 (1): the store credit is minted in the capture's own transaction, so the refusal issueCredit() gave a dead
+    // source (after the return had committed and restocked) is asked here, before the mint, like every other mint site: the
+    // source invoices are locked by now (the headroom UPDATE, the remainder's pool locks), so a void that landed after the
+    // pricing read refuses 409 RETURN_CAPTURE_SOURCE_CLOSED and the whole transaction rolls back: no return, no stock moved, no note.
+    await assertInlineSourcesOpen(tx, (ret.items ?? []) as any[], { capture: true });
     const amount = roundMoney(
       Number(ret.creditSubtotal ?? 0) +
         Number(ret.creditTax ?? 0) +
@@ -770,9 +867,32 @@ export class InlineReturnsService {
     );
     const minted = await this.issueCreditInTx(tx, ret, amount, this.prisma.getTenantId(), {
       creditNoteNumber: opts.creditNoteNumber,
-      capIntentToOrderBalance: true,
+      capIntentToOrderBalance: opts.capIntentToOrderBalance ?? true,
     });
     return { ...captured, minted };
+  }
+
+  /** SA-773: the source Orders of an unlocked dry run for the standalone capture; any failure is "none found". */
+  private async dryRunSourceOrders(
+    dto: CaptureInlineReturnDto,
+    user: JwtPayload,
+  ): Promise<string[]> {
+    try {
+      const dry = await this.quoteService.priceInlineReturn(
+        {
+          customerId: dto.customerId,
+          items: dto.items,
+          routeRunStopId: dto.routeRunStopId,
+          sourceOrderId: dto.sourceOrderId,
+        },
+        user,
+        this.prisma.forTenant(),
+        { defaultSourceOrderId: dto.orderId },
+      );
+      return sourceOrdersOf(dry?.chunks ?? []);
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -978,7 +1098,8 @@ export class InlineReturnsService {
     const tenantId = this.prisma.getTenantId();
     await this.assertGranted(tenantId);
 
-    let result: { replayed: boolean; ret: any; overCap: boolean };
+    // `minted` is set only by a fresh, unheld STORE_CREDIT capture: its credit note was minted in the capture's own transaction
+    let result: { replayed: boolean; ret: any; overCap: boolean; minted?: any };
 
     // m-2/m-3: an unlocked pre-read resolves an already-captured returnKey without opening a
     // transaction — a retried submission (offline replay, double-tap) burns nothing. Routed
@@ -1006,6 +1127,9 @@ export class InlineReturnsService {
         overCap: isInlineHold(preExisting.holdReason),
       };
     } else {
+      // SA-773: the chunk source Orders, found by an unlocked dry run BEFORE the transaction opens (its own connection, never
+      // two per capture); a dry run that fails finds none and the pricing under the locks decides
+      const sourceOrderIds = await this.dryRunSourceOrders(dto, user);
       try {
         result = await this.prisma.tenantTransaction(async (tx: any) => {
           // §5: the SAME customer-scoped lock returns.service.ts's create() takes — inline and
@@ -1013,9 +1137,29 @@ export class InlineReturnsService {
           // order create/edit paths (#2094) take this same lock themselves, as their FIRST
           // statement, and then call `captureInTx`.
           await this.lockCustomerInTx(tx, dto.customerId);
-          return this.captureInTx(tx, dto, user, { forRefund: resolution === "REFUND" });
-        });
+          // Row 347 (1): a STORE_CREDIT capture mints its credit in THIS transaction (the order-create path's composition:
+          // capture, then mint, under the Orders and source invoices the capture holds), so a void or line rebuild can no
+          // longer land between a committed return and its mint and refuse 409 for a return that exists. A held capture
+          // (DRIVER_CAP / already returned) and a replay mint nothing here (captureAndIssueInTx returns `minted: null`), and a
+          // REFUND capture only stores its intent. A mint failure rolls the whole capture back: a same-key retry starts clean.
+          if (resolution === "REFUND") {
+            const refundCapture = await this.captureInTx(tx, dto, user, {
+              forRefund: true,
+              sourceOrderIds,
+            });
+            return { ...refundCapture, minted: null };
+          }
+          return this.captureAndIssueInTx(tx, dto, user, {
+            sourceOrderIds,
+            capIntentToOrderBalance: false,
+          });
+        }, CAPTURE_TX_OPTIONS);
       } catch (err: any) {
+        // a transaction that ran out of budget (P2028), a lock wait that gave up (55P03) or a write conflict / deadlock
+        // (P2034, 40001, 40P01: the order-create side retries on the same `txConflictState`) wrote nothing: the same retryable
+        // 409 the refund claims answer, never an uncoded 500 (the caller retries with the same returnKey)
+        if (isLockUnavailableError(err) || isTransactionExpired(err) || txConflictState(err))
+          throw refundBusy();
         if (this.isReturnKeyConflict(err) && dto.returnKey) {
           const raced = await this.prisma.forTenant().return.findFirst({
             where: { returnKey: dto.returnKey, kind: "INLINE" },
@@ -1040,17 +1184,22 @@ export class InlineReturnsService {
       }
     }
 
-    // HIGH-2: a RECEIVED row with neither a credit note nor a hold is "stuck" — either just
-    // captured (the normal, expected case) or left behind by a PRIOR issueCredit that failed
-    // after this same capture committed. Either way, (re-)issue idempotently before returning.
+    // The credit was minted in the capture's own transaction: tell the dashboard now that it has committed, and answer with
+    // the issued row (the snapshot above predates the link).
+    if (result.minted) this.emitCreditNoteCreated(tenantId, result.minted);
+
+    // HIGH-2: a RECEIVED row with neither a credit note nor a hold is "stuck" — a REPLAY of a capture whose credit was never
+    // minted (the return committed before capture and mint shared a transaction, or its mint was refused: a source that has
+    // since gone dead is still refused by issueCredit's own checks). (Re-)issue idempotently before returning.
     if (
       resolution === "STORE_CREDIT" &&
-      result.ret.status === "RECEIVED" &&
-      !result.ret.creditNoteId &&
-      !result.ret.refundMethod &&
-      !result.ret.holdReason
+      (result.minted ||
+        (result.ret.status === "RECEIVED" &&
+          !result.ret.creditNoteId &&
+          !result.ret.refundMethod &&
+          !result.ret.holdReason))
     ) {
-      await this.issueCredit(result.ret.id);
+      if (!result.minted) await this.issueCredit(result.ret.id);
       const reissued = await this.prisma
         .forTenant()
         .return.findUnique({ where: { id: result.ret.id }, include: { items: true } });
@@ -1185,8 +1334,11 @@ export class InlineReturnsService {
 
   /**
    * §6.5.3: unlocked pre-read (m-2) → tx: Return FOR UPDATE → guard → `issueCreditInTx`
-   * (m-1 mint, N-1 guarded link, intent, settle) → one commit. The immediate-issue path for
-   * a return that was NOT held — the amount is the full priced total, never overridden
+   * (m-1 mint, N-1 guarded link, intent, settle) → one commit. Since row 347 this is the REPLAY
+   * re-issue only: a fresh capture mints inside its own transaction (`captureAndIssueInTx`),
+   * so what reaches here is a RECEIVED return, not held, with no credit note, that a retry with
+   * the same returnKey found (committed before capture and mint shared a transaction, or whose
+   * mint was refused) — the amount is the full priced total, never overridden
    * (`approve()` calls `issueCreditInTx` directly with its own, possibly-reduced amount).
    */
   private async issueCredit(returnId: string): Promise<void> {
@@ -1203,7 +1355,10 @@ export class InlineReturnsService {
     await this.prisma.tenantTransaction(async (tx: any) => {
       // N-1: the Return row lock IS the shared issue/cancel claim.
       await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${returnId} FOR UPDATE`;
-      const fresh = await tx.return.findFirst({ where: { id: returnId, kind: "INLINE" } });
+      const fresh = await tx.return.findFirst({
+        where: { id: returnId, kind: "INLINE" },
+        include: { items: true },
+      });
       // cancel() (or a racing issue) already moved this return out of RECEIVED/no-CN/no-hold —
       // "cancel between re-read and link ⇒ no CN": mint nothing.
       if (
@@ -1214,9 +1369,25 @@ export class InlineReturnsService {
         fresh.holdReason
       )
         return;
-      // SA-706c (house order Return → Order): the Order BEFORE the intent insert below takes KEY SHARE on it.
-      await lockOrderRow(tx, tenantId, fresh.orderId);
+      // SA-706c (house order Return → Order): the Order BEFORE the intent insert below takes KEY SHARE on it. SA-773: the items'
+      // SOURCE Orders go in the same single id-sorted statement, as approve() takes them.
+      await lockRefundOrders(tx, tenantId, [
+        fresh.orderId,
+        ...((fresh.items ?? []) as Array<{ sourceOrderId?: string | null }>)
+          .map((i) => i.sourceOrderId)
+          .filter((o): o is string => !!o),
+      ]);
 
+      // SA-773: the remainder is read here too. A fresh capture was just checked by captureInTx (and mints in its own tx), but a
+      // replay (HIGH-2) re-issues a RECEIVED return with no credit note that may predate that check, or whose pool has since been
+      // credited (a manual amount-only note): minting it unchecked paid the same goods twice. The return excludes itself.
+      await assertInlineReturnWithinRemainder(tx, tenantId, {
+        returnId,
+        items: (fresh.items ?? []) as any[],
+        lockSourceInvoices: true,
+      });
+      // SA-773 N4: a replay re-issue after the source invoice was voided / written off (or its line deleted) mints nothing
+      await assertInlineSourcesOpen(tx, (fresh.items ?? []) as any[]);
       const amount = roundMoney(
         Number(fresh.creditSubtotal ?? 0) +
           Number(fresh.creditTax ?? 0) +
@@ -1300,8 +1471,15 @@ export class InlineReturnsService {
       ) {
         return { skipped: true as const };
       }
-      // SA-706c: as issueCredit() — the Order right after the Return, before restock/mint/insert.
-      await lockOrderRow(tx, tenantId, fresh.orderId);
+      // SA-706c: as issueCredit() - the Order right after the Return, before restock/mint/insert. SA-773: the held items'
+      // SOURCE Orders go in the same single id-sorted statement (the set and order capture and refund() take), so the
+      // remainder below is read under them and the Order never inverts against another locker of that set.
+      await lockRefundOrders(tx, tenantId, [
+        fresh.orderId,
+        ...(fresh.items as Array<{ sourceOrderId?: string | null }>)
+          .map((i) => i.sourceOrderId)
+          .filter((o): o is string => !!o),
+      ]);
       const heldAmount = roundMoney(Number(fresh.heldAmount ?? 0));
       const amount = dto?.amount != null ? roundMoney(dto.amount) : heldAmount;
       if (amount > heldAmount + 0.001) {
@@ -1314,6 +1492,18 @@ export class InlineReturnsService {
           "Approved amount must be greater than 0 — use reject() to decline a hold entirely",
         );
       }
+
+      // SA-773: a hold skipped the capture-time check (it credited nothing yet), so the goods' remainder is read HERE, before
+      // anything is restocked or minted. The stored items are at least the approved amount, so this fails closed. The held
+      // return excludes itself; an approval "with a reason" of goods already returned or credited is refused here too.
+      await assertInlineReturnWithinRemainder(tx, tenantId, {
+        returnId: id,
+        items: fresh.items as any[],
+        lockSourceInvoices: true,
+      });
+      // SA-773 N4: a source invoice voided or written off since the capture has no pool above, so its request was unchecked:
+      // refuse before anything is restocked, reversed or minted (the source invoices are locked by the call above)
+      await assertInlineSourcesOpen(tx, fresh.items as any[]);
 
       // HIGH-4: apply what capture() deferred — restock + regulated-ledger reversal — now
       // that an operator has actually approved the credit.
@@ -1413,6 +1603,7 @@ export class InlineReturnsService {
       const items = fresh.items as Array<{
         sourceOrderId?: string | null;
         sourceInvoiceItemId?: string | null;
+        sourceOrderItemId?: string | null;
       }>;
       await lockRefundOrders(tx, tenantId, [
         fresh.orderId,
@@ -1437,14 +1628,20 @@ export class InlineReturnsService {
       }
 
       // M3: every source invoice paid in full, read under the invoice locks
-      const src = await loadSourceInvoicesState(
-        tx,
-        items.map((i) => i.sourceInvoiceItemId),
-        { beforeInvoiceRead: (invoiceIds) => lockRefundInvoices(tx, tenantId, invoiceIds) },
-      );
+      // Row 347 (3): the invoices the goods sit on NOW (a rebuilt line re-resolves through its order line, as approve and
+      // store credit do), locked, then re-resolved under the lock; every check below runs on THESE invoices
+      const src = await loadSourceInvoicesState(tx, items, {
+        beforeInvoiceRead: (invoiceIds) => lockRefundInvoices(tx, tenantId, invoiceIds),
+      });
       // paid in full AND none of it store credit (F4, read under the same invoice locks)
       const refusal = refundSourcesRefusal(src);
       if (refusal) throw refusal;
+      // SA-773: and the goods' remainder (what other returns and credit notes already took), read under the same locks
+      await assertInlineReturnWithinRemainder(tx, tenantId, {
+        returnId: id,
+        invoiceIds: src.invoiceIds,
+        items: fresh.items as any[],
+      });
       // SA-749r2 item 9: a CASH refund may not exceed the cash applied to each source sale minus earlier cash refunds on it
       // (read under the order and invoice locks held here, so two refunds cannot both spend the same room)
       await assertCashRefundWithinCap(tx, {
@@ -1614,21 +1811,33 @@ export class InlineReturnsService {
       const items = fresh.items as Array<{
         sourceOrderId?: string | null;
         sourceInvoiceItemId?: string | null;
+        sourceOrderItemId?: string | null;
       }>;
       await lockRefundOrders(tx, tenantId, [
         fresh.orderId,
         ...items.map((i) => i.sourceOrderId).filter((o): o is string => !!o),
       ]);
-      const sourceItemIds = [
-        ...new Set(items.map((i) => i.sourceInvoiceItemId).filter((o): o is string => !!o)),
-      ];
-      if (sourceItemIds.length > 0) {
-        const lines: Array<{ invoiceId: string }> =
-          (await tx.invoiceItem.findMany({
-            where: { id: { in: sourceItemIds } },
-            select: { id: true, invoiceId: true },
-          })) ?? [];
-        await lockRefundInvoices(tx, tenantId, [...new Set(lines.map((l) => l.invoiceId))]);
+      if (items.some((i) => i.sourceInvoiceItemId)) {
+        // the invoices the goods sit on NOW: the stored line, or the live line of the same order line after a rebuild gave the
+        // invoice new line ids (resolveInlineSourceInvoices)
+        const invoiceIds = [
+          ...new Set(
+            (await resolveInlineSourceInvoices(tx, items))
+              .map((r) => r.invoiceId)
+              .filter((i): i is string => !!i),
+          ),
+        ];
+        await lockRefundInvoices(tx, tenantId, invoiceIds);
+        // SA-773 N4: a source invoice voided / written off (or a source line gone for good) since the capture has no pool
+        // below, so its request would pass unchecked: refuse before the claim and the mint. (The refused cash refund of such
+        // a sale steers the operator here.)
+        await assertInlineSourcesOpen(tx, items);
+        // SA-773: store credit gives the same value back, so it fits the same remainder (this return itself excluded)
+        await assertInlineReturnWithinRemainder(tx, tenantId, {
+          returnId: id,
+          invoiceIds,
+          items: items as any[],
+        });
       }
 
       const amount = inlineReturnAmount(fresh);
@@ -1787,9 +1996,17 @@ export class InlineReturnsService {
         throw new BadRequestException("Return is already cancelled");
       }
 
-      // m-5 order: the carrying order is locked before any credit pull-back below touches
-      // its invoices.
-      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${fresh.orderId} FOR UPDATE`;
+      // m-5 order: the carrying order is locked before any credit pull-back below touches its invoices. SA-773 follow-up (A):
+      // the pull-back writes the invoices this return's credit note was APPLIED to, and those can sit on other orders: their
+      // Orders go in the SAME id-sorted statement as the carrying order (the {source, carrying} set approve/issueCredit take,
+      // so no cycle with them), then those invoices id-sorted, all before the first write below. The set is read unlocked
+      // here and re-checked by the restore under the locks (an application that appeared since is a 409, nothing written).
+      const noteLocks =
+        fresh.status === "REFUNDED" && fresh.creditNoteId
+          ? await this.creditNotes.cancelLockSet(tx, fresh.creditNoteId)
+          : { orderIds: [] as string[], invoiceIds: [] as string[] };
+      await lockRefundOrders(tx, tenantId, [fresh.orderId, ...noteLocks.orderIds]);
+      await lockRefundInvoices(tx, tenantId, noteLocks.invoiceIds);
 
       // HIGH-4: "applied" (restocked + regulated-ledger reversed) is no longer just
       // `status IN (RECEIVED, REFUNDED)` — a RECEIVED row still carrying `DRIVER_CAP` in
@@ -1837,7 +2054,10 @@ export class InlineReturnsService {
         // sweeps a DIFFERENT credit note that happens to sit on the same order/invoice.
         // Throws RETURN_CREDIT_CONSUMED if some of its `amountUsed` can't be traced back to a
         // restorable payment (m-5: "restore < amountUsed").
-        await this.creditNotes.cancelStandaloneInTx(tx, fresh.creditNoteId);
+        await this.creditNotes.cancelStandaloneInTx(tx, fresh.creditNoteId, {
+          orderIds: [fresh.orderId, ...noteLocks.orderIds],
+          invoiceIds: noteLocks.invoiceIds,
+        });
         await tx.orderCreditNote.deleteMany({
           where: { orderId: fresh.orderId, creditNoteId: fresh.creditNoteId },
         });

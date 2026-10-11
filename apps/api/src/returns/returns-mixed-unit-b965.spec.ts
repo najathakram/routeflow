@@ -72,6 +72,8 @@ describe("ReturnsService.processRefund — mixed-unit product at the refund door
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-737: the claim re-reads the Return's status under its row lock
+    prisma.return.findFirst.mockResolvedValue({ id: "ret", status: "RECEIVED", kind: "STANDARD" });
     creditNotesCreate = jest.fn().mockResolvedValue({ id: "cn-1" });
     const mod = await Test.createTestingModule({
       providers: [
@@ -174,7 +176,7 @@ describe("ReturnsService.processRefund — mixed-unit product at the refund door
     await service.processRefund("ret-1");
     expect(creditNotesCreate).toHaveBeenCalledWith(
       expect.objectContaining({ amount: 60, items: [{ invoiceItemId: "i1", amount: 60, qty: 1 }] }),
-      { ledgerReversedByReturn: true },
+      { ledgerReversedByReturn: true, returnId: "ret-1" },
     );
   });
 
@@ -187,6 +189,7 @@ describe("ReturnsService.processRefund — mixed-unit product at the refund door
     await service.processRefund("ret-1");
     expect(creditNotesCreate).toHaveBeenCalledWith(expect.objectContaining({ amount: 30 }), {
       ledgerReversedByReturn: true,
+      returnId: "ret-1",
     });
   });
 });
@@ -198,6 +201,8 @@ describe("ReturnsService.processRefund — the order pool in PIECES (B967)", () 
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-737: the claim re-reads the Return's status under its row lock
+    prisma.return.findFirst.mockResolvedValue({ id: "ret", status: "RECEIVED", kind: "STANDARD" });
     creditNotesCreate = jest.fn().mockResolvedValue({ id: "cn-1" });
     const mod = await Test.createTestingModule({
       providers: [
@@ -230,7 +235,8 @@ describe("ReturnsService.processRefund — the order pool in PIECES (B967)", () 
   ];
   const poolRead = () =>
     prisma.invoice.findMany.mockResolvedValue(
-      twoBoxInvoices().map((i) => ({ id: i.id, items: i.items })),
+      // SA-773: the refundable remainder pools an order's invoices, so the rows carry their order (as stored rows do)
+      twoBoxInvoices().map((i) => ({ id: i.id, orderId: "ord-1", items: i.items })),
     );
   const withReturn = (qty: number) =>
     prisma.return.findUnique.mockResolvedValue({

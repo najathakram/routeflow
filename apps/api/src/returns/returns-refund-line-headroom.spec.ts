@@ -38,6 +38,8 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-737: the claim re-reads the Return's status under its row lock
+    prisma.return.findFirst.mockResolvedValue({ id: "ret", status: "RECEIVED", kind: "STANDARD" });
     creditNotesCreate = jest.fn().mockResolvedValue({ id: "cn-1" });
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
@@ -79,7 +81,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
         items: [{ invoiceItemId: "line-a", amount: 100, qty: 1 }],
       }),
       // receive() already reversed the returned regulated goods: the itemised refund must not reverse them again
-      { ledgerReversedByReturn: true },
+      { ledgerReversedByReturn: true, returnId: "ret-1" },
     );
   });
 
@@ -121,7 +123,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
         amount: 50,
         items: [{ invoiceItemId: "line-a", amount: 50, qty: 1 }],
       }),
-      { ledgerReversedByReturn: true },
+      { ledgerReversedByReturn: true, returnId: "ret-1" },
     );
   });
 
@@ -281,7 +283,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
           { invoiceItemId: "line-f", amount: 0, qty: 1 },
         ],
       }),
-      { ledgerReversedByReturn: true },
+      { ledgerReversedByReturn: true, returnId: "ret-1" },
     );
   });
 

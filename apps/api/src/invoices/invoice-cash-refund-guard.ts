@@ -21,10 +21,7 @@
  */
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import {
-  CASH_REFUNDED_RETURN_WHERE,
-  sourceLineIdsOfInvoice,
-} from "../returns/inline-return-refund";
+import { CASH_REFUNDED_RETURN_WHERE, sourceRefsOfInvoice } from "../returns/inline-return-refund";
 
 /** The 409 message of `INVOICE_HAS_CASH_REFUND` on an invoice void (web shows a generic sentence by code). */
 export const INVOICE_HAS_CASH_REFUND_MESSAGE =
@@ -51,14 +48,40 @@ async function refuseOnCashRefund(
   }
 }
 
-/** The INLINE source clause for these invoice line ids (none: no clause). */
+/**
+ * The INLINE source clauses for these invoice lines (none: no clause). The reverse of the refund's resolution
+ * (`resolveInlineSourceInvoices`): an item is sourced from the invoice by its stored line id, OR, when a rebuild of the order's
+ * invoice lines left that id DANGLING (no invoice line of the order has it any more), by the order line (`sourceOrderItemId`)
+ * one of the invoice's lines carries, on the invoice's own order. Without the second clause a cash refund of a rebuilt line
+ * (refundable since row 347) would not block the void of the invoice it was paid back against. The second clause is narrowed to
+ * dangling references: an item whose stored line is ALIVE on a sibling invoice (one order line billed on two invoices, 6 + 4)
+ * belongs to that sibling, so a cash refund of the sibling's goods never blocks voiding this invoice. `orderLineIds` is every
+ * invoice line of the order, whatever its invoice's status.
+ */
 function inlineSourceFrom(
-  lineIds: Array<string | null | undefined>,
+  lines: Array<{ id?: string | null; orderItemId?: string | null }>,
+  orderId: string | null,
+  orderLineIds: ReadonlyArray<string>,
 ): Array<Record<string, unknown>> {
-  const ids = lineIds.filter((i): i is string => !!i);
-  return ids.length > 0
-    ? [{ kind: "INLINE", items: { some: { sourceInvoiceItemId: { in: ids } } } }]
-    : [];
+  const ids = lines.map((l) => l.id).filter((i): i is string => !!i);
+  const orderItemIds = [
+    ...new Set(lines.map((l) => l.orderItemId).filter((i): i is string => !!i)),
+  ];
+  const clauses: Array<Record<string, unknown>> = [];
+  if (ids.length > 0)
+    clauses.push({ kind: "INLINE", items: { some: { sourceInvoiceItemId: { in: ids } } } });
+  if (orderItemIds.length > 0)
+    clauses.push({
+      kind: "INLINE",
+      items: {
+        some: {
+          sourceOrderItemId: { in: orderItemIds },
+          sourceInvoiceItemId: { notIn: [...orderLineIds] },
+          ...(orderId ? { OR: [{ sourceOrderId: orderId }, { sourceOrderId: null }] } : {}),
+        },
+      },
+    });
+  return clauses;
 }
 
 /**
@@ -71,7 +94,23 @@ export async function assertNoCashRefundOnInvoice(
   invoiceId: string,
   orderId: string | null,
 ): Promise<void> {
-  const sources = inlineSourceFrom(await sourceLineIdsOfInvoice(tx, invoiceId));
+  const refs = await sourceRefsOfInvoice(tx, invoiceId);
+  // every invoice line of the order: a stored line id in it is NOT dangling (it is alive, on this invoice or a sibling)
+  const orderLines: Array<{ id?: string | null }> =
+    orderId && refs.orderItemIds.length > 0
+      ? ((await tx.invoiceItem.findMany({
+          where: { invoice: { orderId } },
+          select: { id: true },
+        })) ?? [])
+      : [];
+  const sources = inlineSourceFrom(
+    [
+      ...refs.lineIds.map((id) => ({ id })),
+      ...refs.orderItemIds.map((orderItemId) => ({ orderItemId })),
+    ],
+    orderId,
+    orderLines.map((l) => l.id).filter((i): i is string => !!i),
+  );
   if (orderId) sources.push({ kind: "STANDARD", orderId });
   await refuseOnCashRefund(
     tx,
@@ -87,12 +126,23 @@ export async function assertNoCashRefundOnInvoice(
  * through `orderId`. Reads only; call it right after `lockOrderForCancel`, BEFORE the cancel's first write.
  */
 export async function assertNoCashRefundOnOrder(tx: any, orderId: string): Promise<void> {
-  const lines: Array<{ id?: string | null }> =
+  // ONE query: every line of the order's invoices with its invoice's status (the live ones are the sources, all of them tell a
+  // dangling stored id from one that is alive on a voided sibling)
+  const all: Array<{
+    id?: string | null;
+    orderItemId?: string | null;
+    invoice?: { status?: string | null } | null;
+  }> =
     (await tx.invoiceItem.findMany({
-      where: { invoice: { orderId, status: { not: "VOID" } } },
-      select: { id: true },
+      where: { invoice: { orderId } },
+      select: { id: true, orderItemId: true, invoice: { select: { status: true } } },
     })) ?? [];
-  const sources = inlineSourceFrom(lines.map((l) => l.id));
+  const lines = all.filter((l) => !(l.invoice?.status === "VOID")); // Invoice's own status, not a payment's
+  const sources = inlineSourceFrom(
+    lines,
+    orderId,
+    all.map((l) => l.id).filter((i): i is string => !!i),
+  );
   sources.push({ kind: "STANDARD", orderId });
   await refuseOnCashRefund(
     tx,

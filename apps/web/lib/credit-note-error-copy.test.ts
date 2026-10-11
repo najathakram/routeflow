@@ -1,7 +1,10 @@
 import { CREDIT_NOTE_ERROR_CODES } from "@routeflow/types";
 import {
+  CREDIT_EXCEEDS_REFUNDABLE_COPY,
   CREDIT_NOTE_ERROR_COPY,
+  RETURN_EXCEEDS_REFUNDABLE_COPY,
   RETURN_NOTHING_BILLED_COPY,
+  RETURN_REFUND_BASIS_CHANGED_COPY,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
   RETURN_MIXED_UNIT_PRODUCT_COPY,
   REFUND_EXCEEDS_CASH_PAID_COPY,
@@ -9,6 +12,7 @@ import {
   REFUND_PAID_WITH_STORE_CREDIT_COPY,
   UNCONFIRMED_COPY,
   creditNoteErrorCopy,
+  refundableCopy,
   refundErrorMessage,
 } from "./credit-note-error-copy";
 
@@ -117,6 +121,25 @@ describe("B959 RETURN_NOTHING_BILLED copy", () => {
   });
 });
 
+describe("row 347: a capture whose source sale closed (nothing was recorded)", () => {
+  const EXPECTED =
+    "Nothing was recorded: the sale this return refers to was voided or is no longer open. Capture it against another sale, or without a reference.";
+  const err = {
+    response: { data: { code: "RETURN_CAPTURE_SOURCE_CLOSED", message: "RAW SERVER TEXT" } },
+  };
+
+  it("has its own fixed copy, never the server text, and never sends the operator to cancel a return that does not exist", () => {
+    expect(refundErrorMessage(err, "other")).toBe(EXPECTED);
+    expect(EXPECTED).not.toMatch(/cancel|reject/i);
+  });
+
+  it("is a different copy from RETURN_NOTHING_BILLED, whose return DOES exist", () => {
+    const billed = { response: { data: { code: "RETURN_NOTHING_BILLED" } } };
+    expect(refundErrorMessage(billed, "other")).toBe(RETURN_NOTHING_BILLED_COPY);
+    expect(refundErrorMessage(err, "other")).not.toBe(RETURN_NOTHING_BILLED_COPY);
+  });
+});
+
 describe("SA-740r2: the refund refusals have fixed copy that names the exits", () => {
   const err = (code: string) => ({ response: { data: { code, message: "RAW SERVER TEXT" } } });
 
@@ -124,6 +147,7 @@ describe("SA-740r2: the refund refusals have fixed copy that names the exits", (
     ["REFUND_NEEDS_PAID_INVOICE", REFUND_NEEDS_PAID_INVOICE_COPY],
     ["REFUND_PAID_WITH_STORE_CREDIT", REFUND_PAID_WITH_STORE_CREDIT_COPY],
     ["REFUND_EXCEEDS_CASH_PAID", REFUND_EXCEEDS_CASH_PAID_COPY],
+    ["RETURN_REFUND_BASIS_CHANGED", RETURN_REFUND_BASIS_CHANGED_COPY],
   ])("%s is mapped to its fixed copy, never the server text", (code, copy) => {
     expect(refundErrorMessage(err(code), "other")).toBe(copy);
     expect(copy).not.toMatch(/RAW SERVER/);
@@ -143,11 +167,55 @@ describe("SA-740r2: the refund refusals have fixed copy that names the exits", (
       REFUND_NEEDS_PAID_INVOICE_COPY,
       REFUND_PAID_WITH_STORE_CREDIT_COPY,
       REFUND_EXCEEDS_CASH_PAID_COPY,
+      RETURN_REFUND_BASIS_CHANGED_COPY,
       RETURN_NOTHING_BILLED_COPY,
       RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
       RETURN_MIXED_UNIT_PRODUCT_COPY,
     ]) {
       expect(copy).not.toMatch(/outside RouteFlow|manually/i);
     }
+  });
+});
+
+describe("SA-773: the refundable-remainder refusals have fixed copy that names what is left", () => {
+  const err = (code: string, extra: Record<string, unknown> = {}) => ({
+    response: { data: { code, message: "RAW SERVER TEXT", ...extra } },
+  });
+
+  it.each([
+    ["RETURN_EXCEEDS_REFUNDABLE", RETURN_EXCEEDS_REFUNDABLE_COPY],
+    ["CREDIT_EXCEEDS_REFUNDABLE", CREDIT_EXCEEDS_REFUNDABLE_COPY],
+  ])(
+    "%s is the fixed copy, never the server text, plus 'up to' when the body has it",
+    (code, copy) => {
+      expect(refundErrorMessage(err(code), "other")).toBe(copy);
+      expect(refundErrorMessage(err(code, { remainingValue: 12 }), "other")).toBe(
+        `${copy} Up to $12.00 can still be given back.`,
+      );
+      expect(refundErrorMessage(err(code, { remainingValue: "12" }), "other")).toBe(copy);
+      expect(refundErrorMessage(err(code, { remainingValue: -1 }), "other")).toBe(copy);
+      expect(copy).not.toMatch(/RAW SERVER|outside RouteFlow|manually/i);
+    },
+  );
+});
+
+describe("SA-773: refundableCopy is the one place the amount left is added", () => {
+  const err = (code: string, extra: Record<string, unknown> = {}) => ({
+    response: { data: { code, ...extra } },
+  });
+
+  it("answers for the two refusals only, with the amount from the body", () => {
+    expect(refundableCopy(err("RETURN_EXCEEDS_REFUNDABLE", { remainingValue: 5 }))).toBe(
+      `${RETURN_EXCEEDS_REFUNDABLE_COPY} Up to $5.00 can still be given back.`,
+    );
+    expect(refundableCopy(err("CREDIT_EXCEEDS_REFUNDABLE"))).toBe(CREDIT_EXCEEDS_REFUNDABLE_COPY);
+    expect(refundableCopy(err("SOMETHING_ELSE", { remainingValue: 5 }))).toBeNull();
+    expect(refundableCopy(null)).toBeNull();
+  });
+
+  it("creditNoteErrorCopy (the credit note screens) carries the amount too", () => {
+    expect(creditNoteErrorCopy(err("CREDIT_EXCEEDS_REFUNDABLE", { remainingValue: 12 }), "x")).toBe(
+      `${CREDIT_EXCEEDS_REFUNDABLE_COPY} Up to $12.00 can still be given back.`,
+    );
   });
 });

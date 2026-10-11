@@ -161,6 +161,15 @@ export function buildCounterReceipt(input: {
 
   // The server's served change is shown as given: null/absent = no Change row, 0 = a Change $0.00 row (exact cash).
   const serverChange = receipt.change ?? null;
+  // the cash the sale took: its CASH tender lines when the response lists them, else the whole `paid` of a CASH sale; null when
+  // the sale has no cash leg at all
+  const cashLines = (receipt.payments ?? []).filter((l) => l.method === "CASH");
+  const cashLegTaken: number | null =
+    cashLines.length > 0
+      ? roundMoney(cashLines.reduce((s, l) => s + l.amount, 0))
+      : method === "CASH"
+        ? receipt.paid
+        : null;
   let tendered: number | null = null;
   let tenderedAsEntered = false;
   let change: number | null = null;
@@ -198,10 +207,17 @@ export function buildCounterReceipt(input: {
       tendered = receipt.cashTendered;
     } // card / check alone: exactly what was charged, which the Paid row already says
     if (serverChange != null) change = serverChange;
-    // As-entered fallback ONLY for a paid sale the server stored no tender for (a recovered or legacy cash sale). A stored
-    // tender (`cashTendered`) or a balance still owing means the server's null IS the answer: no Change row.
-    else if (enteredTender != null && receipt.cashTendered == null && receipt.balanceDue <= 0) {
-      const derived = roundMoney(enteredTender - receipt.paid);
+    // As-entered fallback ONLY for a paid sale WITH A CASH LEG the server serves no tender for (a recovered or legacy cash
+    // sale, a split included: leg 0 may be the card). A served tender (`cashTendered`), a balance still owing or a sale with no
+    // cash leg (the server withholds a stored figure no cash row backs, so its absence there is not "nothing was stored")
+    // means the server's null IS the answer: no Change row. The change is measured from the cash the sale took, not `paid`.
+    else if (
+      enteredTender != null &&
+      cashLegTaken != null &&
+      receipt.cashTendered == null &&
+      receipt.balanceDue <= 0
+    ) {
+      const derived = roundMoney(enteredTender - cashLegTaken);
       if (derived >= 0) {
         change = derived;
         changeAsEntered = true;

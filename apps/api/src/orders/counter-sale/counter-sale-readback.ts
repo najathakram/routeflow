@@ -67,9 +67,8 @@ export function servedChange(
   /** the order's OTHER payment rows (a voided sibling invoice's): they only decide "is this sale grouped" */
   evidence: TenderEvidence = [],
 ): number | null {
-  if (tendered == null) return null;
+  if (servedTendered(orderId, tendered, payments, evidence) == null) return null;
   const cash = counterTenderCashRows(orderId, payments, evidence);
-  if (cash.length === 0) return null;
   const cashApplied = roundMoney(sumConfirmed(cash));
   const { change } = counterChange({
     total: cashApplied,
@@ -83,6 +82,28 @@ export function servedChange(
     return null;
   }
   return change;
+}
+
+/**
+ * Row 347 item 2: the cash handed over a surface may SHOW, from STORAGE alone: the ONE gate shared by the POST / by-key
+ * response, the Today's-sales row, the receipt (reprint) and the e-mailed receipt, so the figure and the change can not
+ * disagree. `Order.counterCashTendered` is written BEFORE any money moves, so an attempt that died after that write (read
+ * by-key, or retried as ON_ACCOUNT, which takes no tender lock and runs no tender step) leaves a figure no money backs: it is
+ * served only while the sale has a counter-tender CASH row (`counterTenderCashRows`, the set `servedChange` measures the
+ * change against). Null when nothing is stored or no such row exists (a card-only retry, a voided cash row, a foreign one).
+ * A sale whose cash row exists serves the figure as before even when tendered exceeds what the row applied, and even for an
+ * interrupted tender (whose change stays null: `servedChange`'s own rule).
+ */
+export function servedTendered(
+  orderId: string,
+  tendered: unknown,
+  payments: PayRow[],
+  /** the order's OTHER payment rows (a voided sibling invoice's): they only decide "is this sale grouped" */
+  evidence: TenderEvidence = [],
+): number | null {
+  if (tendered == null) return null;
+  if (counterTenderCashRows(orderId, payments, evidence).length === 0) return null;
+  return roundMoney(Number(tendered));
 }
 
 /** The counter method of a stored tender (Prisma CREDIT_CARD reads back as CARD); undefined for any other. */
@@ -176,6 +197,9 @@ export function buildCounterSaleResponse(input: {
     ? servedChange(order.id, order.counterCashTendered, payments, total, evidence)
     : null;
 
+  // The cash handed over, through the same gate as the change: a figure no counter-tender cash row backs is not served
+  const cashTendered = servedTendered(order.id, order.counterCashTendered, payments, evidence);
+
   // Every leg of the tender in leg order, from STORAGE: the money RECORDED against it (change is not in it)
   // and the rows that hold it. A request leg that recorded nothing (refused, or ON_ACCOUNT) reads amount 0.
   const legCount = Math.max(legs?.length ?? 0, ...[...stored.byLeg.keys()].map((i) => i + 1));
@@ -208,9 +232,7 @@ export function buildCounterSaleResponse(input: {
     ...(!settled
       ? { paymentErrorCode: error ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED }
       : {}),
-    ...(order.counterCashTendered != null
-      ? { cashTendered: roundMoney(Number(order.counterCashTendered)) }
-      : {}),
+    ...(cashTendered != null ? { cashTendered } : {}),
     // ONE home for the rate (pricing): the same candidate the Today's row and the emailed receipt use
     ...(order.tax != null
       ? {

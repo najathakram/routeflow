@@ -245,8 +245,12 @@ export class ReturnsController {
 
   @Post(":id/refund")
   @Roles(UserRole.OPERATOR)
-  processRefund(@Param("id") id: string, @Body() dto: ProcessRefundDto) {
-    return this.returnsService.processRefund(id, dto);
+  processRefund(
+    @Param("id") id: string,
+    @Body() dto: ProcessRefundDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.returnsService.processRefund(id, dto, user);
   }
 
   @Post(":id/cancel")

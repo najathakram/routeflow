@@ -221,6 +221,75 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
     expect(retry.change).toBe(18.73);
   });
 
+  describe("N6: a stale tendered never survives a retry that takes no cash", () => {
+    it.each([
+      ["a CARD", { method: "CARD" }],
+      ["a CHECK", { method: "CHECK", reference: "1001" }],
+    ])(
+      "a crash after the tendered write (no money stored), then %s-only retry on the same key: nothing stale is served or stored",
+      async (_label, payment) => {
+        recordPayment.mockRejectedValueOnce(new Error("process died"));
+        const first = await ring({ method: "CASH", amount: 50 }, "k1");
+        expect(first.paymentRecorded).toBe(false);
+        expect(stored).toBe(50); // written BEFORE the payment, the crash left it
+        replay = true;
+
+        const retry = await ring(payment, "k1");
+
+        expect(retry.replayed).toBe(true);
+        expect(retry.paymentRecorded).toBe(true);
+        expect(retry.cashTendered).toBeUndefined();
+        expect(retry.change).toBeUndefined();
+        expect(stored).toBeNull();
+        expect(invoices[0].payments).toHaveLength(1);
+        // what every other surface reads is the same stored row: no tendered
+        findReplayCandidateByKey.mockResolvedValue({
+          id: "ord-1",
+          orderNumber: "ORD-1",
+          counterSale: true,
+          status: "DELIVERED",
+          counterCashTendered: stored,
+        });
+        const k = await service.byKey("k1");
+        expect(k.cashTendered).toBeUndefined();
+        expect(k.change).toBeUndefined();
+      },
+    );
+
+    it("the same retry with a refused tender (more than the sale) takes nothing, and the stale figure is cleared too", async () => {
+      recordPayment.mockRejectedValueOnce(new Error("process died"));
+      await ring({ method: "CASH", amount: 50 }, "k1");
+      expect(stored).toBe(50);
+      replay = true;
+      const retry = await ring({ method: "CARD", amount: 99 }, "k1"); // a card above the 41.27 total is refused
+      expect(retry.paymentRecorded).toBe(false);
+      expect(invoices[0].payments).toHaveLength(0);
+      expect(retry.cashTendered).toBeUndefined();
+      expect(stored).toBeNull();
+    });
+
+    it("a retry that DOES carry the cash leg still overwrites the figure (unchanged)", async () => {
+      recordPayment.mockRejectedValueOnce(new Error("process died"));
+      await ring({ method: "CASH", amount: 50 }, "k1");
+      replay = true;
+      const cash = await ring({ method: "CASH", amount: 60 }, "k1");
+      expect(cash.cashTendered).toBe(60);
+      expect(stored).toBe(60);
+    });
+
+    it("when clearing the stale figure fails, NO payment is recorded and the response says so", async () => {
+      recordPayment.mockRejectedValueOnce(new Error("process died"));
+      await ring({ method: "CASH", amount: 50 }, "k1");
+      replay = true;
+      recordPayment.mockClear();
+      prisma.order.updateMany.mockRejectedValueOnce(new Error("db down"));
+      const retry = await ring({ method: "CARD" }, "k1");
+      expect(recordPayment).not.toHaveBeenCalled();
+      expect(retry.paymentRecorded).toBe(false);
+      expect(retry.paymentErrorCode).toBe(API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED);
+    });
+  });
+
   it("(b) when the tendered write rejects, NO payment is recorded and the response says so", async () => {
     prisma.order.updateMany.mockRejectedValueOnce(new Error("db down"));
     const r = await ring({ method: "CASH", amount: 50 });
@@ -352,14 +421,15 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
       wroteNothing();
     });
 
-    it("(5) a failed CASH attempt (tendered stored, no CASH row) replayed as ON_ACCOUNT serves cashTendered, no change", async () => {
+    it("(5) a failed CASH attempt (tendered stored, no CASH row) replayed as ON_ACCOUNT serves NO cashTendered and no change, as by-key (row 347 item 2)", async () => {
       replay = true;
       stored = 60;
       const r = await ring({ method: "ON_ACCOUNT" });
       keyed(stored);
       const k = await service.byKey("k1", "ON_ACCOUNT");
       expect(r).toEqual(k);
-      expect(r.cashTendered).toBe(60);
+      // the figure was written before any money moved and no counter-tender cash row backs it: served on no reader
+      expect(r.cashTendered).toBeUndefined();
       expect(r.change).toBeUndefined();
       expect(r.paymentId).toBeUndefined();
       expect(r.paymentRecorded).toBe(true);

@@ -98,6 +98,10 @@ describe("InlineReturnsService in-transaction core (#2094)", () => {
     prisma.orderCreditNote.aggregate.mockResolvedValue({ _sum: { amount: null } });
     prisma.return.findFirst.mockResolvedValue(null);
     prisma.return.findMany.mockResolvedValue([]);
+    // row 347 (1): the mint asks assertInlineSourcesOpen about the chunk's source line first; by default it is live
+    prisma.invoiceItem.findMany.mockImplementation(async ({ where }: any) =>
+      (where?.id?.in ?? []).includes("ii-1") ? [{ id: "ii-1", invoiceId: "inv-live" }] : [],
+    );
     prisma.return.create.mockImplementation(async ({ data }: any) => ({
       id: "ret-1",
       ...data,

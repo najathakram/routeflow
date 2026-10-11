@@ -31,6 +31,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import {
   addCredits,
   piecesPerQtyOf,
@@ -44,6 +45,8 @@ import {
   type RefundItem,
 } from "../credit-notes/line-credit-headroom";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { isLockUnavailableError } from "../common/db-locks";
+import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import {
   EXTERNAL_REFUND_METHOD,
   isRefundPending,
@@ -55,6 +58,22 @@ import {
   type RefundTender,
 } from "./inline-return-refund";
 import { assertCashRefundWithinCap } from "./cash-refund-cap";
+import {
+  assertStandardRefundWithinRemainder,
+  previewStandardRefund,
+} from "./refund-remainder-guard";
+import {
+  NOTHING_CREDITABLE_MESSAGE,
+  REFUND_LOCK_TIMEOUT_MS,
+  REFUND_TX_TIMEOUT_MS,
+  isTransactionExpired,
+  isNothingBilledRefusal,
+  pricedNothingBilled,
+  refundAlreadyResolved,
+  refundBasisChanged,
+  refundBusy,
+  refundClaimWhere,
+} from "./standard-refund-claim";
 import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
 import { assertCounterWindowOpen } from "./counter-close-window";
 import { refundTenderData, refundTenderOfColumn } from "./refund-tender";
@@ -80,8 +99,71 @@ import { standardRestockResolver, type ProductPackBasis } from "./returns-restoc
  * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
 const INLINE_RETURN_USE_INLINE_ENDPOINTS = API_ERROR_CODES.INLINE_RETURN_USE_INLINE_ENDPOINTS;
 
+/** SA-737: the return read (before the locks, and again under them) that the refund basis is priced from. */
+const REFUND_RETURN_INCLUDE = {
+  items: true,
+  order: {
+    select: {
+      // `id` feeds the order-scoped headroom aggregate in billedBasisFor.
+      id: true,
+      orderNumber: true,
+      // SA-740r2 item 6: a counter order's refund takes the counter-close lock on its register
+      counterSale: true,
+      registerKey: true,
+      // F08 B53: the creditable/VOID decision must be made IN CODE
+      // (billedBasisFor), never as a DB-level status filter here — excluding
+      // VOID/WRITTEN_OFF at the query makes a VOID-only order indistinguishable
+      // from a never-invoiced order (both come back with zero rows), which
+      // would silently take the legacy order-line fallback instead of refusing.
+      // Fetch every invoice with enough to price + rank it.
+      invoices: {
+        select: {
+          id: true,
+          // The remaining-room refusal below names this invoice to the operator
+          // (billedBasisFor → the toast description), so the HUMAN number has to
+          // travel with the row: without it the message degrades to a raw UUID.
+          invoiceNumber: true,
+          status: true,
+          total: true,
+          createdAt: true,
+          items: {
+            select: {
+              id: true,
+              productId: true,
+              qty: true,
+              subtotal: true,
+              boxes: true,
+              unitsPerBox: true,
+              pieces: true,
+              product: { select: { unitsPerBox: true } },
+            },
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }], // deterministic fill order (SA-628)
+          },
+        },
+      },
+      lineItems: {
+        select: {
+          ...PACK_LINE_SELECT, // B965: the pack evidence the mixed-unit gate reads (id, split, unit label, product pack)
+          unitPrice: true,
+          subtotal: true,
+        },
+      },
+    },
+  },
+} as const satisfies Prisma.ReturnInclude;
+
 /** The shape `create` returns — reused to type a replayed (idempotent) result. */
 type CreatedReturn = Prisma.ReturnGetPayload<{ include: { items: true } }>;
+
+/** The priced refund of a STANDARD return (`billedBasisFor` / `externalRefundBasis`), as the claim and the mint read it. */
+type RefundBasis = {
+  amount: number;
+  invoiceId?: string;
+  items?: RefundItem[];
+  pooledRefund?: Array<{ productId: string; qty: number }>;
+  unbilledItems?: UnbilledReturnItem[];
+  refusal?: string;
+};
 
 /** F08 B166/B75: options object for `findAll`/`findAllForUser` — `search` narrows by
  * return/order number or customer name; everything else is unchanged filtering. */
@@ -606,6 +688,10 @@ export class ReturnsService {
       if (claimed.count === 0) {
         throw new BadRequestException("Only APPROVED or IN_TRANSIT returns can be received");
       }
+      // B848 (a sibling of SA-737): the Order row lock, in the house order Return (the claim above) -> Order, BEFORE the restock
+      // and the ledger reversal. The reversal is pro-rated from the order's per-line remaining balances; two receives on one
+      // order, or a receive beside a void, a cancel or a refund of it, must not read the same balance. Row lock only.
+      if (ret.orderId) await lockOrderRow(tx, this.prisma.getTenantId(), ret.orderId);
 
       if (opts?.restock === false) {
         // "We are not keeping these goods": skip restocking entirely, and persist
@@ -659,6 +745,8 @@ export class ReturnsService {
   private async billedBasisFor(
     items: any[],
     order?: any,
+    // SA-737: the claim transaction's client when the basis is recomputed under the locks; the plain tenant client otherwise
+    db: any = this.prisma.forTenant(),
   ): Promise<{
     amount: number;
     invoiceId?: string;
@@ -668,14 +756,14 @@ export class ReturnsService {
   }> {
     // B969: the pack basis is loaded FIRST: the price below and the itemiser count in PIECES with it, the same converters the
     // preview (`findOne`/`findAll`) uses, so preview == mint.
-    const packBases = await this.packBasesOf(order);
+    const packBases = await this.packBasesOf(order, db);
     const { amount, invoiceId, creditable, refusal, unresolvedProductId } = this.priceReturn(
       items,
       order,
       packBases,
     );
     if (refusal === "NOTHING_CREDITABLE") {
-      throw new BadRequestException("Nothing billed on this order can be refunded");
+      throw new BadRequestException(NOTHING_CREDITABLE_MESSAGE);
     }
     // B965 (SA-628l): a STANDARD return's qty is in its order line's OWN unit, so a product sold on lines with different pack
     // factors (2 boxes of 12 on one line, 12 loose pieces on another) has no single piece count: every line-unit sum below
@@ -724,7 +812,7 @@ export class ReturnsService {
     let unbilledItems: UnbilledReturnItem[] | undefined;
     if (unbilledQty.size > 0) {
       const names: Array<{ id: string; name: string | null }> =
-        (await this.prisma.forTenant().product.findMany({
+        (await db.product.findMany({
           where: { id: { in: [...unbilledQty.keys()] } },
           select: { id: true, name: true },
         })) ?? [];
@@ -761,7 +849,7 @@ export class ReturnsService {
       // still reduce the headroom.
       const creditedScope: any[] = [{ invoiceId: { in: creditableIds } }];
       if (order?.id) creditedScope.push({ orderLinks: { some: { orderId: order.id } } });
-      const agg = await this.prisma.forTenant().creditNote.aggregate({
+      const agg = await db.creditNote.aggregate({
         where: {
           status: { not: "VOID" },
           OR: creditedScope,
@@ -792,7 +880,7 @@ export class ReturnsService {
     let refundItems: RefundItem[] | undefined;
     let effectiveAmount = amount;
     if (creditable.length === 1 && latest) {
-      const itemised = await this.itemiseRefund(items, latest, packBases);
+      const itemised = await this.itemiseRefund(items, latest, packBases, db);
       if (itemised.length > 0) {
         refundItems = itemised;
         effectiveAmount = roundMoney(itemised.reduce((n, it) => n + it.amount, 0));
@@ -804,7 +892,7 @@ export class ReturnsService {
     // it). REFUSES (409), never clips, before the claim; create() re-checks it under the locks at the mint (`pooledRefund`).
     let pooledRefund: Array<{ productId: string; qty: number }> | undefined;
     if (creditable.length >= 2 && order?.id) {
-      const pool = await loadOrderPool(this.prisma.forTenant(), order.id);
+      const pool = await loadOrderPool(db, order.id);
       // B967: the pool and the mint count in PIECES; a standard qty is in the line's unit, so it is converted here, once.
       const returnedPieces = new Map<string, number>();
       for (const [productId, qty] of returnedByProduct)
@@ -828,7 +916,7 @@ export class ReturnsService {
       pooledRefund = [...returnedPieces].map(([productId, qty]) => ({ productId, qty }));
     }
 
-    const latestAgg = await this.prisma.forTenant().creditNote.aggregate({
+    const latestAgg = await db.creditNote.aggregate({
       where: { status: { not: "VOID" }, invoiceId },
       _sum: { amount: true },
     });
@@ -887,9 +975,12 @@ export class ReturnsService {
   }
 
   /** The pack basis of every product on the order's live lines (B969: the axis a STANDARD return is priced on). */
-  private async packBasesOf(order?: any): Promise<Map<string, ProductPackBasis>> {
+  private async packBasesOf(
+    order?: any,
+    db: any = this.prisma.forTenant(),
+  ): Promise<Map<string, ProductPackBasis>> {
     return order?.id && (order.lineItems?.length ?? 0) > 0
-      ? standardPackBases(this.prisma.forTenant(), order.id, order.lineItems)
+      ? standardPackBases(db, order.id, order.lineItems)
       : new Map<string, ProductPackBasis>();
   }
 
@@ -898,8 +989,8 @@ export class ReturnsService {
    * single pricing axis (B969): that has no refund amount to record, and a recorded $0 would feed net sales silently. Refused
    * 409 RETURN_MIXED_UNIT_PRODUCT, like the mint.
    */
-  private async externalRefundBasis(items: any[], order?: any) {
-    const priced = this.priceReturn(items, order, await this.packBasesOf(order));
+  private async externalRefundBasis(items: any[], order?: any, db: any = this.prisma.forTenant()) {
+    const priced = this.priceReturn(items, order, await this.packBasesOf(order, db));
     if (priced.refusal === "UNIT_UNRESOLVED" && priced.unresolvedProductId)
       throw this.mixedUnitRefusal(priced.unresolvedProductId);
     return priced;
@@ -929,6 +1020,7 @@ export class ReturnsService {
     returnItems: any[],
     invoice: any,
     packBases: Map<string, ProductPackBasis>,
+    db: any = this.prisma.forTenant(),
   ): Promise<RefundItem[]> {
     const lines: HeadroomLine[] = (invoice?.items ?? []).map(toHeadroomLine);
     if (lines.length === 0 || lines.some((l) => !l.id)) return [];
@@ -939,7 +1031,7 @@ export class ReturnsService {
         (returnedByProduct.get(it.productId) ?? 0) + Number(it.qty),
       );
     }
-    let credited = await loadLineCredits(this.prisma.forTenant(), invoice.id, lines);
+    let credited = await loadLineCredits(db, invoice.id, lines);
     const out: RefundItem[] = [];
     for (const [productId, returnedQty] of returnedByProduct) {
       const mine = lines.filter((l) => l.productId === productId);
@@ -1133,7 +1225,7 @@ export class ReturnsService {
     return { amount, invoiceId: latest.id, creditable, ...why };
   }
 
-  async processRefund(id: string, dto?: ProcessRefundDto) {
+  async processRefund(id: string, dto?: ProcessRefundDto, actor?: JwtPayload) {
     const method = dto?.method ?? "CREDIT_NOTE";
     // Row 59: a refund is a money write on one tenant's return; a tenantless session is refused before any read.
     if (!this.prisma.getTenantId()) {
@@ -1149,57 +1241,7 @@ export class ReturnsService {
 
     const ret = await this.prisma.forTenant().return.findUnique({
       where: { id },
-      include: {
-        items: true,
-        order: {
-          select: {
-            // `id` feeds the order-scoped headroom aggregate in billedBasisFor.
-            id: true,
-            orderNumber: true,
-            // SA-740r2 item 6: a counter order's refund takes the counter-close lock on its register
-            counterSale: true,
-            registerKey: true,
-            // F08 B53: the creditable/VOID decision must be made IN CODE
-            // (billedBasisFor), never as a DB-level status filter here — excluding
-            // VOID/WRITTEN_OFF at the query makes a VOID-only order indistinguishable
-            // from a never-invoiced order (both come back with zero rows), which
-            // would silently take the legacy order-line fallback instead of refusing.
-            // Fetch every invoice with enough to price + rank it.
-            invoices: {
-              select: {
-                id: true,
-                // The remaining-room refusal below names this invoice to the operator
-                // (billedBasisFor → the toast description), so the HUMAN number has to
-                // travel with the row: without it the message degrades to a raw UUID.
-                invoiceNumber: true,
-                status: true,
-                total: true,
-                createdAt: true,
-                items: {
-                  select: {
-                    id: true,
-                    productId: true,
-                    qty: true,
-                    subtotal: true,
-                    boxes: true,
-                    unitsPerBox: true,
-                    pieces: true,
-                    product: { select: { unitsPerBox: true } },
-                  },
-                  orderBy: [{ createdAt: "asc" }, { id: "asc" }], // deterministic fill order (SA-628)
-                },
-              },
-            },
-            lineItems: {
-              select: {
-                ...PACK_LINE_SELECT, // B965: the pack evidence the mixed-unit gate reads (id, split, unit label, product pack)
-                unitPrice: true,
-                subtotal: true,
-              },
-            },
-          },
-        },
-      },
+      include: REFUND_RETURN_INCLUDE,
     });
     if (!ret) throw new NotFoundException("Return not found");
     if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
@@ -1209,58 +1251,33 @@ export class ReturnsService {
     // F08 B53: refund value is priced from what was actually BILLED (the order's
     // creditable invoices), not re-derived from the order line — see billedBasisFor.
     // EXTERNAL_REFUND mints nothing, so it prices with the PURE helper and skips the mint-time headroom gates. Whether the money
-    // may go back is decided separately, under locks, by recordExternalRefund (the order's invoices paid in full, SA-740r2);
-    // a return that fails it is never stuck: it takes store credit when billable, else it is cancelled.
-    const basis: {
-      amount: number;
-      invoiceId?: string;
-      items?: RefundItem[];
-      pooledRefund?: Array<{ productId: string; qty: number }>;
-      unbilledItems?: UnbilledReturnItem[];
-    } =
-      method === "EXTERNAL_REFUND"
+    // may go back is decided separately, under locks, by claimRefund (the order's invoices paid in full, SA-740r2).
+    // SA-737: this first figure only refuses early (the same 400/409 as ever, before any lock is taken). It is NEVER claimed:
+    // claimRefund recomputes the basis from the locked rows and claims from that.
+    const firstBasis =
+      method === EXTERNAL_REFUND_METHOD
         ? await this.externalRefundBasis(ret.items ?? [], ret.order ?? undefined)
         : await this.billedBasisFor(ret.items ?? [], ret.order ?? undefined);
+
+    // SA-737: ONE claim transaction for both methods (SA-740r2 / R20-2 for the recorded refund): Return, Order, invoices locked in
+    // house order, the basis recomputed under them, then the RECEIVED→REFUNDED claim carrying the amount. The mint below is not in it.
+    const claim = await this.claimRefund(ret, method, dto?.tender, firstBasis, actor);
+    if (method === EXTERNAL_REFUND_METHOD) return claim.row;
     const {
       amount: refundAmount,
       invoiceId: sourceInvoiceId,
       items: refundItems,
       pooledRefund,
       unbilledItems,
-    } = basis;
+    } = claim.basis;
+    const updated = claim.row;
     // B959: a mixed return says WHICH item got no refund, in the same response (never a silent $0)
     const withUnbilled = <T>(r: T): T | (T & { unbilledItems: UnbilledReturnItem[] }) =>
       unbilledItems && unbilledItems.length > 0 && r ? { ...r, unbilledItems } : r;
 
-    // SA-740r2 (R20-2): a recorded cash/card/check refund is resolved in ONE locked transaction: the order's creditable
-    // invoices must be paid in full (the same resolver and predicate as the inline refund), and the claim carries the tender.
-    if (method === "EXTERNAL_REFUND") {
-      return this.recordExternalRefund(ret, refundAmount, dto?.tender);
-    }
-
-    // Concurrency guard: atomically CLAIM the RECEIVED→REFUNDED transition — and persist
-    // the resolution snapshot (method/amount/timestamp) in that SAME write — before
-    // minting any store credit. A racing processRefund (double-click, client retry, or
-    // two operators) matches 0 rows here and aborts, so a single return can never mint
-    // two credits or record two resolutions. Mirrors receive()'s claim above — under READ
-    // COMMITTED the second writer re-checks the WHERE after the row lock, so exactly one wins.
-    const claimed = await this.prisma.forTenant().return.updateMany({
-      where: { id, status: "RECEIVED" },
-      data: {
-        status: "REFUNDED",
-        refundMethod: method,
-        refundAmount,
-        refundedAt: new Date(),
-      },
-    });
-    if (claimed.count === 0) {
-      throw new BadRequestException("Only RECEIVED returns can be refunded");
-    }
-    const updated = await this.prisma.forTenant().return.findUnique({ where: { id } });
-
     if (refundAmount <= 0.001) return withUnbilled(updated);
 
-    // Sequential, NOT nested: create() opens its own Serializable tx and books NO
+    // Sequential, NOT nested (the claim transaction above has committed): create() opens its own Serializable tx and books NO
     // regulated reversal for a lump-sum credit (no items) — the returned regulated
     // goods were already reversed at receive(). billedBasisFor already picked the
     // single creditable invoice, or the latest of 2+ after a headroom check, or
@@ -1286,10 +1303,8 @@ export class ReturnsService {
             : {}),
         },
         // receive() already reversed the returned regulated goods in the ledger: the refund rows must not reverse them again
-        {
-          ledgerReversedByReturn: true,
-          ...(pooledRefund ? { pooledRefund, returnId: id } : {}),
-        },
+        // SA-773 row 333(a): the return id goes with EVERY shape, so the link is written inside the mint transaction
+        { ledgerReversedByReturn: true, returnId: id, ...(pooledRefund ? { pooledRefund } : {}) },
       );
     } catch (err) {
       // F08 B68: the RECEIVED→REFUNDED claim above already committed. A failed mint
@@ -1334,83 +1349,191 @@ export class ReturnsService {
       }
       throw err;
     }
-    await this.prisma.forTenant().return.update({ where: { id }, data: { creditNoteId: cn.id } });
-
     return withUnbilled({ ...updated, creditNoteId: cn.id });
   }
 
   /**
-   * SA-740r2: records a STANDARD return's cash/card/check refund (EXTERNAL_REFUND mints nothing). ONE transaction in the house
-   * lock order Return -> Order -> Invoices: the order's creditable invoices (not VOID / WRITTEN_OFF) are resolved, locked,
-   * and only then read for "paid in full" (409 REFUND_NEEDS_PAID_INVOICE; paid with store credit is 409
-   * REFUND_PAID_WITH_STORE_CREDIT), through the SAME resolver and predicate the inline refund uses. The claim that follows
-   * (RECEIVED -> REFUNDED) carries the amount, `refundedAt` and the optional tender (`Return.refundTender`; omitted -> null).
+   * SA-737 (+ SA-740r2 for the recorded refund): the ONE claim transaction of a STANDARD return's refund, both methods.
+   * House lock order: counter-close (a counter order's recorded refund), Return `FOR UPDATE` (tenant-bound), the order's row,
+   * then the order's creditable invoices id-sorted (the same rows a void and an order cancel take, Order first). Only then is
+   * the basis recomputed from the locked rows: a void or a cancel that committed while this waited is seen, and nothing billed
+   * left is 409 RETURN_REFUND_BASIS_CHANGED, never a claim from the first figure. EXTERNAL_REFUND then needs the order's
+   * creditable invoices paid in full (409 REFUND_NEEDS_PAID_INVOICE; paid with store credit is 409
+   * REFUND_PAID_WITH_STORE_CREDIT, the inline refund's resolver and predicate) and fits the cash cap. The claim (RECEIVED ->
+   * REFUNDED) is a CAS on `refundedAt` / `creditNoteId` too and carries the amount, the method and, for a recorded refund, the
+   * database-clock `refundedAt` and the optional tender (`Return.refundTender`; omitted -> null).
+   *
+   * The CREDIT_NOTE mint is NOT here: `creditNotes.create` opens its own Serializable transaction and runs after this commits.
+   * A lock wait past `REFUND_LOCK_TIMEOUT_MS` is a retryable 409 CONCURRENT_UPDATE; nothing was written.
    */
-  private async recordExternalRefund(
+  private async claimRefund(
     ret: {
       id: string;
       orderId?: string | null;
       order?: { id?: string; counterSale?: boolean | null; registerKey?: string | null } | null;
     },
-    refundAmount: number,
+    method: string,
     tender: RefundTender | undefined,
-  ) {
+    firstBasis: object,
+    actor?: JwtPayload,
+  ): Promise<{ row: any; basis: RefundBasis }> {
     const id = ret.id;
     const tenantId = this.prisma.getTenantId();
+    const external = method === EXTERNAL_REFUND_METHOD;
     // SA-740r2 item 6: the shared counter-close lock is the FIRST statement (a counter order's refund counts in the drawer)
-    const registerKey = registerKeyOfOrder(ret.order);
-    return this.prisma.tenantTransaction(async (tx: any) => {
-      if (registerKey && tenantId) await lockCounterClose(tx, tenantId, registerKey);
-      await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
-      const fresh = await tx.return.findFirst({
-        where: { id },
-        select: { id: true, status: true },
-      });
-      if (!fresh || fresh.status !== "RECEIVED") {
-        throw new BadRequestException("Only RECEIVED returns can be refunded");
-      }
-      const orderId = ret.order?.id ?? ret.orderId;
-      if (orderId) await lockRefundOrders(tx, tenantId, [orderId]);
-      const resolved = await resolveRefundInvoiceIds(tx, {
-        kind: "ORDER",
-        orderId: orderId ?? "",
-      });
-      const state = await loadInvoiceRefundState(tx, resolved, {
-        beforeInvoiceRead: (invoiceIds) => lockRefundInvoices(tx, tenantId, invoiceIds),
-      });
-      const refusal = refundSourcesRefusal(state);
-      if (refusal) throw refusal;
-      // SA-749r2 item 9: a CASH refund may not exceed the cash applied to the order minus earlier cash refunds on it
-      if (orderId) {
-        await assertCashRefundWithinCap(tx, {
-          returnId: id,
-          tender,
-          counterOrder: registerKey != null,
-          perOrder: new Map([[orderId, refundAmount]]),
-        });
-      }
-      // SA-758 CR-2: refundedAt is the DATABASE clock, read after the close lock (the close reads its cutoff from the same clock)
-      const refundedAt = await dbClockNow(tx);
-      // SA-750r3: a refund dated inside a closed window is refused (a closed day's totals never move)
-      if (registerKey && tenantId)
-        await assertCounterWindowOpen(tx, tenantId, registerKey, refundedAt);
-      const claimed = await tx.return.updateMany({
-        where: { id, status: "RECEIVED" },
-        data: {
-          status: "REFUNDED",
-          refundMethod: EXTERNAL_REFUND_METHOD,
-          refundAmount,
-          refundedAt,
-          ...refundTenderData(tender),
+    const registerKey = external ? registerKeyOfOrder(ret.order) : null;
+    try {
+      return await this.prisma.tenantTransaction(
+        async (tx: any) => {
+          // The wait bound comes FIRST so the counter-close wait is bounded too; it takes no lock, so the close lock is still the
+          // first LOCK the transaction acquires (counter-close -> Return -> Order -> invoices).
+          await tx.$executeRaw`SELECT set_config('lock_timeout', ${String(REFUND_LOCK_TIMEOUT_MS)}, true)`;
+          if (registerKey && tenantId) await lockCounterClose(tx, tenantId, registerKey);
+          await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) FOR UPDATE`;
+          const fresh = await tx.return.findFirst({
+            where: { id },
+            select: { id: true, status: true, kind: true },
+          });
+          if (!fresh) throw new NotFoundException("Return not found");
+          if (fresh.kind === "INLINE")
+            throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
+          // The first read (above the locks) is 400 "Only RECEIVED returns can be refunded", as ever. This re-read, under the Return lock,
+          // is 409 with the same text: the return was RECEIVED a moment ago, so another request resolved it while this one waited
+          // (the loser of two refunds). Lead ruling: 400 before the lock, 409 in it.
+          if (fresh.status !== "RECEIVED") throw refundAlreadyResolved();
+          const orderId = ret.order?.id ?? ret.orderId;
+          if (orderId) await lockRefundOrders(tx, tenantId, [orderId]);
+          const resolved = await resolveRefundInvoiceIds(tx, {
+            kind: "ORDER",
+            orderId: orderId ?? "",
+          });
+          await lockRefundInvoices(tx, tenantId, resolved.invoiceIds);
+
+          // the order, its invoices and their lines as they are NOW, under the locks
+          const locked = await tx.return.findUnique({
+            where: { id },
+            include: REFUND_RETURN_INCLUDE,
+          });
+          if (!locked) throw new NotFoundException("Return not found");
+          const basis = await this.basisUnderLock(method, locked, tx, firstBasis);
+          const refundAmount = roundMoney(basis.amount);
+          // SA-773: both methods give value back, so both fit the goods' remainder (read under the locks held here)
+          await assertStandardRefundWithinRemainder(tx, {
+            returnId: id,
+            invoiceIds: resolved.invoiceIds,
+            items: locked.items ?? [],
+            bases: await this.packBasesOf(locked.order ?? undefined, tx),
+            amount: refundAmount,
+          });
+
+          if (external) {
+            const state = await loadInvoiceRefundState(tx, resolved);
+            const refusal = refundSourcesRefusal(state);
+            if (refusal) throw refusal;
+            // SA-749r2 item 9: a CASH refund may not exceed the cash applied to the order minus earlier cash refunds on it
+            if (orderId) {
+              await assertCashRefundWithinCap(tx, {
+                returnId: id,
+                tender,
+                counterOrder: registerKey != null,
+                perOrder: new Map([[orderId, refundAmount]]),
+              });
+            }
+          }
+
+          // SA-758 CR-2: a recorded refund's refundedAt is the DATABASE clock, read after the close lock
+          const refundedAt = external ? await dbClockNow(tx) : new Date();
+          // SA-750r3: a recorded refund dated inside a closed window is refused (a closed day's totals never move). A plain read
+          // under the close lock already held (registerKey is null for store credit), so it adds no lock: counter-close ->
+          // Return -> Order -> invoices stays the whole order. It runs after the basis/cash-cap refusals and before the claim.
+          if (registerKey && tenantId)
+            await assertCounterWindowOpen(tx, tenantId, registerKey, refundedAt);
+          const claimed = await tx.return.updateMany({
+            where: refundClaimWhere(id),
+            data: {
+              status: "REFUNDED",
+              refundMethod: method,
+              refundAmount,
+              refundedAt,
+              ...(external ? refundTenderData(tender) : {}),
+            },
+          });
+          if (claimed.count === 0) throw refundAlreadyResolved();
+          // SA-737 (parity with the inline refund's M5): cash leaving with no audit row is a gap; AWAITED, in this transaction,
+          // so no audit row means no refund
+          if (external) {
+            await tx.auditLog.create({
+              data: {
+                userId: actor?.sub ?? null,
+                impersonatedBy: actor?.impersonatedBy ?? null,
+                action: AUDIT_ACTIONS.STANDARD_REFUND_RECORDED,
+                entityType: "Return",
+                entityId: id,
+                meta: {
+                  returnId: id,
+                  returnNumber: locked.returnNumber ?? null,
+                  orderId: orderId ?? null,
+                  customerId: locked.customerId,
+                  invoiceIds: resolved.invoiceIds,
+                  amount: refundAmount,
+                  tender: tender ?? null,
+                  actor: actor?.sub ?? null,
+                  impersonatedBy: actor?.impersonatedBy ?? null,
+                },
+              },
+            });
+          }
+          const row = await tx.return.findUnique({ where: { id } });
+          // one tender vocabulary (SA-740r2 item 8): answered like the inline refund, read back from the stored column
+          return {
+            row:
+              external && row
+                ? { ...row, refundTender: refundTenderOfColumn(row.refundTender) }
+                : row,
+            basis: { ...basis, amount: refundAmount },
+          };
         },
-      });
-      if (claimed.count === 0) {
-        throw new BadRequestException("Only RECEIVED returns can be refunded");
-      }
-      // one tender vocabulary (SA-740r2 item 8): answered like the inline refund, read back from the stored column
-      const row = await tx.return.findUnique({ where: { id } });
-      return row ? { ...row, refundTender: refundTenderOfColumn(row.refundTender) } : row;
-    });
+        { timeout: REFUND_TX_TIMEOUT_MS },
+      );
+    } catch (err) {
+      // a lock wait past its bound (55P03) or a transaction that ran out of budget (P2028): nothing was written, safe to retry
+      if (isLockUnavailableError(err) || isTransactionExpired(err)) throw refundBusy();
+      throw err;
+    }
+  }
+
+  /**
+   * SA-737: the refund basis from the rows read under the locks. A STANDARD refund whose first figure existed but whose locked
+   * rows bill nothing of what was returned (every invoice voided, or the order cancelled, while it waited) is 409
+   * RETURN_REFUND_BASIS_CHANGED. Any other refusal of the recomputed basis (headroom, mixed units) is that refusal, as before.
+   */
+  private async basisUnderLock(
+    method: string,
+    locked: { items?: any[]; order?: any },
+    tx: any,
+    firstBasis: object,
+  ): Promise<RefundBasis> {
+    let basis: RefundBasis;
+    try {
+      basis =
+        method === EXTERNAL_REFUND_METHOD
+          ? await this.externalRefundBasis(locked.items ?? [], locked.order ?? undefined, tx)
+          : await this.billedBasisFor(locked.items ?? [], locked.order ?? undefined, tx);
+    } catch (err) {
+      if (isNothingBilledRefusal(err)) throw refundBasisChanged();
+      throw err;
+    }
+    // the recorded refund prices with the PURE helper, which reports "nothing billed" instead of throwing it
+    if (pricedNothingBilled(basis) && !pricedNothingBilled(firstBasis)) throw refundBasisChanged();
+    // A recorded (cash) refund is handed over against the figure the operator saw: a different figure under the locks is
+    // refused, never recorded silently (the drawer would drift from the books). Store credit claims the locked figure.
+    if (
+      method === EXTERNAL_REFUND_METHOD &&
+      roundMoney(Number((firstBasis as { amount?: number }).amount ?? 0)) !==
+        roundMoney(basis.amount)
+    )
+      throw refundBasisChanged("AMOUNT");
+    return basis;
   }
 
   async cancel(id: string, user: JwtPayload) {
@@ -1627,11 +1750,28 @@ export class ReturnsService {
       refundEstimate = null;
       refusal = "INLINE";
     } else {
+      const bases = await this.packBasesOf(ret.order);
       ({ amount: refundEstimate, refusal } = this.priceReturn(
         ret.items,
         ret.order ?? undefined,
-        await this.packBasesOf(ret.order),
+        bases,
       ));
+      // SA-773: a return that can be refunded now previews what the claim would accept (display only; the claim is never clamped)
+      if (ret.status === "RECEIVED" && !refusal && refundEstimate > 0) {
+        const preview = await previewStandardRefund(this.prisma.forTenant(), {
+          returnId: ret.id,
+          invoiceIds: (ret.order?.invoices ?? [])
+            .filter((inv: any) => !CREDIT_SOURCE_EXCLUDED.includes(inv.status))
+            .map((inv: any) => inv.id as string),
+          items: ret.items,
+          bases,
+          amount: refundEstimate,
+        });
+        if (preview.capped) {
+          refundEstimate = preview.amount;
+          refusal = "EXCEEDS_REFUNDABLE";
+        }
+      }
     }
 
     // The invoice graph is fetched only to price the row — strip it back out (this

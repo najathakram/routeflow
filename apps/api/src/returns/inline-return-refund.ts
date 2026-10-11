@@ -13,6 +13,7 @@ import { Prisma, UserRole } from "@prisma/client";
 import { CONFIRMED_STATUS, roundMoney, sumConfirmed } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
+import { resolveInlineSourceInvoices, type InlineSourceRef } from "./refundable-remainder";
 import { DEAD_RETURN_STATUSES } from "./return-statuses";
 
 /** The only tenders a counter refund can record. A card refund is RECORDED only; no processor is called. */
@@ -92,14 +93,26 @@ export const CASH_REFUNDED_RETURN_WHERE = {
 } as const;
 
 /**
- * The reverse of `loadSourceInvoicesState`'s resolution (returned line -> `sourceInvoiceItemId` -> `InvoiceItem.invoiceId`):
- * the ids of the lines that sit on `invoiceId`, i.e. the values an INLINE return's `sourceInvoiceItemId` must hold to be
- * sourced from that invoice. Takes no lock; the caller already holds the invoice's.
+ * The reverse of `loadSourceInvoicesState`'s resolution, which is `resolveInlineSourceInvoices`'s: an item sits on `invoiceId`
+ * when its stored `sourceInvoiceItemId` is one of the invoice's lines, OR (the stored id dangling after a rebuild of the order's
+ * invoice lines) when its `sourceOrderItemId` is the order line one of them carries. Returns both id sets of the invoice's
+ * CURRENT lines, so a reader can match returns by either. Reading by the order line alone is a superset (an item whose stored
+ * line is still alive elsewhere matches too): the callers use it to REFUSE (a cash-refund guard), so over-matching is the safe
+ * side. Takes no lock; the caller already holds the invoice's.
  */
-export async function sourceLineIdsOfInvoice(db: any, invoiceId: string): Promise<string[]> {
-  const lines: Array<{ id?: string | null }> =
-    (await db.invoiceItem.findMany({ where: { invoiceId }, select: { id: true } })) ?? [];
-  return lines.map((l) => l.id).filter((i): i is string => !!i);
+export async function sourceRefsOfInvoice(
+  db: any,
+  invoiceId: string,
+): Promise<{ lineIds: string[]; orderItemIds: string[] }> {
+  const lines: Array<{ id?: string | null; orderItemId?: string | null }> =
+    (await db.invoiceItem.findMany({
+      where: { invoiceId },
+      select: { id: true, orderItemId: true },
+    })) ?? [];
+  return {
+    lineIds: lines.map((l) => l.id).filter((i): i is string => !!i),
+    orderItemIds: [...new Set(lines.map((l) => l.orderItemId).filter((i): i is string => !!i))],
+  };
 }
 
 /**
@@ -147,8 +160,7 @@ export const sourcesAreRefundable = (
  * credit (not VOID, not WRITTEN_OFF).
  */
 export type RefundInvoiceSource =
-  | { kind: "LINES"; sourceInvoiceItemIds: ReadonlyArray<string | null | undefined> }
-  | { kind: "ORDER"; orderId: string };
+  { kind: "LINES"; items: ReadonlyArray<InlineSourceRef> } | { kind: "ORDER"; orderId: string };
 
 export interface ResolvedRefundInvoices {
   /** Distinct invoice ids (sorted), to be locked before they are read. */
@@ -160,7 +172,10 @@ export interface ResolvedRefundInvoices {
 /**
  * THE one resolver of "which invoices does this refund need paid" (SA-740r2 item 1), for INLINE and STANDARD alike. Takes no
  * lock; the caller locks `invoiceIds` and then reads their state with {@link loadInvoiceRefundState}. FAILS CLOSED: an
- * unreferenced line, a deleted source line or an order with no creditable invoice is `complete: false`.
+ * unreferenced line, a source line that resolves nowhere (deleted, and its order line too) or an order with no creditable
+ * invoice is `complete: false`. An INLINE item is resolved as `resolveInlineSourceInvoices` does (a rebuilt line re-resolves
+ * through its order line, a creditable invoice winning over a dead one), so a return captured before a post-delivery order
+ * edit is refunded against the live line's invoice.
  */
 export async function resolveRefundInvoiceIds(
   db: any,
@@ -175,18 +190,21 @@ export async function resolveRefundInvoiceIds(
     const invoiceIds = [...new Set(rows.map((r) => r.id))].sort();
     return { invoiceIds, complete: invoiceIds.length > 0 };
   }
-  const ids = source.sourceInvoiceItemIds;
-  const wanted = [...new Set(ids.filter((i): i is string => !!i))];
-  const hasUnreferenced = ids.some((i) => !i);
-  if (wanted.length === 0) return { invoiceIds: [], complete: false };
-  const lines: Array<{ id: string; invoiceId: string }> =
-    (await db.invoiceItem.findMany({
-      where: { id: { in: wanted } },
-      select: { id: true, invoiceId: true },
-    })) ?? [];
-  const invoiceIds = [...new Set(lines.map((l) => l.invoiceId))].sort();
-  // a source line that was deleted since the sale has no invoice to be paid: not refundable in cash
-  return { invoiceIds, complete: lines.length === wanted.length && !hasUnreferenced };
+  const items = source.items;
+  if (!items.some((i) => i.sourceInvoiceItemId)) return { invoiceIds: [], complete: false };
+  // Row 347 (3): the ONE resolver of "the invoice these goods sit on NOW" (refundable-remainder.ts), the one approve, store
+  // credit and the remainder already use: the stored line id, or, when a rebuild of the order's invoice lines gave the invoice
+  // new line ids (any staff edit after delivery), the live line carrying the same order line. A line gone for good, or an
+  // unreferenced item, is not refundable in cash.
+  const where = await resolveInlineSourceInvoices(db, items);
+  // EVERY candidate invoice of a re-resolved item, live and dead, not just the resolver's best pick: one order line can be billed
+  // on two invoices (a 6 + 4 partial split), and with the stored id gone nothing says which one the goods were on. Holding ALL
+  // of them to "paid in full" fails closed (an owing or voided sibling refuses; the exits are store credit or cancel), so cash
+  // is never paid against an invoice the goods were never on; when every candidate is paid in full the refund proceeds. They
+  // are also all locked and re-verified below. (Store credit and approve gate on `invoiceId`, the best pick: no cash leaves.)
+  const invoiceIds = [...new Set(where.flatMap((w) => w.candidateInvoiceIds))].sort();
+  const complete = items.every((it, idx) => !!it.sourceInvoiceItemId && !where[idx].missing);
+  return { invoiceIds, complete };
 }
 
 /**
@@ -254,15 +272,35 @@ export async function loadInvoiceRefundState(
  */
 export async function loadSourceInvoicesState(
   db: any,
-  sourceInvoiceItemIds: ReadonlyArray<string | null | undefined>,
+  items: ReadonlyArray<InlineSourceRef>,
   // The refund locks the resolved invoices here, between resolving them and reading their balances.
   opts: { beforeInvoiceRead?: (invoiceIds: string[]) => Promise<void> } = {},
 ): Promise<SourceInvoicesState> {
-  return loadInvoiceRefundState(
-    db,
-    await resolveRefundInvoiceIds(db, { kind: "LINES", sourceInvoiceItemIds }),
-    opts,
-  );
+  const resolved = await resolveRefundInvoiceIds(db, { kind: "LINES", items });
+  const lock = opts.beforeInvoiceRead;
+  if (!lock) return loadInvoiceRefundState(db, resolved);
+  return loadInvoiceRefundState(db, resolved, {
+    beforeInvoiceRead: async (invoiceIds) => {
+      await lock(invoiceIds);
+      // Row 347 (3): the lock set was computed BEFORE the locks. Re-resolve under them: a rebuild that moved a line to another
+      // invoice in between would make this refund read, and pay against, an invoice that no longer holds the goods. The
+      // same resolution holds (the same invoices, as complete) or the refund is refused as retryable, nothing written.
+      const again = await resolveRefundInvoiceIds(db, { kind: "LINES", items });
+      if (
+        again.complete !== resolved.complete ||
+        again.invoiceIds.length !== invoiceIds.length ||
+        again.invoiceIds.some((id, i) => id !== invoiceIds[i])
+      ) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.CONCURRENT_UPDATE,
+          reason: "REFUND_SOURCE_CHANGED",
+          retryable: true,
+          message:
+            "The sale these goods were returned from was just edited. Nothing was refunded: try again in a moment.",
+        });
+      }
+    },
+  });
 }
 
 /**

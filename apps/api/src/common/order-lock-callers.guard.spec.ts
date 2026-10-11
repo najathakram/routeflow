@@ -11,6 +11,7 @@
  * classify a new caller; never loosen the scan.
  */
 import fs from "node:fs";
+import * as ts from "typescript";
 import path from "node:path";
 
 const SRC = path.join(__dirname, "..");
@@ -144,22 +145,55 @@ describe("order-lock callers: every settle / invoice-create caller declares its 
     );
   });
 
-  it("issueCredit() and approve() take the Order right after the Return, before restock / mint / insert", () => {
-    const src = strip(fs.readFileSync(path.join(SRC, "returns/inline-returns.service.ts"), "utf8"));
-    for (const method of ["issueCredit", "approve"]) {
-      const start = src.indexOf(`async ${method}(`);
-      expect(start).toBeGreaterThan(-1);
-      const body = src.slice(start, start + 6000);
-      const returnLock = body.indexOf('FROM "Return"');
-      const orderLock = body.indexOf("lockOrderRow(tx, tenantId, fresh.orderId)");
-      const firstWrite = Math.min(
-        ...["restockReturnItems(", "issueCreditInTx("]
-          .map((n) => body.indexOf(n))
-          .filter((i) => i > -1),
-      );
-      expect(returnLock).toBeGreaterThan(-1);
-      expect(orderLock).toBeGreaterThan(returnLock);
-      expect(orderLock).toBeLessThan(firstWrite);
+  it("issueCredit() and approve() take the Order right after the Return, before restock / mint / insert (read from the AST, so a reformat cannot move it)", () => {
+    const file = path.join(SRC, "returns/inline-returns.service.ts");
+    const sf = ts.createSourceFile(
+      file,
+      fs.readFileSync(file, "utf8"),
+      ts.ScriptTarget.ES2022,
+      true,
+    );
+    const method = (name: string): ts.MethodDeclaration => {
+      let found: ts.MethodDeclaration | null = null;
+      const walk = (n: ts.Node): void => {
+        if (ts.isMethodDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name) found = n;
+        ts.forEachChild(n, walk);
+      };
+      walk(sf);
+      if (!found) throw new Error(`no method ${name}`);
+      return found;
+    };
+    for (const name of ["issueCredit", "approve"]) {
+      const returnLocks: number[] = [];
+      const orderLocks: number[] = [];
+      const writes: number[] = [];
+      const walk = (n: ts.Node): void => {
+        const pos = n.getStart(sf);
+        // the Return row lock: a raw statement on "Return" ... FOR UPDATE
+        if (ts.isTaggedTemplateExpression(n) && /FROM "Return"/.test(n.template.getText(sf)))
+          returnLocks.push(pos);
+        if (ts.isCallExpression(n)) {
+          const callee = ts.isPropertyAccessExpression(n.expression)
+            ? n.expression.name.text
+            : ts.isIdentifier(n.expression)
+              ? n.expression.text
+              : "";
+          // the Order lock: lockOrderRow(tx, tenant, fresh.orderId) or lockRefundOrders(tx, tenant, [fresh.orderId, ...sources])
+          if (
+            (callee === "lockOrderRow" || callee === "lockRefundOrders") &&
+            n.arguments.some((a) => /fresh\.orderId/.test(a.getText(sf)))
+          )
+            orderLocks.push(pos);
+          if (callee === "restockReturnItems" || callee === "issueCreditInTx") writes.push(pos);
+        }
+        ts.forEachChild(n, walk);
+      };
+      walk(method(name));
+      expect(returnLocks.length).toBeGreaterThan(0);
+      expect(orderLocks.length).toBeGreaterThan(0);
+      expect(writes.length).toBeGreaterThan(0);
+      expect(Math.min(...orderLocks)).toBeGreaterThan(Math.min(...returnLocks));
+      expect(Math.min(...orderLocks)).toBeLessThan(Math.min(...writes));
     }
   });
   it("SA-706d: every transaction that claims a stop locks the stop's Orders FIRST (Order -> RouteRunStop, one order on every path)", () => {

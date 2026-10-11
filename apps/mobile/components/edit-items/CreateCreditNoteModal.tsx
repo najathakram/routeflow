@@ -5,6 +5,7 @@ import { Modal, Pressable, Text, TextInput, View } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
 import { useCreateCreditNote, type CreditNote } from "../../lib/api/credit-notes";
 import { MoneyTextInput } from "../../components/MoneyTextInput";
+import { refundableCopy } from "../../lib/credit-note-error-copy";
 import { styles } from "./styles";
 
 // ─── Inline "New credit note" create modal ───────────────────────────────────
@@ -49,7 +50,12 @@ export function CreateCreditNoteModal({
         onSuccess: (created) => onCreated(created),
         onError: (e: unknown) => {
           const err = e as { response?: { data?: { message?: string } }; message?: string };
-          setError(err?.response?.data?.message ?? err?.message ?? "Couldn't create credit note.");
+          setError(
+            refundableCopy(e) ??
+              err?.response?.data?.message ??
+              err?.message ??
+              "Couldn't create credit note.",
+          );
         },
       },
     );
