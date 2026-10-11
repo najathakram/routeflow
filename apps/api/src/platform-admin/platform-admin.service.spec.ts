@@ -812,6 +812,87 @@ describe("PlatformAdminService — audit provenance", () => {
       expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
     });
 
+    // SA r-note 5 A5 (N4): a comp add-on is a platform grant - never billed, never in MRR. updateStatus must read
+    // the add-ons through billableAddonWhere (isComp: false) like every other MRR reader.
+    describe("N4: comp add-ons are never in the status flip's MRR delta", () => {
+      const addons = [
+        { priceSnapshot: 20, quantity: 1, isComp: true }, // a comp: 0
+        { priceSnapshot: 12, quantity: 2, isComp: false }, // a paid add-on: 24
+      ];
+      const honourWhere = () =>
+        (prisma as any).tenantAddon.findMany.mockImplementation(async (a: any) =>
+          addons.filter((x) => (a?.where?.isComp === false ? !x.isComp : true)),
+        );
+      const payingTenant = (status: string) =>
+        prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+          status,
+          class: "PRODUCTION",
+          deletedAt: null,
+          subscription: { planKey: "SCALE", basePriceSnapshot: 499, discount: 0 },
+        } as any);
+
+      it("suspending an ACTIVE paying tenant: -(499 + 24), the comp's 20 is not in it; the paid add-on still is", async () => {
+        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+        prisma.tenant.update.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "SUSPENDED",
+          plan: "PROFESSIONAL",
+        } as any);
+        payingTenant("ACTIVE");
+        honourWhere();
+        await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+        expect(billingEventService.emit).toHaveBeenCalledWith(
+          TENANT_ID,
+          "subscription.suspended",
+          expect.anything(),
+          expect.objectContaining({ amountDelta: -523 }),
+        );
+      });
+
+      it("reactivating: +(499 + 24), not +543", async () => {
+        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+        prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+        prisma.tenant.update.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "ACTIVE",
+          plan: "PROFESSIONAL",
+        } as any);
+        payingTenant("SUSPENDED");
+        (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+          downgradeToPlanKey: null,
+          downgradeEffectiveAt: null,
+        });
+        honourWhere();
+        await service.updateStatus(TENANT_ID, { status: "ACTIVE" } as any, ADMIN_ID);
+        expect(billingEventService.emit).toHaveBeenCalledWith(
+          TENANT_ID,
+          "subscription.resumed",
+          expect.anything(),
+          expect.objectContaining({ amountDelta: 523 }),
+        );
+      });
+
+      it("the add-on read is billableAddonWhere (isComp: false), asserted on the query itself", async () => {
+        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+        prisma.tenant.update.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "SUSPENDED",
+          plan: "PROFESSIONAL",
+        } as any);
+        payingTenant("ACTIVE");
+        honourWhere();
+        await service.updateStatus(TENANT_ID, { status: "SUSPENDED" } as any, ADMIN_ID);
+        expect((prisma as any).tenantAddon.findMany.mock.calls[0][0].where).toEqual({
+          tenantId: TENANT_ID,
+          active: true,
+          isComp: false,
+        });
+      });
+    });
+
     it("emits nothing when the tenant was never in the paying set (TRIAL → SUSPENDED)", async () => {
       prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
       prisma.tenant.update.mockResolvedValue({
