@@ -35,8 +35,11 @@ import { assertSellableLines } from "../products/sellable-lines";
 import {
   categoryTaxSnapshotOf,
   computeCategoryTax,
+  copyCategoryTaxSnapshot,
+  hasNullTrio,
   normalizeBoxesPieces,
   packFromOwnSplit,
+  recomputeCategoryTax,
   regulatedUnitBasis,
   splitMatchesQty,
   type CategoryTaxType,
@@ -303,24 +306,53 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
     }
     const freeUnits = ctx.clampFreeUnits(item.promoFreeUnits ?? undefined, boxes, qty);
     const lineSub = priceReplacedLine(item as any, { qty, boxes, pieces, unitsPerBox, freeUnits });
-    const category = product?.trackedCategoryId
-      ? ctx.categoryMap.get(product.trackedCategoryId)
-      : null;
+    // B297 PR3 (R3): a CHANGED row that keeps its product re-prices from its OWN rate snapshot (a rate edited
+    // since the sale must not move it); only a new row or a product substitute stamps the live category.
+    const keepsRow = row != null && !productChanged;
+    const ownCategoryId =
+      keepsRow && row.trackedCategoryId && !hasNullTrio(row as any)
+        ? (row.trackedCategoryId as string)
+        : null;
+    const lineCategoryId = ownCategoryId ?? product?.trackedCategoryId ?? null;
+    const category = lineCategoryId ? ctx.categoryMap.get(lineCategoryId) : null;
     // The levy basis reads the SAME resolved pack the money used (SA-180): never the live pack for a stored line.
     const basisPack = Number(unitsPerBox ?? ownPack ?? (row ? 0 : livePack) ?? 0);
     const pieceQty = regulatedUnitBasis(
       { qty, boxes, pieces, unitLabel: item.unitLabel ?? null },
       basisPack,
     ).unitBasisQty;
-    const categoryTaxAmount = category
-      ? computeCategoryTax({
-          taxType: category.taxType as CategoryTaxType,
-          rate: Number(category.rate),
+    let categoryTaxAmount: number;
+    let categoryTrio: ReturnType<typeof categoryTaxSnapshotOf>;
+    if (keepsRow) {
+      const r = recomputeCategoryTax(
+        {
+          trackedCategoryId: lineCategoryId,
+          categoryTaxType: ownCategoryId ? row.categoryTaxType : null,
+          categoryTaxRate: ownCategoryId ? row.categoryTaxRate : null,
+          categoryPriceIncludesTax: ownCategoryId ? row.categoryPriceIncludesTax : null,
+          storedAmount: row.categoryTaxAmount,
           unitBasisQty: pieceQty,
           lineSubtotal: lineSub,
-          priceIncludesTax: category.priceIncludesTax,
-        })
-      : 0;
+        },
+        category,
+      );
+      if (r.warn) ctx.warn(`line ${row.id}: ${r.warn}`);
+      categoryTaxAmount = r.amount;
+      categoryTrio =
+        r.stamp ??
+        (ownCategoryId ? copyCategoryTaxSnapshot(row as any) : categoryTaxSnapshotOf(null));
+    } else {
+      categoryTaxAmount = category
+        ? computeCategoryTax({
+            taxType: category.taxType as CategoryTaxType,
+            rate: Number(category.rate),
+            unitBasisQty: pieceQty,
+            lineSubtotal: lineSub,
+            priceIncludesTax: category.priceIncludesTax,
+          })
+        : 0;
+      categoryTrio = categoryTaxSnapshotOf(category ?? null);
+    }
     return {
       rowId: row?.id ?? null,
       untouched: false,
@@ -340,10 +372,10 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         // Never CLEAR a pack the line carried (B717); a stored line keeps its own, never a sibling's.
         unitsPerBox: unitsPerBox ?? ownPack ?? null,
         promoFreeUnits: freeUnits > 0 ? freeUnits : null,
-        trackedCategoryId: product?.trackedCategoryId ?? null,
+        trackedCategoryId: lineCategoryId,
         trackedSubcategoryId: product?.trackedSubcategoryId ?? null,
         categoryTaxAmount,
-        ...categoryTaxSnapshotOf(category ?? null),
+        ...categoryTrio,
         notes: item.notes ?? null,
         msrp: null as number | null,
       },

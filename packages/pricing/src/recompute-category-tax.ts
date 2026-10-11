@@ -62,7 +62,12 @@ const num = (v: unknown): number => {
 };
 
 /** True when the line has a regulated category but not all three snapshot columns (R4: one NULL = NULL). */
-export function hasNullTrio(line: RecomputeCategoryTaxLine): boolean {
+export function hasNullTrio(
+  line: Pick<
+    RecomputeCategoryTaxLine,
+    "trackedCategoryId" | "categoryTaxType" | "categoryTaxRate" | "categoryPriceIncludesTax"
+  >,
+): boolean {
   return (
     !!line.trackedCategoryId &&
     (line.categoryTaxType == null ||

@@ -166,7 +166,7 @@ import {
   type StockLine,
   type StockLineUnits,
 } from "./order-stock";
-import { linePieceQty } from "./line-piece-qty";
+import { recomputeLineCategoryTaxes } from "./recompute-line-category-taxes";
 import { dateAndShipmentFilters } from "./list-filters";
 import { resolveOversellAllowed } from "./oversell-policy";
 import { PolicyOversellReader } from "./policy-oversell-reader";
@@ -334,57 +334,12 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   /**
-   * RF-4: recompute + persist each regulated line's `categoryTaxAmount` from its
-   * STORED subtotal + piece qty and the line's section (TrackedCategory) tax
-   * config, and return the order-level Σ (rounded). Non-regulated lines are 0.
-   * Category tax is a SECTION-level levy — the reporting subcategory never taxes.
-   * Mirrors create()'s per-line computation so an edited / merged order's total
-   * and per-line snapshots stay consistent with the invoice split. Runs inside
-   * the caller's transaction (uses `tx.trackedCategory` — the tx's own pooled
-   * connection, so it's safe to co-locate with the other in-tx writes).
+   * RF-4 / B297 PR3: recompute + persist each regulated line's `categoryTaxAmount` at the line's OWN rate
+   * snapshot (never the live category) and return the order-level Σ. The rule, the NULL-trio stamp and
+   * the no-category keep live in `recompute-line-category-taxes.ts`; this binds the service's logger.
    */
-  private async recomputeLineCategoryTaxes(tx: any, lines: any[]): Promise<number> {
-    const catIds = [
-      ...new Set(lines.map((li) => li.trackedCategoryId).filter(Boolean)),
-    ] as string[];
-    const cats = catIds.length
-      ? await tx.trackedCategory.findMany({ where: { id: { in: catIds } } })
-      : [];
-    const catMap = new Map<string, any>(cats.map((c: any) => [c.id, c]));
-    // Fetch each regulated line's product unitsPerBox so linePieceQty can expand a
-    // selling-unit boxed line (which didn't snapshot unitsPerBox) to real pieces.
-    const prodIds = [
-      ...new Set(
-        lines.filter((li) => li.trackedCategoryId && li.productId).map((li) => li.productId),
-      ),
-    ] as string[];
-    const prods = prodIds.length
-      ? await tx.product.findMany({
-          where: { id: { in: prodIds } },
-          select: { id: true, unitsPerBox: true },
-        })
-      : [];
-    const upbMap = new Map<string, number>(
-      prods.map((p: any) => [p.id, Number(p.unitsPerBox ?? 0)]),
-    );
-    let sum = 0;
-    for (const li of lines) {
-      const cat = li.trackedCategoryId ? catMap.get(li.trackedCategoryId) : null;
-      const amount = cat
-        ? computeCategoryTax({
-            taxType: cat.taxType as CategoryTaxType,
-            rate: Number(cat.rate),
-            unitBasisQty: linePieceQty(li, upbMap.get(li.productId)),
-            lineSubtotal: Number(li.subtotal),
-            priceIncludesTax: cat.priceIncludesTax,
-          })
-        : 0;
-      if (roundMoney(Number(li.categoryTaxAmount ?? 0)) !== amount) {
-        await tx.orderItem.update({ where: { id: li.id }, data: { categoryTaxAmount: amount } });
-      }
-      sum += amount;
-    }
-    return roundMoney(sum);
+  private recomputeLineCategoryTaxes(tx: any, lines: any[]): Promise<number> {
+    return recomputeLineCategoryTaxes(tx, lines, this.logger);
   }
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {

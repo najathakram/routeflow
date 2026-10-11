@@ -5811,6 +5811,7 @@ export class InvoicesService {
           unitsPerBoxByProduct,
           isTaxExempt,
           invoiceStatus: live.status,
+          warn: (m) => this.logger.warn(m),
         });
         assertAdjustedTotalsSane(live, itemUpdates); // B1031: totals stay sane, before any write
         if (inferred?.verified) {

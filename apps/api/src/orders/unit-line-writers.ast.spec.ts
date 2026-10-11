@@ -109,9 +109,10 @@ const INVENTORY: Record<string, Row> = {
     why: "resolveLineUnits decides pack vs unit; buildUnitLine builds the unit line (4b-2b)",
     trioVia: ["categoryTaxSnapshotOf"],
   },
-  "orders/orders.service.ts::OrdersService.recomputeLineCategoryTaxes": {
+  // B297 PR3: moved out of OrdersService verbatim in shape; it now also stamps a NULL rate trio, once.
+  "orders/recompute-line-category-taxes.ts::recomputeLineCategoryTaxes": {
     kind: "FIELD_ONLY",
-    why: "categoryTaxAmount only; reads the line snapshot first",
+    why: "categoryTaxAmount, plus the rate trio on a NULL-trio line (stamped once); prices at the line snapshot first",
   },
   // SA-762r F1: the cancel's line status flip, moved verbatim out of changeStatus into the shared unwind.
   "orders/order-cancel-tx.ts::cancelOrderInTx": {
@@ -395,7 +396,11 @@ function classMethods(sf: ts.SourceFile): Map<string, ts.MethodDeclaration> {
  * inventory then proves each such row exists. A free-function line writer in `orders/` that is neither listed nor in
  * KNOWN_UNSCANNED_FREE_WRITERS fails the baseline test below, so a NEW extraction cannot lose its writes again.
  */
-const FREE_WRITER_FILES = ["orders/order-cancel-tx.ts", "orders/delivered-stamp.ts"];
+const FREE_WRITER_FILES = [
+  "orders/order-cancel-tx.ts",
+  "orders/delivered-stamp.ts",
+  "orders/recompute-line-category-taxes.ts",
+];
 /** Pre-existing free-function line writers under orders/ that predate this scan (shrink-only; classify one to remove it). */
 const KNOWN_UNSCANNED_FREE_WRITERS = [
   "orders/line-composition.ts::syncLineCompositions",
@@ -447,6 +452,12 @@ const FREE_WRITER_DATA_KEYS: Record<string, string[]> = {
   "orders/order-cancel-tx.ts::cancelOrderInTx": ["status"],
   "orders/delivered-stamp.ts::clearUnevidencedDelivered": ["deliveredQty"],
   "orders/delivered-stamp.ts::stampDeliveredInFull": ["deliveredQty"],
+  "orders/recompute-line-category-taxes.ts::recomputeLineCategoryTaxes": [
+    "categoryPriceIncludesTax",
+    "categoryTaxAmount",
+    "categoryTaxRate",
+    "categoryTaxType",
+  ],
 };
 
 function exportedFunctions(sf: ts.SourceFile): Map<string, ts.FunctionDeclaration> {

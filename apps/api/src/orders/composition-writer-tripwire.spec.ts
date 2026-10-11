@@ -65,9 +65,9 @@ const REGISTRY: Record<string, Entry> = {
     reason: "SA-763r: writes only OrderItem.deliveredQty, on lines with no delivery evidence",
   },
   "orders/orders.service.ts::reopenOrder": { kind: "exempt", reason: "status only" },
-  "orders/orders.service.ts::recomputeLineCategoryTaxes": {
+  "orders/recompute-line-category-taxes.ts::recomputeLineCategoryTaxes": {
     kind: "exempt",
-    reason: "tax amount only",
+    reason: "tax amount, plus the rate trio stamped once on a NULL-trio line",
   },
   "orders/order-line-removal.ts::writeLineRemoval": {
     kind: "exempt",
