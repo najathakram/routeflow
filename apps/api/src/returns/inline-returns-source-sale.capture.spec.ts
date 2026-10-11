@@ -144,10 +144,38 @@ describe("SA-740 §1: captureInTx source sale + locks", () => {
     expect(locks[0].values.slice(0, 2)).toEqual(["ord-carrying", "src-a"]);
     expect(locks[0].values).toContain("test-tenant");
     const lockOrder = prisma.$executeRaw.mock.invocationCallOrder[0];
-    expect(lockOrder).toBeLessThan(quote.priceInlineReturn.mock.invocationCallOrder[0]);
+    // the AUTHORITATIVE pricing (the last call) runs under the locks; SA-773's unlocked dry run before them only finds the Orders
+    const calls = quote.priceInlineReturn.mock.invocationCallOrder;
+    expect(lockOrder).toBeLessThan(calls[calls.length - 1]);
+  });
+
+  it("SA-773: a capture with no named source locks the Orders its dry-run chunks come from, in the SAME first statement (id-sorted with the carrying order)", async () => {
+    await service.captureInTx(prisma, dto(), OPERATOR); // PRICED chunks come from src-z
+    const locks = lockCalls();
+    expect(locks).toHaveLength(1);
+    expect(locks[0].values.filter((v) => v === "ord-carrying" || v === "src-z")).toEqual([
+      "ord-carrying",
+      "src-z",
+    ]);
+    const calls = quote.priceInlineReturn.mock.invocationCallOrder;
+    expect(calls.length).toBe(2); // the dry run, then the pricing under the locks
+    expect(prisma.$executeRaw.mock.invocationCallOrder[0]).toBeGreaterThan(calls[0]);
+    expect(prisma.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(calls[1]);
+  });
+
+  it("SA-773: a dry run that fails locks nothing extra; the pricing under the locks still decides", async () => {
+    quote.priceInlineReturn.mockRejectedValueOnce(new Error("dry run down"));
+    await service.captureInTx(prisma, dto(), OPERATOR);
+    expect(lockCalls()[0].values.filter((v) => v === "src-z")).toHaveLength(0);
+    // and the chunk's order, found only under the locks, is locked before any source invoice is written
+    expect(lockCalls().some((l, i) => i > 0 && l.values.includes("src-z"))).toBe(true);
   });
 
   it("a capture with no source (or the source = the carrying order) locks only the carrying order, tenant-bound", async () => {
+    quote.priceInlineReturn.mockResolvedValue({
+      ...PRICED,
+      chunks: PRICED.chunks.map((c) => ({ ...c, sourceOrderId: "ord-carrying" })),
+    });
     await service.captureInTx(prisma, dto(), OPERATOR);
     await service.captureInTx(
       prisma,

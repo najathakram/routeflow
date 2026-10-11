@@ -321,13 +321,17 @@ export class InlineReturnsService {
     // SA-740 (row 190): lock the carrying order, plus the SOURCE sale when it is a different one, in ONE id-sorted,
     // tenant-bound statement (the set and order `refund()` takes, so a capture and a refund cannot deadlock). It replaces
     // the old carrying-only lock, which had no tenant predicate. The customer advisory lock the caller holds stays first.
-    await lockRefundOrders(
-      tx,
-      tenantId,
-      dto.sourceOrderId && dto.sourceOrderId !== dto.orderId
-        ? [dto.orderId, dto.sourceOrderId]
-        : [dto.orderId],
-    );
+    // SA-773: a named customer's capture with no named source prices chunks from OTHER orders. Their Orders are found by an
+    // unlocked dry run and locked in this same first statement (id-sorted with the rest), BEFORE any source invoice is written
+    // and the order's sibling invoices are asked for: the order a credit note create (Order, then its invoices) takes. A dry
+    // run that fails locks nothing extra; the priced chunks are re-checked under the locks just below.
+    const discovered = await this.discoverChunkSourceOrders(tx, dto, user);
+    const lockedOrders = new Set<string>([
+      dto.orderId,
+      ...(dto.sourceOrderId ? [dto.sourceOrderId] : []),
+      ...discovered,
+    ]);
+    await lockRefundOrders(tx, tenantId, [...lockedOrders]);
     const order = await tx.order.findFirst({
       where: { id: dto.orderId },
       select: { id: true, customerId: true, total: true, status: true, routeRunId: true },
@@ -401,6 +405,13 @@ export class InlineReturnsService {
       // SA-740: a WALK-IN's return is from the sale carrying it unless the caller names another source
       { defaultSourceOrderId: dto.orderId },
     );
+
+    // Fallback: the priced chunks name an Order the dry run did not (the data moved in between): lock it now, before any
+    // source invoice is written. Rare; the dry run is what keeps the locks in one id-sorted statement.
+    const lateOrders = priced.chunks
+      .map((c) => c.sourceOrderId)
+      .filter((o): o is string => !!o && !lockedOrders.has(o));
+    if (lateOrders.length > 0) await lockRefundOrders(tx, tenantId, lateOrders);
 
     // B948 / SA-628a (c): a source line may never be credited past its value by a credit note + an inline return.
     await this.assertWithinLineHeadroom(tx, priced.chunks);
@@ -788,6 +799,35 @@ export class InlineReturnsService {
       capIntentToOrderBalance: true,
     });
     return { ...captured, minted };
+  }
+
+  /**
+   * SA-773: the source Orders a capture's chunks will be priced from, from an UNLOCKED dry run of the same pricing (no row is
+   * written). Any failure is "none found": the in-lock pricing is authoritative and refuses on its own.
+   */
+  private async discoverChunkSourceOrders(
+    tx: any,
+    dto: CaptureInlineReturnDto,
+    user: JwtPayload,
+  ): Promise<string[]> {
+    try {
+      const dry = await this.quoteService.priceInlineReturn(
+        {
+          customerId: dto.customerId,
+          items: dto.items,
+          routeRunStopId: dto.routeRunStopId,
+          sourceOrderId: dto.sourceOrderId,
+        },
+        user,
+        tx,
+        { defaultSourceOrderId: dto.orderId },
+      );
+      return [
+        ...new Set((dry?.chunks ?? []).map((c: any) => c.sourceOrderId as string | null)),
+      ].filter((o): o is string => !!o);
+    } catch {
+      return [];
+    }
   }
 
   /**
