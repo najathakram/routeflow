@@ -53,6 +53,7 @@ describeDb("B297 PR4 — a ledger re-sync writes only what changed, real Postgre
   let prisma: PrismaService;
   let tenantCtx: TenantContextService;
   let invoices: InvoicesService;
+  let ledgerSvc: RegulatedLedgerService;
   const tenantIds: string[] = [];
   let seq = 0;
 
@@ -136,6 +137,7 @@ describeDb("B297 PR4 — a ledger re-sync writes only what changed, real Postgre
       ],
     }).compile();
     invoices = mod.get(InvoicesService);
+    ledgerSvc = mod.get(RegulatedLedgerService);
   });
 
   afterAll(async () => {
@@ -528,6 +530,48 @@ describeDb("B297 PR4 — a ledger re-sync writes only what changed, real Postgre
       [s.cat1]: { qty: 0, net: 0 },
       [s.cat2]: { qty: 12, net: 120 },
     }); // master writes nothing for a same-money swap: VAPE keeps $120 and CIGAR reports $0
+  }, 120_000);
+
+  it("row 341: a RETURN after the swap files under the LIVE category, so each category nets to its own figure", async () => {
+    const s = await seedDraft("swap-return");
+    await tenantCtx.run(s.tenantId, () =>
+      invoices.update(s.invoiceId, {
+        items: [
+          { id: s.aId, productId: s.p2, description: "swapped", qty: 12, unitPrice: 10 },
+          { id: s.bId, productId: s.p1, description: "p1", qty: 6, unitPrice: 10 },
+        ],
+      } as any),
+    );
+    // the ledger is keyed by the order line; give the swapped line's rows one, as an order-derived line has
+    const order = await prisma.order.create({
+      data: {
+        tenantId: s.tenantId,
+        customerId: (await prisma.invoice.findUniqueOrThrow({ where: { id: s.invoiceId } }))
+          .customerId,
+        status: "DELIVERED",
+        subtotal: 180,
+        tax: 0,
+        total: 180,
+      },
+    });
+    await prisma.regulatedSalesLedger.updateMany({
+      where: { invoiceId: s.invoiceId },
+      data: { orderId: order.id },
+    });
+    await tenantCtx.run(s.tenantId, () =>
+      ledgerSvc.reverseReturnEntries({
+        returnId: randomUUID(),
+        orderId: order.id,
+        returnedByProduct: new Map([[s.p2, 4]]),
+        returnedUnit: "LINE_UNIT",
+        db: prisma,
+      }),
+    );
+    const rows = (await draftLedger(s.invoiceId)).filter((r) => r.invoiceItemId === s.aId);
+    expect(netBy(rows, (r) => r.trackedCategoryId)).toEqual({
+      [s.cat1]: { qty: 0, net: 0 },
+      [s.cat2]: { qty: 8, net: 80 }, // master files the return -4 under cat1: cat1 -4/-40, cat2 +12/120
+    });
   }, 120_000);
 
   it("a price adjustment on a DRAFT books a pair for the re-priced line only", async () => {

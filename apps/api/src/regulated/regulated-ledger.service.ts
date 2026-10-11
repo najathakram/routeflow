@@ -813,6 +813,8 @@ export class RegulatedLedgerService {
     remUnitBasisByLine: Map<string, number>;
     remNetByLine: Map<string, number>;
     remTaxByLine: Map<string, number>;
+    /** Booked-line keys (item | category | subcategory | order line) whose net is already 0 in every dimension. */
+    squareKeys: Set<string>;
   } | null> {
     // The order's SALE rows are the snapshot we reverse against.
     // Deterministic row order (SA-170 W/N): both the live FIFO walk and the resumed one iterate
@@ -886,6 +888,9 @@ export class RegulatedLedgerService {
       select: {
         invoiceItemId: true,
         orderItemId: true,
+        trackedCategoryId: true,
+        trackedSubcategoryId: true,
+        entryType: true,
         qty: true,
         unitBasisQty: true,
         netSales: true,
@@ -900,6 +905,16 @@ export class RegulatedLedgerService {
       remTaxByLine.set(lk, (remTaxByLine.get(lk) ?? 0) + Number(r.categoryTax));
     }
 
+    // B297 row 341: the booked lines (item | category | subcategory | order line) that are already square
+    // under their OWN key. A line re-filed to another category / subcategory leaves a dead SALE (and its
+    // reversal) behind under the old key: such a row is never a candidate for a return's reversal, or the
+    // return would be filed under the category the line used to be in. The per-ORDER-LINE remaining above
+    // is unchanged: it still sums every row of the line.
+    const squareKeys = new Set<string>();
+    for (const [key, held] of netHeldByLine([...sales, ...priorReversals], { keyOf: syncKey })) {
+      if (isSquare(held)) squareKeys.add(key);
+    }
+
     return {
       sales,
       productByItem,
@@ -910,6 +925,7 @@ export class RegulatedLedgerService {
       remUnitBasisByLine,
       remNetByLine,
       remTaxByLine,
+      squareKeys,
     };
   }
 
@@ -988,6 +1004,7 @@ export class RegulatedLedgerService {
     const salesByProduct = new Map<string, any[]>();
     for (const s of sales) {
       if (s.correctsEntryId != null) continue;
+      if (built.squareKeys.has(syncKey(s) ?? "")) continue; // B297 row 341: a dead sale of a re-filed line
       const pid = productByItem.get(s.invoiceItemId);
       if (!pid) continue;
       if (!salesByProduct.has(pid)) salesByProduct.set(pid, []);
@@ -1607,6 +1624,7 @@ export class RegulatedLedgerService {
       const ordered = built.sales.filter(
         (s: any) =>
           s.correctsEntryId == null &&
+          !built.squareKeys.has(syncKey(s) ?? "") && // B297 row 341: never a dead sale of a re-filed line
           productId != null &&
           built.productByItem.get(s.invoiceItemId) === productId,
       );
@@ -1791,6 +1809,9 @@ export class RegulatedLedgerService {
         invoiceId: true,
         // RF-3: reporting breakdown carried onto the REVERSAL rows below.
         trackedSubcategoryId: true,
+        // B297 row 341: which booked line (category / subcategory / order line) each SALE row is.
+        trackedCategoryId: true,
+        createdAt: true,
       },
     });
     const liveSaleByItem = new Map<
@@ -1845,12 +1866,19 @@ export class RegulatedLedgerService {
         entryType: true,
         invoiceItemId: true,
         orderItemId: true,
+        trackedCategoryId: true,
+        trackedSubcategoryId: true,
         netSales: true,
         qty: true,
         unitBasisQty: true,
         categoryTax: true,
       },
     });
+    // B297 row 341: booked lines already square under their own key (a re-filed line's dead sale).
+    const squareKeys = new Set<string>();
+    for (const [key, held] of netHeldByLine(lineRows, { keyOf: syncKey })) {
+      if (isSquare(held)) squareKeys.add(key);
+    }
     // invoiceItemId → order line, so legacy REVERSAL rows with a null orderItemId can
     // still be attributed to their line (bridge through a matching SALE row).
     const orderLineByInvoiceItem = new Map<string, string>();
@@ -1888,6 +1916,23 @@ export class RegulatedLedgerService {
     for (const it of items) {
       const live = liveSaleByItem.get(it.invoiceItemId ?? "");
       if (!live || live.net <= 0) continue; // SALE-existence guard — no naked reversal.
+      // B297 row 341: the subcategory / order line / invoice the reversal carries come from the line's LIVE
+      // booked key (the newest base SALE of the credited category that is not already square), never from
+      // whichever SALE of the item an unordered read returned first.
+      const metaRow = liveSaleRows
+        .filter(
+          (s: any) =>
+            s.invoiceItemId === it.invoiceItemId &&
+            !squareKeys.has(syncKey(s) ?? "") &&
+            (s.trackedCategoryId == null || s.trackedCategoryId === it.trackedCategoryId),
+        )
+        .sort((a: any, b: any) => +new Date(b.createdAt ?? 0) - +new Date(a.createdAt ?? 0))[0];
+      if (metaRow) {
+        live.orderId = metaRow.orderId ?? null;
+        live.orderItemId = metaRow.orderItemId ?? null;
+        live.invoiceId = metaRow.invoiceId ?? null;
+        live.trackedSubcategoryId = metaRow.trackedSubcategoryId ?? null;
+      }
       const lk = live.orderItemId ?? it.invoiceItemId ?? "";
       const sale = saleByLine.get(lk) ?? emptyBag();
       if (sale.net <= 0) continue;
