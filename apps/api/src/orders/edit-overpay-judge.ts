@@ -53,6 +53,11 @@ export async function assertEditCannotOverpay(
   scope: OverpayJudgeScope,
 ): Promise<void> {
   if (!scope.resync && !scope.partials) return; // nothing is restated: nothing can become overpaid
+  if (typeof deps.invoices?.projectEditedInvoiceTotals !== "function")
+    throw new Error(
+      "assertEditCannotOverpay: the invoices dependency has no projectEditedInvoiceTotals. OrdersService must be " +
+        "built with the real InvoicesService (Nest DI does) or a complete fake (orders/testing/invoice-edit-stubs.ts).",
+    );
   await withOrderBillingLock(tx, deps.tenantId, orderId);
   const projected = await deps.invoices.projectEditedInvoiceTotals(tx, orderId, scope);
   if (projected.length === 0) return;

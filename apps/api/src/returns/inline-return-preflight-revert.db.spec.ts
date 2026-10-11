@@ -62,6 +62,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { OrdersService } from "../orders/orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { INVOICE_EDIT_STUBS } from "../orders/testing/invoice-edit-stubs";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -251,6 +252,7 @@ describeDb(
       const invoicesForOrders = Object.assign(Object.create(invoices), {
         reconcileOrderDraftInvoice: async () => undefined,
         resyncOrderInvoicesForEdit: async () => [],
+        ...INVOICE_EDIT_STUBS,
       });
       orders = Object.assign(Object.create(OrdersService.prototype), {
         prisma,
