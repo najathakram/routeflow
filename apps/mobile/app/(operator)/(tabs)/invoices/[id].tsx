@@ -205,6 +205,7 @@ export default function InvoiceDetailScreen() {
     status: invoice.status,
     paymentCount: invoice.payments?.length ?? 0,
     isOrderLinked: invoice.orderId != null,
+    balanceDue: invoice.balanceDue,
   });
   // Computed BEFORE canSend: a pending mirror is locked server-side, so Send has
   // to know about it or it offers a guaranteed 400.
