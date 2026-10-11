@@ -5552,6 +5552,8 @@ export class InvoicesService {
       // paidAt); an explicit date is authoritative and drives both fields.
       const explicitSettledAt = dto.settledAt ? new Date(dto.settledAt) : null;
 
+      // SA ruling C: RECORDED -> DEPOSITED / CLEARED takes no close lock (accepted): it changes the CHECK grouping of a fresh
+      // fold, never cash and never a stored close.
       if (dto.status === "DEPOSITED" || dto.status === "CLEARED") {
         await tx.invoicePayment.update({
           where: { id: paymentId },
