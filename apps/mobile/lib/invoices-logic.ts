@@ -37,6 +37,13 @@ export function isPaymentEditable(
   return true;
 }
 
+/** A known, finite balance above zero (same test as web's canSendReminder): unknown / NaN / Infinity is not. */
+function owesBalance(balanceDue: number | string | null | undefined): boolean {
+  if (balanceDue == null) return false;
+  const balance = Number(balanceDue);
+  return Number.isFinite(balance) && balance > 0;
+}
+
 export interface InvoiceActionInput {
   status: string;
   /** ALL payment rows INCLUDING VOID ones — the server's revert-to-draft gate is
@@ -76,9 +83,7 @@ export function invoiceActionFlags(i: InvoiceActionInput): InvoiceActionFlags {
   return {
     canEdit: s === "DRAFT",
     canSendReminder:
-      (OPEN_INVOICE_STATUS_VALUES as readonly string[]).includes(s) &&
-      i.balanceDue != null &&
-      Number(i.balanceDue) > 0, // NaN (unknown / non-numeric) fails this too
+      (OPEN_INVOICE_STATUS_VALUES as readonly string[]).includes(s) && owesBalance(i.balanceDue),
     canDuplicate: !i.isOrderLinked,
     canReopen: s === "PAID",
     canUnvoid: s === "VOID",
