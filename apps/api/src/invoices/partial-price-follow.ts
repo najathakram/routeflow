@@ -3,6 +3,7 @@ import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { draftBillsLessThanOrder } from "./invoice-partition";
 import { isNsfLine } from "./nsf-line";
+import { applyComposedLineEdits } from "./invoice-composed-edit";
 import { regularTaxShare } from "./manual-invoice-context";
 import { UnitLineSplitError } from "../orders/unit-line-split";
 
@@ -45,6 +46,8 @@ export interface FollowDraftPlan {
   invoiceId: string;
   invoiceNumber: string;
   itemUpdates: Array<{ id: string; data: Record<string, unknown> }>;
+  /** The invoice's item rows as read (before the follow): the composed-line step compares against them. */
+  storedRows: any[];
   subtotal: number;
   taxAmount: number;
   total: number;
@@ -78,6 +81,7 @@ export async function planPartialPriceFollow(
         select: {
           id: true,
           orderItemId: true,
+          compositionMode: true, // applyComposedLineEdits reads it
           qty: true,
           unitPrice: true,
           originalPrice: true,
@@ -214,6 +218,7 @@ export async function planPartialPriceFollow(
           invoiceId: inv.id,
           invoiceNumber: inv.invoiceNumber,
           itemUpdates,
+          storedRows: inv.items,
           subtotal,
           taxAmount,
           total,
@@ -237,6 +242,18 @@ export async function applyPartialPriceFollow(
   for (const d of plan.drafts) {
     for (const u of d.itemUpdates)
       await db.invoiceItem.update({ where: { id: u.id }, data: u.data });
+    // A FIXED composed line keeps its component rows' display price on the line's new net: the SAME step a
+    // DRAFT invoice edit runs (price change, qty untouched -> displayUnitPrice4 re-stamped, ids stay put).
+    await applyComposedLineEdits(
+      db,
+      { id: d.invoiceId, status: InvoiceStatus.DRAFT, tenantId: deps.tenantId },
+      d.itemUpdates.map((u) => ({
+        rowId: u.id,
+        untouched: false,
+        data: { qty: d.storedRows.find((r) => r.id === u.id)?.qty, subtotal: u.data.subtotal },
+      })),
+      d.storedRows,
+    );
     await db.invoice.update({
       where: { id: d.invoiceId },
       data: { subtotal: d.subtotal, taxAmount: d.taxAmount, total: d.total, pdfUrl: null },

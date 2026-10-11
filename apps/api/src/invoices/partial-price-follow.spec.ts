@@ -18,6 +18,7 @@ jest.mock("../storage/compress.util", () => ({
 }));
 
 import { BadRequestException, Logger } from "@nestjs/common";
+import { componentUnitPrice4 } from "@routeflow/pricing";
 import { InvoicesService } from "./invoices.service";
 import { planPartialPriceFollow } from "./partial-price-follow";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -245,6 +246,26 @@ describe("SA-760 Q-760-1: a DRAFT partial follows order price edits (price only)
         }),
       ).rejects.toThrow(TypeError);
     });
+  });
+
+  it("a FIXED composed line: the follow re-stamps its component rows' display price on the new net (same path as a DRAFT edit)", async () => {
+    const created = await partialA(72);
+    db.invoiceItems.find((i) => i.invoiceId === created.id)!.compositionMode = "FIXED";
+    repriceA(); // 72 pieces of the line are now worth 180.00 (was 169.20)
+    await service.followPartialPrices("ord-1");
+    const upd = (prisma as any).invoiceItemComponent.updateMany;
+    expect(upd).toHaveBeenCalledTimes(1);
+    expect(upd).toHaveBeenCalledWith({
+      where: { invoiceItemId: expect.any(String), tenantId: "test-tenant" },
+      data: { displayUnitPrice4: componentUnitPrice4(180, 72) },
+    });
+  });
+
+  it("a plain line writes no component row", async () => {
+    await partialA(72);
+    repriceA();
+    await service.followPartialPrices("ord-1");
+    expect((prisma as any).invoiceItemComponent.updateMany).not.toHaveBeenCalled();
   });
 
   it("the sole invoice that bills the whole order is the MIRROR, not a partial: left to the re-sync", async () => {
