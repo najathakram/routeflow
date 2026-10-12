@@ -312,3 +312,46 @@ describe("TenantStatusGuard - status lookup failure (GAP-7)", () => {
     }
   });
 });
+
+// The guard reads the Authorization scheme like the JWT strategy (passport-jwt: the scheme is case-insensitive and any
+// run of whitespace separates it from the token), so both agree on which requests carry a token.
+describe("TenantStatusGuard - Authorization header parsing matches the JWT strategy", () => {
+  const withHeader = (header: string): ExecutionContext => {
+    const req = { headers: { authorization: header }, method: "POST", path: "/api/v1/orders" };
+    return { switchToHttp: () => ({ getRequest: () => req }) } as unknown as ExecutionContext;
+  };
+  const getWith = (header: string): ExecutionContext => {
+    const req = { headers: { authorization: header }, method: "GET", path: "/api/v1/orders" };
+    return { switchToHttp: () => ({ getRequest: () => req }) } as unknown as ExecutionContext;
+  };
+  const VARIANTS = [
+    `Bearer ${token}`,
+    `bearer ${token}`,
+    `BEARER ${token}`,
+    `BeArEr ${token}`,
+    `Bearer  ${token}`,
+    `Bearer\t${token}`,
+    `  Bearer ${token}`,
+  ];
+
+  it.each(VARIANTS)("a READ_ONLY tenant's POST is refused for %j", async (header) => {
+    const err = await guardFor("READ_ONLY", "trial_expired")
+      .canActivate(withHeader(header))
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
+  });
+
+  it.each(VARIANTS)("a SUSPENDED tenant's GET is refused for %j", async (header) => {
+    await expect(guardFor("SUSPENDED").canActivate(getWith(header))).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it.each(["", "Bearer", "Bearer ", `Basic ${token}`, `Token ${token}`, token])(
+    "a header the strategy would not take as a bearer token passes through (%j)",
+    async (header) => {
+      await expect(guardFor("SUSPENDED").canActivate(getWith(header))).resolves.toBe(true);
+    },
+  );
+});

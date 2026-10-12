@@ -8,6 +8,7 @@ import {
 import type { Request } from "express";
 import { PrismaService } from "../prisma/prisma.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { bearerTokenOf } from "../auth/bearer-token";
 import { isReadOnlyAllowedMutation } from "./read-only-registry";
 
 interface CachedStatus {
@@ -60,16 +61,16 @@ export class TenantStatusGuard implements CanActivate {
     const req = context.switchToHttp().getRequest<Request>();
 
     // ── Extract tenantId from JWT payload (no signature check needed) ─────────
-    const authHeader = req.headers["authorization"];
-    if (!authHeader?.startsWith("Bearer ")) {
+    // Read exactly as the JWT strategy reads it (auth/bearer-token.ts: scheme case-insensitive, any whitespace).
+    const bearer = bearerTokenOf(req.headers["authorization"]);
+    if (!bearer) {
       return true; // No token — let JwtAuthGuard handle auth later
     }
 
     let tenantId: string | null = null;
     let role: string | null = null;
     try {
-      const token = authHeader.slice(7);
-      const payloadPart = token.split(".")[1];
+      const payloadPart = bearer.split(".")[1];
       if (!payloadPart) return true;
       const payload = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf8"));
       tenantId = payload.tenantId ?? null;
