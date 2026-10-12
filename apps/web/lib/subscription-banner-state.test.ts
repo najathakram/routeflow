@@ -645,3 +645,49 @@ describe("subscriptionBannerState - an owed marker with no pastDueSince (S-nit)"
     expect(subscriptionBannerState(v, "staff", at(2)).kind).toBe("grace");
   });
 });
+
+// SA-775 rollout: the server says (autoLockHeld) that the pause holds every lock a banner would threaten, so nothing
+// here may promise a read-only date or a deadline; the rest of the banner (the overdue sentence, Pay now) stays.
+describe("subscriptionBannerState - autoLockHeld drops the lock threat", () => {
+  const LOCK_WORDS = /read-only|tomorrow|nothing changes|Nov 8|suspend/i;
+
+  it("day 6 with the pause enforced: the overdue strip, not the final-day 'read-only tomorrow'", () => {
+    for (const role of ["admin", "staff"] as const) {
+      const s = subscriptionBannerState(owing({ autoLockHeld: true }), role, at(6, 2));
+      expect(s.kind).toBe("overdue");
+      expect(s.copy).not.toMatch(LOCK_WORDS);
+      expect(s.dismiss).not.toBeNull();
+    }
+    const admin = subscriptionBannerState(owing({ autoLockHeld: true }), "admin", at(6, 2));
+    expect(admin.copy).toMatch(/overdue/i);
+    expect(admin.action).toEqual({ label: "Pay now", intent: "pay" });
+    expect(admin.cardPay).toEqual({ label: "Pay $149.00", intent: "pay" });
+  });
+
+  it("day 2 with the pause enforced: no 'Update it by <date> and nothing changes' deadline", () => {
+    const s = subscriptionBannerState(owing({ autoLockHeld: true }), "admin", at(2));
+    // owing() carries a billingState-less marker; whichever strip shows, it threatens nothing
+    expect(s.copy).not.toMatch(LOCK_WORDS);
+    expect(s.copy).not.toBe("");
+  });
+
+  it("false or absent: today's copy, unchanged", () => {
+    for (const over of [{ autoLockHeld: false }, {}]) {
+      const s = subscriptionBannerState(owing(over), "admin", at(6, 2));
+      expect(s.kind).toBe("final-day");
+      expect(s.copy).toBe(
+        "Your workspace becomes read-only tomorrow. Update your payment to keep everything running.",
+      );
+      const g = subscriptionBannerState(owing(over), "admin", at(2));
+      expect(g.copy).toBe(
+        "We couldn't charge your card for November. Update it by Nov 8 and nothing changes.",
+      );
+    }
+  });
+
+  it("an already read-only workspace is untouched by the flag (that lock really happened)", () => {
+    const a = subscriptionBannerState(paused({ autoLockHeld: true }), "admin", at(9));
+    const b = subscriptionBannerState(paused(), "admin", at(9));
+    expect(a).toEqual(b);
+  });
+});

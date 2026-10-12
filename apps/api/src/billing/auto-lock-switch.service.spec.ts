@@ -10,6 +10,23 @@ function make(rows: Array<{ value: string; updatedAt: Date }> | Error) {
   return { svc: new AutoLockSwitchService(prisma), queryRaw, executeRaw };
 }
 
+/** A store whose row can be flipped between calls, like another replica writing the switch. */
+function makeStore(initial: string | Error) {
+  let current: string | Error = initial;
+  const queryRaw = jest.fn(async () => {
+    if (current instanceof Error) throw current;
+    return [{ value: current, updatedAt: new Date("2026-10-13T12:00:00.000Z") }];
+  });
+  const prisma = { $queryRaw: queryRaw, $executeRaw: jest.fn() } as any;
+  return {
+    svc: new AutoLockSwitchService(prisma),
+    queryRaw,
+    set: (v: string | Error) => {
+      current = v;
+    },
+  };
+}
+
 describe("parseAutoLockStored: paused unless the value explicitly says not", () => {
   it.each([
     [null, true],
@@ -59,8 +76,8 @@ describe("AutoLockSwitchService", () => {
     });
   });
 
-  it("caches the read (one query inside the TTL) and re-reads after invalidate()", async () => {
-    const { svc, queryRaw } = make([{ value: "false", updatedAt: new Date() }]);
+  it("caches a PAUSED read (one query inside the TTL) and re-reads after invalidate()", async () => {
+    const { svc, queryRaw } = make([{ value: '{"paused":true}', updatedAt: new Date() }]);
     await svc.isPaused();
     await svc.isPaused();
     await svc.isPaused();
@@ -75,7 +92,7 @@ describe("AutoLockSwitchService", () => {
     const spy = jest.spyOn(Date, "now");
     try {
       spy.mockReturnValue(1_000_000);
-      const { svc, queryRaw } = make([{ value: "false", updatedAt: new Date() }]);
+      const { svc, queryRaw } = make([{ value: '{"paused":true}', updatedAt: new Date() }]);
       await svc.isPaused();
       spy.mockReturnValue(1_000_000 + AutoLockSwitchService.CACHE_TTL_MS + 1);
       await svc.isPaused();
@@ -90,6 +107,49 @@ describe("AutoLockSwitchService", () => {
     expect(await svc.isPaused()).toBe(true);
     expect(await svc.isPaused()).toBe(true);
     expect(queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  describe("a re-pause takes effect on every replica at once (only PAUSED is cached)", () => {
+    let spy: jest.SpyInstance;
+    beforeEach(() => {
+      spy = jest.spyOn(Date, "now").mockReturnValue(2_000_000);
+    });
+    afterEach(() => spy.mockRestore());
+
+    it("an UNPAUSED value is never served from cache: every call re-reads the store", async () => {
+      const { svc, queryRaw } = makeStore("false");
+      expect(await svc.isPaused()).toBe(false);
+      expect(await svc.isPaused()).toBe(false);
+      expect(await svc.isPaused()).toBe(false);
+      expect(queryRaw).toHaveBeenCalledTimes(3);
+    });
+
+    it("a flip to PAUSED in the store is seen on the NEXT call, with no TTL wait", async () => {
+      const { svc, set } = makeStore("false");
+      expect(await svc.isPaused()).toBe(false); // the cache now holds (or skips) unpaused
+      set('{"paused":true,"reason":"re-pause","by":"u2"}');
+      expect(await svc.isPaused()).toBe(true); // same instant: Date.now() has not moved
+    });
+
+    it("a PAUSED value is cached within the TTL (one store read) and re-read after it", async () => {
+      const { svc, queryRaw, set } = makeStore('{"paused":true}');
+      expect(await svc.isPaused()).toBe(true);
+      set("false"); // converges only after the TTL (the safe direction)
+      spy.mockReturnValue(2_000_000 + AutoLockSwitchService.CACHE_TTL_MS - 1);
+      expect(await svc.isPaused()).toBe(true);
+      expect(queryRaw).toHaveBeenCalledTimes(1);
+      spy.mockReturnValue(2_000_000 + AutoLockSwitchService.CACHE_TTL_MS + 1);
+      expect(await svc.isPaused()).toBe(false);
+      expect(queryRaw).toHaveBeenCalledTimes(2);
+    });
+
+    it("a read error is PAUSED and not cached: the next call reads again and sees the real value", async () => {
+      const { svc, queryRaw, set } = makeStore(new Error("db down"));
+      expect(await svc.isPaused()).toBe(true);
+      set("false");
+      expect(await svc.isPaused()).toBe(false);
+      expect(queryRaw).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("setPaused upserts the JSON value, refreshes the cache at once, and returns the new state", async () => {
