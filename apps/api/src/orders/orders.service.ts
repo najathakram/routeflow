@@ -325,21 +325,16 @@ export class OrdersService implements OnApplicationBootstrap {
    * Falls back to 0 so that unconfigured tenants don't get a surprise 10% charge.
    */
   private async getTaxRate(): Promise<number> {
-    // Extracted to common/tax-rate.ts (Returns Inside Order Creation PR-1c) so
-    // InlineReturnsQuoteService's unreferenced-chunk pricing shares this exact reader
-    // instead of a second hand-rolled percent→fraction parse — same rule, one place.
+    // common/tax-rate.ts: the ONE reader (InlineReturnsQuoteService shares it).
     return currentTaxRate(this.systemConfig);
   }
 
   /**
-   * RF-4: recompute + persist each regulated line's `categoryTaxAmount` from its
-   * STORED subtotal + piece qty and the line's section (TrackedCategory) tax
-   * config, and return the order-level Σ (rounded). Non-regulated lines are 0.
-   * Category tax is a SECTION-level levy — the reporting subcategory never taxes.
-   * Mirrors create()'s per-line computation so an edited / merged order's total
-   * and per-line snapshots stay consistent with the invoice split. Runs inside
-   * the caller's transaction (uses `tx.trackedCategory` — the tx's own pooled
-   * connection, so it's safe to co-locate with the other in-tx writes).
+   * RF-4: recompute + persist each regulated line's `categoryTaxAmount` from its STORED
+   * subtotal + piece qty and the line's section (TrackedCategory) tax config (0 for an exempt
+   * customer), and return the order-level Σ (rounded). Mirrors create()'s per-line computation so
+   * an edited / merged order's total and snapshots stay consistent with the invoice split. Runs
+   * inside the caller's transaction (`tx.trackedCategory`: the tx's own pooled connection).
    */
   private async recomputeLineCategoryTaxes(
     tx: any,
@@ -372,7 +367,6 @@ export class OrdersService implements OnApplicationBootstrap {
     let sum = 0;
     for (const li of lines) {
       const cat = li.trackedCategoryId ? catMap.get(li.trackedCategoryId) : null;
-      // RF-4: a tax-exempt customer owes no levy, so the snapshot is 0 (as on the invoice).
       const amount =
         cat && !isTaxExempt
           ? computeCategoryTax({
@@ -1961,8 +1955,7 @@ export class OrdersService implements OnApplicationBootstrap {
       };
     });
 
-    // A unit-aware line computed its own levy above: an exempt customer's snapshots are 0 on every line.
-    if (isTaxExempt) for (const li of lineItemsData) li.categoryTaxAmount = 0;
+    if (isTaxExempt) for (const li of lineItemsData) li.categoryTaxAmount = 0; // unit lines priced their own levy
     subtotal = roundMoney(subtotal);
     // Opus review of 942d5d69: rounded here (not left raw) so the
     // discount-vs-subtotal comparison inside assertMoneyInvariantsOrThrow
@@ -1974,13 +1967,16 @@ export class OrdersService implements OnApplicationBootstrap {
     // RF-4: fold the regulated category tax (Σ per-line) into the order total. The
     // `tax` column stays REGULAR tax only; category tax is reconstructable from the
     // line snapshots (Σ categoryTaxAmount), so no dedicated Order column is needed.
-    const totals = orderTotalsOf(lineItemsData, {
+    const {
+      regularTax: tax,
+      categoryTax,
+      total,
+    } = orderTotalsOf(lineItemsData, {
       taxRate: await this.getTaxRate(),
       isTaxExempt,
       discount: orderDiscount,
       shipping: orderShippingFee,
     });
-    const { regularTax: tax, categoryTax, total } = totals;
 
     // B451 gap 4: reject a bounded-but-oversized discountAmount before it can
     // drive the persisted total negative. Fails fast, before any stock lock
