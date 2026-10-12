@@ -111,7 +111,8 @@ describe("Billing card states (SA-777)", () => {
     const c = screen.getByTestId("billing-card");
     expect(within(c).getByText("Overdue since Oct 1")).toBeInTheDocument();
     expect(within(c).queryAllByRole("button")).toHaveLength(0);
-    expect(c.textContent).toContain("Only an admin can pay. Your admin: Dana");
+    expect(c.textContent).toContain("Only an admin can pay. Your admin: dana@example.test");
+    expect(c.textContent).not.toContain("Dana");
     expect(within(c).getByRole("link", { name: "dana@example.test" })).toHaveAttribute(
       "href",
       "mailto:dana@example.test",

@@ -25,8 +25,8 @@ export interface BillingCardModel {
   pay: { label: string; url?: string } | null;
   /** Admin only, every state: "Payment methods & invoices" (the Stripe portal). */
   portal: boolean;
-  /** Operator only: who to ask. */
-  contact: { name: string; email: string | null } | null;
+  /** Operator only: who to ask - by email, never the admin's username (owner ruling). */
+  contact: { email: string | null } | null;
 }
 
 const PILL: Record<CardState, BillingCardModel["pill"]> = {
@@ -147,7 +147,6 @@ export function billingCardModel(
         }
       : null;
 
-  const name = view.billingContactName?.trim();
   return {
     state,
     pill: PILL[state],
@@ -156,6 +155,6 @@ export function billingCardModel(
     subTone,
     pay,
     portal: admin,
-    contact: admin ? null : { name: name || "Your admin", email: view.billingContactEmail ?? null },
+    contact: admin ? null : { email: view.billingContactEmail ?? null },
   };
 }

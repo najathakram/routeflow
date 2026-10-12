@@ -170,7 +170,7 @@ describe("billingCardModel (SA-777)", () => {
     expect(m.amountLine).toBe("Overdue since Oct 1");
     expect(m.pay).toBeNull();
     expect(m.portal).toBe(false);
-    expect(m.contact).toEqual({ name: "Dana", email: "dana@example.test" });
+    expect(m.contact).toEqual({ email: "dana@example.test" }); // never the admin's username
   });
 
   it("a missing field hides its line: no amount, no label, no 'undefined', no dash", () => {

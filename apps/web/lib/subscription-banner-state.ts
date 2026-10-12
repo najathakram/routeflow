@@ -277,7 +277,7 @@ export function subscriptionBannerState(
         tone: "amber",
         copy: admin
           ? overdueSentence(owedAmount(view))
-          : `Your subscription payment is overdue. Please let ${contact(view, false)} know.`,
+          : "Your subscription payment is overdue. Please let your admin know.",
         action: admin ? { ...payAction(view), label: "Pay now" } : null,
         dismiss: { scope: "day", key: `grace:${view.pastDueInvoiceId ?? "open"}:${dayKey(now)}` },
         live: "status",

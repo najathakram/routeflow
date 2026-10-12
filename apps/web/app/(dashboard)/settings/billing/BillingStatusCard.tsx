@@ -115,15 +115,16 @@ export function BillingStatusCard({
           )}
           {model.contact && (
             <p className="mt-3 text-[13px] leading-[18px] text-slate-600">
-              Only an admin can pay. Your admin: {model.contact.name}
-              {model.contact.email && (
+              Only an admin can pay.
+              {model.contact.email ? (
                 <>
-                  {" ("}
+                  {" Your admin: "}
                   <a className="underline" href={`mailto:${model.contact.email}`}>
                     {model.contact.email}
                   </a>
-                  {")"}
                 </>
+              ) : (
+                " Ask your admin."
               )}
             </p>
           )}

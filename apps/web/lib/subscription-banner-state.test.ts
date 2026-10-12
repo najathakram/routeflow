@@ -415,14 +415,9 @@ describe("subscriptionBannerState - pause NOT enforced (dark / off): the owner's
 
   it.each([0, 6, 30])("operator day %i: who to ask, no amount, no pay control", (day) => {
     const s = subscriptionBannerState(dark(), "staff", at(day, 3));
-    expect(s.copy).toBe("Your subscription payment is overdue. Please let Dana know.");
+    expect(s.copy).toBe("Your subscription payment is overdue. Please let your admin know.");
     expect(s.action).toBeNull();
     expect(s.tone).toBe("amber");
-  });
-
-  it("operator with no admin on file: 'your admin'", () => {
-    const s = subscriptionBannerState(dark({ billingContactName: null }), "staff", at(1));
-    expect(s.copy).toBe("Your subscription payment is overdue. Please let your admin know.");
   });
 
   it("no strip while a payment is processing, and none while the invoice is merely due", () => {
