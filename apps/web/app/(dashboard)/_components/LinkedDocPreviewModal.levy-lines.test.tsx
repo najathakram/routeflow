@@ -125,4 +125,25 @@ describe("OrderPreviewModal", () => {
     expect(row("CRV deposit")).toHaveTextContent("$2.80");
     expect(row("Order total")).toHaveTextContent("$36.88");
   });
+
+  it("shows the order's Discount and Shipping rows so the parts add up to the Order total", () => {
+    order = {
+      id: "o-2",
+      orderNumber: "ORD-2",
+      status: "PENDING",
+      subtotal: 40,
+      tax: 3.3,
+      discountAmount: 5,
+      shippingFee: "4.00",
+      total: 42.3,
+      invoices: [],
+      lineItems: [
+        { id: "l1", name: "Water", qty: 4, unitPrice: 10, subtotal: 40, status: "PENDING" },
+      ],
+    };
+    renderWithProviders(<OrderPreviewModal open onClose={() => undefined} orderId="o-2" />);
+    expect(row("Discount")).toHaveTextContent("$5.00");
+    expect(row("Shipping")).toHaveTextContent("$4.00");
+    expect(row("Order total")).toHaveTextContent("$42.30");
+  });
 });
