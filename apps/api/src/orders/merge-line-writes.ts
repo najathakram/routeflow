@@ -165,8 +165,14 @@ export function buildMergeLineWrites(
   const buckets: Array<{ productId: string; winner: MergeLine[]; losers: MergeLine[] }> = [];
   for (const vb of versionBuckets) {
     const clusters: Array<{ rep: MergeLine; winner: MergeLine[]; losers: MergeLine[] }> = [];
+    // A line with a stamped trio and a line without one never share a cluster: the unstamped one is priced at the
+    // LIVE rate by the recompute, so summing a stamped loser into it would re-price the loser's units (row 340
+    // review). Unstamped lines of one category still sum with each other, and so do equal stamped trios.
+    const stampedLine = (li: MergeLine) => !hasNullTrio(li as any) || !li.trackedCategoryId;
     const place = (li: MergeLine, asWinner: boolean) => {
-      let c = clusters.find((x) => foldTarget(x.rep, li) === "ADD");
+      let c = clusters.find(
+        (x) => foldTarget(x.rep, li) === "ADD" && stampedLine(x.rep) === stampedLine(li),
+      );
       if (!c) {
         c = { rep: li, winner: [], losers: [] };
         clusters.push(c);
@@ -177,7 +183,7 @@ export function buildMergeLineWrites(
     // cluster's representative while a stamped line exists (it would pull lines of different trios into one
     // cluster). Stamped lines (winners first) cluster among themselves; unstamped ones then attach to the first
     // cluster of their category, or form their own.
-    const stamped = (li: MergeLine) => !hasNullTrio(li as any) || !li.trackedCategoryId;
+    const stamped = stampedLine;
     const tagged = [
       ...vb.winner.map((li) => ({ li, asWinner: true })),
       ...vb.losers.map((li) => ({ li, asWinner: false })),

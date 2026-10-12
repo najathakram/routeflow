@@ -223,6 +223,24 @@ describe("MED-A/MED-B (review): clustering and pack refusal under a split", () =
   };
   const NULLS = { categoryTaxType: null, categoryTaxRate: null, categoryPriceIncludesTax: null };
 
+  const byQty = (writes: any[]) =>
+    writes.map((w: any) => ({
+      kind: w.kind,
+      qty: w.data.qty,
+      rate: w.data.categoryTaxRate ?? null,
+    }));
+
+  it("a NULL-trio winner never absorbs a STAMPED loser: its units would be re-priced at the live rate (row 340 review)", () => {
+    // winner: 5 units, no stamped trio (recompute prices it at the live rate); loser: 12 units sold at 0.05.
+    const { writes } = buildMergeLineWrites(
+      [ml({ id: "w", qty: 5, subtotal: 5, ...NULLS })],
+      [ml({ qty: 12, subtotal: 12, categoryTaxRate: 0.05 })],
+      o,
+    );
+    // the loser moves over as a line of its own with its own trio; the winner is untouched (no update, no sum 17)
+    expect(byQty(writes)).toEqual([{ kind: "create", qty: 12, rate: 0.05 }]);
+  });
+
   it("a NULL-trio winner never pulls loser lines of different trios into one sum", () => {
     const { writes } = buildMergeLineWrites(
       [ml({ id: "w", qty: 5, subtotal: 5, ...NULLS })],
@@ -232,10 +250,34 @@ describe("MED-A/MED-B (review): clustering and pack refusal under a split", () =
       ],
       o,
     );
-    const quantities = writes.map((w: any) => w.data.qty).sort((a: number, b: number) => a - b);
-    // the 0.05 and 0.08 lines are never summed together (the NULL-trio winner may take one of them)
-    expect(quantities).not.toContain(25);
-    expect(quantities.reduce((n: number, q: number) => n + q, 0)).toBeGreaterThanOrEqual(20);
+    expect(byQty(writes)).toEqual([
+      { kind: "create", qty: 12, rate: 0.05 },
+      { kind: "create", qty: 8, rate: 0.08 },
+    ]);
+  });
+
+  it("a NULL-trio LOSER moves as its own unstamped line next to a stamped winner (priced live once, not at the winner's rate)", () => {
+    const { writes } = buildMergeLineWrites(
+      [ml({ id: "w", qty: 5, subtotal: 5, categoryTaxRate: 0.05 })],
+      [ml({ qty: 3, subtotal: 3, ...NULLS })],
+      o,
+    );
+    expect(byQty(writes)).toEqual([{ kind: "create", qty: 3, rate: null }]);
+  });
+
+  it("two NULL-trio lines of one category still sum, and two equal stamped trios still sum", () => {
+    const nulls = buildMergeLineWrites(
+      [ml({ id: "w", qty: 5, subtotal: 5, ...NULLS })],
+      [ml({ qty: 3, subtotal: 3, ...NULLS })],
+      o,
+    );
+    expect(byQty(nulls.writes)).toEqual([{ kind: "update", qty: 8, rate: null }]);
+    const stamped = buildMergeLineWrites(
+      [ml({ id: "w", qty: 5, subtotal: 5, categoryTaxRate: 0.05 })],
+      [ml({ qty: 12, subtotal: 12, categoryTaxRate: 0.05 })],
+      o,
+    );
+    expect(byQty(stamped.writes)).toEqual([{ kind: "update", qty: 17, rate: null }]);
   });
 
   it("a NULL-trio LOSER listed first is not the representative either", () => {
