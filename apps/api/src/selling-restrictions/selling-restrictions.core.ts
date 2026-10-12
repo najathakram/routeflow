@@ -239,9 +239,26 @@ export function ruleStates(rule: RestrictionRuleFacts): string[] {
   return codes.some((c) => c === null) ? [] : (codes as string[]);
 }
 
-/** True when a decision could need the customer's state (so the adapter must load addresses). */
-export function anyRuleNeedsState(matched: readonly RestrictionRuleFacts[]): boolean {
-  return matched.some((r) => r.jurisdiction === "STATE" && ruleStates(r).length > 0);
+/**
+ * The ONE answer to "is a state needed?": some rule that is ACTIVE at `at`, binds `channel`, and is a STATE rule with at
+ * least one readable state. A FEDERAL rule, a lifted / expired / not-yet-effective rule, a rule for another channel and a
+ * malformed (blocks-everywhere) STATE rule never need one. `evaluate()` asks it of the rules that match the lines (so the
+ * adapter loads addresses, or the tenant's business state for the walk-in) and the readiness probe asks it of every
+ * active STATE rule of the tenant (so the business state is required ONLY when such a rule exists): one function, so the
+ * two can never disagree about what "needs a state" means.
+ */
+export function stateRuleInPlay(
+  rules: readonly RestrictionRuleFacts[],
+  channel: RestrictionChannel,
+  at: Date,
+): boolean {
+  return rules.some(
+    (r) =>
+      r.jurisdiction === "STATE" &&
+      ruleIsActive(r, at) &&
+      ruleBindsChannel(r, channel) &&
+      ruleStates(r).length > 0,
+  );
 }
 
 type AddressKind = "BILLING" | "SHIPPING" | "UNKNOWN";
