@@ -57,7 +57,7 @@ const SURFACES: ReadonlyArray<readonly [string, (e: unknown) => string, unknown,
     "Void sale dialog",
     counterVoidErrorCopy,
     COUNTER,
-    "This sale is in a closed day. Use Return items instead.",
+    "This sale is in a closed day and can't be voided. Use Return items instead.",
   ],
   // The pickup hand-over dialog: the hand-over stands, only the payment was refused.
   [
@@ -78,7 +78,7 @@ const SURFACES: ReadonlyArray<readonly [string, (e: unknown) => string, unknown,
     "Invoice page: record, edit, delete payment, check status (till write)",
     (e) => dayClosedCopy(e) ?? "",
     COUNTER,
-    "This day has been closed. Reopen the close first.",
+    "This day is closed, so this can't be changed. Record it with today's date instead.",
   ],
   [
     "Invoice page: record / edit payment (payment date)",
@@ -126,7 +126,7 @@ describe("every surface that can receive an end-of-day close refusal shows fixed
 
   it("the sentences are the ones the helpers export (no drift between a constant and its use)", () => {
     expect(COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED]).toBe(
-      "This sale is in a closed day. Use Return items instead.",
+      "This sale is in a closed day and can't be voided. Use Return items instead.",
     );
     expect(PICKUP_DAY_CLOSED_COPY).toBe(
       "Handed over. Payment not taken: the till for that day is closed.",
