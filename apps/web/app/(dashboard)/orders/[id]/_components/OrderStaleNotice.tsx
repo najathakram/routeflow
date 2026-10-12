@@ -14,6 +14,23 @@ const isStale = (err: unknown): boolean => {
   return res?.status === 409 && res.data?.code === API_ERROR_CODES.ORDER_REVISION_STALE;
 };
 
+/** What an editor is based on: the revision, the lines and the shipping fee it saw. */
+interface Snapshot<L> {
+  rev?: number;
+  lines?: L[];
+  fee?: number;
+}
+const snapshotOf = <L,>(
+  o:
+    | { revisionNumber?: number; shippingFee?: number | string | null; lineItems?: L[] }
+    | null
+    | undefined,
+): Snapshot<L> => ({
+  rev: o?.revisionNumber,
+  lines: o?.lineItems,
+  fee: o ? Number(o.shippingFee ?? 0) : undefined,
+});
+
 /**
  * Row 372 (SA-735 item 2, web half). The edit screen sends the `revisionNumber` it LOADED when edit mode opened
  * (a background refetch while typing must not move it), and a 409 ORDER_REVISION_STALE shows FIXED copy with a
@@ -22,10 +39,17 @@ const isStale = (err: unknown): boolean => {
  * lines keep the edit) and the next save is judged against it. Extracted so orders/[id]/page.tsx (pinned by size-ratchet.spec.ts) adds a hook call and a render.
  */
 export function useOrderStaleRevision<L extends { id: string } = { id: string }>(
-  order: { id: string; revisionNumber?: number; lineItems?: L[] } | undefined,
+  order:
+    | {
+        id: string;
+        revisionNumber?: number;
+        shippingFee?: number | string | null;
+        lineItems?: L[];
+      }
+    | undefined,
   editing: boolean,
-  /** After Reload: the FRESH lines and the lines the editor was last based on (MF3: rebase the edit onto them). */
-  onRebase?: (fresh: L[], base: L[]) => void,
+  /** After Reload: the FRESH snapshot and the one the editor was last based on (MF3: rebase the edit onto it). */
+  onRebase?: (fresh: Snapshot<L>, base: Snapshot<L>) => void,
 ) {
   const qc = useQueryClient();
   const [stale, setStale] = React.useState(false);
@@ -34,12 +58,12 @@ export function useOrderStaleRevision<L extends { id: string } = { id: string }>
   // never moves it. There is deliberately NO fallback to the live revision (an order that sent none at open
   // sends nothing, instead of silently judging the edit against whatever the server holds now).
   const opened = React.useMemo(
-    () => (editing ? { rev: order?.revisionNumber, lines: order?.lineItems } : undefined),
+    () => (editing ? snapshotOf(order) : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [editing],
   );
-  // Set by Reload: the revision and lines the editor is now based on.
-  const rebased = React.useRef<{ rev?: number; lines?: L[] } | null>(null);
+  // Set by Reload: the snapshot the editor is now based on.
+  const rebased = React.useRef<Snapshot<L> | null>(null);
   React.useEffect(() => {
     if (!editing) {
       rebased.current = null;
@@ -51,6 +75,8 @@ export function useOrderStaleRevision<L extends { id: string } = { id: string }>
   const expected = (): number | undefined => base?.rev;
   /** The lines this edit is judged against (edit-open, or the last Reload): never the live refetch. */
   const baseLines = (): L[] | undefined => base?.lines;
+  /** The shipping fee the editor loaded: `feeChanged` is judged against it, never the live refetch. */
+  const baseFee = (): number | undefined => base?.fee;
 
   const capture = (err: unknown): boolean => {
     if (!editing || !isStale(err)) return false;
@@ -63,12 +89,9 @@ export function useOrderStaleRevision<L extends { id: string } = { id: string }>
   const reload = async () => {
     if (!order) return;
     await qc.invalidateQueries({ queryKey: ["orders", order.id] });
-    const fresh = qc.getQueryData<{ revisionNumber?: number; lineItems?: L[] }>([
-      "orders",
-      order.id,
-    ]);
-    if (fresh?.lineItems) onRebase?.(fresh.lineItems, base?.lines ?? []);
-    rebased.current = { rev: fresh?.revisionNumber, lines: fresh?.lineItems };
+    const fresh = snapshotOf(qc.getQueryData<NonNullable<typeof order>>(["orders", order.id]));
+    if (fresh.lines) onRebase?.(fresh, base ?? snapshotOf(undefined));
+    rebased.current = fresh;
     setStale(false);
   };
 
@@ -87,5 +110,5 @@ export function useOrderStaleRevision<L extends { id: string } = { id: string }>
     </div>
   ) : null;
 
-  return { expected, baseLines, capture, ownsToast, node };
+  return { expected, baseLines, baseFee, capture, ownsToast, node };
 }

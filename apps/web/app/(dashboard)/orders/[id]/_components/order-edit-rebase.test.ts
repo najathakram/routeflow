@@ -21,10 +21,7 @@ const line = (id: string, qty: number, extra: Partial<OrderItem> = {}): OrderIte
     ...extra,
   }) as OrderItem;
 
-const deps = {
-  touched: (e: EditItemState, orig: OrderItem) => buildItemUpdates([e], [orig]).length > 0,
-  seed: buildEditItemFromLine,
-};
+const deps = { seed: buildEditItemFromLine };
 const seedAll = (ls: OrderItem[]) => ls.map(buildEditItemFromLine);
 
 describe("order edit rebase (row 372 MF3)", () => {
@@ -59,6 +56,28 @@ describe("order edit rebase (row 372 MF3)", () => {
     expect(buildItemUpdates(r.items, fresh)).toEqual([
       expect.objectContaining({ id: "b", qty: 4 }),
     ]);
+  });
+
+  it("per FIELD: the user's qty edit survives another writer's price change, and the price still refreshes", () => {
+    const edits = seedAll(base);
+    edits[0] = { ...edits[0], qty: 6 }; // the user changed a's qty only
+    const fresh = [line("a", 5, { unitPrice: 12 }), line("b", 3)]; // someone else repriced a to 12
+    const r = rebaseEditItems(edits, base, fresh, deps);
+    const a = r.items.find((i) => i.id === "a")!;
+    expect(a.qty).toBe(6); // the user's change
+    expect(a.unitPrice).toBe(12); // the other writer's change is NOT reverted
+    // the save sends only the user's qty change: the stale price is not re-sent
+    const sent = buildItemUpdates(r.items, fresh).find((u) => u.id === "a")!;
+    expect(sent).toMatchObject({ qty: 6 });
+    expect(sent).not.toHaveProperty("unitPrice");
+  });
+
+  it("a line CANCELLED at edit-open that another writer revived appears after Reload", () => {
+    const wasCancelled = [line("a", 5, { status: "CANCELLED" }), line("b", 3)];
+    const edits = seedAll([wasCancelled[1]]);
+    const fresh = [line("a", 5), line("b", 3)];
+    const r = rebaseEditItems(edits, wasCancelled, fresh, deps);
+    expect(r.items.map((i) => i.id).sort()).toEqual(["a", "b"]);
   });
 
   it("a line another writer removed is dropped (an edit of it would 409 on every save), and counted", () => {

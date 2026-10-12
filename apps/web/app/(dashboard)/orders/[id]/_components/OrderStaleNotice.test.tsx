@@ -97,13 +97,19 @@ describe("useOrderStaleRevision (row 372)", () => {
   it("Reload hands the FRESH lines and the edit-open lines to onRebase, then re-bases both", async () => {
     const onRebase = jest.fn();
     const qc = new QueryClient();
-    const open = { id: "o1", revisionNumber: 4, lineItems: [{ id: "a" }, { id: "b" }] };
+    const open = {
+      id: "o1",
+      revisionNumber: 4,
+      shippingFee: 10,
+      lineItems: [{ id: "a" }, { id: "b" }],
+    };
     qc.setQueryData(["orders", "o1"], open);
     function H({ order }: { order: any }) {
       const s = useOrderStaleRevision(order, true, onRebase);
       return (
         <div>
           <span data-testid="base">{JSON.stringify(s.baseLines())}</span>
+          <span data-testid="fee">{String(s.baseFee())}</span>
           <button onClick={() => s.capture(stale())}>fail</button>
           {s.node}
         </div>
@@ -119,15 +125,40 @@ describe("useOrderStaleRevision (row 372)", () => {
     rerender(tree({ ...open, lineItems: [{ id: "a" }, { id: "b" }, { id: "c" }] }));
     expect(screen.getByTestId("base")).toHaveTextContent('[{"id":"a"},{"id":"b"}]');
     fireEvent.click(screen.getByText("fail"));
-    const fresh = { id: "o1", revisionNumber: 7, lineItems: [{ id: "a" }, { id: "c" }] };
+    const fresh = {
+      id: "o1",
+      revisionNumber: 7,
+      shippingFee: 15,
+      lineItems: [{ id: "a" }, { id: "c" }],
+    };
     jest.spyOn(qc, "invalidateQueries").mockImplementation(async () => {
       qc.setQueryData(["orders", "o1"], fresh);
     });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Reload" }));
     });
-    expect(onRebase).toHaveBeenCalledWith(fresh.lineItems, open.lineItems);
+    expect(onRebase).toHaveBeenCalledWith(
+      expect.objectContaining({ lines: fresh.lineItems, fee: 15, rev: 7 }),
+      expect.objectContaining({ lines: open.lineItems, fee: 10, rev: 4 }),
+    );
     expect(screen.getByTestId("base")).toHaveTextContent('[{"id":"a"},{"id":"c"}]');
+    expect(screen.getByTestId("fee")).toHaveTextContent("15");
+  });
+
+  it("baseFee() is the fee the editor loaded, not a later refetch (MF3: the fee must not revert another writer)", () => {
+    const qc = new QueryClient();
+    function F({ order }: { order: any }) {
+      const s = useOrderStaleRevision(order, true);
+      return <span data-testid="fee">{String(s.baseFee())}</span>;
+    }
+    const tree = (order: any) => (
+      <QueryClientProvider client={qc}>
+        <F order={order} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree({ id: "o1", revisionNumber: 4, shippingFee: "10.00" }));
+    rerender(tree({ id: "o1", revisionNumber: 5, shippingFee: "15.00" })); // another writer's fee lands
+    expect(screen.getByTestId("fee")).toHaveTextContent("10");
   });
 
   it("outside edit mode nothing is captured and nothing is sent", () => {

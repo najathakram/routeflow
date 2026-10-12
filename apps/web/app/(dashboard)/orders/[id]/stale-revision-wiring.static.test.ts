@@ -35,8 +35,13 @@ describe("order edit sends expectedRevisionNumber (row 372)", () => {
     for (const c of calls) expect(c).toContain("stale.baseLines()");
   });
   it("Reload re-bases the edit through the shared rebase helpers (MF3)", () => {
-    expect(page).toContain("rebaseEditItems(editItems, base, fresh, REBASE_DEPS)");
-    expect(page).toContain("rebasePendingDeletes(ids, fresh)");
+    expect(page).toContain("rebaseEditItems(editItems, base.lines");
+    expect(page).toContain("rebasePendingDeletes(ids, fresh.lines");
+  });
+  it("feeChanged is judged against the fee the editor loaded at BOTH save sites, never the live refetch (MF3)", () => {
+    const sites = page.match(/const feeChanged =[^;]*;/g) ?? [];
+    expect(sites.length).toBeGreaterThanOrEqual(2);
+    for (const s of sites) expect(s).toContain("stale.baseFee()");
   });
   it("a stale 409 is captured by the notice and owns the toast", () => {
     expect(page).toContain("stale.capture(err)");

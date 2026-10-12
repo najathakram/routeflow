@@ -1,24 +1,34 @@
 /**
  * Row 372 MF3 (web). After the stale notice's Reload the page holds FRESH server lines, but the editor's own
- * `editItems` were seeded from the lines it LOADED. Diffing the two would re-send every untouched line another
- * writer changed with its stale qty/price and silently revert them. So an edit is judged against the lines
- * captured at edit-open (what the user actually saw), and Reload REBASES: lines the user did not touch are
- * re-seeded from fresh data; lines they touched keep their edit; lines another writer removed are dropped (an
- * id left in `pendingDeletes` or `editItems` for a vanished line would 409 CONCURRENT_UPDATE on every save);
- * lines another writer added appear. Pure and generic over the page's own `buildItemUpdates` /
- * `buildEditItemFromLine` (passed in: this module must not import the page).
+ * `editItems` were seeded from the lines it LOADED. Diffing the two would re-send every field another writer
+ * changed with the editor's stale value and silently revert it. So an edit is judged against the lines captured
+ * at edit-open (what the user actually saw), and Reload REBASES, per FIELD (a three-way merge of the edit row,
+ * the edit-open line and the fresh line): a field the user did not change takes the fresh value; a field they
+ * changed keeps their value. Lines another writer removed are dropped (an id left in `pendingDeletes` or
+ * `editItems` for a vanished line would 409 CONCURRENT_UPDATE on every save); lines another writer added (or
+ * revived) appear. Pure and generic over the page's own `buildEditItemFromLine` (passed in: this module must
+ * not import the page).
  */
 type Line = { id: string; status?: string | null };
 type Edit = { id: string; isNew?: boolean };
 
 export interface RebaseDeps<E extends Edit, L extends Line> {
-  /** True when `edited` differs from `orig` in anything a save would send (the page's own diff). */
-  touched: (edited: E, orig: L) => boolean;
   /** The page's seed of an edit row from a stored line. */
   seed: (line: L) => E;
 }
 
 const isLive = (l: Line) => l.status !== "CANCELLED";
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/** Three-way merge of ONE edit row: take `fresh` wherever the row still equals `base`, else keep the edit. */
+function mergeRow<E extends Edit>(edit: E, base: E, fresh: E): E {
+  const out: Record<string, unknown> = { ...fresh };
+  for (const k of Object.keys(edit)) {
+    const e = (edit as Record<string, unknown>)[k];
+    if (!same(e, (base as Record<string, unknown>)[k])) out[k] = e; // the user's own change wins
+  }
+  return out as unknown as E;
+}
 
 export function rebaseEditItems<E extends Edit, L extends Line>(
   items: E[],
@@ -42,11 +52,16 @@ export function rebaseEditItems<E extends Edit, L extends Line>(
       dropped += 1; // removed or cancelled by someone else
       continue;
     }
-    const orig = baseById.get(e.id);
-    out.push(orig && deps.touched(e, orig) ? e : deps.seed(freshLine));
+    const baseLine = baseById.get(e.id);
+    out.push(
+      baseLine ? mergeRow(e, deps.seed(baseLine), deps.seed(freshLine)) : deps.seed(freshLine),
+    );
   }
-  // a line another writer ADDED since edit-open: visible, untouched
-  for (const [id, line] of live) if (!seen.has(id) && !baseById.has(id)) out.push(deps.seed(line));
+  // a line another writer ADDED (or revived from CANCELLED) since edit-open: visible, untouched
+  for (const [id, line] of live) {
+    const b = baseById.get(id);
+    if (!seen.has(id) && (!b || !isLive(b))) out.push(deps.seed(line));
+  }
   return { items: out, dropped };
 }
 

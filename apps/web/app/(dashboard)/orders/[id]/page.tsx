@@ -815,17 +815,8 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
   return updates;
 }
 
-/** Row 372 MF3: how Reload re-bases an edit (order-edit-rebase.ts) — the page's own diff and seed. */
-const REBASE_DEPS = {
-  touched: (e: EditItemState, orig: OrderItem): boolean => {
-    try {
-      return buildItemUpdates([e], [orig]).length > 0;
-    } catch {
-      return false; // a locked unit line is never an edit
-    }
-  },
-  seed: buildEditItemFromLine,
-};
+/** Row 372 MF3: how Reload re-bases an edit (order-edit-rebase.ts) — the page's own seed of an edit row. */
+const REBASE_DEPS = { seed: buildEditItemFromLine };
 
 /**
  * BUY_N_GET_M free units for the edit preview, rescaled when the operator edits
@@ -1993,10 +1984,14 @@ export default function OrderDetailPage() {
   const [isEditing, setIsEditing] = React.useState(false);
   const overpay = useOrderOverpayGuard(order, isEditing);
   const stale = useOrderStaleRevision(order, isEditing, (fresh, base) => {
-    // row 372 MF3: Reload re-bases the edit — untouched lines refresh, touched lines keep the edit
-    const r = rebaseEditItems(editItems, base, fresh, REBASE_DEPS);
-    setEditItems(r.items);
-    setPendingDeletes((ids) => rebasePendingDeletes(ids, fresh));
+    // row 372 MF3: Reload re-bases the edit per field — what the user did not change refreshes, their own
+    // changes (lines AND the shipping fee) stay; lines another writer removed are dropped
+    const r = rebaseEditItems(editItems, base.lines ?? [], fresh.lines ?? [], REBASE_DEPS);
+    setEditItems(
+      (prev) => rebaseEditItems(prev, base.lines ?? [], fresh.lines ?? [], REBASE_DEPS).items,
+    );
+    setPendingDeletes((ids) => rebasePendingDeletes(ids, fresh.lines ?? []));
+    if (Math.abs(editShippingFee - (base.fee ?? 0)) <= 0.0001) setEditShippingFee(fresh.fee ?? 0);
     if (r.dropped > 0)
       toast({ title: `${r.dropped} line(s) were removed by someone else`, variant: "error" });
   }); // row 372
@@ -2249,7 +2244,8 @@ export default function OrderDetailPage() {
 
     // Only send shippingFee when it actually changed — avoids no-op churn (and
     // matches the API's "no dto.shippingFee ⇒ keep the stored fee" rule).
-    const feeChanged = Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
+    const feeChanged =
+      Math.abs(editShippingFee - (stale.baseFee() ?? Number(order!.shippingFee ?? 0))) > 0.0001;
 
     // #2406: fold in whatever the operator has typed into the edit-mode Returns section.
     const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
@@ -3074,7 +3070,10 @@ export default function OrderDetailPage() {
                             // way handleSaveItems does — otherwise publishing straight
                             // from edit mode silently drops the fee the operator typed.
                             const feeChanged =
-                              Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
+                              Math.abs(
+                                editShippingFee -
+                                  (stale.baseFee() ?? Number(order!.shippingFee ?? 0)),
+                              ) > 0.0001;
                             // #2406: the Returns section rides this save too, never silently dropped.
                             const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
                             if (inlineReturn === null) return;
