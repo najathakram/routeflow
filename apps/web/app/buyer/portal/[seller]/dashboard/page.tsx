@@ -80,7 +80,7 @@ function nextDeliveryLabel(daysOfWeek: number[]): string {
   return `This ${DAY_FULL[next]}`;
 }
 
-/** A paused seller: disable the control and point it at the one quiet line (the cart's Checkout does the same). */
+/** A paused seller: disable an order-creating control and point it at the one quiet line (the cart's Checkout does the same). */
 function sellerGate(accepting: boolean) {
   return accepting ? {} : { disabled: true, "aria-describedby": "seller-unavailable-line" };
 }
@@ -219,7 +219,6 @@ export default function BuyerDashboardPage() {
   // Business profiles 1B: each recent order's badge is the order detail's own label.
   const { data: capabilities, isLoading: capLoading } = useBuyerSellerCapabilities();
   const cart = useBuyerCart(buyer?.id, sellerSlug);
-  const accepting = useSellerAcceptingOrders();
   const templates: BuyerOrderTemplate[] = templatesData?.data ?? [];
 
   // P5-07: chips read the SAME /buyer/shelf payload as Your Shelf and the shop
@@ -402,8 +401,7 @@ export default function BuyerDashboardPage() {
                       thumbnailUrl: p.thumbnailUrl,
                     })
                   }
-                  {...sellerGate(accepting)}
-                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-buyer-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-buyer-500"
+                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-buyer-600 transition-colors"
                 >
                   <Plus className="h-3 w-3" /> Add
                 </button>
@@ -500,8 +498,7 @@ export default function BuyerDashboardPage() {
                       thumbnailUrl: p.thumbnailUrl,
                     })
                   }
-                  {...sellerGate(accepting)}
-                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-buyer-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-buyer-500"
+                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-buyer-600 transition-colors"
                 >
                   <Plus className="h-3 w-3" /> Add
                 </button>
@@ -558,8 +555,7 @@ export default function BuyerDashboardPage() {
                       thumbnailUrl: p.thumbnailUrl,
                     })
                   }
-                  {...sellerGate(accepting)}
-                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-buyer-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-buyer-500"
+                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-buyer-600 transition-colors"
                 >
                   <Plus className="h-3 w-3" /> Add
                 </button>
@@ -621,8 +617,7 @@ export default function BuyerDashboardPage() {
                       thumbnailUrl: p.thumbnailUrl,
                     })
                   }
-                  {...sellerGate(accepting)}
-                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-buyer-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-buyer-500"
+                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-buyer-600 transition-colors"
                 >
                   <Plus className="h-3 w-3" /> Add
                 </button>

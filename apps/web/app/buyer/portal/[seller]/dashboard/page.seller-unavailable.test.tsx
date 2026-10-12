@@ -5,8 +5,9 @@ import BuyerDashboardPage from "./page";
 
 /**
  * The buyer home reads the SAME `acceptingOrders` capability the shop and the cart read: a paused seller
- * gets the one quiet line, every Add and the standing-order Reorder are disabled with that line as their
- * reason, and a healthy / loading / unknown seller changes nothing.
+ * gets the one quiet line and the standing-order Reorder (it places an order) is disabled with that line as
+ * its reason. Add only fills the local cart, so it stays enabled exactly as on the shop. A healthy / loading /
+ * unknown seller changes nothing.
  */
 const addItem = jest.fn();
 let mockCapability: { data?: { acceptingOrders?: boolean }; isLoading: boolean } = {
@@ -93,7 +94,7 @@ beforeEach(() => {
 });
 
 describe("buyer dashboard — paused seller", () => {
-  it("paused: the one line is shown and every Add + Reorder is disabled, pointing at it", async () => {
+  it("paused: the one line is shown, Reorder is disabled pointing at it, Add stays live", async () => {
     mockCapability = { data: { acceptingOrders: false }, isLoading: false };
     render(<BuyerDashboardPage />);
 
@@ -103,15 +104,15 @@ describe("buyer dashboard — paused seller", () => {
     const adds = screen.getAllByRole("button", { name: /^add$/i });
     expect(adds).toHaveLength(4);
     for (const add of adds) {
-      expect(add).toBeDisabled();
-      expect(add).toHaveAttribute("aria-describedby", "seller-unavailable-line");
+      expect(add).toBeEnabled();
+      expect(add).not.toHaveAttribute("aria-describedby");
     }
     const reorder = screen.getByRole("button", { name: /^reorder$/i });
     expect(reorder).toBeDisabled();
     expect(reorder).toHaveAttribute("aria-describedby", "seller-unavailable-line");
   });
 
-  it("paused: a click on Add never reaches the cart and Reorder never opens the review", async () => {
+  it("paused: Add still fills the cart; Reorder never opens the review", async () => {
     mockCapability = { data: { acceptingOrders: false }, isLoading: false };
     const user = userEvent.setup();
     render(<BuyerDashboardPage />);
@@ -121,7 +122,7 @@ describe("buyer dashboard — paused seller", () => {
     }
     await user.click(screen.getByRole("button", { name: /^reorder$/i }));
 
-    expect(addItem).not.toHaveBeenCalled();
+    expect(addItem).toHaveBeenCalledTimes(4);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
