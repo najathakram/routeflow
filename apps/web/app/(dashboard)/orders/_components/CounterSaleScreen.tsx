@@ -80,6 +80,7 @@ import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
 import { isTextEntryActive } from "@/lib/refocus-scanner";
+import { scrollPageToTop } from "@/lib/scroll-top";
 import { useCounterLiveCart } from "./useCounterLiveCart";
 import { liveCartKey } from "@/lib/counter-live-cart-keys";
 import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
@@ -356,7 +357,12 @@ export function CounterSaleScreen() {
   const receiptHeadingRef = React.useRef<HTMLHeadingElement>(null);
   React.useEffect(() => {
     if (!receipt) refocus();
-    else receiptHeadingRef.current?.focus(); // POS-1: keyboard focus lands on the receipt heading
+    else {
+      // POS-1: keyboard focus lands on the receipt heading. CQ-33: without scrolling to it, and the page back at its top, so
+      // a clerk who had scrolled the sale down to the Complete buttons reads the receipt from its first line.
+      receiptHeadingRef.current?.focus({ preventScroll: true });
+      scrollPageToTop();
+    }
   }, [receipt, refocus]);
 
   const isWalkIn = customer === null;
