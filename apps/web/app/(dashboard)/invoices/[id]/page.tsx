@@ -99,7 +99,7 @@ import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
-import { isPaidAtSale } from "@/lib/invoice-sale-terms";
+import { isPaidAtSale, termsAndConditionsToShow } from "@/lib/invoice-sale-terms";
 import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
@@ -1565,6 +1565,10 @@ export default function InvoiceDetailPage() {
   const status = invoice.status;
   // CQ-26: a counter sale paid at the till has no terms or due date to show (display only; stored values untouched).
   const showTerms = !isPaidAtSale(invoice);
+  // ...and the "Terms & Conditions" row that falls back to the same payment terms text ("Net 30")
+  const termsAndConditions = termsAndConditionsToShow(
+    invoice as Parameters<typeof termsAndConditionsToShow>[0],
+  );
 
   // Draft/Final invoice-PDF stage. Default: DRAFT while it's still the
   // pre-delivery proforma; FINAL once the order is delivered or the invoice is
@@ -2408,10 +2412,10 @@ export default function InvoiceDetailPage() {
                     </span>
                   </p>
                 )}
-                {(invoice as any).terms && (
+                {termsAndConditions && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Terms &amp; Conditions:</span>{" "}
-                    {(invoice as any).terms}
+                    {termsAndConditions}
                   </p>
                 )}
                 {(invoice as any).orderNumber && (
