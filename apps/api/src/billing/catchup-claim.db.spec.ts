@@ -182,7 +182,18 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
     const oct = await rfInvoice(id, "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
     const nov = await rfInvoice(id, "2026-11-01T12:00:00Z", "2026-12-01T12:00:00Z");
     const stripe = fakeStripeCatchup({
-      sessions: { cs_paid: { id: "cs_paid", subscription: "sub_paid", status: "complete" } },
+      sessions: {
+        cs_paid: {
+          id: "cs_paid",
+          subscription: "sub_paid",
+          status: "complete",
+          // SA-733r10 MF-A: settle voids from the session's own S (never a recompute of paid coverage)
+          metadata: {
+            catchup_from: "2026-10-01T12:00:00.000Z",
+            catchup_to: "2026-12-01T12:00:00.000Z",
+          },
+        },
+      },
     });
     const { svc } = svcWith(stripe);
 
@@ -321,7 +332,18 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
     const nov = await rfInvoice(id, "2026-11-01T12:00:00Z", "2026-12-01T12:00:00Z");
     const { svc } = svcWith(
       fakeStripeCatchup({
-        sessions: { cs_r5: { id: "cs_r5", subscription: "sub_r5", status: "complete" } },
+        sessions: {
+          cs_r5: {
+            id: "cs_r5",
+            subscription: "sub_r5",
+            status: "complete",
+            // settle reads S from the session: Sep is PAID (kept), so S = Oct 1
+            metadata: {
+              catchup_from: "2026-10-01T12:00:00.000Z",
+              catchup_to: "2026-12-01T12:00:00.000Z",
+            },
+          },
+        },
       }),
     );
     await svc.onInvoicePaid({
