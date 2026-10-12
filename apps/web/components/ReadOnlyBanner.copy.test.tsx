@@ -87,3 +87,31 @@ describe("ReadOnlyBanner copy (SA-776)", () => {
     expect(container.textContent).toBe("");
   });
 });
+
+describe("ReadOnlyBanner layout (UX QA): stacked lines, a >= 44 px admin control", () => {
+  it("stacks the owner's sentence, the reason and the contact as separate lines, the contact once", () => {
+    const { container } = render(
+      <ReadOnlyBanner
+        status="READ_ONLY"
+        readOnlyReason="payment_overdue"
+        overdueAmount={149}
+        billingContactEmail="dana@acme.test"
+        isAdmin={false}
+      />,
+    );
+    const lines = container.querySelectorAll("[data-testid=read-only-line-part]");
+    expect(lines).toHaveLength(3);
+    expect(lines[1].textContent?.trim()).toBe("Your subscription payment of $149.00 is overdue.");
+    expect(lines[2].textContent?.trim()).toBe(
+      "To restore access, contact your admin (dana@acme.test).",
+    );
+    expect((container.textContent ?? "").split("dana@acme.test")).toHaveLength(2);
+  });
+
+  it("the admin's Choose a plan is a full-width (at 390) >= 44 px control", () => {
+    render(<ReadOnlyBanner status="READ_ONLY" readOnlyReason="trial_expired" isAdmin />);
+    const link = screen.getByRole("link", { name: "Choose a plan" });
+    expect(link.className).toMatch(/min-h-\[44px\]/);
+    expect(link.className).toMatch(/\bw-full\b/);
+  });
+});
