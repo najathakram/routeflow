@@ -14,6 +14,8 @@ export const CATCHUP_REFUSAL = {
   paid_after_gap: API_ERROR_CODES.CATCHUP_NEEDS_RULING,
   paid_invoice_without_period: API_ERROR_CODES.CATCHUP_NEEDS_RULING,
   no_monthly_price: API_ERROR_CODES.CATCHUP_NEEDS_RULING,
+  // SA-733r9 rule 7: the resolved plan price is <= 0, so there is nothing a card could bill
+  no_billable_price: API_ERROR_CODES.CATCHUP_NO_BILLABLE_PRICE,
   has_stripe_subscription: API_ERROR_CODES.CATCHUP_NEEDS_RULING,
   billable_addon_not_card_billable: API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE,
   addon_snapshot_not_catalog: API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
@@ -33,7 +35,9 @@ const MESSAGE: Record<string, string> = {
   [API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG]:
     "NEEDS RULING: this tenant's add-on price or quantity differs from what the card checkout would bill. Keep it on the manual path. Nothing was created.",
   [API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]:
-    "NEEDS RULING: this tenant has paid days that end part-way through a month (a partial period from an activation or a paid invoice). A catch-up would charge those days again. Keep it on the manual path until the prorated catch-up exists. Nothing was created.",
+    "NEEDS RULING: an activation on this tenant has no recorded period, so its paid days cannot be measured. A catch-up could charge days that are already paid. Keep it on the manual path until the activation is corrected. Nothing was created.",
+  [API_ERROR_CODES.CATCHUP_NO_BILLABLE_PRICE]:
+    "NEEDS RULING: this tenant's plan has no billable monthly price (zero or negative). A card subscription would bill nothing. Keep it on the manual path. Nothing was created.",
 };
 
 /** The code an internal refusal reason maps to; anything unlisted is the generic "not eligible". */
