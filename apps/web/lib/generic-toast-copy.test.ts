@@ -525,3 +525,31 @@ describe("P-4: ORDER_EDIT_WOULD_OVERPAY", () => {
     expect(copy).not.toContain(RAW);
   });
 });
+
+describe("SELLER_UNAVAILABLE (a buyer write toward a paused seller)", () => {
+  const body = {
+    code: API_ERROR_CODES.SELLER_UNAVAILABLE,
+    message: "This seller isn't taking online orders right now. Please check back soon.",
+  };
+  const SELLER_COPY =
+    "This seller isn't taking online orders right now. Please check back soon or contact them.";
+
+  it("is the seller-unavailable copy, never the generic permission line", () => {
+    expect(genericToastCopy(err(403, body))).toBe(SELLER_COPY);
+    expect(codedToastCopy(err(403, body))).toBe(SELLER_COPY);
+    expect(genericToastCopy(err(403, body))).not.toMatch(/permission/i);
+  });
+
+  it("the app-wide handler toasts it once with that copy", () => {
+    const toast = jest.fn();
+    handleMutationError(err(403, body), { meta: undefined }, toast, { push: jest.fn() });
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith({ title: SELLER_COPY, variant: "error" });
+  });
+
+  it("a plain 403 keeps the permission line (unchanged)", () => {
+    expect(genericToastCopy(err(403, { message: "Forbidden" }))).toBe(
+      "You don't have permission to do that.",
+    );
+  });
+});

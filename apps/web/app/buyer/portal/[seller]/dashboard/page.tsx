@@ -24,6 +24,7 @@ import {
   type BuyerOrderTemplate,
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
+import { isSellerUnavailableRefusal, sellerUnavailableCopy } from "@/lib/seller-unavailable";
 import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
 import {
   SellerUnavailableLine,
@@ -86,10 +87,12 @@ function sellerGate(accepting: boolean) {
 
 function StandingOrdersPanel({
   sellerSlug,
+  sellerName,
   templates,
   isLoading,
 }: {
   sellerSlug: string;
+  sellerName?: string | null;
   templates: BuyerOrderTemplate[];
   isLoading: boolean;
 }) {
@@ -113,8 +116,11 @@ function StandingOrdersPanel({
     try {
       await reorder.mutateAsync(reviewing.id);
       setReviewing(null);
-    } catch {
-      setPlaceError(REORDER_FAILED_COPY);
+    } catch (err) {
+      // A paused seller says so; every other failure keeps the fixed retry sentence.
+      setPlaceError(
+        isSellerUnavailableRefusal(err) ? sellerUnavailableCopy(sellerName) : REORDER_FAILED_COPY,
+      );
     } finally {
       setPlacing(false);
     }
@@ -328,6 +334,7 @@ export default function BuyerDashboardPage() {
       {/* Standing Orders — front and centre */}
       <StandingOrdersPanel
         sellerSlug={sellerSlug}
+        sellerName={activeSeller?.tenant.name}
         templates={templates}
         isLoading={templatesLoading}
       />
