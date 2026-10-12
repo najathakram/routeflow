@@ -100,6 +100,7 @@ import { isInShell } from "@/lib/in-shell";
 import { TimeZoneDatalist } from "@/components/TimeZoneInput";
 import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
 import { useInvalidFocus } from "@/lib/form-errors";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -886,10 +887,11 @@ function UserManagementTab() {
         <p className="text-sm text-navy/70">
           {isLoading ? "Loading..." : `${data?.meta.total ?? 0} users total`}
         </p>
-        <Button size="sm" onClick={() => setIsAddOpen(true)}>
+        <WriteButton size="sm" onClick={() => setIsAddOpen(true)}>
           Add User
-        </Button>
+        </WriteButton>
       </div>
+      <ReadOnlyHint className="text-xs text-slate-600" />
 
       <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
         <table className="w-full text-sm">

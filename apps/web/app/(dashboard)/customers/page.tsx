@@ -57,6 +57,7 @@ import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { fmt, displayEmail, NO_EMAIL_COPY } from "@/lib/formatting";
 import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
 import { WALK_IN_PROTECTED_COPY } from "./_components/walk-in-protection";
 
@@ -781,10 +782,12 @@ export default function CustomersPage() {
                 {selectMode ? "Cancel" : "Select"}
               </Button>
             )}
-            <Button onClick={() => setIsAddOpen(true)}>New Customer</Button>
+            <WriteButton onClick={() => setIsAddOpen(true)}>New Customer</WriteButton>
           </div>
         }
       />
+
+      <ReadOnlyHint className="px-1 text-xs text-slate-600" />
 
       {/* Selection action bar — never shown in the trash view (F3): the operator can only
           View + inline Restore a removed row, never bulk-act on it. */}
