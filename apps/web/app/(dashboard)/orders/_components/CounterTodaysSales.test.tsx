@@ -273,12 +273,12 @@ describe("CounterTodaysSales", () => {
     expect(within(r).getByRole("link", { name: "View order" })).toBeInTheDocument();
   });
 
-  it("Reprint opens the shared receipt view: 'Reprint · sold …', no Tendered or Change", async () => {
+  it("Reprint opens the shared receipt view: 'Reprint · Sold …', no Tendered or Change", async () => {
     await open();
     fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
     const root = await screen.findByTestId("receipt-print-root");
     expect(within(root).getByTestId("receipt-reprint")).toHaveTextContent(
-      /^Reprint · sold .*11:15 AM/,
+      /^Reprint · Sold .*11:15 AM/,
     );
     expect(within(root).getByTestId("receipt-numbers")).toHaveTextContent("Order ORD-1");
     expect(within(root).getByTestId("receipt-total")).toHaveTextContent("$22.50");

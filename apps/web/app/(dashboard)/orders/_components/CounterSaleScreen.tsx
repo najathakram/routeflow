@@ -1348,8 +1348,8 @@ export function CounterSaleScreen() {
           >
             {discounts > 0 ? (
               <div className="flex justify-between text-sm" data-testid="running-discounts">
-                <span>Discounts</span>
-                <span>-{money(discounts)}</span>
+                <span>Discount</span>
+                <span>−{money(discounts)}</span>
               </div>
             ) : null}
             <div className="flex justify-between text-lg font-semibold" data-testid="running-total">

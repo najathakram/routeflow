@@ -2375,7 +2375,7 @@ describe("digital receipt on the live receipt (SA-751r)", () => {
     expect(input.value).toBe("");
     expect(input).toHaveFocus();
     await user.type(input, "someone@example.com{Enter}");
-    expect(await screen.findByText("Sent to someone@example.com.")).toBeInTheDocument();
+    expect(await screen.findByText("Receipt sent to someone@example.com.")).toBeInTheDocument();
     expect(api.post).toHaveBeenCalledWith("/orders/o1/receipt", {
       channel: "email",
       to: "someone@example.com",
@@ -2399,7 +2399,7 @@ describe("digital receipt on the live receipt (SA-751r)", () => {
     expect(screen.getByRole("button", { name: "Send" })).toHaveFocus();
     expect(api.post).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(await screen.findByText("Sent to buyer@example.com.")).toBeInTheDocument();
+    expect(await screen.findByText("Receipt sent to buyer@example.com.")).toBeInTheDocument();
     expect(api.post).toHaveBeenCalledTimes(1); // 2 presses from the receipt: Email receipt, Send
   });
 
