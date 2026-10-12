@@ -937,15 +937,21 @@ interface RevisionRow {
   why: string;
   /** COVERED only: the BUMPS writer whose tx this one runs in. */
   via?: string;
+  /** STATUS_ONLY only, REQUIRED when the row writes line `status`: why it cannot revive a CANCELLED line. */
+  lineStatus?: string;
 }
 const REVISION_CALLS = [
   "appendOrderRevisionInTx",
   "appendMergeRevisionInTx",
-  "appendInvoiceSyncRevisionInTx",
+  "appendReopenRevisionInTx",
+  "bumpRevisionIfSaleMoved",
 ];
-/** The columns a STATUS_ONLY writer may touch: ship/delivery/invoicing state and derived stamps, never the sale. */
+/**
+ * The columns a STATUS_ONLY writer may touch: delivery/invoicing state and derived stamps, never the sale. A line
+ * `status` write can move a line between CANCELLED and live (a sale change), so it is NOT in this set: a row that
+ * writes `status` must carry a `lineStatus` reason saying why it cannot revive a line under an open editor.
+ */
 const STATUS_COLUMNS = new Set([
-  "status",
   "deliveredQty",
   "invoicedQty",
   "backorderedPieces",
@@ -964,7 +970,11 @@ const MERGE_ALL = `${U}.mergeAllPendingForCustomer`;
 const FORCE = `${U}.forceConsolidateCustomer`;
 const RECOMPUTE = "invoices/invoices.service.ts::InvoicesService.recomputeOrderFromInvoices";
 const covered = (via: string, why: string): RevisionRow => ({ kind: "COVERED", via, why });
-const statusOnly = (why: string): RevisionRow => ({ kind: "STATUS_ONLY", why });
+const statusOnly = (why: string, lineStatus?: string): RevisionRow => ({
+  kind: "STATUS_ONLY",
+  why,
+  lineStatus,
+});
 const REVISIONS: Record<string, RevisionRow> = {
   [UPDATE_ITEMS]: { kind: "BUMPS", why: "staff/buyer/driver edit: EDIT revision at the tx tail" },
   [CHANGE_REQUEST]: {
@@ -1033,11 +1043,13 @@ const REVISIONS: Record<string, RevisionRow> = {
     kind: "NOT_AN_ORDER",
     why: "the nested `lineItems` are an expense's, not an order's",
   },
-  [`${U}.reopenOrder`]: statusOnly(
-    "order status transition: line status follows it (an edit across it is refused)",
-  ),
+  [`${U}.reopenOrder`]: {
+    kind: "BUMPS",
+    why: "puts every item-CANCELLED line live again (a new sale of the whole order): SYSTEM_REOPEN revision in tx",
+  },
   "orders/order-cancel-tx.ts::cancelOrderInTx": statusOnly(
-    "order cancel: line status only (a cancelled order takes no edit)",
+    "order cancel: line status only",
+    "moves lines TO cancelled with the order; a cancelled order takes no edit, and reopenOrder (BUMPS) is the only way back",
   ),
   "orders/delivered-stamp.ts::stampDeliveredInFull": statusOnly(
     "delivery evidence (deliveredQty), not the sale",
@@ -1050,6 +1062,7 @@ const REVISIONS: Record<string, RevisionRow> = {
   ),
   "routes/routes.service.ts::RoutesService.reopenStop": statusOnly(
     "delivery undo (deliveredQty/status), not the sale",
+    "its where-clause is `status: { not: CANCELLED }`: it only moves live lines between delivery states",
   ),
   "orders/backorder-marker-writes.ts::writeValues": statusOnly(
     "backorder marker (backorderedPieces)",
@@ -1115,6 +1128,20 @@ function orderItemWriteKeys(node: ts.Node, sf: ts.SourceFile): string[] {
 function namedUnits(file: string, sf: ts.SourceFile): Map<string, ts.Node> {
   const out = new Map<string, ts.Node>();
   for (const [name, m] of classMethods(sf)) out.set(`${file}::${name}`, m);
+  const visitClass = (n: ts.Node) => {
+    if (ts.isClassDeclaration(n) && n.name) {
+      for (const m of n.members) {
+        if (
+          ts.isPropertyDeclaration(m) &&
+          m.initializer &&
+          (ts.isArrowFunction(m.initializer) || ts.isFunctionExpression(m.initializer))
+        )
+          out.set(`${file}::${n.name.text}.${m.name.getText(sf)}`, m.initializer);
+      }
+    }
+    ts.forEachChild(n, visitClass);
+  };
+  visitClass(sf);
   for (const st of sf.statements) {
     if (ts.isFunctionDeclaration(st) && st.name && st.body) out.set(`${file}::${st.name.text}`, st);
     if (ts.isVariableStatement(st)) {
@@ -1198,10 +1225,28 @@ describe("every order-lines writer moves the order revision or is classified (ro
       const [file] = k.split("::");
       const sf = sourceFiles.get(file)!;
       const keys = orderItemWriteKeys(namedUnits(file, sf).get(k)!, sf);
-      const off = keys.filter((c) => !STATUS_COLUMNS.has(c));
+      // `status` can move a line between CANCELLED and live: only with a declared reason it cannot revive one
+      const off = keys.filter((c) => !STATUS_COLUMNS.has(c) && !(c === "status" && r.lineStatus));
       if (keys.length === 0 || off.length > 0)
         bad.push(`${k}: ${keys.join(",") || "no literal data"}`);
     }
     expect(bad).toEqual([]);
+  });
+
+  it("no raw SQL writes an OrderItem outside the classified Prisma writers (the predicate cannot see it)", () => {
+    const raw = /(UPDATE\s+"OrderItem"|DELETE\s+FROM\s+"OrderItem"|INSERT\s+INTO\s+"OrderItem")/i;
+    const hits = [...sourceFiles.entries()]
+      .filter(([file]) => !/(^|\/)testing\//.test(file))
+      .filter(([, sf]) => raw.test(sf.text))
+      .map(([file]) => file);
+    expect(hits).toEqual([]);
+  });
+
+  it("class-property arrow functions are enumerated too (a writer cannot hide in one)", () => {
+    const sf = parse(
+      "inline.ts",
+      "class A { w = async (tx: any) => { await tx.orderItem.update({ data: { qty: 1 } }); }; }",
+    );
+    expect([...namedUnits("inline.ts", sf).keys()]).toContain("inline.ts::A.w");
   });
 });

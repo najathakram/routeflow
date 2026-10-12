@@ -33,6 +33,7 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
   appendMergeRevisionInTx,
   appendOrderRevisionInTx,
+  appendReopenRevisionInTx,
   attachRevisionNumber,
 } from "./order-revisions";
 import {
@@ -2795,7 +2796,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // Re-take exactly what the cancel credited back (order-stock.ts).
         await restoreStockForReopen(this.stockDeps(), tx, id, cancelledLines);
 
-        return tx.order.update({
+        const reopened = await tx.order.update({
           where: { id },
           data: {
             status: OrderStatus.PENDING,
@@ -2808,11 +2809,10 @@ export class OrdersService implements OnApplicationBootstrap {
             customer: { select: { id: true, businessName: true } },
           },
         });
-        // Headroom over Prisma's 5s default, matching every other
-        // settleStockForEdit call site (:3053, :4755) — the re-decrement above runs
-        // that helper's per-product lock/read/write loop.
+        await appendReopenRevisionInTx(tx, this.prisma.getTenantId(), id); // row 372: lines went live again
+        return reopened;
       },
-      { timeout: 15_000 },
+      { timeout: 15_000 }, // headroom: the stock re-decrement above runs settleStockForEdit's per-product loop
     );
   }
 

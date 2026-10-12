@@ -15,7 +15,7 @@ import * as path from "path";
  */
 const SRC = path.resolve(__dirname, "..");
 const CALLER_TX_CALL =
-  /(?<!async\s+)\bcreateInvoiceFromOrder\(\s*[^,()]+,\s*(?!undefined\b|null\b)[^\s,)]/;
+  /(?<!async\s+)\bcreateInvoiceFromOrder\(\s*(?:[^,()]|\([^()]*\))+,\s*(?!undefined\b|null\b)[^\s,)]/;
 const read = (f: string) => fs.readFileSync(path.join(SRC, f), "utf8");
 
 describe("createInvoiceFromOrder's callerTx callers hold the Order lock first (row 372, MUST 1a)", () => {

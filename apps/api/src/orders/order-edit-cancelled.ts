@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
+import { latestEditRevisionNumber } from "./order-revisions";
 
 /**
  * SA-422 (#2320) — a buyer order edit must never revive a seller-CANCELLED line.
@@ -145,9 +146,14 @@ export function assertHeldCancelledLines(
   if (hit) throw refusal(hit.productId, null);
 }
 
-/** `updateOrderItems`'s response shape: the order with its lines (creation order) and products. */
-export function readEditedOrder(prisma: Pick<PrismaService, "forTenant">, orderId: string) {
-  return prisma.forTenant().order.findUnique({
+/**
+ * `updateOrderItems`'s response shape: the order with its lines (creation order) and products, plus the
+ * `revisionNumber` the edit just produced (row 372) — the web caches this response, and an editor re-opened
+ * before the refetch lands must be based on it, not on a missing revision.
+ */
+export async function readEditedOrder(prisma: Pick<PrismaService, "forTenant">, orderId: string) {
+  const db = prisma.forTenant();
+  const order = await db.order.findUnique({
     where: { id: orderId },
     include: {
       customer: { select: { id: true, businessName: true, contactName: true } },
@@ -159,4 +165,5 @@ export function readEditedOrder(prisma: Pick<PrismaService, "forTenant">, orderI
       transaction: true,
     },
   });
+  return order ? { ...order, revisionNumber: await latestEditRevisionNumber(db, orderId) } : order;
 }

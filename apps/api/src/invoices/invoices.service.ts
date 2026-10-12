@@ -71,9 +71,9 @@ import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { stampMsrpSnapshots } from "./msrp-snapshots";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
-import { appendInvoiceSyncRevisionInTx } from "../orders/order-revisions";
 import {
   checkOrderCoverage,
+  bumpRevisionIfSaleMoved,
   finalizeOrderRecompute,
   resolveProductMatches,
   withOrderRecomputeLock,
@@ -2263,6 +2263,7 @@ export class InvoicesService {
       );
     }
     const db = tx;
+    await lockOrderRow(db, this.prisma.getTenantId(), orderId); // row 372 MF2: serialize with edits' revisions
     const order = await db.order.findUnique({
       where: { id: orderId },
       include: { lineItems: true },
@@ -2366,11 +2367,14 @@ export class InvoicesService {
       ambiguousLineIds,
     });
     logSkippedMatches(this.logger, orderId, freeformSkipped, coverage);
-    if (!coverage.fullyCovered) return coverage.totals;
+    const touched = { lines: false }; // row 372 MF2: any order line sale field written below
+    if (!coverage.fullyCovered) {
+      await bumpRevisionIfSaleMoved(db, tenantId, order, coverage.totals, touched);
+      return coverage.totals;
+    }
 
     let subtotal = 0;
     let categoryTaxSum = 0;
-    const touched = { lines: false }; // row 372 MF2: any order line written below
     for (const [key, agg] of byTarget) {
       const existing = agg.line;
       const lineSubtotal = roundMoney(agg.subtotal);
@@ -2454,7 +2458,7 @@ export class InvoicesService {
       touched,
     });
     // Row 372 MF2: an invoice edit that rewrote the order's lines moves its revision (an open editor is stale).
-    if (touched.lines) await appendInvoiceSyncRevisionInTx(db, tenantId, orderId);
+    await bumpRevisionIfSaleMoved(db, tenantId, order, totals, touched);
     return totals;
   }
 

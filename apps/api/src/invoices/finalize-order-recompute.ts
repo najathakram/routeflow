@@ -1,3 +1,4 @@
+import { appendInvoiceSyncRevisionInTx } from "../orders/order-revisions";
 import { ServiceUnavailableException } from "@nestjs/common";
 import { holdsValues } from "./order-backsync-lines";
 import { Prisma } from "@prisma/client";
@@ -365,4 +366,21 @@ export async function finalizeOrderRecompute(params: {
     });
   }
   return { orderId, subtotal, tax, total, shippingFee: shippingFeeSum };
+}
+
+/**
+ * Row 372 MF2: the invoice back-sync moved what an open order editor sees when a sale field of a line was
+ * written (`touched.lines`) or the order's fee moved (a header fee edit syncs onto it even while the lines stay
+ * gated by coverage): then the order's revision moves in the same tx, so the editor goes stale instead of
+ * silently reverting it. `invoicedQty` / levy-only normalisation never reaches here as `touched`.
+ */
+export async function bumpRevisionIfSaleMoved(
+  db: Prisma.TransactionClient,
+  tenantId: string | null,
+  order: { id: string; shippingFee?: unknown },
+  totals: { shippingFee: number },
+  touched: { lines: boolean },
+): Promise<void> {
+  const feeMoved = totals.shippingFee !== (Number(order.shippingFee ?? 0) || 0);
+  if (touched.lines || feeMoved) await appendInvoiceSyncRevisionInTx(db, tenantId, order.id);
 }

@@ -145,6 +145,7 @@ export async function appendOrderRevisionInTx(
 /** Row 372 MF2: sources of a revision no operator edit produced (the order's lines changed under an editor). */
 export const SYSTEM_MERGE_REVISION = "SYSTEM_MERGE";
 export const SYSTEM_INVOICE_SYNC_REVISION = "SYSTEM_INVOICE_SYNC";
+export const SYSTEM_REOPEN_REVISION = "SYSTEM_REOPEN";
 
 /**
  * Row 372 MF2: the ONE in-tx bump for a writer that changes an order's LINES without an operator edit, so
@@ -178,7 +179,14 @@ export const appendMergeRevisionInTx = (
   winnerId: string,
 ) => appendSystemRevisionInTx(tx, tenantId, winnerId, SYSTEM_MERGE_REVISION);
 
-/** An invoice edit back-synced the order's lines (`recomputeOrderFromInvoices`). */
+/** A reopen put every item-CANCELLED line back live (a new sale of the whole order). */
+export const appendReopenRevisionInTx = (
+  tx: Prisma.TransactionClient,
+  tenantId: string | null,
+  orderId: string,
+) => appendSystemRevisionInTx(tx, tenantId, orderId, SYSTEM_REOPEN_REVISION);
+
+/** An invoice edit back-synced the order's lines or fee (`recomputeOrderFromInvoices`). */
 export const appendInvoiceSyncRevisionInTx = (
   tx: Prisma.TransactionClient,
   tenantId: string | null,

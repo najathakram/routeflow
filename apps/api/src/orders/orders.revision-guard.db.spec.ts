@@ -129,15 +129,16 @@ describeDb("row 372 (SA-735 items 2-4): the order edit guards, real Postgres", (
       },
     };
   }
-  /** Wait until some backend is blocked on a lock (the edit reached the Order FOR UPDATE). */
-  async function waitUntilBlocked(timeoutMs = 8000) {
+  /** Wait until `n` backends are blocked on a lock (every edit reached the Order FOR UPDATE), never just one. */
+  async function waitUntilBlocked(n = 1, timeoutMs = 8000) {
     const t0 = Date.now();
     for (;;) {
       const { rows: r } = await pool.query(
-        `SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database() LIMIT 1`,
+        `SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()`,
       );
-      if (r.length > 0) return;
-      if (Date.now() - t0 > timeoutMs) throw new Error("the edit never blocked on the Order lock");
+      if (r[0].n >= n) return;
+      if (Date.now() - t0 > timeoutMs)
+        throw new Error(`only ${r[0].n}/${n} edits blocked on the Order lock`);
       await new Promise((res) => setTimeout(res, 50));
     }
   }
@@ -304,7 +305,7 @@ describeDb("row 372 (SA-735 items 2-4): the order edit guards, real Postgres", (
       );
     const a = settle(3);
     const b = settle(7);
-    await waitUntilBlocked();
+    await waitUntilBlocked(2); // BOTH edits queued on the held lock before it is released
     await lock.release(true); // both queued on the Order lock, both holding r0
     const results = await Promise.all([a, b]);
     const won = results.filter((r) => r.ok);
