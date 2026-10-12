@@ -1,6 +1,7 @@
 import type { SubscriptionView } from "@routeflow/types";
 import {
   billingMoney,
+  isReadOnlyView,
   isSettling,
   owedAmount,
   payAmountOf,
@@ -57,7 +58,7 @@ const BRANDS: Record<string, string> = {
 const brand = (b: string) => BRANDS[b.toLowerCase()] ?? b.charAt(0).toUpperCase() + b.slice(1);
 
 function stateOf(view: SubscriptionView): CardState | null {
-  if (view.status === "READ_ONLY") return "read-only";
+  if (isReadOnlyView(view)) return "read-only";
   if (view.paymentProcessing === true || view.billingState === "processing") return "processing";
   if (view.billingState === "overdue") return "overdue";
   if (view.billingState === "due") return "due";

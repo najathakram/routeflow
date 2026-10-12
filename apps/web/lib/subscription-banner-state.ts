@@ -185,6 +185,9 @@ export const owedAmount = (view: SubscriptionView): number | null => {
 export const payAmountOf = (view: SubscriptionView): number | null =>
   view.payNowAmount != null && view.payNowAmount > 0 ? view.payNowAmount : owedAmount(view);
 
+/** The workspace is read-only (the status word is spelled here only, never in the card model: error-code parity). */
+export const isReadOnlyView = (view: SubscriptionView): boolean => view.status === "READ_ONLY";
+
 /** A payment is settling (a bank debit): nothing more to pay, so no Pay control invites a double payment. */
 export const isSettling = (view: SubscriptionView): boolean =>
   view.paymentProcessing === true || view.billingState === "processing";
