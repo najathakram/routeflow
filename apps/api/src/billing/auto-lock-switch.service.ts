@@ -56,9 +56,12 @@ export function parseAutoLockStored(raw: string | null | undefined): {
  * billing crons and the Stripe webhook need it, and `PlatformAdminModule` already imports `BillingModule`, so a
  * back edge would be a module cycle (the precedent is `entitlements-mode.service.ts`).
  *
- * `isPaused()` is read on every automatic lock decision, so it is cached for at most 30 s per process and
- * `setPaused` refreshes the local cache at once (another replica converges within the TTL). A read error is
- * treated as PAUSED: a database that cannot answer must never be the reason a tenant is locked.
+ * `isPaused()` is read on every automatic lock decision. Only a PAUSED answer is cached (at most 30 s per
+ * process): an UNPAUSED answer is never served from cache, so a re-pause takes effect on every replica on its
+ * very next lock decision (one primary-key read per decision; the crons are hourly and the webhook rare).
+ * After an unpause another replica may keep serving its cached `paused` for up to the TTL - the safe
+ * direction. `setPaused` refreshes the local cache at once. A read error is treated as PAUSED and is not
+ * cached: a database that cannot answer must never be the reason a tenant is locked.
  */
 @Injectable()
 export class AutoLockSwitchService implements AutoLockSwitch {
@@ -88,7 +91,10 @@ export class AutoLockSwitchService implements AutoLockSwitch {
         reason: parsed.reason,
         by: parsed.by,
       };
-      this.cached = { value: state, expiresAt: now + AutoLockSwitchService.CACHE_TTL_MS };
+      // Cache ONLY paused: an unpaused result must be re-read so a re-pause is seen at once.
+      this.cached = state.paused
+        ? { value: state, expiresAt: now + AutoLockSwitchService.CACHE_TTL_MS }
+        : null;
       return state;
     } catch (err) {
       this.logger.error(
