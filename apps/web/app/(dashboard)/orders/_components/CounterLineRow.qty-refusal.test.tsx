@@ -62,6 +62,34 @@ describe("CounterLineRow typed quantity refusals (CQ-12)", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("a clean whole number the screen did not take (locked, sale in flight) shows no made-up reason", () => {
+    const onQty = jest.fn(() => false);
+    render(
+      <ul>
+        <CounterLineRow
+          line={base}
+          locked={false}
+          onStep={() => undefined}
+          onRemove={() => undefined}
+          onNote={() => undefined}
+          onQty={onQty}
+        />
+      </ul>,
+    );
+    const field = screen.getByRole("spinbutton", { name: "Set quantity of Cola" });
+    fireEvent.change(field, { target: { value: "5" } });
+    fireEvent.blur(field);
+    expect(onQty).toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(field).toHaveValue(3);
+  });
+
+  it("1e3 gets the generic whole-number line, not 'at least 1'", () => {
+    const { field } = mount();
+    type(field, "1e3");
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a whole number from 1.");
+  });
+
   it("Escape drops the draft and any message", () => {
     const { field } = mount();
     type(field, "0");

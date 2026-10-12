@@ -1,4 +1,5 @@
 import {
+  QTY_FORMAT_COPY,
   QTY_NEGATIVE_COPY,
   QTY_NOT_A_NUMBER_COPY,
   QTY_NOT_WHOLE_COPY,
@@ -33,14 +34,21 @@ describe("qtyRefusalMessage (CQ-12)", () => {
     ["99999999999999999999", "qty", QTY_TOO_LARGE_COPY],
     ["0", "boxes", QTY_ZERO_BOXED_COPY],
     ["1.5", "pieces", QTY_NOT_WHOLE_COPY],
+    ["1e3", "qty", QTY_FORMAT_COPY],
+    ["+5", "qty", QTY_FORMAT_COPY],
   ] as const)("%j in a %s field reads %j", (text, kind, copy) => {
     expect(qtyRefusalMessage(text, kind)).toBe(copy);
   });
 
+  it("has nothing to say about a clean whole number (a refusal then came from a locked line or a sale in flight)", () => {
+    expect(qtyRefusalMessage("5", "qty")).toBeNull();
+    expect(qtyRefusalMessage(" 12 ", "boxes")).toBeNull();
+  });
+
   it("explains exactly the texts setLineQty refuses (and none it accepts would reach it)", () => {
-    for (const text of ["0", "-2", "abc", "", "1.5", " "]) {
+    for (const text of ["0", "-2", "abc", "", "1.5", " ", "1e3"]) {
       expect(setLineQty(plain, { qty: text })).toBeNull();
-      expect(qtyRefusalMessage(text, "qty").length).toBeGreaterThan(0);
+      expect(qtyRefusalMessage(text, "qty")?.length).toBeGreaterThan(0);
     }
     for (const text of ["1", "7", " 4 "]) expect(setLineQty(plain, { qty: text })).not.toBeNull();
     // a boxed line: zero boxes AND zero pieces leaves nothing, so the single zero is refused only in total
