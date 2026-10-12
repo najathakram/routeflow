@@ -46,4 +46,27 @@ describe("one pairing helper for the buyer, staff and driver edits (row 373b)", 
     walk(path.resolve(__dirname, ".."));
     expect(offenders).toEqual([]);
   });
+
+  it("a new OrderItem builder cannot bypass the helper: the writing files are a closed set, and createUnitLine overlays carriedLine", () => {
+    const writers: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (/\.ts$/.test(e.name) && !/\.(spec|test)\.ts$/.test(e.name)) {
+          if (/\borderItem\.(create|createMany)\(/.test(fs.readFileSync(p, "utf8")))
+            writers.push(path.relative(path.resolve(__dirname, ".."), p));
+        }
+      }
+    };
+    walk(path.resolve(__dirname, ".."));
+    // A NEW file that writes OrderItems must be classified here (and carry a paired line's snapshot through
+    // pairEditLines' `sourceLineId` / `carriedLine`) before it can land.
+    expect(writers.sort()).toEqual([
+      "invoices/invoices.service.ts",
+      "orders/orders.service.ts",
+      "orders/unit-line-edit.ts",
+    ]);
+    expect(read("unit-line-edit.ts")).toContain("item.carriedLine");
+  });
 });

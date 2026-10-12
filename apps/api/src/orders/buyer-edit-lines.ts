@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { carriedLineFor } from "./carry-line-category";
 import { foldTarget, liveTrioFor, type FoldTrio } from "./fold-target";
 
 /**
@@ -39,6 +40,9 @@ export interface StoredEditLine extends FoldTrio {
   boxes?: unknown;
   pieces?: unknown;
   unitLabel?: string | null;
+  overrideReason?: string | null;
+  unitPrice?: unknown;
+  createdAt?: Date | string | null;
 }
 
 export interface BuyerEditEntry {
@@ -49,11 +53,21 @@ export interface BuyerEditEntry {
   unitLabel?: string | null;
   orderItemId?: string;
   sourceLineId?: string;
+  /**
+   * INTERNAL (never a DTO field: `forbidNonWhitelisted` rejects it from a client): what a paired line carries
+   * from its stored line (category, trio, createdAt), set by the ONE pairing helper. A builder that cannot read
+   * `sourceLineId` through `existingLineById` (the unit-aware `createUnitLine`) overlays this instead.
+   */
+  carriedLine?: Record<string, unknown>;
+  unitPrice?: number;
+  overrideReason?: string | null;
 }
 
 export interface ResolveBuyerEditArgs {
   /** Receives, per output entry, the index of the input entry it came from (a split yields two for one input). */
   trace?: number[];
+  /** A DRIVER's `qty` denomination is the product-wide gate, not the entry's own split (piecesDenominated). */
+  role?: "BUYER" | "STAFF" | "DRIVER";
   items: BuyerEditEntry[];
   lineItems: ReadonlyArray<StoredEditLine>;
   liveTrioByProduct: ReadonlyMap<string, FoldTrio>;
@@ -162,16 +176,50 @@ export function resolveBuyerEditLines(args: ResolveBuyerEditArgs): BuyerEditEntr
     }
     const upb = upbByProduct.get(productId) ?? 0;
     // Row 355: the write path reads the entry like its OWN line (an explicit split is pieces too).
-    const payloadInPieces = upb > 1 && (isBoxSplit(it) || isBoxSplit(own));
+    // A DRIVER's entry is read by the product-wide gate (piecesDenominated ignores its own boxes/pieces).
+    const payloadInPieces =
+      upb > 1 &&
+      (args.role === "DRIVER"
+        ? live.some((l) => l.productId === productId && isBoxSplit(l))
+        : isBoxSplit(it) || isBoxSplit(own));
     const have = storedQtyInPayloadUnits(own, payloadInPieces, upb);
-    const want = Number(it.qty ?? 0);
+    // `want` in the unit the write path uses: an explicit boxes/pieces split is the authority (the SAME normaliser
+    // as the write), never a stale `qty` typed beside it.
+    const want =
+      payloadInPieces && args.role !== "DRIVER" && isBoxSplit(it)
+        ? normalizeBoxesPieces({
+            qty: it.qty,
+            boxes: it.boxes,
+            pieces: it.pieces,
+            unitsPerBox: upb,
+          }).qty
+        : Number(it.qty ?? 0);
     const live2: FoldTrio = liveTrioByProduct.get(productId) ?? { trackedCategoryId: null };
+    const carriedLine = carriedLineFor([own as never], { sourceLineId: own.id }, productId);
     if (want > have && foldTarget(own, live2) === "SPLIT") {
-      push({ ...withQty(rest, have, upb, payloadInPieces), sourceLineId: own.id });
-      push(withQty(rest, want - have, upb, payloadInPieces)); // a sale made today: its own live line
+      push({
+        ...withQty(rest, have, upb, payloadInPieces),
+        sourceLineId: own.id,
+        carriedLine,
+      });
+      // a sale made today: its own live line. It keeps the stored line's override reason when the entry echoes
+      // that line's price, so the price guard that accepted the carried half does not 400 the added half.
+      const echoesStored =
+        rest.overrideReason == null &&
+        own.overrideReason &&
+        rest.unitPrice !== undefined &&
+        Number(rest.unitPrice) === Number(own.unitPrice);
+      push(
+        withQty(
+          echoesStored ? { ...rest, overrideReason: own.overrideReason } : rest,
+          want - have,
+          upb,
+          payloadInPieces,
+        ),
+      );
       continue;
     }
-    push({ ...rest, sourceLineId: own.id });
+    push({ ...rest, sourceLineId: own.id, carriedLine });
   }
   return out;
 }
@@ -361,6 +409,7 @@ export function pairEditLines<T extends BuyerEditEntry & { id?: string }>(
     upbByProduct,
     allowIdlessFallback: true,
     trace,
+    role,
   });
   // Keep the ORIGINAL entry objects (updateOrderItems keys its per-item unit rows by object identity): the first
   // output of an input writes its pairing back onto that object; a split's extra half is a new entry.
@@ -376,6 +425,9 @@ export function pairEditLines<T extends BuyerEditEntry & { id?: string }>(
     seen.add(i);
     const orig = originals[i];
     if (r.sourceLineId !== undefined) orig.sourceLineId = r.sourceLineId;
+    if (r.carriedLine !== undefined) orig.carriedLine = r.carriedLine;
+    if (r.overrideReason !== undefined && r.overrideReason !== orig.overrideReason)
+      orig.overrideReason = r.overrideReason;
     if (r.qty !== orig.qty && r.qty !== undefined) orig.qty = r.qty;
     if ((r.boxes ?? null) !== (orig.boxes ?? null)) orig.boxes = r.boxes;
     if ((r.pieces ?? null) !== (orig.pieces ?? null)) orig.pieces = r.pieces;

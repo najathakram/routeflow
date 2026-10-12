@@ -192,7 +192,15 @@ export async function createUnitLine(
     position,
     tenantId: ctx.tenantId,
   });
-  await ctx.tx.orderItem.create({ data: { orderId, ...built } });
+  // Row 373b: a line paired with a stored line (the ONE pairing helper sets `carriedLine`) keeps that line's
+  // category, trio and createdAt: a re-created unit line is not a new sale.
+  await ctx.tx.orderItem.create({
+    data: {
+      orderId,
+      ...built,
+      ...((item.carriedLine as Record<string, unknown> | undefined) ?? {}),
+    },
+  });
 }
 
 /**

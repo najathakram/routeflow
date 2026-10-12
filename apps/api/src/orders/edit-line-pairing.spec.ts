@@ -93,4 +93,62 @@ describe("pairEditLines (row 373b)", () => {
     const out = pair([{ productId: "p1", qty: 4, id: "gone" }], []);
     expect(out[0].sourceLineId).toBeUndefined();
   });
+
+  // review fold: the split's unit and its added half
+  const boxed = { id: "p1", unitsPerBox: 6, trackedCategoryId: "cat-1" };
+  const pairBoxed = (items: any[], lines: any[], rate: string, role: any) => {
+    const dto = { items, replaceAll: true } as any;
+    pairEditLines(dto, { lineItems: lines }, new Map([["p1", boxed]]), liveCat(rate), role, {
+      buyerLineIds: true,
+    });
+    return dto.items as any[];
+  };
+
+  it("want is read through normalizeBoxesPieces: an explicit boxes/pieces split wins over a stale qty", () => {
+    // stored box-split line: 2 boxes of 6 = 12 pieces at 0.05; live rate is 0.08
+    const line = stored("L1", { boxes: 2, pieces: 0, qty: 12, unitLabel: null });
+    // entry says qty 12 (stale) but names 3 boxes + 0 pieces = 18 pieces: 6 added
+    const out = pairBoxed(
+      [{ productId: "p1", id: "L1", qty: 12, boxes: 3, pieces: 0 }],
+      [line],
+      "0.0800",
+      "STAFF",
+    );
+    expect(out).toHaveLength(2);
+    expect(out[1].sourceLineId).toBeUndefined();
+    expect(out[1].qty).toBe(6);
+  });
+
+  it("a DRIVER entry is denominated by the product-wide gate, not its own boxes/pieces", () => {
+    // 2 packs stored as a box-unaware line (qty 2 selling units); the entry sends qty 5 + boxes 5 (a pack count).
+    // The write path reads a driver's qty by the PRODUCT gate (no box-split line stored => selling units): 5 > 2.
+    const line = stored("L1", { qty: 2 });
+    const out = pairBoxed(
+      [{ productId: "p1", id: "L1", qty: 5, boxes: 5 }],
+      [line],
+      "0.0800",
+      "DRIVER",
+    );
+    expect(out).toHaveLength(2);
+    expect(out[1].qty).toBe(3);
+  });
+
+  it("the split's added half keeps the stored line's override reason when the entry echoes its price", () => {
+    const line = stored("L1", { unitPrice: 7, overrideReason: "agreed price" });
+    const out = pair([{ productId: "p1", id: "L1", qty: 20, unitPrice: 7 }], [line], "0.0800");
+    expect(out).toHaveLength(2);
+    expect(out[1].overrideReason).toBe("agreed price");
+    // a DIFFERENT price is a new decision: the reason is not borrowed
+    const other = pair([{ productId: "p1", id: "L1", qty: 20, unitPrice: 9 }], [line], "0.0800");
+    expect(other[1].overrideReason).toBeUndefined();
+  });
+
+  it("a paired entry carries its stored line's category, trio and createdAt for builders that cannot read sourceLineId", () => {
+    const out = pair([{ productId: "p1", id: "L1", qty: 12 }], [stored("L1")]);
+    expect(out[0].carriedLine).toMatchObject({
+      trackedCategoryId: "cat-1",
+      categoryTaxType: "EXCISE_PER_UNIT",
+      createdAt: T1,
+    });
+  });
 });

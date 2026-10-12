@@ -477,6 +477,43 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
     expect("categoryPriceIncludesTax" in data).toBe(false);
   });
 
+  it("row 373b: a staff replace-all converting a paired pack line to Case keeps the STORED trio and createdAt, never the live rate", async () => {
+    const SOLD_AT = new Date("2026-09-01T09:00:00Z");
+    // a stored PACK line (no unit label) of the regulated product, sold at 0.3; the live rate is 0.5 now
+    const storedPack = {
+      ...existingRegulatedCaseLine,
+      id: "li-pack-reg",
+      unitLabel: null,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      qty: 2,
+      createdAt: SOLD_AT,
+    };
+    prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, lineItems: [storedPack] });
+    prisma.product.findMany.mockResolvedValue([regulatedCaseProduct]);
+    prisma.product.findUniqueOrThrow.mockResolvedValue(regulatedCaseProduct);
+    prisma.productUnit.findMany.mockResolvedValue([regulatedCaseLadderRow]);
+    prisma.trackedCategory.findMany.mockResolvedValue([liveCategory]);
+
+    await service.updateOrderItems(
+      "ord-1",
+      {
+        replaceAll: true,
+        items: [{ id: "li-pack-reg", productId: "prod-case-reg", unitLabel: "Case", qty: 2 }],
+      } as never,
+      operatorPayload as never,
+    );
+
+    const made = prisma.orderItem.create.mock.calls
+      .map((c: any) => c[0].data)
+      .find((d: any) => d.productId === "prod-case-reg");
+    expect(made).toBeDefined();
+    expect(made.unitLabel).toBe("Case");
+    expect(made.categoryTaxRate).toBe(0.3);
+    expect(made.createdAt).toEqual(SOLD_AT);
+  });
+
   it("B297 (SA-098a): substituting to a regulated Case product re-stamps the trio from the NEW product's live category", async () => {
     prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, lineItems: [existingPackLine] });
     prisma.product.findMany.mockResolvedValue([regulatedCaseProduct]);
