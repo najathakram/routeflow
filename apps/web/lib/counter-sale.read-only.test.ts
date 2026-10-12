@@ -1,3 +1,4 @@
+import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
 import { counterSaleErrorCopy, isDefinitiveCounterSaleRefusal } from "./counter-sale";
 
 /**
@@ -5,7 +6,7 @@ import { counterSaleErrorCopy, isDefinitiveCounterSaleRefusal } from "./counter-
  * never the generic "you don't have permission" (the 401 / 403 branch used to win). It is still a DEFINITIVE refusal:
  * the guard rejects before the handler runs, so nothing was written and the cart stays.
  */
-const LINE = "Not available while read-only. Your admin can restore it.";
+const LINE = READ_ONLY_SENTENCE; // SA-776: the one shared owner's sentence
 const readOnly403 = {
   response: { status: 403, data: { code: "READ_ONLY", message: "RAW GUARD TEXT" } },
 };
