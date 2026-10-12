@@ -168,6 +168,7 @@ export function AutoLocksCard() {
             </label>
             <input
               id={reasonId}
+              aria-label="Reason for the change"
               type="text"
               value={reason}
               maxLength={REASON_MAX}
