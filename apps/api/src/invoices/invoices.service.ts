@@ -33,6 +33,7 @@ import {
 } from "./payment-image";
 import {
   computeLineSubtotal,
+  copyCategoryTaxSnapshot,
   roundMoney,
   normalizeBoxesPieces,
   remainingCapacity,
@@ -987,11 +988,11 @@ export class InvoicesService {
       // zero the regular tax on any order-derived invoice.
       taxRate: 0,
       subtotal,
-      // Phase 4 (W4): carry the line's regulated category onto the invoice line so
-      // the split can group by it and reporting/ledger can read it. B297 row 373 (SA-734r2 r-note 8): the order
-      // line's own snapshot, VERBATIM. An uncategorised line stays uncategorised (with its stored levy), whatever
-      // its product's category is now; the copier never re-files a line under the live product. A pre-snapshot
-      // line is stamped by the provable backfill, not guessed here.
+      // Phase 4 (W4): carry the line's regulated category onto the invoice line so the split can group by it
+      // and reporting/ledger can read it. B297 row 373 (SA-734r2 r-note 8): the order line's own snapshot,
+      // VERBATIM. An uncategorised line stays uncategorised (with its stored levy), whatever its product's
+      // category is now: the copier never re-files a line under the live product. (A pre-snapshot line is
+      // therefore invoiced as the order recorded it; no backfill of OrderItem categories exists today.)
       trackedCategoryId: li.trackedCategoryId ?? null,
       // RF-3: reporting-only subcategory snapshot, mirroring trackedCategoryId (verbatim, never the product's).
       trackedSubcategoryId: li.trackedSubcategoryId ?? null,
@@ -1100,7 +1101,7 @@ export class InvoicesService {
     // line added to the order after its create-time guard (buyer merge) or a license
     // that EXPIRED between order creation and invoicing. Runs before any invoice row
     // is written (inside the tx), so a block never half-creates. Category resolves
-    // from the line snapshot or the live product (mirrors buildInvoiceItemData).
+    // from the line snapshot or, for this GUARD only, the live product (a license check reads the current state).
     // orderId is passed so ORDER-scoped §8 overrides apply.
     await this.authGuard.assertAuthorizedOrThrow({
       customerId: order.customerId,
@@ -2393,6 +2394,11 @@ export class InvoicesService {
             subtotal: lineSubtotal,
             // RF-4: mirror the billed category tax back onto the new order line.
             categoryTaxAmount: lineCategoryTax,
+            // B297 row 373: ...and the category, subcategory and rate trio it was billed under: the source
+            // (invoice) line's own snapshot, never the live product (every order <-> invoice copier carries it).
+            trackedCategoryId: agg.sample?.trackedCategoryId ?? null,
+            trackedSubcategoryId: agg.sample?.trackedSubcategoryId ?? null,
+            ...copyCategoryTaxSnapshot(agg.sample ?? {}),
             promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
             invoicedQty: shape.qty,
             status: "PENDING",

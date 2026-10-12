@@ -296,9 +296,9 @@ export const COPIERS: Copier[] = [
   // 2273-2420, callers 3540/3601/6342 = invoice edit and status flows). It UPDATES an existing order line, and
   // CREATES a new OrderItem when an invoice line has a productId and matches no order line. Only the CREATE
   // branch is checked here (delegate orderItem.create). CREATE loses name, priceType (falls to the column
-  // default STANDARD even for a promo line), originalPrice, notes, unitLabel, position, and both tracked ids
-  // although the aggregate sample carries them; readers fall back to the LIVE product (invoices.service.ts
-  // 990/1018/1099), the same "live re-derive" class as C1's description, not a new leak.
+  // default STANDARD even for a promo line), originalPrice, notes, unitLabel and position. Row 373: the category,
+  // subcategory and rate trio are carried from the invoice line (the order -> invoice copier no longer falls
+  // back to the live product, so an uncategorised new order line would stay uncategorised).
   // UNVERIFIED: UPDATE forces status PENDING and invoicedQty = qty on EVERY recompute; whether that flips a
   // DELIVERED or CANCELLED line is untraced (status and invoicedQty sit under `reset` until it is).
   {
@@ -308,22 +308,18 @@ export const COPIERS: Copier[] = [
     target: "OrderItem",
     anchor: { via: "delegate", model: "orderItem" },
     carried:
-      "productId qty unitPrice subtotal boxes pieces unitsPerBox unitLabel categoryTaxAmount promoFreeUnits",
+      "productId qty unitPrice subtotal boxes pieces unitsPerBox unitLabel categoryTaxAmount promoFreeUnits " +
+      "trackedCategoryId trackedSubcategoryId categoryTaxType categoryTaxRate categoryPriceIncludesTax", // row 373
     // SA-716: a line rebuilt from invoice lines has no sale-time stock history — backorderedPieces stays 0.
     reset: "priceType status invoicedQty backorderedPieces",
-    rederived: "name trackedSubcategoryId compositionMode recipeId recipeVersion",
+    rederived: "name compositionMode recipeId recipeVersion",
     components: "rederived", // #2717 M3: syncOrderLineCompositions runs right after the back-sync loop
     na: "deliveredQty overrideReason overriddenBy",
     gaps: {
       ...P0A_LABELS,
-      trackedCategoryId: "B767", // CREATE carries categoryTaxAmount without its category attribution
       originalPrice: "unfiled",
       notes: "unfiled",
       position: "unfiled",
-      // B297: CREATE carries the invoice lines' categoryTaxAmount but not the trio it was priced at.
-      categoryTaxType: "B835",
-      categoryTaxRate: "B835",
-      categoryPriceIncludesTax: "B835",
     },
   },
   // Client copiers: NOT column-checked (the spec is API-side; a request body is not a Prisma model).

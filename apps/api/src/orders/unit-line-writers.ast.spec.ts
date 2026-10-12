@@ -209,9 +209,9 @@ const INVENTORY: Record<string, Row> = {
   "invoices/invoices.service.ts::InvoicesService.recomputeOrderFromInvoices": {
     kind: "SYNC_BACK",
     why: "reachable for a unit-aware line only through invoices.update (guarded) or a single-invoice re-price (multiplier from the line itself)",
-    // B767 (documented gap, not fixed here — owned by Lane F's #1274): its two write sites
-    // (an update() and a create()) carry categoryTaxAmount without trackedCategoryId, so no
-    // trioVia here either — deliberately unmarked, not an oversight.
+    // Row 373 (closes B767 / B835): its CREATE carries the category, subcategory and rate trio from the invoice
+    // line (the source line's own snapshot), via copyCategoryTaxSnapshot.
+    trioVia: ["copyCategoryTaxSnapshot"],
   },
   "invoices/invoices.service.ts::InvoicesService.resyncOrderInvoicesForEdit": {
     kind: "FIELD_ONLY",

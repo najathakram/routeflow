@@ -237,4 +237,73 @@ describe("InvoicesService — B667 round 5", () => {
     );
     expect(warned).toBe(true);
   });
+
+  // B297 row 373 (review fold): the invoice -> order copier (C17) carries the invoice line's category, subcategory
+  // and rate trio onto the order line it CREATES, like every other order <-> invoice copier. Without it the new
+  // order line is uncategorised (373a removed the live-product fallback), and the next reconcile bills it
+  // uncategorised, dropping a regulated line out of its SEPARATE_INVOICE group.
+  it("recomputeOrderFromInvoices: a NEW order line made from an invoice line carries that line's category and trio", async () => {
+    const l1 = { id: "l1", productId: "p1", status: "PENDING", qty: 4, invoicedQty: 0 };
+    prisma.order.findUnique.mockResolvedValue({
+      id: "order1",
+      status: "PENDING",
+      subtotal: 40,
+      tax: 0,
+      total: 40,
+      shippingFee: 0,
+      lineItems: [l1],
+    });
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv1",
+        shippingFee: 0,
+        items: [
+          {
+            id: "ii-l1", // covers the existing order line, so the recompute runs (B667 coverage)
+            orderItemId: "l1",
+            productId: "p1",
+            qty: 4,
+            subtotal: 40,
+            categoryTaxAmount: 0,
+            promoFreeUnits: 0,
+            unitPrice: 10,
+          },
+          {
+            id: "ii-new",
+            orderItemId: null,
+            productId: "p9", // no order line matches: becomes a NEW order line
+            qty: 3,
+            subtotal: 30,
+            categoryTaxAmount: 1.5,
+            promoFreeUnits: 0,
+            unitPrice: 10,
+            trackedCategoryId: "cat-1",
+            trackedSubcategoryId: "sub-1",
+            categoryTaxType: "EXCISE_PER_UNIT",
+            categoryTaxRate: "0.0500",
+            categoryPriceIncludesTax: false,
+          },
+        ],
+      },
+    ]);
+    prisma.deliveryMutation.findMany.mockResolvedValue([]);
+    prisma.orderItem.update.mockResolvedValue({});
+    prisma.orderItem.create.mockResolvedValue({});
+    prisma.order.update.mockResolvedValue({});
+
+    await service.recomputeOrderFromInvoices("order1", prisma);
+
+    const created = prisma.orderItem.create.mock.calls
+      .map((c: any) => c[0].data)
+      .find((d: any) => d.productId === "p9");
+    expect(created).toBeDefined();
+    expect(created).toMatchObject({
+      trackedCategoryId: "cat-1",
+      trackedSubcategoryId: "sub-1",
+      categoryTaxType: "EXCISE_PER_UNIT",
+      categoryTaxRate: 0.05,
+      categoryPriceIncludesTax: false,
+      categoryTaxAmount: 1.5,
+    });
+  });
 });
