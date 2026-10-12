@@ -1,3 +1,4 @@
+import { readOnlyLine } from "@/lib/subscription-banner-state";
 import * as React from "react";
 import type { SubscriptionView } from "@routeflow/types";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
@@ -53,8 +54,9 @@ jest.mock("@/lib/api/counter-sale", () => ({
 }));
 
 const view = (status: "ACTIVE" | "READ_ONLY") =>
-  ({ status, billingContactName: "Dana" }) as SubscriptionView;
-const LINE = "Not available while read-only. Dana can restore it.";
+  ({ status, billingContactEmail: "dana@example.test" }) as unknown as SubscriptionView;
+// SA-776: the one line is the shared read-only copy (the owner's sentence, then who to ask by e-mail), never a name.
+const LINE = readOnlyLine(view("READ_ONLY"), false);
 
 const scan = async (text: string) => {
   const field = screen.getByLabelText("Scan or search items");
