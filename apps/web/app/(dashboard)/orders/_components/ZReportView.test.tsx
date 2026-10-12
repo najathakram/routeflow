@@ -237,17 +237,19 @@ describe("ZReportView", () => {
   });
 });
 
-describe("ZReportView: actions (Print, Email, Close)", () => {
+describe("ZReportView: actions (Close, Email, Print)", () => {
   const actions = () => screen.getByTestId("z-actions");
 
-  it("puts Print first and primary, then Email, then Close, in a footer pinned below the report", () => {
+  it("puts Print LAST and primary (the app's footer convention), after Close and Email, in a footer pinned below the report", () => {
     renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
     const buttons = within(actions()).getAllByRole("button");
-    expect(buttons.map((b) => b.textContent)).toEqual(["Print", "Email", "Close"]);
-    // Print is the primary action: the filled variant, Email and Close the quiet one
-    expect(buttons[0].className).toMatch(/bg-accent-strong/);
+    expect(buttons.map((b) => b.textContent)).toEqual(["Close", "Email", "Print"]);
+    // Print is the primary action: the filled variant, Close and Email the quiet one
+    expect(buttons[0].className).not.toMatch(/bg-accent-strong/);
     expect(buttons[1].className).not.toMatch(/bg-accent-strong/);
-    expect(buttons[2].className).not.toMatch(/bg-accent-strong/);
+    expect(buttons[2].className).toMatch(/bg-accent-strong/);
+    // rightmost, like a Modal footer
+    expect(actions().className).toMatch(/justify-end/);
     // pinned footer: the Modal's own footer region, outside the scrolling body, after the report
     expect(
       screen.getByTestId("z-report").compareDocumentPosition(actions()) &

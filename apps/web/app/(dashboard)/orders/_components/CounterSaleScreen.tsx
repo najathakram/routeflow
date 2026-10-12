@@ -210,7 +210,7 @@ export function CounterSaleScreen() {
     customerFindRef,
     awaitingCustomerRef,
   });
-  // Fixing the tender clears the "less than the total" message and ONLY that one (never a server or final-sale error).
+  // Fixing the tender clears the "Enter at least $X" message and ONLY that one (never a server or final-sale error).
   const clearUnderpaidError = () => setError((e) => (isTenderShortCopy(e) ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
   // SA-748 section 1: the unfinished cart survives a refresh (restored UNLOCKED; a held attempt always wins).
@@ -1035,6 +1035,7 @@ export function CounterSaleScreen() {
               aria-label="Scan or search items"
               className="min-h-[44px] w-full rounded border px-3 py-2 text-base"
               placeholder="Scan or type an item"
+              aria-describedby="counter-scan-hint"
               value={scanText}
               disabled={lineLocked}
               onChange={(e) => {
@@ -1063,8 +1064,9 @@ export function CounterSaleScreen() {
               </span>
             ) : null}
           </form>
-          <p className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
-            Type a quantity first to multiply the next scan.
+          {/* The multiply tip lives under the field: in the placeholder it was cut off at 390px. */}
+          <p id="counter-scan-hint" className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
+            Type a quantity first to multiply.
           </p>
           {scanCue ? (
             <p

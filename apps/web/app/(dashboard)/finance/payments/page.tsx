@@ -19,6 +19,7 @@ import { useInvoices, type InvoiceStatus } from "@/lib/api/invoices";
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { clampAllocationInput } from "@/lib/payment-allocation";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { useCustomers } from "@/lib/api/customers";
 import { useToast, EmptyState, Button, Badge } from "@routeflow/ui/web";
 import Link from "next/link";
@@ -519,8 +520,13 @@ export default function FinancePaymentsPage() {
       await voidPayment.mutateAsync(voidConfirm);
       toast({ title: "Payment voided", variant: "success" });
       setVoidConfirm(null);
-    } catch {
-      toast({ title: "Failed to void payment", variant: "error" });
+    } catch (err: unknown) {
+      // The global toast is quiet for a closed-day refusal (the hook's meta): this one says why, once.
+      toast({
+        title: "Failed to void payment",
+        description: dayClosedCopy(err) ?? undefined,
+        variant: "error",
+      });
     }
   };
 

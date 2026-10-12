@@ -1491,6 +1491,22 @@ describe("CounterSaleScreen: API contract wiring", () => {
       expect(screen.getByTestId("change-due")).toHaveTextContent("Change $17.50");
     });
 
+    it("row 345: the multiply tip is the scan field's accessible description, in a hint line under the form", () => {
+      renderWithProviders(<CounterSaleScreen />);
+      const field = screen.getByLabelText("Scan or search items");
+      expect(field).toHaveAttribute("placeholder", "Scan or type an item");
+      const hint = screen.getByTestId("scan-hint");
+      expect(hint).toHaveTextContent("Type a quantity first to multiply.");
+      // the field keeps its accessible name and gains the tip as its description
+      expect(field).toHaveAccessibleDescription("Type a quantity first to multiply.");
+      // under the field, outside the form
+      expect(hint.closest("form")).toBeNull();
+      expect(
+        screen.getByTestId("counter-scan-bar").compareDocumentPosition(hint) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+
     it("the receipt's total is prominent and is the server's number", async () => {
       mutateAsync.mockResolvedValue({
         orderId: "o1",

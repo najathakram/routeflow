@@ -439,7 +439,7 @@ describe("CounterDayClose: the closed state", () => {
     expect(within(dialog).queryAllByRole("listitem")).toHaveLength(0);
   });
 
-  it("View Z carries Print, Email and Close; Close returns to the sheet", async () => {
+  it("View Z carries Close, Email and Print (Print last); Close returns to the sheet", async () => {
     withClose({ reportSent: true });
     await openSheet();
     fireEvent.click(await screen.findByRole("button", { name: "View Z report" }));
@@ -449,7 +449,7 @@ describe("CounterDayClose: the closed state", () => {
       within(actions)
         .getAllByRole("button")
         .map((b) => b.textContent),
-    ).toEqual(["Print", "Email", "Close"]);
+    ).toEqual(["Close", "Email", "Print"]);
     fireEvent.click(within(actions).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(screen.queryByTestId("z-report")).toBeNull());
     expect(screen.getByRole("dialog", { name: "Today's sales" })).toBeInTheDocument();
@@ -565,7 +565,7 @@ describe("CounterDayClose: the closed state", () => {
     await screen.findByTestId("day-close-form");
     expect(screen.queryByRole("dialog", { name: "Reopen this day?" })).toBeNull();
     expect(post).not.toHaveBeenCalled();
-    // owner ruling 10-12 wording for what an edit does
+    // row 345 wording for what an edit does (the owner-ruled sentence R4.2 shipped)
     expect(
       screen.getByText("Sales times stay the same. A corrected Z report is emailed."),
     ).toBeInTheDocument();
@@ -689,6 +689,14 @@ describe("CounterDayClose: Edit count (reopen, then close again)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Edit count" }));
     return screen.findByTestId("day-close-form");
   };
+
+  it("row 345: the help line says sales times stay the same and a corrected Z report is emailed", async () => {
+    closedWithQuietNextWindow();
+    await openEdit();
+    const dialog = screen.getByRole("dialog", { name: "Edit count" });
+    expect(dialog).toHaveTextContent("Sales times stay the same. A corrected Z report is emailed.");
+    expect(dialog).not.toHaveTextContent("The window stays the same");
+  });
 
   it("opens the count form prefilled from the stored close, float locked, and posts nothing yet", async () => {
     closedWithQuietNextWindow();

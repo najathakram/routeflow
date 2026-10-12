@@ -1,4 +1,5 @@
 import {
+  dayCloseDateLabel,
   explainedTaxRatePercent,
   formatReceiptMoney,
   receiptLineAmounts,
@@ -328,19 +329,12 @@ const REPRINT_METHOD_LABEL: Record<ReprintTender, string> = {
  * string: a value Intl does not know would throw a RangeError and break the receipt, so it falls back to UTC.
  * An absent zone is UTC too (never the browser's zone, SA-738).
  */
-/**
- * "Sun, Oct 11, 2:46 PM" in the given zone: the reprint's "Sold ..." label. Same zone rules as `formatSaleTime` (an unusable
- * zone falls back to UTC, an absent one is UTC, never the browser's).
- */
-export function formatSaleDayTime(at: string | Date, timeZone: string = "UTC"): string {
+export function formatSaleTime(at: string | Date, timeZone: string = "UTC"): string {
   const d = at instanceof Date ? at : new Date(at);
   const format = (zone: string | undefined) =>
     new Intl.DateTimeFormat("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
+      dateStyle: "medium",
+      timeStyle: "short",
       timeZone: zone,
     }).format(d);
   try {
@@ -350,14 +344,23 @@ export function formatSaleDayTime(at: string | Date, timeZone: string = "UTC"): 
   }
 }
 
-export function formatSaleTime(at: string | Date, timeZone: string = "UTC"): string {
+/**
+ * "Sun, Oct 11, 2:46 PM": the day label is the shared `dayCloseDateLabel` (the one the Z report title uses), read from the
+ * sale's own calendar day in the sale's zone, then the time of day in that zone. Same zone fallback as `formatSaleTime`.
+ */
+export function formatSaleDayTime(at: string | Date, timeZone: string = "UTC"): string {
   const d = at instanceof Date ? at : new Date(at);
-  const format = (zone: string | undefined) =>
-    new Intl.DateTimeFormat("en-US", {
-      dateStyle: "medium",
-      timeStyle: "short",
+  const format = (zone: string) => {
+    // en-CA prints a calendar date as YYYY-MM-DD, which is what dayCloseDateLabel reads.
+    const day = new Intl.DateTimeFormat("en-CA", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
       timeZone: zone,
     }).format(d);
+    const time = new Intl.DateTimeFormat("en-US", { timeStyle: "short", timeZone: zone }).format(d);
+    return `${dayCloseDateLabel(day)}, ${time}`;
+  };
   try {
     return format(timeZone);
   } catch {
