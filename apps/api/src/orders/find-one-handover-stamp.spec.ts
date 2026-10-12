@@ -166,6 +166,7 @@ describe("InvoicesService.findOne: the hand-over stamp on the order stub (row 34
       fulfillPath: true,
       shippedAt: true,
       registerKey: true,
+      deliveredAt: true, // the hand-over time on the staff line
       soldBy: { select: { username: true } },
     });
     expect(out.order).toMatchObject({ registerKey: "reg-2", handedOverBy: "pat" });

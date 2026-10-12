@@ -80,9 +80,13 @@ describe("invoice header hand-over stamp (row 342)", () => {
     seedSession("OPERATOR");
     mockInvoice = invoice(HANDED);
     renderWithProviders(<InvoiceDetailPage />);
-    expect(screen.getByTestId("hand-over-stamp")).toHaveTextContent(
-      "Handed over at register main by Pat",
-    );
+    expect(screen.getByTestId("hand-over-stamp")).toHaveTextContent("Handed over by Pat · main");
+  });
+  it("an unstamped register (null) reads as main", () => {
+    seedSession("TENANT_ADMIN");
+    mockInvoice = invoice({ ...HANDED, registerKey: null, handedOverBy: null, soldBy: null });
+    renderWithProviders(<InvoiceDetailPage />);
+    expect(screen.getByTestId("hand-over-stamp")).toHaveTextContent("Handed over · main");
   });
   it("a customer session never sees it", () => {
     seedSession("CUSTOMER");

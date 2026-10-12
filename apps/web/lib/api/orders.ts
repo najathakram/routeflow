@@ -53,6 +53,8 @@ export interface Order {
   registerKey?: string | null;
   /** Row 342, staff reads only: the cashier's display name the API built once; null = none stamped. */
   handedOverBy?: string | null;
+  /** Row 342: the moment the hand-over moved the order to DELIVERED (the stamp line's time). */
+  deliveredAt?: string | null;
   /** Row 342, staff reads only: the cashier relation (the API selects the username). */
   soldBy?: HandOverSoldBy | null;
   urgent: boolean;

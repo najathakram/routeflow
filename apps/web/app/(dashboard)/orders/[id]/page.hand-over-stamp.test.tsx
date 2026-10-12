@@ -5,7 +5,7 @@ import { seedSession } from "@/test-utils/session";
 import OrderDetailPage from "./page";
 
 /**
- * Row 342: a handed-over order's header says where and by whom ("Handed over at register main by Pat"). Staff reads only: a
+ * Row 342: a handed-over order's header says where and by whom ("Handed over by Pat · main"). Staff reads only: a
  * customer session sees nothing, and an order that was not handed over (or has no stamp) shows nothing.
  */
 const get = jest.fn();
@@ -50,10 +50,13 @@ const order = (extra: Record<string, unknown> = {}) => ({
 });
 
 type Role = "OPERATOR" | "TENANT_ADMIN" | "CUSTOMER" | null;
-const open = async (role: Role, extra: Record<string, unknown> = {}) => {
+const open = async (role: Role, extra: Record<string, unknown> = {}, timezone?: string) => {
   seedSession(role);
   get.mockImplementation((url: string) =>
-    Promise.resolve({ data: url === "/orders/o1" ? order(extra) : [] }),
+    Promise.resolve({
+      data:
+        url === "/orders/o1" ? order(extra) : url === "/settings" && timezone ? { timezone } : [],
+    }),
   );
   render(
     <Providers>
@@ -73,15 +76,25 @@ describe("order header hand-over stamp (row 342)", () => {
       handedOverBy: "Pat",
       soldBy: { username: "Pat" },
     });
-    expect(screen.getByTestId("hand-over-stamp")).toHaveTextContent(
-      "Handed over at register main by Pat",
-    );
+    expect(screen.getByTestId("hand-over-stamp")).toHaveTextContent("Handed over by Pat · main");
   });
   it("staff: register only when no cashier is stamped", async () => {
     await open("TENANT_ADMIN", { registerKey: "main", handedOverBy: null, soldBy: null });
     const stamp = screen.getByTestId("hand-over-stamp");
-    expect(stamp).toHaveTextContent("Handed over at register main");
+    expect(stamp).toHaveTextContent("Handed over · main");
     expect(stamp).not.toHaveTextContent(" by ");
+  });
+  it("staff: an unstamped register (null) reads as main", async () => {
+    await open("OPERATOR", { registerKey: null, handedOverBy: "Pat", soldBy: { username: "Pat" } });
+    expect(screen.getByTestId("hand-over-stamp")).toHaveTextContent("Handed over by Pat · main");
+  });
+  it("staff: the hand-over time in the business's zone once it is known", async () => {
+    await open(
+      "OPERATOR",
+      { registerKey: "main", handedOverBy: "Pat", deliveredAt: "2026-10-07T15:14:00.000Z" },
+      "America/New_York",
+    );
+    await screen.findByText("Handed over by Pat · main · Oct 7, 2026, 11:14 AM");
   });
   it("a customer session never sees it, even if a stamp rode the payload", async () => {
     await open("CUSTOMER", { registerKey: "main", handedOverBy: "Pat" });

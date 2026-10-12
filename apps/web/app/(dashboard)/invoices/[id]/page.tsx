@@ -98,6 +98,8 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
 import { HandOverStamp } from "@/components/HandOverStamp";
+import { seesHandOverStamp } from "@/lib/handover-stamp";
+import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
@@ -1421,6 +1423,7 @@ export default function InvoiceDetailPage() {
   const setCheckStatus = useSetCheckStatus();
   const unapplyCreditNote = useUnapplyCreditNote();
   const { user } = useAuth();
+  const stampZone = useTenantTimeZone(seesHandOverStamp(user?.role)); // row 342: the hand-over time
   // A store-only business is POS-forced: its order is handed over, never delivered (the draft's wording follows).
   const { capability: fulfilmentCapability } = useCounterSaleGate();
   const mirrorCopy = pendingMirrorCopy(isStoreOnly(fulfilmentCapability));
@@ -2029,7 +2032,7 @@ export default function InvoiceDetailPage() {
           {/* Row 342: where and by whom the linked order was handed over (staff reads only) */}
           {invoice.order ? (
             <div className="mt-0.5">
-              <HandOverStamp order={invoice.order} role={user?.role} />
+              <HandOverStamp order={invoice.order} role={user?.role} timeZone={stampZone} />
             </div>
           ) : null}
         </div>

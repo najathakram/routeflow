@@ -1,7 +1,8 @@
 import { cashierNameOf } from "@routeflow/pricing";
+import { formatSaleTime } from "@/lib/counter-receipt";
 
 /**
- * Row 342: "Handed over at register main by Pat" on the staff order / invoice detail. Read-only: the stamp is what the API
+ * Row 342: "Handed over by Pat · main · Oct 7, 2026, 11:14 AM" on the staff order / invoice detail. Read-only: the stamp is what the API
  * sent (`registerKey`, `handedOverBy`, the `soldBy` cashier), staff reads only; a buyer's read has none of them.
  */
 
@@ -16,11 +17,13 @@ export interface HandOverSoldBy {
 
 /** The slice of an order (or an invoice's linked `order`) the stamp reads. */
 export interface HandOverStampSource {
-  /** the register the order was handed over at (null/absent = not stamped) */
+  /** the register the order was handed over at (null = unstamped, read as "main"; absent = the read carries no stamp) */
   registerKey?: string | null;
   /** the display name the API built once (`cashierNameOf` of the cashier's username); null = none */
   handedOverBy?: string | null;
   soldBy?: HandOverSoldBy | null;
+  /** the moment the hand-over moved the order to DELIVERED (an ISO instant); absent / null = no time on the line */
+  deliveredAt?: string | null;
 }
 
 /** The roles that run the till and see who handed an order over (the server's staff set; anything else fails closed). */
@@ -48,16 +51,27 @@ export function handOverStampName(order: HandOverStampSource | null | undefined)
   return full || null;
 }
 
+/** The register an unstamped hand-over belongs to (the server's own default, as Today's sales rows read it). */
+const DEFAULT_REGISTER = "main";
+
 /**
- * The quiet info line: `Handed over at register main by Pat`, `Handed over at register main` (no cashier stamped),
- * `Handed over by Pat` (no register stamped), or null when neither is present.
+ * The quiet info line: `Handed over by Pat · main · Oct 7, 2026, 11:14 AM`; pieces the order does not carry are left out
+ * (`Handed over · main` with no cashier stamped). A staff read sends `registerKey: null` for an unstamped order, which reads
+ * as "main"; an ABSENT `registerKey` (an older API, or a read that carries no stamp) with no cashier is null, and with a
+ * cashier only reads `Handed over by Pat`. The time is shown in the business's own zone and ONLY when that zone is known
+ * (never a time in the browser's zone); a time alone is not a stamp.
  */
-export function handOverStampLine(order: HandOverStampSource | null | undefined): string | null {
+export function handOverStampLine(
+  order: HandOverStampSource | null | undefined,
+  timeZone?: string | null,
+): string | null {
   if (!order) return null;
-  const register = clean(order.registerKey);
   const name = handOverStampName(order);
-  if (!register && !name) return null;
-  return `Handed over${register ? ` at register ${register}` : ""}${name ? ` by ${name}` : ""}`;
+  if (order.registerKey === undefined && !name) return null;
+  const register =
+    order.registerKey === undefined ? null : (clean(order.registerKey) ?? DEFAULT_REGISTER);
+  const at = order.deliveredAt && timeZone ? formatSaleTime(order.deliveredAt, timeZone) : null;
+  return ["Handed over" + (name ? ` by ${name}` : ""), register, at].filter(Boolean).join(" · ");
 }
 
 /**

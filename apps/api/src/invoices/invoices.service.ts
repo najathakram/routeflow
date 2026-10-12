@@ -3056,8 +3056,9 @@ export class InvoicesService {
             orderNumber: true,
             fulfillPath: true,
             shippedAt: true,
-            // row 342: "Handed over at register main by Pat" (the cashier relation is staff only)
+            // row 342: "Handed over by Pat · main · 11:14 AM" (the cashier relation is staff only)
             registerKey: true,
+            deliveredAt: true,
             ...(seesHandOverStamp(user) ? { soldBy: HANDOVER_SOLD_BY_SELECT } : {}),
           },
         },

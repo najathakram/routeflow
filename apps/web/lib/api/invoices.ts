@@ -187,6 +187,8 @@ export interface Invoice {
     /** Row 342, STAFF reads only: where and by whom the order was handed over (absent for a buyer / older API). */
     registerKey?: string | null;
     handedOverBy?: string | null;
+    /** the hand-over moment (the stamp line's time) */
+    deliveredAt?: string | null;
     soldBy?: HandOverSoldBy | null;
   };
   /** The server's default PDF stage (detail endpoint): a shipment invoice is "final" before delivery. */
