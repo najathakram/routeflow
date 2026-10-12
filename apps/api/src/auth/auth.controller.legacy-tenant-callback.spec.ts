@@ -6,7 +6,9 @@
  */
 import { GoneException, RequestMethod } from "@nestjs/common";
 import { METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
-import { AuthController } from "./auth.controller";
+import { API_ERROR_CODE_VALUES, API_ERROR_CODES as SHARED_API_ERROR_CODES } from "@routeflow/types";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { AuthController, RETIRED_SIGN_IN_ROUTE } from "./auth.controller";
 
 const RETIRED_BODY = {
   statusCode: 410,
@@ -114,6 +116,17 @@ describe.each(["tenantGoogleLogin", "tenantGoogleCallback"] as const)(
     });
   },
 );
+
+describe("AuthController: the retired-route code is registered", () => {
+  // Clients branch on `code`, so it lives in both registries (value == key), never as a bare literal.
+  it("SIGN_IN_ROUTE_RETIRED is in the API registry and the shared one, and the body sends it", () => {
+    const code = RETIRED_BODY.code;
+    expect((API_ERROR_CODES as Record<string, string>)[code]).toBe(code);
+    expect((SHARED_API_ERROR_CODES as Record<string, string>)[code]).toBe(code);
+    expect(API_ERROR_CODE_VALUES as readonly string[]).toContain(code);
+    expect(RETIRED_SIGN_IN_ROUTE.code).toBe(code);
+  });
+});
 
 describe("AuthController: retired routes keep their paths and do not shadow google/*", () => {
   const proto = AuthController.prototype as unknown as Record<string, object>;

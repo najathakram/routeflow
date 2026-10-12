@@ -41,6 +41,7 @@ import { extractDeviceInfo } from "./device-info.util";
 import { StaffHandoffService } from "./handoff/staff-handoff.service";
 import { HandoffExchangeDto, HandoffMintDto } from "./handoff/handoff.dto";
 import type { JwtPayload } from "./jwt-payload.interface";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 // SEC-4 / F11-002: name + scope of the httpOnly refresh cookie. Path is scoped
 // to the auth routes so it is never sent to unrelated API endpoints. Kept in
@@ -52,7 +53,7 @@ const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30d fallback (mat
 /** Fixed 410 body for the retired per-tenant Google sign-in routes. Nothing from the request is echoed. */
 export const RETIRED_SIGN_IN_ROUTE = {
   statusCode: 410,
-  code: "SIGN_IN_ROUTE_RETIRED",
+  code: API_ERROR_CODES.SIGN_IN_ROUTE_RETIRED,
   message: "This sign-in route has been retired. Use the standard Google sign-in.",
   error: "Gone",
 } as const;

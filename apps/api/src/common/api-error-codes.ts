@@ -467,6 +467,12 @@ export const API_ERROR_CODES = {
    * sent, or a PAID, VOID or WRITTEN_OFF invoice), so a payment reminder makes no sense. Nothing was sent (row 318).
    */
   REMINDER_NOT_ISSUED: "REMINDER_NOT_ISSUED",
+  /**
+   * 410 from GET /auth/google/:tenantSlug and GET /auth/google/:tenantSlug/callback: the legacy per-tenant
+   * Google sign-in routes are retired. Fixed body, nothing from the request echoed; use the standard Google
+   * sign-in (GET /auth/google).
+   */
+  SIGN_IN_ROUTE_RETIRED: "SIGN_IN_ROUTE_RETIRED",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
