@@ -82,6 +82,54 @@ describe("useOrderStaleRevision (row 372)", () => {
     expect(screen.queryByTestId("order-stale-notice")).toBeNull();
   });
 
+  it("an order that sent no revision at edit-open never falls back to the live one (no silent self-judging)", () => {
+    const qc = new QueryClient();
+    const tree = (order: any) => (
+      <QueryClientProvider client={qc}>
+        <Harness order={order} editing />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree({ id: "o1" }));
+    rerender(tree({ id: "o1", revisionNumber: 6 })); // the revision shows up later (a refetch)
+    expect(screen.getByTestId("expected")).toHaveTextContent("undefined");
+  });
+
+  it("Reload hands the FRESH lines and the edit-open lines to onRebase, then re-bases both", async () => {
+    const onRebase = jest.fn();
+    const qc = new QueryClient();
+    const open = { id: "o1", revisionNumber: 4, lineItems: [{ id: "a" }, { id: "b" }] };
+    qc.setQueryData(["orders", "o1"], open);
+    function H({ order }: { order: any }) {
+      const s = useOrderStaleRevision(order, true, onRebase);
+      return (
+        <div>
+          <span data-testid="base">{JSON.stringify(s.baseLines())}</span>
+          <button onClick={() => s.capture(stale())}>fail</button>
+          {s.node}
+        </div>
+      );
+    }
+    const tree = (order: any) => (
+      <QueryClientProvider client={qc}>
+        <H order={order} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree(open));
+    // a background refetch lands while typing: the base must stay the edit-open lines
+    rerender(tree({ ...open, lineItems: [{ id: "a" }, { id: "b" }, { id: "c" }] }));
+    expect(screen.getByTestId("base")).toHaveTextContent('[{"id":"a"},{"id":"b"}]');
+    fireEvent.click(screen.getByText("fail"));
+    const fresh = { id: "o1", revisionNumber: 7, lineItems: [{ id: "a" }, { id: "c" }] };
+    jest.spyOn(qc, "invalidateQueries").mockImplementation(async () => {
+      qc.setQueryData(["orders", "o1"], fresh);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    });
+    expect(onRebase).toHaveBeenCalledWith(fresh.lineItems, open.lineItems);
+    expect(screen.getByTestId("base")).toHaveTextContent('[{"id":"a"},{"id":"c"}]');
+  });
+
   it("outside edit mode nothing is captured and nothing is sent", () => {
     setup({ id: "o1", revisionNumber: 4 }, false);
     expect(screen.getByTestId("expected")).toHaveTextContent("undefined");

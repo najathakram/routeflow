@@ -18,32 +18,39 @@ const isStale = (err: unknown): boolean => {
  * Row 372 (SA-735 item 2, web half). The edit screen sends the `revisionNumber` it LOADED when edit mode opened
  * (a background refetch while typing must not move it), and a 409 ORDER_REVISION_STALE shows FIXED copy with a
  * Reload that refetches the order and re-bases the revision. The editor's typed edits live in the page's own
- * state and are left alone: Reload only brings the server's latest into view, and the next save is judged
- * against it. Extracted so orders/[id]/page.tsx (pinned by size-ratchet.spec.ts) adds a hook call and a render.
+ * state: Reload re-bases them onto the server's latest (order-edit-rebase.ts: untouched lines refresh, touched
+ * lines keep the edit) and the next save is judged against it. Extracted so orders/[id]/page.tsx (pinned by size-ratchet.spec.ts) adds a hook call and a render.
  */
-export function useOrderStaleRevision(
-  order: { id: string; revisionNumber?: number } | undefined,
+export function useOrderStaleRevision<L extends { id: string } = { id: string }>(
+  order: { id: string; revisionNumber?: number; lineItems?: L[] } | undefined,
   editing: boolean,
+  /** After Reload: the FRESH lines and the lines the editor was last based on (MF3: rebase the edit onto them). */
+  onRebase?: (fresh: L[], base: L[]) => void,
 ) {
   const qc = useQueryClient();
-  const loaded = React.useRef<number | undefined>(undefined);
   const [stale, setStale] = React.useState(false);
 
-  // The revision at the moment edit mode opened; cleared when it closes. (Deliberately NOT re-read on refetch.)
-  const revisionNow = order?.revisionNumber;
+  // What the editor LOADED when edit mode opened: keyed on `editing` alone, so a background refetch while typing
+  // never moves it. There is deliberately NO fallback to the live revision (an order that sent none at open
+  // sends nothing, instead of silently judging the edit against whatever the server holds now).
+  const opened = React.useMemo(
+    () => (editing ? { rev: order?.revisionNumber, lines: order?.lineItems } : undefined),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editing],
+  );
+  // Set by Reload: the revision and lines the editor is now based on.
+  const rebased = React.useRef<{ rev?: number; lines?: L[] } | null>(null);
   React.useEffect(() => {
-    if (editing) {
-      if (loaded.current === undefined) loaded.current = revisionNow;
-    } else {
-      loaded.current = undefined;
+    if (!editing) {
+      rebased.current = null;
       setStale(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
+  const base = editing ? (rebased.current ?? opened) : undefined;
 
-  // The first render of edit mode runs before the effect: read the live value until it is captured.
-  const expected = (): number | undefined =>
-    editing ? (loaded.current ?? revisionNow) : undefined;
+  const expected = (): number | undefined => base?.rev;
+  /** The lines this edit is judged against (edit-open, or the last Reload): never the live refetch. */
+  const baseLines = (): L[] | undefined => base?.lines;
 
   const capture = (err: unknown): boolean => {
     if (!editing || !isStale(err)) return false;
@@ -56,8 +63,12 @@ export function useOrderStaleRevision(
   const reload = async () => {
     if (!order) return;
     await qc.invalidateQueries({ queryKey: ["orders", order.id] });
-    const fresh = qc.getQueryData<{ revisionNumber?: number }>(["orders", order.id]);
-    loaded.current = fresh?.revisionNumber;
+    const fresh = qc.getQueryData<{ revisionNumber?: number; lineItems?: L[] }>([
+      "orders",
+      order.id,
+    ]);
+    if (fresh?.lineItems) onRebase?.(fresh.lineItems, base?.lines ?? []);
+    rebased.current = { rev: fresh?.revisionNumber, lines: fresh?.lineItems };
     setStale(false);
   };
 
@@ -76,5 +87,5 @@ export function useOrderStaleRevision(
     </div>
   ) : null;
 
-  return { expected, capture, ownsToast, node };
+  return { expected, baseLines, capture, ownsToast, node };
 }

@@ -75,6 +75,7 @@ import {
 import { OrderReturnsPanel } from "./_components/OrderReturnsPanel";
 import { useOrderOverpayGuard } from "./_components/OrderOverpayNotice";
 import { useOrderStaleRevision } from "./_components/OrderStaleNotice";
+import { rebaseEditItems, rebasePendingDeletes } from "./_components/order-edit-rebase";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -813,6 +814,18 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
   }
   return updates;
 }
+
+/** Row 372 MF3: how Reload re-bases an edit (order-edit-rebase.ts) — the page's own diff and seed. */
+const REBASE_DEPS = {
+  touched: (e: EditItemState, orig: OrderItem): boolean => {
+    try {
+      return buildItemUpdates([e], [orig]).length > 0;
+    } catch {
+      return false; // a locked unit line is never an edit
+    }
+  },
+  seed: buildEditItemFromLine,
+};
 
 /**
  * BUY_N_GET_M free units for the edit preview, rescaled when the operator edits
@@ -1979,7 +1992,14 @@ export default function OrderDetailPage() {
   // Item editing
   const [isEditing, setIsEditing] = React.useState(false);
   const overpay = useOrderOverpayGuard(order, isEditing);
-  const stale = useOrderStaleRevision(order, isEditing); // row 372
+  const stale = useOrderStaleRevision(order, isEditing, (fresh, base) => {
+    // row 372 MF3: Reload re-bases the edit — untouched lines refresh, touched lines keep the edit
+    const r = rebaseEditItems(editItems, base, fresh, REBASE_DEPS);
+    setEditItems(r.items);
+    setPendingDeletes((ids) => rebasePendingDeletes(ids, fresh));
+    if (r.dropped > 0)
+      toast({ title: `${r.dropped} line(s) were removed by someone else`, variant: "error" });
+  }); // row 372
   const updateItems = useUpdateOrderItems({
     localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
   });
@@ -2224,7 +2244,7 @@ export default function OrderDetailPage() {
     // Hard-delete (or CANCEL fallback) for lines the user removed with the trash button.
     const updates: ItemUpdate[] = [
       ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
-      ...buildItemUpdates(editItems, order!.lineItems),
+      ...buildItemUpdates(editItems, stale.baseLines() ?? order!.lineItems),
     ];
 
     // Only send shippingFee when it actually changed — avoids no-op churn (and
@@ -3034,7 +3054,7 @@ export default function OrderDetailPage() {
                             if (refuseLockedUnitLineEdit()) return;
                             const updates: ItemUpdate[] = [
                               ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
-                              ...buildItemUpdates(editItems, order!.lineItems),
+                              ...buildItemUpdates(editItems, stale.baseLines() ?? order!.lineItems),
                             ];
                             const doPublish = () =>
                               updateStatus.mutate(
@@ -3075,6 +3095,7 @@ export default function OrderDetailPage() {
                                     // the payload as a full replace and deletes untouched
                                     // lines. Mirrors handleSaveItems.
                                     replaceAll: false,
+                                    expectedRevisionNumber: stale.expected(), // row 372 MF4
                                     ...(feeChanged ? { shippingFee: editShippingFee } : {}),
                                     // Same dual-path threading as handleSaveItems — the
                                     // line payload is shared (buildItemUpdates) but this
