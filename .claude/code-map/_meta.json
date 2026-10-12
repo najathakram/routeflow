@@ -1,6 +1,6 @@
 {
-  "mappedSha": "5a938f0a201f26cfac39ee6ddccf3670481d84a9",
-  "generatedAt": "2026-10-12T04:02:28.620Z",
+  "mappedSha": "5e231561c0bc4ebe41d8c7aba8f9b14091250df5",
+  "generatedAt": "2026-10-12T10:35:53.805Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 17,
-    "web": 13,
-    "mobile": 9,
+    "api": 18,
+    "web": 14,
+    "mobile": 10,
     "packages": 0
   },
-  "fileCount": 1059,
-  "notes": "**2026-10-12 — MacBook lane pushed branches (docs-only bookkeeping; unmerged, read at branch tips).** New `api/`, `web/` and `mobile/landing-2026-10-12-macbook.md` (TOC row in each area file): `fix/row-311-pos-merge-draft-confirm` `6614c7adf` (web `usePosFinish` DRAFT to PENDING to CONFIRMED, `promotedAlready` re-read), `feat/pos-mode-p2-mobile` `420ee6c6d` (mobile POS mode, hand-over sheet, `usePickupInvoiceBalances`), `feat/pos-mode-p2-web` `cc81fc79c` (already in master), `feat/sa2-delivery-pos-profile` `df643f3f7` (`delivery_pos` profile, Advanced section), `fix/b1015-dashboard-kpi-unknown-v2` `054378ebc` (exact `meta.total` KPIs, `UNKNOWN_KPI` dash). `mappedSha` unchanged."
+  "fileCount": 1076,
+  "notes": "**2026-10-12 — R5.1 (99406fe19) and R4.2 (fcefa5b5a) bookkeeping (docs-only, Option B follow-up).** New `api/`, `web/` and `mobile/landing-2026-10-12-r51-r42.md` (TOC row in each area file; 25 and 88 non-test source files read from merges #3388 and #3389, 17 of them new, plus 25 and 73 test files counted only). R5.1: unpaid bank-debit checkout links but never activates (`SETTLED_CHECKOUT_PAYMENT_STATUSES`, `async_payment_succeeded`/`failed`, `onCheckoutAsyncPaymentFailed`), failed-payment email once per invoice per week (`PAYMENT_FAILED_EMAIL_DEDUPE_*`, `EMAIL_KIND_AUDIENCE`), comp add-ons read Included, `signedBalance` receivable rows, web `read-only-refusal.ts`, mobile paused-seller Place Order block. R4.2: `window-payment-groups.ts` shared till-money classification, Today's `handOverRows` and `handover-stamp.ts`, Z report and receipt wording (`dayCloseVerdictText`), parked-row `priceLines`, `pg-session.ts` UTC pin, `delivery_pos` profile, web `quickCreateRule`/`HandOverStamp`/`OrderRevisionLog`, mobile POS mode (`pos-mode.ts`, `PosHandOverSheet`). `mappedSha` = `5e231561c0bc4ebe41d8c7aba8f9b14091250df5`. The oldest changelog bullet (2026-09-28 overnight landings) moved to `CHANGELOG-ARCHIVE.md` to stay at 30."
 }

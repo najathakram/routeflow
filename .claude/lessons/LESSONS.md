@@ -225,13 +225,6 @@
 
 ## tooling
 
-### L-295 · 2026-10-11 · tooling · Git Bash rewrites `cmd /c` into an interactive `cmd`: a batch job run that way waits on stdin forever and holds the shared slot
-
-- **Symptom:** a batch script launched from Git Bash as `cmd /c <script>` never returned; run inside the heavy slot it held the single shared slot for about three hours while every other lane queued behind it.
-- **Root cause:** MSYS path conversion rewrites the `/c` switch into a drive path (`cmd C:/ <script>`), so `cmd` starts as an INTERACTIVE shell that blocks on stdin; the script was never the problem. The abandoned approach was waiting for it.
-- **Lesson:** **In Git Bash write `cmd //c` (or set `MSYS_NO_PATHCONV=1`, or launch with PowerShell `Start-Process`), give every batch job `< nul` so a stray prompt reads EOF instead of waiting, and give every slot job a hold cap and a closed stdin. Treat a silent hang right after launching a `.cmd` from Git Bash as this trap first. Cf. [[L-291]].**
-- **Guard:** the heavy-slot status line prints `OVER HOLD CAP (> 180 min)` for an over-long holder (`scripts/lib/heavy-slot.mjs`, pinned by `scripts/heavy-slot.self-test.mjs`); it only warns, so the quoting and `< nul` habits are convention only.
-
 ### L-291 · 2026-10-10 · tooling · never feed python a heredoc on Windows (`python3 -`): it hangs; write the script to a file or use node
 
 - **Symptom:** a lane's shell hung indefinitely on a `python3 - <<EOF` edit on a Windows machine.
@@ -386,6 +379,7 @@
 - **Root cause:** the pin copied the wording of the ruling it was written under instead of encoding the invariant, so every later ruling or writer made it lie. A branch's own green cannot see master's changes.
 - **Lesson:** **Pin the invariant structurally: one named constant, assertions derived from it, and an allow-list that carries a reason per entry plus a stale-entry guard (an entry that no longer matches fails). When a ruling changes, change the constant and its pin in the same diff, and replay the merged tip before landing. Cf. [[L-264]].**
 - **Guard:** `SNAPSHOT_READERS` in `coupon-state.spec.ts` and `PACKAGE_ALLOWLIST` in `api-error-codes-parity.spec.ts` (reason per entry, stale-entry check, total pinned); the replay of the merged tip.
+- **Recurrence (2026-10-12, R5.2 train):** the read-only copy rewrite (SA-776) on one train member staled the returns, counter-sale, park and save-error specs and a 390 px counter selector that sibling members had written against the old per-name line; each member was green on its own branch and the collisions only appeared when the MERGED tree's web and api suites ran (a train-only collision). Run the merged tree's full unit suites before the train PR, never each member's own green (cf. [[L-271]], [[L-297]]).
 
 ### L-292 · 2026-10-10 · testing · a fixture that leaks an environment variable (RF_VERIFY_MODE) makes the pre-push hook and CI disagree
 
@@ -481,6 +475,13 @@
 - **Root cause:** the diff of "what changed" was computed against the live query data, so a refetch silently moved the baseline under the user's edits.
 - **Lesson:** **Snapshot the server state when editing starts and diff only against that snapshot; send just the fields the user touched. A refetch while editing never re-bases the draft: offer an explicit reload, and let the server reject a stale revision.**
 - **Guard:** none automatic; review checks that a save payload is built from the frozen baseline. Cf. [[L-167]].
+
+### L-302 · 2026-10-12 · domain · a negative Prisma filter on a nullable column never matches NULL: write the NULL arm and prove it with a NULL row
+
+- **Symptom:** "everything except category X" (the tracked-category bulk assign, and the product list's `product-list-where.ts` where-builder) silently dropped every product with no category; a second instance of the class after the first fix.
+- **Root cause:** `{ col: { not: X } }`, `{ notIn: [...] }` and `NOT: {...}` compile to `col <> X` / `NOT IN`, which SQL's three-valued logic evaluates to UNKNOWN for a NULL column, so NULL rows are excluded. The author's mental model of "all but X" includes the rows that have no value at all.
+- **Lesson:** **A negative filter (`not`, `notIn`, `NOT`) on a nullable column never matches NULL. Spell the NULL arm (`OR: [{ col: null }, { col: { not: X } }]`) and prove the filter with a fixture row whose column is NULL, in a real-database spec when the where-builder is shared.** Cf. [[L-238]].
+- **Guard:** each fix carries a spec with a NULL-column row (the product list where-builder, the bulk assign). No repo-wide scan yet: propose an AST scan that flags `not` / `notIn` / `NOT` on a nullable Prisma column without an adjacent `null` arm.
 
 ### L-301 · 2026-10-12 · domain · a revision or guard value is written in the same transaction and lock as the check that reads it
 

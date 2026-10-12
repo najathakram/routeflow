@@ -3935,3 +3935,10 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **A probe asserts the mode or path it actually entered (the edit mode, the line count after) before it reads the effect it measures; otherwise a fixture that took a different branch reads as a bug.**
 - **Guard:** probes print and assert the branch marker (mode, resulting line count) before any effect assertion; a probe with no such line is not evidence.
   (Archived 2026-10-11 whole and verbatim to make room at cap: L-270: guarded by the probes' own branch-marker assertion; no outside citation.)
+
+### L-295 · 2026-10-11 · tooling · Git Bash rewrites `cmd /c` into an interactive `cmd`: a batch job run that way waits on stdin forever and holds the shared slot
+
+- **Symptom:** a batch script launched from Git Bash as `cmd /c <script>` never returned; run inside the heavy slot it held the single shared slot for about three hours while every other lane queued behind it.
+- **Root cause:** MSYS path conversion rewrites the `/c` switch into a drive path (`cmd C:/ <script>`), so `cmd` starts as an INTERACTIVE shell that blocks on stdin; the script was never the problem. The abandoned approach was waiting for it.
+- **Lesson:** **In Git Bash write `cmd //c` (or set `MSYS_NO_PATHCONV=1`, or launch with PowerShell `Start-Process`), give every batch job `< nul` so a stray prompt reads EOF instead of waiting, and give every slot job a hold cap and a closed stdin. Treat a silent hang right after launching a `.cmd` from Git Bash as this trap first. Cf. [[L-291]].**
+- **Guard:** the heavy-slot status line prints `OVER HOLD CAP (> 180 min)` for an over-long holder (`scripts/lib/heavy-slot.mjs`, pinned by `scripts/heavy-slot.self-test.mjs`); it only warns, so the quoting and `< nul` habits are convention only.
