@@ -300,6 +300,40 @@ describe("counterSaleErrorCopy: FIXED copy, never the server message", () => {
   });
 });
 
+describe("counterSaleErrorCopy: a license refusal (CQ-06) is never the generic 'Something changed'", () => {
+  const licenseErr = (reason: "EXPIRED" | "NO_AUTH") => ({
+    response: {
+      status: 409,
+      data: {
+        code: "REGULATED_AUTH_REQUIRED",
+        message: "RAW SERVER TEXT",
+        blockedCategories: [{ trackedCategoryId: "c1", categoryName: "Tobacco", reason }],
+      },
+    },
+  });
+  it("expired: says it expired, where to renew, and that nothing was charged", () => {
+    const copy = counterSaleErrorCopy(licenseErr("EXPIRED"));
+    expect(copy).toBe(
+      "This sale includes regulated items (Tobacco), and the customer's license has expired. Renew it on the customer's Licenses tab, then try again. Nothing was charged.",
+    );
+    expect(copy).not.toMatch(/Something changed|RAW SERVER TEXT/);
+  });
+  it("none on file: says where to add it or to choose another customer", () => {
+    const copy = counterSaleErrorCopy(licenseErr("NO_AUTH"));
+    expect(copy).toContain("no verified license on file");
+    expect(copy).toContain("choose a customer who has one");
+    expect(copy).not.toMatch(/Something changed/);
+  });
+  it("it is a definitive refusal (the sale is retryable after fixing the license)", () => {
+    expect(isDefinitiveCounterSaleRefusal(licenseErr("EXPIRED"))).toBe(true);
+  });
+  it("another 409 keeps the existing sentence", () => {
+    expect(counterSaleErrorCopy({ response: { status: 409, data: { code: "OTHER" } } })).toMatch(
+      /^Something changed while you were checking out/,
+    );
+  });
+});
+
 describe("counterSaleErrorCopy: an UNKNOWN outcome never claims nothing was charged", () => {
   const unknown = [
     ["a 500", { response: { status: 500, data: { message: "RAW" } } }],

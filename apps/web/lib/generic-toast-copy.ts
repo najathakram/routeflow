@@ -1,5 +1,6 @@
 import { API_ERROR_CODES, CREDITS_PENDING_COPY, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
 import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
+import { regulatedAuthCopy } from "@routeflow/types/regulated-auth-copy";
 import {
   CREDIT_NOTE_ERROR_COPY,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
@@ -294,6 +295,9 @@ export function codedToastCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);
+  // CQ-06: the license refusal says what is wrong (expired / none on file) and where to fix it (shared with mobile).
+  if (code === API_ERROR_CODES.REGULATED_AUTH_REQUIRED)
+    return regulatedAuthCopy(data.blockedCategories);
   if (Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code))
     return CREDIT_NOTE_ERROR_COPY[code as keyof typeof CREDIT_NOTE_ERROR_COPY];
   if (Object.prototype.hasOwnProperty.call(CODE_COPY, code)) return CODE_COPY[code];

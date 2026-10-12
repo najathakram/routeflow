@@ -525,3 +525,31 @@ describe("P-4: ORDER_EDIT_WOULD_OVERPAY", () => {
     expect(copy).not.toContain(RAW);
   });
 });
+
+describe("CQ-06: a license refusal (409 REGULATED_AUTH_REQUIRED) says what is wrong and the next step", () => {
+  const licenseErr = (blockedCategories: unknown) =>
+    err(409, { code: API_ERROR_CODES.REGULATED_AUTH_REQUIRED, blockedCategories });
+
+  it("is mapped by code, never the neutral 409 sentence or the server message", () => {
+    const copy = genericToastCopy(
+      licenseErr([{ trackedCategoryId: "c", categoryName: "Tobacco", reason: "EXPIRED" }]),
+    );
+    expect(copy).toBe(
+      "This sale includes regulated items (Tobacco), and the customer's license has expired. Renew it on the customer's Licenses tab, then try again.",
+    );
+    expect(copy).not.toBe(NEUTRAL_409);
+    expect(copy).not.toContain(RAW);
+  });
+
+  it("codedToastCopy recognises it (so a surface with its own fallback shows it, not the fallback)", () => {
+    expect(
+      codedToastCopy(
+        licenseErr([{ trackedCategoryId: "c", categoryName: "Tobacco", reason: "NO_AUTH" }]),
+      ),
+    ).toContain("no verified license on file");
+  });
+
+  it("a body with no categories still gets the license sentence", () => {
+    expect(genericToastCopy(licenseErr(undefined))).toContain("Licenses tab");
+  });
+});

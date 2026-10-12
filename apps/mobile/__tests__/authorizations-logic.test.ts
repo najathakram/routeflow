@@ -2,7 +2,11 @@
  * Regulated-license guard helpers: detecting the 409 block and choosing the
  * override scope (ORDER when the order exists, else a 24h UNTIL window).
  */
-import { parseRegulatedAuthError, overrideScope } from "../lib/authorizations-logic";
+import {
+  parseRegulatedAuthError,
+  overrideScope,
+  regulatedAuthErrorCopy,
+} from "../lib/authorizations-logic";
 
 describe("parseRegulatedAuthError", () => {
   it("returns the blocked categories on a REGULATED_AUTH_REQUIRED 409", () => {
@@ -50,5 +54,35 @@ describe("overrideScope", () => {
     const now = 1_000_000;
     const scope = overrideScope(undefined, now);
     expect(scope).toBe(`UNTIL:${new Date(now + 24 * 60 * 60 * 1000).toISOString()}`);
+  });
+});
+
+describe("regulatedAuthErrorCopy (CQ-06): the shared license-refusal sentence, never raw server text", () => {
+  const e = (status: number, data: Record<string, unknown>) => ({ response: { status, data } });
+
+  it("an expired license says so and names the next step", () => {
+    const copy = regulatedAuthErrorCopy(
+      e(409, {
+        code: "REGULATED_AUTH_REQUIRED",
+        message: "Conflict Exception",
+        blockedCategories: [
+          { trackedCategoryId: "t1", categoryName: "Tobacco", reason: "EXPIRED" },
+        ],
+      }),
+    );
+    expect(copy).toBe(
+      "This sale includes regulated items (Tobacco), and the customer's license has expired. Renew it on the customer's Licenses tab, then try again.",
+    );
+  });
+
+  it("a body with no categories still gets the license sentence (the empty-list fallback)", () => {
+    expect(regulatedAuthErrorCopy(e(409, { code: "REGULATED_AUTH_REQUIRED" }))).toContain(
+      "Licenses tab",
+    );
+  });
+
+  it("null for any other error", () => {
+    expect(regulatedAuthErrorCopy(e(409, { code: "MERGE_CHOICE_REQUIRED" }))).toBeNull();
+    expect(regulatedAuthErrorCopy(new Error("network"))).toBeNull();
   });
 });

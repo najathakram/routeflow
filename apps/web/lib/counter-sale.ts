@@ -12,6 +12,7 @@ import {
   type CounterSalePaymentMethod,
   type FulfilmentCapability,
 } from "@routeflow/types";
+import { regulatedAuthErrorCopy } from "@routeflow/types/regulated-auth-copy";
 import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
 
 /**
@@ -428,6 +429,9 @@ export function counterSaleErrorCopy(err: unknown): string {
     return PICKUP_TENDER_SHORT_COPY;
   if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_KEY_CONFLICT)
     return "That sale reference was already used. Ring the sale again.";
+  // CQ-06: a license refusal (create()'s regulated guard, before anything is written) says what to fix, not "Something changed".
+  const license = regulatedAuthErrorCopy(err);
+  if (license) return `${license} Nothing was charged.`;
   if (status === 409)
     return "Something changed while you were checking out. Review the sale and try again. Nothing was charged.";
   if (status === 400 || status === 404 || status === 422 || status === 429)
