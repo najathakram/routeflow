@@ -112,7 +112,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   TENANT_MANUAL_ACTIVATION_COVERAGE_RESTORE:
     "Manual activation coverage restored (billing correction)",
   TENANT_BILLING_START_OVERRIDE: "Billing start set (billing correction)",
-  CATCHUP_MINIMUM_FORGIVEN: "Catch-up line under the card minimum forgiven",
+  "catchup.minimum-forgiven": "Catch-up line under the card minimum forgiven",
   TENANT_DELETED: "Tenant deleted",
   TENANT_CONFIG_UPDATED: "Configuration updated",
   TENANT_ADMIN_PASSWORD_RESET: "Admin password reset",

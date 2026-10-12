@@ -453,7 +453,7 @@ describe("PIN: the reachable shapes and the refusal reasons (the G4 inventory)",
     const plans = await reachablePlans();
     expect(plans.length).toBeGreaterThan(10);
     for (const { plan } of plans) {
-      if (plan.shape === "trial" || plan.shape === "anchor_no_line") {
+      if (plan.shape === "trial" || String(plan.shape) === "anchor_no_line") {
         expect(plan.stub.totalCents).toBe(0);
         expect(plan.stub.lines).toEqual([]);
       }
