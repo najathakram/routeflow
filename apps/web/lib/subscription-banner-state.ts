@@ -53,6 +53,8 @@ export interface BannerState {
   inShell: boolean;
   /** The status line on the Billing card (autopay, expiring card). */
   cardLine: string | null;
+  /** The strip's text as separate lines (the read-only sentence / reason / contact), stacked; absent = just `copy`. */
+  lines?: string[];
   /** "Pay $149.00" - primary at the top of the Billing card whenever an invoice is owed (admins only). */
   cardPay: BannerAction | null;
 }
@@ -222,12 +224,14 @@ export function subscriptionBannerState(
     // SA-776: the owner's sentence + the mapped reason line (+ the contact line for a non-admin), composed in ONE
     // place. A cancel, not an unpaid invoice, can be what holds this workspace read-only (S7): the reason line then
     // says "cancelled" and nothing promises that paying restores it; the admin gets a Billing link, never Pay.
-    const copy = readOnlyCopyForView(view, admin).text;
+    const roCopy = readOnlyCopyForView(view, admin);
+    const copy = roCopy.text;
     if (view.readOnlyReason !== "payment_overdue") {
       return {
         kind: "read-only",
         tone: "amber",
         copy,
+        lines: roCopy.lines,
         action: admin ? { label: "Billing", intent: "open-billing" } : null,
         dismiss: null,
         live: "alert",
@@ -242,6 +246,7 @@ export function subscriptionBannerState(
       kind: "read-only",
       tone: "amber",
       copy,
+      lines: roCopy.lines,
       action: canPay ? payAction(view) : null,
       dismiss: null,
       live: "alert",

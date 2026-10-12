@@ -60,8 +60,16 @@ describe("BillingShellBanner - the shell strip", () => {
     expect(strip).toHaveAttribute("role", "status");
     expect(strip.className).toMatch(/blue/);
     expect(strip.className).not.toMatch(/red/);
-    expect(strip.className).toMatch(/\bh-8\b/); // 32 px at 390
-    expect(strip.className).toMatch(/md:h-9/); // 36 px at >= 768
+    // UX QA: no fixed height - the sentence WRAPS (never truncated) and every control is a >= 44 px hit area
+    expect(strip.className).not.toMatch(/(?<![\w-])h-8\b|(?<![\w-])md:h-9/);
+    expect(strip.className).toMatch(/min-h-8/);
+    expect(strip.innerHTML).not.toMatch(/\btruncate\b/);
+    expect(within(strip).getByRole("button", { name: "Update payment" }).className).toMatch(
+      /min-h-\[44px\]/,
+    );
+    expect(within(strip).getByRole("button", { name: "Dismiss" }).className).toMatch(
+      /min-h-\[44px\].*min-w-\[44px\]|min-w-\[44px\].*min-h-\[44px\]/,
+    );
     expect(within(strip).getByText(/We couldn't charge your card for/)).toBeInTheDocument();
     await userEvent.click(within(strip).getByRole("button", { name: "Update payment" }));
     expect(mockPortalMutate).toHaveBeenCalledWith({ intent: "update-payment" });
@@ -113,14 +121,36 @@ describe("BillingShellBanner - the shell strip", () => {
     expect(within(strip).queryByRole("button", { name: /^(pay|update)/i })).toBeNull();
   });
 
-  it("a tap on the text opens a sheet with the full sentence", async () => {
+  it("the full sentence is in the DOM and wraps: nothing is truncated or hidden behind a tap", async () => {
     renderWithProviders(<BillingShellBanner scope="acme" view={view(2)} userRole="OPERATOR" />);
     const strip = await screen.findByTestId("subscription-strip");
-    await userEvent.click(within(strip).getByTitle(/billing issue/i));
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveTextContent(
+    expect(strip).toHaveTextContent(
       "There's a billing issue. Everything still works. Your admin can sort it out in Billing.",
     );
+    expect(strip.innerHTML).not.toMatch(/\btruncate\b/);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("read-only strip: the three lines are stacked (sentence / reason / contact), the contact printed ONCE", async () => {
+    renderWithProviders(<BillingShellBanner scope="acme" view={paused()} userRole="OPERATOR" />);
+    const strip = await screen.findByTestId("subscription-strip");
+    const lines = within(strip).getAllByTestId("strip-line");
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toHaveTextContent(/^This workspace is currently in read-only mode\./);
+    expect(lines[1]).toHaveTextContent("Your subscription payment of $149.00 is overdue.");
+    expect(lines[2]).toHaveTextContent("To restore access, contact your admin (dana@acme.test).");
+    expect((strip.textContent ?? "").split("dana@acme.test")).toHaveLength(2); // exactly once
+  });
+
+  it("read-only strip, admin: sentence + reason stacked, and a >= 44 px Pay control (full width at 390)", async () => {
+    renderWithProviders(
+      <BillingShellBanner scope="acme" view={paused()} userRole="TENANT_ADMIN" />,
+    );
+    const strip = await screen.findByTestId("subscription-strip");
+    expect(within(strip).getAllByTestId("strip-line")).toHaveLength(2);
+    const pay = within(strip).getByRole("button", { name: /^Pay/ });
+    expect(pay.className).toMatch(/min-h-\[44px\]/);
+    expect(pay.className).toMatch(/\bw-full\b/);
   });
 
   it("buyers get no billing state at all, whatever the view says", () => {
@@ -252,8 +282,8 @@ describe("BillingShellBanner - announce once, link, reserve (review folds)", () 
     const reserve = renderWithProviders(<BillingStripReserve scope="acme" />);
     const box = reserve.container.querySelector("[data-testid=subscription-strip-reserve]");
     expect(box).not.toBeNull();
-    expect(box!.className).toMatch(/\bh-8\b/);
-    expect(box!.className).toMatch(/md:h-9/);
+    expect(box!.className).toMatch(/min-h-8/);
+    expect(box!.className).toMatch(/md:min-h-9/);
     expect(box).toHaveAttribute("aria-hidden", "true");
   });
 

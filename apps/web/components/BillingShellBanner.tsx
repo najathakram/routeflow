@@ -23,7 +23,7 @@ const shownKey = (scope: string | null) => `${SHOWN_KEY}.${scope ?? "unknown"}`;
 /**
  * Reserves the strip's height while the subscription read is still loading, but ONLY for a viewer who had a strip
  * on their previous load (a per-viewer hint in storage): a content jump when the strip appears late is a layout
- * shift, and a permanent blank gap for every healthy workspace would be worse. Same fixed heights as the strip.
+ * shift, and a permanent blank gap for every healthy workspace would be worse. Same minimum heights as the strip (which now wraps).
  */
 export function BillingStripReserve({ scope }: { scope: string | null }) {
   const [reserve] = React.useState(() => {
@@ -38,7 +38,7 @@ export function BillingStripReserve({ scope }: { scope: string | null }) {
     <div
       data-testid="subscription-strip-reserve"
       aria-hidden="true"
-      className="h-8 shrink-0 md:h-9"
+      className="min-h-8 shrink-0 md:min-h-9"
     />
   );
 }
