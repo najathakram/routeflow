@@ -71,7 +71,7 @@ const SURFACES: ReadonlyArray<readonly [string, (e: unknown) => string, unknown,
     "Counter sale checkout (till)",
     counterSaleErrorCopy,
     COUNTER,
-    "This day is closed, so no payment was taken. The sale is saved. Ask the office to reopen the close, then use Try again.",
+    "This day is closed, so no payment was taken. The sale is saved without payment.",
   ],
   // The invoice page: record / edit / delete a payment, a check-status change (all four read dayClosedCopy).
   [

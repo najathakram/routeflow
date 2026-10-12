@@ -60,11 +60,15 @@ export class SubscriptionService {
     const addons = addonRows.map((r) => {
       const code = addonSkuCode(r);
       const sku = code ? skuByCode.get(code) : undefined;
+      // SA-693 / row 350: a COMP row is a platform grant, never billed. It carries `comp: true` and NO price
+      // (`monthly` null), so the tenant is never shown a charge that will not happen.
+      const comp = r.isComp === true;
       return {
         sku: code,
         name: sku?.name ?? code ?? r.addonKey,
         quantity: r.quantity,
-        monthly: sku ? Number(sku.monthlyPrice) * r.quantity : null,
+        comp,
+        monthly: !comp && sku ? Number(sku.monthlyPrice) * r.quantity : null,
       };
     });
 
