@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button, TAP_TARGET, cn } from "@routeflow/ui/web";
 import {
+  formatReceiptMoney as money,
   normalizeBoxesPieces,
   roundMoney,
   type ParkedCartPayload,
@@ -26,6 +27,7 @@ import {
   setCounterDiscardHook,
 } from "@/lib/counter-cart-signal";
 import { useCustomers } from "@/lib/api/customers";
+import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useCreateDraft } from "@/lib/api/drafts";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import {
@@ -119,9 +121,9 @@ interface PickedCustomer {
   fulfillPath?: string | null;
   /** the system walk-in customer record (a pick of it is still a walk-in on the receipt) */
   isWalkIn?: boolean | null;
+  /** owes no sales tax and no levy: the estimate, the order and the invoice all say so */
+  isTaxExempt?: boolean | null;
 }
-
-const money = (n: number) => `$${n.toFixed(2)}`;
 
 export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
 
@@ -374,7 +376,17 @@ export function CounterSaleScreen() {
     staleTime: 60_000,
   });
   const taxRate = (settings?.taxRate ?? 0) / 100;
-  const totals = cartTotals(lines, taxRate);
+  // The regulated levy and the exempt customer's $0 tax are in the estimate, so it is the receipt's figure to the cent
+  // (CQ-01 / CQ-02 / CQ-28): the same saleTotals the order and invoice sums run.
+  const { data: categoryRows, isSuccess: categoriesLoaded } = useTrackedCategories();
+  const categories = React.useMemo(
+    () => new Map((Array.isArray(categoryRows) ? categoryRows : []).map((c) => [c.id, c])),
+    [categoryRows],
+  );
+  const totals = cartTotals(lines, taxRate, {
+    categories,
+    isTaxExempt: customer?.isTaxExempt === true,
+  });
   const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
 
@@ -678,6 +690,12 @@ export function CounterSaleScreen() {
     if (attemptRef.current) return send(attemptRef.current); // an unknown outcome: the SAME body, the SAME key
     if (lines.length === 0) {
       setError("Add at least one item.");
+      return null;
+    }
+    // A regulated line's deposit / excise comes from the categories list: until it has loaded the total is short by
+    // exactly that, so the sale waits rather than tender against a figure the server will refuse (CQ-01 / CQ-28).
+    if (!categoriesLoaded && lines.some((l) => l.trackedCategoryId)) {
+      setError("Still loading the regulated charges. Try again in a moment.");
       return null;
     }
     // POS-5: the shared rule (decideStaffOverride) says a special-price customer's edited line needs a reason: no POST.
@@ -1364,12 +1382,34 @@ export function CounterSaleScreen() {
             className="sticky bottom-0 z-20 space-y-2 border-t bg-white pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-2 max-md:bottom-[calc(-1*var(--counter-main-pb,0px))] md:static md:border-t-0 md:py-0"
             data-testid="counter-checkout-bar"
           >
+            {/* CQ-08: the number explains itself, in the receipt's order: Subtotal at the system prices, Discounts, Tax,
+                each named regulated charge, then the total. Every figure is the one the receipt prints. */}
+            <div className="flex justify-between text-sm" data-testid="running-subtotal">
+              <span>Subtotal</span>
+              <span>{money(roundMoney(totals.subtotal + discounts))}</span>
+            </div>
             {discounts > 0 ? (
               <div className="flex justify-between text-sm" data-testid="running-discounts">
                 <span>Discount</span>
                 <span>−{money(discounts)}</span>
               </div>
             ) : null}
+            {totals.tax > 0 ? (
+              <div className="flex justify-between text-sm" data-testid="running-tax">
+                <span>Tax</span>
+                <span>{money(totals.tax)}</span>
+              </div>
+            ) : null}
+            {totals.chargeLines.map((c) => (
+              <div
+                key={c.key}
+                className="flex justify-between text-sm"
+                data-testid={`running-charge-${c.key}`}
+              >
+                <span>{c.label}</span>
+                <span>{money(c.amount)}</span>
+              </div>
+            ))}
             <div className="flex justify-between text-lg font-semibold" data-testid="running-total">
               <span>Estimated total</span>
               <span>{money(totals.total)}</span>

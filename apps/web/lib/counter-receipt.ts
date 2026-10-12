@@ -2,6 +2,7 @@ import {
   dayCloseDateLabel,
   explainedTaxRatePercent,
   formatReceiptMoney,
+  receiptFigures,
   receiptLineAmounts,
   receiptLineDetail,
   roundMoney,
@@ -223,8 +224,13 @@ export function buildCounterReceipt(input: {
   // Tax and the rate candidate are the SERVER's (the response's `tax` = Order.tax and `taxRatePercent`, from pricing's
   // storedTaxRatePercent), exactly what the reprint and the emailed receipt use. Adjustments is whatever remains. The settings
   // tax rate is not a money source here; an older server that sends no tax prints no Tax row.
-  const tax = roundMoney(receipt.tax ?? 0) || 0; // never -0
-  const adjustments = roundMoney(receipt.total - netSubtotal - tax) || 0; // never -0
+  // CQ-03: the deposit / excise are their own named charges (the invoices' billed levy), never inside Tax or Adjustments.
+  const { tax, charges, adjustments } = receiptFigures({
+    netSubtotal,
+    total: receipt.total,
+    tax: receipt.tax ?? 0,
+    charges: receipt.charges,
+  });
   const namedRate = explainedTaxRatePercent({
     base: netSubtotal,
     tax,
@@ -242,6 +248,7 @@ export function buildCounterReceipt(input: {
     subtotal: roundMoney(netSubtotal + discounts),
     discounts,
     tax,
+    charges,
     adjustments,
     total: receipt.total,
     paid: receipt.paid,
@@ -307,6 +314,8 @@ export interface ReprintSaleFacts {
   change?: number | null;
   /** the sale's single stored tax rate in percent (the row's `taxRatePercent`); null/absent: no rate known */
   taxRatePercent?: number | null;
+  /** the regulated levies the invoices billed, each a named charge (the row's `charges`); absent: none */
+  charges?: ReadonlyArray<{ key: string; label: string; amount: number }>;
   /** the row's customer name; null/absent for a walk-in (the row's `isWalkIn`): no customer line prints */
   customerName?: string | null;
   /** IANA zone the sale time is read in (the server's `meta.timezone`) */
@@ -422,8 +431,12 @@ export function receiptModelFromOrder(input: {
   const { paid, balanceDue } = sale;
   const onAccount = !hasTender && balanceDue > 0;
   const orderTotal = num(order.total);
-  const tax = roundMoney(num(order.tax));
-  const adjustments = roundMoney(orderTotal - netSubtotal - tax) || 0; // never -0
+  const { tax, charges, adjustments } = receiptFigures({
+    netSubtotal,
+    total: orderTotal,
+    tax: num(order.tax),
+    charges: sale.charges,
+  });
   // Name the rate only when it accounts for the stored tax (a re-price or credit must not read as tax); else plain "Tax".
   const taxRatePercent = explainedTaxRatePercent({
     base: netSubtotal,
@@ -441,6 +454,7 @@ export function receiptModelFromOrder(input: {
     cashier: clean(input.cashier) || null,
     subtotal: roundMoney(netSubtotal + discounts),
     tax,
+    charges,
     adjustments,
     discounts,
     total: orderTotal,

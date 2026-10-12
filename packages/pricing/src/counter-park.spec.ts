@@ -55,6 +55,28 @@ describe("the server-reserved _resume key", () => {
 });
 
 describe("sanitizeParkedPayload", () => {
+  it("keeps a line's regulated category and the customer's tax exemption, so a resumed cart's estimate is the receipt's (CQ-01 / CQ-02)", () => {
+    const v = ok(
+      cart({
+        lines: [line({ trackedCategoryId: "cat-1" })],
+        customer: { id: "c1", businessName: "Acme", isTaxExempt: true, email: "x@y.test" },
+      }),
+    );
+    expect(v.lines[0].trackedCategoryId).toBe("cat-1");
+    expect(v.customer).toEqual({ id: "c1", businessName: "Acme", isTaxExempt: true });
+  });
+
+  it("a non-boolean exemption or a non-string category is dropped, not stored", () => {
+    const v = ok(
+      cart({
+        lines: [line({ trackedCategoryId: 5 })],
+        customer: { id: "c1", businessName: "Acme", isTaxExempt: "yes" },
+      }),
+    );
+    expect(v.lines[0]).not.toHaveProperty("trackedCategoryId");
+    expect(v.customer).toEqual({ id: "c1", businessName: "Acme" });
+  });
+
   it("keeps the cart snapshot fields", () => {
     expect(ok(cart())).toEqual(cart());
   });

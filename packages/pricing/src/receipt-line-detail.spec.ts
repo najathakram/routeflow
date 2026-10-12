@@ -53,3 +53,18 @@ describe("receiptLineDetail", () => {
     );
   });
 });
+
+describe("formatReceiptMoney: US grouping like the Orders list (CQ-19)", () => {
+  it.each([
+    [2097, "$2,097.00"],
+    [2270, "$2,270.00"],
+    [2431.44, "$2,431.44"],
+    [1234567.5, "$1,234,567.50"],
+    [999.99, "$999.99"],
+    [0, "$0.00"],
+    [-1234.5, "-$1,234.50"],
+    [-1, "-$1.00"],
+  ])("%s -> %s", (n, text) => {
+    expect(formatReceiptMoney(n)).toBe(text);
+  });
+});

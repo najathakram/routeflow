@@ -17,6 +17,10 @@ import { linePieceQty } from "./line-piece-qty";
  * trio reads as NULL here and would re-stamp the line at today's rate. `b297-recompute-snapshot.db.spec.ts`
  * pins each caller against real Postgres.
  *
+ * A tax-exempt customer owes no levy (RF-079 / RF-4, as on the invoice): every line's amount is written 0 and the
+ * trio is left as snapshotted. Each line's `categoryTaxAmount` is also updated in memory, so the caller sums the
+ * order total (`orderTotalsOf`) from these same lines.
+ *
  * Category tax is a SECTION-level levy — the reporting subcategory never taxes. Runs inside the caller's
  * transaction (uses `tx.trackedCategory` / `tx.product` / `tx.orderItem`, the tx's own pooled connection).
  */
@@ -24,6 +28,7 @@ export async function recomputeLineCategoryTaxes(
   tx: any,
   lines: any[],
   logger?: { warn(message: string): void },
+  isTaxExempt = false,
 ): Promise<number> {
   // A3: the live category is read only for the lines that must price at it (a NULL-trio regulated line).
   const catIds = [
@@ -49,7 +54,7 @@ export async function recomputeLineCategoryTaxes(
   const upbMap = new Map<string, number>(prods.map((p: any) => [p.id, Number(p.unitsPerBox ?? 0)]));
   let sum = 0;
   for (const li of lines) {
-    const result = recomputeCategoryTax(
+    const priced = recomputeCategoryTax(
       {
         ...trioOf(li),
         storedAmount: li.categoryTaxAmount,
@@ -58,6 +63,8 @@ export async function recomputeLineCategoryTaxes(
       },
       li.trackedCategoryId ? catMap.get(li.trackedCategoryId) : null,
     );
+    // exempt: the amount is 0 and nothing is stamped or warned (the trio stays as snapshotted)
+    const result = isTaxExempt ? { ...priced, amount: 0, stamp: null, warn: null } : priced;
     if (result.warn)
       logger?.warn(`recomputeLineCategoryTaxes: order line ${li.id}: ${result.warn}`);
     if (result.stamp) {
@@ -77,6 +84,7 @@ export async function recomputeLineCategoryTaxes(
         data: { categoryTaxAmount: result.amount },
       });
     }
+    li.categoryTaxAmount = result.amount;
     sum += result.amount;
   }
   return roundMoney(sum);

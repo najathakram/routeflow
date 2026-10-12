@@ -216,6 +216,8 @@ describe("POS-5 price edit: the cart and totals", () => {
     expect(within(li).getByTestId("line-net-total")).toHaveTextContent("$9.00");
     expect(within(li).getByTestId("line-price-chip")).toHaveTextContent("10% off");
     expect(screen.getByTestId("running-discounts")).toHaveTextContent("Discount−$1.00");
+    // CQ-08: the panel reads like the receipt: Subtotal at the system prices (10.00), then Discount, then the total
+    expect(screen.getByTestId("running-subtotal")).toHaveTextContent("Subtotal$10.00");
     expect(total()).toHaveTextContent("$9.00");
     // the estimate IS cartTotals of the edited cart
     expect(cartTotals([{ unitPrice: 9, qty: 1 }], 0).total).toBe(9);

@@ -77,6 +77,10 @@ export interface InvoiceItem {
   subtotal?: number;
   /** Regulated category snapshot (set at invoice creation) — drives credit-note ledger reversal. */
   trackedCategoryId?: string | null;
+  /** The levy this line billed (a Decimal arrives as a string); 0 for an exempt customer. CQ-03 names it. */
+  categoryTaxAmount?: number | string | null;
+  /** The category's tax type frozen on the line at sale time (B297). */
+  categoryTaxType?: string | null;
   /** Boxed split persisted server-side (unitsPerBox > 1 products). */
   boxes?: number | null;
   pieces?: number | null;

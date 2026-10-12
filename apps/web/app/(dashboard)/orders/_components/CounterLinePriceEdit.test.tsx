@@ -159,6 +159,10 @@ describe("CounterLinePriceEdit: the dialog", () => {
     ["set", "Price per item", "", "Enter a price, like 12.50."],
     ["set", "Price per item", "-1", "Enter 0 or more."],
     ["percent", "Percent off", "100.01", "Enter a percentage from 0 to 100."],
+    ["percent", "Percent off", "abc", "Enter a percentage, like 10 or 12.5."],
+    ["percent", "Percent off", "", "Enter a percentage, like 10 or 12.5."],
+    ["percent", "Percent off", "10.555", "Use at most two decimals, like 12.5."],
+    ["amount", "Amount off per item", "abc", "Enter an amount off, like 1.50."],
     ["amount", "Amount off per item", "11", "That's more than the price. Enter $10.00 or less."],
   ] as const)(
     "%s refusal %j shows its exact copy in role=alert and the dialog stays open",

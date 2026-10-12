@@ -20,6 +20,7 @@ import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
 import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment-credit-notes";
 import { attachInvoicesNeedReview } from "./order-invoices-review";
+import { customerIsTaxExempt, orderTotalsOf } from "./order-totals";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
@@ -334,9 +335,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * Falls back to 0 so that unconfigured tenants don't get a surprise 10% charge.
    */
   private async getTaxRate(): Promise<number> {
-    // Extracted to common/tax-rate.ts (Returns Inside Order Creation PR-1c) so
-    // InlineReturnsQuoteService's unreferenced-chunk pricing shares this exact reader
-    // instead of a second hand-rolled percent→fraction parse — same rule, one place.
+    // common/tax-rate.ts: the ONE reader (InlineReturnsQuoteService shares it).
     return currentTaxRate(this.systemConfig);
   }
 
@@ -349,9 +348,10 @@ export class OrdersService implements OnApplicationBootstrap {
    * RF-4 / B297 PR3: recompute + persist each regulated line's `categoryTaxAmount` at the line's OWN rate
    * snapshot (never the live category) and return the order-level Σ. The rule, the NULL-trio stamp and
    * the no-category keep live in `recompute-line-category-taxes.ts`; this binds the service's logger.
+   * An exempt customer's lines are zeroed there (RF-079 / RF-4), as on the invoice.
    */
-  private recomputeLineCategoryTaxes(tx: any, lines: any[]): Promise<number> {
-    return recomputeLineCategoryTaxes(tx, lines, this.logger);
+  private recomputeLineCategoryTaxes(tx: any, lines: any[], isTaxExempt: boolean): Promise<number> {
+    return recomputeLineCategoryTaxes(tx, lines, this.logger, isTaxExempt);
   }
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {
@@ -882,18 +882,23 @@ export class OrdersService implements OnApplicationBootstrap {
             const subtotal = roundMoney(
               activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0),
             );
-            const tax = roundMoney(subtotal * taxRate);
             // RF-4: re-derive + persist each line's category tax from the merged set,
             // and fold Σ into the total (a merged-in regulated line keeps its levy).
-            const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
+            const isTaxExempt = await customerIsTaxExempt(tx, customerId);
+            await this.recomputeLineCategoryTaxes(tx, activeItems, isTaxExempt);
+            const totals = orderTotalsOf(activeItems, {
+              taxRate,
+              isTaxExempt,
+              shipping: Number(winner.shippingFee ?? 0),
+            });
             await tx.order.update({
               where: { id: winner.id },
               data: {
                 subtotal,
-                tax,
+                tax: totals.regularTax,
                 // Winner keeps ITS OWN stored fee; loser fees drop with the losers (the merged
                 // order is one delivery → one fee). Same asymmetry as discountAmount.
-                total: roundMoney(subtotal + tax + categoryTax + Number(winner.shippingFee ?? 0)),
+                total: totals.total,
                 // A merged-in regulated line flips the denormalized flag on.
                 hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
               },
@@ -1115,10 +1120,15 @@ export class OrdersService implements OnApplicationBootstrap {
             const subtotal = roundMoney(
               activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0),
             );
-            const tax = roundMoney(subtotal * taxRate);
             // RF-4: re-derive + persist each line's category tax from the merged set,
             // and fold Σ into the total (a merged-in regulated line keeps its levy).
-            const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
+            const isTaxExempt = await customerIsTaxExempt(tx, customerId);
+            await this.recomputeLineCategoryTaxes(tx, activeItems, isTaxExempt);
+            const totals = orderTotalsOf(activeItems, {
+              taxRate,
+              isTaxExempt,
+              shipping: Number(winner.shippingFee ?? 0),
+            });
             const routeUpdate = routeAssignment
               ? {
                   routeRunId: routeAssignment.routeRunId,
@@ -1129,10 +1139,10 @@ export class OrdersService implements OnApplicationBootstrap {
               where: { id: winner.id },
               data: {
                 subtotal,
-                tax,
+                tax: totals.regularTax,
                 // Winner keeps ITS OWN stored fee; loser fees drop with the losers (the merged
                 // order is one delivery → one fee). Same asymmetry as discountAmount.
-                total: roundMoney(subtotal + tax + categoryTax + Number(winner.shippingFee ?? 0)),
+                total: totals.total,
                 // A merged-in regulated line flips the denormalized flag on.
                 hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
                 ...routeUpdate,
@@ -1657,6 +1667,8 @@ export class OrdersService implements OnApplicationBootstrap {
       priceHistory,
     });
 
+    // RF-079 / RF-4: an exempt customer owes $0 of BOTH taxes on the order, as on the invoice.
+    const isTaxExempt = await customerIsTaxExempt(this.prisma.forTenant(), customerId);
     let subtotal = 0;
     const lineItemsData = items.map((item, index) => {
       // Unlisted (ad-hoc) line: no catalog product. The operator supplies a
@@ -1866,15 +1878,16 @@ export class OrdersService implements OnApplicationBootstrap {
       const category = product.trackedCategoryId
         ? categoryMap.get(product.trackedCategoryId)
         : null;
-      const categoryTaxAmount = category
-        ? computeCategoryTax({
-            taxType: category.taxType as CategoryTaxType,
-            rate: Number(category.rate),
-            unitBasisQty: qtyPieces,
-            lineSubtotal: itemSubtotal,
-            priceIncludesTax: category.priceIncludesTax,
-          })
-        : 0;
+      const categoryTaxAmount =
+        category && !isTaxExempt
+          ? computeCategoryTax({
+              taxType: category.taxType as CategoryTaxType,
+              rate: Number(category.rate),
+              unitBasisQty: qtyPieces,
+              lineSubtotal: itemSubtotal,
+              priceIncludesTax: category.priceIncludesTax,
+            })
+          : 0;
       // B297 (SA-088): the trio this line was priced under — a later rate edit must never re-price it.
       const categorySnapshot = categoryTaxSnapshotOf(category ?? null);
 
@@ -1915,6 +1928,7 @@ export class OrdersService implements OnApplicationBootstrap {
       };
     });
 
+    if (isTaxExempt) for (const li of lineItemsData) li.categoryTaxAmount = 0; // unit lines priced their own levy
     subtotal = roundMoney(subtotal);
     // Opus review of 942d5d69: rounded here (not left raw) so the
     // discount-vs-subtotal comparison inside assertMoneyInvariantsOrThrow
@@ -1923,14 +1937,19 @@ export class OrdersService implements OnApplicationBootstrap {
     const orderDiscount = roundMoney(dto.discountAmount ?? 0);
     // Optional shipping fee — never taxed; added after tax like Invoice.shippingFee.
     const orderShippingFee = roundMoney(Math.max(0, dto.shippingFee ?? 0));
-    const tax = roundMoney(subtotal * (await this.getTaxRate()));
     // RF-4: fold the regulated category tax (Σ per-line) into the order total. The
     // `tax` column stays REGULAR tax only; category tax is reconstructable from the
     // line snapshots (Σ categoryTaxAmount), so no dedicated Order column is needed.
-    const categoryTax = roundMoney(
-      lineItemsData.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
-    );
-    const total = roundMoney(subtotal + tax + categoryTax - orderDiscount + orderShippingFee);
+    const {
+      regularTax: tax,
+      categoryTax,
+      total,
+    } = orderTotalsOf(lineItemsData, {
+      taxRate: await this.getTaxRate(),
+      isTaxExempt,
+      discount: orderDiscount,
+      shipping: orderShippingFee,
+    });
 
     // B451 gap 4: reject a bounded-but-oversized discountAmount before it can
     // drive the persisted total negative. Fails fast, before any stock lock
@@ -4078,11 +4097,11 @@ export class OrdersService implements OnApplicationBootstrap {
           where: { orderId, status: { not: "CANCELLED" } },
         });
         const subtotal = roundMoney(activeItems.reduce((s, li) => s + Number(li.subtotal), 0));
-        const tax = roundMoney(subtotal * taxRate);
         // RF-4: re-derive + persist each regulated line's category tax from the
         // edited set and fold Σ into the total (kept out of the `tax` column, which
         // stays regular tax only). `total` is reused by the credit guard + revision.
-        const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
+        const isTaxExempt = await customerIsTaxExempt(tx, order.customerId);
+        await this.recomputeLineCategoryTaxes(tx, activeItems, isTaxExempt);
         // Staff may set/change the fee on edit; everyone else keeps the stored fee.
         // Reading the STORED fee here is what stops an ordinary item edit from
         // silently zeroing shipping (the fee-wipe regression).
@@ -4092,7 +4111,8 @@ export class OrdersService implements OnApplicationBootstrap {
         const shippingFee = isStaffFeeEdit
           ? roundMoney(Math.max(0, dto.shippingFee!))
           : roundMoney(Number((order as any).shippingFee ?? 0));
-        const total = roundMoney(subtotal + tax + categoryTax + shippingFee);
+        const totals = orderTotalsOf(activeItems, { taxRate, isTaxExempt, shipping: shippingFee });
+        const { regularTax: tax, categoryTax, total } = totals;
 
         // B451 gap 4: defense-in-depth — UpdateOrderItemsDto carries no
         // discountAmount today (only create() does), so this path has no
@@ -5081,12 +5101,13 @@ export class OrdersService implements OnApplicationBootstrap {
           where: { orderId: order.id, status: { not: "CANCELLED" } },
         });
         const subtotal = roundMoney(activeItems.reduce((s, l) => s + Number(l.subtotal), 0));
-        const tax = roundMoney(subtotal * taxRate);
         // RF-4: re-derive + persist each regulated line's category tax from the
         // post-change set and fold Σ into the total (kept out of the `tax` column).
-        const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
+        const isTaxExempt = await customerIsTaxExempt(tx, order.customerId);
+        await this.recomputeLineCategoryTaxes(tx, activeItems, isTaxExempt);
         const shippingFee = Number((live as any).shippingFee ?? 0);
-        const total = roundMoney(subtotal + tax + categoryTax + shippingFee);
+        const totals = orderTotalsOf(activeItems, { taxRate, isTaxExempt, shipping: shippingFee });
+        const { regularTax: tax, categoryTax, total } = totals;
 
         // ── G6: stock + credit guards RE-RUN inside the tx (:2175-2187).
         // A throw rolls back the claim AND the merge. Resolver role drives the
