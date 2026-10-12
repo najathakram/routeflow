@@ -310,7 +310,6 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
   );
 }
 
-/** Exact server total for a count-only list query; "—" while loading, failed or unknown (never 0). */
 /** An unknown KPI (failed or unanswered request) reads "—", never a zero that looks like data. */
 const UNKNOWN_KPI = "—";
 
@@ -336,9 +335,10 @@ function PanelLoadError({ message, onRetry }: { message: string; onRetry: () => 
   );
 }
 
-function shipCount(q: { data?: { meta?: { total?: number } } }): string | number {
+/** Exact server total for a count-only list query; null while loading, failed or unknown (never 0). */
+function shipCount(q: { data?: { meta?: { total?: number } } }): number | null {
   const n = q.data?.meta?.total;
-  return typeof n === "number" && Number.isFinite(n) ? n : "—";
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
 }
 
 // ─── Overdue Invoices Panel ───────────────────────────────────────────────────
@@ -801,18 +801,14 @@ export default function DashboardPage() {
 
   // ── KPI calculations ──
   // An UNKNOWN figure (request failed or unanswered) is null and renders "—", never a zero.
-  const total = (q: { data?: { meta?: { total?: number } } }): number | null => {
-    const n = q.data?.meta?.total;
-    return typeof n === "number" && Number.isFinite(n) ? n : null;
-  };
   const sumKnown = (parts: Array<number | null>): number | null =>
     parts.some((n) => n === null) ? null : parts.reduce<number>((a, n) => a + (n as number), 0);
   const orderPipeline = {
-    PENDING: total(pendingQ),
-    CONFIRMED: total(confirmedQ),
-    OUT_FOR_DELIVERY: total(outForDeliveryQ),
-    DELIVERED: total(deliveredQ),
-    CANCELLED: total(cancelledQ),
+    PENDING: shipCount(pendingQ),
+    CONFIRMED: shipCount(confirmedQ),
+    OUT_FOR_DELIVERY: shipCount(outForDeliveryQ),
+    DELIVERED: shipCount(deliveredQ),
+    CANCELLED: shipCount(cancelledQ),
   };
   const activeOrders = sumKnown([
     orderPipeline.PENDING,
@@ -820,13 +816,13 @@ export default function DashboardPage() {
     orderPipeline.OUT_FOR_DELIVERY,
   ]);
 
-  const routesToday = total({ data: routeRunsData });
-  const driversOnRoad = total(activeDriversQ);
-  const lowStockTotal = total({ data: lowStockData });
+  const routesToday = shipCount({ data: routeRunsData });
+  const driversOnRoad = shipCount(activeDriversQ);
+  const lowStockTotal = shipCount({ data: lowStockData });
   const revenueRaw = financeData?.summaryTable?.today?.sales;
   const todayRevenue =
     typeof revenueRaw === "number" && Number.isFinite(revenueRaw) ? revenueRaw : null;
-  const overdueCount = total({ data: overdueData });
+  const overdueCount = shipCount({ data: overdueData });
   const overdueInvoices = overdueData?.data ?? [];
   const lowStockProducts: Product[] = lowStockData?.data ?? [];
 
@@ -1018,7 +1014,7 @@ export default function DashboardPage() {
             <Link href="/orders?status=CONFIRMED&fulfillPath=SHIP" className="block">
               <StatCard
                 label="Ready to ship"
-                value={shipCount(readyToShipQ)}
+                value={shipCount(readyToShipQ) ?? UNKNOWN_KPI}
                 icon={<Package className="h-5 w-5" />}
                 className={cn("cursor-pointer transition-shadow hover:shadow-md", STAT_CARD_MIN_H)}
               />
@@ -1029,7 +1025,7 @@ export default function DashboardPage() {
             >
               <StatCard
                 label="Shipped, no tracking"
-                value={shipCount(noTrackingQ)}
+                value={shipCount(noTrackingQ) ?? UNKNOWN_KPI}
                 icon={<AlertTriangle className="h-5 w-5" />}
                 className={cn("cursor-pointer transition-shadow hover:shadow-md", STAT_CARD_MIN_H)}
               />
@@ -1037,7 +1033,7 @@ export default function DashboardPage() {
             <Link href="/orders?fulfillPath=SHIP&shipView=week" className="block">
               <StatCard
                 label="Shipped this week"
-                value={weekStart ? shipCount(shippedWeekQ) : "—"}
+                value={weekStart ? (shipCount(shippedWeekQ) ?? UNKNOWN_KPI) : UNKNOWN_KPI}
                 icon={<Truck className="h-5 w-5" />}
                 className={cn("cursor-pointer transition-shadow hover:shadow-md", STAT_CARD_MIN_H)}
               />
