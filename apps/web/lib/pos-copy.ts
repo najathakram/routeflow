@@ -14,6 +14,7 @@ export const POS_COPY = {
   confirmedInvoiced: "Order confirmed and invoiced",
   confirmedOnly: "Order confirmed",
   confirmMissing: "Order created, but it couldn't be confirmed. Open it to confirm.",
+  mergedConfirmMissing: "Order merged, but it couldn't be confirmed. Open it to confirm.",
   invoiceMissing:
     "Order confirmed, but the invoice wasn't created. Open it and choose Create invoice.",
   mergeTitle: "This customer already has an open counter order",
