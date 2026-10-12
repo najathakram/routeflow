@@ -14,6 +14,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
 import { resolveFulfilPath } from "../orders/fulfil-path-resolver";
 import { syncOrderLineCompositions } from "../orders/order-composition";
+import { orderTotalsOf } from "../orders/order-totals";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { isMergeContention } from "../orders/merge-contention";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -759,9 +760,11 @@ export class OrderTemplatesService {
     // product.pricePerUnit.
     const customerRecord = await this.prisma.forTenant().customer.findUnique({
       where: { id: template.customerId },
-      select: { pricingTier: true },
+      select: { pricingTier: true, isTaxExempt: true },
     });
     const defaultTier = customerRecord?.pricingTier ?? 1;
+    // RF-079 / RF-4: an exempt customer owes $0 of BOTH taxes on the standing order, as on its invoice.
+    const isTaxExempt = customerRecord?.isTaxExempt === true;
     const customerPrices = await this.prisma.forTenant().customerPrice.findMany({
       where: { customerId: template.customerId, productId: { in: productIds } },
     });
@@ -807,15 +810,16 @@ export class OrderTemplatesService {
       const category = product.trackedCategoryId
         ? categoryMap.get(product.trackedCategoryId)
         : null;
-      const categoryTaxAmount = category
-        ? computeCategoryTax({
-            taxType: category.taxType as CategoryTaxType,
-            rate: Number(category.rate),
-            unitBasisQty: qtyPieces,
-            lineSubtotal: itemSubtotal,
-            priceIncludesTax: category.priceIncludesTax,
-          })
-        : 0;
+      const categoryTaxAmount =
+        category && !isTaxExempt
+          ? computeCategoryTax({
+              taxType: category.taxType as CategoryTaxType,
+              rate: Number(category.rate),
+              unitBasisQty: qtyPieces,
+              lineSubtotal: itemSubtotal,
+              priceIncludesTax: category.priceIncludesTax,
+            })
+          : 0;
       // B297 (SA-088): freeze the trio categoryTaxAmount above was computed from.
       const categorySnapshot = categoryTaxSnapshotOf(
         category
@@ -849,14 +853,17 @@ export class OrderTemplatesService {
     // configured in Settings, same unit-mismatch bug as orders.service.
     const storedTaxRate = await this.systemConfig.get("settings.taxRate");
     const taxRate = taxRateFractionFrom(storedTaxRate);
-    const tax = roundMoney(subtotal * taxRate);
     // B658: fold Σ per-line categoryTaxAmount into the total, same as orders.service.ts's
     // create() — the `tax` column stays REGULAR tax only, category tax is reconstructable
     // from the line snapshots.
-    const categoryTax = roundMoney(
-      lineItemsData.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
-    );
-    const total = roundMoney(subtotal + tax + categoryTax);
+    const {
+      regularTax: tax,
+      categoryTax,
+      total,
+    } = orderTotalsOf(lineItemsData, {
+      taxRate,
+      isTaxExempt,
+    });
 
     // #1208 review LOW: guard the generated total the same way create() does
     // (orders.service.ts :2164-2170) — before the stock transaction opens, never after.

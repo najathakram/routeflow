@@ -6,8 +6,16 @@ import {
   ReturnStatus,
   type Prisma,
 } from "@prisma/client";
-import { cashierNameOf, roundMoney, storedTaxRatePercent, sumConfirmed } from "@routeflow/pricing";
+import {
+  COUNTER_DEFAULT_REGISTER,
+  billedChargeLines,
+  cashierNameOf,
+  roundMoney,
+  storedTaxRatePercent,
+  sumConfirmed,
+} from "@routeflow/pricing";
 import type {
+  TodaysHandOverRow,
   TodaysSaleMethod,
   TodaysSalePaymentState,
   TodaysSaleReturn,
@@ -20,7 +28,7 @@ import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
 import { counterMethodOf, servedChange } from "./counter-sale-readback";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
-import { pickupTenderGroupId } from "./pickup-tender-group";
+import { isCounterTenderRow } from "./counter-tender-row";
 
 /**
  * Today's sales (GET /orders/counter-sale/today): the PURE half. Everything that decides a figure lives here
@@ -92,7 +100,9 @@ export function salePaymentsWhere(tenantId: string, w: DayWindow) {
     paidAt: { gte: w.start, lt: w.end },
     invoice: {
       tenantId,
-      status: { notIn: DEAD_INVOICE_STATUSES },
+      // ONE rule with the day close (row 374): cash that was taken stays in the day when the office later WRITES the invoice
+      // off; only a VOID invoice drops its payments. (The day's SALES count still treats a written-off sale as dead.)
+      status: { not: InvoiceStatus.VOID },
       order: liveCounterOrderAnyDayWhere(tenantId),
     },
   };
@@ -114,41 +124,188 @@ export function handOverCandidatesWhere(tenantId: string, w: DayWindow) {
     paymentGroupId: { not: null },
     invoice: {
       tenantId,
-      status: { notIn: DEAD_INVOICE_STATUSES },
-      order: { tenantId, fulfillPath: FulfillPath.PICKUP, counterSale: false },
+      // the day close's own rules (row 374 b): cash taken stays in the day when the office later WRITES the invoice off (only
+      // a VOID invoice drops its payments), and a CANCELLED order's money is not the day's
+      status: { not: InvoiceStatus.VOID },
+      order: {
+        tenantId,
+        fulfillPath: FulfillPath.PICKUP,
+        counterSale: false,
+        status: { not: OrderStatus.CANCELLED },
+      },
     },
   };
 }
 
+/**
+ * The fields the shared classification (`groupWindowPayments`) reads off a counter sale's payment row: the same predicate
+ * the Z report folds with, so Today's money in and the Z cannot disagree about what is till money (row 374 a).
+ */
+export const salePaymentSelect = {
+  amount: true,
+  method: true,
+  status: true,
+  paymentGroupId: true,
+  checkStatus: true,
+  invoice: { select: { orderId: true } },
+} as const;
+
+/**
+ * What a hand-over ROW needs on top of the summary's method / amount / group id: when the tender came in and the
+ * order's number, register, cashier (the username only: row 317's rule, never an email) and customer name. ONE
+ * read for both the summary and the rows (row 342): no extra query.
+ */
 export const handOverCandidateSelect = {
   method: true,
   amount: true,
+  paidAt: true,
   paymentGroupId: true,
-  invoice: { select: { orderId: true } },
+  status: true,
+  checkStatus: true,
+  invoice: {
+    select: {
+      orderId: true,
+      order: {
+        select: {
+          orderNumber: true,
+          registerKey: true,
+          soldBy: { select: { username: true } },
+          customer: { select: { businessName: true } },
+        },
+      },
+    },
+  },
 } satisfies Prisma.InvoicePaymentSelect;
+
+/** The order a hand-over tender sits on, as the candidate select reads it (all optional: a hand-built record may omit it). */
+export interface HandOverOrder {
+  orderNumber?: string | null;
+  registerKey?: string | null;
+  soldBy?: { username?: string | null } | null;
+  customer?: { businessName?: string | null } | null;
+}
 
 /** One payment that is a hand-over's own tender. */
 export interface HandOverPayment {
   method: string;
   amount: unknown;
   orderId: string;
+  /** when the tender was recorded (absent on a hand-built record) */
+  paidAt?: Date;
+  order?: HandOverOrder | null;
 }
 
-/** The candidates whose group id IS the app-side `uuidv5(`${orderId}:pickup:0`, PICKUP_TENDER_NS)`. */
+/**
+ * The candidates that ARE a hand-over's own tender: the ONE tender predicate the day close folds with (`isCounterTenderRow`,
+ * told the order is a POS pickup, not a counter sale), never a second group-id rule. A deposited / cleared check or a method
+ * the till does not take reads as foreign here exactly as it does in the Z report.
+ */
 export function handOverPayments(
   rows: ReadonlyArray<{
     method: string;
     amount: unknown;
     paymentGroupId: string | null;
-    invoice: { orderId: string | null } | null;
+    /** absent on a hand-built record: the candidate query is PAID-only, so absent reads PAID */
+    status?: string;
+    checkStatus?: string | null;
+    paidAt?: Date;
+    invoice: { orderId: string | null; order?: HandOverOrder | null } | null;
   }>,
 ): HandOverPayment[] {
   return rows.flatMap((r) => {
     const orderId = r.invoice?.orderId;
-    return orderId && r.paymentGroupId === pickupTenderGroupId(orderId)
-      ? [{ method: r.method, amount: r.amount, orderId }]
+    return orderId &&
+      isCounterTenderRow(
+        orderId,
+        {
+          method: r.method,
+          status: r.status ?? "PAID",
+          paymentGroupId: r.paymentGroupId,
+          checkStatus: r.checkStatus ?? null,
+        },
+        { counterSale: false },
+      )
+      ? [
+          {
+            method: r.method,
+            amount: r.amount,
+            orderId,
+            ...(r.paidAt ? { paidAt: r.paidAt } : {}),
+            ...(r.invoice?.order ? { order: r.invoice.order } : {}),
+          },
+        ]
       : [];
   });
+}
+
+/** The most hand-over rows one response carries (a day's few hand-overs; `summary.handOvers` is the whole-day figure). */
+export const HAND_OVER_ROWS_MAX = 200;
+
+/**
+ * The day's hand-overs as ROWS (row 342): one per order, folded from the SAME filtered tenders `foldSummary` totals
+ * (`handOverPayments`' output), so the rows' order count is `summary.handOvers.count` and their amounts sum to
+ * `summary.handOvers.total` (until the 200-row bound). The method split uses the till's own mapping
+ * (`todaysMethodOf`); `paidAt` is the latest tender in the window; an unstamped register reads as "main"; an
+ * unstamped or email-like cashier is null (`cashierNameOf`). Newest first, then order id (a stable tie-break).
+ */
+export function toHandOverRows(handOvers: readonly HandOverPayment[]): TodaysHandOverRow[] {
+  const byOrder = new Map<
+    string,
+    {
+      order: HandOverOrder | null | undefined;
+      amount: number;
+      paidAt: number;
+      methods: Map<TodaysSaleMethod, number>;
+    }
+  >();
+  for (const h of handOvers) {
+    const g = byOrder.get(h.orderId) ?? {
+      order: h.order,
+      amount: 0,
+      paidAt: Number.NEGATIVE_INFINITY,
+      methods: new Map<TodaysSaleMethod, number>(),
+    };
+    const amount = num(h.amount);
+    g.amount = roundMoney(g.amount + amount);
+    const m = todaysMethodOf(h.method);
+    g.methods.set(m, roundMoney((g.methods.get(m) ?? 0) + amount));
+    if (h.paidAt && h.paidAt.getTime() > g.paidAt) g.paidAt = h.paidAt.getTime();
+    g.order ??= h.order;
+    byOrder.set(h.orderId, g);
+  }
+  return (
+    [...byOrder.entries()]
+      // a tender with no recorded time is no row (never an invented 1970 one); the query's own window filter means a real one has it
+      .filter(([, g]) => Number.isFinite(g.paidAt))
+      .map(([orderId, g]): TodaysHandOverRow => {
+        const registerKey = (g.order?.registerKey ?? "").trim();
+        return {
+          orderId,
+          orderNumber: g.order?.orderNumber ?? "",
+          customerName: g.order?.customer?.businessName ?? "",
+          paidAt: new Date(g.paidAt).toISOString(),
+          amount: g.amount,
+          methods: METHOD_ORDER.flatMap((method) => {
+            const a = g.methods.get(method) ?? 0;
+            return a > 0 ? [{ method, amount: a }] : [];
+          }),
+          registerKey: registerKey || COUNTER_DEFAULT_REGISTER,
+          handedOverBy: cashierNameOf(g.order?.soldBy),
+        };
+      })
+      .sort((a, b) =>
+        a.paidAt === b.paidAt
+          ? a.orderId < b.orderId
+            ? -1
+            : a.orderId > b.orderId
+              ? 1
+              : 0
+          : a.paidAt < b.paidAt
+            ? 1
+            : -1,
+      )
+      .slice(0, HAND_OVER_ROWS_MAX)
+  );
 }
 
 /**
@@ -237,8 +394,17 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
             orderBy: { createdAt: "asc" },
             select: { method: true, amount: true, status: true },
           },
-          // the stored line rates the sale's tax rate is read from (pricing's storedTaxRatePercent)
-          items: { select: { taxRate: true } },
+          // the stored line rates the sale's tax rate is read from (pricing's storedTaxRatePercent), and the
+          // levy each line billed with its category (CQ-03: named charges on the reprint)
+          items: {
+            select: {
+              taxRate: true,
+              categoryTaxAmount: true,
+              trackedCategoryId: true,
+              categoryTaxType: true,
+              trackedCategory: { select: { id: true, name: true, taxType: true } },
+            },
+          },
         },
       },
       returns: {
@@ -281,8 +447,18 @@ export interface TodayOrderRecord {
     invoiceNumber: string | null;
     status: string;
     payments: Array<{ method: string; amount: unknown; status: string }>;
-    /** SA-764: each line's stored tax rate (a fraction, 0.0825) */
-    items?: Array<{ taxRate: unknown }>;
+    /** SA-764: each line's stored tax rate (a fraction, 0.0825); CQ-03: its billed levy and category */
+    items?: Array<{
+      taxRate: unknown;
+      categoryTaxAmount?: unknown;
+      trackedCategoryId?: string | null;
+      categoryTaxType?: string | null;
+      trackedCategory?: {
+        id?: string | null;
+        name?: string | null;
+        taxType?: string | null;
+      } | null;
+    }>;
   }>;
   returns: Array<{
     id: string;
@@ -405,6 +581,8 @@ export function toTodaysSaleRow(
       live.map((i) => ({ lines: i.items ?? [] })),
       configuredTaxPercent,
     ),
+    // CQ-03: the deposit / excise the live invoices billed, each its own named charge
+    charges: billedChargeLines(live.flatMap((i) => i.items ?? [])),
     returned: { amount: returnedAmount, state: returnState, returns },
     voided,
   };

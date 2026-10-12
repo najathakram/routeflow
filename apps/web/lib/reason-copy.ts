@@ -1,4 +1,5 @@
 import { RUN_UNFINALIZED_PREFIX } from "./api/invoices";
+import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
 
 /**
  * PLACEHOLDER closed sets for the email-delivery health strip. The authoritative `EmailReasonCode`
@@ -163,6 +164,7 @@ export function describeSaveError(err: unknown): string {
     if (/username already in use/i.test(serverText)) return "That username is already in use.";
   }
   if (status === 400 || status === 422) return "Check the details and try again.";
+  if (status === 403 && isReadOnlyRefusal(err)) return readOnlyRefusalCopy();
   if (status === 403) return "You don't have permission to do that.";
   return "Couldn't save, please try again.";
 }

@@ -1,4 +1,4 @@
-import type { InvoiceItemSystemKind } from "@routeflow/types";
+import type { InvoiceItemSystemKind, InvoiceStatus } from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { isDayClosedRefusal } from "../day-closed-copy";
@@ -20,11 +20,13 @@ import type {
   UpdateInvoiceItem,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
+import type { HandOverSoldBy } from "@/lib/handover-stamp";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type InvoiceStatus =
-  "DRAFT" | "SENT" | "VIEWED" | "PARTIAL" | "PAID" | "VOID" | "OVERDUE" | "WRITTEN_OFF";
+// The ONE union, derived from INVOICE_STATUS_VALUES in @routeflow/types (L-072): the API enum's client mirror,
+// pinned set-equal to the Prisma enum by apps/api/src/common/enum-parity.spec.ts. Never hand-type it again.
+export type { InvoiceStatus };
 
 // `PriceType` re-exported from @routeflow/types (wave E / imp-10b R2: was
 // declared identically here AND in `orders.ts` — collapsed to one import).
@@ -75,6 +77,10 @@ export interface InvoiceItem {
   subtotal?: number;
   /** Regulated category snapshot (set at invoice creation) — drives credit-note ledger reversal. */
   trackedCategoryId?: string | null;
+  /** The levy this line billed (a Decimal arrives as a string); 0 for an exempt customer. CQ-03 names it. */
+  categoryTaxAmount?: number | string | null;
+  /** The category's tax type frozen on the line at sale time (B297). */
+  categoryTaxType?: string | null;
   /** Boxed split persisted server-side (unitsPerBox > 1 products). */
   boxes?: number | null;
   pieces?: number | null;
@@ -179,7 +185,19 @@ export interface Invoice {
   /** Set on per-batch delivery invoices; null/absent on the order-level "pending mirror" draft. */
   deliveryBatchId?: string | null;
   /** Linked order summary (present on the detail endpoint) — used to gate the pending-mirror draft. */
-  order?: { status: string; orderNumber?: string | null };
+  order?: {
+    status: string;
+    orderNumber?: string | null;
+    fulfillPath?: "ROUTE" | "SHIP" | "PICKUP" | null;
+    /** Row 342, STAFF reads only: where and by whom the order was handed over (absent for a buyer / older API). */
+    registerKey?: string | null;
+    handedOverBy?: string | null;
+    /** the hand-over moment (the stamp line's time) */
+    deliveredAt?: string | null;
+    soldBy?: HandOverSoldBy | null;
+    /** True for a counter (till) sale. Lets the invoice page leave out terms / due date on a sale paid at the till. */
+    counterSale?: boolean | null;
+  };
   /** The server's default PDF stage (detail endpoint): a shipment invoice is "final" before delivery. */
   pdfVariant?: InvoicePdfVariant;
   recurringInvoiceId?: string;
@@ -724,6 +742,9 @@ export function useRecordPaymentStandalone() {
     StandalonePaymentDto<SelectablePaymentMethod>
   >({
     mutationFn: (dto) => apiClient.post("/invoices/payments/record", dto).then((r) => r.data),
+    // Row 348: every caller (finance Payments, the customer Record Payment modal) answers a closed-day refusal in its
+    // own toast; the global one stays quiet for it so the failure is shown ONCE.
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
@@ -736,6 +757,8 @@ export function useVoidPayment() {
   return useMutation<{ success: boolean }, Error, { invoiceId: string; paymentId: string }>({
     mutationFn: ({ invoiceId, paymentId }) =>
       apiClient.patch(`/invoices/${invoiceId}/payments/${paymentId}/void`).then((r) => r.data),
+    // Row 348: both void surfaces toast a closed-day refusal themselves; the global toast stays quiet for it.
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });

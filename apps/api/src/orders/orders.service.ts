@@ -20,6 +20,7 @@ import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
 import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment-credit-notes";
 import { attachInvoicesNeedReview } from "./order-invoices-review";
+import { customerIsTaxExempt, orderTotalsOf } from "./order-totals";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
@@ -28,8 +29,10 @@ import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
-  appendOrderRevision as appendOrderRevisionImpl,
-  AppendOrderRevisionArgs,
+  appendMergeRevisionInTx,
+  appendOrderRevisionInTx,
+  appendReopenRevisionInTx,
+  attachRevisionNumber,
 } from "./order-revisions";
 import {
   isSpecialTier,
@@ -147,6 +150,7 @@ import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { openTenantGroups } from "./sweep-tenant-gate";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { orderFor, ordersFor } from "../common/staff-only-fields";
 import { currentTaxRate } from "../common/tax-rate";
@@ -163,7 +167,13 @@ import {
   type StockLine,
   type StockLineUnits,
 } from "./order-stock";
-import { linePieceQty } from "./line-piece-qty";
+import { recomputeLineCategoryTaxes } from "./recompute-line-category-taxes";
+import { loadLiveTrioByProduct } from "./fold-target";
+import { carriedLineFor } from "./carry-line-category";
+import { assertLockedEditLines, assertRevisionCurrent } from "./locked-edit-guards";
+import { guardBuyerEditLineIds, pairEditLines, piecesDenominated } from "./buyer-edit-lines";
+import { planSplitPromos, type SplitPromoGroup } from "./split-promo-group";
+import { settleSplitFreeUnits } from "./settle-split-free-units";
 import { dateAndShipmentFilters } from "./list-filters";
 import { resolveOversellAllowed } from "./oversell-policy";
 import { PolicyOversellReader } from "./policy-oversell-reader";
@@ -219,6 +229,7 @@ import type { OrderCancelBlockedField } from "@routeflow/types";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
 import { shippedPushCopy } from "./shipped-push-copy";
 import { attachInvoiceStages } from "./order-invoice-stage";
+import { HANDOVER_SOLD_BY_SELECT, seesHandOverStamp, stampHandedOverBy } from "./handover-stamp";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
 import {
   heldAtBookedFloor,
@@ -324,64 +335,23 @@ export class OrdersService implements OnApplicationBootstrap {
    * Falls back to 0 so that unconfigured tenants don't get a surprise 10% charge.
    */
   private async getTaxRate(): Promise<number> {
-    // Extracted to common/tax-rate.ts (Returns Inside Order Creation PR-1c) so
-    // InlineReturnsQuoteService's unreferenced-chunk pricing shares this exact reader
-    // instead of a second hand-rolled percent→fraction parse — same rule, one place.
+    // common/tax-rate.ts: the ONE reader (InlineReturnsQuoteService shares it).
     return currentTaxRate(this.systemConfig);
   }
 
+  /** B297 row 340: the trio a new sale of each product takes today (a fold's `foldTarget` input). */
+  liveTrioByProduct(productIds: string[]) {
+    return loadLiveTrioByProduct(this.prisma.forTenant() as any, productIds);
+  }
+
   /**
-   * RF-4: recompute + persist each regulated line's `categoryTaxAmount` from its
-   * STORED subtotal + piece qty and the line's section (TrackedCategory) tax
-   * config, and return the order-level Σ (rounded). Non-regulated lines are 0.
-   * Category tax is a SECTION-level levy — the reporting subcategory never taxes.
-   * Mirrors create()'s per-line computation so an edited / merged order's total
-   * and per-line snapshots stay consistent with the invoice split. Runs inside
-   * the caller's transaction (uses `tx.trackedCategory` — the tx's own pooled
-   * connection, so it's safe to co-locate with the other in-tx writes).
+   * RF-4 / B297 PR3: recompute + persist each regulated line's `categoryTaxAmount` at the line's OWN rate
+   * snapshot (never the live category) and return the order-level Σ. The rule, the NULL-trio stamp and
+   * the no-category keep live in `recompute-line-category-taxes.ts`; this binds the service's logger.
+   * An exempt customer's lines are zeroed there (RF-079 / RF-4), as on the invoice.
    */
-  private async recomputeLineCategoryTaxes(tx: any, lines: any[]): Promise<number> {
-    const catIds = [
-      ...new Set(lines.map((li) => li.trackedCategoryId).filter(Boolean)),
-    ] as string[];
-    const cats = catIds.length
-      ? await tx.trackedCategory.findMany({ where: { id: { in: catIds } } })
-      : [];
-    const catMap = new Map<string, any>(cats.map((c: any) => [c.id, c]));
-    // Fetch each regulated line's product unitsPerBox so linePieceQty can expand a
-    // selling-unit boxed line (which didn't snapshot unitsPerBox) to real pieces.
-    const prodIds = [
-      ...new Set(
-        lines.filter((li) => li.trackedCategoryId && li.productId).map((li) => li.productId),
-      ),
-    ] as string[];
-    const prods = prodIds.length
-      ? await tx.product.findMany({
-          where: { id: { in: prodIds } },
-          select: { id: true, unitsPerBox: true },
-        })
-      : [];
-    const upbMap = new Map<string, number>(
-      prods.map((p: any) => [p.id, Number(p.unitsPerBox ?? 0)]),
-    );
-    let sum = 0;
-    for (const li of lines) {
-      const cat = li.trackedCategoryId ? catMap.get(li.trackedCategoryId) : null;
-      const amount = cat
-        ? computeCategoryTax({
-            taxType: cat.taxType as CategoryTaxType,
-            rate: Number(cat.rate),
-            unitBasisQty: linePieceQty(li, upbMap.get(li.productId)),
-            lineSubtotal: Number(li.subtotal),
-            priceIncludesTax: cat.priceIncludesTax,
-          })
-        : 0;
-      if (roundMoney(Number(li.categoryTaxAmount ?? 0)) !== amount) {
-        await tx.orderItem.update({ where: { id: li.id }, data: { categoryTaxAmount: amount } });
-      }
-      sum += amount;
-    }
-    return roundMoney(sum);
+  private recomputeLineCategoryTaxes(tx: any, lines: any[], isTaxExempt: boolean): Promise<number> {
+    return recomputeLineCategoryTaxes(tx, lines, this.logger, isTaxExempt);
   }
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {
@@ -518,6 +488,8 @@ export class OrdersService implements OnApplicationBootstrap {
           // sort LAST (NULLS LAST), with createdAt as the final tiebreak.
           orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         },
+        // row 342: who handed it over (staff only; `registerKey` is a scalar already on the row)
+        ...(seesHandOverStamp(user) ? { soldBy: HANDOVER_SOLD_BY_SELECT } : {}),
         transaction: true,
         invoices: { select: ORDER_INVOICES_SELECT }, // + each line's stored taxRate (row 329a)
         // Credit-note INTENTS selected for this order (join table) — the reason/
@@ -591,11 +563,13 @@ export class OrdersService implements OnApplicationBootstrap {
       cancelBlockedReason: await carrierGuard.carrierBlocked(this, order),
     } satisfies OrderCancelBlockedField);
     await attachInvoiceStages(this.featureConfig, order); // fold 4: each invoice's pdfVariant
+    attachRevisionNumber(order); // row 372
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
     await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
 
+    stampHandedOverBy(order, user); // row 342: staff only; the display name is built once, here
     return orderFor(user, order); // customer-facing fields only for the customer
   }
 
@@ -908,22 +882,28 @@ export class OrdersService implements OnApplicationBootstrap {
             const subtotal = roundMoney(
               activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0),
             );
-            const tax = roundMoney(subtotal * taxRate);
             // RF-4: re-derive + persist each line's category tax from the merged set,
             // and fold Σ into the total (a merged-in regulated line keeps its levy).
-            const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
+            const isTaxExempt = await customerIsTaxExempt(tx, customerId);
+            await this.recomputeLineCategoryTaxes(tx, activeItems, isTaxExempt);
+            const totals = orderTotalsOf(activeItems, {
+              taxRate,
+              isTaxExempt,
+              shipping: Number(winner.shippingFee ?? 0),
+            });
             await tx.order.update({
               where: { id: winner.id },
               data: {
                 subtotal,
-                tax,
+                tax: totals.regularTax,
                 // Winner keeps ITS OWN stored fee; loser fees drop with the losers (the merged
                 // order is one delivery → one fee). Same asymmetry as discountAmount.
-                total: roundMoney(subtotal + tax + categoryTax + Number(winner.shippingFee ?? 0)),
+                total: totals.total,
                 // A merged-in regulated line flips the denormalized flag on.
                 hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
               },
             });
+            await appendMergeRevisionInTx(tx, this.prisma.getTenantId(), winner.id); // row 372 MF2
           });
 
           this.logger.log(
@@ -1140,10 +1120,15 @@ export class OrdersService implements OnApplicationBootstrap {
             const subtotal = roundMoney(
               activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0),
             );
-            const tax = roundMoney(subtotal * taxRate);
             // RF-4: re-derive + persist each line's category tax from the merged set,
             // and fold Σ into the total (a merged-in regulated line keeps its levy).
-            const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
+            const isTaxExempt = await customerIsTaxExempt(tx, customerId);
+            await this.recomputeLineCategoryTaxes(tx, activeItems, isTaxExempt);
+            const totals = orderTotalsOf(activeItems, {
+              taxRate,
+              isTaxExempt,
+              shipping: Number(winner.shippingFee ?? 0),
+            });
             const routeUpdate = routeAssignment
               ? {
                   routeRunId: routeAssignment.routeRunId,
@@ -1154,15 +1139,16 @@ export class OrdersService implements OnApplicationBootstrap {
               where: { id: winner.id },
               data: {
                 subtotal,
-                tax,
+                tax: totals.regularTax,
                 // Winner keeps ITS OWN stored fee; loser fees drop with the losers (the merged
                 // order is one delivery → one fee). Same asymmetry as discountAmount.
-                total: roundMoney(subtotal + tax + categoryTax + Number(winner.shippingFee ?? 0)),
+                total: totals.total,
                 // A merged-in regulated line flips the denormalized flag on.
                 hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
                 ...routeUpdate,
               },
             });
+            await appendMergeRevisionInTx(tx, this.prisma.getTenantId(), winner.id); // row 372 MF2
             // If the winner carries a pending mirror draft, re-sync it to the merged lines.
             await this.invoicesService.reconcileOrderDraftInvoice(winner.id, {
               basis: "order",
@@ -1249,10 +1235,9 @@ export class OrdersService implements OnApplicationBootstrap {
     }
     const skipped = nullTenantRows.length;
 
-    // Null-tenant groups are fully accounted for by the pass above (count + warn) —
-    // exclude them here so the same customer is never double-logged, and so `customers`
-    // below reflects only the groups actually eligible to merge.
-    const mergeCandidateGroups = groups.filter((g) => g.tenantId);
+    // Null-tenant groups are counted + warned above (never double-logged); SA-776: a tenant that is not
+    // TRIAL / ACTIVE gets no automated merge (sweep-tenant-gate.ts), so `customers` counts only eligible groups.
+    const mergeCandidateGroups = await openTenantGroups(this.prisma, groups);
 
     let merged = 0;
     let packMismatches = 0;
@@ -1682,6 +1667,8 @@ export class OrdersService implements OnApplicationBootstrap {
       priceHistory,
     });
 
+    // RF-079 / RF-4: an exempt customer owes $0 of BOTH taxes on the order, as on the invoice.
+    const isTaxExempt = await customerIsTaxExempt(this.prisma.forTenant(), customerId);
     let subtotal = 0;
     const lineItemsData = items.map((item, index) => {
       // Unlisted (ad-hoc) line: no catalog product. The operator supplies a
@@ -1891,15 +1878,16 @@ export class OrdersService implements OnApplicationBootstrap {
       const category = product.trackedCategoryId
         ? categoryMap.get(product.trackedCategoryId)
         : null;
-      const categoryTaxAmount = category
-        ? computeCategoryTax({
-            taxType: category.taxType as CategoryTaxType,
-            rate: Number(category.rate),
-            unitBasisQty: qtyPieces,
-            lineSubtotal: itemSubtotal,
-            priceIncludesTax: category.priceIncludesTax,
-          })
-        : 0;
+      const categoryTaxAmount =
+        category && !isTaxExempt
+          ? computeCategoryTax({
+              taxType: category.taxType as CategoryTaxType,
+              rate: Number(category.rate),
+              unitBasisQty: qtyPieces,
+              lineSubtotal: itemSubtotal,
+              priceIncludesTax: category.priceIncludesTax,
+            })
+          : 0;
       // B297 (SA-088): the trio this line was priced under — a later rate edit must never re-price it.
       const categorySnapshot = categoryTaxSnapshotOf(category ?? null);
 
@@ -1940,6 +1928,7 @@ export class OrdersService implements OnApplicationBootstrap {
       };
     });
 
+    if (isTaxExempt) for (const li of lineItemsData) li.categoryTaxAmount = 0; // unit lines priced their own levy
     subtotal = roundMoney(subtotal);
     // Opus review of 942d5d69: rounded here (not left raw) so the
     // discount-vs-subtotal comparison inside assertMoneyInvariantsOrThrow
@@ -1948,14 +1937,19 @@ export class OrdersService implements OnApplicationBootstrap {
     const orderDiscount = roundMoney(dto.discountAmount ?? 0);
     // Optional shipping fee — never taxed; added after tax like Invoice.shippingFee.
     const orderShippingFee = roundMoney(Math.max(0, dto.shippingFee ?? 0));
-    const tax = roundMoney(subtotal * (await this.getTaxRate()));
     // RF-4: fold the regulated category tax (Σ per-line) into the order total. The
     // `tax` column stays REGULAR tax only; category tax is reconstructable from the
     // line snapshots (Σ categoryTaxAmount), so no dedicated Order column is needed.
-    const categoryTax = roundMoney(
-      lineItemsData.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
-    );
-    const total = roundMoney(subtotal + tax + categoryTax - orderDiscount + orderShippingFee);
+    const {
+      regularTax: tax,
+      categoryTax,
+      total,
+    } = orderTotalsOf(lineItemsData, {
+      taxRate: await this.getTaxRate(),
+      isTaxExempt,
+      discount: orderDiscount,
+      shipping: orderShippingFee,
+    });
 
     // B451 gap 4: reject a bounded-but-oversized discountAmount before it can
     // drive the persisted total negative. Fails fast, before any stock lock
@@ -2801,7 +2795,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // Re-take exactly what the cancel credited back (order-stock.ts).
         await restoreStockForReopen(this.stockDeps(), tx, id, cancelledLines);
 
-        return tx.order.update({
+        const reopened = await tx.order.update({
           where: { id },
           data: {
             status: OrderStatus.PENDING,
@@ -2814,11 +2808,10 @@ export class OrdersService implements OnApplicationBootstrap {
             customer: { select: { id: true, businessName: true } },
           },
         });
-        // Headroom over Prisma's 5s default, matching every other
-        // settleStockForEdit call site (:3053, :4755) — the re-decrement above runs
-        // that helper's per-product lock/read/write loop.
+        await appendReopenRevisionInTx(tx, this.prisma.getTenantId(), id); // row 372: lines went live again
+        return reopened;
       },
-      { timeout: 15_000 },
+      { timeout: 15_000 }, // headroom: the stock re-decrement above runs settleStockForEdit's per-product loop
     );
   }
 
@@ -2835,6 +2828,7 @@ export class OrdersService implements OnApplicationBootstrap {
     opts?: {
       idempotency?: { key: string; responseHash: string };
       isCreateMerge?: boolean;
+      buyerLineIds?: boolean; // B297 row 352: ONLY the buyer's PATCH items route (entries name lines)
     },
   ) {
     assertRemovalsNameALine(dto.items); // #2563: an id-less CANCEL/DELETE, before any read or write
@@ -2868,6 +2862,9 @@ export class OrdersService implements OnApplicationBootstrap {
     if (order.status === "CANCELLED") {
       throw new BadRequestException("Items can't be edited on a cancelled order");
     }
+    // Row 372 (MF4 nit e): an editor on an outdated order meets the 409 BEFORE any refusal can mask it and any
+    // un-tx'd side effect (the invoice revert, the return number). Advisory; the in-tx check below is the lock.
+    await assertRevisionCurrent(this.prisma.forTenant(), orderId, dto.expectedRevisionNumber);
     const isDiffPayload = classifyEditPayload(order, dto, user); // A4/B13: see order-edit-payload.ts
     // SA-422: never revive a seller-CANCELLED line (409 before any write; a strike-off of one is a
     // no-op). SA-422b: BEFORE every unit check, so a cancelled line's id gets this answer first.
@@ -2883,6 +2880,7 @@ export class OrdersService implements OnApplicationBootstrap {
     await unitAware.assertOrderEditAllowed(order, dto, user, findOwner);
     // SA-507a/b: the buyer-diff 400 runs AFTER the guard (ownership, then the 409 shapes).
     await assertBuyerDiffShape(order, dto, user, isDiffPayload, findOwner);
+    guardBuyerEditLineIds(order, dto, user, opts, isDiffPayload);
 
     // units_v1 (A1): resolve every dto item's unit-awareness ONCE, up front — see unit-line-edit.ts.
     // Hoisted here, BEFORE the restriction plan and the un-tx'd revertLinkedInvoicesForOrderEdit
@@ -3006,6 +3004,7 @@ export class OrdersService implements OnApplicationBootstrap {
     const bogoPromos = (order.lineItems ?? []).some((li: any) => Number(li.promoFreeUnits ?? 0) > 0)
       ? await this.loadActivePromotions(UserRole.CUSTOMER)
       : [];
+    const settlePromos = buyerPromos.length ? buyerPromos : bogoPromos; // row 355 settle list
 
     // WP3: resolved on its own pooled connection BEFORE the tx opens, like the
     // reference reads above — the credit guard runs inside the transaction and
@@ -3032,8 +3031,8 @@ export class OrdersService implements OnApplicationBootstrap {
     // write, so a blocked edit leaves the order byte-identical and appends no
     // revision. The guards intentionally consume the AUTHORITATIVE recomputed
     // totals/line set (not a pre-mutation simulation), so there is no second
-    // pricing formula to drift. reconcileOrderDraftInvoice and
-    // appendOrderRevision stay OUTSIDE (after commit), unchanged.
+    // pricing formula to drift. The revision is appended at this tx's tail
+    // (row 372 MF1); reconcileOrderDraftInvoice stays OUTSIDE (after commit).
     let skipInPlaceResync = false; // SA-763r P-3: set inside the edit tx, from the held lines
     const { subtotal, tax, total, shouldRevert, shippingFee } = await inlineReturn.runEditTx(
       inlineRet,
@@ -3049,6 +3048,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // orderItem write below, so it is the true pre-edit state.
         await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+        await assertRevisionCurrent(tx, orderId, dto.expectedRevisionNumber); // row 372: stale -> 409, nothing written
         let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
         let markerCarry: Map<string, number> | undefined; // SA-716 M2: the create-merge fold only
         const carrierLocked = await carrierGuard.carrierRevertUnderLock(
@@ -3061,7 +3061,7 @@ export class OrdersService implements OnApplicationBootstrap {
         );
         const heldItems = await tx.orderItem.findMany({
           where: { orderId },
-          // B709: plus every column the diff branch reads off an existing line (see heldOrSnapshot).
+          // B709: plus every column the diff branch reads off an existing line.
           select: {
             ...EXISTING_LINE_SELECT,
             deliveredQty: true,
@@ -3079,14 +3079,9 @@ export class OrdersService implements OnApplicationBootstrap {
         // concurrent edit of the SAME line — re-run it against the just-locked, authoritative
         // heldItems (never the pre-tx `order.lineItems`) before any write. `unitRows.set` keys
         // by the same `item` object reference, so this simply overwrites each entry in place.
-        const heldById = new Map<string, any>(heldItems.map((h: any) => [h.id, h]));
-        // B709: the diff branch reads every existing line from the LOCKED rows, never from the
-        // pre-tx `order.lineItems` snapshot another writer may have replaced while this tx waited
-        // on the lock. The `?? snapshot` arm is the B135 interim (`liveLine ?? li`): a row the held
-        // read lacks was hard-deleted under the lock, and its write then fails loudly on P2025. The
-        // items[].expectedQty follow-up turns that arm into a CONCURRENT_UPDATE 409.
-        const heldOrSnapshot = (id: string): any =>
-          heldById.get(id) ?? order.lineItems.find((l) => l.id === id);
+        // B709 / row 372: every read of an existing line below is the LOCKED row; a payload id the lock does not
+        // hold is 409 before any write (no snapshot fallback), and B720's missing products load here.
+        const heldById = await assertLockedEditLines(tx, unitCtx, heldItems, dto.items);
         for (const item of dto.items ?? []) {
           const li = item.id ? heldById.get(item.id) : undefined;
           unitEdit.assertUnitLabelNamed(li, item);
@@ -3172,6 +3167,8 @@ export class OrdersService implements OnApplicationBootstrap {
           // references survive); client-supplied unlisted input is ignored on the
           // buyer path. Drivers keep today's authoring behavior.
           // SA-422 (1): a buyer save never deletes the seller's CANCELLED rows (F07 reopen marks).
+          // rows 352 / 373b: the ONE pairing helper (buyer names lines by orderItemId, staff / driver by id)
+          pairEditLines(dto, order, productMap, buyerCategoryMap, user, opts);
           const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items); // #2717 SA-591(b)
           lineIdentity = await markLinesRecreated(tx, orderId, heldItems); // SA-763r M2
           await tx.orderItem.deleteMany({
@@ -3184,6 +3181,9 @@ export class OrdersService implements OnApplicationBootstrap {
           // stamp position from a counter that only advances on a real create
           // (skipped/invalid items `continue` before it).
           let pos = 0;
+          const splitPromos = isBuyerEdit
+            ? planSplitPromos(dto.items, order.lineItems ?? [], productMap, pieceDenominated)
+            : new Map<string, SplitPromoGroup>();
           for (const item of dto.items) {
             if (!item.productId) {
               // B51: buyers never author/rename/drop an unlisted line — the
@@ -3215,19 +3215,10 @@ export class OrdersService implements OnApplicationBootstrap {
             if (!item.qty) continue;
             const product = productMap.get(item.productId);
             if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
-            // An explicit boxes/pieces split (and DRIVER pieceDenominated lines) carry qty as
-            // PIECES: re-split and prorate by the BOX price, else qty*unitPrice over-charges
-            // by unitsPerBox. A PLAIN buyer qty (pre-existing or new) is the default selling
-            // unit (the pack), NOT pieces: it is never re-split and keeps qty*price.
-            // DRIVER edits keep the strict pieceDenominated gate.
+            // Row 355: pack vs pieces per LINE, from its own unit fields (`piecesDenominated`).
             const upb = Number(product.unitsPerBox ?? 0);
             const shouldSplit =
-              upb > 1 &&
-              (pieceDenominated.has(item.productId) ||
-                // REG-B47: a folded merge payload carries an explicit box/piece split —
-                // treat it as piece-denominated and re-split server-side from qty + LIVE
-                // unitsPerBox (B13 posture: the split is a signal, never trusted verbatim).
-                (isBuyerEdit && (item.boxes != null || item.pieces != null)));
+              upb > 1 && piecesDenominated(order.lineItems, item, pieceDenominated, isBuyerEdit);
             // SA-601 / #2780 (PACK ONLY): a PLAIN buyer qty (no boxes/pieces/unitLabel) on a
             // product NEW to the order is NOT re-split as pieces — it is the DEFAULT SELLING
             // UNIT (the pack: qty N = N packs), exactly as create() stores it. It falls through
@@ -3248,16 +3239,17 @@ export class OrdersService implements OnApplicationBootstrap {
             // BUY_N_GET_M threshold: whole SELLING units (boxes for a boxed line,
             // pieces otherwise) — mirrors create()'s qtyUnits derivation.
             const qtyUnits = boxes != null ? boxes : qty;
-            const priced = isBuyerEdit
+            const group = splitPromos.get(item.productId);
+            const pricedRaw = isBuyerEdit
               ? this.resolveBuyerLinePrice(
                   product,
                   buyerCpMap.get(item.productId) ?? buyerDefaultTier,
                   buyerPromos,
-                  qtyPieces,
-                  qtyUnits,
+                  group?.qtyPieces ?? qtyPieces,
+                  group?.qtyUnits ?? qtyUnits,
                   buyerPriceHistory[item.productId]?.lastPrice ?? null,
                   // REG-B109: the exact denomination this line bills with below.
-                  { boxes, pieces, unitsPerBox: upb },
+                  group?.denomination ?? { boxes, pieces, unitsPerBox: upb },
                 )
               : {
                   unitPrice: Number(product.pricePerUnit),
@@ -3265,6 +3257,9 @@ export class OrdersService implements OnApplicationBootstrap {
                   priceType: PriceType.STANDARD,
                   freeUnits: 0,
                 };
+            const priced = group
+              ? { ...pricedRaw, freeUnits: group.share(item, pricedRaw.freeUnits) }
+              : pricedRaw;
             const made = await tx.orderItem.create({
               data: {
                 orderId,
@@ -3302,6 +3297,10 @@ export class OrdersService implements OnApplicationBootstrap {
                     ? (buyerCategoryMap.get(product.trackedCategoryId) ?? null)
                     : null,
                 ),
+                // B297 row 343: a folded line that comes from an existing line (`sourceLineId`, the buyer
+                // cart-submit fold) carries that line's own category and trio, never the product's current
+                // ones; a genuinely new line (no sourceLineId) keeps the live stamp above.
+                ...carriedLineFor(order.lineItems, item, item.productId),
                 // R2: preserve the client's line order on full replace.
                 position: pos++,
               },
@@ -3358,7 +3357,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // gets fetched and the line silently falls back to the customer's DEFAULT
           // tier instead of a genuinely SPECIAL per-product row (or vice versa).
           const existingLineProductIds = dto.items
-            .map((i) => (i.id ? heldOrSnapshot(i.id)?.productId : null)) // B709: locked row
+            .map((i) => (i.id ? heldById.get(i.id)?.productId : null)) // B709: locked row
             .filter((id): id is string => !!id);
           // B466: a substitution's NEW product id must resolve tier pricing too — it
           // was missing from this collection entirely (neither a fresh add's productId
@@ -3410,6 +3409,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // B297 (SA-098a): a superset of `uctx.categoryMap` (unit-aware products only) —
             // this pack-line create() below needs every product this replaceAll touches.
             const operatorReplaceCategoryMap = await loadCategoryMapForProducts(tx, productMap);
+            pairEditLines(dto, order, productMap, operatorReplaceCategoryMap, user, opts); // row 373b
 
             // B60 (REG-B60): the pre-edit BOGO counterparts and per-product line counts (see
             // buildReplaceAllPairing) — built once from the PRE-edit lines, before the delete below.
@@ -3715,7 +3715,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // Hard-remove a line added by mistake. Only safe when nothing
                 // downstream references it — a billed or delivered line is struck
                 // off instead so invoice/delivery history stays intact.
-                const li = heldOrSnapshot(item.id);
+                const li = heldById.get(item.id);
                 const hasDeliveries = await tx.deliveryMutation.count({
                   where: { orderItemId: item.id },
                 });
@@ -3738,7 +3738,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 }
                 // B297 (SA-098a): the pack-line substitute path only — its own scoped load.
                 const substituteCategoryMap = await loadCategoryMapForProducts(tx, [product]);
-                const existingQty = heldOrSnapshot(item.id!)?.qty ?? 1;
+                const existingQty = heldById.get(item.id!)?.qty ?? 1;
                 // Substitution may also carry a box/piece split when the substitute
                 // is itself a boxed product. Honor it the same way as a fresh add —
                 // but only when the SUBSTITUTE is case-packed: the incoming split is
@@ -3828,6 +3828,10 @@ export class OrdersService implements OnApplicationBootstrap {
                   trackedCategoryId: product.trackedCategoryId ?? null,
                   // RF-3: re-snapshot the reporting subcategory alongside the category.
                   trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                  // B297 PR3: the replaced product's levy must not outlive it. The recompute below prices a
+                  // regulated substitute at its stamped trio, but it KEEPS a stored excise on a line with no
+                  // category (L1), so a non-regulated substitute would otherwise inherit the old product's.
+                  categoryTaxAmount: 0,
                   // B297 (SA-098a): the product changed — re-stamp the trio from the
                   // NEW product's live category, same substance as updateUnitLine's
                   // isSubstitute:true arm.
@@ -3849,7 +3853,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 item.overrideReason !== undefined ||
                 item.notes !== undefined
               ) {
-                const li = item.id ? heldOrSnapshot(item.id) : undefined;
+                const li = item.id ? heldById.get(item.id) : undefined;
                 if (!li) continue;
 
                 // N4 (independent review round 2, PR-2): a payload carrying ONLY
@@ -3889,7 +3893,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 }
                 const unitRow = unitRows.get(item);
                 if (unitRow && unitLines.isUnitAware(unitRow)) {
-                  const p = unitCtx.products.get(li.productId!)!;
+                  const p = unitCtx.products.get(li.productId!);
+                  if (!p) throw new ConflictException({ code: API_ERROR_CODES.CONCURRENT_UPDATE });
                   // B297: same product, not a substitute — updateUnitLine must PRESERVE the trio.
                   await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false);
                   continue;
@@ -4084,17 +4089,19 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         }
 
+        if (!(user?.role === UserRole.CUSTOMER && !isDiffPayload))
+          await settleSplitFreeUnits(tx, orderId, heldItems, settlePromos);
         await this.syncCompositions(tx, orderId);
         // Recalculate order totals from all non-cancelled items
         const activeItems = await tx.orderItem.findMany({
           where: { orderId, status: { not: "CANCELLED" } },
         });
         const subtotal = roundMoney(activeItems.reduce((s, li) => s + Number(li.subtotal), 0));
-        const tax = roundMoney(subtotal * taxRate);
         // RF-4: re-derive + persist each regulated line's category tax from the
         // edited set and fold Σ into the total (kept out of the `tax` column, which
         // stays regular tax only). `total` is reused by the credit guard + revision.
-        const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
+        const isTaxExempt = await customerIsTaxExempt(tx, order.customerId);
+        await this.recomputeLineCategoryTaxes(tx, activeItems, isTaxExempt);
         // Staff may set/change the fee on edit; everyone else keeps the stored fee.
         // Reading the STORED fee here is what stops an ordinary item edit from
         // silently zeroing shipping (the fee-wipe regression).
@@ -4104,7 +4111,8 @@ export class OrdersService implements OnApplicationBootstrap {
         const shippingFee = isStaffFeeEdit
           ? roundMoney(Math.max(0, dto.shippingFee!))
           : roundMoney(Number((order as any).shippingFee ?? 0));
-        const total = roundMoney(subtotal + tax + categoryTax + shippingFee);
+        const totals = orderTotalsOf(activeItems, { taxRate, isTaxExempt, shipping: shippingFee });
+        const { regularTax: tax, categoryTax, total } = totals;
 
         // B451 gap 4: defense-in-depth — UpdateOrderItemsDto carries no
         // discountAmount today (only create() does), so this path has no
@@ -4232,6 +4240,16 @@ export class OrdersService implements OnApplicationBootstrap {
           user,
         });
         if (inlineRet && creditGate) await creditGate();
+        // Row 372 MF1: the revision commits WITH the edit, under the Order lock the stale check read under.
+        await appendOrderRevisionInTx(
+          tx,
+          this.prisma.getTenantId(),
+          orderId,
+          user,
+          { subtotal, tax, total, shippingFee },
+          "EDIT",
+          dto.orderNotes,
+        );
         return { subtotal, tax, total, shouldRevert, shippingFee };
       },
       // Headroom over Prisma's 5s default: the merge branch issues per-line
@@ -4270,7 +4288,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // B215: the CONVERGENT tail — invoice resync/reconcile + credit sync/settle. Extracted so a
     // REPLAYED merge can re-run exactly this and nothing else (replayMergeReconcile): the fold
     // above runs at most once per key, while everything in here is idempotent and may run N
-    // times. The status event and the revision append BELOW stay fold-only.
+    // times. The status event BELOW stays fold-only (the revision rides the fold tx).
     const { issuedPartialsUnchanged } = await this.reconcileOrderAfterEdit(
       orderId,
       order.customerId,
@@ -4290,17 +4308,6 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
-    // P5-08: append an immutable revision snapshot of the post-edit state. Runs
-    // last — only after guards passed and every write committed — so a blocked or
-    // failed edit never records a revision. Totals copied verbatim (never recomputed).
-    await this.appendOrderRevision(
-      orderId,
-      user,
-      { subtotal, tax, total, shippingFee },
-      "EDIT",
-      dto.orderNotes ?? null,
-    );
-
     const edited = await cancelledLines.readEditedOrder(this.prisma, orderId);
     // SA-760 Q-760-1: an issued partial whose line price moved stays as issued; the UI is told.
     return issuedPartialsUnchanged.length > 0 ? { ...edited, issuedPartialsUnchanged } : edited;
@@ -4312,8 +4319,8 @@ export class OrdersService implements OnApplicationBootstrap {
    * choice, then the Serializable credit-note sync + settle. Every step here is idempotent, so
    * this may run N times for ONE fold — which is the point: a replayed merge re-runs it (see
    * `replayMergeReconcile`) instead of leaving the order's invoice and applied credits out of
-   * sync forever. The two steps that are NOT convergent — the status event and the
-   * `appendOrderRevision` snapshot — deliberately stay in `updateOrderItems`.
+   * sync forever. The status event is NOT convergent — it deliberately stays in `updateOrderItems`
+   * (the revision snapshot rides the fold tx).
    *
    * `appliedCreditNotes === undefined` means "DO NOT call syncOrderCreditSelections at all — leave
    * the stored selection exactly as it is": a non-staff caller, a request that sent no selection,
@@ -4504,11 +4511,6 @@ export class OrdersService implements OnApplicationBootstrap {
       postDeliveryEdit,
       skipInPlaceResync,
     });
-  }
-
-  /** P5-08: extracted verbatim to `order-revisions.ts` (SA-065 prefactor); thin delegator, same name. */
-  private appendOrderRevision(...args: AppendOrderRevisionArgs) {
-    return appendOrderRevisionImpl(this.prisma, ...args);
   }
 
   /** B283 / stock: extracted verbatim to `order-stock.ts` (B585 prefactor); thin delegators, same names. */
@@ -4782,7 +4784,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
         const heldItems = await tx.orderItem.findMany({
           where: { orderId: order.id },
-          select: { ...EXISTING_LINE_SELECT, deliveredQty: true },
+          select: { ...EXISTING_LINE_SELECT, deliveredQty: true, promoFreeUnits: true },
         });
         restrictionPlan?.assertHeld(heldItems);
 
@@ -5092,18 +5094,20 @@ export class OrdersService implements OnApplicationBootstrap {
           }
         }
 
+        await settleSplitFreeUnits(tx, order.id, heldItems, buyerPromos);
         await this.syncCompositions(tx, order.id);
         // ── Totals recompute — identical to updateOrderItems :2163-2168 ──────
         const activeItems = await tx.orderItem.findMany({
           where: { orderId: order.id, status: { not: "CANCELLED" } },
         });
         const subtotal = roundMoney(activeItems.reduce((s, l) => s + Number(l.subtotal), 0));
-        const tax = roundMoney(subtotal * taxRate);
         // RF-4: re-derive + persist each regulated line's category tax from the
         // post-change set and fold Σ into the total (kept out of the `tax` column).
-        const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
+        const isTaxExempt = await customerIsTaxExempt(tx, order.customerId);
+        await this.recomputeLineCategoryTaxes(tx, activeItems, isTaxExempt);
         const shippingFee = Number((live as any).shippingFee ?? 0);
-        const total = roundMoney(subtotal + tax + categoryTax + shippingFee);
+        const totals = orderTotalsOf(activeItems, { taxRate, isTaxExempt, shipping: shippingFee });
+        const { regularTax: tax, categoryTax, total } = totals;
 
         // ── G6: stock + credit guards RE-RUN inside the tx (:2175-2187).
         // A throw rolls back the claim AND the merge. Resolver role drives the
@@ -5154,23 +5158,23 @@ export class OrdersService implements OnApplicationBootstrap {
             },
           });
         }
-        // shippingFee rides out of the tx (updateOrderItems :4284 idiom) so the post-commit
-        // revision snapshots the value the total was actually built from.
+        // Row 372 MF1: the revision commits with the merge, under this Order lock.
+        await appendOrderRevisionInTx(
+          tx,
+          this.prisma.getTenantId(),
+          order.id,
+          resolver,
+          { subtotal, tax, total, shippingFee },
+          "CHANGE_REQUEST",
+          cr.note,
+        );
         return { subtotal, tax, total, shippingFee };
       },
       { timeout: 15_000 },
     );
 
-    // Post-commit, mirrors updateOrderItems :2222-2246: mirror draft invoice in
-    // lockstep + immutable revision. Never a new money formula.
+    // Post-commit: mirror the draft invoice in lockstep. Never a new money formula.
     await this.invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "order" });
-    await this.appendOrderRevision(
-      order.id,
-      resolver,
-      { subtotal, tax, total, shippingFee },
-      "CHANGE_REQUEST",
-      cr.note ?? null,
-    );
 
     return { merged: true, subtotal, tax, total };
   }

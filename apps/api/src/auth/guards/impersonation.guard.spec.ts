@@ -34,6 +34,20 @@ describe("ImpersonationGuard (B165) — logs impersonated writes from the bearer
     expect(line).toContain("tenant=t1");
   });
 
+  it("the audit line is written for a differently-cased scheme too (read like the JWT strategy)", () => {
+    const token = tokenWith({ sub: "ta1", tenantId: "t1", impersonatedBy: "sa1" });
+    const req = {
+      headers: { authorization: `bearer  ${token}` },
+      method: "POST",
+      url: "/api/v1/orders",
+    };
+
+    expect(new ImpersonationGuard().canActivate(ctx(req))).toBe(true);
+
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    expect(String(logSpy.mock.calls[0]![0])).toContain("admin=sa1");
+  });
+
   it("pin (B165): GET with the claim → true, no log", () => {
     const token = tokenWith({ sub: "ta1", tenantId: "t1", impersonatedBy: "sa1" });
     const guard = new ImpersonationGuard();

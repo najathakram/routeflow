@@ -262,12 +262,29 @@ describeDb("#2717 M3 SA-591(b) — an edit keeps a v1 line on v1, real Postgres"
     ]);
   });
 
-  it("the same edit that adds a second line: the survivor stays v1, the new line gets the ACTIVE v2", async () => {
+  it("an id-less replaceAll naming one product TWICE over one line is refused (row 373 strict pairing), not guessed", async () => {
     const f = await seed();
+    await expect(
+      edit(f.orderId, {
+        replaceAll: true,
+        items: [
+          { productId: f.mixId, boxes: 2, pieces: 0, qty: 48 },
+          { productId: f.mixId, boxes: 1, pieces: 0, qty: 24 },
+        ],
+      }),
+    ).rejects.toMatchObject({ response: { code: "ORDER_EDIT_NEEDS_LINE_IDS" } });
+    expect(await linesOf(f.orderId)).toHaveLength(1); // nothing written
+  });
+
+  it("the same edit that adds a second line (the existing line NAMED by id): the survivor stays v1, the new line gets the ACTIVE v2", async () => {
+    const f = await seed();
+    // row 373: every real client names its existing lines (web/mobile staff edits are id diffs, buyers send
+    // orderItemId with namesLines); an id-less repeat of one product over a line is refused, never paired by guess
+    const [existing] = await linesOf(f.orderId);
     await edit(f.orderId, {
       replaceAll: true,
       items: [
-        { productId: f.mixId, boxes: 2, pieces: 0, qty: 48 },
+        { id: existing.id, productId: f.mixId, boxes: 2, pieces: 0, qty: 48 },
         { productId: f.mixId, boxes: 1, pieces: 0, qty: 24 },
       ],
     });

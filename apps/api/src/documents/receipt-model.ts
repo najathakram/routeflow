@@ -1,8 +1,10 @@
 import { InvoiceStatus } from "@prisma/client";
 import {
   cashierNameOf,
+  billedChargeLines,
   explainedTaxRatePercent,
   formatReceiptMoney,
+  receiptFigures,
   receiptLineAmounts,
   receiptLineDetail,
   roundMoney,
@@ -72,8 +74,14 @@ export interface ReceiptInvoiceInput {
   id: string;
   invoiceNumber: string | null;
   status: string;
-  /** the stored line rates the tax rate is read from; absent = no rate can be named */
-  items?: ReadonlyArray<{ taxRate?: unknown }>;
+  /** the stored line rates the tax rate is read from; absent = no rate can be named. CQ-03: the billed levy and its category. */
+  items?: ReadonlyArray<{
+    taxRate?: unknown;
+    categoryTaxAmount?: unknown;
+    trackedCategoryId?: string | null;
+    categoryTaxType?: string | null;
+    trackedCategory?: { id?: string | null; name?: string | null; taxType?: string | null } | null;
+  }>;
 }
 
 export interface ReceiptPaymentInput {
@@ -153,7 +161,7 @@ function lineName(l: ReceiptLineInput): string {
   return base || "Item";
 }
 
-/** "3 × $2.50 / each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the web prints. */
+/** "3 × $2.50 each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the web prints. */
 function lineDetail(l: ReceiptLineInput): string {
   return receiptLineDetail({
     unitPrice: num(l.unitPrice),
@@ -232,8 +240,13 @@ export function buildReceiptModel(
   const methods = METHOD_ORDER.filter((method) => appliedBy(method) > 0);
   const hasTender = methods.length > 0;
   const onAccount = !hasTender && balanceDue > 0;
-  const tax = roundMoney(num(order.tax));
-  const adjustments = roundMoney(total - netSubtotal - tax) || 0; // never -0
+  // CQ-03: the levy the live invoices billed is its own named charge; Tax is the regular tax only; Adjustments the rest
+  const { tax, charges, adjustments } = receiptFigures({
+    netSubtotal,
+    total,
+    tax: num(order.tax),
+    charges: billedChargeLines(live.flatMap((i) => i.items ?? [])),
+  });
   const taxRatePercent = explainedTaxRatePercent({
     base: netSubtotal,
     tax,
@@ -267,6 +280,7 @@ export function buildReceiptModel(
     subtotal: roundMoney(netSubtotal + discounts),
     discounts,
     tax,
+    charges,
     adjustments,
     taxRatePercent,
     footer: footer || null,

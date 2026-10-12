@@ -3,13 +3,14 @@
 import * as React from "react";
 import Link from "next/link";
 import type { SubscriptionView } from "@routeflow/types";
-import { Button, type ButtonProps } from "@routeflow/ui/web";
+import { Button, ModalNoticeContext, type ButtonProps } from "@routeflow/ui/web";
 import { readOnlyLine } from "./subscription-banner-state";
 
 /**
  * SA-733r6 (B4): while the workspace is read-only, the controls that WRITE (new order, new invoice, new estimate,
  * counter sale / Charge, record payment) stay VISIBLE but disabled, and say why in one fixed sentence right next to
- * them: "Not available while read-only. <Admin name> can restore it." Nothing is hidden (no feature loss). View,
+ * them: the owner's read-only sentence + the mapped reason + (non-admin) the contact line (SA-776, composed in
+ * `read-only-copy.ts`). Nothing is hidden (no feature loss). View,
  * search, print / PDF, export and the end-of-day close stay enabled - the server allow-list is the authority; this
  * only renders it.
  *
@@ -34,10 +35,16 @@ const refusalListeners = new Set<() => void>();
 const notifyRefusal = () => refusalListeners.forEach((fn) => fn());
 
 let refusedAt = 0;
+let refusedReason: string | null = null;
 export function isReadOnlyRefused(): boolean {
   return refusedUntil > Date.now();
 }
-export function markReadOnlyRefused(): void {
+/** The tenant's `readOnlyReason` carried by the latest 403 READ_ONLY (null when none was recorded). */
+export function readOnlyRefusedReason(): string | null {
+  return isReadOnlyRefused() ? refusedReason : null;
+}
+export function markReadOnlyRefused(reason?: string | null): void {
+  refusedReason = reason ?? null;
   refusedAt = Date.now();
   refusedUntil = refusedAt + REFUSAL_MS;
   if (refusalTimer) clearTimeout(refusalTimer);
@@ -54,6 +61,7 @@ function clearReadOnlyRefusal(): void {
 }
 export function resetReadOnlyRefusedForTests(): void {
   refusedUntil = 0;
+  refusedReason = null;
   if (refusalTimer) clearTimeout(refusalTimer);
   refusalTimer = null;
   notifyRefusal();
@@ -70,9 +78,12 @@ const GateContext = React.createContext<Gate>({ readOnly: false, line: null, hin
 export function ReadOnlyGateProvider({
   view,
   readAt,
+  isAdmin = false,
   children,
 }: {
   view: SubscriptionView | null | undefined;
+  /** A TENANT_ADMIN sees the action (Pay / Choose a plan), not the contact line, in the read-only copy. */
+  isAdmin?: boolean;
   /** When `view` was last read (react-query `dataUpdatedAt`); a read newer than a 403 refusal can end the refusal. */
   readAt?: number;
   children: React.ReactNode;
@@ -90,13 +101,41 @@ export function ReadOnlyGateProvider({
       clearReadOnlyRefusal();
     }
   }, [refused, view, readAt]);
-  const name = view?.billingContactName;
   const hintId = React.useId();
   const value = React.useMemo<Gate>(
-    () => ({ readOnly, line: readOnly ? readOnlyLine(name) : null, hintId }),
-    [readOnly, name, hintId],
+    () => ({ readOnly, line: readOnly ? readOnlyLine(view, isAdmin) : null, hintId }),
+    [readOnly, view, isAdmin, hintId],
   );
-  return <GateContext.Provider value={value}>{children}</GateContext.Provider>;
+  // F3/F4 class fix: after ANY 403 READ_ONLY refusal the shared line is shown INLINE in every open (or next-opened)
+  // dialog through the ui Modal's notice slot, so a dialog never sits open and silent. While the workspace is
+  // read-only from the read itself, the write controls are disabled up front and no dialog needs the line.
+  const notice = React.useMemo(
+    () =>
+      refused && value.line ? (
+        <p
+          role="alert"
+          data-testid="read-only-dialog-line"
+          className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200"
+        >
+          {value.line}
+        </p>
+      ) : null,
+    [refused, value.line],
+  );
+  return (
+    <GateContext.Provider value={value}>
+      <ModalNoticeContext.Provider value={notice}>{children}</ModalNoticeContext.Provider>
+    </GateContext.Provider>
+  );
+}
+
+/**
+ * A role with no subscription read (the DRIVER: the billing endpoint is staff-only) learns that the workspace is
+ * read-only only from a refused write; this is that signal, with the reason the refusal carried.
+ */
+export function useReadOnlyRefusal(): { refused: boolean; reason: string | null } {
+  const refused = React.useSyncExternalStore(subscribeRefusal, isReadOnlyRefused, () => false);
+  return { refused, reason: refused ? readOnlyRefusedReason() : null };
 }
 
 export function useReadOnlyGate(): Gate {

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { usePathname } from "next/navigation";
 import type { SubscriptionView } from "@routeflow/types";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { SubscriptionStrip } from "@/components/SubscriptionStrip";
@@ -23,7 +24,7 @@ const shownKey = (scope: string | null) => `${SHOWN_KEY}.${scope ?? "unknown"}`;
 /**
  * Reserves the strip's height while the subscription read is still loading, but ONLY for a viewer who had a strip
  * on their previous load (a per-viewer hint in storage): a content jump when the strip appears late is a layout
- * shift, and a permanent blank gap for every healthy workspace would be worse. Same fixed heights as the strip.
+ * shift, and a permanent blank gap for every healthy workspace would be worse. Same minimum heights as the strip (which now wraps).
  */
 export function BillingStripReserve({ scope }: { scope: string | null }) {
   const [reserve] = React.useState(() => {
@@ -38,7 +39,7 @@ export function BillingStripReserve({ scope }: { scope: string | null }) {
     <div
       data-testid="subscription-strip-reserve"
       aria-hidden="true"
-      className="h-8 shrink-0 md:h-9"
+      className="min-h-8 shrink-0 md:min-h-9"
     />
   );
 }
@@ -64,6 +65,7 @@ export function BillingShellBanner({
   scope: string | null;
 }) {
   usePaidTransition(view, scope);
+  const onBillingPage = usePathname()?.startsWith("/settings/billing") ?? false;
   const role = bannerRoleOf(userRole);
   const state =
     role && (ownsBillingBanner(view) || view.status === "ACTIVE")
@@ -72,8 +74,20 @@ export function BillingShellBanner({
   const showing = !!state?.inShell;
   React.useEffect(() => rememberStrip(scope, showing), [scope, showing]);
   if (role && state) {
-    return state.inShell ? <SubscriptionStrip view={view} role={role} state={state} /> : null;
+    return state.inShell ? (
+      <SubscriptionStrip view={view} role={role} state={state} hideBillingLink={onBillingPage} />
+    ) : null;
   }
   if (ownsBillingBanner(view)) return null; // never "Choose a plan" while an invoice is owed
-  return <ReadOnlyBanner status={view.status} readOnlyReason={view.readOnlyReason} compact />;
+  return (
+    <ReadOnlyBanner
+      status={view.status}
+      readOnlyReason={view.readOnlyReason}
+      overdueAmount={view.openInvoiceAmount}
+      billingContactEmail={view.billingContactEmail}
+      isAdmin={userRole === "TENANT_ADMIN"}
+      hideAction={onBillingPage && view.readOnlyReason !== "trial_expired"}
+      compact
+    />
+  );
 }

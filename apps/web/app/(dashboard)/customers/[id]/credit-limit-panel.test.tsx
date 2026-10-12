@@ -13,13 +13,40 @@ const bar = () => screen.getByRole("progressbar", { name: /credit limit used/i }
 const fill = () => bar().firstElementChild as HTMLElement;
 
 describe("CreditLimitPanel — visibility", () => {
-  it.each([[null], [undefined], [0], [-5]])(
-    "renders nothing when there is no limit (%p)",
-    (limit) => {
-      const { container } = render(<CreditLimitPanel creditLimit={limit} creditExposure={100} />);
-      expect(container).toBeEmptyDOMElement();
-    },
-  );
+  it.each([[null], [undefined], [-5]])("renders nothing when there is no limit (%p)", (limit) => {
+    const { container } = render(<CreditLimitPanel creditLimit={limit} creditExposure={100} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+});
+
+// REG-B1032: `Customer.creditLimit` of 0 is a REAL limit ("no credit extended" — the server's credit block
+// refuses anything above $0); only null means no limit. The panel treated 0 as "no limit" and hid itself.
+describe("CreditLimitPanel — a real $0 limit (REG-B1032)", () => {
+  it("shows the panel with an explicit $0.00 limit instead of hiding it", () => {
+    render(<CreditLimitPanel creditLimit={0} creditExposure={0} />);
+    expect(screen.getByTestId("credit-limit-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("credit-limit-figures")).toHaveTextContent("$0.00 / $0.00");
+    expect(screen.getByTestId("credit-limit-zero")).toHaveTextContent("$0.00 limit");
+  });
+
+  it("with exposure against a $0 limit it reads over the limit, with a full bar (no divide-by-zero)", () => {
+    render(<CreditLimitPanel creditLimit={0} creditExposure={250} />);
+    expect(screen.getByTestId("credit-limit-caption")).toHaveTextContent(
+      "Over the limit by $250.00",
+    );
+    expect(fill().style.width).toBe("100%");
+  });
+
+  it("while the statement loads it still shows the limit and an em dash, not a zero", () => {
+    render(<CreditLimitPanel creditLimit={0} />);
+    expect(screen.getByTestId("credit-limit-figures")).toHaveTextContent("— / $0.00");
+    expect(screen.getByTestId("credit-limit-zero")).toBeInTheDocument();
+  });
+
+  it("a positive limit does not carry the $0 marker", () => {
+    render(<CreditLimitPanel creditLimit={1000} creditExposure={0} />);
+    expect(screen.queryByTestId("credit-limit-zero")).not.toBeInTheDocument();
+  });
 });
 
 describe("CreditLimitPanel — exposure figures", () => {

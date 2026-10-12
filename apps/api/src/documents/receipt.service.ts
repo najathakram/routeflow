@@ -131,8 +131,17 @@ export class ReceiptService {
             id: true,
             invoiceNumber: true,
             status: true,
-            // the stored line rates the receipt names its tax rate from (pricing's storedTaxRatePercent)
-            items: { select: { taxRate: true } },
+            // the stored line rates the receipt names its tax rate from (pricing's storedTaxRatePercent), and the
+            // levy each line billed with its category name (CQ-03: its own named charge)
+            items: {
+              select: {
+                taxRate: true,
+                categoryTaxAmount: true,
+                trackedCategoryId: true,
+                categoryTaxType: true,
+                trackedCategory: { select: { id: true, name: true, taxType: true } },
+              },
+            },
             // in the order they were taken: the first stored tender decides whether change is served
             payments: {
               orderBy: { createdAt: "asc" },

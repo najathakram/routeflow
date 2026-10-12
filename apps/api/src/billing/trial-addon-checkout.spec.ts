@@ -588,6 +588,8 @@ function make(opts: Opts = {}) {
     subscription: "sub_1",
     created: 1791172800,
     metadata: { tenantId: "t1", slug: "acme", planKey: "STARTER", interval: "month" },
+    // P0 hotfix: only a settled session activates; the tests that mean "unpaid" or "no status" say so explicitly
+    payment_status: "paid",
     ...extra,
   });
   /** The checkout.session.completed handler, exactly as the webhook controller dispatches it. */
@@ -1986,7 +1988,8 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
         items: items(),
       });
 
-      await expect(h.completed()).resolves.toBeUndefined();
+      // an UNPAID session: nothing was charged, so no refund trail either
+      await expect(h.completed(h.session({ payment_status: "unpaid" }))).resolves.toBeUndefined();
 
       expect(h.stripe.cancelSubscription).not.toHaveBeenCalled();
       expect(h.stripe.getInvoice).not.toHaveBeenCalled();
@@ -2117,7 +2120,7 @@ describe("X1: a STALE checkout never completes over a newer billing state", () =
         const h = make({ subStatus: "canceled", rows: rows(), items: items() });
         await h.completed(h.session({ payment_status: "unpaid" }));
         expect(paidNotices(h)).toEqual([]);
-        await h.completed(h.session({ id: "cs_2" })); // no payment_status at all
+        await h.completed(h.session({ id: "cs_2", payment_status: undefined })); // no payment_status at all
         expect(paidNotices(h)).toEqual([]);
       });
 

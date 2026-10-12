@@ -1,7 +1,7 @@
 import { formatReceiptMoney, priceUnitWord, receiptLineDetail } from "./receipt-line-detail";
 
 /**
- * Row 317b: the ONE text of a receipt line's detail ("3 × $2.50 / each"). The live counter receipt, the Today's-sales reprint
+ * Row 317b: the ONE text of a receipt line's detail ("3 × $2.50 each"). The live counter receipt, the Today's-sales reprint
  * and the emailed receipt all print it from here, so the unit word can never differ between them.
  */
 describe("priceUnitWord", () => {
@@ -22,8 +22,8 @@ describe("formatReceiptMoney", () => {
 
 describe("receiptLineDetail", () => {
   it("a plain line prints qty x price and the product's own unit word", () => {
-    expect(receiptLineDetail({ unitPrice: 2.5, qty: 3, unit: "Each" })).toBe("3 × $2.50 / each");
-    expect(receiptLineDetail({ unitPrice: 4, qty: 1.5, unit: "lb" })).toBe("1.5 × $4.00 / lb");
+    expect(receiptLineDetail({ unitPrice: 2.5, qty: 3, unit: "Each" })).toBe("3 × $2.50 each");
+    expect(receiptLineDetail({ unitPrice: 4, qty: 1.5, unit: "lb" })).toBe("1.5 × $4.00 per lb");
   });
 
   it("a plain line with no unit prints no word", () => {
@@ -49,7 +49,22 @@ describe("receiptLineDetail", () => {
 
   it("a pack size of 1 is not boxed", () => {
     expect(receiptLineDetail({ unitPrice: 2, qty: 2, unitsPerBox: 1, unit: "case" })).toBe(
-      "2 × $2.00 / case",
+      "2 × $2.00 per case",
     );
+  });
+});
+
+describe("formatReceiptMoney: US grouping like the Orders list (CQ-19)", () => {
+  it.each([
+    [2097, "$2,097.00"],
+    [2270, "$2,270.00"],
+    [2431.44, "$2,431.44"],
+    [1234567.5, "$1,234,567.50"],
+    [999.99, "$999.99"],
+    [0, "$0.00"],
+    [-1234.5, "-$1,234.50"],
+    [-1, "-$1.00"],
+  ])("%s -> %s", (n, text) => {
+    expect(formatReceiptMoney(n)).toBe(text);
   });
 });

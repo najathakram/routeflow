@@ -58,6 +58,17 @@ describe("CounterLinePriceEdit: hidden without the flag", () => {
     expect(screen.getByRole("button", { name: "Edit price for Cola" })).toBeEnabled();
   });
 
+  // CQ-32: a 44 px target through the tablet width (768), compact only from a desktop (lg) up.
+  it("Edit price and Reset price stay 44 px targets until a desktop width", () => {
+    mount({ edited: true });
+    for (const name of ["Edit price for Cola", "Reset price"]) {
+      const btn = screen.getByRole("button", { name });
+      expect(btn).toHaveClass("min-h-[44px]");
+      expect(btn).toHaveClass("lg:min-h-0");
+      expect(btn.className).not.toMatch(/(^|\s)(sm|md):min-h-0/);
+    }
+  });
+
   it("locked disables the control (an unknown-outcome sale)", () => {
     mount({ locked: true, edited: true });
     expect(screen.getByRole("button", { name: "Edit price for Cola" })).toBeDisabled();
@@ -148,6 +159,10 @@ describe("CounterLinePriceEdit: the dialog", () => {
     ["set", "Price per item", "", "Enter a price, like 12.50."],
     ["set", "Price per item", "-1", "Enter 0 or more."],
     ["percent", "Percent off", "100.01", "Enter a percentage from 0 to 100."],
+    ["percent", "Percent off", "abc", "Enter a percentage, like 10 or 12.5."],
+    ["percent", "Percent off", "", "Enter a percentage, like 10 or 12.5."],
+    ["percent", "Percent off", "10.555", "Use at most two decimals, like 12.5."],
+    ["amount", "Amount off per item", "abc", "Enter an amount off, like 1.50."],
     ["amount", "Amount off per item", "11", "That's more than the price. Enter $10.00 or less."],
   ] as const)(
     "%s refusal %j shows its exact copy in role=alert and the dialog stays open",
@@ -176,11 +191,25 @@ describe("CounterLinePriceEdit: the dialog", () => {
       "Add a reason. Acme Foods has a special price on this item.",
     );
     expect(onApply).not.toHaveBeenCalled();
-    fireEvent.change(field("Reason (optional)"), { target: { value: "damaged" } });
+    fireEvent.change(field("Reason (required)"), { target: { value: "damaged" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     expect(onApply).toHaveBeenCalledWith(
       expect.objectContaining({ unitPrice: 6, reason: "damaged" }),
     );
+  });
+
+  // CQ-14: the label must not promise "optional" on a line the rule then refuses without one.
+  it("labels the reason (required) on a special-tier line and (optional) on a standard one", () => {
+    const special: PriceEditLine = { tierPrice: 8, listPrice: 10, tier: 2, qty: 1 };
+    const a = mount({ line: special });
+    open();
+    expect(field("Reason (required)")).toHaveAttribute("aria-required", "true");
+    expect(screen.queryByRole("textbox", { name: "Reason (optional)" })).toBeNull();
+    a.unmount();
+    mount({ line: plain });
+    open();
+    expect(field("Reason (optional)")).not.toHaveAttribute("aria-required");
+    expect(screen.queryByRole("textbox", { name: "Reason (required)" })).toBeNull();
   });
 
   it("Cancel and Escape change nothing and hand focus back through onClosed", async () => {

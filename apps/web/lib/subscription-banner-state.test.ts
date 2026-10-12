@@ -1,4 +1,5 @@
 import type { SubscriptionView } from "@routeflow/types";
+import { readOnlyCopyForView } from "./read-only-copy";
 import {
   bannerRoleOf,
   readOnlyLine,
@@ -32,7 +33,7 @@ function view(over: Partial<SubscriptionView> = {}): SubscriptionView {
     addons: [],
     paymentRequired: false,
     readOnlyReason: null,
-    billingContactName: "Dana",
+    billingContactEmail: "dana@acme.test",
     pastDueSince: null,
     pastDueInvoiceId: null,
     openInvoiceAmount: null,
@@ -186,7 +187,7 @@ describe("subscriptionBannerState - payment failed, days 0-5 (neutral, dismissib
   it.each([0, 2, 5])("operator day %i: names the admin, no action in the DOM", (day) => {
     const s = subscriptionBannerState(owing(), "staff", at(day, 3));
     expect(s.copy).toBe(
-      "There's a billing issue. Everything still works. Dana can sort it out in Billing.",
+      "There's a billing issue. Everything still works. Your admin can sort it out in Billing.",
     );
     expect(s.action).toBeNull();
     expect(s.cardPay).toBeNull();
@@ -205,12 +206,12 @@ describe("subscriptionBannerState - payment failed, days 0-5 (neutral, dismissib
     expect(s.cardPay).toEqual({ label: "Pay $149.00", intent: "pay" });
   });
 
-  it("no contact on file: 'your admin' (lower case mid-sentence, 'Your admin' at a sentence start)", () => {
-    const s = subscriptionBannerState(owing({ billingContactName: null }), "staff", at(1));
+  it("'your admin' (lower case mid-sentence, 'Your admin' at a sentence start); never a name", () => {
+    const s = subscriptionBannerState(owing(), "staff", at(1));
     expect(s.copy).toBe(
       "There's a billing issue. Everything still works. Your admin can sort it out in Billing.",
     );
-    const d6 = subscriptionBannerState(owing({ billingContactName: null }), "staff", at(6, 2));
+    const d6 = subscriptionBannerState(owing(), "staff", at(6, 2));
     expect(d6.copy).toBe("Your workspace becomes read-only tomorrow. Let your admin know.");
   });
 });
@@ -230,7 +231,7 @@ describe("subscriptionBannerState - day 6 (amber, not dismissible, announced onc
 
   it("operator", () => {
     const s = subscriptionBannerState(owing(), "staff", at(6, 2));
-    expect(s.copy).toBe("Your workspace becomes read-only tomorrow. Let Dana know.");
+    expect(s.copy).toBe("Your workspace becomes read-only tomorrow. Let your admin know.");
     expect(s.action).toBeNull();
     expect(s.dismiss).toBeNull();
     expect(s.tone).toBe("amber");
@@ -248,8 +249,9 @@ describe("subscriptionBannerState - read-only (paused): amber, not dismissible, 
     const s = subscriptionBannerState(paused(), "admin", at(8));
     expect(s.kind).toBe("read-only");
     expect(s.tone).toBe("amber");
+    // SA-776: the owner's sentence + the mapped reason; the admin gets the action, not a contact line
     expect(s.copy).toBe(
-      "Your workspace is read-only until the November payment of $149.00 goes through. Your data is safe.",
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment of $149.00 is overdue.",
     );
     expect(s.action).toEqual({ label: "Pay $149.00", intent: "pay" });
     expect(s.cardPay).toEqual({ label: "Pay $149.00", intent: "pay" });
@@ -258,10 +260,10 @@ describe("subscriptionBannerState - read-only (paused): amber, not dismissible, 
     expect(s.inShell).toBe(true);
   });
 
-  it("operator: view, print and export are named; the admin can restore it; no action", () => {
+  it("operator: the sentence, the reason and the contact (your admin + e-mail); no action", () => {
     const s = subscriptionBannerState(paused(), "staff", at(8));
     expect(s.copy).toBe(
-      "Your workspace is read-only. You can still view, print and export. Dana can restore it.",
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment of $149.00 is overdue. To restore access, contact your admin (dana@acme.test).",
     );
     expect(s.action).toBeNull();
     expect(s.cardPay).toBeNull();
@@ -271,7 +273,7 @@ describe("subscriptionBannerState - read-only (paused): amber, not dismissible, 
   it("an unreadable invoice amount never prints a dash: the money is simply left out", () => {
     const s = subscriptionBannerState(paused({ openInvoiceAmount: null }), "admin", at(8));
     expect(s.copy).toBe(
-      "Your workspace is read-only until the November payment goes through. Your data is safe.",
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment is overdue.",
     );
     expect(s.action).toEqual({ label: "Pay now", intent: "pay" });
     expect(s.copy + s.action?.label).not.toMatch(/[—–]|\s-\s/);
@@ -302,7 +304,13 @@ describe("subscriptionBannerState - Don't list (binding)", () => {
   it.each(["admin", "staff"] as const)("%s: no blame wording, no plan CTA, no red", (role) => {
     for (const s of all(role)) {
       const text = `${s.copy} ${s.action?.label ?? ""} ${s.cardLine ?? ""}`;
-      expect(text).not.toMatch(/overdue|failed|suspend|choose a plan|subscribe|countdown/i);
+      // SA-776: the read-only state is the one place the owner's copy names the reason ("... payment ... is
+      // overdue."); every grace / last-day line still never does.
+      const rule =
+        s.kind === "read-only"
+          ? /failed|suspend|choose a plan|subscribe|countdown/i
+          : /overdue|failed|suspend|choose a plan|subscribe|countdown/i;
+      expect(text).not.toMatch(rule);
       expect(["neutral", "amber"]).toContain(s.tone);
     }
   });
@@ -338,11 +346,19 @@ describe("subscriptionPollInterval", () => {
 });
 
 describe("readOnlyLine", () => {
-  it("is the exact blocked-control sentence", () => {
-    expect(readOnlyLine("Dana")).toBe("Not available while read-only. Dana can restore it.");
-    expect(readOnlyLine(null)).toBe("Not available while read-only. Your admin can restore it.");
-    expect(readOnlyLine(undefined)).toBe(
-      "Not available while read-only. Your admin can restore it.",
+  it("is the owner's sentence + the mapped reason + (non-admin) the contact (SA-776)", () => {
+    const v = paused({ openInvoiceAmount: null });
+    expect(readOnlyLine(v, false)).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment is overdue. To restore access, contact your admin (dana@acme.test).",
+    );
+    expect(readOnlyLine(v, true)).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment is overdue.",
+    );
+    expect(readOnlyLine(null, false)).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
+    );
+    expect(readOnlyLine(undefined, true)).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
     );
   });
 });
@@ -365,38 +381,79 @@ describe("subscriptionBannerState - labels come from the server (S4)", () => {
 
 // B2: BILLING_PAUSE_MODE dark / off (the default) never pauses. The grace states must not threaten a read-only date
 // or claim a deadline; they stay neutral, keep the Update payment action, and never escalate to amber / alert.
-describe("subscriptionBannerState - pause NOT enforced (dark / off)", () => {
+describe("subscriptionBannerState - pause NOT enforced (dark / off): the owner's overdue sentence (SA-777)", () => {
   const dark = (over: Partial<SubscriptionView> = {}) => owing({ pauseEnforced: false, ...over });
+  const OVERDUE =
+    "Your subscription payment of $149.00 is overdue. Please complete your payment to keep your account up to date.";
 
   it.each([0, 3, 6, 9, 30])(
-    "admin day %i: neutral card-update copy, no read-only threat, no deadline",
+    "admin day %i: the owner's sentence with the amount and Pay now - no lock, no date, no countdown",
     (day) => {
       const s = subscriptionBannerState(dark(), "admin", at(day, 3));
-      expect(s.kind).toBe("grace");
-      expect(s.tone).toBe("neutral");
-      expect(s.copy).toBe(
-        "We couldn't charge your card for November. Update it to keep autopay running.",
-      );
-      expect(s.copy).not.toMatch(/read-only|tomorrow|\bby\b|Nov 8/i);
-      expect(s.action).toEqual({ label: "Update payment", intent: "update-payment" });
-      expect(s.dismiss).toEqual({ scope: "day", key: expect.any(String) });
+      expect(s.kind).toBe("overdue");
+      expect(s.tone).toBe("amber");
+      expect(s.copy).toBe(OVERDUE);
+      expect(s.copy).not.toMatch(/read-only|lock|suspend|tomorrow|\bby\b|Nov 8|days?\b/i);
+      expect(s.action).toEqual({ label: "Pay now", intent: "pay" });
+      expect(s.dismiss).toEqual({ scope: "day", key: expect.stringMatching(/^grace:in_1:/) });
       expect(s.live).toBe("status");
     },
   );
 
-  it.each([0, 6, 30])("operator day %i: the billing-issue line, no threat", (day) => {
-    const s = subscriptionBannerState(dark(), "staff", at(day, 3));
-    expect(s.copy).toBe(
-      "There's a billing issue. Everything still works. Dana can sort it out in Billing.",
+  it("the amount comes from outstandingTotal (all open invoices) over the clocked invoice's", () => {
+    const s = subscriptionBannerState(dark({ outstandingTotal: 298 }), "admin", at(2));
+    expect(s.copy).toContain("$298.00");
+  });
+
+  it("with the amount omitted the sentence stands without a figure (never a dash, never $0)", () => {
+    const s = subscriptionBannerState(
+      dark({ openInvoiceAmount: null, outstandingTotal: undefined }),
+      "admin",
+      at(2),
     );
+    expect(s.copy).toBe(
+      "Your subscription payment is overdue. Please complete your payment to keep your account up to date.",
+    );
+  });
+
+  it("the Pay action carries the hosted invoice page when the server sent it", () => {
+    const s = subscriptionBannerState(
+      dark({ payNowUrl: "https://pay.example/in_1" }),
+      "admin",
+      at(2),
+    );
+    expect(s.action).toEqual({
+      label: "Pay now",
+      intent: "pay",
+      url: "https://pay.example/in_1",
+    });
+  });
+
+  it.each([0, 6, 30])("operator day %i: who to ask, no amount, no pay control", (day) => {
+    const s = subscriptionBannerState(dark(), "staff", at(day, 3));
+    expect(s.copy).toBe("Your subscription payment is overdue. Please let your admin know.");
     expect(s.action).toBeNull();
-    expect(s.tone).toBe("neutral");
+    expect(s.tone).toBe("amber");
+  });
+
+  it("no strip while a payment is processing, and none while the invoice is merely due", () => {
+    expect(
+      subscriptionBannerState(dark({ billingState: "processing" }), "admin", at(2)).inShell,
+    ).toBe(false);
+    expect(subscriptionBannerState(dark({ paymentProcessing: true }), "admin", at(2)).inShell).toBe(
+      false,
+    );
+    expect(subscriptionBannerState(dark({ billingState: "due" }), "admin", at(2)).inShell).toBe(
+      false,
+    );
   });
 
   it("an older server that sends no flag is treated as not enforced", () => {
     const v = owing();
     delete (v as any).pauseEnforced;
-    expect(subscriptionBannerState(v, "admin", at(6, 3)).kind).toBe("grace");
+    const s = subscriptionBannerState(v, "admin", at(6, 3));
+    expect(s.kind).toBe("overdue");
+    expect(s.copy).not.toMatch(/read-only|tomorrow/i);
   });
 
   it("the Billing card still offers Pay for an admin", () => {
@@ -407,13 +464,144 @@ describe("subscriptionBannerState - pause NOT enforced (dark / off)", () => {
   });
 });
 
+describe("subscriptionBannerState - every amount next to Pay is the amount Pay collects (lead ruling)", () => {
+  const two = (over: Partial<SubscriptionView> = {}) =>
+    owing({
+      pauseEnforced: false,
+      outstandingTotal: 298,
+      payNowAmount: 149,
+      openInvoiceCount: 2,
+      payNowUrl: "https://pay.example/in_1",
+      ...over,
+    });
+
+  it("the overdue strip names the ONE invoice Pay collects, never the total of two", () => {
+    const s = subscriptionBannerState(two(), "admin", at(2));
+    expect(s.copy).toContain("payment of $149.00 is overdue");
+    expect(s.copy).not.toContain("$298.00");
+  });
+
+  it("the read-only reason line uses the same source (payNowAmount)", () => {
+    const text = readOnlyCopyForView(
+      two({ status: "READ_ONLY", readOnlyReason: "payment_overdue", openInvoiceAmount: 298 }),
+      true,
+    ).text;
+    expect(text).toContain("Your subscription payment of $149.00 is overdue.");
+    expect(text).not.toContain("$298.00");
+  });
+
+  it("read-only while a payment settles: the reason line does not call it overdue with an amount", () => {
+    const text = readOnlyCopyForView(
+      two({
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
+        billingState: "processing",
+        paymentProcessing: true,
+        openInvoiceAmount: 149,
+      }),
+      true,
+    ).text;
+    expect(text).not.toContain("$149.00");
+    expect(text).toContain("Your subscription payment is overdue.");
+  });
+
+  it("read-only while a payment is settling: no Pay anywhere (strip action or card pay)", () => {
+    const s = subscriptionBannerState(
+      two({
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
+        billingState: "processing",
+        paymentProcessing: true,
+      }),
+      "admin",
+      at(2),
+    );
+    expect(s.kind).toBe("read-only");
+    expect(s.action).toBeNull();
+    expect(s.cardPay).toBeNull();
+  });
+});
+
+describe("subscriptionBannerState - the server's facts gate the strip (SA-777 review)", () => {
+  const dark = (over: Partial<SubscriptionView> = {}) => owing({ pauseEnforced: false, ...over });
+
+  it("a stamped marker but Stripe shows nothing open ('current'): NO strip, never '$0.00 is overdue'", () => {
+    const s = subscriptionBannerState(
+      dark({ billingState: "current", outstandingTotal: 0 }),
+      "admin",
+      at(2),
+    );
+    expect(s.inShell).toBe(false);
+    expect(s.copy).toBe("");
+  });
+
+  it("a zero total is never printed as an amount owed", () => {
+    const s = subscriptionBannerState(
+      dark({ outstandingTotal: 0, openInvoiceAmount: 149 }),
+      "admin",
+      at(2),
+    );
+    expect(s.copy).not.toContain("$0.00");
+    expect(s.copy).not.toContain("$149.00"); // the clocked amount is not trusted over an explicit 0
+  });
+
+  it("overdue on a live workspace with no marker stamped yet: the owner's sentence still shows", () => {
+    const s = subscriptionBannerState(
+      dark({
+        pastDueInvoiceId: null,
+        pastDueSince: null,
+        billingState: "overdue",
+        outstandingTotal: 149,
+      }),
+      "admin",
+      at(2),
+    );
+    expect(s.kind).toBe("overdue");
+    expect(s.copy).toContain("$149.00 is overdue");
+    expect(s.dismiss?.key).toMatch(/^grace:open:/);
+  });
+
+  it("a read-only trial workspace is not hijacked by an open invoice's overdue state", () => {
+    const s = subscriptionBannerState(
+      dark({
+        status: "READ_ONLY",
+        readOnlyReason: "trial_expired",
+        pastDueInvoiceId: null,
+        pastDueSince: null,
+        billingState: "overdue",
+      }),
+      "admin",
+      at(2),
+    );
+    expect(s.kind).not.toBe("overdue");
+  });
+
+  it("with the pause ENFORCED a merely 'due' invoice keeps the escalation (the pause does not wait for an attempt)", () => {
+    const s = subscriptionBannerState(
+      owing({ pauseEnforced: true, billingState: "due" }),
+      "admin",
+      at(6, 2),
+    );
+    expect(s.kind).toBe("final-day");
+  });
+
+  it("the Pay label is the amount the link collects (one invoice), not the total of several", () => {
+    const s = subscriptionBannerState(
+      dark({ outstandingTotal: 298, payNowAmount: 149, payNowUrl: "https://pay.example/in_1" }),
+      "admin",
+      at(2),
+    );
+    expect(s.cardPay?.label).toBe("Pay $149.00");
+  });
+});
+
 describe("subscriptionBannerState - pause enforced keeps the escalation", () => {
   it("day 6 is amber / alert / not dismissible only when the server enforces the pause", () => {
     expect(subscriptionBannerState(owing({ pauseEnforced: true }), "admin", at(6, 2)).kind).toBe(
       "final-day",
     );
     expect(subscriptionBannerState(owing({ pauseEnforced: false }), "admin", at(6, 2)).kind).toBe(
-      "grace",
+      "overdue",
     );
   });
 });
@@ -429,9 +617,12 @@ describe("subscriptionBannerState - read-only because of a cancel, with an owed 
     (role) => {
       const s = subscriptionBannerState(cancelled(), role, at(9));
       expect(s.kind).toBe("read-only");
-      expect(s.copy).toBe(
-        "Your workspace is read-only. You can still view, print and export. Dana can restore it.",
-      );
+      // the reason line says "cancelled" and nothing promises that paying restores it
+      expect(
+        s.copy.startsWith(
+          "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription was cancelled.",
+        ),
+      ).toBe(true);
       expect(s.copy).not.toMatch(/payment|goes through/i);
       expect(s.cardPay).toBeNull();
     },

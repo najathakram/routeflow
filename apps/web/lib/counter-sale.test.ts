@@ -2,6 +2,7 @@ import type { FulfilmentCapability } from "@routeflow/types";
 import * as keys from "./counter-live-cart-keys";
 import {
   AUTO_PRINT_KEY,
+  isNotSentOffline,
   cartTotals,
   amountDue,
   changeDue,
@@ -18,6 +19,8 @@ import {
   counterSaleGate,
   isStoreOnly,
   PAYMENT_PROBLEM_COPY,
+  isTenderShortCopy,
+  paymentProblemCopy,
   paymentMethodOptions,
   COUNTER_SALE_DAY_CLOSED_TILL_COPY,
   PICKUP_DAY_CLOSED_COPY,
@@ -133,9 +136,10 @@ describe("preselectFulfilment: mirrors the resolver (the customer's stored path 
 
 describe("cartTotals: money only through @routeflow/pricing", () => {
   it("a loose line is price x qty, cents rounded once", () => {
-    expect(cartTotals([{ unitPrice: 1.005, qty: 3 }], 0)).toEqual({
+    expect(cartTotals([{ unitPrice: 1.005, qty: 3 }], 0)).toMatchObject({
       subtotal: 3.02,
       tax: 0,
+      charges: 0,
       total: 3.02,
     });
   });
@@ -144,14 +148,64 @@ describe("cartTotals: money only through @routeflow/pricing", () => {
     expect(t.subtotal).toBe(180);
   });
   it("tax is one roundMoney of the subtotal, total = subtotal + tax", () => {
-    expect(cartTotals([{ unitPrice: 10, qty: 3 }], 0.0825)).toEqual({
+    expect(cartTotals([{ unitPrice: 10, qty: 3 }], 0.0825)).toMatchObject({
       subtotal: 30,
       tax: 2.48,
+      charges: 0,
       total: 32.48,
     });
   });
   it("empty cart is zero", () => {
-    expect(cartTotals([], 0.1)).toEqual({ subtotal: 0, tax: 0, total: 0 });
+    expect(cartTotals([], 0.1)).toMatchObject({ subtotal: 0, tax: 0, charges: 0, total: 0 });
+  });
+});
+
+describe("cartTotals: the regulated levy and the exempt customer (CQ-01, CQ-02, CQ-28)", () => {
+  const categories = new Map([
+    ["dep", { taxType: "DEPOSIT_PER_CONTAINER", rate: "0.1000", priceIncludesTax: false }],
+    ["exc", { taxType: "EXCISE_PER_UNIT", rate: "0.5000", priceIncludesTax: false }],
+  ] as const);
+  const cart = [
+    { unitPrice: 10, qty: 4, trackedCategoryId: "dep" },
+    { unitPrice: 10, qty: 4, trackedCategoryId: "exc" },
+  ];
+
+  it("CQ-01: the deposit and the excise are in the total the screen shows, as on the receipt", () => {
+    // 80.00 + 6.60 tax + 0.40 deposit + 2.00 excise
+    expect(cartTotals(cart, 0.0825, { categories })).toMatchObject({
+      subtotal: 80,
+      tax: 6.6,
+      charges: 2.4,
+      total: 89,
+    });
+  });
+
+  it("CQ-01: the change on a $100 tender is the receipt's, not 2.40 too high", () => {
+    const { total } = cartTotals(cart, 0.0825, { categories });
+    expect(changeDue(total, 100)).toBe(11);
+  });
+
+  it("CQ-02: an exempt customer pays $0 tax and $0 levy, so the screen, the order and the invoice agree", () => {
+    expect(cartTotals(cart, 0.0825, { categories, isTaxExempt: true })).toMatchObject({
+      subtotal: 80,
+      tax: 0,
+      charges: 0,
+      total: 80,
+    });
+  });
+
+  it("CQ-28: Exact on a cart holding a deposit item tenders the receipt's total, so a walk-in is not refused", () => {
+    const { total } = cartTotals([cart[0]], 0.0825, { categories });
+    const exact = quickTenderOptions(total).find((q) => q.label === "Exact");
+    expect(total).toBe(43.7);
+    expect(exact?.amount).toBe(43.7);
+    expect(amountDue(total, exact!.amount)).toBe(0);
+  });
+
+  it("a line with no category, or a category the list does not know, is just taxed", () => {
+    expect(
+      cartTotals([{ unitPrice: 10, qty: 1, trackedCategoryId: "gone" }], 0.1, { categories }),
+    ).toMatchObject({ subtotal: 10, tax: 1, charges: 0, total: 11 });
   });
 });
 
@@ -177,6 +231,12 @@ describe("payment method chips", () => {
     expect(walk.map((m) => m.method)).toEqual(["CASH", "CARD", "CHECK", "ON_ACCOUNT"]);
     expect(walk.find((m) => m.method === "ON_ACCOUNT")?.disabled).toBe(true);
     expect(paymentMethodOptions(false).every((m) => !m.disabled)).toBe(true);
+  });
+  it("a short cash tender says what to enter, with the total in the shared money format", () => {
+    expect(paymentProblemCopy("TENDER_SHORT", 18.94)).toBe("Enter at least $18.94.");
+    expect(isTenderShortCopy(paymentProblemCopy("TENDER_SHORT", 3))).toBe(true);
+    expect(isTenderShortCopy("Enter the check number.")).toBe(false);
+    expect(paymentProblemCopy("CHECK_NUMBER_REQUIRED", 18.94)).toBe("Enter the check number.");
   });
   it("validatePayment: cash must cover the total, a check needs a number, walk-in cannot go on account", () => {
     expect(validatePayment({ method: "CASH", total: 10, tendered: 5, isWalkIn: true })).toBe(
@@ -484,9 +544,14 @@ describe("pickupCompleteErrorCopy", () => {
     );
   });
   it("409 COUNTER_SALE_DAY_CLOSED: the order IS handed over, the payment is not (fixed copy, never the server text)", () => {
-    expect(PICKUP_DAY_CLOSED_COPY).toBe(
-      "Handed over. Payment not taken: the till for that day is closed.",
-    );
+    expect(PICKUP_DAY_CLOSED_COPY).toBe("Handed over. Payment is still due.");
+    // with the balance known, it says how much
+    expect(
+      pickupCompleteErrorCopy(
+        { response: { status: 409, data: { code: "COUNTER_SALE_DAY_CLOSED" } } },
+        18.94,
+      ),
+    ).toBe("Handed over. $18.94 still due.");
     expect(
       pickupCompleteErrorCopy({
         response: {
@@ -565,6 +630,17 @@ describe("held attempt: minimal customer, validated read", () => {
     );
     const c = JSON.parse(window.sessionStorage.getItem(SK) as string).customer;
     expect(Object.keys(c).sort()).toEqual(["businessName", "fulfillPath", "id", "pricingTier"]);
+  });
+
+  it("keeps the tax exemption through a held attempt, so a restored cart still prices without tax (CQ-02)", () => {
+    writeHeldAttempt(
+      SK,
+      snap({
+        customer: { id: "c1", businessName: "Acme", isTaxExempt: true, email: "a@b.c" },
+      }),
+    );
+    const c = (readHeldAttempt(SK) as { customer: Record<string, unknown> }).customer;
+    expect(c).toEqual({ id: "c1", businessName: "Acme", isTaxExempt: true });
   });
 
   it("reads a valid attempt back", () => {
@@ -647,5 +723,14 @@ describe("live cart storage (SA-748 section 1)", () => {
     expect(window.localStorage.getItem("rf.counterSale.liveCart:other:u2")).toBeNull();
     expect(window.localStorage.getItem("rf.counterSale.autoPrint")).toBe("1");
     window.localStorage.clear();
+  });
+});
+
+describe("isNotSentOffline (CQ-29)", () => {
+  it("is true only for a no-answer failure from a browser that was already offline", () => {
+    expect(isNotSentOffline(new Error("Network Error"), true)).toBe(true);
+    expect(isNotSentOffline(new Error("Network Error"), false)).toBe(false);
+    expect(isNotSentOffline({ response: { status: 503 } }, true)).toBe(false);
+    expect(isNotSentOffline(null, true)).toBe(false);
   });
 });

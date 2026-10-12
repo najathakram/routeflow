@@ -15,6 +15,7 @@ import { FeatureOverrideService } from "./feature-override.service";
 import {
   EMPTY_BILLING_VIEW_EXTRAS,
   SubscriptionBillingExtras,
+  pickStateFacts,
 } from "./subscription-billing-extras";
 import {
   BILLING_EXPORT_INVOICE_FIELDS,
@@ -60,11 +61,15 @@ export class SubscriptionService {
     const addons = addonRows.map((r) => {
       const code = addonSkuCode(r);
       const sku = code ? skuByCode.get(code) : undefined;
+      // SA-693 / row 350: a COMP row is a platform grant, never billed. It carries `comp: true` and NO price
+      // (`monthly` null), so the tenant is never shown a charge that will not happen.
+      const comp = r.isComp === true;
       return {
         sku: code,
         name: sku?.name ?? code ?? r.addonKey,
         quantity: r.quantity,
-        monthly: sku ? Number(sku.monthlyPrice) * r.quantity : null,
+        comp,
+        monthly: !comp && sku ? Number(sku.monthlyPrice) * r.quantity : null,
       };
     });
 
@@ -139,7 +144,9 @@ export class SubscriptionService {
       // SA-733r6 (B4): dunning facts + the banner extras. The server decides read-only; the client only renders.
       pastDueSince: sub?.pastDueSince ?? null,
       pastDueInvoiceId: sub?.pastDueInvoiceId ?? null,
-      billingContactName: extras.billingContactName,
+      billingContactEmail: extras.billingContactEmail,
+      // SA-777: spread, so a field Stripe could not answer is OMITTED from the JSON (never null/0).
+      ...pickStateFacts(extras),
       openInvoiceAmount: extras.openInvoiceAmount,
       paymentMethodSummary: extras.paymentMethodSummary,
       nextCharge: extras.nextCharge,

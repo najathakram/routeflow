@@ -19,6 +19,7 @@ import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { LOCK_FAMILIES } from "../../common/db-locks";
 import { createMockPrisma, type MockPrisma } from "../../testing/prisma-mock";
 import { CounterParkService } from "./counter-park.service";
+import { priceLinesOf } from "./counter-park";
 import { FakeParkDb } from "./counter-park.fixtures";
 
 /**
@@ -455,6 +456,45 @@ describe("CounterParkService.list", () => {
     expect(res.data[0]).not.toHaveProperty("customerName");
     for (const r of res.data) expect(r).not.toHaveProperty("payload");
     expect(JSON.stringify(res)).not.toContain("Acme Widget");
+  });
+
+  it("row 330e: each row carries the pricing inputs of its lines (and nothing else of them), so the screen can total it", async () => {
+    const t = setup();
+    await t.park({
+      id: id(1),
+      payload: payload({
+        lines: [
+          line({
+            unitPrice: 2.5,
+            qty: 2,
+            boxes: 1,
+            pieces: 3,
+            unitsPerBox: 12,
+            note: "keep cold",
+            tierPrices: { pricePerUnit: 2 },
+          }),
+          line({ tempId: "t-2", unitPrice: 4, qty: 1 }),
+        ],
+      }),
+    });
+    const res = await t.service.list({ page: 1, pageSize: 20 }, NOW);
+    expect(res.data[0].priceLines).toEqual([
+      { unitPrice: 2.5, qty: 2, boxes: 1, pieces: 3, unitsPerBox: 12 },
+      { unitPrice: 4, qty: 1 },
+    ]);
+    expect(JSON.stringify(res)).not.toContain("keep cold");
+    expect(JSON.stringify(res)).not.toContain("Acme Widget");
+  });
+
+  it("row 330e: priceLinesOf drops a line with no finite price or qty and reads a non-array as none", () => {
+    expect(
+      priceLinesOf({ lines: [{ unitPrice: "x", qty: 1 }, { unitPrice: 1 }, null, 7] }),
+    ).toEqual([]);
+    expect(priceLinesOf({ lines: "nope" })).toEqual([]);
+    expect(priceLinesOf(null)).toEqual([]);
+    expect(priceLinesOf({ lines: [{ unitPrice: "2.5", qty: "3", boxes: null }] })).toEqual([
+      { unitPrice: 2.5, qty: 3 },
+    ]);
   });
 
   it("pages (skip/take) and reports the open total; a missing or invalid register is the default", async () => {

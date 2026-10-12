@@ -247,6 +247,15 @@ export function tenantHeaderHtml(businessName: string): string {
 }
 
 /**
+ * A closing sentence that ends in a tenant-typed name ("Sent by Acme Co."): the period is added only when the text does not
+ * already end a sentence, so a business named "Acme Co." is not signed "Acme Co.." (CQ-20).
+ */
+export function endSentence(text: string): string {
+  const t = text.trimEnd();
+  return /[.!?\u2026]$/.test(t) ? t : `${t}.`; // . ! ? and the ellipsis character
+}
+
+/**
  * The ONE shared branded shell every transactional email in this file renders through —
  * Route Navy header, a heading, the caller's body, a Cloud-gray footer. Table-based, inline
  * CSS only, Arial/Helvetica stack (email-safe and deliberate — never "fix" this to a
@@ -1854,7 +1863,7 @@ export class EmailService {
       heading: "Invoice",
       bodyHtml,
       bodyText,
-      footerNote: `This is an automated email from ${businessName}.`,
+      footerNote: endSentence(`This is an automated email from ${businessName}`),
     });
   }
 

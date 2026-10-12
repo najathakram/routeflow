@@ -151,6 +151,7 @@ export * from "./api/products";
 export * from "./api/finance";
 export * from "./api/credit-notes";
 export * from "./api/returns";
+export * from "./api/buyer-order-edit";
 export * from "./api/inline-returns";
 export * from "./api/regulated";
 export * from "./api/routes";

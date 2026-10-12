@@ -1,4 +1,5 @@
 import type { SubscriptionView } from "@routeflow/types";
+import { readOnlyCopyForView } from "./read-only-copy";
 
 /**
  * SA-733r6 (B4): the ONE pure function behind the billing strip in the dashboard shell and the Settings >
@@ -6,9 +7,11 @@ import type { SubscriptionView } from "@routeflow/types";
  * the action, the dismiss rule. No per-screen copy; no client timer decides state - the server's read does, and
  * this only renders it (the day index is computed from `pastDueSince` against the `now` the caller passes).
  *
- * Rules that bind (the brief's Don't list): never red; no "overdue" / "failed" / "suspended" or blame wording; no
- * countdown; no pay control for anyone but a workspace admin; no "Choose a plan" / "Subscribe" while an invoice
- * is owed; no billing state for buyers; amounts always print as money ($149.00), never a dash.
+ * Rules that bind (the brief's Don't list): never red; "overdue" only in the owner's signed sentences (the Billing
+ * strip's SA-777 sentence, and the read-only states' SA-776 copy composed in `read-only-copy.ts`); no "failed" /
+ * "suspended" or blame wording; no countdown; no pay control for anyone but a workspace admin; no "Choose a plan" /
+ * "Subscribe" while an invoice is owed; no billing state for buyers; amounts always print as money ($149.00), never a
+ * dash. SA-777: nothing here threatens a lock, a date or a countdown while `pauseEnforced !== true`.
  */
 
 export type BannerRole = "admin" | "staff";
@@ -24,6 +27,8 @@ export interface BannerAction {
   label: string;
   /** "update-payment" opens the Stripe billing portal; "pay" opens the owed invoice's hosted page. */
   intent: "update-payment" | "pay" | "open-billing";
+  /** SA-777: the oldest owed invoice's hosted page (`payNowUrl`); a Pay action opens it directly when present. */
+  url?: string;
 }
 
 export interface BannerDismiss {
@@ -33,8 +38,8 @@ export interface BannerDismiss {
 }
 
 export interface BannerState {
-  kind: "none" | "autopay" | "card-expiring" | "grace" | "final-day" | "read-only";
-  /** Grace is neutral (blue); the last day and read-only are amber. Never red. */
+  kind: "none" | "autopay" | "card-expiring" | "grace" | "overdue" | "final-day" | "read-only";
+  /** Grace is neutral (blue); overdue, the last day and read-only are amber. Never red. */
   tone: "none" | "neutral" | "amber";
   /** The full strip text ("" when there is no strip). */
   copy: string;
@@ -48,6 +53,8 @@ export interface BannerState {
   inShell: boolean;
   /** The status line on the Billing card (autopay, expiring card). */
   cardLine: string | null;
+  /** The strip's text as separate lines (the read-only sentence / reason / contact), stacked; absent = just `copy`. */
+  lines?: string[];
   /** "Pay $149.00" - primary at the top of the Billing card whenever an invoice is owed (admins only). */
   cardPay: BannerAction | null;
 }
@@ -118,8 +125,6 @@ const utcDayOrNull = (iso: string): string | null => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? null : utcDay(d);
 };
-const monthLabelOf = (view: SubscriptionView, since: Date | null, now: Date) =>
-  view.pastDueMonthLabel ?? utcMonth(since ?? now);
 /** Local calendar date key, for the "dismissed for the day" rule. */
 const dayKey = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -135,17 +140,17 @@ const BRANDS: Record<string, string> = {
 };
 const brandName = (b: string) => BRANDS[b.toLowerCase()] ?? b.charAt(0).toUpperCase() + b.slice(1);
 
-/** "Dana", or the neutral fallback when no admin is on file. `lead` capitalises it at a sentence start. */
-function contact(view: SubscriptionView, lead: boolean): string {
-  const name = view.billingContactName?.trim();
-  if (name) return name;
+/** Who a non-admin is told to ask. There is no contact NAME (SA-776: a username is never shown). */
+function contact(lead: boolean): string {
   return lead ? "Your admin" : "your admin";
 }
 
-/** The sentence a blocked control shows while the workspace is read-only (and a 403 READ_ONLY shows next to it). */
-export function readOnlyLine(adminName: string | null | undefined): string {
-  const name = adminName?.trim() || "Your admin";
-  return `Not available while read-only. ${name} can restore it.`;
+/**
+ * The line a blocked control shows while the workspace is read-only (and a 403 READ_ONLY toast shows): the owner's
+ * sentence + the mapped reason + (non-admin) the contact, from `read-only-copy.ts` (SA-776).
+ */
+export function readOnlyLine(view: SubscriptionView | null | undefined, isAdmin: boolean): string {
+  return readOnlyCopyForView(view, isAdmin).text;
 }
 
 /** True when this view's read-only / grace state is the billing strip's, not the trial banner's. */
@@ -157,13 +162,49 @@ export function ownsBillingBanner(view: SubscriptionView | null | undefined): bo
 export function subscriptionPollInterval(
   view: SubscriptionView | null | undefined,
 ): number | false {
-  return ownsBillingBanner(view) ? POLL_MS : false;
+  // SA-777: also while the server says a payment is overdue or settling (the strip / card clear on server state).
+  return ownsBillingBanner(view) ||
+    view?.billingState === "overdue" ||
+    view?.billingState === "processing"
+    ? POLL_MS
+    : false;
 }
 
-const payAction = (view: SubscriptionView): BannerAction => ({
-  label: view.openInvoiceAmount != null ? `Pay ${billingMoney(view.openInvoiceAmount)}` : "Pay now",
-  intent: "pay",
-});
+/** What is owed in dollars: SA-777's `outstandingTotal` (all open invoices), else the clocked invoice's amount.
+ *  A zero or negative figure is "nothing owed", never printed as money owed. */
+export const owedAmount = (view: SubscriptionView): number | null => {
+  const total = view.outstandingTotal;
+  if (total != null && total > 0) return total;
+  const clocked = view.openInvoiceAmount;
+  return clocked != null && clocked > 0 && total == null ? clocked : null;
+};
+
+/**
+ * The amount the Pay control collects: that ONE invoice's `payNowAmount`, else (an older server) what is owed. EVERY
+ * amount printed next to Pay (the button, the strip sentence, the card's big number, the read-only reason line)
+ * comes from here, so the words and the button can never disagree (lead ruling).
+ */
+export const payAmountOf = (view: SubscriptionView): number | null =>
+  view.payNowAmount != null && view.payNowAmount > 0 ? view.payNowAmount : owedAmount(view);
+
+/** The workspace is read-only (the status word is spelled here only, never in the card model: error-code parity). */
+export const isReadOnlyView = (view: SubscriptionView): boolean => view.status === "READ_ONLY";
+
+/** A payment is settling (a bank debit): nothing more to pay, so no Pay control invites a double payment. */
+export const isSettling = (view: SubscriptionView): boolean =>
+  view.paymentProcessing === true || view.billingState === "processing";
+
+const payAction = (view: SubscriptionView): BannerAction => {
+  const amount = payAmountOf(view);
+  return {
+    label: amount != null && amount > 0 ? `Pay ${billingMoney(amount)}` : "Pay now",
+    intent: "pay",
+    ...(view.payNowUrl ? { url: view.payNowUrl } : {}),
+  };
+};
+/** The owner's signed overdue sentence (SA-777); the amount is left out, never faked, when it is unknown. */
+const overdueSentence = (amount: number | null) =>
+  `Your subscription payment${amount != null ? ` of ${billingMoney(amount)}` : ""} is overdue. Please complete your payment to keep your account up to date.`;
 const UPDATE_PAYMENT: BannerAction = { label: "Update payment", intent: "update-payment" };
 
 export function subscriptionBannerState(
@@ -180,13 +221,17 @@ export function subscriptionBannerState(
 
   // ── Paused (read-only) ───────────────────────────────────────────────────────────────────────────────
   if (readOnly) {
-    // A cancel, not an unpaid invoice, is what holds this workspace read-only: paying does not restore it, so the
-    // sentence must not promise that (S7). Neutral line; the admin gets a Billing link, never a Pay button.
+    // SA-776: the owner's sentence + the mapped reason line (+ the contact line for a non-admin), composed in ONE
+    // place. A cancel, not an unpaid invoice, can be what holds this workspace read-only (S7): the reason line then
+    // says "cancelled" and nothing promises that paying restores it; the admin gets a Billing link, never Pay.
+    const roCopy = readOnlyCopyForView(view, admin);
+    const copy = roCopy.text;
     if (view.readOnlyReason !== "payment_overdue") {
       return {
         kind: "read-only",
         tone: "amber",
-        copy: `Your workspace is read-only. You can still view, print and export. ${contact(view, true)} can restore it.`,
+        copy,
+        lines: roCopy.lines,
         action: admin ? { label: "Billing", intent: "open-billing" } : null,
         dismiss: null,
         live: "alert",
@@ -195,27 +240,35 @@ export function subscriptionBannerState(
         cardPay: null,
       };
     }
-    const month = monthLabelOf(view, sinceOk, now);
-    const money =
-      view.openInvoiceAmount != null ? ` of ${billingMoney(view.openInvoiceAmount)}` : "";
+    // A payment already settling: nothing more to pay, so no Pay control (never invite a double payment).
+    const canPay = admin && !isSettling(view);
     return {
       kind: "read-only",
       tone: "amber",
-      copy: admin
-        ? `Your workspace is read-only until the ${month} payment${money} goes through. Your data is safe.`
-        : `Your workspace is read-only. You can still view, print and export. ${contact(view, true)} can restore it.`,
-      action: admin ? payAction(view) : null,
+      copy,
+      lines: roCopy.lines,
+      action: canPay ? payAction(view) : null,
       dismiss: null,
       live: "alert",
       inShell: true,
       cardLine: null,
-      cardPay: admin && view.pastDueInvoiceId ? payAction(view) : null,
+      cardPay: canPay && view.pastDueInvoiceId ? payAction(view) : null,
     };
   }
 
   // ── An invoice is owed, the workspace still works: grace, or (only when the pause is real) the last day ─
-  if (view.pastDueInvoiceId) {
+  // SA-777: the dunning marker, or the server saying a payment is overdue on a live workspace (no marker stamped yet).
+  const owedNow =
+    !!view.pastDueInvoiceId || (view.billingState === "overdue" && view.status !== "READ_ONLY");
+  if (owedNow) {
     const cardPay = admin ? payAction(view) : null;
+    // SA-777: the server's facts say nothing is owed (a voided / written-off invoice, a payment that just landed):
+    // the marker alone is not a strip.
+    if (view.billingState === "current") return NONE;
+    // No strip while a payment settles; none for a merely "due" invoice unless the pause is real (a real pause
+    // must keep its escalation: the marker can be clocked before the first attempt).
+    if (isSettling(view)) return NONE;
+    if (view.billingState === "due" && view.pauseEnforced !== true) return NONE;
     const elapsedHours = sinceOk ? Math.max(0, (now.getTime() - sinceOk.getTime()) / HOUR_MS) : 0;
     // B2: the last-day escalation (amber, "read-only tomorrow") exists ONLY when the server really pauses
     // (BILLING_PAUSE_MODE=enforced). In dark / off nothing will happen on day 7, so nothing is threatened.
@@ -225,10 +278,27 @@ export function subscriptionBannerState(
         tone: "amber",
         copy: admin
           ? "Your workspace becomes read-only tomorrow. Update your payment to keep everything running."
-          : `Your workspace becomes read-only tomorrow. Let ${contact(view, false)} know.`,
+          : `Your workspace becomes read-only tomorrow. Let ${contact(false)} know.`,
         action: admin ? UPDATE_PAYMENT : null,
         dismiss: null,
         live: "alert",
+        inShell: true,
+        cardLine: null,
+        cardPay,
+      };
+    }
+    // SA-777: while the pause is NOT enforced (today) nothing is threatened: the owner's overdue sentence, the
+    // amount, and Pay now - no deadline, no "read-only", no countdown.
+    if (view.pauseEnforced !== true) {
+      return {
+        kind: "overdue",
+        tone: "amber",
+        copy: admin
+          ? overdueSentence(payAmountOf(view))
+          : "Your subscription payment is overdue. Please let your admin know.",
+        action: admin ? { ...payAction(view), label: "Pay now" } : null,
+        dismiss: { scope: "day", key: `grace:${view.pastDueInvoiceId ?? "open"}:${dayKey(now)}` },
+        live: "status",
         inShell: true,
         cardLine: null,
         cardPay,
@@ -249,9 +319,9 @@ export function subscriptionBannerState(
       tone: "neutral",
       copy: admin
         ? adminCopy
-        : `There's a billing issue. Everything still works. ${contact(view, true)} can sort it out in Billing.`,
+        : `There's a billing issue. Everything still works. ${contact(true)} can sort it out in Billing.`,
       action: admin ? UPDATE_PAYMENT : null,
-      dismiss: { scope: "day", key: `grace:${view.pastDueInvoiceId}:${dayKey(now)}` },
+      dismiss: { scope: "day", key: `grace:${view.pastDueInvoiceId ?? "open"}:${dayKey(now)}` },
       live: "status",
       inShell: true,
       cardLine: null,
