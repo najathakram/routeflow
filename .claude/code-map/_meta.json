@@ -1,6 +1,6 @@
 {
   "mappedSha": "ef8c02f688adc3002cc8878dc59c92e3ed58a695",
-  "generatedAt": "2026-10-11T12:00:00.000Z",
+  "generatedAt": "2026-10-12T12:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1059,
-  "notes": "**2026-10-11 \u2014 Release 4 #3378 (master `ef8c02f688adc3002cc8878dc59c92e3ed58a695`, train/w23-r4; docs-only bookkeeping).** New `api/`, `web/` and `mobile/landing-2026-10-11-r4.md` (TOC row in each area file) and a Release 4 section in `packages.md`: digital receipt (SA-751r; `documents/` receipt model, email send with three caps, shared `ReceiptModel`, one tax-rate home and one lowered-price rule in `@routeflow/pricing`), SA-764 stored cash tendered and served change on counter replays and Today's sales rows, counter pass 2 (#3364), refund slip (#3367), last 7 days (#3368), POS mode (staff PICKUP, `orders.posMode`, `DISPATCH_PATH_WHERE`, POS order page, delivered-floor stamp, P-3 edit-after-final overpay judge and `statusFromPayments`, P-4 revision marks), SA-770 overdue by balance due (`classifyInvoiceBalance`, `balanceDueSql`), billing B1 (#3360; Stripe-first plan change, price override and scheduled downgrade under the `tenant-price` lock; `toCents`/`fromCents` moved to pricing). No new migration. Older notes corrected in place: Today's sales row fields now sent, `counterCashTendered` now written, `recomputeInvoiceStatus` renamed, `toCents`/`fromCents` location, the overdue-sweep and staff-capability notes. The oldest changelog bullet (merge train D, 2026-09-27) moved to `CHANGELOG-ARCHIVE.md` to stay at 30. `mappedSha` = `ef8c02f688adc3002cc8878dc59c92e3ed58a695`."
+  "notes": "**2026-10-12 — MacBook lane pushed branches (docs-only bookkeeping; unmerged, read at branch tips).** New `api/`, `web/` and `mobile/landing-2026-10-12-macbook.md` (TOC row in each area file): `fix/row-311-pos-merge-draft-confirm` `6614c7adf` (web `usePosFinish` DRAFT to PENDING to CONFIRMED, `promotedAlready` re-read), `feat/pos-mode-p2-mobile` `420ee6c6d` (mobile POS mode, hand-over sheet, `usePickupInvoiceBalances`), `feat/pos-mode-p2-web` `cc81fc79c` (already in master), `feat/sa2-delivery-pos-profile` `df643f3f7` (`delivery_pos` profile, Advanced section), `fix/b1015-dashboard-kpi-unknown-v2` `054378ebc` (exact `meta.total` KPIs, `UNKNOWN_KPI` dash). `mappedSha` unchanged."
 }

@@ -3856,3 +3856,57 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **Declare the FK inline: `ADD COLUMN "x" TEXT CONSTRAINT "T_x_fkey" REFERENCES ...`, not a separate `ADD CONSTRAINT` (probe on 1M rows: 0.7 ms inline vs 33 ms separate; the constraint name is unchanged, so Prisma shows no drift). Write the real lock duration in the migration header.**
 - **Guard:** the sitting-3 migration headers; replay plus `apps/api/scripts/schema-drift.mjs`.
   (Archived 2026-10-11 whole and verbatim to make room at cap: L-286: guarded by the sitting-3 migration headers and `apps/api/scripts/schema-drift.mjs`; no outside citation.)
+
+## Archived 2026-10-12 — headroom for L-295..L-298 (MacBook lane bookkeeping)
+
+### L-191 · 2026-09-17 · tooling · MailboxCard.tsx JSX apostrophes only caught by a full web lint
+
+- **Symptom:** `MailboxCard.tsx` shipped with five raw `'` characters in JSX text nodes
+  (`react/no-unescaped-entities`). `tsc`, Jest, and a targeted `eslint` pass on just the changed
+  file were all clean; the errors only surfaced under `npm run lint -w apps/web` (`next lint`)
+  against the whole workspace.
+- **Root cause:** `next lint` fails the ENTIRE web workspace on a single error, and amid
+  pre-existing warnings elsewhere in the repo, a real new error in the diff reads as just more
+  backlog.
+- **Lesson:** **A JSX text change needs web lint run locally before push, not inferred from
+  `tsc`/Jest passing — scan the full lint output for NEW errors in the touched file(s) rather
+  than assuming a clean `tsc` means the JSX is clean too.**
+- **Guard:** none yet — propose a scoped `npm run lint -w apps/web -- --file <changed-file>`
+  invocation, or a pre-push step that diffs lint output against a baseline.
+
+### L-202 · 2026-09-18 · testing · 390px sweep script matched zero targets, reported clean
+
+- **Symptom:** the 390px mobile-overflow sweep located screens via `a[href^='/x/']`, but this
+  codebase navigates list tables by row-level `onClick` + `router.push`, never anchors — true
+  across every screen checked. The locator matched nothing, every run recorded "skipped: no
+  data," and looked clean while testing nothing. Fleet decisions were made on those results.
+- **Root cause:** the harness treated "found zero candidate targets" and "checked every
+  candidate and found nothing wrong" as the same outcome — a green run gives no signal for which
+  one happened.
+- **Lesson:** **Any verification step that yields zero candidate targets must raise an error,
+  never a skip or a pass.**
+- **Guard:** none yet — propose the sweep script assert a non-zero target count before
+  evaluating, failing loudly when a locator matches nothing.
+
+### L-050 · 2026-09-02 · testing · #598
+
+- **Symptom:** two new e2e specs went red post-deploy AND dragged an unrelated, previously-green
+  test down with them.
+- **Root cause:** neither new project declared `dependencies`, so the runner placed both in the
+  first phase, while the victim ran in phase 2 on a stored session for the same shared operator;
+  the mutating spec revoked that session mid-flow, 401ing the sibling's token refresh.
+- **Lesson:** **A spec that mutates shared auth state needs its own user, not a scheduling
+  tweak.** Ask which fixtures a new suite MUTATES, and who else in its phase reads them.
+- **Guard:** none yet — the two project entries are commented out with the diagnosis inline, so
+  re-enabling is a seed change plus uncommenting. A skip is not a discharge ([[L-041]]).
+
+### L-025 · 2026-09-01 · testing
+
+- **Symptom:** native Google Sign-In had been dead the whole time — the callback destructured a
+  `default` export `expo-secure-store` does not have, so token storage threw on every device.
+- **Root cause:** the throw sits inside a `!isWeb` branch. Every automated surface runs the web
+  build, which takes the `localStorage` branch, so nothing ever executed the failing line.
+- **Lesson:** **A `Platform`/`isWeb` branch is untested code unless something runs that
+  platform. When you touch one side of such a branch, either exercise the other side or state
+  plainly that it is unverified.**
+- **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
