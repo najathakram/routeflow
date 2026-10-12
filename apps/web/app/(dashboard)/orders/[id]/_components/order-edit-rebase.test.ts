@@ -128,6 +128,77 @@ describe("order edit rebase (row 372 MF3)", () => {
     expect(buildItemUpdates(r.items, fresh)).toEqual([]);
   });
 
+  it("M2: both sides changed the SAME field: the server's value stands and the line is counted (no silent overwrite)", () => {
+    const edits = seedAll(base);
+    edits[0] = { ...edits[0], qty: 7 }; // the user typed 7 on a stale 5
+    const fresh = [line("a", 9), line("b", 3)]; // the other writer set 9
+    const r = rebaseEditItems(edits, base, fresh, deps);
+    expect(r.conflicts).toBe(1);
+    expect(r.items[0].qty).toBe(9);
+    expect(buildItemUpdates(r.items, fresh)).toEqual([]);
+  });
+
+  it("M2: the user's change to a DIFFERENT field than the other writer's is kept, and not counted", () => {
+    const edits = seedAll(base);
+    edits[0] = { ...edits[0], qty: 7 };
+    const fresh = [line("a", 5, { unitPrice: 12 }), line("b", 3)];
+    const r = rebaseEditItems(edits, base, fresh, deps);
+    expect(r.conflicts).toBe(0);
+    expect(r.items[0]).toMatchObject({ qty: 7, unitPrice: 12 });
+  });
+
+  it("M2: a note typed-and-erased ('' vs null) or padded with a space is NOT an edit, so it never overwrites theirs", () => {
+    const withNullNote = [line("a", 5, { notes: null as never }), line("b", 3)];
+    const edits = seedAll(withNullNote);
+    edits[0] = { ...edits[0], notes: "" };
+    const fresh = [line("a", 5, { notes: "dock 4" }), line("b", 3)];
+    const r = rebaseEditItems(edits, withNullNote, fresh, deps);
+    expect(r.conflicts).toBe(0);
+    expect(r.items[0].notes).toBe("dock 4");
+    const padded = [line("a", 5, { notes: "Leave at back" }), line("b", 3)];
+    const e2 = seedAll(padded);
+    e2[0] = { ...e2[0], notes: "Leave at back " };
+    const r2 = rebaseEditItems(
+      e2,
+      padded,
+      [line("a", 5, { notes: "Leave at dock 4" }), line("b", 3)],
+      deps,
+    );
+    expect(r2.items[0].notes).toBe("Leave at dock 4");
+  });
+
+  it("M2: the user's picker flags survive a rebase of a line they changed", () => {
+    const edits = seedAll(base);
+    edits[0] = { ...edits[0], qty: 7, priceEdited: true };
+    const fresh = [line("a", 5, { unitPrice: 12 }), line("b", 3)];
+    const r = rebaseEditItems(edits, base, fresh, deps);
+    expect(r.items[0].priceEdited).toBe(true);
+  });
+
+  it("M2: a catalog-only change (unitCost) is not 'someone else changed the line'", () => {
+    const edits = seedAll(base);
+    edits[0] = { ...edits[0], qty: 7 };
+    const r = rebaseEditItems(
+      edits,
+      base,
+      [
+        line("a", 5, {
+          product: {
+            id: "p-a",
+            name: "Item a",
+            unit: "Each",
+            unitsPerBox: 1,
+            averageCost: 3,
+          } as never,
+        }),
+        line("b", 3),
+      ],
+      deps,
+    );
+    expect(r.conflicts).toBe(0);
+    expect(r.items[0].qty).toBe(7);
+  });
+
   it("picker-only flags (priceEdited false vs absent) are not an edit: the row refreshes", () => {
     const edits = seedAll(base);
     edits[0] = { ...edits[0], priceEdited: false, startOnDefaultUnit: false };

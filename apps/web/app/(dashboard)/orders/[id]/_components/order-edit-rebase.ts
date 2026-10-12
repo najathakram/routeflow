@@ -33,10 +33,17 @@ const DENOMINATION_KEYS = [
 ] as const;
 /** UI-only flags the unit picker writes on its own (`false` vs absent): never evidence of an edit. */
 const UI_ONLY_KEYS = new Set(["priceEdited", "startOnDefaultUnit", "reasonBaselinePrice"]);
+/** Display facts read from the live PRODUCT, not the order line: a catalog change is nobody editing the line. */
+const PRODUCT_ONLY_KEYS = new Set(["unitCost", "category", "unit", "originalUnitsPerBox"]);
+const IGNORED_KEYS = new Set([...UI_ONLY_KEYS, ...PRODUCT_ONLY_KEYS]);
 
 const field = (o: object, k: string) => (o as Record<string, unknown>)[k];
 const isDenomination = (k: string) => (DENOMINATION_KEYS as readonly string[]).includes(k);
 const keysOf = (...rows: object[]) => [...new Set(rows.flatMap((r) => Object.keys(r)))];
+/** What a save would compare: a note is trimmed and null == "" (exactly `buildItemUpdates`' own rule). */
+const norm = (k: string, v: unknown) => (k === "notes" ? String(v ?? "").trim() : v);
+const differs = (a: object, b: object, k: string) =>
+  !same(norm(k, field(a, k)), norm(k, field(b, k)));
 
 /**
  * Three-way merge of ONE edit row (edit, the edit-open `base`, the `fresh` server row). Never a SILENT revert:
@@ -45,15 +52,16 @@ const keysOf = (...rows: object[]) => [...new Set(rows.flatMap((r) => Object.key
  *   3. both changed it, and either side touched the denomination (product, unit, pack size, box split) -> the
  *      fresh row whole, COUNTED (`conflict`) so the page tells the user to re-check it: a qty is never carried
  *      across a unit/pack/product change, and no stale field of the user's row is ever re-sent over theirs;
- *   4. both changed it, denomination untouched by both -> per field: fresh, except the user's own changes.
+ *   4. both changed it, denomination untouched by both -> per field: fresh, plus the user's own changes; a field
+ *      BOTH changed to different values takes the fresh value and is COUNTED (the user re-enters it).
  */
 function mergeRow<E extends Edit>(edit: E, base: E, fresh: E): { row: E; conflict: boolean } {
   const userChanged = keysOf(edit, base).filter(
-    (k) => !UI_ONLY_KEYS.has(k) && !same(field(edit, k), field(base, k)),
+    (k) => !IGNORED_KEYS.has(k) && differs(edit, base, k),
   );
   if (userChanged.length === 0) return { row: fresh, conflict: false };
   const freshChanged = keysOf(fresh, base).filter(
-    (k) => !UI_ONLY_KEYS.has(k) && !same(field(fresh, k), field(base, k)),
+    (k) => !IGNORED_KEYS.has(k) && differs(fresh, base, k),
   );
   if (freshChanged.length === 0) return { row: edit, conflict: false };
   if (userChanged.some(isDenomination) || freshChanged.some(isDenomination)) {
@@ -61,8 +69,14 @@ function mergeRow<E extends Edit>(edit: E, base: E, fresh: E): { row: E; conflic
     return { row: { ...fresh, cancelled: field(edit, "cancelled") } as E, conflict: true };
   }
   const out: Record<string, unknown> = { ...fresh };
-  for (const k of userChanged) out[k] = field(edit, k); // the user's own change wins, field by field
-  return { row: out as unknown as E, conflict: false };
+  let conflict = false;
+  for (const k of userChanged) {
+    if (freshChanged.includes(k) && differs(edit, fresh, k))
+      conflict = true; // both changed it: theirs stands
+    else out[k] = field(edit, k); // the user's own change wins, field by field
+  }
+  for (const k of UI_ONLY_KEYS) if (k in edit) out[k] = field(edit, k); // the picker's own memory stays
+  return { row: out as unknown as E, conflict };
 }
 
 export function rebaseEditItems<E extends Edit, L extends Line>(
