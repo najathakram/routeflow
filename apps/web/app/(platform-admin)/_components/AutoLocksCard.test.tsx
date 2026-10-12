@@ -45,8 +45,11 @@ beforeEach(() => {
   mockPatch.mockResolvedValue({ data: {} });
 });
 
-const typeReason = (text = "owner go-live ruling") =>
-  fireEvent.change(screen.getByLabelText(/Reason for the change/), { target: { value: text } });
+// the card renders its form only after the status load, so wait for the field
+const typeReason = async (text = "owner go-live ruling") =>
+  fireEvent.change(await screen.findByLabelText(/Reason for the change/), {
+    target: { value: text },
+  });
 
 describe("AutoLocksCard", () => {
   it("shows the paused banner with the number of tenants and the list by id and kind", async () => {
@@ -67,7 +70,7 @@ describe("AutoLocksCard", () => {
     render(<AutoLocksCard />);
     const open = await screen.findByRole("button", { name: /Unpause automatic locks/ });
     expect(open).toBeDisabled();
-    typeReason();
+    await typeReason();
     expect(open).toBeEnabled();
     fireEvent.click(open);
 
@@ -83,7 +86,7 @@ describe("AutoLocksCard", () => {
   it("UNPAUSE: Cancel writes nothing; the explicit confirm sends {paused:false, reason}", async () => {
     route(state());
     render(<AutoLocksCard />);
-    typeReason("  owner go-live ruling  ");
+    await typeReason("  owner go-live ruling  ");
     fireEvent.click(await screen.findByRole("button", { name: /Unpause automatic locks/ }));
     await screen.findByText("Unpausing will lock these 2 tenants within the hour:");
 
@@ -104,7 +107,7 @@ describe("AutoLocksCard", () => {
   it("UNPAUSE: if the preview cannot load, confirm stays disabled (no blind unpause)", async () => {
     route(state(), new Error("boom"));
     render(<AutoLocksCard />);
-    typeReason();
+    await typeReason();
     fireEvent.click(await screen.findByRole("button", { name: /Unpause automatic locks/ }));
     expect(await screen.findByText(/Couldn't load the unpause preview/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Unpause and allow locks" })).toBeDisabled();
@@ -115,7 +118,7 @@ describe("AutoLocksCard", () => {
     route(state({ paused: false, wouldLockNow: [] }));
     render(<AutoLocksCard />);
     expect(await screen.findByText("Automatic locks are on")).toBeInTheDocument();
-    typeReason();
+    await typeReason();
     fireEvent.click(screen.getByRole("button", { name: "Pause automatic locks" }));
     await waitFor(() =>
       expect(mockPatch).toHaveBeenCalledWith("/platform-admin/config/auto-locks", {
@@ -129,7 +132,7 @@ describe("AutoLocksCard", () => {
     route(state({ paused: false, wouldLockNow: [] }));
     mockPatch.mockRejectedValue({ response: { data: { message: "SECRET internals" } } });
     render(<AutoLocksCard />);
-    typeReason();
+    await typeReason();
     fireEvent.click(await screen.findByRole("button", { name: "Pause automatic locks" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Couldn't change the switch. Nothing was changed.",
