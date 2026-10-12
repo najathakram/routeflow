@@ -61,16 +61,17 @@ export class SubscriptionService {
    */
   private async autoLockHeld(tenantId: string): Promise<boolean> {
     if (!this.autoLocks) return false;
+    // This runs on every billing read: ONE cached switch read answers the common case (not paused = nothing is held)
+    // without touching the tenant row; only a paused switch needs the class.
+    if (!(await this.autoLocks.isPaused())) return false;
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { class: true },
     });
     const t = { id: tenantId, class: tenant?.class };
-    const [overdue, trial] = await Promise.all([
-      autoLockAllowed(this.autoLocks, t, "payment_overdue"),
-      autoLockAllowed(this.autoLocks, t, "trial_expired"),
-    ]);
-    return !overdue && !trial;
+    // Held only when EVERY kind a banner threatens is held; the first allowed kind settles it.
+    if (await autoLockAllowed(this.autoLocks, t, "payment_overdue")) return false;
+    return !(await autoLockAllowed(this.autoLocks, t, "trial_expired"));
   }
 
   /** The tenant's current plan + add-ons + renewal state (settings-billing header). */

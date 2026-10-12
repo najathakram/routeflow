@@ -59,8 +59,17 @@ describe("SubscriptionService.getSubscription - autoLockHeld (SA-775 rollout)", 
     },
   );
 
-  it("switch not paused: false", async () => {
-    expect((await viewWith({ paused: false }).run()).autoLockHeld).toBe(false);
+  it("switch not paused: false at the cost of ONE switch read - no tenant read, no second gate call", async () => {
+    const v = viewWith({ paused: false });
+    expect((await v.run()).autoLockHeld).toBe(false);
+    expect(v.isPaused).toHaveBeenCalledTimes(1);
+    expect(v.prisma.tenant.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("switch paused: the tenant class is read once", async () => {
+    const v = viewWith({ paused: true });
+    await v.run();
+    expect(v.prisma.tenant.findUnique).toHaveBeenCalledTimes(1);
   });
 
   it("no switch injected (a bare unit spec): false, and the tenant row is never read", async () => {
