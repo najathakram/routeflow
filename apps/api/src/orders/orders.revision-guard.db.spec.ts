@@ -5,7 +5,9 @@
  *      P2025 / stale write (the old `heldOrSnapshot` fallback to the pre-tx snapshot);
  *  (3) B720: a concurrent substitution that makes the line unit-aware under the lock no longer 500s on a missing
  *      product map entry: its product is loaded AFTER the lock;
- *  (4) the matching revision number edits, and the edit appends the revision the next GET exposes.
+ *  (4) the matching revision number edits, and the edit appends the revision the next GET exposes;
+ *  (5) MF1: the revision is appended INSIDE the edit tx, so two concurrent edits holding revision N cannot both pass
+ *      and a committed edit always has its revision.
  *
  * Builds a REAL OrdersService via `Object.create` (no Nest DI), as buyer-edit-cancelled-line.db.spec.ts does.
  * SAFETY: one throwaway `qa-372-<run>` tenant approved by `assertTestTenant`; `afterAll` deletes what it made.
@@ -285,5 +287,48 @@ describeDb("row 372 (SA-735 items 2-4): the order edit guards, real Postgres", (
     expect(line.productId).toBe(cased);
     expect(Number(line.qty)).toBe(24);
     expect(line.unitLabel).toBe("Case");
+  });
+  it("MF1: two concurrent edits both carrying revision N: exactly one wins, the other is 409 ORDER_REVISION_STALE", async () => {
+    const cola = await product("race");
+    const o = await order(cola);
+    const lineId = o.lineItems[0].id;
+    const r0 = await latest()(o.id);
+    const lock = await holdOrderLock(o.id);
+    const settle = (qty: number) =>
+      edit(o.id, {
+        items: [{ id: lineId, action: "UPDATE", qty, unitPrice: 10 }],
+        expectedRevisionNumber: r0,
+      }).then(
+        () => ({ ok: true as const, qty }),
+        (e: any) => ({ ok: false as const, qty, e }),
+      );
+    const a = settle(3);
+    const b = settle(7);
+    await waitUntilBlocked();
+    await lock.release(true); // both queued on the Order lock, both holding r0
+    const results = await Promise.all([a, b]);
+    const won = results.filter((r) => r.ok);
+    const lost = results.filter((r) => !r.ok);
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect((lost[0] as any).e?.response?.code).toBe("ORDER_REVISION_STALE");
+    expect(Number((await rows(o.id))[0].qty)).toBe(won[0].qty); // the loser overwrote nothing
+    expect(await latest()(o.id)).toBe(r0 + 1); // one edit, one revision
+  });
+
+  it("MF1: an edit that committed always has its revision, even when the post-commit reconcile throws", async () => {
+    const cola = await product("atomic");
+    const o = await order(cola);
+    const lineId = o.lineItems[0].id;
+    const r0 = await latest()(o.id);
+    const spy = jest
+      .spyOn(orders, "reconcileOrderAfterEdit")
+      .mockRejectedValueOnce(new Error("reconcile blew up after commit"));
+    await expect(
+      edit(o.id, { items: [{ id: lineId, action: "UPDATE", qty: 5, unitPrice: 10 }] }),
+    ).rejects.toThrow("reconcile blew up");
+    spy.mockRestore();
+    expect(Number((await rows(o.id))[0].qty)).toBe(5); // the edit is committed ...
+    expect(await latest()(o.id)).toBe(r0 + 1); // ... so the revision moved with it
   });
 });
