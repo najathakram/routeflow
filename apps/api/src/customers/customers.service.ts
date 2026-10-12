@@ -76,6 +76,7 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
 import { addressStateFields } from "./address-state";
+import { hasDefaultBillingAddress, isBillingType } from "./address-state-writes";
 import * as compliance from "./customer-compliance-input";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
@@ -722,6 +723,12 @@ export class CustomersService {
           data: { isDefault: false },
         });
       }
+      // Addendum D: a billing address added to a customer with no default billing address becomes it
+      // (so the state is governed), without demoting any other address.
+      const becomesDefaultBilling =
+        dto.isDefault !== true &&
+        isBillingType(dto.addressType ?? "BILLING") &&
+        !(await hasDefaultBillingAddress(tx, id));
       return tx.customerAddress.create({
         data: {
           customerId: id,
@@ -732,7 +739,7 @@ export class CustomersService {
           state: dto.state,
           ...addressStateFields(dto.state, dto.zip),
           zip: dto.zip,
-          isDefault: dto.isDefault ?? false,
+          isDefault: dto.isDefault === true || becomesDefaultBilling,
           addressType: dto.addressType ?? "BILLING",
           ...(coords ?? {}),
         },

@@ -97,6 +97,8 @@ const E = (why: string) => ({ kind: "EXEMPT", why }) as const;
 const TABLE: Record<string, { kind: "STATE" } | { kind: "EXEMPT"; why: string }> = {
   "customers/customers.service.ts::create::createMany#0": S,
   "customers/customers.service.ts::addAddress::create#0": S,
+  "customers/address-state-writes.ts::setChosenAddressState::updateMany#0": S,
+  "customers/address-state-writes.ts::createMinimalAddresses::createMany#0": S,
   "customers/customers.service.ts::updateAddress::update#0": S,
   "customers/customers.service.ts::addAddress::updateMany#0": E("clears the isDefault flag"),
   "customers/customers.service.ts::updateAddress::updateMany#0": E("clears the isDefault flag"),
