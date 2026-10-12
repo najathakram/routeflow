@@ -12,12 +12,12 @@
 
 ## process
 
-### L-297 · 2026-10-11 · process · a helper made stricter breaks every caller written on the other side of a merge: audit callers, run the full verify on the merged tip
+### L-304 · 2026-10-12 · process · a suspected display gap is judged against the payload the surface receives, not the JSX that reads the field
 
-- **Symptom:** after `isPayingTenant` was made to throw unless `couponFull` is a boolean, a master-origin backfill script that never selected that column would have thrown in apply mode; only the full verify, including the serial script lane, caught it.
-- **Root cause:** the stricter contract was proven against the callers on the author's branch; callers added on master (scripts, which no touched spec covers) were invisible until the merge. A branch's own green and a run of only the touched specs cannot see them.
-- **Lesson:** **When a helper starts throwing on a missing input, grep every caller in the same PR and update each; then run the FULL verify (script lane included) on the merged tip of a stack and on master, never just the touched specs. Cf. [[L-247]], [[L-264]].**
-- **Guard:** `scripts-live-target-guard.spec.ts` and the script-lane spec `backfill-refund-tender-script.spec.ts`, which execute the real callers against the strict helper.
+- **Symptom:** a review reported that the staff order page's invoice card still printed a due date on a paid till sale; the follow-up spent a lane checking it. The card's `inv.dueDate` was never populated: the order read's invoice stubs are a narrow `select` with no `dueDate`.
+- **Root cause:** a reviewer inferred the defect from the component's JSX; the serializer that feeds it was not read. The real gap sat on the list read, which was found only by tracing `findAll`.
+- **Lesson:** **Before fixing or reporting a display gap, name the select, serializer or allowlist that feeds the field and confirm the field is in it; JSX that reads an absent field is dead code, not a defect. Then trace every OTHER read of the same document.**
+- **Guard:** none automatic; the review checklist for invoice/order display changes (named select first). Cf. [[L-167]].
 
 ### L-294 · 2026-10-11 · process · a review lists every writer of a row shape before it calls that shape anomalous
 
@@ -225,6 +225,13 @@
 
 ## tooling
 
+### L-303 · 2026-10-12 · tooling · a rule the API, web and mobile must all run belongs in @routeflow/pricing, never @routeflow/types
+
+- **Symptom:** a shared display rule (the paid-at-sale predicate) was first written into `packages/types`; the api-runtime-imports guard went red because the compiled API cannot value-import that package.
+- **Root cause:** `@routeflow/types` is source-only (TS the API never builds), and web and mobile import it freely, so a rule written there looks shared until the API's runtime import audit runs. The same trap archived as L-261 earlier.
+- **Lesson:** **Before placing shared runtime logic, ask who executes it. If the API does, it goes in `@routeflow/pricing` (the one compiled workspace package the API may value-import, with scanning); types keeps only constants and types.** Web/mobile re-export a thin wrapper to keep their import paths.
+- **Guard:** `api-runtime-imports` spec ("never value-imports @routeflow/types from a compiled source file") and the exact-package list spec; the pricing package's own spec pins the rule (row 401).
+
 ### L-291 · 2026-10-10 · tooling · never feed python a heredoc on Windows (`python3 -`): it hangs; write the script to a file or use node
 
 - **Symptom:** a lane's shell hung indefinitely on a `python3 - <<EOF` edit on a Windows machine.
@@ -381,14 +388,6 @@
 - **Guard:** `SNAPSHOT_READERS` in `coupon-state.spec.ts` and `PACKAGE_ALLOWLIST` in `api-error-codes-parity.spec.ts` (reason per entry, stale-entry check, total pinned); the replay of the merged tip.
 - **Recurrence (2026-10-12, R5.2 train):** the read-only copy rewrite (SA-776) on one train member staled the returns, counter-sale, park and save-error specs and a 390 px counter selector that sibling members had written against the old per-name line; each member was green on its own branch and the collisions only appeared when the MERGED tree's web and api suites ran (a train-only collision). Run the merged tree's full unit suites before the train PR, never each member's own green (cf. [[L-271]], [[L-297]]).
 
-### L-292 · 2026-10-10 · testing · a fixture that leaks an environment variable (RF_VERIFY_MODE) makes the pre-push hook and CI disagree
-
-- **Symptom:** the same checks gave different results in the local pre-push hook and in CI.
-- **Root cause:** fixtures ran the real `main()` of a script and inherited `RF_VERIFY_MODE=fast` from the hook environment, so the hook (fast mode) and CI (full mode) exercised different code; the abandoned approach was re-running until the two agreed.
-- **Lesson:** **A fixture that runs a script's real `main()` scrubs the environment first, through one shared helper, so a mode variable inherited from the hook (`RF_VERIFY_MODE=fast`) cannot change what the spec exercises; any test that sets a process variable restores it afterwards. When the hook and CI disagree, diff the environment first.**
-- **Guard:** the shared environment scrub in the fixtures; a review check on any fixture that runs a real `main()` or writes `process.env`.
-- **Recurrence (2026-10-11, Release 4):** the same class with database state: a spec that seeds tenant settings (a tax rate, a preference) restores them in an after hook, or later specs in the same file inherit them and pass or fail by order.
-
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
 
 - **Symptom:** `touch-reveal-b511.test.ts` and `edit-line-item-row-b513.test.ts` both asserted a
@@ -455,12 +454,12 @@
 
 ## domain
 
-### L-298 · 2026-10-12 · domain · a screen that shows what is owed never falls back to the gross total while the server balance is loading or errored
+### L-305 · 2026-10-12 · domain · wrapping write controls in a gate covers only the controls someone wrapped; sweep the rest by search and pin the list
 
-- **Symptom:** a hand-over sheet showed the order's gross total as the amount due while the invoice balance read was still loading (or had failed), so a cashier could collect, or skip, the wrong amount for an already part-paid order.
-- **Root cause:** the amount owed was `balance ?? total`; the fallback made "unknown" look like "nothing paid yet", and submit stayed enabled.
-- **Lesson:** **A figure derived from a server balance has three states: known, loading, errored. Unknown renders as loading or an error with retry and disables the submit; it never degrades to a gross or cached total.**
-- **Guard:** the pure helper returns an explicit unknown variant (`posHandOverBalance`) and its spec pins loading and error to it. Cf. [[L-260]].
+- **Symptom:** after the read-only gate shipped (WriteButton/WriteLink, a refusal notice in the shared Modal slot), UX re-runs still found raw write controls, hand-rolled dialogs and a driver shell with no notice; each was a separate P2.
+- **Root cause:** the gate is opt-in per control and the notice rides a component slot, so anything not built on those components is outside it; the API side had a registry plus a route-walk pin (SA-776), the web side had neither.
+- **Lesson:** **When a gate or notice is delivered by wrapper components, enumerate the surfaces by search (raw buttons that post to write routes, `role="dialog"` markup outside the shared Modal) and pin the list in a spec; state plainly which surfaces are knowingly outside it.**
+- **Guard:** none automatic yet; propose a static scan on the web like the API's route-walk pin. Known gaps recorded: hand-rolled dialogs; the driver banner shows only after a refused write (no driver-readable status). Cf. [[L-225]].
 
 ### L-299 · 2026-10-12 · domain · a client-assumed state transition is checked against the API transition table, and a retry comment is only true if the refused edge is handled
 

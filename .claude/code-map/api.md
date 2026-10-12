@@ -45,6 +45,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-09-29-early.md](api/landing-2026-09-29-early.md) | Landing 2026-09-29 early: scanning package, component price, paying predicate, run/stop lock order, Jest cache, buyer types, order credits |
 | [api/landing-2026-09-29-midday.md](api/landing-2026-09-29-midday.md) | Landing 2026-09-29 midday: unitLineCount tripwire, lint:migrations SET LOCAL, plane deploy ids, shared PaymentMethod |
 | [api/landing-2026-09-29-late.md](api/landing-2026-09-29-late.md) | Landing 2026-09-29 late: staff price-override rule, driver mode 1a, push-guard, lint-migrations exemptions |
+| [api/landing-2026-10-12-r52.md](api/landing-2026-10-12-r52.md) | Landing 2026-10-12 Release 5.2: order edit revision guard, edit-line pairing, category trio from snapshot, read-only registries |
 | [api/landing-2026-10-12-r51-r42.md](api/landing-2026-10-12-r51-r42.md) | Landing 2026-10-12 Release 5.1 + 4.2: unpaid ACH checkout never activates, failed-payment email dedupe, one till-money classification, hand-over rows and stamp, UTC session pin |
 | [api/landing-2026-10-12-macbook.md](api/landing-2026-10-12-macbook.md) | Landing 2026-10-12 MacBook lane (pushed): delivery_pos business profile |
 | [api/landing-2026-10-11-r4.md](api/landing-2026-10-11-r4.md) | Landing 2026-10-11 Release 4: digital receipt, SA-764, POS mode, SA-770 overdue-by-balance, billing B1 Stripe-first |

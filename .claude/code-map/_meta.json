@@ -1,6 +1,6 @@
 {
-  "mappedSha": "5e231561c0bc4ebe41d8c7aba8f9b14091250df5",
-  "generatedAt": "2026-10-12T10:35:53.805Z",
+  "mappedSha": "7f9dfb180e5fff74625e637c754d82bd27f11f7c",
+  "generatedAt": "2026-10-12T15:45:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 18,
-    "web": 14,
-    "mobile": 10,
+    "api": 19,
+    "web": 15,
+    "mobile": 11,
     "packages": 0
   },
-  "fileCount": 1076,
-  "notes": "**2026-10-12 — R5.1 (99406fe19) and R4.2 (fcefa5b5a) bookkeeping (docs-only, Option B follow-up).** New `api/`, `web/` and `mobile/landing-2026-10-12-r51-r42.md` (TOC row in each area file; 25 and 88 non-test source files read from merges #3388 and #3389, 17 of them new, plus 25 and 73 test files counted only). R5.1: unpaid bank-debit checkout links but never activates (`SETTLED_CHECKOUT_PAYMENT_STATUSES`, `async_payment_succeeded`/`failed`, `onCheckoutAsyncPaymentFailed`), failed-payment email once per invoice per week (`PAYMENT_FAILED_EMAIL_DEDUPE_*`, `EMAIL_KIND_AUDIENCE`), comp add-ons read Included, `signedBalance` receivable rows, web `read-only-refusal.ts`, mobile paused-seller Place Order block. R4.2: `window-payment-groups.ts` shared till-money classification, Today's `handOverRows` and `handover-stamp.ts`, Z report and receipt wording (`dayCloseVerdictText`), parked-row `priceLines`, `pg-session.ts` UTC pin, `delivery_pos` profile, web `quickCreateRule`/`HandOverStamp`/`OrderRevisionLog`, mobile POS mode (`pos-mode.ts`, `PosHandOverSheet`). `mappedSha` = `5e231561c0bc4ebe41d8c7aba8f9b14091250df5`. The oldest changelog bullet (2026-09-28 overnight landings) moved to `CHANGELOG-ARCHIVE.md` to stay at 30."
+  "fileCount": 1131,
+  "notes": "- **2026-10-12 — Release 5.2 bookkeeping (`5e231561c..7f9dfb180`, 26 train merges, 165 non-merge commits; docs-only, Option B follow-up).** New `api/`, `web/` and `mobile/landing-2026-10-12-r52.md` (TOC row in each area file; 93, 84 and 21 non-test source files read at the tip, 217 test files counted only; no migration). Order edit revision guard with the stale 409 reload and per-field rebase (row 372) and one edit-line pairing (row 373); category trio recomputed from the line snapshot and folds that add quantity only at an equal trio (rows 338, 340, 343); the levy named apart from tax (row 398); read-only allow-list and tenant job registries, the 403 reason and one copy helper, one billing card (SA-776); one seller-status rule for buyer writes; counter QA polish (CQ-04..CQ-34); paid-at-sale invoices show no terms or due date on the page, PDF, e-mail, mobile and buyer list (row 401, shared `isPaidAtSale` in `@routeflow/pricing`). Lessons L-303..L-305 (see `.claude/lessons`). `mappedSha` = the R5.2 tip `7f9dfb180`; members after it land in the next note."
 }
