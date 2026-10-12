@@ -20,7 +20,15 @@ export const BUCKET_KEYS: readonly BucketKey[] = UNKNOWN_STATE_BUCKET_VALUES;
 
 export type UnknownStateRow = UnknownStateCustomerRow;
 export type { UnknownStateBucket };
-export type UnknownStateBuckets = UnknownStateCustomersResponse;
+/**
+ * The three buckets plus the two page-level facts the API adds: `customersTotal` (distinct customers across the
+ * buckets: a customer with two bad addresses counts once) and `businessStateMissing` (a legal ban is in play and the
+ * business has no state, so counter sales cannot be judged). Optional here so an older API still renders.
+ */
+export type UnknownStateBuckets = UnknownStateCustomersResponse & {
+  customersTotal?: number;
+  businessStateMissing?: boolean;
+};
 export type StateWriteResult = AddressStateResponse;
 export type BulkStateResult = BulkStateResponse;
 
@@ -73,3 +81,12 @@ export function visibleRows(
 /** The advisory count the "Limit in portal" dialog shows before it submits (sum of the three bucket totals). */
 export const totalWithoutState = (b: UnknownStateBuckets | undefined): number =>
   (b?.noAddress?.total ?? 0) + (b?.unusableState?.total ?? 0) + (b?.needsReview?.total ?? 0);
+
+/** The header count: distinct customers from the server, less the customers saved here this visit. */
+export function headerTotal(
+  b: UnknownStateBuckets,
+  removedCustomerIds: ReadonlySet<string>,
+): number {
+  const server = typeof b.customersTotal === "number" ? b.customersTotal : totalWithoutState(b);
+  return Math.max(0, server - removedCustomerIds.size);
+}

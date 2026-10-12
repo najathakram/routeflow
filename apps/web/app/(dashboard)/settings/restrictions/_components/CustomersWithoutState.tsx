@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
+import NextLink from "next/link";
 import { Check, ChevronDown, ChevronRight } from "lucide-react";
-import { US_STATES } from "@routeflow/types";
+import { RESTRICTIONS_BUSINESS_STATE_MISSING_LINE, US_STATES } from "@routeflow/types";
 import { Button, Modal, useToast } from "@routeflow/ui/web";
 import { ReadOnlyHint, useReadOnlyGate } from "@/lib/read-only-gate";
 import {
@@ -26,6 +27,7 @@ import {
   bulkConfirmLine,
   bulkDoneTitle,
   headerLine,
+  headerTotal,
   remaining,
   visibleRows,
   weReadLine,
@@ -459,7 +461,12 @@ export function CustomersWithoutState({ canFix }: { canFix: boolean }) {
         BUCKET_KEYS.map((k) => [k, remaining(data[k].total, removed[k].size)]),
       ) as Record<BucketKey, number>)
     : null;
-  const total = counts ? counts.noAddress + counts.unusableState + counts.needsReview : 0;
+  const removedCustomers = new Set<string>([
+    ...removed.noAddress,
+    ...removed.unusableState,
+    ...removed.needsReview,
+  ]);
+  const total = data ? headerTotal(data, removedCustomers) : 0;
 
   return (
     <section
@@ -493,6 +500,18 @@ export function CustomersWithoutState({ canFix }: { canFix: boolean }) {
       </div>
 
       {gate.readOnly && <ReadOnlyHint className="mt-3" />}
+
+      {data?.businessStateMissing && (
+        <p
+          data-testid="business-state-missing"
+          className="mt-3 rounded-lg border border-warning/30 bg-white px-3 py-2 text-sm text-navy"
+        >
+          {RESTRICTIONS_BUSINESS_STATE_MISSING_LINE}{" "}
+          <NextLink href="/settings?tab=profile" className="font-medium text-brand-600 underline">
+            Add business address
+          </NextLink>
+        </p>
+      )}
 
       {data && counts && (
         <ul className="mt-3 space-y-2">

@@ -275,4 +275,33 @@ describe("CustomersWithoutState (Addendum D)", () => {
     await waitFor(() => expect(screen.getByText("2 have no address")).toBeInTheDocument());
     expect(screen.queryByText("1 has no address")).toBeNull();
   });
+
+  it("the header counts distinct customers (customersTotal), not address rows", async () => {
+    mockGet.mockResolvedValue({
+      data: data({ customersTotal: 4 }),
+    });
+    renderWithProviders(<CustomersWithoutState canFix />);
+    expect(await screen.findByText(/^4 customers need a state\./)).toBeInTheDocument();
+    // bucket rows keep their own counts
+    expect(screen.getByText("3 have no address")).toBeInTheDocument();
+  });
+
+  it("shows one business-state line with a link when a legal ban cannot be judged", async () => {
+    mockGet.mockResolvedValue({ data: data({ businessStateMissing: true }) });
+    renderWithProviders(<CustomersWithoutState canFix />);
+    const line = await screen.findByTestId("business-state-missing");
+    expect(line).toHaveTextContent(
+      "Add your business address in Settings › Business so counter sales can check state rules.",
+    );
+    expect(within(line).getByRole("link", { name: "Add business address" })).toHaveAttribute(
+      "href",
+      "/settings?tab=profile",
+    );
+  });
+
+  it("shows no business-state line otherwise", async () => {
+    renderWithProviders(<CustomersWithoutState canFix />);
+    await screen.findByText(/need a state/);
+    expect(screen.queryByTestId("business-state-missing")).toBeNull();
+  });
 });
