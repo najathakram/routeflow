@@ -63,6 +63,14 @@ describe("SettingsHub regroup", () => {
     }
   });
 
+  it("(C h) links the rules page as Portal limits & rules from both groups", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    for (const t of ["Selling & catalog", "Compliance"]) {
+      const link = within(section(t)).getByRole("link", { name: /portal limits & rules/i });
+      expect(link).toHaveAttribute("href", "/settings/restrictions/rules");
+    }
+  });
+
   it("operators see Selling restrictions in both groups (read-only page)", () => {
     renderWithProviders(<SettingsHub isAdmin={false} />);
     for (const t of ["Selling & catalog", "Compliance"]) {

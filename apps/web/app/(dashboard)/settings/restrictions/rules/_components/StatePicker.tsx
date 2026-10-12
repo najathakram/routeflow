@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Input, cn } from "@routeflow/ui/web";
 import { US_STATES } from "@routeflow/types";
+import { stateName } from "@/lib/restriction-rules";
 
 /**
  * Multi-select of the shared US state list: a search box, a scrollable checkbox list, and the
@@ -44,7 +45,7 @@ export function StatePicker({
                 aria-label={`Remove ${code}`}
                 className="rounded-full bg-danger-bg px-2 py-0.5 text-xs font-semibold text-danger"
               >
-                {code} ×
+                {stateName(code)} ×
               </button>
             </li>
           ))}

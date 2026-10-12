@@ -2,10 +2,21 @@
 
 import * as React from "react";
 import NextLink from "next/link";
-import { ArrowLeft, Archive, ArchiveRestore, Check, Loader2, Pencil, Plus, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Archive,
+  ArchiveRestore,
+  Ban,
+  Check,
+  Loader2,
+  Pencil,
+  Plus,
+  X,
+} from "lucide-react";
 import { Badge, Button, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
+import { LimitInPortalDialog } from "@/components/portal-limits/LimitInPortalDialog";
 import {
   useCreateProductCategory,
   useProductCategories,
@@ -28,6 +39,9 @@ export default function ProductCategoriesPage() {
   }, [setTitle]);
   const { user } = useAuth();
   const isAdmin = user?.role === "TENANT_ADMIN";
+  // Owner ruling 10-07: operators are near-admins and may limit products in the portal (the server decides).
+  const canLimit = isAdmin || user?.role === "OPERATOR";
+  const [limiting, setLimiting] = React.useState<LabelCategoryDto | null>(null);
   const { toast } = useToast();
   const [showArchived, setShowArchived] = React.useState(false);
   const { data: categories = [], isLoading, isError } = useProductCategories(showArchived);
@@ -182,6 +196,16 @@ export default function ProductCategoriesPage() {
                   <span className="text-xs text-navy/60">
                     {c.productCount} {c.productCount === 1 ? "product" : "products"}
                   </span>
+                  {canLimit && !c.archivedAt && (
+                    <button
+                      type="button"
+                      className={actionCls}
+                      data-testid="category-limit-in-portal"
+                      onClick={() => setLimiting(c)}
+                    >
+                      <Ban className="h-3.5 w-3.5" /> Limit in portal…
+                    </button>
+                  )}
                   {isAdmin && (
                     <span className="flex items-center gap-1">
                       <button
@@ -215,6 +239,16 @@ export default function ProductCategoriesPage() {
           ))}
         </ul>
       )}
+      <LimitInPortalDialog
+        open={limiting !== null}
+        scope={{
+          kind: "category",
+          categoryId: limiting?.id ?? "",
+          categoryName: limiting?.name ?? "",
+          productCount: limiting?.productCount ?? 0,
+        }}
+        onClose={() => setLimiting(null)}
+      />
     </div>
   );
 }

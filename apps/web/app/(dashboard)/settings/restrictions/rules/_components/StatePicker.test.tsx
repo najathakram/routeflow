@@ -18,7 +18,7 @@ describe("StatePicker", () => {
       within(chips)
         .getAllByRole("listitem")
         .map((l) => l.textContent),
-    ).toEqual(["TX ×", "FL ×"]);
+    ).toEqual(["Texas ×", "Florida ×"]);
     fireEvent.click(box("Texas"));
     expect(
       within(screen.getByRole("list", { name: "Selected states" })).getAllByRole("listitem"),

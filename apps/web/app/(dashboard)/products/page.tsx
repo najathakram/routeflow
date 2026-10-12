@@ -44,6 +44,7 @@ import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
 import {
   PortalBulkButtons,
+  PortalLimitButtons,
   PortalHiddenBadge,
   PortalHiddenFilter,
 } from "./_components/PortalVisibilityControls";
@@ -1417,6 +1418,7 @@ export default function ProductsPage() {
               </Button>
             )}
             <PortalBulkButtons selected={selected} onDone={() => setSelected(new Set())} />
+            <PortalLimitButtons selected={selected} onDone={() => setSelected(new Set())} />
             <Button
               variant="danger"
               leftIcon={<Trash2 className="h-4 w-4" />}

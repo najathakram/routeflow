@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { Ban, Eye, EyeOff } from "lucide-react";
 import { Badge, Button, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
+import { LimitInPortalDialog } from "@/components/portal-limits/LimitInPortalDialog";
 import { useBulkSetPortalVisibility } from "@/lib/api/product-portal-visibility";
 import {
   BULK_PORTAL_MAX,
@@ -97,6 +98,51 @@ export function PortalBulkButtons({
       >
         Show in portal
       </Button>
+    </>
+  );
+}
+
+/**
+ * "Limit in portal…" (state portal limits spec §1): sits right after Show in portal on the selection it acts on.
+ * "Select all in category" opens the same dialog on a whole label category (covers products added later, and has
+ * no 200 cap). TENANT_ADMIN and OPERATOR (owner ruling 10-07: operators are near-admins; the server is the authority).
+ */
+export function PortalLimitButtons({
+  selected,
+  onDone,
+}: {
+  selected: Set<string>;
+  onDone: () => void;
+}) {
+  const role = useAuth().user?.role;
+  const [mode, setMode] = React.useState<"products" | "category" | null>(null);
+  if (role !== "TENANT_ADMIN" && role !== "OPERATOR") return null;
+  const ids = Array.from(selected);
+  return (
+    <>
+      <Button
+        variant="secondary"
+        leftIcon={<Ban className="h-4 w-4" />}
+        data-testid="portal-bulk-limit-open"
+        onClick={() => setMode("products")}
+      >
+        Limit in portal…
+      </Button>
+      <button
+        type="button"
+        data-testid="portal-select-all-category"
+        className="text-sm font-medium text-brand-600 hover:underline"
+        onClick={() => setMode("category")}
+      >
+        Select all in category
+      </button>
+      <LimitInPortalDialog
+        open={mode !== null}
+        scope={{ kind: "products", productIds: mode === "category" ? [] : ids }}
+        pickCategory
+        onClose={() => setMode(null)}
+        onDone={onDone}
+      />
     </>
   );
 }
