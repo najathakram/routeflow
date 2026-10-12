@@ -177,15 +177,15 @@ describe("CounterSaleScreen", () => {
     expect(screen.getByTestId("change-due")).toHaveTextContent("Change $0.50");
   });
 
-  it("cash: the 'less than the total' error clears the moment the tender is fixed (row 188)", async () => {
+  it("cash: the 'Enter at least' error clears the moment the tender is fixed (row 188)", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("012345678905");
     await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("less than the total");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter at least $2.50.");
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "5" } });
-    expect(screen.queryByText(/less than the total/)).toBeNull();
+    expect(screen.queryByText(/Enter at least/)).toBeNull();
   });
 
   it("row 238: the underpaid error renders INSIDE the sticky checkout bar, next to Complete (never off-screen below the fold)", async () => {
@@ -195,7 +195,7 @@ describe("CounterSaleScreen", () => {
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("less than the total");
+    expect(alert).toHaveTextContent("Enter at least $2.50.");
     expect(screen.getByTestId("counter-checkout-bar")).toContainElement(alert);
     // and it sits before the actions, so the cashier reads why before the buttons
     const actions = screen.getByTestId("counter-checkout-actions");
@@ -551,7 +551,7 @@ describe("CounterSaleScreen", () => {
     await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/less than the total/);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter at least $2.50.");
     expect(mutateAsync).not.toHaveBeenCalled();
   });
 

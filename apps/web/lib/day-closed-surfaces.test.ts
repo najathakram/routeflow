@@ -64,7 +64,7 @@ const SURFACES: ReadonlyArray<readonly [string, (e: unknown) => string, unknown,
     "Pickup hand-over dialog",
     pickupCompleteErrorCopy,
     COUNTER,
-    "Handed over. Payment not taken: the till for that day is closed.",
+    "Handed over. Payment is still due.",
   ],
   // The till's own checkout: the sale is saved, only its tender was refused.
   [
@@ -128,9 +128,7 @@ describe("every surface that can receive an end-of-day close refusal shows fixed
     expect(COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED]).toBe(
       "This sale is in a closed day and can't be voided. Use Return items instead.",
     );
-    expect(PICKUP_DAY_CLOSED_COPY).toBe(
-      "Handed over. Payment not taken: the till for that day is closed.",
-    );
+    expect(PICKUP_DAY_CLOSED_COPY).toBe("Handed over. Payment is still due.");
     expect(COUNTER_SALE_DAY_CLOSED_TILL_COPY).toMatch(/^This day is closed/);
     expect(REFUND_DAY_CLOSED_COPY).toMatch(/store credit/);
   });
