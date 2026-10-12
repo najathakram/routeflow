@@ -19,7 +19,7 @@ export const RECEIPT_EMAIL_COPY = {
   unavailable: "This sale can't be emailed any more.",
   addressLimit: "This address reached today's receipt limit.",
   offline: "You're offline. Print it, or send it later from Today's sales.",
-  sent: (to: string) => `Sent to ${to}.`,
+  sent: (to: string) => `Receipt sent to ${to}.`,
 } as const;
 
 /**

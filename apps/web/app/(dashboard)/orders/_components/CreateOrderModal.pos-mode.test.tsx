@@ -122,7 +122,7 @@ describe("CreateOrderModal: POS mode switch", () => {
     mockPrefs = { "orders.posMode": "true" };
     await openWithLine();
     expect(screen.queryByRole("switch", { name: /pos mode/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Confirm & invoice" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm and invoice" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^create order$/i }));
     await waitFor(() => expect(orderPosts().length).toBe(1));
     expect(orderPosts()[0][1].fulfillPath).not.toBe("PICKUP");
@@ -153,7 +153,7 @@ describe("CreateOrderModal: POS mode switch", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     const sw = await posSwitch();
     await waitFor(() => expect(sw).toBeChecked());
-    expect(screen.getByRole("button", { name: "Confirm & invoice" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm and invoice" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Confirm only" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /save as draft/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^create order$/i })).not.toBeInTheDocument();
@@ -187,7 +187,7 @@ describe("CreateOrderModal: POS mode switch", () => {
     mockPrefs = { "orders.posMode": "true" };
     await openWithLine();
     await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
-    fireEvent.click(screen.getByRole("button", { name: "Confirm & invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith("/orders/o1/status", { status: "CONFIRMED" }),
     );
@@ -228,7 +228,7 @@ describe("CreateOrderModal: POS mode switch", () => {
     );
     const { onViewOrder } = await openWithLine();
     await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
-    fireEvent.click(screen.getByRole("button", { name: "Confirm & invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() =>
       expect(mockToast).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -264,7 +264,7 @@ describe("CreateOrderModal: POS mode switch", () => {
     await openWithLine();
     await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
     expect(mockActiveHook).toHaveBeenLastCalledWith("c1", "PICKUP");
-    fireEvent.click(screen.getByRole("button", { name: "Confirm & invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     expect(
       await screen.findByText("This customer already has an open counter order"),
     ).toBeInTheDocument();
@@ -278,7 +278,7 @@ describe("CreateOrderModal: POS mode landing and Enter", () => {
     mockPrefs = { "orders.posMode": "true" };
     const { onViewOrder } = await openWithLine();
     await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
-    fireEvent.click(screen.getByRole("button", { name: "Confirm & invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("o1"));
     expect(post).toHaveBeenCalledWith("/invoices/from-order/o1");
   });
@@ -290,7 +290,7 @@ describe("CreateOrderModal: POS mode landing and Enter", () => {
     );
     const { onViewOrder } = await openWithLine();
     await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
-    fireEvent.click(screen.getByRole("button", { name: "Confirm & invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() => expect(onViewOrder).toHaveBeenCalledWith("o1"));
   });
 
@@ -334,7 +334,7 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
   it("is in POS mode with no stored preference: Confirm & invoice, no delivery steps, no switch", async () => {
     asStoreOnly();
     await openWithLine();
-    expect(await screen.findByRole("button", { name: "Confirm & invoice" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Confirm and invoice" })).toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: /pos mode/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/Requested Delivery Date/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^create order$/i })).not.toBeInTheDocument();
@@ -343,7 +343,7 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
   it("sends the order as PICKUP", async () => {
     asStoreOnly();
     await openWithLine();
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm & invoice" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm and invoice" }));
     await waitFor(() => expect(orderPosts().length).toBe(1));
     expect(orderPosts()[0][1].fulfillPath).toBe("PICKUP");
   });
@@ -353,9 +353,7 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     expect(await screen.findByRole("dialog", { name: "Invoice a customer" })).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Sold in store. The invoice is made when you confirm; hand the goods over when they collect.",
-      ),
+      screen.getByText("Sold in store. Confirming creates the invoice. Hand goods over at pickup."),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Create a new order on behalf of a customer."),
@@ -368,13 +366,13 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
     asStoreOnly();
     mockRole = "SUPER_ADMIN";
     await openWithLine();
-    expect(screen.queryByRole("button", { name: "Confirm & invoice" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm and invoice" })).not.toBeInTheDocument();
   });
 
   it("a delivery tenant is unchanged: POS mode stays an opt-in switch", async () => {
     await openWithLine();
     expect(await posSwitch()).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Confirm & invoice" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm and invoice" })).not.toBeInTheDocument();
 
     expect(screen.getByRole("dialog", { name: "Create Order" })).toBeInTheDocument();
     expect(screen.getByText("Create a new order on behalf of a customer.")).toBeInTheDocument();

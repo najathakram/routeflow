@@ -102,7 +102,12 @@ export const Modal = ({
           <div className={cn("mb-4 flex items-start justify-between gap-4", scroll && "shrink-0")}>
             <div className="min-w-0">
               {title ? (
-                <Dialog.Title className="text-lg font-semibold text-navy">{title}</Dialog.Title>
+                <Dialog.Title
+                  tabIndex={-1}
+                  className="text-lg font-semibold text-navy outline-none"
+                >
+                  {title}
+                </Dialog.Title>
               ) : (
                 <Dialog.Title className="sr-only">Dialog</Dialog.Title>
               )}

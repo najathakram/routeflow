@@ -61,6 +61,9 @@ import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { HandOverStamp } from "@/components/HandOverStamp";
+import { seesHandOverStamp } from "@/lib/handover-stamp";
+import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { useStaffFulfilment } from "@/lib/fulfilment-caps";
 import { OrderFulfilmentRow, fulfillPathErrorCopy } from "../_components/OrderFulfilmentRow";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
@@ -1938,6 +1941,7 @@ export default function OrderDetailPage() {
   // Order-level commission override (staff + sales_agents addon only — the
   // server independently re-checks both via PlanFlagGuard/parseCommissionRatePct).
   const { user } = useAuth();
+  const stampZone = useTenantTimeZone(seesHandOverStamp(user?.role)); // row 342: the hand-over time
   const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const [commissionEditOpen, setCommissionEditOpen] = React.useState(false);
@@ -2560,6 +2564,10 @@ export default function OrderDetailPage() {
                 Delivery: {formatDateOnly(order.requestedDeliveryDate)}
               </span>
             )}
+          </div>
+          {/* Row 342: who handed it over, at which register (staff reads only) */}
+          <div className="mt-1.5">
+            <HandOverStamp order={order} role={user?.role} timeZone={stampZone} />
           </div>
         </div>
 

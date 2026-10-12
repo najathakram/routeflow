@@ -1,4 +1,5 @@
 import { computeLineSubtotal, roundMoney, validCustomer, validLine } from "@routeflow/pricing";
+import { formatReceiptMoney } from "./counter-receipt";
 import {
   API_ERROR_CODES,
   type CounterSalePaymentMethod,
@@ -166,12 +167,25 @@ export function validatePayment(input: {
   return null;
 }
 
+/** The short-tender line says what to enter ("Enter at least $18.94."), never what was wrong. */
+export const TENDER_SHORT_PREFIX = "Enter at least";
+export const tenderShortCopy = (total: number): string =>
+  `${TENDER_SHORT_PREFIX} ${formatReceiptMoney(total)}.`;
+/** True for the line `tenderShortCopy` made (the screen clears it, and only it, when the tender is fixed). */
+export const isTenderShortCopy = (text: string): boolean => text.startsWith(TENDER_SHORT_PREFIX);
+
 export const PAYMENT_PROBLEM_COPY: Record<PaymentProblem, string> = {
-  TENDER_SHORT: "The amount tendered is less than the total.",
+  /** the amount-less fallback; callers that know the total use `paymentProblemCopy` */
+  TENDER_SHORT: `${TENDER_SHORT_PREFIX} the full total.`,
   CHECK_NUMBER_REQUIRED: "Enter the check number.",
   WALK_IN_ON_ACCOUNT:
     "A walk-in customer can't be charged on account. Pick a customer or another payment method.",
 };
+
+/** The line for a payment problem; a short cash tender names the amount to enter. */
+export function paymentProblemCopy(problem: PaymentProblem, total: number): string {
+  return problem === "TENDER_SHORT" ? tenderShortCopy(total) : PAYMENT_PROBLEM_COPY[problem];
+}
 
 /** The scan field: 1-3 digits are a QUANTITY to multiply the next scan by; anything else is a code. */
 export function parseScanField(
@@ -363,8 +377,10 @@ export const PICKUP_ONLY_COPY = "Only a pickup order can be handed over this way
 export const PICKUP_GENERIC_COPY = "Couldn't complete the pickup. Check the order and try again.";
 
 /** 409 COUNTER_SALE_DAY_CLOSED from pickup-complete: the hand-over stands, only the payment was refused (the tender's day is closed). */
-export const PICKUP_DAY_CLOSED_COPY =
-  "Handed over. Payment not taken: the till for that day is closed.";
+export const PICKUP_DAY_CLOSED_COPY = "Handed over. Payment is still due.";
+/** The same refusal when the dialog knows what is owed: "Handed over. $18.94 still due." */
+export const pickupDayClosedCopy = (balanceDue: number): string =>
+  `Handed over. ${formatReceiptMoney(balanceDue)} still due.`;
 export const PICKUP_PAYMENT_REQUIRED_COPY =
   "A balance is due on this order now. Take payment to finish.";
 export const PICKUP_TENDER_SHORT_COPY = "A walk-in customer must pay the full balance.";
@@ -381,7 +397,7 @@ export function pickupErrorCode(err: unknown): string | undefined {
 }
 
 /** Fixed copy by error code; the server's own message is never shown. */
-export function pickupCompleteErrorCopy(err: unknown): string {
+export function pickupCompleteErrorCopy(err: unknown, balanceDue?: number): string {
   const res = (err as { response?: { status?: number; data?: { code?: unknown } } } | null)
     ?.response;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED)
@@ -392,7 +408,9 @@ export function pickupCompleteErrorCopy(err: unknown): string {
     return PICKUP_INVOICE_MISSING_COPY;
   if (res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT) return PICKUP_WALK_IN_CREDIT_COPY;
   if (res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)
-    return PICKUP_DAY_CLOSED_COPY;
+    return balanceDue !== undefined && balanceDue > 0
+      ? pickupDayClosedCopy(balanceDue)
+      : PICKUP_DAY_CLOSED_COPY;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_NOT_READY) return PICKUP_NOT_READY_COPY;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_ONLY) return PICKUP_ONLY_COPY;
   if (res?.data?.code === API_ERROR_CODES.WALK_IN_NO_ACCOUNT)

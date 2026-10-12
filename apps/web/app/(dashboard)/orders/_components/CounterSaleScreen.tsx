@@ -44,7 +44,8 @@ import {
   COUNTER_DISCARD_COPY,
   COUNTER_OUTCOME_UNKNOWN_COPY,
   COUNTER_SALES_DISABLED_COPY,
-  PAYMENT_PROBLEM_COPY,
+  isTenderShortCopy,
+  paymentProblemCopy,
   cartTotals,
   amountDue,
   changeDue,
@@ -210,8 +211,7 @@ export function CounterSaleScreen() {
     awaitingCustomerRef,
   });
   // Fixing the tender clears the "less than the total" message and ONLY that one (never a server or final-sale error).
-  const clearUnderpaidError = () =>
-    setError((e) => (e === PAYMENT_PROBLEM_COPY.TENDER_SHORT ? "" : e));
+  const clearUnderpaidError = () => setError((e) => (isTenderShortCopy(e) ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
   // SA-748 section 1: the unfinished cart survives a refresh (restored UNLOCKED; a held attempt always wins).
   const liveCart = useCounterLiveCart({
@@ -703,7 +703,7 @@ export function CounterSaleScreen() {
       isWalkIn,
     });
     if (problem) {
-      setError(PAYMENT_PROBLEM_COPY[problem]);
+      setError(paymentProblemCopy(problem, totals.total));
       return null;
     }
     const tenderAmount = roundMoney(tenderedNum);
@@ -1034,7 +1034,7 @@ export function CounterSaleScreen() {
               ref={scanRef}
               aria-label="Scan or search items"
               className="min-h-[44px] w-full rounded border px-3 py-2 text-base"
-              placeholder="Scan or type an item (type a quantity first to multiply)"
+              placeholder="Scan or type an item"
               value={scanText}
               disabled={lineLocked}
               onChange={(e) => {
@@ -1063,6 +1063,9 @@ export function CounterSaleScreen() {
               </span>
             ) : null}
           </form>
+          <p className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
+            Type a quantity first to multiply the next scan.
+          </p>
           {scanCue ? (
             <p
               role="status"
@@ -1375,8 +1378,8 @@ export function CounterSaleScreen() {
           >
             {discounts > 0 ? (
               <div className="flex justify-between text-sm" data-testid="running-discounts">
-                <span>Discounts</span>
-                <span>-{money(discounts)}</span>
+                <span>Discount</span>
+                <span>−{money(discounts)}</span>
               </div>
             ) : null}
             <div className="flex justify-between text-lg font-semibold" data-testid="running-total">
@@ -1386,9 +1389,9 @@ export function CounterSaleScreen() {
 
             {method === "CASH" ? (
               <p className="text-3xl font-bold" data-testid="change-due" role="status">
-                {amountDue(totals.total, tenderedNum) > 0
-                  ? `Amount due ${money(amountDue(totals.total, tenderedNum))}`
-                  : `Change ${money(changeDue(totals.total, tenderedNum))}`}
+                {changeDue(totals.total, tenderedNum) > 0
+                  ? `Change ${money(changeDue(totals.total, tenderedNum))}`
+                  : `Amount due ${money(amountDue(totals.total, tenderedNum))}`}
               </p>
             ) : null}
 

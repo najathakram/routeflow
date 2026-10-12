@@ -219,6 +219,7 @@ import type { OrderCancelBlockedField } from "@routeflow/types";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
 import { shippedPushCopy } from "./shipped-push-copy";
 import { attachInvoiceStages } from "./order-invoice-stage";
+import { HANDOVER_SOLD_BY_SELECT, seesHandOverStamp, stampHandedOverBy } from "./handover-stamp";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
 import {
   heldAtBookedFloor,
@@ -518,6 +519,8 @@ export class OrdersService implements OnApplicationBootstrap {
           // sort LAST (NULLS LAST), with createdAt as the final tiebreak.
           orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         },
+        // row 342: who handed it over (staff only; `registerKey` is a scalar already on the row)
+        ...(seesHandOverStamp(user) ? { soldBy: HANDOVER_SOLD_BY_SELECT } : {}),
         transaction: true,
         invoices: { select: ORDER_INVOICES_SELECT }, // + each line's stored taxRate (row 329a)
         // Credit-note INTENTS selected for this order (join table) — the reason/
@@ -596,6 +599,7 @@ export class OrdersService implements OnApplicationBootstrap {
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
     await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
 
+    stampHandedOverBy(order, user); // row 342: staff only; the display name is built once, here
     return orderFor(user, order); // customer-facing fields only for the customer
   }
 

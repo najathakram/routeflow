@@ -26,9 +26,11 @@ describe("dayClosedCopy (fixed copy for the end-of-day close refusals)", () => {
 
   it("COUNTER_SALE_DAY_CLOSED -> the fixed copy, never the server message", () => {
     expect(dayClosedCopy(refusal("COUNTER_SALE_DAY_CLOSED"))).toBe(
-      "This day has been closed. Reopen the close first.",
+      "This day is closed, so this can't be changed. Record it with today's date instead.",
     );
-    expect(COUNTER_SALE_DAY_CLOSED_COPY).toBe("This day has been closed. Reopen the close first.");
+    expect(COUNTER_SALE_DAY_CLOSED_COPY).toBe(
+      "This day is closed, so this can't be changed. Record it with today's date instead.",
+    );
   });
 
   it.each([
