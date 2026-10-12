@@ -298,3 +298,129 @@ describe("credit-note ratio and metadata come from the live key only (review MED
     ]);
   });
 });
+
+describe("review fold (row 341): dead keys under full netting, and the piece ratio of a key that was re-synced in place", () => {
+  const svc = () => new RegulatedLedgerService({} as any);
+  const cat1Void = [
+    row({ id: "s1", qty: 10, unitBasisQty: 10, netSales: 100, categoryTax: 0.5 }),
+    // a return BEFORE the swap, then a void/delete reversal (no returnId: full netting) of the rest
+    row({
+      id: "r1",
+      entryType: "REVERSAL",
+      returnId: "ret-0",
+      qty: -4,
+      unitBasisQty: -4,
+      netSales: -40,
+      categoryTax: -0.2,
+      createdAt: new Date("2026-10-01T12:00:00Z"),
+    }),
+    row({
+      id: "v1",
+      entryType: "REVERSAL",
+      qty: -6,
+      unitBasisQty: -6,
+      netSales: -60,
+      categoryTax: -0.3,
+      createdAt: new Date("2026-10-02T00:00:00Z"),
+    }),
+    // the order is re-invoiced under cat-2 (same order line)
+    row({
+      id: "s2",
+      trackedCategoryId: "cat-2",
+      qty: 10,
+      unitBasisQty: 10,
+      netSales: 100,
+      categoryTax: 0.5,
+      createdAt: new Date("2026-10-02T00:00:01Z"),
+    }),
+  ];
+
+  it("a key squared by a FULL-netting void (return, then void) is dead: the next return files under the live category", async () => {
+    const { db, written } = dbOver(cat1Void);
+    await svc().reverseReturnEntries({
+      returnId: "ret-1",
+      orderId: "o1",
+      returnedByProduct: new Map([["p1", 3]]),
+      returnedUnit: "LINE_UNIT",
+      db,
+    });
+    expect(written().map((r) => [r.trackedCategoryId, r.qty])).toEqual([["cat-2", -3]]);
+  });
+
+  it("the same, for a credit note: it books under the live category, not the void's dead key", async () => {
+    const { db, written } = dbOver(cat1Void);
+    db.creditNoteItem.findMany.mockResolvedValue([
+      {
+        tenantId: "t1",
+        invoiceItemId: "ii-1",
+        trackedCategoryId: "cat-2",
+        amount: 30,
+        qty: 3,
+        categoryTax: 0,
+      },
+    ]);
+    await svc().reverseCreditNoteEntries({ creditNoteId: "cn-9", db });
+    expect(written().map((r) => [r.trackedCategoryId, r.qty])).toEqual([["cat-2", -3]]);
+  });
+
+  // SALE (10 units, 10 pieces) -> re-sync REVERSAL -> SALE again on the SAME key after a repack (10 units, 120 pieces).
+  const repack = [
+    row({
+      id: "s1",
+      trackedCategoryId: "cat-2",
+      qty: 10,
+      unitBasisQty: 10,
+      netSales: 100,
+      categoryTax: 0,
+    }),
+    row({
+      id: "s1-rev",
+      trackedCategoryId: "cat-2",
+      entryType: "REVERSAL",
+      qty: -10,
+      unitBasisQty: -10,
+      netSales: -100,
+      categoryTax: 0,
+      createdAt: new Date("2026-10-02T00:00:00Z"),
+    }),
+    row({
+      id: "s2",
+      trackedCategoryId: "cat-2",
+      qty: 10,
+      unitBasisQty: 120,
+      netSales: 100,
+      categoryTax: 0,
+      createdAt: new Date("2026-10-02T00:00:01Z"),
+    }),
+  ];
+
+  it("a credit of 5 units after a same-key repack books -60 pieces, not a blend of the offset sale (-32.5)", async () => {
+    const { db, written } = dbOver(repack);
+    db.creditNoteItem.findMany.mockResolvedValue([
+      {
+        tenantId: "t1",
+        invoiceItemId: "ii-1",
+        trackedCategoryId: "cat-2",
+        amount: 50,
+        qty: 5,
+        categoryTax: 0,
+      },
+    ]);
+    await svc().reverseCreditNoteEntries({ creditNoteId: "cn-8", db });
+    expect(written()).toHaveLength(1);
+    expect(written()[0]).toMatchObject({ qty: -5, unitBasisQty: -60 });
+  });
+
+  it("a LINE_UNIT return of 5 after a same-key repack books -60 pieces, never the offset sale's own 1:1 ratio", async () => {
+    const { db, written } = dbOver(repack);
+    await svc().reverseReturnEntries({
+      returnId: "ret-2",
+      orderId: "o1",
+      returnedByProduct: new Map([["p1", 5]]),
+      returnedUnit: "LINE_UNIT",
+      db,
+    });
+    expect(written()).toHaveLength(1);
+    expect(written()[0]).toMatchObject({ qty: -5, unitBasisQty: -60 });
+  });
+});
