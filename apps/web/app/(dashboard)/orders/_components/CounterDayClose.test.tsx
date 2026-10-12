@@ -565,7 +565,7 @@ describe("CounterDayClose: the closed state", () => {
     await screen.findByTestId("day-close-form");
     expect(screen.queryByRole("dialog", { name: "Reopen this day?" })).toBeNull();
     expect(post).not.toHaveBeenCalled();
-    // owner ruling 10-12 wording for what an edit does
+    // row 345 wording for what an edit does (the polish keeps the "Fix the count." lead-in)
     expect(
       screen.getByText(
         "Fix the count. Sales times stay the same. A corrected Z report is emailed.",
