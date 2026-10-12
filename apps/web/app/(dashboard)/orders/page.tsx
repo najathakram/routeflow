@@ -44,7 +44,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
 import { BatchShipActions } from "./_components/BatchShipActions";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
-import { isStoreOnlyHeader } from "@/lib/counter-sale";
+import { quickCreateRule } from "@/lib/counter-sale";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
@@ -659,7 +659,7 @@ export default function OrdersPage() {
 
   // A store-only tenant (capabilities.fulfilment: PICKUP only): "New Order" went to the same place as "Counter sale",
   // so the header has Counter sale (primary) and Invoice a customer (secondary) and nothing else duplicated.
-  const storeOnlyHeader = isStoreOnlyHeader(counterGate);
+  const storeOnlyHeader = quickCreateRule(counterGate).storeOnly;
 
   const headerSubtitle = meta
     ? `${meta.total.toLocaleString("en-US")} order${meta.total !== 1 ? "s" : ""}${

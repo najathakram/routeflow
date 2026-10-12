@@ -111,7 +111,7 @@ export function CounterReceiptView({
                   className="block text-xs text-navy/70 print:text-black"
                   data-testid="receipt-line-discount"
                 >
-                  Discount -{money(l.discount)}
+                  Discount −{money(l.discount)}
                 </span>
               </span>
             ) : (
@@ -153,8 +153,8 @@ export function CounterReceiptView({
         </div>
         {m.discounts > 0 ? (
           <div className="flex justify-between" data-testid="receipt-discounts">
-            <dt>Discounts</dt>
-            <dd>-{money(m.discounts)}</dd>
+            <dt>Discount</dt>
+            <dd>−{money(m.discounts)}</dd>
           </div>
         ) : null}
         {m.tax !== 0 ? (

@@ -228,7 +228,9 @@ describe("Void sale: the dialog", () => {
     typeReason("because");
     fireEvent.click(confirmVoid());
     const err = await screen.findByTestId("counter-void-error");
-    expect(err).toHaveTextContent("This sale is in a closed day. Use Return items instead.");
+    expect(err).toHaveTextContent(
+      "This sale is in a closed day and can't be voided. Use Return items instead.",
+    );
     expect(document.body.textContent).not.toMatch(/conflicts with something/i);
     expect(document.body.textContent).not.toContain(RAW);
     expect(screen.queryByTestId("counter-void-done")).toBeNull();

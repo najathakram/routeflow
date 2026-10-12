@@ -23,7 +23,7 @@ describe("formatReceiptMoney", () => {
 describe("receiptLineDetail", () => {
   it("a plain line prints qty x price and the product's own unit word", () => {
     expect(receiptLineDetail({ unitPrice: 2.5, qty: 3, unit: "Each" })).toBe("3 × $2.50 each");
-    expect(receiptLineDetail({ unitPrice: 4, qty: 1.5, unit: "lb" })).toBe("1.5 × $4.00 lb");
+    expect(receiptLineDetail({ unitPrice: 4, qty: 1.5, unit: "lb" })).toBe("1.5 × $4.00 per lb");
   });
 
   it("a plain line with no unit prints no word", () => {
@@ -49,7 +49,7 @@ describe("receiptLineDetail", () => {
 
   it("a pack size of 1 is not boxed", () => {
     expect(receiptLineDetail({ unitPrice: 2, qty: 2, unitsPerBox: 1, unit: "case" })).toBe(
-      "2 × $2.00 case",
+      "2 × $2.00 per case",
     );
   });
 });

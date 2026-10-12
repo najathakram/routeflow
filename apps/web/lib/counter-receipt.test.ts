@@ -225,7 +225,7 @@ describe("row 298: the receipt line names the product's unit", () => {
 
   it("a plain line prints the unit word after the price", () => {
     expect(detailOf({ unit: "each" })).toBe("1 × $2.50 each");
-    expect(detailOf({ unit: " LB ", qty: 3 })).toBe("3 × $2.50 lb");
+    expect(detailOf({ unit: " LB ", qty: 3 })).toBe("3 × $2.50 per lb");
   });
   it("a line with no unit on file keeps the bare form", () => {
     expect(detailOf({})).toBe("1 × $2.50");

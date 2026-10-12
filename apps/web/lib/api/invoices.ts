@@ -20,6 +20,7 @@ import type {
   UpdateInvoiceItem,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
+import type { HandOverSoldBy } from "@/lib/handover-stamp";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -180,7 +181,17 @@ export interface Invoice {
   /** Set on per-batch delivery invoices; null/absent on the order-level "pending mirror" draft. */
   deliveryBatchId?: string | null;
   /** Linked order summary (present on the detail endpoint) — used to gate the pending-mirror draft. */
-  order?: { status: string; orderNumber?: string | null };
+  order?: {
+    status: string;
+    orderNumber?: string | null;
+    fulfillPath?: "ROUTE" | "SHIP" | "PICKUP" | null;
+    /** Row 342, STAFF reads only: where and by whom the order was handed over (absent for a buyer / older API). */
+    registerKey?: string | null;
+    handedOverBy?: string | null;
+    /** the hand-over moment (the stamp line's time) */
+    deliveredAt?: string | null;
+    soldBy?: HandOverSoldBy | null;
+  };
   /** The server's default PDF stage (detail endpoint): a shipment invoice is "final" before delivery. */
   pdfVariant?: InvoicePdfVariant;
   recurringInvoiceId?: string;

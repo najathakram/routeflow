@@ -26,7 +26,9 @@ export function receiptLineDetail(l: {
 }): string {
   const price = formatReceiptMoney(l.unitPrice);
   if ((l.unitsPerBox ?? 0) <= 1) {
-    const word = (l.unit ?? "").trim() ? ` ${priceUnitWord(l.unit)}` : "";
+    // "1 × $1.75 each": the unit follows the price in a sentence, never as "/ each"; another unit reads "per lb" like "per box"
+    const unit = (l.unit ?? "").trim() ? priceUnitWord(l.unit) : "";
+    const word = unit ? (unit === "each" ? " each" : ` per ${unit}`) : "";
     return `${l.qty} × ${price}${word}`;
   }
   const boxes = l.boxes ?? 0;

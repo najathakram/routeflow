@@ -325,8 +325,8 @@ describe("renderOrderReceipt (email)", () => {
       expect(body).toContain("$15.00");
       expect(body).toContain("Subtotal");
       expect(body).toContain("$27.50");
-      expect(body).toContain("Discounts");
-      expect(body).toContain("-$1.00");
+      expect(body).toContain("Discount");
+      expect(body).toContain("−$1.00"); // the minus glyph, never a hyphen
       expect(body).toContain("$5.00"); // the struck list price of the discounted line
       expect(body).toContain("Tax (8%)");
       expect(body).toContain("$2.12");

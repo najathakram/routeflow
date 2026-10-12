@@ -145,6 +145,20 @@ describe("PickupCompleteDialog — tender", () => {
     await waitFor(() => expect(post).toHaveBeenCalled());
     expect(post.mock.calls[0][1]).toEqual({ payment: { method: "CASH", amount: 40 } });
     expect(await screen.findByTestId("pickup-change")).toHaveTextContent("$15.00");
+    // owner ruling 10-12 wording: no em dash, a full sentence
+    expect(screen.getByTestId("pickup-outcome")).toHaveTextContent("Picked up and paid.");
+    expect(screen.getByRole("dialog", { name: "Picked up ORD-1" })).toBeInTheDocument();
+  });
+
+  it("a balance still due after the hand-over reads 'Picked up. $7.58 still due.'", async () => {
+    balance(25);
+    post.mockResolvedValue(result({ balanceDue: 7.58, paid: 17.42, change: 0 }));
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "25" } });
+    confirm();
+    expect(await screen.findByText("Picked up. $7.58 still due.")).toBeVisible();
+    expect(document.body.textContent).not.toMatch(/Picked up —/);
   });
 
   it("quick tender fills the amount", async () => {
@@ -361,9 +375,7 @@ describe("PickupCompleteDialog — the API's pickup codes", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "25" } });
     confirm();
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Handed over. Payment not taken: the till for that day is closed.",
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Handed over. $25.00 still due.");
     expect(screen.queryByText(/raw text/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     invalidate.mockClear();

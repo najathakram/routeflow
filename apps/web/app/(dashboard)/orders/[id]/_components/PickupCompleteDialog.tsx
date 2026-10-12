@@ -140,7 +140,7 @@ export function PickupCompleteDialog({
       if (unknown) writeHeldPickupKey(storeKey, keyRef.current);
       else clearHeldPickupKey(storeKey);
       setErrorCode(pickupErrorCode(err));
-      setError(pickupCompleteErrorCopy(err));
+      setError(pickupCompleteErrorCopy(err, due ?? undefined));
     }
   }
 
@@ -175,7 +175,7 @@ export function PickupCompleteDialog({
     <Modal
       open={open}
       onClose={onClose}
-      title={`${handOver ? "Hand over" : "Picked up"}${orderNumber ? `${handOver ? " " : " — "}${orderNumber}` : ""}`}
+      title={`${handOver ? "Hand over" : "Picked up"}${orderNumber ? ` ${orderNumber}` : ""}`}
       className="max-w-md"
       footer={
         outcome ? (

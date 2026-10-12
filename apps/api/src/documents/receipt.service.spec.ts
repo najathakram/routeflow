@@ -286,7 +286,7 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
     it("shows the struck list price and a Discounts row for a lowered line (the invoices' rule), unless the tenant hides original prices (invoice.hideOriginalPrice)", async () => {
       const shown = setup({});
       await shown.send();
-      expect(shown.email.send.mock.calls[0][0].text).toContain("Discounts");
+      expect(shown.email.send.mock.calls[0][0].text).toContain("Discount");
       const hidden = setup({ settings: { "invoice.hideOriginalPrice": "true" } });
       await hidden.send();
       const { html, text } = hidden.email.send.mock.calls[0][0];

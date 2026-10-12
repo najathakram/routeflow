@@ -97,6 +97,9 @@ import { ShipmentCard } from "@/components/ShipmentCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
+import { HandOverStamp } from "@/components/HandOverStamp";
+import { seesHandOverStamp } from "@/lib/handover-stamp";
+import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
@@ -1420,9 +1423,12 @@ export default function InvoiceDetailPage() {
   const setCheckStatus = useSetCheckStatus();
   const unapplyCreditNote = useUnapplyCreditNote();
   const { user } = useAuth();
+  const stampZone = useTenantTimeZone(seesHandOverStamp(user?.role)); // row 342: the hand-over time
   // A store-only business is POS-forced: its order is handed over, never delivered (the draft's wording follows).
   const { capability: fulfilmentCapability } = useCounterSaleGate();
-  const mirrorCopy = pendingMirrorCopy(isStoreOnly(fulfilmentCapability));
+  const mirrorCopy = pendingMirrorCopy(
+    fulfilmentCapability == null ? null : isStoreOnly(fulfilmentCapability),
+  );
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
@@ -2017,6 +2023,7 @@ export default function InvoiceDetailPage() {
             <TenantInvoiceRevisionMarks
               revisedAt={invoice.revisedAt}
               overpaidBy={invoice.overpaidBy}
+              orderId={invoice.orderId}
             />
           </div>
           <p className="mt-1 text-sm text-navy/70">
@@ -2025,6 +2032,12 @@ export default function InvoiceDetailPage() {
             {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
             {invoice.dueDate ? ` · due ${fmtCalendarDate(invoice.dueDate)}` : ""}
           </p>
+          {/* Row 342: where and by whom the linked order was handed over (staff reads only) */}
+          {invoice.order ? (
+            <div className="mt-0.5">
+              <HandOverStamp order={invoice.order} role={user?.role} timeZone={stampZone} />
+            </div>
+          ) : null}
         </div>
 
         {/* Zoho-style action toolbar */}
