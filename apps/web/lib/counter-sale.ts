@@ -205,7 +205,7 @@ const ORDER_EXISTS_CODES: ReadonlySet<unknown> = new Set([
 
 /** 409 COUNTER_SALE_DAY_CLOSED from the till's sale: the sale is saved, only its payment was refused (the tender's day is closed). */
 export const COUNTER_SALE_DAY_CLOSED_TILL_COPY =
-  "This day is closed, so no payment was taken. The sale is saved. Ask the office to reopen the close, then use Try again.";
+  "This day is closed, so no payment was taken. The sale is saved without payment.";
 
 /**
  * True only for a 4xx that PROVES nothing was written (the auth guard, the throttler and validation all reject BEFORE the
