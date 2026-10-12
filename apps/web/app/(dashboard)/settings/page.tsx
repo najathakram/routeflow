@@ -101,6 +101,7 @@ import { TimeZoneDatalist } from "@/components/TimeZoneInput";
 import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
 import { useInvalidFocus } from "@/lib/form-errors";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { isReadOnlyRefusal } from "@/lib/read-only-refusal";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -162,6 +163,8 @@ function BusinessProfileTab() {
       });
     },
     onError: (err: unknown, sent) => {
+      if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
+
       const res = (err as { response?: { status?: number; data?: { code?: string } } })?.response;
       // The server's own text is never shown: a refused zone and a refused role each get one fixed line.
       if (res?.data?.code === API_ERROR_CODES.INVALID_TIME_ZONE) {
@@ -208,6 +211,8 @@ function BusinessProfileTab() {
       });
     },
     onError: (err: any) => {
+      if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
+
       const msg = err?.response?.data?.message ?? "Try a PNG, JPG, or WEBP under 5 MB.";
       toast({ title: "Logo upload failed", description: msg, variant: "error" });
       // Drop the local preview so the saved logo (if any) shows instead of a stale one.
@@ -740,6 +745,7 @@ function EditUserModal({
           onClose();
         },
         onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({ title: "Update failed", description: err.message, variant: "error" }),
       },
     );
@@ -749,7 +755,8 @@ function EditUserModal({
     if (!user) return;
     resetPassword.mutate(user.id, {
       onSuccess: (result) => setTempPassword(result.tempPassword),
-      onError: () => toast({ title: "Failed to reset password", variant: "error" }),
+      onError: (err) =>
+        isReadOnlyRefusal(err) || toast({ title: "Failed to reset password", variant: "error" }),
     });
   };
 
@@ -872,7 +879,8 @@ function UserManagementTab() {
     changeStatus.mutate(
       { id: user.id, status: nextStatus },
       {
-        onError: () => toast({ title: "Failed to update status", variant: "error" }),
+        onError: (err) =>
+          isReadOnlyRefusal(err) || toast({ title: "Failed to update status", variant: "error" }),
       },
     );
   };
@@ -1013,7 +1021,8 @@ function AIIntegrationsTab() {
         variant: "success",
       });
     },
-    onError: () => toast({ title: "Failed to save API key", variant: "error" }),
+    onError: (err) =>
+      isReadOnlyRefusal(err) || toast({ title: "Failed to save API key", variant: "error" }),
   });
 
   const removeKey = useMutation({
@@ -1022,7 +1031,8 @@ function AIIntegrationsTab() {
       qc.invalidateQueries({ queryKey: ["settings", "anthropic"] });
       toast({ title: "API key removed", variant: "success" });
     },
-    onError: () => toast({ title: "Failed to remove key", variant: "error" }),
+    onError: (err) =>
+      isReadOnlyRefusal(err) || toast({ title: "Failed to remove key", variant: "error" }),
   });
 
   const isConfigured = anthropicStatus?.configured === true;
@@ -2277,7 +2287,8 @@ function CostingTab() {
       { costingMethod: method, defaultMarginFloor: floor },
       {
         onSuccess: () => toast({ title: "Costing settings saved", variant: "success" }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Could not save",
             description: "Only admins can change costing settings.",
@@ -2373,7 +2384,8 @@ function RemittanceTab() {
   const save = () => {
     update.mutate(form, {
       onSuccess: () => toast({ title: "Payment info saved", variant: "success" }),
-      onError: () =>
+      onError: (err) =>
+        isReadOnlyRefusal(err) ||
         toast({
           title: "Could not save",
           description: "Only admins can change how-to-pay settings.",
@@ -2508,6 +2520,7 @@ function TierLabelsCard() {
     update.mutate(form, {
       onSuccess: () => toast({ title: "Tier names saved", variant: "success" }),
       onError: (err: any) =>
+        isReadOnlyRefusal(err) ||
         toast({
           title: "Could not save",
           description: err?.response?.data?.message ?? "Please try again.",
@@ -2593,7 +2606,8 @@ function InvoicingTab() {
             description: "Default terms updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
@@ -2613,7 +2627,8 @@ function InvoicingTab() {
             description: "Original price display updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
@@ -2657,6 +2672,8 @@ function InvoicingTab() {
             variant: "success",
           }),
         onError: (err: any) => {
+          if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
+
           setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
           toast({
             title: "Failed to save",
@@ -2678,7 +2695,8 @@ function InvoicingTab() {
             description: "Deposit collection setting updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
