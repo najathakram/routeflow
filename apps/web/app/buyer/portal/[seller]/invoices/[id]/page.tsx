@@ -23,6 +23,7 @@ import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { checkBadgeFor } from "@/lib/check-badge";
 import { invoiceStatusVariant } from "@/lib/buyer-invoice-status";
 import { fmtCalendarDate } from "@/lib/formatting";
+import { isPaymentTermsText } from "@/lib/invoice-sale-terms";
 import { InvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
 
 function fmt(n: number) {
@@ -194,6 +195,13 @@ export default function BuyerInvoiceDetailPage() {
       ? Number(invoice.balanceDue)
       : Math.max(0, Number(invoice.total) - totalPaid - creditApplied - advanceApplied);
   const paymentTermsLabel = invoicePaymentTermsLabel(invoice);
+  // Row 401: a counter sale paid at the till shows no due date or payment terms (the seller's CQ-26 rule); a real
+  // long-form T&C text stays, one that is only the payment terms goes with them.
+  const showTerms = invoice.paidAtSale !== true;
+  const termsText =
+    invoice.terms && !(!showTerms && isPaymentTermsText(invoice.terms, paymentTermsLabel))
+      ? invoice.terms
+      : null;
   const deposit = invoiceDepositFields(invoice);
 
   return (
@@ -213,8 +221,9 @@ export default function BuyerInvoiceDetailPage() {
             <InvoiceRevisionMarks revisedAt={invoice.revisedAt} overpaidBy={invoice.overpaidBy} />
           </div>
           <p className="text-sm text-navy/70 mt-1">
-            Issued {fmtCalendarDate(invoice.issueDate)} · Due {fmtCalendarDate(invoice.dueDate)}
-            {paymentTermsLabel ? ` · Terms: ${paymentTermsLabel}` : ""}
+            Issued {fmtCalendarDate(invoice.issueDate)}
+            {showTerms ? ` · Due ${fmtCalendarDate(invoice.dueDate)}` : ""}
+            {showTerms && paymentTermsLabel ? ` · Terms: ${paymentTermsLabel}` : ""}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -256,7 +265,7 @@ export default function BuyerInvoiceDetailPage() {
       </div>
 
       {/* Deposit schedule — only when the invoice carries one (WP-D). */}
-      {deposit && (
+      {deposit && showTerms && (
         <div className="mb-6 flex items-center gap-2 rounded-xl border border-buyer-200 bg-buyer-50 px-4 py-3 text-sm font-medium text-buyer-700">
           <Clock className="h-4 w-4 shrink-0" />
           <span>
@@ -454,10 +463,10 @@ export default function BuyerInvoiceDetailPage() {
       )}
 
       {/* Terms */}
-      {invoice.terms && (
+      {termsText && (
         <div className="rounded-xl border border-surface-border bg-white p-4">
           <p className="text-xs text-navy/70 mb-1">Terms &amp; Conditions</p>
-          <p className="text-sm text-navy">{invoice.terms}</p>
+          <p className="text-sm text-navy">{termsText}</p>
         </div>
       )}
     </div>

@@ -38,6 +38,7 @@ import {
 import { useApplyAdvancePayment, useCustomerAdvancePayments } from "../../../../lib/api/customers";
 import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
+import { invoiceShowsTerms } from "../../../../lib/invoice-sale-terms";
 import { fmtCalendarDate } from "../../../../lib/format-date";
 import { isInternalEmail } from "../../../../lib/internal-email";
 import {
@@ -199,6 +200,8 @@ export default function InvoiceDetailScreen() {
   const taxLines = invoiceTaxLines(invoice as Parameters<typeof invoiceTaxLines>[0]);
   const balance = invoice.balanceDue ?? invoice.total;
   const paymentTermsLabel = (invoice as typeof invoice & InvoiceTermsLabelField).paymentTermsLabel;
+  // Row 401: a counter sale paid at the till shows no due date or terms (the web page's CQ-26 rule).
+  const showTerms = invoiceShowsTerms(invoice);
   const isVoid = invoice.status === "VOID";
   // B4: mirrors web's allow-list exactly. The server only rejects VOID, so a
   // bare "not paid, not void" gate used to offer this on DRAFT/WRITTEN_OFF —
@@ -676,11 +679,15 @@ export default function InvoiceDetailScreen() {
               hitSlop={4}
             >
               <Text style={styles.due}>
-                {invoice.dueDate ? `Due ${fmtCalendarDate(invoice.dueDate)}` : "Set due date"}
+                {!showTerms
+                  ? "Edit due date"
+                  : invoice.dueDate
+                    ? `Due ${fmtCalendarDate(invoice.dueDate)}`
+                    : "Set due date"}
               </Text>
               <Ionicons name="pencil-outline" size={12} color={ios.label3} />
             </Pressable>
-            {paymentTermsLabel ? (
+            {showTerms && paymentTermsLabel ? (
               <Text style={styles.headerMeta}>Terms: {paymentTermsLabel}</Text>
             ) : null}
           </View>

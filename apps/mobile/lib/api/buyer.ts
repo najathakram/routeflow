@@ -80,6 +80,8 @@ export type {
 export interface BuyerInvoice {
   id: string;
   invoiceNumber: string;
+  /** Row 401: the server's answer to "a counter sale paid at the till" — no due date / terms shown. */
+  paidAtSale?: boolean;
   revisedAt?: string | null;
   overpaidBy?: number | null;
   status: string;
