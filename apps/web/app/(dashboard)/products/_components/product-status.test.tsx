@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import {
   STOCK_FILTER_CHIPS,
   ProductStatusBadge,
+  stockCountLabel,
   getProductStatus,
   stockFilterParams,
 } from "./product-status";
@@ -64,8 +65,19 @@ describe("ProductStatusBadge", () => {
     expect(screen.queryByText(/out of stock/i)).toBeNull();
   });
 
-  it("shows a negative count as it is", () => {
-    render(<ProductStatusBadge status="OUT_OF_STOCK" currentStock={-3} />);
-    expect(screen.getByText("-3 in stock")).toBeInTheDocument();
+  // UX CHANGE (330b follow-up): a negative count never shows as "-2 in stock": it clamps to 0 and says how many
+  // were sold past it, in the same amber (the product stays sellable).
+  it("clamps a negative count: -2 reads '0 in stock · 2 oversold'", () => {
+    render(<ProductStatusBadge status="OUT_OF_STOCK" currentStock={-2} />);
+    const badge = screen.getByText("0 in stock · 2 oversold").closest("span")!;
+    expect(badge.className).toContain("bg-warning-bg");
+    expect(screen.queryByText(/-\d/)).toBeNull();
+  });
+
+  it("one formatter feeds every badge: zero, positive and negative", () => {
+    expect(stockCountLabel(0)).toBe("0 in stock");
+    expect(stockCountLabel(4)).toBe("4 in stock");
+    expect(stockCountLabel(-2)).toBe("0 in stock · 2 oversold");
+    expect(stockCountLabel(null)).toBe("0 in stock");
   });
 });

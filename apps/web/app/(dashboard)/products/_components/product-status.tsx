@@ -38,10 +38,13 @@ export function stockFilterParams(filter: ProductStockFilter): {
 
 /**
  * Row 330b (owner ruling): an empty product shows the real count in the warning tone ("0 in stock"), never a red
- * "Out of Stock". The product stays sellable; the count is the whole message.
+ * "Out of Stock". The product stays sellable; the count is the whole message. The ONE formatter for every staff badge
+ * site: a negative count never reads "-2 in stock", it clamps to 0 and says how many were sold past it.
  */
 export function stockCountLabel(currentStock: number | null | undefined): string {
-  return `${formatQty(currentStock)} in stock`;
+  const n = Number(currentStock ?? 0);
+  if (Number.isFinite(n) && n < 0) return `0 in stock · ${formatQty(-n)} oversold`;
+  return `${formatQty(n)} in stock`;
 }
 
 export function ProductStatusBadge({
