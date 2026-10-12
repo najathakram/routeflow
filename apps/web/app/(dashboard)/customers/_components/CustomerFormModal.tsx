@@ -128,13 +128,6 @@ export interface CustomerFormModalProps {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Edit payload for an optional text field: the value, an explicit `null` when a loaded value was
- *  emptied, or `undefined` (leave alone) when there was nothing to clear. */
-function clearable(next: string | undefined, loaded: string | null | undefined) {
-  if (next) return next;
-  return loaded ? null : undefined;
-}
-
 function buildDefaultValues(
   initialData?: CustomerFormModalProps["initialData"],
   newCustomerFulfillPath: "ROUTE" | "SHIP" = "ROUTE",
@@ -371,8 +364,8 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           // B1033: an emptied optional field is an explicit null (the API stores null); `|| undefined`
           // made it a silent no-op and the old value stayed. Only a value the form actually loaded can be
           // cleared — an already-empty field is left out, so an edit can never wipe a column it never saw.
-          phone: clearable(data.phone, initialData.phone),
-          mobile: clearable(data.mobile, initialData.mobile),
+          phone: clearableField(data.phone, initialData.phone),
+          mobile: clearableField(data.mobile, initialData.mobile),
           customerType: data.customerType,
           displayName: resolvedDisplayName,
           // #3206 follow-up: an emptied name field the form loaded is an explicit null (cleared); one
@@ -380,7 +373,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           salutation: clearableField(data.salutation, initialData.salutation),
           firstName: clearableField(data.firstName, initialData.firstName),
           lastName: clearableField(data.lastName, initialData.lastName),
-          taxId: clearable(data.taxId, initialData.taxId),
+          taxId: clearableField(data.taxId, initialData.taxId),
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: data.creditLimit
             ? parseFloat(data.creditLimit)

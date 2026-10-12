@@ -24,7 +24,7 @@ import { fmt } from "@/lib/formatting";
  * limit and renders with an explicit "$0.00 limit" line (B1032).
  */
 export interface CreditLimitPanelProps {
-  /** `Customer.creditLimit` — null / 0 / absent means no limit, so no panel. */
+  /** `Customer.creditLimit` — null / absent (or negative) means no limit, so no panel; 0 is a real $0 limit. */
   creditLimit?: number | null;
   /** `statement.creditExposure`; `undefined` while loading or on an older API. */
   creditExposure?: number;
