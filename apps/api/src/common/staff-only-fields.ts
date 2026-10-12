@@ -94,6 +94,7 @@ export const CUSTOMER_INVOICE_FIELDS = [
   "isOverdue",
   "overpaidBy", // SA-763r P-3: derived, max(0, confirmed external paid - total)
   "revisedAt", // SA-763r P-3: derived, the latest invoice.revised audit row (null when never revised)
+  "paidAtSale", // row 401: derived boolean (isPaidAtSale), so the buyer copy shows no due date / terms on a till sale
 ] as const;
 
 /** Invoice line scalars a buyer screen reads. `product` and `components` are projected below; the

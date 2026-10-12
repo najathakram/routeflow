@@ -4,6 +4,7 @@ import { carrierLabel, getTrackingUrl } from "../common/shipping";
 import { invoiceTaxSplit, roundMoney } from "@routeflow/pricing";
 import { promoNote, qtyCellText, showOriginalPrice, type PdfSubLine } from "./invoice-pdf-item";
 import { CREDIT_NOTE_METHOD, resolveConfirmedAmounts } from "./payment-predicates";
+import { pdfTermsView } from "./invoice-pdf-terms";
 
 type DecimalLike = { toNumber(): number } | number | string;
 
@@ -11,6 +12,9 @@ export interface InvoicePdfData {
   id: string;
   invoiceNumber: string;
   status: string;
+  /** Row 401: the paid-at-sale rule reads the invoice's creation instant, the order's `counterSale` and each payment's. */
+  createdAt?: Date | string | null;
+  order?: { counterSale?: boolean | null } | null;
   /**
    * Document stage: "draft" renders a DRAFT watermark + badge (a pre-delivery
    * proforma the wholesaler can print/send before the order ships); "final"
@@ -132,6 +136,8 @@ export interface InvoicePdfData {
     reference?: string | null;
     notes?: string | null;
     paidAt: Date | string;
+    /** Row 401: when the row was written (the paid-at-sale rule compares it with the invoice's creation). */
+    createdAt?: Date | string | null;
     /** Present on CREDIT_NOTE payments — read live via the relation so a later
      *  edit of the credit's reason shows up on the next PDF render. */
     creditNote?: { creditNoteNumber: string; reason: string | null } | null;
@@ -412,6 +418,8 @@ function StatusBadge({
 }
 
 export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
+  // Row 401: a counter sale paid at the till prints no due date / terms (the invoice page's CQ-26 rule).
+  const terms = pdfTermsView(invoice);
   const subtotal = toNum(invoice.subtotal);
   // CQ-03: the header tax holds the regular tax plus the levy; the document names the levy apart (CRV deposit, excise).
   const taxSplit = invoiceTaxSplit(invoice.taxAmount, invoice.items);
@@ -454,7 +462,9 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
   // Deposit schedule (Tier 1): depositAmount arrives pre-computed from the
   // service (roundMoney(total*percent/100)); the remainder is simply what's
   // left of the total after it — independent of payments actually recorded.
-  const hasDeposit = invoice.depositPercent != null && invoice.depositAmount != null;
+  // (its "Remainder due <date>" is a due date, so a paid-at-sale invoice carries no schedule either)
+  const hasDeposit =
+    terms.showDueAndTerms && invoice.depositPercent != null && invoice.depositAmount != null;
   const depositAmount = invoice.depositAmount ?? 0;
   const remainderAmount = total - depositAmount;
   const addr =
@@ -568,10 +578,10 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
             <View style={{ flex: 1, alignItems: "flex-end" }}>
               <Text style={styles.billLabel}>Invoice Details</Text>
               <Text style={styles.billSub}>Invoice Date: {fmtDate(invoice.issueDate)}</Text>
-              {invoice.dueDate ? (
+              {terms.showDueAndTerms && invoice.dueDate ? (
                 <Text style={styles.billSub}>Due Date: {fmtDate(invoice.dueDate)}</Text>
               ) : null}
-              {invoice.paymentTermsLabel ? (
+              {terms.showDueAndTerms && invoice.paymentTermsLabel ? (
                 <Text style={styles.billSub}>Terms: {invoice.paymentTermsLabel}</Text>
               ) : null}
               {invoice.paidAt ? (
@@ -885,14 +895,14 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
           fill) so it reads as a separate section rather than another row
           of body copy.
         */}
-        {invoice.terms ? (
+        {terms.termsAndConditions ? (
           // The wrapper stays un-wrapped (marginTop:auto pins it to the bottom of
           // the page when short); the inner box wraps so LONG terms flow onto
           // additional pages instead of clipping.
           <View style={styles.termsWrapper}>
             <View style={styles.termsBox} wrap>
               <Text style={styles.termsLabel}>Terms &amp; Conditions</Text>
-              <Text style={styles.termsBody}>{invoice.terms}</Text>
+              <Text style={styles.termsBody}>{terms.termsAndConditions}</Text>
             </View>
           </View>
         ) : null}

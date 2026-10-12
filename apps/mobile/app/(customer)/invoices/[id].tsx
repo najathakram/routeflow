@@ -17,6 +17,7 @@ import { formatPaymentMethod, paymentRowFlags } from "../../../lib/buyer-payment
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { fmtCalendarDate } from "../../../lib/format-date";
 import { overpaidText, revisedBadgeText } from "../../../lib/invoice-revision";
+import { invoiceShowsTerms } from "../../../lib/invoice-sale-terms";
 import { invoiceLineQtyText } from "@routeflow/pricing";
 import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../lib/invoice-line-display";
 
@@ -104,6 +105,8 @@ export default function CustomerInvoiceDetailScreen() {
           : "total";
   const pdfUrl = (invoice as any).pdfUrl as string | undefined;
   const paymentTermsLabel = (invoice as typeof invoice & InvoiceTermsLabelField).paymentTermsLabel;
+  // Row 401: a counter sale paid at the till shows no due date or terms (the web page's CQ-26 rule).
+  const showTerms = invoiceShowsTerms(invoice);
 
   const handleSharePdf = async () => {
     if (!pdfUrl) return;
@@ -162,10 +165,10 @@ export default function CustomerInvoiceDetailScreen() {
 
           <Text style={styles.total}>${Number(invoice.total).toFixed(2)}</Text>
 
-          {invoice.dueDate ? (
+          {showTerms && invoice.dueDate ? (
             <Text style={styles.dueDate}>Due: {fmtCalendarDate(invoice.dueDate, "short")}</Text>
           ) : null}
-          {paymentTermsLabel ? (
+          {showTerms && paymentTermsLabel ? (
             <Text style={styles.dueDate}>Terms: {paymentTermsLabel}</Text>
           ) : null}
         </View>
