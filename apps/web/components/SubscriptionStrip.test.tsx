@@ -202,7 +202,7 @@ describe("BillingShellBanner - announce once, link, reserve (review folds)", () 
     expect(await screen.findByTestId("subscription-strip")).toHaveAttribute("role", "status");
   });
 
-  it("dark mode day 9: a neutral dismissible status, no threat", async () => {
+  it("dark mode day 9: the owner's overdue sentence with Pay now, an amber dismissible status, no threat (SA-777)", async () => {
     renderWithProviders(
       <BillingShellBanner
         scope="acme"
@@ -212,8 +212,13 @@ describe("BillingShellBanner - announce once, link, reserve (review folds)", () 
     );
     const strip = await screen.findByTestId("subscription-strip");
     expect(strip).toHaveAttribute("role", "status");
-    expect(strip.className).toMatch(/blue/);
-    expect(strip.textContent).not.toMatch(/read-only|tomorrow/i);
+    expect(strip.className).toMatch(/amber/);
+    expect(strip.className).not.toMatch(/red/);
+    expect(strip.textContent).toContain(
+      "Your subscription payment of $149.00 is overdue. Please complete your payment to keep your account up to date.",
+    );
+    expect(strip.textContent).not.toMatch(/read-only|tomorrow|lock|suspend|\d+ days?/i);
+    expect(within(strip).getByRole("button", { name: "Pay now" })).toBeInTheDocument();
     expect(within(strip).getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
   });
 

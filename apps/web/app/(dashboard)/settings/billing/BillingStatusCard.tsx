@@ -3,10 +3,11 @@
 import * as React from "react";
 import { CheckCircle2 } from "lucide-react";
 import type { SubscriptionView } from "@routeflow/types";
-import { Button, Card } from "@routeflow/ui/web";
+import { Badge, Button, Card } from "@routeflow/ui/web";
 import { useBillingPortal } from "@/lib/api/billing";
 import { usePaidNotice } from "@/lib/billing-paid-notice";
 import { bannerRoleOf, subscriptionBannerState } from "@/lib/subscription-banner-state";
+import { billingCardModel } from "@/lib/billing-card-model";
 
 /**
  * SA-733r6 (B4): the Settings > Billing card's status block, rendered from the same `subscriptionBannerState` as
@@ -30,7 +31,14 @@ export function BillingStatusCard({
   const [paid, clearPaid] = usePaidNotice(scope);
   const portal = useBillingPortal();
   if (!role) return null;
+  const model = billingCardModel(sub, role);
+  // SA-777: the server's state drives ONE card (pill, amount, buttons). When the server could not say, the legacy
+  // autopay / expiring-card block below renders exactly as before - never a guessed "Current".
   const state = subscriptionBannerState(sub, role);
+  const payNow = (pay: { url?: string }) => {
+    if (pay.url?.startsWith("https://")) window.open(pay.url, "_blank", "noopener,noreferrer");
+    else portal.mutate({ intent: "pay" });
+  };
   const owedCopy =
     state.kind === "grace" || state.kind === "final-day" || state.kind === "read-only"
       ? state.copy
@@ -52,7 +60,77 @@ export function BillingStatusCard({
           </Button>
         </div>
       )}
-      {owedCopy && (
+      {model && (
+        <Card
+          data-testid="billing-card"
+          data-state={model.state}
+          className="mx-auto w-full max-w-[720px] p-4 md:p-5"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-[15px] font-semibold leading-5 text-slate-900">Subscription</h2>
+            <Badge variant={model.pill.tone} label={model.pill.label} />
+          </div>
+          {model.amountLine && (
+            <p className="mt-3 text-[28px] font-semibold leading-[34px] tabular-nums text-slate-900">
+              {model.amountLine}
+            </p>
+          )}
+          {model.subLine && (
+            <p
+              className={
+                model.subTone === "amber"
+                  ? "mt-1 text-[13px] leading-[18px] text-amber-800"
+                  : "mt-1 text-[13px] leading-[18px] text-slate-500"
+              }
+            >
+              {model.subLine}
+            </p>
+          )}
+          {model.state === "read-only" && owedCopy && (
+            <p className="mt-3 text-sm leading-5 text-slate-800">{owedCopy}</p>
+          )}
+          {(model.pay || model.portal) && (
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              {model.pay && (
+                <Button
+                  className="min-h-[44px] w-full sm:w-auto"
+                  loading={portal.isPending}
+                  onClick={() => payNow(model.pay!)}
+                >
+                  {model.pay.label}
+                </Button>
+              )}
+              {model.portal && (
+                <Button
+                  variant="secondary"
+                  className="min-h-[44px] w-full sm:w-auto"
+                  aria-label="Payment methods & invoices (opens Stripe)"
+                  loading={portal.isPending}
+                  onClick={() => portal.mutate({ intent: "update-payment" })}
+                >
+                  Payment methods &amp; invoices ↗
+                </Button>
+              )}
+            </div>
+          )}
+          {model.contact && (
+            <p className="mt-3 text-[13px] leading-[18px] text-slate-600">
+              Only an admin can pay.
+              {model.contact.email ? (
+                <>
+                  {" Your admin: "}
+                  <a className="underline" href={`mailto:${model.contact.email}`}>
+                    {model.contact.email}
+                  </a>
+                </>
+              ) : (
+                " Ask your admin."
+              )}
+            </p>
+          )}
+        </Card>
+      )}
+      {!model && owedCopy && (
         <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
           <p className="min-w-0 flex-1 text-sm text-slate-800">{owedCopy}</p>
           {state.cardPay && (
@@ -62,7 +140,7 @@ export function BillingStatusCard({
           )}
         </Card>
       )}
-      {state.cardLine && (
+      {!model && state.cardLine && (
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600">
           <p>{state.cardLine}</p>
           {state.kind === "card-expiring" && (

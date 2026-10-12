@@ -380,38 +380,79 @@ describe("subscriptionBannerState - labels come from the server (S4)", () => {
 
 // B2: BILLING_PAUSE_MODE dark / off (the default) never pauses. The grace states must not threaten a read-only date
 // or claim a deadline; they stay neutral, keep the Update payment action, and never escalate to amber / alert.
-describe("subscriptionBannerState - pause NOT enforced (dark / off)", () => {
+describe("subscriptionBannerState - pause NOT enforced (dark / off): the owner's overdue sentence (SA-777)", () => {
   const dark = (over: Partial<SubscriptionView> = {}) => owing({ pauseEnforced: false, ...over });
+  const OVERDUE =
+    "Your subscription payment of $149.00 is overdue. Please complete your payment to keep your account up to date.";
 
   it.each([0, 3, 6, 9, 30])(
-    "admin day %i: neutral card-update copy, no read-only threat, no deadline",
+    "admin day %i: the owner's sentence with the amount and Pay now - no lock, no date, no countdown",
     (day) => {
       const s = subscriptionBannerState(dark(), "admin", at(day, 3));
-      expect(s.kind).toBe("grace");
-      expect(s.tone).toBe("neutral");
-      expect(s.copy).toBe(
-        "We couldn't charge your card for November. Update it to keep autopay running.",
-      );
-      expect(s.copy).not.toMatch(/read-only|tomorrow|\bby\b|Nov 8/i);
-      expect(s.action).toEqual({ label: "Update payment", intent: "update-payment" });
-      expect(s.dismiss).toEqual({ scope: "day", key: expect.any(String) });
+      expect(s.kind).toBe("overdue");
+      expect(s.tone).toBe("amber");
+      expect(s.copy).toBe(OVERDUE);
+      expect(s.copy).not.toMatch(/read-only|lock|suspend|tomorrow|\bby\b|Nov 8|days?\b/i);
+      expect(s.action).toEqual({ label: "Pay now", intent: "pay" });
+      expect(s.dismiss).toEqual({ scope: "day", key: expect.stringMatching(/^grace:in_1:/) });
       expect(s.live).toBe("status");
     },
   );
 
-  it.each([0, 6, 30])("operator day %i: the billing-issue line, no threat", (day) => {
-    const s = subscriptionBannerState(dark(), "staff", at(day, 3));
-    expect(s.copy).toBe(
-      "There's a billing issue. Everything still works. Your admin can sort it out in Billing.",
+  it("the amount comes from outstandingTotal (all open invoices) over the clocked invoice's", () => {
+    const s = subscriptionBannerState(dark({ outstandingTotal: 298 }), "admin", at(2));
+    expect(s.copy).toContain("$298.00");
+  });
+
+  it("with the amount omitted the sentence stands without a figure (never a dash, never $0)", () => {
+    const s = subscriptionBannerState(
+      dark({ openInvoiceAmount: null, outstandingTotal: undefined }),
+      "admin",
+      at(2),
     );
+    expect(s.copy).toBe(
+      "Your subscription payment is overdue. Please complete your payment to keep your account up to date.",
+    );
+  });
+
+  it("the Pay action carries the hosted invoice page when the server sent it", () => {
+    const s = subscriptionBannerState(
+      dark({ payNowUrl: "https://pay.example/in_1" }),
+      "admin",
+      at(2),
+    );
+    expect(s.action).toEqual({
+      label: "Pay now",
+      intent: "pay",
+      url: "https://pay.example/in_1",
+    });
+  });
+
+  it.each([0, 6, 30])("operator day %i: who to ask, no amount, no pay control", (day) => {
+    const s = subscriptionBannerState(dark(), "staff", at(day, 3));
+    expect(s.copy).toBe("Your subscription payment is overdue. Please let your admin know.");
     expect(s.action).toBeNull();
-    expect(s.tone).toBe("neutral");
+    expect(s.tone).toBe("amber");
+  });
+
+  it("no strip while a payment is processing, and none while the invoice is merely due", () => {
+    expect(
+      subscriptionBannerState(dark({ billingState: "processing" }), "admin", at(2)).inShell,
+    ).toBe(false);
+    expect(subscriptionBannerState(dark({ paymentProcessing: true }), "admin", at(2)).inShell).toBe(
+      false,
+    );
+    expect(subscriptionBannerState(dark({ billingState: "due" }), "admin", at(2)).inShell).toBe(
+      false,
+    );
   });
 
   it("an older server that sends no flag is treated as not enforced", () => {
     const v = owing();
     delete (v as any).pauseEnforced;
-    expect(subscriptionBannerState(v, "admin", at(6, 3)).kind).toBe("grace");
+    const s = subscriptionBannerState(v, "admin", at(6, 3));
+    expect(s.kind).toBe("overdue");
+    expect(s.copy).not.toMatch(/read-only|tomorrow/i);
   });
 
   it("the Billing card still offers Pay for an admin", () => {
@@ -422,13 +463,86 @@ describe("subscriptionBannerState - pause NOT enforced (dark / off)", () => {
   });
 });
 
+describe("subscriptionBannerState - the server's facts gate the strip (SA-777 review)", () => {
+  const dark = (over: Partial<SubscriptionView> = {}) => owing({ pauseEnforced: false, ...over });
+
+  it("a stamped marker but Stripe shows nothing open ('current'): NO strip, never '$0.00 is overdue'", () => {
+    const s = subscriptionBannerState(
+      dark({ billingState: "current", outstandingTotal: 0 }),
+      "admin",
+      at(2),
+    );
+    expect(s.inShell).toBe(false);
+    expect(s.copy).toBe("");
+  });
+
+  it("a zero total is never printed as an amount owed", () => {
+    const s = subscriptionBannerState(
+      dark({ outstandingTotal: 0, openInvoiceAmount: 149 }),
+      "admin",
+      at(2),
+    );
+    expect(s.copy).not.toContain("$0.00");
+    expect(s.copy).not.toContain("$149.00"); // the clocked amount is not trusted over an explicit 0
+  });
+
+  it("overdue on a live workspace with no marker stamped yet: the owner's sentence still shows", () => {
+    const s = subscriptionBannerState(
+      dark({
+        pastDueInvoiceId: null,
+        pastDueSince: null,
+        billingState: "overdue",
+        outstandingTotal: 149,
+      }),
+      "admin",
+      at(2),
+    );
+    expect(s.kind).toBe("overdue");
+    expect(s.copy).toContain("$149.00 is overdue");
+    expect(s.dismiss?.key).toMatch(/^grace:open:/);
+  });
+
+  it("a read-only trial workspace is not hijacked by an open invoice's overdue state", () => {
+    const s = subscriptionBannerState(
+      dark({
+        status: "READ_ONLY",
+        readOnlyReason: "trial_expired",
+        pastDueInvoiceId: null,
+        pastDueSince: null,
+        billingState: "overdue",
+      }),
+      "admin",
+      at(2),
+    );
+    expect(s.kind).not.toBe("overdue");
+  });
+
+  it("with the pause ENFORCED a merely 'due' invoice keeps the escalation (the pause does not wait for an attempt)", () => {
+    const s = subscriptionBannerState(
+      owing({ pauseEnforced: true, billingState: "due" }),
+      "admin",
+      at(6, 2),
+    );
+    expect(s.kind).toBe("final-day");
+  });
+
+  it("the Pay label is the amount the link collects (one invoice), not the total of several", () => {
+    const s = subscriptionBannerState(
+      dark({ outstandingTotal: 298, payNowAmount: 149, payNowUrl: "https://pay.example/in_1" }),
+      "admin",
+      at(2),
+    );
+    expect(s.cardPay?.label).toBe("Pay $149.00");
+  });
+});
+
 describe("subscriptionBannerState - pause enforced keeps the escalation", () => {
   it("day 6 is amber / alert / not dismissible only when the server enforces the pause", () => {
     expect(subscriptionBannerState(owing({ pauseEnforced: true }), "admin", at(6, 2)).kind).toBe(
       "final-day",
     );
     expect(subscriptionBannerState(owing({ pauseEnforced: false }), "admin", at(6, 2)).kind).toBe(
-      "grace",
+      "overdue",
     );
   });
 });
