@@ -184,6 +184,29 @@ describe("SubscriptionBillingExtras.read: open-invoice facts (SA-777)", () => {
     });
   });
 
+  it("the date next to Pay is the PAY TARGET's, never a settling invoice's", async () => {
+    const day = (d: string) => Math.floor(new Date(d).getTime() / 1000);
+    const { extras } = make({
+      rows: [
+        row({
+          id: "settling",
+          created: day("2026-08-01T12:00:00Z"),
+          due_date: day("2026-09-15T12:00:00Z"),
+        }),
+        row({
+          id: "unpaid",
+          created: day("2026-09-01T12:00:00Z"),
+          due_date: day("2026-10-15T12:00:00Z"),
+        }),
+      ],
+      processing: { settling: true },
+    });
+    const out = await extras.read("t1", SUB);
+    expect(out.openInvoiceDueLabel).toBe("Oct 15");
+    expect(out.settlingCount).toBe(1);
+    expect(out.openInvoiceCount).toBe(2);
+  });
+
   it("payNowAmount is the oldest invoice's own amount, not the total (the button must collect what it says)", async () => {
     const { extras } = make({
       rows: [
@@ -233,6 +256,8 @@ describe("trimBillingViewForRole (SA-777)", () => {
     outstandingTotal: 149,
     payNowUrl: "https://pay.example/in_1",
     payNowAmount: 149,
+    openInvoiceCount: 2,
+    settlingCount: 1,
     openInvoiceDueLabel: "Oct 1",
     billingContactEmail: "dana@example.test",
     openInvoiceAmount: 149,
@@ -248,6 +273,8 @@ describe("trimBillingViewForRole (SA-777)", () => {
     expect(out).not.toHaveProperty("outstandingTotal");
     expect(out).not.toHaveProperty("payNowUrl");
     expect(out).not.toHaveProperty("payNowAmount");
+    expect(out).not.toHaveProperty("openInvoiceCount");
+    expect(out).not.toHaveProperty("settlingCount");
     expect(out.openInvoiceAmount).toBeNull();
   });
 

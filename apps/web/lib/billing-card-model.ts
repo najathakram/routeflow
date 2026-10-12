@@ -156,11 +156,15 @@ export function billingCardModel(
       }
     : null;
 
-  // "Total open: $298.00 · 2 invoices": only when more is owed than the one invoice Pay collects.
+  // "Total open: $298.00 · 2 invoices (1 processing)": only when more is owed than the one invoice Pay collects,
+  // naming what is already settling so the second figure is never read as still to pay.
   const count = view.openInvoiceCount;
+  const settling = view.settlingCount ?? 0;
   const totalLine =
     pay && total != null && payable != null && total > payable + 0.005
-      ? `Total open: ${billingMoney(total)}${count != null && count > 1 ? ` · ${count} invoices` : ""}`
+      ? `Total open: ${billingMoney(total)}${count != null && count > 1 ? ` · ${count} invoices` : ""}${
+          settling > 0 ? ` (${settling} processing)` : ""
+        }`
       : null;
 
   return {

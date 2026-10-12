@@ -152,6 +152,23 @@ describe("billingCardModel (SA-777)", () => {
     expect(m.totalLine).toBe("Total open: $298.00 · 2 invoices");
   });
 
+  it("one invoice settling and one payable: the total line says what is processing (never read as still to pay)", () => {
+    const m = billingCardModel(
+      view({
+        billingState: "overdue",
+        outstandingTotal: 298,
+        payNowAmount: 149,
+        openInvoiceCount: 2,
+        settlingCount: 1,
+        payNowUrl: "https://pay.example/in_2",
+        openInvoiceDueLabel: "Oct 15",
+      }),
+      "admin",
+      NOW,
+    )!;
+    expect(m.totalLine).toBe("Total open: $298.00 · 2 invoices (1 processing)");
+  });
+
   it("one open invoice: no 'Total open' line (it would repeat the amount)", () => {
     const m = billingCardModel(
       view({

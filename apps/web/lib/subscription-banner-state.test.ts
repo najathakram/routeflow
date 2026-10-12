@@ -490,6 +490,21 @@ describe("subscriptionBannerState - every amount next to Pay is the amount Pay c
     expect(text).not.toContain("$298.00");
   });
 
+  it("read-only while a payment settles: the reason line does not call it overdue with an amount", () => {
+    const text = readOnlyCopyForView(
+      two({
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
+        billingState: "processing",
+        paymentProcessing: true,
+        openInvoiceAmount: 149,
+      }),
+      true,
+    ).text;
+    expect(text).not.toContain("$149.00");
+    expect(text).toContain("Your subscription payment is overdue.");
+  });
+
   it("read-only while a payment is settling: no Pay anywhere (strip action or card pay)", () => {
     const s = subscriptionBannerState(
       two({

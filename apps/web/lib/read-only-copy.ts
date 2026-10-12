@@ -39,11 +39,14 @@ export function readOnlyCopyForView(
 ): ReadOnlyCopy {
   return readOnlyCopy({
     reason: view?.readOnlyReason ?? null,
-    // the amount Pay collects (payNowAmount), else the clocked invoice's: one source for every figure next to Pay
+    // the amount Pay collects (payNowAmount), else the clocked invoice's: one source for every figure next to Pay;
+    // none while a payment is already settling (it is being paid, not "overdue").
     overdueAmount:
-      view?.payNowAmount != null && view.payNowAmount > 0
-        ? view.payNowAmount
-        : (view?.openInvoiceAmount ?? null),
+      view?.paymentProcessing === true || view?.billingState === "processing"
+        ? null
+        : view?.payNowAmount != null && view.payNowAmount > 0
+          ? view.payNowAmount
+          : (view?.openInvoiceAmount ?? null),
     billingContactEmail: view?.billingContactEmail ?? null,
     isAdmin,
   });

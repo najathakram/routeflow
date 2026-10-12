@@ -114,6 +114,8 @@ export interface SubscriptionView<TDate = string> {
   payNowAmount?: number;
   /** How many open invoices make up `outstandingTotal` (the card's "Total open: $298.00 · 2 invoices" line). */
   openInvoiceCount?: number;
+  /** How many of those are already settling (a bank debit); admins only, like the amounts. */
+  settlingCount?: number;
 }
 
 /**
