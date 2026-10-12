@@ -688,9 +688,9 @@ describe("SA-767 L-2.2 - the batched count committer (structural pins)", () => {
     const existing = m.search(/tx\.stockCountLine\.findUnique\(/);
     expect(read).toBeGreaterThan(m.search(/this\.prisma\.tenantTransaction\(/));
     expect(read).toBeLessThan(existing);
-    expect(m).toMatch(
-      /data: dto\.increment \? data : \{ \.\.\.data, expectedQty: live\.currentStock \}/,
-    );
+    // re-stamps only on an ABSOLUTE write that CHANGES the count (SA-767 r-note 5 SA-1)
+    expect(m).toMatch(/const recount = !dto\.increment && absoluteCountChanged\(existing, data\)/);
+    expect(m).toMatch(/data: recount \? \{ \.\.\.data, expectedQty: live\.currentStock \} : data/);
     expect(m).toMatch(/expectedQty: live\.currentStock,\n\s+\.\.\.data,/);
     // the read is a baseline stamp, not a stock write: no Product lock for it
     expect(m).not.toMatch(/lockProducts|lockProductsForStock/);

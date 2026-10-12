@@ -58,6 +58,7 @@ import {
   type LockResult,
 } from "../common/db-locks";
 import {
+  absoluteCountChanged,
   COUNT_COMMIT_BATCH,
   COUNT_LOCK_ATTEMPTS,
   COUNT_LOCK_RETRY_MS,
@@ -2701,14 +2702,18 @@ export class InventoryService {
       };
 
       if (existing) {
+        // The baseline is the stock when this line's counting BEGAN: its create, or its last ABSOLUTE write
+        // THAT CHANGED THE COUNT (a typed / set total or a recount whose quantity or boxes / pieces split
+        // differs from the stored line). That write re-stamps it, otherwise a sale between two counts would
+        // be subtracted twice (the REPLACE delta is `countedQty - expectedQty`). Everything else keeps it:
+        // an increment scan is one physical count accumulating, and a cost-only edit, a mode toggle or a
+        // same-value resend (both clients resend the full countedQty on every edit) is not a recount - a
+        // re-stamp there would erase a sale made since the count (SA-767 r-note 5 SA-1). ADD-mode lines
+        // never read it.
+        const recount = !dto.increment && absoluteCountChanged(existing, data);
         return tx.stockCountLine.update({
           where: { id: existing.id },
-          // The baseline is the stock when this line's counting BEGAN: its create or its last ABSOLUTE
-          // write (a typed / set total or a recount that replaces `countedQty`). An absolute write
-          // re-stamps it, otherwise a sale between two counts would be subtracted twice (the REPLACE
-          // delta is `countedQty - expectedQty`). An increment scan is one physical count
-          // accumulating: it keeps the baseline. ADD-mode lines never read it.
-          data: dto.increment ? data : { ...data, expectedQty: live.currentStock },
+          data: recount ? { ...data, expectedQty: live.currentStock } : data,
           select: this.stockCountLineSelect(),
         });
       }

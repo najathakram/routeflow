@@ -10,6 +10,9 @@
  *  (A2) a scan-built line (50 increment scans from stock 100, a sale mid-way, no recount) keeps
  *       expected 100: delta -50, the sale survives.
  *  (A3) a sale AFTER the last absolute write is kept in the final stock (regression guard).
+ *  (A4-A6) MF1 (r-note 4 A): an absolute write that does NOT change the count keeps the baseline. Both
+ *       clients resend the full countedQty on every edit (cost, mode toggle), so re-stamping there would
+ *       erase a sale that landed since the count (counted 100 at stock 100, sale 10 -> final 100, not 90).
  */
 import { describeDb } from "../common/testing/db-spec";
 import { useCountDbHarness } from "./testing/count-db-harness";
@@ -70,5 +73,66 @@ describeDb("SA-767 L-2.4 A - expectedQty re-stamp on absolute count writes", () 
     await h.commitSession(h.A, w);
 
     expect(await h.stockOfId(p)).toBe(60); // 70 + (90 - 100)
+  }, 60_000);
+
+  it("(A4) MF1: a COST-ONLY edit after a sale keeps expectedQty 100 and the sale survives (final 90)", async () => {
+    const w = await h.seedCountWorld("a4", 1, { lines: false });
+    const p = w.idOf(1);
+
+    await h.upsert(h.A, w, { productId: p, countedQty: 100 }); // create: expected 100
+    await h.sell(p, 10); // stock 90
+    await h.upsert(h.A, w, { productId: p, countedQty: 100, unitCostOverride: 3 }); // same count
+    const line = await lineOf(w, p);
+    await h.commitSession(h.A, w);
+
+    expect(Number(line.expectedQty)).toBe(100); // was re-stamped to 90, erasing the sale (final 100)
+    expect(Number(line.unitCostOverride)).toBe(3);
+    expect(await h.stockOfId(p)).toBe(90);
+    expect((await h.sessionOf(w)).status).toBe("COMMITTED");
+  }, 60_000);
+
+  it("(A5) MF1: a MODE-ONLY toggle (and back) after a sale keeps the baseline: final 90", async () => {
+    const w = await h.seedCountWorld("a5", 1, { lines: false });
+    const p = w.idOf(1);
+
+    await h.upsert(h.A, w, { productId: p, countedQty: 100 });
+    await h.sell(p, 10);
+    await h.upsert(h.A, w, { productId: p, countedQty: 100, mode: "ADD" });
+    await h.upsert(h.A, w, { productId: p, countedQty: 100, mode: "REPLACE" });
+    const line = await lineOf(w, p);
+    await h.commitSession(h.A, w);
+
+    expect(Number(line.expectedQty)).toBe(100);
+    expect(await h.stockOfId(p)).toBe(90);
+  }, 60_000);
+
+  it("(A6) MF1: a CHANGED recount after a sale still re-stamps (100 -> sale 10 -> recount 90): final 90", async () => {
+    const w = await h.seedCountWorld("a6", 1, { lines: false });
+    const p = w.idOf(1);
+
+    await h.upsert(h.A, w, { productId: p, countedQty: 100 });
+    await h.sell(p, 10);
+    await h.upsert(h.A, w, { productId: p, countedQty: 90, unitCostOverride: 3 }); // count AND cost
+    const line = await lineOf(w, p);
+    await h.commitSession(h.A, w);
+
+    expect(Number(line.expectedQty)).toBe(90);
+    expect(await h.stockOfId(p)).toBe(90);
+  }, 60_000);
+
+  it("(A7) MF1 accepted residual ambiguity: a SAME-VALUE recount after a sale keeps the old baseline (final 90, the recount is not honoured)", async () => {
+    const w = await h.seedCountWorld("a7", 1, { lines: false });
+    const p = w.idOf(1);
+
+    await h.upsert(h.A, w, { productId: p, countedQty: 100 });
+    await h.sell(p, 10); // stock 90, but the counter physically still sees 100 and re-enters 100
+    await h.upsert(h.A, w, { productId: p, countedQty: 100 });
+    const line = await lineOf(w, p);
+    await h.commitSession(h.A, w);
+
+    // The write is indistinguishable from a cost / mode resend, so the baseline stays 100 and the
+    // delta is 0: the sale is kept and stock stays 90. A counter who disagrees edits the number.
+    expect(Number(line.expectedQty)).toBe(100);
+    expect(await h.stockOfId(p)).toBe(90);
   }, 60_000);
 });

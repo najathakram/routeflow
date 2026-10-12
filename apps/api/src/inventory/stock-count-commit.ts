@@ -13,7 +13,7 @@
  * of the same key pair for its own tx and is 409 STOCK_COUNT_COMMITTING if the committer has it.
  */
 import { ConflictException } from "@nestjs/common";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** Lines per commit transaction: bounds how long one count batch holds its Product row locks. */
@@ -110,6 +110,25 @@ export interface StockCountCommitOutcome {
 
 /** The `StockMovement.reference` of every movement a count session writes (also its movementReference). */
 export const stockCountReference = (sessionId: string): string => `STOCK_COUNT-${sessionId}`;
+
+type CountSplit = number | null | undefined;
+const sameSplit = (a: CountSplit, b: CountSplit) =>
+  a == null || b == null ? a == null && b == null : a === b;
+
+/**
+ * SA-767 r-note 5 SA-1 (the refinement of r-note 4 A): did an ABSOLUTE write change the count? Both
+ * clients resend the full `countedQty` on every edit (unit cost, mode toggle), so only a write whose
+ * quantity or boxes / pieces split differs from the stored line re-stamps the baseline. The quantity
+ * compares by Decimal equality (`100.000` equals `100`); a split compares as integers, null meaning
+ * "no split stored".
+ */
+export function absoluteCountChanged(
+  existing: { countedQty: Qty; boxes?: CountSplit; pieces?: CountSplit },
+  next: { countedQty: Qty; boxes?: CountSplit; pieces?: CountSplit },
+): boolean {
+  if (!new Prisma.Decimal(existing.countedQty).eq(new Prisma.Decimal(next.countedQty))) return true;
+  return !sameSplit(existing.boxes, next.boxes) || !sameSplit(existing.pieces, next.pieces);
+}
 
 /** The coded 409: the count is being committed. Nothing was changed; retry is safe. */
 export function stockCountCommitting(): ConflictException {

@@ -69,6 +69,81 @@ describe("upsertStockCountLine - expectedQty stamp rule (SA-767 L-2.4 A)", () =>
     expect(Number(w.prisma.stockCountLine.update.mock.calls[0][0].data.expectedQty)).toBe(90);
   });
 
+  // MF1 (r-note 4 A): both clients resend the FULL absolute countedQty on every edit, so a write that
+  // does not change the count (a cost edit, a mode toggle, a same-value resend) must keep the baseline.
+  it("a COST-ONLY edit (same absolute countedQty) keeps the baseline: no expectedQty in the write", async () => {
+    w.prisma.stockCountLine.findUnique.mockResolvedValue(existing());
+
+    await save({ countedQty: 100, unitCostOverride: 3 });
+
+    const data = w.prisma.stockCountLine.update.mock.calls[0][0].data;
+    expect(Number(data.countedQty)).toBe(100);
+    expect(data).toHaveProperty("unitCostOverride");
+    expect(data).not.toHaveProperty("expectedQty");
+  });
+
+  it("a MODE-ONLY toggle (same absolute countedQty) keeps the baseline", async () => {
+    w.prisma.stockCountLine.findUnique.mockResolvedValue(existing());
+
+    await save({ countedQty: 100, mode: "ADD" });
+
+    const data = w.prisma.stockCountLine.update.mock.calls[0][0].data;
+    expect(data.mode).toBe("ADD");
+    expect(data).not.toHaveProperty("expectedQty");
+  });
+
+  it("the quantity compare is Decimal equality: a stored 100.000 equals a resent 100", async () => {
+    w.prisma.stockCountLine.findUnique.mockResolvedValue(existing({ countedQty: D("100.000") }));
+
+    await save({ countedQty: 100 });
+
+    expect(w.prisma.stockCountLine.update.mock.calls[0][0].data).not.toHaveProperty("expectedQty");
+  });
+
+  it("a SAME-VALUE recount after a sale keeps the old baseline (accepted residual ambiguity)", async () => {
+    w.prisma.stockCountLine.findUnique.mockResolvedValue(existing());
+
+    await save({ countedQty: 100 }); // live stock is 90; the recount equals the stored count
+
+    expect(w.prisma.stockCountLine.update.mock.calls[0][0].data).not.toHaveProperty("expectedQty");
+  });
+
+  describe("boxed product (12 per box)", () => {
+    beforeEach(() => {
+      w.prisma.product.findFirst.mockResolvedValue({
+        id: pid(1),
+        name: "Widget",
+        kind: "STANDARD",
+        currentStock: D(90),
+        unitsPerBox: 12,
+      });
+    });
+
+    it("a changed boxes / pieces split at the SAME quantity counts as a change and re-stamps", async () => {
+      w.prisma.stockCountLine.findUnique.mockResolvedValue(
+        existing({ countedQty: D(24), boxes: null, pieces: null }), // a legacy line without a split
+      );
+
+      await save({ boxes: 2, pieces: 0 });
+
+      const data = w.prisma.stockCountLine.update.mock.calls[0][0].data;
+      expect(Number(data.countedQty)).toBe(24);
+      expect(Number(data.expectedQty)).toBe(90);
+    });
+
+    it("the same split resent (even as 1 box + 12 pieces, which rolls over) keeps the baseline", async () => {
+      w.prisma.stockCountLine.findUnique.mockResolvedValue(
+        existing({ countedQty: D(24), boxes: 2, pieces: 0 }),
+      );
+
+      await save({ boxes: 1, pieces: 12 });
+
+      expect(w.prisma.stockCountLine.update.mock.calls[0][0].data).not.toHaveProperty(
+        "expectedQty",
+      );
+    });
+  });
+
   it("an INCREMENT scan on an existing line keeps the baseline (no expectedQty in the write)", async () => {
     w.prisma.stockCountLine.findUnique.mockResolvedValue(existing({ countedQty: D(4) }));
 

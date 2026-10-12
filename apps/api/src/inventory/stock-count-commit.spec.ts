@@ -1,6 +1,8 @@
 import { ConflictException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { LOCK_FAMILIES, tryAdvisoryXactLockShared } from "../common/db-locks";
 import {
+  absoluteCountChanged,
   COUNT_COMMIT_BATCH,
   COUNT_LOCK_ATTEMPTS,
   COUNT_LOCK_RETRY_MS,
@@ -114,5 +116,62 @@ describe("tryAdvisoryXactLockShared (SA-767 L-2.4 B)", () => {
     await expect(tryAdvisoryXactLockShared(tx, "stock-count", "")).rejects.toThrow(TypeError);
     await expect(tryAdvisoryXactLockShared(tx, "nope" as never, "s1")).rejects.toThrow(TypeError);
     expect(tx.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe("absoluteCountChanged (SA-767 r-note 4 A, MF1)", () => {
+  const same = { boxes: null, pieces: null };
+
+  it("compares by Decimal equality, never by float or by representation", () => {
+    expect(
+      absoluteCountChanged(
+        { countedQty: new Prisma.Decimal("100.000"), ...same },
+        { countedQty: new Prisma.Decimal(100), ...same },
+      ),
+    ).toBe(false);
+    // 0.1 + 0.2 style float drift must not fake a change, and a real 0.001 step must register
+    expect(
+      absoluteCountChanged(
+        { countedQty: new Prisma.Decimal("0.3"), ...same },
+        { countedQty: new Prisma.Decimal("0.1").add("0.2"), ...same },
+      ),
+    ).toBe(false);
+    expect(
+      absoluteCountChanged(
+        { countedQty: new Prisma.Decimal("100.000"), ...same },
+        { countedQty: new Prisma.Decimal("100.001"), ...same },
+      ),
+    ).toBe(true);
+  });
+
+  it("a different quantity is a change", () => {
+    expect(
+      absoluteCountChanged(
+        { countedQty: new Prisma.Decimal(100), ...same },
+        { countedQty: new Prisma.Decimal(90), ...same },
+      ),
+    ).toBe(true);
+  });
+
+  it("a boxes / pieces split change counts as a change even at the same quantity", () => {
+    const q = new Prisma.Decimal(90);
+    expect(
+      absoluteCountChanged(
+        { countedQty: q, boxes: null, pieces: null },
+        { countedQty: q, boxes: 0, pieces: 90 },
+      ),
+    ).toBe(true);
+    expect(
+      absoluteCountChanged(
+        { countedQty: q, boxes: 3, pieces: 0 },
+        { countedQty: q, boxes: 2, pieces: 6 },
+      ),
+    ).toBe(true);
+    expect(
+      absoluteCountChanged(
+        { countedQty: q, boxes: 3, pieces: 0 },
+        { countedQty: q, boxes: 3, pieces: 0 },
+      ),
+    ).toBe(false);
   });
 });
