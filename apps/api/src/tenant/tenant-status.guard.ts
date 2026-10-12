@@ -21,18 +21,33 @@ interface CachedStatus {
 const CACHE_TTL_MS = 60_000;
 
 /**
- * Global guard that blocks all API requests from tenants whose status is
- * SUSPENDED or CANCELLED.
+ * Global tenant-status guard (APP_GUARD): the ONE place a tenant's STATUS limits what its staff sessions may do.
  *
- * Runs as an APP_GUARD (before route-level guards), so `req.user` is NOT
- * populated yet. We decode the JWT payload directly from the Authorization
- * header — the same approach used by ImpersonationGuard. JwtAuthGuard still
- * verifies the signature downstream; we only inspect the `tenantId` claim.
+ *  - SUSPENDED / CANCELLED: every request is refused (403).
+ *  - READ_ONLY: GET / HEAD / OPTIONS pass; any other method must match `READ_ONLY_ALLOWED_MUTATIONS`
+ *    (./read-only-registry - the single allow-list, pinned route by route by read-only-route-pin.spec.ts: the
+ *    billing restore paths, `/auth/*`, the counter day-close + its reopen and Z-report, and the e-mailed receipt)
+ *    or is refused with 403 `{ code: "READ_ONLY", reason }` (`SELLER_UNAVAILABLE` for a CUSTOMER-role JWT).
+ *    `reason` is the tenant's recorded readOnlyReason; clients map it to fixed copy and never show server text.
+ *  - TRIAL / ACTIVE: everything passes.
  *
- * SUPER_ADMIN users (tenantId === null) always pass.
+ * Runs as an APP_GUARD (before route-level guards), so `req.user` is NOT populated yet. We decode the JWT payload
+ * directly from the Authorization header - the same approach used by ImpersonationGuard. JwtAuthGuard still
+ * verifies the signature downstream; the `tenantId` / `role` claims are read here ONLY to look up status, never to
+ * authorize. SUPER_ADMIN users (tenantId === null), and requests with no / a malformed Bearer token, pass through
+ * to the route's own guards.
  *
- * An in-memory cache (Map) with 60 s TTL avoids a DB hit on every request.
- * Call `invalidate(tenantId)` when a tenant's status changes.
+ * A buyer (CUSTOMER) token carries no tenantId, so buyer writes are gated per route by BuyerSellerContextGuard
+ * (SELLER_READ_ONLY_BUYER_GATE), not here. System-initiated work (cron, queue) follows the same status rule
+ * through `acceptsAutomatedWrites` in ./tenant-automation.
+ *
+ * An in-memory cache (Map) with 60 s TTL avoids a DB hit on every request. Call `invalidate(tenantId)` when a
+ * tenant's status changes.
+ *
+ * Accepted gap (SA-776 GAP-7): when the status lookup throws AND no status was ever cached for the tenant, the
+ * request FAILS OPEN (logged). Availability wins over a blanket outage on a DB blip; the stale cache (kept past its
+ * TTL) covers short blips for any tenant seen in the last process lifetime, and an unknown tenant is refused later
+ * at JwtAuthGuard.
  */
 @Injectable()
 export class TenantStatusGuard implements CanActivate {

@@ -281,3 +281,34 @@ describe("TenantStatusGuard - buyer writes to a read-only seller (B4)", () => {
     expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
   });
 });
+
+// SA-776 GAP-7 (accepted, stated in the guard's header): a DB error with NO cached status fails OPEN for
+// availability; once a status has been seen, a DB blip keeps enforcing it from the stale cache.
+describe("TenantStatusGuard - status lookup failure (GAP-7)", () => {
+  it("no cached status and the lookup throws: the request passes (fail open, logged)", async () => {
+    const prisma = { tenant: { findUnique: jest.fn().mockRejectedValue(new Error("db down")) } };
+    const guard = new TenantStatusGuard(prisma as unknown as PrismaService);
+    jest
+      .spyOn((guard as unknown as { logger: { error: () => void } }).logger, "error")
+      .mockImplementation();
+    await expect(guard.canActivate(ctx("POST", "/api/v1/orders"))).resolves.toBe(true);
+  });
+
+  it("a status seen before the blip keeps being enforced from the stale cache (past its TTL)", async () => {
+    const findUnique = jest
+      .fn()
+      .mockResolvedValueOnce({ status: "READ_ONLY", readOnlyReason: null })
+      .mockRejectedValue(new Error("db down"));
+    const guard = new TenantStatusGuard({ tenant: { findUnique } } as unknown as PrismaService);
+    await guard.canActivate(ctx("GET", "/api/v1/orders")); // seeds the cache
+    const real = Date.now();
+    const spy = jest.spyOn(Date, "now").mockReturnValue(real + 5 * 60_000); // TTL long gone
+    try {
+      const err = await guard.canActivate(ctx("POST", "/api/v1/orders")).catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
