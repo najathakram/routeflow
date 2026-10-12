@@ -14,7 +14,12 @@ import {
 export type PriceEditMode = "set" | "percent" | "amount";
 
 export type PriceEditRefusal =
-  "NOT_A_NUMBER" | "NEGATIVE" | "PERCENT_RANGE" | "AMOUNT_OVER_PRICE" | "REASON_REQUIRED";
+  | "NOT_A_NUMBER"
+  | "NEGATIVE"
+  | "PERCENT_RANGE"
+  | "PERCENT_PRECISION"
+  | "AMOUNT_OVER_PRICE"
+  | "REASON_REQUIRED";
 
 /** What the edit needs to know about the line. `tierPrice` is the system price for this customer (no edit). */
 export interface PriceEditLine {
@@ -91,7 +96,9 @@ export function resolveCounterPriceEdit(
     if (n < 0) return { ok: false, refused: "NEGATIVE" };
     wanted = roundMoney(n);
   } else if (mode === "percent") {
-    if (n < 0 || n > 100 || roundMoney(n) !== n) return { ok: false, refused: "PERCENT_RANGE" };
+    if (n < 0 || n > 100) return { ok: false, refused: "PERCENT_RANGE" };
+    // in range but finer than a hundredth of a percent: a different message from "out of range" (CQ-15)
+    if (roundMoney(n) !== n) return { ok: false, refused: "PERCENT_PRECISION" };
     wanted = roundMoney(line.tierPrice * (1 - n / 100));
   } else {
     if (n < 0) return { ok: false, refused: "NEGATIVE" };
@@ -128,6 +135,26 @@ export interface PriceOverride {
 }
 
 const dollars = (n: number) => formatReceiptMoney(roundMoney(n));
+
+/**
+ * What the clerk typed, as the chip, while it is still true against `tierPrice` (a percent or an amount off the tier
+ * that gives exactly `netPrice`); null once the tier moved under a kept edit, or for a set price. CQ-15: a line typed
+ * "10% off" must say "10% off", not the 18.95% it is against a higher list price.
+ */
+export function typedPriceEditChip(
+  override: Pick<PriceOverride, "mode" | "value">,
+  tierPrice: number,
+  netPrice: number,
+): string | null {
+  const tier = roundMoney(tierPrice);
+  const net = roundMoney(netPrice);
+  if (net >= tier) return null;
+  if (override.mode === "percent" && roundMoney(tier * (1 - override.value / 100)) === net)
+    return `${override.value}% off`;
+  if (override.mode === "amount" && roundMoney(tier - override.value) === net)
+    return `${dollars(override.value)} off each`;
+  return null;
+}
 
 /**
  * The neutral chip on an edited line: `{p}% off`, `{$a} off each`, or `Price changed` (a set price, or a net at or

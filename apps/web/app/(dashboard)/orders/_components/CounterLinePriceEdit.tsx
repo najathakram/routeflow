@@ -62,14 +62,20 @@ function refusalCopy(
   refused: PriceEditRefusal,
   customerName: string | undefined,
   max: number | undefined,
+  mode: PriceEditMode,
 ): string {
   switch (refused) {
     case "NOT_A_NUMBER":
+      // the copy names what the open mode asks for: a percentage is not "a price" (CQ-15)
+      if (mode === "percent") return "Enter a percentage, like 10 or 12.5.";
+      if (mode === "amount") return "Enter an amount off, like 1.50.";
       return "Enter a price, like 12.50.";
     case "NEGATIVE":
       return "Enter 0 or more.";
     case "PERCENT_RANGE":
       return "Enter a percentage from 0 to 100.";
+    case "PERCENT_PRECISION":
+      return "Use at most two decimals, like 12.5.";
     case "AMOUNT_OVER_PRICE":
       return `That's more than the price. Enter ${money(max ?? 0)} or less.`;
     case "REASON_REQUIRED":
@@ -124,7 +130,7 @@ export function CounterLinePriceEdit({
     e?.preventDefault();
     const result = resolveCounterPriceEdit(mode, value, line, reason);
     if (!result.ok) {
-      setError(refusalCopy(result.refused, customerName, result.max));
+      setError(refusalCopy(result.refused, customerName, result.max, mode));
       valueRef.current?.focus();
       return;
     }

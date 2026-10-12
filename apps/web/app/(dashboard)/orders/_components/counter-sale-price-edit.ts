@@ -4,7 +4,12 @@ import {
   roundMoney,
   showOriginalPrice,
 } from "@routeflow/pricing";
-import { lineTotalAt, priceEditChip, type PriceEditLine } from "@/lib/counter-price-edit";
+import {
+  lineTotalAt,
+  priceEditChip,
+  typedPriceEditChip,
+  type PriceEditLine,
+} from "@/lib/counter-price-edit";
 import type { CounterPriceEdit } from "./CounterLinePriceEdit";
 import type { SaleLine } from "./counter-sale-scan";
 
@@ -133,7 +138,10 @@ export function editedLineFigures(
     original: struck?.original ?? null,
     net: struck?.net ?? lineTotalAt(view, l.unitPrice),
     discount: struck?.discount ?? 0,
-    chip: priceEditChip(l.override, reference, l.unitPrice),
+    // CQ-15: what was typed, while it is still true against the tier price; else measured from the reference (the list).
+    chip:
+      typedPriceEditChip(l.override, view.tierPrice, l.unitPrice) ??
+      priceEditChip(l.override, reference, l.unitPrice),
   };
 }
 
