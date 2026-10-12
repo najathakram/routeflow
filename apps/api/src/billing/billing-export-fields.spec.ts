@@ -157,6 +157,8 @@ describe("billing export projection (B1187)", () => {
     expect([...EXPORT_EXCLUDED_EVENT_TYPES]).toEqual([
       "tenant.class_changed",
       "reconciliation.snapshot_backfilled",
+      "coupon.unbilled",
+      "coupon.billed",
     ]);
   });
 

@@ -2,6 +2,8 @@ import type { ToastData } from "@routeflow/ui/web";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { genericToastCopy } from "./generic-toast-copy";
 import { safeTextBodyCopy } from "./safe-text-error-copy";
+import { markReadOnlyRefused } from "./read-only-gate";
+import { ownsBillingBanner, readOnlyLine } from "./subscription-banner-state";
 
 /**
  * The app-wide MutationCache error handler (extracted from `app/providers.tsx`, #1965 so it is
@@ -16,6 +18,11 @@ export function handleMutationError(
   mutation: { meta?: Record<string, unknown> } | undefined,
   toast: ToastFn,
   router: { push: (href: string) => void },
+  /** SA-733r6: the cached subscription read + a way to refresh it, for the read-only line (providers.tsx wires it). */
+  readOnlyState?: {
+    view: () => import("@routeflow/types").SubscriptionView | undefined;
+    refresh: () => void;
+  },
 ): void {
   const data = (error as any)?.response?.data;
   // (ORDER_EDIT_WOULD_OVERPAY is deliberately NOT here: its notice renders only in edit mode, so the order page
@@ -56,6 +63,16 @@ export function handleMutationError(
   // message with a title the tenant understands plus a way out, instead of
   // just swallowing the toast like the other HANDLED_CODES above.
   if (data?.code === API_ERROR_CODES.READ_ONLY) {
+    // SA-733r6 (B4): the control was enabled from a stale read - re-read now so every write control on screen
+    // switches to its disabled-with-the-line state, and say the fixed line (never "Choose a plan" while a
+    // payment is owed; the server answers a plan change with 409 PAYMENT_OVERDUE).
+    const view = readOnlyState?.view();
+    readOnlyState?.refresh();
+    markReadOnlyRefused();
+    if (ownsBillingBanner(view)) {
+      toast({ title: readOnlyLine(view?.billingContactName), variant: "warning" });
+      return;
+    }
     toast({
       title: "Your workspace is read-only",
       description: "Choose a plan to make changes.",

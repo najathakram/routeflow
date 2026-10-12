@@ -262,6 +262,13 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
           items: { object: "list", data: sub.items.map((i) => ({ ...i })) },
         };
       }),
+      // SA-736r: the coupon sync's two Stripe reads - inert (no discount; no upcoming invoice -> nothing written).
+      retrieveSubscriptionWithDiscounts: jest.fn(async (id: string) => ({
+        id,
+        status: "active",
+        discounts: [],
+      })),
+      previewNextInvoice: jest.fn(async () => null),
       getSubscriptionPaymentState: jest.fn(async (id: string) => {
         const sub = subs[id];
         if (!sub) return { status: null, paymentProcessing: false };

@@ -1,11 +1,13 @@
 import { ExecutionContext, ForbiddenException } from "@nestjs/common";
-import { READ_ONLY_ALLOWED_ROUTES, TenantStatusGuard } from "./tenant-status.guard";
+import { TenantStatusGuard, READ_ONLY_ALLOWED_MUTATIONS } from "./tenant-status.guard";
 import { PrismaService } from "../prisma/prisma.service";
 
 const token = `h.${Buffer.from(JSON.stringify({ tenantId: "t1" })).toString("base64url")}.s`;
 
-function ctx(method: string, path: string): ExecutionContext {
-  const req = { headers: { authorization: `Bearer ${token}` }, method, path };
+const buyerToken = `h.${Buffer.from(JSON.stringify({ tenantId: "t1", role: "CUSTOMER" })).toString("base64url")}.s`;
+
+function ctx(method: string, path: string, bearer: string = token): ExecutionContext {
+  const req = { headers: { authorization: `Bearer ${bearer}` }, method, path };
   return { switchToHttp: () => ({ getRequest: () => req }) } as unknown as ExecutionContext;
 }
 
@@ -44,14 +46,14 @@ describe("TenantStatusGuard — READ_ONLY enforcement", () => {
     ).resolves.toBe(true);
   });
 
-  it("allows closing the day while READ_ONLY, and ONLY that exact endpoint (owner ruling 2026-10-10)", async () => {
+  it("allows closing the day while READ_ONLY, and ONLY the anchored day-close endpoints (owner ruling 2026-10-10)", async () => {
     await expect(
       guardFor("READ_ONLY").canActivate(ctx("POST", "/api/v1/orders/counter-sale/day-close")),
     ).resolves.toBe(true);
     for (const blocked of [
       "/api/v1/orders/counter-sale", // a sale stays blocked
       "/api/v1/orders/counter-sale/day-close/x/reopen", // not a uuid
-      "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/report",
+      "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/report/", // anchored: no trailing slash
       "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/reopen/",
       "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/reopen/x",
       "/api/v1/orders/counter-sale/day-close/",
@@ -65,16 +67,20 @@ describe("TenantStatusGuard — READ_ONLY enforcement", () => {
     }
   });
 
-  it("the allow-list is exactly the close and the reopen, and the reopen is allowed (SA-750r3 O1)", async () => {
-    expect(READ_ONLY_ALLOWED_ROUTES.map((r) => `${r.method} ${r.path.source}`)).toEqual([
-      "POST ^\\/api\\/v1\\/orders\\/counter-sale\\/day-close$",
-      "POST ^\\/api\\/v1\\/orders\\/counter-sale\\/day-close\\/[0-9a-fA-F-]{36}\\/reopen$",
-    ]);
+  it("the reopen is allowed, the Z-report re-send is allowed (SA r-note 10-10), a sale is still refused (SA-750r3 O1)", async () => {
     await expect(
       guardFor("READ_ONLY").canActivate(
         ctx(
           "POST",
           "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/reopen",
+        ),
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      guardFor("READ_ONLY").canActivate(
+        ctx(
+          "POST",
+          "/api/v1/orders/counter-sale/day-close/11111111-1111-1111-1111-111111111111/report",
         ),
       ),
     ).resolves.toBe(true);
@@ -127,5 +133,110 @@ describe("TenantStatusGuard — READ_ONLY enforcement", () => {
 
   it("allows everything for ACTIVE tenants", async () => {
     await expect(guardFor("ACTIVE").canActivate(ctx("POST", "/api/v1/orders"))).resolves.toBe(true);
+  });
+});
+
+// SA-733r6 (B4) + SA-750r3 O1: the read-only allow-list is ONE data constant, pinned entry by entry.
+// A read-only tenant keeps housekeeping on cash already taken (the day close, a receipt e-mail) and the admin's
+// billing portal; it never gets sales, orders, invoices or payments.
+describe("TenantStatusGuard - READ_ONLY allow-list (B4 pin)", () => {
+  const ALLOWED: Array<[string, string]> = [
+    ["POST", "/api/v1/billing/portal"],
+    ["POST", "/api/v1/billing/subscription"],
+    ["POST", "/api/v1/billing/subscription/downgrade"],
+    ["POST", "/api/v1/billing/subscription/cancel"],
+    ["POST", "/api/v1/billing/subscription/resume"],
+    ["POST", "/api/v1/billing/subscription/checkout"],
+    ["POST", "/api/v1/orders/counter-sale/day-close"],
+    ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/reopen"],
+    ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/report"],
+    ["POST", "/api/v1/orders/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/receipt"],
+  ];
+  const BLOCKED: Array<[string, string]> = [
+    ["POST", "/api/v1/invoices/inv1/payments"],
+    // SA ruling: staff approving a buyer's cash request is a staff PAYMENT write - still READ_ONLY (the buyer's own
+    // declaration is exempt at the buyer seller-context guard, a different guard)
+    ["POST", "/api/v1/payment-requests/pr1/approve"],
+    ["POST", "/api/v1/orders"],
+    ["POST", "/api/v1/orders/counter-sale"],
+    ["POST", "/api/v1/orders/counter-sale/o1/void"],
+    ["POST", "/api/v1/orders/counter-sale/tender"],
+    ["POST", "/api/v1/estimates"],
+    ["POST", "/api/v1/invoices"],
+    ["PATCH", "/api/v1/invoices/inv1/payments/p1"],
+    // anchored, not substring: neighbours of the allowed routes stay blocked
+    ["POST", "/api/v1/billing/portal-evil"],
+    ["POST", "/api/v1/orders/counter-sale/day-close-evil"],
+    ["POST", "/api/v1/orders/o1/receipt/extra"],
+    ["POST", "/api/v1/orders/o1/receipts"],
+    ["DELETE", "/api/v1/orders/counter-sale/day-close"],
+    // SA ruling: there is NO /reclose (the re-close is the same POST); the id is a UUID, nothing looser
+    ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab/reclose"],
+    ["POST", "/api/v1/orders/counter-sale/day-close/not-a-uuid/reopen"],
+    ["POST", "/api/v1/orders/counter-sale/day-close/0b1f2c3d-aaaa-bbbb-cccc-1234567890ab"],
+    // the plan-restore paths are POST-only (a read passes anyway); nothing else rides on the prefix
+    ["DELETE", "/api/v1/billing/subscription"],
+    ["POST", "/api/v1/billing/subscription/anything-else"],
+    ["POST", "/api/v1/billing/subscription/cancel/extra"],
+    // the receipt id is a UUID, nothing looser
+    ["POST", "/api/v1/orders/o1/receipt"],
+    ["PUT", "/api/v1/billing/subscription/cancel"],
+  ];
+
+  it.each(ALLOWED)("allows %s %s while READ_ONLY", async (method, path) => {
+    await expect(guardFor("READ_ONLY").canActivate(ctx(method, path))).resolves.toBe(true);
+  });
+
+  it.each(BLOCKED)("blocks %s %s while READ_ONLY with the READ_ONLY code", async (method, path) => {
+    const err = await guardFor("READ_ONLY")
+      .canActivate(ctx(method, path))
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
+  });
+
+  it("pins the allow-list entries EXACTLY (anchored patterns; the day-close ones match nothing on bases without SA-750)", () => {
+    expect(READ_ONLY_ALLOWED_MUTATIONS.map((e) => [e.methods, e.pattern])).toEqual([
+      ["ANY", /^\/api\/v1\/auth\//],
+      [["POST"], /^\/api\/v1\/billing\/subscribe$/],
+      [["POST"], /^\/api\/v1\/billing\/quote$/],
+      [["POST"], /^\/api\/v1\/billing\/subscription$/],
+      [["POST"], /^\/api\/v1\/billing\/subscription\/(downgrade|cancel|resume|checkout)$/],
+      [["POST"], /^\/api\/v1\/billing\/portal$/],
+      [["POST"], /^\/api\/v1\/orders\/counter-sale\/day-close$/],
+      [["POST"], /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/reopen$/],
+      [["POST"], /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/report$/],
+      [["POST"], /^\/api\/v1\/orders\/[0-9a-fA-F-]{36}\/receipt$/],
+    ]);
+  });
+});
+
+// SA-733r6 (B4) / SA-733 D11: a buyer's write to a read-only (paused) seller is 403 SELLER_UNAVAILABLE, a coded,
+// seller-neutral refusal - never the staff-facing READ_ONLY text that talks about subscribing.
+describe("TenantStatusGuard - buyer writes to a read-only seller (B4)", () => {
+  it("refuses a buyer's POST with SELLER_UNAVAILABLE and no billing wording", async () => {
+    const err = await guardFor("READ_ONLY")
+      .canActivate(ctx("POST", "/api/v1/buyer/orders", buyerToken))
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    const body = err.getResponse() as { code: string; message: string };
+    expect(body.code).toBe("SELLER_UNAVAILABLE");
+    expect(body.message).not.toMatch(/payment|billing|subscribe|plan/i);
+  });
+
+  it("still lets a buyer read and sign in while the seller is read-only", async () => {
+    await expect(
+      guardFor("READ_ONLY").canActivate(ctx("GET", "/api/v1/buyer/products", buyerToken)),
+    ).resolves.toBe(true);
+    await expect(
+      guardFor("READ_ONLY").canActivate(ctx("POST", "/api/v1/auth/refresh", buyerToken)),
+    ).resolves.toBe(true);
+  });
+
+  it("a staff user's blocked write keeps the READ_ONLY code", async () => {
+    const err = await guardFor("READ_ONLY")
+      .canActivate(ctx("POST", "/api/v1/orders"))
+      .catch((e) => e);
+    expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
   });
 });

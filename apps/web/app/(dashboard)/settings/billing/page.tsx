@@ -10,6 +10,8 @@ import { DIALOG_FIT, DIALOG_FOOTER_BUTTON } from "@/components/dialog-mobile-fit
 import { useAuth } from "@/lib/auth-context";
 import { formatMoney } from "@/lib/format";
 import { BillingExportButton } from "./BillingExportButton";
+import { BillingStatusCard } from "./BillingStatusCard";
+import { ownsBillingBanner } from "@/lib/subscription-banner-state";
 import {
   useSubscription,
   useUsage,
@@ -441,8 +443,17 @@ export default function BillingSettingsPage() {
         <BillingExportButton />
       </div>
 
+      {/* SA-733r6 (B4): Pay $X primary at the top while an invoice is owed, the autopay / expiring-card line, and the
+          one-time "all set". While an invoice is owed the old read-only banner (and its "Choose a plan") steps aside. */}
+      <BillingStatusCard
+        sub={s}
+        userRole={user?.role}
+        scope={user?.tenantSlug ?? user?.id ?? null}
+      />
       <TrialBanner sub={s} />
-      <ReadOnlyBanner status={s.status} readOnlyReason={s.readOnlyReason} />
+      {!ownsBillingBanner(s) && (
+        <ReadOnlyBanner status={s.status} readOnlyReason={s.readOnlyReason} />
+      )}
 
       {s.cancelAtPeriodEnd && s.status !== "READ_ONLY" && (
         <div className="flex items-center justify-between gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">
@@ -521,9 +532,12 @@ export default function BillingSettingsPage() {
             </div>
           )}
           <div className="flex items-center gap-2">
-            <a href="/choose-plan">
-              <Button size="sm">Change plan</Button>
-            </a>
+            {/* Never a plan purchase path while an invoice is owed (the server answers 409 PAYMENT_OVERDUE). */}
+            {!ownsBillingBanner(s) && (
+              <a href="/choose-plan">
+                <Button size="sm">Change plan</Button>
+              </a>
+            )}
             {s.status === "TRIAL" && isAdmin && (
               <Button size="sm" variant="ghost" onClick={() => setEndTrialOpen(true)}>
                 End trial

@@ -189,7 +189,14 @@ describe("SubscriptionService.getExport (B1187)", () => {
     await svc.getExport(TENANT);
     expect(prisma.billingEvent.findMany.mock.calls[0][0].where).toEqual({
       tenantId: TENANT,
-      type: { notIn: ["tenant.class_changed", "reconciliation.snapshot_backfilled"] },
+      type: {
+        notIn: [
+          "tenant.class_changed",
+          "reconciliation.snapshot_backfilled",
+          "coupon.unbilled",
+          "coupon.billed",
+        ],
+      },
     });
     expect(prisma.rfInvoice.findMany.mock.calls[0][0].where).toEqual({ tenantId: TENANT });
   });
