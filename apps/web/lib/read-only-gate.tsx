@@ -35,10 +35,16 @@ const refusalListeners = new Set<() => void>();
 const notifyRefusal = () => refusalListeners.forEach((fn) => fn());
 
 let refusedAt = 0;
+let refusedReason: string | null = null;
 export function isReadOnlyRefused(): boolean {
   return refusedUntil > Date.now();
 }
-export function markReadOnlyRefused(): void {
+/** The tenant's `readOnlyReason` carried by the latest 403 READ_ONLY (null when none was recorded). */
+export function readOnlyRefusedReason(): string | null {
+  return isReadOnlyRefused() ? refusedReason : null;
+}
+export function markReadOnlyRefused(reason?: string | null): void {
+  refusedReason = reason ?? null;
   refusedAt = Date.now();
   refusedUntil = refusedAt + REFUSAL_MS;
   if (refusalTimer) clearTimeout(refusalTimer);
@@ -55,6 +61,7 @@ function clearReadOnlyRefusal(): void {
 }
 export function resetReadOnlyRefusedForTests(): void {
   refusedUntil = 0;
+  refusedReason = null;
   if (refusalTimer) clearTimeout(refusalTimer);
   refusalTimer = null;
   notifyRefusal();
@@ -120,6 +127,15 @@ export function ReadOnlyGateProvider({
       <ModalNoticeContext.Provider value={notice}>{children}</ModalNoticeContext.Provider>
     </GateContext.Provider>
   );
+}
+
+/**
+ * A role with no subscription read (the DRIVER: the billing endpoint is staff-only) learns that the workspace is
+ * read-only only from a refused write; this is that signal, with the reason the refusal carried.
+ */
+export function useReadOnlyRefusal(): { refused: boolean; reason: string | null } {
+  const refused = React.useSyncExternalStore(subscribeRefusal, isReadOnlyRefused, () => false);
+  return { refused, reason: refused ? readOnlyRefusedReason() : null };
 }
 
 export function useReadOnlyGate(): Gate {

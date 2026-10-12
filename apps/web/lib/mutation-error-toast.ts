@@ -73,7 +73,7 @@ export function handleMutationError(
     const view = readOnlyState?.view();
     const isAdmin = readOnlyState?.isAdmin?.() ?? true;
     readOnlyState?.refresh();
-    markReadOnlyRefused();
+    markReadOnlyRefused(typeof data?.reason === "string" ? data.reason : null);
     // SA-776: the owner's sentence + the mapped reason (+ the contact line for a non-admin), composed from the
     // subscription view in ONE helper - never from the 403's text. The reason in the 403 body is the fallback when
     // no subscription read is cached yet.

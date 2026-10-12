@@ -10,6 +10,7 @@ import {
   WriteLink,
   markReadOnlyRefused,
   resetReadOnlyRefusedForTests,
+  useReadOnlyRefusal,
 } from "./read-only-gate";
 
 /**
@@ -219,5 +220,19 @@ describe("a READ_ONLY refusal shows the shared line inline in any dialog", () =>
       </ReadOnlyGateProvider>,
     );
     expect(screen.getByTestId("read-only-dialog-line")).toBeInTheDocument();
+  });
+});
+
+describe("useReadOnlyRefusal (the driver shell's only read-only signal)", () => {
+  afterEach(() => act(() => resetReadOnlyRefusedForTests()));
+  function Probe() {
+    const r = useReadOnlyRefusal();
+    return <span data-testid="probe">{r.refused ? `refused:${r.reason ?? "none"}` : "ok"}</span>;
+  }
+  it("starts clear, then carries the refusal's reason", () => {
+    renderWithProviders(<Probe />);
+    expect(screen.getByTestId("probe")).toHaveTextContent("ok");
+    act(() => markReadOnlyRefused("trial_expired"));
+    expect(screen.getByTestId("probe")).toHaveTextContent("refused:trial_expired");
   });
 });
