@@ -96,15 +96,51 @@ interface PreparedRules {
 }
 
 /**
- * Rules still LIVE at `now` for the identical-rule check: not lifted and not expired. Unlike
- * `activeRuleWhere` it has no `effectiveFrom` bound, so a scheduled rule counts as already there.
- * An `AND` list, for a caller's `where.AND`.
+ * Rules still LIVE at `now` for the identical-rule check: not lifted and not expired. A rule whose
+ * `effectiveTo` (or `liftedAt`) is already at or before `now` is not live, so it is never identical
+ * — a new rule is written. An `AND` list, for a caller's `where.AND`.
  */
 export function liveRuleWhere(now: Date): Prisma.SellingRestrictionWhereInput[] {
   return [
     { OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }] },
     { OR: [{ liftedAt: null }, { liftedAt: { gt: now } }] },
   ];
+}
+
+/**
+ * The SQL half of "the existing window COVERS the requested one": it starts no later than the
+ * request, and ends (at `effectiveTo` or a future `liftedAt`, whichever is earlier) no earlier —
+ * never, when the request is open-ended. `windowCovers` is its JS twin. An `AND` list.
+ */
+export function coveringWindowWhere(window: {
+  effectiveFrom: Date;
+  effectiveTo: Date | null;
+}): Prisma.SellingRestrictionWhereInput[] {
+  const to = window.effectiveTo;
+  return [
+    { effectiveFrom: { lte: window.effectiveFrom } },
+    to === null
+      ? { effectiveTo: null, liftedAt: null }
+      : {
+          AND: [
+            { OR: [{ effectiveTo: null }, { effectiveTo: { gte: to } }] },
+            { OR: [{ liftedAt: null }, { liftedAt: { gte: to } }] },
+          ],
+        },
+  ];
+}
+
+/** The JS twin of `coveringWindowWhere`: does `existing`'s window cover `requested`'s? */
+export function windowCovers(
+  existing: { effectiveFrom: Date; effectiveTo: Date | null; liftedAt: Date | null },
+  requested: { effectiveFrom: Date; effectiveTo: Date | null },
+): boolean {
+  if (existing.effectiveFrom.getTime() > requested.effectiveFrom.getTime()) return false;
+  const ends = [existing.effectiveTo, existing.liftedAt].filter((d): d is Date => d !== null);
+  if (ends.length === 0) return true;
+  if (requested.effectiveTo === null) return false;
+  const end = Math.min(...ends.map((d) => d.getTime()));
+  return end >= requested.effectiveTo.getTime();
 }
 
 /** A states list as a comparable key: USPS codes, de-duplicated, sorted. */
@@ -372,8 +408,10 @@ export class SellingRestrictionsAdminService {
   /**
    * The targets (product ids, or the category id) that already carry an IDENTICAL live rule:
    * same target, same jurisdiction, same set of states (order and spelling ignored), same surface,
-   * not lifted and not expired. A scheduled rule (effectiveFrom later) counts: it is already on its
-   * way. Its own dates are not compared — a second rule would only duplicate the chip.
+   * not lifted and not expired at `now`, AND a window that COVERS the requested one (starts no
+   * later; ends no earlier, or never when the request is open-ended — a future lift is an end).
+   * A rule that expires sooner or starts later is not identical: skipping it would leave the
+   * target sellable in the gap, so a new rule is written.
    */
   private async identicalTargets(
     tx: Prisma.TransactionClient,
@@ -386,6 +424,9 @@ export class SellingRestrictionsAdminService {
       jurisdiction: string;
       states: string[];
       surface: string;
+      effectiveFrom: Date;
+      effectiveTo: Date | null;
+      liftedAt: Date | null;
     }> = await tx.sellingRestriction.findMany({
       where: {
         tenantId,
@@ -394,7 +435,7 @@ export class SellingRestrictionsAdminService {
           : { productId: { in: p.target.productIds } }),
         jurisdiction: p.jurisdiction,
         surface: p.surface,
-        AND: liveRuleWhere(p.now),
+        AND: [...liveRuleWhere(p.now), ...coveringWindowWhere(p)],
       },
       select: {
         productId: true,
@@ -402,6 +443,9 @@ export class SellingRestrictionsAdminService {
         jurisdiction: true,
         states: true,
         surface: true,
+        effectiveFrom: true,
+        effectiveTo: true,
+        liftedAt: true,
       },
     });
     const key = sortedStatesKey(p.states);
@@ -409,6 +453,7 @@ export class SellingRestrictionsAdminService {
     for (const r of rows) {
       if (r.jurisdiction !== p.jurisdiction || r.surface !== p.surface) continue;
       if (sortedStatesKey(r.states) !== key) continue;
+      if (!windowCovers(r, p)) continue;
       const target = r.productId ?? r.categoryId;
       if (target) out.add(target);
     }

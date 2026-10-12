@@ -80,6 +80,13 @@ function setup(opts: { foreignProductIds?: string[] } = {}) {
 
 const bulk = { jurisdiction: "STATE" as const, states: ["TX"] };
 
+/** An existing rule's window: in force since long ago, open-ended, never lifted. */
+const OPEN_SINCE_PAST = {
+  effectiveFrom: new Date("2020-01-01T00:00:00Z"),
+  effectiveTo: null,
+  liftedAt: null,
+};
+
 describe("POST /selling-restrictions/bulk (row a): N products, one transaction, one audit row", () => {
   it("bulk with 12 products creates 12 rows through ONE createMany in ONE transaction and writes ONE audit row", async () => {
     const s = setup();
@@ -185,6 +192,7 @@ describe("row c: an identical active rule is skipped and reported", () => {
         jurisdiction: "STATE",
         states: ["OK", "TX"],
         surface: "BUYER_PORTAL",
+        ...OPEN_SINCE_PAST,
       },
       // NOT identical: a different states set
       {
@@ -193,6 +201,7 @@ describe("row c: an identical active rule is skipped and reported", () => {
         jurisdiction: "STATE",
         states: ["TX"],
         surface: "BUYER_PORTAL",
+        ...OPEN_SINCE_PAST,
       },
       // NOT identical: a different surface
       {
@@ -201,6 +210,7 @@ describe("row c: an identical active rule is skipped and reported", () => {
         jurisdiction: "STATE",
         states: ["TX", "OK"],
         surface: "ALL",
+        ...OPEN_SINCE_PAST,
       },
     ]);
     const res = await s.service.bulkCreate(
@@ -215,8 +225,8 @@ describe("row c: an identical active rule is skipped and reported", () => {
     ]);
     expect(s.store.audits[0].meta.skippedProductIds).toEqual(["p2"]);
 
-    // The candidate read is tenant-scoped, matches target + jurisdiction + surface in SQL, and
-    // excludes lifted and expired rules (a scheduled rule still counts as identical).
+    // The candidate read is tenant-scoped, matches target + jurisdiction + surface in SQL,
+    // excludes lifted and expired rules, and only reads windows that could cover the request.
     const where = s.rules.findMany.mock.calls[0][0].where;
     expect(where).toMatchObject({
       tenantId: "test-tenant",
@@ -226,7 +236,7 @@ describe("row c: an identical active rule is skipped and reported", () => {
     });
     expect(JSON.stringify(where.AND)).toContain("liftedAt");
     expect(JSON.stringify(where.AND)).toContain("effectiveTo");
-    expect(JSON.stringify(where)).not.toContain("effectiveFrom");
+    expect(JSON.stringify(where.AND)).toContain("effectiveFrom");
   });
 
   it("when every product is already limited, nothing is written and no audit row is added", async () => {
@@ -238,6 +248,7 @@ describe("row c: an identical active rule is skipped and reported", () => {
         jurisdiction: "STATE",
         states: ["TX"],
         surface: "BUYER_PORTAL",
+        ...OPEN_SINCE_PAST,
       },
     ]);
     const res = await s.service.bulkCreate({ ...bulk, productIds: ["p1"] }, user);
@@ -255,11 +266,101 @@ describe("row c: an identical active rule is skipped and reported", () => {
         jurisdiction: "STATE",
         states: ["TX"],
         surface: "BUYER_PORTAL",
+        ...OPEN_SINCE_PAST,
       },
     ]);
     const res = await s.service.bulkCreate({ ...bulk, categoryId: "c1" }, user);
     expect(res).toEqual({ created: 0, skipped: 1, createdIds: [] });
     expect(s.rules.findMany.mock.calls[0][0].where).toMatchObject({ categoryId: "c1" });
+  });
+});
+
+describe("row c (dates): an existing rule is identical ONLY if its window covers the requested one", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const existing = (w: {
+    effectiveFrom: Date;
+    effectiveTo: Date | null;
+    liftedAt?: Date | null;
+  }) => ({
+    productId: "p1",
+    categoryId: null,
+    jurisdiction: "STATE",
+    states: ["TX"],
+    surface: "ALL",
+    liftedAt: null,
+    ...w,
+  });
+  const run = async (row: object, req: { effectiveFrom?: string; effectiveTo?: string } = {}) => {
+    const s = setup();
+    s.rules.findMany.mockResolvedValue([row]);
+    const res = await s.service.bulkCreate(
+      { ...bulk, surface: "ALL", productIds: ["p1"], ...req },
+      user,
+    );
+    return { s, res };
+  };
+
+  it("existing expires tomorrow + requested open-ended from now => CREATED, not skipped", async () => {
+    const now = Date.now();
+    const { res } = await run(
+      existing({ effectiveFrom: new Date(now - DAY), effectiveTo: new Date(now + DAY) }),
+    );
+    expect(res).toMatchObject({ created: 1, skipped: 0, skippedProductIds: [] });
+  });
+
+  it("existing scheduled next month + requested starting now => CREATED, not skipped", async () => {
+    const now = Date.now();
+    const { res } = await run(
+      existing({ effectiveFrom: new Date(now + 30 * DAY), effectiveTo: null }),
+    );
+    expect(res).toMatchObject({ created: 1, skipped: 0 });
+  });
+
+  it("existing with a future lift date does not cover an open-ended request => CREATED", async () => {
+    const now = Date.now();
+    const { res } = await run(
+      existing({
+        effectiveFrom: new Date(now - DAY),
+        effectiveTo: null,
+        liftedAt: new Date(now + DAY),
+      }),
+    );
+    expect(res).toMatchObject({ created: 1, skipped: 0 });
+  });
+
+  it("existing open-ended + requested bounded inside it => skipped", async () => {
+    const now = Date.now();
+    const { res } = await run(existing({ effectiveFrom: new Date(now - DAY), effectiveTo: null }), {
+      effectiveFrom: new Date(now + DAY).toISOString(),
+      effectiveTo: new Date(now + 10 * DAY).toISOString(),
+    });
+    expect(res).toMatchObject({ created: 0, skipped: 1, skippedProductIds: ["p1"] });
+  });
+
+  it("existing with the EQUAL window => skipped", async () => {
+    const from = new Date(Date.now() + DAY);
+    const to = new Date(Date.now() + 10 * DAY);
+    const { res } = await run(existing({ effectiveFrom: from, effectiveTo: to }), {
+      effectiveFrom: from.toISOString(),
+      effectiveTo: to.toISOString(),
+    });
+    expect(res).toMatchObject({ created: 0, skipped: 1 });
+  });
+
+  it("existing bounded + requested ending later => CREATED", async () => {
+    const now = Date.now();
+    const { res } = await run(
+      existing({ effectiveFrom: new Date(now - DAY), effectiveTo: new Date(now + 5 * DAY) }),
+      { effectiveTo: new Date(now + 10 * DAY).toISOString() },
+    );
+    expect(res).toMatchObject({ created: 1, skipped: 0 });
+  });
+
+  it("the SQL read bounds the candidate window: starts no later, and (open request) no end", async () => {
+    const { s } = await run(existing({ effectiveFrom: new Date(0), effectiveTo: null }));
+    const and = JSON.stringify(s.rules.findMany.mock.calls[0][0].where.AND);
+    expect(and).toContain("effectiveFrom");
+    expect(and).toContain("lte");
   });
 });
 
