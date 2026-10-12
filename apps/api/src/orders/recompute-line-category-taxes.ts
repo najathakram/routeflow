@@ -30,14 +30,6 @@ export async function recomputeLineCategoryTaxes(
   logger?: { warn(message: string): void },
   isTaxExempt = false,
 ): Promise<number> {
-  if (isTaxExempt) {
-    for (const li of lines) {
-      if (roundMoney(Number(li.categoryTaxAmount ?? 0)) !== 0)
-        await tx.orderItem.update({ where: { id: li.id }, data: { categoryTaxAmount: 0 } });
-      li.categoryTaxAmount = 0;
-    }
-    return 0;
-  }
   // A3: the live category is read only for the lines that must price at it (a NULL-trio regulated line).
   const catIds = [
     ...new Set(lines.filter((li) => hasNullTrio(trioOf(li))).map((li) => li.trackedCategoryId)),
@@ -62,7 +54,7 @@ export async function recomputeLineCategoryTaxes(
   const upbMap = new Map<string, number>(prods.map((p: any) => [p.id, Number(p.unitsPerBox ?? 0)]));
   let sum = 0;
   for (const li of lines) {
-    const result = recomputeCategoryTax(
+    const priced = recomputeCategoryTax(
       {
         ...trioOf(li),
         storedAmount: li.categoryTaxAmount,
@@ -71,6 +63,8 @@ export async function recomputeLineCategoryTaxes(
       },
       li.trackedCategoryId ? catMap.get(li.trackedCategoryId) : null,
     );
+    // exempt: the amount is 0 and nothing is stamped or warned (the trio stays as snapshotted)
+    const result = isTaxExempt ? { ...priced, amount: 0, stamp: null, warn: null } : priced;
     if (result.warn)
       logger?.warn(`recomputeLineCategoryTaxes: order line ${li.id}: ${result.warn}`);
     if (result.stamp) {

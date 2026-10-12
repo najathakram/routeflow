@@ -2,7 +2,8 @@ import { appendInvoiceSyncRevisionInTx } from "../orders/order-revisions";
 import { ServiceUnavailableException } from "@nestjs/common";
 import { holdsValues } from "./order-backsync-lines";
 import { Prisma } from "@prisma/client";
-import { roundMoney, sumInvoiceTotals } from "@routeflow/pricing";
+import { roundMoney } from "@routeflow/pricing";
+import { orderTotalsOfSums } from "../orders/order-totals";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { QTY_EPSILON } from "../orders/merge-idempotency";
@@ -349,9 +350,9 @@ export async function finalizeOrderRecompute(params: {
   );
   // RF-4: fold the billed category tax (Σ per line) back into the order total, so the order
   // stays in step with what the invoices actually charged. The ONE formula (`sumInvoiceTotals`).
-  const { regularTax: tax, total } = sumInvoiceTotals(
-    [{ subtotal, taxRate: effectiveTaxRate, categoryTaxAmount: categoryTaxSum }],
-    { shipping: shippingFeeSum },
+  const { regularTax: tax, total } = orderTotalsOfSums(
+    { subtotal, levy: categoryTaxSum },
+    { taxRate: effectiveTaxRate, shipping: shippingFeeSum },
   );
   // SA-235: the Order row is written only when a column it would write differs (an identical save moves no updatedAt).
   const orderWrites: Array<[string, unknown]> = [

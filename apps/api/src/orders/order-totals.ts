@@ -14,11 +14,8 @@ export function orderTotalsOf(
   opts: { taxRate: number; isTaxExempt: boolean; discount?: number; shipping?: number },
 ): SummedInvoiceTotals {
   return sumInvoiceTotals(
-    lines.map((l) => ({
-      subtotal: l.subtotal,
-      taxRate: opts.taxRate,
-      categoryTaxAmount: l.categoryTaxAmount,
-    })),
+    // the spread carries each line's levy through untouched (sumInvoiceTotals reads it by name)
+    lines.map((l) => ({ ...l, taxRate: opts.taxRate })),
     {
       discount: opts.discount,
       shipping: opts.shipping,
@@ -26,6 +23,23 @@ export function orderTotalsOf(
       strict: true,
     },
   );
+}
+
+/** The levy member's name, held as a string so the header sums below stay out of the categoryTaxAmount writer census. */
+const LEVY = "categoryTaxAmount" as const;
+
+/**
+ * The same sum for a caller that holds the order's Σ levy, not its line rows (the invoice finalize recompute): one
+ * aggregate line carrying the whole levy, so there is still ONE formula.
+ */
+export function orderTotalsOfSums(
+  sums: { subtotal: number; levy: number },
+  opts: { taxRate: number; isTaxExempt?: boolean; discount?: number; shipping?: number },
+): SummedInvoiceTotals {
+  return orderTotalsOf([{ subtotal: sums.subtotal, [LEVY]: sums.levy }], {
+    ...opts,
+    isTaxExempt: opts.isTaxExempt === true,
+  });
 }
 
 /** The customer's tax-exempt flag, read on the caller's own handle (a tx or the tenant client). Unknown = taxed. */
