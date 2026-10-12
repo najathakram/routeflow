@@ -72,14 +72,6 @@ export function useBulkSetState() {
   });
 }
 
-export function useUndoBulkState() {
-  const qc = useQueryClient();
-  return useMutation<{ restored: number }, Error, { changedAddressIds: string[] }>({
-    mutationFn: (body) => apiClient.post(`${BASE}/bulk-state/undo`, body).then((r) => r.data),
-    onSuccess: () => refresh(qc),
-  });
-}
-
 export function useRefreshUnknownState() {
   const qc = useQueryClient();
   return () => refresh(qc);
