@@ -105,7 +105,7 @@ test("reprint prints on 80 mm paper with no Tendered or Change", async ({
   await openSheet(page);
   await page.getByTestId("today-row-e2e-o1").getByRole("button", { name: "Reprint" }).click();
   const root = page.getByTestId("receipt-print-root");
-  await expect(root.getByTestId("receipt-reprint")).toContainText("Reprint · sold");
+  await expect(root.getByTestId("receipt-reprint")).toContainText("Reprint · Sold");
   await expect(root).not.toContainText(/Tendered|Change/);
   await page.emulateMedia({ media: "print" });
   const pageRule = await page.evaluate(() =>

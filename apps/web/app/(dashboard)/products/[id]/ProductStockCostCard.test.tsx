@@ -41,7 +41,8 @@ describe("ProductStockCostCard (extracted from the product detail page)", () => 
         onSetCost={onSetCost}
       />,
     );
-    expect(screen.getByText("Out of Stock")).toBeInTheDocument();
+    expect(screen.getByText("0 in stock")).toBeInTheDocument(); // row 330b: the count, amber, never "Out of Stock"
+    expect(screen.queryByText("Out of Stock")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Set cost" }));
     fireEvent.click(screen.getByRole("button", { name: "No cost set" }));
     expect(onSetCost).toHaveBeenCalledTimes(2);

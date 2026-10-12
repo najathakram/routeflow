@@ -61,6 +61,9 @@ import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { HandOverStamp } from "@/components/HandOverStamp";
+import { seesHandOverStamp } from "@/lib/handover-stamp";
+import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { useStaffFulfilment } from "@/lib/fulfilment-caps";
 import { OrderFulfilmentRow, fulfillPathErrorCopy } from "../_components/OrderFulfilmentRow";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
@@ -77,6 +80,7 @@ import { useOrderOverpayGuard } from "./_components/OrderOverpayNotice";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
+import { OrderRevisionLog } from "./_components/OrderRevisionLog";
 import {
   describeChangeRequest,
   describeResolution,
@@ -1937,6 +1941,7 @@ export default function OrderDetailPage() {
   // Order-level commission override (staff + sales_agents addon only — the
   // server independently re-checks both via PlanFlagGuard/parseCommissionRatePct).
   const { user } = useAuth();
+  const stampZone = useTenantTimeZone(seesHandOverStamp(user?.role)); // row 342: the hand-over time
   const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const [commissionEditOpen, setCommissionEditOpen] = React.useState(false);
@@ -2560,6 +2565,10 @@ export default function OrderDetailPage() {
               </span>
             )}
           </div>
+          {/* Row 342: who handed it over, at which register (staff reads only) */}
+          <div className="mt-1.5">
+            <HandOverStamp order={order} role={user?.role} timeZone={stampZone} />
+          </div>
         </div>
 
         {/* Action bar */}
@@ -2602,20 +2611,8 @@ export default function OrderDetailPage() {
             </span>
           )}
 
-          {/* P5-08: revision count (append-only edit history). */}
-          {!isEditing && (order?.revisions?.length ?? 0) > 0 && (
-            <span
-              className="inline-flex items-center rounded-full bg-navy/5 px-2 py-1 text-xs font-medium text-navy/70"
-              title={order!
-                .revisions!.map(
-                  (r) =>
-                    `v${r.revisionNumber} · ${r.editedByName ?? r.editedByRole ?? "system"} · ${new Date(r.createdAt).toLocaleString()} · ${formatMoney(r.snapshot.total)}`,
-                )
-                .join("\n")}
-            >
-              Edited {order!.revisions!.length}×
-            </span>
-          )}
+          {/* P5-08: revision count + log (append-only edit history), one tap (row 330d). */}
+          {!isEditing && <OrderRevisionLog revisions={order?.revisions ?? []} />}
 
           {/* P5-11: pending post-dispatch change requests awaiting resolution. */}
           {!isEditing && pendingChangeRequests.length > 0 && (

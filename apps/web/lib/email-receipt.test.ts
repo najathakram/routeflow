@@ -16,7 +16,7 @@ describe("RECEIPT_EMAIL_COPY (the UX brief's words, exactly)", () => {
     expect(RECEIPT_EMAIL_COPY.sending).toBe("Sending…");
     expect(RECEIPT_EMAIL_COPY.sendAgain).toBe("Send again");
     expect(RECEIPT_EMAIL_COPY.tryAgain).toBe("Try again");
-    expect(RECEIPT_EMAIL_COPY.sent("a@b.co")).toBe("Sent to a@b.co.");
+    expect(RECEIPT_EMAIL_COPY.sent("a@b.co")).toBe("Receipt sent to a@b.co.");
     expect(RECEIPT_EMAIL_COPY.failed).toBe("Couldn't send. Try again.");
     expect(RECEIPT_EMAIL_COPY.orderLimit).toBe("This receipt reached its email limit.");
     expect(RECEIPT_EMAIL_COPY.dayLimit).toBe("Today's email limit is reached. Print instead.");

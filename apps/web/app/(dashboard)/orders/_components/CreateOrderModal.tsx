@@ -1445,15 +1445,20 @@ export function CreateOrderModal({
 
   /** POS "Confirm & invoice" / "Confirm only": the order exists (PENDING); confirm it, then invoice it. */
   const finishPosOrder = (
-    created: { id: string; orderNumber?: string | null },
+    created: { id: string; orderNumber?: string | null; status?: string | null },
     finish: "invoice" | "confirm",
     viewOrder?: (orderId: string) => void,
+    merged?: { fromStatus?: string | null },
   ) => {
     const action = viewOrder
       ? { label: "View Order", onClick: () => viewOrder(created.id) }
       : undefined;
     posFinish
-      .mutateAsync({ orderId: created.id, invoice: finish === "invoice" })
+      .mutateAsync({
+        orderId: created.id,
+        invoice: finish === "invoice",
+        fromStatus: created.status ?? merged?.fromStatus,
+      })
       .then(() => {
         toast({
           title: finish === "invoice" ? POS_COPY.confirmedInvoiced : POS_COPY.confirmedOnly,
@@ -1464,7 +1469,12 @@ export function CreateOrderModal({
       .catch((err: unknown) => {
         const step = err instanceof PosFinishError ? err.step : "confirm";
         toast({
-          title: step === "invoice" ? POS_COPY.invoiceMissing : POS_COPY.confirmMissing,
+          title:
+            step === "invoice"
+              ? POS_COPY.invoiceMissing
+              : merged
+                ? POS_COPY.mergedConfirmMissing
+                : POS_COPY.confirmMissing,
           variant: "warning",
           action,
         });
@@ -1556,7 +1566,13 @@ export function CreateOrderModal({
         onSuccess: (created: any) => {
           submitKey.settle("success");
           if (posMode && !asDraft && created?.id) {
-            finishPosOrder(created, posFinishRef.current, onViewOrder);
+            // A merge returns the target order; its status (else the prompt's) says if it is still a DRAFT.
+            finishPosOrder(
+              created,
+              posFinishRef.current,
+              onViewOrder,
+              mergeChoice === "merge" ? { fromStatus: mergePrompt?.status } : undefined,
+            );
           } else {
             toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
           }
@@ -1864,7 +1880,7 @@ export function CreateOrderModal({
           <Button
             variant="ghost"
             type="button"
-            className="w-full sm:mr-auto sm:w-auto"
+            className="w-full max-sm:h-11 sm:mr-auto sm:w-auto"
             onClick={handleMinimize}
             disabled={!canMinimize || savingDraft}
             loading={savingDraft}
@@ -1876,23 +1892,26 @@ export function CreateOrderModal({
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
           <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-            <Button variant="ghost" type="button" onClick={handleDismiss}>
+            {/* Row 344: the footer actions are 44 px tap targets below sm (they were 34 px at 390). */}
+            <Button variant="ghost" type="button" className="max-sm:h-11" onClick={handleDismiss}>
               Cancel
             </Button>
             <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
             <WriteButton
               variant="secondary"
               type="button"
+              className="max-sm:h-11"
               loading={createOrder.isPending}
               disabled={createOrder.isPending || fulfilmentPending}
               onClick={onSaveDraft}
             >
-              Save as Draft
+              Save as draft
             </WriteButton>
             {posMode && (
               <WriteButton
                 variant="secondary"
                 type="button"
+                className="max-sm:h-11"
                 loading={createOrder.isPending}
                 disabled={
                   createOrder.isPending || fulfilmentPending || lineItems.some(isPendingDefaultUnit)
@@ -1908,6 +1927,7 @@ export function CreateOrderModal({
             <WriteButton
               type="submit"
               form="create-order-form"
+              className="max-sm:h-11"
               onClick={() => {
                 posFinishRef.current = "invoice";
               }}

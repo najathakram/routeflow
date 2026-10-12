@@ -95,7 +95,7 @@ function build(
 }
 
 describe("BusinessProfileService.list", () => {
-  it("returns the four profiles as shared summaries, in registry order", () => {
+  it("returns the five profiles as shared summaries, in registry order", () => {
     const { svc } = build();
     const res = svc.list();
     expect(res.profiles.map((p) => p.key)).toEqual([
@@ -103,9 +103,10 @@ describe("BusinessProfileService.list", () => {
       "shipping_wholesaler",
       "in_store_retailer",
       "in_store_shipping_retailer",
+      "delivery_pos",
     ]);
     // availability comes from the feature registry (SA-671 M1 lifted): the pickup modes are available
-    expect(res.profiles.map((p) => p.available)).toEqual([true, true, true, true]);
+    expect(res.profiles.map((p) => p.available)).toEqual([true, true, true, true, true]);
   });
 });
 
