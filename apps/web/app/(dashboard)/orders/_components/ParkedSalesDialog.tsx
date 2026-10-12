@@ -16,6 +16,7 @@ import {
   formatParkedTime,
   isStaleParked,
   lineCountLabel,
+  parkedRowTitle,
 } from "@/lib/counter-park";
 import type { useParkedSales } from "./useParkedSales";
 
@@ -34,6 +35,7 @@ function ParkedRow({
   parked: Parked;
 }) {
   const stale = isStaleParked(row.createdAt);
+  const head = parkedRowTitle(row.label, row.createdAt, timezone);
   // Row 330e: the live cart's own totals function over the stored lines' pricing inputs, never qty x price per line.
   // No price lines (an older server, or none priceable) = no total, never a $0.00.
   const total =
@@ -42,10 +44,12 @@ function ParkedRow({
   return (
     <li className="space-y-2 py-3" data-testid={`parked-row-${row.id}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="min-w-0 break-words font-medium">{row.label}</span>
-        <span className="tabular-nums text-xs text-navy/70">
-          {formatParkedTime(row.createdAt, timezone)}
-        </span>
+        <span className="min-w-0 break-words font-medium">{head.title}</span>
+        {head.timeShown ? null : (
+          <span className="tabular-nums text-xs text-navy/70">
+            {formatParkedTime(row.createdAt, timezone)}
+          </span>
+        )}
       </div>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-xs text-navy/70">

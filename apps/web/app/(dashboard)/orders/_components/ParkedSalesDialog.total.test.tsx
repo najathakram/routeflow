@@ -71,6 +71,26 @@ describe("ParkedSalesDialog: row total (row 330e)", () => {
     expect(row).not.toHaveTextContent("$108.00");
   });
 
+  it("row 368: a default walk-in row reads its time once, in 12 h: Walk-in · 7:26 PM", async () => {
+    renderWithProviders(
+      <ParkedSalesDialog
+        openerRef={{ current: null }}
+        parked={parkedWith([
+          {
+            ...ROW,
+            label: "Walk-in · 19:26",
+            createdAt: "2026-10-08T19:26:00.000Z",
+            priceLines: [{ unitPrice: 1, qty: 1 }],
+          },
+        ])}
+      />,
+    );
+    const row = await screen.findByTestId("parked-row-p1");
+    expect(within(row).getByText("Walk-in · 7:26 PM")).toBeInTheDocument();
+    expect(row).not.toHaveTextContent("19:26");
+    expect(row.textContent!.match(/7:26 PM/g)).toHaveLength(1);
+  });
+
   it("an untaxed tenant shows the subtotal as the total", async () => {
     mockSettings = { timezone: "UTC", taxRate: 0 };
     renderWithProviders(
