@@ -65,6 +65,10 @@ export interface BillingViewExtras {
   payNowUrl?: string;
   /** What `payNowUrl` collects (that one invoice's amount remaining, dollars): the Pay button's own figure. */
   payNowAmount?: number;
+  /** How many open invoices `outstandingTotal` sums (the card names it when it exceeds `payNowAmount`). */
+  openInvoiceCount?: number;
+  /** How many of those are already settling (a bank debit): "Total open ... (1 processing)". */
+  settlingCount?: number;
 }
 
 export interface BillingExtrasSubscription {
@@ -92,7 +96,14 @@ export function trimBillingViewForRole<T extends Partial<BillingViewExtras>>(
 ): T {
   if (role === "TENANT_ADMIN" || role === "SUPER_ADMIN") return view;
   // SA-777: an operator keeps the state and the date label (no money) and loses the amount and the pay link.
-  const { outstandingTotal: _amount, payNowUrl: _pay, payNowAmount: _payAmount, ...rest } = view;
+  const {
+    outstandingTotal: _amount,
+    payNowUrl: _pay,
+    payNowAmount: _payAmount,
+    openInvoiceCount: _count,
+    settlingCount: _settling,
+    ...rest
+  } = view;
   return { ...rest, paymentMethodSummary: null, nextCharge: null, openInvoiceAmount: null } as T;
 }
 
@@ -105,6 +116,8 @@ export function pickStateFacts(e: Partial<BillingViewExtras>): Partial<BillingVi
   if (e.openInvoiceDueLabel !== undefined) out.openInvoiceDueLabel = e.openInvoiceDueLabel;
   if (e.payNowUrl !== undefined) out.payNowUrl = e.payNowUrl;
   if (e.payNowAmount !== undefined) out.payNowAmount = e.payNowAmount;
+  if (e.openInvoiceCount !== undefined) out.openInvoiceCount = e.openInvoiceCount;
+  if (e.settlingCount !== undefined) out.settlingCount = e.settlingCount;
   return out;
 }
 
@@ -280,6 +293,8 @@ export class SubscriptionBillingExtras {
     | "openInvoiceDueLabel"
     | "payNowUrl"
     | "payNowAmount"
+    | "openInvoiceCount"
+    | "settlingCount"
   > {
     if (!open) return {};
     const owed = owedInvoices(open);
@@ -288,14 +303,18 @@ export class SubscriptionBillingExtras {
     const target = payableInvoices(open)[0];
     const oldest = owed[0];
     // "overdue since" is the dunning clock's date when it has one; "due by" is the invoice's own due date
+    // the date sits next to the amount Pay collects, so it is the PAY TARGET's own (never a settling invoice's)
+    const dated = target ?? oldest;
     const dueAt =
       billingState === "overdue" && since
         ? since
-        : oldest
-          ? new Date((oldest.dueDateSec ?? oldest.createdSec) * 1000)
+        : dated
+          ? new Date((dated.dueDateSec ?? dated.createdSec) * 1000)
           : null;
     return {
       outstandingTotal: fromCents(outstandingCents(open)),
+      openInvoiceCount: owed.length,
+      settlingCount: owed.filter((i) => i.paymentProcessing).length,
       billingState,
       paymentProcessing: billingState === "processing",
       ...(oldest && dueAt && dueAt.getTime() > 0
