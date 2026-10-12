@@ -108,7 +108,11 @@ export function OrderPreviewModal({
 }) {
   const { data: order, isLoading } = useOrder(open ? orderId : "");
   const liveLines = React.useMemo(
-    () => order?.lineItems?.filter((li) => li.status !== "CANCELLED"),
+    // a CANCELLED order keeps its header total (levy included) while every line is cancelled: name the levy from them
+    () =>
+      order?.status === "CANCELLED"
+        ? order.lineItems
+        : order?.lineItems?.filter((li) => li.status !== "CANCELLED"),
     [order],
   );
   const charges = useOrderCharges(liveLines, open);

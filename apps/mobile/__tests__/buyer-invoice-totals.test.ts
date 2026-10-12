@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { join } from "path";
-import { buyerInvoiceTotalsRows } from "../lib/buyer-invoice-totals";
+import { buyerInvoiceTotalsRows, totalsRowText } from "../lib/buyer-invoice-totals";
 
 // Follow-up to row 398: the customer app's invoice shows Subtotal, Tax, each named charge, Discount and Shipping from the
 // server's own figures, never a hard-coded tax name or rate.
@@ -52,6 +52,17 @@ describe("buyerInvoiceTotalsRows", () => {
       { key: "subtotal", label: "Subtotal", amount: 20 },
     ]);
     expect(buyerInvoiceTotalsRows({ total: 20 })).toEqual([]);
+  });
+});
+
+describe("totalsRowText: the sign is in the text", () => {
+  it("a discount reads -$5.00, a charge $2.80, never a bare or doubled sign", () => {
+    expect(totalsRowText({ key: "discount", label: "Discount", amount: -5 })).toBe(
+      "Discount: -$5.00",
+    );
+    expect(totalsRowText({ key: "c", label: "CRV deposit", amount: 2.8 })).toBe(
+      "CRV deposit: $2.80",
+    );
   });
 });
 

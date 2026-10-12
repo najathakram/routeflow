@@ -1,3 +1,5 @@
+import { formatReceiptMoney, roundMoney } from "@routeflow/pricing";
+
 /**
  * The customer app's invoice totals, from the server's own figures (GET /buyer/invoices/:id): Subtotal, Tax, one named
  * row per regulated charge ("CRV deposit"), Discount (negative) and Shipping. The tax split is computed server-side with the
@@ -22,7 +24,12 @@ export interface TotalsRow {
   amount: number;
 }
 
-const cents = (v: unknown): number => Math.round((Number(v ?? 0) || 0) * 100) / 100;
+const cents = (v: unknown): number => roundMoney(Number(v ?? 0) || 0);
+
+/** "Discount: -$5.00", "CRV deposit: $2.80": the sign is part of the text, never bare or doubled. */
+export function totalsRowText(r: TotalsRow): string {
+  return `${r.label}: ${formatReceiptMoney(r.amount)}`;
+}
 
 export function buyerInvoiceTotalsRows(inv: BuyerInvoiceTotalsSource): TotalsRow[] {
   if (inv.subtotal == null) return [];

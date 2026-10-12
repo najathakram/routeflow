@@ -26,7 +26,7 @@ describe("orderPreviewTotalsRows", () => {
     expect(sum(rows)).toBe(45.1);
   });
 
-  it("an edited order's header that never subtracted its discount still adds up: the gap is a named Adjustment", () => {
+  it("an edited order whose header never subtracted its stored discount shows no discount it did not get, and still adds up", () => {
     // 40 + 3.30 + 4.00 shipping = 47.30 is what the edit stored; the stored discountAmount (5) was not applied
     const rows = orderPreviewTotalsRows({
       subtotal: 40,
@@ -36,15 +36,14 @@ describe("orderPreviewTotalsRows", () => {
       shippingFee: 4,
       total: 47.3,
     });
+    expect(rows.map((r) => r.key)).toEqual(["subtotal", "tax", "shipping"]);
     expect(sum(rows)).toBe(47.3);
-    expect(rows.map((r) => r.key)).toEqual([
-      "subtotal",
-      "tax",
-      "discount",
-      "shipping",
-      "adjustment",
-    ]);
-    expect(rows.find((r) => r.key === "adjustment")?.amount).toBe(5);
+  });
+
+  it("any other gap between the parts and the header is one plain Adjustment row", () => {
+    const rows = orderPreviewTotalsRows({ subtotal: 40, tax: 3.3, charges: [], total: 45 });
+    expect(rows.find((r) => r.key === "adjustment")?.amount).toBe(1.7);
+    expect(sum(rows)).toBe(45);
   });
 
   it("a plain order is Subtotal and Tax only", () => {

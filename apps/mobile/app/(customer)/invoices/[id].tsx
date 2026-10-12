@@ -18,7 +18,7 @@ import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { fmtCalendarDate } from "../../../lib/format-date";
 import { overpaidText, revisedBadgeText } from "../../../lib/invoice-revision";
 import { invoiceLineQtyText } from "@routeflow/pricing";
-import { buyerInvoiceTotalsRows } from "../../../lib/buyer-invoice-totals";
+import { buyerInvoiceTotalsRows, totalsRowText } from "../../../lib/buyer-invoice-totals";
 import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../lib/invoice-line-display";
 
 // buyer.ts's BuyerInvoiceItem doesn't declare `msrp` yet even though the
@@ -159,7 +159,7 @@ export default function CustomerInvoiceDetailScreen() {
             <View style={{ marginTop: 4, gap: 2 }}>
               {totalsRows.map((r) => (
                 <Text key={r.key} style={styles.totalLine}>
-                  {r.label}: {r.amount < 0 ? "-" : ""}${Math.abs(r.amount).toFixed(2)}
+                  {totalsRowText(r)}
                 </Text>
               ))}
             </View>
