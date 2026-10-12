@@ -509,11 +509,14 @@ export class BuyerCatalogService {
         !(f.product.trackedCategoryId && hiddenIds.has(f.product.trackedCategoryId)),
     );
     // The ONE visibility twin decides: a favourite the tenant hid (or whose parent is hidden) is a stub, not a price.
+    // A product a selling restriction hides from THIS buyer (a state limit) is hidden completely (owner): the row is
+    // dropped, no stub. `restrictedIds` already carries a limited product's variants, so a variant is dropped too.
     const visibility = await this.buyerVisibility(customerId);
-    const visible = (f: (typeof liveFavorites)[number]) =>
+    const unrestricted = liveFavorites.filter((f) => !visibility.restrictedIds.has(f.productId));
+    const visible = (f: (typeof unrestricted)[number]) =>
       isBuyerVisibleProduct(visibility, f.product as any);
-    const activeFavorites = liveFavorites.filter(visible);
-    const unavailableFavorites = liveFavorites.filter((f) => !visible(f));
+    const activeFavorites = unrestricted.filter(visible);
+    const unavailableFavorites = unrestricted.filter((f) => !visible(f));
 
     // Load customer pricing tier + overrides
     const customer = await this.prisma

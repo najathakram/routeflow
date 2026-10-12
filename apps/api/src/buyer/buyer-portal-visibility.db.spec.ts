@@ -568,7 +568,13 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
   }
 
   /** What each rail shows for one product, given what the fixture put on it. */
-  function expectSurfaces(f: Fx, v: View, p: any, visibleIn: boolean) {
+  function expectSurfaces(
+    f: Fx,
+    v: View,
+    p: any,
+    visibleIn: boolean,
+    hiddenBy: "curation" | "restriction" = "curation",
+  ) {
     const id = p.id;
     // P is a FAMILY container (kind FAMILY, WS6/Q3): NON-SELLABLE, so it is in no buyer read whether hidden or not.
     const visible = id === f.P.id ? false : visibleIn;
@@ -584,8 +590,9 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     if (id === f.S.id) {
       expect(v.favorites.has(id)).toBe(visible);
       // SA-606 M3: a favourite the tenant hid is kept as a name-only "No longer available online" stub: no price.
+      // A product a selling restriction hides from this buyer is "hidden completely" (owner): the row is dropped.
       const stub = v.favoriteStubs.find((x: any) => x.productId === id);
-      expect(Boolean(stub)).toBe(!visible);
+      expect(Boolean(stub)).toBe(!visible && hiddenBy === "curation");
       if (stub) {
         expect(stub).toMatchObject({
           unavailable: true,
@@ -1008,7 +1015,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       await productRule(f, f.S.id);
 
       const v = await buyerView(f);
-      expectSurfaces(f, v, f.S, false);
+      expectSurfaces(f, v, f.S, false, "restriction");
       for (const p of [f.P, f.V1, f.V2, f.V3]) expectSurfaces(f, v, p, true);
       expect(v.counts.total).toBe(3);
       expect(v.categories).toEqual(["Acme Family"]);
@@ -1070,7 +1077,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       const f = await seedTenant("sr-d");
       await productRule(f, f.S.id, { surface: "ALL" });
       const v = await buyerView(f);
-      expectSurfaces(f, v, f.S, false);
+      expectSurfaces(f, v, f.S, false, "restriction");
       await expectProbe(f, f.S, false);
       await expect(
         inTenant(f, () =>
@@ -1091,7 +1098,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       expect((await check(f, f.S, "BUYER_PORTAL")).outcome).toBe("BLOCK");
       expect((await check(f, f.S, "STAFF")).outcome).toBe("OFF");
       const v = await buyerView(f);
-      expectSurfaces(f, v, f.S, false);
+      expectSurfaces(f, v, f.S, false, "restriction");
     });
 
     it("(g) a rule with a future effectiveFrom does not hide yet, and hides at/after it", async () => {
