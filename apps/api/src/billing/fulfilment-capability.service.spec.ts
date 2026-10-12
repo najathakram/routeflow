@@ -178,9 +178,9 @@ describe("GET /buyer/capabilities", () => {
     }
   });
 
-  it("acceptingOrders stays true for a READ_ONLY seller while the gate is dark (the default)", async () => {
+  it("acceptingOrders stays true for a READ_ONLY seller while the gate is dark (the explicit rollback)", async () => {
     const saved = process.env.SELLER_READ_ONLY_BUYER_GATE;
-    delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+    process.env.SELLER_READ_ONLY_BUYER_GATE = "dark"; // the explicit rollback (default is enforced)
     try {
       const { svc } = makeService({ mode: "ship" });
       const body = await handler().call(new BuyerCapabilitiesController(svc), {
@@ -190,7 +190,8 @@ describe("GET /buyer/capabilities", () => {
       });
       expect(body.acceptingOrders).toBe(true);
     } finally {
-      if (saved !== undefined) process.env.SELLER_READ_ONLY_BUYER_GATE = saved;
+      if (saved === undefined) delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+      else process.env.SELLER_READ_ONLY_BUYER_GATE = saved;
     }
   });
 

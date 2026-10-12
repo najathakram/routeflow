@@ -81,7 +81,8 @@ describe("buyer account-level link writes follow the seller's workspace status",
       expect(prisma.customerLink.update).not.toHaveBeenCalled();
     });
 
-    it("READ_ONLY seller + gate dark (default): accepted, and one would-deny line is logged", async () => {
+    it("READ_ONLY seller + gate dark (the explicit rollback): accepted, and one would-deny line is logged", async () => {
+      process.env.SELLER_READ_ONLY_BUYER_GATE = "dark"; // the explicit rollback (default is enforced)
       setup("READ_ONLY");
       await expect(service.acceptInvite("tok", "buyer-1")).resolves.toMatchObject({
         tenantSlug: "acme-foods",
@@ -141,7 +142,8 @@ describe("buyer account-level link writes follow the seller's workspace status",
       expect(prisma.customerLink.update).not.toHaveBeenCalled();
     });
 
-    it("READ_ONLY seller + gate dark (default): proceeds, and one would-deny line is logged", async () => {
+    it("READ_ONLY seller + gate dark (the explicit rollback): proceeds, and one would-deny line is logged", async () => {
+      process.env.SELLER_READ_ONLY_BUYER_GATE = "dark"; // the explicit rollback (default is enforced)
       setup("READ_ONLY");
       await expect(service.requestSeller("buyer-1", dto)).resolves.toMatchObject({
         linkId: "link-1",

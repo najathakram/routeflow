@@ -5,19 +5,20 @@ import { READ_ONLY_STATUS } from "../billing/dunning-config";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
- * SA ruling 10-11 A3 (N6): the buyer-side READ_ONLY refusal ships DARK like every new behaviour gate.
- * `SELLER_READ_ONLY_BUYER_GATE` = `dark` (the default: allow, and log a `would_deny` line) | `enforced` (403
- * SELLER_UNAVAILABLE). It is separate from BILLING_PAUSE_MODE because a lapsed trial is READ_ONLY too. An unknown
- * value is `dark`: a typo can never turn the refusal on. The owner flips it after the READ_ONLY-sellers-with-buyers
- * count plus a week of would-deny log counts.
+ * SA ruling 10-11 A3 (N6), row 390 FLIP: the buyer-side READ_ONLY refusal is ENFORCED. It shipped dark behind
+ * `SELLER_READ_ONLY_BUYER_GATE` while the READ_ONLY-sellers-with-buyers count and a week of `would_deny` log counts
+ * were read; the owner has now ruled it on. `enforced` (the default, and what any unset or unknown value means: 403
+ * SELLER_UNAVAILABLE) | `dark` (the explicit ROLLBACK: allow, and log a `would_deny` line). It is separate from
+ * BILLING_PAUSE_MODE because a lapsed trial is READ_ONLY too. Rollback without a deploy is
+ * `SELLER_READ_ONLY_BUYER_GATE=dark`; a typo of "dark" stays enforced (a typo can never turn the refusal OFF).
  */
 export type SellerReadOnlyBuyerGate = "dark" | "enforced";
 export function sellerReadOnlyBuyerGate(
   env: Record<string, string | undefined> = process.env,
 ): SellerReadOnlyBuyerGate {
-  return (env.SELLER_READ_ONLY_BUYER_GATE ?? "").trim().toLowerCase() === "enforced"
-    ? "enforced"
-    : "dark";
+  return (env.SELLER_READ_ONLY_BUYER_GATE ?? "").trim().toLowerCase() === "dark"
+    ? "dark"
+    : "enforced";
 }
 
 /** The buyer-facing copy of a seller-status refusal: fixed, neutral, never a reason or anything about billing. */
@@ -41,8 +42,8 @@ export type SellerWriteVerdict =
  * SA-776: the ONE rule for a buyer write toward a seller, by the seller's workspace status. Every caller that lets a
  * buyer (or a buyer's sign-in) change what is linked to a seller asks this function and nothing else:
  *   - ACTIVE / TRIAL seller: allowed.
- *   - READ_ONLY seller: governed by `SELLER_READ_ONLY_BUYER_GATE` - `dark` (default) allows and logs `would_deny`,
- *     `enforced` refuses.
+ *   - READ_ONLY seller: governed by `SELLER_READ_ONLY_BUYER_GATE` - `enforced` (the default) refuses, `dark` (the
+ *     explicit rollback) allows and logs `would_deny`.
  *   - SUSPENDED / CANCELLED (and any status not listed here): refused always.
  * `context` is the route or flow label that goes into the would-deny line (seller tenant id + route, no buyer data).
  * The caller shapes the refusal itself (a request throws `sellerUnavailableException()`; a redirect flow maps it to an
