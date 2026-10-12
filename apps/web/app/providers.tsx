@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { QueryClient, QueryClientProvider, MutationCache } from "@tanstack/react-query";
 import { AuthProvider } from "@/lib/auth-context";
+import { getStoredUser } from "@/lib/auth";
 import { BuyerAuthProvider } from "@/lib/buyer-auth-context";
 import { ToastProvider, useToast } from "@routeflow/ui/web";
 import { I18nProvider } from "@/lib/i18n";
@@ -24,6 +25,8 @@ function QueryProviders({ children }: { children: React.ReactNode }) {
             view: () => queryClient.getQueryData<SubscriptionView>(["billing", "subscription"]),
             refresh: () =>
               void queryClient.invalidateQueries({ queryKey: ["billing", "subscription"] }),
+            // SA-776: the admin sees the action in the read-only toast, anyone else the contact line.
+            isAdmin: () => getStoredUser()?.role === "TENANT_ADMIN",
           }),
       }),
       defaultOptions: {

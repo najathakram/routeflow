@@ -74,6 +74,15 @@ export function createMockPrisma(): MockPrisma {
       }),
     );
 
+  // SA-776: a tenants-by-id lookup (the cron / sweep status read) answers ACTIVE for each id unless a spec overrides.
+  const tenantProxy = () => {
+    const proxy = modelProxy();
+    proxy.findMany.mockImplementation(async (args?: { where?: { id?: { in?: string[] } } }) =>
+      (args?.where?.id?.in ?? []).map((id) => ({ id, status: "ACTIVE" })),
+    );
+    return proxy;
+  };
+
   // Prisma's update() returns the written row. B562 PR-2's order stock paths read the counter the
   // update returned (the SALE movement's stockAfter), so the product mock returns one by default.
   const productProxy = () => {
@@ -155,7 +164,7 @@ export function createMockPrisma(): MockPrisma {
     customerTag: modelProxy(),
     customerTagAssignment: modelProxy(),
     customerComment: modelProxy(),
-    tenant: modelProxy(),
+    tenant: tenantProxy(),
     return: modelProxy(),
     returnItem: modelProxy(),
     stockMovement: modelProxy(),

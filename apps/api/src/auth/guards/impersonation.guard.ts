@@ -1,4 +1,5 @@
 import { Injectable, CanActivate, ExecutionContext, Logger } from "@nestjs/common";
+import { bearerTokenOf } from "../bearer-token";
 
 interface ImpersonationClaims {
   impersonatedBy?: string;
@@ -90,10 +91,10 @@ export class ImpersonationGuard implements CanActivate {
     if (request?.user?.impersonatedBy) {
       return { claims: request.user as ImpersonationClaims, verified: true };
     }
-    const authHeader: unknown = request?.headers?.authorization;
-    if (typeof authHeader !== "string" || !authHeader.startsWith("Bearer ")) return null;
+    const bearer = bearerTokenOf(request?.headers?.authorization);
+    if (!bearer) return null;
     try {
-      const payloadPart = authHeader.slice(7).split(".")[1];
+      const payloadPart = bearer.split(".")[1];
       if (!payloadPart) return null;
       const payload = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf8"));
       return typeof payload?.impersonatedBy === "string"

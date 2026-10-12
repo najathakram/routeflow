@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { fromCents } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
+import { isInternalEmail } from "../common/internal-email";
 import { isOwed } from "./dunning-core";
 import { DUNNING_PAUSE_HOURS, DUNNING_FALLBACK_ZONE, HOUR_MS } from "./dunning-config";
 import { dunningZone } from "./dunning-zone";
@@ -8,8 +9,10 @@ import { StripeService } from "./stripe.service";
 
 /**
  * SA-733r6 (B4): the facts the subscription view adds so the web banner and the Billing card render from ONE read.
- *  - `billingContactName`: the OLDEST ACTIVE TENANT_ADMIN's `username` (the User model has no display-name column) - a
- *    fixed, stated rule (a per-branch contact can replace the rule behind this one field later);
+ *  - `billingContactEmail` (SA-776): the e-mail of the OLDEST ACTIVE TENANT_ADMIN that has a real one - a fixed,
+ *    stated rule (a per-branch contact can replace the rule behind this one field later). There is NO contact name: the User model has no
+ *    display-name column and a username is never shown (the field this replaced was the username). An internal
+ *    sentinel address (`no-email+...@placeholder.local`) is never sent;
  *  - `openInvoiceAmount`: the `pastDueInvoiceId` invoice's amount remaining, in dollars (Stripe cents via `fromCents`);
  *  - `paymentMethodSummary` / `nextCharge`: the autopay card and what the next renewal charges;
  *  - `pastDueMonthLabel` / `graceEndsLabel` / `nextCharge.dateLabel`: calendar labels formatted HERE in the TENANT's
@@ -32,7 +35,7 @@ export interface PaymentMethodSummary {
 }
 
 export interface BillingViewExtras {
-  billingContactName: string | null;
+  billingContactEmail: string | null;
   openInvoiceAmount: number | null;
   paymentMethodSummary: PaymentMethodSummary | null;
   nextCharge: { amount: number; date: string; dateLabel: string } | null;
@@ -50,7 +53,7 @@ export interface BillingExtrasSubscription {
 }
 
 export const EMPTY_BILLING_VIEW_EXTRAS: BillingViewExtras = {
-  billingContactName: null,
+  billingContactEmail: null,
   openInvoiceAmount: null,
   paymentMethodSummary: null,
   nextCharge: null,
@@ -108,15 +111,15 @@ export class SubscriptionBillingExtras {
     tenantId: string,
     sub: BillingExtrasSubscription | null | undefined,
   ): Promise<BillingViewExtras> {
-    const [billingContactName, openInvoiceAmount, card, zone] = await Promise.all([
-      this.contactName(tenantId),
+    const [billingContactEmail, openInvoiceAmount, card, zone] = await Promise.all([
+      this.contactEmail(tenantId),
       this.openAmount(sub?.pastDueInvoiceId ?? null),
       this.cardAndNextCharge(tenantId, sub),
       dunningZone(this.prisma, tenantId),
     ]);
     const since = sub?.pastDueInvoiceId ? (sub.pastDueSince ?? null) : null;
     return {
-      billingContactName,
+      billingContactEmail,
       openInvoiceAmount,
       paymentMethodSummary: card.paymentMethodSummary,
       nextCharge: card.nextCharge
@@ -146,14 +149,20 @@ export class SubscriptionBillingExtras {
     }
   }
 
-  private async contactName(tenantId: string): Promise<string | null> {
+  private async contactEmail(tenantId: string): Promise<string | null> {
     try {
-      const admin = await this.prisma.user.findFirst({
+      // Oldest active admin first; one whose address is blank or an internal sentinel is passed over for the next.
+      const admins = await this.prisma.user.findMany({
         where: { tenantId, role: "TENANT_ADMIN", status: "ACTIVE", deletedAt: null },
         orderBy: { createdAt: "asc" },
-        select: { username: true },
+        select: { email: true },
+        take: 25,
       });
-      return admin?.username ?? null;
+      for (const a of admins) {
+        const email = a.email?.trim();
+        if (email && !isInternalEmail(email)) return email;
+      }
+      return null;
     } catch (err) {
       this.logger.warn(`billing contact lookup failed for ${tenantId}: ${(err as Error).message}`);
       return null;

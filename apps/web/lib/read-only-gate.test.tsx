@@ -16,7 +16,7 @@ import {
  * are VISIBLE but DISABLED with the exact line; nothing is hidden. Outside the shell the gate is open.
  */
 const view = (over: Partial<SubscriptionView> = {}) =>
-  ({ status: "READ_ONLY", billingContactName: "Dana", ...over }) as SubscriptionView;
+  ({ status: "READ_ONLY", billingContactEmail: "dana@acme.test", ...over }) as SubscriptionView;
 
 function Screen() {
   return (
@@ -40,19 +40,31 @@ describe("read-only gate", () => {
     expect(order).toBeDisabled();
     expect(pay).toBeDisabled();
     const line = screen.getByTestId("read-only-line");
-    expect(line).toHaveTextContent("Not available while read-only. Dana can restore it.");
+    expect(line).toHaveTextContent(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. To restore access, contact your admin (dana@acme.test).",
+    );
     expect(order).toHaveAttribute("aria-describedby", line.id);
     expect(screen.queryByRole("link", { name: "New Order" })).toBeNull(); // cannot navigate
   });
 
-  it("no admin on file: 'Your admin can restore it.'", () => {
-    renderWithProviders(
-      <ReadOnlyGateProvider view={view({ billingContactName: null })}>
+  it("an admin sees the sentence + reason and no contact line; no e-mail on file omits it too", () => {
+    const { unmount } = renderWithProviders(
+      <ReadOnlyGateProvider view={view({ readOnlyReason: "trial_expired" })} isAdmin>
         <Screen />
       </ReadOnlyGateProvider>,
     );
     expect(screen.getByTestId("read-only-line")).toHaveTextContent(
-      "Not available while read-only. Your admin can restore it.",
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your free trial has ended.",
+    );
+    expect(screen.getByTestId("read-only-line")).not.toHaveTextContent("To restore access");
+    unmount();
+    renderWithProviders(
+      <ReadOnlyGateProvider view={view({ billingContactEmail: null })}>
+        <Screen />
+      </ReadOnlyGateProvider>,
+    );
+    expect(screen.getByTestId("read-only-line").textContent).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
     );
   });
 
@@ -91,7 +103,7 @@ describe("read-only gate - a 403 READ_ONLY refusal", () => {
     act(() => markReadOnlyRefused());
     expect(screen.getByRole("button", { name: "Record Payment" })).toBeDisabled();
     expect(screen.getByTestId("read-only-line")).toHaveTextContent(
-      "Not available while read-only. Dana can restore it.",
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
     );
   });
 

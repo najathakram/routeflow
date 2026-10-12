@@ -1,4 +1,5 @@
 import type { SubscriptionView } from "@routeflow/types";
+import { readOnlyCopyForView } from "./read-only-copy";
 
 /**
  * SA-733r6 (B4): the ONE pure function behind the billing strip in the dashboard shell and the Settings >
@@ -6,8 +7,9 @@ import type { SubscriptionView } from "@routeflow/types";
  * the action, the dismiss rule. No per-screen copy; no client timer decides state - the server's read does, and
  * this only renders it (the day index is computed from `pastDueSince` against the `now` the caller passes).
  *
- * Rules that bind (the brief's Don't list): never red; no "overdue" / "failed" / "suspended" or blame wording; no
- * countdown; no pay control for anyone but a workspace admin; no "Choose a plan" / "Subscribe" while an invoice
+ * Rules that bind (the brief's Don't list): never red; no "overdue" / "failed" / "suspended" or blame wording (the
+ * read-only states are the one exception: the owner's SA-776 copy, composed in `read-only-copy.ts`, names the
+ * reason, e.g. "Your subscription payment of $149.00 is overdue."); no countdown; no pay control for anyone but a workspace admin; no "Choose a plan" / "Subscribe" while an invoice
  * is owed; no billing state for buyers; amounts always print as money ($149.00), never a dash.
  */
 
@@ -118,8 +120,6 @@ const utcDayOrNull = (iso: string): string | null => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? null : utcDay(d);
 };
-const monthLabelOf = (view: SubscriptionView, since: Date | null, now: Date) =>
-  view.pastDueMonthLabel ?? utcMonth(since ?? now);
 /** Local calendar date key, for the "dismissed for the day" rule. */
 const dayKey = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -135,17 +135,17 @@ const BRANDS: Record<string, string> = {
 };
 const brandName = (b: string) => BRANDS[b.toLowerCase()] ?? b.charAt(0).toUpperCase() + b.slice(1);
 
-/** "Dana", or the neutral fallback when no admin is on file. `lead` capitalises it at a sentence start. */
-function contact(view: SubscriptionView, lead: boolean): string {
-  const name = view.billingContactName?.trim();
-  if (name) return name;
+/** Who a non-admin is told to ask. There is no contact NAME (SA-776: a username is never shown). */
+function contact(lead: boolean): string {
   return lead ? "Your admin" : "your admin";
 }
 
-/** The sentence a blocked control shows while the workspace is read-only (and a 403 READ_ONLY shows next to it). */
-export function readOnlyLine(adminName: string | null | undefined): string {
-  const name = adminName?.trim() || "Your admin";
-  return `Not available while read-only. ${name} can restore it.`;
+/**
+ * The line a blocked control shows while the workspace is read-only (and a 403 READ_ONLY toast shows): the owner's
+ * sentence + the mapped reason + (non-admin) the contact, from `read-only-copy.ts` (SA-776).
+ */
+export function readOnlyLine(view: SubscriptionView | null | undefined, isAdmin: boolean): string {
+  return readOnlyCopyForView(view, isAdmin).text;
 }
 
 /** True when this view's read-only / grace state is the billing strip's, not the trial banner's. */
@@ -180,13 +180,15 @@ export function subscriptionBannerState(
 
   // ── Paused (read-only) ───────────────────────────────────────────────────────────────────────────────
   if (readOnly) {
-    // A cancel, not an unpaid invoice, is what holds this workspace read-only: paying does not restore it, so the
-    // sentence must not promise that (S7). Neutral line; the admin gets a Billing link, never a Pay button.
+    // SA-776: the owner's sentence + the mapped reason line (+ the contact line for a non-admin), composed in ONE
+    // place. A cancel, not an unpaid invoice, can be what holds this workspace read-only (S7): the reason line then
+    // says "cancelled" and nothing promises that paying restores it; the admin gets a Billing link, never Pay.
+    const copy = readOnlyCopyForView(view, admin).text;
     if (view.readOnlyReason !== "payment_overdue") {
       return {
         kind: "read-only",
         tone: "amber",
-        copy: `Your workspace is read-only. You can still view, print and export. ${contact(view, true)} can restore it.`,
+        copy,
         action: admin ? { label: "Billing", intent: "open-billing" } : null,
         dismiss: null,
         live: "alert",
@@ -195,15 +197,10 @@ export function subscriptionBannerState(
         cardPay: null,
       };
     }
-    const month = monthLabelOf(view, sinceOk, now);
-    const money =
-      view.openInvoiceAmount != null ? ` of ${billingMoney(view.openInvoiceAmount)}` : "";
     return {
       kind: "read-only",
       tone: "amber",
-      copy: admin
-        ? `Your workspace is read-only until the ${month} payment${money} goes through. Your data is safe.`
-        : `Your workspace is read-only. You can still view, print and export. ${contact(view, true)} can restore it.`,
+      copy,
       action: admin ? payAction(view) : null,
       dismiss: null,
       live: "alert",
@@ -225,7 +222,7 @@ export function subscriptionBannerState(
         tone: "amber",
         copy: admin
           ? "Your workspace becomes read-only tomorrow. Update your payment to keep everything running."
-          : `Your workspace becomes read-only tomorrow. Let ${contact(view, false)} know.`,
+          : `Your workspace becomes read-only tomorrow. Let ${contact(false)} know.`,
         action: admin ? UPDATE_PAYMENT : null,
         dismiss: null,
         live: "alert",
@@ -249,7 +246,7 @@ export function subscriptionBannerState(
       tone: "neutral",
       copy: admin
         ? adminCopy
-        : `There's a billing issue. Everything still works. ${contact(view, true)} can sort it out in Billing.`,
+        : `There's a billing issue. Everything still works. ${contact(true)} can sort it out in Billing.`,
       action: admin ? UPDATE_PAYMENT : null,
       dismiss: { scope: "day", key: `grace:${view.pastDueInvoiceId}:${dayKey(now)}` },
       live: "status",
