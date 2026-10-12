@@ -163,7 +163,12 @@ export class DunningService {
     try {
       await runMilestones(
         this.deps(),
-        { tenantId: row.tenantId, pastDueInvoiceId: invoiceId, pastDueSince: since },
+        {
+          tenantId: row.tenantId,
+          pastDueInvoiceId: invoiceId,
+          pastDueSince: since,
+          tenantClass: row.tenant.class,
+        },
         facts,
         now,
         { paused: isPausedRow(row) },
@@ -316,7 +321,12 @@ export class DunningService {
 
     const finalSentAt = await runMilestones(
       deps,
-      { tenantId: row.tenantId, pastDueInvoiceId: invoiceId, pastDueSince: since },
+      {
+        tenantId: row.tenantId,
+        pastDueInvoiceId: invoiceId,
+        pastDueSince: since,
+        tenantClass: row.tenant.class,
+      },
       facts,
       now,
       { paused: isPausedRow(row) },

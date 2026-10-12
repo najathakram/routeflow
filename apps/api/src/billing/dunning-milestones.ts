@@ -7,6 +7,7 @@ import {
   HOUR_MS,
 } from "./dunning-config";
 import { episodeKey } from "./dunning-clock";
+import { autoLockAllowed } from "./auto-lock-gate";
 import { type DunningDeps, remainingCents } from "./dunning-core";
 import { hoursSince } from "./dunning-time";
 
@@ -28,7 +29,13 @@ import { hoursSince } from "./dunning-time";
  */
 export async function runMilestones(
   deps: DunningDeps,
-  row: { tenantId: string; pastDueInvoiceId: string; pastDueSince: Date },
+  row: {
+    tenantId: string;
+    pastDueInvoiceId: string;
+    pastDueSince: Date;
+    /** The tenant class, for the SA-775 gate that decides whether the final notice may threaten a lock. */
+    tenantClass?: string | null;
+  },
   facts: InvoiceFacts,
   now: Date,
   opts: { paused?: boolean } = {},
@@ -100,20 +107,32 @@ export async function runMilestones(
 
   // `attempted` keys the d0 copy: an invoice Stripe never tried (a discovery stamp) is "open - pay it here", never
   // "we couldn't process your payment".
-  const send = (
+  const send = async (
     milestone: string,
     kind: "d0" | "d3" | "final",
     dates: { readOnlyOn?: string } = {},
-  ) =>
-    deps.notifications.notifyDunning(tenantId, milestone, key, kind, {
+  ) => {
+    // SA-775 rollout: the final notice says the workspace becomes read-only. While the pause holds that lock (the same
+    // gate the pause asks) it must not say so. Without an injected switch (a bare unit spec) the copy is unchanged.
+    const pauseHolds =
+      kind === "final" && deps.autoLocks
+        ? !(await autoLockAllowed(
+            deps.autoLocks,
+            { id: tenantId, class: row.tenantClass },
+            "payment_overdue",
+          ))
+        : undefined;
+    return deps.notifications.notifyDunning(tenantId, milestone, key, kind, {
       payUrl,
       attempted: facts.attemptCount > 0,
       amountCents: remainingCents(facts),
       currency: facts.currency ?? null,
       periodLabel: facts.periodLabel ?? null,
       invoiceNumber: facts.invoiceNumber ?? null,
+      ...(pauseHolds === undefined ? {} : { omitLockWarning: pauseHolds }),
       ...dates,
     });
+  };
   const readOnlyOn = () =>
     deps.notifications.localDateLabel(tenantId, new Date(now.getTime() + 24 * HOUR_MS));
 

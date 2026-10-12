@@ -61,6 +61,8 @@ function make(
     txTenant?: { status: string; readOnlyReason: string | null };
     /** The owed marker as the resume transaction re-reads it under the lock (default: still in_1). */
     txClock?: string | null;
+    /** SA-775: the rollout switch handed to the service (absent = a bare unit spec, as today). */
+    autoLocks?: { isPaused(): Promise<boolean> };
   } = {},
 ) {
   const order: string[] = [];
@@ -146,7 +148,7 @@ function make(
     order.push("transition");
     return opts.transitionResult ?? true;
   });
-  const svc = new DunningService(prisma, stripe, notifications, guard);
+  const svc = new DunningService(prisma, stripe, notifications, guard, opts.autoLocks as any);
   svc.bindTransition(transition as any);
   return { svc, prisma, tx, stripe, notifications, guard, transition, order };
 }
@@ -417,6 +419,59 @@ describe("DunningService", () => {
         EP,
       );
       expect(d.transition).not.toHaveBeenCalled();
+    });
+
+    describe("SA-775: the final notice drops the lock threat when the pause holds the lock", () => {
+      const finalExtra = (d: any) =>
+        d.notifications.notifyDunning.mock.calls.find((c: any[]) => c[3] === "final")?.[4];
+      const sweepFinal = async (cls: string, autoLocks?: { isPaused(): Promise<boolean> }) => {
+        mode("enforced");
+        const d = make({
+          sweepRows: [row({ tenant: { ...row().tenant, class: cls } })],
+          logged: [
+            { milestone: "DUNNING_D0", sentAt: at(0) },
+            { milestone: "DUNNING_D3", sentAt: at(72) },
+          ],
+          autoLocks,
+        });
+        await d.svc.sweep(at(150));
+        return d;
+      };
+
+      it("switch paused + PRODUCTION: omitLockWarning true (same milestone, key and kind)", async () => {
+        const d = await sweepFinal("PRODUCTION", { isPaused: async () => true });
+        expect(d.notifications.notifyDunning).toHaveBeenCalledWith(
+          "t1",
+          "DUNNING_D6",
+          EP,
+          "final",
+          expect.objectContaining({ omitLockWarning: true }),
+        );
+        expect(d.notifications.recordDunningMilestone).toHaveBeenCalledWith(
+          "t1",
+          "DUNNING_FINAL",
+          EP,
+        );
+      });
+
+      it.each([
+        ["TEST class", "TEST", { isPaused: async () => true }],
+        ["switch not paused", "PRODUCTION", { isPaused: async () => false }],
+        ["no switch injected", "PRODUCTION", undefined],
+      ])("%s: not omitted (the unchanged copy)", async (_n, cls, sw) => {
+        const d = await sweepFinal(cls as string, sw as any);
+        expect(finalExtra(d).omitLockWarning).toBe(sw ? false : undefined);
+        expect(finalExtra(d).readOnlyOn).toBe("Nov 9, 2026");
+      });
+
+      it("d0 / d3 emails carry no omitLockWarning", async () => {
+        mode("enforced");
+        const d = make({ sweepRows: [row()], autoLocks: { isPaused: async () => true } });
+        await d.svc.sweep(at(80));
+        expect(d.notifications.notifyDunning.mock.calls[0][4]).not.toHaveProperty(
+          "omitLockWarning",
+        );
+      });
     });
 
     it("flipping dark -> enforced with a 200 h clock sends the final notice and pauses NOBODY in hour one", async () => {
