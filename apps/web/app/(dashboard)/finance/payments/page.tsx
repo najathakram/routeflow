@@ -438,7 +438,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
             disabled={record.isPending || overAllocated}
             className="rounded-lg border border-surface-border px-4 py-2 text-sm text-navy hover:bg-surface-raised disabled:opacity-50"
           >
-            Save as Draft
+            Save as draft
           </button>
           <button
             onClick={() => handleSave("PAID")}

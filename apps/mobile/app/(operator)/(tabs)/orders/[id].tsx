@@ -70,7 +70,33 @@ import { ShipmentSection, ShipmentEditModal } from "../../../../components/Shipm
 import { shipmentForDisplay } from "../../../../lib/shipment-display";
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
-import { canDeleteOrder, demotionRequiresReason } from "../../../../lib/order-status-flow";
+import {
+  canDeleteOrder,
+  demotionRequiresReason,
+  isPosOrder,
+} from "../../../../lib/order-status-flow";
+import {
+  POS_COPY,
+  POS_READY_FAILED,
+  POS_SWITCH_FAILED,
+  pickupCompleteErrorCopy,
+  decidePickupResponse,
+  posHandOverBalance,
+  posLiveInvoices,
+  posCanSwitchToDelivery,
+  posCutNote,
+  posOrderActions,
+  posProgressSteps,
+  type PosAction,
+} from "../../../../lib/pos-mode";
+import { PosHandOverSheet } from "../../../../components/PosHandOverSheet";
+import { useCustomer } from "../../../../lib/api/customers";
+import {
+  releasePickupKey,
+  usePickupComplete,
+  usePickupInvoiceBalances,
+  useSwitchOrderToDelivery,
+} from "../../../../lib/api/pos-orders";
 import { statusActions, type StatusAction } from "../../../../lib/order-actions";
 import { useRecordReturn } from "../../../../hooks/useRecordReturn";
 
@@ -121,6 +147,12 @@ export default function OrderDetailScreen() {
   const urgentMut = useToggleOrderUrgent();
   const shipmentMut = useUpdateOrderShipment();
   const createInvoiceMut = useCreateInvoiceFromOrder();
+  const pickupMut = usePickupComplete(id ?? "");
+  // GET /orders/:id does not carry customer.isWalkIn: read it from the customer record (same as web).
+  const { data: walkInCustomer } = useCustomer(
+    isPosOrder(order) ? (order?.customer?.id ?? order?.customerId ?? "") : "",
+  );
+  const switchToDeliveryMut = useSwitchOrderToDelivery();
   const sendMut = useSendInvoice();
   const pdfMut = useInvoicePdf();
   const [shipmentModal, setShipmentModal] = useState(false);
@@ -158,6 +190,16 @@ export default function OrderDetailScreen() {
   // The demotion awaiting a reason. The server rejects a blank one, so the sheet
   // holds the action until the operator supplies it.
   const [reasonFor, setReasonFor] = useState<StatusAction | null>(null);
+  // POS hand-over tender sheet (open flag + the last failure, as fixed copy).
+  const [handOverOpen, setHandOverOpen] = useState(false);
+  const [handOverError, setHandOverError] = useState<string | null>(null);
+  // Balance the server says is still owed after a 200 whose payment was not recorded (same key retry).
+  const [handOverOwed, setHandOverOwed] = useState<number | null>(null);
+  // The order payload's invoices carry no balance: read each live invoice for its server balanceDue.
+  const balances = usePickupInvoiceBalances(
+    posLiveInvoices(order).map((i) => i.id),
+    handOverOpen && isPosOrder(order),
+  );
 
   if (isLoading) {
     return (
@@ -189,7 +231,19 @@ export default function OrderDetailScreen() {
   // pins its signature to the narrower `OrderStatus` union so a typo'd status
   // string is caught at the call site instead of silently falling through to
   // the switch's `default: []`.
-  const actions = statusActions(order.status as OrderStatus, order.fulfillPath);
+  const actions = statusActions(
+    order.status as OrderStatus,
+    order.fulfillPath,
+    order.cancelBlockedReason,
+    order.counterSale,
+  );
+  // SA-763r P-2: a POS-mode order = PICKUP and not a counter sale. One primary per state.
+  const isPos = isPosOrder(order);
+  const posActions = isPos ? posOrderActions(order, order.status) : [];
+  const posSteps =
+    isPos && order.status !== "DRAFT" && order.status !== "CANCELLED"
+      ? posProgressSteps(order, order.status)
+      : null;
   // R1: trust the server edit-window — items are now editable at every live stage
   // (incl. OUT_FOR_DELIVERY / DELIVERED); only CANCELLED closes it. Fall back to a
   // non-cancelled check for older API responses that don't send editWindow.
@@ -278,6 +332,66 @@ export default function OrderDetailScreen() {
       },
       onError: (e) => toastError(e, "Couldn't prepare the invoice. Open it from Invoices."),
     });
+  };
+
+  /** Credit-limit / selling-restriction 409s keep their guard modals; everything else is fixed copy. */
+  const toastPosError = (e: unknown, fallback: string) => {
+    const credit = parseCreditLimitError(e);
+    if (credit) return setCreditBlock(credit);
+    const restricted = parseSellingRestricted(e);
+    if (restricted) return setRestrictedBlock(restricted);
+    showToast(fallback);
+  };
+
+  /** POS-mode actions: Create invoice / Hand over / Ready for pickup / Switch to delivery / pay or print. */
+  const runPosAction = (a: PosAction) => {
+    switch (a.key) {
+      case "createInvoice":
+        createInvoiceMut.mutate(order.id, {
+          onSuccess: () => {
+            showToast(POS_COPY.invoiceCreated);
+            refetch();
+          },
+          onError: () => showToast(POS_COPY.invoiceFailed),
+        });
+        return;
+      case "handOver":
+        setHandOverError(null);
+        setHandOverOwed(null);
+        setHandOverOpen(true);
+        return;
+      case "readyForPickup":
+        changeMut.mutate(
+          { id: order.id, status: "OUT_FOR_DELIVERY" },
+          {
+            onSuccess: () => {
+              showToast("Customer notified: ready for pickup");
+              refetch();
+            },
+            onError: (e) => toastPosError(e, POS_READY_FAILED),
+          },
+        );
+        return;
+      case "switchToDelivery":
+        confirm(
+          POS_COPY.switchToDelivery,
+          "Move this order onto the delivery route instead of pickup?",
+          () =>
+            switchToDeliveryMut.mutate(order.id, {
+              onSuccess: () => {
+                showToast("Switched to delivery");
+                refetch();
+              },
+              onError: (e) => toastPosError(e, POS_SWITCH_FAILED),
+            }),
+          { confirmText: POS_COPY.switchToDelivery },
+        );
+        return;
+      case "recordPayment":
+      case "printInvoice":
+        if (a.invoiceId) router.push(`/(operator)/invoices/${a.invoiceId}` as any);
+        return;
+    }
   };
 
   /**
@@ -694,7 +808,7 @@ export default function OrderDetailScreen() {
                   style={styles.editItemsBtn}
                 >
                   <Ionicons name="create-outline" size={16} color={ios.brand} />
-                  <Text style={styles.linkText}>Edit items</Text>
+                  <Text style={styles.linkText}>{isPos ? "Edit order" : "Edit items"}</Text>
                 </Pressable>
               ) : null}
             </View>
@@ -901,6 +1015,57 @@ export default function OrderDetailScreen() {
             />
           ) : null}
 
+          {/* POS mode: Confirmed -> Invoice (draft) -> Handed over, one primary per state. */}
+          {isPos && (posSteps || posActions.length > 0) ? (
+            <View style={styles.card}>
+              {posSteps ? (
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                  {posSteps.map((step) => (
+                    <Pill key={step.key} variant={step.done ? "green" : "gray"} small>
+                      {step.done ? `${step.label} ✓` : step.label}
+                    </Pill>
+                  ))}
+                </View>
+              ) : null}
+              {posActions.length > 0 ? (
+                <View style={[styles.actionsCol, posSteps ? { marginTop: 10 } : null]}>
+                  {posActions.map((a) => {
+                    const hidden =
+                      a.key === "switchToDelivery" && !posCanSwitchToDelivery(order.status);
+                    if (hidden) return null;
+                    const busy =
+                      pickupMut.isPending ||
+                      createInvoiceMut.isPending ||
+                      changeMut.isPending ||
+                      switchToDeliveryMut.isPending;
+                    return (
+                      <Pressable
+                        key={a.key}
+                        style={[
+                          styles.actionBtn,
+                          a.tier === "primary" ? styles.primaryAction : styles.secondaryAction,
+                          busy && styles.actionDisabled,
+                        ]}
+                        onPress={() => runPosAction(a)}
+                        disabled={busy}
+                        accessibilityRole="button"
+                      >
+                        <Text
+                          style={[styles.actionBtnText, a.tier === "primary" && { color: "#fff" }]}
+                        >
+                          {a.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
+              {posCutNote(order, order.status) ? (
+                <Text style={styles.shipHint}>{posCutNote(order, order.status)}</Text>
+              ) : null}
+            </View>
+          ) : null}
+
           {/* Status transitions */}
           {actions.length > 0 ? (
             <View style={styles.card}>
@@ -1077,6 +1242,42 @@ export default function OrderDetailScreen() {
         issuePrompt={sendSheet?.issuePrompt}
       />
 
+      <PosHandOverSheet
+        visible={handOverOpen}
+        isWalkIn={walkInCustomer?.isWalkIn}
+        balance={posHandOverBalance({
+          orderTotal: Number(order.total),
+          orderInvoices: order.invoices ?? [],
+          owedOverride: handOverOwed,
+          isFetching: balances.isFetching,
+          isError: balances.isError,
+          details: balances.data,
+        })}
+        onRetry={() => void balances.refetch()}
+        submitting={pickupMut.isPending}
+        error={handOverError}
+        onCancel={() => setHandOverOpen(false)}
+        onSubmit={(body) =>
+          pickupMut.mutate(body, {
+            onSuccess: (res) => {
+              const d = decidePickupResponse(res);
+              if (d.kind === "retry-tender") {
+                // Committed but unpaid: back to the tender step, same Idempotency-Key.
+                setHandOverOwed(d.owed);
+                setHandOverError(d.message);
+                refetch();
+                return;
+              }
+              releasePickupKey(order.id);
+              setHandOverOwed(null);
+              setHandOverOpen(false);
+              showToast(d.message);
+              refetch();
+            },
+            onError: (e) => setHandOverError(pickupCompleteErrorCopy(e)),
+          })
+        }
+      />
       <ReasonSheet
         visible={reasonFor !== null}
         title={reasonFor?.label ?? "Reason"}

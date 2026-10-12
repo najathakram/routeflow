@@ -116,6 +116,13 @@ describe("Void sale: who sees the button", () => {
 });
 
 describe("Void sale: the dialog", () => {
+  it("warns in plain words that a void can't be undone (owner ruling 10-12 wording)", async () => {
+    await openSheet();
+    fireEvent.click(rowVoidButton());
+    expect(await screen.findByText(/You can.t undo this\./)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/It can.t be undone/);
+  });
+
   it("requires a reason: empty and 2-character reasons never leave", async () => {
     await openSheet();
     fireEvent.click(rowVoidButton());
@@ -218,7 +225,9 @@ describe("Void sale: the dialog", () => {
     typeReason("because");
     fireEvent.click(confirmVoid());
     const err = await screen.findByTestId("counter-void-error");
-    expect(err).toHaveTextContent("This sale is in a closed day. Use Return items instead.");
+    expect(err).toHaveTextContent(
+      "This sale is in a closed day and can't be voided. Use Return items instead.",
+    );
     expect(document.body.textContent).not.toMatch(/conflicts with something/i);
     expect(document.body.textContent).not.toContain(RAW);
     expect(screen.queryByTestId("counter-void-done")).toBeNull();

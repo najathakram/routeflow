@@ -310,9 +310,9 @@ describe("business-profile routes are platform-admin only", () => {
 });
 
 describe("GET business-profiles / POST preview", () => {
-  it("lists the four profiles", () => {
+  it("lists the five profiles", () => {
     const { controller } = fakeTenant({});
-    expect(controller.listBusinessProfiles().profiles).toHaveLength(4);
+    expect(controller.listBusinessProfiles().profiles).toHaveLength(5);
   });
 
   it("preview writes nothing", async () => {

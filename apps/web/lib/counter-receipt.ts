@@ -83,7 +83,7 @@ const METHOD_LABEL: Record<CounterSalePaymentMethod, string> = {
   ON_ACCOUNT: "On account",
 };
 
-/** "3 × $2.50 / each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the email prints. */
+/** "3 × $2.50 each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the email prints. */
 const lineDetail = (l: ReceiptLineInput): string => receiptLineDetail(l);
 
 /** GET /orders/:id serialises Prisma Decimals as strings ("3.30"): coerce, and treat anything non-numeric as 0. */
@@ -328,6 +328,28 @@ const REPRINT_METHOD_LABEL: Record<ReprintTender, string> = {
  * string: a value Intl does not know would throw a RangeError and break the receipt, so it falls back to UTC.
  * An absent zone is UTC too (never the browser's zone, SA-738).
  */
+/**
+ * "Sun, Oct 11, 2:46 PM" in the given zone: the reprint's "Sold ..." label. Same zone rules as `formatSaleTime` (an unusable
+ * zone falls back to UTC, an absent one is UTC, never the browser's).
+ */
+export function formatSaleDayTime(at: string | Date, timeZone: string = "UTC"): string {
+  const d = at instanceof Date ? at : new Date(at);
+  const format = (zone: string | undefined) =>
+    new Intl.DateTimeFormat("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: zone,
+    }).format(d);
+  try {
+    return format(timeZone);
+  } catch {
+    return format("UTC");
+  }
+}
+
 export function formatSaleTime(at: string | Date, timeZone: string = "UTC"): string {
   const d = at instanceof Date ? at : new Date(at);
   const format = (zone: string | undefined) =>

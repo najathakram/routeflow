@@ -124,8 +124,8 @@ export function CounterVoidSaleDialog({
       ) : (
         <form id="counter-void-form" className="space-y-3 text-sm" onSubmit={submit} noValidate>
           <p>
-            This cancels the sale, puts its items back in stock and voids its payments. It
-            can&apos;t be undone.
+            This cancels the sale, puts its items back in stock and voids its payments. You
+            can&apos;t undo this.
           </p>
           <label className="block">
             Reason for voiding
