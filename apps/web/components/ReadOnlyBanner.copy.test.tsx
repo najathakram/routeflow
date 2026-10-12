@@ -115,3 +115,38 @@ describe("ReadOnlyBanner layout (UX QA): stacked lines, a >= 44 px admin control
     expect(link.className).toMatch(/\bw-full\b/);
   });
 });
+
+describe("ReadOnlyBanner admin action by reason (F1/F2, billing-ux §4)", () => {
+  it.each(["subscription_cancelled", "trial_cancelled", "payment_overdue", null, "set_by_admin"])(
+    "reason %s: a 'Billing' link to /settings/billing (never 'Choose a plan'), a >= 44 px control",
+    (reason) => {
+      render(<ReadOnlyBanner status="READ_ONLY" readOnlyReason={reason} isAdmin />);
+      const link = screen.getByRole("link", { name: "Billing" });
+      expect(link).toHaveAttribute("href", "/settings/billing");
+      expect(link.className).toMatch(/min-h-\[44px\]/);
+      expect(screen.queryByRole("link", { name: "Choose a plan" })).toBeNull();
+    },
+  );
+
+  it("trial_expired keeps 'Choose a plan' (the plan choice flow), a >= 44 px control", () => {
+    render(<ReadOnlyBanner status="READ_ONLY" readOnlyReason="trial_expired" isAdmin />);
+    const link = screen.getByRole("link", { name: "Choose a plan" });
+    expect(link).toHaveAttribute("href", "/choose-plan");
+    expect(link.className).toMatch(/min-h-\[44px\]/);
+  });
+});
+
+describe("ReadOnlyBanner on the Billing page itself (S4)", () => {
+  it("hideAction: no self-link to /settings/billing", () => {
+    render(
+      <ReadOnlyBanner
+        status="READ_ONLY"
+        readOnlyReason="subscription_cancelled"
+        isAdmin
+        hideAction
+      />,
+    );
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByText(/read-only mode/)).toBeInTheDocument();
+  });
+});

@@ -12,8 +12,18 @@ afterEach(() => {
 
 describe("ReadOnlyBanner 'Choose a plan' link", () => {
   it("is cancelled while a sale is being recorded, and works when not busy", () => {
-    render(<ReadOnlyBanner status="READ_ONLY" readOnlyReason={null} compact />);
+    render(<ReadOnlyBanner status="READ_ONLY" readOnlyReason="trial_expired" compact />);
     const link = screen.getByRole("link", { name: "Choose a plan" });
+    expect(fireEvent.click(link)).toBe(true);
+    act(() => setCounterCartBusy(true));
+    expect(fireEvent.click(link)).toBe(false);
+  });
+});
+
+describe("ReadOnlyBanner 'Billing' link", () => {
+  it("is cancelled while a sale is being recorded, and works when not busy", () => {
+    render(<ReadOnlyBanner status="READ_ONLY" readOnlyReason="subscription_cancelled" compact />);
+    const link = screen.getByRole("link", { name: "Billing" });
     expect(fireEvent.click(link)).toBe(true);
     act(() => setCounterCartBusy(true));
     expect(fireEvent.click(link)).toBe(false);

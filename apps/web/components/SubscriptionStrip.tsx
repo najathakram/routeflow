@@ -45,9 +45,12 @@ export function SubscriptionStrip({
   view,
   role,
   state: given,
+  hideBillingLink = false,
 }: {
   view: SubscriptionView;
   role: BannerRole;
+  /** The page is /settings/billing itself: a "Billing" link would point at the page already open. */
+  hideBillingLink?: boolean;
   /** A caller that already computed the state passes it. */
   state?: BannerState;
 }) {
@@ -117,7 +120,7 @@ export function SubscriptionStrip({
         ))}
       </div>
       <div className="flex w-full items-center gap-2 sm:w-auto">
-        {action && action.intent === "open-billing" && (
+        {action && action.intent === "open-billing" && !hideBillingLink && (
           <a
             href="/settings/billing"
             onClick={(e) => {
@@ -126,7 +129,7 @@ export function SubscriptionStrip({
             }}
             className={cn(
               HIT,
-              "inline-flex w-full items-center justify-center rounded-ctl border border-line-strong bg-paper px-3 text-[13px] font-medium text-navy sm:w-auto",
+              "inline-flex min-w-0 flex-1 items-center justify-center rounded-ctl border border-line-strong bg-paper px-3 text-[13px] font-medium text-navy sm:flex-none",
             )}
           >
             {action.label}
@@ -136,7 +139,7 @@ export function SubscriptionStrip({
           <Button
             size="sm"
             variant="secondary"
-            className={cn(HIT, "w-full shrink-0 sm:w-auto")}
+            className={cn(HIT, "min-w-0 flex-1 sm:flex-none")}
             loading={portal.isPending}
             onClick={() => runAction(action)}
           >

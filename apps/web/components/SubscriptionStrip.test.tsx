@@ -150,7 +150,9 @@ describe("BillingShellBanner - the shell strip", () => {
     expect(within(strip).getAllByTestId("strip-line")).toHaveLength(2);
     const pay = within(strip).getByRole("button", { name: /^Pay/ });
     expect(pay.className).toMatch(/min-h-\[44px\]/);
-    expect(pay.className).toMatch(/\bw-full\b/);
+    // grows to fill the row but stays inside it: Dismiss is never pushed off the 390 px viewport (UX B4)
+    expect(pay.className).toMatch(/\bflex-1\b/);
+    expect(pay.className).not.toMatch(/\bw-full\b/);
   });
 
   it("buyers get no billing state at all, whatever the view says", () => {
@@ -387,5 +389,25 @@ describe("BillingShellBanner - review folds #2", () => {
     expect(other.container.querySelector("[data-testid=subscription-strip-reserve]")).toBeNull();
     const same = renderWithProviders(<BillingStripReserve scope="acme" />);
     expect(same.container.querySelector("[data-testid=subscription-strip-reserve]")).not.toBeNull();
+  });
+});
+
+describe("SubscriptionStrip controls stay inside a 390 px row (UX B4)", () => {
+  it("overdue strip, admin: Pay now flexes (flex-1 min-w-0) and Dismiss keeps its 44 px box beside it", async () => {
+    renderWithProviders(
+      <BillingShellBanner
+        scope="acme"
+        view={view(2, { pauseEnforced: false, payNowAmount: 149, outstandingTotal: 149 })}
+        userRole="TENANT_ADMIN"
+      />,
+    );
+    const strip = await screen.findByTestId("subscription-strip");
+    const pay = within(strip).getByRole("button", { name: "Pay now" });
+    expect(pay.className).toMatch(/\bflex-1\b/);
+    expect(pay.className).toMatch(/min-w-0/);
+    expect(pay.className).not.toMatch(/\bw-full\b/);
+    const dismiss = within(strip).getByRole("button", { name: "Dismiss" });
+    expect(dismiss.className).toMatch(/\bshrink-0\b/);
+    expect(dismiss.className).toMatch(/min-w-\[44px\]/);
   });
 });

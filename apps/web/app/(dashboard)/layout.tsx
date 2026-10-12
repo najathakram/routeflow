@@ -41,6 +41,7 @@ import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
 import { ReadOnlyGateProvider } from "@/lib/read-only-gate";
 import { BillingShellBanner, BillingStripReserve } from "@/components/BillingShellBanner";
+import { DriverReadOnlyBanner } from "@/components/DriverReadOnlyBanner";
 import { subscriptionPollInterval } from "@/lib/subscription-banner-state";
 import { useSubscription } from "@/lib/api/billing";
 import { useAuth } from "@/lib/auth-context";
@@ -1363,6 +1364,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           />
         ) : isStaff && !subscriptionFailed ? (
           <BillingStripReserve scope={billingScope} />
+        ) : user?.role === "DRIVER" ? (
+          <DriverReadOnlyBanner />
         ) : null}
         {register ? (
           <RegisterHeader

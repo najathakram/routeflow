@@ -1,6 +1,7 @@
 import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
 import { API_ERROR_CODES } from "@routeflow/types";
-import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
+import { isReadOnlyRefusal, readOnlyRefusalCopy, showReadOnlyRefusal } from "./read-only-refusal";
+import { isReadOnlyRefused, resetReadOnlyRefusedForTests } from "./read-only-gate";
 import { readOnlyLine } from "./subscription-banner-state";
 
 /**
@@ -54,5 +55,32 @@ describe("readOnlyRefusalCopy", () => {
     expect(readOnlyRefusalCopy(view({ readOnlyReason: "trial_expired" }), true)).toBe(
       `${READ_ONLY_SENTENCE} Your free trial has ended.`,
     );
+  });
+});
+
+describe("showReadOnlyRefusal (a raw apiClient write that is not a mutation)", () => {
+  afterEach(() => resetReadOnlyRefusedForTests());
+  const refusal = {
+    response: { status: 403, data: { code: "READ_ONLY", reason: "trial_expired" } },
+  };
+
+  it("a READ_ONLY refusal: the shared line (sentence + reason) as a toast, the gate flips, true is returned", () => {
+    const toast = jest.fn();
+    expect(showReadOnlyRefusal(refusal, toast)).toBe(true);
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast.mock.calls[0][0]).toMatchObject({
+      title: READ_ONLY_SENTENCE,
+      description: "Your free trial has ended.",
+      variant: "warning",
+    });
+    expect(isReadOnlyRefused()).toBe(true);
+  });
+
+  it("any other error: false, no toast, the gate untouched (the caller shows its own)", () => {
+    const toast = jest.fn();
+    expect(showReadOnlyRefusal({ response: { status: 500, data: {} } }, toast)).toBe(false);
+    expect(showReadOnlyRefusal(new Error("boom"), toast)).toBe(false);
+    expect(toast).not.toHaveBeenCalled();
+    expect(isReadOnlyRefused()).toBe(false);
   });
 });

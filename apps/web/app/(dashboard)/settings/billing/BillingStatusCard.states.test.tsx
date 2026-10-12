@@ -177,3 +177,31 @@ describe("Billing card: Pay collects what the card says (lead ruling)", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("Billing card: the contact is printed once (UX C1)", () => {
+  it("operator, read-only: the e-mail appears exactly once in the card", () => {
+    card(
+      view({
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
+        billingState: "overdue",
+        openInvoiceAmount: 149,
+        paymentMethodSummary: null,
+        nextCharge: null,
+      }),
+      "OPERATOR",
+    );
+    const c = screen.getByTestId("billing-card");
+    expect((c.textContent ?? "").split("dana@example.test")).toHaveLength(2);
+    expect(within(c).queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("operator, not read-only: the card's own contact line still appears once", () => {
+    card(
+      view({ billingState: "overdue", paymentMethodSummary: null, nextCharge: null }),
+      "OPERATOR",
+    );
+    const c = screen.getByTestId("billing-card");
+    expect((c.textContent ?? "").split("dana@example.test")).toHaveLength(2);
+  });
+});
