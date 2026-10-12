@@ -481,7 +481,12 @@ export interface BuyerInvoiceDetail {
   overpaidBy?: number | null;
   status: InvoiceStatus;
   subtotal: number;
+  /** The stored header: the regular tax PLUS the regulated levy. Show `regularTaxAmount` and `chargeLines` instead. */
   taxAmount: number;
+  /** Row 398: the regular tax alone (the header minus the lines' levy). Absent from an older server. */
+  regularTaxAmount?: number;
+  /** Row 398: one named charge per regulated category ("CRV deposit"), the same lines the PDF prints. */
+  chargeLines?: Array<{ key: string; label: string; amount: number }>;
   discount: number;
   shippingFee: number;
   total: number;

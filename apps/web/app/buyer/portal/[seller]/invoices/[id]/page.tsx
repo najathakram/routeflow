@@ -278,7 +278,19 @@ export default function BuyerInvoiceDetailPage() {
             value: fmt(Number(invoice.subtotal)),
             icon: FileText,
           },
-          { key: "tax", label: "Tax", value: fmt(Number(invoice.taxAmount)), icon: FileText },
+          {
+            key: "tax",
+            label: "Tax",
+            value: fmt(Number(invoice.regularTaxAmount ?? invoice.taxAmount)),
+            icon: FileText,
+          },
+          // Row 398: the deposit / excise is its own named charge (an older server sends none: nothing here)
+          ...(invoice.chargeLines ?? []).map((c) => ({
+            key: `charge-${c.key}`,
+            label: c.label,
+            value: fmt(Number(c.amount)),
+            icon: FileText,
+          })),
           { key: "total", label: "Total", value: fmt(Number(invoice.total)), icon: DollarSign },
           {
             key: "balance",
