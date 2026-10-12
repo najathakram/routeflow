@@ -39,7 +39,11 @@ export function readOnlyCopyForView(
 ): ReadOnlyCopy {
   return readOnlyCopy({
     reason: view?.readOnlyReason ?? null,
-    overdueAmount: view?.openInvoiceAmount ?? null,
+    // the amount Pay collects (payNowAmount), else the clocked invoice's: one source for every figure next to Pay
+    overdueAmount:
+      view?.payNowAmount != null && view.payNowAmount > 0
+        ? view.payNowAmount
+        : (view?.openInvoiceAmount ?? null),
     billingContactEmail: view?.billingContactEmail ?? null,
     isAdmin,
   });

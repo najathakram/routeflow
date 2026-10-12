@@ -86,6 +86,9 @@ export function BillingStatusCard({
               {model.subLine}
             </p>
           )}
+          {model.totalLine && (
+            <p className="mt-1 text-[13px] leading-[18px] text-slate-500">{model.totalLine}</p>
+          )}
           {model.state === "read-only" && owedCopy && (
             <p className="mt-3 text-sm leading-5 text-slate-800">{owedCopy}</p>
           )}

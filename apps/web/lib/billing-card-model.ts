@@ -1,5 +1,11 @@
 import type { SubscriptionView } from "@routeflow/types";
-import { billingMoney, owedAmount, type BannerRole } from "./subscription-banner-state";
+import {
+  billingMoney,
+  isSettling,
+  owedAmount,
+  payAmountOf,
+  type BannerRole,
+} from "./subscription-banner-state";
 
 /**
  * SA-777 / billing-ux.md: the Billing card's ONE pure model. Everything the card prints comes from the SERVER's
@@ -19,6 +25,8 @@ export interface BillingCardModel {
   amountLine: string | null;
   /** The 13/18 line under it. */
   subLine: string | null;
+  /** "Total open: $298.00 · 2 invoices": only when more is owed than the ONE invoice Pay collects. */
+  totalLine: string | null;
   /** Amber text for the sub line ("Card expires 11/26"). */
   subTone: "normal" | "amber";
   /** Admin only; never while a payment is processing. `url` is the oldest owed invoice's hosted page. */
@@ -90,7 +98,11 @@ export function billingCardModel(
   const state = stateOf(view);
   if (!state) return null;
   const admin = role === "admin";
-  const amount = owedAmount(view);
+  // Pay collects ONE invoice: every amount next to it is that invoice's. The total of all open invoices is named
+  // underneath when it is larger (and while settling, where nothing is payable, the total IS the line).
+  const total = owedAmount(view);
+  const payable = payAmountOf(view);
+  const amount = state === "processing" ? total : payable;
   const label = view.openInvoiceDueLabel ?? undefined;
   const planLine = `${view.planName} plan, ${view.cycle === "ANNUAL" ? "annual" : "monthly"}`;
 
@@ -126,25 +138,29 @@ export function billingCardModel(
   } else if (state === "processing") {
     const words = "payment processing — usually 3–5 business days";
     amountLine = amount != null ? `${billingMoney(amount)} ${words}` : cap(words);
-  } else if (view.readOnlyReason === "payment_overdue") {
+  } else if (view.readOnlyReason === "payment_overdue" && !isSettling(view)) {
     amountLine = owedLine(amount, "overdue", label);
   }
 
   // Pay: due / overdue / read-only-because-unpaid, admins only, never while a payment is settling.
-  const payable =
-    state === "due" ||
-    state === "overdue" ||
-    (state === "read-only" && view.readOnlyReason === "payment_overdue");
-  const pay =
-    admin && payable
-      ? {
-          // the button collects ONE invoice (`payNowUrl`'s): its own amount, never the total of several
-          label:
-            (view.payNowAmount ?? amount) != null
-              ? `Pay ${billingMoney((view.payNowAmount ?? amount)!)}`
-              : "Pay now",
-          ...(view.payNowUrl ? { url: view.payNowUrl } : {}),
-        }
+  const canPay =
+    admin &&
+    !isSettling(view) &&
+    (state === "due" ||
+      state === "overdue" ||
+      (state === "read-only" && view.readOnlyReason === "payment_overdue"));
+  const pay = canPay
+    ? {
+        label: payable != null && payable > 0 ? `Pay ${billingMoney(payable)}` : "Pay now",
+        ...(view.payNowUrl ? { url: view.payNowUrl } : {}),
+      }
+    : null;
+
+  // "Total open: $298.00 · 2 invoices": only when more is owed than the one invoice Pay collects.
+  const count = view.openInvoiceCount;
+  const totalLine =
+    pay && total != null && payable != null && total > payable + 0.005
+      ? `Total open: ${billingMoney(total)}${count != null && count > 1 ? ` · ${count} invoices` : ""}`
       : null;
 
   return {
@@ -152,6 +168,7 @@ export function billingCardModel(
     pill: PILL[state],
     amountLine,
     subLine,
+    totalLine,
     subTone,
     pay,
     portal: admin,

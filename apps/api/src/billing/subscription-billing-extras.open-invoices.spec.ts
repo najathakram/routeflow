@@ -194,6 +194,7 @@ describe("SubscriptionBillingExtras.read: open-invoice facts (SA-777)", () => {
     const out = await extras.read("t1", SUB);
     expect(out.outstandingTotal).toBe(298);
     expect(out.payNowAmount).toBe(149);
+    expect(out.openInvoiceCount).toBe(2); // the card says "Total open: $298.00 · 2 invoices"
   });
 
   it("no Stripe customer on the tenant row: the fields are omitted and Stripe is not called", async () => {

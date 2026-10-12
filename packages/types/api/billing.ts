@@ -112,6 +112,8 @@ export interface SubscriptionView<TDate = string> {
   payNowUrl?: string;
   /** What `payNowUrl` collects (that one invoice's amount remaining, dollars): the Pay button's own figure. */
   payNowAmount?: number;
+  /** How many open invoices make up `outstandingTotal` (the card's "Total open: $298.00 · 2 invoices" line). */
+  openInvoiceCount?: number;
 }
 
 /**

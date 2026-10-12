@@ -140,3 +140,40 @@ describe("Billing card states (SA-777)", () => {
     expect(screen.queryByText("Current")).toBeNull();
   });
 });
+
+describe("Billing card: Pay collects what the card says (lead ruling)", () => {
+  it("two open invoices: the big number is the one Pay collects, the total is underneath, in the DOM", () => {
+    card(
+      view({
+        billingState: "overdue",
+        outstandingTotal: 298,
+        payNowAmount: 149,
+        openInvoiceCount: 2,
+        openInvoiceDueLabel: "Oct 1",
+        payNowUrl: "https://pay.example/in_1",
+      }),
+    );
+    const c = screen.getByTestId("billing-card");
+    expect(within(c).getByText("$149.00 overdue since Oct 1")).toBeInTheDocument();
+    expect(within(c).getByText("Total open: $298.00 · 2 invoices")).toBeInTheDocument();
+    expect(within(c).getByRole("button", { name: "Pay $149.00" })).toBeInTheDocument();
+    expect(c.textContent).not.toContain("$298.00 overdue");
+  });
+
+  it("read-only while a payment settles: no Pay button, the portal stays", () => {
+    card(
+      view({
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
+        billingState: "processing",
+        paymentProcessing: true,
+        outstandingTotal: 149,
+      }),
+    );
+    const c = screen.getByTestId("billing-card");
+    expect(within(c).queryByRole("button", { name: /^Pay (\$|now)/ })).toBeNull();
+    expect(
+      within(c).getByRole("button", { name: "Payment methods & invoices (opens Stripe)" }),
+    ).toBeInTheDocument();
+  });
+});

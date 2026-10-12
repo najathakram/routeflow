@@ -177,9 +177,20 @@ export const owedAmount = (view: SubscriptionView): number | null => {
   return clocked != null && clocked > 0 && total == null ? clocked : null;
 };
 
+/**
+ * The amount the Pay control collects: that ONE invoice's `payNowAmount`, else (an older server) what is owed. EVERY
+ * amount printed next to Pay (the button, the strip sentence, the card's big number, the read-only reason line)
+ * comes from here, so the words and the button can never disagree (lead ruling).
+ */
+export const payAmountOf = (view: SubscriptionView): number | null =>
+  view.payNowAmount != null && view.payNowAmount > 0 ? view.payNowAmount : owedAmount(view);
+
+/** A payment is settling (a bank debit): nothing more to pay, so no Pay control invites a double payment. */
+export const isSettling = (view: SubscriptionView): boolean =>
+  view.paymentProcessing === true || view.billingState === "processing";
+
 const payAction = (view: SubscriptionView): BannerAction => {
-  // The button says what its link collects: that one invoice's amount (never the total of several)
-  const amount = view.payNowAmount ?? owedAmount(view);
+  const amount = payAmountOf(view);
   return {
     label: amount != null && amount > 0 ? `Pay ${billingMoney(amount)}` : "Pay now",
     intent: "pay",
@@ -222,16 +233,18 @@ export function subscriptionBannerState(
         cardPay: null,
       };
     }
+    // A payment already settling: nothing more to pay, so no Pay control (never invite a double payment).
+    const canPay = admin && !isSettling(view);
     return {
       kind: "read-only",
       tone: "amber",
       copy,
-      action: admin ? payAction(view) : null,
+      action: canPay ? payAction(view) : null,
       dismiss: null,
       live: "alert",
       inShell: true,
       cardLine: null,
-      cardPay: admin && view.pastDueInvoiceId ? payAction(view) : null,
+      cardPay: canPay && view.pastDueInvoiceId ? payAction(view) : null,
     };
   }
 
@@ -246,7 +259,7 @@ export function subscriptionBannerState(
     if (view.billingState === "current") return NONE;
     // No strip while a payment settles; none for a merely "due" invoice unless the pause is real (a real pause
     // must keep its escalation: the marker can be clocked before the first attempt).
-    if (view.paymentProcessing === true || view.billingState === "processing") return NONE;
+    if (isSettling(view)) return NONE;
     if (view.billingState === "due" && view.pauseEnforced !== true) return NONE;
     const elapsedHours = sinceOk ? Math.max(0, (now.getTime() - sinceOk.getTime()) / HOUR_MS) : 0;
     // B2: the last-day escalation (amber, "read-only tomorrow") exists ONLY when the server really pauses
@@ -273,7 +286,7 @@ export function subscriptionBannerState(
         kind: "overdue",
         tone: "amber",
         copy: admin
-          ? overdueSentence(owedAmount(view))
+          ? overdueSentence(payAmountOf(view))
           : "Your subscription payment is overdue. Please let your admin know.",
         action: admin ? { ...payAction(view), label: "Pay now" } : null,
         dismiss: { scope: "day", key: `grace:${view.pastDueInvoiceId ?? "open"}:${dayKey(now)}` },

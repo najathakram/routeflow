@@ -65,6 +65,8 @@ export interface BillingViewExtras {
   payNowUrl?: string;
   /** What `payNowUrl` collects (that one invoice's amount remaining, dollars): the Pay button's own figure. */
   payNowAmount?: number;
+  /** How many open invoices `outstandingTotal` sums (the card names it when it exceeds `payNowAmount`). */
+  openInvoiceCount?: number;
 }
 
 export interface BillingExtrasSubscription {
@@ -105,6 +107,7 @@ export function pickStateFacts(e: Partial<BillingViewExtras>): Partial<BillingVi
   if (e.openInvoiceDueLabel !== undefined) out.openInvoiceDueLabel = e.openInvoiceDueLabel;
   if (e.payNowUrl !== undefined) out.payNowUrl = e.payNowUrl;
   if (e.payNowAmount !== undefined) out.payNowAmount = e.payNowAmount;
+  if (e.openInvoiceCount !== undefined) out.openInvoiceCount = e.openInvoiceCount;
   return out;
 }
 
@@ -280,6 +283,7 @@ export class SubscriptionBillingExtras {
     | "openInvoiceDueLabel"
     | "payNowUrl"
     | "payNowAmount"
+    | "openInvoiceCount"
   > {
     if (!open) return {};
     const owed = owedInvoices(open);
@@ -296,6 +300,7 @@ export class SubscriptionBillingExtras {
           : null;
     return {
       outstandingTotal: fromCents(outstandingCents(open)),
+      openInvoiceCount: owed.length,
       billingState,
       paymentProcessing: billingState === "processing",
       ...(oldest && dueAt && dueAt.getTime() > 0
