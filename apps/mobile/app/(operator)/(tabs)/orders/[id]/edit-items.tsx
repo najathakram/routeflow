@@ -20,6 +20,7 @@ import { UnitPickerRow } from "../../../../../components/UnitPickerRow";
 import { OrderAppliedCredits } from "../../../../../components/OrderAppliedCredits";
 import type { UnitOption } from "../../../../../lib/unit-options";
 import { useCreditNotes, type CreditNote } from "../../../../../lib/api/credit-notes";
+import { useOrderStaleRevision } from "../../../../../components/edit-items/StaleOrderNotice";
 import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib/api/orders";
 import { useInlineReturnsAddon } from "../../../../../lib/api/addons";
 import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers";
@@ -65,6 +66,7 @@ import {
   type EditItemsSnapshot,
   type StagedEdit,
   type UnlistedDraft,
+  appliedCreditNotesPayload,
 } from "../../../../../lib/edit-items-draft";
 import { bumpScanOrder, nextFlash, type ScanFlash } from "../../../../../lib/scan-tray";
 import { ScanTray } from "../../../../../components/ScanTray";
@@ -211,6 +213,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const [restrictedBlock, setRestrictedBlock] = useState<BlockedLine[] | null>(null);
   const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
   const updateMut = useUpdateOrderItems();
+  const stale = useOrderStaleRevision(order, id); // row 262
 
   // ── Apply-credit section (mirrors NewOrderScreen) ──────────────────────────
   // Driver-gated off below (drivers don't manage credits). `creditsTouched`
@@ -818,6 +821,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         orderId: id,
         items,
         replaceAll: false,
+        ...stale.body(), // row 262: the revision this editor opened with
         // A credits-only edit still reaches the server: `items: []` +
         // `replaceAll: false` is a safe no-op for lines (the web fee-only
         // data-loss bug came from omitting replaceAll:false, not from an
@@ -832,14 +836,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         // send no amount (up to remaining) by design.
         ...(creditsTouched
           ? {
-              appliedCreditNotes: selectedCreditIds.map((cnId) => {
-                const stored = ((order as any)?.orderCreditNotes ?? []).find(
-                  (oc: any) => oc.creditNoteId === cnId,
-                );
-                return stored?.amount != null
-                  ? { creditNoteId: cnId, amount: toNumber(stored.amount) }
-                  : { creditNoteId: cnId };
-              }),
+              appliedCreditNotes: appliedCreditNotesPayload(selectedCreditIds, order),
             }
           : {}),
       },
@@ -858,6 +855,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           leaveEditor();
         },
         onError: (e: any) => {
+          if (stale.capture(e)) return; // row 262: fixed-copy notice, no toast
           const restricted = parseSellingRestricted(e);
           if (restricted) {
             setRestrictedBlock(restricted);
@@ -1177,6 +1175,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               the server lines it was diffed against changed underneath it, so
               re-sending those qty/price edits would write money against a
               different baseline. */}
+          {stale.node}
           {restoreState === "applied" ? (
             <View style={styles.restoreBanner}>
               <Ionicons name="refresh-outline" size={16} color={ios.brand} />

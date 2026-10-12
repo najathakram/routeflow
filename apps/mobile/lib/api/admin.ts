@@ -121,6 +121,8 @@ export function useAdminDashboard() {
 export interface AdminOrder {
   id: string;
   orderNumber: string;
+  /** Row 262: latest edit revision (GET /orders/:id); the editor echoes it as `expectedRevisionNumber`. */
+  revisionNumber?: number;
   status: string;
   urgent: boolean;
   subtotal: number;

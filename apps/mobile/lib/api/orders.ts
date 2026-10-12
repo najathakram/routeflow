@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { expectedRevisionBody } from "../order-revision-guard";
 import { apiClient } from "../api-client";
 import type { ChangeRequest } from "./change-requests";
 import { creditsPendingFromError } from "../order-credits-pending";
@@ -550,14 +551,17 @@ export function useUpdateOrderItems() {
        * desired set.
        */
       appliedCreditNotes?: AppliedCreditNoteInput[];
+      /** Row 262: the `revisionNumber` the editor opened with; behind the server's latest = 409 ORDER_REVISION_STALE. Omit when unknown. */
+      expectedRevisionNumber?: number;
     }
   >({
-    mutationFn: ({ orderId, items, replaceAll, appliedCreditNotes }) =>
+    mutationFn: ({ orderId, items, replaceAll, appliedCreditNotes, expectedRevisionNumber }) =>
       apiClient
         .patch(`/orders/${orderId}/items`, {
           items,
           replaceAll,
           ...(appliedCreditNotes !== undefined ? { appliedCreditNotes } : {}),
+          ...expectedRevisionBody(expectedRevisionNumber),
         })
         .then((r) => r.data),
     onSuccess: () => {

@@ -1074,3 +1074,22 @@ export function pickerTrayExpandedHeight(win: { width: number; height: number })
     Math.min(Math.round(win.height * 0.55), Math.floor(win.height - viewfinderBottom)),
   );
 }
+
+/**
+ * `appliedCreditNotes` for a touched credits section. MONEY: previously-linked credits ROUND-TRIP
+ * their stored per-credit amount (a bare {creditNoteId} re-syncs as "up to remaining"); newly
+ * selected ones send no amount. Moved verbatim out of the screen (size ratchet, row 262).
+ */
+export function appliedCreditNotesPayload(
+  selectedCreditIds: string[],
+  order: unknown,
+): { creditNoteId: string; amount?: number }[] {
+  return selectedCreditIds.map((cnId) => {
+    const stored = ((order as any)?.orderCreditNotes ?? []).find(
+      (oc: any) => oc.creditNoteId === cnId,
+    );
+    return stored?.amount != null
+      ? { creditNoteId: cnId, amount: toNumber(stored.amount) }
+      : { creditNoteId: cnId };
+  });
+}
