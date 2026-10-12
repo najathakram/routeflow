@@ -124,6 +124,8 @@ export const CATCHUP_META = {
   /** trial_one_time: the span the one-time line covers [from, to) - ISO instants. */
   from: "catchup_from",
   to: "catchup_to",
+  /** A line under Stripe's $0.50 minimum was forgiven (the session carries none): its cents, for the audit row. */
+  forgivenCents: "catchup_forgiven_cents",
 } as const;
 
 /**
