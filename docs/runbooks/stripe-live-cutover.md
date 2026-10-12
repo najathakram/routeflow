@@ -76,9 +76,10 @@ Check each item above. Record the #2446 deployment id and its `SUCCESS` status.
    - Pin its **API version to `2026-08-26.dahlia`**, the value of `STRIPE_API_VERSION` exported from `apps/api/src/billing/stripe-period.ts` (#2446).
      Payloads in any other version will not match what the handlers read.
    - Events: `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
-     `checkout.session.async_payment_failed`, `checkout.session.expired`, `invoice.payment_succeeded`,
-     `invoice.paid`, `invoice.payment_failed`, `customer.subscription.updated`,
-     `customer.subscription.deleted`.
+     `checkout.session.async_payment_failed`, `checkout.session.expired`, `invoice.paid`,
+     `invoice.payment_succeeded`, `invoice.payment_failed`, `invoice.upcoming`,
+     `customer.subscription.updated`, `customer.subscription.deleted`,
+     `customer.subscription.trial_will_end`.
    - The two `async_payment_*` events are REQUIRED: a bank-debit (ACH) Checkout completes unpaid and the
      tenant is activated only when `async_payment_succeeded` delivers the settled session. Without it the
      tenant waits for the interim `invoice.payment_succeeded` reinstatement and its checkout add-ons are
@@ -88,7 +89,7 @@ Check each item above. Record the #2446 deployment id and its `SUCCESS` status.
    `{API_PUBLIC_URL}/api/v1/settings/stripe-connect/callback`. It must be registered in **both**
    test and live mode.
 3. **Connect webhook.** Add a Connect endpoint `https://<api-host>/api/v1/billing/webhook/connect`.
-   - Pin the same API version.
+   - Pin the same API version, `2026-08-26.dahlia`.
    - Events: `payment_intent.succeeded`, `checkout.session.completed`,
      `checkout.session.expired`, `checkout.session.async_payment_failed`, `account.updated`,
      `charge.refunded`, `charge.dispute.created`, `account.application.deauthorized`.
