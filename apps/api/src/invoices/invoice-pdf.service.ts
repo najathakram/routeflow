@@ -255,10 +255,15 @@ export class InvoicePdfService {
     const key = invoicePdfStorageKey(invoiceId);
     await this.storage.upload(key, pdfBuffer, "application/pdf");
 
-    await this.prisma.invoice.update({
-      where: { id: invoiceId },
-      data: { pdfUrl: key },
-    });
+    // The key is deterministic per invoice, so write the pointer only when it changes
+    // (first render, or after an invalidation nulled it). A repeat render leaves the
+    // row, and its updatedAt, untouched.
+    if (inv.pdfUrl !== key) {
+      await this.prisma.invoice.update({
+        where: { id: invoiceId },
+        data: { pdfUrl: key },
+      });
+    }
 
     this.logger.log(`Invoice PDF stored at key: ${key}`);
     return this.storage.presignedUrl(key);

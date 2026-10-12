@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { UserRole } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { acceptsAutomatedWrites } from "../tenant/tenant-automation";
 import {
   CONNECT_OAUTH_PROVIDER,
   type ConnectAccountSnapshot,
@@ -257,9 +258,17 @@ export class StripeConnectService {
 
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true, slug: true },
+      select: { id: true, slug: true, status: true },
     });
     if (!tenant) throw new BadRequestException("tenant_not_found");
+
+    // The signed state was minted while the workspace accepted changes; its status may
+    // have moved since. Re-read it live and refuse BEFORE the code exchange, so a
+    // workspace that no longer accepts changes never gets a Stripe grant or a bound
+    // payout account. Same TRIAL/ACTIVE rule as every other system-side write.
+    if (!acceptsAutomatedWrites(tenant.status)) {
+      throw new BadRequestException("workspace_read_only");
+    }
 
     // REG-2441: resolve the PLATFORM's own account id BEFORE exchanging the
     // code — a code exchange creates a live Stripe OAuth grant, so doing the
