@@ -610,35 +610,38 @@ describeDb("Counter Sale integrity, the real chain on Postgres (row 383)", () =>
   });
 
   describe("(b2) by-key after a half sale", () => {
-    // DEFECT (P1, row 383): storedSaleState() calls an order whose only invoice is an unsent DRAFT "live", so by-key answers
-    // 200 {paymentRecorded: true} for a half sale and the till stops retrying. `it.failing` pins it red-first: it goes
-    // green the day storedSaleState treats a DRAFT invoice as "incomplete" (then flip this to a plain `it`).
-    it.failing(
-      "after the send step failed (invoice DRAFT, no payment) by-key must NOT report a finished, paid sale",
-      async () => {
-        const k = key();
-        const spy = jest
-          .spyOn(invoices, "send")
-          .mockRejectedValueOnce(new Error("send unavailable"));
-        await expect(ring(A, k)).rejects.toThrow(/send unavailable/);
-        spy.mockRestore();
+    it("PIN: a fully sent and paid sale still reads LIVE: by-key answers 200 with the stored tender", async () => {
+      const k = key();
+      const rung = await ring(A, k);
+      const read = await tenantCtx.run(A.tenantId, () => service.byKey(k));
+      expect(read.replayed).toBe(true);
+      expect(read.paymentRecorded).toBe(true);
+      expect(read.orderId).toBe(rung.orderId);
+      expect(read.balanceDue).toBe(rung.balanceDue);
+    });
 
-        const read = await tenantCtx
-          .run(A.tenantId, () => service.byKey(k))
-          .then(
-            (r) => ({ ok: true as const, r }),
-            (e) => ({ ok: false as const, e }),
-          );
-        if (read.ok) {
-          // a 200 here is only acceptable if it admits the payment is missing
-          expect(read.r.paymentRecorded).toBe(false);
-        } else {
-          expect((read.e as { response?: { code?: string } }).response?.code).toBe(
-            "COUNTER_SALE_INCOMPLETE",
-          );
-        }
-      },
-    );
+    // Row 383 (P1, FIXED here): storedSaleState() used to call an order whose only invoice is an unsent DRAFT "live", so
+    // by-key answered 200 {paymentRecorded: true} for a half sale and the till stopped retrying. It is now "incomplete".
+    it("RED-FIRST: after the send step failed (invoice DRAFT, no payment) by-key is 409 COUNTER_SALE_INCOMPLETE, and the same-key re-POST finishes it", async () => {
+      const k = key();
+      const spy = jest.spyOn(invoices, "send").mockRejectedValueOnce(new Error("send unavailable"));
+      await expect(ring(A, k)).rejects.toThrow(/send unavailable/);
+      spy.mockRestore();
+
+      await expect(tenantCtx.run(A.tenantId, () => service.byKey(k))).rejects.toMatchObject({
+        response: { code: "COUNTER_SALE_INCOMPLETE" },
+      });
+
+      const finished = await ring(A, k);
+      expect(finished.paymentRecorded).toBe(true);
+      const f = await footprint(A, k);
+      expect(f.invoices).toHaveLength(1);
+      expect(f.invoices[0].status).not.toBe("DRAFT");
+      expect(f.payments).toHaveLength(1);
+      // and now by-key reads it as the finished sale it is
+      const read = await tenantCtx.run(A.tenantId, () => service.byKey(k));
+      expect(read.paymentRecorded).toBe(true);
+    });
   });
 
   // ── (d) price, tax, rounding, balances ────────────────────────────────────────────────────────────────────────────
