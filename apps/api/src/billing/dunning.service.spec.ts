@@ -643,6 +643,83 @@ describe("DunningService", () => {
           expect(finals(d)[1].slice(0, 4)).toEqual(["t1", "DUNNING_FINAL", EP, "final"]);
         });
 
+        describe("the switch flips BETWEEN the notice lookup and the pause transaction", () => {
+          const oldLog = [
+            { milestone: "DUNNING_D0", sentAt: at(0) },
+            { milestone: "DUNNING_D3", sentAt: at(72) },
+            { milestone: "DUNNING_D6", sentAt: at(144) },
+            { milestone: "DUNNING_FINAL", sentAt: at(150) },
+          ];
+          /**
+           * A scripted switch: the answer changes when the sweep reads the tenant zone, which happens AFTER the
+           * notice lookup (runMilestones) and BEFORE the pause transaction (pauseTenantTx).
+           */
+          const scripted = (
+            first: { paused: boolean; at: Date | null },
+            gate: { paused: boolean; at: Date | null },
+            cls = "PRODUCTION",
+          ) => {
+            const p = { cur: first, unpausedReads: 0 };
+            const autoLocks = {
+              isPaused: async () => p.cur.paused,
+              unpausedSince: async () => {
+                p.unpausedReads += 1;
+                return p.cur.paused ? null : p.cur.at;
+              },
+            };
+            const d = make({
+              sweepRows: [row({ tenant: { ...row().tenant, class: cls } })],
+              logged: oldLog,
+              autoLocks,
+              txTenant: { status: "ACTIVE", readOnlyReason: null, class: cls },
+            });
+            d.prisma.tenantConfig.findUnique.mockImplementation(async () => {
+              p.cur = gate;
+              return { timezone: "UTC" };
+            });
+            return { d, p };
+          };
+
+          it("PAUSED at the notice lookup, UNPAUSED (after the final) at the gate: the stale final does not lock", async () => {
+            mode("enforced");
+            const { d } = scripted({ paused: true, at: null }, { paused: false, at: at(270) });
+            await d.svc.sweep(at(295));
+            expect(d.transition).not.toHaveBeenCalled();
+            expect(d.tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
+            expect(d.tx.tenant.updateMany).not.toHaveBeenCalled();
+          });
+
+          it("a double flip: unpaused before the final (U), then a later unpause (U' > final) at the gate: held", async () => {
+            mode("enforced");
+            const { d } = scripted({ paused: false, at: at(140) }, { paused: false, at: at(270) });
+            await d.svc.sweep(at(295));
+            expect(d.transition).not.toHaveBeenCalled();
+            expect(d.tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
+          });
+
+          it("control: the final sent after the unpause locks, and the gate re-reads the boundary inside the transaction", async () => {
+            mode("enforced");
+            const { d, p } = scripted(
+              { paused: false, at: at(140) },
+              { paused: false, at: at(140) },
+            );
+            await d.svc.sweep(at(295));
+            expect(d.transition).toHaveBeenCalledTimes(1);
+            expect(p.unpausedReads).toBeGreaterThanOrEqual(2); // the notice lookup and the gate
+          });
+
+          it("TEST class keeps locking whatever the switch says (unchanged)", async () => {
+            mode("enforced");
+            const { d } = scripted(
+              { paused: false, at: at(280) },
+              { paused: false, at: at(290) },
+              "TEST",
+            );
+            await d.svc.sweep(at(295));
+            expect(d.transition).toHaveBeenCalledTimes(1);
+          });
+        });
+
         it("an unpaused switch that reports no boundary (a bare stub) keeps today's behaviour", async () => {
           mode("enforced");
           const d = make({

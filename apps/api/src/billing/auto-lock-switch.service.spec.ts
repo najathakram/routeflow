@@ -111,6 +111,31 @@ describe("AutoLockSwitchService", () => {
       },
     );
 
+    it("setPaused(false) on an already-unpaused switch keeps the ORIGINAL `at` (it must not re-issue finals or slide locks)", async () => {
+      const was = "2026-01-05T00:00:00.000Z"; // long before now
+      let stored = `{"paused":false,"reason":"go live","by":"u1","at":"${was}"}`;
+      const prisma = {
+        $executeRaw: jest.fn(async (_s: unknown, _k: unknown, v: string) => {
+          stored = v;
+          return 1;
+        }),
+        $queryRaw: jest.fn(async () => [{ value: stored, updatedAt }]),
+      } as any;
+      const svc = new AutoLockSwitchService(prisma);
+      const again = await svc.setPaused(false, "re-confirmed", "u2");
+      expect(JSON.parse(stored)).toMatchObject({
+        paused: false,
+        reason: "re-confirmed",
+        by: "u2",
+        at: was,
+      });
+      expect(again.unpausedAt).toEqual(new Date(was));
+      // a real pause -> unpause cycle still moves the boundary
+      await svc.setPaused(true, "re-pause", "u2");
+      const reopened = await svc.setPaused(false, "go live again", "u2");
+      expect(reopened.unpausedAt!.getTime()).toBeGreaterThan(new Date(was).getTime());
+    });
+
     it("unpausedSince() on an UNPAUSED value is never cached: it re-reads the store, so a re-pause is seen at once", async () => {
       const { svc, set } = makeStore(`{"paused":false,"at":"${at}"}`);
       expect(await svc.unpausedSince()).toEqual(new Date(at));
