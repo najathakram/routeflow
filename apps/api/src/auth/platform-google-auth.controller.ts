@@ -136,8 +136,6 @@ export class PlatformGoogleAuthController {
         "google_id_taken",
         // #2495: an email match already bound to a DIFFERENT Google sub.
         "google_account_mismatch",
-        // A tenant-type state carrying a buyer invite for a seller whose workspace is not taking it.
-        "seller_unavailable",
       ]);
       if (errCode === "google_token_invalid")
         return res.redirect(`${base}/auth/callback?error=state_invalid`);

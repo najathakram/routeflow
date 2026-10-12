@@ -13,9 +13,9 @@ jest.mock("google-auth-library", () => ({
 /**
  * The invite acceptance on the Google callback follows the seller's workspace status, through the SAME rule the
  * buyer routes use (buyer/seller-status-gate.ts): a suspended or cancelled seller is refused, a read-only seller
- * follows SELLER_READ_ONLY_BUYER_GATE (dark: allowed + would-deny line; enforced: refused). A refusal writes
- * nothing, leaves the invite token on the row (so it can be accepted after reactivation), and answers the
- * callback's existing way: a redirect carrying a fixed error code.
+ * follows SELLER_READ_ONLY_BUYER_GATE (dark: allowed + would-deny line; enforced: refused). A refusal skips only the
+ * link: nothing is written to it, the invite token stays on the row (so it can be accepted after reactivation), the
+ * sign-in itself completes, and the bundle says `linked: "false"` plus `invite: "seller_unavailable"`.
  */
 
 const profile = {
@@ -92,26 +92,49 @@ describe("Google callback invite acceptance follows the seller's workspace statu
   const wouldDeny = () =>
     warn.mock.calls.map((c: any[]) => String(c[0])).filter((l: string) => /would_deny/.test(l));
 
-  it.each(["SUSPENDED", "CANCELLED"])(
-    "%s seller: no link write, the invite stays on the row, the callback is refused",
-    async (status) => {
+  const refusedCases: Array<[string, string | undefined]> = [
+    ["SUSPENDED", undefined],
+    ["CANCELLED", undefined],
+    ["READ_ONLY", "enforced"],
+  ];
+
+  it.each(refusedCases)(
+    "%s seller (gate %s): the sign-in completes, no link write, the invite stays, outcome seller_unavailable",
+    async (status, gate) => {
+      if (gate) process.env.SELLER_READ_ONLY_BUYER_GATE = gate;
       const { prisma, service } = boot(status);
-      await expect(service.findOrCreateUser(profile as any)).rejects.toThrow("seller_unavailable");
+      const result: any = await service.findOrCreateUser(profile as any);
+      expect(result.kind).toBe("buyer");
+      expect(result.accessToken).toBeTruthy();
+      expect(result.inviteOutcome).toBe("seller_unavailable");
       expect(prisma.customerLink.update).not.toHaveBeenCalled();
-      expect(prisma.buyerRefreshToken.upsert).not.toHaveBeenCalled();
+      expect(prisma.buyerRefreshToken.upsert).toHaveBeenCalled(); // the session was minted
     },
   );
 
-  it("READ_ONLY seller + gate enforced: refused, nothing written", async () => {
-    process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced";
-    const { prisma, service } = boot("READ_ONLY");
-    await expect(service.findOrCreateUser(profile as any)).rejects.toThrow("seller_unavailable");
+  it("portal context with an ACTIVE state tenant and an invite whose seller is SUSPENDED: no link", async () => {
+    // The state's tenantSlug (the seller the buyer arrived from) is ACTIVE; the invite token belongs to ANOTHER,
+    // suspended seller. The rule follows the INVITE's seller, never the state's.
+    const { prisma, service } = boot("SUSPENDED");
+    prisma.tenant.findFirst.mockResolvedValue({
+      id: "tn-state",
+      slug: "acme",
+      status: "ACTIVE",
+    } as any);
+    const result: any = await service.findOrCreateUser({
+      ...profile,
+      context: "portal",
+      tenantSlug: "acme",
+    } as any);
+    expect(result.kind).toBe("buyer");
+    expect(result.inviteOutcome).toBe("seller_unavailable");
     expect(prisma.customerLink.update).not.toHaveBeenCalled();
   });
 
   it("READ_ONLY seller + gate dark (default): accepted as before, and one would-deny line is logged", async () => {
     const { prisma, service } = boot("READ_ONLY");
-    await service.findOrCreateUser(profile as any);
+    const result: any = await service.findOrCreateUser(profile as any);
+    expect(result.inviteOutcome).toBe("accepted");
     expect(prisma.customerLink.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "link-1" },
@@ -129,41 +152,95 @@ describe("Google callback invite acceptance follows the seller's workspace statu
   it.each(["ACTIVE", "TRIAL"])("%s seller: accepted as before, no would-deny line", async (s) => {
     const { prisma, service } = boot(s);
     process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced";
-    await service.findOrCreateUser(profile as any);
+    const result: any = await service.findOrCreateUser(profile as any);
+    expect(result.inviteOutcome).toBe("accepted");
     expect(prisma.customerLink.update).toHaveBeenCalledTimes(1);
     expect(wouldDeny()).toHaveLength(0);
   });
 
-  describe("both callbacks answer a refusal with a redirect carrying a fixed error code", () => {
+  it("a sign-in with no invite carries no outcome", async () => {
+    const { service } = boot("SUSPENDED");
+    const result: any = await service.findOrCreateUser({
+      ...profile,
+      inviteToken: undefined,
+    } as any);
+    expect(result.inviteOutcome).toBeUndefined();
+  });
+
+  describe("the callback bundle reports the outcome", () => {
     const webConfig = {
       get: jest.fn((k: string) => (k === "WEB_URL" ? "http://localhost:3001" : undefined)),
     };
+    async function runTenantCallback(status: string, gate?: string) {
+      if (gate) process.env.SELLER_READ_ONLY_BUYER_GATE = gate;
+      const { prisma, service } = boot(status);
+      jest.spyOn(service, "verifyCallback").mockResolvedValue(profile as any);
+      const exchange = jest.spyOn(service, "createExchangeCode").mockResolvedValue("xchg-1");
+      const controller = new AuthController(
+        {} as any,
+        webConfig as any,
+        {} as any,
+        service,
+        {} as any,
+        {} as any,
+      );
+      const res = { redirect: jest.fn() } as any;
+      await controller.googleCallback("code", "state", "", { headers: {} } as any, res);
+      return { prisma, res, bundle: exchange.mock.calls[0]?.[0] as Record<string, string> };
+    }
 
-    it.each(["SUSPENDED", "CANCELLED"])(
-      "tenant callback, %s seller: error=seller_unavailable, no write, nothing internal in the URL",
-      async (status) => {
-        const { prisma, service } = boot(status);
-        jest.spyOn(service, "verifyCallback").mockResolvedValue(profile as any);
-        const controller = new AuthController(
-          {} as any,
-          webConfig as any,
-          {} as any,
-          service,
-          {} as any,
-          {} as any,
-        );
-        const res = { redirect: jest.fn() } as any;
-        await controller.googleCallback("code", "state", "", { headers: {} } as any, res);
+    it.each(refusedCases)(
+      "tenant callback, %s seller (gate %s): signed in, linked false, invite=seller_unavailable",
+      async (status, gate) => {
+        const { prisma, res, bundle } = await runTenantCallback(status, gate);
         expect(prisma.customerLink.update).not.toHaveBeenCalled();
-        expect(res.redirect).toHaveBeenCalledTimes(1);
-        const url = String(res.redirect.mock.calls[0][0]);
-        expect(url).toContain("error=seller_unavailable");
-        expect(url).not.toMatch(/tok-invite|accessToken|code=/);
+        expect(bundle).toMatchObject({
+          type: "BUYER",
+          linked: "false",
+          invite: "seller_unavailable",
+        });
+        expect(bundle.accessToken).toBeTruthy();
+        expect(String(res.redirect.mock.calls[0][0])).toMatch(/\?code=xchg-1$/);
       },
     );
 
+    it("tenant callback, an accepted invite: linked true and no invite flag", async () => {
+      const { bundle } = await runTenantCallback("ACTIVE");
+      expect(bundle.linked).toBe("true");
+      expect(bundle).not.toHaveProperty("invite");
+    });
+
+    it("tenant callback, an invite that was skipped (expired): linked false, no invite flag", async () => {
+      const { prisma, service } = boot("ACTIVE");
+      prisma.customerLink.findFirst.mockResolvedValue({
+        ...inviteRow("ACTIVE"),
+        inviteExpiresAt: new Date("2020-01-01T00:00:00.000Z"),
+      } as any);
+      jest.spyOn(service, "verifyCallback").mockResolvedValue(profile as any);
+      const exchange = jest.spyOn(service, "createExchangeCode").mockResolvedValue("xchg-1");
+      const controller = new AuthController(
+        {} as any,
+        webConfig as any,
+        {} as any,
+        service,
+        {} as any,
+        {} as any,
+      );
+      await controller.googleCallback(
+        "code",
+        "state",
+        "",
+        { headers: {} } as any,
+        { redirect: jest.fn() } as any,
+      );
+      const bundle = exchange.mock.calls[0][0] as Record<string, string>;
+      expect(prisma.customerLink.update).not.toHaveBeenCalled();
+      expect(bundle.linked).toBe("false");
+      expect(bundle).not.toHaveProperty("invite");
+    });
+
     it.each(["SUSPENDED", "CANCELLED"])(
-      "platform callback, %s seller: error=seller_unavailable, no write",
+      "platform callback, %s seller: no link write (the platform page takes no buyer session)",
       async (status) => {
         const { prisma, service } = boot(status);
         jest.spyOn(service, "verifyCallback").mockResolvedValue(profile as any);
@@ -171,8 +248,7 @@ describe("Google callback invite acceptance follows the seller's workspace statu
         const res = { redirect: jest.fn() } as any;
         await controller.handleCallback("code", "state", "", { headers: {} } as any, res);
         expect(prisma.customerLink.update).not.toHaveBeenCalled();
-        expect(res.redirect).toHaveBeenCalledTimes(1);
-        expect(String(res.redirect.mock.calls[0][0])).toContain("error=seller_unavailable");
+        expect(String(res.redirect.mock.calls[0][0])).toContain("error=unauthorized");
       },
     );
   });

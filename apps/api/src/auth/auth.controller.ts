@@ -439,7 +439,10 @@ export class AuthController {
           refreshToken: r.refreshToken,
           type: "BUYER",
           sellerCount: String(r.sellerCount),
-          linked: profile.inviteToken ? "true" : "false",
+          // true only when this sign-in actually activated a link (a dead, removed, expired or refused invite is not).
+          linked: r.inviteOutcome === "accepted" ? "true" : "false",
+          // The seller's workspace is not taking the invite right now: the buyer is signed in, the link was skipped.
+          ...(r.inviteOutcome === "seller_unavailable" ? { invite: "seller_unavailable" } : {}),
         };
       }
 
@@ -740,8 +743,6 @@ export class AuthController {
       "google_id_taken",
       // #2495: an email match already bound to a DIFFERENT Google sub.
       "google_account_mismatch",
-      // The invite on the sign-in belongs to a seller whose workspace is not taking it (fixed neutral copy client-side).
-      "seller_unavailable",
     ]);
     return allowed.has(raw) ? raw : "unknown_error";
   }

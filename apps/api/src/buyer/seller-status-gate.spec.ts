@@ -1,4 +1,5 @@
 import { ForbiddenException } from "@nestjs/common";
+import type { TenantStatus } from "@prisma/client";
 import {
   sellerAcceptsBuyerWrite,
   sellerReadOnlyBuyerGate,
@@ -13,7 +14,7 @@ describe("sellerAcceptsBuyerWrite", () => {
   const logger = { warn: jest.fn() };
   const ask = (sellerStatus: string, gate?: "dark" | "enforced") =>
     sellerAcceptsBuyerWrite({
-      sellerStatus,
+      sellerStatus: sellerStatus as TenantStatus,
       sellerId: "tn-1",
       gate,
       logger,
@@ -31,6 +32,14 @@ describe("sellerAcceptsBuyerWrite", () => {
   it.each(["SUSPENDED", "CANCELLED"])("%s seller: refused under BOTH gate values", (status) => {
     expect(ask(status, "dark")).toEqual({ allowed: false, reason: "SELLER_BLOCKED" });
     expect(ask(status, "enforced")).toEqual({ allowed: false, reason: "SELLER_BLOCKED" });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("a status the rule does not know is refused under both gate values (fail closed)", () => {
+    for (const status of ["PAUSED", "", "active"]) {
+      expect(ask(status, "dark")).toEqual({ allowed: false, reason: "SELLER_BLOCKED" });
+      expect(ask(status, "enforced")).toEqual({ allowed: false, reason: "SELLER_BLOCKED" });
+    }
     expect(logger.warn).not.toHaveBeenCalled();
   });
 

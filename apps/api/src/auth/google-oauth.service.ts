@@ -103,6 +103,8 @@ export type GoogleAuthResult =
       kind: "buyer";
       buyer: { id: string; email: string; name: string; hasPassword: boolean };
       sellerCount: number;
+      /** Only when the sign-in carried an invite: what became of it (see InviteOutcome). */
+      inviteOutcome?: InviteOutcome;
     } & TokenPair);
 
 // ─── Service ─────────────────────────────────────────────────────────────────
@@ -110,7 +112,7 @@ export type GoogleAuthResult =
 const NONCE_TTL_SECS = 600; // 10 minutes
 
 /** What the callback's invite step did: linked, silently skipped (dead / removed / expired), or refused by the seller's status. */
-type InviteOutcome = "accepted" | "ignored" | "seller_unavailable";
+export type InviteOutcome = "accepted" | "ignored" | "seller_unavailable";
 
 // B349: the OAuth `state` is signed so a caller cannot rewrite `linkUserId` (or any
 // other field) to attach their Google identity to someone else's account. The key is
@@ -841,16 +843,17 @@ export class GoogleOAuthService {
     }
 
     // Process an invite token embedded in the OAuth state
+    // The invite never blocks the sign-in: a link that cannot be accepted (dead, removed, expired, or refused by the
+    // seller's workspace status) is skipped and the buyer still lands signed in. The outcome rides on the result so
+    // the callback reports `linked` only when a link was really activated, and says so when the seller refused.
+    let inviteOutcome: InviteOutcome | undefined;
     if (profile.inviteToken) {
-      const outcome = await this.acceptInviteToken(profile.inviteToken, buyer.id).catch(
+      inviteOutcome = await this.acceptInviteToken(profile.inviteToken, buyer.id).catch(
         (e: Error): InviteOutcome => {
           this.logger.warn(`Invite token processing failed: ${e.message}`);
           return "ignored";
         },
       );
-      // The seller's workspace is not taking the acceptance: nothing was written and the invite is still on the
-      // row. The callback answers it with its usual redirect-with-a-code (the controllers allow-list this code).
-      if (outcome === "seller_unavailable") throw new ForbiddenException("seller_unavailable");
     }
 
     // REG-B141: the count of USABLE sellers the Google callback hands the client (web reads it
@@ -877,6 +880,7 @@ export class GoogleOAuthService {
         hasPassword: buyer.passwordSet,
       },
       sellerCount,
+      ...(inviteOutcome ? { inviteOutcome } : {}),
     };
   }
 
