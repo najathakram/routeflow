@@ -1,0 +1,104 @@
+/**
+ * SA-776 (row 382): the ONE composition of the read-only copy for web and mobile.
+ *
+ *   sentence      the owner's fixed sentence, verbatim;
+ *   reasonLine    one line from the tenant's `readOnlyReason` (mapped copy, NEVER server text); null when none;
+ *   contactLine   "To restore access, contact {name} ({email})." for a non-admin; null for a TENANT_ADMIN (who gets
+ *                 the action - Pay / Choose a plan - instead) and when neither name nor email is known.
+ *
+ * Pure: no React, no DOM, no network. Web (`apps/web/lib/read-only-copy.ts`) and mobile
+ * (`apps/mobile/lib/read-only-copy.ts`) re-export this module through a thin wrapper, so the strings cannot drift.
+ * The buyer-side refusal copy (`SELLER_UNAVAILABLE`) is a different surface and is NOT built here.
+ */
+
+export const READ_ONLY_SENTENCE =
+  "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.";
+
+/** The `readOnlyReason` values the server records (tenant-status writers); anything else maps to no reason line. */
+export type ReadOnlyReason =
+  "trial_expired" | "trial_cancelled" | "subscription_cancelled" | "payment_overdue";
+
+export interface ReadOnlyCopyInput {
+  /** `SubscriptionView.readOnlyReason`: null / unknown = set by an administrator (no reason line). */
+  reason?: string | null;
+  /** `SubscriptionView.openInvoiceAmount`, in dollars. Absent (null) falls back to the amount-free line. */
+  overdueAmount?: number | null;
+  /** The billing contact's DISPLAY name - never a username. */
+  billingContactName?: string | null;
+  billingContactEmail?: string | null;
+  /** A TENANT_ADMIN sees the action instead of the contact line. */
+  isAdmin?: boolean;
+  /** The caller's money formatter (web passes `formatMoney`); defaults to en-US USD, "$1,490.00". */
+  formatMoney?: (dollars: number) => string;
+}
+
+export interface ReadOnlyCopy {
+  sentence: string;
+  reasonLine: string | null;
+  contactLine: string | null;
+  /** The non-null lines in reading order: sentence, reason, contact. */
+  lines: string[];
+  /** `lines` joined with a single space, for a toast title / `title` attribute. */
+  text: string;
+}
+
+function defaultMoney(n: number): string {
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
+  } catch {
+    return `$${n.toFixed(2)}`;
+  }
+}
+
+/** The one reason line for a `readOnlyReason`, or null (set by an administrator / unknown value). */
+export function readOnlyReasonLine(
+  reason: string | null | undefined,
+  overdueAmount?: number | null,
+  formatMoney: (dollars: number) => string = defaultMoney,
+): string | null {
+  switch (reason) {
+    case "payment_overdue":
+      return typeof overdueAmount === "number" && Number.isFinite(overdueAmount)
+        ? `Your subscription payment of ${formatMoney(overdueAmount)} is overdue.`
+        : "Your subscription payment is overdue.";
+    case "trial_expired":
+      return "Your free trial has ended.";
+    case "subscription_cancelled":
+    case "trial_cancelled":
+      return "Your subscription was cancelled.";
+    default:
+      return null;
+  }
+}
+
+/** "To restore access, contact Dana (dana@acme.test)." / "... contact Dana." / "... contact dana@acme.test." / null. */
+export function readOnlyContactLine(
+  name: string | null | undefined,
+  email: string | null | undefined,
+): string | null {
+  const n = name?.trim() || null;
+  const e = email?.trim() || null;
+  if (n && e) return `To restore access, contact ${n} (${e}).`;
+  if (n) return `To restore access, contact ${n}.`;
+  if (e) return `To restore access, contact ${e}.`;
+  return null;
+}
+
+export function readOnlyCopy(input: ReadOnlyCopyInput = {}): ReadOnlyCopy {
+  const reasonLine = readOnlyReasonLine(input.reason, input.overdueAmount, input.formatMoney);
+  const contactLine = input.isAdmin
+    ? null
+    : readOnlyContactLine(input.billingContactName, input.billingContactEmail);
+  const lines = [READ_ONLY_SENTENCE, reasonLine, contactLine].filter((l): l is string => !!l);
+  return {
+    sentence: READ_ONLY_SENTENCE,
+    reasonLine,
+    contactLine,
+    lines,
+    text: lines.join(" "),
+  };
+}
+
+export function readOnlyCopyText(input: ReadOnlyCopyInput = {}): string {
+  return readOnlyCopy(input).text;
+}

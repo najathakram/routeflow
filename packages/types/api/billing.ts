@@ -71,8 +71,11 @@ export interface SubscriptionView<TDate = string> {
   pastDueSince?: TDate | null;
   /** The Stripe invoice the tenant owes; the Pay action is shown whenever this is set. */
   pastDueInvoiceId?: string | null;
-  /** The oldest active TENANT_ADMIN's name - who operators are told to ask. */
+  /** The oldest active TENANT_ADMIN's DISPLAY name (never a username; null when none is on file) - who
+   *  operators are told to ask. */
   billingContactName?: string | null;
+  /** The same admin's e-mail (SA-776); null when none, or when it is an internal sentinel address. */
+  billingContactEmail?: string | null;
   /** The owed invoice's amount remaining, in dollars (always printed as money). */
   openInvoiceAmount?: number | null;
   /** The card autopay will charge (brand / last4 / expiry); null when none or not a card. */
