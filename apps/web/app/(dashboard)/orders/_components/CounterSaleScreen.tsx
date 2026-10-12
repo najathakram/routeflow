@@ -69,6 +69,7 @@ import {
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
 import { CounterReceiptBody } from "./CounterReceiptBody";
+import { CounterCustomerCredit } from "./CounterCustomerCredit";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
@@ -958,6 +959,9 @@ export function CounterSaleScreen() {
                 setCustomerSearch(e.target.value);
               }}
             />
+            {customer && !customer.isWalkIn ? (
+              <CounterCustomerCredit customerId={customer.id} />
+            ) : null}
             {reprice.noteText ? (
               <p
                 role="status"
