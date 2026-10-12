@@ -178,6 +178,102 @@ describe("SellingRestrictionsService.evaluate", () => {
     expect(prisma.customer.findFirst).not.toHaveBeenCalled();
   });
 
+  describe("system walk-in at the counter is judged by the TENANT's business state (CQ-04, ruling a)", () => {
+    const walkInRow = { isWalkIn: true, addresses: [] as unknown[] };
+    const stateRule = (states: string[]) => dbRule({ states, reason: "State ban" });
+    const businessState = (state: string | null) =>
+      prisma.tenantConfig.findUnique.mockResolvedValue(state === null ? null : { state });
+    const sale = (customerId: string | null = "walk-in-id") =>
+      service.evaluate(T, customerId, [{ productId: "p1" }], { at: NOW, channel: "STAFF" });
+
+    beforeEach(() => {
+      enable(true);
+      withProduct();
+      prisma.systemConfig.findFirst.mockResolvedValue(null);
+    });
+
+    it("a covered product in an ALLOWED state is sold (no block)", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([stateRule(["TX"])]);
+      prisma.customer.findFirst.mockResolvedValue(walkInRow);
+      businessState("FL");
+      expect((await sale()).outcome).toBe("ALLOW");
+    });
+
+    it("a PROHIBITED state blocks with the rule's own reason", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([stateRule(["TX"])]);
+      prisma.customer.findFirst.mockResolvedValue(walkInRow);
+      businessState("TX");
+      const res = await sale();
+      expect(res.outcome).toBe("BLOCK");
+      expect(res.reasons[0]).toMatchObject({
+        reason: "STATE_BAN",
+        state: "TX",
+        ruleId: "r1",
+        categoryName: "THC",
+      });
+    });
+
+    it("a state typed as a name resolves like a code; an unusable value is no state", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([stateRule(["TX"])]);
+      prisma.customer.findFirst.mockResolvedValue(walkInRow);
+      businessState("Texas");
+      expect((await sale()).outcome).toBe("BLOCK");
+      businessState("ZZ");
+      expect((await sale()).outcome).toBe("INDETERMINATE");
+    });
+
+    it("falls back to the legacy settings.state when the tenant config has none (Settings > Business's own read)", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([stateRule(["TX"])]);
+      prisma.customer.findFirst.mockResolvedValue(walkInRow);
+      prisma.tenantConfig.findUnique.mockResolvedValue({ state: null });
+      prisma.systemConfig.findFirst.mockResolvedValue({ value: "TX" });
+      expect((await sale()).outcome).toBe("BLOCK");
+    });
+
+    it("a tenant with NO business state: the walk-in stays INDETERMINATE (unchanged)", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([stateRule(["TX"])]);
+      prisma.customer.findFirst.mockResolvedValue(walkInRow);
+      businessState(null);
+      expect((await sale()).outcome).toBe("INDETERMINATE");
+    });
+
+    it("a NAMED customer without an address is still INDETERMINATE and never gets the tenant state", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([stateRule(["TX"])]);
+      prisma.customer.findFirst.mockResolvedValue({ isWalkIn: null, addresses: [] });
+      businessState("FL");
+      expect((await sale("c1")).outcome).toBe("INDETERMINATE");
+      expect(prisma.tenantConfig.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("a customer NAMED 'Walk-in' that is not the system customer does NOT get the tenant state", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([stateRule(["TX"])]);
+      prisma.customer.findFirst.mockResolvedValue({
+        businessName: "Walk-in",
+        isWalkIn: false,
+        addresses: [],
+      });
+      businessState("FL");
+      expect((await sale("lookalike")).outcome).toBe("INDETERMINATE");
+      expect(prisma.tenantConfig.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("the system flag is read in the customer's own tenant-scoped query", async () => {
+      prisma.sellingRestriction.findMany.mockResolvedValue([stateRule(["TX"])]);
+      prisma.customer.findFirst.mockResolvedValue(walkInRow);
+      businessState("FL");
+      await sale();
+      expect(prisma.customer.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "walk-in-id", tenantId: T },
+          select: expect.objectContaining({ isWalkIn: true }),
+        }),
+      );
+      expect(prisma.tenantConfig.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { tenantId: T } }),
+      );
+    });
+  });
+
   it("honours the tenant's shipping-first precedence", async () => {
     enable(true, true);
     withProduct();
@@ -748,6 +844,12 @@ describe("SellingRestrictionsService.evaluate", () => {
         return sorted.slice(start, start + args.take);
       });
 
+    beforeEach(() => {
+      // a tenant that HAS a business state (Settings > Business); the missing case is its own test below
+      prisma.tenantConfig.findUnique.mockResolvedValue({ state: "TX" });
+      prisma.systemConfig.findFirst.mockResolvedValue(null);
+    });
+
     it("counts every bucket, with the switch still OFF (readiness is asked BEFORE enabling)", async () => {
       enable(false);
       serveCustomers([
@@ -773,6 +875,7 @@ describe("SellingRestrictionsService.evaluate", () => {
         addressesMissingStateCode: 2, // null-state + bogus-state (no USABLE code)
         addressesNeedingReview: 1,
         indeterminateCustomerCount: 6, // everyone except the two resolvable customers
+        businessStateMissing: false,
       });
     });
 
@@ -792,6 +895,7 @@ describe("SellingRestrictionsService.evaluate", () => {
         addressesMissingStateCode: 0,
         addressesNeedingReview: 0,
         indeterminateCustomerCount: 0,
+        businessStateMissing: false,
       });
     });
 
@@ -853,6 +957,46 @@ describe("SellingRestrictionsService.evaluate", () => {
       });
     });
 
+    describe("the tenant's own business state (counter sales judge the walk-in by it)", () => {
+      const resolvable = [customer("ok", [addr()])];
+
+      it("a tenant with no business state is NOT READY, the walk-in never the cause", async () => {
+        enable(true);
+        prisma.tenantConfig.findUnique.mockResolvedValue(null);
+        serveCustomers(resolvable);
+        const r = await service.getEnableReadiness(T);
+        expect(r).toMatchObject({
+          ready: false,
+          businessStateMissing: true,
+          customersWithoutAddress: 0,
+          indeterminateCustomerCount: 0,
+        });
+        await expect(service.assertReadyToEnable(T)).rejects.toMatchObject({
+          response: {
+            code: "SELLING_RESTRICTIONS_NOT_READY",
+            readiness: { businessStateMissing: true },
+          },
+        });
+      });
+
+      it("a business state the engine cannot read counts as missing", async () => {
+        enable(true);
+        prisma.tenantConfig.findUnique.mockResolvedValue({ state: "  " });
+        serveCustomers(resolvable);
+        expect((await service.getEnableReadiness(T)).businessStateMissing).toBe(true);
+      });
+
+      it("a business state in the legacy settings.state counts as present", async () => {
+        enable(true);
+        prisma.tenantConfig.findUnique.mockResolvedValue(null);
+        prisma.systemConfig.findFirst.mockResolvedValue({ value: "fl" });
+        serveCustomers(resolvable);
+        const r = await service.getEnableReadiness(T);
+        expect(r.businessStateMissing).toBe(false);
+        expect(r.ready).toBe(true);
+      });
+    });
+
     describe("system walk-in customer (CQ-04): excluded by predicate, never by name", () => {
       type Row = {
         id: string;
@@ -890,6 +1034,7 @@ describe("SellingRestrictionsService.evaluate", () => {
           addressesMissingStateCode: 0,
           addressesNeedingReview: 0,
           indeterminateCustomerCount: 0,
+          businessStateMissing: false,
         });
       });
 
@@ -982,6 +1127,7 @@ describe("SellingRestrictionsService.evaluate", () => {
           addressesMissingStateCode: 0,
           addressesNeedingReview: 0,
           indeterminateCustomerCount: 1,
+          businessStateMissing: false,
         },
       });
     });

@@ -12,6 +12,7 @@ import { assertAmbientTenant } from "../common/ambient-tenant";
 import { normalizeUsState } from "../common/us-states";
 import { excludeWalkIn } from "../customers/walk-in-protected";
 import { PrismaService } from "../prisma/prisma.service";
+import { tenantBusinessState } from "./tenant-business-state";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import {
   activeRuleWhere,
@@ -75,6 +76,11 @@ export interface EnableReadiness {
   addressesNeedingReview: number;
   /** Customers `resolveGoverningState` (the engine's own) leaves UNRESOLVED under the tenant's precedence. */
   indeterminateCustomerCount: number;
+  /**
+   * The tenant has NO usable business-address state (Settings > Business). A counter sale to the system walk-in is judged
+   * by it, so without one every STATE rule on a walk-in sale is INDETERMINATE: the tenant is not ready.
+   */
+  businessStateMissing: boolean;
 }
 
 /** The address columns the governing-state resolver reads. */
@@ -220,6 +226,7 @@ export class SellingRestrictionsService {
     assertAmbientTenant(this.prisma, tenantId, "SellingRestrictionsService");
     const { addressPrecedence } = await this.getPolicy(tenantId);
     const db = this.prisma.forTenant();
+    const businessStateMissing = (await tenantBusinessState(this.prisma, tenantId)) === null;
 
     const tally = {
       customerCount: 0,
@@ -268,7 +275,12 @@ export class SellingRestrictionsService {
       if (page.length < ENABLE_READINESS_PAGE_SIZE) break;
       cursor = page[page.length - 1].id;
     }
-    return { ready: !truncated && tally.indeterminateCustomerCount === 0, truncated, ...tally };
+    return {
+      ready: !truncated && tally.indeterminateCustomerCount === 0 && !businessStateMissing,
+      truncated,
+      ...tally,
+      businessStateMissing,
+    };
   }
 
   /**
@@ -373,12 +385,20 @@ export class SellingRestrictionsService {
       const customer = await db.customer.findFirst({
         where: { id: customerId, tenantId },
         select: {
+          isWalkIn: true,
           addresses: { select: ADDRESS_SELECT },
         },
       });
-      governingState = customer
-        ? resolveGoverningState(customer.addresses, policy.addressPrecedence)
-        : UNRESOLVED_STATE;
+      if (customer?.isWalkIn === true) {
+        // The tenant's system walk-in (the SYSTEM flag, never the name) has no address of its own: a counter sale is
+        // judged where the store is. No usable business state stays UNRESOLVED (INDETERMINATE), as before.
+        const state = await tenantBusinessState(this.prisma, tenantId);
+        governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
+      } else {
+        governingState = customer
+          ? resolveGoverningState(customer.addresses, policy.addressPrecedence)
+          : UNRESOLVED_STATE;
+      }
     }
 
     const ruleCategoryIds = [
