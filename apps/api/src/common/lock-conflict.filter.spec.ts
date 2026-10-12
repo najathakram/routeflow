@@ -388,7 +388,8 @@ describe("registerGlobalExceptionFilters (real Nest dispatch)", () => {
     const mod = await Test.createTestingModule({ controllers: [ThrowController] }).compile();
     app = mod.createNestApplication();
     registerGlobalExceptionFilters(app);
-    await app.init();
+    // #2267: bind to loopback first (supertest otherwise calls listen(0) per request on every interface)
+    await app.listen(0, "127.0.0.1");
   });
   afterAll(async () => app.close());
   beforeEach(() => {

@@ -73,7 +73,9 @@ const BASELINE: Record<string, number> = {
   "buyer/buyer.controller.ts": 1,
   "buyer/replenishment.service.ts": 1,
   "buyer/buyer-catalog.service.ts": 3,
-  "inventory/inventory.service.ts": 4,
+  // 3 since the count line's in-tx product read became `live` (SA-767 L-2.4 A): upsertStockCountLine reads
+  // `live.unitsPerBox` to rebuild the boxes/pieces split (a count quantity, not a line factor).
+  "inventory/inventory.service.ts": 3,
   // SA-079: loadProductPackNow's ONE read is classifySaleAxis's boxed-GATE fallback for a
   // box-unaware line with no unitsPerBox snapshot of its own — it derives no line factor,
   // quantity or price. But it is not inert: its output decides whether a return's SALE row is
