@@ -81,4 +81,16 @@ describe("usePosFinish", () => {
     expect((err as PosFinishError).step).toBe("confirm");
     expect(apiClient.post).not.toHaveBeenCalled();
   });
+
+  it("a refused PENDING step on an order that already reads CONFIRMED does not send CONFIRMED again", async () => {
+    (apiClient.patch as jest.Mock).mockRejectedValueOnce({ response: { status: 409 } });
+    (apiClient.get as jest.Mock).mockResolvedValue({ data: { id: "o1", status: "CONFIRMED" } });
+    (apiClient.post as jest.Mock).mockResolvedValue({ data: {} });
+    const { result } = renderHook(() => usePosFinish(), { wrapper: wrapper(new QueryClient()) });
+    await act(async () => {
+      await result.current.mutateAsync({ orderId: "o1", invoice: true, fromStatus: "DRAFT" });
+    });
+    expect((apiClient.patch as jest.Mock).mock.calls.map((c) => c[1].status)).toEqual(["PENDING"]);
+    expect(apiClient.post).toHaveBeenCalledWith("/invoices/from-order/o1");
+  });
 });

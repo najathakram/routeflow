@@ -83,14 +83,14 @@ export class PosFinishError extends Error {
  * PENDING or CONFIRMED (someone else promoted it, or a retry). A failure names the step so the caller can say which
  * half is missing (the order page offers "Create invoice" when only the second failed).
  */
-async function promotedAlready(orderId: string, e: unknown): Promise<boolean> {
+async function promotedAlready(orderId: string, e: unknown): Promise<Order | null> {
   const status = (e as { response?: { status?: number } } | null)?.response?.status;
-  if (status !== 400 && status !== 409) return false;
+  if (status !== 400 && status !== 409) return null;
   try {
-    const cur = (await apiClient.get(`/orders/${orderId}`)).data as { status?: string } | undefined;
-    return cur?.status === "PENDING" || cur?.status === "CONFIRMED";
+    const cur = (await apiClient.get(`/orders/${orderId}`)).data as Order | undefined;
+    return cur?.status === "PENDING" || cur?.status === "CONFIRMED" ? cur : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -104,7 +104,7 @@ export function usePosFinish() {
   >({
     meta: { localErrorToast: true }, // the Create Order modal toasts which half is missing
     mutationFn: async ({ orderId, invoice, fromStatus }) => {
-      let order: Order;
+      let order: Order | undefined;
       try {
         // The API's table has no DRAFT -> CONFIRMED edge (DRAFT -> PENDING only), so a merge into an open
         // DRAFT promotes it first. Not idempotent: a refused PENDING (409/400) is treated as done only when
@@ -113,10 +113,14 @@ export function usePosFinish() {
           try {
             await apiClient.patch(`/orders/${orderId}/status`, { status: "PENDING" });
           } catch (e) {
-            if (!(await promotedAlready(orderId, e))) throw e;
+            const cur = await promotedAlready(orderId, e);
+            if (!cur) throw e;
+            // Already CONFIRMED (a retry): CONFIRMED -> CONFIRMED is a 400, so do not send it again.
+            if (cur.status === "CONFIRMED") order = cur;
           }
         }
-        order = (await apiClient.patch(`/orders/${orderId}/status`, { status: "CONFIRMED" })).data;
+        order ??= (await apiClient.patch(`/orders/${orderId}/status`, { status: "CONFIRMED" }))
+          .data;
       } catch (e) {
         throw new PosFinishError("confirm", e);
       }
@@ -127,7 +131,7 @@ export function usePosFinish() {
           throw new PosFinishError("invoice", e);
         }
       }
-      return order;
+      return order as Order;
     },
     onSettled: (_d, _e, vars) => {
       qc.invalidateQueries({ queryKey: ["orders"] });
