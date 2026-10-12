@@ -21,6 +21,7 @@ import {
   surfaceText,
   windowText,
 } from "@/lib/restriction-rules";
+import { WriteButton } from "@/lib/read-only-gate";
 import { LiftLimitsDialog } from "@/components/portal-limits/LiftLimitsDialog";
 import { LiftRuleDialog } from "./_components/LiftRuleDialog";
 import { RuleFormDialog } from "./_components/RuleFormDialog";
@@ -155,7 +156,7 @@ export default function RestrictionRulesPage() {
             >
               Clear
             </button>
-            <Button onClick={() => setConfirmLift(true)}>Lift {picked.size}</Button>
+            <WriteButton onClick={() => setConfirmLift(true)}>Lift {picked.size}</WriteButton>
           </div>
         </div>
       )}
@@ -173,7 +174,10 @@ export default function RestrictionRulesPage() {
             key={f.value}
             type="button"
             aria-pressed={filter === f.value}
-            onClick={() => setFilter(f.value)}
+            onClick={() => {
+              setFilter(f.value);
+              setPicked(new Set());
+            }}
             className={cn(
               "rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
               filter === f.value

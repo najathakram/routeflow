@@ -84,3 +84,11 @@ export function useRefreshUnknownState() {
   const qc = useQueryClient();
   return () => refresh(qc);
 }
+
+/** The Undo as a plain call: the bucket that raised it may have unmounted by the time it is clicked. */
+export async function undoBulkStateRequest(body: {
+  changedAddressIds: string[];
+}): Promise<{ restored: number }> {
+  const { data } = await apiClient.post(`${BASE}/bulk-state/undo`, body);
+  return data;
+}

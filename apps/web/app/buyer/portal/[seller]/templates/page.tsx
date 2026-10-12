@@ -232,12 +232,16 @@ export default function BuyerTemplatesPage() {
             orders
           </button>
           .
-          {skippedNote && (
-            <span data-testid="reorder-skipped-note" className="ml-1 text-navy">
-              {skippedNote}
-            </span>
-          )}
         </div>
+      )}
+      {skippedNote && (
+        <p
+          role="status"
+          data-testid="reorder-skipped-note"
+          className="mb-4 rounded-lg bg-surface-raised px-4 py-2.5 text-sm text-navy"
+        >
+          {skippedNote}
+        </p>
       )}
 
       {/* Templates list */}

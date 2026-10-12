@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Ban } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
+import { useReadOnlyGate } from "@/lib/read-only-gate";
 import { useProductLimits } from "@/lib/api/portal-limits";
 import { LiftLimitsDialog } from "@/components/portal-limits/LiftLimitsDialog";
 import { limitChipText, limitViaText } from "@/lib/portal-limits";
@@ -16,6 +17,7 @@ export function PortalLimitsRow({ productId }: { productId: string }) {
   const role = useAuth().user?.role;
   const canLift = role === "TENANT_ADMIN" || role === "OPERATOR";
   const { data, isLoading, isError } = useProductLimits(productId);
+  const readOnly = useReadOnlyGate().readOnly;
   const [lifting, setLifting] = React.useState<string | null>(null);
 
   if (isLoading) return null;
@@ -43,7 +45,8 @@ export function PortalLimitsRow({ productId }: { productId: string }) {
                 {canLift && (
                   <button
                     type="button"
-                    className="text-[11px] font-medium text-brand-600 hover:underline"
+                    disabled={readOnly}
+                    className="text-[11px] font-medium text-brand-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={() => setLifting(l.id)}
                   >
                     Lift
@@ -54,7 +57,11 @@ export function PortalLimitsRow({ productId }: { productId: string }) {
           })}
         </ul>
       )}
-      <LiftLimitsDialog ids={lifting ? [lifting] : []} onClose={() => setLifting(null)} />
+      <LiftLimitsDialog
+        ids={lifting ? [lifting] : []}
+        inheritedFrom={limits.find((l) => l.id === lifting && l.via !== "PRODUCT")?.viaName ?? null}
+        onClose={() => setLifting(null)}
+      />
     </div>
   );
 }

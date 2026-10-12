@@ -42,10 +42,10 @@ export function StatePicker({
               <button
                 type="button"
                 onClick={() => toggle(code)}
-                aria-label={`Remove ${code}`}
+                aria-label={`Remove ${stateName(code.toUpperCase())}`}
                 className="rounded-full bg-danger-bg px-2 py-0.5 text-xs font-semibold text-danger"
               >
-                {stateName(code)} ×
+                {stateName(code.toUpperCase())} ×
               </button>
             </li>
           ))}

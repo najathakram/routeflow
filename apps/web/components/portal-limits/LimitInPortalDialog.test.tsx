@@ -90,6 +90,42 @@ describe("LimitInPortalDialog (C a-d)", () => {
     expect(within(dialog).getByText("Limit “Vapes” in your portal")).toBeInTheDocument();
   });
 
+  it("the category live line is the spec's sentence", async () => {
+    const user = userEvent.setup();
+    open({
+      scope: { kind: "category", categoryId: "c1", categoryName: "Vapes", productCount: 38 },
+    });
+    await pickTexas(user);
+    expect(
+      screen.getByText(
+        "Customers in Texas won't see the 38 products labelled Vapes, or any you label later.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("a legal ban stops promising that staff can still sell them", async () => {
+    const user = userEvent.setup();
+    open();
+    await pickTexas(user);
+    await user.click(screen.getByRole("checkbox", { name: /legal ban/i }));
+    expect(screen.queryByText(/your staff can still sell them/i)).toBeNull();
+    expect(screen.getByText(/staff orders and invoices are blocked too/i)).toBeInTheDocument();
+  });
+
+  it("when every product already had the limit: says so, and offers no Undo", async () => {
+    const user = userEvent.setup();
+    mockPost.mockResolvedValueOnce({ data: { created: 0, skipped: 12, createdIds: [] } });
+    open();
+    await pickTexas(user);
+    await user.click(screen.getByRole("button", { name: "Hide from Texas" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    const shown = toast.mock.calls[0][0];
+    expect(shown.title).toBe(
+      "Nothing changed. 12 products were already hidden from Texas portal customers.",
+    );
+    expect(shown.action).toBeUndefined();
+  });
+
   it("(b) the primary is disabled until a state is chosen", async () => {
     const user = userEvent.setup();
     open();
@@ -179,7 +215,7 @@ describe("LimitInPortalDialog (C a-d)", () => {
     expect(shown.duration).toBe(10_000);
     expect(onDone).toHaveBeenCalled();
 
-    await shown.action.onClick();
+    shown.action.onClick();
     await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(2));
     expect(mockPost.mock.calls[1]).toEqual([
       "/selling-restrictions/lift-batch",

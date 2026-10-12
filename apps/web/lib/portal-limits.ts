@@ -76,19 +76,22 @@ export function primaryLabel(states: string[] | null): string {
   return `Hide from ${whoLabel(states)}`;
 }
 
-export function liveLine(scope: LimitScope, states: string[] | null): string {
-  const what =
-    scope.kind === "category"
-      ? `the ${scope.productCount} products labelled ${scope.categoryName}, or any you label later`
-      : `these ${scope.productIds.length} products`;
-  if (states === null)
-    return `No portal customer will see ${what} in the portal. Your staff can still sell them.`;
-  if (states.length === 0) return "";
+export function liveLine(scope: LimitScope, states: string[] | null, legalBan = false): string {
+  if (states !== null && states.length === 0) return "";
   const who =
-    states.length === 1
-      ? `Customers in ${stateLabel(states[0])}`
-      : `Customers in ${states.map(stateLabel).join(", ")}`;
-  return `${who} won't see ${what} in the portal. Your staff can still sell them.`;
+    states === null
+      ? "No portal customer"
+      : states.length === 1
+        ? `Customers in ${stateLabel(states[0])}`
+        : `Customers in ${states.map(stateLabel).join(", ")}`;
+  if (scope.kind === "category")
+    return `${who} won't see the ${scope.productCount} products labelled ${scope.categoryName}, or any you label later.`;
+  const what = `these ${scope.productIds.length} products`;
+  // A legal ban (surface ALL) blocks staff too, so the line must not promise staff can still sell them.
+  const tail = legalBan
+    ? "Staff orders and invoices are blocked too."
+    : "Your staff can still sell them.";
+  return `${who} won't see ${what} in the portal. ${tail}`;
 }
 
 export function noStateLine(count: number): string {
@@ -103,15 +106,22 @@ export function doneTitle(
 ): string {
   const audience =
     states === null ? "all portal customers" : `${whoLabel(states)} portal customers`;
-  if (scope.kind === "category") return `“${scope.categoryName}” hidden from ${audience}`;
+  if (scope.kind === "category")
+    return created === 0
+      ? `“${scope.categoryName}” was already hidden from ${audience}`
+      : `“${scope.categoryName}” hidden from ${audience}`;
+  if (created === 0)
+    return `Nothing changed. ${plural(skipped, "product was", "products were")} already hidden from ${audience}.`;
   const base = `${plural(created, "product", "products")} hidden from ${audience}`;
   return skipped > 0 ? `${base}. ${skipped} already ${skipped === 1 ? "was" : "were"}.` : base;
 }
 
 export function undoneTitle(states: string[] | null, lifted: number, scope: LimitScope): string {
-  const where = states === null ? "everyone" : (whoLabel(states) ?? "");
   if (scope.kind === "category") return `“${scope.categoryName}” limit removed`;
-  return `${where} limit removed from ${plural(lifted, "product", "products")}`;
+  const what = plural(lifted, "product", "products");
+  return states === null
+    ? `Limit removed from ${what}`
+    : `${whoLabel(states)} limit removed from ${what}`;
 }
 
 /** The request body for a dialog choice (pure, so the surface/jurisdiction rule has one home). */

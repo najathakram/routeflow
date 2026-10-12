@@ -56,7 +56,7 @@ export function AddFullAddressSheet({
       onClose={onClose}
       title={customer ? `Add address for ${customer.name}` : "Add address"}
       scroll
-      className="left-auto right-0 top-0 h-full max-h-full w-full max-w-md translate-x-0 translate-y-0 rounded-none"
+      className="left-auto right-0 top-0 h-full max-h-full w-full max-w-md translate-x-0 translate-y-0 rounded-none data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right data-[state=closed]:zoom-out-100 data-[state=open]:zoom-in-100"
     >
       <form onSubmit={submit} noValidate className="space-y-3" data-testid="add-full-address-sheet">
         <label className="block text-sm font-medium text-navy">

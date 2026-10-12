@@ -41,3 +41,12 @@ export function useProductLimits(productId: string) {
     enabled: !!productId,
   });
 }
+
+/**
+ * The same lift as `useLiftBatch`, as a plain call. A toast's Undo outlives the component that raised it (the selection
+ * is cleared, the dialog unmounts), and a hook's per-call callbacks do not run on an unmounted observer.
+ */
+export async function liftBatchRequest(body: LiftBatchRequest): Promise<{ lifted: number }> {
+  const { data } = await apiClient.post("/selling-restrictions/lift-batch", body);
+  return data;
+}

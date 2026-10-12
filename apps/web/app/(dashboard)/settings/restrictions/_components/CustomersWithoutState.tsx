@@ -7,11 +7,11 @@ import { Button, Modal, useToast } from "@routeflow/ui/web";
 import { ReadOnlyHint, useReadOnlyGate } from "@/lib/read-only-gate";
 import {
   fetchBucketPage,
+  undoBulkStateRequest,
   useBulkSetState,
   useCreateMinimalAddress,
   useRefreshUnknownState,
   useSetAddressState,
-  useUndoBulkState,
   useUnknownStateBuckets,
 } from "@/lib/api/unknown-state";
 import { stateLabel } from "@/lib/portal-limits";
@@ -58,6 +58,7 @@ function StateSelect({
   return (
     <select
       ref={fieldRef}
+      data-row-field
       aria-label={label}
       aria-invalid={error || undefined}
       value={value}
@@ -90,16 +91,18 @@ function StateRow({
   bucket,
   row,
   canFix,
-  focusMe,
-  onFocused,
+  onAdvance,
+  onBusy,
   onSaved,
   onAddFull,
 }: {
   bucket: BucketKey;
   row: UnknownStateRow;
   canFix: boolean;
-  focusMe: boolean;
-  onFocused: () => void;
+  /** The save landed: move focus to the next row now, before this one finishes leaving. */
+  onAdvance: (row: UnknownStateRow) => void;
+  /** Whether this row has a save in flight or confirmed (a bulk set must not touch it). */
+  onBusy: (id: string, busy: boolean) => void;
   onSaved: (row: UnknownStateRow) => void;
   onAddFull: (row: UnknownStateRow) => void;
 }) {
@@ -113,14 +116,13 @@ function StateRow({
   const field = React.useRef<HTMLSelectElement>(null);
 
   React.useEffect(() => {
-    if (focusMe) {
-      field.current?.focus();
-      onFocused();
-    }
-  }, [focusMe, onFocused]);
+    onBusy(row.customerId, status !== "idle");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- report status changes only
+  }, [status]);
 
   const done = () => {
     setStatus("saved");
+    onAdvance(row);
     window.setTimeout(() => {
       if (reducedMotion()) return onSaved(row);
       setStatus("leaving");
@@ -158,8 +160,9 @@ function StateRow({
   return (
     <li
       data-testid={`state-row-${row.customerId}`}
-      className={`flex flex-wrap items-start gap-x-3 gap-y-2 px-3 py-2.5 transition-all ${
-        status === "leaving" ? "max-h-0 overflow-hidden py-0 opacity-0 duration-200" : ""
+      data-state-row
+      className={`flex max-h-40 flex-wrap items-start gap-x-3 gap-y-2 overflow-hidden px-3 py-2.5 transition-all duration-200 motion-reduce:transition-none ${
+        status === "leaving" ? "max-h-0 py-0 opacity-0" : ""
       }`}
     >
       <div className="min-w-0 flex-1 basis-40">
@@ -177,9 +180,10 @@ function StateRow({
           <Check className="h-4 w-4" aria-hidden /> Saved
         </span>
       ) : !canFix ? null : bucket === "needsReview" && !changing ? (
-        <span className="flex gap-2">
+        <span className="flex flex-wrap items-center gap-2">
           <Button
             size="sm"
+            data-row-field
             loading={status === "saving"}
             disabled={busy || !row.suggestedState}
             onClick={() => save(true, row.suggestedState ?? "")}
@@ -189,6 +193,11 @@ function StateRow({
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => setChanging(true)}>
             Change
           </Button>
+          {error && (
+            <p role="alert" className="w-full text-xs text-navy">
+              {SAVE_FAILED}
+            </p>
+          )}
         </span>
       ) : (
         <div className="flex flex-wrap items-start gap-2">
@@ -254,28 +263,34 @@ function BucketList({
   first,
   removed,
   onRemoved,
+  onUndone,
   onAddFull,
 }: {
   bucket: BucketKey;
   canFix: boolean;
   first: { rows: UnknownStateRow[]; nextCursor: string | null };
   removed: ReadonlySet<string>;
-  onRemoved: (ids: string[], undo?: () => void) => void;
+  onRemoved: (ids: string[]) => void;
+  /** After a bulk Undo: the card (which outlives this list) re-reads the server. */
+  onUndone: () => void;
   onAddFull: (row: UnknownStateRow) => void;
 }) {
   const { toast } = useToast();
   const bulk = useBulkSetState();
-  const undo = useUndoBulkState();
+  const busyIds = React.useRef(new Set<string>());
+  const setBusy = React.useCallback((id: string, busy: boolean) => {
+    if (busy) busyIds.current.add(id);
+    else busyIds.current.delete(id);
+  }, []);
   const [extra, setExtra] = React.useState<UnknownStateRow[]>([]);
   const [cursor, setCursor] = React.useState<string | null>(first.nextCursor);
   const [loadingMore, setLoadingMore] = React.useState(false);
   const [bulkOpen, setBulkOpen] = React.useState(false);
   const [bulkState, setBulkState] = React.useState("");
   const [bulkError, setBulkError] = React.useState(false);
-  const [focusId, setFocusId] = React.useState<string | null>(null);
+  const listRef = React.useRef<HTMLUListElement>(null);
 
   const rows = visibleRows([...first.rows, ...extra], removed);
-  const clearFocus = React.useCallback(() => setFocusId(null), []);
 
   const showMore = async () => {
     if (!cursor) return;
@@ -289,17 +304,24 @@ function BucketList({
     }
   };
 
-  const saved = (row: UnknownStateRow) => {
+  // Enter saves and focus jumps to the next row's field at once (the saved row keeps showing "Saved" for a moment).
+  const advance = (row: UnknownStateRow) => {
     const idx = rows.findIndex((r) => r.customerId === row.customerId);
     const next = rows[idx + 1] ?? rows[idx - 1];
-    setFocusId(next?.customerId ?? null);
-    onRemoved([row.customerId]);
+    if (!next) return;
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-testid="state-row-${next.customerId}"] [data-row-field]`)
+      ?.focus();
   };
+  const saved = (row: UnknownStateRow) => onRemoved([row.customerId]);
 
   const runBulk = () => {
     if (!bulkState) return;
     setBulkError(false);
-    const ids = rows.slice(0, BULK_MAX).map((r) => r.customerId);
+    const ids = rows
+      .filter((r) => !busyIds.current.has(r.customerId))
+      .slice(0, BULK_MAX)
+      .map((r) => r.customerId);
     bulk.mutate(
       { bucket, customerIds: ids, state: bulkState },
       {
@@ -312,11 +334,14 @@ function BucketList({
             duration: BULK_UNDO_MS,
             action: {
               label: "Undo",
-              onClick: () =>
-                undo.mutate(
-                  { changedAddressIds: res.changedAddressIds },
-                  { onSuccess: () => onRemoved([], () => undefined) },
-                ),
+              // a plain call: this list is gone once its bucket empties, the card is not
+              onClick: () => {
+                undoBulkStateRequest({ changedAddressIds: res.changedAddressIds })
+                  .then(onUndone)
+                  .catch(() =>
+                    toast({ title: "Couldn't undo. Nothing was changed.", variant: "error" }),
+                  );
+              },
             },
           });
         },
@@ -327,7 +352,7 @@ function BucketList({
 
   return (
     <div className="border-t border-warning/30">
-      {canFix && bucket !== "needsReview" && rows.length > 0 && (
+      {canFix && rows.length > 0 && (
         <div className="flex justify-end px-3 pt-2">
           <Button
             size="sm"
@@ -342,15 +367,15 @@ function BucketList({
           </Button>
         </div>
       )}
-      <ul className="divide-y divide-warning/20" aria-label="Customers to fix">
+      <ul ref={listRef} className="divide-y divide-warning/20" aria-label="Customers to fix">
         {rows.map((r) => (
           <StateRow
             key={r.customerId}
             bucket={bucket}
             row={r}
             canFix={canFix}
-            focusMe={focusId === r.customerId}
-            onFocused={clearFocus}
+            onAdvance={advance}
+            onBusy={setBusy}
             onSaved={saved}
             onAddFull={onAddFull}
           />
@@ -373,7 +398,10 @@ function BucketList({
           </label>
           {bulkState && (
             <p className="text-sm text-navy">
-              {bulkConfirmLine(Math.min(rows.length, BULK_MAX), stateLabel(bulkState))}
+              {bulkConfirmLine(
+                Math.min(rows.filter((r) => !busyIds.current.has(r.customerId)).length, BULK_MAX),
+                stateLabel(bulkState),
+              )}
             </p>
           )}
           {bulkError && (
@@ -415,14 +443,14 @@ export function CustomersWithoutState({ canFix }: { canFix: boolean }) {
     row: UnknownStateRow;
   } | null>(null);
 
-  const markRemoved = (bucket: BucketKey) => (ids: string[]) => {
-    if (ids.length === 0) {
-      // an Undo: the server read is the truth again
-      setRemoved({ noAddress: new Set(), unusableState: new Set(), needsReview: new Set() });
-      return;
-    }
+  const markRemoved = (bucket: BucketKey) => (ids: string[]) =>
     setRemoved((prev) => ({ ...prev, [bucket]: new Set([...prev[bucket], ...ids]) }));
-  };
+
+  // The server read is the truth: whenever fresh data lands (Refresh, an Undo, another save elsewhere) the rows
+  // saved here are already in it, so forget them rather than subtract them twice.
+  React.useEffect(() => {
+    setRemoved({ noAddress: new Set(), unusableState: new Set(), needsReview: new Set() });
+  }, [buckets.dataUpdatedAt]);
 
   // a body that is not the three buckets (an old API) is treated as an unreadable list, never a crash
   const data = buckets.data?.noAddress ? buckets.data : undefined;
@@ -458,10 +486,7 @@ export function CustomersWithoutState({ canFix }: { canFix: boolean }) {
         <button
           type="button"
           className="shrink-0 text-xs font-medium text-brand-600 hover:underline"
-          onClick={() => {
-            setRemoved({ noAddress: new Set(), unusableState: new Set(), needsReview: new Set() });
-            refresh();
-          }}
+          onClick={() => refresh()}
         >
           Refresh
         </button>
@@ -497,11 +522,13 @@ export function CustomersWithoutState({ canFix }: { canFix: boolean }) {
               </div>
               {open === k && (
                 <BucketList
+                  key={`${k}-${buckets.dataUpdatedAt}`}
                   bucket={k}
                   canFix={fixable}
                   first={data[k]}
                   removed={removed[k]}
                   onRemoved={markRemoved(k)}
+                  onUndone={refresh}
                   onAddFull={(row) => setSheetRow({ bucket: k, row })}
                 />
               )}

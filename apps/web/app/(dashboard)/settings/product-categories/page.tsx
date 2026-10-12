@@ -16,6 +16,7 @@ import {
 import { Badge, Button, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
+import { useReadOnlyGate } from "@/lib/read-only-gate";
 import { LimitInPortalDialog } from "@/components/portal-limits/LimitInPortalDialog";
 import {
   useCreateProductCategory,
@@ -41,6 +42,7 @@ export default function ProductCategoriesPage() {
   const isAdmin = user?.role === "TENANT_ADMIN";
   // Owner ruling 10-07: operators are near-admins and may limit products in the portal (the server decides).
   const canLimit = isAdmin || user?.role === "OPERATOR";
+  const readOnly = useReadOnlyGate().readOnly;
   const [limiting, setLimiting] = React.useState<LabelCategoryDto | null>(null);
   const { toast } = useToast();
   const [showArchived, setShowArchived] = React.useState(false);
@@ -201,6 +203,7 @@ export default function ProductCategoriesPage() {
                       type="button"
                       className={actionCls}
                       data-testid="category-limit-in-portal"
+                      disabled={readOnly}
                       onClick={() => setLimiting(c)}
                     >
                       <Ban className="h-3.5 w-3.5" /> Limit in portal…
@@ -239,16 +242,18 @@ export default function ProductCategoriesPage() {
           ))}
         </ul>
       )}
-      <LimitInPortalDialog
-        open={limiting !== null}
-        scope={{
-          kind: "category",
-          categoryId: limiting?.id ?? "",
-          categoryName: limiting?.name ?? "",
-          productCount: limiting?.productCount ?? 0,
-        }}
-        onClose={() => setLimiting(null)}
-      />
+      {limiting && (
+        <LimitInPortalDialog
+          open
+          scope={{
+            kind: "category",
+            categoryId: limiting.id,
+            categoryName: limiting.name,
+            productCount: limiting.productCount,
+          }}
+          onClose={() => setLimiting(null)}
+        />
+      )}
     </div>
   );
 }

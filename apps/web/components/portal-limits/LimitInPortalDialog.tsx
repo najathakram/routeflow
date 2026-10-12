@@ -3,13 +3,15 @@
 import * as React from "react";
 import NextLink from "next/link";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, useToast } from "@routeflow/ui/web";
 import { StatePicker } from "@/app/(dashboard)/settings/restrictions/rules/_components/StatePicker";
-import { useBulkLimit, useLiftBatch } from "@/lib/api/portal-limits";
+import { liftBatchRequest, useBulkLimit } from "@/lib/api/portal-limits";
 import { useUnknownStateBuckets } from "@/lib/api/unknown-state";
 import { totalWithoutState } from "@/lib/unknown-state";
 import { useRestrictionsSettings } from "@/lib/api/restrictions-settings";
 import { useProductCategories } from "@/lib/api/product-labels";
+import { WriteButton } from "@/lib/read-only-gate";
 import {
   LIMIT_MAX,
   LIMIT_SAVE_FAILED,
@@ -28,10 +30,12 @@ import {
 
 const REVIEW_HREF = "/settings/restrictions#customers-without-state";
 const LIMITS_HREF = "/settings/restrictions/rules";
+const FORM_ID = "limit-in-portal-form";
 
 /**
  * "Limit N products in your portal" (spec §2): one dialog for the products list and the category row. One primary
  * action, whose label tracks the choice; errors keep the input; success closes and toasts with Undo + View limits.
+ * The primary sits in the pinned footer so it stays visible on a short phone.
  */
 export function LimitInPortalDialog({
   open,
@@ -49,8 +53,8 @@ export function LimitInPortalDialog({
 }) {
   const { toast } = useToast();
   const router = useRouter();
+  const qc = useQueryClient();
   const bulk = useBulkLimit();
-  const lift = useLiftBatch();
   const unknown = useUnknownStateBuckets(1);
   const settings = useRestrictionsSettings();
   const [everyone, setEveryone] = React.useState(false);
@@ -90,7 +94,7 @@ export function LimitInPortalDialog({
   const showPicker = pickCategory && (tooMany || needsCategory || !!picked);
   const ready = !tooMany && !needsCategory && (everyone || states.length > 0);
   const noState = totalWithoutState(unknown.data);
-  const line = liveLine(scope, chosen);
+  const line = liveLine(scope, chosen, legalBan);
   const enforcementOff = settings.data ? settings.data.enabled === false : false;
 
   const submit = (e: React.FormEvent) => {
@@ -101,27 +105,36 @@ export function LimitInPortalDialog({
     bulk.mutate(request, {
       onSuccess: (res) => {
         const createdIds = res.createdIds ?? [];
+        const changed = res.created > 0 && createdIds.length > 0;
         toast({
           title: doneTitle(scope, chosen, res.created, res.skipped),
           variant: "success",
           duration: UNDO_VISIBLE_MS,
           secondaryAction: { label: "View limits", onClick: () => router.push(LIMITS_HREF) },
-          action: {
-            label: "Undo",
-            onClick: () => {
-              if (createdIds.length === 0) return;
-              lift.mutate(
-                { ids: createdIds, reason: UNDO_REASON },
-                {
-                  onSuccess: (r) =>
-                    toast({
-                      title: undoneTitle(chosen, r.lifted ?? createdIds.length, scope),
-                      variant: "success",
-                    }),
+          // Undo is a plain call: this component is usually gone (selection cleared) by the time it is clicked.
+          ...(changed
+            ? {
+                action: {
+                  label: "Undo",
+                  onClick: () => {
+                    liftBatchRequest({ ids: createdIds, reason: UNDO_REASON })
+                      .then((r) => {
+                        qc.invalidateQueries({ queryKey: ["selling-restrictions"] });
+                        toast({
+                          title: undoneTitle(chosen, r.lifted ?? createdIds.length, scope),
+                          variant: "success",
+                        });
+                      })
+                      .catch(() =>
+                        toast({
+                          title: "Couldn't undo. Nothing was changed.",
+                          variant: "error",
+                        }),
+                      );
+                  },
                 },
-              );
-            },
-          },
+              }
+            : {}),
         });
         onDone?.();
         onClose();
@@ -136,8 +149,27 @@ export function LimitInPortalDialog({
       onClose={onClose}
       title={needsCategory ? "Limit a whole category in your portal" : dialogTitle(scope)}
       scroll
+      footer={
+        <>
+          <NextLink href={LIMITS_HREF} className="mr-auto text-xs text-navy/60 hover:underline">
+            View all limits
+          </NextLink>
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <WriteButton type="submit" form={FORM_ID} disabled={!ready} loading={bulk.isPending}>
+            {primaryLabel(chosen)}
+          </WriteButton>
+        </>
+      }
     >
-      <form onSubmit={submit} noValidate className="space-y-4" data-testid="limit-in-portal-dialog">
+      <form
+        id={FORM_ID}
+        onSubmit={submit}
+        noValidate
+        className="space-y-4"
+        data-testid="limit-in-portal-dialog"
+      >
         {showPicker && (
           <CategoryPick
             value={picked?.id ?? ""}
@@ -233,18 +265,6 @@ export function LimitInPortalDialog({
             {LIMIT_SAVE_FAILED}
           </p>
         )}
-
-        <div className="flex flex-wrap items-center justify-end gap-3 border-t border-surface-border pt-4">
-          <NextLink href={LIMITS_HREF} className="mr-auto text-xs text-navy/60 hover:underline">
-            View all limits
-          </NextLink>
-          <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" disabled={!ready} loading={bulk.isPending}>
-            {primaryLabel(chosen)}
-          </Button>
-        </div>
       </form>
     </Modal>
   );

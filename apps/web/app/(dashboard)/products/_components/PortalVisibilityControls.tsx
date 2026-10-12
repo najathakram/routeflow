@@ -4,6 +4,7 @@ import * as React from "react";
 import { Ban, Eye, EyeOff } from "lucide-react";
 import { Badge, Button, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
+import { WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 import { LimitInPortalDialog } from "@/components/portal-limits/LimitInPortalDialog";
 import { useBulkSetPortalVisibility } from "@/lib/api/product-portal-visibility";
 import {
@@ -115,34 +116,38 @@ export function PortalLimitButtons({
   onDone: () => void;
 }) {
   const role = useAuth().user?.role;
+  const readOnly = useReadOnlyGate().readOnly;
   const [mode, setMode] = React.useState<"products" | "category" | null>(null);
   if (role !== "TENANT_ADMIN" && role !== "OPERATOR") return null;
   const ids = Array.from(selected);
   return (
     <>
-      <Button
+      <WriteButton
         variant="secondary"
         leftIcon={<Ban className="h-4 w-4" />}
         data-testid="portal-bulk-limit-open"
         onClick={() => setMode("products")}
       >
         Limit in portal…
-      </Button>
+      </WriteButton>
       <button
         type="button"
         data-testid="portal-select-all-category"
-        className="text-sm font-medium text-brand-600 hover:underline"
+        disabled={readOnly}
+        className="text-sm font-medium text-brand-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
         onClick={() => setMode("category")}
       >
         Select all in category
       </button>
-      <LimitInPortalDialog
-        open={mode !== null}
-        scope={{ kind: "products", productIds: mode === "category" ? [] : ids }}
-        pickCategory
-        onClose={() => setMode(null)}
-        onDone={onDone}
-      />
+      {mode !== null && (
+        <LimitInPortalDialog
+          open
+          scope={{ kind: "products", productIds: mode === "category" ? [] : ids }}
+          pickCategory
+          onClose={() => setMode(null)}
+          onDone={onDone}
+        />
+      )}
     </>
   );
 }

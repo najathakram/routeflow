@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Button, Modal, useToast } from "@routeflow/ui/web";
 import { useLiftBatch } from "@/lib/api/portal-limits";
+import { WriteButton } from "@/lib/read-only-gate";
 import { LIFT_DEFAULT_REASON } from "@/lib/portal-limits";
 
 /**
@@ -11,11 +12,14 @@ import { LIFT_DEFAULT_REASON } from "@/lib/portal-limits";
  */
 export function LiftLimitsDialog({
   ids,
+  inheritedFrom,
   onClose,
   onDone,
 }: {
   /** Open while there is something to lift. */
   ids: string[];
+  /** Set when the limit being lifted is inherited ("Vapes"): the confirm says it lifts the whole rule. */
+  inheritedFrom?: string | null;
   onClose: () => void;
   onDone?: () => void;
 }) {
@@ -49,7 +53,11 @@ export function LiftLimitsDialog({
       open={n > 0}
       onClose={onClose}
       title={n === 1 ? "Lift this limit?" : `Lift ${n} limits?`}
-      description="Customers see these products in the portal again straight away. Lifted limits stay in the list."
+      description={
+        inheritedFrom
+          ? `This limit comes from ${inheritedFrom}. Lifting it lifts it for every product it covers, and customers see them in the portal again straight away.`
+          : "Customers see these products in the portal again straight away. Lifted limits stay in the list."
+      }
     >
       <form onSubmit={submit} noValidate className="space-y-4">
         <label className="block text-sm font-medium text-navy">
@@ -65,9 +73,9 @@ export function LiftLimitsDialog({
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" loading={lift.isPending}>
+          <WriteButton type="submit" loading={lift.isPending}>
             Lift
-          </Button>
+          </WriteButton>
         </div>
       </form>
     </Modal>

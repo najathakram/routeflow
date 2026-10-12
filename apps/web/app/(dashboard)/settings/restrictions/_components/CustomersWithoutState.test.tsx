@@ -242,4 +242,37 @@ describe("CustomersWithoutState (Addendum D)", () => {
       ),
     );
   });
+
+  it("after a bulk Undo the bucket is back (the card re-reads; the list that raised it is gone)", async () => {
+    const user = userEvent.setup();
+    mockPost.mockResolvedValueOnce({ data: { changed: 3, changedAddressIds: ["x1", "x2", "x3"] } });
+    mockPost.mockResolvedValueOnce({ data: { restored: 3 } });
+    renderWithProviders(<CustomersWithoutState canFix />);
+    await openBucket(user, /3 have no address/);
+    await user.click(screen.getByRole("button", { name: /set state for all shown/i }));
+    const dialog = screen.getByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText(/state/i), "TX");
+    await user.click(within(dialog).getByRole("button", { name: "Set state" }));
+    await waitFor(() => expect(screen.queryByText("3 have no address")).toBeNull());
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    toast.mock.calls[0][0].action.onClick();
+    expect(await screen.findByText("3 have no address")).toBeInTheDocument();
+  });
+
+  it("a refresh after saving rows never subtracts them twice", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CustomersWithoutState canFix />);
+    await openBucket(user, /3 have no address/);
+    const first = screen.getByTestId("state-row-c-a");
+    await user.selectOptions(within(first).getByLabelText(/state for customer a/i), "TX");
+    await user.click(within(first).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByText("2 have no address")).toBeInTheDocument());
+    // the server now agrees: two left
+    mockGet.mockResolvedValue({
+      data: data({ noAddress: bucket([row("b"), row("c")]) }),
+    });
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(screen.getByText("2 have no address")).toBeInTheDocument());
+    expect(screen.queryByText("1 has no address")).toBeNull();
+  });
 });
