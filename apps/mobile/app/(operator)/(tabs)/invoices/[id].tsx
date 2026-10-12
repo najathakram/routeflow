@@ -59,6 +59,7 @@ import {
   invoiceLineUnitNoun,
   usesUnitDisplay,
 } from "../../../../lib/invoice-line-display";
+import { invoiceTaxLines } from "../../../../lib/invoice-tax-lines";
 import { invoiceLineQtyText } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
@@ -194,6 +195,8 @@ export default function InvoiceDetailScreen() {
   }
 
   const s = statusPill(invoice.status);
+  // Row 398: the header tax holds the regular tax plus the levy; the totals show them apart (shared invoiceTaxSplit).
+  const taxLines = invoiceTaxLines(invoice as Parameters<typeof invoiceTaxLines>[0]);
   const balance = invoice.balanceDue ?? invoice.total;
   const paymentTermsLabel = (invoice as typeof invoice & InvoiceTermsLabelField).paymentTermsLabel;
   const isVoid = invoice.status === "VOID";
@@ -932,12 +935,19 @@ export default function InvoiceDetailScreen() {
                 <Text style={styles.totalLabel}>Subtotal</Text>
                 <Text style={styles.totalValue}>{fmtCurrency(invoice.subtotal)}</Text>
               </View>
-              {invoice.taxAmount ? (
+              {/* Row 398: Tax is the regular tax; each regulated category (deposit, excise) is its own named row */}
+              {taxLines.tax ? (
                 <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>Tax</Text>
-                  <Text style={styles.totalValue}>{fmtCurrency(invoice.taxAmount)}</Text>
+                  <Text style={styles.totalValue}>{fmtCurrency(taxLines.tax)}</Text>
                 </View>
               ) : null}
+              {taxLines.charges.map((c) => (
+                <View key={c.key} style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>{c.label}</Text>
+                  <Text style={styles.totalValue}>{fmtCurrency(c.amount)}</Text>
+                </View>
+              ))}
               {invoice.discount ? (
                 <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>Discount</Text>
