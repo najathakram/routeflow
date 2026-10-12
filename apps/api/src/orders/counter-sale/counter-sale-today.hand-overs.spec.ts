@@ -12,6 +12,9 @@ import {
 } from "./counter-sale-today";
 import { CounterSaleTodayService } from "./counter-sale-today.service";
 import { pickupTenderGroupId } from "./pickup-tender-group";
+import { isCounterTenderRow } from "./counter-tender-row";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * SA-763r R7 / red row 11: Today's sales sees a POS-mode hand-over's cash. A named customer's PICKUP order
@@ -39,6 +42,40 @@ describe("handOverPayments — the code half of the predicate", () => {
       pay("o-3", "CASH", "7.00", null),
     ];
     expect(handOverPayments(rows)).toEqual([{ method: "CASH", amount: "50.00", orderId: "o-1" }]);
+  });
+});
+
+describe("handOverPayments — ONE tender predicate with the day close (row 342)", () => {
+  const POS = { counterSale: false } as const;
+  const rows = [
+    { ...pay("o-1", "CASH", "50.00"), status: "PAID" },
+    { ...pay("o-2", "CHECK", "40.00"), status: "PAID", checkStatus: "RECORDED" },
+    { ...pay("o-3", "CHECK", "30.00"), status: "PAID", checkStatus: "DEPOSITED" }, // the bank has it
+    { ...pay("o-4", "ACH", "25.00"), status: "PAID" }, // not a till tender method
+    { ...pay("o-5", "CASH", "20.00"), status: "PENDING" },
+  ];
+
+  it("a hand-over row is exactly what isCounterTenderRow says is the pickup tender", () => {
+    const kept = new Set(handOverPayments(rows).map((h) => h.orderId));
+    for (const r of rows) {
+      const orderId = r.invoice.orderId;
+      expect(kept.has(orderId)).toBe(isCounterTenderRow(orderId, r, POS));
+    }
+  });
+
+  it("a deposited check and a non-till method are not hand-over rows (day close reads them as foreign)", () => {
+    const kept = handOverPayments(rows).map((h) => h.orderId);
+    expect(kept).toEqual(expect.arrayContaining(["o-1", "o-2"]));
+    expect(kept).not.toContain("o-3");
+    expect(kept).not.toContain("o-4");
+  });
+
+  it("the sale-day sources hold no second copy of the group-id rule", () => {
+    for (const f of ["counter-sale-today.ts", "day-close/day-close-facts.ts"]) {
+      const src = readFileSync(join(__dirname, f), "utf8");
+      expect(src).not.toMatch(/===\s*pickupTenderGroupId\(/);
+      expect(src).toMatch(/isCounterTenderRow/);
+    }
   });
 });
 

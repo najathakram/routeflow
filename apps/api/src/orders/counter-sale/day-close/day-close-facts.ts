@@ -9,7 +9,7 @@ import {
   windowReturnsWhere,
   type DayWindow,
 } from "../counter-sale-today";
-import { pickupTenderGroupId } from "../pickup-tender-group";
+import { isCounterTenderRow } from "../counter-tender-row";
 import type { WindowFacts, WindowPayment } from "./day-close-fold";
 import { registerOrderWhere } from "./day-close-register";
 
@@ -71,9 +71,11 @@ export async function readWindowFacts(
     },
     select: paymentSelect,
   });
+  // the same predicate Today's sales rows and the fold read (`isCounterTenderRow`, a POS pickup order): never a second rule here
   const handOvers: WindowPayment[] = handOverRows.filter(
     (r) =>
-      r.invoice?.orderId != null && r.paymentGroupId === pickupTenderGroupId(r.invoice.orderId),
+      r.invoice?.orderId != null &&
+      isCounterTenderRow(r.invoice.orderId, r, { counterSale: false }),
   );
   const payments: WindowPayment[] = [...counterPayments, ...handOvers];
   const paidOnSales = await db.invoicePayment.aggregate({

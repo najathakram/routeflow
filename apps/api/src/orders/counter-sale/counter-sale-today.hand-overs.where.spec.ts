@@ -74,7 +74,6 @@ describe("hand-over candidates: each filter keeps its row out", () => {
   it.each([
     ["fulfillPath PICKUP", "route", (w: any) => delete w.invoice.order.fulfillPath],
     ["counterSale false", "counter", (w: any) => delete w.invoice.order.counterSale],
-    ["payment status PAID", "voidPayment", (w: any) => delete w.status],
     ["invoice not VOID / WRITTEN_OFF", "voidInvoice", (w: any) => delete w.invoice.status],
     ["paidAt window", "otherDay", (w: any) => delete w.paidAt],
     ["tenant", "otherTenant", (w: any) => delete w.tenantId],
@@ -88,6 +87,14 @@ describe("hand-over candidates: each filter keeps its row out", () => {
       expect(counted(ALL, where)).toContain(FIXTURES[key].invoice.orderId);
     },
   );
+
+  it("a VOID payment stays out even without the SQL status filter: the shared tender predicate is the second wall", () => {
+    const where = JSON.parse(JSON.stringify(handOverCandidatesWhere(T, W)), (k, v) =>
+      k === "gte" || k === "lt" ? new Date(v) : v,
+    );
+    delete where.status;
+    expect(counted(ALL, where)).not.toContain("o-vp");
+  });
 
   it("the v5 match (code half) keeps a deposit and an id-less payment out", () => {
     expect(counted([FIXTURES.deposit, FIXTURES.noGroup])).toEqual([]);

@@ -27,7 +27,7 @@ import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
 import { counterMethodOf, servedChange } from "./counter-sale-readback";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
-import { pickupTenderGroupId } from "./pickup-tender-group";
+import { isCounterTenderRow } from "./counter-tender-row";
 
 /**
  * Today's sales (GET /orders/counter-sale/today): the PURE half. Everything that decides a figure lives here
@@ -137,6 +137,8 @@ export const handOverCandidateSelect = {
   amount: true,
   paidAt: true,
   paymentGroupId: true,
+  status: true,
+  checkStatus: true,
   invoice: {
     select: {
       orderId: true,
@@ -170,19 +172,36 @@ export interface HandOverPayment {
   order?: HandOverOrder | null;
 }
 
-/** The candidates whose group id IS the app-side `uuidv5(`${orderId}:pickup:0`, PICKUP_TENDER_NS)`. */
+/**
+ * The candidates that ARE a hand-over's own tender: the ONE tender predicate the day close folds with (`isCounterTenderRow`,
+ * told the order is a POS pickup, not a counter sale), never a second group-id rule. A deposited / cleared check or a method
+ * the till does not take reads as foreign here exactly as it does in the Z report.
+ */
 export function handOverPayments(
   rows: ReadonlyArray<{
     method: string;
     amount: unknown;
     paymentGroupId: string | null;
+    /** absent on a hand-built record: the candidate query is PAID-only, so absent reads PAID */
+    status?: string;
+    checkStatus?: string | null;
     paidAt?: Date;
     invoice: { orderId: string | null; order?: HandOverOrder | null } | null;
   }>,
 ): HandOverPayment[] {
   return rows.flatMap((r) => {
     const orderId = r.invoice?.orderId;
-    return orderId && r.paymentGroupId === pickupTenderGroupId(orderId)
+    return orderId &&
+      isCounterTenderRow(
+        orderId,
+        {
+          method: r.method,
+          status: r.status ?? "PAID",
+          paymentGroupId: r.paymentGroupId,
+          checkStatus: r.checkStatus ?? null,
+        },
+        { counterSale: false },
+      )
       ? [
           {
             method: r.method,
