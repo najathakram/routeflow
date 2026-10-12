@@ -16,15 +16,31 @@ const walk = (dir: string): string[] =>
     return /\.(ts|tsx)$/.test(n) && !/\.test\.(ts|tsx)$/.test(n) ? [p] : [];
   });
 
+/** The names a customer copy must never carry: the stamp's helpers and the two stamped fields (row 374 e). */
+const STAMP_NAMES = /handOverStampLine|HandOverStamp|handover-stamp|handedOverBy|registerKey/;
+
 describe("hand-over stamp stays off customer copies (row 342)", () => {
-  it("only the lib, the component, the staff reads' types and the two staff detail pages name it", () => {
+  it("the scan catches each name (planted references)", () => {
+    for (const planted of [
+      "renderHandOverStamp(order)",
+      'import { handOverStampLine } from "@/lib/handover-stamp";',
+      "<p>{order.handedOverBy}</p>",
+      "const r = invoice.order.registerKey;",
+    ]) {
+      expect(STAMP_NAMES.test(planted)).toBe(true);
+    }
+    expect(STAMP_NAMES.test("const cashier = receipt.cashier;")).toBe(false);
+  });
+
+  it("only the lib, the component, the staff reads' types, the staff detail pages and Today's hand-over rows name it", () => {
     const users = walk(ROOT)
-      .filter((p) => /handOverStampLine|HandOverStamp|handover-stamp/.test(readFileSync(p, "utf8")))
+      .filter((p) => STAMP_NAMES.test(readFileSync(p, "utf8")))
       .map((p) => p.slice(ROOT.length + 1))
       .sort();
     expect(users).toEqual([
       "app/(dashboard)/invoices/[id]/page.tsx",
       "app/(dashboard)/orders/[id]/page.tsx",
+      "app/(dashboard)/orders/_components/HandOverRows.tsx", // Today's sales hand-over rows (staff)
       "components/HandOverStamp.tsx",
       "lib/api/invoices.ts", // the staff read's type
       "lib/api/orders.ts", // the staff read's type
