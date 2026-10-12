@@ -122,7 +122,13 @@ function make(
     tenant: {
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: overrides.plainCasCount ?? 0 }),
-      findUnique: jest.fn().mockResolvedValue({ plan: "STARTER", planVersionId: "v1" }),
+      findUnique: jest.fn().mockResolvedValue({
+        id: "t1",
+        class: "PRODUCTION",
+        status: "ACTIVE",
+        plan: "STARTER",
+        planVersionId: "v1",
+      }),
     },
     // #2440 N2: the tenant's add-on subscription items (none by default).
     tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
@@ -134,11 +140,13 @@ function make(
     emailDelivery: { findFirst: jest.fn().mockResolvedValue(null) },
     tenantSubscription: {
       findFirst: jest.fn().mockResolvedValue(sub),
-      findMany: jest
-        .fn()
-        .mockResolvedValue([
-          { ...sub, stripeSubId: "sub_1", tenant: { id: sub.tenantId, slug: "acme" } },
-        ]),
+      findMany: jest.fn().mockResolvedValue([
+        {
+          ...sub,
+          stripeSubId: "sub_1",
+          tenant: { id: sub.tenantId, slug: "acme", class: "PRODUCTION" },
+        },
+      ]),
       // Finding 4 (Lite-L2 review): onCheckoutCompleted reads this to check for a negotiated
       // price override before overwriting basePriceSnapshot. `sub` has no
       // priceOverrideMonthly/priceOverrideAnnual fields by default, so they read as `undefined`
@@ -270,7 +278,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       await (svc as any).onSubscriptionDeleted(SUB_EVT);
       // Atomic compare-and-swap on status is the idempotency key.
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
-        where: { id: "t1", status: "ACTIVE" },
+        where: { id: "t1", status: "ACTIVE", class: "PRODUCTION" }, // SA-775 S3: the judged class is part of the CAS
         data: { status: "CANCELLED" },
       });
       // −(349 base + 12×2 add-ons − 0 discount) = −373, emitted inside the same tx.
@@ -409,7 +417,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         const { svc, tx } = make({ stripeStatus: "canceled", transitionCount: 1 });
         await svc.suspendOverdueTenants();
         expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
-          where: { id: "t1", status: "ACTIVE" },
+          where: { id: "t1", status: "ACTIVE", class: "PRODUCTION" }, // SA-775 S3: the judged class is part of the CAS
           data: { status: "SUSPENDED" },
         });
       });
@@ -423,7 +431,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       });
       await svc.suspendOverdueTenants();
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
-        where: { id: "t1", status: "ACTIVE" },
+        where: { id: "t1", status: "ACTIVE", class: "PRODUCTION" }, // SA-775 S3: the judged class is part of the CAS
         data: { status: "SUSPENDED" },
       });
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_SUSPENDED)).toBe(-373);
@@ -2708,7 +2716,7 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       });
       await (svc as any).onSubscriptionDeleted(SUB_EVT);
       expect(prisma.tenant.updateMany.mock.calls[0][0]).toEqual({
-        where: { id: "t1", status: "SUSPENDED" },
+        where: { id: "t1", status: "SUSPENDED", class: "PRODUCTION" },
         data: { status: "CANCELLED" },
       });
       // Suspension (cron or platform admin) already booked the −MRR; cancelling books nothing.
@@ -2763,7 +2771,7 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
       const { svc, tx, events } = make({ transitionCount: 1, sub: LIVE_SUB });
       await (svc as any).onSubscriptionUpdated(upd("canceled"));
       expect(tx.tenant.updateMany.mock.calls[0][0]).toMatchObject({
-        where: { id: "t1", status: "ACTIVE" },
+        where: { id: "t1", status: "ACTIVE", class: "PRODUCTION" }, // SA-775 S3: the judged class is part of the CAS
         data: { status: "CANCELLED" },
       });
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-349);

@@ -31,8 +31,8 @@ function make() {
         (where.trialEndsAt?.lt ? t.trialEndsAt < where.trialEndsAt.lt : true),
     ),
   );
-  const update = jest.fn().mockResolvedValue({});
-  const prisma: any = { tenant: { findMany, update } };
+  const update = jest.fn().mockResolvedValue({ count: 1 }); // expireTrials' compare-and-swap (updateMany)
+  const prisma: any = { tenant: { findMany, updateMany: update } };
   const events: any = { emit: jest.fn() };
   const notification: any = { notifyTrialEnding: jest.fn().mockResolvedValue(undefined) };
   const svc = new BillingCronService(
