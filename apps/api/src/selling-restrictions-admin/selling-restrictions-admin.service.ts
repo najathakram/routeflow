@@ -4,8 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
-import type { RestrictionStatus, SellingRestrictionListItemDto } from "@routeflow/types";
+import { randomUUID } from "crypto";
+import { Prisma, RestrictionJurisdiction, RestrictionSurface } from "@prisma/client";
+import type {
+  BulkRestrictionResponse,
+  RestrictionStatus,
+  SellingRestrictionListItemDto,
+} from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -13,6 +18,7 @@ import { normalizeUsState } from "../common/us-states";
 import { activeRuleWhere, ruleIsActive } from "../selling-restrictions/selling-restrictions.core";
 import { CreateRestrictionDto } from "./dto/create-restriction.dto";
 import { LiftRestrictionDto } from "./dto/lift-restriction.dto";
+import { BULK_RESTRICTION_MAX, BulkRestrictionDto } from "./dto/bulk-restriction.dto";
 
 const INCLUDE = {
   category: { select: { name: true } },
@@ -22,6 +28,52 @@ type Row = Prisma.SellingRestrictionGetPayload<{ include: typeof INCLUDE }>;
 
 /** More rules than this per tenant is not a legal-hold list; the read is bounded, never unbounded. */
 const LIST_CAP = 500;
+
+/** The reason a bulk portal limit carries when the admin leaves the note blank. */
+export const DEFAULT_BULK_REASON = "Portal limit";
+
+/** What single and bulk create hand the shared validation path. */
+interface RuleInput {
+  categoryId?: string;
+  productIds?: string[];
+  jurisdiction: RestrictionJurisdiction;
+  states?: string[];
+  surface: RestrictionSurface;
+  effectiveFrom?: string;
+  effectiveTo?: string;
+  reason: string;
+}
+
+/** A validated create: one target scope, normalised states, a checked window. */
+interface PreparedRules {
+  target: { categoryId: string } | { productIds: string[] };
+  jurisdiction: RestrictionJurisdiction;
+  states: string[];
+  surface: RestrictionSurface;
+  effectiveFrom: Date;
+  effectiveTo: Date | null;
+  reason: string;
+  now: Date;
+}
+
+/**
+ * Rules still LIVE at `now` for the identical-rule check: not lifted and not expired. Unlike
+ * `activeRuleWhere` it has no `effectiveFrom` bound, so a scheduled rule counts as already there.
+ * An `AND` list, for a caller's `where.AND`.
+ */
+export function liveRuleWhere(now: Date): Prisma.SellingRestrictionWhereInput[] {
+  return [
+    { OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }] },
+    { OR: [{ liftedAt: null }, { liftedAt: { gt: now } }] },
+  ];
+}
+
+/** A states list as a comparable key: USPS codes, de-duplicated, sorted. */
+function sortedStatesKey(states: readonly string[]): string {
+  return [...new Set(states.map((s) => normalizeUsState(s) ?? s.trim().toUpperCase()))]
+    .sort()
+    .join(",");
+}
 
 /**
  * The API-side mirror of the shared status list (the API never imports `@routeflow/types` at
@@ -95,11 +147,11 @@ function toDto(row: Row, now: Date): SellingRestrictionListItemDto {
 }
 
 /**
- * Rule ADMIN (Lane R step 5a): list / create / lift `SellingRestriction` rows (list, create and lift).
- * Reads OPERATOR, writes TENANT_ADMIN, all audited. It only WRITES rows the engine reads — the engine (rule shape,
- * `ruleIsActive`/`activeRuleWhere`) is imported, never re-decided here. Reading the list is LIVE for
- * OPERATOR; but nothing enforces the rules yet, so writing one changes no tenant's behaviour until
- * the feature is switched on (step 6).
+ * Rule ADMIN (Lane R step 5a; portal limits Branch B): list / create (single and bulk) / lift
+ * `SellingRestriction` rows. OPERATOR and TENANT_ADMIN (owner 10-07: operators are near-admins);
+ * creates are audited IN their own transaction. It only WRITES rows the engine reads — the engine
+ * (rule shape, `ruleIsActive`/`activeRuleWhere`) is imported, never re-decided here.
+ * Single create is a bulk of one: one validation path (`prepare`), one write path (`writeRules`).
  * A rule is never edited or deleted: it is lifted (with a reason), so the history stays.
  */
 @Injectable()
@@ -131,9 +183,9 @@ export class SellingRestrictionsAdminService {
    * STATE names must all be real states: the engine treats a rule naming anything it can't read as
    * "blocks everywhere", so a typo written here would silently over-block — refuse it at the door.
    */
-  private normalizeStates(dto: CreateRestrictionDto): string[] {
-    const given = (dto.states ?? []).map((s) => s.trim()).filter((s) => s !== "");
-    if (dto.jurisdiction === "FEDERAL") {
+  private normalizeStates(jurisdiction: RestrictionJurisdiction, states?: string[]): string[] {
+    const given = (states ?? []).map((s) => s.trim()).filter((s) => s !== "");
+    if (jurisdiction === "FEDERAL") {
       if (given.length > 0) {
         throw new BadRequestException(
           "A federal restriction applies everywhere; remove the states.",
@@ -153,70 +205,259 @@ export class SellingRestrictionsAdminService {
     return codes;
   }
 
+  /**
+   * The ONE validation path for single and bulk create (pure; no reads): exactly one target
+   * (a category, or 1..BULK_RESTRICTION_MAX products), the states rules, the date window.
+   */
+  private prepare(input: RuleInput): PreparedRules {
+    const productIds = [...new Set(input.productIds ?? [])];
+    if (!input.categoryId === (productIds.length === 0)) {
+      throw new BadRequestException("Target exactly one of a category or a product.");
+    }
+    if (productIds.length > BULK_RESTRICTION_MAX) {
+      throw new BadRequestException(
+        `Send at most ${BULK_RESTRICTION_MAX} products at once, or limit a whole category instead.`,
+      );
+    }
+    const states = this.normalizeStates(input.jurisdiction, input.states);
+    const now = new Date();
+    const effectiveFrom = input.effectiveFrom ? new Date(input.effectiveFrom) : now;
+    const effectiveTo = input.effectiveTo ? new Date(input.effectiveTo) : null;
+    if (effectiveTo && effectiveTo.getTime() <= effectiveFrom.getTime()) {
+      throw new BadRequestException("The end date must be after the start date.");
+    }
+    return {
+      target: input.categoryId ? { categoryId: input.categoryId } : { productIds },
+      jurisdiction: input.jurisdiction,
+      states,
+      surface: input.surface,
+      effectiveFrom,
+      effectiveTo,
+      reason: input.reason,
+      now,
+    };
+  }
+
+  /**
+   * Inside the caller's transaction: the target must be this tenant's (a category that is not
+   * archived; every product), identical live rules are skipped when asked, then ONE createMany.
+   * Ids are minted here so the audit row and the response can name them.
+   */
+  private async writeRules(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    p: PreparedRules,
+    user: JwtPayload,
+    opts: { skipIdentical: boolean },
+  ): Promise<{ createdIds: string[]; skippedProductIds: string[]; skippedCategory: boolean }> {
+    if ("categoryId" in p.target) {
+      const cat = await tx.productCategory.findFirst({
+        where: { tenantId, id: p.target.categoryId },
+      });
+      if (!cat) throw new NotFoundException("Category not found");
+      if (cat.archivedAt)
+        throw new ConflictException("That category is archived. Restore it first.");
+    } else {
+      const wanted = p.target.productIds;
+      const found: Array<{ id: string }> = await tx.product.findMany({
+        where: { tenantId, id: { in: wanted } },
+        select: { id: true },
+      });
+      const have = new Set(found.map((r) => r.id));
+      const missing = wanted.filter((id) => !have.has(id));
+      if (missing.length > 0) {
+        throw new NotFoundException(
+          wanted.length === 1
+            ? "Product not found"
+            : `${missing.length} of the products were not found.`,
+        );
+      }
+    }
+
+    const identical = opts.skipIdentical ? await this.identicalTargets(tx, tenantId, p) : new Set();
+    const targets: Array<{ categoryId: string | null; productId: string | null }> =
+      "categoryId" in p.target
+        ? identical.has(p.target.categoryId)
+          ? []
+          : [{ categoryId: p.target.categoryId, productId: null }]
+        : p.target.productIds
+            .filter((id) => !identical.has(id))
+            .map((id) => ({ categoryId: null, productId: id }));
+    const skippedProductIds =
+      "productIds" in p.target ? p.target.productIds.filter((id) => identical.has(id)) : [];
+
+    const data = targets.map((t) => ({
+      id: randomUUID(),
+      tenantId,
+      categoryId: t.categoryId,
+      productId: t.productId,
+      jurisdiction: p.jurisdiction,
+      states: p.states,
+      surface: p.surface,
+      effectiveFrom: p.effectiveFrom,
+      effectiveTo: p.effectiveTo,
+      reason: p.reason,
+      createdById: user.sub,
+      createdByName: user.username,
+    }));
+    if (data.length > 0) await tx.sellingRestriction.createMany({ data });
+    return {
+      createdIds: data.map((d) => d.id),
+      skippedProductIds,
+      skippedCategory: "categoryId" in p.target && targets.length === 0,
+    };
+  }
+
+  /**
+   * The targets (product ids, or the category id) that already carry an IDENTICAL live rule:
+   * same target, same jurisdiction, same set of states (order and spelling ignored), same surface,
+   * not lifted and not expired. A scheduled rule (effectiveFrom later) counts: it is already on its
+   * way. Its own dates are not compared — a second rule would only duplicate the chip.
+   */
+  private async identicalTargets(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    p: PreparedRules,
+  ): Promise<Set<string>> {
+    const rows: Array<{
+      productId: string | null;
+      categoryId: string | null;
+      jurisdiction: string;
+      states: string[];
+      surface: string;
+    }> = await tx.sellingRestriction.findMany({
+      where: {
+        tenantId,
+        ...("categoryId" in p.target
+          ? { categoryId: p.target.categoryId }
+          : { productId: { in: p.target.productIds } }),
+        jurisdiction: p.jurisdiction,
+        surface: p.surface,
+        AND: liveRuleWhere(p.now),
+      },
+      select: {
+        productId: true,
+        categoryId: true,
+        jurisdiction: true,
+        states: true,
+        surface: true,
+      },
+    });
+    const key = sortedStatesKey(p.states);
+    const out = new Set<string>();
+    for (const r of rows) {
+      if (r.jurisdiction !== p.jurisdiction || r.surface !== p.surface) continue;
+      if (sortedStatesKey(r.states) !== key) continue;
+      const target = r.productId ?? r.categoryId;
+      if (target) out.add(target);
+    }
+    return out;
+  }
+
+  /** Single create: a bulk of one (same validation and write path); never skips, keeps its response. */
   async create(
     dto: CreateRestrictionDto,
     user: JwtPayload,
   ): Promise<SellingRestrictionListItemDto> {
     const tenantId = this.requireTenant();
-    if (!dto.categoryId === !dto.productId) {
-      throw new BadRequestException("Target exactly one of a category or a product.");
-    }
-    const states = this.normalizeStates(dto);
-
-    const now = new Date();
-    const effectiveFrom = dto.effectiveFrom ? new Date(dto.effectiveFrom) : now;
-    const effectiveTo = dto.effectiveTo ? new Date(dto.effectiveTo) : null;
-    if (effectiveTo && effectiveTo.getTime() <= effectiveFrom.getTime()) {
-      throw new BadRequestException("The end date must be after the start date.");
-    }
-
-    const db = this.prisma.forTenant();
-    if (dto.categoryId) {
-      const cat = await db.productCategory.findFirst({ where: { id: dto.categoryId } });
-      if (!cat) throw new NotFoundException("Category not found");
-      if (cat.archivedAt)
-        throw new ConflictException("That category is archived. Restore it first.");
-    } else {
-      const product = await db.product.findFirst({
-        where: { id: dto.productId },
-        select: { id: true },
+    const p = this.prepare({
+      categoryId: dto.categoryId,
+      productIds: dto.productId ? [dto.productId] : undefined,
+      jurisdiction: dto.jurisdiction,
+      states: dto.states,
+      surface: dto.surface ?? "ALL",
+      effectiveFrom: dto.effectiveFrom,
+      effectiveTo: dto.effectiveTo,
+      reason: dto.reason,
+    });
+    return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
+      const { createdIds } = await this.writeRules(tx, tenantId, p, user, {
+        skipIdentical: false,
       });
-      if (!product) throw new NotFoundException("Product not found");
-    }
+      const row: Row | null = await tx.sellingRestriction.findFirst({
+        where: { id: createdIds[0] },
+        include: INCLUDE,
+      });
+      if (!row) throw new NotFoundException("Restriction not found");
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId: user.sub,
+          impersonatedBy: user.impersonatedBy ?? null,
+          action: "selling_restriction.created",
+          entityType: "SellingRestriction",
+          entityId: row.id,
+          meta: {
+            scope: dto.categoryId ? { categoryId: dto.categoryId } : { productId: dto.productId },
+            jurisdiction: dto.jurisdiction,
+            states: p.states,
+            surface: row.surface,
+            effectiveFrom: p.effectiveFrom.toISOString(),
+            effectiveTo: p.effectiveTo?.toISOString() ?? null,
+            reason: dto.reason,
+          },
+        },
+      });
+      return toDto(row, p.now);
+    });
+  }
 
-    const row = await db.sellingRestriction.create({
-      data: {
+  /**
+   * POST /selling-restrictions/bulk: products (1..BULK_RESTRICTION_MAX) or one category, in ONE
+   * transaction — one createMany and one audit row, or nothing at all. A target that already has
+   * an identical live rule is skipped and reported, never duplicated.
+   */
+  async bulkCreate(dto: BulkRestrictionDto, user: JwtPayload): Promise<BulkRestrictionResponse> {
+    const tenantId = this.requireTenant();
+    const p = this.prepare({
+      categoryId: dto.categoryId,
+      productIds: dto.productIds,
+      jurisdiction: dto.jurisdiction,
+      states: dto.states,
+      surface: dto.surface ?? "BUYER_PORTAL",
+      effectiveFrom: dto.effectiveFrom,
+      effectiveTo: dto.effectiveTo,
+      reason: dto.reason ?? DEFAULT_BULK_REASON,
+    });
+    return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
+      const { createdIds, skippedProductIds, skippedCategory } = await this.writeRules(
+        tx,
         tenantId,
-        categoryId: dto.categoryId ?? null,
-        productId: dto.productId ?? null,
-        jurisdiction: dto.jurisdiction,
-        states,
-        surface: dto.surface ?? "ALL",
-        effectiveFrom,
-        effectiveTo,
-        reason: dto.reason,
-        createdById: user.sub,
-        createdByName: user.username,
-      },
-      include: INCLUDE,
+        p,
+        user,
+        { skipIdentical: true },
+      );
+      const skipped = skippedProductIds.length + (skippedCategory ? 1 : 0);
+      const base: BulkRestrictionResponse = {
+        created: createdIds.length,
+        skipped,
+        createdIds,
+        ...("productIds" in p.target ? { skippedProductIds } : {}),
+      };
+      if (createdIds.length === 0) return base;
+      const audit: { id: string } = await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId: user.sub,
+          impersonatedBy: user.impersonatedBy ?? null,
+          action: "selling_restriction.bulk_created",
+          entityType: "SellingRestriction",
+          entityId: null,
+          meta: {
+            ids: createdIds,
+            scope: p.target,
+            states: p.states,
+            jurisdiction: p.jurisdiction,
+            surface: p.surface,
+            effectiveFrom: p.effectiveFrom.toISOString(),
+            effectiveTo: p.effectiveTo?.toISOString() ?? null,
+            reason: p.reason,
+            skippedProductIds,
+          },
+        },
+      });
+      return { ...base, auditId: audit.id };
     });
-    await this.audit.log({
-      tenantId,
-      userId: user.sub,
-      action: "selling_restriction.created",
-      entityType: "SellingRestriction",
-      entityId: row.id,
-      meta: {
-        scope: dto.categoryId ? { categoryId: dto.categoryId } : { productId: dto.productId },
-        jurisdiction: dto.jurisdiction,
-        states,
-        surface: row.surface,
-        effectiveFrom: effectiveFrom.toISOString(),
-        effectiveTo: effectiveTo?.toISOString() ?? null,
-        reason: dto.reason,
-      },
-    });
-    return toDto(row, now);
   }
 
   /** Lifts a rule now. The write itself is guarded on `liftedAt IS NULL`, so a double lift is a 409, never an overwrite. */

@@ -61,13 +61,14 @@ function setup() {
     findMany: jest.fn().mockResolvedValue([]),
     findFirst: jest.fn(),
     create: jest.fn(),
+    createMany: jest.fn().mockResolvedValue({ count: 1 }),
     updateMany: jest.fn(),
   };
   models.sellingRestriction = rules;
   models.productCategory = {
     findFirst: jest.fn().mockResolvedValue({ id: "c1", archivedAt: null }),
   };
-  models.product.findFirst.mockResolvedValue({ id: "p1" });
+  models.product.findMany.mockResolvedValue([{ id: "p1" }]);
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   return {
     prisma,
@@ -136,14 +137,15 @@ describe("SellingRestrictionsAdminService.create", () => {
     await expect(s.service.create({ ...base, ...over } as any, user)).rejects.toBeInstanceOf(
       BadRequestException,
     );
-    expect(s.rules.create).not.toHaveBeenCalled();
+    expect(s.rules.createMany).not.toHaveBeenCalled();
   });
 
-  it("stores state names as de-duplicated USPS codes, stamped with tenant and user, then audits", async () => {
+  it("stores state names as de-duplicated USPS codes, stamped with tenant and user, then audits in the same transaction", async () => {
     const s = setup();
-    s.rules.create.mockResolvedValue(row({ states: ["TX", "FL"] }));
+    s.rules.findFirst.mockResolvedValue(row({ states: ["TX", "FL"] }));
     await s.service.create({ ...base, states: ["Texas", "tx", " fl "] }, user);
-    const data = s.rules.create.mock.calls[0][0].data;
+    expect(s.rules.createMany).toHaveBeenCalledTimes(1);
+    const data = s.rules.createMany.mock.calls[0][0].data[0];
     expect(data).toMatchObject({
       tenantId: "test-tenant",
       categoryId: "c1",
@@ -155,21 +157,23 @@ describe("SellingRestrictionsAdminService.create", () => {
       createdByName: "admin",
     });
     expect(data.effectiveFrom).toBeInstanceOf(Date);
-    expect(s.audit.log).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "selling_restriction.created", entityId: "r1" }),
-    );
+    expect(s.models.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "selling_restriction.created", entityId: "r1" }),
+    });
+    // The response is still the single rule's list item (the web's create caller reads it).
+    expect(s.rules.findFirst.mock.calls[0][0].where).toEqual({ id: data.id });
   });
 
   it("a FEDERAL rule stores no states; a product-scoped rule needs the product to exist", async () => {
     const s = setup();
-    s.rules.create.mockResolvedValue(row({ jurisdiction: "FEDERAL", states: [] }));
+    s.rules.findFirst.mockResolvedValue(row({ jurisdiction: "FEDERAL", states: [] }));
     await s.service.create({ productId: "p1", jurisdiction: "FEDERAL", reason: "x" }, user);
-    expect(s.rules.create.mock.calls[0][0].data).toMatchObject({
+    expect(s.rules.createMany.mock.calls[0][0].data[0]).toMatchObject({
       productId: "p1",
       categoryId: null,
       states: [],
     });
-    s.models.product.findFirst.mockResolvedValue(null);
+    s.models.product.findMany.mockResolvedValue([]);
     await expect(
       s.service.create({ productId: "nope", jurisdiction: "FEDERAL", reason: "x" }, user),
     ).rejects.toBeInstanceOf(NotFoundException);
@@ -183,7 +187,7 @@ describe("SellingRestrictionsAdminService.create", () => {
     await expect(s.service.create(base, user)).rejects.toBeInstanceOf(ConflictException);
     (s.prisma.getTenantId as jest.Mock).mockReturnValue(null);
     await expect(s.service.create(base, user)).rejects.toBeInstanceOf(BadRequestException);
-    expect(s.rules.create).not.toHaveBeenCalled();
+    expect(s.rules.createMany).not.toHaveBeenCalled();
   });
 });
 
@@ -225,10 +229,11 @@ describe("SellingRestrictionsAdminService.lift", () => {
 });
 
 describe("SellingRestrictionsAdminController", () => {
-  it("reads are OPERATOR, create/lift are TENANT_ADMIN, and the class is behind both guards", () => {
+  it("reads and create are OPERATOR (TENANT_ADMIN satisfies it), lift is TENANT_ADMIN, and the class is behind both guards", () => {
     const proto = SellingRestrictionsAdminController.prototype as unknown as Record<string, object>;
     expect(Reflect.getMetadata(ROLES_KEY, proto.list)).toEqual([UserRole.OPERATOR]);
-    expect(Reflect.getMetadata(ROLES_KEY, proto.create)).toEqual([UserRole.TENANT_ADMIN]);
+    expect(Reflect.getMetadata(ROLES_KEY, proto.create)).toEqual([UserRole.OPERATOR]);
+    expect(Reflect.getMetadata(ROLES_KEY, proto.bulkCreate)).toEqual([UserRole.OPERATOR]);
     expect(Reflect.getMetadata(ROLES_KEY, proto.lift)).toEqual([UserRole.TENANT_ADMIN]);
     const guards = (
       Reflect.getMetadata("__guards__", SellingRestrictionsAdminController) ?? []
