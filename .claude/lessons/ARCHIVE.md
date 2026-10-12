@@ -3967,3 +3967,11 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **A figure derived from a server balance has three states: known, loading, errored. Unknown renders as loading or an error with retry and disables the submit; it never degrades to a gross or cached total.**
 - **Guard:** the pure helper returns an explicit unknown variant (`posHandOverBalance`) and its spec pins loading and error to it. Cf. [[L-260]].
   (Archived 2026-10-12 whole and verbatim to make room at cap: L-298: guarded by the pure helper's explicit unknown variant and its spec; no citation outside the register.)
+
+### L-299 · 2026-10-12 · domain · a client-assumed state transition is checked against the API transition table, and a retry comment is only true if the refused edge is handled
+
+- **Symptom:** a POS finish after a merge into an open DRAFT order sent DRAFT to CONFIRMED and was refused; the first fix re-sent PENDING on retry, which the API also refuses (PENDING to PENDING is a 400/409), and the code comment called the sequence idempotent.
+- **Root cause:** the client assumed an edge the server's table lacks, and "idempotent" was asserted, never read from the table.
+- **Lesson:** **Before a client chains status PATCHes, read the server transition table for each edge. A step the server refuses on repeat is not idempotent: on a 400/409, re-read the resource and continue only if it already sits at the target (or beyond), and skip any patch the re-read makes a no-op.**
+- **Guard:** web `usePosFinish` re-reads through `promotedAlready` and its spec covers refused PENDING and already-CONFIRMED. Cf. [[L-267]].
+  (Archived 2026-10-12 whole and verbatim to make room at cap: L-299: guarded by web `usePosFinish`'s `promotedAlready` re-read and its spec; no citation outside the register.)
