@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
-import { normalizeBoxesPieces } from "@routeflow/pricing";
+import { normalizeBoxesPieces, round4, withinStaffOverrideTolerance } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { carriedLineFor } from "./carry-line-category";
 import { foldTarget, liveTrioFor, type FoldTrio } from "./fold-target";
@@ -90,7 +90,10 @@ function storedQtyInPayloadUnits(
   upb: number,
 ): number {
   const stored = Number(own.qty);
-  if (!payloadInPieces) return stored;
+  if (!payloadInPieces) {
+    // a box-split line's `qty` is PIECES: an entry read as selling units compares against its whole boxes
+    return isBoxSplit(own) && upb > 1 ? stored / upb : stored;
+  }
   return isBoxSplit(own) ? stored : stored * (upb > 1 ? upb : 1);
 }
 
@@ -176,19 +179,25 @@ export function resolveBuyerEditLines(args: ResolveBuyerEditArgs): BuyerEditEntr
     }
     const upb = upbByProduct.get(productId) ?? 0;
     // Row 355: the write path reads the entry like its OWN line (an explicit split is pieces too).
-    // The unit `qty` is written in is decided exactly as the write path decides it (piecesDenominated for the
-    // buyer and driver, replace-all-line-build for staff). A PAIRED entry reads like its own line: a box-split
-    // line => pieces. A buyer's entry with ANY explicit split is pieces too; a staff entry only with a real
-    // (non-zero) split, since a zero split is "not using box entry" and its `qty` stands.
-    const explicitSplit =
-      args.role === "BUYER" ? isBoxSplit(it) : (it.boxes ?? 0) > 0 || (it.pieces ?? 0) > 0;
-    const payloadInPieces =
-      upb > 1 && (isBoxSplit(own) || (args.role !== "DRIVER" && explicitSplit));
-    const have = storedQtyInPayloadUnits(own, payloadInPieces, upb);
-    // `want`: staff writes read a real boxes/pieces split through normalizeBoxesPieces (the write's own
-    // normaliser); the buyer and driver writes always read `qty`.
+    // The unit `qty` is written in is decided exactly as the write path decides it:
+    //  - BUYER (piecesDenominated, isBuyerEdit): pieces when the entry carries ANY boxes/pieces split or its paired
+    //    line is box-split;
+    //  - STAFF (replace-all-line-build): pieces ONLY for a real (non-zero) boxes/pieces split, never from the
+    //    stored line: a plain or zero-split `qty` is selling units;
+    //  - DRIVER (piecesDenominated, non-buyer): a paired entry reads like its own line.
+    const realSplit = (it.boxes ?? 0) > 0 || (it.pieces ?? 0) > 0;
+    const entryInPieces =
+      upb > 1 &&
+      (args.role === "STAFF"
+        ? realSplit
+        : args.role === "BUYER"
+          ? isBoxSplit(it) || isBoxSplit(own)
+          : isBoxSplit(own));
+    const have = storedQtyInPayloadUnits(own, entryInPieces, upb);
+    // `want`: a STAFF real split is read through normalizeBoxesPieces (the write's own normaliser); the buyer
+    // and driver writes always read `qty`.
     const want =
-      args.role === "STAFF" && payloadInPieces && explicitSplit
+      args.role === "STAFF" && realSplit && upb > 1
         ? normalizeBoxesPieces({
             qty: it.qty,
             boxes: it.boxes,
@@ -196,21 +205,51 @@ export function resolveBuyerEditLines(args: ResolveBuyerEditArgs): BuyerEditEntr
             unitsPerBox: upb,
           }).qty
         : Number(it.qty ?? 0);
+    // The unit the ADDED half is written in. A DRIVER's added half names no line, so the write reads it by the
+    // product-wide gate (any box-split line of the product => pieces): expressed in that unit.
+    const driverGatePieces =
+      args.role === "DRIVER" &&
+      upb > 1 &&
+      lineItems.some((l) => l.productId === productId && isBoxSplit(l));
+    const payloadInPieces = entryInPieces;
     const live2: FoldTrio = liveTrioByProduct.get(productId) ?? { trackedCategoryId: null };
     const carriedLine = carriedLineFor([own as never], { sourceLineId: own.id }, productId);
-    if (want > have && foldTarget(own, live2) === "SPLIT") {
+    // A plain/zero-split STAFF entry on a box-split stored line (which may hold loose pieces: 14 = 2 boxes + 2
+    // pieces) is compared AND written in whole PIECES, as explicit splits, never a fractional pack count.
+    const piecesCompare = args.role === "STAFF" && upb > 1 && isBoxSplit(own) && !entryInPieces;
+    const haveCmp = piecesCompare ? Number(own.qty) : have;
+    const wantCmp = piecesCompare ? want * upb : want;
+    // A DRIVER's added half on a pack line is written in the pieces the product-wide gate reads; when that is not
+    // a whole number of pieces (a fractional pack count) no split is made: the entry is left whole, untouched.
+    const driverAdded = driverGatePieces && !isBoxSplit(own) ? round4((want - have) * upb) : null;
+    // A half written in PIECES must be a whole number of pieces: a fractional stored pack count (1.5 packs) or a
+    // fractional wanted quantity (2.4 packs on a 14-piece line) would truncate in normalizeBoxesPieces and drop
+    // quantity or emit an empty half. Such an entry is left whole, as a fractional driver pack count is.
+    const writesPieces = piecesCompare || payloadInPieces;
+    const wholePieces = !writesPieces || (Number.isInteger(haveCmp) && Number.isInteger(wantCmp));
+    const splittable = wholePieces && (driverAdded === null || Number.isInteger(driverAdded));
+    if (wantCmp > haveCmp && splittable && foldTarget(own, live2) === "SPLIT") {
       push({
-        ...withQty(rest, have, upb, payloadInPieces),
+        ...withQty(rest, haveCmp, upb, piecesCompare || payloadInPieces),
         sourceLineId: own.id,
         carriedLine,
       });
-      // a sale made today: its own live line, priced by today's rules. The stored line's price and override
-      // reason belong to THAT line (an override is never extended to quantity added later), so the added half
-      // carries neither: it prices at the resolved tier / promo price with no override to justify.
+      // a sale made today: its own live line, priced by today's rules. A price the entry merely ECHOES from the
+      // stored line (and that line's override reason) belongs to THAT line: it is not extended to quantity added
+      // later. A price the client actually changed is a decision about the whole entry and stays.
+      const echoes =
+        rest.unitPrice !== undefined &&
+        own.unitPrice != null &&
+        withinStaffOverrideTolerance(Number(rest.unitPrice), Number(own.unitPrice));
       const { unitPrice: _price, overrideReason: _reason, ...fresh } = rest;
       void _price;
       void _reason;
-      push(withQty(fresh, want - have, upb, payloadInPieces));
+      const base = echoes ? fresh : rest;
+      push(
+        driverAdded !== null
+          ? { ...base, qty: driverAdded }
+          : withQty(base, wantCmp - haveCmp, upb, piecesCompare || payloadInPieces),
+      );
       continue;
     }
     push({ ...rest, sourceLineId: own.id, carriedLine });
@@ -300,6 +339,7 @@ export function applyBuyerEditLines<T extends BuyerEditEntry>(
     liveTrioByProduct,
     upbByProduct,
     allowIdlessFallback: !dto.namesLines,
+    role: "BUYER",
   });
   // The resolver only adds `sourceLineId` and splits an entry in two copies of itself: same shape as `T`.
   items.splice(0, items.length, ...(resolved as unknown as T[]));

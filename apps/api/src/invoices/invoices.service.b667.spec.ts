@@ -378,4 +378,95 @@ describe("InvoicesService — B667 round 5", () => {
       [2, 0.05],
     ]);
   });
+
+  it("recomputeOrderFromInvoices is idempotent for lines split by snapshot: a second recompute creates and cancels nothing", async () => {
+    const trioA = {
+      trackedCategoryId: "cat-1",
+      categoryTaxType: "EXCISE_PER_UNIT",
+      categoryTaxRate: 0.05,
+      categoryPriceIncludesTax: false,
+    };
+    const trioB = { ...trioA, categoryTaxRate: 0.08 };
+    const l1 = {
+      id: "l1",
+      productId: "p1",
+      status: "PENDING",
+      qty: 4,
+      invoicedQty: 0,
+      unitPrice: 10,
+      subtotal: 40,
+    };
+    // state AFTER the first recompute: the two snapshot lines exist; the invoice items still carry no orderItemId
+    const made = [
+      {
+        id: "n1",
+        productId: "p9",
+        status: "PENDING",
+        qty: 2,
+        invoicedQty: 2,
+        unitPrice: 10,
+        subtotal: 20,
+        ...trioA,
+      },
+      {
+        id: "n2",
+        productId: "p9",
+        status: "PENDING",
+        qty: 1,
+        invoicedQty: 1,
+        unitPrice: 10,
+        subtotal: 10,
+        ...trioB,
+      },
+    ];
+    prisma.order.findUnique.mockResolvedValue({
+      id: "order1",
+      status: "PENDING",
+      subtotal: 70,
+      tax: 0,
+      total: 70,
+      shippingFee: 0,
+      lineItems: [l1, ...made],
+    });
+    const base = {
+      orderItemId: null,
+      productId: "p9",
+      categoryTaxAmount: 0,
+      promoFreeUnits: 0,
+      unitPrice: 10,
+    };
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv1",
+        shippingFee: 0,
+        items: [
+          {
+            id: "ii-l1",
+            orderItemId: "l1",
+            productId: "p1",
+            qty: 4,
+            subtotal: 40,
+            categoryTaxAmount: 0,
+            promoFreeUnits: 0,
+            unitPrice: 10,
+          },
+          { ...base, id: "a", qty: 2, subtotal: 20, ...trioA, categoryTaxRate: "0.0500" },
+          { ...base, id: "b", qty: 1, subtotal: 10, ...trioB, categoryTaxRate: "0.0800" },
+        ],
+      },
+    ]);
+    prisma.deliveryMutation.findMany.mockResolvedValue([]);
+    prisma.orderItem.update.mockResolvedValue({});
+    prisma.orderItem.create.mockResolvedValue({});
+    prisma.orderItem.updateMany.mockResolvedValue({ count: 0 });
+    prisma.order.update.mockResolvedValue({});
+
+    await service.recomputeOrderFromInvoices("order1", prisma);
+
+    expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    const cancelled = prisma.orderItem.update.mock.calls.filter(
+      (c: any) => c[0]?.data?.status === "CANCELLED",
+    );
+    expect(cancelled).toHaveLength(0);
+  });
 });

@@ -119,35 +119,8 @@ describe("pairEditLines (row 373b)", () => {
     expect(out[1].qty).toBe(6);
   });
 
-  it("a DRIVER entry is denominated by the product-wide gate, not its own boxes/pieces", () => {
-    // 2 packs stored as a box-unaware line (qty 2 selling units); the entry sends qty 5 + boxes 5 (a pack count).
-    // The write path reads a driver's qty by the PRODUCT gate (no box-split line stored => selling units): 5 > 2.
-    const line = stored("L1", { qty: 2 });
-    const out = pairBoxed(
-      [{ productId: "p1", id: "L1", qty: 5, boxes: 5 }],
-      [line],
-      "0.0800",
-      "DRIVER",
-    );
-    expect(out).toHaveLength(2);
-    expect(out[1].qty).toBe(3);
-  });
-
-  it("the split's added half is priced by today's rules: it carries neither the stored price nor its override reason", () => {
-    const line = stored("L1", { unitPrice: 7, overrideReason: "agreed price" });
-    const out = pair(
-      [{ productId: "p1", id: "L1", qty: 20, unitPrice: 7, overrideReason: "agreed price" }],
-      [line],
-      "0.0800",
-    );
-    expect(out).toHaveLength(2);
-    expect(out[0].unitPrice).toBe(7); // the carried half keeps what the client sent
-    expect(out[1].unitPrice).toBeUndefined();
-    expect(out[1].overrideReason).toBeUndefined();
-  });
-
-  it("DRIVER with a pack line AND a box-split line of one product: a paired pack entry reads as its OWN line (selling units)", () => {
-    const pack = stored("A", { qty: 2 }); // pack line: 2 selling units = 12 pieces
+  it("DRIVER with a pack line AND a box-split line: the added half is written in the unit the write path reads (pieces)", () => {
+    const pack = stored("A", { qty: 2 }); // pack line: 2 selling units
     const boxSplit = stored("B", { boxes: 1, pieces: 0, qty: 6 });
     const out = pairBoxed(
       [{ productId: "p1", id: "A", qty: 3 }],
@@ -155,14 +128,16 @@ describe("pairEditLines (row 373b)", () => {
       "0.0800",
       "DRIVER",
     );
-    // 3 packs wanted vs 2 stored: one pack is added at today's live trio, in selling units
+    // the carried half stays 2 packs on A; the 1 added pack is read by the product-wide gate (a box-split line
+    // exists): 1 pack = 6 pieces, so it is written as qty 6, never as 1 piece
     expect(out.map((o) => [o.qty, o.sourceLineId ?? null])).toEqual([
       [2, "A"],
-      [1, null],
+      [6, null],
     ]);
   });
 
-  it("a ZERO boxes/pieces split is not a split: staff `qty` stands and the added units still split", () => {
+  it("a STAFF entry with a plain or zero split is selling units: a box-split stored line is compared in boxes", () => {
+    // stored: 2 boxes of 6 = 12 pieces (qty 12). The entry says 20 PACKS (a zero split is "not using box entry").
     const line = stored("L1", { boxes: 2, pieces: 0, qty: 12 });
     const out = pairBoxed(
       [{ productId: "p1", id: "L1", qty: 20, boxes: 0, pieces: 0 }],
@@ -170,7 +145,137 @@ describe("pairEditLines (row 373b)", () => {
       "0.0800",
       "STAFF",
     );
-    expect(out.map((o) => o.qty)).toEqual([12, 8]);
+    // have = 12 pieces (2 boxes), want = 20 packs = 120 pieces: written as explicit splits in PIECES, 12 stay
+    // on the line and 108 (18 packs) go to the new live line; no fractional pack count is ever written
+    expect(out.map((o) => o.qty)).toEqual([12, 108]);
+  });
+
+  it("STAFF plain entry on a box-split line WITH loose pieces: both halves are explicit splits in pieces, no fractional pack", () => {
+    // stored 14 pieces = 2 boxes + 2 pieces (upb 6). The staff entry says 3 packs (18 pieces) at a new trio.
+    const line = stored("L1", { boxes: 2, pieces: 2, qty: 14 });
+    const out = pairBoxed([{ productId: "p1", id: "L1", qty: 3 }], [line], "0.0800", "STAFF");
+    expect(out).toHaveLength(2);
+    // carried half keeps exactly the stored 14 pieces (2 boxes + 2 pieces); the added half is 4 pieces
+    expect(out.map((o) => [o.qty, o.boxes, o.pieces])).toEqual([
+      [14, 2, 2],
+      [4, 0, 4],
+    ]);
+  });
+
+  it("a DRIVER ignores its own boxes/pieces: a paired pack line is read like itself", () => {
+    const pack = stored("A", { qty: 2 });
+    const out = pairBoxed(
+      [{ productId: "p1", id: "A", qty: 5, boxes: 5 }],
+      [pack],
+      "0.0800",
+      "DRIVER",
+    );
+    // no box-split line of the product exists: the gate is selling units; 5 packs vs 2 stored: 3 added
+    expect(out.map((o) => o.qty)).toEqual([2, 3]);
+  });
+
+  it("a DRIVER whose gate is pieces ONLY because of a CANCELLED box-split line still writes the added pack as pieces", () => {
+    const pack = stored("A", { qty: 2 });
+    const cancelled = stored("C", { boxes: 1, pieces: 0, qty: 6, status: "CANCELLED" });
+    const out = pairBoxed(
+      [{ productId: "p1", id: "A", qty: 3 }],
+      [pack, cancelled],
+      "0.0800",
+      "DRIVER",
+    );
+    expect(out.map((o) => [o.qty, o.sourceLineId ?? null])).toEqual([
+      [2, "A"],
+      [6, null],
+    ]);
+  });
+
+  it("a DRIVER fractional pack count makes no split (never a truncated piece count)", () => {
+    const pack = stored("A", { qty: 2 });
+    const boxSplit = stored("B", { boxes: 1, pieces: 0, qty: 6 });
+    const out = pairBoxed(
+      [{ productId: "p1", id: "A", qty: 2.1 }],
+      [pack, boxSplit],
+      "0.0800",
+      "DRIVER",
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].qty).toBe(2.1);
+  });
+
+  it("STAFF 2.4 packs on a 14-piece box-split line is left whole (no truncated, empty added half)", () => {
+    const line = stored("L1", { boxes: 2, pieces: 2, qty: 14 });
+    const out = pairBoxed([{ productId: "p1", id: "L1", qty: 2.4 }], [line], "0.0800", "STAFF");
+    expect(out).toHaveLength(1);
+    expect(out[0].qty).toBe(2.4);
+  });
+
+  it("a stored FRACTIONAL pack line with a real staff split is left whole (7.5 pieces never truncated to 7)", () => {
+    const line = stored("L1", { qty: 1.5 }); // 1.5 packs of upb 6 = 9 pieces? held fractional on purpose
+    const dto = { items: [{ productId: "p1", id: "L1", qty: 10, boxes: 1, pieces: 4 }] } as any;
+    pairEditLines(
+      dto,
+      { lineItems: [line] },
+      new Map([["p1", { id: "p1", unitsPerBox: 5, trackedCategoryId: "cat-1" }]]),
+      liveCat("0.0800"),
+      "STAFF",
+      { buyerLineIds: true },
+    );
+    expect(dto.items).toHaveLength(1);
+  });
+
+  it("a DRIVER 3.3 packs vs 1.1 stored (upb 10) is a whole 22 pieces, not float noise that blocks the split", () => {
+    const boxed10 = { id: "p1", unitsPerBox: 10, trackedCategoryId: "cat-1" };
+    const pack = stored("A", { qty: 1.1 });
+    const boxSplit = stored("B", { boxes: 1, pieces: 0, qty: 10 });
+    const dto = { items: [{ productId: "p1", id: "A", qty: 3.3 }] } as any;
+    pairEditLines(
+      dto,
+      { lineItems: [pack, boxSplit] },
+      new Map([["p1", boxed10]]),
+      liveCat("0.0800"),
+      "DRIVER",
+      { buyerLineIds: true },
+    );
+    expect(dto.items).toHaveLength(2);
+    expect(dto.items[1].qty).toBe(22);
+  });
+
+  it("a BUYER zero split on a pack line is read as the write reads it (pieces): nothing added, no split", () => {
+    const pack = stored("A", { qty: 2 }); // 2 packs of 12 pieces
+    const dto = {
+      items: [{ productId: "p1", orderItemId: "A", qty: 24, boxes: 0, pieces: 0 }],
+    } as any;
+    pairEditLines(
+      dto,
+      { lineItems: [pack] },
+      new Map([["p1", { id: "p1", unitsPerBox: 12, trackedCategoryId: "cat-1" }]]),
+      liveCat("0.0800"),
+      "BUYER",
+      { buyerLineIds: true },
+    );
+    expect(dto.items).toHaveLength(1); // 24 pieces == 2 packs: no quantity was added
+  });
+
+  it("the added half drops a price that only ECHOES the stored line; a CHANGED price stays on both halves", () => {
+    const line = stored("L1", { unitPrice: 7, overrideReason: "agreed price" });
+    const echo = pair(
+      [{ productId: "p1", id: "L1", qty: 20, unitPrice: 7, overrideReason: "agreed price" }],
+      [line],
+      "0.0800",
+    );
+    expect(echo).toHaveLength(2);
+    expect(echo[0].unitPrice).toBe(7);
+    expect(echo[1].unitPrice).toBeUndefined();
+    expect(echo[1].overrideReason).toBeUndefined();
+    const changed = pair(
+      [{ productId: "p1", id: "L1", qty: 20, unitPrice: 8, overrideReason: "new deal" }],
+      [line],
+      "0.0800",
+    );
+    expect(changed.map((o) => [o.unitPrice, o.overrideReason])).toEqual([
+      [8, "new deal"],
+      [8, "new deal"],
+    ]);
   });
 
   it("a paired entry carries its stored line's category, trio and createdAt for builders that cannot read sourceLineId", () => {

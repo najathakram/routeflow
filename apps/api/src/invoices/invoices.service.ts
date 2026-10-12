@@ -2279,6 +2279,21 @@ export class InvoicesService {
     for (const li of order.lineItems as any[]) existingById.set(li.id, li);
     // #1185 round 5, item 2 -- see resolveProductMatches' own doc.
     const { existingByProduct, ambiguousLineIds } = resolveProductMatches(order.lineItems);
+    // (product, snapshot) -> its ONLY active order line (null when two share one): row 373's idempotent match.
+    const snapshotKeyOf = (r: any): string =>
+      [
+        r.trackedCategoryId ?? "",
+        r.trackedSubcategoryId ?? "",
+        r.categoryTaxType ?? "",
+        r.categoryTaxRate != null ? Number(r.categoryTaxRate) : "",
+        r.categoryPriceIncludesTax ?? "",
+      ].join("|");
+    const bySnapshot = new Map<string, any>();
+    for (const li of order.lineItems as any[]) {
+      if (!li.productId || li.status === "CANCELLED") continue;
+      const k = `${li.productId}|${snapshotKeyOf(li)}`;
+      bySnapshot.set(k, bySnapshot.has(k) ? null : li);
+    }
     // Aggregate billed qty + subtotal, resolving each invoice line to its source
     // order line: prefer the stored orderItemId; else first-match by productId
     // (legacy rows). An invoice line with a product but no matching order line
@@ -2303,6 +2318,9 @@ export class InvoicesService {
         const line =
           (it.orderItemId && existingById.get(it.orderItemId)) ||
           (it.productId && existingByProduct.get(it.productId)) ||
+          // row 373: a product on several order lines (different snapshots) matches by (product, snapshot), so a
+          // second recompute finds the lines it created and never cancels and re-creates them.
+          (it.productId && bySnapshot.get(`${it.productId}|${snapshotKeyOf(it)}`)) ||
           null;
         if (!line && !it.productId) {
           freeformSkipped.push(it.id);
@@ -2310,14 +2328,7 @@ export class InvoicesService {
         }
         // A new order line per (product, category, subcategory, trio): invoice lines of one product that were
         // billed under different snapshots must not be summed under the LAST one's (row 373 review).
-        const snap = [
-          it.trackedCategoryId ?? "",
-          it.trackedSubcategoryId ?? "",
-          it.categoryTaxType ?? "",
-          it.categoryTaxRate != null ? Number(it.categoryTaxRate) : "",
-          it.categoryPriceIncludesTax ?? "",
-        ].join("|");
-        const key = line ? `line:${line.id}` : `product:${it.productId}|${snap}`;
+        const key = line ? `line:${line.id}` : `product:${it.productId}|${snapshotKeyOf(it)}`;
         const prev = byTarget.get(key) ?? {
           line,
           productId: it.productId ?? null,
