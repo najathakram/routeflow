@@ -110,6 +110,54 @@ function isSquare(h: HeldNet): boolean {
   );
 }
 
+/**
+ * B297 row 341 (review fold): the base SALE rows that are never a reversal target for a return or credit, because
+ * their booked line is no longer standing under that key:
+ *  - the key is square under EITHER netting. With return / credit REVERSALs left standing it is the key a re-sync
+ *    reversed (the return it already carried stays); under FULL netting it is a key a void / delete (no returnId)
+ *    squared after a return, which the first rule alone misses;
+ *  - the SALE was OFFSET in place: a re-sync REVERSAL (no returnId / creditNoteId) of the same key consumed it
+ *    (oldest SALE first), and the key was booked again (an edit, a repack). Such a SALE must not price the
+ *    piece axis with its own, superseded ratio (SALE 10 boxes / 10 pieces -> REVERSAL -> SALE 10 boxes / 120 pieces).
+ * `rows` are every ledger row of the lines in play (SALEs, corrections and REVERSALs).
+ */
+export function deadSaleIdsOf(rows: any[]): Set<string> {
+  const squareKeys = new Set<string>();
+  for (const preserveReturns of [true, false]) {
+    for (const [key, held] of netHeldByLine(rows, { keyOf: syncKey, preserveReturns })) {
+      if (isSquare(held)) squareKeys.add(key);
+    }
+  }
+  const dead = new Set<string>();
+  const byKey = new Map<string, { sales: any[]; offset: number }>();
+  for (const r of rows) {
+    const key = syncKey(r);
+    if (key == null) continue;
+    const e = byKey.get(key) ?? { sales: [], offset: 0 };
+    if (r.entryType === "SALE" && r.correctsEntryId == null) {
+      e.sales.push(r);
+      if (squareKeys.has(key) && r.id != null) dead.add(r.id);
+    } else if (r.entryType === "REVERSAL" && r.returnId == null && r.creditNoteId == null) {
+      e.offset += -Number(r.qty);
+    }
+    byKey.set(key, e);
+  }
+  for (const [key, e] of byKey) {
+    if (squareKeys.has(key) || e.offset <= HELD_EPS) continue;
+    let left = e.offset;
+    const oldestFirst = [...e.sales].sort(
+      (a, b) => +new Date(a.createdAt ?? 0) - +new Date(b.createdAt ?? 0),
+    );
+    for (const sale of oldestFirst) {
+      const q = Number(sale.qty);
+      if (!(q > 0) || left + HELD_EPS < q) break;
+      if (sale.id != null) dead.add(sale.id);
+      left -= q;
+    }
+  }
+  return dead;
+}
+
 /** The REVERSAL row that brings `held` back to zero, booked into the CURRENT period (never backdated). */
 function reversalRowFor(held: HeldNet, now: Date, bucket: string) {
   const s = held.sale;
@@ -813,8 +861,8 @@ export class RegulatedLedgerService {
     remUnitBasisByLine: Map<string, number>;
     remNetByLine: Map<string, number>;
     remTaxByLine: Map<string, number>;
-    /** Booked-line keys (item | category | subcategory | order line) whose net is already 0 in every dimension. */
-    squareKeys: Set<string>;
+    /** Base SALE ids that are never a reversal target (a dead key, or a sale offset in place): see deadSaleIdsOf. */
+    deadSaleIds: Set<string>;
   } | null> {
     // The order's SALE rows are the snapshot we reverse against.
     // Deterministic row order (SA-170 W/N): both the live FIFO walk and the resumed one iterate
@@ -912,16 +960,7 @@ export class RegulatedLedgerService {
     // reversal) behind under the old key: such a row is never a candidate for a return's reversal, or the
     // return would be filed under the category the line used to be in. The per-ORDER-LINE remaining above
     // is unchanged: it still sums every row of the line.
-    const squareKeys = new Set<string>();
-    // Dead = square with return / credit-note reversals LEFT STANDING (`preserveReturns`, the netting the
-    // re-sync reversed the sale with): a key a return reduced BEFORE the re-file nets negative under the full
-    // sum and would otherwise stay a walk candidate, and the next return would file under the old category.
-    for (const [key, held] of netHeldByLine([...sales, ...priorReversals], {
-      keyOf: syncKey,
-      preserveReturns: true,
-    })) {
-      if (isSquare(held)) squareKeys.add(key);
-    }
+    const deadSaleIds = deadSaleIdsOf([...sales, ...priorReversals]);
 
     return {
       sales,
@@ -933,7 +972,7 @@ export class RegulatedLedgerService {
       remUnitBasisByLine,
       remNetByLine,
       remTaxByLine,
-      squareKeys,
+      deadSaleIds,
     };
   }
 
@@ -1012,7 +1051,7 @@ export class RegulatedLedgerService {
     const salesByProduct = new Map<string, any[]>();
     for (const s of sales) {
       if (s.correctsEntryId != null) continue;
-      if (built.squareKeys.has(syncKey(s) ?? "")) continue; // B297 row 341: a dead sale of a re-filed line
+      if (built.deadSaleIds.has(s.id)) continue; // B297 row 341: a dead or offset sale
       const pid = productByItem.get(s.invoiceItemId);
       if (!pid) continue;
       if (!salesByProduct.has(pid)) salesByProduct.set(pid, []);
@@ -1444,7 +1483,7 @@ export class RegulatedLedgerService {
     // to correct or reverse against: the whole parked quantity continues down the live walk.
     const rowClosed =
       (Math.abs(remQtyBefore) <= EPS && Math.abs(remNetBefore) <= EPS) ||
-      builtBefore.squareKeys.has(syncKey(saleRow) ?? "");
+      builtBefore.deadSaleIds.has(saleRow.id);
 
     let correctionEntryId: string | null = null;
     if (!rowClosed && verdict.state === "legacy") {
@@ -1636,7 +1675,7 @@ export class RegulatedLedgerService {
       const ordered = built.sales.filter(
         (s: any) =>
           s.correctsEntryId == null &&
-          !built.squareKeys.has(syncKey(s) ?? "") && // B297 row 341: never a dead sale of a re-filed line
+          !built.deadSaleIds.has(s.id) && // B297 row 341: never a dead or offset sale
           productId != null &&
           built.productByItem.get(s.invoiceItemId) === productId,
       );
@@ -1888,11 +1927,8 @@ export class RegulatedLedgerService {
         categoryTax: true,
       },
     });
-    // B297 row 341: booked lines already square under their own key (a re-filed line's dead sale).
-    const squareKeys = new Set<string>();
-    for (const [key, held] of netHeldByLine(lineRows, { keyOf: syncKey, preserveReturns: true })) {
-      if (isSquare(held)) squareKeys.add(key);
-    }
+    // B297 row 341: base SALEs that are not a live target (a re-filed line's dead sale, or one offset in place).
+    const deadSaleIds = deadSaleIdsOf(lineRows);
     // invoiceItemId → order line, so legacy REVERSAL rows with a null orderItemId can
     // still be attributed to their line (bridge through a matching SALE row).
     const orderLineByInvoiceItem = new Map<string, string>();
@@ -1937,7 +1973,7 @@ export class RegulatedLedgerService {
       const liveRows = liveSaleRows.filter(
         (s: any) =>
           s.invoiceItemId === it.invoiceItemId &&
-          !squareKeys.has(syncKey(s) ?? "") &&
+          !deadSaleIds.has(s.id) &&
           (s.trackedCategoryId == null || s.trackedCategoryId === it.trackedCategoryId),
       );
       const metaRow = [...liveRows].sort(
