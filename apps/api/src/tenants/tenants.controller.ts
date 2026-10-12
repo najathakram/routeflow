@@ -217,7 +217,8 @@ export class TenantsController {
     return {
       success: true,
       message: "Google OAuth is configured",
-      authUrl: `/api/v1/auth/google/${user.tenantId}`,
+      // the legacy per-tenant route takes the SLUG (auth.controller.ts: google/:tenantSlug), never the tenant id
+      authUrl: `/api/v1/auth/google/${user.tenantSlug}`,
     };
   }
 

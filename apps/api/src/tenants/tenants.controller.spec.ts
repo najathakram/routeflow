@@ -244,3 +244,38 @@ describe("TenantsController.getMyFeatures: fulfilment modes + capabilities.fulfi
     });
   });
 });
+
+// Row 411: the test-connection answer's authUrl is the legacy per-tenant route GET /auth/google/:tenantSlug, whose
+// param is the SLUG (auth.controller.ts tenantGoogleLogin -> buildAuthUrl(slug)). It was built from the tenant ID, a URL
+// that 404s a slug lookup.
+describe("TenantsController.testGoogleOAuthConfig: authUrl names the tenant slug (row 411)", () => {
+  function build(cfg: Record<string, unknown>) {
+    const tenantsService = { getGoogleOAuthConfig: jest.fn().mockResolvedValue(cfg) } as any;
+    const controller = new TenantsController(
+      tenantsService,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    return { controller, tenantsService };
+  }
+  const user = { tenantId: "t-uuid-1", tenantSlug: "acme-co" } as unknown as JwtPayload;
+  const ready = { clientId: "id", callbackUrl: "https://x/cb", enabled: true };
+
+  it("builds the URL from the slug, never the tenant id", async () => {
+    const { controller } = build(ready);
+    const out = (await controller.testGoogleOAuthConfig({}, user)) as { authUrl: string };
+    expect(out).toMatchObject({ success: true, authUrl: "/api/v1/auth/google/acme-co" });
+    expect(out.authUrl).not.toContain("t-uuid-1");
+  });
+
+  it("an unconfigured tenant still answers success: false without a URL", async () => {
+    const { controller } = build({ clientId: null, callbackUrl: null, enabled: false });
+    const out = await controller.testGoogleOAuthConfig({}, user);
+    expect(out).toMatchObject({ success: false });
+    expect(out).not.toHaveProperty("authUrl");
+  });
+});
