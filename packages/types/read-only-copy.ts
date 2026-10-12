@@ -15,6 +15,15 @@
 export const READ_ONLY_SENTENCE =
   "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.";
 
+/**
+ * The two statuses that are NOT read-only: a SUSPENDED or CANCELLED workspace is closed to system-side writes
+ * as well, and a surface that refuses one (the Stripe Connect return leg) says which, never "read-only".
+ * Amount-free and name-free; the API keeps a literal copy (it never value-imports this package at runtime)
+ * that its controller spec pins byte-equal.
+ */
+export const SUSPENDED_SENTENCE = "This workspace is currently suspended. Please contact support.";
+export const CANCELLED_SENTENCE = "This workspace has been cancelled. Please contact support.";
+
 /** The `readOnlyReason` values the server records (tenant-status writers); anything else maps to no reason line. */
 export type ReadOnlyReason =
   "trial_expired" | "trial_cancelled" | "subscription_cancelled" | "payment_overdue";

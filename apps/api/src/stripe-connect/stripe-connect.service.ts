@@ -265,9 +265,17 @@ export class StripeConnectService {
     // The signed state was minted while the workspace accepted changes; its status may
     // have moved since. Re-read it live and refuse BEFORE the code exchange, so a
     // workspace that no longer accepts changes never gets a Stripe grant or a bound
-    // payout account. Same TRIAL/ACTIVE rule as every other system-side write.
+    // payout account. Same TRIAL/ACTIVE rule as every other system-side write. The refusal
+    // names the status (fixed codes the callback maps to fixed copy): a SUSPENDED or CANCELLED
+    // workspace is not "read-only"; READ_ONLY and anything unrecognised stay workspace_read_only.
     if (!acceptsAutomatedWrites(tenant.status)) {
-      throw new BadRequestException("workspace_read_only");
+      throw new BadRequestException(
+        tenant.status === "SUSPENDED"
+          ? "workspace_suspended"
+          : tenant.status === "CANCELLED"
+            ? "workspace_cancelled"
+            : "workspace_read_only",
+      );
     }
 
     // REG-2441: resolve the PLATFORM's own account id BEFORE exchanging the

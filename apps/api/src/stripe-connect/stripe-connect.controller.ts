@@ -66,8 +66,14 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   platform_account_not_allowed:
     "That's RouteFlow's own Stripe account — sign in to your business's Stripe account and try again.",
   platform_account_check_failed: "Couldn't verify that Stripe account — try connecting again.",
+  // The three workspace-status refusals show the SHARED sentence for the status
+  // (packages/types/read-only-copy.ts). This app never value-imports @routeflow/types at runtime
+  // (no-runtime-workspace-imports.spec.ts), so these are literal copies; the controller spec
+  // asserts each byte-equal to the shared constant.
   workspace_read_only:
-    "This workspace is read-only, so a payment account can't be connected right now.",
+    "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
+  workspace_suspended: "This workspace is currently suspended. Please contact support.",
+  workspace_cancelled: "This workspace has been cancelled. Please contact support.",
 };
 const OAUTH_GENERIC_ERROR = "Could not connect Stripe — try again from Settings.";
 
