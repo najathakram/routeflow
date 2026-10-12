@@ -9,7 +9,9 @@ import {
   resolveGoverningState,
   restrictedSummary,
   restrictionChannelForPrincipal,
+  restrictionsApply,
   ruleBindsChannel,
+  ruleHidesFromBuyer,
   ruleIsActive,
   UNKNOWN_PRODUCT_NAME,
   UNRESOLVED_STATE,
@@ -913,5 +915,95 @@ describe("restrictedSummary — the 409's human `message`", () => {
 
   it("an empty list (should not happen) still yields a real sentence, never an empty toast", () => {
     expect(restrictedSummary([])).toBe("This order can't be sold to this customer.");
+  });
+});
+
+describe("portal limits: the switch is staff-channel only (restrictionsApply)", () => {
+  it("the portal channel always applies its rules, switch on or off", () => {
+    expect(restrictionsApply({ enabled: false }, "BUYER_PORTAL")).toBe(true);
+    expect(restrictionsApply({ enabled: true }, "BUYER_PORTAL")).toBe(true);
+  });
+
+  it("the staff channel applies them only when the switch is on", () => {
+    expect(restrictionsApply({ enabled: false }, "STAFF")).toBe(false);
+    expect(restrictionsApply({ enabled: true }, "STAFF")).toBe(true);
+  });
+
+  it("an unrecognised channel is treated as the portal (fails closed)", () => {
+    expect(restrictionsApply({ enabled: false }, "SOMETHING_ELSE" as never)).toBe(true);
+  });
+});
+
+describe("portal limits: a buyer with no state on file", () => {
+  const portalOnly = rule({ surface: "BUYER_PORTAL" });
+  const legalBan = rule({ surface: "ALL" });
+  const NO_STATE = UNRESOLVED_STATE;
+
+  it("is ALLOWED a portal-only limit (the admin is told they have no state)", () => {
+    expect(
+      evaluateRestrictions(
+        input({ channel: "BUYER_PORTAL", rules: [portalOnly], governingState: NO_STATE }),
+      ),
+    ).toEqual({ outcome: "ALLOW", reasons: [] });
+  });
+
+  it("is still INDETERMINATE (fail closed) for a legal ban that binds every channel", () => {
+    expect(
+      evaluateRestrictions(
+        input({ channel: "BUYER_PORTAL", rules: [legalBan], governingState: NO_STATE }),
+      ).outcome,
+    ).toBe("INDETERMINATE");
+  });
+
+  it("a legal ban beside a portal-only limit still fails closed", () => {
+    expect(
+      evaluateRestrictions(
+        input({
+          channel: "BUYER_PORTAL",
+          rules: [portalOnly, rule({ id: "r2", surface: "ALL" })],
+          governingState: NO_STATE,
+        }),
+      ).outcome,
+    ).toBe("INDETERMINATE");
+  });
+
+  it("a resolved state matching a portal-only limit BLOCKs the portal", () => {
+    expect(
+      evaluateRestrictions(
+        input({
+          channel: "BUYER_PORTAL",
+          rules: [portalOnly],
+          governingState: { resolved: true, state: "TX" },
+        }),
+      ).outcome,
+    ).toBe("BLOCK");
+  });
+});
+
+describe("portal limits: ruleHidesFromBuyer matches the decision rule by rule", () => {
+  const TX = { resolved: true, state: "TX" } as const;
+  const NY = { resolved: true, state: "NY" } as const;
+  const hides = (
+    over: Partial<RestrictionRuleFacts>,
+    gov: Parameters<typeof ruleHidesFromBuyer>[1],
+  ) => ruleHidesFromBuyer(rule(over), gov);
+
+  it("a STATE rule hides only where its state is named", () => {
+    expect(hides({ surface: "BUYER_PORTAL" }, TX)).toBe(true);
+    expect(hides({ surface: "BUYER_PORTAL" }, NY)).toBe(false);
+  });
+
+  it("a FEDERAL rule hides from everyone, with or without a state", () => {
+    expect(hides({ jurisdiction: "FEDERAL", states: [] }, NY)).toBe(true);
+    expect(hides({ jurisdiction: "FEDERAL", states: [] }, UNRESOLVED_STATE)).toBe(true);
+  });
+
+  it("a malformed STATE rule with no readable states hides everywhere", () => {
+    expect(hides({ states: [] }, NY)).toBe(true);
+  });
+
+  it("with no state on file: a portal-only limit shows, a legal ban hides", () => {
+    expect(hides({ surface: "BUYER_PORTAL" }, UNRESOLVED_STATE)).toBe(false);
+    expect(hides({ surface: "ALL" }, UNRESOLVED_STATE)).toBe(true);
   });
 });

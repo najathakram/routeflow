@@ -23,6 +23,9 @@ import {
   offEvaluation,
   resolveGoverningState,
   restrictedSummary,
+  restrictionsApply,
+  ruleHidesFromBuyer,
+  ruleMatchesProduct,
   ruleStates,
   stateRuleInPlay,
   UNRESOLVED_STATE,
@@ -99,6 +102,9 @@ const RULE_FACTS_SELECT = {
   reason: true,
 } as const;
 
+/** Levels of variants under a rule's product the buyer visibility expansion follows (a malformed cycle's bound). */
+const BUYER_VISIBILITY_MAX_DEPTH = 5;
+
 /** The address columns the governing-state resolver reads. */
 export const ADDRESS_SELECT = {
   isDefault: true,
@@ -136,6 +142,8 @@ export interface SellableLinesParams {
    */
   channel: RestrictionChannel;
   at?: Date;
+  /** As `EvaluateOptions.switchGated`. */
+  switchGated?: boolean;
 }
 
 export interface EvaluateOptions {
@@ -143,6 +151,12 @@ export interface EvaluateOptions {
   channel: RestrictionChannel;
   /** Point-in-time evaluation; defaults to now. */
   at?: Date;
+  /**
+   * The tenant switch gates this call as it gates STAFF (off = OFF) whatever the channel. For STAFF-side
+   * warnings that judge at the portal channel but must stay silent until the tenant turns restrictions on
+   * (the merge warning), so a portal limit alone does not start raising operator alerts.
+   */
+  switchGated?: boolean;
 }
 
 /**
@@ -329,14 +343,29 @@ export class SellingRestrictionsService {
     options: EvaluateOptions,
   ): Promise<RestrictionsEvaluation> {
     const policy = await this.getPolicy(tenantId);
-    if (!policy.enabled) return offEvaluation();
+    const channel = options?.channel ?? "BUYER_PORTAL"; // fail closed: the channel that binds more
+    // The switch adds STAFF enforcement only: the portal channel always applies its rules (restrictionsApply).
+    if (!restrictionsApply(policy, options?.switchGated ? "STAFF" : channel))
+      return offEvaluation();
 
     const productIds = [...new Set(lines.map((l) => l.productId))];
     if (productIds.length === 0) return { outcome: "ALLOW", reasons: [] };
 
-    const channel = options?.channel ?? "BUYER_PORTAL"; // fail closed: the channel that binds more
     const at = options?.at ?? new Date();
     const db = this.prisma.forTenant();
+
+    // The switch is off and only the portal reaches here: a tenant that has set no limit at all is judged exactly
+    // as before the portal ignored the switch (nothing to apply, no product reads). Switch ON never takes this exit,
+    // so its fail-closed handling of an unresolvable product is unchanged.
+    if (!restrictionsApply(policy, "STAFF")) {
+      // (the staff channel applies only with the switch on, so this reads "the switch is off")
+      const anyRule = await db.sellingRestriction.findMany({
+        where: { tenantId, AND: [activeRuleWhere(at)] },
+        select: { id: true },
+        take: 1,
+      });
+      if (anyRule.length === 0) return { outcome: "ALLOW", reasons: [] };
+    }
 
     const labels = await this.productLabels.effectiveLabels(tenantId, productIds);
     const products: ProductFacts[] = productIds.map((id) => {
@@ -433,6 +462,91 @@ export class SellingRestrictionsService {
   }
 
   /**
+   * The product ids the BUYER PORTAL must not show this customer: every product a rule active at `at` hides from them
+   * (`ruleHidesFromBuyer`: BLOCK and INDETERMINATE both hide, a portal-only limit does not hide from a customer with no
+   * state on file). Runs whatever the staff-enforcement switch says: portal limits always apply. ONE indexed query when
+   * the tenant has no active rule (the common case), and nothing else is read.
+   *
+   * Parity with `evaluate()`: candidates are expanded from the hiding rules (a product rule: the product and its
+   * variants; a category rule: the products labelled INCLUDE and their variants), then judged by the SAME pure
+   * `ruleMatchesProduct` over `ProductLabelsService.effectiveLabels`, so an EXCLUDE opt-out keeps a variant visible and
+   * a reparented variant is judged by its current parent. A candidate whose label chain cannot be resolved is hidden
+   * (fail closed, as `evaluate` answers INDETERMINATE).
+   */
+  async restrictedProductIdsFor(
+    tenantId: string,
+    customerId: string | null,
+    at: Date = new Date(),
+  ): Promise<ReadonlySet<string>> {
+    assertAmbientTenant(this.prisma, tenantId, "SellingRestrictionsService");
+    const db = this.prisma.forTenant();
+    const rules: RestrictionRuleFacts[] = await db.sellingRestriction.findMany({
+      where: { tenantId, AND: [activeRuleWhere(at)] },
+      select: RULE_FACTS_SELECT,
+    });
+    if (rules.length === 0) return new Set<string>();
+
+    let governingState = UNRESOLVED_STATE;
+    if (customerId && stateRuleInPlay(rules, "BUYER_PORTAL", at)) {
+      const { addressPrecedence } = await this.getPolicy(tenantId);
+      const customer = await db.customer.findFirst({
+        where: { id: customerId, tenantId },
+        select: { isWalkIn: true, addresses: { select: ADDRESS_SELECT } },
+      });
+      if (customer?.isWalkIn === true) {
+        const state = await tenantBusinessState(this.prisma, tenantId);
+        governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
+      } else if (customer) {
+        governingState = resolveGoverningState(customer.addresses, addressPrecedence);
+      }
+    }
+    const hiding = rules.filter((r) => ruleHidesFromBuyer(r, governingState));
+    if (hiding.length === 0) return new Set<string>();
+
+    // Candidates: the rules' own products and the products labelled with a hiding category, plus their variants.
+    const seeds = new Set<string>(hiding.map((r) => r.productId).filter((x): x is string => !!x));
+    const categoryIds = [
+      ...new Set(hiding.map((r) => r.categoryId).filter((x): x is string => !!x)),
+    ];
+    if (categoryIds.length > 0) {
+      const labelled = await db.productCategoryLabel.findMany({
+        where: { tenantId, categoryId: { in: categoryIds }, mode: "INCLUDE" },
+        select: { productId: true },
+      });
+      for (const l of labelled) seeds.add(l.productId);
+    }
+    const candidates = new Set<string>(seeds);
+    let frontier = [...seeds];
+    for (let depth = 0; depth < BUYER_VISIBILITY_MAX_DEPTH && frontier.length > 0; depth++) {
+      const kids: Array<{ id: string }> = await db.product.findMany({
+        where: { tenantId, parentProductId: { in: frontier } },
+        select: { id: true },
+      });
+      frontier = kids.map((k) => k.id).filter((id) => !candidates.has(id));
+      for (const id of frontier) candidates.add(id);
+    }
+    if (candidates.size === 0) return new Set<string>();
+
+    const labels = await this.productLabels.effectiveLabels(tenantId, [...candidates]);
+    const hidden = new Set<string>();
+    for (const id of candidates) {
+      const l = labels.get(id);
+      if (!l || l.resolvable === false) {
+        hidden.add(id); // unresolvable: fail closed
+        continue;
+      }
+      const facts: ProductFacts = {
+        id,
+        name: l.name,
+        effectiveCategoryIds: l.effectiveCategoryIds,
+        lineageIds: l.lineageIds,
+      };
+      if (hiding.some((r) => ruleMatchesProduct(r, facts))) hidden.add(id);
+    }
+    return hidden;
+  }
+
+  /**
    * The choke point's read half (step 2): `evaluate()` over only the products that ADD sellable
    * quantity. Lines with no product id (nothing to check) are dropped, then the lines are grouped
    * by product: a product is checked when ANY of its lines has an omitted / non-numeric / NaN
@@ -449,7 +563,7 @@ export class SellingRestrictionsService {
       params.tenantId,
       params.customerId,
       checkable.map((productId) => ({ productId })),
-      { channel: params.channel, at: params.at },
+      { channel: params.channel, at: params.at, switchGated: params.switchGated },
     );
   }
 

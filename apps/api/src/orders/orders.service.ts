@@ -2919,9 +2919,8 @@ export class OrdersService implements OnApplicationBootstrap {
       throw new ForbiddenException(await carrierGuard.buyerEditClosedMessage(this, order)); // B1135
     }
 
-    // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice
-    // revert and any write. Non-draft only (a draft is judged at its promotion). OFF = one policy read
-    // here and nothing else; the plan is re-checked under the row lock below (order-edit-restrictions.ts).
+    // Lane R: a banned product added by this edit refuses (409 SELLING_RESTRICTED) BEFORE the invoice revert and any
+    // write; non-draft only (a draft is judged at its promotion). Re-checked under the row lock (order-edit-restrictions.ts).
     let restrictionPlan: OrderEditRestrictionPlan | null = null;
     if (order.status !== "DRAFT") {
       const tenantId = this.restrictionTenantId(user, order.tenantId);
@@ -2932,6 +2931,7 @@ export class OrdersService implements OnApplicationBootstrap {
           existing: order.lineItems ?? [],
           items: dto.items ?? [],
           mode: orderEditMode(user?.role, dto.replaceAll, isDiffPayload),
+          principal: user,
         },
       );
       if (restrictionPlan)
@@ -4685,7 +4685,7 @@ export class OrdersService implements OnApplicationBootstrap {
     const tenantId = this.restrictionTenantId(resolver, order.tenantId);
     const restrictionPlan = await planChangeRequestRestrictions(
       { restrictions: this.sellingRestrictions },
-      { tenantId, existing: order.lineItems ?? [], cr },
+      { tenantId, existing: order.lineItems ?? [], cr, principal: resolver },
     );
     if (restrictionPlan)
       await this.sellingRestrictions.assertLinesSellable({

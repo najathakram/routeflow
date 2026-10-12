@@ -103,7 +103,10 @@ describe("SellingRestrictionsService.evaluate", () => {
 
   it("OFF: no SystemConfig row means OFF (owner ruling: off by default) — and nothing else is read", async () => {
     policyRows([]);
-    const res = await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
+    const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      at: NOW,
+      channel: "STAFF",
+    });
     expect(res).toEqual({ outcome: "OFF", reasons: [] });
     expect(prisma.product.findMany).not.toHaveBeenCalled();
     expect(prisma.sellingRestriction.findMany).not.toHaveBeenCalled();
@@ -115,7 +118,57 @@ describe("SellingRestrictionsService.evaluate", () => {
     prisma.sellingRestriction.findMany.mockResolvedValue([
       dbRule({ jurisdiction: "FEDERAL", states: [] }),
     ]);
-    expect((await service.evaluate(T, "c1", [{ productId: "p1" }])).outcome).toBe("OFF");
+    expect(
+      (await service.evaluate(T, "c1", [{ productId: "p1" }], { channel: "STAFF" })).outcome,
+    ).toBe("OFF");
+    expect(prisma.sellingRestriction.findMany).not.toHaveBeenCalled();
+  });
+
+  it("PORTAL: the switch is staff-channel only — switch off, a live FEDERAL rule still BLOCKs the portal", async () => {
+    enable(false);
+    withProduct();
+    prisma.sellingRestriction.findMany.mockResolvedValue([
+      dbRule({ jurisdiction: "FEDERAL", states: [] }),
+    ]);
+    const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      at: NOW,
+      channel: "BUYER_PORTAL",
+    });
+    expect(res.outcome).toBe("BLOCK");
+  });
+
+  it("PORTAL: no channel given fails closed to the portal — the switch cannot turn it off", async () => {
+    enable(false);
+    withProduct();
+    prisma.sellingRestriction.findMany.mockResolvedValue([
+      dbRule({ jurisdiction: "FEDERAL", states: [] }),
+    ]);
+    const res = await service.evaluate(T, "c1", [{ productId: "p1" }], { at: NOW });
+    expect(res.outcome).toBe("BLOCK");
+  });
+
+  it("PORTAL, switch off, a tenant with NO active rule: ALLOW after one rule probe, no product reads", async () => {
+    enable(false);
+    prisma.sellingRestriction.findMany.mockResolvedValue([]);
+    const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      at: NOW,
+      channel: "BUYER_PORTAL",
+    });
+    expect(res).toEqual({ outcome: "ALLOW", reasons: [] });
+    expect(prisma.sellingRestriction.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.product.findMany).not.toHaveBeenCalled();
+  });
+
+  it("switchGated: a portal-channel call follows the tenant switch (off = OFF, the rule is never read)", async () => {
+    enable(false);
+    prisma.sellingRestriction.findMany.mockResolvedValue([
+      dbRule({ jurisdiction: "FEDERAL", states: [] }),
+    ]);
+    const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      channel: "BUYER_PORTAL",
+      switchGated: true,
+    });
+    expect(res.outcome).toBe("OFF");
     expect(prisma.sellingRestriction.findMany).not.toHaveBeenCalled();
   });
 
@@ -446,7 +499,9 @@ describe("SellingRestrictionsService.evaluate", () => {
   it("an ambient tenant equal to the requested tenant is fine", async () => {
     mockAmbient(T);
     enable(false);
-    expect((await service.evaluate(T, null, [{ productId: "p1" }])).outcome).toBe("OFF");
+    expect(
+      (await service.evaluate(T, null, [{ productId: "p1" }], { channel: "STAFF" })).outcome,
+    ).toBe("OFF");
   });
 
   describe("getPolicy (SystemConfig keys)", () => {
@@ -1666,5 +1721,113 @@ describe("SellingRestrictionsService.evaluate", () => {
       ).rejects.toThrow(/tenantId/);
       expectNoReads();
     });
+  });
+});
+
+describe("SellingRestrictionsService.restrictedProductIdsFor (portal limits: what a buyer is not shown)", () => {
+  let service: SellingRestrictionsService;
+  let prisma: any;
+
+  const portalRule = (over: Record<string, unknown> = {}) => ({
+    id: "r1",
+    categoryId: null,
+    productId: "p1",
+    jurisdiction: "STATE",
+    states: ["TX"],
+    surface: "BUYER_PORTAL",
+    effectiveFrom: new Date("2026-01-01T00:00:00Z"),
+    effectiveTo: null,
+    liftedAt: null,
+    reason: "Portal limit",
+    ...over,
+  });
+  const customerIn = (state: string | null, isWalkIn = false) =>
+    prisma.customer.findFirst.mockResolvedValue({
+      isWalkIn,
+      addresses:
+        state === null
+          ? []
+          : [
+              {
+                isDefault: true,
+                addressType: "BILLING",
+                stateCode: state,
+                stateNeedsReview: false,
+              },
+            ],
+    });
+
+  beforeEach(async () => {
+    const mock: any = createMockPrisma();
+    mock.getTenantId.mockReturnValue(null);
+    prisma = mock.forTenant();
+    prisma.sellingRestriction = writeGuardedModel(jest.fn().mockResolvedValue([]));
+    prisma.productCategory = writeGuardedModel(jest.fn().mockResolvedValue([]));
+    prisma.productCategoryLabel = writeGuardedModel(jest.fn().mockResolvedValue([]));
+    prisma.systemConfig.findMany.mockResolvedValue([]);
+    prisma.product.findMany.mockResolvedValue([
+      { id: "p1", name: "Gummies", parentProductId: null, categoryLabels: [] },
+    ]);
+    const mod = await Test.createTestingModule({
+      providers: [
+        SellingRestrictionsService,
+        ProductLabelsService,
+        { provide: PrismaService, useValue: mock },
+      ],
+    }).compile();
+    service = mod.get(SellingRestrictionsService);
+  });
+
+  it("(i) with no active rule it costs ONE query and reads nothing else", async () => {
+    const ids = await service.restrictedProductIdsFor(T, "c1", NOW);
+    expect(ids.size).toBe(0);
+    expect(prisma.sellingRestriction.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.customer.findFirst).not.toHaveBeenCalled();
+    expect(prisma.product.findMany).not.toHaveBeenCalled();
+    expect(prisma.productCategoryLabel.findMany).not.toHaveBeenCalled();
+    expect(prisma.systemConfig.findMany).not.toHaveBeenCalled();
+  });
+
+  it("reads only the rules ACTIVE at `at` (the SQL twin), for this tenant", async () => {
+    await service.restrictedProductIdsFor(T, null, NOW);
+    expect(prisma.sellingRestriction.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: T, AND: [activeRuleWhere(NOW)] } }),
+    );
+  });
+
+  it("hides the rule's product from a buyer whose default address is in the rule's state", async () => {
+    prisma.sellingRestriction.findMany.mockResolvedValue([portalRule()]);
+    customerIn("TX");
+    expect([...(await service.restrictedProductIdsFor(T, "c1", NOW))]).toEqual(["p1"]);
+  });
+
+  it("leaves a buyer in another state alone", async () => {
+    prisma.sellingRestriction.findMany.mockResolvedValue([portalRule()]);
+    customerIn("NY");
+    expect((await service.restrictedProductIdsFor(T, "c1", NOW)).size).toBe(0);
+  });
+
+  it("with no state on file, a portal-only limit hides nothing and a legal ban hides", async () => {
+    prisma.sellingRestriction.findMany.mockResolvedValue([portalRule()]);
+    customerIn(null);
+    expect((await service.restrictedProductIdsFor(T, "c1", NOW)).size).toBe(0);
+    prisma.sellingRestriction.findMany.mockResolvedValue([portalRule({ surface: "ALL" })]);
+    expect([...(await service.restrictedProductIdsFor(T, "c1", NOW))]).toEqual(["p1"]);
+  });
+
+  it("a FEDERAL rule hides without consulting any address", async () => {
+    prisma.sellingRestriction.findMany.mockResolvedValue([
+      portalRule({ jurisdiction: "FEDERAL", states: [] }),
+    ]);
+    expect([...(await service.restrictedProductIdsFor(T, "c1", NOW))]).toEqual(["p1"]);
+    expect(prisma.customer.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("a rule that names a missing product id hides that id (nothing to resolve, fail closed)", async () => {
+    prisma.sellingRestriction.findMany.mockResolvedValue([
+      portalRule({ productId: "ghost", jurisdiction: "FEDERAL", states: [] }),
+    ]);
+    prisma.product.findMany.mockResolvedValue([]);
+    expect((await service.restrictedProductIdsFor(T, "c1", NOW)).has("ghost")).toBe(true);
   });
 });

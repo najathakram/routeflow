@@ -1,3 +1,4 @@
+import { noRestrictionsProvider } from "../selling-restrictions/testing/no-restrictions-provider";
 import { Test } from "@nestjs/testing";
 import { NotFoundException } from "@nestjs/common";
 import { StockAlertService } from "./stock-alert.service";
@@ -19,6 +20,7 @@ describe("StockAlertService (P5-03)", () => {
         StockAlertService,
         { provide: PrismaService, useValue: prisma },
         { provide: NotificationsService, useValue: notifications },
+        noRestrictionsProvider,
       ],
     }).compile();
     service = mod.get(StockAlertService);

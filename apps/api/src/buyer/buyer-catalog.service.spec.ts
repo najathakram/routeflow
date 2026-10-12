@@ -1,3 +1,4 @@
+import { noRestrictionsProvider } from "../selling-restrictions/testing/no-restrictions-provider";
 import { Test } from "@nestjs/testing";
 import { NotFoundException } from "@nestjs/common";
 import { BuyerCatalogService } from "./buyer-catalog.service";
@@ -56,6 +57,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         { provide: ReplenishmentService, useValue: replenishment },
         { provide: PromotionsService, useValue: promotions },
         { provide: BuyerBackorderViewResolver, useValue: { resolve: backorderResolve } },
+        noRestrictionsProvider,
       ],
     }).compile();
     service = mod.get(BuyerCatalogService);

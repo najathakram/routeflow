@@ -33,6 +33,7 @@ import {
   roundMoney,
 } from "@routeflow/pricing";
 import type { CategoryTaxType } from "@routeflow/pricing";
+import type { BuyerReorderSkippedLine } from "@routeflow/types";
 import { taxRateFractionFrom } from "../common/tax-rate";
 import { decrementStockForSale } from "../orders/order-stock";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
@@ -401,7 +402,15 @@ export class OrderTemplatesService {
   // B1054: a repeat within GENERATE_NOW_REPLAY_WINDOW_MS is answered with the order the first run
   // placed. Accepted limit: if that order lost a pending-order merge in the window, the retry places
   // a new one (see generate-replay.ts); the merge is not touched to carry a marker.
-  async generateOrder(templateId: string, isStaffRole = true, allowOversell?: boolean) {
+  async generateOrder(
+    templateId: string,
+    isStaffRole = true,
+    allowOversell?: boolean,
+    /** Out-param: a buyer's Reorder fills `skipped` with the lines a selling restriction left out. */
+    outcome?: { skipped: BuyerReorderSkippedLine[] },
+  ) {
+    // Only a caller that asked for `skipped` (the buyer's Reorder) has restricted lines left out; every other
+    // manual run keeps the 409 so nothing is dropped without the caller being told.
     const replaySince = replayCutoff(new Date()); // B1054: measured from the START of this request
     const template = await this.prisma.forTenant().orderTemplate.findUnique({
       where: { id: templateId },
@@ -414,14 +423,19 @@ export class OrderTemplatesService {
     // concurrent case this unlocked read cannot.
     const replay = await findReplayOrder(this.prisma.forTenant(), template.id, replaySince);
     if (replay) return replay;
+    const runCtx: { ban: null; restricted?: BuyerReorderSkippedLine[] } = {
+      ban: null,
+      ...(outcome ? { restricted: [] } : {}),
+    };
     const order = await this.createOrderFromTemplate(
       template,
       isStaffRole,
       false,
-      undefined,
+      runCtx,
       allowOversell,
       replaySince,
     );
+    if (outcome && runCtx.restricted) outcome.skipped = runCtx.restricted;
     // Null = every line was a license-gated category the customer isn't verified
     // for, so nothing was ordered. Surface it (the cron path tolerates null; a
     // manual reorder should tell the caller why the order is empty).
@@ -595,7 +609,13 @@ export class OrderTemplatesService {
     isStaffRole: boolean,
     unattended = false,
     /** Unattended runs: filled with the ban note, so the CALLER can notify after the attempt (finally). */
-    ctx?: { ban: { count: number; names: string } | null; placed?: boolean; replayed?: boolean },
+    ctx?: {
+      ban: { count: number; names: string } | null;
+      placed?: boolean;
+      replayed?: boolean;
+      /** A buyer's manual run: the lines left out because a selling restriction hides them from this buyer. */
+      restricted?: BuyerReorderSkippedLine[];
+    },
     /** WS9: the caller's resolved boolean for a manual run (default = isStaffRole, today's value). */
     allowOversellArg?: boolean,
     /** B1054: an order this template placed at/after it is returned instead of a second one (manual: now - 30 s; cron: UTC day start). */
@@ -616,13 +636,35 @@ export class OrderTemplatesService {
     );
     const restrictionTenantId = requireRestrictionTenantId(this.prisma.getTenantId());
     const customerId = template.customerId;
-    const live = template.items.filter((i) => !i.suspendedAt);
+    let live = template.items.filter((i) => !i.suspendedAt);
     let banNote: { count: number; names: string } | null = null;
     if (!unattended) {
       if (live.length === 0)
         throw new BadRequestException(
           "Every line on this standing order is suspended — lift a line or edit the template.",
         );
+      if (channel === "BUYER_PORTAL" && ctx?.restricted) {
+        // A buyer's Reorder leaves restricted lines out (they are hidden from this buyer everywhere else) and
+        // orders the rest; `skipped` tells the portal. The 409 below stays the authority for a race (a rule
+        // created since) and for every line left in.
+        const verdict = await this.sellingRestrictions.checkLinesSellable({
+          tenantId: restrictionTenantId,
+          customerId,
+          lines: live.map((i) => ({ productId: i.productId })),
+          channel,
+        });
+        if (verdict.outcome === "BLOCK" || verdict.outcome === "INDETERMINATE") {
+          const nameOf = new Map(verdict.reasons.map((r) => [r.productId, r.productName]));
+          const left = live.filter((i) => nameOf.has(i.productId));
+          live = live.filter((i) => !nameOf.has(i.productId));
+          ctx.restricted = left.map((i) => ({
+            productId: i.productId,
+            name: nameOf.get(i.productId) ?? "",
+          }));
+          if (live.length === 0)
+            throw new BadRequestException("None of these items are available to you right now.");
+        }
+      }
       await this.sellingRestrictions.assertLinesSellable({
         tenantId: restrictionTenantId,
         customerId,

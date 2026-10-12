@@ -336,6 +336,81 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
     });
   });
 
+  describe("buyer reorder: portal limits (lines hidden from this buyer are left out, with `skipped`)", () => {
+    const hidden = {
+      outcome: "BLOCK",
+      reasons: [{ productId: "p-banned", productName: "Banned Cola", ruleId: "rule-1" }],
+    };
+
+    it("(h) drops the restricted line, orders the rest, and returns it in `skipped`", async () => {
+      restrictions.checkLinesSellable.mockResolvedValue(hidden);
+      const outcome = { skipped: [] as Array<{ productId: string; name: string }> };
+
+      await service.generateOrder("t1", false, false, outcome);
+
+      expect(restrictions.checkLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: "BUYER_PORTAL" }),
+      );
+      // the 409 authority is still asked, but only about the lines left in
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ lines: [{ productId: "p-ok" }], channel: "BUYER_PORTAL" }),
+      );
+      expect(
+        prisma.order.create.mock.calls[0][0].data.lineItems.create.map((l: any) => l.productId),
+      ).toEqual(["p-ok"]);
+      expect(outcome.skipped).toEqual([{ productId: "p-banned", name: "Banned Cola" }]);
+    });
+
+    it("an INDETERMINATE verdict (legal ban, no state on file) drops the line too", async () => {
+      restrictions.checkLinesSellable.mockResolvedValue({ ...hidden, outcome: "INDETERMINATE" });
+      const outcome = { skipped: [] as Array<{ productId: string; name: string }> };
+      await service.generateOrder("t1", false, false, outcome);
+      expect(outcome.skipped.map((l) => l.productId)).toEqual(["p-banned"]);
+    });
+
+    it("when every line is restricted it answers with the calm sentence and places nothing", async () => {
+      prisma.orderTemplate.findUnique.mockResolvedValue(template({ items: [line("p-banned")] }));
+      restrictions.checkLinesSellable.mockResolvedValue(hidden);
+
+      await expect(service.generateOrder("t1", false, false, { skipped: [] })).rejects.toThrow(
+        "None of these items are available to you right now.",
+      );
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("nothing restricted: skipped stays empty and the order is whole", async () => {
+      const outcome = { skipped: [] as Array<{ productId: string; name: string }> };
+      await service.generateOrder("t1", false, false, outcome);
+      expect(outcome.skipped).toEqual([]);
+      expect(prisma.order.create.mock.calls[0][0].data.lineItems.create).toHaveLength(2);
+    });
+
+    it("a customer's own /generate (no `skipped` out-param) is NOT trimmed: it keeps the 409 and the lines named", async () => {
+      restrictions.assertLinesSellable.mockRejectedValue(
+        new ConflictException({ code: "SELLING_RESTRICTED", message: "banned", blockedLines: [] }),
+      );
+      restrictions.checkLinesSellable.mockResolvedValue(hidden);
+      await expect(service.generateOrder("t1", false, false)).rejects.toMatchObject({
+        response: { code: "SELLING_RESTRICTED" },
+      });
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("a STAFF manual run is NOT trimmed: the operator still gets the 409", async () => {
+      restrictions.assertLinesSellable.mockRejectedValue(
+        new ConflictException({ code: "SELLING_RESTRICTED", message: "banned", blockedLines: [] }),
+      );
+      restrictions.checkLinesSellable.mockResolvedValue(hidden);
+      await expect(service.generateOrder("t1", true)).rejects.toMatchObject({
+        response: { code: "SELLING_RESTRICTED" },
+      });
+      expect(restrictions.checkLinesSellable).not.toHaveBeenCalled();
+      expect(restrictions.assertLinesSellable).toHaveBeenCalledWith(
+        expect.objectContaining({ lines: [{ productId: "p-banned" }, { productId: "p-ok" }] }),
+      );
+    });
+  });
+
   describe("provenance on create", () => {
     it("snapshots the creator's role and id; an internal caller leaves it NULL", async () => {
       prisma.customer.findUnique.mockResolvedValue({ id: "c1" });

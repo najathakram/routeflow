@@ -3,7 +3,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { getTierPrice } from "@routeflow/pricing";
-import { buyerVisibleProductWhere, noBuyerRestrictions } from "./buyer-product-visibility";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { buyerVisibilityFor, buyerVisibleProductWhere } from "./buyer-product-visibility";
 import { firstSignableImageKey } from "../products/product-image-keys";
 import { overdueCutoff } from "../common/calendar-date";
 import { tenantTimeZone } from "../common/tenant-time-zone";
@@ -17,11 +18,12 @@ export class BuyerDashboardService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly visibility: RegulatedVisibilityService,
+    private readonly restrictions: SellingRestrictionsService,
   ) {}
 
-  /** The tenant-scoped "no blocked ids" visibility context (B1211): no tenant on the request throws, never unscoped. */
-  private buyerVisibility() {
-    return noBuyerRestrictions(this.prisma.getTenantId());
+  /** The tenant-scoped buyer visibility context (hidden ids included): no tenant on the request throws, never unscoped (B1211). */
+  private buyerVisibility(customerId: string) {
+    return buyerVisibilityFor(this.restrictions, this.prisma.getTenantId(), customerId);
   }
 
   /**
@@ -44,6 +46,8 @@ export class BuyerDashboardService {
     // visibility service the catalog uses — so the dashboard can't drift and re-expose
     // a product the buyer would be blocked from buying at checkout.
     const { hiddenIds } = await this.visibility.computeGate(customerId, now);
+    // One restriction read per request; every product query below applies the same hidden-id set.
+    const buyerVis = await this.buyerVisibility(customerId);
     // NULL-safe form: `notIn` never matches NULL, so the old shape hid every
     // UNTRACKED product from the dashboard rails once a license-gated
     // category existed (see products.service.findAll for the full account).
@@ -131,7 +135,7 @@ export class BuyerDashboardService {
 
       // New products (last 30 days)
       this.prisma.forTenant().product.findMany({
-        where: buyerVisibleProductWhere(this.buyerVisibility(), {
+        where: buyerVisibleProductWhere(buyerVis, {
           createdAt: { gte: thirtyDaysAgo },
           ...gateWhere,
         }),
@@ -141,7 +145,7 @@ export class BuyerDashboardService {
 
       // Featured products
       this.prisma.forTenant().product.findMany({
-        where: buyerVisibleProductWhere(this.buyerVisibility(), { isFeatured: true, ...gateWhere }),
+        where: buyerVisibleProductWhere(buyerVis, { isFeatured: true, ...gateWhere }),
         orderBy: { name: "asc" },
         take: 10,
       }),
@@ -203,7 +207,7 @@ export class BuyerDashboardService {
     const freqProducts =
       freqProductIds.length > 0
         ? await this.prisma.forTenant().product.findMany({
-            where: buyerVisibleProductWhere(this.buyerVisibility(), {
+            where: buyerVisibleProductWhere(buyerVis, {
               id: { in: freqProductIds },
               ...gateWhere,
             }),
@@ -329,7 +333,7 @@ export class BuyerDashboardService {
     const suggestedProducts =
       orderedCategories.length > 0
         ? await this.prisma.forTenant().product.findMany({
-            where: buyerVisibleProductWhere(this.buyerVisibility(), {
+            where: buyerVisibleProductWhere(buyerVis, {
               category: { in: orderedCategories },
               id: { notIn: orderedProductIds },
               ...gateWhere,

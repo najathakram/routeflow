@@ -1,7 +1,8 @@
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { StockAlertStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { buyerVisibleProductWhere, noBuyerRestrictions } from "../buyer/buyer-product-visibility";
+import { buyerVisibilityFor, buyerVisibleProductWhere } from "../buyer/buyer-product-visibility";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { NotificationsService } from "../notifications/notifications.service";
 
 /**
@@ -26,6 +27,7 @@ export class StockAlertService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly restrictions: SellingRestrictionsService,
   ) {}
 
   /**
@@ -38,8 +40,9 @@ export class StockAlertService {
     productId: string,
     tenantId: string,
   ): Promise<{ subscribed: true }> {
+    const visibility = await buyerVisibilityFor(this.restrictions, tenantId, customerId);
     const product = await this.prisma.forTenant().product.findFirst({
-      where: buyerVisibleProductWhere(noBuyerRestrictions(tenantId), { id: productId }),
+      where: buyerVisibleProductWhere(visibility, { id: productId }),
       select: { id: true },
     });
     if (!product) throw new NotFoundException("Product not found");

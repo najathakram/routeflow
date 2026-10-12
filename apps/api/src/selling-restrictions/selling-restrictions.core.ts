@@ -19,6 +19,7 @@ import type {
   RestrictionAddressPrecedence,
   RestrictionChannel,
   RestrictionsEvaluation,
+  RestrictionsPolicy,
 } from "@routeflow/types";
 import { normalizeUsState } from "../common/us-states";
 
@@ -105,6 +106,20 @@ export function restrictionChannelForPrincipal(
 ): RestrictionChannel {
   if (!principal || principal.type === "BUYER") return "BUYER_PORTAL";
   return principal.role != null && STAFF_ROLES.has(principal.role) ? "STAFF" : "BUYER_PORTAL";
+}
+
+/**
+ * The ONE gate of the tenant switch (`selling_restrictions.enabled`): it adds STAFF enforcement only. The buyer-portal
+ * channel ALWAYS applies its rules, so a portal limit works the moment the admin sets it; staff-channel blocking touches
+ * orders, invoices, recurring jobs and imports, so it stays opt-in. Any channel that is not exactly "STAFF" is judged as
+ * the portal (fail closed, like `restrictionChannelForPrincipal`). Every short-circuit on the switch calls this, never
+ * `policy.enabled` directly (`portal-limits-pins.spec.ts`).
+ */
+export function restrictionsApply(
+  policy: Pick<RestrictionsPolicy, "enabled">,
+  channel: RestrictionChannel,
+): boolean {
+  return (channel as string) !== "STAFF" || policy.enabled;
 }
 
 /** The OFF outcome: a first-class result, produced without reading anything else. */
@@ -308,6 +323,25 @@ export function resolveGoverningState(
   return codes.size === 1 ? { resolved: true, state: [...codes][0] } : UNRESOLVED_STATE;
 }
 
+/**
+ * Does this rule HIDE its products from a portal buyer in `governingState`? One predicate for the visibility engine
+ * (`restrictedProductIdsFor`), matching `evaluateRestrictions` rule by rule: a federal, unrecognised or malformed
+ * (no readable states) rule hides everywhere; a STATE rule hides when the buyer's state is named; and with the state
+ * unresolved a legal ban (surface ALL, INDETERMINATE) hides while a portal-only limit does not (ALLOW). BLOCK and
+ * INDETERMINATE both hide, so a legal-ban product is never shown and then refused at checkout. The caller loads only
+ * rules ACTIVE at `at`; every active rule binds the portal channel.
+ */
+export function ruleHidesFromBuyer(
+  rule: RestrictionRuleFacts,
+  governingState: GoverningState,
+): boolean {
+  if ((rule.jurisdiction as string) !== "STATE") return true;
+  const states = ruleStates(rule);
+  if (states.length === 0) return true;
+  if (!governingState.resolved) return (rule.surface as string) !== "BUYER_PORTAL";
+  return states.includes(governingState.state);
+}
+
 export interface EvaluateInput {
   channel: RestrictionChannel;
   at: Date;
@@ -417,6 +451,9 @@ export function evaluateRestrictions(input: EvaluateInput): RestrictionsEvaluati
     }
 
     if (!input.governingState.resolved) {
+      // Owner ruling 2: a customer with no state on file is ALLOWED where every matched STATE rule is a portal-only limit
+      // (a commercial choice, not law). A legal ban (surface ALL) among them keeps the fail-closed INDETERMINATE.
+      if (stateRules.every((r) => (r.surface as string) === "BUYER_PORTAL")) continue;
       indeterminate = true;
       reasons.push(
         line(
