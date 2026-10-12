@@ -151,10 +151,12 @@ export function posOrderActions(
     out.push(switchToDelivery);
     return out;
   }
-  if (status === "DELIVERED" && first) {
-    const paid = invoices.every((i) => i.status === "PAID");
-    // Record payment opens the first invoice that is not yet PAID; Print the first live one.
-    const target = paid ? first : (invoices.find((i) => i.status !== "PAID") ?? first);
+  // A written-off invoice is never a payment or print target.
+  const payable = invoices.filter((i) => i.status !== "WRITTEN_OFF");
+  if (status === "DELIVERED" && payable[0]) {
+    const paid = payable.every((i) => i.status === "PAID");
+    // Record payment opens the first invoice that is not yet PAID; Print the first payable one.
+    const target = paid ? payable[0] : (payable.find((i) => i.status !== "PAID") ?? payable[0]);
     return [
       {
         key: paid ? "printInvoice" : "recordPayment",
@@ -293,19 +295,48 @@ export const POS_TENDER_METHODS: { method: PosTenderMethod; label: string }[] = 
 export function posBalanceDue(
   orderTotal: number,
   invoices:
-    | ReadonlyArray<{
-        status: string;
-        total: number;
-        balanceDue?: number;
-        payments?: ReadonlyArray<{ amount: number | string }>;
-      }>
-    | null
-    | undefined,
-): number {
-  const live = (invoices ?? []).filter((i) => i.status !== "VOID" && i.status !== "WRITTEN_OFF");
-  if (live.length === 0) return roundMoney(orderTotal);
-  const sum = live.reduce((acc, i) => acc + (i.balanceDue ?? i.total), 0);
-  return roundMoney(sum);
+    ReadonlyArray<{ status: string; total: number; balanceDue?: number }> | null | undefined,
+): number | null {
+  const all = invoices ?? [];
+  if (all.length === 0) return roundMoney(orderTotal); // no invoice yet: the order total
+  const live = all.filter((i) => i.status !== "VOID" && i.status !== "WRITTEN_OFF");
+  // The server's per-invoice balanceDue only: a missing one is unknown (null), never the gross total.
+  if (live.some((i) => typeof i.balanceDue !== "number")) return null;
+  return roundMoney(live.reduce((acc, i) => acc + (i.balanceDue as number), 0));
+}
+
+export type PosHandOverBalance =
+  { state: "loading" } | { state: "error" } | { state: "ready"; amount: number };
+
+/**
+ * What the hand-over sheet may show as owed. Never the gross order total once an invoice exists: until
+ * the per-invoice server balances are read the state is `loading`, and a failed read is `error`
+ * (the sheet then offers Retry and keeps submit disabled).
+ */
+export function posHandOverBalance(input: {
+  orderTotal: number;
+  orderInvoices: ReadonlyArray<{ status: string }>;
+  /** The balance the server said was still owed after a 200 whose payment was not recorded. */
+  owedOverride: number | null;
+  isFetching: boolean;
+  isError: boolean;
+  details: ReadonlyArray<{ status: string; total: number; balanceDue?: number }> | undefined;
+}): PosHandOverBalance {
+  if (input.owedOverride != null) return { state: "ready", amount: roundMoney(input.owedOverride) };
+  if (!input.orderInvoices.some((i) => i.status !== "VOID")) {
+    return { state: "ready", amount: roundMoney(input.orderTotal) };
+  }
+  if (input.isError) return { state: "error" };
+  if (input.isFetching || !input.details) return { state: "loading" };
+  const amount = posBalanceDue(input.orderTotal, input.details);
+  return amount === null ? { state: "error" } : { state: "ready", amount };
+}
+
+/** After a refused PENDING step the order was re-read: a CONFIRMED order needs no CONFIRMED patch. */
+export function posConfirmStepsAfterPending(
+  rereadStatus: string | null | undefined,
+): "CONFIRMED"[] {
+  return rereadStatus === "CONFIRMED" ? [] : ["CONFIRMED"];
 }
 
 /**

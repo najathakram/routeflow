@@ -81,7 +81,7 @@ import {
   POS_SWITCH_FAILED,
   pickupCompleteErrorCopy,
   decidePickupResponse,
-  posBalanceDue,
+  posHandOverBalance,
   posLiveInvoices,
   posCanSwitchToDelivery,
   posCutNote,
@@ -1245,13 +1245,15 @@ export default function OrderDetailScreen() {
       <PosHandOverSheet
         visible={handOverOpen}
         isWalkIn={walkInCustomer?.isWalkIn}
-        loading={balances.isLoading}
-        balanceDue={
-          handOverOwed ??
-          (balances.data
-            ? posBalanceDue(Number(order.total), balances.data)
-            : posBalanceDue(Number(order.total), order.invoices))
-        }
+        balance={posHandOverBalance({
+          orderTotal: Number(order.total),
+          orderInvoices: order.invoices ?? [],
+          owedOverride: handOverOwed,
+          isFetching: balances.isFetching,
+          isError: balances.isError,
+          details: balances.data,
+        })}
+        onRetry={() => void balances.refetch()}
         submitting={pickupMut.isPending}
         error={handOverError}
         onCancel={() => setHandOverOpen(false)}

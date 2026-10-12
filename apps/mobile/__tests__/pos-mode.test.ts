@@ -9,6 +9,8 @@ import {
   decidePickupResponse,
   pendingRefusalIsDone,
   planPosTender,
+  posConfirmStepsAfterPending,
+  posHandOverBalance,
   posConfirmSteps,
   posMergeAlert,
   posMayHandOverUnpaid,
@@ -362,5 +364,75 @@ describe("hand-over balance, change and zero-owed", () => {
     expect(a[0]).toMatchObject({ key: "recordPayment", invoiceId: "u" });
     const paid = posOrderActions({ invoices: [inv("VOID", "v"), inv("PAID", "p")] }, "DELIVERED");
     expect(paid[0]).toMatchObject({ key: "printInvoice", invoiceId: "p" });
+  });
+});
+
+describe("posHandOverBalance (never the gross total when the balances are not known)", () => {
+  const live = [{ id: "a", status: "SENT" }];
+  const q = (over: Record<string, unknown>) => ({
+    orderTotal: 100,
+    orderInvoices: live,
+    owedOverride: null,
+    isFetching: false,
+    isError: false,
+    details: undefined as { status: string; total: number; balanceDue?: number }[] | undefined,
+    ...over,
+  });
+  it("loading: no amount", () => {
+    expect(posHandOverBalance(q({ isFetching: true }))).toEqual({ state: "loading" });
+    expect(posHandOverBalance(q({}))).toEqual({ state: "loading" });
+  });
+  it("error: no amount and no gross fallback", () => {
+    expect(posHandOverBalance(q({ isError: true }))).toEqual({ state: "error" });
+    expect(posHandOverBalance(q({ isError: true, details: [] }))).toEqual({ state: "error" });
+  });
+  it("ready: the sum of server balanceDue (deposit case)", () => {
+    expect(
+      posHandOverBalance(q({ details: [{ status: "SENT", total: 100, balanceDue: 60 }] })),
+    ).toEqual({ state: "ready", amount: 60 });
+  });
+  it("refetching a cached read is loading again", () => {
+    expect(
+      posHandOverBalance(
+        q({ isFetching: true, details: [{ status: "SENT", total: 100, balanceDue: 60 }] }),
+      ),
+    ).toEqual({ state: "loading" });
+  });
+  it("a detail with no balanceDue is unknown, not gross", () => {
+    expect(posHandOverBalance(q({ details: [{ status: "SENT", total: 100 }] }))).toEqual({
+      state: "error",
+    });
+  });
+  it("no live invoice yet: the order total; the server's owed override wins", () => {
+    expect(posHandOverBalance(q({ orderInvoices: [] }))).toEqual({ state: "ready", amount: 100 });
+    expect(posHandOverBalance(q({ owedOverride: 25, isError: true }))).toEqual({
+      state: "ready",
+      amount: 25,
+    });
+  });
+  it("every invoice written off owes nothing (not the gross total)", () => {
+    expect(
+      posHandOverBalance(
+        q({
+          orderInvoices: [{ id: "a", status: "WRITTEN_OFF" }],
+          details: [{ status: "WRITTEN_OFF", total: 100, balanceDue: 100 }],
+        }),
+      ),
+    ).toEqual({ state: "ready", amount: 0 });
+  });
+});
+
+describe("misc money-safety", () => {
+  it("Record payment never targets a WRITTEN_OFF invoice", () => {
+    const a = posOrderActions(
+      { invoices: [inv("WRITTEN_OFF", "w"), inv("SENT", "u")] },
+      "DELIVERED",
+    );
+    expect(a[0]).toMatchObject({ key: "recordPayment", invoiceId: "u" });
+    expect(posOrderActions({ invoices: [inv("WRITTEN_OFF", "w")] }, "DELIVERED")).toEqual([]);
+  });
+  it("a re-read of CONFIRMED after a refused PENDING skips the CONFIRMED patch", () => {
+    expect(posConfirmStepsAfterPending("CONFIRMED")).toEqual([]);
+    expect(posConfirmStepsAfterPending("PENDING")).toEqual(["CONFIRMED"]);
   });
 });

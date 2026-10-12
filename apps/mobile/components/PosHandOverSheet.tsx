@@ -17,6 +17,7 @@ import {
   POS_TENDER_PROBLEM_COPY,
   planPosTender,
   posMayHandOverUnpaid,
+  type PosHandOverBalance,
   type PosTenderMethod,
 } from "../lib/pos-mode";
 
@@ -27,20 +28,21 @@ import {
 export function PosHandOverSheet({
   visible,
   isWalkIn,
-  balanceDue,
+  balance,
   submitting,
-  loading,
   error,
+  onRetry,
   onCancel,
   onSubmit,
 }: {
   visible: boolean;
   /** Unknown / loading counts as not known-named: a tender is required. */
   isWalkIn: boolean | null | undefined;
-  balanceDue: number;
+  /** What is owed: loading / error show no amount and keep submit disabled (never the gross total). */
+  balance: PosHandOverBalance;
   submitting?: boolean;
-  /** The invoices' balances are still being read: the tender cannot be judged yet. */
-  loading?: boolean;
+  /** Re-read the invoice balances after a failed read. */
+  onRetry: () => void;
   /** Fixed copy for the last failed attempt (never a server message). */
   error?: string | null;
   onCancel: () => void;
@@ -50,6 +52,9 @@ export function PosHandOverSheet({
   const [amount, setAmount] = React.useState("");
   const [reference, setReference] = React.useState("");
   const [problem, setProblem] = React.useState<string | null>(null);
+  const ready = balance.state === "ready";
+  const loading = balance.state === "loading";
+  const balanceDue = balance.state === "ready" ? balance.amount : 0;
 
   React.useEffect(() => {
     if (visible) {
@@ -64,7 +69,7 @@ export function PosHandOverSheet({
   const cancel = () => {
     if (!submitting) onCancel();
   };
-  const nothingOwed = !loading && balanceDue <= 0;
+  const nothingOwed = ready && balanceDue <= 0;
 
   const submit = (skip: boolean) => {
     const plan = planPosTender({
@@ -97,9 +102,20 @@ export function PosHandOverSheet({
               ? "Take payment now, or hand over and leave the invoice open."
               : "Take payment to hand the order over."}
           </Text>
+          {loading ? <Text style={styles.hint}>Loading the balance…</Text> : null}
+          {balance.state === "error" ? (
+            <>
+              <Text style={styles.error}>
+                Couldn't read the invoice balance. Retry before taking payment.
+              </Text>
+              <Pressable style={styles.secondary} onPress={onRetry} accessibilityRole="button">
+                <Text style={styles.secondaryText}>Retry</Text>
+              </Pressable>
+            </>
+          ) : null}
           {nothingOwed ? (
             <Text style={styles.hint}>Nothing is owed on this order.</Text>
-          ) : (
+          ) : !ready ? null : (
             <>
               <View style={styles.chips}>
                 {POS_TENDER_METHODS.map((m) => (
@@ -149,21 +165,21 @@ export function PosHandOverSheet({
           {problem || error ? <Text style={styles.error}>{problem ?? error}</Text> : null}
           <Pressable
             style={[styles.primary, submitting && { opacity: 0.5 }]}
-            disabled={submitting || loading}
+            disabled={submitting || !ready}
             onPress={() => submit(false)}
             accessibilityRole="button"
           >
             <Text style={styles.primaryText}>
               {submitting
                 ? "Saving…"
-                : loading
-                  ? "Loading balance…"
+                : !ready
+                  ? "Balance unavailable"
                   : nothingOwed
                     ? POS_COPY.handOver
                     : `${POS_COPY.handOver} and take payment`}
             </Text>
           </Pressable>
-          {posMayHandOverUnpaid(isWalkIn) && !nothingOwed ? (
+          {posMayHandOverUnpaid(isWalkIn) && ready && !nothingOwed ? (
             <Pressable
               style={styles.secondary}
               disabled={submitting}

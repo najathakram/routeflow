@@ -7,6 +7,7 @@ import {
   POS_MODE_PREF_KEY,
   pendingRefusalIsDone,
   posConfirmSteps,
+  posConfirmStepsAfterPending,
   posModeFromPreferences,
   posModePrefPatch,
   type PosFinishStep,
@@ -38,14 +39,14 @@ export class PosFinishError extends Error {
   }
 }
 
-async function promotedAlready(orderId: string, e: unknown): Promise<boolean> {
+async function rereadAfterRefusedPending(orderId: string, e: unknown): Promise<string | null> {
   const httpStatus = (e as { response?: { status?: number } } | null)?.response?.status;
-  if (httpStatus !== 400 && httpStatus !== 409) return false;
+  if (httpStatus !== 400 && httpStatus !== 409) return null;
   try {
     const cur = (await apiClient.get(`/orders/${orderId}`)).data as { status?: string } | undefined;
-    return pendingRefusalIsDone(httpStatus, cur?.status);
+    return pendingRefusalIsDone(httpStatus, cur?.status) ? (cur?.status ?? null) : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -62,12 +63,16 @@ export function usePosFinish() {
   >({
     mutationFn: async ({ orderId, invoice, fromStatus }) => {
       try {
+        let reread: string | null = null;
         for (const status of posConfirmSteps(fromStatus)) {
+          if (status === "CONFIRMED" && posConfirmStepsAfterPending(reread).length === 0) continue;
           try {
             await apiClient.patch(`/orders/${orderId}/status`, { status });
           } catch (e) {
             // PENDING is the only step that can be a re-run; a refusal is "done" only if a re-read agrees.
-            if (status !== "PENDING" || !(await promotedAlready(orderId, e))) throw e;
+            if (status !== "PENDING") throw e;
+            reread = await rereadAfterRefusedPending(orderId, e);
+            if (reread === null) throw e;
           }
         }
       } catch (e) {
@@ -135,6 +140,7 @@ export function usePickupInvoiceBalances(invoiceIds: readonly string[], enabled:
     queryKey: ["invoices", "pickup-balance", ...invoiceIds],
     enabled: enabled && invoiceIds.length > 0,
     staleTime: 0,
+    gcTime: 0, // never show a previous open's balance
     queryFn: () =>
       Promise.all(invoiceIds.map((id) => apiClient.get(`/invoices/${id}`).then((r) => r.data))),
   });
