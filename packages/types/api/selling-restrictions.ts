@@ -85,6 +85,14 @@ export interface UnknownStateCustomersResponse {
   noAddress: UnknownStateBucket;
   unusableState: UnknownStateBucket;
   needsReview: UnknownStateBucket;
+  /** Distinct customers across the three buckets (a customer in two buckets counts once): the card header. */
+  customersTotal: number;
+  /**
+   * True only when an active ALL (legal-ban) STATE rule exists and the tenant has no business state on
+   * file: the same predicate as the engine's `stateRuleInPlay`. The web shows the "set your business
+   * state" nudge from it; false when no such rule is in force.
+   */
+  businessStateMissing: boolean;
 }
 
 export interface BulkStateRequest {
