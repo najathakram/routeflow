@@ -24,6 +24,8 @@ const NEVER_SEES_WRITE_REFUSALS: Record<string, string> = {
   "lib/buyer-auth.ts": "clears a presence cookie on a failed session read; shows no copy",
   "lib/customer-not-linked.ts":
     "classifies the GET /orders 403 for a login with no customer record (a read)",
+  "lib/seller-unavailable.ts":
+    "classifies the buyer-side 403 SELLER_UNAVAILABLE (a paused seller); a buyer never meets the tenant READ_ONLY refusal",
   "lib/scan-po-lock.ts":
     "classifies the PLAN_GATE 403 on the scan route; a plan lock, not a write copy",
   "app/(platform-admin)/admin/tenants/[id]/_features/profile-errors.ts":
