@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Button, Input, Modal, cn } from "@routeflow/ui/web";
+import { formatReceiptMoney as money } from "@routeflow/pricing";
 import {
   isBoxedLine,
   resolveCounterPriceEdit,
@@ -9,9 +10,6 @@ import {
   type PriceEditMode,
   type PriceEditRefusal,
 } from "@/lib/counter-price-edit";
-
-const money = (n: number) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 
 /** What Apply hands back: the screen replaces ONE line's override with it and never posts from here. */
 export interface CounterPriceEdit {

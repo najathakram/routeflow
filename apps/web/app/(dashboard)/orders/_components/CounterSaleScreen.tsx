@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button, TAP_TARGET, cn } from "@routeflow/ui/web";
 import {
+  formatReceiptMoney as money,
   normalizeBoxesPieces,
   roundMoney,
   type ParkedCartPayload,
@@ -114,8 +115,6 @@ interface PickedCustomer {
   /** owes no sales tax and no levy: the estimate, the order and the invoice all say so */
   isTaxExempt?: boolean | null;
 }
-
-const money = (n: number) => `$${n.toFixed(2)}`;
 
 /** How long the "Line removed. Undo" bar stays. */
 const UNDO_MS = 5000;

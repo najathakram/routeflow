@@ -1,6 +1,7 @@
 import {
   computeLineSubtotal,
   decideStaffOverride,
+  formatReceiptMoney,
   isSpecialTier,
   roundMoney,
 } from "@routeflow/pricing";
@@ -126,7 +127,7 @@ export interface PriceOverride {
   reason?: string;
 }
 
-const dollars = (n: number) => `$${roundMoney(n).toFixed(2)}`;
+const dollars = (n: number) => formatReceiptMoney(roundMoney(n));
 
 /**
  * The neutral chip on an edited line: `{p}% off`, `{$a} off each`, or `Price changed` (a set price, or a net at or
