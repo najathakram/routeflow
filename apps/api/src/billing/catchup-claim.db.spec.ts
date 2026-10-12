@@ -13,6 +13,8 @@ import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { CatchupClaimService } from "./catchup-claim.service";
+import { CatchupCheckoutService } from "./catchup-checkout.service";
+import { ADMIN_AUDIT_ENTITY } from "../platform-admin/audit-actions.constant";
 import { BillingEventService } from "./billing-event.service";
 import { RfInvoicesAdminService } from "../platform-admin/rf-invoices.service";
 import { fakeStripeCatchup } from "../testing/fake-stripe-catchup";
@@ -386,5 +388,116 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
     await expect(
       prisma.tenantSubscription.update({ where: { tenantId: id }, data: { catchupState: "DONE" } }),
     ).rejects.toThrow();
+  });
+
+  it("SA-733r10 MF-A (real SQL): activation [Oct 12, Nov 11) + PAID [Nov 11, Dec 1) (Zelle) - S = A = Dec 1 at creation; settle at completion voids the OPEN [Dec 1, Jan 1) ONCE from the session's catchup_from and leaves both PAID rows alone", async () => {
+    const id = await tenant("mfa");
+    const START = "2026-10-12T04:08:24Z";
+    const MID = "2026-11-11T04:08:24Z";
+    // the activation: marker (with the recorded period) + the post-commit trail row seconds later
+    await prisma.auditLog.createMany({
+      data: [
+        {
+          tenantId: id,
+          action: "TENANT_MANUAL_ACTIVATION_MARKER",
+          entityType: ADMIN_AUDIT_ENTITY,
+          entityId: id,
+          meta: { periodStart: START, periodEnd: MID },
+          createdAt: new Date(START),
+        },
+        {
+          tenantId: id,
+          action: "TENANT_SUBSCRIPTION_ACTIVATED",
+          entityType: ADMIN_AUDIT_ENTITY,
+          entityId: id,
+          meta: { periodEnd: MID },
+          createdAt: new Date(new Date(START).getTime() + 3000),
+        },
+      ],
+    });
+    const paidActivation = await rfInvoice(id, START, MID, "PAID");
+    const paidZelle = await rfInvoice(id, MID, "2026-12-01T12:00:00Z", "PAID");
+    const openDec = await rfInvoice(id, "2026-12-01T12:00:00Z", "2027-01-01T12:00:00Z");
+
+    const stripe = fakeStripeCatchup({
+      subs: {
+        sub_mfa: {
+          id: "sub_mfa",
+          customer: "cus_mfa",
+          status: "trialing",
+          latest_invoice: null,
+          default_payment_method: "pm_mfa",
+        },
+      },
+    });
+    const claim = new CatchupClaimService(
+      prisma as any,
+      stripe as any,
+      new BillingEventService(prisma as any),
+    );
+    const checkout = new CatchupCheckoutService(
+      prisma as any,
+      stripe as any,
+      {
+        resolveTenantPricing: async () => ({
+          planKey: "GROWTH",
+          monthly: 100,
+          source: "override",
+          currency: "usd",
+        }),
+        checkoutPriceData: async () => ({
+          currency: "usd",
+          unit_amount: 10000,
+          recurring: { interval: "month" },
+          product_data: { name: "RouteFlow Growth - monthly" },
+        }),
+      } as any,
+      { checkoutAddonLines: async () => ({ lineItems: [], skus: [] }) } as any,
+      claim,
+      { ensureStripeCustomer: async () => "cus_mfa" } as any,
+    );
+
+    // creation: paid through Dec 1 12:00Z (one walk over the activation + the PAID RfInvoice), S = A = Dec 1
+    const now = new Date("2026-11-20T10:00:00Z");
+    const report = await checkout.plan(id, now);
+    expect(report.plan).toMatchObject({ ok: true, shape: "trial" });
+    if (!report.plan.ok) throw new Error("unreachable");
+    expect(report.plan.stub.from.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+    expect(report.plan.stub.to.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+    expect(report.plan.stub.totalCents).toBe(0);
+    const out = await checkout.open(id, { now, expectedStubCents: 0 });
+    const params = stripe.client.checkout.sessions.create.mock.calls[0][0];
+    expect(params.metadata.catchup_from).toBe("2026-12-01T12:00:00.000Z");
+    expect(params.metadata.catchup_to).toBe("2026-12-01T12:00:00.000Z");
+
+    // completion: the ordinary handler stored the subscription; the claim service settles AT COMPLETION
+    await prisma.tenantSubscription.update({
+      where: { tenantId: id },
+      data: { stripeSubId: "sub_mfa" },
+    });
+    stripe.sessions[out.sessionId] = {
+      ...stripe.sessions[out.sessionId],
+      status: "complete",
+      subscription: "sub_mfa",
+      customer: "cus_mfa",
+      payment_status: "no_payment_required",
+      expires_at: Math.floor(new Date("2026-11-21T10:00:00Z").getTime() / 1000),
+    };
+    await claim.onSessionCompleted(stripe.sessions[out.sessionId]);
+
+    const status = async (rid: string) =>
+      (await prisma.rfInvoice.findUniqueOrThrow({ where: { id: rid } })).status;
+    expect(await status(openDec.id)).toBe("VOID");
+    expect(await status(paidActivation.id)).toBe("PAID");
+    expect(await status(paidZelle.id)).toBe("PAID");
+    expect(await sub(id)).toMatchObject({ catchupState: null, externalPayment: false });
+    expect(
+      await prisma.auditLog.count({ where: { tenantId: id, action: "RF_INVOICE_VOIDED" } }),
+    ).toBe(1);
+    // a redelivery changes nothing more
+    await claim.onSessionCompleted(stripe.sessions[out.sessionId]);
+    expect(
+      await prisma.auditLog.count({ where: { tenantId: id, action: "RF_INVOICE_VOIDED" } }),
+    ).toBe(1);
   });
 });
