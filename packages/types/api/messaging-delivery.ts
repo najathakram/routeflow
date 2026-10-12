@@ -24,6 +24,7 @@ export const EMAIL_KIND_VALUES = [
   "AUTH_OTHER",
   "Z_REPORT",
   "RECEIPT",
+  "PAYMENT_FAILED",
 ] as const;
 export type EmailKind = (typeof EMAIL_KIND_VALUES)[number];
 
