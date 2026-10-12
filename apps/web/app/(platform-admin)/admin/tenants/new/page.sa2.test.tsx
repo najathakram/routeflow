@@ -417,7 +417,7 @@ describe("SA-2 chain and partial failure", () => {
       plan: { overrides: [], comps: [{ featureKey: "driver_payments" }], modes: [], billing: [] },
     });
     await renderPage();
-    fireEvent.click(screen.getByRole("radio", { name: /Delivery/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /Delivery distributor/ }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /At-door payment collection/ }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /Receipt scanning/ }));
     fillForm();

@@ -284,7 +284,7 @@ describe("CreateOrderModal: POS mode merge into an open DRAFT (row 311)", () => 
     );
     const view = await openWithLine();
     await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
-    fireEvent.click(screen.getByRole("button", { name: "Confirm & invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invoice" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add to it" }));
     return view;
   };
@@ -417,8 +417,8 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
   it("row 344: every footer button is a 44 px tap target below sm (390 px was 34 px)", async () => {
     asStoreOnly();
     await openWithLine();
-    await screen.findByRole("button", { name: "Confirm & invoice" });
-    const names = ["Minimize", "Cancel", "Save as Draft", "Confirm only", "Confirm & invoice"];
+    await screen.findByRole("button", { name: "Confirm and invoice" });
+    const names = ["Minimize", "Cancel", "Save as draft", "Confirm only", "Confirm and invoice"];
     for (const name of names) {
       const btn = screen.getByRole("button", { name });
       expect(btn.className).toMatch(/max-sm:h-11/);
