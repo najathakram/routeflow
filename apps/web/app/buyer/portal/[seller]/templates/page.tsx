@@ -13,7 +13,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { Badge, Button } from "@routeflow/ui/web";
-import { reorderSkippedNote } from "@/lib/buyer-reorder-review";
+import { reorderNoneAvailable, reorderSkippedNote } from "@/lib/buyer-reorder-review";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerTemplates, useBuyerReorder, type BuyerOrderTemplate } from "@/lib/api/buyer";
 import { ReorderReviewSheet, REORDER_FAILED_COPY } from "../_components/ReorderReviewSheet";
@@ -176,19 +176,13 @@ export default function BuyerTemplatesPage() {
     setSuccessId(null);
     try {
       const res = await reorder.mutateAsync(templateId);
-      const note = reorderSkippedNote(res);
-      if (note?.none) {
-        // nothing was ordered: keep the review open and say why (calm copy, not a failure)
-        setPlaceError(note.text);
-        return;
-      }
-      setSkippedNote(note?.text ?? null);
+      setSkippedNote(reorderSkippedNote(res));
       setSuccessId(templateId);
       setTimeout(() => setSuccessId(null), 4000);
       // Close the review only on success; a failure keeps it open so nothing is lost.
       setReviewing(null);
-    } catch {
-      setPlaceError(REORDER_FAILED_COPY);
+    } catch (err) {
+      setPlaceError(reorderNoneAvailable(err) ?? REORDER_FAILED_COPY);
     } finally {
       setReorderingId(null);
     }

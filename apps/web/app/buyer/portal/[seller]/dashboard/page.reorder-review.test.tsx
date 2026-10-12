@@ -177,8 +177,13 @@ describe("buyer dashboard — reorder leaves out lines the portal no longer offe
     );
   });
 
-  it("all skipped: no order, the sheet stays and says none are available", async () => {
-    mutateAsync.mockResolvedValueOnce({ skipped: [{ productId: "x" }] });
+  it("all skipped: the API answers 400 with the sentence; the sheet stays and shows it as-is", async () => {
+    mutateAsync.mockRejectedValueOnce({
+      response: {
+        status: 400,
+        data: { message: "None of these items are available to you right now." },
+      },
+    });
     const user = userEvent.setup();
     render(<BuyerDashboardPage />);
     await user.click(await screen.findByRole("button", { name: /^reorder$/i }));

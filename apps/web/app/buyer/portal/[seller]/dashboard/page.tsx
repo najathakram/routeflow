@@ -15,7 +15,7 @@ import {
   Store,
 } from "lucide-react";
 import { Badge, Button, cn } from "@routeflow/ui/web";
-import { reorderSkippedNote } from "@/lib/buyer-reorder-review";
+import { reorderNoneAvailable, reorderSkippedNote } from "@/lib/buyer-reorder-review";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import {
   useBuyerDashboard,
@@ -117,18 +117,15 @@ function StandingOrdersPanel({
     setPlaceError(null);
     try {
       const res = await reorder.mutateAsync(reviewing.id);
-      const note = reorderSkippedNote(res);
-      if (note?.none) {
-        // nothing was ordered: keep the sheet open and say why (calm copy, not a failure)
-        setPlaceError(note.text);
-        return;
-      }
-      setSkippedNote(note?.text ?? null);
+      setSkippedNote(reorderSkippedNote(res));
       setReviewing(null);
     } catch (err) {
-      // A paused seller says so; every other failure keeps the fixed retry sentence.
+      // Nothing orderable says so; a paused seller says so; every other failure keeps the fixed retry sentence.
       setPlaceError(
-        isSellerUnavailableRefusal(err) ? sellerUnavailableCopy(sellerName) : REORDER_FAILED_COPY,
+        reorderNoneAvailable(err) ??
+          (isSellerUnavailableRefusal(err)
+            ? sellerUnavailableCopy(sellerName)
+            : REORDER_FAILED_COPY),
       );
     } finally {
       setPlacing(false);

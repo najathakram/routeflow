@@ -85,26 +85,21 @@ export function priceReorderReview(
 }
 
 /**
- * State portal limits (spec §4): a reorder that left lines out (the server drops lines this buyer may not be offered and
- * returns them as `skipped`). `none` = every line was left out, so no order exists. Null when nothing was skipped.
+ * State portal limits (spec §4): a placed reorder carries `skipped` (the lines this buyer may not be offered, always
+ * present, `[]` when nothing was left out). Null when nothing was skipped.
  */
-export function reorderSkippedNote(res: unknown): { text: string; none: boolean } | null {
-  const r = (res ?? {}) as {
-    skipped?: unknown;
-    id?: unknown;
-    orderId?: unknown;
-    order?: { id?: unknown } | null;
-  };
-  const n = Array.isArray(r.skipped)
-    ? r.skipped.length
-    : typeof r.skipped === "number"
-      ? r.skipped
-      : 0;
+export function reorderSkippedNote(res: unknown): string | null {
+  const skipped = (res as { skipped?: unknown } | null | undefined)?.skipped;
+  const n = Array.isArray(skipped) ? skipped.length : 0;
   if (n <= 0) return null;
-  const created = Boolean(r.id ?? r.orderId ?? r.order?.id);
-  if (!created) return { text: "None of these items are available to you right now.", none: true };
-  return {
-    text: `${n} ${n === 1 ? "item isn't" : "items aren't"} available to you and ${n === 1 ? "was" : "were"} left out.`,
-    none: false,
-  };
+  return `${n} ${n === 1 ? "item isn't" : "items aren't"} available to you and ${n === 1 ? "was" : "were"} left out.`;
+}
+
+const NONE_AVAILABLE = "None of these items are available to you right now.";
+
+/** Every line was restricted: the API answers 400 with that sentence and places nothing. Show it as-is. */
+export function reorderNoneAvailable(err: unknown): string | null {
+  const r = (err as { response?: { status?: number; data?: { message?: unknown } } } | null)
+    ?.response;
+  return r?.status === 400 && r.data?.message === NONE_AVAILABLE ? NONE_AVAILABLE : null;
 }
