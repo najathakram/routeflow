@@ -22,8 +22,8 @@
     "check-types": "tsc --noEmit"
   },
   "devDependencies": {
-    "@radix-ui/react-dialog": "^1.1.23",
-    "@radix-ui/react-toast": "^1.2.23",
+    "@radix-ui/react-dialog": "^1.2.0",
+    "@radix-ui/react-toast": "^1.2.24",
     "@routeflow/eslint-config": "*",
     "@routeflow/typescript-config": "*",
     "@tanstack/react-table": "^8.21.3",
@@ -34,7 +34,7 @@
     "clsx": "^2.1.1",
     "eslint": "^9.0.0",
     "lucide-react": "^0.577.0",
-    "react-hook-form": "^7.88.0",
+    "react-hook-form": "^7.89.0",
     "tailwind-merge": "^3.7.0",
     "typescript": "^5.9.3",
     "zod": "^3.25.76"
