@@ -101,6 +101,23 @@ describe("tryAdvisoryXactLockShared (SA-767 L-2.4 B)", () => {
     ).resolves.toBe(false);
   });
 
+  it("fails CLOSED on any answer that is not an explicit true (odd client shape = not acquired)", async () => {
+    for (const odd of [
+      [],
+      undefined,
+      null,
+      [{}],
+      [{ ok: undefined }],
+      [{ ok: null }],
+      [{ ok: "t" }],
+    ]) {
+      // eslint-disable-next-line no-await-in-loop
+      await expect(tryAdvisoryXactLockShared(txReturning(odd), "stock-count", "s1")).resolves.toBe(
+        false,
+      );
+    }
+  });
+
   it("binds family and key as hashtext() arguments, like the committer's lock", async () => {
     const tx = txReturning([{ ok: true }]);
     await tryAdvisoryXactLockShared(tx, "stock-count", "s1");

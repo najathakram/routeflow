@@ -1237,6 +1237,14 @@ describe("InventoryService", () => {
     // SA-767 L-2.2: the commit flips the session by CAS after the last batch.
     beforeEach(() => {
       prisma.stockCountSession.updateMany.mockResolvedValue({ count: 1 });
+      // The edits probe the shared stock-count lock; it fails closed, so grant it explicitly.
+      prisma.tenantTransaction.mockImplementation((fn: any) =>
+        fn({
+          ...prisma,
+          $executeRaw: jest.fn().mockResolvedValue(0),
+          $queryRaw: jest.fn().mockResolvedValue([{ ok: true }]),
+        }),
+      );
     });
 
     it("a committed session short-circuits instead of re-applying its deltas", async () => {

@@ -589,6 +589,7 @@ export async function tryAdvisoryXactLockShared(
   const rows = (await tx.$queryRaw`
     SELECT pg_try_advisory_xact_lock_shared(hashtext(${family}), hashtext(${key})) AS ok
   `) as Array<{ ok?: boolean }> | undefined;
-  // Postgres always answers one boolean row; only an explicit false is "an exclusive holder has it".
-  return rows?.[0]?.ok !== false;
+  // Fails CLOSED: only an explicit true is "the shared lock is held". An odd client shape (no row, no
+  // boolean) must read as "not acquired" (the edit is refused, nothing is written), never as a grant.
+  return rows?.[0]?.ok === true;
 }

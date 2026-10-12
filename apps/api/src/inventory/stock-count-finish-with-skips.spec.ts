@@ -165,4 +165,58 @@ describe("commitStockCountSession - finish with skips (SA-767 L-2.4 C)", () => {
     expect(w.prisma.stockCountSession.updateMany).not.toHaveBeenCalled();
     expect(w.audit.log).not.toHaveBeenCalled();
   });
+
+  // n2: the pre-checks read the products BEFORE the lock; a product can be variant-assigned (become a
+  // FAMILY) between that read and a batch. The batch re-checks `kind` on the rows it read UNDER the lock.
+  describe("a product that became a FAMILY AFTER the pre-checks (found under the batch lock)", () => {
+    beforeEach(() => {
+      const base = w.prisma.product.findMany.getMockImplementation()!;
+      w.prisma.product.findMany.mockImplementation(async (args: any) => {
+        const rows = await base(args);
+        if (!args?.select) return rows; // the pre-check read still sees STANDARD
+        return rows.map((r: any) => (r.id === pid(3) ? { ...r, kind: "FAMILY" } : r));
+      });
+    });
+
+    it("without the flag: the same coded FAMILY_NOT_SELLABLE 400 as the pre-check, nothing written", async () => {
+      const err: any = await commit().catch((e) => e);
+
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({
+        code: "FAMILY_NOT_SELLABLE",
+        productIds: [pid(3)],
+      });
+      expect(w.prisma.product.update).not.toHaveBeenCalled(); // not even p002
+      expect(w.prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(w.prisma.stockCountSession.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("with the flag: skipped + audited as PRODUCT_IS_FAMILY, the rest commits, COMMITTED once", async () => {
+      const res: any = await commit({ finishWithSkips: true });
+
+      expect(res.skippedProducts).toEqual([
+        { productId: pid(3), name: `Widget ${pid(3)}`, reason: "PRODUCT_IS_FAMILY" },
+      ]);
+      expect(w.prisma.product.update).toHaveBeenCalledTimes(1); // p002 only
+      expect(w.prisma.product.update.mock.calls[0][0].where).toEqual({ id: pid(2) });
+      expect(w.prisma.stockCountSession.updateMany).toHaveBeenCalledTimes(1);
+      expect(String(w.prisma.stockCountSession.updateMany.mock.calls[0][0].data.notes)).toContain(
+        pid(3),
+      );
+      expect(w.audit.log).toHaveBeenCalledTimes(1);
+      expect(w.audit.log.mock.calls[0][0]).toMatchObject({
+        action: "stock-count.line-skipped",
+        meta: { sessionId: "sess-1", productId: pid(3), reason: "PRODUCT_IS_FAMILY" },
+      });
+    });
+
+    it("the batch reads kind and name under the lock (they are in the locked select)", async () => {
+      await commit({ finishWithSkips: true });
+
+      const locked = w.prisma.product.findMany.mock.calls
+        .map((c: any[]) => c[0])
+        .find((a: any) => a?.select);
+      expect(locked.select).toMatchObject({ kind: true, name: true });
+    });
+  });
 });

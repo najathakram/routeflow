@@ -88,7 +88,8 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
           if (ids) mine.push(...(ids as string[]));
           return Promise.resolve(0);
         }),
-        $queryRaw: jest.fn().mockResolvedValue([]),
+        // the shared stock-count lock probe: an explicit grant (the probe fails closed on anything else)
+        $queryRaw: jest.fn().mockResolvedValue([{ ok: true }]),
       };
       txs.push(tx);
       return fn(tx);

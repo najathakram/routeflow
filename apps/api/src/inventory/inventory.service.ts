@@ -1611,7 +1611,15 @@ export class InventoryService {
   private async readLockedStockRows(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
     const rows = await tx.product.findMany({
       where: { id: { in: [...new Set(productIds)] } },
-      select: { id: true, currentStock: true, averageCost: true, costingMethod: true },
+      // `kind` and `name`: a batch re-checks the product is still countable UNDER the lock (SA-767 n2).
+      select: {
+        id: true,
+        name: true,
+        kind: true,
+        currentStock: true,
+        averageCost: true,
+        costingMethod: true,
+      },
     });
     return new Map(rows.map((r) => [r.id, r]));
   }
@@ -2983,7 +2991,10 @@ export class InventoryService {
         effectiveDate,
         notes,
         userId: user.sub,
+        finishWithSkips,
       });
+      // A product that became a FAMILY after the pre-checks, found under the batch lock (SA-767 n2).
+      skippedProducts.push(...batch.skippedFamilies);
       movementIds.push(...batch.movementIds);
       costMovementIds.push(...batch.costMovementIds);
       skipped += batch.skipped;
@@ -3095,7 +3106,13 @@ export class InventoryService {
    */
   private async commitStockCountBatch(
     batch: StockCountBatchLine[],
-    ctx: { reference: string; effectiveDate: Date; notes?: string; userId: string },
+    ctx: {
+      reference: string;
+      effectiveDate: Date;
+      notes?: string;
+      userId: string;
+      finishWithSkips: boolean;
+    },
   ) {
     const { reference } = ctx;
     const productIds = batch.map((l) => l.productId);
@@ -3117,7 +3134,27 @@ export class InventoryService {
           const costMovementIds = done
             .filter((m) => m.type === MovementType.COST_BASIS)
             .map((m) => m.id);
-          const pending = batch.filter((l) => !doneProducts.has(l.productId));
+          let pending = batch.filter((l) => !doneProducts.has(l.productId));
+
+          // The pre-checks read these products BEFORE the lock; one can have been variant-assigned (become
+          // a FAMILY) since. Re-check `kind` on the locked rows (SA-767 n2): it is permanent, so without
+          // the flag it is the same coded 400 the pre-check throws (nothing of this batch is written), and
+          // with "finish with skips" the line is skipped here and recorded by the caller.
+          const skippedFamilies: StockCountSkippedProduct[] = [];
+          const familyLines = pending.filter((l) => lockedMap.get(l.productId)?.kind === "FAMILY");
+          if (familyLines.length > 0) {
+            if (!ctx.finishWithSkips) {
+              assertSellableLines(familyLines.map((l) => lockedMap.get(l.productId)!)); // WS8
+            }
+            for (const l of familyLines) {
+              skippedFamilies.push({
+                productId: l.productId,
+                name: lockedMap.get(l.productId)!.name,
+                reason: "PRODUCT_IS_FAMILY",
+              });
+            }
+            pending = pending.filter((l) => !familyLines.includes(l));
+          }
 
           // 1) Cost corrections first — see the ordering note on commitStockCountSession.
           const correctedCosts = new Map<string, Prisma.Decimal>();
@@ -3161,7 +3198,13 @@ export class InventoryService {
           });
           movementIds.push(...applied.movementIds);
 
-          return { movementIds, costMovementIds, skipped: applied.skipped, restockedProductIds };
+          return {
+            movementIds,
+            costMovementIds,
+            skipped: applied.skipped,
+            restockedProductIds,
+            skippedFamilies,
+          };
         },
         // One batch is at most COUNT_COMMIT_BATCH lines (a movement create + product update, + a lot on a
         // positive delta, each): well inside this budget, and a stuck batch fails instead of hanging.
