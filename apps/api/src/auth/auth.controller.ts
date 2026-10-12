@@ -676,11 +676,25 @@ export class AuthController {
     if (!code) {
       return res.redirect(`${this.webUrl}/auth/error?message=oauth_cancelled`);
     }
-    const user = await this.tenantGoogleOAuth.exchangeCode(code, slug);
-    const tokens = await this.authService.login(user as any);
-    res.redirect(
-      `${this.webUrl}/auth/callback?accessToken=${tokens.accessToken}&refreshToken=${tokens.refreshToken}&role=${tokens.user.role}&tenantSlug=${slug}`,
-    );
+    // Tokens reach the browser through the same one-time code as the main Google
+    // callback: the staff bundle is stored server-side and the web callback page
+    // redeems the code via POST /auth/google/exchange. No token is put in the URL.
+    const callbackPage = `${this.webUrl}/auth/google/callback`;
+    try {
+      const user = await this.tenantGoogleOAuth.exchangeCode(code, slug);
+      const tokens = await this.authService.login(user as any);
+      const bundle: Record<string, string> = {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        role: tokens.user.role,
+        tenantSlug: tokens.user.tenantSlug ?? "",
+      };
+      const exchangeCode = await this.googleOAuth.createExchangeCode(bundle);
+      return res.redirect(`${callbackPage}?code=${exchangeCode}`);
+    } catch (err: any) {
+      // Only a fixed, allow-listed code reaches the URL, never a server message.
+      return res.redirect(`${callbackPage}?error=${this.mapErrorCode(err?.message ?? "")}`);
+    }
   }
 
   // ─── Refresh-cookie helpers (SEC-4 / F11-002) ──────────────────────────────
