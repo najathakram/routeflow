@@ -67,15 +67,14 @@ function setup(opts: { foreignProductIds?: string[] } = {}) {
       throw e;
     }
   });
-  const audit = { log: jest.fn().mockResolvedValue(undefined) };
+  const labels = { effectiveLabels: jest.fn() };
   return {
     prisma,
     models,
     rules,
     store,
-    audit,
     failAuditWrite: () => (failAudit = true),
-    service: new SellingRestrictionsAdminService(prisma, audit as any),
+    service: new SellingRestrictionsAdminService(prisma, labels as any),
   };
 }
 
@@ -117,7 +116,6 @@ describe("POST /selling-restrictions/bulk (row a): N products, one transaction, 
         states: ["TX"],
       }),
     });
-    expect(s.audit.log).not.toHaveBeenCalled(); // the audit row is IN the transaction, not after it
 
     expect(res).toEqual({
       created: 12,

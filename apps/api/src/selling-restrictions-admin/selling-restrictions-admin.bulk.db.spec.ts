@@ -1,22 +1,25 @@
 /**
- * Portal limits, Branch B — DB lane for POST /selling-restrictions/bulk.
+ * Portal limits, Branch B — DB lane for POST /selling-restrictions/bulk, /lift-batch and the
+ * product chips (GET ?productId=).
  * What a mocked prisma cannot prove: the createMany and the audit row really share ONE Postgres
  * transaction (a failure after the insert leaves 0 rows), the identical-rule skip reads the real
- * rows (a lifted rule no longer counts), a category scope is ONE category row, and another tenant's
- * product or category is never written.
+ * rows (a lifted rule no longer counts), a category scope is ONE category row, another tenant's
+ * product or category is never written; a batch lift is all-or-nothing and never overwrites an
+ * earlier lift; the chips reach a parent's and a category's rules through the REAL effective
+ * labels, so an EXCLUDE opt-out hides the category chip.
  *
  * Run via `npm run local:test:db`. Every tenant is a throwaway `qa-bulk-<run>-*` slug approved by
  * `assertTestTenant`, and afterAll deletes exactly what it made.
  */
 import { randomUUID } from "crypto";
-import { NotFoundException } from "@nestjs/common";
+import { ConflictException, NotFoundException } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
-import { AuditService } from "../audit/audit.service";
+import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { SellingRestrictionsAdminService } from "./selling-restrictions-admin.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
@@ -49,9 +52,15 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
   const bulkAudits = (tenantId: string) =>
     raw.auditLog.findMany({ where: { tenantId, action: "selling_restriction.bulk_created" } });
 
-  async function seedProduct(tenantId: string, name: string) {
+  async function seedProduct(tenantId: string, name: string, parentProductId?: string) {
     const p = await raw.product.create({
-      data: { tenantId, name, unit: "EACH", pricePerUnit: "1.00" },
+      data: {
+        tenantId,
+        name,
+        unit: "EACH",
+        pricePerUnit: "1.00",
+        parentProductId: parentProductId ?? null,
+      },
     });
     return p.id;
   }
@@ -62,7 +71,7 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
     ctx = new TenantContextService();
     prisma = new PrismaService(ctx);
     await prisma.$connect();
-    service = new SellingRestrictionsAdminService(prisma, new AuditService(prisma));
+    service = new SellingRestrictionsAdminService(prisma, new ProductLabelsService(prisma));
     tenantA = (await raw.tenant.create({ data: { slug: slugA, name: `Bulk spec ${slugA}` } })).id;
     tenantB = (await raw.tenant.create({ data: { slug: slugB, name: `Bulk spec ${slugB}` } })).id;
     categoryA = (await raw.productCategory.create({ data: { tenantId: tenantA, name: "Vapes" } }))
@@ -78,6 +87,8 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
     for (const t of [tenantA, tenantB].filter(Boolean)) {
       await raw.auditLog.deleteMany({ where: { tenantId: t } });
       await raw.sellingRestriction.deleteMany({ where: { tenantId: t } });
+      await raw.productCategoryLabel.deleteMany({ where: { tenantId: t } });
+      await raw.product.deleteMany({ where: { tenantId: t, parentProductId: { not: null } } });
       await raw.product.deleteMany({ where: { tenantId: t } });
       await raw.productCategory.deleteMany({ where: { tenantId: t } });
       await raw.tenant.deleteMany({ where: { id: t } });
@@ -223,5 +234,116 @@ describeDb("selling-restriction bulk create against real Postgres", () => {
       await raw.sellingRestriction.count({ where: { tenantId: { in: [tenantA, tenantB] } } }),
     ).toBe(0);
     expect(await bulkAudits(tenantA)).toHaveLength(0);
+  }, 30_000);
+
+  const liftAudits = (tenantId: string) =>
+    raw.auditLog.findMany({ where: { tenantId, action: "selling_restriction.batch_lifted" } });
+
+  it("lift-batch lifts N with one audit row; a second call is a 409 and overwrites nothing", async () => {
+    const three = productsA.slice(0, 3);
+    const { createdIds } = await asA(() =>
+      service.bulkCreate({ jurisdiction: "STATE", states: ["TX"], productIds: three }, admin),
+    );
+    const res = await asA(() =>
+      service.liftBatch({ ids: createdIds, reason: "Undone right after creating" }, admin),
+    );
+    expect(res).toEqual({ lifted: 3, ids: createdIds });
+    const lifted = await raw.sellingRestriction.findMany({ where: { id: { in: createdIds } } });
+    expect(lifted.every((r) => r.liftedAt && r.liftReason === "Undone right after creating")).toBe(
+      true,
+    );
+    expect(await liftAudits(tenantA)).toHaveLength(1);
+
+    await expect(
+      asA(() =>
+        service.liftBatch({ ids: createdIds, reason: "second" }, {
+          sub: "u2",
+          username: "two",
+        } as JwtPayload),
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+    const after = await raw.sellingRestriction.findMany({ where: { id: { in: createdIds } } });
+    for (const r of after) {
+      const first = lifted.find((x) => x.id === r.id)!;
+      expect(r.liftedAt?.toISOString()).toBe(first.liftedAt?.toISOString());
+      expect(r.liftReason).toBe("Undone right after creating");
+      expect(r.liftedById).toBe(admin.sub);
+    }
+    expect(await liftAudits(tenantA)).toHaveLength(1);
+  }, 30_000);
+
+  it("lift-batch is all-or-nothing: an already-lifted or another tenant's id leaves every rule as it was", async () => {
+    const { createdIds } = await asA(() =>
+      service.bulkCreate(
+        { jurisdiction: "STATE", states: ["TX"], productIds: productsA.slice(0, 2) },
+        admin,
+      ),
+    );
+    const foreign = await raw.sellingRestriction.create({
+      data: {
+        tenantId: tenantB,
+        productId: productB,
+        jurisdiction: "FEDERAL",
+        states: [],
+        reason: "seed",
+      },
+    });
+    await asA(() => service.liftBatch({ ids: [createdIds[0]] }, admin));
+    await expect(asA(() => service.liftBatch({ ids: createdIds }, admin))).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    await expect(
+      asA(() => service.liftBatch({ ids: [createdIds[1], foreign.id] }, admin)),
+    ).rejects.toBeInstanceOf(ConflictException);
+    const second = await raw.sellingRestriction.findUniqueOrThrow({ where: { id: createdIds[1] } });
+    expect(second.liftedAt).toBeNull();
+    const other = await raw.sellingRestriction.findUniqueOrThrow({ where: { id: foreign.id } });
+    expect(other.liftedAt).toBeNull();
+    expect(await liftAudits(tenantA)).toHaveLength(1); // only the first, successful batch
+  }, 30_000);
+
+  it("?productId= chips: own (PRODUCT), parent (PARENT), category (CATEGORY); an EXCLUDE opt-out hides the category", async () => {
+    const parent = await seedProduct(tenantA, "Acme pod");
+    const variant = await seedProduct(tenantA, "Acme pod mint", parent);
+    const optedOut = await seedProduct(tenantA, "Acme pod plain", parent);
+    await raw.productCategoryLabel.create({
+      data: { tenantId: tenantA, productId: parent, categoryId: categoryA, mode: "INCLUDE" },
+    });
+    await raw.productCategoryLabel.create({
+      data: {
+        tenantId: tenantA,
+        productId: optedOut,
+        categoryId: categoryA,
+        mode: "EXCLUDE",
+        reason: "not a vape",
+        parentProductIdAtWrite: parent,
+      },
+    });
+    await asA(() =>
+      service.bulkCreate({ jurisdiction: "STATE", states: ["TX"], productIds: [variant] }, admin),
+    );
+    await asA(() =>
+      service.bulkCreate({ jurisdiction: "STATE", states: ["NY"], productIds: [parent] }, admin),
+    );
+    await asA(() =>
+      service.bulkCreate({ jurisdiction: "FEDERAL", states: [], categoryId: categoryA }, admin),
+    );
+
+    const chips = await asA(() => service.productLimits(variant));
+    expect(chips.nextCursor).toBeNull();
+    expect(chips.items.map((c) => [c.via, c.viaLabel]).sort()).toEqual(
+      [
+        ["CATEGORY", "Vapes"],
+        ["PARENT", "Acme pod"],
+        ["PRODUCT", null],
+      ].sort(),
+    );
+
+    const opted = await asA(() => service.productLimits(optedOut));
+    expect(opted.items.map((c) => c.via)).toEqual(["PARENT"]);
+
+    await expect(asA(() => service.productLimits(productB))).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   }, 30_000);
 });

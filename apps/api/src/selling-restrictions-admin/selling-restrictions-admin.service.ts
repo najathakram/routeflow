@@ -8,11 +8,14 @@ import { randomUUID } from "crypto";
 import { Prisma, RestrictionJurisdiction, RestrictionSurface } from "@prisma/client";
 import type {
   BulkRestrictionResponse,
+  LiftBatchResponse,
+  ProductLimitDto,
+  ProductLimitsResponse,
   RestrictionStatus,
   SellingRestrictionListItemDto,
 } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
-import { AuditService } from "../audit/audit.service";
+import { ProductLabelsService } from "../product-labels/product-labels.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { normalizeUsState } from "../common/us-states";
 import { activeRuleWhere, ruleIsActive } from "../selling-restrictions/selling-restrictions.core";
@@ -31,6 +34,42 @@ const LIST_CAP = 500;
 
 /** The reason a bulk portal limit carries when the admin leaves the note blank. */
 export const DEFAULT_BULK_REASON = "Portal limit";
+
+/** The reason a batch lift records when the admin leaves the note blank. */
+export const DEFAULT_LIFT_REASON = "Limit lifted";
+
+/** Chips per page of GET /selling-restrictions?productId= (a product carries a handful in practice). */
+export const PRODUCT_LIMITS_PAGE_SIZE = 50;
+
+/** The opaque keyset cursor of the chips list: the last id of the page, base64url-wrapped. */
+function encodeCursor(id: string): string {
+  return Buffer.from(JSON.stringify({ id }), "utf8").toString("base64url");
+}
+
+function decodeCursor(cursor: string): string {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    const id = (parsed as { id?: unknown } | null)?.id;
+    if (typeof id === "string" && id.length > 0 && id.length <= 64) return id;
+  } catch {
+    /* fall through to the 400 */
+  }
+  throw new BadRequestException("That page cursor is not valid. Reload the list.");
+}
+
+/** The 409 of a batch lift: nothing was changed; names what blocked it. */
+function liftConflict(notFoundIds: string[], alreadyLiftedIds: string[]): ConflictException {
+  return new ConflictException({
+    statusCode: 409,
+    error: "Conflict",
+    message:
+      alreadyLiftedIds.length > 0 && notFoundIds.length === 0
+        ? "Some of these limits were already lifted. Nothing was changed."
+        : "Some of these limits could not be lifted. Nothing was changed. Reload and try again.",
+    notFoundIds,
+    alreadyLiftedIds,
+  });
+}
 
 /** What single and bulk create hand the shared validation path. */
 interface RuleInput {
@@ -121,6 +160,28 @@ export function restrictionStatus(row: Row, now: Date): RestrictionStatus {
   return "SCHEDULED";
 }
 
+/** One chip: how the rule reaches `productId` (its own, an ancestor's, or a category's), and through what. */
+function toProductLimit(row: Row, productId: string): ProductLimitDto {
+  const via = row.categoryId ? "CATEGORY" : row.productId === productId ? "PRODUCT" : "PARENT";
+  return {
+    id: row.id,
+    jurisdiction: row.jurisdiction,
+    states: row.states,
+    surface: row.surface,
+    reason: row.reason,
+    effectiveFrom: row.effectiveFrom.toISOString(),
+    effectiveTo: row.effectiveTo ? row.effectiveTo.toISOString() : null,
+    via,
+    viaLabel:
+      via === "CATEGORY"
+        ? (row.category?.name ?? null)
+        : via === "PARENT"
+          ? (row.product?.name ?? null)
+          : null,
+    liftedAt: row.liftedAt ? row.liftedAt.toISOString() : null,
+  };
+}
+
 function toDto(row: Row, now: Date): SellingRestrictionListItemDto {
   return {
     id: row.id,
@@ -158,7 +219,7 @@ function toDto(row: Row, now: Date): SellingRestrictionListItemDto {
 export class SellingRestrictionsAdminService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly audit: AuditService,
+    private readonly productLabels: ProductLabelsService,
   ) {}
 
   private requireTenant(): string {
@@ -460,35 +521,144 @@ export class SellingRestrictionsAdminService {
     });
   }
 
-  /** Lifts a rule now. The write itself is guarded on `liftedAt IS NULL`, so a double lift is a 409, never an overwrite. */
+  /**
+   * The ONE lift write (single and batch): stamps the lift on exactly `ids`, in this tenant, and only
+   * where `liftedAt IS NULL` — so an earlier lift is never overwritten. Returns how many rows it
+   * lifted; the caller compares that to what it asked for. Refuses to run with no tenant or no ids:
+   * Prisma drops an `undefined` where key, and a many-write must never widen.
+   */
+  private async liftRules(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    ids: readonly string[],
+    reason: string,
+    user: JwtPayload,
+    now: Date,
+  ): Promise<number> {
+    if (!tenantId || ids.length === 0 || ids.some((id) => !id)) {
+      throw new BadRequestException("Name at least one restriction to lift.");
+    }
+    const { count } = await tx.sellingRestriction.updateMany({
+      where: { tenantId, id: { in: [...ids] }, liftedAt: null },
+      data: {
+        liftedAt: now,
+        liftedById: user.sub,
+        liftedByName: user.username,
+        liftReason: reason,
+      },
+    });
+    return count;
+  }
+
+  /** Lifts a rule now, through the guarded `liftRules`: a double lift is a 409, never an overwrite. */
   async lift(
     id: string,
     dto: LiftRestrictionDto,
     user: JwtPayload,
   ): Promise<SellingRestrictionListItemDto> {
     const tenantId = this.requireTenant();
-    const db = this.prisma.forTenant();
     const now = new Date();
-    const { count } = await db.sellingRestriction.updateMany({
-      where: { id, liftedAt: null },
-      data: {
-        liftedAt: now,
-        liftedById: user.sub,
-        liftedByName: user.username,
-        liftReason: dto.reason,
+    return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
+      const count = await this.liftRules(tx, tenantId, [id], dto.reason, user, now);
+      const row: Row | null = await tx.sellingRestriction.findFirst({
+        where: { id },
+        include: INCLUDE,
+      });
+      if (!row) throw new NotFoundException("Restriction not found");
+      if (count === 0) throw new ConflictException("This restriction has already been lifted.");
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId: user.sub,
+          impersonatedBy: user.impersonatedBy ?? null,
+          action: "selling_restriction.lifted",
+          entityType: "SellingRestriction",
+          entityId: id,
+          meta: { reason: dto.reason },
+        },
+      });
+      return toDto(row, now);
+    });
+  }
+
+  /**
+   * POST /selling-restrictions/lift-batch: lifts every named rule or none. One transaction: a read
+   * names any id that is unknown here (another tenant's reads the same) or already lifted — a 409
+   * before any write — then ONE guarded write; if it lifts fewer rows than asked (a concurrent lift
+   * won a row), the 409 rolls the whole batch back. One audit row.
+   */
+  async liftBatch(
+    dto: { ids: string[]; reason?: string },
+    user: JwtPayload,
+  ): Promise<LiftBatchResponse> {
+    const tenantId = this.requireTenant();
+    const ids = [...new Set(dto.ids ?? [])];
+    if (ids.length === 0) throw new BadRequestException("Name at least one restriction to lift.");
+    if (ids.length > BULK_RESTRICTION_MAX) {
+      throw new BadRequestException(`Lift at most ${BULK_RESTRICTION_MAX} limits at once.`);
+    }
+    const reason = dto.reason ?? DEFAULT_LIFT_REASON;
+    const now = new Date();
+    return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
+      const rows = await tx.sellingRestriction.findMany({
+        where: { tenantId, id: { in: ids } },
+        select: { id: true, liftedAt: true },
+      });
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      const notFoundIds = ids.filter((id) => !byId.has(id));
+      const alreadyLiftedIds = ids.filter((id) => byId.get(id)?.liftedAt);
+      if (notFoundIds.length > 0 || alreadyLiftedIds.length > 0) {
+        throw liftConflict(notFoundIds, alreadyLiftedIds);
+      }
+      const count = await this.liftRules(tx, tenantId, ids, reason, user, now);
+      if (count !== ids.length) throw liftConflict([], []);
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId: user.sub,
+          impersonatedBy: user.impersonatedBy ?? null,
+          action: "selling_restriction.batch_lifted",
+          entityType: "SellingRestriction",
+          entityId: null,
+          meta: { ids, reason },
+        },
+      });
+      return { lifted: count, ids };
+    });
+  }
+
+  /**
+   * GET /selling-restrictions?productId=: every ACTIVE rule binding the product, for the product-page
+   * chips — its own (PRODUCT), an ancestor's (PARENT), and a category it is EFFECTIVELY labelled
+   * with (CATEGORY; `effectiveLabels` applies EXCLUDE opt-outs, so an opted-out category never
+   * shows). The same reach as the engine's `evaluate()`. Keyset-paged by id with an opaque cursor.
+   */
+  async productLimits(productId: string, cursor?: string): Promise<ProductLimitsResponse> {
+    const tenantId = this.requireTenant();
+    const after = cursor === undefined ? undefined : decodeCursor(cursor);
+    const labels = (await this.productLabels.effectiveLabels(tenantId, [productId])).get(productId);
+    if (!labels?.nameKnown) throw new NotFoundException("Product not found");
+    const lineage = [...labels.lineageIds];
+    const categoryIds = [...labels.effectiveCategoryIds];
+    const now = new Date();
+    const rows = await this.prisma.forTenant().sellingRestriction.findMany({
+      where: {
+        tenantId,
+        OR: [
+          { productId: { in: lineage } },
+          ...(categoryIds.length > 0 ? [{ categoryId: { in: categoryIds } }] : []),
+        ],
+        AND: [activeRuleWhere(now), ...(after ? [{ id: { gt: after } }] : [])],
       },
+      include: INCLUDE,
+      orderBy: { id: "asc" },
+      take: PRODUCT_LIMITS_PAGE_SIZE + 1,
     });
-    const row = await db.sellingRestriction.findFirst({ where: { id }, include: INCLUDE });
-    if (!row) throw new NotFoundException("Restriction not found");
-    if (count === 0) throw new ConflictException("This restriction has already been lifted.");
-    await this.audit.log({
-      tenantId,
-      userId: user.sub,
-      action: "selling_restriction.lifted",
-      entityType: "SellingRestriction",
-      entityId: id,
-      meta: { reason: dto.reason },
-    });
-    return toDto(row, now);
+    const page = rows.slice(0, PRODUCT_LIMITS_PAGE_SIZE);
+    return {
+      items: page.map((r) => toProductLimit(r, productId)),
+      nextCursor:
+        rows.length > PRODUCT_LIMITS_PAGE_SIZE ? encodeCursor(page[page.length - 1].id) : null,
+    };
   }
 }

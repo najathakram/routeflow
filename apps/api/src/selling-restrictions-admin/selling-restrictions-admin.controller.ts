@@ -1,14 +1,17 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseEnumPipe,
   Post,
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiQuery, ApiTags } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 import type { RestrictionStatus } from "@routeflow/types";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -22,7 +25,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CreateRestrictionDto } from "./dto/create-restriction.dto";
 import { LiftRestrictionDto } from "./dto/lift-restriction.dto";
-import { BULK_RESTRICTION_MAX, BulkRestrictionDto } from "./dto/bulk-restriction.dto";
+import { BULK_RESTRICTION_MAX, BulkRestrictionDto, LiftBatchDto } from "./dto/bulk-restriction.dto";
 
 const STATUSES = Object.fromEntries(RESTRICTION_STATUSES.map((s) => [s, s]));
 
@@ -37,10 +40,24 @@ export class SellingRestrictionsAdminController {
 
   @Get()
   @Roles(UserRole.OPERATOR)
-  @ApiOperation({ summary: "List selling restrictions (rules), optionally by status" })
+  @ApiOperation({
+    summary:
+      "List selling restrictions (rules), optionally by status; with productId, the active rules binding that product (product-page chips: via PRODUCT, PARENT or CATEGORY), keyset-paged",
+  })
+  @ApiQuery({ name: "status", required: false, enum: RESTRICTION_STATUSES })
+  @ApiQuery({ name: "productId", required: false })
+  @ApiQuery({ name: "cursor", required: false, description: "nextCursor of the previous page" })
   list(
     @Query("status", new ParseEnumPipe(STATUSES, { optional: true })) status?: RestrictionStatus,
+    @Query("productId") productId?: string,
+    @Query("cursor") cursor?: string,
   ) {
+    if (productId !== undefined) {
+      if (typeof productId !== "string" || productId.trim() === "" || productId.length > 64) {
+        throw new BadRequestException("productId must be a product id.");
+      }
+      return this.rules.productLimits(productId, cursor);
+    }
     return this.rules.list(status);
   }
 
@@ -62,8 +79,21 @@ export class SellingRestrictionsAdminController {
     return this.rules.bulkCreate(dto, user);
   }
 
+  @Post("lift-batch")
+  @Roles(UserRole.OPERATOR)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: `Lift up to ${BULK_RESTRICTION_MAX} rules in one transaction (audited once); 409 and nothing changed if any is unknown or already lifted`,
+  })
+  @ApiBody({ type: LiftBatchDto })
+  liftBatch(@Body() dto: LiftBatchDto, @CurrentUser() user: JwtPayload) {
+    return this.rules.liftBatch(dto, user);
+  }
+
   @Post(":id/lift")
-  @Roles(UserRole.TENANT_ADMIN)
+  @Roles(UserRole.OPERATOR)
+  @ApiOperation({ summary: "Lift one rule now (audited); 409 if it was already lifted" })
+  @ApiBody({ type: LiftRestrictionDto })
   lift(@Param("id") id: string, @Body() dto: LiftRestrictionDto, @CurrentUser() user: JwtPayload) {
     return this.rules.lift(id, dto, user);
   }

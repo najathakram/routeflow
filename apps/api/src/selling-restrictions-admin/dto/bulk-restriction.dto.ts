@@ -63,3 +63,18 @@ export class BulkRestrictionDto {
   @IsOptional() @IsDateString() effectiveFrom?: string;
   @IsOptional() @IsDateString() effectiveTo?: string;
 }
+
+/** POST /selling-restrictions/lift-batch (wire shape `LiftBatchRequest`). */
+export class LiftBatchDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(BULK_RESTRICTION_MAX, {
+    message: `Lift at most ${BULK_RESTRICTION_MAX} limits at once.`,
+  })
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  ids: string[];
+
+  /** Defaults to "Limit lifted". */
+  @IsOptional() @Transform(trimToUndefined) @IsString() @MaxLength(500) reason?: string;
+}

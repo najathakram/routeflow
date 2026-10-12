@@ -69,13 +69,12 @@ function setup() {
     findFirst: jest.fn().mockResolvedValue({ id: "c1", archivedAt: null }),
   };
   models.product.findMany.mockResolvedValue([{ id: "p1" }]);
-  const audit = { log: jest.fn().mockResolvedValue(undefined) };
+  const labels = { effectiveLabels: jest.fn() };
   return {
     prisma,
     models,
     rules,
-    audit,
-    service: new SellingRestrictionsAdminService(prisma, audit as any),
+    service: new SellingRestrictionsAdminService(prisma, labels as any),
   };
 }
 
@@ -198,15 +197,15 @@ describe("SellingRestrictionsAdminService.lift", () => {
     s.rules.findFirst.mockResolvedValue(row({ liftedAt: NOW }));
     await s.service.lift("r1", { reason: "Law repealed" }, user);
     const call = s.rules.updateMany.mock.calls[0][0];
-    expect(call.where).toEqual({ id: "r1", liftedAt: null });
+    expect(call.where).toEqual({ tenantId: "test-tenant", id: { in: ["r1"] }, liftedAt: null });
     expect(call.data).toMatchObject({
       liftedById: "u1",
       liftedByName: "admin",
       liftReason: "Law repealed",
     });
-    expect(s.audit.log).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "selling_restriction.lifted" }),
-    );
+    expect(s.models.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "selling_restriction.lifted", entityId: "r1" }),
+    });
   });
 
   it("a second lift is a 409 and never overwrites; an unknown id is a 404; needs a tenant", async () => {
@@ -224,17 +223,18 @@ describe("SellingRestrictionsAdminService.lift", () => {
     await expect(s.service.lift("r1", { reason: "x" }, user)).rejects.toBeInstanceOf(
       BadRequestException,
     );
-    expect(s.audit.log).not.toHaveBeenCalled();
+    expect(s.models.auditLog.create).not.toHaveBeenCalled();
   });
 });
 
 describe("SellingRestrictionsAdminController", () => {
-  it("reads and create are OPERATOR (TENANT_ADMIN satisfies it), lift is TENANT_ADMIN, and the class is behind both guards", () => {
+  it("reads, create and lift are OPERATOR (TENANT_ADMIN satisfies it), and the class is behind both guards", () => {
     const proto = SellingRestrictionsAdminController.prototype as unknown as Record<string, object>;
     expect(Reflect.getMetadata(ROLES_KEY, proto.list)).toEqual([UserRole.OPERATOR]);
     expect(Reflect.getMetadata(ROLES_KEY, proto.create)).toEqual([UserRole.OPERATOR]);
     expect(Reflect.getMetadata(ROLES_KEY, proto.bulkCreate)).toEqual([UserRole.OPERATOR]);
-    expect(Reflect.getMetadata(ROLES_KEY, proto.lift)).toEqual([UserRole.TENANT_ADMIN]);
+    expect(Reflect.getMetadata(ROLES_KEY, proto.lift)).toEqual([UserRole.OPERATOR]);
+    expect(Reflect.getMetadata(ROLES_KEY, proto.liftBatch)).toEqual([UserRole.OPERATOR]);
     const guards = (
       Reflect.getMetadata("__guards__", SellingRestrictionsAdminController) ?? []
     ).map((g: { name: string }) => g.name);
