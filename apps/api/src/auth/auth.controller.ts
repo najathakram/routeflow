@@ -439,7 +439,10 @@ export class AuthController {
           refreshToken: r.refreshToken,
           type: "BUYER",
           sellerCount: String(r.sellerCount),
-          linked: profile.inviteToken ? "true" : "false",
+          // true only when this sign-in actually activated a link (a dead, removed, expired or refused invite is not).
+          linked: r.inviteOutcome === "accepted" ? "true" : "false",
+          // The seller's workspace is not taking the invite right now: the buyer is signed in, the link was skipped.
+          ...(r.inviteOutcome === "seller_unavailable" ? { invite: "seller_unavailable" } : {}),
         };
       }
 

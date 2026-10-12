@@ -101,18 +101,19 @@ export interface ClassifiedRoute {
 /**
  * Buyer-JWT writes WITHOUT `BuyerSellerContextGuard`. A seller-scoped buyer write carries that guard (the gate that
  * stops a READ_ONLY seller taking buyer writes); these act on the buyer's own account or on a link, so they have no
- * seller to gate on.
+ * seller CONTEXT for the guard. The two that create a link toward a seller ask the same shared rule in the service
+ * (`buyer/seller-status-gate.ts`); the rest touch no seller.
  */
 export const BUYER_ACCOUNT_WRITES: ReadonlyArray<ClassifiedRoute> = [
   {
     route: "POST /api/v1/buyer/invites/:token/accept",
     reason:
-      "links the buyer to a seller by invite token; gated under the dark buyer gate in a follow-up",
+      "links the buyer to a seller by invite token; gated by the shared seller-status rule (buyer/seller-status-gate.ts), dark by default",
   },
   {
     route: "POST /api/v1/buyer/sellers/request",
     reason:
-      "asks to connect with a seller the buyer is not yet linked to; gated under the dark buyer gate in a follow-up",
+      "asks to connect with a seller the buyer is not yet linked to; gated by the shared seller-status rule (buyer/seller-status-gate.ts), dark by default",
   },
   {
     route: "DELETE /api/v1/buyer/sellers/:sellerSlug",
