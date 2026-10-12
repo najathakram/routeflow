@@ -33,7 +33,11 @@ import { CounterReceiptView } from "./CounterReceiptView";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { EmailReceiptButton, EmailReceiptRow } from "./EmailReceipt";
 import { useEmailReceipt } from "./useEmailReceipt";
-import { CounterVoidSaleAction, CounterVoidSaleDialog } from "./CounterVoidSaleDialog";
+import {
+  CounterVoidSaleAction,
+  CounterVoidSaleDialog,
+  TodaysSalesReadOnlyLine,
+} from "./CounterVoidSaleDialog";
 
 const PAYMENT_LABEL: Record<TodaysSaleRow["paymentState"], string> = {
   PAID: "Paid",
@@ -504,6 +508,8 @@ export function CounterTodaysSales() {
           (reprint || view === "week") && "print:[&>div:first-child]:hidden",
         )}
       >
+        {/* CQ-21: the list and week sheets print with real page margins (the receipt view sets its own 80 mm page) */}
+        {reprint ? null : <style>{`@media print { @page { margin: 10mm; } }`}</style>}
         {reprint ? (
           <Reprint
             row={reprint}
@@ -555,6 +561,7 @@ export function CounterTodaysSales() {
                 timeOf={(iso) => timeOf(iso, timezone)}
               />
             )}
+            {view === "week" ? null : <TodaysSalesReadOnlyLine />}
             {view === "week" ? null : rows.length === 0 ? (
               <p className="py-6 text-center text-sm text-navy/70">No sales yet today</p>
             ) : (

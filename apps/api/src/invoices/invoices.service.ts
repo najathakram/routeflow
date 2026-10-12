@@ -3028,6 +3028,8 @@ export class InvoicesService {
             // row 342: "Handed over by Pat · main · 11:14 AM" (the cashier relation is staff only)
             registerKey: true,
             deliveredAt: true,
+            // CQ-26: a counter sale paid at the till shows no terms / due date (the web decides; nothing is stored differently)
+            counterSale: true,
             ...(seesHandOverStamp(user) ? { soldBy: HANDOVER_SOLD_BY_SELECT } : {}),
           },
         },

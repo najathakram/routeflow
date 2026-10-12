@@ -220,12 +220,38 @@ export function parseScanField(
 
 export const COUNTER_SALES_DISABLED_COPY = "Counter sales are not turned on for this business.";
 
+/** CQ-30: shown after a Retry that got no answer either (still offline); the lookup resumes by itself when the network is back. */
+export const COUNTER_GATE_STILL_OFFLINE_COPY =
+  "Still no answer. It will open by itself when you are back online.";
+
+/** CQ-30: the capability lookup failed (offline, a server error): say so, never "not turned on". Shown with a Retry button. */
+export const COUNTER_GATE_CHECK_FAILED_COPY =
+  "Couldn't check whether counter sales are on. Check your connection and try again.";
+
 /** Shown under the unknown-outcome banner when "Check sale status" itself failed (anything but a 404 answer). */
 export const COUNTER_LOOKUP_FAILED_COPY = "Couldn't check the sale. Try again.";
 
 /** After a 5xx, a network error or a timeout the sale may or may not have been written: say exactly that. */
 export const COUNTER_OUTCOME_UNKNOWN_COPY =
   "We couldn't confirm the sale. Check recent sales before trying again.";
+
+/**
+ * CQ-29: offline at Complete. Shown in the checkout bar; the form stays usable and the sale can be sent again. It says
+ * "recorded", not "charged": a card or check is run on an outside terminal, which may already have taken the money while
+ * only the RouteFlow sale is missing, so the line also tells the clerk not to run the card a second time.
+ */
+export const COUNTER_OFFLINE_COPY =
+  "No connection. Nothing was recorded yet. Check your connection and try again. If a card was already charged on the terminal, do not charge it again.";
+
+/**
+ * CQ-29: the request got no answer AND the browser already reported itself offline when it was sent. Only that combination
+ * proves nothing reached the server, so only it may say "nothing was recorded". Any other no-answer failure (a drop in flight, a
+ * timeout, a 5xx) stays an UNKNOWN outcome. The sale keeps its Idempotency-Key for the retry either way.
+ */
+export function isNotSentOffline(err: unknown, offlineAtSend: boolean): boolean {
+  const e = err as { response?: unknown } | null | undefined;
+  return offlineAtSend && !!e && !e.response;
+}
 
 const DEFINITIVE_REFUSALS = new Set([400, 401, 403, 404, 409, 422, 429]);
 
@@ -286,6 +312,18 @@ export function isCounterSaleChanged(err: unknown): boolean {
     err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
   )?.response;
   return res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_CHANGED;
+}
+
+/**
+ * A message that says something about a sale that EXISTS (voided or changed after it was rung, or saved without payment for a
+ * closed day). Unlike a stale refusal it stays when the cart is edited, because editing the cart does not undo it (CQ-18).
+ */
+export function isFinalSaleMessage(message: string): boolean {
+  return (
+    message === COUNTER_SALE_VOIDED_COPY ||
+    message === COUNTER_SALE_CHANGED_COPY ||
+    message === COUNTER_SALE_DAY_CLOSED_TILL_COPY
+  );
 }
 
 /** The fixed copy of a FINAL answer (voided / changed after it was rung), else null: such a sale is never retried. */
