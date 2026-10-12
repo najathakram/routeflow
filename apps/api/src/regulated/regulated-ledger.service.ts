@@ -129,28 +129,37 @@ export function deadSaleIdsOf(rows: any[]): Set<string> {
     }
   }
   const dead = new Set<string>();
-  const byKey = new Map<string, { sales: any[]; offset: number }>();
+  const byKey = new Map<string, { sales: any[]; offset: number; lastOffsetAt: number }>();
   for (const r of rows) {
     const key = syncKey(r);
     if (key == null) continue;
-    const e = byKey.get(key) ?? { sales: [], offset: 0 };
+    const e = byKey.get(key) ?? { sales: [], offset: 0, lastOffsetAt: -Infinity };
     if (r.entryType === "SALE" && r.correctsEntryId == null) {
       e.sales.push(r);
       if (squareKeys.has(key) && r.id != null) dead.add(r.id);
     } else if (r.entryType === "REVERSAL" && r.returnId == null && r.creditNoteId == null) {
       e.offset += -Number(r.qty);
+      e.lastOffsetAt = Math.max(e.lastOffsetAt, +new Date(r.createdAt ?? 0));
     }
     byKey.set(key, e);
   }
   for (const [key, e] of byKey) {
     if (squareKeys.has(key) || e.offset <= HELD_EPS) continue;
+    // A SALE booked strictly BEFORE a same-key re-sync / void reversal was superseded by it, whatever quantity that
+    // reversal carried (a return then a void offsets less than the sale's quantity, yet the key was re-booked after).
+    for (const sale of e.sales) {
+      if (sale.id != null && +new Date(sale.createdAt ?? 0) < e.lastOffsetAt) dead.add(sale.id);
+    }
+    // Rows booked in ONE transaction share a timestamp, so the quantity rule covers the tie: the reversal consumes
+    // the oldest SALEs first.
     let left = e.offset;
     const oldestFirst = [...e.sales].sort(
       (a, b) => +new Date(a.createdAt ?? 0) - +new Date(b.createdAt ?? 0),
     );
     for (const sale of oldestFirst) {
       const q = Number(sale.qty);
-      if (!(q > 0) || left + HELD_EPS < q) break;
+      if (!(q > 0)) continue; // a zero / negative base SALE neither consumes nor blocks the walk
+      if (left + HELD_EPS < q) break;
       if (sale.id != null) dead.add(sale.id);
       left -= q;
     }
@@ -934,6 +943,8 @@ export class RegulatedLedgerService {
     const priorReversals = await db.regulatedSalesLedger.findMany({
       where: { invoiceItemId: { in: invoiceItemIds }, entryType: "REVERSAL" },
       select: {
+        id: true,
+        createdAt: true, // deadSaleIdsOf orders a re-sync / void reversal against the sales it superseded
         invoiceItemId: true,
         orderItemId: true,
         trackedCategoryId: true,
@@ -1848,7 +1859,11 @@ export class RegulatedLedgerService {
       // It is NOT excluded from `lineRows` below — the remaining-balance cap (`saleByLine`) must
       // still fold in its real net/qty/unitBasis contribution.
       where: { invoiceItemId: { in: invoiceItemIds }, entryType: "SALE", correctsEntryId: null },
+      // deterministic read order: the live-key choice and the oldest-first offset rule never depend on the planner
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       select: {
+        // `id` is what deadSaleIdsOf / the live-row filter key on: a SALE read without it can never be named dead
+        id: true,
         invoiceItemId: true,
         netSales: true,
         // B661: both quantity axes of THIS credited line's own SALE rows — the pieces-per-line-unit
@@ -1913,7 +1928,12 @@ export class RegulatedLedgerService {
           { invoiceItemId: { in: invoiceItemIds } },
         ],
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       select: {
+        // deadSaleIdsOf needs the row's identity, its time and whether it is a units-only correction
+        id: true,
+        createdAt: true,
+        correctsEntryId: true,
         entryType: true,
         invoiceItemId: true,
         orderItemId: true,
