@@ -88,7 +88,8 @@ export const AUTO_LOCK_COPY = {
   loadFailed: "Couldn't load the automatic-locks status. Reload the page to try again.",
   previewFailed: "Couldn't load the unpause preview. Try again.",
   switchFailed: "Couldn't change the switch. Nothing was changed.",
-  pausedNow: "Automatic locks are paused. Nothing locks on its own until you unpause.",
+  pausedNow:
+    "Automatic locks are paused. Production tenants don't lock on their own until you unpause.",
   unpausedNow: "Automatic locks are on for every tenant.",
   neverUnlocks: "Pausing never unlocks a tenant that is already locked.",
 } as const;
