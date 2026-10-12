@@ -107,32 +107,35 @@ export async function runMilestones(
 
   // `attempted` keys the d0 copy: an invoice Stripe never tried (a discovery stamp) is "open - pay it here", never
   // "we couldn't process your payment".
-  const send = async (
+  const send = (
     milestone: string,
     kind: "d0" | "d3" | "final",
     dates: { readOnlyOn?: string } = {},
-  ) => {
-    // SA-775 rollout: the final notice says the workspace becomes read-only. While the pause holds that lock (the same
-    // gate the pause asks) it must not say so. Without an injected switch (a bare unit spec) the copy is unchanged.
-    const pauseHolds =
-      kind === "final" && deps.autoLocks
-        ? !(await autoLockAllowed(
-            deps.autoLocks,
-            { id: tenantId, class: row.tenantClass },
-            "payment_overdue",
-          ))
-        : undefined;
-    return deps.notifications.notifyDunning(tenantId, milestone, key, kind, {
+    omitLockWarning?: boolean,
+  ) =>
+    deps.notifications.notifyDunning(tenantId, milestone, key, kind, {
       payUrl,
       attempted: facts.attemptCount > 0,
       amountCents: remainingCents(facts),
       currency: facts.currency ?? null,
       periodLabel: facts.periodLabel ?? null,
       invoiceNumber: facts.invoiceNumber ?? null,
-      ...(pauseHolds === undefined ? {} : { omitLockWarning: pauseHolds }),
+      ...(omitLockWarning === undefined ? {} : { omitLockWarning }),
       ...dates,
     });
-  };
+  // SA-775 rollout: the final notice says the workspace becomes read-only. While the rollout pause holds that lock (the
+  // same gate the pause asks) it must not say so, AND it must not count as the final notice: a tenant that is later
+  // unpaused would otherwise be paused 24 h on without ever having been told. Without an injected switch (a bare unit
+  // spec) nothing is held and the copy is unchanged.
+  const pauseHoldsLock = async (): Promise<boolean> =>
+    deps.autoLocks
+      ? !(await autoLockAllowed(
+          deps.autoLocks,
+          { id: tenantId, class: row.tenantClass },
+          "payment_overdue",
+        ))
+      : false;
+  const omitFor = (held: boolean) => (deps.autoLocks ? held : undefined);
   const readOnlyOn = () =>
     deps.notifications.localDateLabel(tenantId, new Date(now.getTime() + 24 * HOUR_MS));
 
@@ -157,16 +160,27 @@ export async function runMilestones(
   } else if (top === M.D3) {
     warnUndeliverable(await send(M.D3, "d3"));
   } else if (top === M.D6) {
-    // enforced, first time: this d6 email IS the final notice - record both.
-    const res = warnUndeliverable(await send(M.D6, "final", { readOnlyOn: await readOnlyOn() }));
-    if (res.status === "sent" && !finalSentAt) {
-      await deps.notifications.recordDunningMilestone(tenantId, M.FINAL, key);
-      finalSentAt = now;
+    const held = await pauseHoldsLock();
+    if (held) {
+      // The lock is held: the neutral notice goes out under D6 only (its own claim, so once). It is NOT the final
+      // notice: no DUNNING_FINAL, no finalSentAt - the real final (with its date) goes out once the lock is allowed.
+      warnUndeliverable(await send(M.D6, "final", {}, true));
+    } else {
+      // enforced, first time: this d6 email IS the final notice - record both.
+      const res = warnUndeliverable(
+        await send(M.D6, "final", { readOnlyOn: await readOnlyOn() }, omitFor(false)),
+      );
+      if (res.status === "sent" && !finalSentAt) {
+        await deps.notifications.recordDunningMilestone(tenantId, M.FINAL, key);
+        finalSentAt = now;
+      }
     }
-  } else if (elapsed >= DUNNING_D6_HOURS && !finalSentAt) {
-    // d6 already logged without a final notice (it went out by another route): a separate final notice, then the
-    // 24 h lead starts.
-    const res = warnUndeliverable(await send(M.FINAL, "final", { readOnlyOn: await readOnlyOn() }));
+  } else if (elapsed >= DUNNING_D6_HOURS && !finalSentAt && !(await pauseHoldsLock())) {
+    // d6 already logged without a final notice (it went out by another route, or as the neutral held notice): a
+    // separate final notice, then the 24 h lead starts. While the lock is held nothing is sent here (no hourly resend).
+    const res = warnUndeliverable(
+      await send(M.FINAL, "final", { readOnlyOn: await readOnlyOn() }, omitFor(false)),
+    );
     if (res.status === "sent") finalSentAt = now;
   }
   return finalSentAt;

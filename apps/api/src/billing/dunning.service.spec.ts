@@ -438,20 +438,77 @@ describe("DunningService", () => {
         return d;
       };
 
-      it("switch paused + PRODUCTION: omitLockWarning true (same milestone, key and kind)", async () => {
-        const d = await sweepFinal("PRODUCTION", { isPaused: async () => true });
-        expect(d.notifications.notifyDunning).toHaveBeenCalledWith(
-          "t1",
-          "DUNNING_D6",
-          EP,
-          "final",
-          expect.objectContaining({ omitLockWarning: true }),
+      // A mutable log + switch so a second sweep sees what the first one sent (the mocks do not persist by themselves).
+      const lifecycle = (cls = "PRODUCTION") => {
+        mode("enforced");
+        const sw = { paused: true };
+        const logged: { milestone: string; sentAt: Date; key?: string }[] = [
+          { milestone: "DUNNING_D0", sentAt: at(0) },
+          { milestone: "DUNNING_D3", sentAt: at(72) },
+        ];
+        let clock = at(150);
+        const d = make({
+          sweepRows: [row({ tenant: { ...row().tenant, class: cls } })],
+          logged,
+          autoLocks: { isPaused: async () => sw.paused },
+          localPausedAt: at(177),
+        });
+        d.notifications.notifyDunning.mockImplementation(
+          async (_t: string, milestone: string, key: string) => {
+            logged.push({ milestone, sentAt: clock, key });
+            return { status: "sent", recipients: 1 };
+          },
         );
-        expect(d.notifications.recordDunningMilestone).toHaveBeenCalledWith(
+        d.notifications.recordDunningMilestone.mockImplementation(
+          async (_t: string, milestone: string, key: string) => {
+            logged.push({ milestone, sentAt: clock, key });
+            return true;
+          },
+        );
+        const sweepAt = (h: number) => {
+          clock = at(h);
+          return d.svc.sweep(clock);
+        };
+        return { d, sw, sweepAt };
+      };
+      const finals = (d: any) =>
+        d.notifications.notifyDunning.mock.calls.filter((c: any[]) => c[3] === "final");
+
+      it("held + PRODUCTION: the neutral notice goes out ONCE under D6; it is NOT the final notice (no DUNNING_FINAL)", async () => {
+        const { d, sweepAt } = lifecycle();
+        await sweepAt(150);
+        expect(finals(d)).toHaveLength(1);
+        expect(finals(d)[0].slice(0, 4)).toEqual(["t1", "DUNNING_D6", EP, "final"]);
+        expect(finals(d)[0][4].omitLockWarning).toBe(true);
+        expect(finals(d)[0][4].readOnlyOn).toBeUndefined();
+        expect(d.notifications.recordDunningMilestone).not.toHaveBeenCalledWith(
           "t1",
           "DUNNING_FINAL",
           EP,
         );
+        // the next hourly sweeps send nothing and pause nobody (the gate holds the lock)
+        await sweepAt(151);
+        await sweepAt(177);
+        expect(finals(d)).toHaveLength(1);
+        expect(d.transition).not.toHaveBeenCalled();
+      });
+
+      it("held, then unpaused: the REAL final (with its date) is sent once, and the pause waits 24 h after it", async () => {
+        const { d, sw, sweepAt } = lifecycle();
+        await sweepAt(150); // held: neutral notice only
+        sw.paused = false; // a super admin unpauses
+        await sweepAt(160);
+        expect(finals(d)).toHaveLength(2);
+        expect(finals(d)[1].slice(0, 4)).toEqual(["t1", "DUNNING_FINAL", EP, "final"]);
+        expect(finals(d)[1][4]).toEqual(
+          expect.objectContaining({ omitLockWarning: false, readOnlyOn: "Nov 9, 2026" }),
+        );
+        expect(d.transition).not.toHaveBeenCalled(); // never in the sweep that sent the notice
+        await sweepAt(183); // 23 h after the real final
+        expect(d.transition).not.toHaveBeenCalled();
+        await sweepAt(185); // 25 h after it (09:00+ local)
+        expect(d.transition).toHaveBeenCalledTimes(1);
+        expect(finals(d)).toHaveLength(2); // sent once, never resent
       });
 
       it.each([
