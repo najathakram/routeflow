@@ -19,24 +19,27 @@ export function useBusinessStatus(): BusinessStatus | null {
   return React.useMemo(() => businessStatus(sub.data, role), [sub.data, role]);
 }
 
-/** A throw while reading the plan hides the card; the screen and the rest of the list stay. */
-export function BusinessCard() {
-  return (
-    <RailBoundary>
-      <BusinessCardInner />
-    </RailBoundary>
-  );
-}
+type Variant = "rail" | "list" | "pane";
 
 /**
  * Apple-ID-row pattern: logo (or an initial), business name, plan + status pill. The whole card opens Plan &
  * billing; "Pay $X" is a sibling button (never a button inside a link) and only shows when payment is due.
  */
-function BusinessCardInner() {
+/** A throw while reading the plan hides the card; the screen and the rest of the list stay. */
+export function BusinessCard(props: { variant: Variant; active?: boolean }) {
+  return (
+    <RailBoundary>
+      <BusinessCardInner {...props} />
+    </RailBoundary>
+  );
+}
+
+function BusinessCardInner({ variant, active }: { variant: Variant; active?: boolean }) {
   const { branding } = useTenant();
   const status = useBusinessStatus();
   const portal = useBillingPortal();
   const name = branding?.businessName?.trim() || "Your business";
+  const big = variant === "pane";
 
   const pay = status?.pay;
   const onPay = () => {
@@ -49,9 +52,12 @@ function BusinessCardInner() {
       <Link
         href="/settings/billing"
         data-testid="business-card"
+        aria-current={active ? "page" : undefined}
         className={cn(
-          "flex items-center gap-3 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--paper)] p-3 shadow-[var(--sh-card)] transition-colors [transition-duration:120ms] hover:bg-[var(--sunken)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary motion-reduce:transition-none",
-          pay && "pr-32",
+          "flex items-center gap-3 rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--paper)] shadow-[var(--sh-card)] transition-colors [transition-duration:120ms] hover:bg-[var(--sunken)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary motion-reduce:transition-none",
+          big ? "p-5" : "p-3",
+          pay && variant !== "rail" && "pr-32",
+          active && "ring-2 ring-inset ring-primary",
         )}
       >
         {branding?.logoUrl ? (
@@ -59,18 +65,26 @@ function BusinessCardInner() {
           <img
             src={branding.logoUrl}
             alt=""
-            className="h-10 w-10 flex-none rounded-lg object-contain"
+            className={cn("flex-none rounded-lg object-contain", big ? "h-14 w-14" : "h-10 w-10")}
           />
         ) : (
           <span
             aria-hidden="true"
-            className="flex h-10 w-10 flex-none items-center justify-center rounded-lg bg-[var(--accent)] text-lg font-semibold text-[var(--primary-foreground)]"
+            className={cn(
+              "flex flex-none items-center justify-center rounded-lg bg-[var(--accent)] font-semibold text-[var(--primary-foreground)]",
+              big ? "h-14 w-14 text-2xl" : "h-10 w-10 text-lg",
+            )}
           >
             {name.charAt(0).toUpperCase()}
           </span>
         )}
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-[family-name:var(--font-display)] text-xl leading-6 text-[var(--ink-900)]">
+          <span
+            className={cn(
+              "block truncate font-[family-name:var(--font-display)] text-[var(--ink-900)]",
+              big ? "text-3xl leading-9" : "text-xl leading-6",
+            )}
+          >
             {name}
           </span>
           {status && (
@@ -90,7 +104,11 @@ function BusinessCardInner() {
       {pay && (
         <Button
           size="sm"
-          className="absolute right-3 top-1/2 min-h-11 -translate-y-1/2"
+          className={
+            variant === "rail"
+              ? "mt-2 w-full"
+              : "absolute right-3 top-1/2 min-h-11 -translate-y-1/2 xl:min-h-0"
+          }
           onClick={onPay}
           loading={portal.isPending}
         >

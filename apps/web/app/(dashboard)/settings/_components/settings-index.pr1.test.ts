@@ -1,6 +1,13 @@
 import * as fs from "fs";
 import * as path from "path";
-import { buildIndex, listGroup, searchSettings, splitHighlight } from "./settings-index";
+import {
+  activeEntryIds,
+  buildIndex,
+  listGroup,
+  rowHref,
+  searchSettings,
+  splitHighlight,
+} from "./settings-index";
 import { GROUP_META } from "./settings-groups";
 
 /** Settings PR1 (hub + search + rail): groups, new entries, gates, resolving hrefs, search, active row. */
@@ -231,7 +238,7 @@ describe("PR1 search", () => {
     });
     expect(first("time zone")?.href).toBe("/settings?tab=profile#settings-timezone");
     expect(first("carrier")?.href).toBe("/settings?tab=fulfilment#delivery-method");
-    expect(first("backorder")?.href).toBe("#out-of-stock-ordering");
+    expect(rowHref(first("backorder")!)).toBe("/settings#out-of-stock-ordering");
     expect(first("low stock")?.href).toBe("/settings?tab=notifications#low-stock-digest");
     expect(first("stripe")?.href).toBe("/settings#card-payments");
     expect(first("pay bill")?.href).toBe("/settings/billing");
@@ -278,5 +285,40 @@ describe("apple-ux U1: one search result per destination", () => {
     const labels = searchSettings("state", full).map((e) => e.label);
     expect(labels.filter((l) => l === "Selling restrictions")).toHaveLength(1);
     expect(labels.filter((l) => l === "Portal limits & rules")).toHaveLength(1);
+  });
+});
+
+describe("PR1 row hrefs and the active row", () => {
+  it("an in-page anchor is made absolute so a click from any settings page lands on the hub card", () => {
+    expect(rowHref({ href: "#route-defaults" } as never)).toBe("/settings#route-defaults");
+    expect(rowHref({ href: "/settings?tab=users" } as never)).toBe("/settings?tab=users");
+    expect(rowHref({ href: "/settings/billing" } as never)).toBe("/settings/billing");
+  });
+
+  const act = (pathname: string, tab: string | null, hash = "") =>
+    activeEntryIds(full, { pathname, tab, hash });
+
+  it("?tab= marks that tab's row", () => {
+    expect(act("/settings", "invoicing")).toEqual(["invoicing"]);
+    expect(act("/settings", "profile")).toEqual(["business-profile"]);
+  });
+
+  it("Fulfillment vs Counter sales are told apart by the hash; Fulfillment is the default", () => {
+    expect(act("/settings", "fulfilment")).toEqual(["fulfillment"]);
+    expect(act("/settings", "fulfilment", "#counter-sales")).toEqual(["counter-sales"]);
+  });
+
+  it("sub-routes mark their row; the rules page does not light the restrictions rows", () => {
+    expect(act("/settings/billing", null)).toEqual(["plan-billing"]);
+    expect(act("/settings/import", null)).toEqual(["import-data"]);
+    expect(act("/settings/restrictions/rules", null)).toEqual(["restriction-rules"]);
+    // listed in two groups, but only ONE row is aria-current
+    expect(act("/settings/restrictions", null)).toEqual(["restrictions-selling"]);
+  });
+
+  it("on the bare hub a card hash marks its row; no hash marks nothing", () => {
+    expect(act("/settings", null, "#route-defaults")).toEqual(["route-defaults"]);
+    expect(act("/settings", null, "#card-payments")).toEqual(["card-payments"]);
+    expect(act("/settings", null)).toEqual([]);
   });
 });
