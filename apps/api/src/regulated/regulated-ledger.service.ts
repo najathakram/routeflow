@@ -138,7 +138,12 @@ export function deadSaleIdsOf(rows: any[]): Set<string> {
     if (r.entryType === "SALE" && r.correctsEntryId == null) {
       e.sales.push(r);
       if (squareKeys.has(key) && r.id != null) dead.add(r.id);
-    } else if (r.entryType === "REVERSAL" && r.returnId == null && r.creditNoteId == null) {
+    } else if (
+      r.entryType === "REVERSAL" &&
+      r.returnId == null &&
+      r.creditNoteId == null &&
+      r.correctsEntryId == null // a price-correction row (qty 0, points at its SALE) supersedes nothing
+    ) {
       e.offset += -Number(r.qty);
       e.lastOffsetAt = Math.max(e.lastOffsetAt, +new Date(r.createdAt ?? 0));
     }
@@ -951,6 +956,7 @@ export class RegulatedLedgerService {
       select: {
         id: true,
         createdAt: true, // deadSaleIdsOf orders a re-sync / void reversal against the sales it superseded
+        correctsEntryId: true, // ...and tells a units/price correction row from one
         invoiceItemId: true,
         orderItemId: true,
         trackedCategoryId: true,

@@ -24,7 +24,7 @@ function freshTenantSlug(label: string): string {
   tenantSeq += 1;
   return assertTestTenant(
     `qa-b341d-${RUN_SUFFIX}-${tenantSeq}-${label}`,
-    "return-credit-compose.db.spec.ts",
+    "regulated-ledger-superseded-sale.db.spec.ts",
   );
 }
 
