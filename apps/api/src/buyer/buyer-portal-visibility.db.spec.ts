@@ -1126,6 +1126,38 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       expect(before.has(f.S.id)).toBe(false);
     });
 
+    it("(j) a back-in-stock fire never pushes a restricted buyer and leaves their alert PENDING; lifting the limit lets it fire", async () => {
+      const f = await seedTenant("sr-j");
+      await addState(f, "TX");
+      await productRule(f, f.S.id);
+      await raw.stockAlert.create({
+        data: {
+          tenantId: f.tenantId,
+          customerId: f.customerId,
+          productId: f.S.id,
+          status: "PENDING",
+        },
+      });
+      const push = jest.fn().mockResolvedValue(1);
+      const alerts = new StockAlertService(prisma, { sendToCustomer: push } as any, restrictions);
+
+      const blocked = await inTenant(f, () => alerts.fireForProducts([f.S.id]));
+      expect(blocked.notified).toBe(0);
+      expect(push).not.toHaveBeenCalled();
+      const row = await raw.stockAlert.findFirstOrThrow({
+        where: { tenantId: f.tenantId, productId: f.S.id },
+      });
+      expect(row.status).toBe("PENDING");
+
+      await raw.sellingRestriction.updateMany({
+        where: { tenantId: f.tenantId },
+        data: { liftedAt: new Date() },
+      });
+      const lifted = await inTenant(f, () => alerts.fireForProducts([f.S.id]));
+      expect(lifted.notified).toBe(1);
+      expect(push).toHaveBeenCalledTimes(1);
+    });
+
     it("a lifted rule hides nothing, and an ended rule hides nothing", async () => {
       const f = await seedTenant("sr-lift");
       await addState(f, "TX");

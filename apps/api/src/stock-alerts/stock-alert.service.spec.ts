@@ -1,3 +1,4 @@
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { noRestrictionsProvider } from "../selling-restrictions/testing/no-restrictions-provider";
 import { Test } from "@nestjs/testing";
 import { NotFoundException } from "@nestjs/common";
@@ -8,6 +9,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("StockAlertService (P5-03)", () => {
   let service: StockAlertService;
+  let restrictions: { restrictedProductIdsFor: jest.Mock };
   let prisma: ReturnType<typeof createMockPrisma>;
   let notifications: { sendToCustomer: jest.Mock };
 
@@ -24,6 +26,8 @@ describe("StockAlertService (P5-03)", () => {
       ],
     }).compile();
     service = mod.get(StockAlertService);
+    restrictions = mod.get(SellingRestrictionsService) as unknown as typeof restrictions;
+    restrictions.restrictedProductIdsFor.mockReset().mockResolvedValue(new Set<string>());
   });
 
   it("subscribe: idempotent upsert to PENDING on (tenant, customer, product)", async () => {
@@ -100,6 +104,63 @@ describe("StockAlertService (P5-03)", () => {
       where: { id: "a1", status: "PENDING" },
       data: { status: "NOTIFIED", notifiedAt: expect.any(Date) },
     });
+  });
+
+  it("fire: a buyer a selling restriction hides this product from gets no push, and their alert is left PENDING", async () => {
+    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
+    prisma.stockAlert.findMany.mockResolvedValue([
+      { id: "a1", tenantId: "t1", customerId: "c1", productId: "p1", status: "PENDING" },
+      { id: "a2", tenantId: "t1", customerId: "c2", productId: "p1", status: "PENDING" },
+    ]);
+    prisma.stockAlert.updateMany.mockResolvedValue({ count: 1 });
+    // c1 is restricted for p1 (a state limit); c2 is not
+    restrictions.restrictedProductIdsFor.mockImplementation(
+      async (_t: string, customerId: string) =>
+        customerId === "c1" ? new Set(["p1"]) : new Set<string>(),
+    );
+
+    const res = await service.fireForProducts(["p1"]);
+
+    expect(res).toEqual({ notified: 1 });
+    expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
+    expect(notifications.sendToCustomer.mock.calls[0][0]).toBe("c2");
+    // c1's alert is never claimed: it stays PENDING and fires if the limit is lifted before the next restock
+    expect(prisma.stockAlert.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.stockAlert.updateMany.mock.calls[0][0]).toMatchObject({ where: { id: "a2" } });
+  });
+
+  it("fire: when the restriction read fails the buyer is not pushed (fail closed) and the other alerts still fire", async () => {
+    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
+    prisma.stockAlert.findMany.mockResolvedValue([
+      { id: "a1", tenantId: "t1", customerId: "c1", productId: "p1", status: "PENDING" },
+      { id: "a2", tenantId: "t1", customerId: "c2", productId: "p1", status: "PENDING" },
+    ]);
+    prisma.stockAlert.updateMany.mockResolvedValue({ count: 1 });
+    restrictions.restrictedProductIdsFor.mockImplementation(
+      async (_t: string, customerId: string) => {
+        if (customerId === "c1") throw new Error("db down");
+        return new Set<string>();
+      },
+    );
+
+    const res = await service.fireForProducts(["p1"]);
+
+    expect(res).toEqual({ notified: 1 });
+    expect(notifications.sendToCustomer.mock.calls.map((c: any[]) => c[0])).toEqual(["c2"]);
+  });
+
+  it("fire: one restriction read per customer, not per product", async () => {
+    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
+    prisma.stockAlert.findMany.mockResolvedValue([
+      { id: "a1", tenantId: "t1", customerId: "c1", productId: "p1", status: "PENDING" },
+    ]);
+    prisma.stockAlert.updateMany.mockResolvedValue({ count: 1 });
+    restrictions.restrictedProductIdsFor.mockClear();
+    restrictions.restrictedProductIdsFor.mockResolvedValue(new Set<string>());
+
+    await service.fireForProducts(["p1", "p2"]);
+
+    expect(restrictions.restrictedProductIdsFor).toHaveBeenCalledTimes(1);
   });
 
   it("fire: a lost atomic claim (concurrent restock already took it) sends no push", async () => {
