@@ -69,7 +69,11 @@ export const Modal = ({
   return (
     <Dialog.Root open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+        {/* print:hidden: a printed page never carries the dimmed, blurred backdrop (CQ-21) */}
+        <Dialog.Overlay
+          data-modal-overlay
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm print:hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+        />
         <Dialog.Content
           ref={contentRef}
           onEscapeKeyDown={onEscapeKeyDown}

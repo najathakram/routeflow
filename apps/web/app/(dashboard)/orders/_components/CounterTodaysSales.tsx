@@ -504,6 +504,8 @@ export function CounterTodaysSales() {
           (reprint || view === "week") && "print:[&>div:first-child]:hidden",
         )}
       >
+        {/* CQ-21: the list and week sheets print with real page margins (the receipt view sets its own 80 mm page) */}
+        {reprint ? null : <style>{`@media print { @page { margin: 10mm; } }`}</style>}
         {reprint ? (
           <Reprint
             row={reprint}
