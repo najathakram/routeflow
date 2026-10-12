@@ -121,10 +121,12 @@ function listFigures(
 }
 
 /**
- * Display figures of an edited line; null for a plain line. The struck "original", the discount AND the chip all measure from
- * the LIST whenever the list is struck, so struck -> net -> chip -> Discounts agree arithmetically (tier 10 / list 12 / price 8
- * / qty 2: $24.00 struck, $16.00 net, "$4.00 off each", Discounts $8.00). Only when the list is not struck (the tenant hides
- * original prices, or the line's list is unknown or not above its price) does the chip keep the TIER reference.
+ * Display figures of an edited line; null for a plain line. The struck "original", the net and the discount measure from the
+ * LIST whenever the list is struck, so struck -> net -> Discounts agree arithmetically and equal what the receipt prints
+ * (tier 10 / list 12 / price 8 / qty 2: $24.00 struck, $16.00 net, Discounts $8.00). The CHIP says what the clerk typed
+ * (CQ-15: "10% off", "$2.00 off each"), measured from the customer's tier price, for as long as that is still true; once the
+ * tier moved under a kept edit, or the list is not struck, it is re-derived from the list / tier as before. The chip is
+ * therefore the clerk's own figure and may read differently from the list-measured Discounts row beside it.
  */
 export function editedLineFigures(
   l: SaleLine,

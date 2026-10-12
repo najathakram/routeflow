@@ -1364,17 +1364,18 @@ export function CounterSaleScreen() {
             className="sticky bottom-0 z-20 space-y-2 border-t bg-white py-2 md:static md:border-t-0 md:py-0"
             data-testid="counter-checkout-bar"
           >
+            {/* CQ-08: the number explains itself, in the receipt's order: Subtotal at the system prices, Discounts, Tax,
+                each named regulated charge, then the total. Every figure is the one the receipt prints. */}
+            <div className="flex justify-between text-sm" data-testid="running-subtotal">
+              <span>Subtotal</span>
+              <span>{money(roundMoney(totals.subtotal + discounts))}</span>
+            </div>
             {discounts > 0 ? (
               <div className="flex justify-between text-sm" data-testid="running-discounts">
                 <span>Discounts</span>
                 <span>-{money(discounts)}</span>
               </div>
             ) : null}
-            {/* CQ-08: the number explains itself. Tax and each regulated charge are the same figures the receipt prints. */}
-            <div className="flex justify-between text-sm" data-testid="running-subtotal">
-              <span>Subtotal</span>
-              <span>{money(totals.subtotal)}</span>
-            </div>
             {totals.tax > 0 ? (
               <div className="flex justify-between text-sm" data-testid="running-tax">
                 <span>Tax</span>
