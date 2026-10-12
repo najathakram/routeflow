@@ -34,6 +34,7 @@ import { CatchupClaimService } from "./catchup-claim.service";
 import { CatchupCheckoutService } from "./catchup-checkout.service";
 import { DunningService } from "./dunning.service";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
+import { AutoLockAdminService } from "./auto-lock-admin.service";
 
 @Module({
   // forwardRef: MailboxModule (imported by EmailModule for MailboxSendService) imports this
@@ -70,6 +71,7 @@ import { AutoLockSwitchService } from "./auto-lock-switch.service";
     DunningService,
     // SA-775 (row 381): the rollout pause on AUTOMATIC locks - the switch, and the super-admin preview over it.
     AutoLockSwitchService,
+    AutoLockAdminService,
     // Manual invoices due PR1 (DARK: RF_INVOICING_MODE defaults to off, the cron then does nothing).
     RfInvoiceBuilder,
     RfInvoiceIssuerService,
@@ -102,6 +104,7 @@ import { AutoLockSwitchService } from "./auto-lock-switch.service";
     DunningService,
     // SA-775: the platform-admin controller reads / flips the switch and previews the unpause.
     AutoLockSwitchService,
+    AutoLockAdminService,
     BillingService,
     PlatformPricingService,
     AddonService,
