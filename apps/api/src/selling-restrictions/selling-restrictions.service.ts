@@ -391,7 +391,8 @@ export class SellingRestrictionsService {
       });
       if (customer?.isWalkIn === true) {
         // The tenant's system walk-in (the SYSTEM flag, never the name) has no address of its own: a counter sale is
-        // judged where the store is. No usable business state stays UNRESOLVED (INDETERMINATE), as before.
+        // judged where the store is. A walk-in's own address, if one is ever added, is intentionally ignored in
+        // favour of the tenant state. No usable business state stays UNRESOLVED (INDETERMINATE), as before.
         const state = await tenantBusinessState(this.prisma, tenantId);
         governingState = state ? { resolved: true, state } : UNRESOLVED_STATE;
       } else {
