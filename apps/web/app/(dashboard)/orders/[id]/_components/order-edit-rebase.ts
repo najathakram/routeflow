@@ -5,9 +5,8 @@
  * at edit-open (what the user actually saw), and Reload REBASES, per FIELD (a three-way merge of the edit row,
  * the edit-open line and the fresh line): a field the user did not change takes the fresh value; a field they
  * changed keeps their value. A line's qty only means something WITH its denomination (product, unit, pack
- * size, box split): when either side changed one, fields are never mixed across the two (a count of boxes
- * would be sold as cases) - the user's own row wins whole if they changed the denomination themselves, else the
- * fresh row wins whole and the line is COUNTED so the page can say "re-enter your change". Lines another writer removed are dropped (an id left in `pendingDeletes` or
+ * size, box split): when BOTH sides changed a line and either touched its denomination, nothing is mixed - the
+ * fresh row wins whole and the line is COUNTED so the page can say "re-check it". Lines another writer removed are dropped (an id left in `pendingDeletes` or
  * `editItems` for a vanished line would 409 CONCURRENT_UPDATE on every save); lines another writer added (or
  * revived) appear. Pure and generic over the page's own `buildEditItemFromLine` (passed in: this module must
  * not import the page).
@@ -32,24 +31,37 @@ const DENOMINATION_KEYS = [
   "boxSplit",
   "isUnlisted",
 ] as const;
+/** UI-only flags the unit picker writes on its own (`false` vs absent): never evidence of an edit. */
+const UI_ONLY_KEYS = new Set(["priceEdited", "startOnDefaultUnit", "reasonBaselinePrice"]);
 
 const field = (o: object, k: string) => (o as Record<string, unknown>)[k];
+const isDenomination = (k: string) => (DENOMINATION_KEYS as readonly string[]).includes(k);
+const keysOf = (...rows: object[]) => [...new Set(rows.flatMap((r) => Object.keys(r)))];
 
 /**
- * Three-way merge of ONE edit row: take `fresh` wherever the row still equals `base`, else keep the edit.
- * `conflict` is true when the user's change was DROPPED because another writer changed the line's denomination.
+ * Three-way merge of ONE edit row (edit, the edit-open `base`, the `fresh` server row). Never a SILENT revert:
+ *   1. the user changed nothing on it -> the fresh row;
+ *   2. nobody else changed it -> the user's row whole (nothing of anyone else's to lose);
+ *   3. both changed it, and either side touched the denomination (product, unit, pack size, box split) -> the
+ *      fresh row whole, COUNTED (`conflict`) so the page tells the user to re-check it: a qty is never carried
+ *      across a unit/pack/product change, and no stale field of the user's row is ever re-sent over theirs;
+ *   4. both changed it, denomination untouched by both -> per field: fresh, except the user's own changes.
  */
 function mergeRow<E extends Edit>(edit: E, base: E, fresh: E): { row: E; conflict: boolean } {
-  const changed = Object.keys(edit).filter((k) => !same(field(edit, k), field(base, k)));
-  if (changed.length === 0) return { row: fresh, conflict: false }; // untouched: the server's line
-  if (changed.some((k) => (DENOMINATION_KEYS as readonly string[]).includes(k))) {
-    return { row: edit, conflict: false }; // the user re-denominated it themselves: their row, whole
-  }
-  if (DENOMINATION_KEYS.some((k) => !same(field(base, k), field(fresh, k)))) {
-    return { row: fresh, conflict: true }; // another writer re-denominated it: never mix a count with a new unit
+  const userChanged = keysOf(edit, base).filter(
+    (k) => !UI_ONLY_KEYS.has(k) && !same(field(edit, k), field(base, k)),
+  );
+  if (userChanged.length === 0) return { row: fresh, conflict: false };
+  const freshChanged = keysOf(fresh, base).filter(
+    (k) => !UI_ONLY_KEYS.has(k) && !same(field(fresh, k), field(base, k)),
+  );
+  if (freshChanged.length === 0) return { row: edit, conflict: false };
+  if (userChanged.some(isDenomination) || freshChanged.some(isDenomination)) {
+    // a "Not available" strike sends no qty, so it is the one user change that is safe to keep
+    return { row: { ...fresh, cancelled: field(edit, "cancelled") } as E, conflict: true };
   }
   const out: Record<string, unknown> = { ...fresh };
-  for (const k of changed) out[k] = field(edit, k); // the user's own change wins, field by field
+  for (const k of userChanged) out[k] = field(edit, k); // the user's own change wins, field by field
   return { row: out as unknown as E, conflict: false };
 }
 

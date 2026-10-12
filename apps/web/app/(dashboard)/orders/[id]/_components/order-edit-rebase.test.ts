@@ -99,13 +99,52 @@ describe("order edit rebase (row 372 MF3)", () => {
     expect(r.items[0].qty).toBe(deps.seed(fresh[0]).qty);
   });
 
-  it("M1: the user substituted the product themselves and the other writer changed qty: the user's row stands whole", () => {
+  it("M1: the user substituted and nobody else touched the line: the user's row stands whole", () => {
     const edits = seedAll(base);
     edits[0] = { ...edits[0], substituteProductId: "p-sub", qty: 7 };
+    const r = rebaseEditItems(edits, base, base, deps);
+    expect(r.conflicts).toBe(0);
+    expect(r.items[0]).toMatchObject({ id: "a", substituteProductId: "p-sub", qty: 7 });
+  });
+
+  it("M1b: the user substituted (same qty) while another writer changed the qty: the fresh row wins and is counted, nothing is re-sent", () => {
+    const edits = seedAll(base);
+    edits[0] = { ...edits[0], substituteProductId: "p-sub" }; // qty stays 5
+    const fresh = [line("a", 9), line("b", 3)]; // the other writer raised a to 9
+    const r = rebaseEditItems(edits, base, fresh, deps);
+    expect(r.conflicts).toBe(1);
+    expect(r.items[0].qty).toBe(9);
+    expect(r.items[0].substituteProductId).toBeUndefined();
+    expect(buildItemUpdates(r.items, fresh)).toEqual([]);
+  });
+
+  it("M1b: a unit change by the user and another writer's note edit on the line: no stale note is re-sent", () => {
+    const edits = seedAll(base);
+    edits[0] = { ...edits[0], unitLabel: "Case", qty: 2 };
+    const fresh = [line("a", 5, { notes: "dock 4" }), line("b", 3)];
+    const r = rebaseEditItems(edits, base, fresh, deps);
+    expect(r.conflicts).toBe(1);
+    expect(r.items[0].notes).toBe("dock 4");
+    expect(buildItemUpdates(r.items, fresh)).toEqual([]);
+  });
+
+  it("picker-only flags (priceEdited false vs absent) are not an edit: the row refreshes", () => {
+    const edits = seedAll(base);
+    edits[0] = { ...edits[0], priceEdited: false, startOnDefaultUnit: false };
     const fresh = [line("a", 9), line("b", 3)];
     const r = rebaseEditItems(edits, base, fresh, deps);
     expect(r.conflicts).toBe(0);
-    expect(r.items[0]).toMatchObject({ id: "a", substituteProductId: "p-sub", qty: 7 });
+    expect(r.items[0].qty).toBe(9);
+  });
+
+  it("a 'Not available' strike survives a conflict (it sends no qty)", () => {
+    const boxed = [line("a", 24, { unitsPerBox: 12, boxes: 2, pieces: 0 })];
+    const edits = seedAll(boxed);
+    edits[0] = { ...edits[0], cancelled: true };
+    const fresh = [line("a", 2, { unitLabel: "Case", unitsPerBox: 12, boxes: 2, pieces: 0 })];
+    const r = rebaseEditItems(edits, boxed, fresh, deps);
+    expect(r.conflicts).toBe(1);
+    expect(r.items[0].cancelled).toBe(true);
   });
 
   it("a line CANCELLED at edit-open that another writer revived appears after Reload", () => {
