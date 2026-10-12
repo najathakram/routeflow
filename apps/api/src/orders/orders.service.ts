@@ -18,10 +18,7 @@ import { LeaderCron } from "../common/cron-lock";
 import { withAfterCommit } from "../common/after-commit";
 import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
-import {
-  attachPaymentCreditNotes,
-  ORDER_CREDIT_PAYMENT_SELECT,
-} from "./order-payment-credit-notes";
+import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment-credit-notes";
 import { attachInvoicesNeedReview } from "./order-invoices-review";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
@@ -152,6 +149,7 @@ import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { openTenantGroups } from "./sweep-tenant-gate";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { orderFor, ordersFor } from "../common/staff-only-fields";
 import { currentTaxRate } from "../common/tax-rate";
@@ -230,6 +228,7 @@ import type { OrderCancelBlockedField } from "@routeflow/types";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
 import { shippedPushCopy } from "./shipped-push-copy";
 import { attachInvoiceStages } from "./order-invoice-stage";
+import { HANDOVER_SOLD_BY_SELECT, seesHandOverStamp, stampHandedOverBy } from "./handover-stamp";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
 import {
   heldAtBookedFloor,
@@ -489,29 +488,10 @@ export class OrdersService implements OnApplicationBootstrap {
           // sort LAST (NULLS LAST), with createdAt as the final tiebreak.
           orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         },
+        // row 342: who handed it over (staff only; `registerKey` is a scalar already on the row)
+        ...(seesHandOverStamp(user) ? { soldBy: HANDOVER_SOLD_BY_SELECT } : {}),
         transaction: true,
-        invoices: {
-          select: {
-            id: true,
-            invoiceNumber: true,
-            status: true,
-            total: true,
-            deliveryBatchId: true, // the invoice stage (pdfVariant) keys on it
-            // Applied credit-note payments, so clients can show per-credit dollars
-            // actually applied without a second roundtrip.
-            // Classification pending: whether this credit-note-application read
-            // should count DRAFT rows is decided by campaign batch F03's
-            // confirmed-payment sweep (sums go PAID-only, listings keep not-VOID
-            // with visible status). F03 converts this site or writes the reasoned
-            // exemption here.
-            // scan-ok: draft-payment-not-void — pending F03 classification, see above.
-            payments: {
-              where: { method: "CREDIT_NOTE", status: { not: "VOID" } },
-              // #2404: autoApplied (SA-436 PR-1) labels each credit Automatic / Manual.
-              select: ORDER_CREDIT_PAYMENT_SELECT,
-            },
-          },
-        },
+        invoices: { select: ORDER_INVOICES_SELECT }, // + each line's stored taxRate (row 329a)
         // Credit-note INTENTS selected for this order (join table) — the reason/
         // amount/status render at read time via the relation so an edit to the
         // credit note's reason shows up everywhere automatically.
@@ -589,6 +569,7 @@ export class OrdersService implements OnApplicationBootstrap {
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
     await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
 
+    stampHandedOverBy(order, user); // row 342: staff only; the display name is built once, here
     return orderFor(user, order); // customer-facing fields only for the customer
   }
 
@@ -1244,10 +1225,9 @@ export class OrdersService implements OnApplicationBootstrap {
     }
     const skipped = nullTenantRows.length;
 
-    // Null-tenant groups are fully accounted for by the pass above (count + warn) —
-    // exclude them here so the same customer is never double-logged, and so `customers`
-    // below reflects only the groups actually eligible to merge.
-    const mergeCandidateGroups = groups.filter((g) => g.tenantId);
+    // Null-tenant groups are counted + warned above (never double-logged); SA-776: a tenant that is not
+    // TRIAL / ACTIVE gets no automated merge (sweep-tenant-gate.ts), so `customers` counts only eligible groups.
+    const mergeCandidateGroups = await openTenantGroups(this.prisma, groups);
 
     let merged = 0;
     let packMismatches = 0;
@@ -2081,8 +2061,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 // customer/agent default). Validated by parseCommissionRatePct above.
                 commissionRatePct,
                 fulfillPath,
-                // SA-672e: only the counter-sale POST passes this; every other order keeps the column default.
-                ...(options.counterSale ? { counterSale: true } : {}),
+                // SA-672e/row 317: only the counter-sale POST passes this; it also stamps the cashier (a replay writes nothing).
+                ...(options.counterSale ? { counterSale: true, soldById: user.sub } : {}),
                 lineItems: { create: lineItemsData },
               },
               include: {

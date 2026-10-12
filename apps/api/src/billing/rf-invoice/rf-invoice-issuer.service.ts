@@ -5,6 +5,13 @@ import { uniqueViolationOn } from "../../common/prisma-unique";
 import { ADMIN_AUDIT_ENTITY } from "../../platform-admin/audit-actions.constant";
 import { PrismaService } from "../../prisma/prisma.service";
 import { writeAdminNotice } from "../manual-invoice-notice";
+import {
+  effectiveCycle,
+  nextBillingWindow,
+  sameSnapped,
+  snapToBoundary,
+  windowParts,
+} from "./calendar-windows";
 import { RfInvoiceBuilder } from "./rf-invoice-builder";
 import { RfInvoiceMailerService } from "./rf-invoice-mailer.service";
 import {
@@ -31,12 +38,20 @@ export const RF_INVOICE_CANDIDATE_WHERE = {
   cancelAtPeriodEnd: false,
   periodStart: { not: null },
   periodEnd: { not: null },
+  // SA-733r3 N2: a held October catch-up claim freezes RouteFlow invoicing for the tenant (the issuer skips it).
+  catchupState: null,
   tenant: { class: "PRODUCTION", deletedAt: null, status: "ACTIVE" },
 } as const;
 
 export interface IssueWindow {
   periodStart: Date;
   periodEnd: Date;
+  /**
+   * SA-744r2 (review): an ANNUAL window whose start was CLIPPED by an old-shape invoice issued ahead is not a
+   * shape the helper prices (fewer than 12 months from an unaligned start). It is NEVER issued or emailed at a
+   * full annual price for fewer days: `issuePeriod` raises the review notice instead and writes nothing.
+   */
+  needsRuling?: boolean;
 }
 
 /** The subscription fields the issuer reads (the cron's `select`, and what DB-3 / PR2 pass in). */
@@ -55,7 +70,8 @@ export interface IssuerSubscription {
 export type IssueResult =
   | { status: "issued"; invoice: { id: string; number: string } }
   | { status: "exists" }
-  | { status: "no_price" };
+  | { status: "no_price" }
+  | { status: "needs_ruling" };
 
 export interface IssueDueSummary {
   mode: RfInvoicingMode;
@@ -65,6 +81,8 @@ export interface IssueDueSummary {
   failed: number;
   /** Tenants a period was due for but whose price cannot be resolved. */
   unpriced: string[];
+  /** Tenants whose due ANNUAL window was clipped by an old-shape invoice: not issued, a notice raised. */
+  needsRuling: string[];
   /** Tenants skipped because their period ended long ago (rollCycles lagging); no invoice was issued. */
   stale: string[];
 }
@@ -103,6 +121,7 @@ export class RfInvoiceIssuerService {
       existing: 0,
       failed: 0,
       unpriced: [],
+      needsRuling: [],
       stale: [],
     };
     if (mode === "off") return summary;
@@ -141,7 +160,9 @@ export class RfInvoiceIssuerService {
           const r = await this.issuePeriod(sub, window, now);
           if (r.status === "issued") summary.issued++;
           else if (r.status === "exists") summary.existing++;
-          else if (!summary.unpriced.includes(sub.tenantId)) summary.unpriced.push(sub.tenantId);
+          else if (r.status === "needs_ruling") {
+            if (!summary.needsRuling.includes(sub.tenantId)) summary.needsRuling.push(sub.tenantId);
+          } else if (!summary.unpriced.includes(sub.tenantId)) summary.unpriced.push(sub.tenantId);
         }
       } catch (e) {
         summary.failed++;
@@ -160,8 +181,16 @@ export class RfInvoiceIssuerService {
   }
 
   /**
-   * The periods due now for one subscription, earliest first. The cron uses the 7-day lead; the
+   * The periods due now for one subscription, earliest first (SA-744r2). The cron uses the 7-day lead; the
    * platform-admin issue-now passes `Infinity` to issue the next uninvoiced period immediately.
+   *   (b) catch-up: the CURRENT period, when the period before it was invoiced (matched under the inclusive
+   *       24 h snap) and this one never was.
+   *   (a) the NEXT window, `nextBillingWindow(sub.periodEnd)` - the same helper `rollCycles` uses, so the two
+   *       can never disagree. The lead check and the window's end come from it; the greatest non-VOID
+   *       invoiced `periodEnd` only CLIPS its start (an old-shape invoice issued ahead is never billed
+   *       twice) and the window is skipped when fully covered. An alignment window that ends within the
+   *       lead pulls the following full month in the same run (the look-past uses RF_INVOICE_LEAD_DAYS
+   *       even under issue-now), so a December invoice is never due ~36 h after it is created.
    */
   async windowsFor(
     sub: IssuerSubscription,
@@ -172,20 +201,69 @@ export class RfInvoiceIssuerService {
     const end = sub.periodEnd as Date;
     const length = end.getTime() - start.getTime();
     if (!(length > 0)) return [];
+    const cycle = effectiveCycle(sub.cycle, start, end);
     const windows: IssueWindow[] = [];
 
     // (b) catch-up: the period before this one was invoiced (and not voided), this one never was.
-    const prior = await this.prisma.rfInvoice.findFirst({
-      where: { tenantId: sub.tenantId, status: { not: "VOID" }, periodEnd: start },
-      select: { id: true },
-    });
-    if (prior) windows.push({ periodStart: start, periodEnd: end });
+    if (await this.hasPriorInvoiceEndingAt(sub.tenantId, start)) {
+      windows.push({ periodStart: start, periodEnd: end });
+    }
 
-    // (a) the next period, once it starts within the lead time.
-    if (end.getTime() - now.getTime() <= leadDays * DAY_MS) {
-      windows.push({ periodStart: end, periodEnd: new Date(end.getTime() + length) });
+    // (a) the next window, once it starts within the lead time.
+    const next = nextBillingWindow(end, cycle);
+    if (next.periodStart.getTime() - now.getTime() > leadDays * DAY_MS) return windows;
+    const clipped = await this.clipToUninvoiced(sub.tenantId, next);
+    if (!clipped) return windows;
+    const parts = windowParts(clipped.periodStart, clipped.periodEnd, cycle);
+    // A clipped ANNUAL window (start moved by an old-shape invoice, parts no longer 12 months) is not priced.
+    const clippedAnnual =
+      cycle === "ANNUAL" &&
+      clipped.periodStart.getTime() !== next.periodStart.getTime() &&
+      parts === null;
+    windows.push(clippedAnnual ? { ...clipped, needsRuling: true } : clipped);
+    const alignmentOnly = parts?.length === 1 && parts[0].kind === "ALIGN";
+    if (
+      alignmentOnly &&
+      clipped.periodEnd.getTime() - now.getTime() <= RF_INVOICE_LEAD_DAYS * DAY_MS
+    ) {
+      windows.push(nextBillingWindow(clipped.periodEnd, cycle));
     }
     return windows;
+  }
+
+  /** M1: a non-VOID invoice whose `periodEnd` snaps to the same instant as `start` (not exact equality). */
+  private async hasPriorInvoiceEndingAt(tenantId: string, start: Date): Promise<boolean> {
+    const rows = await this.prisma.rfInvoice.findMany({
+      where: {
+        tenantId,
+        status: { not: "VOID" },
+        periodEnd: {
+          gte: new Date(start.getTime() - 2 * DAY_MS),
+          lte: new Date(start.getTime() + 2 * DAY_MS),
+        },
+      },
+      select: { periodEnd: true },
+    });
+    return rows.some((r) => r.periodEnd instanceof Date && sameSnapped(r.periodEnd, start));
+  }
+
+  /** M2: clip the window's start to the greatest non-VOID invoiced end; null when it is fully covered. */
+  private async clipToUninvoiced(
+    tenantId: string,
+    window: IssueWindow,
+  ): Promise<IssueWindow | null> {
+    const latest = await this.prisma.rfInvoice.findFirst({
+      where: { tenantId, status: { not: "VOID" } },
+      orderBy: { periodEnd: "desc" },
+      select: { periodEnd: true },
+    });
+    if (!latest?.periodEnd) return window;
+    const covered = snapToBoundary(latest.periodEnd);
+    if (covered.getTime() >= window.periodEnd.getTime()) return null;
+    if (covered.getTime() > window.periodStart.getTime()) {
+      return { periodStart: covered, periodEnd: window.periodEnd };
+    }
+    return window;
   }
 
   /**
@@ -199,14 +277,28 @@ export class RfInvoiceIssuerService {
     now: Date,
     actorId: string | null = null,
   ): Promise<IssueResult> {
-    const periodKey = window.periodStart.toISOString();
+    // M1: the key is the SNAPPED window start, so a legacy 00:00Z start and its 12:00Z twin are one period.
+    const periodKey = snapToBoundary(window.periodStart).toISOString();
     const already = await this.prisma.rfInvoice.findFirst({
       where: { tenantId: sub.tenantId, periodKey },
       select: { id: true },
     });
-    if (already) return { status: "exists" };
+    if (already || (await this.hasInvoiceStartingAt(sub.tenantId, window.periodStart))) {
+      return { status: "exists" };
+    }
 
-    const draft = await this.builder.build(sub.tenantId, sub.cycle, window);
+    // M4 (B863): a last window of 360+ days is ANNUAL whatever the label says; the label is not rewritten.
+    const cycle = effectiveCycle(sub.cycle, sub.periodStart, sub.periodEnd);
+    if (window.needsRuling) {
+      await this.raiseOnce(
+        sub.tenantId,
+        RF_INVOICE_AUDIT_ACTIONS.IRREGULAR_PERIOD,
+        periodKey,
+        `No RouteFlow invoice was issued for the ANNUAL window ${window.periodStart.toISOString().slice(0, 10)} to ${new Date(window.periodEnd.getTime() - DAY_MS).toISOString().slice(0, 10)} (inclusive): an invoice issued in the old shape already covers its first days, so a full annual price would bill fewer days. It needs a ruling.`,
+      );
+      return { status: "needs_ruling" };
+    }
+    const draft = await this.builder.build(sub.tenantId, cycle, window);
     if (!draft.ok) {
       await this.raiseOnce(
         sub.tenantId,
@@ -228,7 +320,7 @@ export class RfInvoiceIssuerService {
                 number,
                 amount: draft.total,
                 status: "OPEN",
-                cycle: sub.cycle,
+                cycle,
                 issuedAt: now,
                 periodStart: window.periodStart,
                 periodEnd: window.periodEnd,
@@ -267,7 +359,7 @@ export class RfInvoiceIssuerService {
           sub.tenantId,
           RF_INVOICE_AUDIT_ACTIONS.IRREGULAR_PERIOD,
           periodKey,
-          `The RouteFlow invoice for the period starting ${periodKey.slice(0, 10)} was issued, but its window (${window.periodStart.toISOString().slice(0, 10)} to ${window.periodEnd.toISOString().slice(0, 10)}) is not a regular billing period. Check the amount.`,
+          `The RouteFlow invoice for the period starting ${periodKey.slice(0, 10)} was issued, but its window (${window.periodStart.toISOString().slice(0, 10)} to ${new Date(window.periodEnd.getTime() - DAY_MS).toISOString().slice(0, 10)}, inclusive) is not a regular billing period. Check the amount.`,
         );
       }
       await this.emailIssued(invoice.id, now);
@@ -277,6 +369,22 @@ export class RfInvoiceIssuerService {
         return { status: "exists" };
       throw e;
     }
+  }
+
+  /** A non-VOID invoice that starts at `start` under the snap: never bill a period twice under two spellings. */
+  private async hasInvoiceStartingAt(tenantId: string, start: Date): Promise<boolean> {
+    const rows = await this.prisma.rfInvoice.findMany({
+      where: {
+        tenantId,
+        status: { not: "VOID" },
+        periodStart: {
+          gte: new Date(start.getTime() - 2 * DAY_MS),
+          lte: new Date(start.getTime() + 2 * DAY_MS),
+        },
+      },
+      select: { periodStart: true },
+    });
+    return rows.some((r) => r.periodStart instanceof Date && sameSnapped(r.periodStart, start));
   }
 
   /** Live mode only: email the invoice just issued. A mail problem never undoes or fails the issue. */

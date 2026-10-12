@@ -44,7 +44,8 @@ import {
   COUNTER_DISCARD_COPY,
   COUNTER_OUTCOME_UNKNOWN_COPY,
   COUNTER_SALES_DISABLED_COPY,
-  PAYMENT_PROBLEM_COPY,
+  isTenderShortCopy,
+  paymentProblemCopy,
   cartTotals,
   amountDue,
   changeDue,
@@ -66,6 +67,7 @@ import {
   writeHeldAttempt,
 } from "@/lib/counter-sale";
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
+import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
 import { CounterReceiptBody } from "./CounterReceiptBody";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
@@ -99,6 +101,7 @@ import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 import { ParkedSales } from "./ParkedSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
+import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 interface PickedCustomer {
   id: string;
@@ -118,6 +121,7 @@ const UNDO_MS = 5000;
 export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
 
 export function CounterSaleScreen() {
+  const readOnlyGate = useReadOnlyGate();
   const router = useRouter();
   const gate = useCounterSaleGate();
   const createSale = useCreateCounterSale();
@@ -207,8 +211,7 @@ export function CounterSaleScreen() {
     awaitingCustomerRef,
   });
   // Fixing the tender clears the "less than the total" message and ONLY that one (never a server or final-sale error).
-  const clearUnderpaidError = () =>
-    setError((e) => (e === PAYMENT_PROBLEM_COPY.TENDER_SHORT ? "" : e));
+  const clearUnderpaidError = () => setError((e) => (isTenderShortCopy(e) ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
   // SA-748 section 1: the unfinished cart survives a refresh (restored UNLOCKED; a held attempt always wins).
   const liveCart = useCounterLiveCart({
@@ -313,6 +316,28 @@ export function CounterSaleScreen() {
     barObserver.current = new ResizeObserver(measure);
     barObserver.current.observe(el);
   }, []);
+  // Rows 330a / 368: below md the checkout bar floats at the bottom of the scroll container. `position: sticky` stops at the
+  // container's own padding (the shell's pb-24), so left alone the bar floated 96 px up with cart lines showing below it.
+  // The bar's `bottom` is pulled down through that padding and the screen draws the same padding back in (a negative
+  // margin), so the bar is the LAST thing in the scroll and rests at the real bottom: the only space reserved for it is its
+  // own in-flow height. A control that takes focus mid-page (a quantity, Tab, the keyboard) is scrolled to the container's
+  // bottom edge, under the floating bar, so the container's scroll-padding is exactly the bar's height. Let go on unmount.
+  const [mainPad, setMainPad] = React.useState(0);
+  React.useEffect(() => {
+    const main = document.getElementById("main-content");
+    // md+ lays the bar out in the payment column (static), so only the floating one needs this
+    const floating = !window.matchMedia?.("(min-width: 768px)").matches;
+    if (!main || !floating) {
+      setMainPad(0);
+      return;
+    }
+    setMainPad(parseFloat(getComputedStyle(main).paddingBottom) || 0);
+    if (barHeight === 0) return;
+    main.style.setProperty("scroll-padding-bottom", `${barHeight}px`);
+    return () => {
+      main.style.removeProperty("scroll-padding-bottom");
+    };
+  }, [barHeight]);
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
   };
@@ -330,7 +355,7 @@ export function CounterSaleScreen() {
   });
   const taxRate = (settings?.taxRate ?? 0) / 100;
   const totals = cartTotals(lines, taxRate);
-  const discounts = discountsTotal(lines); // POS-5: the `Discounts` row (display only; the total already includes it)
+  const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
 
   const { data: customersData } = useCustomers({ search: customerSearch.trim() || undefined });
@@ -645,7 +670,8 @@ export function CounterSaleScreen() {
           tendered,
           reference,
         });
-        setError("");
+        // A tender refused for a CLOSED DAY leaves the sale saved but unpaid: say so (the banner below is the generic one).
+        setError(isCounterSaleDayClosed(err) ? counterSaleErrorCopy(err) : "");
         setOutcomeUnknown(true);
       }
       return null;
@@ -677,7 +703,7 @@ export function CounterSaleScreen() {
       isWalkIn,
     });
     if (problem) {
-      setError(PAYMENT_PROBLEM_COPY[problem]);
+      setError(paymentProblemCopy(problem, totals.total));
       return null;
     }
     const tenderAmount = roundMoney(tenderedNum);
@@ -854,8 +880,13 @@ export function CounterSaleScreen() {
 
   return (
     <div
-      className="mx-auto w-full max-w-5xl space-y-4 p-4 pb-[calc(1rem+var(--counter-bar-h,0px))] md:pb-4"
-      style={{ "--counter-bar-h": `${barHeight}px` } as React.CSSProperties}
+      className="mx-auto w-full max-w-5xl space-y-4 p-4 max-md:mb-[calc(-1*var(--counter-main-pb,0px))] max-md:pb-0"
+      style={
+        {
+          "--counter-bar-h": `${barHeight}px`,
+          "--counter-main-pb": `${mainPad}px`,
+        } as React.CSSProperties
+      }
       data-testid="counter-sale-screen"
       data-counter-screen
     >
@@ -879,14 +910,14 @@ export function CounterSaleScreen() {
           onRestore={restoreParked}
         />
         {gate.offerShipInstead ? (
-          <Button
+          <WriteButton
             className="min-h-[44px]"
             variant="secondary"
             disabled={locked || salePosting || createDraft.isPending}
             onClick={onShipClick}
           >
             Ship this order instead
-          </Button>
+          </WriteButton>
         ) : null}
       </div>
 
@@ -1003,7 +1034,7 @@ export function CounterSaleScreen() {
               ref={scanRef}
               aria-label="Scan or search items"
               className="min-h-[44px] w-full rounded border px-3 py-2 text-base"
-              placeholder="Scan or type an item (type a quantity first to multiply)"
+              placeholder="Scan or type an item"
               value={scanText}
               disabled={lineLocked}
               onChange={(e) => {
@@ -1032,6 +1063,9 @@ export function CounterSaleScreen() {
               </span>
             ) : null}
           </form>
+          <p className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
+            Type a quantity first to multiply the next scan.
+          </p>
           {scanCue ? (
             <p
               role="status"
@@ -1121,6 +1155,7 @@ export function CounterSaleScreen() {
                 onPriceClosed={refocus}
                 onNoteClosed={refocus}
                 onQtyEnter={refocusFromActive}
+                hideOriginalPrice={settings?.hideOriginalPrice === true}
               />
             ))}
           </ul>
@@ -1334,15 +1369,17 @@ export function CounterSaleScreen() {
             </p>
           ) : null}
 
+          {/* SA-733r6: read-only keeps the cart; Charge is disabled and says why - above the bar, so the bar's box never moves. */}
+          <ReadOnlyHint className="text-sm text-slate-700" />
           <div
             ref={barRef}
-            className="sticky bottom-0 z-20 space-y-2 border-t bg-white py-2 md:static md:border-t-0 md:py-0"
+            className="sticky bottom-0 z-20 space-y-2 border-t bg-white pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-2 max-md:bottom-[calc(-1*var(--counter-main-pb,0px))] md:static md:border-t-0 md:py-0"
             data-testid="counter-checkout-bar"
           >
             {discounts > 0 ? (
               <div className="flex justify-between text-sm" data-testid="running-discounts">
-                <span>Discounts</span>
-                <span>-{money(discounts)}</span>
+                <span>Discount</span>
+                <span>−{money(discounts)}</span>
               </div>
             ) : null}
             <div className="flex justify-between text-lg font-semibold" data-testid="running-total">
@@ -1352,9 +1389,9 @@ export function CounterSaleScreen() {
 
             {method === "CASH" ? (
               <p className="text-3xl font-bold" data-testid="change-due" role="status">
-                {amountDue(totals.total, tenderedNum) > 0
-                  ? `Amount due ${money(amountDue(totals.total, tenderedNum))}`
-                  : `Change ${money(changeDue(totals.total, tenderedNum))}`}
+                {changeDue(totals.total, tenderedNum) > 0
+                  ? `Change ${money(changeDue(totals.total, tenderedNum))}`
+                  : `Amount due ${money(amountDue(totals.total, tenderedNum))}`}
               </p>
             ) : null}
 
@@ -1369,7 +1406,9 @@ export function CounterSaleScreen() {
               <Button
                 className="min-h-[44px]"
                 onClick={() => void completeSale(false)}
+                aria-describedby={readOnlyGate.readOnly ? readOnlyGate.hintId : undefined}
                 disabled={
+                  readOnlyGate.readOnly ||
                   salePosting ||
                   createDraft.isPending ||
                   locked ||
@@ -1384,7 +1423,9 @@ export function CounterSaleScreen() {
                 className="min-h-[44px]"
                 variant="secondary"
                 onClick={() => void completeSale(true)}
+                aria-describedby={readOnlyGate.readOnly ? readOnlyGate.hintId : undefined}
                 disabled={
+                  readOnlyGate.readOnly ||
                   salePosting ||
                   createDraft.isPending ||
                   locked ||

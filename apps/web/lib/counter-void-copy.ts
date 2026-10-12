@@ -6,7 +6,8 @@ import { formatReceiptMoney } from "./counter-receipt";
  * server's `body.code`. The server `message` is never read (owner rule: no raw server strings in the UI). The closed set is
  * the void's own codes plus the two kept cash-refund guards and the not-found; `Record<..>` makes a new code without copy a
  * compile error. generic-toast-copy.ts carries the four void-only codes too, so any other surface that toasts one reads
- * the same sentence.
+ * the same sentence. COUNTER_SALE_DAY_CLOSED is NOT void-only (a payment edit, a pickup tender and a refund get it too):
+ * only here does it say "can't be voided. Use Return items instead"; every other surface keeps day-closed-copy.ts's sentence.
  */
 export const COUNTER_VOID_ERROR_CODES = [
   API_ERROR_CODES.COUNTER_SALE_VOIDED,
@@ -14,6 +15,7 @@ export const COUNTER_VOID_ERROR_CODES = [
   API_ERROR_CODES.COUNTER_SALE_VOID_FOREIGN_PAYMENT,
   API_ERROR_CODES.COUNTER_SALE_VOID_NOT_TODAY,
   API_ERROR_CODES.COUNTER_SALE_VOID_BUSY,
+  API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
   API_ERROR_CODES.ORDER_HAS_CASH_REFUND,
   API_ERROR_CODES.INVOICE_HAS_CASH_REFUND,
   API_ERROR_CODES.COUNTER_SALE_NOT_FOUND,
@@ -30,6 +32,9 @@ export const COUNTER_VOID_ERROR_COPY: Record<CounterVoidErrorCode, string> = {
     "Only a sale rung today can be voided at the register. Ask the office to handle this one.",
   [API_ERROR_CODES.COUNTER_SALE_VOID_BUSY]:
     "This sale is being updated at the register right now. Try voiding it again in a moment.",
+  // The sale (or a payment it reverses) is dated inside a day whose close is in force: a closed day's totals never move.
+  [API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED]:
+    "This sale is in a closed day and can't be voided. Use Return items instead.",
   [API_ERROR_CODES.ORDER_HAS_CASH_REFUND]:
     "Part of this sale was refunded in cash, so it can't be voided here. Ask the office to issue a credit note instead.",
   [API_ERROR_CODES.INVOICE_HAS_CASH_REFUND]:

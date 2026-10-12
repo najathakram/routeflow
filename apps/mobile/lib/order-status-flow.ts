@@ -69,3 +69,34 @@ export function demotionRequiresReason(from: string, to: string): boolean {
 export function canDeleteOrder(_status: string): boolean {
   return true;
 }
+
+/**
+ * POS mode (SA-763r P-2): a staff order on the PICKUP path that is not a walk-in counter sale.
+ * The order's own `fulfillPath` is the snapshot (there is no `Order.posMode` column), and counter
+ * sales (PICKUP + `counterSale: true`) keep their own flow, so the predicate is the literal pair.
+ * Mirrors `apps/web/lib/api/pos-orders.ts` `isPosOrder`.
+ */
+export function isPosOrder(
+  order: { fulfillPath?: string | null; counterSale?: boolean | null } | null | undefined,
+): boolean {
+  return order?.fulfillPath === "PICKUP" && order?.counterSale !== true;
+}
+
+/**
+ * Statuses a POS order's status bar never offers as a move: hand-over IS the completion, so there is
+ * no Out-for-delivery and no DELIVERED status action (the UI pin, web and mobile). "Ready for pickup"
+ * is a separate secondary action (`lib/pos-mode.ts`), and hand-over goes through pickup-complete.
+ */
+export const POS_HIDDEN_TARGET_STATUSES: readonly string[] = [
+  "OUT_FOR_DELIVERY",
+  "PARTIALLY_DELIVERED",
+  "DELIVERED",
+];
+
+/** Whether the status bar may offer `to` on this order (always true off the POS path). */
+export function posStatusMoveAllowed(
+  order: { fulfillPath?: string | null; counterSale?: boolean | null },
+  to: string,
+): boolean {
+  return !isPosOrder(order) || !POS_HIDDEN_TARGET_STATUSES.includes(to);
+}

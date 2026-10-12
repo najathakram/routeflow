@@ -36,6 +36,9 @@ function unsetTenant(): BusinessProfileState {
     holds: { recurring_routes: false, order_delivery: false, driver_payments: false },
     // Modules held through an add-on row the tenant PAYS for (a Stripe item or a price).
     paying: new Set(),
+    // SA-769: modules with an ACTIVE add-on row (billable or comp), and the subset that is a comp.
+    rowHeld: new Set(),
+    compRows: new Set(),
     modes: { fulfilment_model: "unset", counter_sales: "unset" },
   };
 }
@@ -47,12 +50,13 @@ function profile(key: string) {
 }
 
 describe("business profile registry", () => {
-  it("has exactly the four profiles, in picker order", () => {
+  it("has exactly the five profiles, in picker order", () => {
     expect(BUSINESS_PROFILES.map((p) => [p.key, p.label])).toEqual([
       ["delivery_distributor", "Delivery distributor"],
       ["shipping_wholesaler", "Shipping wholesaler"],
       ["in_store_retailer", "In-store retailer"],
       ["in_store_shipping_retailer", "In-store + shipping retailer"],
+      ["delivery_pos", "Delivery + POS"],
     ]);
   });
 
@@ -107,6 +111,12 @@ describe("business profile registry", () => {
         denies: FLEET_MODULES,
         modes: { fulfilment_model: "pickup_ship", counter_sales: "on" },
       },
+      {
+        key: "delivery_pos",
+        grants: FLEET_MODULES,
+        denies: [],
+        modes: { fulfilment_model: "delivery", counter_sales: "on" },
+      },
     ]);
   });
 
@@ -155,6 +165,7 @@ describe("business profile registry", () => {
       ["shipping_wholesaler", true],
       ["in_store_retailer", true],
       ["in_store_shipping_retailer", true],
+      ["delivery_pos", true],
     ]);
     expect(unavailableModes(profile("in_store_shipping_retailer"))).toEqual([]);
     expect(unavailableModes(profile("shipping_wholesaler"))).toEqual([]);
@@ -180,6 +191,8 @@ describe("no second resolver — the applied profile reads through deriveFulfilm
   it.each([
     ["delivery_distributor", { methods: ["ROUTE"], counter: "off", staffOpensAs: "order" }],
     ["shipping_wholesaler", { methods: ["SHIP"], counter: "off", staffOpensAs: "order" }],
+    // delivery + counter: ROUTE orders with an optional counter (not an in-store-only mode)
+    ["delivery_pos", { methods: ["ROUTE"], counter: "optional", staffOpensAs: "order" }],
   ])("%s lands on a consistent capability", (key, expected) => {
     const p = profile(key);
     const fleet = toBusinessProfileSummary(p).grants.length > 0;
@@ -224,12 +237,19 @@ describe("no second resolver — the applied profile reads through deriveFulfilm
 });
 
 describe("planBusinessProfile", () => {
-  it("delivery distributor on an unset tenant: grants all three modules (driver payments is NOT on by default), sets delivery", () => {
+  it("SA-769: delivery distributor on an unset tenant COMPS all three modules (driver payments is NOT on by default), writes no GRANT override, sets delivery", () => {
     expect(planBusinessProfile(profile("delivery_distributor"), unsetTenant())).toEqual({
+      // a comp row replaces the GRANT override: nothing for the override path to create
       overrides: [
-        { featureKey: "recurring_routes", effect: "GRANT", action: "create" },
-        { featureKey: "order_delivery", effect: "GRANT", action: "create" },
-        { featureKey: "driver_payments", effect: "GRANT", action: "create" },
+        { featureKey: "recurring_routes", effect: "GRANT", action: "skip" },
+        { featureKey: "order_delivery", effect: "GRANT", action: "skip" },
+        { featureKey: "driver_payments", effect: "GRANT", action: "skip" },
+      ],
+      // order unchanged: the fleet keys first, driver_payments last
+      comps: [
+        { featureKey: "recurring_routes" },
+        { featureKey: "order_delivery" },
+        { featureKey: "driver_payments" },
       ],
       modes: [{ key: "fulfilment_model", from: "unset", to: "delivery" }],
       billing: [],
@@ -243,6 +263,7 @@ describe("planBusinessProfile", () => {
         { featureKey: "order_delivery", effect: "DENY", action: "skip" },
         { featureKey: "driver_payments", effect: "DENY", action: "skip" },
       ],
+      comps: [],
       modes: [{ key: "fulfilment_model", from: "unset", to: "ship" }],
       billing: [],
     });
@@ -264,15 +285,29 @@ describe("planBusinessProfile", () => {
     ]);
   });
 
-  it("a DENY override on a fleet key is replaced by the GRANT", () => {
+  it("SA-769: a DENY override on a fleet key is REVOKED (nothing created) and the module comped when no add-on row holds it", () => {
     const state = unsetTenant();
     state.overrides.set("order_delivery", "DENY");
     const plan = planBusinessProfile(profile("delivery_distributor"), state);
     expect(plan.overrides[1]).toEqual({
       featureKey: "order_delivery",
       effect: "GRANT",
-      action: "replace",
+      action: "revoke",
     });
+    expect(plan.comps.map((c) => c.featureKey)).toEqual([
+      "recurring_routes",
+      "order_delivery",
+      "driver_payments",
+    ]);
+  });
+
+  it("SA-769: a DENY override over an ACTIVE add-on row is only revoked: the row already holds the module, no comp", () => {
+    const state = unsetTenant();
+    state.overrides.set("order_delivery", "DENY");
+    state.rowHeld = new Set(["order_delivery"]);
+    const plan = planBusinessProfile(profile("delivery_distributor"), state);
+    expect(plan.overrides[1].action).toBe("revoke");
+    expect(plan.comps.map((c) => c.featureKey)).not.toContain("order_delivery");
   });
 
   it("a tenant that already matches gets an all-skip plan with no mode changes", () => {
@@ -285,6 +320,78 @@ describe("planBusinessProfile", () => {
     expect(plan.overrides.every((o) => o.action === "skip")).toBe(true);
     expect(plan.modes).toEqual([]);
     expect(describeBusinessProfilePlan(plan)).toEqual([]);
+  });
+});
+
+describe("SA-769 planBusinessProfile — never re-price what exists", () => {
+  const heldBy = (state: BusinessProfileState, key: string) => {
+    state.holds[key] = true;
+    state.rowHeld = new Set([...(state.rowHeld ?? []), key]);
+    return state;
+  };
+
+  it("a module the tenant already PAYS for stays billable: no comp, no billing change, no override", () => {
+    const state = heldBy(unsetTenant(), "order_delivery");
+    state.paying = new Set(["order_delivery"]);
+    const plan = planBusinessProfile(profile("delivery_distributor"), state);
+    expect(plan.comps.map((c) => c.featureKey)).toEqual(["recurring_routes", "driver_payments"]);
+    expect(plan.overrides.find((o) => o.featureKey === "order_delivery")?.action).toBe("skip");
+    expect(plan.billing).toEqual([]);
+  });
+
+  it("an existing comp row is left alone (held: nothing to comp)", () => {
+    const state = heldBy(unsetTenant(), "recurring_routes");
+    state.compRows = new Set(["recurring_routes"]);
+    const plan = planBusinessProfile(profile("delivery_distributor"), state);
+    expect(plan.comps.map((c) => c.featureKey)).toEqual(["order_delivery", "driver_payments"]);
+  });
+
+  it("an existing GRANT override is left alone (no comp, no revoke, no create)", () => {
+    const state = unsetTenant();
+    state.overrides.set("driver_payments", "GRANT");
+    state.holds.driver_payments = true;
+    const plan = planBusinessProfile(profile("delivery_distributor"), state);
+    expect(plan.overrides.find((o) => o.featureKey === "driver_payments")?.action).toBe("skip");
+    expect(plan.comps.map((c) => c.featureKey)).toEqual(["recurring_routes", "order_delivery"]);
+  });
+
+  it("idempotent: a tenant whose modules are all held by comp rows plans no comp at all", () => {
+    const state = unsetTenant();
+    for (const k of FLEET_MODULES) heldBy(state, k);
+    state.compRows = new Set(FLEET_MODULES);
+    const plan = planBusinessProfile(profile("delivery_distributor"), state);
+    expect(plan.comps).toEqual([]);
+    expect(plan.overrides.every((o) => o.action === "skip")).toBe(true);
+    expect(describeBusinessProfilePlan(plan)).toEqual([
+      "Where orders go: Not configured (today's behavior) → Own delivery",
+    ]);
+  });
+
+  it("a fleet:false profile switches a COMP row off through the disable path (BILLING_DISABLE_ORDER), flagged comp, with no DENY override", () => {
+    const state = unsetTenant();
+    for (const k of FLEET_MODULES) heldBy(state, k);
+    state.compRows = new Set(FLEET_MODULES);
+    const plan = planBusinessProfile(profile("shipping_wholesaler"), state);
+    expect(plan.comps).toEqual([]);
+    expect(plan.billing).toEqual([
+      { featureKey: "driver_payments", action: "disable", manual: false, comp: true },
+      { featureKey: "order_delivery", action: "disable", manual: false, comp: true },
+      { featureKey: "recurring_routes", action: "disable", manual: false, comp: true },
+    ]);
+    expect(plan.overrides.every((o) => o.action === "skip")).toBe(true);
+  });
+
+  it("a PAID row and a COMP row side by side: the paid one stays a billing stop, the comp one is flagged comp", () => {
+    const state = unsetTenant();
+    heldBy(state, "recurring_routes");
+    heldBy(state, "order_delivery");
+    state.paying = new Set(["recurring_routes"]);
+    state.compRows = new Set(["order_delivery"]);
+    const plan = planBusinessProfile(profile("shipping_wholesaler"), state);
+    expect(plan.billing).toEqual([
+      { featureKey: "order_delivery", action: "disable", manual: false, comp: true },
+      { featureKey: "recurring_routes", action: "disable", manual: false },
+    ]);
   });
 });
 
@@ -327,15 +434,42 @@ describe("describeBusinessProfileSections — billing kept apart from the rest (
         { featureKey: "recurring_routes", effect: "GRANT" as const, action: "create" as const },
         { featureKey: "driver_payments", effect: "DENY" as const, action: "skip" as const },
       ],
+      comps: [],
       modes: [{ key: "fulfilment_model", from: "unset", to: "ship" }],
       billing: [{ featureKey: "driver_payments", action: "disable" as const, manual: true }],
     };
-    const { billing, changes } = describeBusinessProfileSections(plan);
+    const { billing, comps, changes } = describeBusinessProfileSections(plan);
     expect(billing).toHaveLength(1);
     expect(billing[0]).toMatch(/manual invoice/);
+    expect(comps).toEqual([]);
     expect(changes.some((l) => /billing|manual invoice/.test(l))).toBe(false);
     expect(changes[0]).toContain("turned on free (comp), no charge added");
-    expect(describeBusinessProfilePlan(plan)).toEqual([...billing, ...changes]);
+    expect(describeBusinessProfilePlan(plan)).toEqual([...billing, ...comps, ...changes]);
+  });
+
+  it('SA-769: comps get their own lines ("Included free with this profile"), kept out of changes; summary = billing, comps, changes', () => {
+    const plan = planBusinessProfile(profile("delivery_distributor"), unsetTenant());
+    const { billing, comps, changes } = describeBusinessProfileSections(plan);
+    const label = (key: string) => FEATURE_REGISTRY.find((f) => f.key === key)!.label;
+    expect(billing).toEqual([]);
+    expect(comps).toEqual(
+      FLEET_MODULES.map(
+        (k) => `Turn on ${label(k)}: included free with this profile, no charge added`,
+      ),
+    );
+    expect(changes).toEqual(["Where orders go: Not configured (today's behavior) → Own delivery"]);
+    expect(describeBusinessProfilePlan(plan)).toEqual([...comps, ...changes]);
+  });
+
+  it("SA-769: a comp row switched off by a fleet:false profile says it was free and nothing is billed", () => {
+    const state = unsetTenant();
+    state.holds.recurring_routes = true;
+    state.rowHeld = new Set(["recurring_routes"]);
+    state.compRows = new Set(["recurring_routes"]);
+    const plan = planBusinessProfile(profile("shipping_wholesaler"), state);
+    expect(describeBusinessProfileSections(plan).billing).toEqual([
+      "Recurring routes will be switched off (it was included free; nothing is billed)",
+    ]);
   });
 });
 
@@ -459,9 +593,9 @@ describe("describeBusinessProfilePlan — the plain-English preview", () => {
       planBusinessProfile(profile("delivery_distributor"), state),
     );
     const label = FEATURE_REGISTRY.find((f) => f.key === "order_delivery")!.label;
-    expect(lines).toContain(
-      `Turn on ${label}: turned on free (comp), no charge added (replaces the current "off" override)`,
-    );
+    // SA-769: the DENY is revoked on its own line; the comp row is its own "included free" line
+    expect(lines).toContain(`Remove the "off" override on ${label}`);
+    expect(lines).toContain(`Turn on ${label}: included free with this profile, no charge added`);
   });
 });
 

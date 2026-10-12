@@ -42,11 +42,13 @@ import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
 import { isUnsetCapabilities, useFulfilmentCaps } from "@/lib/fulfilment-caps";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { quickCreateRule } from "@/lib/counter-sale";
 import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
 import { GettingStartedBanner } from "./GettingStartedBanner";
 import { useTenantOnboarding } from "@/lib/api/onboarding";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Column definitions (stable refs, defined outside component) ───────────────
 
@@ -572,6 +574,8 @@ export default function DashboardPage() {
   const counterGate = useCounterSaleGate({
     enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
   });
+  // Row 344 (follows row 331): the SAME store-only header rule as the Orders page, from the same gate.
+  const quickCreate = quickCreateRule(counterGate);
   // Routes/drivers are recurring-routes surfaces, so every gate below (the mode
   // pill AND the route/driver cards it reveals) must use the same condition as
   // the shell's "Drive mode" menu item / exit chip in (dashboard)/layout.tsx —
@@ -824,10 +828,15 @@ export default function DashboardPage() {
           </div>
           {/* Quick-create shortcuts */}
           <div className="flex items-center gap-2">
-            <Button href="/invoices/new" size="sm" variant="secondary">
+            <WriteButton
+              href="/invoices/new"
+              size="sm"
+              variant="secondary"
+              className={cn(quickCreate.storeOnly && "max-sm:h-11")}
+            >
               <FileMinus className="mr-1.5 h-3.5 w-3.5" />
               New Invoice
-            </Button>
+            </WriteButton>
             {routesAccess && (
               <Button href="/routes/create" size="sm" variant="secondary">
                 <Truck className="mr-1.5 h-3.5 w-3.5" />
@@ -835,15 +844,24 @@ export default function DashboardPage() {
               </Button>
             )}
             {counterGate.showButton ? (
-              <Button href="/orders/counter-sale" size="sm" variant="secondary">
+              <WriteButton
+                href="/orders/counter-sale"
+                size="sm"
+                // A store-only business has one place to ring a sale: the counter is the filled primary.
+                variant={quickCreate.counterIsPrimary ? "primary" : "secondary"}
+                className={cn(quickCreate.storeOnly && "max-sm:h-11")}
+              >
                 Counter sale
-              </Button>
+              </WriteButton>
             ) : null}
-            <Button href="/orders?action=new" size="sm" variant="primary">
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              New Order
-            </Button>
+            {quickCreate.showNewOrder ? (
+              <WriteButton href="/orders?action=new" size="sm" variant="primary">
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                New Order
+              </WriteButton>
+            ) : null}
           </div>
+          <ReadOnlyHint />
         </div>
       )}
 
@@ -852,14 +870,15 @@ export default function DashboardPage() {
         <div className="flex flex-wrap items-center gap-2">
           <span className="mr-1 text-sm font-medium text-navy/70">Quick create:</span>
           {counterGate.showButton ? (
-            <Button href="/orders/counter-sale" size="sm" variant="secondary">
+            <WriteButton href="/orders/counter-sale" size="sm" variant="secondary">
               Counter sale
-            </Button>
+            </WriteButton>
           ) : null}
-          <Button href="/orders?action=new" size="sm" variant="secondary">
+          <WriteButton href="/orders?action=new" size="sm" variant="secondary">
             <Plus className="mr-1.5 h-3.5 w-3.5" />
             New Order
-          </Button>
+          </WriteButton>
+          <ReadOnlyHint className="basis-full text-xs text-slate-600" />
         </div>
       )}
 

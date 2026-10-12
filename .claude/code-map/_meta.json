@@ -1,6 +1,6 @@
 {
-  "mappedSha": "3e7d8b9dd0b7f48b435ace82407fdee2e133a43a",
-  "generatedAt": "2026-10-09T19:00:00.000Z",
+  "mappedSha": "5a938f0a201f26cfac39ee6ddccf3670481d84a9",
+  "generatedAt": "2026-10-12T04:02:28.620Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 15,
-    "web": 11,
-    "mobile": 7,
+    "api": 17,
+    "web": 13,
+    "mobile": 9,
     "packages": 0
   },
-  "fileCount": 1053,
-  "notes": "**2026-10-09 \u2014 W21b #3347 (master `5584e2f4f`) and W22a-1 #3362 (master `3e7d8b9dd0b7f48b435ace82407fdee2e133a43a`, 13 PRs; docs-only bookkeeping).** New `api/`, `web/` and `mobile/landing-2026-10-09-w21b-w22a1.md` (counter price edit POS-5, cash-refund void/cancel guard, Today's sales by credit note, B1054 replay, B1157/B1158 parked-checkout reconcile, units P0a schema, invoice payment paidAt index, protected-tenant script guard, operator feature groups (report only), self-service audit and admin-account rule, variant rules B1211 to B1216, web leave guard / live-cart persist / discount re-apply / family-aware pickers, mobile Store credit pill and cascade confirm) and a W21b/W22a-1 section in `packages.md`. The oldest changelog bullet (train A, 2026-09-27) moved to `CHANGELOG-ARCHIVE.md` to stay at 30. `mappedSha` = `3e7d8b9dd0b7f48b435ace82407fdee2e133a43a`."
+  "fileCount": 1059,
+  "notes": "**2026-10-12 — MacBook lane pushed branches (docs-only bookkeeping; unmerged, read at branch tips).** New `api/`, `web/` and `mobile/landing-2026-10-12-macbook.md` (TOC row in each area file): `fix/row-311-pos-merge-draft-confirm` `6614c7adf` (web `usePosFinish` DRAFT to PENDING to CONFIRMED, `promotedAlready` re-read), `feat/pos-mode-p2-mobile` `420ee6c6d` (mobile POS mode, hand-over sheet, `usePickupInvoiceBalances`), `feat/pos-mode-p2-web` `cc81fc79c` (already in master), `feat/sa2-delivery-pos-profile` `df643f3f7` (`delivery_pos` profile, Advanced section), `fix/b1015-dashboard-kpi-unknown-v2` `054378ebc` (exact `meta.total` KPIs, `UNKNOWN_KPI` dash). `mappedSha` unchanged."
 }

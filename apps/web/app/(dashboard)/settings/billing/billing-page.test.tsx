@@ -27,6 +27,7 @@ let mockSubscriptionView: SubscriptionView;
 const mockCancelMutate = jest.fn();
 // WP9: mutable per-test fixture for useCreateCheckout, same pattern as mockCancelMutate.
 const mockCheckoutMutate = jest.fn();
+const mockPortalMutate = jest.fn();
 let mockCheckoutPending = false;
 // Add-on fixtures: the catalog the page lists, and the mutations/preview the confirm sheet drives.
 const mockEnableMutate = jest.fn();
@@ -52,6 +53,7 @@ jest.mock("@/lib/api/billing", () => ({
       ? mockProrationPreview
       : { data: undefined, isLoading: false, isFetching: false, isError: false },
   useCreateCheckout: () => ({ mutate: mockCheckoutMutate, isPending: mockCheckoutPending }),
+  useBillingPortal: () => ({ mutate: mockPortalMutate, isPending: false }),
 }));
 
 // Mutable per-test fixture, same pattern as `mockSubscriptionView` above: the real
@@ -116,8 +118,10 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
 
     renderWithProviders(<BillingSettingsPage />);
 
-    expect(await screen.findByText(/workspace is read-only/i)).toBeInTheDocument();
-    expect(screen.getByText(/trial ended/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/workspace is currently in read-only mode/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/free trial has ended/i)).toBeInTheDocument();
     const choosePlanLink = screen.getByRole("link", { name: /choose a plan/i });
     expect(choosePlanLink).toHaveAttribute("href", "/choose-plan");
     expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
@@ -158,7 +162,9 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
 
     renderWithProviders(<BillingSettingsPage />);
 
-    expect(await screen.findByText(/workspace is read-only/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/workspace is currently in read-only mode/i),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /keep my plan/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/cancellation scheduled/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
@@ -198,7 +204,7 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
 
     expect(await screen.findByRole("button", { name: /change plan/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /end trial/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/workspace is read-only/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/workspace is currently in read-only mode/i)).not.toBeInTheDocument();
   });
 });
 
@@ -1035,5 +1041,140 @@ describe("BillingSettingsPage — checkout errors", () => {
     expect(
       await screen.findByText("We couldn't start checkout. Nothing was changed. Please try again."),
     ).toBeInTheDocument();
+  });
+});
+
+// SA-733r6 (B4): the Billing card while an invoice is owed - Pay $X primary at the top (admins only), no plan
+// purchase path, the autopay line when nothing is owed, and none of it in an operator's DOM.
+describe("BillingSettingsPage - owed invoice / autopay (B4)", () => {
+  const T0 = Date.now() - 2 * 86_400_000;
+  const owed = (over: Partial<SubscriptionView> = {}): SubscriptionView =>
+    subscriptionView({
+      pastDueSince: new Date(T0).toISOString(),
+      pastDueInvoiceId: "in_1",
+      openInvoiceAmount: 149,
+      billingContactEmail: "dana@acme.test",
+      ...over,
+    });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthUser = { role: "TENANT_ADMIN" };
+  });
+
+  it("admin: Pay $149.00 is a primary button that opens the pay link; no Change plan / Choose a plan", async () => {
+    mockSubscriptionView = owed();
+    renderWithProviders(<BillingSettingsPage />);
+    const pay = await screen.findByRole("button", { name: "Pay $149.00" });
+    await userEvent.click(pay);
+    expect(mockPortalMutate).toHaveBeenCalledWith({ intent: "pay" });
+    expect(screen.queryByRole("button", { name: /change plan/i })).toBeNull();
+    expect(screen.queryByText(/choose a plan|subscribe/i)).toBeNull();
+  });
+
+  it("paused admin: the read-only sentence with the money, Pay $149.00, and no old read-only banner", async () => {
+    mockSubscriptionView = owed({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
+    renderWithProviders(<BillingSettingsPage />);
+    expect(
+      await screen.findByText(
+        "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment of $149.00 is overdue.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pay $149.00" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /choose a plan/i })).toBeNull();
+  });
+
+  it("operator: the sentence, the reason and the contact (your admin + e-mail); no pay control in the DOM", async () => {
+    mockAuthUser = { role: "OPERATOR" };
+    mockSubscriptionView = owed({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
+    renderWithProviders(<BillingSettingsPage />);
+    expect(
+      await screen.findByText(
+        "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment of $149.00 is overdue. To restore access, contact your admin (dana@acme.test).",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^pay/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /update payment/i })).toBeNull();
+  });
+
+  it("nothing owed: the admin sees the autopay line with the next charge", async () => {
+    mockSubscriptionView = subscriptionView({
+      paymentMethodSummary: { brand: "visa", last4: "4242", expMonth: 12, expYear: 2099 },
+      nextCharge: { amount: 149, date: "2099-12-01T12:00:00.000Z" },
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    expect(
+      await screen.findByText("Autopay is on. Next charge: $149.00 on Dec 1."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^pay/i })).toBeNull();
+  });
+});
+
+// ─── Row 350 / SA-693: a comp add-on reads "Included", never a price ───────────────────────────
+
+describe("BillingSettingsPage — comp add-ons (row 350)", () => {
+  const rowOf = (name: string) => {
+    const row = screen.getByText(name).closest(".py-3");
+    if (!row) throw new Error(`no add-on row for ${name}`);
+    return within(row as HTMLElement);
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthUser = { role: "TENANT_ADMIN" };
+    mockPlansAddons = [ADDON, { ...ADDON, sku: "OCR_PACK", name: "OCR Pack", sortOrder: 2 }];
+  });
+
+  it("a comp catalog add-on shows Included and no price; a paid one beside it is unchanged", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [
+        { sku: "ROUTE_PLUS", name: "Route Plus", quantity: 1, comp: true, monthly: null },
+        { sku: "OCR_PACK", name: "OCR Pack", quantity: 1, comp: false, monthly: 49 },
+      ],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Route Plus");
+
+    const comp = rowOf("Route Plus");
+    expect(comp.getByText("Included")).toBeInTheDocument();
+    expect(comp.getByText("Active")).toBeInTheDocument();
+    expect(comp.queryByText(/\$/)).toBeNull();
+
+    const paid = rowOf("OCR Pack");
+    expect(paid.getByText("$49/mo")).toBeInTheDocument();
+    expect(paid.queryByText("Included")).toBeNull();
+  });
+
+  it("an active add-on with no comp flag (an older server) still shows its price", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [{ sku: "ROUTE_PLUS", name: "Route Plus", quantity: 1, monthly: 49 }],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Route Plus");
+
+    const row = rowOf("Route Plus");
+    expect(row.getByText("$49/mo")).toBeInTheDocument();
+    expect(row.queryByText("Included")).toBeNull();
+  });
+
+  it("a comp add-on outside the catalog reads Included · Managed by RouteFlow with no price", async () => {
+    mockPlansAddons = [ADDON];
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [
+        { sku: "SALES_AGENTS", name: "Sales agents", quantity: 1, comp: true, monthly: null },
+        { sku: "MSRP", name: "MSRP", quantity: 1, comp: false, monthly: 29 },
+      ],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Sales agents");
+
+    const comp = rowOf("Sales agents");
+    expect(comp.getByText(/^Included · Managed by RouteFlow$/)).toBeInTheDocument();
+    expect(comp.queryByText(/\$/)).toBeNull();
+
+    expect(rowOf("MSRP").getByText("$29/mo · Managed by RouteFlow")).toBeInTheDocument();
   });
 });

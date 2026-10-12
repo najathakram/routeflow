@@ -41,7 +41,7 @@ const isRailway = /\.railway\.internal|\.proxy\.rlwy\.net/i.test(url);
 
     // Row 195: refuse a protected tenant (paying, Stripe-linked or env-listed) before any write.
     const sub = await c.query(
-      'SELECT "planKey", "stripeSubId" FROM "TenantSubscription" WHERE "tenantId" = $1',
+      'SELECT "planKey", "stripeSubId", "couponFull" FROM "TenantSubscription" WHERE "tenantId" = $1',
       [tenantId],
     );
     try {

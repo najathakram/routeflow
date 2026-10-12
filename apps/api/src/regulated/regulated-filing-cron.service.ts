@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { acceptsRecordKeeping } from "../tenant/tenant-automation";
 import { RegulatedFilingService } from "./regulated-filing.service";
 import { filingPeriod, FilingCadence } from "./period";
 
@@ -77,7 +78,22 @@ export class RegulatedFilingCronService {
       }),
     ]);
     const packTenants = new Set(packAddons.map((a) => a.tenantId));
-    const gated = categories.filter((c) => packTenants.has(c.tenantId));
+    const onPack = categories.filter((c) => packTenants.has(c.tenantId));
+
+    // SA-776: this is record-keeping over CLOSED periods - it keeps running for a READ_ONLY tenant ("view
+    // records" stays true) and is skipped for a SUSPENDED or CANCELLED one (acceptsRecordKeeping).
+    const tenantIds = [...new Set(onPack.map((c) => c.tenantId))];
+    const statuses =
+      tenantIds.length > 0
+        ? await this.prisma.tenant.findMany({
+            where: { id: { in: tenantIds } },
+            select: { id: true, status: true },
+          })
+        : [];
+    const blocked = new Set(
+      statuses.filter((t) => !acceptsRecordKeeping(t.status)).map((t) => t.id),
+    );
+    const gated = onPack.filter((c) => !blocked.has(c.tenantId));
 
     let prepared = 0;
     let skipped = 0;
@@ -115,7 +131,8 @@ export class RegulatedFilingCronService {
     if (prepared || skipped) {
       this.logger.log(
         `Regulated filing auto-prepare: ${prepared} prepared, ${skipped} already present ` +
-          `(${gated.length} of ${categories.length} active categories on pack tenants)`,
+          `(${gated.length} of ${categories.length} active categories on pack tenants` +
+          `${blocked.size > 0 ? `, ${blocked.size} suspended/cancelled tenant(s) skipped` : ""})`,
       );
     }
   }

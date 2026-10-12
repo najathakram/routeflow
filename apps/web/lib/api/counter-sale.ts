@@ -27,7 +27,12 @@ export function useCounterSaleGate(options?: { enabled?: boolean }) {
   // A disabled gate (non-staff) stays DARK even when a cached answer is in the query cache.
   const gate = enabled
     ? counterSaleGate(cap)
-    : { showButton: false, opensAsCounter: false, offerShipInstead: false };
+    : {
+        showButton: false,
+        opensAsCounter: false,
+        offerShipInstead: false,
+        offerInvoiceOrder: false,
+      };
   return { ...gate, capability: enabled ? cap : null, loading: enabled && isLoading === true };
 }
 

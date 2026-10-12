@@ -36,6 +36,19 @@ export const INVOICE_STATUS_VALUES = [
 ] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUS_VALUES)[number];
 
+/**
+ * SA-770: the OPEN invoice statuses - issued and not settled, so they can still be owed and can be overdue
+ * (a reminder is sent for them, the Unpaid chip lists them). A SUBSET of INVOICE_STATUS_VALUES, not a Prisma
+ * enum: the API keeps its own `OPEN_INVOICE_STATUSES` (invoice-status-sets.ts; it never value-imports this
+ * package) and invoices/open-invoice-statuses-pin.spec.ts pins the two set-equal.
+ */
+export const OPEN_INVOICE_STATUS_VALUES = [
+  "SENT",
+  "VIEWED",
+  "PARTIAL",
+  "OVERDUE",
+] as const satisfies readonly InvoiceStatus[];
+
 export const RETURN_STATUS_VALUES = [
   "PENDING",
   "APPROVED",

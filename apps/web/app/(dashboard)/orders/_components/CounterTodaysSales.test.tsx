@@ -29,10 +29,11 @@ jest.mock("@/lib/api-client", () => ({
 }));
 let addon = true;
 let role: string | undefined = "OPERATOR";
+let username = "pat";
 jest.mock("@/lib/api/tobacco", () => ({ useHasAddon: () => addon }));
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
-  useOptionalAuth: () => ({ user: role ? { role, username: "pat" } : null }),
+  useOptionalAuth: () => ({ user: role ? { role, username } : null }),
 }));
 const ORDER = {
   id: "o1",
@@ -272,12 +273,12 @@ describe("CounterTodaysSales", () => {
     expect(within(r).getByRole("link", { name: "View order" })).toBeInTheDocument();
   });
 
-  it("Reprint opens the shared receipt view: 'Reprint · sold …', no Tendered or Change", async () => {
+  it("Reprint opens the shared receipt view: 'Reprint · Sold …', no Tendered or Change", async () => {
     await open();
     fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
     const root = await screen.findByTestId("receipt-print-root");
     expect(within(root).getByTestId("receipt-reprint")).toHaveTextContent(
-      /^Reprint · sold .*11:15 AM/,
+      /^Reprint · Sold .*11:15 AM/,
     );
     expect(within(root).getByTestId("receipt-numbers")).toHaveTextContent("Order ORD-1");
     expect(within(root).getByTestId("receipt-total")).toHaveTextContent("$22.50");
@@ -369,7 +370,53 @@ describe("CounterTodaysSales", () => {
     expect(screen.getByRole("dialog").className).not.toContain("print:[&>div:first-child]:hidden");
   });
 
-  it("a reprint credits the reprinter, never a Cashier line", async () => {
+  it("row 317: a row names its cashier; an old row (no stored cashier) names none", async () => {
+    serve({
+      1: page1([
+        row({ orderId: "o1", cashierName: "jane" }),
+        row({ orderId: "o2", orderNumber: "ORD-2", cashierName: null }),
+        row({ orderId: "o3", orderNumber: "ORD-3" }),
+      ]),
+    });
+    await open();
+    const r1 = await screen.findByTestId("today-row-o1");
+    expect(within(r1).getByTestId("today-row-cashier")).toHaveTextContent("Cashier: jane");
+    expect(
+      within(await screen.findByTestId("today-row-o2")).queryByTestId("today-row-cashier"),
+    ).toBeNull();
+    expect(
+      within(await screen.findByTestId("today-row-o3")).queryByTestId("today-row-cashier"),
+    ).toBeNull();
+  });
+
+  it("row 317: 'Reprinted by' follows the shared name rule: an email-shaped username is not printed", async () => {
+    const original = username;
+    username = "pat@acme.test";
+    try {
+      await open();
+      fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+      const root = await screen.findByTestId("receipt-print-root");
+      expect(within(root).queryByTestId("receipt-reprinted-by")).toBeNull();
+      expect(root.textContent).not.toContain("pat@acme.test");
+    } finally {
+      username = original;
+    }
+  });
+
+  it("row 317: the reprint of a sale with a stored cashier prints 'Cashier: <name>' beside who reprinted it", async () => {
+    serve({ 1: page1([row({ cashierName: "jane" })]) });
+    await open();
+    fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+    const root = await screen.findByTestId("receipt-print-root");
+    expect(within(root).getByTestId("receipt-cashier")).toHaveTextContent("Cashier: jane");
+    expect(within(root).getByTestId("receipt-reprinted-by")).toHaveTextContent("Reprinted by pat");
+    // owner ruling (A): both are staff-facing on screen only; the printed reprint (the customer's copy) carries neither
+    expect(within(root).getByTestId("receipt-cashier")).toHaveClass("print:hidden");
+    expect(within(root).getByTestId("receipt-reprinted-by")).toHaveClass("print:hidden");
+    expect(within(root).getByTestId("receipt-numbers")).not.toHaveClass("print:hidden");
+  });
+
+  it("a reprint of a sale with no stored cashier credits the reprinter, never a Cashier line", async () => {
     await open();
     fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
     const root = await screen.findByTestId("receipt-print-root");

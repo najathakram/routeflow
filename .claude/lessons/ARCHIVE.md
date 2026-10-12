@@ -3839,3 +3839,99 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **Any async lookup that can add or change lines must disable the money action until its queue is empty, and the server must judge the tender against its own total, not the screen's.**
 - **Guard:** `useCounterSaleScan` queue state gates Pay; `assertWalkInTenderCoversTotal` and its db spec.
   (Archived 2026-10-10 whole and verbatim to make room at cap: L-278: guarded by the `useCounterSaleScan` queue state gating Pay and `assertWalkInTenderCoversTotal` with its db spec; no outside citation.)
+
+### L-274 · 2026-10-07 · tooling · a plain `npm ci` runs the root `prepare` (husky) and rewrites the SHARED hooksPath
+
+- **Symptom:** after `npm ci` in a worktree, `core.hooksPath` (shared by every worktree) turned relative and later pushes ran without the fleet shim's checks.
+- **Root cause:** the root `"prepare": "husky"` script runs on a plain `npm ci`, doing exactly what `npx husky` does: it rewrites the one repo-wide `core.hooksPath`.
+- **Lesson:** **In a worktree install with `npm ci --ignore-scripts`, never a plain `npm ci`. After any install, reset the absolute shim path, print `git config core.hooksPath`, and run `check-git-hooks` before committing or pushing.**
+- **Guard:** none automatic beyond `scripts/check-git-hooks.mjs`; the install order in [[L-254]].
+- **Recurrence (2026-10-08):** a second recurrence on the shared Mac mini of a plain `npm ci` rewriting `core.hooksPath`. `npm ci --ignore-scripts` plus a manual `prisma generate` avoids it.
+  (Archived 2026-10-11 whole and verbatim to make room at cap: L-274: superseded by L-254 (the same install order and the same guard, `scripts/check-git-hooks.mjs`); no outside citation.)
+
+### L-286 · 2026-10-08 · deploy · add a foreign key to a populated table inline on the new column, and state lock durations honestly
+
+- **Symptom:** recorded by the 2026-10-08 operating review from the sitting-3 migrations; the incident detail is in the lead's notes.
+- **Root cause:** Postgres skips the validation scan for a new column with no default only when the foreign key is declared inline. Inside one transaction an `ALTER TABLE` holds ACCESS EXCLUSIVE until COMMIT, so an index built later in the same file blocks reads as well as writes.
+- **Lesson:** **Declare the FK inline: `ADD COLUMN "x" TEXT CONSTRAINT "T_x_fkey" REFERENCES ...`, not a separate `ADD CONSTRAINT` (probe on 1M rows: 0.7 ms inline vs 33 ms separate; the constraint name is unchanged, so Prisma shows no drift). Write the real lock duration in the migration header.**
+- **Guard:** the sitting-3 migration headers; replay plus `apps/api/scripts/schema-drift.mjs`.
+  (Archived 2026-10-11 whole and verbatim to make room at cap: L-286: guarded by the sitting-3 migration headers and `apps/api/scripts/schema-drift.mjs`; no outside citation.)
+
+## Archived 2026-10-12 — headroom for L-295..L-298 (MacBook lane bookkeeping)
+
+### L-191 · 2026-09-17 · tooling · MailboxCard.tsx JSX apostrophes only caught by a full web lint
+
+- **Symptom:** `MailboxCard.tsx` shipped with five raw `'` characters in JSX text nodes
+  (`react/no-unescaped-entities`). `tsc`, Jest, and a targeted `eslint` pass on just the changed
+  file were all clean; the errors only surfaced under `npm run lint -w apps/web` (`next lint`)
+  against the whole workspace.
+- **Root cause:** `next lint` fails the ENTIRE web workspace on a single error, and amid
+  pre-existing warnings elsewhere in the repo, a real new error in the diff reads as just more
+  backlog.
+- **Lesson:** **A JSX text change needs web lint run locally before push, not inferred from
+  `tsc`/Jest passing — scan the full lint output for NEW errors in the touched file(s) rather
+  than assuming a clean `tsc` means the JSX is clean too.**
+- **Guard:** none yet — propose a scoped `npm run lint -w apps/web -- --file <changed-file>`
+  invocation, or a pre-push step that diffs lint output against a baseline.
+
+### L-202 · 2026-09-18 · testing · 390px sweep script matched zero targets, reported clean
+
+- **Symptom:** the 390px mobile-overflow sweep located screens via `a[href^='/x/']`, but this
+  codebase navigates list tables by row-level `onClick` + `router.push`, never anchors — true
+  across every screen checked. The locator matched nothing, every run recorded "skipped: no
+  data," and looked clean while testing nothing. Fleet decisions were made on those results.
+- **Root cause:** the harness treated "found zero candidate targets" and "checked every
+  candidate and found nothing wrong" as the same outcome — a green run gives no signal for which
+  one happened.
+- **Lesson:** **Any verification step that yields zero candidate targets must raise an error,
+  never a skip or a pass.**
+- **Guard:** none yet — propose the sweep script assert a non-zero target count before
+  evaluating, failing loudly when a locator matches nothing.
+
+### L-050 · 2026-09-02 · testing · #598
+
+- **Symptom:** two new e2e specs went red post-deploy AND dragged an unrelated, previously-green
+  test down with them.
+- **Root cause:** neither new project declared `dependencies`, so the runner placed both in the
+  first phase, while the victim ran in phase 2 on a stored session for the same shared operator;
+  the mutating spec revoked that session mid-flow, 401ing the sibling's token refresh.
+- **Lesson:** **A spec that mutates shared auth state needs its own user, not a scheduling
+  tweak.** Ask which fixtures a new suite MUTATES, and who else in its phase reads them.
+- **Guard:** none yet — the two project entries are commented out with the diagnosis inline, so
+  re-enabling is a seed change plus uncommenting. A skip is not a discharge ([[L-041]]).
+
+### L-025 · 2026-09-01 · testing
+
+- **Symptom:** native Google Sign-In had been dead the whole time — the callback destructured a
+  `default` export `expo-secure-store` does not have, so token storage threw on every device.
+- **Root cause:** the throw sits inside a `!isWeb` branch. Every automated surface runs the web
+  build, which takes the `localStorage` branch, so nothing ever executed the failing line.
+- **Lesson:** **A `Platform`/`isWeb` branch is untested code unless something runs that
+  platform. When you touch one side of such a branch, either exercise the other side or state
+  plainly that it is unverified.**
+- **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
+## Archived 2026-10-11 — least-cited, guarded; headroom for L-295..L-297 (Release 5 bookkeeping)
+
+### L-254 · 2026-10-02 · tooling · a fresh worktree runs the fleet hook shim, never `npx husky`, and hooks fail fast when the worktree has no install
+
+- **Symptom:** a worktree made with `npm ci --ignore-scripts` has no `.husky/_`, so before the shared shim a push silently skipped pre-push verify; with the shim, a worktree with no `node_modules` fails pre-commit (`prettier` ENOENT through lint-staged) and pre-push (`semver is not resolvable`). `npx husky` resets the shared `core.hooksPath`.
+- **Root cause:** hooks resolve per checkout, while the fleet shares one shim (`.git/husky-shim/_`) that runs each worktree's own `.husky` scripts; the tools the hooks call come from that worktree's own `node_modules`.
+- **Lesson:** **In a fresh worktree never run `npx husky`, `HUSKY=0` or `--no-verify`; read the first lines of a hook failure that appears within seconds (it names the missing tool). For code, install first (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`). For a docs-only commit, link a full install's `node_modules` (any worktree with a working install; the main checkout's can be broken) for the commit and remove the link after; for a docs-only push use the audited `SKIP_VERIFY=1 SKIP_VERIFY_REASON="..."`.**
+- **Guard:** `scripts/check-git-hooks.mjs` (first step of `npm run verify`); the audit line `SKIP_VERIFY_REASON` writes to `.git/skip-verify.log`.
+  (Archived 2026-10-11 whole and verbatim to make room at cap: L-254: guarded by `scripts/check-git-hooks.mjs` (first step of `npm run verify`) and the audited `SKIP_VERIFY_REASON` line; three outside citations, all in bookkeeping files.)
+
+### L-293 · 2026-10-11 · tooling · a builder's local tsc that excludes specs misses spec type errors: hand back only after the repo's own check-types ratchet
+
+- **Symptom:** a spec type error passed the builder's local type-check and only failed later, in the ratchet and CI, after the work had been handed back.
+- **Root cause:** the builder's bare `tsc` used a config that excludes spec files, so spec errors never showed; the repo's check-types ratchet compiles specs. The abandoned approach was trusting the local tsc as the type gate.
+- **Lesson:** **Before handing work back, run the repo's own check-types ratchet (the one verify runs), never a bare local `tsc`; a green local tsc that skips specs proves nothing about the spec files you just wrote.**
+- **Guard:** the check-types ratchet in `npm run verify` and CI; none for the local habit beyond the hand-back checklist.
+  (Archived 2026-10-11 whole and verbatim to make room at cap: L-293: guarded by the check-types ratchet in `npm run verify` and CI; one outside citation (the code map changelog).)
+
+### L-270 · 2026-10-07 · testing · a probe asserts the branch it entered before reading the effect it measures
+
+- **Symptom:** a replace-all stock probe looked like a double-decrement of stock.
+- **Root cause:** the probe sent no `replaceAll: true`, so the edit took MERGE mode, a different branch from the one under test; the effect was read without ever checking which path ran.
+- **Lesson:** **A probe asserts the mode or path it actually entered (the edit mode, the line count after) before it reads the effect it measures; otherwise a fixture that took a different branch reads as a bug.**
+- **Guard:** probes print and assert the branch marker (mode, resulting line count) before any effect assertion; a probe with no such line is not evidence.
+  (Archived 2026-10-11 whole and verbatim to make room at cap: L-270: guarded by the probes' own branch-marker assertion; no outside citation.)

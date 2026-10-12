@@ -1,6 +1,7 @@
 import type { InvoiceItemSystemKind } from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { isDayClosedRefusal } from "../day-closed-copy";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
 import { priceAdjustmentFailure } from "../price-adjustment-failure";
 import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-methods";
@@ -19,6 +20,7 @@ import type {
   UpdateInvoiceItem,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
+import type { HandOverSoldBy } from "@/lib/handover-stamp";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -178,7 +180,17 @@ export interface Invoice {
   /** Set on per-batch delivery invoices; null/absent on the order-level "pending mirror" draft. */
   deliveryBatchId?: string | null;
   /** Linked order summary (present on the detail endpoint) — used to gate the pending-mirror draft. */
-  order?: { status: string; orderNumber?: string | null };
+  order?: {
+    status: string;
+    orderNumber?: string | null;
+    fulfillPath?: "ROUTE" | "SHIP" | "PICKUP" | null;
+    /** Row 342, STAFF reads only: where and by whom the order was handed over (absent for a buyer / older API). */
+    registerKey?: string | null;
+    handedOverBy?: string | null;
+    /** the hand-over moment (the stamp line's time) */
+    deliveredAt?: string | null;
+    soldBy?: HandOverSoldBy | null;
+  };
   /** The server's default PDF stage (detail endpoint): a shipment invoice is "final" before delivery. */
   pdfVariant?: InvoicePdfVariant;
   recurringInvoiceId?: string;
@@ -186,6 +198,11 @@ export interface Invoice {
   payments?: InvoicePayment[];
   /** Server-computed balance due — 0 for PAID/VOID/WRITTEN_OFF regardless of payment records */
   balanceDue?: number;
+  /**
+   * Server-computed (SA-770): an open (SENT/VIEWED/PARTIAL/OVERDUE) invoice that still owes AND whose due day
+   * has ended in the tenant's zone. The one overdue rule, so a client never re-derives it from `status`.
+   */
+  isOverdue?: boolean;
   /** Server-computed CASH-ONLY amount paid (B421) — excludes CREDIT_NOTE/ADVANCE
    *  applications, which are surfaced separately below. */
   paidAmount?: number;
@@ -615,6 +632,8 @@ export function useRecordInvoicePayment() {
   return useMutation<Invoice & { createdPaymentId?: string }, Error, RecordInvoicePaymentDto>({
     mutationFn: ({ id, ...data }) =>
       apiClient.post(`/invoices/${id}/payments`, data).then((r) => r.data),
+    // SA-750r3: the invoice page answers a closed-day refusal with its own fixed copy (dayClosedCopy): no second toast.
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", id] });
@@ -641,6 +660,7 @@ export function useUpdateInvoicePayment() {
   return useMutation<Invoice, Error, UpdateInvoicePaymentDto>({
     mutationFn: ({ invoiceId, paymentId, ...data }) =>
       apiClient.patch(`/invoices/${invoiceId}/payments/${paymentId}`, data).then((r) => r.data),
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (updated) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
@@ -653,6 +673,7 @@ export function useDeleteInvoicePayment() {
   return useMutation<Invoice, Error, { invoiceId: string; paymentId: string }>({
     mutationFn: ({ invoiceId, paymentId }) =>
       apiClient.delete(`/invoices/${invoiceId}/payments/${paymentId}`).then((r) => r.data),
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (updated) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
@@ -745,6 +766,7 @@ export function useSetCheckStatus() {
       apiClient
         .patch(`/invoices/${invoiceId}/payments/${paymentId}/check-status`, data)
         .then((r) => r.data),
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (_, { invoiceId }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });

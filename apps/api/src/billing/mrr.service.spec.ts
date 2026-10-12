@@ -5,6 +5,8 @@ import { roundMoney } from "@routeflow/pricing";
 function make() {
   const prisma = {
     tenantSubscription: {
+      // SA-736r: the unbilled-coupon cohort count (the real rows are proven in mrr-coupon.db.spec.ts).
+      count: jest.fn().mockResolvedValue(0),
       findMany: jest.fn().mockResolvedValue([
         { tenantId: "t-starter", planKey: "STARTER", basePriceSnapshot: 59, discount: 0 },
         { tenantId: "t-business", planKey: "BUSINESS", basePriceSnapshot: 349, discount: 10 },
@@ -88,7 +90,28 @@ describe("MrrService.computeOverview", () => {
     const where = prisma.tenantAddon.findMany.mock.calls[0][0].where;
     expect(where.active).toBe(true);
     expect(where.tenant.status).toBe("ACTIVE");
-    expect(where.tenant.subscription).toEqual({ planKey: { not: null } });
+    // SA-736r M2: the add-on query mirrors payingWhere's couponFull gate, so a coupon tenant's add-ons leave
+    // `mrr` exactly as they leave `ledgerMrr`.
+    expect(where.tenant.subscription).toEqual({ planKey: { not: null }, couponFull: false });
+  });
+
+  it("SA-736r M2: payingWhere itself carries couponFull:false (the subscription read AND the add-on read)", async () => {
+    const { svc, prisma } = make();
+    await svc.computeOverview();
+    expect(prisma.tenantSubscription.findMany.mock.calls[0][0].where).toMatchObject({
+      planKey: { not: null },
+      couponFull: false,
+    });
+  });
+
+  it("SA-736r: the unbilled cohort is counted from its own query, never from payingWhere", async () => {
+    const { svc, prisma } = make();
+    prisma.tenantSubscription.count.mockResolvedValue(2);
+    const o = await svc.computeOverview();
+    expect(o.couponUnbilledTenants).toBe(2);
+    expect(prisma.tenantSubscription.count.mock.calls[0][0].where).toMatchObject({
+      couponFull: true,
+    });
   });
 
   // SA-693: a comp books 0 by construction (priceSnapshot 0), and both MRR reads also filter it out
@@ -160,6 +183,7 @@ describe("MrrService.computeOverview", () => {
   it("splits unpriced (F2) vs zero-priced (full-discount) rows, and wires activeWithoutSubscription to its own query", async () => {
     const prisma = {
       tenantSubscription: {
+        count: jest.fn().mockResolvedValue(0), // SA-736r: the unbilled-coupon cohort count
         findMany: jest.fn().mockResolvedValue([
           { tenantId: "t-paying", planKey: "STARTER", basePriceSnapshot: 59, discount: 0 },
           // Missing a snapshot, no add-ons to rescue it — genuinely unpriced (F2's shape).
@@ -203,6 +227,7 @@ describe("MrrService.computeOverview", () => {
   it("REG-743-F4 a null-snapshot row rescued by add-ons counts as paying, never as unpriced", async () => {
     const prisma = {
       tenantSubscription: {
+        count: jest.fn().mockResolvedValue(0), // SA-736r: the unbilled-coupon cohort count
         findMany: jest
           .fn()
           .mockResolvedValue([
@@ -233,6 +258,7 @@ describe("MrrService.computeOverview", () => {
   it("REG-743-N5 excludes a $0 row (full discount) from payingTenants and byPlan tenant counts", async () => {
     const prisma = {
       tenantSubscription: {
+        count: jest.fn().mockResolvedValue(0), // SA-736r: the unbilled-coupon cohort count
         findMany: jest.fn().mockResolvedValue([
           { tenantId: "t-starter", planKey: "STARTER", basePriceSnapshot: 59, discount: 0 },
           // A real Stripe subscription (has a planKey) fully discounted to $0 — still a
@@ -282,6 +308,7 @@ describe("MrrService.computeOverview", () => {
     ];
     const prisma = {
       tenantSubscription: {
+        count: jest.fn().mockResolvedValue(0), // SA-736r: the unbilled-coupon cohort count
         findMany: jest
           .fn()
           .mockImplementation(({ where }: any) =>
@@ -357,6 +384,7 @@ describe("MrrService — feature-override MRR exclusion oracle (brief B)", () =>
     const overrideRows: any[] = [];
     const prisma = {
       tenantSubscription: {
+        count: jest.fn().mockResolvedValue(0), // SA-736r: the unbilled-coupon cohort count
         findMany: jest
           .fn()
           .mockResolvedValue([
@@ -486,6 +514,7 @@ describe("MrrService.computeOverview — REG-MRR-ANNUAL (6-tenant v11 fixture)",
   it("T16 REG-B866-BYPLAN prices A(STARTER 99) B(GROWTH 249+addons) C(SCALE 499 fully discounted) D(manual, unpriced) E(addon-rescued) F(SCALE ANNUAL, snapshot=monthly 499) (flips REG-MRR-ANNUAL, SA-277)", async () => {
     const prisma = {
       tenantSubscription: {
+        count: jest.fn().mockResolvedValue(0), // SA-736r: the unbilled-coupon cohort count
         findMany: jest.fn().mockResolvedValue([
           { tenantId: "A", planKey: "STARTER", basePriceSnapshot: 99, discount: 0 },
           { tenantId: "B", planKey: "GROWTH", basePriceSnapshot: 249, discount: 0 },

@@ -101,7 +101,7 @@ describe("PickupCompleteDialog — tender", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10" } });
     confirm();
-    expect(await screen.findByText("The amount tendered is less than the total.")).toBeVisible();
+    expect(await screen.findByText("Enter at least $25.00.")).toBeVisible();
     expect(post).not.toHaveBeenCalled();
   });
 
@@ -116,6 +116,20 @@ describe("PickupCompleteDialog — tender", () => {
     await waitFor(() => expect(post).toHaveBeenCalled());
     expect(post.mock.calls[0][1]).toEqual({ payment: { method: "CASH", amount: 40 } });
     expect(await screen.findByTestId("pickup-change")).toHaveTextContent("$15.00");
+    // owner ruling 10-12 wording: no em dash, a full sentence
+    expect(screen.getByTestId("pickup-outcome")).toHaveTextContent("Picked up and paid.");
+    expect(screen.getByRole("dialog", { name: "Picked up ORD-1" })).toBeInTheDocument();
+  });
+
+  it("a balance still due after the hand-over reads 'Picked up. $7.58 still due.'", async () => {
+    balance(25);
+    post.mockResolvedValue(result({ balanceDue: 7.58, paid: 17.42, change: 0 }));
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "25" } });
+    confirm();
+    expect(await screen.findByText("Picked up. $7.58 still due.")).toBeVisible();
+    expect(document.body.textContent).not.toMatch(/Picked up —/);
   });
 
   it("quick tender fills the amount", async () => {
@@ -317,6 +331,24 @@ describe("PickupCompleteDialog — the API's pickup codes", () => {
       "Already picked up. Record any payment on the invoice.",
     );
     expect(screen.queryByText(/raw text/)).toBeNull();
+    invalidate.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ["orders"] }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("409 COUNTER_SALE_DAY_CLOSED: the order IS handed over; fixed copy, never the server text, Reload (no retry)", async () => {
+    balance(25);
+    post.mockRejectedValueOnce({
+      response: { status: 409, data: { code: "COUNTER_SALE_DAY_CLOSED", message: "raw text" } },
+    });
+    const { invalidate, onClose } = mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "25" } });
+    confirm();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Handed over. $25.00 still due.");
+    expect(screen.queryByText(/raw text/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     invalidate.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Reload" }));
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ["orders"] }));
@@ -532,6 +564,7 @@ describe("PickupCompleteDialog — the global error toast", () => {
     "COUNTER_CHECK_NUMBER_REQUIRED",
     "PICKUP_NOT_READY",
     "PICKUP_ONLY",
+    "COUNTER_SALE_DAY_CLOSED",
   ])("%s: the dialog's own copy shows and NO global toast fires", async (code) => {
     toast.mockClear();
     post.mockRejectedValueOnce({ response: { status: 409, data: { code } } });

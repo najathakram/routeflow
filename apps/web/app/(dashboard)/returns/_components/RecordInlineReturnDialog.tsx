@@ -17,6 +17,7 @@
 // lines/quote.
 import { RefundSlipAction } from "./RefundSlipAction";
 import { readAutoPrint } from "@/lib/counter-sale";
+import { isReadOnlyRefusal } from "@/lib/read-only-refusal";
 import * as React from "react";
 import Link from "next/link";
 import { Button, Modal, Select, useToast } from "@routeflow/ui/web";
@@ -89,16 +90,19 @@ const PENDING_ON_CLOSE: ReadonlySet<RefundErrorKind> = new Set([
   "failed",
   "changed",
   "forbidden",
+  "readOnly",
   "needsPaid",
   "notRefundable",
   "paidWithCredit",
   "exceedsCash",
+  "dayClosed",
 ]);
 /** Refusals where the saved return can still be given as store credit (not a 403). */
 const CREDIT_INSTEAD: ReadonlySet<RefundErrorKind> = new Set([
   "needsPaid",
   "notRefundable",
   "paidWithCredit",
+  "dayClosed",
 ]);
 
 export interface RecordedInfo {
@@ -394,6 +398,7 @@ export function RecordInlineReturnDialog({
           const refundDenied =
             showChoice &&
             effResolution === "REFUND" &&
+            !isReadOnlyRefusal(err) &&
             (err as { response?: { status?: number } } | undefined)?.response?.status === 403;
           setRefusalMessage(refundDenied ? REFUND_COPY.forbidden : extractRefusalMessage(err));
           // #2647: the earlier capture WAS recorded: link it and clear the draft (a fresh key and a
@@ -490,7 +495,9 @@ export function RecordInlineReturnDialog({
             saved &&
             (refundError === "failed" ||
               refundError === "exceedsCash" ||
-              CREDIT_INSTEAD.has(refundError)) ? (
+              (CREDIT_INSTEAD.has(refundError) &&
+                // a walk-in can't hold store credit: a closed day leaves only the later date
+                !(refundError === "dayClosed" && walkIn))) ? (
               <>
                 <Button
                   variant="secondary"
@@ -710,7 +717,7 @@ function RefundChoice({
       )}
       {error && (
         <p role="alert" className="text-sm font-medium text-danger">
-          {REFUND_COPY[error]}
+          {error === "dayClosed" && walkIn ? REFUND_COPY.dayClosedWalkIn : REFUND_COPY[error]}
         </p>
       )}
     </fieldset>

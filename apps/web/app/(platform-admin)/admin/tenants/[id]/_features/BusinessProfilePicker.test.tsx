@@ -2,8 +2,10 @@ import * as React from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { BusinessProfilePicker } from "./BusinessProfilePicker";
+import { INCLUDED_FREE_COPY } from "./profile-plain-copy";
 import {
   PROFILES_FIXTURE,
+  deliveryPreviewWithComps,
   matchingPreview,
   shippingPreviewWithBilling,
 } from "./__fixtures__/profiles.fixtures";
@@ -60,14 +62,14 @@ beforeEach(() => {
   });
 });
 
-describe("BusinessProfilePicker — the four profiles", () => {
-  it("lists all four profiles with their plain-English descriptions", async () => {
+describe("BusinessProfilePicker — the five profiles", () => {
+  it("lists all five profiles with their plain-English descriptions", async () => {
     await renderPicker();
     for (const p of PROFILES_FIXTURE) {
       const radio = screen.getByRole("radio", { name: new RegExp(p.label.replace("+", "\\+")) });
       expect(radio).toBeInTheDocument();
     }
-    expect(screen.getAllByRole("radio")).toHaveLength(4);
+    expect(screen.getAllByRole("radio")).toHaveLength(5);
   });
 
   it("shows the in-store profiles disabled, with no 'Available when counter sales launch' note (SA-1)", async () => {
@@ -115,6 +117,85 @@ describe("BusinessProfilePicker — the four profiles", () => {
   });
 });
 
+describe("SA-769 — the preview names every module the profile will comp", () => {
+  it('lists each comped module with "Included free with this profile", under its own section, and no Billing section', async () => {
+    mockPreview.mockResolvedValue(deliveryPreviewWithComps());
+    await renderPicker();
+    const dialog = await openPreview(/Delivery distributor/);
+    const comps = within(dialog).getByTestId("profile-preview-comps");
+    for (const name of [
+      "Recurring routes",
+      "Ad hoc order delivery",
+      "At-door payment collection",
+    ]) {
+      expect(within(comps).getByText(name)).toBeInTheDocument();
+    }
+    expect(within(comps).getAllByText(INCLUDED_FREE_COPY)).toHaveLength(3);
+    expect(within(dialog).queryByTestId("profile-preview-billing")).not.toBeInTheDocument();
+    // the mode change is still under "What will change", and the comp lines are not repeated there
+    const changes = within(dialog).getByTestId("profile-preview-changes");
+    expect(
+      within(changes).getByText(
+        "Where orders go: Not configured (today's behavior) → Own delivery",
+      ),
+    ).toBeInTheDocument();
+    expect(within(changes).queryByText(/included free/i)).not.toBeInTheDocument();
+  });
+
+  it('a preview whose only change is a comp is not "nothing will change": Confirm is enabled', async () => {
+    mockPreview.mockResolvedValue(
+      deliveryPreviewWithComps({
+        changes: [],
+        plan: {
+          overrides: [],
+          comps: [{ featureKey: "driver_payments" }],
+          modes: [],
+          billing: [],
+        },
+      }),
+    );
+    await renderPicker();
+    const dialog = await openPreview(/Delivery distributor/);
+    expect(within(dialog).queryByTestId("profile-preview-empty")).not.toBeInTheDocument();
+    const comps = within(dialog).getByTestId("profile-preview-comps");
+    expect(within(comps).getAllByText(INCLUDED_FREE_COPY)).toHaveLength(1);
+    expect(within(dialog).getByRole("button", { name: "Confirm" })).toBeEnabled();
+  });
+
+  it("a profile that comps nothing has no comp section (the tenant already holds the modules)", async () => {
+    await renderPicker();
+    const dialog = await openPreview();
+    expect(within(dialog).queryByTestId("profile-preview-comps")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(INCLUDED_FREE_COPY)).not.toBeInTheDocument();
+  });
+
+  it('a comp row switched off by a fleet:false profile is not a billing stop: no "billing stopped" claim, no manual-invoice warning', async () => {
+    mockPreview.mockResolvedValue(
+      shippingPreviewWithBilling({
+        plan: {
+          overrides: [],
+          comps: [],
+          modes: [{ key: "fulfilment_model", from: "delivery", to: "ship" }],
+          billing: [{ featureKey: "order_delivery", action: "disable", manual: false, comp: true }],
+        },
+        summary: [
+          "Ad hoc order delivery will be switched off (it was included free; nothing is billed)",
+          "Where orders go: Own delivery → Ship by carrier",
+        ],
+        changes: ["Where orders go: Own delivery → Ship by carrier"],
+      }),
+    );
+    await renderPicker();
+    const dialog = await openPreview();
+    expect(within(dialog).queryByTestId("profile-preview-billing")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/Billing stops/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/manual invoice/)).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByText("Ad hoc order delivery will be switched off (it was included free)"),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("BusinessProfilePicker — preview", () => {
   it("previews first: calls the preview for the chosen profile and writes nothing", async () => {
     await renderPicker();
@@ -156,6 +237,7 @@ describe("BusinessProfilePicker — preview", () => {
       shippingPreviewWithBilling({
         plan: {
           overrides: [],
+          comps: [],
           modes: [{ key: "fulfilment_model", from: "delivery", to: "ship" }],
           billing: [
             { featureKey: "driver_payments", action: "disable", manual: true },
@@ -185,7 +267,7 @@ describe("BusinessProfilePicker — preview", () => {
       shippingPreviewWithBilling({
         summary: ["Turn off Recurring routes", "Where orders go: Own delivery → Ship by carrier"],
         changes: ["Turn off Recurring routes", "Where orders go: Own delivery → Ship by carrier"],
-        plan: { overrides: [], modes: [], billing: [] },
+        plan: { overrides: [], comps: [], modes: [], billing: [] },
       }),
     );
     await renderPicker();

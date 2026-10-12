@@ -39,7 +39,9 @@ import { PortalSwitchLink } from "@/components/PortalSwitchLink";
 import { setLastPortalCookie } from "@/lib/presence-cookies";
 import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
-import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
+import { ReadOnlyGateProvider } from "@/lib/read-only-gate";
+import { BillingShellBanner, BillingStripReserve } from "@/components/BillingShellBanner";
+import { subscriptionPollInterval } from "@/lib/subscription-banner-state";
 import { useSubscription } from "@/lib/api/billing";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -1002,11 +1004,19 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   // CUSTOMER/DRIVER); a 60s staleTime keeps it from refetching on every navigation.
   // Lite-L2 (WP8): the same result also drives the nav's plan-gated filtering below —
   // isSuccess/isError captured alongside `data` (do not add a second useSubscription call).
+  // Per-viewer convenience memory (the strip-shown hint, the paid notice) is scoped to the workspace.
+  const billingScope = user?.tenantSlug ?? user?.id ?? null;
   const {
     data: subscriptionStatus,
+    dataUpdatedAt: subscriptionReadAt,
     isSuccess: subscriptionResolved,
     isError: subscriptionFailed,
-  } = useSubscription({ staleTime: 60_000, enabled: isStaff });
+  } = useSubscription({
+    staleTime: 60_000,
+    enabled: isStaff,
+    // SA-733r6: while a billing state is showing, re-read every 30 s so a payment clears the strip <= 60 s.
+    refetchInterval: (q) => subscriptionPollInterval(q.state.data),
+  });
   const { data: regulatedSections, isLoading: regulatedLoading } = useTrackedCategories(
     { active: true },
     { enabled: isStaff },
@@ -1345,13 +1355,15 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           control; below lg the rail is a drawer so it becomes the viewport corner. */}
       <div className="relative flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
-        {subscriptionStatus && (
-          <ReadOnlyBanner
-            status={subscriptionStatus.status}
-            readOnlyReason={subscriptionStatus.readOnlyReason}
-            compact
+        {subscriptionStatus ? (
+          <BillingShellBanner
+            view={subscriptionStatus}
+            userRole={user?.role}
+            scope={billingScope}
           />
-        )}
+        ) : isStaff && !subscriptionFailed ? (
+          <BillingStripReserve scope={billingScope} />
+        ) : null}
         {register ? (
           <RegisterHeader
             onOpenMobileNav={() => setMobileNavOpen(true)}
@@ -1383,14 +1395,26 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           tabIndex={-1}
           className="flex-1 focus:outline-none overflow-x-hidden overflow-y-auto bg-surface-raised pb-24"
         >
-          {children}
+          <ReadOnlyGateProvider
+            view={subscriptionStatus}
+            readAt={subscriptionReadAt}
+            isAdmin={user?.role === "TENANT_ADMIN"}
+          >
+            {children}
+          </ReadOnlyGateProvider>
         </main>
         {/* Persistent parked-draft dock (pos-cost-roles-spec §2) — bottom-left of
             the content area, every operator screen; resume/discard + scan-to-draft. */}
         <DraftDock />
       </div>
 
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <ReadOnlyGateProvider
+        view={subscriptionStatus}
+        readAt={subscriptionReadAt}
+        isAdmin={user?.role === "TENANT_ADMIN"}
+      >
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      </ReadOnlyGateProvider>
       <PwaInstallPrompt logoSrc={BRAND_MARK_SRC} accentClass="bg-brand-600 hover:bg-brand-700" />
 
       {/* Keyboard shortcuts help modal */}

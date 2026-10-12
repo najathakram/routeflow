@@ -500,7 +500,7 @@ describe("PKG-4 owner rule: no control in the touched areas is lost or hidden", 
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     expect(cust()).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /minimize/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save as Draft" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save as draft" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create Order" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "scan" })).toBeInTheDocument();
     await user.type(prod(), "zzz");

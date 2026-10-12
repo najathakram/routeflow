@@ -102,7 +102,8 @@ import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
-import { useStaffFulfilment } from "@/lib/fulfilment-caps";
+import { useFulfilmentCaps, useStaffFulfilment } from "@/lib/fulfilment-caps";
+import { isStoreOnly } from "@/lib/counter-sale";
 import { usePosFinish, usePosMode, PosFinishError } from "@/lib/api/pos-orders";
 import { POS_COPY } from "@/lib/pos-copy";
 import {
@@ -122,6 +123,7 @@ import { useOrderSuggestions } from "@/lib/api/order-suggestions";
 import { mergeOrderedIntoLine, type OrderedAdd } from "./order-again";
 import { OrderSuggestionsBar } from "./OrderSuggestionsBar";
 import { useOrderSuggestionActions } from "./use-order-suggestion-actions";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -253,7 +255,12 @@ export function CreateOrderModal({
   const { user: posUser } = useAuth();
   // The switch and PICKUP are for roles with USE_POS_MODE only: a stored preference never applies without it.
   const posAllowed = staffMay(posUser?.role, "USE_POS_MODE");
-  const posMode = posAllowed && pos.posMode;
+  // A store-only business (capabilities.fulfilment: PICKUP is its only method) has no delivery to switch back to:
+  // the builder is simply POS mode, with no switch and no preference involved (row 331).
+  const storeOnly = isStoreOnly(useFulfilmentCaps());
+  const posMode = posAllowed && (storeOnly || pos.posMode);
+  // POS mode forced by the capability (not an opt-in): the builder talks about invoicing in store, not delivery.
+  const storeOnlyPos = posAllowed && storeOnly;
   const posFinish = usePosFinish();
   // Which POS finishing action the operator pressed ("Confirm & invoice" vs "Confirm only"); survives the merge prompt.
   const posFinishRef = React.useRef<"invoice" | "confirm">("invoice");
@@ -1438,15 +1445,20 @@ export function CreateOrderModal({
 
   /** POS "Confirm & invoice" / "Confirm only": the order exists (PENDING); confirm it, then invoice it. */
   const finishPosOrder = (
-    created: { id: string; orderNumber?: string | null },
+    created: { id: string; orderNumber?: string | null; status?: string | null },
     finish: "invoice" | "confirm",
     viewOrder?: (orderId: string) => void,
+    merged?: { fromStatus?: string | null },
   ) => {
     const action = viewOrder
       ? { label: "View Order", onClick: () => viewOrder(created.id) }
       : undefined;
     posFinish
-      .mutateAsync({ orderId: created.id, invoice: finish === "invoice" })
+      .mutateAsync({
+        orderId: created.id,
+        invoice: finish === "invoice",
+        fromStatus: created.status ?? merged?.fromStatus,
+      })
       .then(() => {
         toast({
           title: finish === "invoice" ? POS_COPY.confirmedInvoiced : POS_COPY.confirmedOnly,
@@ -1457,7 +1469,12 @@ export function CreateOrderModal({
       .catch((err: unknown) => {
         const step = err instanceof PosFinishError ? err.step : "confirm";
         toast({
-          title: step === "invoice" ? POS_COPY.invoiceMissing : POS_COPY.confirmMissing,
+          title:
+            step === "invoice"
+              ? POS_COPY.invoiceMissing
+              : merged
+                ? POS_COPY.mergedConfirmMissing
+                : POS_COPY.confirmMissing,
           variant: "warning",
           action,
         });
@@ -1549,7 +1566,13 @@ export function CreateOrderModal({
         onSuccess: (created: any) => {
           submitKey.settle("success");
           if (posMode && !asDraft && created?.id) {
-            finishPosOrder(created, posFinishRef.current, onViewOrder);
+            // A merge returns the target order; its status (else the prompt's) says if it is still a DRAFT.
+            finishPosOrder(
+              created,
+              posFinishRef.current,
+              onViewOrder,
+              mergeChoice === "merge" ? { fromStatus: mergePrompt?.status } : undefined,
+            );
           } else {
             toast(orderCreatedToast({ mergeChoice, asDraft, created, onViewOrder }));
           }
@@ -1841,8 +1864,10 @@ export function CreateOrderModal({
       open={isOpen && !scanScreenActive}
       onClose={handleDismiss}
       onEscapeKeyDown={handleEscape}
-      title={resumeDraftId ? "Resume draft" : "Create Order"}
-      description="Create a new order on behalf of a customer."
+      title={resumeDraftId ? "Resume draft" : storeOnlyPos ? POS_COPY.builderTitle : "Create Order"}
+      description={
+        storeOnlyPos ? POS_COPY.builderSubtitle : "Create a new order on behalf of a customer."
+      }
       className="max-w-2xl"
       footer={
         // B564: the Modal footer is a `justify-end` flex row, so four buttons wider than a
@@ -1855,7 +1880,7 @@ export function CreateOrderModal({
           <Button
             variant="ghost"
             type="button"
-            className="w-full sm:mr-auto sm:w-auto"
+            className="w-full max-sm:h-11 sm:mr-auto sm:w-auto"
             onClick={handleMinimize}
             disabled={!canMinimize || savingDraft}
             loading={savingDraft}
@@ -1867,22 +1892,26 @@ export function CreateOrderModal({
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
           <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-            <Button variant="ghost" type="button" onClick={handleDismiss}>
+            {/* Row 344: the footer actions are 44 px tap targets below sm (they were 34 px at 390). */}
+            <Button variant="ghost" type="button" className="max-sm:h-11" onClick={handleDismiss}>
               Cancel
             </Button>
-            <Button
+            <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
+            <WriteButton
               variant="secondary"
               type="button"
+              className="max-sm:h-11"
               loading={createOrder.isPending}
               disabled={createOrder.isPending || fulfilmentPending}
               onClick={onSaveDraft}
             >
-              Save as Draft
-            </Button>
+              Save as draft
+            </WriteButton>
             {posMode && (
-              <Button
+              <WriteButton
                 variant="secondary"
                 type="button"
+                className="max-sm:h-11"
                 loading={createOrder.isPending}
                 disabled={
                   createOrder.isPending || fulfilmentPending || lineItems.some(isPendingDefaultUnit)
@@ -1893,11 +1922,12 @@ export function CreateOrderModal({
                 }}
               >
                 {POS_COPY.confirmOnly}
-              </Button>
+              </WriteButton>
             )}
-            <Button
+            <WriteButton
               type="submit"
               form="create-order-form"
+              className="max-sm:h-11"
               onClick={() => {
                 posFinishRef.current = "invoice";
               }}
@@ -1909,7 +1939,7 @@ export function CreateOrderModal({
               aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
             >
               {posMode ? POS_COPY.confirmAndInvoice : "Create Order"}
-            </Button>
+            </WriteButton>
           </div>
         </div>
       }
@@ -1943,7 +1973,7 @@ export function CreateOrderModal({
             </div>
           )}
 
-          {posAllowed && (
+          {posAllowed && !storeOnly && (
             <label
               htmlFor="pos-mode-switch"
               className="flex min-h-11 cursor-pointer items-start justify-between gap-3 rounded-lg border border-surface-border bg-white px-3 py-2.5"
@@ -2596,7 +2626,9 @@ export function CreateOrderModal({
 
             <Textarea
               label="Notes"
-              placeholder="Special instructions, delivery notes…"
+              placeholder={
+                storeOnlyPos ? "Special instructions…" : "Special instructions, delivery notes…"
+              }
               register={register("notes")}
             />
 

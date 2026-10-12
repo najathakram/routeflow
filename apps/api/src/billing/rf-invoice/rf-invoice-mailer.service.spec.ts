@@ -526,6 +526,20 @@ describe("RfInvoiceMailerService", () => {
       expect(sendPlatform).toHaveBeenCalledTimes(2);
     });
 
+    it("Opus nit: a tenant with an October catch-up claim held (even SESSION_OPEN, no stripeSubId yet) gets no automatic email", async () => {
+      for (const catchupState of ["SESSION_OPEN", "AWAITING_FIRST_PAYMENT", "RELEASING"]) {
+        const held = { subscription: { stripeSubId: null, catchupState } };
+        const { svc, sendPlatform } = make({
+          invoices: [inv("inv-1", { dueDate: dueIn(-7), tenant: held })],
+        });
+        expect((await svc.runRemind(NOW)).sent).toBe(0);
+        await svc.sendAuto("inv-1", "issue", NOW);
+        expect(sendPlatform).not.toHaveBeenCalled();
+        // a staff-initiated resend is still allowed
+        expect((await svc.sendManual("inv-1", ADMIN, NOW)).outcome).toBe("sent");
+      }
+    });
+
     it("a manual-pay tenant (no stripeSubId) is still reminded", async () => {
       const { svc } = make({
         invoices: [

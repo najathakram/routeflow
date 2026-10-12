@@ -1,9 +1,11 @@
 import { computeLineSubtotal, roundMoney, validCustomer, validLine } from "@routeflow/pricing";
+import { formatReceiptMoney } from "./counter-receipt";
 import {
   API_ERROR_CODES,
   type CounterSalePaymentMethod,
   type FulfilmentCapability,
 } from "@routeflow/types";
+import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
 
 /**
  * Counter sale (walk-in pickup) — the pure logic behind the one screen. Money goes ONLY through @routeflow/pricing
@@ -17,26 +19,69 @@ export interface CounterSaleGate {
   opensAsCounter: boolean;
   /** "Ship this order instead": only when SHIP is a method of this business */
   offerShipInstead: boolean;
+  /** "Invoice order": a store-only business's way into the order builder (row 331) */
+  offerInvoiceOrder: boolean;
 }
 
 const NO_COUNTER: CounterSaleGate = {
   showButton: false,
   opensAsCounter: false,
   offerShipInstead: false,
+  offerInvoiceOrder: false,
 };
+
+/**
+ * A store-only business: PICKUP is its only fulfilment method (no route, no shipping). Read from
+ * `capabilities.fulfilment`, never from the profile key; a missing or partial answer is NOT store-only.
+ */
+export function isStoreOnly(
+  cap: Pick<FulfilmentCapability, "methods"> | null | undefined,
+): boolean {
+  const methods = (cap?.methods ?? []) as readonly string[];
+  return methods.length > 0 && methods.every((m) => m === "PICKUP");
+}
 
 /** always -> the button and New order opens as the counter; optional -> the button only; off / unknown / loading -> nothing. */
 export function counterSaleGate(cap: FulfilmentCapability | null | undefined): CounterSaleGate {
   if (!cap) return NO_COUNTER;
   if (cap.counter === "optional")
-    return { showButton: true, opensAsCounter: false, offerShipInstead: false };
+    return {
+      showButton: true,
+      opensAsCounter: false,
+      offerShipInstead: false,
+      offerInvoiceOrder: false,
+    };
   if (cap.counter === "always")
     return {
       showButton: true,
       opensAsCounter: true,
       offerShipInstead: (cap.methods ?? []).includes("SHIP"), // `?? []`: a partial answer must not crash the till
+      // A business with no delivery at all has nowhere else to build an invoiced order from: give it the entry.
+      offerInvoiceOrder: isStoreOnly(cap),
     };
   return NO_COUNTER;
+}
+
+/**
+ * Row 331 (UX G7) + row 344: the ONE header rule for every place that carries the quick-create entries (the Orders
+ * header, the dashboard header). A store-only business has a single place to ring a sale, so "New Order" (which
+ * went to the same place as "Counter sale") is not offered, Counter sale is the filled primary and trails, and
+ * the actions are 44 px targets below `sm`. Read from the one capability gate (`counterSaleGate`), so there is no
+ * second rule and no second capability read. A partial gate (a test double, a loading state) is NOT store-only.
+ */
+export interface QuickCreateRule {
+  storeOnly: boolean;
+  /** "New Order" is offered. */
+  showNewOrder: boolean;
+  /** "Counter sale" is the filled primary (and trails the other actions). */
+  counterIsPrimary: boolean;
+}
+
+export function quickCreateRule(
+  gate: Partial<Pick<CounterSaleGate, "offerInvoiceOrder">> | null | undefined,
+): QuickCreateRule {
+  const storeOnly = gate?.offerInvoiceOrder === true;
+  return { storeOnly, showNewOrder: !storeOnly, counterIsPrimary: storeOnly };
 }
 
 /**
@@ -144,12 +189,25 @@ export function validatePayment(input: {
   return null;
 }
 
+/** The short-tender line says what to enter ("Enter at least $18.94."), never what was wrong. */
+export const TENDER_SHORT_PREFIX = "Enter at least";
+export const tenderShortCopy = (total: number): string =>
+  `${TENDER_SHORT_PREFIX} ${formatReceiptMoney(total)}.`;
+/** True for the line `tenderShortCopy` made (the screen clears it, and only it, when the tender is fixed). */
+export const isTenderShortCopy = (text: string): boolean => text.startsWith(TENDER_SHORT_PREFIX);
+
 export const PAYMENT_PROBLEM_COPY: Record<PaymentProblem, string> = {
-  TENDER_SHORT: "The amount tendered is less than the total.",
+  /** the amount-less fallback; callers that know the total use `paymentProblemCopy` */
+  TENDER_SHORT: `${TENDER_SHORT_PREFIX} the full total.`,
   CHECK_NUMBER_REQUIRED: "Enter the check number.",
   WALK_IN_ON_ACCOUNT:
     "A walk-in customer can't be charged on account. Pick a customer or another payment method.",
 };
+
+/** The line for a payment problem; a short cash tender names the amount to enter. */
+export function paymentProblemCopy(problem: PaymentProblem, total: number): string {
+  return problem === "TENDER_SHORT" ? tenderShortCopy(total) : PAYMENT_PROBLEM_COPY[problem];
+}
 
 /** The scan field: 1-3 digits are a QUANTITY to multiply the next scan by; anything else is a code. */
 export function parseScanField(
@@ -176,7 +234,14 @@ const ORDER_EXISTS_CODES: ReadonlySet<unknown> = new Set([
   API_ERROR_CODES.COUNTER_SALE_ORDER_CHANGED,
   API_ERROR_CODES.IDEMPOTENCY_KEY_OTHER_ORDER,
   API_ERROR_CODES.IDEMPOTENCY_KEY_CART_MISMATCH,
+  // The sale is committed BEFORE its tender: a tender dated inside a closed day is refused afterwards, so the sale exists
+  // (unpaid). A fresh key would ring it twice; the SAME key finishes it once the close is reopened.
+  API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
 ]);
+
+/** 409 COUNTER_SALE_DAY_CLOSED from the till's sale: the sale is saved, only its payment was refused (the tender's day is closed). */
+export const COUNTER_SALE_DAY_CLOSED_TILL_COPY =
+  "This day is closed, so no payment was taken. The sale is saved without payment.";
 
 /**
  * True only for a 4xx that PROVES nothing was written (the auth guard, the throttler and validation all reject BEFORE the
@@ -256,10 +321,14 @@ export function counterSaleErrorCopy(err: unknown): string {
   // POS-5: a refused price edit says so (and what to do), before the generic permission copy below.
   if (status === 403 && res?.data?.code === API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED)
     return COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY;
+  // A READ_ONLY workspace's 403: the guard refused before the handler ran (nothing was written), and the permission is fine.
+  if (status === 403 && isReadOnlyRefusal(err)) return readOnlyRefusalCopy();
   if (status === 401 || status === 403)
     return "You don't have permission to complete a counter sale.";
   const final = finalCounterSaleCopy(err);
   if (final) return final;
+  if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)
+    return COUNTER_SALE_DAY_CLOSED_TILL_COPY;
   if (status === 409 && ORDER_EXISTS_CODES.has(res?.data?.code))
     return COUNTER_OUTCOME_UNKNOWN_COPY; // the order exists
   if (status === 409 && res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT)
@@ -329,6 +398,11 @@ export const PICKUP_NOT_READY_COPY =
 export const PICKUP_ONLY_COPY = "Only a pickup order can be handed over this way.";
 export const PICKUP_GENERIC_COPY = "Couldn't complete the pickup. Check the order and try again.";
 
+/** 409 COUNTER_SALE_DAY_CLOSED from pickup-complete: the hand-over stands, only the payment was refused (the tender's day is closed). */
+export const PICKUP_DAY_CLOSED_COPY = "Handed over. Payment is still due.";
+/** The same refusal when the dialog knows what is owed: "Handed over. $18.94 still due." */
+export const pickupDayClosedCopy = (balanceDue: number): string =>
+  `Handed over. ${formatReceiptMoney(balanceDue)} still due.`;
 export const PICKUP_PAYMENT_REQUIRED_COPY =
   "A balance is due on this order now. Take payment to finish.";
 export const PICKUP_TENDER_SHORT_COPY = "A walk-in customer must pay the full balance.";
@@ -345,7 +419,7 @@ export function pickupErrorCode(err: unknown): string | undefined {
 }
 
 /** Fixed copy by error code; the server's own message is never shown. */
-export function pickupCompleteErrorCopy(err: unknown): string {
+export function pickupCompleteErrorCopy(err: unknown, balanceDue?: number): string {
   const res = (err as { response?: { status?: number; data?: { code?: unknown } } } | null)
     ?.response;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_PAYMENT_REQUIRED)
@@ -355,6 +429,10 @@ export function pickupCompleteErrorCopy(err: unknown): string {
   if (res?.data?.code === API_ERROR_CODES.PICKUP_INVOICE_MISSING)
     return PICKUP_INVOICE_MISSING_COPY;
   if (res?.data?.code === API_ERROR_CODES.WALK_IN_OPEN_CREDIT) return PICKUP_WALK_IN_CREDIT_COPY;
+  if (res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED)
+    return balanceDue !== undefined && balanceDue > 0
+      ? pickupDayClosedCopy(balanceDue)
+      : PICKUP_DAY_CLOSED_COPY;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_NOT_READY) return PICKUP_NOT_READY_COPY;
   if (res?.data?.code === API_ERROR_CODES.PICKUP_ONLY) return PICKUP_ONLY_COPY;
   if (res?.data?.code === API_ERROR_CODES.WALK_IN_NO_ACCOUNT)
@@ -466,6 +544,7 @@ const PICKUP_HANDLED_CODES: ReadonlySet<string> = new Set([
   API_ERROR_CODES.COUNTER_CHECK_NUMBER_REQUIRED,
   API_ERROR_CODES.PICKUP_NOT_READY,
   API_ERROR_CODES.PICKUP_ONLY,
+  API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
 ]);
 export function isPickupHandledError(err: unknown): boolean {
   const code = pickupErrorCode(err);

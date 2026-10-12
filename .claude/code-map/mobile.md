@@ -37,6 +37,10 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 | [mobile/landing-2026-09-29-early.md](mobile/landing-2026-09-29-early.md) | Landing 2026-09-29 early (mobile+web): price suffix, buyer bell seller switch, qty width, PO pack labels, applied credits |
 | [mobile/landing-2026-09-29-midday.md](mobile/landing-2026-09-29-midday.md) | Landing 2026-09-29 midday (mobile): OTA runtime 1.2.0, ADD_ITEM retry drop (B795), shared PaymentMethod |
 | [mobile/landing-2026-09-29-late.md](mobile/landing-2026-09-29-late.md) | Landing 2026-09-29 late (mobile): iOS scan-tray price modal sequencing (B901) |
+| [mobile/landing-2026-10-12-macbook.md](mobile/landing-2026-10-12-macbook.md) | Landing 2026-10-12 MacBook lane (pushed): mobile POS mode, hand-over sheet, server-owned balance |
+| [mobile/landing-2026-10-11-r4.md](mobile/landing-2026-10-11-r4.md) | Landing 2026-10-11 Release 4 (mobile): invoice revision marks, order-edit overpay refusal, overdue by balance |
+| [mobile/landing-2026-10-11-r41.md](mobile/landing-2026-10-11-r41.md) | Landing 2026-10-11 Release 4.1 (mobile): open invoice set, server overdue flag, reminder error copy |
+| [mobile/landing-2026-10-10-w22a2-w23.md](mobile/landing-2026-10-10-w22a2-w23.md) | Landing 2026-10-10 W23 (mobile): source sale on inline returns, standard refund tender picker, refusal copy |
 | [mobile/landing-2026-10-09-w21b-w22a1.md](mobile/landing-2026-10-09-w21b-w22a1.md) | Landing 2026-10-09 W21b + W22a-1 (mobile): Store credit return pill, family cascade confirm, types mock |
 | [mobile/landing-2026-10-08-w21a.md](mobile/landing-2026-10-08-w21a.md) | Landing 2026-10-08 W21a (mobile): credits-pending saved order (B1205), neutral scan prompt, oversell visibility |
 | [mobile/landing-2026-10-06-w4-w10.md](mobile/landing-2026-10-06-w4-w10.md) | Landing 2026-10-06 (mobile): buyer submit key (B1094), types mock mirrors, B1117 gap |

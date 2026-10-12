@@ -43,8 +43,9 @@ import {
 } from "../invoices/payment-predicates";
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { lockInvoicesForPayment } from "../invoices/invoice-send-guard";
+import { counterPay } from "../invoices/counter-payment-guard";
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
-import { confirmedBalance } from "../invoices/invoice-balance-classify";
+import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
 
 /**
  * Receipt-extraction model. Receipts are small documents where a misread line
@@ -196,7 +197,11 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async recordPayment(id: string, dto: RecordPaymentDto) {
+    // G4: the same end-of-day-close door the office recordPayment uses. The counter scope is read BEFORE the transaction so the
+    // shared close lock is its FIRST statement; a non-counter invoice gets null here and every counterPay helper is a no-op.
+    const till = await counterPay.scope(this.prisma, id);
     return this.prisma.tenantTransaction(async (tx) => {
+      await counterPay.lock(tx, till);
       // SA-404f F1: FIRST lock (Order →) Invoice, so the status read below sees a committed VOID
       // and refuses, instead of writing PAID/PARTIAL back over it.
       await lockInvoicesForPayment(tx, [id]);
@@ -238,6 +243,15 @@ export class BookkeepingService implements OnModuleInit {
         );
       }
 
+      // Counter invoice: the instant is the DATABASE clock read under the lock, and a till-CASH row dated before a standing
+      // close is refused DAY_CLOSED_FOR_PAYMENT_DATE. Any other invoice keeps the app clock.
+      const paidAt = await counterPay.assertDatedOk(
+        tx,
+        till,
+        inv.orderId,
+        { method: dto.method },
+        PaymentStatus.PAID,
+      );
       await tx.invoicePayment.create({
         data: {
           invoiceId: id,
@@ -246,7 +260,7 @@ export class BookkeepingService implements OnModuleInit {
           reference: dto.reference,
           notes: dto.notes,
           status: PaymentStatus.PAID,
-          paidAt: new Date(),
+          paidAt,
           checkStatus: dto.method === "CHECK" ? CheckStatus.RECORDED : null,
         },
       });
@@ -2374,7 +2388,11 @@ export class BookkeepingService implements OnModuleInit {
         type: "INVOICE",
         status: inv.status,
         total: Number(inv.total),
-        balance: confirmedBalance(inv.total, inv.payments),
+        // OWNER RULING 2026-10-11 (Receivable Summary only): an overpaid invoice shows its NEGATIVE
+        // balance (-10.00 when paid $10 over). Every other report stays on the clamped
+        // confirmedBalance (row 310). The web footer total stays clamped per row
+        // (receivableSummaryBalanceTotal), so the surplus never nets against what is owed.
+        balance: signedBalance(inv.total, inv.payments),
       });
     }
 

@@ -6,6 +6,7 @@ import { Modal, Button, useToast } from "@routeflow/ui/web";
 import { previewSplitLineTotal, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import { useCreatePartialInvoiceFromOrder } from "@/lib/api/invoices";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { WriteButton } from "@/lib/read-only-gate";
 
 interface SplitInvoiceModalProps {
   isOpen: boolean;
@@ -129,14 +130,14 @@ export function SplitInvoiceModal({
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button
+          <WriteButton
             type="button"
             loading={createPartial.isPending}
             disabled={billable.length === 0}
             onClick={submit}
           >
             Create invoice
-          </Button>
+          </WriteButton>
         </>
       }
     >

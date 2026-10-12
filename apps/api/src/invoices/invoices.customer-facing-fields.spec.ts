@@ -44,6 +44,8 @@ function serviceReading(row: ReturnType<typeof invoiceRow>) {
     prisma: {
       // SA-770: findAll resolves the tenant for the overdue balance filter (a no-op without isOverdue)
       getTenantId: () => "tenant-1",
+      // row 308: every read resolves the tenant zone once for its isOverdue flag (none configured here)
+      tenantConfig: { findUnique: jest.fn().mockResolvedValue({ timezone: null }) },
       forTenant: () => ({
         invoice: {
           findUnique: jest.fn().mockResolvedValue(row),

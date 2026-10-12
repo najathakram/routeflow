@@ -1,4 +1,5 @@
 export * from "./pricing";
+export * from "./counter-day-close";
 export * from "./cents";
 export * from "./counter-register";
 export * from "./tier-pricing";
@@ -14,6 +15,8 @@ export * from "./inferred-flat-rate";
 export * from "./explained-tax-rate";
 export * from "./show-original-price";
 export * from "./receipt-line";
+export * from "./receipt-line-detail";
+export * from "./cashier-name";
 export * from "./units-label";
 export * from "./unit-line-count";
 export * from "./po-display-total";

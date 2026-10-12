@@ -62,7 +62,9 @@ import {
   type InvoicePayment,
   type CheckStatus,
 } from "@/lib/api/invoices";
-import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
+import { isPendingMirrorInvoice, pendingMirrorCopy } from "@/lib/invoice-pending-mirror";
+import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { isStoreOnly } from "@/lib/counter-sale";
 import { canSendReminder } from "@/lib/invoice-reminder";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
@@ -78,6 +80,7 @@ import type { LineComponentView } from "@routeflow/types";
 import { CHECK_TRANSITIONS } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import { InvoiceLineAmount } from "./InvoiceLineAmount";
+import { InvoiceLinePrice } from "./InvoiceLinePrice";
 import { TenantInvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
 import { RemoveCreditButton } from "./RemoveCreditButton";
 import { AdjustPricesPanel } from "./AdjustPricesPanel";
@@ -94,9 +97,14 @@ import { ShipmentCard } from "@/components/ShipmentCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
+import { HandOverStamp } from "@/components/HandOverStamp";
+import { seesHandOverStamp } from "@/lib/handover-stamp";
+import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
+import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
+import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -245,9 +253,13 @@ function WhatsNextBanner({
             <strong>Invoice has been sent.</strong> Record payment as soon as you receive it.
           </p>
         </div>
-        <Button size="sm" onClick={onRecordPayment} leftIcon={<CreditCard className="h-4 w-4" />}>
+        <WriteButton
+          size="sm"
+          onClick={onRecordPayment}
+          leftIcon={<CreditCard className="h-4 w-4" />}
+        >
           Record Payment
-        </Button>
+        </WriteButton>
       </div>
     );
   }
@@ -261,9 +273,13 @@ function WhatsNextBanner({
             <strong>Partial payment received.</strong> Follow up for the remaining balance.
           </p>
         </div>
-        <Button size="sm" onClick={onRecordPayment} leftIcon={<CreditCard className="h-4 w-4" />}>
+        <WriteButton
+          size="sm"
+          onClick={onRecordPayment}
+          leftIcon={<CreditCard className="h-4 w-4" />}
+        >
           Record Payment
-        </Button>
+        </WriteButton>
       </div>
     );
   }
@@ -277,7 +293,7 @@ function WhatsNextBanner({
             <strong>This invoice is overdue.</strong> Contact your customer for payment.
           </p>
         </div>
-        <Button
+        <WriteButton
           size="sm"
           variant="secondary"
           onClick={onRecordPayment}
@@ -285,7 +301,7 @@ function WhatsNextBanner({
           className="border-orange-300 text-orange-700 hover:bg-orange-100"
         >
           Record Payment
-        </Button>
+        </WriteButton>
       </div>
     );
   }
@@ -1375,6 +1391,7 @@ function DropdownMenu({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function InvoiceDetailPage() {
+  const readOnlyGate = useReadOnlyGate();
   const params = useParams();
   const id = params.id as string;
   const router = useRouter();
@@ -1406,6 +1423,12 @@ export default function InvoiceDetailPage() {
   const setCheckStatus = useSetCheckStatus();
   const unapplyCreditNote = useUnapplyCreditNote();
   const { user } = useAuth();
+  const stampZone = useTenantTimeZone(seesHandOverStamp(user?.role)); // row 342: the hand-over time
+  // A store-only business is POS-forced: its order is handed over, never delivered (the draft's wording follows).
+  const { capability: fulfilmentCapability } = useCounterSaleGate();
+  const mirrorCopy = pendingMirrorCopy(
+    fulfilmentCapability == null ? null : isStoreOnly(fulfilmentCapability),
+  );
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
@@ -1790,7 +1813,7 @@ export default function InvoiceDetailPage() {
         onError: (err: any) => {
           toast({
             title: "Failed to record payment",
-            description: err?.response?.data?.message ?? "Please try again.",
+            description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
             variant: "error",
           });
         },
@@ -1827,7 +1850,7 @@ export default function InvoiceDetailPage() {
         onError: (err: any) => {
           toast({
             title: "Failed to update payment",
-            description: err?.response?.data?.message ?? "Please try again.",
+            description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
             variant: "error",
           });
         },
@@ -1844,8 +1867,12 @@ export default function InvoiceDetailPage() {
           setDeletingPayment(null);
           toast({ title: "Payment deleted", variant: "info" });
         },
-        onError: () => {
-          toast({ title: "Failed to delete payment", variant: "error" });
+        onError: (err: any) => {
+          toast({
+            title: "Failed to delete payment",
+            description: dayClosedCopy(err) ?? undefined,
+            variant: "error",
+          });
         },
       },
     );
@@ -1868,7 +1895,7 @@ export default function InvoiceDetailPage() {
         onError: (err: any) => {
           toast({
             title: "Failed to update check status",
-            description: err?.response?.data?.message ?? "Please try again.",
+            description: dayClosedCopy(err) ?? err?.response?.data?.message ?? "Please try again.",
             variant: "error",
           });
         },
@@ -1996,6 +2023,7 @@ export default function InvoiceDetailPage() {
             <TenantInvoiceRevisionMarks
               revisedAt={invoice.revisedAt}
               overpaidBy={invoice.overpaidBy}
+              orderId={invoice.orderId}
             />
           </div>
           <p className="mt-1 text-sm text-navy/70">
@@ -2004,6 +2032,12 @@ export default function InvoiceDetailPage() {
             {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
             {invoice.dueDate ? ` · due ${fmtCalendarDate(invoice.dueDate)}` : ""}
           </p>
+          {/* Row 342: where and by whom the linked order was handed over (staff reads only) */}
+          {invoice.order ? (
+            <div className="mt-0.5">
+              <HandOverStamp order={invoice.order} role={user?.role} timeZone={stampZone} />
+            </div>
+          ) : null}
         </div>
 
         {/* Zoho-style action toolbar */}
@@ -2013,7 +2047,7 @@ export default function InvoiceDetailPage() {
           {isPendingMirror && (
             <span className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-700">
               <Info className="h-3.5 w-3.5" />
-              Mirrors the order — ready to send after delivery
+              {mirrorCopy.badge}
             </span>
           )}
 
@@ -2130,7 +2164,22 @@ export default function InvoiceDetailPage() {
           )}
 
           {/* Record Payment dropdown */}
-          {canRecordPayment && (
+          {canRecordPayment && readOnlyGate.readOnly && (
+            <div>
+              <button
+                type="button"
+                disabled
+                aria-describedby={readOnlyGate.hintId}
+                data-testid="record-payment-trigger"
+                className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card opacity-50"
+              >
+                <CreditCard className="h-3.5 w-3.5" />
+                Record Payment
+              </button>
+              <ReadOnlyHint />
+            </div>
+          )}
+          {canRecordPayment && !readOnlyGate.readOnly && (
             <DropdownMenu
               trigger={
                 <button
@@ -2143,14 +2192,29 @@ export default function InvoiceDetailPage() {
                 </button>
               }
               items={[
-                { label: "Record Payment", onClick: () => setIsPaymentOpen(true) },
+                {
+                  label: "Record Payment",
+                  onClick: () => setIsPaymentOpen(true),
+                  disabled: readOnlyGate.readOnly,
+                },
                 // B13: web had no way to apply a customer's advance-payment wallet balance —
                 // only mobile could. Same gate as Record Payment; the server also refuses a
                 // settled/dead/forgiven invoice (CREDIT_NOT_APPLICABLE) regardless.
                 ...(invoice.customerId
-                  ? [{ label: "Apply Advance", onClick: () => setIsAdvanceOpen(true) }]
+                  ? [
+                      {
+                        label: "Apply Advance",
+                        onClick: () => setIsAdvanceOpen(true),
+                        disabled: readOnlyGate.readOnly,
+                      },
+                    ]
                   : []),
-                { label: "Write Off", onClick: () => setIsWriteOffOpen(true), danger: true },
+                {
+                  label: "Write Off",
+                  onClick: () => setIsWriteOffOpen(true),
+                  danger: true,
+                  disabled: readOnlyGate.readOnly,
+                },
               ]}
             />
           )}
@@ -2239,8 +2303,9 @@ export default function InvoiceDetailPage() {
             >
               order #{invoice.order?.orderNumber ?? ""}
             </Link>{" "}
-            and updates automatically until it&apos;s delivered. To change what&apos;s billed, edit
-            the order — you&apos;ll review and send this invoice after delivery.
+            and updates automatically until it&apos;s{" "}
+            {isStoreOnly(fulfilmentCapability) ? "handed over" : "delivered"}. To change what&apos;s
+            billed, edit the order — {mirrorCopy.note}
           </div>
         </div>
       )}
@@ -2398,76 +2463,8 @@ export default function InvoiceDetailPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          {item.priceType === "SPECIAL" && !hideOriginal ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className="strike text-xs">
-                                {fmt(Number(item.originalPrice))}
-                              </span>
-                              <span className="money text-success">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success ring-1 ring-success/20">
-                                Special price
-                              </span>
-                            </div>
-                          ) : item.priceType === "DISCOUNTED" && !hideOriginal ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className="strike text-xs">
-                                {fmt(Number(item.originalPrice))}
-                              </span>
-                              <span className="money text-warning">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/20">
-                                Discounted price
-                              </span>
-                            </div>
-                          ) : item.priceType === "PROMO" &&
-                            item.originalPrice != null &&
-                            !hideOriginal ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className="strike text-xs">
-                                {fmt(Number(item.originalPrice))}
-                              </span>
-                              <span className="money text-brand-600">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 ring-1 ring-brand-200">
-                                Promo price
-                              </span>
-                            </div>
-                          ) : item.priceType === "MANUAL" &&
-                            item.originalPrice != null &&
-                            Number(item.unitPrice) > Number(item.originalPrice) ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              {/* Upsell (above list): green, no strikethrough — the base
-                                is never shown to the buyer. */}
-                              <span className="money text-success">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success ring-1 ring-success/20">
-                                Upsell
-                              </span>
-                            </div>
-                          ) : item.priceType === "MANUAL" &&
-                            item.originalPrice != null &&
-                            !hideOriginal ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className="strike text-xs">
-                                {fmt(Number(item.originalPrice))}
-                              </span>
-                              <span className="money text-warning">
-                                {fmt(Number(item.unitPrice))}
-                              </span>
-                              <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/20">
-                                Adjusted
-                              </span>
-                            </div>
-                          ) : (
-                            <span className="money text-navy/70">
-                              {fmt(Number(item.unitPrice))}
-                            </span>
-                          )}
+                          {/* Row 322c: the struck original follows pricing's showOriginalPrice (the PDF's rule). */}
+                          <InvoiceLinePrice item={item} hideOriginal={hideOriginal} />
                           {/* Suggested retail price, snapshotted at line creation — appears
                               regardless of priceType. Keyed off data presence, not the flag,
                               so an issued invoice keeps rendering it even if the tenant later
@@ -2709,6 +2706,7 @@ export default function InvoiceDetailPage() {
                                   label: "Mark deposited",
                                   onClick: () => handleSetCheckStatus(pmt.id, "DEPOSITED"),
                                   disabled:
+                                    readOnlyGate.readOnly ||
                                     !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
                                       "DEPOSITED",
                                     ),
@@ -2717,6 +2715,7 @@ export default function InvoiceDetailPage() {
                                   label: "Mark cleared",
                                   onClick: () => handleSetCheckStatus(pmt.id, "CLEARED"),
                                   disabled:
+                                    readOnlyGate.readOnly ||
                                     !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
                                       "CLEARED",
                                     ),
@@ -2726,6 +2725,7 @@ export default function InvoiceDetailPage() {
                                   onClick: () => setBouncingPayment(pmt),
                                   danger: true,
                                   disabled:
+                                    readOnlyGate.readOnly ||
                                     !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
                                       "BOUNCED",
                                     ),
@@ -2742,7 +2742,7 @@ export default function InvoiceDetailPage() {
             )}
             {canRecordPayment && (
               <div className="mt-4">
-                <Button
+                <WriteButton
                   variant="secondary"
                   size="sm"
                   className="w-full"
@@ -2750,7 +2750,8 @@ export default function InvoiceDetailPage() {
                   onClick={() => setIsPaymentOpen(true)}
                 >
                   Record Payment
-                </Button>
+                </WriteButton>
+                <ReadOnlyHint />
               </div>
             )}
           </Card>
