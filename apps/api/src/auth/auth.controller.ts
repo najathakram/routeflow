@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  GoneException,
   HttpCode,
   HttpStatus,
   Param,
@@ -22,7 +23,6 @@ import { AuthService } from "./auth.service";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { CurrentUser } from "./decorators/current-user.decorator";
-import { TenantGoogleOAuthService } from "../tenants/tenant-google-oauth.service";
 import { GoogleOAuthService } from "./google-oauth.service";
 import { AppleOAuthService } from "./apple-oauth.service";
 import { AppleNonceDto } from "./dto/apple-nonce.dto";
@@ -49,6 +49,14 @@ const REFRESH_COOKIE = "rf_refresh";
 const REFRESH_COOKIE_PATH = "/api/v1/auth";
 const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30d fallback (matches refresh TTL)
 
+/** Fixed 410 body for the retired per-tenant Google sign-in routes. Nothing from the request is echoed. */
+export const RETIRED_SIGN_IN_ROUTE = {
+  statusCode: 410,
+  code: "SIGN_IN_ROUTE_RETIRED",
+  message: "This sign-in route has been retired. Use the standard Google sign-in.",
+  error: "Gone",
+} as const;
+
 @ApiTags("auth")
 @Controller("auth")
 export class AuthController {
@@ -65,7 +73,6 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
-    private readonly tenantGoogleOAuth: TenantGoogleOAuthService,
     private readonly googleOAuth: GoogleOAuthService,
     private readonly staffHandoff: StaffHandoffService,
     private readonly appleOAuth: AppleOAuthService,
@@ -655,46 +662,21 @@ export class AuthController {
     return { received: true };
   }
 
-  // ─── Per-tenant Google OAuth (legacy path-param variant) ──────────────────
-  // Kept for backward compatibility. New integrations should use the header-based flow above.
+  // ─── Retired per-tenant Google sign-in routes ─────────────────────────────
+  // The legacy per-tenant sign-in routes are retired. Both answer 410 Gone with one fixed body
+  // and read nothing from the request. Declared after the static GET google/link and
+  // google/callback routes so these param routes never shadow them.
 
   @Get("google/:tenantSlug")
-  @ApiOperation({ summary: "Initiate per-tenant Google OAuth login (legacy)" })
-  async tenantGoogleLogin(@Param("tenantSlug") slug: string, @Res() res: Response) {
-    const url = await this.tenantGoogleOAuth.buildAuthUrl(slug);
-    res.redirect(url);
+  @ApiOperation({ summary: "Retired per-tenant Google sign-in route (410 Gone)" })
+  tenantGoogleLogin(): never {
+    throw new GoneException(RETIRED_SIGN_IN_ROUTE);
   }
 
   @Get("google/:tenantSlug/callback")
-  @ApiOperation({ summary: "Per-tenant Google OAuth callback (legacy)" })
-  async tenantGoogleCallback(
-    @Param("tenantSlug") slug: string,
-    @Req() req: any,
-    @Res() res: Response,
-  ) {
-    const code = req.query?.code as string;
-    if (!code) {
-      return res.redirect(`${this.webUrl}/auth/error?message=oauth_cancelled`);
-    }
-    // Tokens reach the browser through the same one-time code as the main Google
-    // callback: the staff bundle is stored server-side and the web callback page
-    // redeems the code via POST /auth/google/exchange. No token is put in the URL.
-    const callbackPage = `${this.webUrl}/auth/google/callback`;
-    try {
-      const user = await this.tenantGoogleOAuth.exchangeCode(code, slug);
-      const tokens = await this.authService.login(user as any);
-      const bundle: Record<string, string> = {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        role: tokens.user.role,
-        tenantSlug: tokens.user.tenantSlug ?? "",
-      };
-      const exchangeCode = await this.googleOAuth.createExchangeCode(bundle);
-      return res.redirect(`${callbackPage}?code=${exchangeCode}`);
-    } catch (err: any) {
-      // Only a fixed, allow-listed code reaches the URL, never a server message.
-      return res.redirect(`${callbackPage}?error=${this.mapErrorCode(err?.message ?? "")}`);
-    }
+  @ApiOperation({ summary: "Retired per-tenant Google sign-in callback (410 Gone)" })
+  tenantGoogleCallback(): never {
+    throw new GoneException(RETIRED_SIGN_IN_ROUTE);
   }
 
   // ─── Refresh-cookie helpers (SEC-4 / F11-002) ──────────────────────────────

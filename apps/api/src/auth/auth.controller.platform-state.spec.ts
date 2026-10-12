@@ -15,7 +15,6 @@ function makeController(googleOAuth: any) {
   return new AuthController(
     {} as any, // authService — not reached by googleCallback
     configService as any,
-    {} as any, // tenantGoogleOAuth
     googleOAuth,
     {} as any, // staffHandoff — not reached by googleCallback
     {} as any, // appleOAuth — not reached by googleCallback
