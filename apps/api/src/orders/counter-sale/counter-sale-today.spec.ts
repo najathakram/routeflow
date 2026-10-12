@@ -281,7 +281,8 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
     const money = saleCall(prisma).where;
     expect(money.paidAt).toEqual({ gte: start, lt: end });
     expect(money.status).toBe("PAID");
-    expect(money.invoice.status).toEqual({ notIn: ["VOID", "WRITTEN_OFF"] });
+    // cash taken stays in the day when the invoice is written off later: only VOID drops its payments (the Z's rule)
+    expect(money.invoice.status).toEqual({ not: "VOID" });
     // the SALE's own day is not a filter: a day-1 sale paid today counts today
     expect(money.invoice.order).toEqual({
       tenantId: T,

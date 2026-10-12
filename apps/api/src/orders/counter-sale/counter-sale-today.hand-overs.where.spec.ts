@@ -1,4 +1,4 @@
-import { handOverCandidatesWhere, handOverPayments } from "./counter-sale-today";
+import { handOverCandidatesWhere, handOverPayments, salePaymentsWhere } from "./counter-sale-today";
 import { pickupTenderGroupId } from "./pickup-tender-group";
 
 /**
@@ -102,5 +102,39 @@ describe("hand-over candidates: each filter keeps its row out", () => {
 
   it("the v5 match (code half) keeps a deposit and an id-less payment out", () => {
     expect(counted([FIXTURES.deposit, FIXTURES.noGroup])).toEqual([]);
+  });
+});
+
+/** row 374: Today's counter payments and the Z read ONE where; a written-off invoice keeps its cash, a void one does not. */
+describe("salePaymentsWhere: one rule for Today's money in and the Z", () => {
+  const sale = (id: string, over: Row = {}, invoiceOver: Row = {}, orderOver: Row = {}) => ({
+    tenantId: T,
+    status: "PAID",
+    paidAt: new Date("2026-10-07T15:00:00Z"),
+    method: "CASH",
+    amount: "10.00",
+    id,
+    invoice: {
+      tenantId: T,
+      status: "SENT",
+      order: { tenantId: T, counterSale: true, status: "DELIVERED", ...orderOver },
+      ...invoiceOver,
+    },
+    ...over,
+  });
+  const ids = (rows: Row[]) =>
+    rows.filter((r) => matches(r, salePaymentsWhere(T, W) as Record<string, any>)).map((r) => r.id);
+
+  it("keeps a WRITTEN_OFF invoice's cash, drops a VOID invoice's, a void payment and other days", () => {
+    expect(
+      ids([
+        sale("kept"),
+        sale("written-off", {}, { status: "WRITTEN_OFF" }),
+        sale("void-invoice", {}, { status: "VOID" }),
+        sale("void-payment", { status: "VOID" }),
+        sale("other-day", { paidAt: new Date("2026-10-09T15:00:00Z") }),
+        sale("pickup-order", {}, {}, { counterSale: false }),
+      ]),
+    ).toEqual(["kept", "written-off"]);
   });
 });

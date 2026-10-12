@@ -1,4 +1,3 @@
-import { InvoiceStatus } from "@prisma/client";
 import type { PrismaService } from "../../../prisma/prisma.service";
 import {
   creditNotesInWindowWhere,
@@ -33,13 +32,9 @@ export async function readWindowFacts(
     _count: { _all: true },
     _sum: { total: true },
   });
-  // Cash that was taken stays in the drawer when the office later writes the rest off: only a VOID invoice drops its payments
-  // (the rest of the where is Today's sales' own definition of money in).
-  const inWindow = salePaymentsWhere(tenantId, w);
-  const taken = {
-    ...inWindow,
-    invoice: { ...inWindow.invoice, status: { not: InvoiceStatus.VOID } },
-  };
+  // Today's sales' own definition of money in, unchanged: only a VOID invoice drops its payments, so cash taken stays in the
+  // drawer when the office later writes the rest off (row 374: Today's reads this same where).
+  const taken = salePaymentsWhere(tenantId, w);
   const paymentSelect = {
     amount: true,
     method: true,

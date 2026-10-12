@@ -99,7 +99,9 @@ export function salePaymentsWhere(tenantId: string, w: DayWindow) {
     paidAt: { gte: w.start, lt: w.end },
     invoice: {
       tenantId,
-      status: { notIn: DEAD_INVOICE_STATUSES },
+      // ONE rule with the day close (row 374): cash that was taken stays in the day when the office later WRITES the invoice
+      // off; only a VOID invoice drops its payments. (The day's SALES count still treats a written-off sale as dead.)
+      status: { not: InvoiceStatus.VOID },
       order: liveCounterOrderAnyDayWhere(tenantId),
     },
   };
