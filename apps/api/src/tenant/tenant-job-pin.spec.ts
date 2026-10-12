@@ -99,27 +99,51 @@ export function referencesAny(text: string, names: readonly string[]): boolean {
   return found;
 }
 
-/** True when the source has a `status: "ACTIVE"` property assignment (or `TenantStatus.ACTIVE`). */
-export function hasActiveOnlyFilter(text: string): boolean {
+/**
+ * True when the source selects TENANTS by status: a `<...>.tenant.findMany(...)` (or `.tenants.findMany`) call whose
+ * `where` has `status: "ACTIVE"` (or `TenantStatus.ACTIVE`). A `status: "ACTIVE"` on a user, a template or any other
+ * model does not count (the old text-wide check accepted those).
+ */
+export function hasActiveOnlyTenantFilter(text: string): boolean {
   const sf = ts.createSourceFile("f.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const isActive = (init: ts.Expression): boolean => {
+    let e = init;
+    while (ts.isAsExpression(e) || ts.isParenthesizedExpression(e)) e = e.expression;
+    if (stringOf(e) === "ACTIVE") return true;
+    return (
+      ts.isPropertyAccessExpression(e) &&
+      e.name.text === "ACTIVE" &&
+      ts.isIdentifier(e.expression) &&
+      e.expression.text === "TenantStatus"
+    );
+  };
+  const propName = (n: ts.PropertyName): string | null =>
+    ts.isIdentifier(n) || ts.isStringLiteral(n) ? n.text : null;
   let found = false;
   const visit = (node: ts.Node) => {
     if (found) return;
     if (
-      ts.isPropertyAssignment(node) &&
-      ((ts.isIdentifier(node.name) && node.name.text === "status") ||
-        stringOf(node.name) === "status")
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "findMany" &&
+      ts.isPropertyAccessExpression(node.expression.expression) &&
+      ["tenant", "tenants"].includes(node.expression.expression.name.text)
     ) {
-      let init = node.initializer;
-      while (ts.isAsExpression(init) || ts.isParenthesizedExpression(init)) init = init.expression;
-      if (stringOf(init) === "ACTIVE") found = true;
-      if (
-        ts.isPropertyAccessExpression(init) &&
-        init.name.text === "ACTIVE" &&
-        ts.isIdentifier(init.expression) &&
-        init.expression.text === "TenantStatus"
-      ) {
-        found = true;
+      const arg = node.arguments[0];
+      if (arg && ts.isObjectLiteralExpression(arg)) {
+        for (const p of arg.properties) {
+          if (!ts.isPropertyAssignment(p) || propName(p.name) !== "where") continue;
+          if (!ts.isObjectLiteralExpression(p.initializer)) continue;
+          for (const w of p.initializer.properties) {
+            if (
+              ts.isPropertyAssignment(w) &&
+              propName(w.name) === "status" &&
+              isActive(w.initializer)
+            ) {
+              found = true;
+            }
+          }
+        }
       }
     }
     ts.forEachChild(node, visit);
@@ -181,8 +205,10 @@ export function checkJobs(
             );
           }
         } else if (spec.filter === "ACTIVE_ONLY") {
-          if (!hasActiveOnlyFilter(text)) {
-            problems.push(`${ctx}: ${where} has no \`status: "ACTIVE"\` filter`);
+          if (!hasActiveOnlyTenantFilter(text)) {
+            problems.push(
+              `${ctx}: ${where} never selects tenants with \`tenant.findMany({ where: { status: "ACTIVE" } })\``,
+            );
           }
         } else {
           problems.push(
@@ -337,8 +363,8 @@ describe("SA-776 job pin: red proofs on fixture sources", () => {
         { "fixture.writesEverywhere": spec({ filter: "ACTIVE_ONLY" }) },
         readAs(FIXTURE_TX_NO_PREDICATE),
       ).join("\n"),
-    ).toMatch(/no `status: "ACTIVE"` filter/);
-    const withFilter = `${FIXTURE_TX_NO_PREDICATE}\nconst w = { status: "ACTIVE" };`;
+    ).toMatch(/never selects tenants/);
+    const withFilter = `${FIXTURE_TX_NO_PREDICATE}\nconst t = await this.prisma.tenant.findMany({ where: { status: "ACTIVE" }, select: { id: true } });`;
     expect(
       checkJobs(
         noFilter,
@@ -353,6 +379,35 @@ describe("SA-776 job pin: red proofs on fixture sources", () => {
         readAs(FIXTURE_TX_WITH_PREDICATE),
       ).join("\n"),
     ).toMatch(/gone.job: in TENANT_JOBS but no such/);
+  });
+
+  it("an ACTIVE filter on a USER (or any other model) is not a tenant filter and FAILS", () => {
+    const userOnly = `${FIXTURE_TX_NO_PREDICATE}
+      const admins = await this.prisma.user.findMany({ where: { tenantId, role: "TENANT_ADMIN", status: "ACTIVE" } });
+      const rows = await this.prisma.orderTemplate.findMany({ where: { status: "ACTIVE" } });
+      const bare = { status: "ACTIVE" };`;
+    expect(hasActiveOnlyTenantFilter(userOnly)).toBe(false);
+    const jobs = jobsInSource("f.ts", userOnly);
+    expect(
+      checkJobs(
+        jobs,
+        { "fixture.writesEverywhere": spec({ filter: "ACTIVE_ONLY" }) },
+        readAs(userOnly),
+      ).join("\n"),
+    ).toMatch(/never selects tenants/);
+    // the tenant filter, even next to user filters, passes; a destructured / TenantStatus.ACTIVE spelling too
+    expect(
+      hasActiveOnlyTenantFilter(
+        `${userOnly}\nawait this.prisma.tenant.findMany({ where: { status: TenantStatus.ACTIVE } });`,
+      ),
+    ).toBe(true);
+    expect(
+      hasActiveOnlyTenantFilter(
+        `await tenants.findMany({ where: { status: "ACTIVE" as const } });`,
+      ),
+    ).toBe(
+      false, // `tenants` alone is a variable, not a `<x>.tenants` property
+    );
   });
 
   it("a Bull @Process handler is named <queue>.<process>", () => {
