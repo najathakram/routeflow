@@ -337,13 +337,6 @@ describeDb("Order totals honour tax exemption on every writer — real Postgres"
     });
   }
 
-  async function itemsOf(orderId: string) {
-    return raw.orderItem.findMany({
-      where: { orderId, status: { not: "CANCELLED" } },
-      orderBy: { position: "asc" },
-    });
-  }
-
   async function header(orderId: string) {
     const o = await raw.order.findUniqueOrThrow({ where: { id: orderId } });
     return { subtotal: Number(o.subtotal), tax: Number(o.tax), total: Number(o.total) };
