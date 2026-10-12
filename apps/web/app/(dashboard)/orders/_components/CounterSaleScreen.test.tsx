@@ -243,10 +243,33 @@ describe("CounterSaleScreen", () => {
       try {
         const view = renderWithProviders(<CounterSaleScreen />);
         await waitFor(() =>
-          expect(main.style.getPropertyValue("scroll-padding-bottom")).toBe("292px"),
-        ); // bar 180 + the shell pb-24 (96) + 1rem
+          expect(main.style.getPropertyValue("scroll-padding-bottom")).toBe("180px"),
+        ); // exactly the bar's height (row 368)
         view.unmount();
         expect(main.style.getPropertyValue("scroll-padding-bottom")).toBe("");
+      } finally {
+        main.remove();
+      }
+    });
+
+    it("row 368: below md the bar sticks to the real bottom (through the shell's pb-24), and the space reserved is the bar's own height, not extra padding", async () => {
+      const main = document.createElement("main");
+      main.id = "main-content";
+      main.style.paddingBottom = "96px";
+      document.body.appendChild(main);
+      try {
+        const view = renderWithProviders(<CounterSaleScreen />);
+        const root = screen.getByTestId("counter-sale-screen");
+        await waitFor(() => expect(root.style.getPropertyValue("--counter-main-pb")).toBe("96px"));
+        // the bar sits at the scrollport's bottom edge, not 96 px up (sticky respects the container's own padding)
+        expect(screen.getByTestId("counter-checkout-bar").className).toContain(
+          "max-md:bottom-[calc(-1*var(--counter-main-pb,0px))]",
+        );
+        // the screen draws that padding back in and adds none of its own below the bar
+        expect(root.className).toContain("max-md:mb-[calc(-1*var(--counter-main-pb,0px))]");
+        expect(root.className).toContain("max-md:pb-0");
+        expect(root.className).not.toContain("--counter-bar-h");
+        view.unmount();
       } finally {
         main.remove();
       }
