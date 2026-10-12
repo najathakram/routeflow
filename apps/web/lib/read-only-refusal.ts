@@ -1,5 +1,7 @@
 import { API_ERROR_CODES, type SubscriptionView } from "@routeflow/types";
 import { readOnlyLine } from "./subscription-banner-state";
+import { readOnlyCopyForView } from "./read-only-copy";
+import { markReadOnlyRefused } from "./read-only-gate";
 
 /**
  * A write refused by a READ_ONLY workspace is a 403 whose body code is READ_ONLY (TenantStatusGuard). Every helper that
@@ -33,4 +35,27 @@ export function readOnlyRefusalCopy(
   isAdmin: boolean = false,
 ): string {
   return readOnlyLine(view ?? null, isAdmin);
+}
+
+/**
+ * A raw `apiClient` write (not a react-query mutation) is never seen by the app-wide mutation handler, so a READ_ONLY
+ * refusal of it must be answered here: flip the gate (every control + dialog switches to the shared line) and toast
+ * the shared copy (the owner's sentence, the mapped reason). Returns true when `err` was such a refusal, so the caller
+ * skips its own generic "Failed to save" toast.
+ */
+export function showReadOnlyRefusal(
+  err: unknown,
+  toast: (o: { title: string; description?: string; variant: "warning" }) => unknown,
+): boolean {
+  if (!isReadOnlyRefusal(err)) return false;
+  const body = (err as { response?: { data?: { reason?: unknown } } }).response?.data;
+  const reason = typeof body?.reason === "string" ? body.reason : null;
+  markReadOnlyRefused(reason);
+  const copy = readOnlyCopyForView({ readOnlyReason: reason } as SubscriptionView, false);
+  toast({
+    title: copy.sentence,
+    description: [copy.reasonLine, copy.contactLine].filter(Boolean).join(" ") || undefined,
+    variant: "warning",
+  });
+  return true;
 }

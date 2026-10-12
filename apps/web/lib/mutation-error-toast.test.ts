@@ -53,6 +53,23 @@ describe("handleMutationError (#1965)", () => {
     expect(router.push).toHaveBeenCalledWith("/settings/billing");
   });
 
+  it("on the Billing page itself the toast has no Billing action (it would link to the open page)", () => {
+    window.history.pushState({}, "", "/settings/billing");
+    try {
+      const t = jest.fn();
+      handleMutationError(
+        axiosErr({ code: "READ_ONLY", reason: "subscription_cancelled", message: "x" }),
+        {},
+        t,
+        { push: jest.fn() },
+        { view: () => undefined, refresh: jest.fn(), isAdmin: () => true },
+      );
+      expect(t.mock.calls[0][0].action).toBeUndefined();
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+  });
+
   it.each(["subscription_cancelled", "trial_cancelled", "set_by_admin"])(
     "reason %s: the admin's toast action is Billing, never Choose a plan",
     (reason) => {

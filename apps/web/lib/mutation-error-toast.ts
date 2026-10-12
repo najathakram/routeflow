@@ -95,7 +95,10 @@ export function handleMutationError(
       ...(isAdmin
         ? (view?.readOnlyReason ?? data?.reason) === "trial_expired"
           ? { action: { label: "Choose a plan", onClick: () => router.push("/choose-plan") } }
-          : { action: { label: "Billing", onClick: () => router.push("/settings/billing") } }
+          : typeof window !== "undefined" &&
+              window.location.pathname.startsWith("/settings/billing")
+            ? {} // already on the Billing page: an action to it would do nothing
+            : { action: { label: "Billing", onClick: () => router.push("/settings/billing") } }
         : {}),
     });
     return;

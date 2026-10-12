@@ -20,6 +20,8 @@ export interface ReadOnlyBannerProps {
   overdueAmount?: number | null;
   /** `SubscriptionView.billingContactEmail`: the non-admin's "contact your admin" line. */
   billingContactEmail?: string | null;
+  /** No admin e-mail to name (a driver): show the generic "contact your workspace admin" line. */
+  contactFallback?: boolean;
   /** The page already IS the destination (the Billing page): no action link. */
   hideAction?: boolean;
   /** A TENANT_ADMIN sees the action (Choose a plan for an expired trial, else Billing); anyone else the contact line. Defaults to admin (old shape). */
@@ -38,6 +40,7 @@ export function ReadOnlyBanner({
   billingContactEmail,
   isAdmin = true,
   hideAction = false,
+  contactFallback = false,
 }: ReadOnlyBannerProps) {
   if (status !== "READ_ONLY") return null;
   const copy = readOnlyCopy({
@@ -45,6 +48,7 @@ export function ReadOnlyBanner({
     overdueAmount,
     billingContactEmail,
     isAdmin,
+    contactFallback,
   });
 
   // billing-ux §4: an expired trial is the one reason where choosing a plan is the way out; every other reason

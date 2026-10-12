@@ -27,6 +27,12 @@ describe("DriverReadOnlyBanner", () => {
     expect(screen.queryByRole("link", { name: /Billing|Choose a plan/ })).toBeNull();
   });
 
+  it("with no e-mail to name, the contact fallback line tells the driver to contact the workspace admin", () => {
+    renderWithProviders(<DriverReadOnlyBanner />);
+    act(() => markReadOnlyRefused("payment_overdue"));
+    expect(screen.getByText(/contact your workspace admin/)).toBeInTheDocument();
+  });
+
   it("is wired into the dashboard shell for the DRIVER role (static pin)", () => {
     const layout = readFileSync(join(__dirname, "../app/(dashboard)/layout.tsx"), "utf8");
     expect(layout).toMatch(/<DriverReadOnlyBanner\s*\/>/);

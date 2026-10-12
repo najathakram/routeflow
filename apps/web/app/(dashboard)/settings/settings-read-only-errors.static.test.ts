@@ -38,4 +38,22 @@ describe("Settings page: a READ_ONLY refusal is never answered with a generic sa
     }
     expect(offenders).toEqual([]);
   });
+
+  it("a raw apiClient save (catch) never answers READ_ONLY with its generic toast", () => {
+    // 'catch' handlers that toast "Failed ..." (reads and the auth-allowed session revoke are exempt) must route a READ_ONLY refusal first (showReadOnlyRefusal for a raw
+    // call that no mutation handler sees; isReadOnlyRefusal where a mutation already showed the line)
+    const offenders: number[] = [];
+    let count = 0;
+    const re = /\}\s*catch\s*(\([^)]*\))?\s*\{/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(src))) {
+      const body = src.slice(m.index, m.index + 260);
+      if (!/toast\(\{\s*title:\s*"Failed(?! to (load|revoke))/.test(body)) continue;
+      count += 1;
+      if (!/(showReadOnlyRefusal|isReadOnlyRefusal)\(/.test(body))
+        offenders.push(src.slice(0, m.index).split("\n").length);
+    }
+    expect(count).toBeGreaterThanOrEqual(3); // the scan is not vacuous
+    expect(offenders).toEqual([]);
+  });
 });

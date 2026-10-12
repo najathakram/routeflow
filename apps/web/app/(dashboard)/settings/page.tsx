@@ -101,7 +101,7 @@ import { TimeZoneDatalist } from "@/components/TimeZoneInput";
 import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
 import { useInvalidFocus } from "@/lib/form-errors";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
-import { isReadOnlyRefusal } from "@/lib/read-only-refusal";
+import { isReadOnlyRefusal, showReadOnlyRefusal } from "@/lib/read-only-refusal";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -1436,7 +1436,8 @@ function EmailSettingsTab() {
       });
       qc.invalidateQueries({ queryKey: ["settings", "email"] });
       toast({ title: "Email settings saved", variant: "success" });
-    } catch {
+    } catch (err) {
+      if (showReadOnlyRefusal(err, toast)) return;
       toast({ title: "Failed to save settings", variant: "error" });
     } finally {
       setIsSaving(false);
@@ -2139,7 +2140,8 @@ function MyAccountTab() {
           : "Sign out and back in to access driver features.",
         variant: "success",
       });
-    } catch {
+    } catch (err) {
+      if (isReadOnlyRefusal(err)) return; // the app-wide handler already showed the shared line
       toast({ title: "Failed to update driver access", variant: "error" });
     }
   };
@@ -2714,7 +2716,8 @@ function InvoicingTab() {
       });
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({ title: "Invoice defaults saved", variant: "success" });
-    } catch {
+    } catch (err) {
+      if (showReadOnlyRefusal(err, toast)) return;
       toast({ title: "Failed to save", variant: "error" });
     } finally {
       setSavingDefaults(false);

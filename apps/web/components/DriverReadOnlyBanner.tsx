@@ -9,7 +9,7 @@ import { ReadOnlyBanner } from "./ReadOnlyBanner";
  * The read-only banner for the DRIVER shell. A driver cannot read the subscription (the billing endpoint is
  * staff-only), so the banner appears when a write is refused with 403 READ_ONLY - that refusal carries the tenant's
  * reason - and stays while the gate's refusal is live. It is the same ReadOnlyBanner (owner's sentence + reason),
- * with no admin action and no contact line (a driver is not told whom to contact; the e-mail is staff-only data).
+ * with no admin action; the contact line is the generic "contact your workspace admin" (the admin e-mail is staff-only data).
  */
 export function DriverReadOnlyBanner() {
   const { refused, reason } = useReadOnlyRefusal();
@@ -20,6 +20,7 @@ export function DriverReadOnlyBanner() {
       status={API_ERROR_CODES.READ_ONLY}
       readOnlyReason={reason}
       isAdmin={false}
+      contactFallback
       compact
     />
   );
