@@ -11,6 +11,7 @@ import {
 import { Test } from "@nestjs/testing";
 import { ThrottlerException } from "@nestjs/throttler";
 import { MulterError } from "multer";
+import * as Sentry from "@sentry/node";
 import request from "supertest";
 import { LockConflictFilter, LOCK_UNAVAILABLE_BODY } from "./lock-conflict.filter";
 import {
@@ -18,6 +19,23 @@ import {
   registerGlobalExceptionFilters,
 } from "./global-exception-filters";
 import { retryStockTx } from "./tx-retry";
+
+/**
+ * SA-767 r-note 5 SA-4: every mapped error is also reported to Sentry at WARNING level, fingerprinted by
+ * route + code (the mapping is never silent). The Sentry module is mocked: one captured event per
+ * mapped error, none for what the filter delegates.
+ */
+const mockScope = {
+  setLevel: jest.fn(),
+  setFingerprint: jest.fn(),
+  setTag: jest.fn(),
+  setUser: jest.fn(),
+};
+jest.mock("@sentry/node", () => ({
+  withScope: jest.fn((cb: (scope: unknown) => void) => cb(mockScope)),
+  captureException: jest.fn(),
+}));
+const captured = () => (Sentry.captureException as unknown as jest.Mock).mock.calls;
 
 /**
  * SA-767 r-note 3 (a): the backstop. A stock-writer lock wait that gave up (55P03), a deadlock
@@ -100,6 +118,7 @@ describe("LockConflictFilter (unit)", () => {
   let filter: LockConflictFilter;
 
   beforeEach(() => {
+    jest.clearAllMocks();
     warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
     next = { catch: jest.fn() };
     filter = new LockConflictFilter(next);
@@ -128,6 +147,35 @@ describe("LockConflictFilter (unit)", () => {
     expect(line).toContain(state);
   });
 
+  it.each(SHAPES)(
+    "%s (%s) is reported to Sentry ONCE, at warning level, fingerprinted by route + code",
+    (state, _shape, mk) => {
+      const { host } = makeHost("POST", "/api/v1/orders");
+      filter.catch(mk(), host);
+      expect(captured()).toHaveLength(1);
+      expect(mockScope.setLevel).toHaveBeenCalledWith("warning");
+      expect(mockScope.setFingerprint).toHaveBeenCalledWith(["POST /api/v1/orders", state]);
+    },
+  );
+
+  it("the fingerprint uses the matched route pattern, not the URL with ids and a query", () => {
+    const req = {
+      method: "PATCH",
+      originalUrl: "/api/v1/orders/abc/status?x=1",
+      baseUrl: "/api/v1",
+      route: { path: "/orders/:id/status" },
+    };
+    const host: any = {
+      getType: () => "http",
+      switchToHttp: () => ({ getResponse: () => makeHost().res, getRequest: () => req }),
+    };
+    filter.catch(pgCode("40P01"), host);
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith([
+      "PATCH /api/v1/orders/:id/status",
+      "40P01",
+    ]);
+  });
+
   // "maps ONLY these": everything else is delegated to the next filter, response untouched.
   const NOT_MAPPED: Array<[string, () => unknown]> = [
     ["a plain Error", () => new Error("boom")],
@@ -145,8 +193,13 @@ describe("LockConflictFilter (unit)", () => {
       () => new ConflictException({ code: "STOCK_COUNT_COMMITTING", message: "x" }),
     ],
     [
-      "an existing 503 LOCK_UNAVAILABLE",
-      () => new ServiceUnavailableException({ code: "LOCK_UNAVAILABLE", message: "x" }),
+      "a 503 with a DIFFERENT code",
+      () => new ServiceUnavailableException({ code: "SOMETHING_ELSE", message: "x" }),
+    ],
+    ["a 503 with a plain string body", () => new ServiceUnavailableException("down")],
+    [
+      "a non-503 HttpException that carries the LOCK_UNAVAILABLE code",
+      () => new HttpException({ code: "LOCK_UNAVAILABLE", message: "x" }, 429),
     ],
     ["a generic HttpException", () => new HttpException("teapot", 418)],
     [
@@ -167,8 +220,75 @@ describe("LockConflictFilter (unit)", () => {
     expect(res.header).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
+    expect(captured()).toHaveLength(0); // delegated: the catch-all owns any capture
     expect(next.catch).toHaveBeenCalledTimes(1);
     expect(next.catch).toHaveBeenCalledWith(err, host);
+  });
+
+  describe("an HttpException 503 whose body code is LOCK_UNAVAILABLE (MF2)", () => {
+    const exhausted = () =>
+      new ServiceUnavailableException({
+        code: "LOCK_UNAVAILABLE",
+        message: "Another stock change was in progress.",
+      });
+    const countStyle = () =>
+      new ServiceUnavailableException({
+        code: "LOCK_UNAVAILABLE",
+        message: "Part of this count was saved. Commit again to finish.",
+        committedLines: 3,
+        totalLines: 10,
+      });
+
+    it.each([
+      ["a retryStockTx-style body", exhausted],
+      ["a count-committer body with progress fields", countStyle],
+    ])("%s: Retry-After 2, status and body exactly as thrown", (_n, mk) => {
+      const err = mk();
+      const { host, res } = makeHost();
+      filter.catch(err, host);
+      expect(res.status).toHaveBeenCalledWith(503);
+      expect(res.header).toHaveBeenCalledWith("Retry-After", "2");
+      expect(res.json).toHaveBeenCalledTimes(1);
+      expect(res.json.mock.calls[0][0]).toEqual(err.getResponse());
+    });
+
+    it("renders it itself (the catch-all is not called) and reports ONE warning event to Sentry", () => {
+      const { host } = makeHost("POST", "/api/v1/orders");
+      filter.catch(exhausted(), host);
+      expect(next.catch).not.toHaveBeenCalled();
+      expect(captured()).toHaveLength(1);
+      expect(mockScope.setLevel).toHaveBeenCalledWith("warning");
+      expect(mockScope.setFingerprint).toHaveBeenCalledWith([
+        "POST /api/v1/orders",
+        "LOCK_UNAVAILABLE",
+      ]);
+    });
+
+    it("a Sentry that throws never breaks the response", () => {
+      (Sentry.withScope as unknown as jest.Mock).mockImplementationOnce(() => {
+        throw new Error("sentry down");
+      });
+      const { host, res } = makeHost();
+      expect(() => filter.catch(exhausted(), host)).not.toThrow();
+      expect(res.header).toHaveBeenCalledWith("Retry-After", "2");
+    });
+
+    it("logs at warn with the route and the code", () => {
+      const { host } = makeHost("POST", "/api/v1/orders");
+      filter.catch(exhausted(), host);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const line = String(warn.mock.calls[0][0]);
+      expect(line).toContain("POST /api/v1/orders");
+      expect(line).toContain("LOCK_UNAVAILABLE");
+    });
+
+    it("a non-HTTP context still delegates", () => {
+      const { host, res } = makeHost();
+      host.getType = () => "ws";
+      filter.catch(exhausted(), host);
+      expect(res.header).not.toHaveBeenCalled();
+      expect(next.catch).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("a non-HTTP context (e.g. a websocket gateway) is delegated, never written to", () => {
@@ -220,6 +340,27 @@ class ThrowController {
   @Get("multer")
   multer() {
     throw new MulterError("LIMIT_FILE_SIZE", "file");
+  }
+  @Get("count-503")
+  count503() {
+    throw new ServiceUnavailableException({
+      code: "LOCK_UNAVAILABLE",
+      message: "Part of this count was saved. Commit again to finish.",
+      committedLines: 3,
+      totalLines: 10,
+    });
+  }
+  @Get("other-503")
+  other503() {
+    throw new ServiceUnavailableException({ code: "SOMETHING_ELSE", message: "down" });
+  }
+  @Get("committing")
+  committing() {
+    throw new ConflictException({ code: "STOCK_COUNT_COMMITTING", message: "committing" });
+  }
+  @Get("merge")
+  merge() {
+    throw new ConflictException({ code: "MERGE_IN_PROGRESS", message: "merging" });
   }
   @Get("exhausted")
   async exhausted() {
@@ -298,6 +439,64 @@ describe("registerGlobalExceptionFilters (real Nest dispatch)", () => {
     expect(res.status).toBe(503);
     expect(res.body.code).toBe("LOCK_UNAVAILABLE");
     expect(res.body.message).toMatch(/Another stock change was in progress/);
+  });
+
+  it("MF2: that exhausted retryStockTx 503 now carries Retry-After: 2, body unchanged", async () => {
+    const res = await request(app.getHttpServer()).get("/t/exhausted");
+    expect(res.status).toBe(503);
+    expect(res.headers["retry-after"]).toBe("2");
+    expect(res.body.code).toBe("LOCK_UNAVAILABLE");
+    expect(res.body.message).toMatch(/Another stock change was in progress/);
+  });
+
+  it("MF2: the count committer 503 keeps committedLines / totalLines and gets the header", async () => {
+    const res = await request(app.getHttpServer()).get("/t/count-503");
+    expect(res.status).toBe(503);
+    expect(res.headers["retry-after"]).toBe("2");
+    expect(res.body).toEqual({
+      code: "LOCK_UNAVAILABLE",
+      message: "Part of this count was saved. Commit again to finish.",
+      committedLines: 3,
+      totalLines: 10,
+    });
+  });
+
+  it("MF2: a 503 with a DIFFERENT code gets NO Retry-After", async () => {
+    const res = await request(app.getHttpServer()).get("/t/other-503");
+    expect(res.status).toBe(503);
+    expect(res.headers["retry-after"]).toBeUndefined();
+    expect(res.body.code).toBe("SOMETHING_ELSE");
+  });
+
+  it("MF2: 409s (STOCK_COUNT_COMMITTING, MERGE_IN_PROGRESS, CAS) are untouched", async () => {
+    for (const [path, code] of [
+      ["/t/committing", "STOCK_COUNT_COMMITTING"],
+      ["/t/merge", "MERGE_IN_PROGRESS"],
+      ["/t/cas", "CONCURRENT_UPDATE"],
+    ] as const) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await request(app.getHttpServer()).get(path);
+      expect(res.status).toBe(409);
+      expect(res.headers["retry-after"]).toBeUndefined();
+      expect(res.body.code).toBe(code);
+    }
+  });
+
+  it("SA-4: a mapped error over HTTP reaches Sentry once, at warning level, by matched route", async () => {
+    jest.clearAllMocks();
+    const res = await request(app.getHttpServer()).get("/t/lock");
+    expect(res.status).toBe(503);
+    expect(captured()).toHaveLength(1);
+    expect(mockScope.setLevel).toHaveBeenCalledWith("warning");
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["GET /t/lock", "55P03"]);
+  });
+
+  it("SA-4: the exhausted retryStockTx 503 is reported at warning level too (not an error-level 5xx)", async () => {
+    jest.clearAllMocks();
+    await request(app.getHttpServer()).get("/t/exhausted");
+    expect(captured()).toHaveLength(1);
+    expect(mockScope.setLevel).toHaveBeenCalledWith("warning");
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["GET /t/exhausted", "LOCK_UNAVAILABLE"]);
   });
 
   it("registers the catch-all FIRST, the lock filter right after it, the narrow ones last", () => {
