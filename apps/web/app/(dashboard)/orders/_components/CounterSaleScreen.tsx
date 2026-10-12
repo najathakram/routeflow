@@ -73,6 +73,7 @@ import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
 import { CounterReceiptBody } from "./CounterReceiptBody";
 import { CounterCustomerCredit } from "./CounterCustomerCredit";
 import { CounterGateOffline } from "./CounterGateOffline";
+import { CounterCustomerMatches } from "./CounterCustomerMatches";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
@@ -365,7 +366,9 @@ export function CounterSaleScreen() {
   const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
 
-  const { data: customersData } = useCustomers({ search: customerSearch.trim() || undefined });
+  const { data: customersData, isFetching: customersFetching } = useCustomers({
+    search: customerSearch.trim() || undefined,
+  });
   const matches = customerSearch.trim() ? (customersData?.data ?? []).slice(0, 6) : [];
 
   // The fulfilment pre-selection for "Ship this order instead": the customer's own path first, then the staff default.
@@ -1021,27 +1024,18 @@ export function CounterSaleScreen() {
                 {COUNTER_SHIP_WALK_IN_CAPTION}
               </p>
             ) : null}
-            {matches.length > 0 ? (
-              <ul className="rounded border text-sm">
-                {matches.map((c: any) => (
-                  <li key={c.id}>
-                    <button
-                      type="button"
-                      className="min-h-[44px] w-full px-3 py-2 text-left hover:bg-gray-50"
-                      disabled={lineLocked}
-                      onClick={() => {
-                        if (lineLocked || saleInFlight()) return;
-                        setCustomer(c);
-                        setCustomerSearch("");
-                        refocus();
-                      }}
-                    >
-                      {c.businessName}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
+            <CounterCustomerMatches
+              search={customerSearch}
+              matches={matches as PickedCustomer[]}
+              answered={customersData !== undefined && !customersFetching}
+              disabled={lineLocked}
+              onPick={(c) => {
+                if (lineLocked || saleInFlight()) return;
+                setCustomer(c);
+                setCustomerSearch("");
+                refocus();
+              }}
+            />
           </section>
 
           {/* SA-747: quick keys; a tap is the scan add path, and a frozen cart ignores it */}
