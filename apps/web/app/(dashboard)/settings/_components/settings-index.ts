@@ -17,13 +17,16 @@ export type IndexEntry = {
   href?: string;
   /** Info rows only: the sentence shown instead of desc. */
   answer?: string;
-  /** business | selling | orders | notifications | compliance | integrations | billing | footer | hub */
+  /** fulfilment | business | payments | selling | notifications | compliance | integrations | footer */
   groupKey: string;
   /** Breadcrumb tail, e.g. "Invoicing" (defaults to the label). */
   page?: string;
   keywords: string[];
   show?: "admin";
-  needs?: "fleet";
+  /** fleet = routes/drivers on the plan; selfServe = Settings > Fulfillment is open to this tenant; counter = counter sales on. */
+  needs?: "fleet" | "selfServe" | "counter";
+  /** false = searchable but not a row in the hub/rail lists (Plan & billing lives in the Business card). */
+  listed?: false;
   /** Filled by a later change; a row shows `affects ?? desc`. */
   affects?: string;
 };
@@ -31,15 +34,128 @@ export type IndexEntry = {
 const R = "/settings/restrictions";
 
 const ENTRIES: IndexEntry[] = [
+  // ── How you sell ─────────────────────────────────────────────────────────────────────────
+  {
+    id: "fulfillment",
+    kind: "item",
+    label: "Fulfillment",
+    desc: "How new orders reach your customers",
+    href: "/settings?tab=fulfilment#delivery-method",
+    groupKey: "fulfilment",
+    needs: "selfServe",
+    keywords: [
+      "ship",
+      "shipping",
+      "carrier",
+      "ups",
+      "fedex",
+      "pickup",
+      "pick up",
+      "our trucks",
+      "in store",
+    ],
+  },
+  {
+    id: "counter-sales",
+    kind: "item",
+    label: "Counter sales",
+    desc: "Walk-in sales, taken and paid on one screen",
+    href: "/settings?tab=fulfilment#counter-sales",
+    groupKey: "fulfilment",
+    needs: "selfServe",
+    keywords: [
+      "counter",
+      "walk-in",
+      "walk in",
+      "till",
+      "register",
+      "pos",
+      "in-store",
+      "cash sale",
+      "retail",
+    ],
+  },
+  {
+    id: "counter-quick-keys",
+    kind: "item",
+    label: "Counter quick keys",
+    desc: "Pin the products you ring up most",
+    href: "/orders/counter-sale",
+    groupKey: "fulfilment",
+    needs: "counter",
+    keywords: ["quick keys", "pins", "shortcuts", "buttons"],
+  },
+  {
+    id: "day-close",
+    kind: "item",
+    label: "Day close & Z report",
+    desc: "Count the drawer and close the day",
+    href: "/orders/counter-sale",
+    groupKey: "fulfilment",
+    needs: "counter",
+    keywords: ["z report", "end of day", "close day", "drawer", "cash drawer", "till", "register"],
+  },
+  {
+    id: "delivery-method",
+    kind: "card",
+    label: "Delivery method",
+    desc: "On our own trucks, by carrier or pickup",
+    href: "/settings?tab=fulfilment#delivery-method",
+    groupKey: "fulfilment",
+    page: "Fulfillment",
+    needs: "selfServe",
+    keywords: [
+      "carrier",
+      "shipping",
+      "ups",
+      "fedex",
+      "usps",
+      "dhl",
+      "tracking",
+      "pickup",
+      "trucks",
+    ],
+  },
+  {
+    id: "open-counter",
+    kind: "card",
+    label: "Open the Counter",
+    desc: "Ring up a walk-in sale",
+    href: "/orders/counter-sale",
+    groupKey: "fulfilment",
+    page: "Counter sales",
+    needs: "counter",
+    keywords: ["register", "till", "walk-in", "sale"],
+  },
+  {
+    id: "backorder-visibility",
+    kind: "card",
+    label: "Backorder visibility",
+    desc: "What customers see about backordered items",
+    href: "#out-of-stock-ordering",
+    groupKey: "fulfilment",
+    page: "Out-of-stock ordering",
+    keywords: ["backorder", "back order", "ships when restocked", "show", "hide", "customers see"],
+  },
+  {
+    id: "info-pos-mode",
+    kind: "info",
+    label: "POS mode",
+    desc: "Sell to a named customer and invoice now",
+    answer:
+      "Turn on POS mode in the New order window on the Orders screen. It books a named customer and invoices right away.",
+    groupKey: "fulfilment",
+    keywords: ["pos", "pos mode", "point of sale", "invoice now", "named customer"],
+  },
   // ── Business & team ──────────────────────────────────────────────────────────────────────
   {
     id: "business-profile",
     kind: "item",
     label: "Business profile",
-    desc: "Name, address, logo & default tax rate",
+    desc: "Name, address, logo, receipt footer & default tax rate",
     href: "/settings?tab=profile",
     groupKey: "business",
-    keywords: ["tax", "sales tax", "logo", "address", "phone", "company"],
+    keywords: ["tax", "sales tax", "logo", "address", "phone", "company", "hours"],
   },
   {
     id: "user-management",
@@ -56,17 +172,18 @@ const ENTRIES: IndexEntry[] = [
       "driver",
       "operator",
       "role",
+      "permissions",
       "reset password",
     ],
   },
-  // ── Selling & catalog ────────────────────────────────────────────────────────────────────
+  // ── Invoicing & payments · Selling & pricing ─────────────────────────────────────────────
   {
     id: "invoicing",
     kind: "item",
     label: "Invoicing",
     desc: "Numbering, terms & default notes",
     href: "/settings?tab=invoicing",
-    groupKey: "selling",
+    groupKey: "payments",
     keywords: [
       "terms",
       "net 30",
@@ -93,7 +210,7 @@ const ENTRIES: IndexEntry[] = [
     label: "How to pay",
     desc: "Remit-to & payment instructions",
     href: "/settings?tab=remittance",
-    groupKey: "selling",
+    groupKey: "payments",
     keywords: ["bank", "remit", "check", "ach", "wire", "zelle"],
   },
   {
@@ -106,12 +223,21 @@ const ENTRIES: IndexEntry[] = [
     keywords: ["restriction", "state", "blocked", "banned", "age", "tobacco", "vape", "compliance"],
   },
   {
+    id: "restriction-rules",
+    kind: "item",
+    label: "Restriction rules",
+    desc: "Rules that stop products being sold where they are banned",
+    href: "/settings/restrictions/rules",
+    groupKey: "selling",
+    keywords: ["rules", "banned", "lift", "state", "restriction", "compliance"],
+  },
+  {
     id: "import-data",
     kind: "item",
     label: "Import data",
     desc: "CSV importers, numbering & finish setup",
     href: "/settings/import",
-    groupKey: "selling",
+    groupKey: "integrations",
     keywords: ["numbering", "next number", "sequence", "csv", "upload"],
   },
   {
@@ -120,7 +246,7 @@ const ENTRIES: IndexEntry[] = [
     label: "Migration",
     desc: "Move from Zoho, QuickBooks, CSV or paper",
     href: "/settings/migration",
-    groupKey: "selling",
+    groupKey: "integrations",
     keywords: ["zoho", "quickbooks", "switch", "move"],
   },
   // ── Orders & stock ───────────────────────────────────────────────────────────────────────
@@ -130,7 +256,7 @@ const ENTRIES: IndexEntry[] = [
     label: "Route defaults",
     desc: "Service time, start time, speed & depot location",
     href: "#route-defaults",
-    groupKey: "orders",
+    groupKey: "fulfilment",
     needs: "fleet",
     keywords: ["route", "depot", "speed", "service time", "start time", "eta"],
   },
@@ -140,7 +266,7 @@ const ENTRIES: IndexEntry[] = [
     label: "Out-of-stock ordering",
     desc: "Let customers order items that are out of stock",
     href: "#out-of-stock-ordering",
-    groupKey: "orders",
+    groupKey: "fulfilment",
     keywords: [
       "backorder",
       "back order",
@@ -157,7 +283,7 @@ const ENTRIES: IndexEntry[] = [
     label: "Batch invoice import",
     desc: "Scan a stack of bills/photos into invoices",
     href: "/settings/batch-import",
-    groupKey: "orders",
+    groupKey: "integrations",
     keywords: ["scan", "bills", "photos", "ocr"],
   },
   // ── Notifications ────────────────────────────────────────────────────────────────────────
@@ -225,7 +351,7 @@ const ENTRIES: IndexEntry[] = [
     label: "Product labels",
     desc: "Restriction categories applied to products",
     href: "/settings/product-categories",
-    groupKey: "compliance",
+    groupKey: "selling",
     show: "admin",
     keywords: ["restriction", "category", "tag", "compliance", "state", "blocked", "banned", "age"],
   },
@@ -255,8 +381,38 @@ const ENTRIES: IndexEntry[] = [
     label: "Plan & billing",
     desc: "Subscription, usage & add-ons",
     href: "/settings/billing",
-    groupKey: "billing",
-    keywords: ["plan", "subscription", "add-on", "upgrade", "usage"],
+    groupKey: "business",
+    listed: false,
+    keywords: ["plan", "subscription", "add-on", "upgrade", "usage", "trial"],
+  },
+  {
+    id: "billing-status",
+    kind: "card",
+    label: "Billing status",
+    desc: "What you owe, autopay and the card on file",
+    href: "/settings/billing",
+    groupKey: "business",
+    page: "Plan & billing",
+    keywords: [
+      "past due",
+      "overdue",
+      "card declined",
+      "payment failed",
+      "read only",
+      "locked",
+      "paused",
+      "trial",
+    ],
+  },
+  {
+    id: "pay-bill",
+    kind: "card",
+    label: "Pay bill",
+    desc: "Pay what you owe for your RouteFlow plan",
+    href: "/settings/billing",
+    groupKey: "business",
+    page: "Plan & billing",
+    keywords: ["pay", "pay now", "owed", "balance"],
   },
   // ── My account (footer) ──────────────────────────────────────────────────────────────────
   {
@@ -273,17 +429,17 @@ const ENTRIES: IndexEntry[] = [
   // ── Cards that live on a settings screen ─────────────────────────────────────────────────
   {
     id: "card-payments",
-    kind: "card",
+    kind: "item",
     label: "Card payments",
-    desc: "Take card payments from customers with Stripe",
+    desc: "Take card payments from your buyers with Stripe",
     href: "/settings#card-payments",
-    groupKey: "hub",
+    groupKey: "payments",
     page: "Card payments",
     keywords: ["stripe", "card", "credit card", "online payment", "pay online"],
   },
   {
     id: "tier-names",
-    kind: "card",
+    kind: "item",
     label: "Pricing tier names",
     desc: "Rename your price levels",
     href: "/settings#tier-names",
@@ -328,20 +484,40 @@ const ENTRIES: IndexEntry[] = [
     ["tax", "sales tax"],
   ),
   ...card(
+    "time-zone",
+    "Time zone",
+    "The zone used for dates, day close and reports",
+    "profile",
+    "business",
+    "Business profile",
+    ["timezone", "tz", "clock", "utc"],
+    { anchor: "settings-timezone" },
+  ),
+  ...card(
+    "receipt-footer",
+    "Receipt footer",
+    "Text printed at the bottom of every receipt",
+    "profile",
+    "business",
+    "Business profile",
+    ["receipt", "footer", "print", "thank you"],
+  ),
+  ...card(
     "payment-terms",
     "Payment terms",
     "How many days customers have to pay",
     "invoicing",
-    "selling",
+    "payments",
     "Invoicing",
     ["terms", "net 30", "due date", "days to pay", "invoice"],
+    { anchor: "invoice-due-days" },
   ),
   ...card(
     "original-price",
     "Show original price",
     "Show the list price next to a discounted price",
     "invoicing",
-    "selling",
+    "payments",
     "Invoicing",
     ["discount", "list price", "invoice"],
   ),
@@ -350,7 +526,7 @@ const ENTRIES: IndexEntry[] = [
     "Deposits",
     "Collect a deposit when the order is placed",
     "invoicing",
-    "selling",
+    "payments",
     "Invoicing",
     ["deposit", "prepay", "down payment", "invoice"],
   ),
@@ -359,16 +535,17 @@ const ENTRIES: IndexEntry[] = [
     "Invoice numbering",
     "Prefix and the next invoice number",
     "invoicing",
-    "selling",
+    "payments",
     "Invoicing",
     ["prefix", "invoice number", "next number", "sequence", "invoice"],
+    { anchor: "invoice-number-prefix" },
   ),
   ...card(
     "invoice-defaults",
     "Invoice defaults",
     "Customer notes and terms & conditions on every invoice",
     "invoicing",
-    "selling",
+    "payments",
     "Invoicing",
     ["notes", "footer", "default notes", "terms", "conditions", "invoice"],
   ),
@@ -395,7 +572,7 @@ const ENTRIES: IndexEntry[] = [
     "Remit-to address",
     "Where customers send payment",
     "remittance",
-    "selling",
+    "payments",
     "How to pay",
     ["remit", "check", "mail"],
   ),
@@ -404,7 +581,7 @@ const ENTRIES: IndexEntry[] = [
     "Payment instructions",
     "Check, ACH, wire and notes shown on the buyer Payments page",
     "remittance",
-    "selling",
+    "payments",
     "How to pay",
     ["bank", "ach", "wire", "zelle"],
   ),
@@ -434,7 +611,7 @@ const ENTRIES: IndexEntry[] = [
     "notifications",
     "Notifications",
     ["low stock", "reorder", "digest", "stock alert", "inventory email"],
-    { show: "admin" },
+    { show: "admin", anchor: "low-stock-digest" },
   ),
   ...card(
     "push",
@@ -521,7 +698,7 @@ const ENTRIES: IndexEntry[] = [
     label: "Shipping carrier",
     desc: "Which carrier ships an order",
     answer: "You choose the carrier on each order when you mark it shipped.",
-    groupKey: "orders",
+    groupKey: "fulfilment",
     keywords: [
       "ship",
       "shipping",
@@ -545,7 +722,7 @@ const ENTRIES: IndexEntry[] = [
     label: "Last price a customer paid",
     desc: "Prices filled in on new orders",
     answer: "New orders fill in the last price you gave this customer.",
-    groupKey: "orders",
+    groupKey: "fulfilment",
     keywords: ["last price", "previous price", "price history", "customer price"],
   },
   {
@@ -554,7 +731,7 @@ const ENTRIES: IndexEntry[] = [
     label: "Reorder points",
     desc: "When a product counts as low on stock",
     answer: "Set a reorder point on each product. The low-stock digest uses it.",
-    groupKey: "orders",
+    groupKey: "fulfilment",
     keywords: ["low stock", "reorder", "digest", "stock alert", "inventory email"],
   },
   {
@@ -563,7 +740,7 @@ const ENTRIES: IndexEntry[] = [
     label: "Ship several orders at once",
     desc: "Mark many orders shipped together",
     answer: "Select orders on the Orders list, then choose Mark shipped.",
-    groupKey: "orders",
+    groupKey: "fulfilment",
     keywords: ["bulk", "batch", "ship", "mark shipped", "tracking"],
   },
   {
@@ -573,7 +750,7 @@ const ENTRIES: IndexEntry[] = [
     desc: "Sell to walk-in customers",
     answer:
       "Ring up walk-in customers from the Orders screen. Not there? Ask RouteFlow support to turn it on.",
-    groupKey: "orders",
+    groupKey: "fulfilment",
     keywords: [
       "counter",
       "walk-in",
@@ -588,7 +765,7 @@ const ENTRIES: IndexEntry[] = [
   },
 ];
 
-/** A card that lives on a `?tab=` screen: deep-links to `#id` on that screen. */
+/** A card that lives on a `?tab=` screen: deep-links to `#anchor` on that screen when it has one. */
 function card(
   id: string,
   label: string,
@@ -597,30 +774,28 @@ function card(
   groupKey: string,
   page: string | undefined,
   keywords: string[],
-  extra: Pick<IndexEntry, "show" | "needs"> = {},
+  { anchor, ...extra }: Pick<IndexEntry, "show" | "needs"> & { anchor?: string } = {},
 ): IndexEntry[] {
-  return [
-    {
-      id,
-      kind: "card",
-      label,
-      desc,
-      href: `/settings?tab=${tab}#${id}`,
-      groupKey,
-      page,
-      keywords,
-      ...extra,
-    },
-  ];
+  // Only a hash the page really renders (an id in the tab body) is linked; otherwise the plain tab.
+  const href = `/settings?tab=${tab}${anchor ? `#${anchor}` : ""}`;
+  return [{ id, kind: "card", label, desc, href, groupKey, page, keywords, ...extra }];
 }
 
 /** Carrier-only (fleet-off) accounts have no drivers: user management must not promise them. */
 const USERS_DESC_NO_FLEET = "Team members, roles, passwords";
 
-/** The entries a viewer can see: admin-only and fleet-only rows are dropped, never greyed out. */
-export function buildIndex(o: { isAdmin: boolean; fleet: boolean }): IndexEntry[] {
+/** The entries a viewer can see: admin-only, fleet-only and flag-gated rows are dropped, never greyed out. */
+export function buildIndex(o: {
+  isAdmin: boolean;
+  fleet: boolean;
+  /** Settings > Fulfillment is open (GET /settings/fulfilment -> selfServe). Unknown = dark. */
+  selfServe?: boolean;
+  /** Counter sales are on (the counter capability). Unknown = dark. */
+  counter?: boolean;
+}): IndexEntry[] {
+  const open = { fleet: o.fleet, selfServe: !!o.selfServe, counter: !!o.counter };
   return ENTRIES.filter((e) => (e.show === "admin" ? o.isAdmin : true))
-    .filter((e) => (e.needs === "fleet" ? o.fleet : true))
+    .filter((e) => (e.needs ? open[e.needs] : true))
     .map((e) =>
       e.id === "user-management" && !o.fleet
         ? { ...e, desc: USERS_DESC_NO_FLEET, keywords: e.keywords.filter((k) => k !== "driver") }
@@ -663,4 +838,73 @@ export function searchIndex(q: string, entries: IndexEntry[]): IndexEntry[] {
     scored.push({ e, score, i });
   });
   return scored.sort((a, b) => b.score - a.score || a.i - b.i).map((s) => s.e);
+}
+
+/** Row order inside each hub/rail group (direction 2b); ids not listed sort last. */
+export const GROUP_ROWS: Record<string, string[]> = {
+  fulfilment: [
+    "fulfillment",
+    "counter-sales",
+    "out-of-stock-ordering",
+    "route-defaults",
+    "counter-quick-keys",
+    "day-close",
+  ],
+  business: ["business-profile", "user-management"],
+  payments: ["invoicing", "how-to-pay", "card-payments"],
+  selling: ["tier-names", "costing", "restrictions-selling", "restriction-rules", "product-labels"],
+  notifications: ["notifications", "email-smtp"],
+  compliance: ["regulated-sections", "restrictions-compliance"],
+  integrations: [
+    "claude-scanner",
+    "gohighlevel",
+    "import-data",
+    "migration",
+    "batch-invoice-import",
+  ],
+};
+/** Counter-first (Sam) and fleet-first (Dana): the order changes, the membership never does. */
+const FLEET_FIRST = ["route-defaults"];
+const COUNTER_FIRST = ["counter-sales", "counter-quick-keys", "day-close"];
+
+/** The list rows of one group, in order. */
+export function listGroup(
+  entries: IndexEntry[],
+  key: string,
+  o: { fleet: boolean; counter: boolean },
+): IndexEntry[] {
+  const base = GROUP_ROWS[key] ?? [];
+  const lead = key === "fulfilment" ? (o.fleet ? FLEET_FIRST : o.counter ? COUNTER_FIRST : []) : [];
+  const order = [...lead, ...base.filter((id) => !lead.includes(id))];
+  const rank = (id: string) => (order.includes(id) ? order.indexOf(id) : order.length);
+  return entries
+    .filter((e) => e.kind === "item" && e.listed !== false && e.groupKey === key)
+    .sort((a, b) => rank(a.id) - rank(b.id));
+}
+
+/** Search for the UI: linked results first (best match, anchored target on ties), then plain answers; no repeats. */
+export function searchSettings(q: string, entries: IndexEntry[]): IndexEntry[] {
+  const hits = searchIndex(q, entries);
+  const linked = hits.filter((e) => e.kind !== "info");
+  const seen = new Set<string>();
+  const out = linked.filter((e) => {
+    const k = `${e.href}|${e.label}|${e.groupKey}`;
+    return seen.has(k) ? false : (seen.add(k), true);
+  });
+  const labels = new Set(linked.map((e) => normalize(e.label)));
+  // An answer a linked row already gives (same words) is dropped; the link is the better answer.
+  return [...out, ...hits.filter((e) => e.kind === "info" && !labels.has(normalize(e.label)))];
+}
+
+/** The label cut into runs, marking the words the query matched ("Low-stock digest" / "low stock"). */
+export function splitHighlight(label: string, q: string): { text: string; hit: boolean }[] {
+  const words = q
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  if (words.length === 0) return [{ text: label, hit: false }];
+  return label
+    .split(new RegExp(`(${words.join("|")})`, "gi"))
+    .filter((t) => t !== "")
+    .map((text) => ({ text, hit: words.includes(text.toLowerCase()) }));
 }
