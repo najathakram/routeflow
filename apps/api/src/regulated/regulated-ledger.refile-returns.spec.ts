@@ -523,6 +523,53 @@ describe("review fold (row 341): dead keys under full netting, and the piece rat
     expect(written()[0]).toMatchObject({ qty: -5, unitBasisQty: -60 });
   });
 
+  // A B662 price correction after the repack: a REVERSAL row (qty 0) that POINTS AT the live sale. It supersedes
+  // nothing, so it must neither advance the "superseded before" time nor offset a quantity.
+  const repackThenCorrection = [
+    ...repack,
+    row({
+      id: "s2-corr",
+      entryType: "REVERSAL",
+      trackedCategoryId: "cat-2",
+      correctsEntryId: "s2",
+      qty: 0,
+      unitBasisQty: 0,
+      netSales: -10,
+      categoryTax: 0,
+      createdAt: new Date("2026-10-03T00:00:00Z"),
+    }),
+  ];
+
+  it("a price-correction row after a same-key repack leaves the live sale live: a credit still books -60 pieces", async () => {
+    const { db, written } = dbOver(repackThenCorrection);
+    db.creditNoteItem.findMany.mockResolvedValue([
+      {
+        tenantId: "t1",
+        invoiceItemId: "ii-1",
+        trackedCategoryId: "cat-2",
+        amount: 45,
+        qty: 5,
+        categoryTax: 0,
+      },
+    ]);
+    await svc().reverseCreditNoteEntries({ creditNoteId: "cn-corr", db });
+    expect(written()).toHaveLength(1);
+    expect(written()[0]).toMatchObject({ qty: -5, unitBasisQty: -60 });
+  });
+
+  it("the same for a LINE_UNIT return: the return still finds the live sale and books -60 pieces", async () => {
+    const { db, written } = dbOver(repackThenCorrection);
+    await svc().reverseReturnEntries({
+      returnId: "ret-corr",
+      orderId: "o1",
+      returnedByProduct: new Map([["p1", 5]]),
+      returnedUnit: "LINE_UNIT",
+      db,
+    });
+    expect(written()).toHaveLength(1);
+    expect(written()[0]).toMatchObject({ qty: -5, unitBasisQty: -60 });
+  });
+
   it("a LINE_UNIT return of 5 after a same-key repack books -60 pieces, never the offset sale's own 1:1 ratio", async () => {
     const { db, written } = dbOver(repack);
     await svc().reverseReturnEntries({
