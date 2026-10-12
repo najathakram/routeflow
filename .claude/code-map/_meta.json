@@ -1,6 +1,6 @@
 {
-  "mappedSha": "5a938f0a201f26cfac39ee6ddccf3670481d84a9",
-  "generatedAt": "2026-10-12T04:02:28.620Z",
+  "mappedSha": "96fc7351fb78f50296579936e88c3369627265cf",
+  "generatedAt": "2026-10-12T17:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 17,
-    "web": 13,
-    "mobile": 9,
+    "api": 20,
+    "web": 16,
+    "mobile": 11,
     "packages": 0
   },
-  "fileCount": 1059,
-  "notes": "**2026-10-12 — MacBook lane pushed branches (docs-only bookkeeping; unmerged, read at branch tips).** New `api/`, `web/` and `mobile/landing-2026-10-12-macbook.md` (TOC row in each area file): `fix/row-311-pos-merge-draft-confirm` `6614c7adf` (web `usePosFinish` DRAFT to PENDING to CONFIRMED, `promotedAlready` re-read), `feat/pos-mode-p2-mobile` `420ee6c6d` (mobile POS mode, hand-over sheet, `usePickupInvoiceBalances`), `feat/pos-mode-p2-web` `cc81fc79c` (already in master), `feat/sa2-delivery-pos-profile` `df643f3f7` (`delivery_pos` profile, Advanced section), `fix/b1015-dashboard-kpi-unknown-v2` `054378ebc` (exact `meta.total` KPIs, `UNKNOWN_KPI` dash). `mappedSha` unchanged."
+  "fileCount": 1141,
+  "notes": "- **2026-10-12 — R5.2 tail bookkeeping (`7f9dfb180..96fc7351f`, row 381 and four small hotfix members; docs-only, Option B follow-up).** New `api/` and `web/landing-2026-10-12-r52-tail.md` (TOC row in each area file; 28 non-test source files, 26 test files counted only; no migration). Row 381: the automatic-lock pause switch (`platform.autoLocksPaused`, fail-closed class gate before each writer's first write, class inside the compare-and-swap, held-case claim and audit rows), the platform-admin switch API with preview, the super-admin card, and the writer-census pin; platform/tenant auth callbacks turn the wrong state type away first; the Connect callback refuses a workspace not accepting changes with status-specific copy; the invoice PDF pointer is written only when it changes. Lesson L-306. `mappedSha` = master `96fc7351f`."
 }

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
@@ -46,6 +46,8 @@ import { stampClock } from "./dunning-stamp";
 import { dunningZone } from "./dunning-zone";
 import { stripeInvoiceSubscriptionId } from "./stripe-period";
 import { StripeService } from "./stripe.service";
+import { DUNNING_SWEEP_WHERE } from "./auto-lock-candidates";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import type { PauseExit } from "./transition-to-active";
 
 export type StampOutcome = "stamped" | "unchanged" | "off" | "ignored" | "skipped" | "not_owed";
@@ -84,6 +86,8 @@ export class DunningService {
     private readonly stripe: StripeService,
     private readonly notifications: BillingNotificationService,
     private readonly tenantStatusGuard: TenantStatusGuard,
+    // SA-775: the rollout pause on the dunning pause (a READ_ONLY lock).
+    @Optional() private readonly autoLocks?: AutoLockSwitchService,
   ) {}
 
   /** Called once by BillingService's constructor. */
@@ -105,6 +109,7 @@ export class DunningService {
       mode: () => billingPauseMode(),
       once: (key) => this.once(key),
       cursors: this.cursors,
+      autoLocks: this.autoLocks,
     };
   }
 
@@ -158,7 +163,12 @@ export class DunningService {
     try {
       await runMilestones(
         this.deps(),
-        { tenantId: row.tenantId, pastDueInvoiceId: invoiceId, pastDueSince: since },
+        {
+          tenantId: row.tenantId,
+          pastDueInvoiceId: invoiceId,
+          pastDueSince: since,
+          tenantClass: row.tenant.class,
+        },
         facts,
         now,
         { paused: isPausedRow(row) },
@@ -241,13 +251,7 @@ export class DunningService {
     if (mode === "off" || !this.stripe.isConfigured) return out;
 
     const rows = (await this.prisma.tenantSubscription.findMany({
-      where: {
-        pastDueInvoiceId: { not: null },
-        stripeSubId: { not: null },
-        externalPayment: false,
-        catchupState: null, // r3 N2(a): the sweep and the pause skip a held catch-up claim
-        tenant: { deletedAt: null },
-      },
+      where: DUNNING_SWEEP_WHERE, // the one shared predicate: the cron and the unpause preview cannot drift
       select: DUNNING_ROW_SELECT,
     })) as ClockedRow[];
 
@@ -317,7 +321,12 @@ export class DunningService {
 
     const finalSentAt = await runMilestones(
       deps,
-      { tenantId: row.tenantId, pastDueInvoiceId: invoiceId, pastDueSince: since },
+      {
+        tenantId: row.tenantId,
+        pastDueInvoiceId: invoiceId,
+        pastDueSince: since,
+        tenantClass: row.tenant.class,
+      },
       facts,
       now,
       { paused: isPausedRow(row) },

@@ -72,7 +72,8 @@ import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
-import { invoiceTaxSplit, remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
@@ -99,7 +100,7 @@ import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
-import { isPaidAtSale } from "@/lib/invoice-sale-terms";
+import { isPaidAtSale, termsAndConditionsToShow } from "@/lib/invoice-sale-terms";
 import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
@@ -1477,22 +1478,8 @@ export default function InvoiceDetailPage() {
     () => new Map((invTrackedCategories ?? []).map((c) => [c.id, c])),
     [invTrackedCategories],
   );
-  // CQ-03: the levy is its own named charge under Tax. Names come from ALL categories (an inactive one still bills).
-  const { data: allTrackedCategories } = useTrackedCategories({}, { enabled: !!invoice });
-  const taxSplit = React.useMemo(() => {
-    const byId = new Map(
-      (Array.isArray(allTrackedCategories) ? allTrackedCategories : []).map((c) => [c.id, c]),
-    );
-    return invoiceTaxSplit(
-      invoice?.taxAmount,
-      (invoice?.items ?? []).map((it) => ({
-        categoryTaxAmount: it.categoryTaxAmount,
-        trackedCategoryId: it.trackedCategoryId,
-        categoryTaxType: it.categoryTaxType,
-        trackedCategory: it.trackedCategoryId ? (byId.get(it.trackedCategoryId) ?? null) : null,
-      })),
-    );
-  }, [invoice, allTrackedCategories]);
+  // CQ-03 / row 398: the levy is its own named charge under Tax (one hook, one pricing helper, every staff screen).
+  const taxSplit = useInvoiceTaxSplit(invoice, !!invoice);
   const sectionedRows = React.useMemo(() => {
     const its = invoice?.items ?? [];
     const inline: typeof its = [];
@@ -1565,6 +1552,10 @@ export default function InvoiceDetailPage() {
   const status = invoice.status;
   // CQ-26: a counter sale paid at the till has no terms or due date to show (display only; stored values untouched).
   const showTerms = !isPaidAtSale(invoice);
+  // ...and the "Terms & Conditions" row that falls back to the same payment terms text ("Net 30")
+  const termsAndConditions = termsAndConditionsToShow(
+    invoice as Parameters<typeof termsAndConditionsToShow>[0],
+  );
 
   // Draft/Final invoice-PDF stage. Default: DRAFT while it's still the
   // pre-delivery proforma; FINAL once the order is delivered or the invoice is
@@ -2408,10 +2399,10 @@ export default function InvoiceDetailPage() {
                     </span>
                   </p>
                 )}
-                {(invoice as any).terms && (
+                {termsAndConditions && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Terms &amp; Conditions:</span>{" "}
-                    {(invoice as any).terms}
+                    {termsAndConditions}
                   </p>
                 )}
                 {(invoice as any).orderNumber && (

@@ -19,7 +19,17 @@ export interface RestrictionsEnableReadiness {
   addressesMissingStateCode: number;
   addressesNeedingReview: number;
   indeterminateCustomerCount: number;
+  /**
+   * True only when a business state is REQUIRED and absent: the tenant has an active STATE rule and no usable
+   * business-address state (Settings > Business). A counter sale to the walk-in is judged by it, so then the tenant is
+   * NOT ready (`RESTRICTIONS_BUSINESS_STATE_MISSING_LINE` says what to do). False when no STATE rule is in play.
+   */
+  businessStateMissing: boolean;
 }
+
+/** The actionable line shown when `businessStateMissing` (one string for the API contract and the settings banner). */
+export const RESTRICTIONS_BUSINESS_STATE_MISSING_LINE =
+  "Add your business address in Settings \u203a Business so counter sales can check state rules.";
 
 export interface UpdateRestrictionsSettingsRequest {
   /** Turning ON is refused with 409 `SELLING_RESTRICTIONS_NOT_READY` (+ readiness) until the data is ready. */

@@ -131,6 +131,13 @@ export function CounterSaleScreen() {
   const readOnlyGate = useReadOnlyGate();
   const router = useRouter();
   const gate = useCounterSaleGate();
+  // CQ-30: once the capability check has failed, the retry panel stays up for the WHOLE refetch. React Query flips a failed,
+  // data-less lookup back to "loading" the moment it refetches; without this the panel gave way to the blank loading
+  // placeholder for the length of the request. It leaves only when the lookup settles (the sale UI, or the panel again).
+  const gateWasFailedRef = React.useRef(false);
+  if (gate.failed) gateWasFailedRef.current = true;
+  else if (!gate.loading) gateWasFailedRef.current = false;
+  const keepRetryPanel = gate.failed || (gate.loading && gateWasFailedRef.current);
   const createSale = useCreateCounterSale();
   const lookupSale = useCounterSaleByKey();
   const createDraft = useCreateDraft();
@@ -660,7 +667,8 @@ export function CounterSaleScreen() {
         attemptRef.current = null;
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
-        setError(counterSaleErrorCopy(err)); // FIXED copy, never the server message
+        // FIXED copy, never the server message; a walk-in sale has no customer record to fix a license on
+        setError(counterSaleErrorCopy(err, { walkIn: attempt.dto.walkIn === true }));
         liveCart.endSend();
       } else {
         attempt.unknown = true;
@@ -861,12 +869,14 @@ export function CounterSaleScreen() {
     writeAutoPrint(on);
   };
 
+  // A failed check keeps its retry panel up through a retry (CQ-30, see `keepRetryPanel`).
+  if (keepRetryPanel) {
+    return <CounterGateOffline onRetry={gate.retry} retrying={gate.retrying || gate.loading} />;
+  }
+
   // The features answer is not in yet: an empty, non-interactive placeholder, with no copy (neither the sale UI nor a false
   // "not turned on").
   if (gate.loading) return <div data-testid="counter-sale-loading" aria-busy="true" />;
-
-  // CQ-30: a FAILED lookup is not "off": say the check failed and offer a retry (still no sale UI).
-  if (gate.failed) return <CounterGateOffline onRetry={gate.retry} retrying={gate.retrying} />;
 
   // Missing means dark: loading, error, unknown, a response without the capability, or counter "off" all render NO sale UI
   // (a deep link or a stale tab). Only "optional" / "always" open the screen.

@@ -12,12 +12,12 @@
 
 ## process
 
-### L-297 · 2026-10-11 · process · a helper made stricter breaks every caller written on the other side of a merge: audit callers, run the full verify on the merged tip
+### L-304 · 2026-10-12 · process · a suspected display gap is judged against the payload the surface receives, not the JSX that reads the field
 
-- **Symptom:** after `isPayingTenant` was made to throw unless `couponFull` is a boolean, a master-origin backfill script that never selected that column would have thrown in apply mode; only the full verify, including the serial script lane, caught it.
-- **Root cause:** the stricter contract was proven against the callers on the author's branch; callers added on master (scripts, which no touched spec covers) were invisible until the merge. A branch's own green and a run of only the touched specs cannot see them.
-- **Lesson:** **When a helper starts throwing on a missing input, grep every caller in the same PR and update each; then run the FULL verify (script lane included) on the merged tip of a stack and on master, never just the touched specs. Cf. [[L-247]], [[L-264]].**
-- **Guard:** `scripts-live-target-guard.spec.ts` and the script-lane spec `backfill-refund-tender-script.spec.ts`, which execute the real callers against the strict helper.
+- **Symptom:** a review reported that the staff order page's invoice card still printed a due date on a paid till sale; the follow-up spent a lane checking it. The card's `inv.dueDate` was never populated: the order read's invoice stubs are a narrow `select` with no `dueDate`.
+- **Root cause:** a reviewer inferred the defect from the component's JSX; the serializer that feeds it was not read. The real gap sat on the list read, which was found only by tracing `findAll`.
+- **Lesson:** **Before fixing or reporting a display gap, name the select, serializer or allowlist that feeds the field and confirm the field is in it; JSX that reads an absent field is dead code, not a defect. Then trace every OTHER read of the same document.**
+- **Guard:** none automatic; the review checklist for invoice/order display changes (named select first). Cf. [[L-167]].
 
 ### L-294 · 2026-10-11 · process · a review lists every writer of a row shape before it calls that shape anomalous
 
@@ -225,12 +225,12 @@
 
 ## tooling
 
-### L-295 · 2026-10-11 · tooling · Git Bash rewrites `cmd /c` into an interactive `cmd`: a batch job run that way waits on stdin forever and holds the shared slot
+### L-303 · 2026-10-12 · tooling · a rule the API, web and mobile must all run belongs in @routeflow/pricing, never @routeflow/types
 
-- **Symptom:** a batch script launched from Git Bash as `cmd /c <script>` never returned; run inside the heavy slot it held the single shared slot for about three hours while every other lane queued behind it.
-- **Root cause:** MSYS path conversion rewrites the `/c` switch into a drive path (`cmd C:/ <script>`), so `cmd` starts as an INTERACTIVE shell that blocks on stdin; the script was never the problem. The abandoned approach was waiting for it.
-- **Lesson:** **In Git Bash write `cmd //c` (or set `MSYS_NO_PATHCONV=1`, or launch with PowerShell `Start-Process`), give every batch job `< nul` so a stray prompt reads EOF instead of waiting, and give every slot job a hold cap and a closed stdin. Treat a silent hang right after launching a `.cmd` from Git Bash as this trap first. Cf. [[L-291]].**
-- **Guard:** the heavy-slot status line prints `OVER HOLD CAP (> 180 min)` for an over-long holder (`scripts/lib/heavy-slot.mjs`, pinned by `scripts/heavy-slot.self-test.mjs`); it only warns, so the quoting and `< nul` habits are convention only.
+- **Symptom:** a shared display rule (the paid-at-sale predicate) was first written into `packages/types`; the api-runtime-imports guard went red because the compiled API cannot value-import that package.
+- **Root cause:** `@routeflow/types` is source-only (TS the API never builds), and web and mobile import it freely, so a rule written there looks shared until the API's runtime import audit runs. The same trap archived as L-261 earlier.
+- **Lesson:** **Before placing shared runtime logic, ask who executes it. If the API does, it goes in `@routeflow/pricing` (the one compiled workspace package the API may value-import, with scanning); types keeps only constants and types.** Web/mobile re-export a thin wrapper to keep their import paths.
+- **Guard:** `api-runtime-imports` spec ("never value-imports @routeflow/types from a compiled source file") and the exact-package list spec; the pricing package's own spec pins the rule (row 401).
 
 ### L-291 · 2026-10-10 · tooling · never feed python a heredoc on Windows (`python3 -`): it hangs; write the script to a file or use node
 
@@ -386,14 +386,7 @@
 - **Root cause:** the pin copied the wording of the ruling it was written under instead of encoding the invariant, so every later ruling or writer made it lie. A branch's own green cannot see master's changes.
 - **Lesson:** **Pin the invariant structurally: one named constant, assertions derived from it, and an allow-list that carries a reason per entry plus a stale-entry guard (an entry that no longer matches fails). When a ruling changes, change the constant and its pin in the same diff, and replay the merged tip before landing. Cf. [[L-264]].**
 - **Guard:** `SNAPSHOT_READERS` in `coupon-state.spec.ts` and `PACKAGE_ALLOWLIST` in `api-error-codes-parity.spec.ts` (reason per entry, stale-entry check, total pinned); the replay of the merged tip.
-
-### L-292 · 2026-10-10 · testing · a fixture that leaks an environment variable (RF_VERIFY_MODE) makes the pre-push hook and CI disagree
-
-- **Symptom:** the same checks gave different results in the local pre-push hook and in CI.
-- **Root cause:** fixtures ran the real `main()` of a script and inherited `RF_VERIFY_MODE=fast` from the hook environment, so the hook (fast mode) and CI (full mode) exercised different code; the abandoned approach was re-running until the two agreed.
-- **Lesson:** **A fixture that runs a script's real `main()` scrubs the environment first, through one shared helper, so a mode variable inherited from the hook (`RF_VERIFY_MODE=fast`) cannot change what the spec exercises; any test that sets a process variable restores it afterwards. When the hook and CI disagree, diff the environment first.**
-- **Guard:** the shared environment scrub in the fixtures; a review check on any fixture that runs a real `main()` or writes `process.env`.
-- **Recurrence (2026-10-11, Release 4):** the same class with database state: a spec that seeds tenant settings (a tax rate, a preference) restores them in an after hook, or later specs in the same file inherit them and pass or fail by order.
+- **Recurrence (2026-10-12, R5.2 train):** the read-only copy rewrite (SA-776) on one train member staled the returns, counter-sale, park and save-error specs and a 390 px counter selector that sibling members had written against the old per-name line; each member was green on its own branch and the collisions only appeared when the MERGED tree's web and api suites ran (a train-only collision). Run the merged tree's full unit suites before the train PR, never each member's own green (cf. [[L-271]], [[L-297]]).
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
 
@@ -461,19 +454,19 @@
 
 ## domain
 
-### L-298 · 2026-10-12 · domain · a screen that shows what is owed never falls back to the gross total while the server balance is loading or errored
+### L-306 · 2026-10-12 · domain · a switch that must stop a family of automatic writers is enforced by a writer census and a fail-closed read, never by the callers you remember
 
-- **Symptom:** a hand-over sheet showed the order's gross total as the amount due while the invoice balance read was still loading (or had failed), so a cashier could collect, or skip, the wrong amount for an already part-paid order.
-- **Root cause:** the amount owed was `balance ?? total`; the fallback made "unknown" look like "nothing paid yet", and submit stayed enabled.
-- **Lesson:** **A figure derived from a server balance has three states: known, loading, errored. Unknown renders as loading or an error with retry and disables the submit; it never degrades to a gross or cached total.**
-- **Guard:** the pure helper returns an explicit unknown variant (`posHandOverBalance`) and its spec pins loading and error to it. Cf. [[L-260]].
+- **Symptom:** the automatic-lock pause (row 381) landed as a switch plus a gate, and a follow-up had to be added to hold EVERY automatic tenant lock while it is on; a later one made an unknown tenant class fail closed and pinned the class inside the write.
+- **Root cause:** each cron, webhook and cancel path decided on its own whether to lock, so the switch was a convention in each caller; the judged class was read before, not inside, the compare-and-swap, so a reclassification between scan and write could still lock.
+- **Lesson:** **Put the gate in ONE function that fails closed (switch on, key missing, read error, or an unclassified/unknown class all mean "held"), call it before each writer's first write, carry the judged class inside the write's own compare-and-swap, and pin the census: a spec classes every writer of the guarded column and fails the build for an unclassed writer or one gated after its first write.** Cf. [[L-223]], [[L-301]].
+- **Guard:** `auto-lock-writers.pin.spec.ts` (writer census), the `auto-locks-paused` and `auto-lock-admin` DB specs, and the billing module-wiring spec.
 
-### L-299 · 2026-10-12 · domain · a client-assumed state transition is checked against the API transition table, and a retry comment is only true if the refused edge is handled
+### L-305 · 2026-10-12 · domain · wrapping write controls in a gate covers only the controls someone wrapped; sweep the rest by search and pin the list
 
-- **Symptom:** a POS finish after a merge into an open DRAFT order sent DRAFT to CONFIRMED and was refused; the first fix re-sent PENDING on retry, which the API also refuses (PENDING to PENDING is a 400/409), and the code comment called the sequence idempotent.
-- **Root cause:** the client assumed an edge the server's table lacks, and "idempotent" was asserted, never read from the table.
-- **Lesson:** **Before a client chains status PATCHes, read the server transition table for each edge. A step the server refuses on repeat is not idempotent: on a 400/409, re-read the resource and continue only if it already sits at the target (or beyond), and skip any patch the re-read makes a no-op.**
-- **Guard:** web `usePosFinish` re-reads through `promotedAlready` and its spec covers refused PENDING and already-CONFIRMED. Cf. [[L-267]].
+- **Symptom:** after the read-only gate shipped (WriteButton/WriteLink, a refusal notice in the shared Modal slot), UX re-runs still found raw write controls, hand-rolled dialogs and a driver shell with no notice; each was a separate P2.
+- **Root cause:** the gate is opt-in per control and the notice rides a component slot, so anything not built on those components is outside it; the API side had a registry plus a route-walk pin (SA-776), the web side had neither.
+- **Lesson:** **When a gate or notice is delivered by wrapper components, enumerate the surfaces by search (raw buttons that post to write routes, `role="dialog"` markup outside the shared Modal) and pin the list in a spec; state plainly which surfaces are knowingly outside it.**
+- **Guard:** none automatic yet; propose a static scan on the web like the API's route-walk pin. Known gaps recorded: hand-rolled dialogs; the driver banner shows only after a refused write (no driver-readable status). Cf. [[L-225]].
 
 ### L-300 · 2026-10-12 · domain · an edit screen freezes its diff baseline at edit-open and re-bases only on an explicit reload
 
@@ -481,6 +474,13 @@
 - **Root cause:** the diff of "what changed" was computed against the live query data, so a refetch silently moved the baseline under the user's edits.
 - **Lesson:** **Snapshot the server state when editing starts and diff only against that snapshot; send just the fields the user touched. A refetch while editing never re-bases the draft: offer an explicit reload, and let the server reject a stale revision.**
 - **Guard:** none automatic; review checks that a save payload is built from the frozen baseline. Cf. [[L-167]].
+
+### L-302 · 2026-10-12 · domain · a negative Prisma filter on a nullable column never matches NULL: write the NULL arm and prove it with a NULL row
+
+- **Symptom:** "everything except category X" (the tracked-category bulk assign, and the product list's `product-list-where.ts` where-builder) silently dropped every product with no category; a second instance of the class after the first fix.
+- **Root cause:** `{ col: { not: X } }`, `{ notIn: [...] }` and `NOT: {...}` compile to `col <> X` / `NOT IN`, which SQL's three-valued logic evaluates to UNKNOWN for a NULL column, so NULL rows are excluded. The author's mental model of "all but X" includes the rows that have no value at all.
+- **Lesson:** **A negative filter (`not`, `notIn`, `NOT`) on a nullable column never matches NULL. Spell the NULL arm (`OR: [{ col: null }, { col: { not: X } }]`) and prove the filter with a fixture row whose column is NULL, in a real-database spec when the where-builder is shared.** Cf. [[L-238]].
+- **Guard:** each fix carries a spec with a NULL-column row (the product list where-builder, the bulk assign). No repo-wide scan yet: propose an AST scan that flags `not` / `notIn` / `NOT` on a nullable Prisma column without an adjacent `null` arm.
 
 ### L-301 · 2026-10-12 · domain · a revision or guard value is written in the same transaction and lock as the check that reads it
 

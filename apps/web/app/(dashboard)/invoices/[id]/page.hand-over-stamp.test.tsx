@@ -128,6 +128,25 @@ describe("invoice terms and due date on a counter sale paid at the till (CQ-26)"
     expect(screen.queryByText("Due Date:")).toBeNull();
     expect(screen.queryByText(/· due /)).toBeNull();
   });
+  it("the Terms & Conditions row that only repeats 'Net 30' goes too; a real T&C text stays", () => {
+    seedSession("OPERATOR");
+    mockInvoice = invoice(COUNTER, { ...TERMS, terms: "Net 30", payments: PAID_AT_SALE });
+    const a = renderWithProviders(<InvoiceDetailPage />);
+    expect(screen.queryByText("Terms & Conditions:")).toBeNull();
+    expect(screen.queryByText("Net 30")).toBeNull();
+    a.unmount();
+    mockInvoice = invoice(COUNTER, { ...TERMS, terms: "All sales final.", payments: PAID_AT_SALE });
+    renderWithProviders(<InvoiceDetailPage />);
+    expect(screen.getByText("All sales final.")).toBeInTheDocument();
+  });
+
+  it("an on-account counter invoice keeps the Terms & Conditions row", () => {
+    seedSession("OPERATOR");
+    mockInvoice = invoice(COUNTER, { ...TERMS, status: "SENT", terms: "Net 30", payments: [] });
+    renderWithProviders(<InvoiceDetailPage />);
+    expect(screen.getByText("Terms & Conditions:")).toBeInTheDocument();
+  });
+
   it("a counter sale paid days later still shows its terms and due date", () => {
     seedSession("OPERATOR");
     mockInvoice = invoice(COUNTER, {

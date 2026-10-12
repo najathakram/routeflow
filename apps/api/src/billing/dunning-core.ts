@@ -7,6 +7,7 @@ import type { InvoiceFacts } from "./catchup-claim";
 import { type BillingPauseMode, PAYMENT_OVERDUE_REASON, READ_ONLY_STATUS } from "./dunning-config";
 import type { PauseExit } from "./transition-to-active";
 import type { StripeService } from "./stripe.service";
+import type { AutoLockSwitch } from "./auto-lock-gate";
 
 /**
  * SA-733r7 PR-B3: the shared vocabulary of the dunning modules (`dunning.service.ts`, `dunning-pause.ts`,
@@ -48,6 +49,8 @@ export interface DunningDeps {
   once: (key: string) => boolean;
   /** Process-local rotation cursors of the periodic sweeps (see dunning-paging.ts); empty after a restart. */
   cursors: Map<string, string>;
+  /** SA-775: the rollout pause on AUTOMATIC locks; the pause asks it before it writes (undefined = a bare unit spec). */
+  autoLocks?: AutoLockSwitch;
 }
 
 /** The subscription + tenant columns every dunning decision reads. */

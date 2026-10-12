@@ -60,7 +60,7 @@ describe("createInvoiceFromOrder's callerTx callers hold the Order lock first (r
             .readFileSync(p, "utf8")
             .replace(/\/\*[\s\S]*?\*\//g, "") // block comments and JSDoc name the call in prose
             .replace(/(^|\s)\/\/.*$/gm, "$1");
-          if (CALLER_TX_CALL.test(code)) hits.push(path.relative(SRC, p));
+          if (CALLER_TX_CALL.test(code)) hits.push(path.relative(SRC, p).split(path.sep).join("/"));
         }
       }
     };

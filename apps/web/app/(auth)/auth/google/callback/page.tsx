@@ -70,40 +70,26 @@ function GoogleCallbackInner() {
       setTimeout(() => router.replace("/login?error=google_failed"), 4000);
     };
 
-    // ── Resolve tokens: one-time code (F8-001) or legacy direct params ─────────
+    // ── Resolve tokens: only by redeeming the one-time code (F8-001) ──────────
+    // Tokens are never read from the URL; a link carrying them does not sign anyone in.
     async function resolveBundle(): Promise<Record<string, string> | null> {
       const code = params.get("code");
-      if (code) {
-        const apiBase = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(
-          /\/$/,
-          "",
-        );
-        try {
-          const res = await fetch(`${apiBase}/auth/google/exchange`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code }),
-          });
-          if (!res.ok) return null;
-          return (await res.json()) as Record<string, string>;
-        } catch {
-          return null;
-        }
+      if (!code) return null;
+      const apiBase = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(
+        /\/$/,
+        "",
+      );
+      try {
+        const res = await fetch(`${apiBase}/auth/google/exchange`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code }),
+        });
+        if (!res.ok) return null;
+        return (await res.json()) as Record<string, string>;
+      } catch {
+        return null;
       }
-      // Backward-compat: tokens delivered directly in the URL (deploy skew / legacy)
-      const accessToken = params.get("accessToken");
-      const refreshToken = params.get("refreshToken");
-      if (!accessToken || !refreshToken) return null;
-      return {
-        accessToken,
-        refreshToken,
-        type: params.get("type") ?? "",
-        role: params.get("role") ?? "",
-        tenantSlug: params.get("tenantSlug") ?? "",
-        sellerCount: params.get("sellerCount") ?? "",
-        linked: params.get("linked") ?? "",
-        invite: params.get("invite") ?? "",
-      };
     }
 
     void resolveBundle().then((bundle) => {

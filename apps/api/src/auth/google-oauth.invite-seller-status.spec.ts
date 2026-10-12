@@ -180,7 +180,6 @@ describe("Google callback invite acceptance follows the seller's workspace statu
       const controller = new AuthController(
         {} as any,
         webConfig as any,
-        {} as any,
         service,
         {} as any,
         {} as any,
@@ -222,7 +221,6 @@ describe("Google callback invite acceptance follows the seller's workspace statu
       const controller = new AuthController(
         {} as any,
         webConfig as any,
-        {} as any,
         service,
         {} as any,
         {} as any,

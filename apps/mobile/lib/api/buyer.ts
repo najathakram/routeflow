@@ -80,13 +80,21 @@ export type {
 export interface BuyerInvoice {
   id: string;
   invoiceNumber: string;
+  /** Row 401: the server's answer to "a counter sale paid at the till" — no due date / terms shown. */
+  paidAtSale?: boolean;
   revisedAt?: string | null;
   overpaidBy?: number | null;
   status: string;
   issueDate?: string;
   dueDate?: string;
   subtotal?: number;
-  tax?: number;
+  /** The stored header: the regular tax PLUS the regulated levy. Show `regularTaxAmount` and `chargeLines`. */
+  taxAmount?: number | string;
+  /** The regular tax alone, and one named charge per regulated category (server-computed; absent on an older server). */
+  regularTaxAmount?: number;
+  chargeLines?: Array<{ key: string; label: string; amount: number }>;
+  discount?: number | string;
+  shippingFee?: number | string;
   total: number;
   amountPaid?: number;
   paidAmount?: number;
