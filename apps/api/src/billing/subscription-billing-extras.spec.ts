@@ -19,7 +19,7 @@ const SUB: any = {
 
 function make(
   over: {
-    admin?: { username: string } | null;
+    admin?: { email: string; driver: { contactName: string | null } | null } | null;
     facts?: any;
     factsError?: boolean;
     card?: any;
@@ -37,7 +37,11 @@ function make(
     user: {
       findFirst: jest
         .fn()
-        .mockResolvedValue(over.admin === undefined ? { username: "Dana" } : over.admin),
+        .mockResolvedValue(
+          over.admin === undefined
+            ? { email: "dana@acme.test", driver: { contactName: "Dana" } }
+            : over.admin,
+        ),
     },
   } as any;
   const stripe = {
@@ -69,10 +73,14 @@ function make(
 }
 
 describe("SubscriptionBillingExtras.read (B4 view fields)", () => {
-  it("billingContactName is the OLDEST ACTIVE TENANT_ADMIN's name (a fixed, stated rule)", async () => {
+  it("billingContactName is the OLDEST ACTIVE TENANT_ADMIN's DISPLAY name, never a username (SA-776)", async () => {
     const { extras, prisma } = make();
     const out = await extras.read("t1", SUB);
     expect(out.billingContactName).toBe("Dana");
+    expect(out.billingContactEmail).toBe("dana@acme.test");
+    // the username is not even selected: it cannot leak as the contact name
+    const select = (prisma.user.findFirst as jest.Mock).mock.calls[0][0].select;
+    expect(select).not.toHaveProperty("username");
     expect(prisma.user.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
@@ -88,7 +96,25 @@ describe("SubscriptionBillingExtras.read (B4 view fields)", () => {
 
   it("billingContactName is null when the tenant has no active admin", async () => {
     const { extras } = make({ admin: null });
-    expect((await extras.read("t1", SUB)).billingContactName).toBeNull();
+    const out = await extras.read("t1", SUB);
+    expect(out.billingContactName).toBeNull();
+    expect(out.billingContactEmail).toBeNull();
+  });
+
+  it("an admin with no display name yields a null name and still the e-mail (never the username)", async () => {
+    const { extras } = make({ admin: { email: "dana@acme.test", driver: null } });
+    const out = await extras.read("t1", SUB);
+    expect(out.billingContactName).toBeNull();
+    expect(out.billingContactEmail).toBe("dana@acme.test");
+  });
+
+  it("a blank display name is null and an internal sentinel e-mail is never sent", async () => {
+    const { extras } = make({
+      admin: { email: "no-email+0b1f2c3d@placeholder.local", driver: { contactName: "   " } },
+    });
+    const out = await extras.read("t1", SUB);
+    expect(out.billingContactName).toBeNull();
+    expect(out.billingContactEmail).toBeNull();
   });
 
   it("openInvoiceAmount is the pastDueInvoiceId invoice's amount_remaining, in dollars (never a dash)", async () => {

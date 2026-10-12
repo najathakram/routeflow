@@ -12,6 +12,8 @@ import { isReadOnlyAllowedMutation } from "./read-only-registry";
 
 interface CachedStatus {
   status: string;
+  /** `Tenant.readOnlyReason` (trial_expired | ...), carried in the READ_ONLY 403 body; null when none. */
+  readOnlyReason: string | null;
   expiresAt: number;
 }
 
@@ -69,14 +71,14 @@ export class TenantStatusGuard implements CanActivate {
     const now = Date.now();
     const cached = this.statusCache.get(tenantId);
     if (cached && cached.expiresAt > now) {
-      return this.assertAllowed(cached.status, req, role);
+      return this.assertAllowed(cached.status, req, role, cached.readOnlyReason);
     }
 
     // ── Query DB ─────────────────────────────────────────────────────────────
     try {
       const tenant = await this.prisma.tenant.findUnique({
         where: { id: tenantId },
-        select: { status: true },
+        select: { status: true, readOnlyReason: true },
       });
 
       if (!tenant) {
@@ -85,8 +87,10 @@ export class TenantStatusGuard implements CanActivate {
       }
 
       // Cache the result
+      const readOnlyReason = tenant.readOnlyReason ?? null;
       this.statusCache.set(tenantId, {
         status: tenant.status,
+        readOnlyReason,
         expiresAt: now + CACHE_TTL_MS,
       });
 
@@ -95,14 +99,14 @@ export class TenantStatusGuard implements CanActivate {
         this.cleanExpiredEntries(now);
       }
 
-      return this.assertAllowed(tenant.status, req, role);
+      return this.assertAllowed(tenant.status, req, role, readOnlyReason);
     } catch (err) {
       if (err instanceof ForbiddenException) throw err;
       // On DB error, prefer the last-known status (even past TTL) so the READ_ONLY /
       // SUSPENDED enforcement boundary doesn't evaporate during a DB blip. Only fail
       // open when status is genuinely unknown, to avoid bricking healthy tenants.
       const stale = this.statusCache.get(tenantId);
-      if (stale) return this.assertAllowed(stale.status, req, role);
+      if (stale) return this.assertAllowed(stale.status, req, role, stale.readOnlyReason);
       this.logger.error("Failed to check tenant status", err);
       return true;
     }
@@ -122,7 +126,12 @@ export class TenantStatusGuard implements CanActivate {
 
   // ── Private helpers ──────────────────────────────────────────────────────────
 
-  private assertAllowed(status: string, req: Request, role: string | null = null): true {
+  private assertAllowed(
+    status: string,
+    req: Request,
+    role: string | null = null,
+    readOnlyReason: string | null = null,
+  ): true {
     if (status === "SUSPENDED" || status === "CANCELLED") {
       throw new ForbiddenException("Tenant account is suspended. Please contact support.");
     }
@@ -145,8 +154,11 @@ export class TenantStatusGuard implements CanActivate {
             message: "This seller isn't taking online orders right now. Please check back soon.",
           });
         }
+        // SA-776: `reason` is the tenant's recorded readOnlyReason (null = set by an administrator). Clients map it
+        // to fixed copy (packages/types/read-only-copy.ts) and never render server text.
         throw new ForbiddenException({
           code: API_ERROR_CODES.READ_ONLY,
+          reason: readOnlyReason,
           message:
             "Your workspace is read-only. Subscribe to restore full access — exports still work.",
         });

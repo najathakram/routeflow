@@ -115,6 +115,7 @@ describe("SettingsBillingController.getSubscription - role-trimmed view (B4 S3)"
     status: "READ_ONLY",
     pastDueInvoiceId: "in_1",
     billingContactName: "Dana",
+    billingContactEmail: "dana@acme.test",
     openInvoiceAmount: 149,
     paymentMethodSummary: { brand: "visa", last4: "4242", expMonth: 10, expYear: 2026 },
     nextCharge: { amount: 149, date: "2026-12-01T00:00:00.000Z", dateLabel: "Dec 1" },
@@ -129,6 +130,8 @@ describe("SettingsBillingController.getSubscription - role-trimmed view (B4 S3)"
       expect(out.nextCharge).toBeNull();
       expect(out.openInvoiceAmount).toBeNull();
       expect(out.billingContactName).toBe("Dana");
+      // SA-776: the contact's e-mail is what a non-admin is told to write to - the role trim keeps it
+      expect(out.billingContactEmail).toBe("dana@acme.test");
       expect(out.pastDueInvoiceId).toBe("in_1");
     },
   );

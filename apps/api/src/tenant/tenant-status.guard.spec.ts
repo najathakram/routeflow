@@ -12,8 +12,10 @@ function ctx(method: string, path: string, bearer: string = token): ExecutionCon
   return { switchToHttp: () => ({ getRequest: () => req }) } as unknown as ExecutionContext;
 }
 
-function guardFor(status: string) {
-  const prisma = { tenant: { findUnique: jest.fn().mockResolvedValue({ status }) } };
+function guardFor(status: string, readOnlyReason: string | null = null) {
+  const prisma = {
+    tenant: { findUnique: jest.fn().mockResolvedValue({ status, readOnlyReason }) },
+  };
   return new TenantStatusGuard(prisma as unknown as PrismaService);
 }
 
@@ -33,6 +35,44 @@ describe("TenantStatusGuard — READ_ONLY enforcement", () => {
       .catch((e) => e);
     expect(err).toBeInstanceOf(ForbiddenException);
     expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
+  });
+
+  it("the READ_ONLY 403 body carries the tenant's readOnlyReason (SA-776), null when none", async () => {
+    const withReason = await guardFor("READ_ONLY", "trial_expired")
+      .canActivate(ctx("POST", "/api/v1/orders"))
+      .catch((e) => e);
+    expect(withReason).toBeInstanceOf(ForbiddenException);
+    expect(withReason.getResponse()).toEqual(
+      expect.objectContaining({ code: "READ_ONLY", reason: "trial_expired" }),
+    );
+    const none = await guardFor("READ_ONLY")
+      .canActivate(ctx("POST", "/api/v1/orders"))
+      .catch((e) => e);
+    expect(none.getResponse()).toEqual(
+      expect.objectContaining({ code: "READ_ONLY", reason: null }),
+    );
+  });
+
+  it("the reason survives the cache and a DB blip (the stale status keeps its reason)", async () => {
+    const findUnique = jest
+      .fn()
+      .mockResolvedValueOnce({ status: "READ_ONLY", readOnlyReason: "payment_overdue" })
+      .mockRejectedValue(new Error("db down"));
+    const guard = new TenantStatusGuard({ tenant: { findUnique } } as unknown as PrismaService);
+    const first = await guard.canActivate(ctx("POST", "/api/v1/orders")).catch((e) => e);
+    expect(first.getResponse().reason).toBe("payment_overdue");
+    const cached = await guard.canActivate(ctx("POST", "/api/v1/orders")).catch((e) => e);
+    expect(cached.getResponse().reason).toBe("payment_overdue");
+    expect(findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows an allow-listed mutation (POST /billing/portal) and refuses SUSPENDED on a GET (SA-776 pins)", async () => {
+    await expect(
+      guardFor("READ_ONLY", "trial_expired").canActivate(ctx("POST", "/api/v1/billing/portal")),
+    ).resolves.toBe(true);
+    await expect(
+      guardFor("SUSPENDED").canActivate(ctx("GET", "/api/v1/orders")),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it("allows subscribe/upgrade + auth mutations while READ_ONLY (so the tenant can restore access)", async () => {

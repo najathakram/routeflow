@@ -91,6 +91,17 @@ export interface SubscriptionView<TDate = string> {
   pauseEnforced?: boolean;
 }
 
+/**
+ * The 403 body of a write refused while the workspace is READ_ONLY (SA-776; `TenantStatusGuard`). `reason` is the
+ * tenant's recorded `readOnlyReason` (null = set by an administrator). Clients compose their copy from the
+ * subscription view through `@routeflow/types/read-only-copy` and never render `message`.
+ */
+export interface ReadOnlyErrorBody {
+  code: "READ_ONLY";
+  reason: string | null;
+  message: string;
+}
+
 /** The autopay card shown on the Billing card ("Your Visa ending 4242 expires Oct 31"). */
 export interface PaymentMethodSummary {
   brand: string;

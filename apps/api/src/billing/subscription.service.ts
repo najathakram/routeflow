@@ -140,6 +140,7 @@ export class SubscriptionService {
       pastDueSince: sub?.pastDueSince ?? null,
       pastDueInvoiceId: sub?.pastDueInvoiceId ?? null,
       billingContactName: extras.billingContactName,
+      billingContactEmail: extras.billingContactEmail,
       openInvoiceAmount: extras.openInvoiceAmount,
       paymentMethodSummary: extras.paymentMethodSummary,
       nextCharge: extras.nextCharge,

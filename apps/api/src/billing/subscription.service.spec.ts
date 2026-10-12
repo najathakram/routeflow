@@ -516,6 +516,7 @@ describe("SubscriptionService.getSubscription - B4 banner fields", () => {
     };
     const extrasOut = {
       billingContactName: "Dana",
+      billingContactEmail: "dana@acme.test",
       openInvoiceAmount: 149,
       paymentMethodSummary: { brand: "visa", last4: "4242", expMonth: 10, expYear: 2026 },
       nextCharge: { amount: 149, date: "2026-12-01T00:00:00.000Z" },
@@ -527,6 +528,7 @@ describe("SubscriptionService.getSubscription - B4 banner fields", () => {
     expect(view.pastDueSince).toEqual(new Date("2026-11-01T14:00:00Z"));
     expect(view.pastDueInvoiceId).toBe("in_1");
     expect(view.billingContactName).toBe("Dana");
+    expect(view.billingContactEmail).toBe("dana@acme.test");
     expect(view.openInvoiceAmount).toBe(149);
     expect(view.paymentMethodSummary).toEqual(extrasOut.paymentMethodSummary);
     expect(view.nextCharge).toEqual(extrasOut.nextCharge);
@@ -572,6 +574,7 @@ describe("SubscriptionService.getSubscription - B4 banner fields", () => {
     );
     const view = await svc.getSubscription("t1");
     expect(view.billingContactName).toBeNull();
+    expect(view.billingContactEmail).toBeNull();
     expect(view.openInvoiceAmount).toBeNull();
     expect(view.paymentMethodSummary).toBeNull();
   });
