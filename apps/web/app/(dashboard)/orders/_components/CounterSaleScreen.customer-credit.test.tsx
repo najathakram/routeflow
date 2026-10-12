@@ -193,6 +193,8 @@ describe("CounterSaleScreen: a picked customer's account signal (CQ-07)", () => 
     pickAcme();
     const flag = await screen.findByTestId("counter-customer-overdue");
     expect(flag).toHaveTextContent("Overdue $150.50");
+    expect(flag).toHaveTextContent("For information only.");
+    expect(flag).not.toHaveTextContent(/can still ring|not blocked/i);
     expect(flag.className).toMatch(/amber/);
     expect(screen.getByRole("button", { name: "Complete & show receipt" })).not.toBeDisabled();
   });
@@ -202,8 +204,11 @@ describe("CounterSaleScreen: a picked customer's account signal (CQ-07)", () => 
     renderWithProviders(<CounterSaleScreen />);
     pickAcme();
     const note = await screen.findByTestId("counter-customer-over-limit");
-    expect(note).toHaveTextContent("Over the credit limit by $250.00");
-    expect(note).toHaveTextContent("not blocked");
+    expect(note).toHaveTextContent("Over credit limit by $250.00");
+    // what it measures is named, and nothing is claimed about what the server will do (enforce_new_orders may refuse)
+    expect(note).toHaveTextContent("open balance $1,250.00, limit $1,000.00");
+    expect(note).toHaveTextContent("For information only.");
+    expect(note).not.toHaveTextContent(/not blocked|can still ring/i);
     expect(screen.getByRole("button", { name: "Complete & show receipt" })).not.toBeDisabled();
   });
 

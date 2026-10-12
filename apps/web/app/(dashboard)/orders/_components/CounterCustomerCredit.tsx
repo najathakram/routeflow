@@ -43,6 +43,8 @@ function Value<T>({
 export function CounterCustomerCredit({ customerId }: { customerId: string }) {
   const { view } = useCounterCustomerCredit(customerId);
   const overdue = view.overdue.state === "ready" ? view.overdue.value : 0;
+  const limit = view.creditLimit.state === "ready" ? view.creditLimit.value : null;
+  const open = view.openBalance.state === "ready" ? view.openBalance.value : null;
 
   return (
     <div className="space-y-1" data-testid="counter-customer-credit">
@@ -101,7 +103,14 @@ export function CounterCustomerCredit({ customerId }: { customerId: string }) {
       ) : null}
       {view.overLimitBy > 0 ? (
         <p role="status" className="text-sm text-navy/80" data-testid="counter-customer-over-limit">
-          Over the credit limit by {fmt(view.overLimitBy)}. {COUNTER_CUSTOMER_OVER_LIMIT_NOTE}
+          Over credit limit by {fmt(view.overLimitBy)}
+          {open !== null && limit !== null ? (
+            <>
+              {" "}
+              (open balance {fmt(open)}, limit {fmt(limit)})
+            </>
+          ) : null}
+          . {COUNTER_CUSTOMER_OVER_LIMIT_NOTE}
         </p>
       ) : null}
       {view.loadFailed ? (

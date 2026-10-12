@@ -123,9 +123,12 @@ export function counterCustomerCreditView(
 }
 
 export const COUNTER_CUSTOMER_OVERDUE_COPY = "Overdue";
-export const COUNTER_CUSTOMER_OVERDUE_NOTE = "You can still ring this sale.";
-export const COUNTER_CUSTOMER_OVER_LIMIT_NOTE =
-  "For your information only. This sale is not blocked.";
+/**
+ * Wording that claims nothing about what the SERVER will do: the order credit gate (`credit_limit.enforce_new_orders`) may
+ * still refuse an order, and the till only shows the figures. Informational, and Complete is never disabled by the client.
+ */
+export const COUNTER_CUSTOMER_OVERDUE_NOTE = "For information only.";
+export const COUNTER_CUSTOMER_OVER_LIMIT_NOTE = "For information only.";
 export const COUNTER_CUSTOMER_NO_LIMIT_COPY = "No limit";
 export const COUNTER_CUSTOMER_LOAD_FAILED_COPY = "Couldn't load credit info.";
 export const COUNTER_CUSTOMER_DEFAULT_TERMS_COPY = "default terms";
