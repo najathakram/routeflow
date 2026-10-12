@@ -368,7 +368,12 @@ export class SellingRestrictionsService {
     if (!restrictionsApply(policy, "STAFF")) {
       // (the staff channel applies only with the switch on, so this reads "the switch is off")
       const anyRule = await db.sellingRestriction.findMany({
-        where: { tenantId, AND: [activeRuleWhere(at)] },
+        where: {
+          tenantId,
+          AND: [activeRuleWhere(at)],
+          // a run that ignores portal-only limits must not be kept busy by one existing
+          ...(options?.skipPortalOnlyRules ? { surface: { not: "BUYER_PORTAL" as const } } : {}),
+        },
         select: { id: true },
         take: 1,
       });

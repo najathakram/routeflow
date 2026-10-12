@@ -182,6 +182,22 @@ describe("SellingRestrictionsService.evaluate", () => {
     expect((await service.evaluate(T, "c1", [{ productId: "p1" }], opts)).outcome).toBe("BLOCK");
   });
 
+  it("skipPortalOnlyRules, switch off: the no-rule probe excludes portal-only rules, so one alone costs nothing", async () => {
+    enable(false);
+    prisma.sellingRestriction.findMany.mockResolvedValue([]);
+    const res = await service.evaluate(T, "c1", [{ productId: "p1" }], {
+      at: NOW,
+      channel: "BUYER_PORTAL",
+      skipPortalOnlyRules: true,
+    });
+    expect(res).toEqual({ outcome: "ALLOW", reasons: [] });
+    expect(prisma.sellingRestriction.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.sellingRestriction.findMany.mock.calls[0][0].where).toMatchObject({
+      surface: { not: "BUYER_PORTAL" },
+    });
+    expect(prisma.product.findMany).not.toHaveBeenCalled();
+  });
+
   it("switchGated: a portal-channel call follows the tenant switch (off = OFF, the rule is never read)", async () => {
     enable(false);
     prisma.sellingRestriction.findMany.mockResolvedValue([
