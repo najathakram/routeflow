@@ -106,7 +106,11 @@ import { LicenseGuardModal } from "./LicenseGuardModal";
 import { BlockedLinesModal } from "./BlockedLinesModal";
 import { parseSellingRestricted } from "../lib/selling-restricted";
 import type { BlockedLine } from "@routeflow/types";
-import { parseRegulatedAuthError, type BlockedCategory } from "../lib/api/authorizations";
+import {
+  parseRegulatedAuthError,
+  regulatedAuthErrorCopy,
+  type BlockedCategory,
+} from "../lib/api/authorizations";
 import { bumpScanOrder, nextFlash, trayRowsFrom, type ScanFlash } from "../lib/scan-tray";
 import {
   NO_PENDING_SCROLL,
@@ -1980,7 +1984,9 @@ function ProductPickView({
             setLicenseBlock(blocked);
             return;
           }
-          const msg = body?.message ?? err?.message ?? "Unable to save order.";
+          // CQ-06: a license refusal that carried no categories (no guard to open) still says what to fix.
+          const msg =
+            regulatedAuthErrorCopy(err) ?? body?.message ?? err?.message ?? "Unable to save order.";
           alertInfo("Couldn't save order", String(msg));
         },
       },

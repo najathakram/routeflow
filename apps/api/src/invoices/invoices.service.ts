@@ -39,6 +39,7 @@ import {
   remainingCapacity,
   inferredGoodsFlatRate,
   OVERPAID_EPSILON,
+  isPaidAtSale,
 } from "@routeflow/pricing";
 import { computeDepositFields } from "./deposit-fields";
 import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-read";
@@ -2904,7 +2905,8 @@ export class InvoicesService {
           customer: { select: { id: true, businessName: true } },
           payments: { orderBy: { createdAt: "desc" } },
           // Shipments lists hide the shipped date of an unmarked order (status only, no column).
-          order: { select: { status: true } },
+          // counterSale: the paid-at-sale flag below (row 401), so a till sale's list row shows no due date.
+          order: { select: { status: true, counterSale: true } },
         },
         skip,
         take: limit,
@@ -2960,6 +2962,7 @@ export class InvoicesService {
         isOverdue,
         depositAmount,
         depositOverdue,
+        paidAtSale: isPaidAtSale(inv),
       };
     });
 
@@ -2998,7 +3001,9 @@ export class InvoicesService {
             product: { select: { id: true, name: true, unit: true, unitsPerBox: true } },
             // RF-2-lite: surface the regulated category/subcategory NAME so clients can
             // label regulated lines (previously only the trackedCategoryId was returned).
-            trackedCategory: { select: { id: true, name: true, invoiceTreatment: true } },
+            trackedCategory: {
+              select: { id: true, name: true, taxType: true, invoiceTreatment: true },
+            },
             trackedSubcategory: { select: { id: true, name: true } },
           },
         },
@@ -3060,6 +3065,7 @@ export class InvoicesService {
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
       hideOriginalPrice,
+      paidAtSale: isPaidAtSale(inv), // row 401: a counter sale paid at the till shows no due date / terms
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
       // F3: the server's default PDF stage (a shipment invoice is FINAL); clients read it, never re-derive.
       pdfVariant: await resolveInvoiceVariant(this.featureConfig, inv.tenantId, inv, inv.order),
@@ -3612,6 +3618,7 @@ export class InvoicesService {
           where: CONFIRMED_PAYMENT,
           include: { creditNote: { select: { creditNoteNumber: true } } },
         },
+        order: { select: { counterSale: true } }, // row 401: paid-at-sale hides the terms
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3717,6 +3724,7 @@ export class InvoicesService {
       pdfUrl,
       attachment,
       isReminder: false,
+      hideTerms: isPaidAtSale(inv),
       hideOriginalPrice,
       // Deposit schedule (display-only): derive with the same read-time math the
       // detail endpoint uses; null when the invoice carries no deposit.

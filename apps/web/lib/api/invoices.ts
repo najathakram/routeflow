@@ -79,8 +79,15 @@ export interface InvoiceItem {
   trackedCategoryId?: string | null;
   /** The levy this line billed (a Decimal arrives as a string); 0 for an exempt customer. CQ-03 names it. */
   categoryTaxAmount?: number | string | null;
-  /** The category's tax type frozen on the line at sale time (B297). */
+  /** The category's tax type frozen on the line at sale time (B297). Null on a line billed before that migration. */
   categoryTaxType?: string | null;
+  /** The category row `GET /invoices/:id` includes: its name and type name the levy charge ("CRV deposit"). */
+  trackedCategory?: {
+    id: string;
+    name: string;
+    taxType?: string | null;
+    invoiceTreatment?: string | null;
+  } | null;
   /** Boxed split persisted server-side (unitsPerBox > 1 products). */
   boxes?: number | null;
   pieces?: number | null;

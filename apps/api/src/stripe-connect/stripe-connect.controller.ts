@@ -66,6 +66,8 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   platform_account_not_allowed:
     "That's RouteFlow's own Stripe account — sign in to your business's Stripe account and try again.",
   platform_account_check_failed: "Couldn't verify that Stripe account — try connecting again.",
+  workspace_read_only:
+    "This workspace is read-only, so a payment account can't be connected right now.",
 };
 const OAUTH_GENERIC_ERROR = "Could not connect Stripe — try again from Settings.";
 

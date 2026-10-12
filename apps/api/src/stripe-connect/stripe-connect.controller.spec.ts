@@ -4,8 +4,8 @@
  * covered in stripe-connect.service.spec.ts; this spec pins the controller's
  * OAUTH_ERROR_MESSAGES mapping — the exact, fixed, user-safe copy that
  * reaches the redirect URL for `platform_account_not_allowed` and
- * `platform_account_check_failed` (invariant 12: the public callback must
- * never leak internal exception text).
+ * `platform_account_check_failed`, plus `workspace_read_only` (invariant 12:
+ * the public callback must never leak internal exception text).
  *
  * Mock pattern (mockRes) mirrors payment-requests/connect-webhook.controller.spec.ts.
  */
@@ -61,6 +61,19 @@ describe("StripeConnectCallbackController", () => {
     expect(redirected.searchParams.get("stripe")).toBe("error");
     expect(redirected.searchParams.get("reason")).toBe(
       "Couldn't verify that Stripe account — try connecting again.",
+    );
+  });
+
+  it("maps workspace_read_only to its fixed, amount-free message", async () => {
+    mockConnect.completeOAuth.mockRejectedValue(new BadRequestException("workspace_read_only"));
+    const res = mockRes();
+
+    await controller.callback("code", "state", undefined, res);
+
+    const redirected = new URL(res.redirectedTo!);
+    expect(redirected.searchParams.get("stripe")).toBe("error");
+    expect(redirected.searchParams.get("reason")).toBe(
+      "This workspace is read-only, so a payment account can't be connected right now.",
     );
   });
 });
