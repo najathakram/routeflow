@@ -175,8 +175,12 @@ export class TenantStatusGuard implements CanActivate {
         throw new ForbiddenException({
           code: API_ERROR_CODES.READ_ONLY,
           reason: readOnlyReason,
+          // F6: only a workspace admin can subscribe; anyone else is told to ask theirs (clients still map `reason`
+          // to the shared fixed copy and never render this text).
           message:
-            "Your workspace is read-only. Subscribe to restore full access — exports still work.",
+            role === "TENANT_ADMIN" || role === "SUPER_ADMIN"
+              ? "Your workspace is read-only. Subscribe to restore full access — exports still work."
+              : "Your workspace is read-only. Ask your admin to restore access — exports still work.",
         });
       }
     }
