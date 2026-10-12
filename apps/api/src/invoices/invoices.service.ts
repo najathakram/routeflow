@@ -43,7 +43,7 @@ import {
 import { computeDepositFields } from "./deposit-fields";
 import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-read";
 import { withComponentViews } from "../orders/component-view";
-import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
+import { orderLineShape, orderLineUnchanged, SALE_NEUTRAL_COLUMNS } from "./order-backsync-lines";
 import {
   buildEditedLines,
   loadEditCatalog,
@@ -2389,12 +2389,7 @@ export class InvoicesService {
         // An order line that would be rewritten to exactly what it holds is not written at all.
         if (!orderLineUnchanged(existing, shape, agg)) {
           // invoicedQty / levy-only normalisation is bookkeeping, not a change to the sale (row 372 MF2)
-          const sameSale = {
-            ...existing,
-            invoicedQty: shape.qty,
-            categoryTaxAmount: lineCategoryTax,
-          };
-          if (!orderLineUnchanged(sameSale, shape, agg)) touched.lines = true;
+          if (!orderLineUnchanged(existing, shape, agg, SALE_NEUTRAL_COLUMNS)) touched.lines = true;
           await db.orderItem.update({
             where: { id: existing.id },
             data: {
