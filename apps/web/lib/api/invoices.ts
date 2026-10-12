@@ -191,6 +191,8 @@ export interface Invoice {
     /** the hand-over moment (the stamp line's time) */
     deliveredAt?: string | null;
     soldBy?: HandOverSoldBy | null;
+    /** True for a counter (till) sale. Lets the invoice page leave out terms / due date on a sale paid at the till. */
+    counterSale?: boolean | null;
   };
   /** The server's default PDF stage (detail endpoint): a shipment invoice is "final" before delivery. */
   pdfVariant?: InvoicePdfVariant;
