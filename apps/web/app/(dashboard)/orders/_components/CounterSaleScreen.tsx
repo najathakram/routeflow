@@ -75,6 +75,7 @@ import { CounterCustomerCredit } from "./CounterCustomerCredit";
 import { CounterGateOffline } from "./CounterGateOffline";
 import { CounterCustomerMatches } from "./CounterCustomerMatches";
 import { CounterLastSale, useLastSaleNote } from "./CounterLastSale";
+import { useCounterLineUndo } from "./useCounterLineUndo";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
@@ -99,7 +100,6 @@ import {
   setLineNote,
   takeLine,
   toSaleItem,
-  type RemovedLine,
 } from "./counter-sale-line-edit";
 import { useCounterSaleScan } from "./useCounterSaleScan";
 import { useCounterScanFocus } from "./useCounterScanFocus";
@@ -120,9 +120,6 @@ interface PickedCustomer {
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
-
-/** How long the "Line removed. Undo" bar stays. */
-const UNDO_MS = 5000;
 
 export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
 
@@ -515,58 +512,16 @@ export function CounterSaleScreen() {
     refocus();
   };
 
-  // POS-3: a removed line is held for 5 s in ONE slot (a newer removal makes the older one final). Undo puts it back at
-  // its index, or merges it into the same product if that was re-scanned meanwhile. Pay uses `lines`, which never has it.
-  const [undo, setUndo] = React.useState<RemovedLine | null>(null);
-  const undoRef = React.useRef<RemovedLine | null>(null);
-  undoRef.current = undo;
-  const undoTimerRef = React.useRef<number | null>(null);
-  // The countdown resumes only when BOTH the pointer and the keyboard focus have left the bar.
-  const undoHoverRef = React.useRef(false);
-  const undoFocusRef = React.useRef(false);
-  const dropUndo = React.useCallback(() => {
-    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
-    undoTimerRef.current = null;
-    undoLeftRef.current = UNDO_MS;
-    const hadFocus = undoFocusRef.current;
-    undoFocusRef.current = false; // the focused Undo button is gone with the line; the pointer may still be over the bar
-    setUndo(null);
-    if (hadFocus) refocus(); // the focused Undo chip vanished: the cursor goes back to the scan field, not <body>
-  }, [refocus]);
-  // The 5 s window PAUSES while the bar is hovered or focused and resumes with what was left.
-  const undoLeftRef = React.useRef(UNDO_MS);
-  const undoStartedRef = React.useRef(0);
-  const armUndo = (ms: number) => {
-    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
-    undoLeftRef.current = ms;
-    if (undoHoverRef.current || undoFocusRef.current) return; // held: the leave/blur handler starts the countdown
-    undoStartedRef.current = Date.now();
-    undoTimerRef.current = window.setTimeout(dropUndo, ms);
-  };
-  const pauseUndo = () => {
-    if (undoTimerRef.current === null) return;
-    window.clearTimeout(undoTimerRef.current);
-    undoTimerRef.current = null;
-    undoLeftRef.current = Math.max(0, undoLeftRef.current - (Date.now() - undoStartedRef.current));
-  };
-  const resumeUndo = () => {
-    if (!undoRef.current || undoTimerRef.current !== null) return;
-    armUndo(undoLeftRef.current);
-  };
-  React.useEffect(
-    () => () => {
-      if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
-    },
-    [],
-  );
+  // POS-3: a removed line is held (LINE_UNDO_MS, CQ-27) in ONE slot (a newer removal makes the older one final). Undo puts it
+  // back at its index, or merges it into the same product if that was re-scanned meanwhile. Pay uses `lines`, which never has it.
+  const { undo, hold: holdRemoved, drop: dropUndo, bar: undoBar } = useCounterLineUndo(refocus);
 
   const removeLine = (tempId: string) => {
     if (lineLocked || saleInFlight()) return;
     const taken = takeLine(lines, tempId);
     if (!taken) return;
     setLines(taken.lines);
-    setUndo(taken.removed);
-    armUndo(UNDO_MS);
+    holdRemoved(taken.removed);
     refocus();
   };
 
@@ -1210,23 +1165,7 @@ export function CounterSaleScreen() {
               undo &&
                 "flex items-center justify-between gap-2 rounded border border-navy/20 bg-navy/5 p-2 text-sm",
             )}
-            onMouseEnter={() => {
-              undoHoverRef.current = true;
-              pauseUndo();
-            }}
-            onMouseLeave={() => {
-              undoHoverRef.current = false;
-              if (!undoFocusRef.current) resumeUndo();
-            }}
-            onFocus={() => {
-              undoFocusRef.current = true;
-              pauseUndo();
-            }}
-            onBlur={(e) => {
-              if (e.currentTarget.contains(e.relatedTarget as Node | null)) return; // focus moved within the bar
-              undoFocusRef.current = false;
-              if (!undoHoverRef.current) resumeUndo();
-            }}
+            {...undoBar}
           >
             {undo ? (
               <>
