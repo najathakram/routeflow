@@ -312,6 +312,24 @@ export class StripeService implements OnModuleInit {
     return rows.sort((a, b) => (a?.created ?? 0) - (b?.created ?? 0));
   }
 
+  /**
+   * SA-777: a customer's OPEN invoices, capped at `limit` (the Billing card sums what is owed, it never pages). The
+   * customer id is the TENANT ROW's, never a request value. `request` caps this one call like the portal route does.
+   */
+  async listOpenCustomerInvoices(
+    customerId: string,
+    limit = 10,
+    request?: { timeoutMs: number; maxNetworkRetries: number },
+  ): Promise<any[]> {
+    const page = await this.client.invoices.list(
+      { customer: customerId, status: "open", limit },
+      request
+        ? { timeout: request.timeoutMs, maxNetworkRetries: request.maxNetworkRetries }
+        : undefined,
+    );
+    return Array.isArray(page?.data) ? page.data : [];
+  }
+
   /** Deletes a DRAFT invoice (only a draft can be deleted; an open one is voided). */
   async deleteDraftInvoice(invoiceId: string): Promise<any> {
     return this.client.invoices.del(invoiceId);
