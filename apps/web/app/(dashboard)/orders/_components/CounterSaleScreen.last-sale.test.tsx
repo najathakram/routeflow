@@ -84,6 +84,30 @@ describe("CounterSaleScreen: the finished sale's order number (CQ-17)", () => {
     expect(screen.queryByTestId("counter-last-sale")).toBeNull();
   });
 
+  // At 390 the note sat above the viewport (the scroll container was left scrolled at the Complete buttons).
+  it("brings the note into view when it appears (nearest, so the page moves no more than needed)", async () => {
+    const scrollIntoView = jest.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollIntoView;
+    try {
+      renderWithProviders(<CounterSaleScreen />);
+      await scan("COLA");
+      fireEvent.click(screen.getByRole("button", { name: "$20" }));
+      scrollIntoView.mockClear(); // the scan field's own focus handling may call it too
+      fireEvent.click(screen.getByRole("button", { name: "Complete & next sale" }));
+      const note = await screen.findByTestId("counter-last-sale");
+      await waitFor(() => {
+        const calls = scrollIntoView.mock.calls.map((c, i) => ({
+          arg: c[0],
+          el: scrollIntoView.mock.contexts[i],
+        }));
+        expect(calls).toContainEqual({ arg: { block: "nearest" }, el: note });
+      });
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it("Complete & show receipt shows the receipt, not the note", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("COLA");

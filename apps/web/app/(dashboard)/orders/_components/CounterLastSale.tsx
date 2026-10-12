@@ -16,8 +16,15 @@ export function useLastSaleNote(lineCount: number) {
 }
 
 export function CounterLastSale({ orderNumber }: { orderNumber: string }) {
+  const ref = React.useRef<HTMLParagraphElement>(null);
+  // At 390 the sale screen sits inside a scroll container the clerk had scrolled down to the Complete buttons, so the fresh
+  // sale's note (which is above the cart) rendered above the viewport. Bring it into view, moving the page no more than needed.
+  React.useEffect(() => {
+    ref.current?.scrollIntoView?.({ block: "nearest" });
+  }, [orderNumber]);
   return (
     <p
+      ref={ref}
       role="status"
       className="rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900"
       data-testid="counter-last-sale"
