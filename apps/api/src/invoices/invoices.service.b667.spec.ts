@@ -306,4 +306,76 @@ describe("InvoicesService — B667 round 5", () => {
       categoryTaxAmount: 1.5,
     });
   });
+
+  it("recomputeOrderFromInvoices: invoice lines of one product billed under DIFFERENT trios become separate order lines", async () => {
+    const l1 = { id: "l1", productId: "p1", status: "PENDING", qty: 4, invoicedQty: 0 };
+    prisma.order.findUnique.mockResolvedValue({
+      id: "order1",
+      status: "PENDING",
+      subtotal: 70,
+      tax: 0,
+      total: 70,
+      shippingFee: 0,
+      lineItems: [l1],
+    });
+    const base = {
+      orderItemId: null,
+      productId: "p9",
+      categoryTaxAmount: 0,
+      promoFreeUnits: 0,
+      unitPrice: 10,
+    };
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv1",
+        shippingFee: 0,
+        items: [
+          {
+            id: "ii-l1",
+            orderItemId: "l1",
+            productId: "p1",
+            qty: 4,
+            subtotal: 40,
+            categoryTaxAmount: 0,
+            promoFreeUnits: 0,
+            unitPrice: 10,
+          },
+          {
+            ...base,
+            id: "a",
+            qty: 2,
+            subtotal: 20,
+            trackedCategoryId: "cat-1",
+            categoryTaxType: "EXCISE_PER_UNIT",
+            categoryTaxRate: "0.0500",
+            categoryPriceIncludesTax: false,
+          },
+          {
+            ...base,
+            id: "b",
+            qty: 1,
+            subtotal: 10,
+            trackedCategoryId: "cat-1",
+            categoryTaxType: "EXCISE_PER_UNIT",
+            categoryTaxRate: "0.0800",
+            categoryPriceIncludesTax: false,
+          },
+        ],
+      },
+    ]);
+    prisma.deliveryMutation.findMany.mockResolvedValue([]);
+    prisma.orderItem.update.mockResolvedValue({});
+    prisma.orderItem.create.mockResolvedValue({});
+    prisma.order.update.mockResolvedValue({});
+
+    await service.recomputeOrderFromInvoices("order1", prisma);
+
+    const made = prisma.orderItem.create.mock.calls
+      .map((c: any) => c[0].data)
+      .filter((d: any) => d.productId === "p9");
+    expect(made.map((d: any) => [d.qty, d.categoryTaxRate]).sort()).toEqual([
+      [1, 0.08],
+      [2, 0.05],
+    ]);
+  });
 });

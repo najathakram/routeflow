@@ -54,7 +54,11 @@ describe("one pairing helper for the buyer, staff and driver edits (row 373b)", 
         const p = path.join(dir, e.name);
         if (e.isDirectory()) walk(p);
         else if (/\.ts$/.test(e.name) && !/\.(spec|test)\.ts$/.test(e.name)) {
-          if (/\borderItem\.(create|createMany)\(/.test(fs.readFileSync(p, "utf8")))
+          if (
+            /\borderItem\.(create|createMany|upsert)\(|lineItems:\s*\{\s*create/.test(
+              fs.readFileSync(p, "utf8"),
+            )
+          )
             writers.push(path.relative(path.resolve(__dirname, ".."), p));
         }
       }
@@ -62,8 +66,12 @@ describe("one pairing helper for the buyer, staff and driver edits (row 373b)", 
     walk(path.resolve(__dirname, ".."));
     // A NEW file that writes OrderItems must be classified here (and carry a paired line's snapshot through
     // pairEditLines' `sourceLineId` / `carriedLine`) before it can land.
+    // order-templates: an order made FROM a template (every line is a new sale, nothing to pair with);
+    // bookkeeping: a nested `lineItems: { create }` of another model, listed so a change there is seen.
     expect(writers.sort()).toEqual([
+      "bookkeeping/bookkeeping.service.ts",
       "invoices/invoices.service.ts",
+      "order-templates/order-templates.service.ts",
       "orders/orders.service.ts",
       "orders/unit-line-edit.ts",
     ]);

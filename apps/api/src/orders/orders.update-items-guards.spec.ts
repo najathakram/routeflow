@@ -974,8 +974,8 @@ describe("OrdersService — F06 guards (TP2)", () => {
               { productId: "prod-promo", qty: 5, unitPrice: 5 },
             ],
             replaceAll: true,
-          },
-          operatorPayload,
+          } as never,
+          operatorPayload as never,
         ),
       ).rejects.toMatchObject({ response: { code: "ORDER_EDIT_NEEDS_LINE_IDS" } });
       expect(prisma.orderItem.create).not.toHaveBeenCalled();

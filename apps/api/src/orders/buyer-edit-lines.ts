@@ -176,17 +176,19 @@ export function resolveBuyerEditLines(args: ResolveBuyerEditArgs): BuyerEditEntr
     }
     const upb = upbByProduct.get(productId) ?? 0;
     // Row 355: the write path reads the entry like its OWN line (an explicit split is pieces too).
-    // A DRIVER's entry is read by the product-wide gate (piecesDenominated ignores its own boxes/pieces).
+    // The unit `qty` is written in is decided exactly as the write path decides it (piecesDenominated for the
+    // buyer and driver, replace-all-line-build for staff). A PAIRED entry reads like its own line: a box-split
+    // line => pieces. A buyer's entry with ANY explicit split is pieces too; a staff entry only with a real
+    // (non-zero) split, since a zero split is "not using box entry" and its `qty` stands.
+    const explicitSplit =
+      args.role === "BUYER" ? isBoxSplit(it) : (it.boxes ?? 0) > 0 || (it.pieces ?? 0) > 0;
     const payloadInPieces =
-      upb > 1 &&
-      (args.role === "DRIVER"
-        ? live.some((l) => l.productId === productId && isBoxSplit(l))
-        : isBoxSplit(it) || isBoxSplit(own));
+      upb > 1 && (isBoxSplit(own) || (args.role !== "DRIVER" && explicitSplit));
     const have = storedQtyInPayloadUnits(own, payloadInPieces, upb);
-    // `want` in the unit the write path uses: an explicit boxes/pieces split is the authority (the SAME normaliser
-    // as the write), never a stale `qty` typed beside it.
+    // `want`: staff writes read a real boxes/pieces split through normalizeBoxesPieces (the write's own
+    // normaliser); the buyer and driver writes always read `qty`.
     const want =
-      payloadInPieces && args.role !== "DRIVER" && isBoxSplit(it)
+      args.role === "STAFF" && payloadInPieces && explicitSplit
         ? normalizeBoxesPieces({
             qty: it.qty,
             boxes: it.boxes,
@@ -202,21 +204,13 @@ export function resolveBuyerEditLines(args: ResolveBuyerEditArgs): BuyerEditEntr
         sourceLineId: own.id,
         carriedLine,
       });
-      // a sale made today: its own live line. It keeps the stored line's override reason when the entry echoes
-      // that line's price, so the price guard that accepted the carried half does not 400 the added half.
-      const echoesStored =
-        rest.overrideReason == null &&
-        own.overrideReason &&
-        rest.unitPrice !== undefined &&
-        Number(rest.unitPrice) === Number(own.unitPrice);
-      push(
-        withQty(
-          echoesStored ? { ...rest, overrideReason: own.overrideReason } : rest,
-          want - have,
-          upb,
-          payloadInPieces,
-        ),
-      );
+      // a sale made today: its own live line, priced by today's rules. The stored line's price and override
+      // reason belong to THAT line (an override is never extended to quantity added later), so the added half
+      // carries neither: it prices at the resolved tier / promo price with no override to justify.
+      const { unitPrice: _price, overrideReason: _reason, ...fresh } = rest;
+      void _price;
+      void _reason;
+      push(withQty(fresh, want - have, upb, payloadInPieces));
       continue;
     }
     push({ ...rest, sourceLineId: own.id, carriedLine });
@@ -426,8 +420,6 @@ export function pairEditLines<T extends BuyerEditEntry & { id?: string }>(
     const orig = originals[i];
     if (r.sourceLineId !== undefined) orig.sourceLineId = r.sourceLineId;
     if (r.carriedLine !== undefined) orig.carriedLine = r.carriedLine;
-    if (r.overrideReason !== undefined && r.overrideReason !== orig.overrideReason)
-      orig.overrideReason = r.overrideReason;
     if (r.qty !== orig.qty && r.qty !== undefined) orig.qty = r.qty;
     if ((r.boxes ?? null) !== (orig.boxes ?? null)) orig.boxes = r.boxes;
     if ((r.pieces ?? null) !== (orig.pieces ?? null)) orig.pieces = r.pieces;

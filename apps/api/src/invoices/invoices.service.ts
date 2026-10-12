@@ -2308,7 +2308,16 @@ export class InvoicesService {
           freeformSkipped.push(it.id);
           continue;
         }
-        const key = line ? `line:${line.id}` : `product:${it.productId}`;
+        // A new order line per (product, category, subcategory, trio): invoice lines of one product that were
+        // billed under different snapshots must not be summed under the LAST one's (row 373 review).
+        const snap = [
+          it.trackedCategoryId ?? "",
+          it.trackedSubcategoryId ?? "",
+          it.categoryTaxType ?? "",
+          it.categoryTaxRate != null ? Number(it.categoryTaxRate) : "",
+          it.categoryPriceIncludesTax ?? "",
+        ].join("|");
+        const key = line ? `line:${line.id}` : `product:${it.productId}|${snap}`;
         const prev = byTarget.get(key) ?? {
           line,
           productId: it.productId ?? null,

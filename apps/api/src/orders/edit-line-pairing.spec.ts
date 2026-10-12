@@ -133,14 +133,44 @@ describe("pairEditLines (row 373b)", () => {
     expect(out[1].qty).toBe(3);
   });
 
-  it("the split's added half keeps the stored line's override reason when the entry echoes its price", () => {
+  it("the split's added half is priced by today's rules: it carries neither the stored price nor its override reason", () => {
     const line = stored("L1", { unitPrice: 7, overrideReason: "agreed price" });
-    const out = pair([{ productId: "p1", id: "L1", qty: 20, unitPrice: 7 }], [line], "0.0800");
+    const out = pair(
+      [{ productId: "p1", id: "L1", qty: 20, unitPrice: 7, overrideReason: "agreed price" }],
+      [line],
+      "0.0800",
+    );
     expect(out).toHaveLength(2);
-    expect(out[1].overrideReason).toBe("agreed price");
-    // a DIFFERENT price is a new decision: the reason is not borrowed
-    const other = pair([{ productId: "p1", id: "L1", qty: 20, unitPrice: 9 }], [line], "0.0800");
-    expect(other[1].overrideReason).toBeUndefined();
+    expect(out[0].unitPrice).toBe(7); // the carried half keeps what the client sent
+    expect(out[1].unitPrice).toBeUndefined();
+    expect(out[1].overrideReason).toBeUndefined();
+  });
+
+  it("DRIVER with a pack line AND a box-split line of one product: a paired pack entry reads as its OWN line (selling units)", () => {
+    const pack = stored("A", { qty: 2 }); // pack line: 2 selling units = 12 pieces
+    const boxSplit = stored("B", { boxes: 1, pieces: 0, qty: 6 });
+    const out = pairBoxed(
+      [{ productId: "p1", id: "A", qty: 3 }],
+      [pack, boxSplit],
+      "0.0800",
+      "DRIVER",
+    );
+    // 3 packs wanted vs 2 stored: one pack is added at today's live trio, in selling units
+    expect(out.map((o) => [o.qty, o.sourceLineId ?? null])).toEqual([
+      [2, "A"],
+      [1, null],
+    ]);
+  });
+
+  it("a ZERO boxes/pieces split is not a split: staff `qty` stands and the added units still split", () => {
+    const line = stored("L1", { boxes: 2, pieces: 0, qty: 12 });
+    const out = pairBoxed(
+      [{ productId: "p1", id: "L1", qty: 20, boxes: 0, pieces: 0 }],
+      [line],
+      "0.0800",
+      "STAFF",
+    );
+    expect(out.map((o) => o.qty)).toEqual([12, 8]);
   });
 
   it("a paired entry carries its stored line's category, trio and createdAt for builders that cannot read sourceLineId", () => {
