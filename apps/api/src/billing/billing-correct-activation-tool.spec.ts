@@ -133,8 +133,13 @@ describe("the files exist and the script is safe by construction", () => {
     expect(read(SCRIPT) + read(CORE)).toMatch(/assertWritableTenant\(|assertSafeTarget\(/);
   });
 
-  it("RED: the catch-up claim refusal is the shared one (claimRefusal / the catchupState check), not a copy", () => {
-    expect(read(SCRIPT) + read(CORE)).toMatch(/claimRefusal|catchupState/);
+  it("N11: the tool REFUSES while a claim is held - the source re-reads catchupState under the Tenant lock and throws before any INSERT", () => {
+    const src = read(SCRIPT);
+    const refusal = src.search(/if \(held\) throw refuse\(/);
+    const insert = src.search(/INSERT\s+INTO\s+"?AuditLog/i);
+    expect(refusal).toBeGreaterThan(0);
+    expect(insert).toBeGreaterThan(refusal);
+    expect(src.slice(0, refusal)).toMatch(/FOR UPDATE/); // the lock is taken before the claim is read
   });
 });
 
@@ -401,5 +406,45 @@ describe("RED (SA-733r12): --restore-coverage <markerId> has the same gates as -
     expect(text).toMatch(/before/i);
     expect(text).toMatch(/after/i);
     expect(text).not.toMatch(/qa-acme|slug/i);
+  });
+});
+
+describe("N3: the preview says how it priced the line", () => {
+  it("prints 'price $X (override|snapshot), add-ons excluded - preview only; the catch-up dry-run is the authority'", () => {
+    const core = loadCore();
+    const t = core
+      .formatDryRun(report({ pricing: { cents: 10000, source: "override" } }))
+      .join("\n");
+    expect(t).toMatch(
+      /price \$100\.00 \(override\), add-ons excluded - preview only; the catch-up dry-run is the authority/,
+    );
+    const u = core
+      .formatDryRun(report({ pricing: { cents: 24900, source: "snapshot" } }))
+      .join("\n");
+    expect(u).toMatch(/price \$249\.00 \(snapshot\)/);
+    const none = core.formatDryRun(report({ pricing: null })).join("\n");
+    expect(none).toMatch(/price n\/a/);
+  });
+});
+
+describe("N4: the tool asserts the compiled marker semantics version after loading dist", () => {
+  it("catchup-markers.ts exports CATCHUP_MARKERS_VERSION and the core expects the same number", () => {
+    const ts = read(path.resolve(__dirname, "catchup-markers.ts"));
+    const m = ts.match(/export const CATCHUP_MARKERS_VERSION = (\d+)/);
+    expect(m).not.toBeNull();
+    expect(loadCore().EXPECTED_MARKERS_VERSION).toBe(Number(m![1]));
+  });
+
+  it("assertMarkersVersion passes on a match and fails loudly on a mismatch or a missing export", () => {
+    const core = loadCore();
+    const v = core.EXPECTED_MARKERS_VERSION;
+    expect(() => core.assertMarkersVersion({ CATCHUP_MARKERS_VERSION: v })).not.toThrow();
+    expect(() => core.assertMarkersVersion({ CATCHUP_MARKERS_VERSION: v + 1 })).toThrow(/version/i);
+    expect(() => core.assertMarkersVersion({})).toThrow(/version/i);
+    expect(() => core.assertMarkersVersion(null)).toThrow(/version/i);
+  });
+
+  it("the script calls it right after loading the compiled module", () => {
+    expect(read(SCRIPT)).toMatch(/assertMarkersVersion\(/);
   });
 });

@@ -67,11 +67,14 @@ function askLine(q) {
 function loadPlanner() {
   const dist = resolve(HERE, "../dist/billing");
   try {
-    return {
+    const loaded = {
       plan: require(resolve(dist, "catchup-plan.js")),
       markers: require(resolve(dist, "catchup-markers.js")),
     };
+    core.assertMarkersVersion(loaded.markers); // a stale dist fails loudly (N4)
+    return loaded;
   } catch (e) {
+    if (/marker reader has version/.test(String(e && e.message))) throw e;
     throw new Error(
       `the compiled planner is missing (${e.code ?? e.message}): run "npm run build -w apps/api" first`,
     );
@@ -196,6 +199,13 @@ function buildReport(planner, data, args, now) {
     planKey: data.sub.planKey,
     stripeSubId: data.sub.stripeSubId,
     claimState: data.sub.catchupState ?? null,
+    // how the line was priced (N3): the override first, else the stored snapshot, else nothing to price with
+    pricing:
+      data.sub.priceOverrideMonthly != null
+        ? { cents: Math.round(Number(data.sub.priceOverrideMonthly) * 100), source: "override" }
+        : data.sub.basePriceSnapshot != null
+          ? { cents: Math.round(Number(data.sub.basePriceSnapshot) * 100), source: "snapshot" }
+          : null,
     markers: existingMarkers.map((r) => ({
       id: r.id,
       action: r.action,

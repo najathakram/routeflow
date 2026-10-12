@@ -167,6 +167,21 @@ function formatState(label, s) {
   return lines;
 }
 
+/**
+ * The marker semantics version this tool expects from the COMPILED apps/api/dist/billing/catchup-markers.js
+ * (CATCHUP_MARKERS_VERSION in catchup-markers.ts; a spec pins that the two numbers agree). A stale dist fails loudly.
+ */
+const EXPECTED_MARKERS_VERSION = 1;
+
+function assertMarkersVersion(mod) {
+  const got = mod && mod.CATCHUP_MARKERS_VERSION;
+  if (got !== EXPECTED_MARKERS_VERSION) {
+    throw new Error(
+      `the compiled marker reader has version ${got === undefined ? "(missing)" : got}, this tool expects version ${EXPECTED_MARKERS_VERSION}: rebuild the API ("npm run build -w apps/api")`,
+    );
+  }
+}
+
 /** The dry-run block of one tenant. Ids and numbers only: never a name. */
 function formatDryRun(r) {
   const lines = [];
@@ -179,6 +194,11 @@ function formatDryRun(r) {
       `    ${m.id}  ${m.action}  window ${day(m.periodStart)} -> ${day(m.periodEnd)}  ${markerState(m)}`,
     );
   }
+  lines.push(
+    r.pricing
+      ? `  price ${money(r.pricing.cents)} (${r.pricing.source}), add-ons excluded - preview only; the catch-up dry-run is the authority`
+      : "  price n/a (no override or snapshot on the subscription row), add-ons excluded - preview only; the catch-up dry-run is the authority",
+  );
   lines.push(...formatState("BEFORE this change", r.before));
   lines.push(...formatState("AFTER this change", r.after));
   lines.push(
@@ -296,6 +316,8 @@ async function applyGate(p) {
 
 module.exports = {
   ACTIONS,
+  EXPECTED_MARKERS_VERSION,
+  assertMarkersVersion,
   parseArgs,
   validateBillingStart,
   formatDryRun,

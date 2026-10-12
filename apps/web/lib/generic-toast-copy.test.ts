@@ -114,6 +114,13 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(
       genericToastCopy(err(409, { code: API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP })),
     ).toMatch(/invoiced directly/);
+    // CATCHUP_MANUAL_PERIOD_AHEAD now means only "a manual activation recorded without a paid period"
+    expect(
+      genericToastCopy(err(409, { code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD })),
+    ).toMatch(/manual activation recorded without a paid period/);
+    expect(
+      genericToastCopy(err(409, { code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD })),
+    ).not.toMatch(/part-way/);
   });
 
   it("SA-733r7: the dunning refusals show fixed copy, never the server message", () => {
