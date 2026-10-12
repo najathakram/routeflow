@@ -19,6 +19,7 @@ import { fmtCalendarDate } from "../../../lib/format-date";
 import { overpaidText, revisedBadgeText } from "../../../lib/invoice-revision";
 import { invoiceShowsTerms } from "../../../lib/invoice-sale-terms";
 import { invoiceLineQtyText } from "@routeflow/pricing";
+import { buyerInvoiceTotalsRows, totalsRowText } from "../../../lib/buyer-invoice-totals";
 import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../lib/invoice-line-display";
 
 // buyer.ts's BuyerInvoiceItem doesn't declare `msrp` yet even though the
@@ -83,6 +84,7 @@ export default function CustomerInvoiceDetailScreen() {
 
   const p = invoicePill(invoice.status, invoice.isOverdue);
   const balanceDue = Number(invoice.balanceDue ?? invoice.amountDue ?? 0);
+  const totalsRows = buyerInvoiceTotalsRows(invoice); // server figures, no hard-coded tax name or rate
   const paidAmount = Number(invoice.paidAmount ?? invoice.amountPaid ?? 0);
   // B421: confirmed but non-cash — a credit note or advance applied to this
   // invoice reduces balanceDue but must never render as "Paid".
@@ -156,10 +158,13 @@ export default function CustomerInvoiceDetailScreen() {
             </Pill>
           </View>
 
-          {invoice.subtotal != null && invoice.tax != null ? (
+          {totalsRows.length > 0 ? (
             <View style={{ marginTop: 4, gap: 2 }}>
-              <Text style={styles.totalLine}>Subtotal: ${Number(invoice.subtotal).toFixed(2)}</Text>
-              <Text style={styles.totalLine}>GST (10%): ${Number(invoice.tax).toFixed(2)}</Text>
+              {totalsRows.map((r) => (
+                <Text key={r.key} style={styles.totalLine}>
+                  {totalsRowText(r)}
+                </Text>
+              ))}
             </View>
           ) : null}
 

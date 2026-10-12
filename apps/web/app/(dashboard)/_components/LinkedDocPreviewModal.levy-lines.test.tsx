@@ -98,6 +98,33 @@ describe("InvoicePreviewModal", () => {
 });
 
 describe("OrderPreviewModal", () => {
+  it("a cancelled order still names its levy (the header kept it) instead of an Adjustment", () => {
+    order = {
+      id: "o-3",
+      orderNumber: "ORD-3",
+      status: "CANCELLED",
+      subtotal: 31.48,
+      tax: 2.6,
+      total: 36.88,
+      invoices: [],
+      lineItems: [
+        {
+          id: "l1",
+          name: "Soda",
+          qty: 4,
+          unitPrice: 7.87,
+          subtotal: 31.48,
+          status: "CANCELLED",
+          trackedCategoryId: "cat-crv",
+          categoryTaxAmount: "2.80",
+        },
+      ],
+    };
+    renderWithProviders(<OrderPreviewModal open onClose={() => undefined} orderId="o-3" />);
+    expect(row("CRV deposit")).toHaveTextContent("$2.80");
+    expect(screen.queryByText("Adjustment")).toBeNull();
+  });
+
   it("shows the order's levy as a named row so Subtotal + Tax + charges = Order total", () => {
     order = {
       id: "o-1",
@@ -124,5 +151,26 @@ describe("OrderPreviewModal", () => {
     expect(row("Tax")).toHaveTextContent("$2.60");
     expect(row("CRV deposit")).toHaveTextContent("$2.80");
     expect(row("Order total")).toHaveTextContent("$36.88");
+  });
+
+  it("shows the order's Discount and Shipping rows so the parts add up to the Order total", () => {
+    order = {
+      id: "o-2",
+      orderNumber: "ORD-2",
+      status: "PENDING",
+      subtotal: 40,
+      tax: 3.3,
+      discountAmount: 5,
+      shippingFee: "4.00",
+      total: 42.3,
+      invoices: [],
+      lineItems: [
+        { id: "l1", name: "Water", qty: 4, unitPrice: 10, subtotal: 40, status: "PENDING" },
+      ],
+    };
+    renderWithProviders(<OrderPreviewModal open onClose={() => undefined} orderId="o-2" />);
+    expect(row("Discount")).toHaveTextContent("-$5.00");
+    expect(row("Shipping")).toHaveTextContent("$4.00");
+    expect(row("Order total")).toHaveTextContent("$42.30");
   });
 });

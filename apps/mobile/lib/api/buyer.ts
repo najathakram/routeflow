@@ -88,7 +88,13 @@ export interface BuyerInvoice {
   issueDate?: string;
   dueDate?: string;
   subtotal?: number;
-  tax?: number;
+  /** The stored header: the regular tax PLUS the regulated levy. Show `regularTaxAmount` and `chargeLines`. */
+  taxAmount?: number | string;
+  /** The regular tax alone, and one named charge per regulated category (server-computed; absent on an older server). */
+  regularTaxAmount?: number;
+  chargeLines?: Array<{ key: string; label: string; amount: number }>;
+  discount?: number | string;
+  shippingFee?: number | string;
   total: number;
   amountPaid?: number;
   paidAmount?: number;
