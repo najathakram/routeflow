@@ -2547,7 +2547,7 @@ export class BillingService {
       `Payment failed for tenant ${sub.tenantId} (${sub.tenant.slug}). Grace period: ${PAYMENT_GRACE_DAYS} days.`,
     );
 
-    // SA r-note 5 A1: in off/dark this is the ONLY tenant email (master's #2440, one per real payment_failed: dark
+    // SA r-note 5 A1: in off/dark this is the ONLY tenant email (master's #2440, once per invoice per PAYMENT_FAILED_EMAIL_REDUPE_DAYS: dark
     // is silent to tenants); the dunning milestone series replaces it in enforced. #2476 / SA-472: the increment
     // above IS the event's effect, so everything after it is best-effort and never throws - a throw would record
     // "error:" and make a redelivery re-run the increment.

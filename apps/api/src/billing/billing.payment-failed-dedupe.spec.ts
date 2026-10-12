@@ -122,7 +122,8 @@ describe("row 346: the #2440 failed-payment e-mail is deduped per invoice", () =
       entityId: "in_1",
     });
     expect(where.status.in).not.toContain("FAILED");
-    expect(where.status.in).toContain("SENT");
+    // only a real send suppresses: FAILED, WOULD_SEND and QUEUED (written before a handoff) never do
+    expect(where.status.in).toEqual(["SENT"]);
     const ageMs = Date.now() - where.createdAt.gte.getTime();
     expect(Math.abs(ageMs - PAYMENT_FAILED_EMAIL_REDUPE_DAYS * DAY_MS)).toBeLessThan(60_000);
   });

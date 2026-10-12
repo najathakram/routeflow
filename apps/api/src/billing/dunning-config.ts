@@ -59,20 +59,16 @@ export function billingPauseMode(
  * admin again. 7 days = the dunning ladder's span (`DUNNING_PAUSE_HOURS`): one reminder per invoice per week, so an
  * invoice still unpaid after the whole retry window gets one more nudge instead of silence.
  */
-export const PAYMENT_FAILED_EMAIL_REDUPE_DAYS = 7;
+export const PAYMENT_FAILED_EMAIL_REDUPE_DAYS = DUNNING_PAUSE_HOURS / 24;
 /** The `EmailDelivery.kind` / `entityType` the failed-payment email is recorded under (entityId = the Stripe invoice id). */
 export const PAYMENT_FAILED_EMAIL_KIND = "PAYMENT_FAILED" as const;
 export const PAYMENT_FAILED_EMAIL_ENTITY_TYPE = "StripeInvoice";
 /**
- * A prior delivery row counts as "already told the admin" only when it went out (or was handed over): a FAILED row
- * (never sent) and a WOULD_SEND row (a dark record, nothing sent) must NOT suppress the next retry's email.
+ * A prior delivery row counts as "already told the admin" only when the mail really went out: SENT. A FAILED row
+ * (never sent), a WOULD_SEND row (a dark record) and a QUEUED row (written before a handoff that may never complete)
+ * must NOT suppress the next retry's email. Today EmailService.send writes only SENT or FAILED for this kind.
  */
-export const PAYMENT_FAILED_EMAIL_DEDUPE_STATUSES = [
-  "SENT",
-  "QUEUED",
-  "BOUNCED",
-  "OPTED_OUT",
-] as const;
+export const PAYMENT_FAILED_EMAIL_DEDUPE_STATUSES = ["SENT"] as const;
 
 /** Which email path tells a tenant about an unpaid invoice. */
 export type DunningEmailPath = "legacy_failed_payment" | "milestones";

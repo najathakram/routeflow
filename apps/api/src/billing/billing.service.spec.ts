@@ -2700,7 +2700,7 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
     });
 
     // SA r-note 5 A1: dark is SILENT to tenants. In off AND dark a real invoice.payment_failed sends exactly master's
-    // #2440 admin email (one per event, portal link best-effort); the dunning milestone series replaces it ONLY in
+    // #2440 admin email (once per invoice per week, portal link best-effort); the dunning milestone series replaces it ONLY in
     // enforced, so a tenant is never told twice and never told by the milestone series in dark.
     describe("A1: the #2440 failed-payment email (restored) vs the enforced milestone series", () => {
       const saved = process.env.BILLING_PAUSE_MODE;
