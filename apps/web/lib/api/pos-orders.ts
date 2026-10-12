@@ -77,10 +77,24 @@ export class PosFinishError extends Error {
 }
 
 /**
- * "Confirm & invoice": (DRAFT target only: PATCH status PENDING first,) PATCH status CONFIRMED, then POST /invoices/from-order/:id. Both are idempotent on the
- * server, so a retry of either is safe. A failure names the step so the caller can say which half is missing
- * (the order page offers "Create invoice" when only the second failed).
+ * "Confirm & invoice": (DRAFT target only: PATCH status PENDING first,) PATCH status CONFIRMED, then POST /invoices/from-order/:id.
+ * The status PATCHes are NOT idempotent (the API refuses PENDING -> PENDING and CONFIRMED -> CONFIRMED), so the
+ * PENDING step re-reads the order when it is refused with a 400/409 and carries on only if the order already is
+ * PENDING or CONFIRMED (someone else promoted it, or a retry). A failure names the step so the caller can say which
+ * half is missing (the order page offers "Create invoice" when only the second failed).
  */
+async function promotedAlready(orderId: string, e: unknown): Promise<boolean> {
+  const status = (e as { response?: { status?: number } } | null)?.response?.status;
+  if (status !== 400 && status !== 409) return false;
+  try {
+    const cur = (await apiClient.get(`/orders/${orderId}`)).data as { status?: string } | undefined;
+    return cur?.status === "PENDING" || cur?.status === "CONFIRMED";
+  } catch {
+    return false;
+  }
+}
+
+/** See `promotedAlready`: the doc block above describes the whole flow. */
 export function usePosFinish() {
   const qc = useQueryClient();
   return useMutation<
@@ -93,9 +107,14 @@ export function usePosFinish() {
       let order: Order;
       try {
         // The API's table has no DRAFT -> CONFIRMED edge (DRAFT -> PENDING only), so a merge into an open
-        // DRAFT promotes it first. Idempotent: a retry finds PENDING and skips this.
+        // DRAFT promotes it first. Not idempotent: a refused PENDING (409/400) is treated as done only when
+        // the order now reads PENDING/CONFIRMED (a retry, or someone else promoted it).
         if (fromStatus === "DRAFT") {
-          await apiClient.patch(`/orders/${orderId}/status`, { status: "PENDING" });
+          try {
+            await apiClient.patch(`/orders/${orderId}/status`, { status: "PENDING" });
+          } catch (e) {
+            if (!(await promotedAlready(orderId, e))) throw e;
+          }
         }
         order = (await apiClient.patch(`/orders/${orderId}/status`, { status: "CONFIRMED" })).data;
       } catch (e) {

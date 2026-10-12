@@ -50,4 +50,35 @@ describe("usePosFinish", () => {
       "CONFIRMED",
     ]);
   });
+
+  it("a re-run on a DRAFT target whose PENDING step is refused carries on when the order already reads PENDING", async () => {
+    (apiClient.patch as jest.Mock)
+      .mockRejectedValueOnce({ response: { status: 400 } }) // PENDING -> PENDING is refused
+      .mockResolvedValueOnce({ data: { id: "o1", status: "CONFIRMED" } });
+    (apiClient.get as jest.Mock).mockResolvedValue({ data: { id: "o1", status: "PENDING" } });
+    const { result } = renderHook(() => usePosFinish(), { wrapper: wrapper(new QueryClient()) });
+    await act(async () => {
+      await result.current.mutateAsync({ orderId: "o1", invoice: false, fromStatus: "DRAFT" });
+    });
+    expect((apiClient.patch as jest.Mock).mock.calls.map((c) => c[1].status)).toEqual([
+      "PENDING",
+      "CONFIRMED",
+    ]);
+  });
+
+  it("a refused PENDING step on an order that is still DRAFT fails at confirm (a guard refusal is not swallowed)", async () => {
+    (apiClient.patch as jest.Mock).mockRejectedValueOnce({
+      response: { status: 400, data: { code: "X" } },
+    });
+    (apiClient.get as jest.Mock).mockResolvedValue({ data: { id: "o1", status: "DRAFT" } });
+    const { result } = renderHook(() => usePosFinish(), { wrapper: wrapper(new QueryClient()) });
+    let err: unknown;
+    await act(async () => {
+      err = await result.current
+        .mutateAsync({ orderId: "o1", invoice: true, fromStatus: "DRAFT" })
+        .catch((e) => e);
+    });
+    expect((err as PosFinishError).step).toBe("confirm");
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
 });
