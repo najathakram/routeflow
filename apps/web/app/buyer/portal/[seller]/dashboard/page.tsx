@@ -25,6 +25,10 @@ import {
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
+import {
+  SellerUnavailableLine,
+  useSellerAcceptingOrders,
+} from "@/components/SellerUnavailableLine";
 import { buyerOrderStatusLabel } from "@/lib/buyer-fulfilment";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
@@ -75,6 +79,11 @@ function nextDeliveryLabel(daysOfWeek: number[]): string {
   return `This ${DAY_FULL[next]}`;
 }
 
+/** A paused seller: disable the control and point it at the one quiet line (the cart's Checkout does the same). */
+function sellerGate(accepting: boolean) {
+  return accepting ? {} : { disabled: true, "aria-describedby": "seller-unavailable-line" };
+}
+
 function StandingOrdersPanel({
   sellerSlug,
   templates,
@@ -85,6 +94,7 @@ function StandingOrdersPanel({
   isLoading: boolean;
 }) {
   const reorder = useBuyerReorder({ localErrorToast: true }); // the sheet shows its own sentence
+  const accepting = useSellerAcceptingOrders();
   // A tap on Reorder only OPENS the review sheet (lines + total); the order is placed from its
   // "Place order" button, never from the tap itself.
   const [reviewing, setReviewing] = React.useState<BuyerOrderTemplate | null>(null);
@@ -168,7 +178,8 @@ function StandingOrdersPanel({
                 </p>
                 <button
                   onClick={() => setReviewing(t)}
-                  className="mt-1 flex items-center gap-1 rounded-lg bg-buyer-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-buyer-600 transition-colors"
+                  {...sellerGate(accepting)}
+                  className="mt-1 flex items-center gap-1 rounded-lg bg-buyer-500 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-buyer-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-buyer-500"
                 >
                   <ShoppingCart className="h-3 w-3" />
                   Reorder
@@ -202,6 +213,7 @@ export default function BuyerDashboardPage() {
   // Business profiles 1B: each recent order's badge is the order detail's own label.
   const { data: capabilities, isLoading: capLoading } = useBuyerSellerCapabilities();
   const cart = useBuyerCart(buyer?.id, sellerSlug);
+  const accepting = useSellerAcceptingOrders();
   const templates: BuyerOrderTemplate[] = templatesData?.data ?? [];
 
   // P5-07: chips read the SAME /buyer/shelf payload as Your Shelf and the shop
@@ -243,6 +255,8 @@ export default function BuyerDashboardPage() {
         </h1>
         <p className="text-sm text-navy/70 mt-1">Your dashboard at {activeSeller?.tenant.name}</p>
       </div>
+
+      <SellerUnavailableLine className="rounded-lg bg-surface-raised px-4 py-3 text-sm text-navy/80" />
 
       {/* P5-07: replenishment chips → Your Shelf */}
       {(lowCount > 0 || dueSoonCount > 0) && (
@@ -381,7 +395,8 @@ export default function BuyerDashboardPage() {
                       thumbnailUrl: p.thumbnailUrl,
                     })
                   }
-                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-buyer-600 transition-colors"
+                  {...sellerGate(accepting)}
+                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-buyer-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-buyer-500"
                 >
                   <Plus className="h-3 w-3" /> Add
                 </button>
@@ -478,7 +493,8 @@ export default function BuyerDashboardPage() {
                       thumbnailUrl: p.thumbnailUrl,
                     })
                   }
-                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-buyer-600 transition-colors"
+                  {...sellerGate(accepting)}
+                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-buyer-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-buyer-500"
                 >
                   <Plus className="h-3 w-3" /> Add
                 </button>
@@ -535,7 +551,8 @@ export default function BuyerDashboardPage() {
                       thumbnailUrl: p.thumbnailUrl,
                     })
                   }
-                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-buyer-600 transition-colors"
+                  {...sellerGate(accepting)}
+                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-buyer-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-buyer-500"
                 >
                   <Plus className="h-3 w-3" /> Add
                 </button>
@@ -597,7 +614,8 @@ export default function BuyerDashboardPage() {
                       thumbnailUrl: p.thumbnailUrl,
                     })
                   }
-                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-buyer-600 transition-colors"
+                  {...sellerGate(accepting)}
+                  className="flex items-center gap-1 rounded-md bg-buyer-500 px-2 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-buyer-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-buyer-500"
                 >
                   <Plus className="h-3 w-3" /> Add
                 </button>
