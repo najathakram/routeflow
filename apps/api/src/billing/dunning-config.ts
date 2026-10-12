@@ -56,10 +56,11 @@ export function billingPauseMode(
 /**
  * Row 346: master's failed-payment email (the off/dark path) is sent at most ONCE PER INVOICE per this many days.
  * Stripe re-fires `invoice.payment_failed` on every retry of the same invoice; without this each retry mailed the
- * admin again. 7 days = the dunning ladder's span (`DUNNING_PAUSE_HOURS`): one reminder per invoice per week, so an
- * invoice still unpaid after the whole retry window gets one more nudge instead of silence.
+ * admin again. A whole number of days of its own: 7 matches the dunning ladder's span (`DUNNING_PAUSE_HOURS` = 168) TODAY,
+ * so an invoice still unpaid after the whole retry window gets one more nudge instead of silence, but the two are
+ * independent - changing the pause hours does not move this window (and vice versa).
  */
-export const PAYMENT_FAILED_EMAIL_REDUPE_DAYS = DUNNING_PAUSE_HOURS / 24;
+export const PAYMENT_FAILED_EMAIL_DEDUPE_DAYS = 7;
 /** The `EmailDelivery.kind` / `entityType` the failed-payment email is recorded under (entityId = the Stripe invoice id). */
 export const PAYMENT_FAILED_EMAIL_KIND = "PAYMENT_FAILED" as const;
 export const PAYMENT_FAILED_EMAIL_ENTITY_TYPE = "StripeInvoice";

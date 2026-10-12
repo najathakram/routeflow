@@ -1,10 +1,10 @@
 import { BillingService } from "./billing.service";
-import { PAYMENT_FAILED_EMAIL_REDUPE_DAYS } from "./dunning-config";
+import { PAYMENT_FAILED_EMAIL_DEDUPE_DAYS } from "./dunning-config";
 
 /**
  * Row 346: master's #2440 failed-payment e-mail (the off/dark path) went out once per Stripe
  * `invoice.payment_failed` EVENT, so every Stripe retry of the same invoice e-mailed the admin
- * again. It is now sent at most once per invoice per PAYMENT_FAILED_EMAIL_REDUPE_DAYS, deduped on the
+ * again. It is now sent at most once per invoice per PAYMENT_FAILED_EMAIL_DEDUPE_DAYS, deduped on the
  * EXISTING EmailDelivery marker (tenant + kind + entityType + entityId), no schema change.
  */
 
@@ -100,7 +100,7 @@ describe("row 346: the #2440 failed-payment e-mail is deduped per invoice", () =
   });
 
   it("the window is a named constant of a sensible length (a week: the dunning ladder's span)", () => {
-    expect(PAYMENT_FAILED_EMAIL_REDUPE_DAYS).toBe(7);
+    expect(PAYMENT_FAILED_EMAIL_DEDUPE_DAYS).toBe(7);
   });
 
   it("the FIRST payment_failed for an invoice sends one e-mail, recorded under the invoice id", async () => {
@@ -125,7 +125,7 @@ describe("row 346: the #2440 failed-payment e-mail is deduped per invoice", () =
     // only a real send suppresses: FAILED, WOULD_SEND and QUEUED (written before a handoff) never do
     expect(where.status.in).toEqual(["SENT"]);
     const ageMs = Date.now() - where.createdAt.gte.getTime();
-    expect(Math.abs(ageMs - PAYMENT_FAILED_EMAIL_REDUPE_DAYS * DAY_MS)).toBeLessThan(60_000);
+    expect(Math.abs(ageMs - PAYMENT_FAILED_EMAIL_DEDUPE_DAYS * DAY_MS)).toBeLessThan(60_000);
   });
 
   it("a Stripe retry (a second payment_failed) for the SAME invoice inside the window sends nothing", async () => {
@@ -138,7 +138,7 @@ describe("row 346: the #2440 failed-payment e-mail is deduped per invoice", () =
   });
 
   it("the same invoice again AFTER the window sends again", async () => {
-    const old = new Date(Date.now() - (PAYMENT_FAILED_EMAIL_REDUPE_DAYS * DAY_MS + 60 * 60 * 1000));
+    const old = new Date(Date.now() - (PAYMENT_FAILED_EMAIL_DEDUPE_DAYS * DAY_MS + 60 * 60 * 1000));
     const { svc, email } = make({
       rows: [
         {
@@ -157,7 +157,7 @@ describe("row 346: the #2440 failed-payment e-mail is deduped per invoice", () =
 
   it("a row just inside the window still suppresses", async () => {
     const recent = new Date(
-      Date.now() - (PAYMENT_FAILED_EMAIL_REDUPE_DAYS * DAY_MS - 60 * 60 * 1000),
+      Date.now() - (PAYMENT_FAILED_EMAIL_DEDUPE_DAYS * DAY_MS - 60 * 60 * 1000),
     );
     const { svc, email } = make({
       rows: [

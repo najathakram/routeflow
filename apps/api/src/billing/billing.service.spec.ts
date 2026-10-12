@@ -129,6 +129,9 @@ function make(
     user: {
       findFirst: jest.fn().mockResolvedValue({ email: "admin@example.test", username: "admin" }),
     },
+    // Row 346: the failed-payment e-mail dedupe lookup finds no earlier delivery by default (without this mock every
+    // case would run the fail-open path and its warn).
+    emailDelivery: { findFirst: jest.fn().mockResolvedValue(null) },
     tenantSubscription: {
       findFirst: jest.fn().mockResolvedValue(sub),
       findMany: jest
@@ -2775,9 +2778,11 @@ describe("#2440 subscription upkeep — match by subscription id, status mapping
         await expect((svc as any).onPaymentFailed(failed())).resolves.toBeUndefined();
         expect(prisma.tenantSubscription.update).toHaveBeenCalledTimes(1);
         expect(email.send).not.toHaveBeenCalled();
-        expect(warn.mock.calls.some((c: any[]) => /payment-failed email/i.test(String(c[0])))).toBe(
-          true,
-        );
+        expect(
+          warn.mock.calls.some((c: any[]) =>
+            /payment-failed email for tenant t1 not sent: db blip/.test(String(c[0])),
+          ),
+        ).toBe(true);
       });
 
       it("another customer's subscription id, or an invoice with no subscription: no count, no email", async () => {

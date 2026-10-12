@@ -20,7 +20,7 @@ import {
   PAYMENT_FAILED_EMAIL_DEDUPE_STATUSES,
   PAYMENT_FAILED_EMAIL_ENTITY_TYPE,
   PAYMENT_FAILED_EMAIL_KIND,
-  PAYMENT_FAILED_EMAIL_REDUPE_DAYS,
+  PAYMENT_FAILED_EMAIL_DEDUPE_DAYS,
   billingPauseMode,
   dunningEmailsFor,
 } from "./dunning-config";
@@ -2547,7 +2547,7 @@ export class BillingService {
       `Payment failed for tenant ${sub.tenantId} (${sub.tenant.slug}). Grace period: ${PAYMENT_GRACE_DAYS} days.`,
     );
 
-    // SA r-note 5 A1: in off/dark this is the ONLY tenant email (master's #2440, once per invoice per PAYMENT_FAILED_EMAIL_REDUPE_DAYS: dark
+    // SA r-note 5 A1: in off/dark this is the ONLY tenant email (master's #2440, once per invoice per PAYMENT_FAILED_EMAIL_DEDUPE_DAYS: dark
     // is silent to tenants); the dunning milestone series replaces it in enforced. #2476 / SA-472: the increment
     // above IS the event's effect, so everything after it is best-effort and never throws - a throw would record
     // "error:" and make a redelivery re-run the increment.
@@ -2574,7 +2574,7 @@ export class BillingService {
     invoiceId: string,
   ): Promise<boolean> {
     try {
-      const since = new Date(Date.now() - PAYMENT_FAILED_EMAIL_REDUPE_DAYS * 24 * 60 * 60 * 1000);
+      const since = new Date(Date.now() - PAYMENT_FAILED_EMAIL_DEDUPE_DAYS * 24 * 60 * 60 * 1000);
       const prior = await this.prisma.emailDelivery.findFirst({
         where: {
           tenantId,
@@ -2597,7 +2597,7 @@ export class BillingService {
 
   /**
    * The admin warning for a failed payment (#2440): portal link best-effort, plain-text fallback. Row 346: sent at
-   * most once per invoice per PAYMENT_FAILED_EMAIL_REDUPE_DAYS (Stripe re-fires payment_failed on every retry); the
+   * most once per invoice per PAYMENT_FAILED_EMAIL_DEDUPE_DAYS (Stripe re-fires payment_failed on every retry); the
    * delivery row it records is the dedupe marker. An event with no invoice id cannot be keyed, so it sends.
    */
   private async sendPaymentFailedEmail(
@@ -2609,7 +2609,7 @@ export class BillingService {
   ): Promise<void> {
     if (invoiceId && (await this.paymentFailedEmailAlreadySent(sub.tenantId, invoiceId))) {
       this.logger.log(
-        `payment-failed email for tenant ${sub.tenantId} skipped: invoice ${invoiceId} was already mailed within ${PAYMENT_FAILED_EMAIL_REDUPE_DAYS} days`,
+        `payment-failed email for tenant ${sub.tenantId} skipped: invoice ${invoiceId} was already mailed within ${PAYMENT_FAILED_EMAIL_DEDUPE_DAYS} days`,
       );
       return;
     }
