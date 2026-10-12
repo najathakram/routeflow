@@ -182,16 +182,21 @@ export function useCounterSaleScan(deps: Deps) {
     resume();
   };
   const [moreBusy, setMoreBusy] = React.useState(false);
+  const moreRef = React.useRef(false); // a ref: a double click must not send two requests
   /** CQ-10: the next page of the open category list, appended (a product never appears twice). */
   const loadMore = async () => {
     const cur = picker;
-    if (!cur?.category || !cur.category.hasMore || moreBusy) return;
+    if (!cur?.category || !cur.category.hasMore || moreRef.current) return;
+    const epoch = epochRef.current;
+    const name = cur.category.name;
+    moreRef.current = true;
     setMoreBusy(true);
     try {
-      const next = await fetchCategoryPage(cur.category.name, cur.category.page + 1);
-      if (!aliveRef.current) return;
+      const next = await fetchCategoryPage(name, cur.category.page + 1);
+      // a reply for a picker that is gone (cancelled, reset, or another category now open) is dropped
+      if (!aliveRef.current || epoch !== epochRef.current) return;
       setPicker((p) => {
-        if (!p?.category) return p;
+        if (!p?.category || p.category.name !== name) return p;
         const have = new Set(p.matches.map((m: any) => m.id));
         return {
           ...p,
@@ -202,10 +207,12 @@ export function useCounterSaleScan(deps: Deps) {
     } catch {
       // the list stays as it is; "Show more" can be tried again
     } finally {
+      moreRef.current = false;
       setMoreBusy(false);
     }
   };
   const cancelPicker = () => {
+    epochRef.current += 1; // a page still on the wire for this picker must not land in the next one
     setPicker(null);
     setCarry(1);
     shift();

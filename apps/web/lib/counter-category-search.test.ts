@@ -41,6 +41,25 @@ describe("fetchCategoryPage", () => {
     expect(page.products).toHaveLength(2);
   });
 
+  it("a FAMILY row is never offered: its variants are (the family itself is not sellable)", async () => {
+    get.mockResolvedValueOnce({
+      data: {
+        data: [
+          {
+            id: "fam",
+            kind: "FAMILY",
+            name: "Bleach",
+            variants: [{ id: "v1", name: "Bleach 1L" }],
+          },
+          { id: "solo", name: "Sponge" },
+        ],
+        meta: { total: 2, limit: 20 },
+      },
+    });
+    const page = await fetchCategoryPage("Household", 1);
+    expect(page.products.map((p: any) => p.id)).toEqual(["v1", "solo"]);
+  });
+
   it("the last page has no more", async () => {
     get.mockResolvedValueOnce({ data: { data: [{ id: "z" }], meta: { total: 41, limit: 20 } } });
     expect((await fetchCategoryPage("Household", 3)).hasMore).toBe(false);

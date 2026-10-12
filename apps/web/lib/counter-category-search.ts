@@ -1,4 +1,5 @@
 import { apiClient } from "./api-client";
+import { sellableFlat } from "./product-search-groups";
 
 /**
  * CQ-10: typing a CATEGORY name in the counter's "Scan or type an item" lists that category's products. This is the
@@ -13,6 +14,7 @@ export interface CategoryPage {
   category: string;
   products: any[];
   page: number;
+  /** the server's count of rows in the category (families count once); paging is by these rows */
   total: number;
   hasMore: boolean;
 }
@@ -39,8 +41,10 @@ export async function fetchCategoryPage(category: string, page: number): Promise
     },
   });
   const body = res?.data ?? {};
-  const products: any[] = Array.isArray(body) ? body : (body.data ?? []);
-  const total = Number(body?.meta?.total ?? products.length);
+  // a FAMILY row is not sellable (assertSellableLines): its variants are what the picker offers
+  const products: any[] = sellableFlat<any>(Array.isArray(body) ? body : (body.data ?? []));
+  const rows = Array.isArray(body) ? body.length : (body.data ?? []).length;
+  const total = Number(body?.meta?.total ?? rows);
   const limit = Number(body?.meta?.limit ?? CATEGORY_PAGE_SIZE) || CATEGORY_PAGE_SIZE;
   return { category, products, page, total, hasMore: page * limit < total };
 }

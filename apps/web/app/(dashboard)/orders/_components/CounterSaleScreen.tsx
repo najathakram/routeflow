@@ -1128,8 +1128,7 @@ export function CounterSaleScreen() {
             <div className="space-y-1" data-testid="counter-scan-picker">
               {scan.picker.category ? (
                 <p className="text-sm font-medium" data-testid="counter-category-heading">
-                  {scan.picker.category.name}: {scan.picker.matches.length} of{" "}
-                  {scan.picker.category.total}
+                  {scan.picker.category.name}: {scan.picker.matches.length} items
                 </p>
               ) : null}
               <DidYouMeanPicker

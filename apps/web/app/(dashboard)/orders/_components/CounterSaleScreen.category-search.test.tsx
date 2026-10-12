@@ -112,13 +112,46 @@ describe("counter category search (CQ-10)", () => {
     await scan("Household");
     const picker = await screen.findByTestId("counter-scan-picker");
     expect(within(picker).getAllByRole("button", { name: /Household item/ })).toHaveLength(20);
-    expect(picker).toHaveTextContent("20 of 25");
+    expect(picker).toHaveTextContent("Household: 20 items");
     fireEvent.click(within(picker).getByRole("button", { name: "Show more" }));
     await waitFor(() =>
       expect(within(picker).getAllByRole("button", { name: /Household item/ })).toHaveLength(25),
     );
     expect(within(picker).queryByRole("button", { name: "Show more" })).toBeNull();
     expect(categoryCalls.map((c) => c.page)).toEqual([1, 2]);
+  });
+
+  it("a late 'Show more' of a closed category never lands in the next picker", async () => {
+    let releasePage2!: () => void;
+    const gate = new Promise<void>((r) => (releasePage2 = r));
+    const base = (apiClient.get as jest.Mock).getMockImplementation()!;
+    (apiClient.get as jest.Mock).mockImplementation(async (url: string, cfg?: any) => {
+      if (url === "/products" && cfg?.params?.category === "Household" && cfg.params.page === 2) {
+        await gate;
+      }
+      if (url === "/products" && cfg?.params?.category === "Snacks") {
+        return {
+          data: {
+            data: [{ ...product(90), name: "Snack bar", id: "s-1" }],
+            meta: { total: 1, limit: 20 },
+          },
+        };
+      }
+      return base(url, cfg);
+    });
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("Household");
+    const first = await screen.findByTestId("counter-scan-picker");
+    fireEvent.click(within(first).getByRole("button", { name: "Show more" }));
+    fireEvent.click(within(first).getByRole("button", { name: /^(Cancel|Close|Dismiss)/ }));
+    await waitFor(() => expect(screen.queryByTestId("counter-scan-picker")).toBeNull());
+    await scan("Snacks");
+    const second = await screen.findByTestId("counter-scan-picker");
+    releasePage2();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(second).toHaveTextContent("Snack bar");
+    expect(second.textContent).not.toMatch(/Household item/);
+    expect(second).toHaveTextContent("Snacks");
   });
 
   it("text that is no code and no category still reads 'No product found for that code.'", async () => {
