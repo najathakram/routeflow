@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { isSpecialTier } from "@routeflow/pricing";
 import { Button, Input, Modal, cn } from "@routeflow/ui/web";
 import {
   isBoxedLine,
@@ -109,6 +110,9 @@ export function CounterLinePriceEdit({
 
   const boxed = isBoxedLine(line);
   const unitWord = boxed ? "box" : "item";
+  // CQ-14: the label says what Apply will do. The reason is required for exactly the lines the shared rule
+  // (`decideStaffOverride`, which `resolveCounterPriceEdit` runs) refuses without one: a special-tier line.
+  const reasonRequired = isSpecialTier(line.tier);
 
   const openDialog = () => {
     setMode("set");
@@ -234,7 +238,8 @@ export function CounterLinePriceEdit({
           />
 
           <Input
-            label="Reason (optional)"
+            label={reasonRequired ? "Reason (required)" : "Reason (optional)"}
+            aria-required={reasonRequired ? true : undefined}
             type="text"
             maxLength={200}
             autoComplete="off"

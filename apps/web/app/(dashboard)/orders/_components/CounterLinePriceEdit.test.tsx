@@ -176,11 +176,25 @@ describe("CounterLinePriceEdit: the dialog", () => {
       "Add a reason. Acme Foods has a special price on this item.",
     );
     expect(onApply).not.toHaveBeenCalled();
-    fireEvent.change(field("Reason (optional)"), { target: { value: "damaged" } });
+    fireEvent.change(field("Reason (required)"), { target: { value: "damaged" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     expect(onApply).toHaveBeenCalledWith(
       expect.objectContaining({ unitPrice: 6, reason: "damaged" }),
     );
+  });
+
+  // CQ-14: the label must not promise "optional" on a line the rule then refuses without one.
+  it("labels the reason (required) on a special-tier line and (optional) on a standard one", () => {
+    const special: PriceEditLine = { tierPrice: 8, listPrice: 10, tier: 2, qty: 1 };
+    const a = mount({ line: special });
+    open();
+    expect(field("Reason (required)")).toHaveAttribute("aria-required", "true");
+    expect(screen.queryByRole("textbox", { name: "Reason (optional)" })).toBeNull();
+    a.unmount();
+    mount({ line: plain });
+    open();
+    expect(field("Reason (optional)")).not.toHaveAttribute("aria-required");
+    expect(screen.queryByRole("textbox", { name: "Reason (required)" })).toBeNull();
   });
 
   it("Cancel and Escape change nothing and hand focus back through onClosed", async () => {
