@@ -115,6 +115,9 @@ const TABLE: Record<
   "customers/address-state-writes.ts::restoreAddressState::updateMany#0": R,
   "customers/customers.service.ts::updateAddress::update#0": S,
   "customers/customers.service.ts::addAddress::updateMany#0": E("clears the isDefault flag"),
+  "customers/customers.service.ts::addAddress::updateMany#1": E(
+    "demotes a blank-street placeholder default",
+  ),
   "customers/customers.service.ts::updateAddress::updateMany#0": E("clears the isDefault flag"),
   "customers/customers.service.ts::updateAddress::update#1": E("async geocode: coordinates only"),
   "customers/customers.service.ts::geocodeAllAddresses::update#0": E("geocode: coordinates only"),

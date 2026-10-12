@@ -45,7 +45,12 @@ import {
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { CREDIT_NOT_APPLICABLE } from "../invoices/invoice-status-sets";
 import { RECEIVABLE_INVOICE_SELECT, receivableBalance } from "../invoices/credit-exposure";
-import { geocodeAddress, GeocodableAddress, GeocodeCoords } from "../common/geocode.util";
+import {
+  geocodeAddress,
+  GeocodableAddress,
+  GeocodeCoords,
+  hasBlankStreet,
+} from "../common/geocode.util";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { SCHEDULED_ROUTE_KIND_WHERE } from "../routes/route-stop-filters.util";
 import { StorageService } from "../storage/storage.service";
@@ -76,7 +81,7 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
 import { addressStateFields } from "./address-state";
-import { hasDefaultBillingAddress, isBillingType } from "./address-state-writes";
+import { defaultAddresses, isBillingType } from "./address-state-writes";
 import * as compliance from "./customer-compliance-input";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
@@ -136,14 +141,27 @@ export class CustomersService {
     return geocodeAddress(addr, key, this.logger);
   }
 
-  /** Geocode all CustomerAddress records that are missing lat/lng. Returns counts. */
-  async geocodeAllAddresses(): Promise<{ total: number; geocoded: number; failed: number }> {
+  /**
+   * Geocode all CustomerAddress records that are missing lat/lng. Returns counts. A blank-street
+   * address (no street, no city) is skipped and counted as `skipped`, never pinned to a centroid.
+   */
+  async geocodeAllAddresses(): Promise<{
+    total: number;
+    geocoded: number;
+    failed: number;
+    skipped: number;
+  }> {
     const addresses = await this.prisma.forTenant().customerAddress.findMany({
       where: { OR: [{ lat: null }, { lng: null }] },
     });
     let geocoded = 0;
     let failed = 0;
+    let skipped = 0;
     for (const addr of addresses) {
+      if (hasBlankStreet(addr)) {
+        skipped++;
+        continue;
+      }
       const coords = await this.geocodeIfPossible(addr);
       if (coords) {
         await this.prisma.forTenant().customerAddress.update({
@@ -155,7 +173,7 @@ export class CustomersService {
         failed++;
       }
     }
-    return { total: addresses.length, geocoded, failed };
+    return { total: addresses.length, geocoded, failed, skipped };
   }
 
   /**
@@ -723,12 +741,23 @@ export class CustomersService {
           data: { isDefault: false },
         });
       }
-      // Addendum D: a billing address added to a customer with no default billing address becomes it
-      // (so the state is governed), without demoting any other address.
-      const becomesDefaultBilling =
-        dto.isDefault !== true &&
-        isBillingType(dto.addressType ?? "BILLING") &&
-        !(await hasDefaultBillingAddress(tx, id));
+      // Addendum D: with no explicit choice, a billing address becomes the default when the customer
+      // has NO default address of any type, or when every default is a blank-street placeholder (a
+      // "minimal", state-only address) and this one is real: the placeholder is demoted in this
+      // transaction, so exactly one default remains. A default with a street or a city is never demoted.
+      let becomesDefaultBilling = false;
+      if (dto.isDefault !== true && isBillingType(dto.addressType ?? "BILLING")) {
+        const defaults = await defaultAddresses(tx, id);
+        const placeholders = defaults.filter((a) => hasBlankStreet(a));
+        if (defaults.length === 0) becomesDefaultBilling = true;
+        else if (!hasBlankStreet(dto) && placeholders.length === defaults.length) {
+          await tx.customerAddress.updateMany({
+            where: { customerId: id, isDefault: true, id: { in: placeholders.map((a) => a.id) } },
+            data: { isDefault: false },
+          });
+          becomesDefaultBilling = true;
+        }
+      }
       return tx.customerAddress.create({
         data: {
           customerId: id,

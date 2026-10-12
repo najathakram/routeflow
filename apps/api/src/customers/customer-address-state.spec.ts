@@ -14,6 +14,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { geocodeAddress } from "../common/geocode.util";
 import { EmailService } from "../email/email.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -430,9 +431,20 @@ describe('"Add full address": the first billing address becomes the default bill
     prisma.customerAddress.create.mockResolvedValue({ id: "new" });
   });
 
-  const existing = (rows: Array<{ isDefault: boolean; addressType: string }>) =>
+  /** The customer's stored addresses; a row has a real street unless it says otherwise. */
+  const existing = (
+    rows: Array<{
+      id?: string;
+      isDefault: boolean;
+      addressType: string;
+      line1?: string;
+      city?: string;
+    }>,
+  ) =>
     prisma.customerAddress.findMany.mockImplementation(async (a: any) =>
-      rows.filter((r) => a?.where?.isDefault !== true || r.isDefault),
+      rows
+        .map((r, i) => ({ id: `old-${i + 1}`, line1: "9 Elm St", city: "Dallas", ...r }))
+        .filter((r) => a?.where?.isDefault !== true || r.isDefault),
     );
   const written = () => prisma.customerAddress.create.mock.calls[0][0].data;
 
@@ -449,10 +461,53 @@ describe('"Add full address": the first billing address becomes the default bill
     expect(written().isDefault).toBe(true);
   });
 
-  it("only a default SHIPPING address: the billing one becomes default and the shipping default is not demoted", async () => {
+  it("only a default SHIPPING address: the new billing one is NOT default (one default, never two)", async () => {
     existing([{ isDefault: true, addressType: "SHIPPING" }]);
     await service.addAddress("c1", { ...ADDRESS, zip: "78701" } as any);
+    expect(written().isDefault).toBe(false);
+    expect(prisma.customerAddress.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('one default "Main"-typed address: a new billing address leaves exactly that one default', async () => {
+    existing([{ isDefault: true, addressType: "Main" }]);
+    await service.addAddress("c1", { ...ADDRESS, zip: "78701" } as any);
+    expect(written().isDefault).toBe(false);
+    expect(prisma.customerAddress.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("minimal (blank street) default then a full address: the full one is default, the blank one is demoted", async () => {
+    existing([{ id: "min", isDefault: true, addressType: "BILLING", line1: "", city: " " }]);
+    await service.addAddress("c1", { ...ADDRESS, zip: "78701" } as any);
     expect(written().isDefault).toBe(true);
+    expect(prisma.customerAddress.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.customerAddress.updateMany).toHaveBeenCalledWith({
+      where: { customerId: "c1", isDefault: true, id: { in: ["min"] } },
+      data: { isDefault: false },
+    });
+  });
+
+  it("the blank default is demoted even when the form sends isDefault: false", async () => {
+    existing([{ id: "min", isDefault: true, addressType: "BILLING", line1: "", city: "" }]);
+    await service.addAddress("c1", { ...ADDRESS, zip: "78701", isDefault: false } as any);
+    expect(written().isDefault).toBe(true);
+    expect(prisma.customerAddress.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("a NON-blank default is never demoted (a street, or only a city, is a real address)", async () => {
+    existing([{ isDefault: true, addressType: "BILLING", line1: "", city: "Dallas" }]);
+    await service.addAddress("c1", { ...ADDRESS, zip: "78701" } as any);
+    expect(written().isDefault).toBe(false);
+    expect(prisma.customerAddress.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a blank default stays when the new address is blank-street too, or a SHIPPING one", async () => {
+    existing([{ id: "min", isDefault: true, addressType: "BILLING", line1: "", city: "" }]);
+    await service.addAddress("c1", { ...ADDRESS, line1: " ", city: "", zip: "78701" } as any);
+    await service.addAddress("c1", { ...ADDRESS, zip: "78701", addressType: "SHIPPING" } as any);
+    expect(prisma.customerAddress.create.mock.calls.map((c: any) => c[0].data.isDefault)).toEqual([
+      false,
+      false,
+    ]);
     expect(prisma.customerAddress.updateMany).not.toHaveBeenCalled();
   });
 
@@ -477,5 +532,55 @@ describe('"Add full address": the first billing address becomes the default bill
       where: { customerId: "c1" },
       data: { isDefault: false },
     });
+  });
+});
+
+describe("geocoding skips a blank-street address (no state-centroid pins)", () => {
+  const BLANK = { line1: "", city: " ", state: "TX", zip: "" };
+  let fetchSpy: jest.SpyInstance;
+  beforeEach(() => {
+    fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [{ geometry: { location: { lat: 30.2, lng: -97.7 } } }] }),
+    } as any);
+  });
+  afterEach(() => fetchSpy.mockRestore());
+
+  it("geocodeAddress returns null for blank line1 AND blank city without calling the geocoder", async () => {
+    expect(await geocodeAddress(BLANK, "key")).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await geocodeAddress({ ...BLANK, city: "Austin" }, "key")).toEqual({
+      lat: 30.2,
+      lng: -97.7,
+    });
+  });
+
+  it("geocode-all skips blank-street addresses and counts them as skipped", async () => {
+    const prisma = createMockPrisma();
+    const module = await Test.createTestingModule({
+      providers: [
+        CustomersService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue("key") } },
+        { provide: StorageService, useValue: {} },
+        { provide: MeterService, useValue: {} },
+        { provide: PlanCatalogService, useValue: {} },
+        { provide: EntitlementAuthority, useValue: {} },
+        { provide: EmailService, useValue: {} },
+        { provide: CommissionEngineService, useValue: {} },
+        { provide: RegulatedLedgerService, useValue: {} },
+      ],
+    }).compile();
+    const service = module.get(CustomersService);
+    prisma.customerAddress.findMany.mockResolvedValue([
+      { id: "blank", ...BLANK },
+      { id: "real", line1: "1 Congress Ave", city: "Austin", state: "TX", zip: "78701" },
+    ]);
+    prisma.customerAddress.update.mockResolvedValue({});
+    const res = await service.geocodeAllAddresses();
+    expect(res).toEqual({ total: 2, geocoded: 1, failed: 0, skipped: 1 });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(prisma.customerAddress.update).toHaveBeenCalledTimes(1);
+    expect(prisma.customerAddress.update.mock.calls[0][0].where).toEqual({ id: "real" });
   });
 });

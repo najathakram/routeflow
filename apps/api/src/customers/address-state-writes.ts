@@ -98,16 +98,15 @@ export function isBillingType(addressType: string | null | undefined): boolean {
   return (addressType ?? "").trim().toUpperCase() === "BILLING";
 }
 
-/** True when the customer already has a DEFAULT BILLING address (the one a billing-first policy governs by). */
-export async function hasDefaultBillingAddress(
+/** The customer's DEFAULT addresses of ANY type, with what tells a blank-street placeholder apart. */
+export async function defaultAddresses(
   tx: Prisma.TransactionClient,
   customerId: string,
-): Promise<boolean> {
-  const defaults = await tx.customerAddress.findMany({
+): Promise<Array<{ id: string; line1: string; city: string; addressType: string | null }>> {
+  return tx.customerAddress.findMany({
     where: { customerId, isDefault: true },
-    select: { addressType: true },
+    select: { id: true, line1: true, city: true, addressType: true },
   });
-  return defaults.some((a) => isBillingType(a.addressType));
 }
 
 /**
