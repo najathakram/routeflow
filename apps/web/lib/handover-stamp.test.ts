@@ -94,20 +94,33 @@ describe("handOverStampName (row 342)", () => {
 });
 
 describe("isHandedOver (row 342)", () => {
-  it("a counter sale, or a DELIVERED pickup order", () => {
+  it("a counter sale, or a DELIVERED pickup order that carries the register a hand-over stamps", () => {
     expect(isHandedOver({ counterSale: true, fulfillPath: "PICKUP", status: "DELIVERED" })).toBe(
       true,
     );
-    expect(isHandedOver({ fulfillPath: "PICKUP", status: "DELIVERED" })).toBe(true);
+    expect(isHandedOver({ fulfillPath: "PICKUP", status: "DELIVERED", registerKey: "main" })).toBe(
+      true,
+    );
+  });
+  it("a PICKUP order an office user marked DELIVERED has no stamped register: no hand-over", () => {
+    expect(isHandedOver({ fulfillPath: "PICKUP", status: "DELIVERED" })).toBe(false);
+    expect(isHandedOver({ fulfillPath: "PICKUP", status: "DELIVERED", registerKey: null })).toBe(
+      false,
+    );
+    expect(isHandedOver({ fulfillPath: "PICKUP", status: "DELIVERED", registerKey: "  " })).toBe(
+      false,
+    );
   });
   it("not a pickup still waiting, nor a route/ship order", () => {
-    expect(isHandedOver({ fulfillPath: "PICKUP", status: "CONFIRMED" })).toBe(false);
-    expect(isHandedOver({ fulfillPath: "ROUTE", status: "DELIVERED" })).toBe(false);
-    expect(isHandedOver({ fulfillPath: "SHIP", status: "DELIVERED" })).toBe(false);
+    const stamped = { registerKey: "main" };
+    expect(isHandedOver({ fulfillPath: "PICKUP", status: "CONFIRMED", ...stamped })).toBe(false);
+    expect(isHandedOver({ fulfillPath: "ROUTE", status: "DELIVERED", ...stamped })).toBe(false);
+    expect(isHandedOver({ fulfillPath: "SHIP", status: "DELIVERED", ...stamped })).toBe(false);
   });
-  it("a page without fulfillPath shows it whenever the stamp exists", () => {
-    expect(isHandedOver({ status: "DELIVERED" })).toBe(true);
-    expect(isHandedOver({})).toBe(true);
+  it("a page without fulfillPath (the invoice's order stub) shows it only when the register is stamped", () => {
+    expect(isHandedOver({ registerKey: "main" })).toBe(true);
+    expect(isHandedOver({ status: "DELIVERED" })).toBe(false);
+    expect(isHandedOver({})).toBe(false);
   });
 });
 

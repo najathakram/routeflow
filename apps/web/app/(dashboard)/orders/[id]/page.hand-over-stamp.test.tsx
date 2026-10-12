@@ -84,9 +84,18 @@ describe("order header hand-over stamp (row 342)", () => {
     expect(stamp).toHaveTextContent("Handed over · main");
     expect(stamp).not.toHaveTextContent(" by ");
   });
-  it("staff: an unstamped register (null) reads as main", async () => {
-    await open("OPERATOR", { registerKey: null, handedOverBy: "Pat", soldBy: { username: "Pat" } });
+  it("staff: a counter sale with no stamped register reads as main", async () => {
+    await open("OPERATOR", {
+      counterSale: true,
+      registerKey: null,
+      handedOverBy: "Pat",
+      soldBy: { username: "Pat" },
+    });
     expect(screen.getByTestId("hand-over-stamp")).toHaveTextContent("Handed over by Pat · main");
+  });
+  it("staff: a PICKUP order marked DELIVERED in the office has no hand-over, so no stamp", async () => {
+    await open("OPERATOR", { registerKey: null, handedOverBy: null, soldBy: null });
+    expect(screen.queryByTestId("hand-over-stamp")).toBeNull();
   });
   it("staff: the hand-over time in the business's zone once it is known", async () => {
     await open(

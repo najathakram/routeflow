@@ -75,15 +75,19 @@ export function handOverStampLine(
 }
 
 /**
- * Whether the order was handed over at the till: a counter sale, or a PICKUP order that is DELIVERED (picked up). A page that
- * does not carry `fulfillPath` (the invoice's order stub) shows the stamp whenever it exists: only a hand-over is stamped.
+ * Whether the order was REALLY handed over at the till. A counter sale always was. Any other order needs the stamp a hand-over
+ * leaves (the register is stamped inside the hand-over's own lock): a PICKUP order an office user merely marked DELIVERED
+ * carries no register, so it shows no "Handed over" line at all (never a made-up "main"). A page that does not carry
+ * `fulfillPath` (the invoice's order stub) needs the same stamped register.
  */
 export function isHandedOver(order: {
   status?: string | null;
   fulfillPath?: string | null;
   counterSale?: boolean | null;
+  registerKey?: string | null;
 }): boolean {
   if (order.counterSale === true) return true;
+  if (!clean(order.registerKey)) return false;
   if (!order.fulfillPath) return true;
   return order.fulfillPath === "PICKUP" && order.status === "DELIVERED";
 }
