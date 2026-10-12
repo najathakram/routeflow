@@ -19,7 +19,9 @@ const SUB: any = {
 
 function make(
   over: {
-    admin?: { username: string } | null;
+    admin?: { email: string } | null;
+    /** The full oldest-first list of active admins (overrides `admin`). */
+    admins?: Array<{ email: string }>;
     facts?: any;
     factsError?: boolean;
     card?: any;
@@ -35,9 +37,16 @@ function make(
       findUnique: jest.fn().mockResolvedValue({ timezone: over.zone ?? null }),
     },
     user: {
-      findFirst: jest
+      findMany: jest
         .fn()
-        .mockResolvedValue(over.admin === undefined ? { username: "Dana" } : over.admin),
+        .mockResolvedValue(
+          over.admins ??
+            (over.admin === undefined
+              ? [{ email: "dana@acme.test" }]
+              : over.admin
+                ? [over.admin]
+                : []),
+        ),
     },
   } as any;
   const stripe = {
@@ -69,11 +78,15 @@ function make(
 }
 
 describe("SubscriptionBillingExtras.read (B4 view fields)", () => {
-  it("billingContactName is the OLDEST ACTIVE TENANT_ADMIN's name (a fixed, stated rule)", async () => {
+  it("billingContactEmail is the OLDEST ACTIVE TENANT_ADMIN's e-mail (a fixed, stated rule), no name at all (SA-776)", async () => {
     const { extras, prisma } = make();
     const out = await extras.read("t1", SUB);
-    expect(out.billingContactName).toBe("Dana");
-    expect(prisma.user.findFirst).toHaveBeenCalledWith(
+    expect(out.billingContactEmail).toBe("dana@acme.test");
+    expect(out).not.toHaveProperty("billingContactName");
+    // only the e-mail is selected: neither the username nor a linked driver's name can leak as a contact
+    const call = (prisma.user.findMany as jest.Mock).mock.calls[0][0];
+    expect(call.select).toEqual({ email: true });
+    expect(call).toEqual(
       expect.objectContaining({
         where: expect.objectContaining({
           tenantId: "t1",
@@ -86,9 +99,28 @@ describe("SubscriptionBillingExtras.read (B4 view fields)", () => {
     );
   });
 
-  it("billingContactName is null when the tenant has no active admin", async () => {
+  it("billingContactEmail is null when the tenant has no active admin", async () => {
     const { extras } = make({ admin: null });
-    expect((await extras.read("t1", SUB)).billingContactName).toBeNull();
+    expect((await extras.read("t1", SUB)).billingContactEmail).toBeNull();
+  });
+
+  it("the OLDEST admin with a real e-mail is the contact: a sentinel or blank address is passed over", async () => {
+    const { extras } = make({
+      admins: [
+        { email: "no-email+0b1f2c3d@placeholder.local" },
+        { email: "   " },
+        { email: "second@acme.test" },
+        { email: "third@acme.test" },
+      ],
+    });
+    expect((await extras.read("t1", SUB)).billingContactEmail).toBe("second@acme.test");
+  });
+
+  it("an internal sentinel or blank e-mail is never sent", async () => {
+    const sentinel = make({ admin: { email: "no-email+0b1f2c3d@placeholder.local" } });
+    expect((await sentinel.extras.read("t1", SUB)).billingContactEmail).toBeNull();
+    const blank = make({ admin: { email: "   " } });
+    expect((await blank.extras.read("t1", SUB)).billingContactEmail).toBeNull();
   });
 
   it("openInvoiceAmount is the pastDueInvoiceId invoice's amount_remaining, in dollars (never a dash)", async () => {
@@ -120,7 +152,7 @@ describe("SubscriptionBillingExtras.read (B4 view fields)", () => {
     const out = await extras.read("t1", SUB);
     expect(out.openInvoiceAmount).toBeNull();
     expect(out.paymentMethodSummary).toBeNull();
-    expect(out.billingContactName).toBe("Dana");
+    expect(out.billingContactEmail).toBe("dana@acme.test");
   });
 
   it("paymentMethodSummary carries brand / last4 / expiry and nextCharge the amount and the renewal date", async () => {
@@ -164,7 +196,7 @@ describe("SubscriptionBillingExtras.read (B4 view fields)", () => {
     expect(out.openInvoiceAmount).toBeNull();
     expect(out.paymentMethodSummary).toBeNull();
     expect(stripe.getInvoiceFacts).not.toHaveBeenCalled();
-    expect(out.billingContactName).toBe("Dana");
+    expect(out.billingContactEmail).toBe("dana@acme.test");
   });
 
   it("caches the Stripe reads per tenant so a 60 s poll does not hit Stripe each time", async () => {

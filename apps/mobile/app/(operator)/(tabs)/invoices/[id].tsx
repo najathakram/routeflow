@@ -45,6 +45,7 @@ import {
   canSendInvoiceNow,
   canWriteOff,
   invoiceActionFlags,
+  isOpenInvoiceStatus,
   isPaymentEditable,
   isPendingOrderMirror,
 } from "../../../../lib/invoices-logic";
@@ -821,7 +822,7 @@ export default function InvoiceDetailScreen() {
                 status recompute doesn't preserve DRAFT (customers.service
                 applyAdvancePaymentToInvoice), so a draft would silently flip
                 to SENT — gate to the post-send statuses only. */}
-            {["SENT", "VIEWED", "PARTIAL", "OVERDUE"].includes(invoice.status) ? (
+            {isOpenInvoiceStatus(invoice.status) ? (
               <ActionTile
                 icon="wallet-outline"
                 label="Apply advance"

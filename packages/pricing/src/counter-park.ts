@@ -279,6 +279,18 @@ export interface ParkCartRequest {
   payload: ParkedCartPayload;
 }
 
+/**
+ * The pricing inputs of one parked line, and nothing else of it: all the screen's `cartTotals` needs to total the row
+ * (`computeLineSubtotal`'s own inputs). The list never carries the payload.
+ */
+export interface ParkedPriceLine {
+  unitPrice: number;
+  qty: number;
+  boxes?: number;
+  pieces?: number;
+  unitsPerBox?: number;
+}
+
 /** One parked cart in the list (and the answer to a park). */
 export interface ParkedCartListItem {
   id: string;
@@ -288,6 +300,8 @@ export interface ParkedCartListItem {
   expiresAt: string;
   lineCount: number;
   customerName?: string;
+  /** Row 330e: the lines' pricing inputs (the LIST sends them; the park answer does not). Absent = no total shown. */
+  priceLines?: ParkedPriceLine[];
 }
 
 export interface ParkCartResponse extends ParkedCartListItem {

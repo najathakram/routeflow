@@ -45,6 +45,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-09-29-early.md](api/landing-2026-09-29-early.md) | Landing 2026-09-29 early: scanning package, component price, paying predicate, run/stop lock order, Jest cache, buyer types, order credits |
 | [api/landing-2026-09-29-midday.md](api/landing-2026-09-29-midday.md) | Landing 2026-09-29 midday: unitLineCount tripwire, lint:migrations SET LOCAL, plane deploy ids, shared PaymentMethod |
 | [api/landing-2026-09-29-late.md](api/landing-2026-09-29-late.md) | Landing 2026-09-29 late: staff price-override rule, driver mode 1a, push-guard, lint-migrations exemptions |
+| [api/landing-2026-10-12-macbook.md](api/landing-2026-10-12-macbook.md) | Landing 2026-10-12 MacBook lane (pushed): delivery_pos business profile |
 | [api/landing-2026-10-11-r4.md](api/landing-2026-10-11-r4.md) | Landing 2026-10-11 Release 4: digital receipt, SA-764, POS mode, SA-770 overdue-by-balance, billing B1 Stripe-first |
 | [api/landing-2026-10-11-r41.md](api/landing-2026-10-11-r41.md) | Landing 2026-10-11 Release 4.1: day close and Z report, closed-day guards, receipt cashier, overdue and reminder fixes |
 | [api/landing-2026-10-11-r5.md](api/landing-2026-10-11-r5.md) | Landing 2026-10-11 Release 5: dunning B3, grace/read-only B4, October catch-up B2, coupon-unbilled, calendar RF windows, profile comps |

@@ -42,9 +42,12 @@ describe("handleMutationError (#1965)", () => {
       router,
     );
     expect(toast).toHaveBeenCalledTimes(1);
-    expect(toast.mock.calls[0][0].title).toBe("Your workspace is read-only");
-    // B980: the description is fixed copy too, never the raw guard message.
-    expect(toast.mock.calls[0][0].description).toBe("Choose a plan to make changes.");
+    expect(toast.mock.calls[0][0].title).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
+    );
+    // B980: fixed copy too, never the raw guard message ("x"); no reason known -> no description.
+    expect(toast.mock.calls[0][0].description).toBeUndefined();
+    expect(toast.mock.calls[0][0].action).toMatchObject({ label: "Choose a plan" });
   });
 
   it("still swallows HANDLED_CODES and still turns READ_ONLY into the read-only toast", () => {
@@ -53,7 +56,9 @@ describe("handleMutationError (#1965)", () => {
     expect(toast).not.toHaveBeenCalled();
     handleMutationError(axiosErr({ code: "READ_ONLY", message: "x" }), {}, toast, router);
     expect(toast).toHaveBeenCalledTimes(1);
-    expect(toast.mock.calls[0][0].title).toBe("Your workspace is read-only");
+    expect(toast.mock.calls[0][0].title).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
+    );
   });
 
   // B1135: the buyer's request form says this refusal inline; a second generic toast would repeat it.
@@ -131,20 +136,45 @@ describe("handleMutationError - 403 READ_ONLY while a payment is owed (B4)", () 
     status: "READ_ONLY",
     readOnlyReason: "payment_overdue",
     pastDueInvoiceId: "in_1",
-    billingContactName: "Dana",
+    openInvoiceAmount: 149,
+    billingContactEmail: "dana@acme.test",
   } as any;
 
-  it("shows the exact line, no plan CTA, and refreshes the subscription read", () => {
+  it("an admin: the sentence + the amount owed, no contact line, no plan CTA, and the read is refreshed", () => {
     const toast = jest.fn();
     const router = { push: jest.fn() };
     const refresh = jest.fn();
-    handleMutationError(readOnly, {}, toast, router, { view: () => owedView, refresh });
+    handleMutationError(readOnly, {}, toast, router, {
+      view: () => owedView,
+      refresh,
+      isAdmin: () => true,
+    });
     expect(toast).toHaveBeenCalledTimes(1);
     const arg = toast.mock.calls[0][0];
-    expect(arg.title).toBe("Not available while read-only. Dana can restore it.");
+    expect(arg.title).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment of $149.00 is overdue.",
+    );
     expect(arg.action).toBeUndefined();
     expect(JSON.stringify(arg)).not.toMatch(/choose a plan/i);
     expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("a non-admin: the contact line (your admin + e-mail); no amount is invented", () => {
+    const toast = jest.fn();
+    handleMutationError(
+      readOnly,
+      {},
+      toast,
+      { push: jest.fn() },
+      {
+        view: () => ({ ...owedView, openInvoiceAmount: null }),
+        refresh: jest.fn(),
+        isAdmin: () => false,
+      },
+    );
+    expect(toast.mock.calls[0][0].title).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment is overdue. To restore access, contact your admin (dana@acme.test).",
+    );
   });
 
   it("an opted-out mutation still gets the line (the read-only branch comes first)", () => {
@@ -157,43 +187,67 @@ describe("handleMutationError - 403 READ_ONLY while a payment is owed (B4)", () 
       {
         view: () => owedView,
         refresh: jest.fn(),
+        isAdmin: () => true,
       },
     );
     expect(toast.mock.calls[0][0].title).toBe(
-      "Not available while read-only. Dana can restore it.",
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment of $149.00 is overdue.",
     );
   });
 
-  it("no admin on file: 'Your admin can restore it.'", () => {
-    const toast = jest.fn();
+  it("a trial-ended workspace: sentence + reason; the Choose a plan action for an admin only", () => {
+    const view = () => ({ status: "READ_ONLY", readOnlyReason: "trial_expired" }) as any;
+    const admin = jest.fn();
     handleMutationError(
       readOnly,
       {},
-      toast,
+      admin,
+      { push: jest.fn() },
+      { view, refresh: jest.fn(), isAdmin: () => true },
+    );
+    expect(admin.mock.calls[0][0].title).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
+    );
+    expect(admin.mock.calls[0][0].description).toBe("Your free trial has ended.");
+    expect(admin.mock.calls[0][0].action).toMatchObject({ label: "Choose a plan" });
+    const staff = jest.fn();
+    handleMutationError(
+      readOnly,
+      {},
+      staff,
       { push: jest.fn() },
       {
-        view: () => ({ ...owedView, billingContactName: null }),
+        view: () =>
+          ({
+            status: "READ_ONLY",
+            readOnlyReason: "trial_expired",
+            billingContactEmail: "dana@acme.test",
+          }) as any,
         refresh: jest.fn(),
+        isAdmin: () => false,
       },
     );
-    expect(toast.mock.calls[0][0].title).toBe(
-      "Not available while read-only. Your admin can restore it.",
+    expect(staff.mock.calls[0][0].description).toBe(
+      "Your free trial has ended. To restore access, contact your admin (dana@acme.test).",
     );
+    expect(staff.mock.calls[0][0].action).toBeUndefined();
   });
 
-  it("a trial-ended workspace keeps the existing toast and its Choose a plan action", () => {
+  it("with no subscription read cached, the 403 body's reason is mapped (never its message)", () => {
     const toast = jest.fn();
     handleMutationError(
-      readOnly,
+      {
+        response: {
+          status: 403,
+          data: { code: "READ_ONLY", reason: "trial_cancelled", message: "RAW" },
+        },
+      },
       {},
       toast,
       { push: jest.fn() },
-      {
-        view: () => ({ status: "READ_ONLY", readOnlyReason: "trial_expired" }) as any,
-        refresh: jest.fn(),
-      },
     );
-    expect(toast.mock.calls[0][0].title).toBe("Your workspace is read-only");
+    expect(toast.mock.calls[0][0].description).toBe("Your subscription was cancelled.");
+    expect(JSON.stringify(toast.mock.calls[0][0])).not.toContain("RAW");
   });
 });
 

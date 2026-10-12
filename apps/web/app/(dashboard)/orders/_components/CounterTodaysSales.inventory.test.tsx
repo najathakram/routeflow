@@ -124,6 +124,7 @@ it("every control of the Today's sales sheet that existed before day close is st
     "today-in-check",
     "today-in-other",
     "today-in-total",
+    "today-hand-overs",
     "today-store-credit-used",
     "today-on-account",
     "today-refunds",

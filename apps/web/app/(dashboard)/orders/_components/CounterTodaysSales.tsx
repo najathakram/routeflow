@@ -9,7 +9,7 @@ import { cashierNameOf } from "@routeflow/pricing";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 import { useOrder } from "@/lib/api/orders";
-import type { TodaysSaleMethod, TodaysSaleRow, TodaysSalesSummary } from "@routeflow/types";
+import type { TodaysSaleRow, TodaysSalesSummary } from "@routeflow/types";
 import {
   COUNTER_SALE_TODAY_KEY,
   useCounterSaleToday,
@@ -21,12 +21,13 @@ import { useOptionalAuth } from "@/lib/auth-context";
 import { guardCounterLeave } from "@/lib/counter-cart-signal";
 import {
   formatReceiptMoney as money,
-  formatSaleTime,
+  formatSaleDayTime,
   receiptCustomerName,
   receiptModelFromOrder,
   type ReceiptBusinessProfile,
 } from "@/lib/counter-receipt";
 import { CounterDayClose } from "./CounterDayClose";
+import { HandOverRows, METHOD_LABEL, handOverFigure } from "./HandOverRows";
 import { receiptEmailPrefill } from "@/lib/email-receipt";
 import { CounterReceiptView } from "./CounterReceiptView";
 import { CounterReturnAction } from "./CounterReturnAction";
@@ -34,13 +35,6 @@ import { EmailReceiptButton, EmailReceiptRow } from "./EmailReceipt";
 import { useEmailReceipt } from "./useEmailReceipt";
 import { CounterVoidSaleAction, CounterVoidSaleDialog } from "./CounterVoidSaleDialog";
 
-const METHOD_LABEL: Record<TodaysSaleMethod, string> = {
-  CASH: "Cash",
-  CARD: "Card",
-  CHECK: "Check",
-  OTHER: "Other",
-  STORE_CREDIT: "Store credit",
-};
 const PAYMENT_LABEL: Record<TodaysSaleRow["paymentState"], string> = {
   PAID: "Paid",
   PARTLY_PAID: "Partly paid",
@@ -60,11 +54,27 @@ const timeOf = (iso: string, timeZone: string) =>
     new Date(iso),
   );
 
-function Stat({ label, value, testId }: { label: string; value: string; testId?: string }) {
+function Stat({
+  label,
+  value,
+  testId,
+  note,
+}: {
+  label: string;
+  value: string;
+  testId?: string;
+  /** a hand-overs line: says the figure is already inside Money in and the cash expected */
+  note?: boolean;
+}) {
   return (
-    <div className="flex justify-between gap-2" data-testid={testId}>
+    <div className="flex flex-wrap justify-between gap-x-2" data-testid={testId}>
       <dt>{label}</dt>
       <dd className="tabular-nums">{value}</dd>
+      {note ? (
+        <dd className="basis-full text-xs text-navy/60">
+          These are already counted in money in and cash expected.
+        </dd>
+      ) : null}
     </div>
   );
 }
@@ -76,6 +86,7 @@ function Summary({
   testId = "today-summary",
   prefix = "today",
   cashExpectedSuffix = "",
+  handOverNote = true,
 }: {
   s: TodaysSalesSummary;
   /** the region's accessible name */
@@ -85,6 +96,8 @@ function Summary({
   prefix?: string;
   /** appended to the cash-expected label (the week total says it is a sum of the days) */
   cashExpectedSuffix?: string;
+  /** the "already counted" note under the hand-overs line (the per-day week blocks leave it to the total) */
+  handOverNote?: boolean;
 }) {
   const r = s.refunds;
   // SA-740r2: a window can hold refunds with a recorded method AND refunds without one (the tender is optional on STANDARD
@@ -107,6 +120,12 @@ function Summary({
         <Stat label="Check in" value={money(s.moneyIn.check)} testId={`${prefix}-in-check`} />
         <Stat label="Other in" value={money(s.moneyIn.other)} testId={`${prefix}-in-other`} />
         <Stat label="Money in" value={money(s.moneyIn.total)} testId={`${prefix}-in-total`} />
+        <Stat
+          label="Pickup hand-overs"
+          value={handOverFigure(s.handOvers ?? { count: 0, total: 0 })}
+          testId={`${prefix}-hand-overs`}
+          note={handOverNote && (s.handOvers?.count ?? 0) > 0}
+        />
         <Stat
           label="Store credit used"
           value={money(s.storeCreditUsed)}
@@ -227,7 +246,7 @@ function Reprint({
           model={model}
           logoUrl={branding?.logoUrl ?? null}
           reprintedBy={reprintedBy}
-          reprintLabel={`Reprint · sold ${formatSaleTime(row.createdAt, timezone)}`}
+          reprintLabel={`Reprint · Sold ${formatSaleDayTime(row.createdAt, timezone)}`}
         />
       ) : isError ? (
         <div role="alert" className="space-y-2 text-sm">
@@ -328,6 +347,7 @@ function WeekReport({ today }: { today: string }) {
             label={`${dayLabel(r.day)} summary`}
             testId={`week-day-${r.day}`}
             prefix={`week-day-${r.day}`}
+            handOverNote={false}
           />
         </div>
       ))}
@@ -529,6 +549,13 @@ export function CounterTodaysSales() {
             {view === "week" ? null : <CounterDayClose />}
             {view === "week" && tenantDay ? <WeekReport today={tenantDay} /> : null}
             {view === "week" ? null : summary ? <Summary s={summary} /> : null}
+            {view === "week" || !summary ? null : (
+              <HandOverRows
+                rows={q.data?.pages[0]?.handOverRows}
+                summary={summary.handOvers ?? { count: 0, total: 0 }}
+                timeOf={(iso) => timeOf(iso, timezone)}
+              />
+            )}
             {view === "week" ? null : rows.length === 0 ? (
               <p className="py-6 text-center text-sm text-navy/70">No sales yet today</p>
             ) : (

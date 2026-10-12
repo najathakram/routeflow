@@ -1,4 +1,3 @@
-import { READ_ONLY_STATUS } from "../../billing/dunning-config";
 import {
   BadRequestException,
   CanActivate,
@@ -9,9 +8,9 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
-import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { BLOCKED_SELLER_STATUSES, liveBuyerLinkWhere } from "../buyer-link-scope";
 import type { BuyerJwtPayload } from "../interfaces/buyer-jwt-payload.interface";
+import { sellerAcceptsBuyerWrite, sellerUnavailableException } from "../seller-status-gate";
 
 /**
  * SA-733r6 (option a): the ONLY buyer writes a READ_ONLY seller still takes - the buyer paying what is owed. One named
@@ -31,22 +30,6 @@ export const SELLER_READ_ONLY_EXEMPT_BUYER_WRITES: ReadonlyArray<{
   // when the gate is enforced.
   { method: "POST", pattern: /^\/api\/v1\/buyer\/orders\/[^/]+\/cancel$/ },
 ];
-
-/**
- * SA ruling 10-11 A3 (N6): the buyer-side READ_ONLY refusal ships DARK like every new behaviour gate.
- * `SELLER_READ_ONLY_BUYER_GATE` = `dark` (the default: allow, and log a `would_deny` line) | `enforced` (403
- * SELLER_UNAVAILABLE). It is separate from BILLING_PAUSE_MODE because a lapsed trial is READ_ONLY too. An unknown
- * value is `dark`: a typo can never turn the refusal on. The owner flips it after the READ_ONLY-sellers-with-buyers
- * count plus a week of would-deny log counts.
- */
-export type SellerReadOnlyBuyerGate = "dark" | "enforced";
-export function sellerReadOnlyBuyerGate(
-  env: Record<string, string | undefined> = process.env,
-): SellerReadOnlyBuyerGate {
-  return (env.SELLER_READ_ONLY_BUYER_GATE ?? "").trim().toLowerCase() === "enforced"
-    ? "enforced"
-    : "dark";
-}
 
 /**
  * Resolves the buyer's active CustomerLink for the requested seller (X-Tenant-Slug).
@@ -112,21 +95,16 @@ export class BuyerSellerContextGuard implements CanActivate {
     const exempt = SELLER_READ_ONLY_EXEMPT_BUYER_WRITES.some(
       (e) => e.method === method && e.pattern.test(path),
     );
-    if (
-      tenant.status === READ_ONLY_STATUS &&
-      !["GET", "HEAD", "OPTIONS"].includes(method) &&
-      !exempt
-    ) {
-      if (sellerReadOnlyBuyerGate() === "enforced") {
-        throw new ForbiddenException({
-          code: API_ERROR_CODES.SELLER_UNAVAILABLE,
-          message: "This seller isn't taking online orders right now. Please check back soon.",
-        });
-      }
-      // dark: allow, and log what enforced would have refused (seller tenant id + route, no buyer data)
-      this.logger.warn(
-        `seller_read_only.would_deny code=${API_ERROR_CODES.SELLER_UNAVAILABLE} seller=${tenant.id} route=${method} ${path}`,
-      );
+    if (!["GET", "HEAD", "OPTIONS"].includes(method) && !exempt) {
+      // ONE rule (seller-status-gate.ts): READ_ONLY + the dark/enforced gate. A SUSPENDED / CANCELLED seller was
+      // already refused above, for reads too.
+      const verdict = sellerAcceptsBuyerWrite({
+        sellerStatus: tenant.status,
+        sellerId: tenant.id,
+        logger: this.logger,
+        context: `${method} ${path}`,
+      });
+      if (!verdict.allowed) throw sellerUnavailableException();
     }
 
     // Populate request for downstream handlers / BuyerTenantInterceptor

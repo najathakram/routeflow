@@ -1,3 +1,4 @@
+import { appendInvoiceSyncRevisionInTx } from "../orders/order-revisions";
 import { ServiceUnavailableException } from "@nestjs/common";
 import { holdsValues } from "./order-backsync-lines";
 import { Prisma } from "@prisma/client";
@@ -301,6 +302,8 @@ export async function finalizeOrderRecompute(params: {
   subtotal: number;
   categoryTaxSum: number;
   invoices: any[];
+  /** Out-param (row 372 MF2): set when an orphan line was written, so the caller bumps the revision. */
+  touched?: { lines: boolean };
 }): Promise<OrderRecomputeTotals> {
   const { db, orderId, order, deliveredBasis, unbilled, categoryTaxSum, invoices } = params;
 
@@ -328,6 +331,7 @@ export async function finalizeOrderRecompute(params: {
       where: { id: orphan.id },
       data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null, invoicedQty: 0 },
     });
+    if (params.touched && !alreadyCancelled) params.touched.lines = true; // stale numbers on a cancelled line are not a sale change
   }
 
   // Preserve the order's effective tax rate (avoids depending on global config drift); mirror
@@ -363,4 +367,21 @@ export async function finalizeOrderRecompute(params: {
     });
   }
   return { orderId, subtotal, tax, total, shippingFee: shippingFeeSum };
+}
+
+/**
+ * Row 372 MF2: the invoice back-sync moved what an open order editor sees when a sale field of a line was
+ * written (`touched.lines`) or the order's fee moved (a header fee edit syncs onto it even while the lines stay
+ * gated by coverage): then the order's revision moves in the same tx, so the editor goes stale instead of
+ * silently reverting it. `invoicedQty` / levy-only normalisation never reaches here as `touched`.
+ */
+export async function bumpRevisionIfSaleMoved(
+  db: Prisma.TransactionClient,
+  tenantId: string | null,
+  order: { id: string; shippingFee?: unknown },
+  totals: { shippingFee: number },
+  touched: { lines: boolean },
+): Promise<void> {
+  const feeMoved = totals.shippingFee !== (Number(order.shippingFee ?? 0) || 0);
+  if (touched.lines || feeMoved) await appendInvoiceSyncRevisionInTx(db, tenantId, order.id);
 }

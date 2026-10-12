@@ -23,8 +23,9 @@ jest.mock("@/lib/api/addons", () => ({
 jest.mock("@/lib/api/counter-sale", () => ({ useCounterSaleGate: () => ({ showButton: true }) }));
 
 const view = (status: string) =>
-  ({ status, billingContactName: "Dana" }) as unknown as SubscriptionView;
-const LINE = "Not available while read-only. Dana can restore it.";
+  ({ status, billingContactEmail: "dana@acme.test" }) as unknown as SubscriptionView;
+const LINE =
+  "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. To restore access, contact your admin (dana@acme.test).";
 
 beforeEach(() => mockPush.mockClear());
 afterEach(cleanup);

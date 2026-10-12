@@ -42,7 +42,7 @@ function totalRow(label: string, value: string, strong = false): string {
 /** The totals, as (label, value, strong) triples: the ONE list both the html and the text print, in the print view's order. */
 function totalsOf(m: ReceiptModel): Array<[string, string, boolean]> {
   const rows: Array<[string, string, boolean]> = [["Subtotal", money(m.subtotal), false]];
-  if (m.discounts > 0) rows.push(["Discounts", `-${money(m.discounts)}`, false]);
+  if (m.discounts > 0) rows.push(["Discount", `−${money(m.discounts)}`, false]);
   if (m.tax !== 0) rows.push([taxRowLabel(m.taxRatePercent), money(m.tax), false]);
   for (const c of m.charges) rows.push([c.label, money(c.amount), false]);
   if (m.adjustments !== 0) rows.push(["Adjustments", money(m.adjustments), false]);
@@ -73,7 +73,7 @@ function lineAmountHtml(l: ReceiptModel["lines"][number]): string {
     escapeHtml(money(l.total)) +
     '<br><span style="' +
     SUB +
-    '">Discount -' +
+    '">Discount −' +
     escapeHtml(money(l.discount)) +
     "</span>"
   );
@@ -125,7 +125,7 @@ function bodyTextOf(m: ReceiptModel): string[] {
       .map((l) => {
         const amount =
           l.original != null
-            ? `was ${money(l.original)}  ${money(l.total)} (Discount -${money(l.discount)})`
+            ? `was ${money(l.original)}  ${money(l.total)} (Discount −${money(l.discount)})`
             : money(l.total);
         return `${l.name}\n  ${l.detail}  ${amount}${l.note ? `\n  ${l.note}` : ""}`;
       })
@@ -152,14 +152,14 @@ export function renderOrderReceipt(
   const model = buildReceiptModel(order, invoices, payments, tenantBranding, zone);
   const name = oneLine(model.header.name ?? "");
   const subject = name
-    ? `Your receipt from ${name} (Order ${model.orderNumber})`
-    : `Your receipt (Order ${model.orderNumber})`;
+    ? `Your receipt from ${name} for order ${model.orderNumber}`
+    : `Your receipt for order ${model.orderNumber}`;
   const { html, text } = renderBrandedEmail({
     headerHtml: tenantHeaderHtml(name || "Receipt"),
     heading: "Receipt",
     bodyHtml: bodyHtmlOf(model),
     bodyText: bodyTextOf(model),
-    footerNote: name ? `Receipt sent by ${name}.` : "Receipt sent from RouteFlow.",
+    footerNote: name ? `Sent by ${name}.` : "Sent by RouteFlow.",
   });
   return { model, subject, html, text };
 }

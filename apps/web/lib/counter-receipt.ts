@@ -1,4 +1,5 @@
 import {
+  dayCloseDateLabel,
   explainedTaxRatePercent,
   formatReceiptMoney,
   receiptFigures,
@@ -84,7 +85,7 @@ const METHOD_LABEL: Record<CounterSalePaymentMethod, string> = {
   ON_ACCOUNT: "On account",
 };
 
-/** "3 × $2.50 / each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the email prints. */
+/** "3 × $2.50 each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the email prints. */
 const lineDetail = (l: ReceiptLineInput): string => receiptLineDetail(l);
 
 /** GET /orders/:id serialises Prisma Decimals as strings ("3.30"): coerce, and treat anything non-numeric as 0. */
@@ -345,6 +346,30 @@ export function formatSaleTime(at: string | Date, timeZone: string = "UTC"): str
       timeStyle: "short",
       timeZone: zone,
     }).format(d);
+  try {
+    return format(timeZone);
+  } catch {
+    return format("UTC");
+  }
+}
+
+/**
+ * "Sun, Oct 11, 2:46 PM": the day label is the shared `dayCloseDateLabel` (the one the Z report title uses), read from the
+ * sale's own calendar day in the sale's zone, then the time of day in that zone. Same zone fallback as `formatSaleTime`.
+ */
+export function formatSaleDayTime(at: string | Date, timeZone: string = "UTC"): string {
+  const d = at instanceof Date ? at : new Date(at);
+  const format = (zone: string) => {
+    // en-CA prints a calendar date as YYYY-MM-DD, which is what dayCloseDateLabel reads.
+    const day = new Intl.DateTimeFormat("en-CA", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      timeZone: zone,
+    }).format(d);
+    const time = new Intl.DateTimeFormat("en-US", { timeStyle: "short", timeZone: zone }).format(d);
+    return `${dayCloseDateLabel(day)}, ${time}`;
+  };
   try {
     return format(timeZone);
   } catch {

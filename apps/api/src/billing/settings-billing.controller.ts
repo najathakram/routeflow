@@ -69,7 +69,7 @@ export class SettingsBillingController {
   @Get("subscription")
   @ApiOperation({ summary: "The tenant's current plan, add-ons and renewal state" })
   async getSubscription(@CurrentUser() user: AuthUser & { role?: string }) {
-    // S3: the card, the next charge and the amount are a workspace admin's; an operator keeps the contact's name only.
+    // S3: the card, the next charge and the amount are a workspace admin's; an operator keeps the contact's e-mail (who to ask) and the owed marker only.
     const view = await this.subscription.getSubscription(this.tenantIdOf(user));
     return trimBillingViewForRole(view, user.role);
   }

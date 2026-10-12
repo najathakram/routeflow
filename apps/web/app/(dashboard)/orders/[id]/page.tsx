@@ -61,6 +61,9 @@ import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { HandOverStamp } from "@/components/HandOverStamp";
+import { seesHandOverStamp } from "@/lib/handover-stamp";
+import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { useStaffFulfilment } from "@/lib/fulfilment-caps";
 import { OrderFulfilmentRow, fulfillPathErrorCopy } from "../_components/OrderFulfilmentRow";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
@@ -74,9 +77,12 @@ import {
 } from "../_components/use-order-inline-return-save";
 import { OrderReturnsPanel } from "./_components/OrderReturnsPanel";
 import { useOrderOverpayGuard } from "./_components/OrderOverpayNotice";
+import { useOrderStaleRevision } from "./_components/OrderStaleNotice";
+import { rebaseOnReload } from "./_components/order-edit-rebase";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
+import { OrderRevisionLog } from "./_components/OrderRevisionLog";
 import {
   describeChangeRequest,
   describeResolution,
@@ -1937,6 +1943,7 @@ export default function OrderDetailPage() {
   // Order-level commission override (staff + sales_agents addon only — the
   // server independently re-checks both via PlanFlagGuard/parseCommissionRatePct).
   const { user } = useAuth();
+  const stampZone = useTenantTimeZone(seesHandOverStamp(user?.role)); // row 342: the hand-over time
   const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const [commissionEditOpen, setCommissionEditOpen] = React.useState(false);
@@ -1956,7 +1963,7 @@ export default function OrderDetailPage() {
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
   const guardError = (retry: () => void) => (err: unknown) => {
-    if (overpay.capture(err)) return;
+    if (overpay.capture(err) || stale.capture(err)) return;
     const restricted = parseSellingRestricted(err);
     if (restricted) {
       setRestrictedBlock(restricted);
@@ -1979,7 +1986,29 @@ export default function OrderDetailPage() {
   // Item editing
   const [isEditing, setIsEditing] = React.useState(false);
   const overpay = useOrderOverpayGuard(order, isEditing);
-  const updateItems = useUpdateOrderItems({ localErrorToast: overpay.ownsToast });
+  const stale = useOrderStaleRevision(order, isEditing, (fresh, base) => {
+    // row 372 MF3: Reload re-bases lines, fee and credits (order-edit-rebase.ts); a clash is handed to the user
+    const n = rebaseOnReload(
+      {
+        editItems,
+        editShippingFee,
+        editCredits,
+        creditsTouched,
+        deps: { seed: buildEditItemFromLine },
+        setEditItems,
+        setPendingDeletes,
+        setEditShippingFee,
+        setEditCredits,
+        setCreditsTouched,
+      },
+      fresh,
+      base,
+    );
+    if (n > 0) toast({ title: "Someone else changed this order - re-check it", variant: "error" });
+  }); // row 372
+  const updateItems = useUpdateOrderItems({
+    localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
+  });
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
   const [pendingDeletes, setPendingDeletes] = React.useState<string[]>([]);
   const [draftAutoEntered, setDraftAutoEntered] = React.useState(false);
@@ -2221,12 +2250,12 @@ export default function OrderDetailPage() {
     // Hard-delete (or CANCEL fallback) for lines the user removed with the trash button.
     const updates: ItemUpdate[] = [
       ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
-      ...buildItemUpdates(editItems, order!.lineItems),
+      ...buildItemUpdates(editItems, stale.baseLines() ?? order!.lineItems),
     ];
 
     // Only send shippingFee when it actually changed — avoids no-op churn (and
     // matches the API's "no dto.shippingFee ⇒ keep the stored fee" rule).
-    const feeChanged = Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
+    const feeChanged = stale.feeChanged(editShippingFee, order!.shippingFee);
 
     // #2406: fold in whatever the operator has typed into the edit-mode Returns section.
     const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
@@ -2246,6 +2275,7 @@ export default function OrderDetailPage() {
         id: order!.id,
         items: updates,
         replaceAll: false,
+        expectedRevisionNumber: stale.expected(), // row 372: the revision this editor loaded
         ...(feeChanged ? { shippingFee: editShippingFee } : {}),
         // Credit-note selection: only sent when the operator actually touched
         // the picker — undefined on the wire leaves the server's stored
@@ -2560,6 +2590,10 @@ export default function OrderDetailPage() {
               </span>
             )}
           </div>
+          {/* Row 342: who handed it over, at which register (staff reads only) */}
+          <div className="mt-1.5">
+            <HandOverStamp order={order} role={user?.role} timeZone={stampZone} />
+          </div>
         </div>
 
         {/* Action bar */}
@@ -2602,20 +2636,8 @@ export default function OrderDetailPage() {
             </span>
           )}
 
-          {/* P5-08: revision count (append-only edit history). */}
-          {!isEditing && (order?.revisions?.length ?? 0) > 0 && (
-            <span
-              className="inline-flex items-center rounded-full bg-navy/5 px-2 py-1 text-xs font-medium text-navy/70"
-              title={order!
-                .revisions!.map(
-                  (r) =>
-                    `v${r.revisionNumber} · ${r.editedByName ?? r.editedByRole ?? "system"} · ${new Date(r.createdAt).toLocaleString()} · ${formatMoney(r.snapshot.total)}`,
-                )
-                .join("\n")}
-            >
-              Edited {order!.revisions!.length}×
-            </span>
-          )}
+          {/* P5-08: revision count + log (append-only edit history), one tap (row 330d). */}
+          {!isEditing && <OrderRevisionLog revisions={order?.revisions ?? []} />}
 
           {/* P5-11: pending post-dispatch change requests awaiting resolution. */}
           {!isEditing && pendingChangeRequests.length > 0 && (
@@ -2933,6 +2955,7 @@ export default function OrderDetailPage() {
                   applied when you save.
                 </p>
                 {overpay.node}
+                {stale.node}
                 <EditableLineItems
                   items={editItems}
                   onChange={setEditItems}
@@ -3029,7 +3052,7 @@ export default function OrderDetailPage() {
                             if (refuseLockedUnitLineEdit()) return;
                             const updates: ItemUpdate[] = [
                               ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
-                              ...buildItemUpdates(editItems, order!.lineItems),
+                              ...buildItemUpdates(editItems, stale.baseLines() ?? order!.lineItems),
                             ];
                             const doPublish = () =>
                               updateStatus.mutate(
@@ -3048,8 +3071,10 @@ export default function OrderDetailPage() {
                             // Carry a shipping-fee edit into the publish save the same
                             // way handleSaveItems does — otherwise publishing straight
                             // from edit mode silently drops the fee the operator typed.
-                            const feeChanged =
-                              Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
+                            const feeChanged = stale.feeChanged(
+                              editShippingFee,
+                              order!.shippingFee,
+                            );
                             // #2406: the Returns section rides this save too, never silently dropped.
                             const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
                             if (inlineReturn === null) return;
@@ -3070,6 +3095,7 @@ export default function OrderDetailPage() {
                                     // the payload as a full replace and deletes untouched
                                     // lines. Mirrors handleSaveItems.
                                     replaceAll: false,
+                                    expectedRevisionNumber: stale.expected(), // row 372 MF4
                                     ...(feeChanged ? { shippingFee: editShippingFee } : {}),
                                     // Same dual-path threading as handleSaveItems — the
                                     // line payload is shared (buildItemUpdates) but this

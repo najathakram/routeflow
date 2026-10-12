@@ -33,6 +33,7 @@ import {
 } from "./payment-image";
 import {
   computeLineSubtotal,
+  copyCategoryTaxSnapshot,
   roundMoney,
   normalizeBoxesPieces,
   remainingCapacity,
@@ -42,10 +43,17 @@ import {
 import { computeDepositFields } from "./deposit-fields";
 import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-read";
 import { withComponentViews } from "../orders/component-view";
-import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
+import {
+  HANDOVER_SOLD_BY_SELECT,
+  seesHandOverStamp,
+  stampHandedOverBy,
+} from "../orders/handover-stamp";
+import { aggregateInvoiceLines } from "./order-backsync-aggregate";
+import { orderLineShape, orderLineUnchanged, SALE_NEUTRAL_COLUMNS } from "./order-backsync-lines";
 import {
   buildEditedLines,
   loadEditCatalog,
+  withRowCategories,
   orderSyncLines,
   inPlacePatch,
   matchEditLines,
@@ -71,8 +79,8 @@ import { stampMsrpSnapshots } from "./msrp-snapshots";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import {
   checkOrderCoverage,
+  bumpRevisionIfSaleMoved,
   finalizeOrderRecompute,
-  resolveProductMatches,
   withOrderRecomputeLock,
 } from "./finalize-order-recompute";
 import {
@@ -987,14 +995,14 @@ export class InvoicesService {
       // zero the regular tax on any order-derived invoice.
       taxRate: 0,
       subtotal,
-      // Phase 4 (W4): carry the line's regulated category onto the invoice line so
-      // the split can group by it and reporting/ledger can read it. Prefer the
-      // OrderItem sale-time snapshot; fall back to the live product category for
-      // orders created before the snapshot shipped (best-effort — see resolveLineCategoryId).
-      trackedCategoryId: li.trackedCategoryId ?? li.product?.trackedCategoryId ?? null,
-      // RF-3: reporting-only subcategory snapshot, mirroring trackedCategoryId — prefer
-      // the order-line snapshot, fall back to the live product for pre-RF-3 lines.
-      trackedSubcategoryId: li.trackedSubcategoryId ?? li.product?.trackedSubcategoryId ?? null,
+      // Phase 4 (W4): carry the line's regulated category onto the invoice line so the split can group by it
+      // and reporting/ledger can read it. B297 row 373 (SA-734r2 r-note 8): the order line's own snapshot,
+      // VERBATIM. An uncategorised line stays uncategorised (with its stored levy), whatever its product's
+      // category is now: the copier never re-files a line under the live product. (A pre-snapshot line is
+      // therefore invoiced as the order recorded it; no backfill of OrderItem categories exists today.)
+      trackedCategoryId: li.trackedCategoryId ?? null,
+      // RF-3: reporting-only subcategory snapshot, mirroring trackedCategoryId (verbatim, never the product's).
+      trackedSubcategoryId: li.trackedSubcategoryId ?? null,
       categoryTaxAmount,
       categoryTaxType: li.categoryTaxType ?? null, // B297: COPY verbatim, never a live fallback.
       categoryTaxRate: li.categoryTaxRate != null ? Number(li.categoryTaxRate) : null,
@@ -1014,8 +1022,8 @@ export class InvoicesService {
    *
    * When no SEPARATE_INVOICE-category lines are present the result is a SINGLE
    * group, so callers produce exactly one invoice — byte-identical to pre-split
-   * behaviour. Category resolution prefers the OrderItem sale-time snapshot and
-   * falls back to the live product category for orders created before W4.
+   * behaviour. Category resolution is the OrderItem sale-time snapshot, verbatim (row 373:
+   * no live-product fallback, so the group always matches the category the copy carries).
    */
   private async groupOrderLinesForInvoicing(
     remainingItems: Array<{ li: any; remainingQty: number }>,
@@ -1023,8 +1031,8 @@ export class InvoicesService {
   ): Promise<
     Array<{ trackedCategoryId: string | null; category: any; items: typeof remainingItems }>
   > {
-    const resolveCat = (li: any): string | null =>
-      li.trackedCategoryId ?? li.product?.trackedCategoryId ?? null;
+    // The SAME category the copy carries (row 373): the line's own snapshot, never the live product.
+    const resolveCat = (li: any): string | null => li.trackedCategoryId ?? null;
 
     const catIds = [
       ...new Set(remainingItems.map(({ li }) => resolveCat(li)).filter(Boolean)),
@@ -1100,7 +1108,7 @@ export class InvoicesService {
     // line added to the order after its create-time guard (buyer merge) or a license
     // that EXPIRED between order creation and invoicing. Runs before any invoice row
     // is written (inside the tx), so a block never half-creates. Category resolves
-    // from the line snapshot or the live product (mirrors buildInvoiceItemData).
+    // from the line snapshot or, for this GUARD only, the live product (a license check reads the current state).
     // orderId is passed so ORDER-scoped §8 overrides apply.
     await this.authGuard.assertAuthorizedOrThrow({
       customerId: order.customerId,
@@ -2261,6 +2269,7 @@ export class InvoicesService {
       );
     }
     const db = tx;
+    await lockOrderRow(db, this.prisma.getTenantId(), orderId); // row 372 MF2: serialize with edits' revisions
     const order = await db.order.findUnique({
       where: { id: orderId },
       include: { lineItems: true },
@@ -2274,63 +2283,11 @@ export class InvoicesService {
     if (invoices.length === 0) return null;
 
     const tenantId = this.prisma.getTenantId();
-    const existingById = new Map<string, any>();
-    for (const li of order.lineItems as any[]) existingById.set(li.id, li);
-    // #1185 round 5, item 2 -- see resolveProductMatches' own doc.
-    const { existingByProduct, ambiguousLineIds } = resolveProductMatches(order.lineItems);
-    // Aggregate billed qty + subtotal, resolving each invoice line to its source
-    // order line: prefer the stored orderItemId; else first-match by productId
-    // (legacy rows). An invoice line with a product but no matching order line
-    // becomes a NEW order line (an item added on the invoice). Freeform invoice
-    // lines (no product, no orderItemId) can't map to an order line and are skipped.
-    type Agg = {
-      line: any; // existing order line, or null → create new
-      productId: string | null;
-      qty: number;
-      subtotal: number;
-      categoryTax: number; // RF-4: Σ billed category tax for this source line
-      freeUnits: number; // BUY_N_GET_M: Σ billed free selling units for this source line
-      unitPrice: number;
-      n: number; // contributing invoice lines
-      packs: Set<number>; // their packs (0 = none), for the shared-pack re-split rule
-      sample: any; // an invoice item, for the box/piece + upb snapshot
-    };
-    const byTarget = new Map<string, Agg>();
-    const freeformSkipped: string[] = []; // SA-093a rd6: no orderItemId, no productId -- warn, never silent
-    for (const inv of invoices) {
-      for (const it of inv.items as any[]) {
-        const line =
-          (it.orderItemId && existingById.get(it.orderItemId)) ||
-          (it.productId && existingByProduct.get(it.productId)) ||
-          null;
-        if (!line && !it.productId) {
-          freeformSkipped.push(it.id);
-          continue;
-        }
-        const key = line ? `line:${line.id}` : `product:${it.productId}`;
-        const prev = byTarget.get(key) ?? {
-          line,
-          productId: it.productId ?? null,
-          qty: 0,
-          subtotal: 0,
-          categoryTax: 0,
-          freeUnits: 0,
-          unitPrice: Number(it.unitPrice),
-          n: 0,
-          packs: new Set<number>(),
-          sample: it,
-        };
-        prev.n += 1;
-        prev.packs.add(Number(it.unitsPerBox ?? 0));
-        prev.qty += Number(it.qty);
-        prev.subtotal += Number(it.subtotal);
-        prev.categoryTax += Number(it.categoryTaxAmount ?? 0);
-        prev.freeUnits += Math.max(0, Math.trunc(Number(it.promoFreeUnits ?? 0) || 0));
-        prev.unitPrice = Number(it.unitPrice); // most-recent line wins for display
-        prev.sample = it;
-        byTarget.set(key, prev);
-      }
-    }
+    // SA-093 / row 373: which order line each invoice line bills (ONE helper, order-backsync-aggregate.ts).
+    const { existingById, ambiguousLineIds, byTarget, freeformSkipped } = aggregateInvoiceLines(
+      order.lineItems as any[],
+      invoices as any[],
+    );
 
     const deliveredBasis = await deliveredBasisByLine(db, orderId); // SA-093a rd6
     // B667: coverage decided BEFORE any line is rewritten — see checkOrderCoverage's doc.
@@ -2344,7 +2301,11 @@ export class InvoicesService {
       ambiguousLineIds,
     });
     logSkippedMatches(this.logger, orderId, freeformSkipped, coverage);
-    if (!coverage.fullyCovered) return coverage.totals;
+    const touched = { lines: false }; // row 372 MF2: any order line sale field written below
+    if (!coverage.fullyCovered) {
+      await bumpRevisionIfSaleMoved(db, tenantId, order, coverage.totals, touched);
+      return coverage.totals;
+    }
 
     let subtotal = 0;
     let categoryTaxSum = 0;
@@ -2360,7 +2321,9 @@ export class InvoicesService {
       const shape = orderLineShape(existing, agg);
       if (existing) {
         // An order line that would be rewritten to exactly what it holds is not written at all.
-        if (!orderLineUnchanged(existing, shape, agg))
+        if (!orderLineUnchanged(existing, shape, agg)) {
+          // invoicedQty / levy-only normalisation is bookkeeping, not a change to the sale (row 372 MF2)
+          if (!orderLineUnchanged(existing, shape, agg, SALE_NEUTRAL_COLUMNS)) touched.lines = true;
           await db.orderItem.update({
             where: { id: existing.id },
             data: {
@@ -2378,8 +2341,10 @@ export class InvoicesService {
               status: "PENDING",
             },
           });
+        }
         existingById.delete(existing.id);
       } else {
+        touched.lines = true;
         await db.orderItem.create({
           data: {
             orderId,
@@ -2393,6 +2358,11 @@ export class InvoicesService {
             subtotal: lineSubtotal,
             // RF-4: mirror the billed category tax back onto the new order line.
             categoryTaxAmount: lineCategoryTax,
+            // B297 row 373: ...and the category, subcategory and rate trio it was billed under: the source
+            // (invoice) line's own snapshot, never the live product (every order <-> invoice copier carries it).
+            trackedCategoryId: agg.sample?.trackedCategoryId ?? null,
+            trackedSubcategoryId: agg.sample?.trackedSubcategoryId ?? null,
+            ...copyCategoryTaxSnapshot(agg.sample ?? {}),
             promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
             invoicedQty: shape.qty,
             status: "PENDING",
@@ -2405,7 +2375,7 @@ export class InvoicesService {
     await syncOrderLineCompositions(db, orderId, tenantId, this.featureConfig);
     // B667: cancelling an orphan and rewriting the order's totals — coverage was already
     // confirmed above, before this loop ran.
-    return finalizeOrderRecompute({
+    const totals = await finalizeOrderRecompute({
       db,
       orderId,
       order,
@@ -2414,7 +2384,11 @@ export class InvoicesService {
       subtotal,
       categoryTaxSum,
       invoices,
+      touched,
     });
+    // Row 372 MF2: an invoice edit that rewrote the order's lines moves its revision (an open editor is stale).
+    await bumpRevisionIfSaleMoved(db, tenantId, order, totals, touched);
+    return totals;
   }
 
   /**
@@ -3045,7 +3019,18 @@ export class InvoicesService {
         },
         // The web invoice page gates Edit/Send for an order-linked DRAFT until the
         // order is delivered (the "pending mirror"). Surface the order's status here.
-        order: { select: { status: true, orderNumber: true, fulfillPath: true, shippedAt: true } },
+        order: {
+          select: {
+            status: true,
+            orderNumber: true,
+            fulfillPath: true,
+            shippedAt: true,
+            // row 342: "Handed over by Pat · main · 11:14 AM" (the cashier relation is staff only)
+            registerKey: true,
+            deliveredAt: true,
+            ...(seesHandOverStamp(user) ? { soldBy: HANDOVER_SOLD_BY_SELECT } : {}),
+          },
+        },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -3062,6 +3047,7 @@ export class InvoicesService {
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+    stampHandedOverBy(inv.order, user); // row 342: staff only (`invoiceDetailFor` drops `order` for a buyer)
     return invoiceDetailFor(user, {
       ...inv,
       ...deriveInvoiceDetailFields(
@@ -3143,7 +3129,7 @@ export class InvoicesService {
           stored: storedRows,
           matches,
           productMap,
-          categoryMap,
+          categoryMap: await withRowCategories(tx, storedRows, categoryMap),
           clampFreeUnits: (f, b, q) => this.clampLineFreeUnits(f, b, q),
           warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
         });
@@ -5831,6 +5817,7 @@ export class InvoicesService {
           unitsPerBoxByProduct,
           isTaxExempt,
           invoiceStatus: live.status,
+          warn: (m) => this.logger.warn(m),
         });
         assertAdjustedTotalsSane(live, itemUpdates); // B1031: totals stay sane, before any write
         if (inferred?.verified) {

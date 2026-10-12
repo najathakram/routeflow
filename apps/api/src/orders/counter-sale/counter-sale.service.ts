@@ -419,7 +419,7 @@ export class CounterSaleService {
    * Without the request's payment the body carries no `change`, and `paymentRecorded` is read from what is
    * stored: an ON_ACCOUNT sale (no tender, nothing asked of the till) reads `paymentRecorded:true`, a stored
    * tender that leaves balance owing reads `false`. With the till's own `method` POST's rule applies to it
-   * (a tender that failed completely reads `false`). A half-written sale (no invoice rows at all) is a coded 409
+   * (a tender that failed completely reads `false`). A half-written sale (no invoice rows at all, or an invoice still DRAFT on a PENDING / DELIVERED order) is a coded 409
    * COUNTER_SALE_INCOMPLETE (re-POST finishes it); a voided or cancelled one is COUNTER_SALE_VOIDED (start a
    * new sale); a moved order with no invoice is COUNTER_SALE_CHANGED (check with the office, do not re-ring); nothing stored for the key, or an order whose Order.counterSale marker is not true (a staff/buyer order that shares the key store), is a definitive 404.
    */
@@ -438,7 +438,7 @@ export class CounterSaleService {
       });
     }
     // The ONE stored-sale rule (shared with createSale's replay guard): voided / cancelled is definitive,
-    // an order with no invoice rows at all is half-written, anything else is a live sale.
+    // an order with no invoice rows at all (or a still-DRAFT invoice) is half-written, anything else is a live sale.
     const all = await this.prisma
       .forTenant()
       .invoice.findMany({ where: { orderId: order.id }, select: { status: true } });

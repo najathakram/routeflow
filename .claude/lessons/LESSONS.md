@@ -257,21 +257,6 @@
   calling `gh run rerun` whenever the PR predates a relevant base-branch fix.
 - **Fold-in 2026-09-27 (CI base must equal master):** a close/reopen or empty commit is not proof either. GitHub recomputes `refs/pull/N/merge` asynchronously, so a run started seconds after can still check out the OLD base (seen three times in one night). Before trusting a green run, read its checkout line (`HEAD is now at <merge> into <base>`) and require `<base>` to equal the current master; if not, wait until `git ls-remote origin refs/pull/N/merge` shows a merge commit whose first parent is master, then trigger again.
 
-### L-191 · 2026-09-17 · tooling · MailboxCard.tsx JSX apostrophes only caught by a full web lint
-
-- **Symptom:** `MailboxCard.tsx` shipped with five raw `'` characters in JSX text nodes
-  (`react/no-unescaped-entities`). `tsc`, Jest, and a targeted `eslint` pass on just the changed
-  file were all clean; the errors only surfaced under `npm run lint -w apps/web` (`next lint`)
-  against the whole workspace.
-- **Root cause:** `next lint` fails the ENTIRE web workspace on a single error, and amid
-  pre-existing warnings elsewhere in the repo, a real new error in the diff reads as just more
-  backlog.
-- **Lesson:** **A JSX text change needs web lint run locally before push, not inferred from
-  `tsc`/Jest passing — scan the full lint output for NEW errors in the touched file(s) rather
-  than assuming a clean `tsc` means the JSX is clean too.**
-- **Guard:** none yet — propose a scoped `npm run lint -w apps/web -- --file <changed-file>`
-  invocation, or a pre-push step that diffs lint output against a baseline.
-
 ### L-193 · 2026-09-17 · tooling · bugs.mjs index carries catalogue-only fields forward BY ID POSITION
 
 - **Symptom:** renumbering 17 filed bug records (to dodge an id collision) then running
@@ -425,20 +410,6 @@
   text.**
 - **Guard:** the fix (rewriting both to DOM-behavior assertions) is being built into #910.
 
-### L-202 · 2026-09-18 · testing · 390px sweep script matched zero targets, reported clean
-
-- **Symptom:** the 390px mobile-overflow sweep located screens via `a[href^='/x/']`, but this
-  codebase navigates list tables by row-level `onClick` + `router.push`, never anchors — true
-  across every screen checked. The locator matched nothing, every run recorded "skipped: no
-  data," and looked clean while testing nothing. Fleet decisions were made on those results.
-- **Root cause:** the harness treated "found zero candidate targets" and "checked every
-  candidate and found nothing wrong" as the same outcome — a green run gives no signal for which
-  one happened.
-- **Lesson:** **Any verification step that yields zero candidate targets must raise an error,
-  never a skip or a pass.**
-- **Guard:** none yet — propose the sweep script assert a non-zero target count before
-  evaluating, failing loudly when a locator matches nothing.
-
 ### L-165 · 2026-09-16 · testing · #779 (B225/B244/B411)
 
 - **Symptom:** two unrelated integration tests intermittently failed under load — one asserted
@@ -451,29 +422,6 @@
   other parallel worker touching the same path.
 - **Guard:** code review should flag any `Date.now()`-delta or directory-listing-count assertion
   in a spec touching a spawned process or shared tmp path — no automated lint yet.
-
-### L-050 · 2026-09-02 · testing · #598
-
-- **Symptom:** two new e2e specs went red post-deploy AND dragged an unrelated, previously-green
-  test down with them.
-- **Root cause:** neither new project declared `dependencies`, so the runner placed both in the
-  first phase, while the victim ran in phase 2 on a stored session for the same shared operator;
-  the mutating spec revoked that session mid-flow, 401ing the sibling's token refresh.
-- **Lesson:** **A spec that mutates shared auth state needs its own user, not a scheduling
-  tweak.** Ask which fixtures a new suite MUTATES, and who else in its phase reads them.
-- **Guard:** none yet — the two project entries are commented out with the diagnosis inline, so
-  re-enabling is a seed change plus uncommenting. A skip is not a discharge ([[L-041]]).
-
-### L-025 · 2026-09-01 · testing
-
-- **Symptom:** native Google Sign-In had been dead the whole time — the callback destructured a
-  `default` export `expo-secure-store` does not have, so token storage threw on every device.
-- **Root cause:** the throw sits inside a `!isWeb` branch. Every automated surface runs the web
-  build, which takes the `localStorage` branch, so nothing ever executed the failing line.
-- **Lesson:** **A `Platform`/`isWeb` branch is untested code unless something runs that
-  platform. When you touch one side of such a branch, either exercise the other side or state
-  plainly that it is unverified.**
-- **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
 ### L-247 · 2026-09-29 · testing · swapping a constructor dependency has construction sites tsc does not check (#2241)
 
@@ -512,6 +460,34 @@
 - **Recurrence (2026-10-08):** a master merge, or a merge of another branch, makes the api and mobile `.campaign/runs` reports STALE even when no test file changed on your branch, because turbo serves cached test results and never regenerates them. Regenerate with the full suite (`cd apps/api && npx jest --maxWorkers=2`, the same in mobile) before the push.
 
 ## domain
+
+### L-298 · 2026-10-12 · domain · a screen that shows what is owed never falls back to the gross total while the server balance is loading or errored
+
+- **Symptom:** a hand-over sheet showed the order's gross total as the amount due while the invoice balance read was still loading (or had failed), so a cashier could collect, or skip, the wrong amount for an already part-paid order.
+- **Root cause:** the amount owed was `balance ?? total`; the fallback made "unknown" look like "nothing paid yet", and submit stayed enabled.
+- **Lesson:** **A figure derived from a server balance has three states: known, loading, errored. Unknown renders as loading or an error with retry and disables the submit; it never degrades to a gross or cached total.**
+- **Guard:** the pure helper returns an explicit unknown variant (`posHandOverBalance`) and its spec pins loading and error to it. Cf. [[L-260]].
+
+### L-299 · 2026-10-12 · domain · a client-assumed state transition is checked against the API transition table, and a retry comment is only true if the refused edge is handled
+
+- **Symptom:** a POS finish after a merge into an open DRAFT order sent DRAFT to CONFIRMED and was refused; the first fix re-sent PENDING on retry, which the API also refuses (PENDING to PENDING is a 400/409), and the code comment called the sequence idempotent.
+- **Root cause:** the client assumed an edge the server's table lacks, and "idempotent" was asserted, never read from the table.
+- **Lesson:** **Before a client chains status PATCHes, read the server transition table for each edge. A step the server refuses on repeat is not idempotent: on a 400/409, re-read the resource and continue only if it already sits at the target (or beyond), and skip any patch the re-read makes a no-op.**
+- **Guard:** web `usePosFinish` re-reads through `promotedAlready` and its spec covers refused PENDING and already-CONFIRMED. Cf. [[L-267]].
+
+### L-300 · 2026-10-12 · domain · an edit screen freezes its diff baseline at edit-open and re-bases only on an explicit reload
+
+- **Symptom:** an edit screen sent every line on save after a background refetch, re-writing untouched lines and reverting another writer's change made in between.
+- **Root cause:** the diff of "what changed" was computed against the live query data, so a refetch silently moved the baseline under the user's edits.
+- **Lesson:** **Snapshot the server state when editing starts and diff only against that snapshot; send just the fields the user touched. A refetch while editing never re-bases the draft: offer an explicit reload, and let the server reject a stale revision.**
+- **Guard:** none automatic; review checks that a save payload is built from the frozen baseline. Cf. [[L-167]].
+
+### L-301 · 2026-10-12 · domain · a revision or guard value is written in the same transaction and lock as the check that reads it
+
+- **Symptom:** two concurrent writers both passed a revision check and both committed, because the new revision value was appended after the first transaction committed.
+- **Root cause:** check and write were separate steps, not one atomic compare-and-set under the row lock.
+- **Lesson:** **Read the guard value after taking the lock, compare, and write the new value in that same transaction. A guard stamped after commit is a log, not a guard.**
+- **Guard:** none automatic; DB specs that race two callers against one row. Cf. [[L-239]].
 
 ### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
 

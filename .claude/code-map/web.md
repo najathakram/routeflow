@@ -22,6 +22,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/components-shared.md](web/components-shared.md) | Components & shared                                                                                    |
 | [web/api-hooks.md](web/api-hooks.md)                 | API hooks (`lib/api/`)                                                                                 |
 | [web/catchup-2026-09-21.md](web/catchup-2026-09-21.md) | Catch-up 2026-09-21: restrictions UI, product labels, PO tab, scan-to-order, credit-limit guard, config snapshots tab |
+| [web/landing-2026-10-12-macbook.md](web/landing-2026-10-12-macbook.md) | Landing 2026-10-12 MacBook lane (pushed): merged-draft POS confirm, delivery + POS profile UI, dashboard KPIs never zero |
 | [web/landing-2026-10-11-r4.md](web/landing-2026-10-11-r4.md) | Landing 2026-10-11 Release 4: email receipt, counter pass 2, last 7 days, refund slip, POS order page, revision marks |
 | [web/landing-2026-10-11-r41.md](web/landing-2026-10-11-r41.md) | Landing 2026-10-11 Release 4.1: day close form and Z view, store-only invoice entry, receipt cashier, closed-day copy |
 | [web/landing-2026-10-11-r5.md](web/landing-2026-10-11-r5.md) | Landing 2026-10-11 Release 5: billing strip, read-only gate (WriteButton), Billing status card, buyer seller-unavailable line, profile comps |

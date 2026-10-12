@@ -161,7 +161,7 @@ function lineName(l: ReceiptLineInput): string {
   return base || "Item";
 }
 
-/** "3 × $2.50 / each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the web prints. */
+/** "3 × $2.50 each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the web prints. */
 function lineDetail(l: ReceiptLineInput): string {
   return receiptLineDetail({
     unitPrice: num(l.unitPrice),

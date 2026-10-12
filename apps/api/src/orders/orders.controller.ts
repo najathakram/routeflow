@@ -260,7 +260,16 @@ export class OrdersController {
                   // operator to edit yet. The actual remedy is to not merge at all.
                   'Choose "Create as a separate order" instead.',
                 );
-                const foldResult = foldMergeItems(current.lineItems ?? [], dto.items ?? []);
+                const foldResult = foldMergeItems(
+                  current.lineItems ?? [],
+                  dto.items ?? [],
+                  undefined,
+                  // B297 row 340 (foldTarget): the rate trio a NEW sale of each incoming product takes today —
+                  // an existing line sold at a different trio does not absorb the added quantity.
+                  await this.ordersService.liveTrioByProduct(
+                    (dto.items ?? []).map((i) => i.productId).filter(Boolean) as string[],
+                  ),
+                );
                 if (foldResult.livePackFallbackProductIds.length > 0) {
                   this.logger.warn(
                     `foldMergeItems: order ${current.id} product(s) [${foldResult.livePackFallbackProductIds.join(", ")}] had box data but no resolvable pack of their own — deferred to the live product pack in updateOrderItems (B776/SA-124)`,
@@ -536,7 +545,12 @@ export class OrdersController {
     @Body() dto: UpdateOrderItemsDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.forCaller(user, await this.ordersService.updateOrderItems(id, dto, user));
+    // B297 row 352: a CUSTOMER principal on this route names its lines exactly as on the buyer route.
+    const edited =
+      user.role === UserRole.CUSTOMER
+        ? await this.ordersService.updateOrderItems(id, dto, user, { buyerLineIds: true })
+        : await this.ordersService.updateOrderItems(id, dto, user);
+    return this.forCaller(user, edited);
   }
 
   // ─── P5-09: post-dispatch change requests ───────────────────────────────────

@@ -328,6 +328,7 @@ function statefulOrdersService(opts: { orderKey: string | null; throwAfterFirstF
     // B215: the controller re-runs the convergent post-fold tail on every replay.
     replayMergeReconcile: jest.fn().mockResolvedValue(undefined),
     // Fold stand-in; records the key only when the caller hands it in (the fixed controller does).
+    liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
     updateOrderItems: jest.fn(
       async (
         _id: string,

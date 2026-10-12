@@ -40,6 +40,7 @@ import {
   isUuid,
   lineCountOf,
   localHm,
+  priceLinesOf,
   type ParkedRow,
 } from "./counter-park";
 import type { ListParkedDto, ParkCartDto } from "./counter-park.dto";
@@ -242,6 +243,7 @@ export class CounterParkService {
         SELECT "id", "label", "registerKey", "createdAt", "expiresAt",
                CASE WHEN jsonb_typeof("payload"->'lines') = 'array'
                     THEN jsonb_array_length("payload"->'lines') ELSE 0 END AS "lineCount",
+               "payload"->'lines' AS "lines",
                "payload"->'customer'->>'businessName' AS "customerName"
           FROM "CounterParkedCart"
          WHERE "tenantId" = ${tenantId} AND "registerKey" = ${registerKey}
@@ -262,6 +264,7 @@ export class CounterParkService {
       createdAt: iso(r.createdAt),
       expiresAt: iso(r.expiresAt as Date | string),
       lineCount: Number(r.lineCount ?? 0),
+      priceLines: priceLinesOf({ lines: r.lines }),
       ...(r.customerName ? { customerName: r.customerName } : {}),
     }));
     return { data, total: total[0]?.n ?? 0, page, pageSize };

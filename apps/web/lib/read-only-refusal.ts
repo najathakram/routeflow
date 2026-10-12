@@ -1,4 +1,4 @@
-import { API_ERROR_CODES } from "@routeflow/types";
+import { API_ERROR_CODES, type SubscriptionView } from "@routeflow/types";
 import { readOnlyLine } from "./subscription-banner-state";
 
 /**
@@ -23,7 +23,14 @@ export function isReadOnlyRefusal(err: unknown): boolean {
   return code === API_ERROR_CODES.READ_ONLY;
 }
 
-/** The fixed read-only sentence: B4's `readOnlyLine` ("Your admin" when the admin's name is unknown). */
-export function readOnlyRefusalCopy(adminName?: string | null): string {
-  return readOnlyLine(adminName);
+/**
+ * The read-only line a blocked control / a refused write shows: the shared read-only copy (SA-776, ONE helper) - the
+ * owner's sentence, then the mapped reason and who to ask by e-mail when the caller holds the subscription view.
+ * With no view it is the owner's sentence alone; the 403's own text is never shown.
+ */
+export function readOnlyRefusalCopy(
+  view?: SubscriptionView | null,
+  isAdmin: boolean = false,
+): string {
+  return readOnlyLine(view ?? null, isAdmin);
 }
