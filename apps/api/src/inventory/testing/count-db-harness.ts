@@ -19,7 +19,7 @@ import { StockAlertService } from "../../stock-alerts/stock-alert.service";
 import { AuditService } from "../../audit/audit.service";
 import { requireLocalDatabaseUrl } from "../../common/testing/db-spec";
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { assertTestTenant } = require("../../../../../scripts/lib/test-tenants.cjs");
 
 const RUN_SUFFIX = randomUUID().slice(0, 8);
@@ -199,6 +199,28 @@ export function useCountDbHarness(spec: string) {
     return { tenantId: tenant.id, userId: user.id, sessionId: session.id, idOf };
   }
 
+  /** Another session in the SAME tenant (the cases for one-open-count-per-product). */
+  async function addSession(w: CountWorld, name: string): Promise<CountWorld> {
+    const session = await h.A.prisma.stockCountSession.create({
+      data: { tenantId: w.tenantId, startedById: w.userId, name },
+    });
+    return { ...w, sessionId: session.id };
+  }
+
+  /** A line written straight to the table, bypassing the service (a LEGACY overlap). */
+  const addLegacyLine = (w: CountWorld, productId: string, counted = 90, expected = 100) =>
+    h.A.prisma.stockCountLine.create({
+      data: {
+        tenantId: w.tenantId,
+        sessionId: w.sessionId,
+        productId,
+        mode: "REPLACE",
+        countedQty: counted,
+        expectedQty: expected,
+        countedById: w.userId,
+      },
+    });
+
   const inTenant = <T>(s: Services, w: CountWorld, fn: () => Promise<T>) =>
     s.tenantCtx.run(w.tenantId, fn);
   const stockOfId = async (id: string) =>
@@ -284,6 +306,8 @@ export function useCountDbHarness(spec: string) {
 
   return Object.assign(h, {
     seedCountWorld,
+    addSession,
+    addLegacyLine,
     inTenant,
     stockOfId,
     commitSession,

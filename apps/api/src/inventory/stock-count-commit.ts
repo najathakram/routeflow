@@ -22,6 +22,12 @@ export const COUNT_COMMIT_BATCH = 50;
 /** The advisory-lock family of the committer (exclusive) and of the edits (shared): `db-locks.ts`. */
 export const STOCK_COUNT_LOCK_FAMILY = "stock-count" as const;
 
+/** SA-767 r-note 5 SA-3: the tx lock of "add this product to a count", keyed `<tenantId>:<productId>`. */
+export const STOCK_COUNT_PRODUCT_LOCK_FAMILY = "stock-count-product" as const;
+
+/** A count in these statuses is "open": it can still be edited and committed. */
+export const OPEN_COUNT_STATUSES = ["OPEN", "REVIEW"] as const;
+
 /**
  * The committer's try-lock is retried this many times, `COUNT_LOCK_RETRY_MS` apart, before it answers
  * 409: an edit that is mid-flight holds the SHARED form of the lock for a few milliseconds, and a
@@ -110,6 +116,43 @@ export interface StockCountCommitOutcome {
 
 /** The `StockMovement.reference` of every movement a count session writes (also its movementReference). */
 export const stockCountReference = (sessionId: string): string => `STOCK_COUNT-${sessionId}`;
+
+/**
+ * One product that is already on another OPEN / REVIEW count (SA-767 r-note 5 SA-3). `sessionName` is
+ * null for an unnamed count; the client then says "another count".
+ */
+export interface OpenCountConflict {
+  productId: string;
+  productName?: string | null;
+  sessionId: string;
+  sessionName: string | null;
+}
+
+/**
+ * The coded 409 PRODUCT_IN_OPEN_COUNT: ONE open count per product. An add carries the first conflict as
+ * `{ sessionId, sessionName }`; every refusal (an add, an amendment, a commit that found a legacy
+ * overlap) also lists all of them as `conflicts`. Nothing was changed; the operator removes the product
+ * from one of the counts.
+ */
+export function productInOpenCount(conflicts: OpenCountConflict[]): ConflictException {
+  const first = conflicts[0];
+  const where = first.sessionName ? `"${first.sessionName}"` : "another count";
+  return new ConflictException({
+    code: API_ERROR_CODES.PRODUCT_IN_OPEN_COUNT,
+    message:
+      conflicts.length === 1
+        ? `${first.productName ?? "This product"} is already being counted in ${where}.`
+        : `${conflicts.length} products are already being counted in other counts. Remove them from one count.`,
+    sessionId: first.sessionId,
+    sessionName: first.sessionName,
+    conflicts: conflicts.map((c) => ({
+      productId: c.productId,
+      ...(c.productName ? { productName: c.productName } : {}),
+      sessionId: c.sessionId,
+      sessionName: c.sessionName,
+    })),
+  });
+}
 
 type CountSplit = number | null | undefined;
 const sameSplit = (a: CountSplit, b: CountSplit) =>

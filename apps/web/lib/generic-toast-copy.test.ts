@@ -139,6 +139,8 @@ describe("genericToastCopy: codes users rely on", () => {
     ["CONCURRENT_UPDATE", /Someone else is updating/],
     // SA-767 L-2.2: a second commit / an edit of a count that is being saved.
     ["STOCK_COUNT_COMMITTING", /^This count is being saved. Try again in a moment.$/],
+    // SA-767 r-note 5 SA-3: the fallback toast (the count screens show the session name themselves).
+    ["PRODUCT_IN_OPEN_COUNT", /^Already being counted in another count$/],
     ["BARCODE_TAKEN", /barcode/],
     ["ADDON_GATE", /isn't included in your current plan/],
   ])("%s", (code, re) => {

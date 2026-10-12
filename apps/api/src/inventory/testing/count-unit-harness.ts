@@ -34,7 +34,8 @@ export interface CountUnitWorld {
   ledger: Array<{ id: string; productId: string; type: string }>;
   /** Flip to simulate the committer holding the session's exclusive lock. */
   state: { lockHeld: boolean };
-  /** Order of interesting calls: "tx", "lock", "session-read", "movement-read", "product-read". */
+  /** Order of interesting calls: "tx", "lock", "session-read", "movement-read", "product-read",
+   * "xlock:<family>|<key>" (a blocking tx advisory lock), "overlap-read" (the other-open-count lookup). */
   events: string[];
   seed: (ids: string[], currentStock?: number) => void;
 }
@@ -61,7 +62,11 @@ export async function buildCountUnitWorld(
     events.push("tx");
     const tx = {
       ...prisma,
-      $executeRaw: jest.fn().mockResolvedValue(0),
+      $executeRaw: jest.fn().mockImplementation((s: TemplateStringsArray, ...v: unknown[]) => {
+        // SA-767 r-note 5 SA-3: the per-product blocking xact lock, recorded with its (family, key).
+        if (s.join("?").includes("pg_advisory_xact_lock")) events.push(`xlock:${v.join("|")}`);
+        return Promise.resolve(0);
+      }),
       $queryRaw: jest.fn().mockImplementation((s: TemplateStringsArray) => {
         if (s.join("?").includes("pg_try_advisory_xact_lock_shared")) {
           events.push("lock");

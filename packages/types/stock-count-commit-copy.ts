@@ -25,6 +25,19 @@ export const STOCK_COUNT_RECOUNT_COPY = "Recount these in a new session";
 export const STOCK_COUNT_PERMANENT_COPY =
   "Some counted products can't be saved. Finish with skips to save the rest.";
 
+/**
+ * SA-767 r-note 5 SA-3 (one OPEN count per product): a commit refused because some of its products are
+ * also on another open count (a legacy overlap). The operator removes them from one of the counts.
+ */
+export const STOCK_COUNT_OVERLAP_COMMIT_COPY =
+  "Some products are also in another open count. Remove them from one count, then commit again.";
+
+/** "Already being counted in <count>" - an add refused by 409 PRODUCT_IN_OPEN_COUNT. */
+export function productInOpenCountCopy(sessionName?: string | null): string {
+  const name = typeof sessionName === "string" ? sessionName.trim() : "";
+  return `Already being counted in ${name || "another count"}`;
+}
+
 export interface StockCountCommitProgress {
   committedLines: number;
   totalLines: number;
@@ -39,6 +52,23 @@ export interface StockCountSkippedProductView {
   productId: string;
   name?: string;
   reason: string;
+}
+
+/**
+ * A line add refused by another open count (409 PRODUCT_IN_OPEN_COUNT, read defensively from an
+ * axios-shaped error): the sentence to show and the id of the count that has the product, for the
+ * "open that count" link. Null for any other failure.
+ */
+export function stockCountProductInOpenCount(
+  err: unknown,
+): { copy: string; sessionId: string | null } | null {
+  const res = (err as { response?: { status?: unknown; data?: unknown } } | null)?.response;
+  const data = (res?.data ?? {}) as Record<string, unknown>;
+  if (res?.status !== 409 || data.code !== API_ERROR_CODES.PRODUCT_IN_OPEN_COUNT) return null;
+  return {
+    copy: productInOpenCountCopy(typeof data.sessionName === "string" ? data.sessionName : null),
+    sessionId: typeof data.sessionId === "string" ? data.sessionId : null,
+  };
 }
 
 /** What a failed commit means for the screen. */
@@ -58,6 +88,7 @@ const numberOrNull = (v: unknown): number | null =>
  * keeps its generic message.
  *  - 503 LOCK_UNAVAILABLE: "Partly saved" when `committedLines > 0`, else "Nothing was saved".
  *  - 409 STOCK_COUNT_COMMITTING: the "being saved" sentence.
+ *  - 409 PRODUCT_IN_OPEN_COUNT: the legacy-overlap sentence (products also on another open count).
  *  - 400 FAMILY_NOT_SELLABLE / 404 with `missingProductIds`: a permanent refusal.
  */
 export function stockCountCommitFailure(err: unknown): StockCountCommitFailure | null {
@@ -73,6 +104,9 @@ export function stockCountCommitFailure(err: unknown): StockCountCommitFailure |
   }
   if (status === 409 && data.code === API_ERROR_CODES.STOCK_COUNT_COMMITTING) {
     return { copy: STOCK_COUNT_COMMITTING_COPY, permanent: false };
+  }
+  if (status === 409 && data.code === API_ERROR_CODES.PRODUCT_IN_OPEN_COUNT) {
+    return { copy: STOCK_COUNT_OVERLAP_COMMIT_COPY, permanent: false };
   }
   if (
     (status === 400 && data.code === API_ERROR_CODES.FAMILY_NOT_SELLABLE) ||

@@ -116,6 +116,7 @@ export const LOCK_FAMILIES = [
   "tenant-price",
   "counter-park",
   "stock-count",
+  "stock-count-product",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
@@ -212,6 +213,9 @@ const POOL_MAX: Record<string, number | undefined> = {
   // across every tenant; a committer that finds no slot gets the retryable 503 LOCK_UNAVAILABLE, and a
   // second commit of the same session loses the try-lock at once (409 STOCK_COUNT_COMMITTING).
   "stock-count": 4,
+  // `stock-count-product` (SA-767 r-note 5 SA-3) opens no lock pool: it is the one-open-count-per-product lock,
+  // a transaction-scoped `pg_advisory_xact_lock` on the adder's own Prisma connection ({@link advisoryXactLock}),
+  // keyed `<tenantId>:<productId>`. It is listed so the family name is reserved in the one namespace.
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {
@@ -564,6 +568,28 @@ export async function withAdvisoryLocks<T>(
     if (destroy) client.release(failure instanceof Error ? failure : new Error(String(failure)));
     else client.release();
   }
+}
+
+/**
+ * Take the EXCLUSIVE, transaction-scoped advisory lock on `(family, key)` inside `tx`, WAITING for it
+ * (blocking `pg_advisory_xact_lock`; released by Postgres when `tx` ends). For a check-then-insert that
+ * must serialise concurrent adders - SA-767 r-note 5 SA-3: two sessions adding the same product take
+ * `stock-count-product:<tenantId>:<productId>` one after the other, and the second one sees the first
+ * one's committed line. The key pair is derived like {@link withAdvisoryLock}'s (`hashtext` x 2). A caller
+ * that needs several keys takes them in SORTED order, so two such callers can never deadlock.
+ */
+export async function advisoryXactLock(
+  tx: { $executeRaw: (...args: any[]) => unknown },
+  family: LockFamily,
+  key: string,
+): Promise<void> {
+  if (typeof key !== "string" || key.length === 0) {
+    throw new TypeError("advisoryXactLock: key must be a non-empty string");
+  }
+  if (!(LOCK_FAMILIES as readonly string[]).includes(family)) {
+    throw new TypeError(`advisoryXactLock: unknown lock family "${family}"`);
+  }
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${family}), hashtext(${key}))`;
 }
 
 /**

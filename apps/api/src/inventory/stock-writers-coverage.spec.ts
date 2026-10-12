@@ -692,6 +692,12 @@ describe("SA-767 L-2.2 - the batched count committer (structural pins)", () => {
     expect(m).toMatch(/const recount = !dto\.increment && absoluteCountChanged\(existing, data\)/);
     expect(m).toMatch(/data: recount \? \{ \.\.\.data, expectedQty: live\.currentStock \} : data/);
     expect(m).toMatch(/expectedQty: live\.currentStock,\n\s+\.\.\.data,/);
+    // adding the product takes the per-product tx lock, then checks the other open counts (SA-3)
+    expect(m.search(/advisoryXactLock\(/)).toBeGreaterThan(-1);
+    expect(m.search(/advisoryXactLock\(/)).toBeLessThan(m.search(/findOpenCountConflicts\(/));
+    expect(m.search(/findOpenCountConflicts\(/)).toBeLessThan(
+      m.search(/tx\.stockCountLine\.create\(/),
+    );
     // the read is a baseline stamp, not a stock write: no Product lock for it
     expect(m).not.toMatch(/lockProducts|lockProductsForStock/);
   });

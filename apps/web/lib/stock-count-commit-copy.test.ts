@@ -2,6 +2,7 @@ import {
   STOCK_COUNT_FINISH_WITH_SKIPS_LABEL,
   STOCK_COUNT_RECOUNT_COPY,
   stockCountCommitFailure,
+  stockCountProductInOpenCount,
   stockCountSavingCopy,
 } from "@routeflow/types";
 
@@ -66,5 +67,52 @@ describe("stock-count commit copy", () => {
   it("the finish-with-skips button and the recount line", () => {
     expect(STOCK_COUNT_FINISH_WITH_SKIPS_LABEL).toBe("Finish with skips");
     expect(STOCK_COUNT_RECOUNT_COPY).toBe("Recount these in a new session");
+  });
+});
+
+// SA-767 r-note 5: one open count per product (SA-3), and the count screen help line (residual).
+describe("one open count per product copy", () => {
+  it("an add refused by another open count: Already being counted in <session>, with its id for the link", () => {
+    const e = err(409, {
+      code: "PRODUCT_IN_OPEN_COUNT",
+      message: "RAW SERVER TEXT",
+      sessionId: "sess-9",
+      sessionName: "Aisle 3",
+    });
+    expect(stockCountProductInOpenCount(e)).toEqual({
+      copy: "Already being counted in Aisle 3",
+      sessionId: "sess-9",
+    });
+  });
+
+  it('an unnamed session reads "another count"', () => {
+    expect(
+      stockCountProductInOpenCount(
+        err(409, { code: "PRODUCT_IN_OPEN_COUNT", sessionId: "s", sessionName: null }),
+      )?.copy,
+    ).toBe("Already being counted in another count");
+  });
+
+  it.each([
+    ["another 409", err(409, { code: "STOCK_COUNT_COMMITTING" })],
+    ["a 400", err(400, { code: "PRODUCT_IN_OPEN_COUNT" })],
+    ["no response", new Error("Network Error")],
+    ["null", null],
+  ])("%s is not this refusal", (_n, e) => {
+    expect(stockCountProductInOpenCount(e)).toBeNull();
+  });
+
+  it("a commit refused for a legacy overlap has its own non-permanent sentence", () => {
+    expect(
+      stockCountCommitFailure(
+        err(409, {
+          code: "PRODUCT_IN_OPEN_COUNT",
+          conflicts: [{ productId: "p1", sessionId: "s", sessionName: "Aisle 3" }],
+        }),
+      ),
+    ).toEqual({
+      copy: "Some products are also in another open count. Remove them from one count, then commit again.",
+      permanent: false,
+    });
   });
 });
