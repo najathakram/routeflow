@@ -39,7 +39,9 @@ describe("one pairing helper for the buyer, staff and driver edits (row 373b)", 
         ) {
           const src = fs.readFileSync(p, "utf8");
           if (/\b(resolveBuyerEditLines|applyBuyerEditLines)\(/.test(src))
-            offenders.push(path.relative(path.resolve(__dirname, ".."), p));
+            offenders.push(
+              path.relative(path.resolve(__dirname, ".."), p).split(path.sep).join("/"),
+            );
         }
       }
     };
@@ -59,7 +61,7 @@ describe("one pairing helper for the buyer, staff and driver edits (row 373b)", 
               fs.readFileSync(p, "utf8"),
             )
           )
-            writers.push(path.relative(path.resolve(__dirname, ".."), p));
+            writers.push(path.relative(path.resolve(__dirname, ".."), p).split(path.sep).join("/"));
         }
       }
     };

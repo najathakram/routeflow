@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 /**
  * Row 342 OWNER RULING: the hand-over stamp (cashier, register, time) is on STAFF views only, never on a customer copy: the
@@ -35,7 +35,12 @@ describe("hand-over stamp stays off customer copies (row 342)", () => {
   it("only the lib, the component, the staff reads' types, the staff detail pages and Today's hand-over rows name it", () => {
     const users = walk(ROOT)
       .filter((p) => STAMP_NAMES.test(readFileSync(p, "utf8")))
-      .map((p) => p.slice(ROOT.length + 1))
+      .map((p) =>
+        p
+          .slice(ROOT.length + 1)
+          .split(sep)
+          .join("/"),
+      )
       .sort();
     expect(users).toEqual([
       "app/(dashboard)/invoices/[id]/page.tsx",
