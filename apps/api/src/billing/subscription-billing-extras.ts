@@ -9,11 +9,10 @@ import { StripeService } from "./stripe.service";
 
 /**
  * SA-733r6 (B4): the facts the subscription view adds so the web banner and the Billing card render from ONE read.
- *  - `billingContactName` / `billingContactEmail` (SA-776): the OLDEST ACTIVE TENANT_ADMIN - a fixed, stated rule (a
- *    per-branch contact can replace the rule behind these fields later). The name is a DISPLAY name, never the
- *    `username` (the owner's rule): the User model has no display-name column, so it is the admin's linked Driver
- *    `contactName` when one exists, else null. The e-mail is the admin's address unless it is an internal sentinel
- *    (`no-email+...@placeholder.local`), which is never shown;
+ *  - `billingContactEmail` (SA-776): the OLDEST ACTIVE TENANT_ADMIN's e-mail - a fixed, stated rule (a per-branch
+ *    contact can replace the rule behind this one field later). There is NO contact name: the User model has no
+ *    display-name column and a username is never shown (the field this replaced was the username). An internal
+ *    sentinel address (`no-email+...@placeholder.local`) is never sent;
  *  - `openInvoiceAmount`: the `pastDueInvoiceId` invoice's amount remaining, in dollars (Stripe cents via `fromCents`);
  *  - `paymentMethodSummary` / `nextCharge`: the autopay card and what the next renewal charges;
  *  - `pastDueMonthLabel` / `graceEndsLabel` / `nextCharge.dateLabel`: calendar labels formatted HERE in the TENANT's
@@ -36,7 +35,6 @@ export interface PaymentMethodSummary {
 }
 
 export interface BillingViewExtras {
-  billingContactName: string | null;
   billingContactEmail: string | null;
   openInvoiceAmount: number | null;
   paymentMethodSummary: PaymentMethodSummary | null;
@@ -55,7 +53,6 @@ export interface BillingExtrasSubscription {
 }
 
 export const EMPTY_BILLING_VIEW_EXTRAS: BillingViewExtras = {
-  billingContactName: null,
   billingContactEmail: null,
   openInvoiceAmount: null,
   paymentMethodSummary: null,
@@ -114,16 +111,15 @@ export class SubscriptionBillingExtras {
     tenantId: string,
     sub: BillingExtrasSubscription | null | undefined,
   ): Promise<BillingViewExtras> {
-    const [contact, openInvoiceAmount, card, zone] = await Promise.all([
-      this.contact(tenantId),
+    const [billingContactEmail, openInvoiceAmount, card, zone] = await Promise.all([
+      this.contactEmail(tenantId),
       this.openAmount(sub?.pastDueInvoiceId ?? null),
       this.cardAndNextCharge(tenantId, sub),
       dunningZone(this.prisma, tenantId),
     ]);
     const since = sub?.pastDueInvoiceId ? (sub.pastDueSince ?? null) : null;
     return {
-      billingContactName: contact.name,
-      billingContactEmail: contact.email,
+      billingContactEmail,
       openInvoiceAmount,
       paymentMethodSummary: card.paymentMethodSummary,
       nextCharge: card.nextCharge
@@ -153,19 +149,18 @@ export class SubscriptionBillingExtras {
     }
   }
 
-  private async contact(tenantId: string): Promise<{ name: string | null; email: string | null }> {
+  private async contactEmail(tenantId: string): Promise<string | null> {
     try {
       const admin = await this.prisma.user.findFirst({
         where: { tenantId, role: "TENANT_ADMIN", status: "ACTIVE", deletedAt: null },
         orderBy: { createdAt: "asc" },
-        select: { email: true, driver: { select: { contactName: true } } },
+        select: { email: true },
       });
-      const name = admin?.driver?.contactName?.trim() || null;
       const email = admin?.email?.trim() || null;
-      return { name, email: email && !isInternalEmail(email) ? email : null };
+      return email && !isInternalEmail(email) ? email : null;
     } catch (err) {
       this.logger.warn(`billing contact lookup failed for ${tenantId}: ${(err as Error).message}`);
-      return { name: null, email: null };
+      return null;
     }
   }
 

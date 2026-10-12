@@ -26,17 +26,15 @@ describe("mobile read-only copy (SA-776)", () => {
     expect(readOnlyCopy({ reason: null }).reasonLine).toBeNull();
   });
 
-  it("a non-admin sees name + email; an admin sees no contact line; email missing -> name only", () => {
-    const base = { billingContactName: "Dana Reyes", billingContactEmail: "dana@acme.test" };
+  it("a non-admin sees 'your admin' + the e-mail; an admin sees no contact line; no e-mail -> none", () => {
+    const base = { billingContactEmail: "dana@acme.test" };
     expect(readOnlyCopy(base).contactLine).toBe(
-      "To restore access, contact Dana Reyes (dana@acme.test).",
+      "To restore access, contact your admin (dana@acme.test).",
     );
     expect(readOnlyCopy({ ...base, isAdmin: true }).contactLine).toBeNull();
-    expect(readOnlyCopy({ billingContactName: "Dana Reyes" }).contactLine).toBe(
-      "To restore access, contact Dana Reyes.",
-    );
-    expect(readOnlyCopyText({ reason: "trial_expired", ...base })).toContain(
-      "Your free trial has ended.",
+    expect(readOnlyCopy({}).contactLine).toBeNull();
+    expect(readOnlyCopyText({ reason: "trial_expired", ...base })).toBe(
+      `${READ_ONLY_SENTENCE} Your free trial has ended. To restore access, contact your admin (dana@acme.test).`,
     );
   });
 });

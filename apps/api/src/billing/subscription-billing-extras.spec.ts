@@ -19,7 +19,7 @@ const SUB: any = {
 
 function make(
   over: {
-    admin?: { email: string; driver: { contactName: string | null } | null } | null;
+    admin?: { email: string } | null;
     facts?: any;
     factsError?: boolean;
     card?: any;
@@ -37,11 +37,7 @@ function make(
     user: {
       findFirst: jest
         .fn()
-        .mockResolvedValue(
-          over.admin === undefined
-            ? { email: "dana@acme.test", driver: { contactName: "Dana" } }
-            : over.admin,
-        ),
+        .mockResolvedValue(over.admin === undefined ? { email: "dana@acme.test" } : over.admin),
     },
   } as any;
   const stripe = {
@@ -73,15 +69,15 @@ function make(
 }
 
 describe("SubscriptionBillingExtras.read (B4 view fields)", () => {
-  it("billingContactName is the OLDEST ACTIVE TENANT_ADMIN's DISPLAY name, never a username (SA-776)", async () => {
+  it("billingContactEmail is the OLDEST ACTIVE TENANT_ADMIN's e-mail (a fixed, stated rule), no name at all (SA-776)", async () => {
     const { extras, prisma } = make();
     const out = await extras.read("t1", SUB);
-    expect(out.billingContactName).toBe("Dana");
     expect(out.billingContactEmail).toBe("dana@acme.test");
-    // the username is not even selected: it cannot leak as the contact name
-    const select = (prisma.user.findFirst as jest.Mock).mock.calls[0][0].select;
-    expect(select).not.toHaveProperty("username");
-    expect(prisma.user.findFirst).toHaveBeenCalledWith(
+    expect(out).not.toHaveProperty("billingContactName");
+    // only the e-mail is selected: neither the username nor a linked driver's name can leak as a contact
+    const call = (prisma.user.findFirst as jest.Mock).mock.calls[0][0];
+    expect(call.select).toEqual({ email: true });
+    expect(call).toEqual(
       expect.objectContaining({
         where: expect.objectContaining({
           tenantId: "t1",
@@ -94,27 +90,16 @@ describe("SubscriptionBillingExtras.read (B4 view fields)", () => {
     );
   });
 
-  it("billingContactName is null when the tenant has no active admin", async () => {
+  it("billingContactEmail is null when the tenant has no active admin", async () => {
     const { extras } = make({ admin: null });
-    const out = await extras.read("t1", SUB);
-    expect(out.billingContactName).toBeNull();
-    expect(out.billingContactEmail).toBeNull();
+    expect((await extras.read("t1", SUB)).billingContactEmail).toBeNull();
   });
 
-  it("an admin with no display name yields a null name and still the e-mail (never the username)", async () => {
-    const { extras } = make({ admin: { email: "dana@acme.test", driver: null } });
-    const out = await extras.read("t1", SUB);
-    expect(out.billingContactName).toBeNull();
-    expect(out.billingContactEmail).toBe("dana@acme.test");
-  });
-
-  it("a blank display name is null and an internal sentinel e-mail is never sent", async () => {
-    const { extras } = make({
-      admin: { email: "no-email+0b1f2c3d@placeholder.local", driver: { contactName: "   " } },
-    });
-    const out = await extras.read("t1", SUB);
-    expect(out.billingContactName).toBeNull();
-    expect(out.billingContactEmail).toBeNull();
+  it("an internal sentinel or blank e-mail is never sent", async () => {
+    const sentinel = make({ admin: { email: "no-email+0b1f2c3d@placeholder.local" } });
+    expect((await sentinel.extras.read("t1", SUB)).billingContactEmail).toBeNull();
+    const blank = make({ admin: { email: "   " } });
+    expect((await blank.extras.read("t1", SUB)).billingContactEmail).toBeNull();
   });
 
   it("openInvoiceAmount is the pastDueInvoiceId invoice's amount_remaining, in dollars (never a dash)", async () => {
@@ -146,7 +131,7 @@ describe("SubscriptionBillingExtras.read (B4 view fields)", () => {
     const out = await extras.read("t1", SUB);
     expect(out.openInvoiceAmount).toBeNull();
     expect(out.paymentMethodSummary).toBeNull();
-    expect(out.billingContactName).toBe("Dana");
+    expect(out.billingContactEmail).toBe("dana@acme.test");
   });
 
   it("paymentMethodSummary carries brand / last4 / expiry and nextCharge the amount and the renewal date", async () => {
@@ -190,7 +175,7 @@ describe("SubscriptionBillingExtras.read (B4 view fields)", () => {
     expect(out.openInvoiceAmount).toBeNull();
     expect(out.paymentMethodSummary).toBeNull();
     expect(stripe.getInvoiceFacts).not.toHaveBeenCalled();
-    expect(out.billingContactName).toBe("Dana");
+    expect(out.billingContactEmail).toBe("dana@acme.test");
   });
 
   it("caches the Stripe reads per tenant so a 60 s poll does not hit Stripe each time", async () => {

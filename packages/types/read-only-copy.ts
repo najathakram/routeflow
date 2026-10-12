@@ -3,8 +3,9 @@
  *
  *   sentence      the owner's fixed sentence, verbatim;
  *   reasonLine    one line from the tenant's `readOnlyReason` (mapped copy, NEVER server text); null when none;
- *   contactLine   "To restore access, contact {name} ({email})." for a non-admin; null for a TENANT_ADMIN (who gets
- *                 the action - Pay / Choose a plan - instead) and when neither name nor email is known.
+ *   contactLine   "To restore access, contact your admin ({email})." for a non-admin; null for a TENANT_ADMIN (who
+ *                 gets the action - Pay / Choose a plan - instead) and when no email is on file. There is NO name
+ *                 in it: the User model has no display-name field, and a username is never shown (lead ruling).
  *
  * Pure: no React, no DOM, no network. Web (`apps/web/lib/read-only-copy.ts`) and mobile
  * (`apps/mobile/lib/read-only-copy.ts`) re-export this module through a thin wrapper, so the strings cannot drift.
@@ -23,8 +24,7 @@ export interface ReadOnlyCopyInput {
   reason?: string | null;
   /** `SubscriptionView.openInvoiceAmount`, in dollars. Absent (null) falls back to the amount-free line. */
   overdueAmount?: number | null;
-  /** The billing contact's DISPLAY name - never a username. */
-  billingContactName?: string | null;
+  /** The oldest active TENANT_ADMIN's e-mail (`SubscriptionView.billingContactEmail`); null = no contact line. */
   billingContactEmail?: string | null;
   /** A TENANT_ADMIN sees the action instead of the contact line. */
   isAdmin?: boolean;
@@ -71,24 +71,15 @@ export function readOnlyReasonLine(
   }
 }
 
-/** "To restore access, contact Dana (dana@acme.test)." / "... contact Dana." / "... contact dana@acme.test." / null. */
-export function readOnlyContactLine(
-  name: string | null | undefined,
-  email: string | null | undefined,
-): string | null {
-  const n = name?.trim() || null;
+/** "To restore access, contact your admin (dana@acme.test)." or null when there is no e-mail on file. */
+export function readOnlyContactLine(email: string | null | undefined): string | null {
   const e = email?.trim() || null;
-  if (n && e) return `To restore access, contact ${n} (${e}).`;
-  if (n) return `To restore access, contact ${n}.`;
-  if (e) return `To restore access, contact ${e}.`;
-  return null;
+  return e ? `To restore access, contact your admin (${e}).` : null;
 }
 
 export function readOnlyCopy(input: ReadOnlyCopyInput = {}): ReadOnlyCopy {
   const reasonLine = readOnlyReasonLine(input.reason, input.overdueAmount, input.formatMoney);
-  const contactLine = input.isAdmin
-    ? null
-    : readOnlyContactLine(input.billingContactName, input.billingContactEmail);
+  const contactLine = input.isAdmin ? null : readOnlyContactLine(input.billingContactEmail);
   const lines = [READ_ONLY_SENTENCE, reasonLine, contactLine].filter((l): l is string => !!l);
   return {
     sentence: READ_ONLY_SENTENCE,

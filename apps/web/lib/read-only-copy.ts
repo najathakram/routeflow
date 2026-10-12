@@ -40,7 +40,6 @@ export function readOnlyCopyForView(
   return readOnlyCopy({
     reason: view?.readOnlyReason ?? null,
     overdueAmount: view?.openInvoiceAmount ?? null,
-    billingContactName: view?.billingContactName ?? null,
     billingContactEmail: view?.billingContactEmail ?? null,
     isAdmin,
   });

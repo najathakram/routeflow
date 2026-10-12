@@ -71,10 +71,9 @@ export interface SubscriptionView<TDate = string> {
   pastDueSince?: TDate | null;
   /** The Stripe invoice the tenant owes; the Pay action is shown whenever this is set. */
   pastDueInvoiceId?: string | null;
-  /** The oldest active TENANT_ADMIN's DISPLAY name (never a username; null when none is on file) - who
-   *  operators are told to ask. */
-  billingContactName?: string | null;
-  /** The same admin's e-mail (SA-776); null when none, or when it is an internal sentinel address. */
+  /** The oldest active TENANT_ADMIN's e-mail - who non-admins are told to contact (SA-776). Null when none, or
+   *  when it is an internal sentinel address. There is deliberately NO name field: the User model has no display
+   *  name and a username is never shown (the old `billingContactName` was the username and is gone). */
   billingContactEmail?: string | null;
   /** The owed invoice's amount remaining, in dollars (always printed as money). */
   openInvoiceAmount?: number | null;

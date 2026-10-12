@@ -40,15 +40,14 @@ describe("read-only copy (SA-776)", () => {
     expect(readOnlyCopyText({ reason: "set by ops: pending audit" })).toBe(SENTENCE);
   });
 
-  it("a non-admin gets the contact line with display name and email", () => {
+  it("a non-admin gets the contact line: 'your admin' and the e-mail, never a name", () => {
     const c = readOnlyCopy({
       reason: "trial_expired",
-      billingContactName: "Dana Reyes",
       billingContactEmail: "dana@acme.test",
     });
-    expect(c.contactLine).toBe("To restore access, contact Dana Reyes (dana@acme.test).");
+    expect(c.contactLine).toBe("To restore access, contact your admin (dana@acme.test).");
     expect(c.text).toBe(
-      `${SENTENCE} Your free trial has ended. To restore access, contact Dana Reyes (dana@acme.test).`,
+      `${SENTENCE} Your free trial has ended. To restore access, contact your admin (dana@acme.test).`,
     );
     expect(c.lines).toEqual([SENTENCE, "Your free trial has ended.", c.contactLine]);
   });
@@ -56,7 +55,6 @@ describe("read-only copy (SA-776)", () => {
   it("a TENANT_ADMIN gets no contact line (the caller renders the action instead)", () => {
     const c = readOnlyCopy({
       reason: "trial_expired",
-      billingContactName: "Dana Reyes",
       billingContactEmail: "dana@acme.test",
       isAdmin: true,
     });
@@ -64,17 +62,13 @@ describe("read-only copy (SA-776)", () => {
     expect(c.text).toBe(`${SENTENCE} Your free trial has ended.`);
   });
 
-  it("a missing email falls back to the name only; a missing name to the email only; neither omits the line", () => {
-    expect(readOnlyCopy({ billingContactName: "Dana Reyes" }).contactLine).toBe(
-      "To restore access, contact Dana Reyes.",
-    );
-    expect(readOnlyCopy({ billingContactEmail: "dana@acme.test" }).contactLine).toBe(
-      "To restore access, contact dana@acme.test.",
-    );
-    expect(
-      readOnlyCopy({ billingContactName: "  ", billingContactEmail: "" }).contactLine,
-    ).toBeNull();
-    expect(readOnlyCopy({}).lines).toEqual([SENTENCE]);
+  it("no e-mail on file omits the contact line (no username, no name is ever shown)", () => {
+    expect(readOnlyCopy({}).contactLine).toBeNull();
+    expect(readOnlyCopy({ billingContactEmail: "  " }).contactLine).toBeNull();
+    expect(readOnlyCopy({ billingContactEmail: null }).lines).toEqual([SENTENCE]);
+    // an extra name key is not part of the input shape and changes nothing
+    const withName = { billingContactEmail: "dana@acme.test", billingContactName: "dana_admin" };
+    expect(readOnlyCopy(withName).text).not.toContain("dana_admin");
   });
 
   it("composes from the subscription view", () => {
@@ -82,11 +76,10 @@ describe("read-only copy (SA-776)", () => {
       status: "READ_ONLY",
       readOnlyReason: "payment_overdue",
       openInvoiceAmount: 149,
-      billingContactName: "Dana Reyes",
       billingContactEmail: "dana@acme.test",
     } as unknown as SubscriptionView;
     expect(readOnlyCopyForView(view, false).text).toBe(
-      `${SENTENCE} Your subscription payment of $149.00 is overdue. To restore access, contact Dana Reyes (dana@acme.test).`,
+      `${SENTENCE} Your subscription payment of $149.00 is overdue. To restore access, contact your admin (dana@acme.test).`,
     );
     expect(readOnlyCopyForView(view, true).contactLine).toBeNull();
     expect(readOnlyCopyForView(null, false).text).toBe(SENTENCE);

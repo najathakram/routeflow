@@ -139,7 +139,6 @@ export class SubscriptionService {
       // SA-733r6 (B4): dunning facts + the banner extras. The server decides read-only; the client only renders.
       pastDueSince: sub?.pastDueSince ?? null,
       pastDueInvoiceId: sub?.pastDueInvoiceId ?? null,
-      billingContactName: extras.billingContactName,
       billingContactEmail: extras.billingContactEmail,
       openInvoiceAmount: extras.openInvoiceAmount,
       paymentMethodSummary: extras.paymentMethodSummary,
