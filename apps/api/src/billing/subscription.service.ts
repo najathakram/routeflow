@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { MeterKey } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
@@ -10,6 +10,8 @@ import {
   INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
 } from "./plan-catalog.constants";
 import { computeServedFlags } from "./plan-flag-policy";
+import { autoLockAllowed } from "./auto-lock-gate";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import { billingPauseMode } from "./dunning-config";
 import { FeatureOverrideService } from "./feature-override.service";
 import {
@@ -47,7 +49,29 @@ export class SubscriptionService {
     // SA-733r6 (B4): billing-contact name, open-invoice amount and the autopay card (Stripe-backed, cached).
     // Optional for the same reason as above; absent = the four fields read null.
     private readonly billingExtras?: SubscriptionBillingExtras,
+    // SA-775 rollout: the switch behind `autoLockHeld`. Optional like the two above; absent = never held.
+    @Optional() private readonly autoLocks?: AutoLockSwitchService,
   ) {}
+
+  /**
+   * SA-775 rollout: does the pause hold EVERY automatic lock a banner threatens (the unpaid-invoice pause and the trial
+   * expiry)? Asked of the same gate the writers use, so the banners never promise a lock that will not happen. The web
+   * cannot call the gate; it reads this one boolean. False without a switch (a bare unit spec) and for a TEST / DEMO /
+   * INTERNAL tenant, which still lock.
+   */
+  private async autoLockHeld(tenantId: string): Promise<boolean> {
+    if (!this.autoLocks) return false;
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { class: true },
+    });
+    const t = { id: tenantId, class: tenant?.class };
+    const [overdue, trial] = await Promise.all([
+      autoLockAllowed(this.autoLocks, t, "payment_overdue"),
+      autoLockAllowed(this.autoLocks, t, "trial_expired"),
+    ]);
+    return !overdue && !trial;
+  }
 
   /** The tenant's current plan + add-ons + renewal state (settings-billing header). */
   async getSubscription(tenantId: string) {
@@ -155,6 +179,8 @@ export class SubscriptionService {
       // B2: only the SERVER knows whether a pause will really happen (BILLING_PAUSE_MODE=enforced). In dark / off the
       // banner never threatens a read-only date.
       pauseEnforced: billingPauseMode() === "enforced",
+      // SA-775 rollout: true when the pause holds the lock a banner would threaten, so it drops that line.
+      autoLockHeld: await this.autoLockHeld(tenantId),
     };
   }
 

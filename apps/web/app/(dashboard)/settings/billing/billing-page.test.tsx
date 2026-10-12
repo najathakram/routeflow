@@ -138,6 +138,24 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
     expect(await screen.findByRole("button", { name: /end trial/i })).toBeInTheDocument();
   });
 
+  // SA-775 rollout: never threaten a lock the pause will not carry out.
+  it("a trial tenant is told it goes read-only after the trial, unless the server says the lock is held", async () => {
+    const trial = {
+      status: "TRIAL" as const,
+      trialEndsAt: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+    };
+    mockSubscriptionView = subscriptionView(trial);
+    const first = renderWithProviders(<BillingSettingsPage />);
+    expect(await screen.findByText(/goes read-only/i)).toBeInTheDocument();
+    first.unmount();
+
+    mockSubscriptionView = { ...subscriptionView(trial), autoLockHeld: true } as SubscriptionView;
+    renderWithProviders(<BillingSettingsPage />);
+    expect(await screen.findByText(/Trial ends in/i)).toBeInTheDocument();
+    expect(screen.getByText(/pick a plan to keep full access/i)).toBeInTheDocument();
+    expect(screen.queryByText(/goes read-only/i)).not.toBeInTheDocument();
+  });
+
   // Regression guard: an ACTIVE tenant keeps today's Cancel affordance. GREEN today.
   it("RO-1 an active tenant still sees Cancel", async () => {
     mockSubscriptionView = subscriptionView({ status: "ACTIVE", cancelAtPeriodEnd: false });

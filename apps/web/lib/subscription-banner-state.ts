@@ -11,7 +11,8 @@ import { readOnlyCopyForView } from "./read-only-copy";
  * strip's SA-777 sentence, and the read-only states' SA-776 copy composed in `read-only-copy.ts`); no "failed" /
  * "suspended" or blame wording; no countdown; no pay control for anyone but a workspace admin; no "Choose a plan" /
  * "Subscribe" while an invoice is owed; no billing state for buyers; amounts always print as money ($149.00), never a
- * dash. SA-777: nothing here threatens a lock, a date or a countdown while `pauseEnforced !== true`.
+ * dash. SA-777: nothing here threatens a lock, a date or a countdown while `pauseEnforced !== true`, nor while
+ * `autoLockHeld === true` (SA-775 rollout: the pause holds the lock, so it is not threatened).
  */
 
 export type BannerRole = "admin" | "staff";
@@ -218,6 +219,10 @@ export function subscriptionBannerState(
   const since = view.pastDueSince ? new Date(view.pastDueSince) : null;
   const sinceOk = since && !Number.isNaN(since.getTime()) ? since : null;
   const readOnly = view.status === "READ_ONLY" && ownsBillingBanner(view);
+  // SA-775 rollout: `pauseEnforced` says the pause is real, `autoLockHeld` says the rollout switch holds this tenant's
+  // automatic lock anyway. Only when the lock will really happen may a strip threaten a date or a read-only workspace;
+  // otherwise it reads exactly as in dark mode (the overdue sentence + Pay now, no deadline).
+  const lockThreat = view.pauseEnforced === true && view.autoLockHeld !== true;
 
   // ── Paused (read-only) ───────────────────────────────────────────────────────────────────────────────
   if (readOnly) {
@@ -268,11 +273,11 @@ export function subscriptionBannerState(
     // No strip while a payment settles; none for a merely "due" invoice unless the pause is real (a real pause
     // must keep its escalation: the marker can be clocked before the first attempt).
     if (isSettling(view)) return NONE;
-    if (view.billingState === "due" && view.pauseEnforced !== true) return NONE;
+    if (view.billingState === "due" && !lockThreat) return NONE;
     const elapsedHours = sinceOk ? Math.max(0, (now.getTime() - sinceOk.getTime()) / HOUR_MS) : 0;
     // B2: the last-day escalation (amber, "read-only tomorrow") exists ONLY when the server really pauses
     // (BILLING_PAUSE_MODE=enforced). In dark / off nothing will happen on day 7, so nothing is threatened.
-    if (view.pauseEnforced === true && elapsedHours >= FINAL_DAY_HOURS) {
+    if (lockThreat && elapsedHours >= FINAL_DAY_HOURS) {
       return {
         kind: "final-day",
         tone: "amber",
@@ -289,7 +294,7 @@ export function subscriptionBannerState(
     }
     // SA-777: while the pause is NOT enforced (today) nothing is threatened: the owner's overdue sentence, the
     // amount, and Pay now - no deadline, no "read-only", no countdown.
-    if (view.pauseEnforced !== true) {
+    if (!lockThreat) {
       return {
         kind: "overdue",
         tone: "amber",
@@ -311,7 +316,7 @@ export function subscriptionBannerState(
       (sinceOk ? utcDay(new Date(sinceOk.getTime() + GRACE_DAYS * DAY_MS)) : null);
     // A deadline is only claimed when the pause is real AND we know the date; otherwise the neutral card-update copy.
     const adminCopy =
-      view.pauseEnforced === true && dueBy
+      lockThreat && dueBy
         ? `We couldn't charge your card${forMonth}. Update it by ${dueBy} and nothing changes.`
         : `We couldn't charge your card${forMonth}. Update it to keep autopay running.`;
     return {

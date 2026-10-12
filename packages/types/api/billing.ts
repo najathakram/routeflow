@@ -98,6 +98,10 @@ export interface SubscriptionView<TDate = string> {
   /** True only when the server will really pause an unpaid workspace (BILLING_PAUSE_MODE=enforced). In dark / off the
    *  banner never threatens a read-only date. */
   pauseEnforced?: boolean;
+  /** SA-775 rollout: true when the rollout pause holds the automatic locks a banner would threaten (the unpaid-invoice
+   *  pause, the trial expiry) for THIS tenant, so no banner may promise a read-only date. Computed by the server through
+   *  the same gate the lock writers use; absent / false = today's copy. */
+  autoLockHeld?: boolean;
   /** SA-777 - server-derived from the tenant's OPEN Stripe invoices (precedence processing > overdue > due >
    *  current). OMITTED, never zeroed, when Stripe could not answer: the UI then hides the amount and never says
    *  "current". `outstandingTotal` and `payNowUrl` are admins only (an operator's view omits them). */

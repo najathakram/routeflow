@@ -84,8 +84,11 @@ function TrialBanner({ sub }: { sub: SubscriptionView }) {
         <strong>
           {days} day{days === 1 ? "" : "s"}
         </strong>{" "}
-        — pick a plan to keep full access. After it expires your workspace goes read-only (exports
-        still work).
+        — pick a plan to keep full access.
+        {/* SA-775: no read-only threat while the rollout pause holds the trial-expiry lock. */}
+        {sub.autoLockHeld === true
+          ? null
+          : " After it expires your workspace goes read-only (exports still work)."}
       </span>
     </div>
   );
