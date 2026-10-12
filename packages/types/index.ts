@@ -169,6 +169,7 @@ export * from "./api/restrictions";
 export * from "./api/restrictions-settings";
 export * from "./api/product-labels";
 export * from "./api/restrictions-admin";
+export * from "./api/selling-restrictions";
 export * from "./api/messaging-matrix";
 export * from "./api/messaging-delivery";
 export * from "./api/staff-order-email";

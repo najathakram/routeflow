@@ -55,9 +55,8 @@ export interface LiftSellingRestrictionRequest {
 //   categories'), for the product-page chips. Without productId the route keeps returning
 //   SellingRestrictionListItemDto[].
 //
-// GET /settings/restrictions/unknown-state-customers?take=10   (TENANT_ADMIN, OPERATOR)
-//   → 200 UnknownStateCustomersResponse: customers whose governing state can't be resolved
-//   (walk-in excluded), first `take` sorted by name.
+// Customers whose governing state can't be resolved, and fixing them in place, are a separate
+// contract: see ./selling-restrictions.ts (UnknownStateCustomersResponse, BulkStateRequest, ...).
 
 /** Cap on ids per bulk create and per lift-batch; the same cap as the web's BULK_PORTAL_MAX. */
 export const BULK_RESTRICTION_MAX_PRODUCTS = 200;
@@ -90,8 +89,6 @@ export interface BulkRestrictionResponse {
   createdIds: string[];
   /** Products skipped because an identical active rule already binds them. */
   skippedProductIds?: string[];
-  /** Customers with no resolvable state, who still see BUYER_PORTAL-limited products. */
-  unknownStateCustomerCount: number;
   auditId?: string;
 }
 
@@ -133,11 +130,4 @@ export interface ProductLimitsResponse {
   items: ProductLimitDto[];
   /** Pass back as `cursor` for the next page; null on the last page. */
   nextCursor: string | null;
-}
-
-export interface UnknownStateCustomersResponse {
-  count: number;
-  customers: { id: string; name: string }[];
-  /** True when count exceeds the customers returned. */
-  truncated: boolean;
 }
