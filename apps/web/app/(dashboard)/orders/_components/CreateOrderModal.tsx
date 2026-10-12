@@ -1887,7 +1887,7 @@ export function CreateOrderModal({
               disabled={createOrder.isPending || fulfilmentPending}
               onClick={onSaveDraft}
             >
-              Save as Draft
+              Save as draft
             </WriteButton>
             {posMode && (
               <WriteButton
