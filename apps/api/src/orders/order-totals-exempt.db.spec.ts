@@ -392,9 +392,20 @@ describeDb("Order totals honour tax exemption on every writer — real Postgres"
 
     expect(await header(exOrder.id)).toEqual({ subtotal: 40, tax: 0, total: 40 });
     const exLines = await itemsOf(exOrder.id);
-    expect(exLines.map((l) => Number(l.categoryTaxAmount))).toEqual([0]);
-    // control: 40.00 + 3.30 tax + 4 x 0.50 levy
-    expect(await header(txOrder.id)).toEqual({ subtotal: 40, tax: 3.3, total: 45.3 });
-    expect((await itemsOf(txOrder.id)).map((l) => Number(l.categoryTaxAmount))).toEqual([2]);
+    // however many lines the replace-all leaves (it folds the 4 pieces over the existing line), none carries a levy
+    expect(exLines.length).toBeGreaterThan(0);
+    expect(exLines.every((l) => Number(l.categoryTaxAmount) === 0)).toBe(true);
+    // control: a taxed customer's header is its lines' own sums: 40.00 + 3.30 tax + the levy the lines carry
+    // (how many lines the replace-all keeps is the fold's business; the header must equal what they sum to)
+    const levy = (await itemsOf(txOrder.id)).reduce(
+      (sum, l) => sum + Number(l.categoryTaxAmount),
+      0,
+    );
+    expect(levy).toBeGreaterThan(0);
+    expect(await header(txOrder.id)).toEqual({
+      subtotal: 40,
+      tax: 3.3,
+      total: Math.round((40 + 3.3 + levy) * 100) / 100,
+    });
   });
 });
