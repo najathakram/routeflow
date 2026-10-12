@@ -667,11 +667,6 @@ export class BuyerController {
             // incoming item is expanded only when the STORED line is box-split (where
             // the accumulator is in pieces). Where both sides are bare they already
             // agree in selling units and neither is touched.
-            const boxAwareIncoming = new Set(
-              incomingItems
-                .filter((i) => i.boxes != null || i.pieces != null)
-                .map((i) => i.productId),
-            );
             const productIds = lineItems
               .map((li: { productId?: string | null }) => li.productId)
               .filter((id: string | null | undefined): id is string => !!id);
@@ -682,6 +677,19 @@ export class BuyerController {
                 })
               : [];
             const upbByProduct = new Map(products.map((p) => [p.id, Number(p.unitsPerBox ?? 0)]));
+            // Row 355: "box-aware" is read from the incoming AFTER the bare ones are expanded against a
+            // box-split stored line — a stored PACK line of that product must be normalized to pieces too,
+            // or its packs fold into the expanded boxes as if they were pieces.
+            const normalizedIncoming = normalizeBareIncomingSellingUnits(
+              incomingItems,
+              lineItems,
+              upbByProduct,
+            );
+            const boxAwareIncoming = new Set(
+              normalizedIncoming
+                .filter((i) => i.boxes != null || i.pieces != null)
+                .map((i) => i.productId),
+            );
             const upbForStoredSnapshots = new Map(
               [...upbByProduct].filter(([id]) => boxAwareIncoming.has(id)),
             );
@@ -699,10 +707,15 @@ export class BuyerController {
             // which is F07's file region.
             const foldResult = foldMergeItems(
               normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
-              normalizeBareIncomingSellingUnits(incomingItems, lineItems, upbByProduct),
+              normalizedIncoming,
               // SA-124e(3): the price basis follows the RESOLVED pack, not the live one —
               // already built above for the denomination normalizers.
               upbByProduct,
+              // B297 row 343 (foldTarget): the rate trio a NEW sale of each incoming product takes today —
+              // an existing line sold at a different trio does not absorb the added quantity.
+              await this.ordersService.liveTrioByProduct(
+                incomingItems.map((i) => i.productId).filter(Boolean) as string[],
+              ),
             );
             if (foldResult.livePackFallbackProductIds.length > 0) {
               this.logger.warn(
@@ -870,7 +883,12 @@ export class BuyerController {
     @Body() dto: UpdateOrderItemsDto,
     @CurrentBuyerCustomer() ctx: any,
   ) {
-    return toCustomerOrder(await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx)));
+    // B297 row 352: the entries name their lines (`orderItemId`), so a line keeps the rate it was sold at.
+    return toCustomerOrder(
+      await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx), {
+        buyerLineIds: true,
+      }),
+    );
   }
 
   @Post("orders/:id/change-requests")

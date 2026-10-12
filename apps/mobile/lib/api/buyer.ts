@@ -8,6 +8,7 @@ import {
 import { buyerApiClient, getBuyerSubmitScope, type BuyerSeller } from "../buyer-auth";
 import { trackingRefetchInterval } from "../order-tracking-logic";
 import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "../buyer-submit-key";
+import type { BuyerOrderItemEdit } from "@routeflow/types";
 import type {
   ChangeRequestResolution,
   ChangeRequestStatus,
@@ -662,13 +663,11 @@ export function useBuyerUpdateTemplate() {
 
 export function useBuyerUpdateOrderItems() {
   const qc = useQueryClient();
-  return useMutation<
-    BuyerOrder,
-    Error,
-    { orderId: string; items: Array<{ productId: string; qty: number }> }
-  >({
+  return useMutation<BuyerOrder, Error, { orderId: string; items: BuyerOrderItemEdit[] }>({
     mutationFn: ({ orderId, items }) =>
-      buyerApiClient.patch(`/buyer/orders/${orderId}/items`, { items }).then((r) => r.data),
+      buyerApiClient
+        .patch(`/buyer/orders/${orderId}/items`, { items, namesLines: true })
+        .then((r) => r.data),
     onSuccess: (_, { orderId }) => {
       qc.invalidateQueries({ queryKey: ["buyer-orders"] });
       qc.invalidateQueries({ queryKey: ["buyer-order", orderId] });

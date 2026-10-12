@@ -104,9 +104,43 @@ describe("createUnitLine / updateUnitLine — price + stamp the trio at write (S
     expect("categoryTaxType" in data).toBe(false);
     expect("categoryTaxRate" in data).toBe(false);
     expect("categoryPriceIncludesTax" in data).toBe(false);
-    // The amount still gets SOME value (deferred to the post-mutation recompute, unchanged from
-    // pre-B297 behaviour on this branch) — money isn't what this pin is about.
+    // B297 row 338: nor the category the line was sold under, nor its levy — a product that has since
+    // left or changed its category must not re-file the line or drop its sale-time excise. The amount is
+    // re-derived from the line's own snapshot by the post-mutation recompute.
+    expect("trackedCategoryId" in data).toBe(false);
+    expect("trackedSubcategoryId" in data).toBe(false);
+    expect("categoryTaxAmount" in data).toBe(false);
+  });
+
+  it("row 338: a same-product edit of a line whose product LEFT its category writes no category or levy", async () => {
+    const ctx = makeCtx();
+    await updateUnitLine(
+      ctx,
+      "line-1",
+      unregulatedProduct, // the product has since lost its category
+      resolveLineUnits(unregulatedProduct, units, { unitLabel: "Case" }),
+      { qty: 4, unitLabel: "Case" },
+      false,
+    );
+    const data = ctx.tx.orderItem.update.mock.calls[0][0].data;
+    expect("trackedCategoryId" in data).toBe(false); // master writes null
+    expect("categoryTaxAmount" in data).toBe(false); // master writes 0: the sale-time excise is dropped
+  });
+
+  it("row 338: a SUBSTITUTE still takes the NEW product's category, levy and trio (a new sale)", async () => {
+    const ctx = makeCtx();
+    await updateUnitLine(
+      ctx,
+      "line-1",
+      regulatedProduct,
+      resolved,
+      { qty: 4, unitLabel: "Case" },
+      true,
+    );
+    const data = ctx.tx.orderItem.update.mock.calls[0][0].data;
+    expect(data.trackedCategoryId).toBe("cat-1");
     expect(typeof data.categoryTaxAmount).toBe("number");
+    expect(data.categoryTaxType).toBe("EXCISE_PER_UNIT");
   });
 
   it("a non-regulated product still carries an all-null snapshot and a zero amount — nothing invented", async () => {

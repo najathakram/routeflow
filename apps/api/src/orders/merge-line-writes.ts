@@ -5,15 +5,18 @@
  * PACK GROUPS first (`merge-pack-resolve.ts`) and emit one write PER GROUP, so a product whose
  * contributing lines disagree on pack never folds across that disagreement.
  */
+import { allocateSplitFreeUnits } from "./merge-split-promo";
 import { PriceType } from "@prisma/client";
 import {
   copyCategoryTaxSnapshot,
+  hasNullTrio,
   type CategoryTaxType,
   type PromotionRule,
 } from "@routeflow/pricing";
 import { mergeBoxedContributions } from "./buyer-merge-pricing";
 import { groupContributionsByPack, type PackCandidate } from "./merge-pack-resolve";
 import { compositionStampOf } from "./order-composition";
+import { foldTarget } from "./fold-target";
 
 export { compositionStampOf };
 
@@ -140,21 +143,55 @@ export function buildMergeLineWrites(
 
   // #2717 M3 (C9a/C9b): split every product's contributions by composition first, so a FIXED line
   // never folds across a recipe version (or with a plain line). One bucket per product otherwise.
-  const buckets: Array<{ productId: string; winner: MergeLine[]; losers: MergeLine[] }> = [];
+  const versionBuckets: Array<{ productId: string; winner: MergeLine[]; losers: MergeLine[] }> = [];
   for (const productId of productIds) {
     const w = winnerByProduct.get(productId) ?? [];
     const l = loserByProduct.get(productId) ?? [];
     const keys = new Set([...w, ...l].map(versionKey));
-    if (keys.size <= 1) buckets.push({ productId, winner: w, losers: l });
+    if (keys.size <= 1) versionBuckets.push({ productId, winner: w, losers: l });
     else {
       for (const k of keys) {
-        buckets.push({
+        versionBuckets.push({
           productId,
           winner: w.filter((li) => versionKey(li) === k),
           losers: l.filter((li) => versionKey(li) === k),
         });
       }
     }
+  }
+  // B297 row 340 (SA MED-3, `foldTarget`): lines fold only at an equal rate trio. A loser line whose own trio
+  // differs from the winner's (a rate change, a category move, newly regulated) is NOT summed into it: it
+  // forms its own bucket and moves over as a line of its own, trio copied (a merge is not a new sale).
+  const buckets: Array<{ productId: string; winner: MergeLine[]; losers: MergeLine[] }> = [];
+  for (const vb of versionBuckets) {
+    const clusters: Array<{ rep: MergeLine; winner: MergeLine[]; losers: MergeLine[] }> = [];
+    // A line with a stamped trio and a line without one never share a cluster: the unstamped one is priced at the
+    // LIVE rate by the recompute, so summing a stamped loser into it would re-price the loser's units (row 340
+    // review). Unstamped lines of one category still sum with each other, and so do equal stamped trios.
+    const stampedLine = (li: MergeLine) => !hasNullTrio(li as any) || !li.trackedCategoryId;
+    const place = (li: MergeLine, asWinner: boolean) => {
+      let c = clusters.find(
+        (x) => foldTarget(x.rep, li) === "ADD" && stampedLine(x.rep) === stampedLine(li),
+      );
+      if (!c) {
+        c = { rep: li, winner: [], losers: [] };
+        clusters.push(c);
+      }
+      (asWinner ? c.winner : c.losers).push(li);
+    };
+    // A line with NO stamped trio is "ADD" against every trio of its category, so it must never be the
+    // cluster's representative while a stamped line exists (it would pull lines of different trios into one
+    // cluster). Stamped lines (winners first) cluster among themselves; unstamped ones then attach to the first
+    // cluster of their category, or form their own.
+    const stamped = stampedLine;
+    const tagged = [
+      ...vb.winner.map((li) => ({ li, asWinner: true })),
+      ...vb.losers.map((li) => ({ li, asWinner: false })),
+    ];
+    tagged.filter((t) => stamped(t.li)).forEach((t) => place(t.li, t.asWinner));
+    tagged.filter((t) => !stamped(t.li)).forEach((t) => place(t.li, t.asWinner));
+    for (const c of clusters)
+      buckets.push({ productId: vb.productId, winner: c.winner, losers: c.losers });
   }
 
   for (const { productId, winner: winnerLinesForProduct, losers } of buckets) {
@@ -293,5 +330,6 @@ export function buildMergeLineWrites(
     }
   }
 
-  return { writes, warnings };
+  // Row 355: a product left on several lines earns its free units on the COMBINED quantity.
+  return { writes: allocateSplitFreeUnits(writes, winnerLines, opts), warnings };
 }

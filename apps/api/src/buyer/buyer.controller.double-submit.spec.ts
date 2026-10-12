@@ -101,6 +101,7 @@ describe("B1094 — BuyerController.createOrder double submit", () => {
         return orderId ? { orderId, verified: true } : null;
       }),
       replayMergeReconcile: jest.fn(async () => undefined),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn(
         async (id: string, body: { items: Line[] }, _u: unknown, opts?: any) => {
           await tick();

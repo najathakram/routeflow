@@ -612,9 +612,6 @@ describe("OrdersService — F06 guards (TP2)", () => {
       "REG-B63 (T7): a CUSTOMER items-edit on a %s order is refused before any side effect",
       async (status) => {
         primePostDispatchFixture(status);
-        const revisionSpy = jest
-          .spyOn(service as any, "appendOrderRevision")
-          .mockResolvedValue(undefined);
 
         const attempt = service.updateOrderItems(
           "ord-1",
@@ -632,7 +629,7 @@ describe("OrdersService — F06 guards (TP2)", () => {
         expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
         expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
         expect(prisma.orderItem.create).not.toHaveBeenCalled();
-        expect(revisionSpy).not.toHaveBeenCalled();
+        expect(prisma.orderRevision.create).not.toHaveBeenCalled();
       },
     );
 
@@ -960,16 +957,32 @@ describe("OrdersService — F06 guards (TP2)", () => {
       });
       prisma.order.findUnique.mockResolvedValue(twoLineOrder);
       prisma.product.findMany.mockResolvedValue([promoProduct]);
-      prisma.orderItem.findMany.mockResolvedValue([]);
       promotionsService.activeForCatalog.mockResolvedValue([bogoRule]);
 
-      // A no-op save: both lines echoed at their stored qty and price.
+      // Row 373b: id-less entries cannot be paired with two stored lines of one product. They are refused
+      // (the strict fallback), never guessed and never granted a snapshot.
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          {
+            items: [
+              { productId: "prod-promo", qty: 10, unitPrice: 5 },
+              { productId: "prod-promo", qty: 5, unitPrice: 5 },
+            ],
+            replaceAll: true,
+          } as never,
+          operatorPayload as never,
+        ),
+      ).rejects.toMatchObject({ response: { code: "ORDER_EDIT_NEEDS_LINE_IDS" } });
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+
+      // A no-op save that NAMES both lines: each is paired with its own stored line; the sibling stays plain.
       await service.updateOrderItems(
         "ord-1",
         {
           items: [
-            { productId: "prod-promo", qty: 10, unitPrice: 5 },
-            { productId: "prod-promo", qty: 5, unitPrice: 5 },
+            { id: "li-promo", productId: "prod-promo", qty: 10, unitPrice: 5 },
+            { id: "li-plain", productId: "prod-promo", qty: 5, unitPrice: 5 },
           ],
           replaceAll: true,
         },

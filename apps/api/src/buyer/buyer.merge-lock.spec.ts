@@ -110,6 +110,7 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
   let controller: BuyerController;
   let ordersService: {
     findActiveOrder: jest.Mock;
+    liveTrioByProduct: jest.Mock;
     updateOrderItems: jest.Mock;
     applyBuyerMergeHeader: jest.Mock;
     mergeAllPendingForCustomer: jest.Mock;
@@ -130,6 +131,7 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
 
     ordersService = {
       findActiveOrder: jest.fn().mockResolvedValue(ACTIVE_ORDER),
+      liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
       updateOrderItems: jest.fn(async () => {
         mockCallOrder.push("updateOrderItems");
       }),
@@ -208,6 +210,45 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
       expect.objectContaining({ replaceAll: true }),
       expect.any(Object),
     );
+  });
+
+  it("B297 row 343: the fold prices a new sale at the product's LIVE trio — a line sold at another trio keeps its qty and the added qty goes on its own line", async () => {
+    ordersService.findActiveOrder.mockResolvedValue({
+      ...ACTIVE_ORDER,
+      lineItems: [
+        {
+          ...ACTIVE_ORDER.lineItems[0],
+          trackedCategoryId: "cat-1",
+          categoryTaxType: "EXCISE_PER_UNIT",
+          categoryTaxRate: "0.0500",
+          categoryPriceIncludesTax: false,
+        },
+      ],
+    });
+    ordersService.liveTrioByProduct.mockResolvedValue(
+      new Map([
+        [
+          "prod-a",
+          {
+            trackedCategoryId: "cat-1",
+            categoryTaxType: "EXCISE_PER_UNIT",
+            categoryTaxRate: 0.07,
+            categoryPriceIncludesTax: false,
+          },
+        ],
+      ]),
+    );
+
+    await controller.createOrder(
+      { items: [{ productId: "prod-a", qty: 3 }] } as any,
+      MOCK_CTX as any,
+    );
+
+    expect(ordersService.liveTrioByProduct).toHaveBeenCalledWith(["prod-a"]);
+    const written = ordersService.updateOrderItems.mock.calls[0][1].items as any[];
+    const prodA = written.filter((i) => i.productId === "prod-a");
+    expect(prodA).toHaveLength(2);
+    expect(prodA.map((i) => Number(i.qty)).sort()).toEqual([2, 3]);
   });
 
   it("runs the sibling sweep and the response read AFTER the lock is released — mergeAllPendingForCustomer takes the SAME key and would self-block if nested", async () => {
