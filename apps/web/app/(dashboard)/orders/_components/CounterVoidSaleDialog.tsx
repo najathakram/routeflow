@@ -16,6 +16,7 @@ import {
   voidReasonProblem,
 } from "@/lib/counter-void-copy";
 import { counterVoidErrorCopy, voidErrorCode } from "@/lib/counter-void-error";
+import { useReadOnlyGate } from "@/lib/read-only-gate";
 
 type Done = { handBack: CounterSaleVoidResponse["handBack"] | null; alreadyVoided: boolean };
 
@@ -172,15 +173,40 @@ export function CounterVoidSaleAction({
   onOpen: () => void;
 }) {
   const role = useOptionalAuth()?.user?.role;
+  const gate = useReadOnlyGate();
   if (!staffMay(role, "VOID_SALE")) return null;
+  // CQ-34: a void is refused by a READ_ONLY workspace, so the control is off up front (visible, never hidden) and points at
+  // the sheet's one read-only line; the dialog never opens and no reason is asked for first.
   return (
     <button
       type="button"
-      className="min-h-11 inline-flex items-center justify-center rounded border border-red-300 px-3 text-sm text-red-700"
+      className="min-h-11 inline-flex items-center justify-center rounded border border-red-300 px-3 text-sm text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
       aria-label={`Void sale ${orderNumber}`}
+      disabled={gate.readOnly}
+      aria-describedby={gate.readOnly ? `${gate.hintId}-today` : undefined}
+      title={gate.readOnly ? (gate.line ?? undefined) : undefined}
       onClick={onOpen}
     >
       Void sale
     </button>
+  );
+}
+
+/**
+ * CQ-34: the ONE read-only line of the Today's sales sheet, shown once above the list (never per row) when the workspace is
+ * read-only and the signed-in role may void. The disabled Void sale buttons describe themselves by it.
+ */
+export function TodaysSalesReadOnlyLine({ className }: { className?: string }) {
+  const role = useOptionalAuth()?.user?.role;
+  const gate = useReadOnlyGate();
+  if (!gate.readOnly || !gate.line || !staffMay(role, "VOID_SALE")) return null;
+  return (
+    <p
+      id={`${gate.hintId}-today`}
+      data-testid="today-read-only-line"
+      className={className ?? "text-sm text-slate-700"}
+    >
+      {gate.line}
+    </p>
   );
 }
