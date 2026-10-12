@@ -9,6 +9,7 @@ import type { PromotionRule } from "@routeflow/pricing";
 import type { BuyerOrderItemEdit } from "@routeflow/types";
 import type { ChangeRequest } from "@/lib/change-requests";
 import { buyerOrderConflict } from "@/lib/buyer-order-conflict";
+import { isSellerUnavailableRefusal } from "@/lib/seller-unavailable";
 import {
   isTrackingLive,
   type FulfilmentMethod,
@@ -387,8 +388,11 @@ export function useBuyerOrderTracking(orderId: string) {
 export function useBuyerCreateOrder() {
   const qc = useQueryClient();
   return useMutation({
-    // The cart and shelf render their own sentence for the "order already placed" refusals.
-    meta: { localErrorToast: (err: unknown) => buyerOrderConflict(err) !== null },
+    // The cart and shelf render their own sentence for the "order already placed" refusals and for a paused seller.
+    meta: {
+      localErrorToast: (err: unknown) =>
+        buyerOrderConflict(err) !== null || isSellerUnavailableRefusal(err),
+    },
     mutationFn: (data: {
       items: Array<{
         productId: string;

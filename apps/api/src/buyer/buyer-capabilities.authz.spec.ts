@@ -168,8 +168,8 @@ describe("GET /buyer/capabilities — acceptingOrders follows SELLER_READ_ONLY_B
     store.tenants.find((t) => t.id === "t-acme")!.status = "READ_ONLY";
   };
 
-  it("dark (the default) + a READ_ONLY seller: acceptingOrders is TRUE (the server takes the order)", async () => {
-    delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+  it("dark (the explicit rollback) + a READ_ONLY seller: acceptingOrders is TRUE (the server takes the order)", async () => {
+    process.env.SELLER_READ_ONLY_BUYER_GATE = "dark"; // the explicit rollback (default is enforced)
     readOnlySeller();
     const res = await capabilities("acme").expect(200);
     expect(res.body.acceptingOrders).toBe(true);

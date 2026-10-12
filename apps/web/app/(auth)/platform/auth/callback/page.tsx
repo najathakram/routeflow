@@ -59,7 +59,7 @@ function PlatformCallbackInner() {
       setStatus("error");
     };
 
-    // ── Resolve tokens: one-time code (F8-001) or legacy direct params ─────────
+    // ── Resolve tokens: one-time code only (F8-001) ──────────────────────────────
     async function resolveBundle(): Promise<Record<string, string> | null> {
       const code = params.get("code");
       if (code) {
@@ -79,10 +79,8 @@ function PlatformCallbackInner() {
           return null;
         }
       }
-      const accessToken = params.get("accessToken");
-      const refreshToken = params.get("refreshToken");
-      if (!accessToken || !refreshToken) return null;
-      return { accessToken, refreshToken, role: params.get("role") ?? "" };
+      // Tokens are never accepted from the URL; the server sends only code, action or error.
+      return null;
     }
 
     void resolveBundle().then((bundle) => {

@@ -471,6 +471,11 @@ export function dunningTemplate(params: {
   payUrl: string | null;
   /** `final` only: the tenant-local date the workspace becomes read-only. */
   readOnlyOn?: string;
+  /**
+   * `final` only (SA-775 rollout): the rollout pause holds the lock this notice would threaten, so the workspace will NOT
+   * become read-only. The notice then asks for the payment without the deadline, the date or the words "read-only".
+   */
+  omitLockWarning?: boolean;
   /** `d6` (dark) only: the tenant-local date to update the card by. */
   byDate?: string;
   /** `paused_still_owed` and a never-attempted `d0`: the open invoice's number, amount still owed (cents), currency. */
@@ -542,6 +547,14 @@ export function dunningTemplate(params: {
           ? ` for ${formatDunningAmount(params.amountCents, params.currency)}`
           : ""
       } is open — pay it here.`,
+    };
+  }
+  // SA-775: never threaten a lock the pause will not carry out. Same invoice, same milestone - only the wording changes.
+  if (params.kind === "final" && params.omitLockWarning === true) {
+    copy.final = {
+      subject: `Your subscription invoice is still unpaid — ${biz}`,
+      tagline: "Payment overdue",
+      body: `The subscription invoice for ${biz} is still unpaid. Please pay it or update your payment method to keep your subscription in good standing.`,
     };
   }
   const c = copy[params.kind];
