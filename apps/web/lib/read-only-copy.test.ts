@@ -1,4 +1,5 @@
 import type { SubscriptionView } from "@routeflow/types";
+import { CANCELLED_SENTENCE, SUSPENDED_SENTENCE } from "@routeflow/types/read-only-copy";
 import {
   READ_ONLY_SENTENCE,
   readOnlyCopy,
@@ -13,6 +14,14 @@ describe("read-only copy (SA-776)", () => {
   it("the sentence is the owner's, verbatim", () => {
     expect(READ_ONLY_SENTENCE).toBe(SENTENCE);
     expect(readOnlyCopy({}).sentence).toBe(SENTENCE);
+  });
+
+  it("a suspended and a cancelled workspace each have their own fixed, name-free sentence", () => {
+    expect(SUSPENDED_SENTENCE).toBe(
+      "This workspace is currently suspended. Please contact support.",
+    );
+    expect(CANCELLED_SENTENCE).toBe("This workspace has been cancelled. Please contact support.");
+    expect(new Set([SENTENCE, SUSPENDED_SENTENCE, CANCELLED_SENTENCE]).size).toBe(3);
   });
 
   it.each([
