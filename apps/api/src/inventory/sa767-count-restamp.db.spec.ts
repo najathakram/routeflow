@@ -10,6 +10,8 @@
  *  (A2) a scan-built line (50 increment scans from stock 100, a sale mid-way, no recount) keeps
  *       expected 100: delta -50, the sale survives.
  *  (A3) a sale AFTER the last absolute write is kept in the final stock (regression guard).
+ *  (A8) MF3: fractional scans (0.1 x3) store 0.300; a cost-only edit that resends the client's float
+ *       0.30000000000000004 is not a recount (the quantity is rounded to the column's 3 dp first).
  *  (A4-A6) MF1 (r-note 4 A): an absolute write that does NOT change the count keeps the baseline. Both
  *       clients resend the full countedQty on every edit (cost, mode toggle), so re-stamping there would
  *       erase a sale that landed since the count (counted 100 at stock 100, sale 10 -> final 100, not 90).
@@ -134,5 +136,25 @@ describeDb("SA-767 L-2.4 A - expectedQty re-stamp on absolute count writes", () 
     // delta is 0: the sale is kept and stock stays 90. A counter who disagrees edits the number.
     expect(Number(line.expectedQty)).toBe(100);
     expect(await h.stockOfId(p)).toBe(90);
+  }, 60_000);
+
+  it("(A8) MF3: three 0.1 scans, a sale, then a cost-only edit resending 0.30000000000000004 keeps the baseline", async () => {
+    const w = await h.seedCountWorld("a8", 1, { lines: false, stock: 1 });
+    const p = w.idOf(1);
+
+    for (let k = 0; k < 3; k++)
+      await h.upsert(h.A, w, { productId: p, countedQty: 0.1, increment: true }); // stores 0.300, stamps 1
+    await h.sell(p, 0.1); // stock 0.9
+    await h.upsert(h.A, w, {
+      productId: p,
+      countedQty: 0.1 + 0.1 + 0.1, // the web row's float: 0.30000000000000004
+      unitCostOverride: 3,
+    });
+    const line = await lineOf(w, p);
+    await h.commitSession(h.A, w);
+
+    expect(Number(line.countedQty)).toBe(0.3);
+    expect(Number(line.expectedQty)).toBe(1); // a re-stamp would make it 0.9 and erase the sale
+    expect(await h.stockOfId(p)).toBeCloseTo(0.2, 3); // 0.9 + (0.3 - 1)
   }, 60_000);
 });

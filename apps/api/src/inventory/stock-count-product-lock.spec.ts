@@ -156,6 +156,28 @@ describe("one open count per product (SA-767 r-note 5, SA-3)", () => {
       expect(w.prisma.stockCountLine.create).toHaveBeenCalledTimes(2);
     });
 
+    it("seeds each line's countedQty through roundCountQty (a legacy unrounded value lands at 3 dp)", async () => {
+      w.prisma.stockCountSession.findUnique.mockResolvedValue({
+        id: "old",
+        status: "COMMITTED",
+        lines: [
+          {
+            productId: pid(1),
+            countedQty: D("1.2345"),
+            boxes: null,
+            pieces: null,
+            mode: "REPLACE",
+          },
+        ],
+      });
+
+      await amend();
+
+      expect(w.prisma.stockCountLine.create.mock.calls[0][0].data.countedQty.toString()).toBe(
+        "1.235",
+      );
+    });
+
     it("refuses with 409 PRODUCT_IN_OPEN_COUNT when a seeded product is open in another count", async () => {
       w.prisma.stockCountLine.findMany.mockResolvedValue([other({ productId: pid(2) })]);
 

@@ -154,6 +154,22 @@ export function productInOpenCount(conflicts: OpenCountConflict[]): ConflictExce
   });
 }
 
+/** `StockCountLine.countedQty` is Decimal(10,3): the scale Postgres rounds a write to. */
+export const COUNT_QTY_DECIMAL_PLACES = 3;
+
+/**
+ * SA-767 r-note 5 MF3: a counted quantity as the column will store it. The DTO accepts any JS number
+ * (the web row keeps 0.1 + 0.1 + 0.1 = 0.30000000000000004), and `new Prisma.Decimal(float)` keeps the
+ * float's tail, so it would never equal the stored 0.300 and every resend would look like a recount.
+ * Round ONCE, half up, before BOTH the compare and the write.
+ */
+export function roundCountQty(qty: Qty): Prisma.Decimal {
+  return new Prisma.Decimal(qty).toDecimalPlaces(
+    COUNT_QTY_DECIMAL_PLACES,
+    Prisma.Decimal.ROUND_HALF_UP,
+  );
+}
+
 type CountSplit = number | null | undefined;
 const sameSplit = (a: CountSplit, b: CountSplit) =>
   a == null || b == null ? a == null && b == null : a === b;
@@ -169,7 +185,8 @@ export function absoluteCountChanged(
   existing: { countedQty: Qty; boxes?: CountSplit; pieces?: CountSplit },
   next: { countedQty: Qty; boxes?: CountSplit; pieces?: CountSplit },
 ): boolean {
-  if (!new Prisma.Decimal(existing.countedQty).eq(new Prisma.Decimal(next.countedQty))) return true;
+  // Both sides go through the one rounding helper, so a caller cannot hand in an unrounded float.
+  if (!roundCountQty(existing.countedQty).eq(roundCountQty(next.countedQty))) return true;
   return !sameSplit(existing.boxes, next.boxes) || !sameSplit(existing.pieces, next.pieces);
 }
 

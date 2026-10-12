@@ -144,6 +144,61 @@ describe("upsertStockCountLine - expectedQty stamp rule (SA-767 L-2.4 A)", () =>
     });
   });
 
+  // MF3: the column is Decimal(10,3). The incoming quantity is rounded to it ONCE, before the compare and
+  // the write, otherwise a float the client keeps (0.1 + 0.1 + 0.1) never equals the stored 0.300 and every
+  // resend would count as a recount.
+  describe("the incoming quantity is rounded to the column's 3 dp before the compare (MF3)", () => {
+    it("0.30000000000000004 resent against a stored 0.300 is NOT a recount: no expectedQty, 0.3 written", async () => {
+      w.prisma.stockCountLine.findUnique.mockResolvedValue(existing({ countedQty: D("0.300") }));
+
+      await save({ countedQty: 0.1 + 0.1 + 0.1, unitCostOverride: 3 });
+
+      const data = w.prisma.stockCountLine.update.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty("expectedQty");
+      expect(data.countedQty.toString()).toBe("0.3");
+    });
+
+    it("1.2345 resent against a stored 1.235 is NOT a recount (the write is rounded half up to 1.235)", async () => {
+      w.prisma.stockCountLine.findUnique.mockResolvedValue(existing({ countedQty: D("1.235") }));
+
+      await save({ countedQty: 1.2345 });
+
+      const data = w.prisma.stockCountLine.update.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty("expectedQty");
+      expect(data.countedQty.toString()).toBe("1.235");
+    });
+
+    it("a genuinely different quantity (0.301 against 0.300) still re-stamps", async () => {
+      w.prisma.stockCountLine.findUnique.mockResolvedValue(existing({ countedQty: D("0.300") }));
+
+      await save({ countedQty: 0.301 });
+
+      const data = w.prisma.stockCountLine.update.mock.calls[0][0].data;
+      expect(Number(data.expectedQty)).toBe(90);
+      expect(data.countedQty.toString()).toBe("0.301");
+    });
+
+    it("CREATE writes the rounded quantity too", async () => {
+      w.prisma.stockCountLine.findUnique.mockResolvedValue(null);
+
+      await save({ countedQty: 1.2345 });
+
+      expect(w.prisma.stockCountLine.create.mock.calls[0][0].data.countedQty.toString()).toBe(
+        "1.235",
+      );
+    });
+
+    it("an INCREMENT adds the rounded value and stores a rounded sum", async () => {
+      w.prisma.stockCountLine.findUnique.mockResolvedValue(existing({ countedQty: D("0.3") }));
+
+      await save({ countedQty: 0.1 + 0.2, increment: true });
+
+      const data = w.prisma.stockCountLine.update.mock.calls[0][0].data;
+      expect(data.countedQty.toString()).toBe("0.6");
+      expect(data).not.toHaveProperty("expectedQty");
+    });
+  });
+
   it("an INCREMENT scan on an existing line keeps the baseline (no expectedQty in the write)", async () => {
     w.prisma.stockCountLine.findUnique.mockResolvedValue(existing({ countedQty: D(4) }));
 

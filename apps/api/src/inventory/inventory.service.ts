@@ -66,6 +66,7 @@ import {
   computeCommitProgress,
   OPEN_COUNT_STATUSES,
   productInOpenCount,
+  roundCountQty,
   STOCK_COUNT_LOCK_FAMILY,
   STOCK_COUNT_PRODUCT_LOCK_FAMILY,
   stockCountCommitting,
@@ -2483,7 +2484,7 @@ export class InventoryService {
       }
       seedLines = source.lines.map((l) => ({
         productId: l.productId,
-        countedQty: l.countedQty,
+        countedQty: roundCountQty(l.countedQty), // the one rounding helper (legacy rows may be unrounded)
         boxes: l.boxes,
         pieces: l.pieces,
         mode: l.mode as "REPLACE" | "ADD",
@@ -2703,15 +2704,17 @@ export class InventoryService {
         dto.boxes != null || dto.pieces != null
           ? normalizeBoxesPieces({ boxes: dto.boxes, pieces: dto.pieces, unitsPerBox: upb })
           : null;
-      const incoming = fromSplit ? fromSplit.qty : (dto.countedQty ?? 0);
+      // Rounded to the column's 3 dp ONCE, here: the compare below and the write both see what Postgres
+      // will store (SA-767 r-note 5 MF3), so a client float never reads as a changed count.
+      const incoming = roundCountQty(fromSplit ? fromSplit.qty : (dto.countedQty ?? 0));
 
       const existing = await tx.stockCountLine.findUnique({
         where: { sessionId_productId: { sessionId, productId: dto.productId } },
       });
 
       const countedQty = dto.increment
-        ? new Prisma.Decimal(existing?.countedQty ?? 0).add(incoming)
-        : new Prisma.Decimal(incoming);
+        ? roundCountQty(new Prisma.Decimal(existing?.countedQty ?? 0).add(incoming))
+        : incoming;
 
       const data = {
         mode: dto.mode ?? existing?.mode ?? "REPLACE",
