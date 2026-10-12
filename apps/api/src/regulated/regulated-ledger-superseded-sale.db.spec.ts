@@ -281,6 +281,52 @@ describeDb(
       });
     }
 
+    /** A B662-style price correction AFTER the repack: a qty-0 REVERSAL that points at the live sale. */
+    async function priceCorrection(s: Seed) {
+      const live = await prisma.regulatedSalesLedger.findFirstOrThrow({
+        where: { tenantId: s.tenantId, orderItemId: s.orderItem.id, entryType: "SALE" },
+        orderBy: { createdAt: "desc" },
+      });
+      await prisma.regulatedSalesLedger.create({
+        data: {
+          tenantId: s.tenantId,
+          trackedCategoryId: live.trackedCategoryId,
+          trackedSubcategoryId: live.trackedSubcategoryId,
+          entryType: "REVERSAL",
+          correctsEntryId: live.id,
+          orderId: live.orderId,
+          orderItemId: live.orderItemId,
+          invoiceId: live.invoiceId,
+          invoiceItemId: live.invoiceItemId,
+          qty: 0,
+          unitBasisQty: 0,
+          netSales: -10,
+          categoryTax: 0,
+          soldAt: live.soldAt,
+          periodBucket: live.periodBucket,
+          createdAt: new Date(live.createdAt.getTime() + 60_000),
+        },
+      });
+    }
+
+    it("a price correction after the repack leaves the live sale live: credit -60 pieces and return -60 pieces", async () => {
+      const a = await seedSale("pc1");
+      await repack(a);
+      await priceCorrection(a);
+      const cn = await bookCredit(a, 45, 5, 5, "pc1");
+      const credited = (await allRows(a)).filter((r) => r.creditNoteId === cn.id);
+      expect(credited).toHaveLength(1);
+      expect(Number(credited[0].unitBasisQty)).toBe(-60);
+
+      const b = await seedSale("pc2");
+      await repack(b);
+      await priceCorrection(b);
+      const ret = await bookReturn(b, 5, "pc2");
+      const returned = (await allRows(b)).filter((r) => r.returnId === ret.id);
+      expect(returned).toHaveLength(1);
+      expect(Number(returned[0].unitBasisQty)).toBe(-60);
+    });
+
     it("a credit of 5 units after a same-key repack books -60 pieces, not the blend (-32.5)", async () => {
       const s = await seedSale("cr");
       await repack(s);
