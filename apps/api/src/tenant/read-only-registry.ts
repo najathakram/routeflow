@@ -169,6 +169,7 @@ export const PUBLIC_WRITE_ROUTES: ReadonlyArray<ClassifiedRoute> = [
       ["request-password-reset", "buyer password-reset request"],
       ["reset-password", "buyer password reset by emailed token"],
       ["verify-email", "buyer e-mail verification by emailed token"],
+      ["verify-merge", "buyer account-merge confirmation by emailed token"],
     ] as const
   ).map(([tail, why]) => ({
     route: `POST /api/v1/buyer/auth/${tail}`,

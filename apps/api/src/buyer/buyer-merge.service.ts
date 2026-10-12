@@ -119,7 +119,11 @@ export class BuyerMergeService {
 
   // ─── Buyer: verify merge token ────────────────────────────────────────────────
 
-  async verifyMergeToken(token: string) {
+  /**
+   * The shared, read-only validation behind both the preview and the consume: lookup by token,
+   * still pending verification, not expired. Throws the same NotFound / BadRequest / Gone errors.
+   */
+  private async findPendingMergeByToken(token: string) {
     const mergeRequest = await this.prisma.buyerMergeRequest.findUnique({
       where: { verificationToken: token },
     });
@@ -133,6 +137,22 @@ export class BuyerMergeService {
         "Verification token has expired. Please initiate a new merge request.",
       );
     }
+    return mergeRequest;
+  }
+
+  /**
+   * Row 404: the non-mutating preview behind `GET verify-merge/:token`. A link scanner's prefetch
+   * may call it any number of times; it writes nothing and returns no account details (no e-mail,
+   * name or id), only whether the token can still be confirmed.
+   */
+  async peekMergeToken(token: string) {
+    const mergeRequest = await this.findPendingMergeByToken(token);
+    return { valid: true as const, expiresAt: mergeRequest.verificationExpires };
+  }
+
+  /** The single-use consume, reached only by the explicit `POST verify-merge` confirm click. */
+  async verifyMergeToken(token: string) {
+    const mergeRequest = await this.findPendingMergeByToken(token);
 
     await this.prisma.buyerMergeRequest.update({
       where: { id: mergeRequest.id },
