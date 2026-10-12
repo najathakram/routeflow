@@ -230,16 +230,21 @@ describe("StripeConnectService", () => {
     // The status is read live after the signed state checks out and BEFORE the code
     // exchange, so a refused callback never creates a Stripe grant or binds an account.
 
-    it.each(["READ_ONLY", "SUSPENDED", "CANCELLED"])(
-      "refuses a %s workspace before the code exchange and stores nothing",
-      async (status) => {
+    // Each refused status carries its OWN fixed code, so the callback can show status-specific copy.
+    it.each([
+      ["READ_ONLY", "workspace_read_only"],
+      ["SUSPENDED", "workspace_suspended"],
+      ["CANCELLED", "workspace_cancelled"],
+    ])(
+      "refuses a %s workspace with %s before the code exchange and stores nothing",
+      async (status, code) => {
         mockJwt.verifyAsync.mockResolvedValue(statePayload);
         tenantStripeConnect.updateMany.mockResolvedValueOnce({ count: 1 });
         prisma.tenant.findUnique.mockResolvedValue({ ...liveTenant, status } as any);
         mockOauth.exchangeCode.mockResolvedValue({ accountRef: "acct_1", livemode: false });
 
         await expect(service.completeOAuth("code", "state")).rejects.toMatchObject({
-          response: { message: "workspace_read_only" },
+          response: { message: code },
         });
         expect(prisma.tenant.findUnique).toHaveBeenCalledWith(
           expect.objectContaining({
