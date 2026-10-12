@@ -6,6 +6,7 @@
 import { API_ERROR_CODES, PREF, staffMay } from "@routeflow/types";
 import type { PickupCompleteRequest, PickupCompleteResponse } from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
+import { fmtCurrency } from "../utils/format";
 
 import { isPosOrder } from "./order-status-flow";
 
@@ -415,13 +416,8 @@ export function decidePickupResponse(res: PickupCompleteResponse): PickupDecisio
     releaseKey: true,
     message: res.paymentRecorded
       ? (res.change ?? 0) > 0
-        ? `Handed over. Change ${posMoney(res.change ?? 0)}`
+        ? `Handed over. Change ${fmtCurrency(res.change ?? 0)}`
         : "Handed over"
       : "Handed over, but the payment wasn't recorded. Record it on the invoice.",
   };
-}
-
-/** Dollars for a toast: rounded to cents. */
-export function posMoney(n: number): string {
-  return `$${roundMoney(n).toFixed(2)}`;
 }
