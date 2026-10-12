@@ -193,6 +193,25 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
     );
   });
 
+  // SA-775 follow-up: while auto-locks are paused a production tenant may stay writable, so the copy must
+  // not promise an immediate lock; it is true both when the pause holds the lock and when it does not.
+  it("RO-1 the End trial dialog does not promise an immediate read-only lock", async () => {
+    mockAuthUser = { role: "TENANT_ADMIN" };
+    mockSubscriptionView = subscriptionView({
+      status: "TRIAL",
+      trialEndsAt: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "End trial" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(
+      dialog.getByText("Your workspace becomes read-only; exports still work."),
+    ).toBeInTheDocument();
+    expect(dialog.queryByText(/immediately/i)).not.toBeInTheDocument();
+  });
+
   it("RO-1 a trial tenant as OPERATOR sees no End trial control and no read-only banner", async () => {
     mockAuthUser = { role: "OPERATOR" };
     mockSubscriptionView = subscriptionView({

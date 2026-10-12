@@ -596,7 +596,7 @@ export default function BillingSettingsPage() {
           setEndTrialOpen(false);
         }}
         title="End your trial now?"
-        description="Your workspace becomes read-only immediately; exports still work."
+        description="Your workspace becomes read-only; exports still work."
         confirmLabel="End trial"
         variant="danger"
         loading={cancel.isPending}
