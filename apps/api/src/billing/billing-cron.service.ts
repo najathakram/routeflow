@@ -1,5 +1,5 @@
 import { priceOverrideOf, sameOverride } from "./price-override";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
@@ -28,6 +28,7 @@ import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transition-config.service";
 import { StripeService } from "./stripe.service";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import { markNeedsReconcile } from "./needs-reconcile";
 import { resolvePlanPrice } from "./plan-price";
 import { CHECKOUT_ADDON_EXPAND, stripeAddonItemIds } from "./stripe-addon-items";
@@ -68,6 +69,9 @@ export class BillingCronService {
     private readonly stripe: StripeService,
     // R1 option B: the backup sweep for a downgrade price whose `invoice.upcoming` webhook was missed.
     private readonly scheduledPrice: ScheduledPriceChangeService,
+    // SA-775: the rollout pause on AUTOMATIC locks (trial expiry, scheduled cancellation). @Optional only so a
+    // unit spec can build the sweep bare; billing.module-wiring.spec.ts pins that production injects it.
+    @Optional() private readonly autoLocks?: AutoLockSwitchService,
   ) {}
 
   private planMonthly(version: PlanVersionWithCatalog | null, planKey: string | null): number {

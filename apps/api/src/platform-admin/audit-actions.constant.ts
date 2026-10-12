@@ -57,6 +57,8 @@ export const AdminAuditAction = {
   FEATURE_DIFF_EXPLAINED: "FEATURE_DIFF_EXPLAINED",
   CONFIG_SNAPSHOT_RESTORED: "CONFIG_SNAPSHOT_RESTORED",
   CONFIG_SNAPSHOT_FLAG_CHANGED: "CONFIG_SNAPSHOT_FLAG_CHANGED",
+  /** SA-775: the platform-wide pause on AUTOMATIC tenant locks was switched (meta: paused, reason, previous). */
+  PLATFORM_AUTO_LOCKS_SWITCHED: "PLATFORM_AUTO_LOCKS_SWITCHED",
   // #2159 S1 — wholesaler onboarding cases. tenantId is null until the case is activated.
   ONBOARDING_CASE_CREATED: "ONBOARDING_CASE_CREATED",
   ONBOARDING_STAGE_ADVANCED: "ONBOARDING_STAGE_ADVANCED",
@@ -119,6 +121,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   FEATURE_DIFF_EXPLAINED: "Feature resolver diff explained",
   CONFIG_SNAPSHOT_RESTORED: "Configuration snapshot restored",
   CONFIG_SNAPSHOT_FLAG_CHANGED: "Config snapshot flag changed",
+  PLATFORM_AUTO_LOCKS_SWITCHED: "Automatic locks switched",
   ONBOARDING_CASE_CREATED: "Onboarding case created",
   ONBOARDING_STAGE_ADVANCED: "Onboarding stage advanced",
   ONBOARDING_STEP_WAIVED: "Onboarding step waived",

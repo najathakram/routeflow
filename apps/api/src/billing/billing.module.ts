@@ -33,6 +33,7 @@ import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { CatchupCheckoutService } from "./catchup-checkout.service";
 import { DunningService } from "./dunning.service";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
 
 @Module({
   // forwardRef: MailboxModule (imported by EmailModule for MailboxSendService) imports this
@@ -67,6 +68,8 @@ import { DunningService } from "./dunning.service";
     CatchupCheckoutService,
     // SA-733r7 PR-B3: dunning (clock stamp, hourly pause sweep, invoice.paid resume, pause_collection reconciler).
     DunningService,
+    // SA-775 (row 381): the rollout pause on AUTOMATIC locks - the switch, and the super-admin preview over it.
+    AutoLockSwitchService,
     // Manual invoices due PR1 (DARK: RF_INVOICING_MODE defaults to off, the cron then does nothing).
     RfInvoiceBuilder,
     RfInvoiceIssuerService,
@@ -97,6 +100,8 @@ import { DunningService } from "./dunning.service";
     CatchupCheckoutService,
     // Platform-admin activation / extendTrial clear a pause's Stripe pause_collection after their commit.
     DunningService,
+    // SA-775: the platform-admin controller reads / flips the switch and previews the unpause.
+    AutoLockSwitchService,
     BillingService,
     PlatformPricingService,
     AddonService,

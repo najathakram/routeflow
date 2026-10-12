@@ -59,6 +59,7 @@ import { lockTenantForLedger } from "./addon-ledger";
 import { checkoutAnchorParams, planCheckoutAnchor } from "./checkout-anchor";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { DunningService } from "./dunning.service";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import type { TransitionOpts } from "./dunning-core";
 import { assertTenantNotPaymentOverdue } from "./payment-overdue";
 import { transitionToActiveTx, type PauseExit } from "./transition-to-active";
@@ -218,6 +219,8 @@ export class BillingService {
     @Optional() private readonly catchup?: CatchupClaimService,
     // SA-733r7 PR-B3: dunning (the clock stamp, the hourly pause sweep, the invoice.paid resume).
     @Optional() private readonly dunning?: DunningService,
+    // SA-775: the rollout pause on AUTOMATIC locks (suspendOverdueTenants, the Stripe-cancel webhook).
+    @Optional() private readonly autoLocks?: AutoLockSwitchService,
   ) {
     // MRR has ONE writer: dunning's pause and resume book their delta through this class's transitionAndEmit.
     this.dunning?.bindTransition((...args) => this.transitionAndEmit(...args));

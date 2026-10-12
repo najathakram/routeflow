@@ -12,6 +12,8 @@ import { RfInvoicesAdminService } from "../platform-admin/rf-invoices.service";
 import { BillingModule } from "./billing.module";
 import { BillingService } from "./billing.service";
 import { CatchupCheckoutService } from "./catchup-checkout.service";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
+import { BillingCronService } from "./billing-cron.service";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { DunningService } from "./dunning.service";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
@@ -61,6 +63,14 @@ describe("BillingModule wiring: the @Optional collaborators are really provided"
       const mutations = moduleRef.get(SubscriptionMutationService, { strict: false }) as any;
       expect(mutations.scheduledPrice).toBeInstanceOf(ScheduledPriceChangeService);
       expect(mutations.dunning).toBeInstanceOf(DunningService);
+      // SA-775: every AUTOMATIC lock writer holds the REAL rollout switch - an @Optional that came back
+      // undefined would silently leave that writer ungated in production.
+      const sw = moduleRef.get(AutoLockSwitchService, { strict: false });
+      expect(sw).toBeInstanceOf(AutoLockSwitchService);
+      expect(billing.autoLocks).toBe(sw);
+      expect(mutations.autoLocks).toBe(sw);
+      expect(billing.dunning.autoLocks).toBe(sw);
+      expect((moduleRef.get(BillingCronService, { strict: false }) as any).autoLocks).toBe(sw);
     } finally {
       await moduleRef.close();
     }

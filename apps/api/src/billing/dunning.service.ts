@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
@@ -46,6 +46,7 @@ import { stampClock } from "./dunning-stamp";
 import { dunningZone } from "./dunning-zone";
 import { stripeInvoiceSubscriptionId } from "./stripe-period";
 import { StripeService } from "./stripe.service";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import type { PauseExit } from "./transition-to-active";
 
 export type StampOutcome = "stamped" | "unchanged" | "off" | "ignored" | "skipped" | "not_owed";
@@ -84,6 +85,8 @@ export class DunningService {
     private readonly stripe: StripeService,
     private readonly notifications: BillingNotificationService,
     private readonly tenantStatusGuard: TenantStatusGuard,
+    // SA-775: the rollout pause on the dunning pause (a READ_ONLY lock).
+    @Optional() private readonly autoLocks?: AutoLockSwitchService,
   ) {}
 
   /** Called once by BillingService's constructor. */
@@ -105,6 +108,7 @@ export class DunningService {
       mode: () => billingPauseMode(),
       once: (key) => this.once(key),
       cursors: this.cursors,
+      autoLocks: this.autoLocks,
     };
   }
 

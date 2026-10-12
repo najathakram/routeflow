@@ -57,6 +57,7 @@ import { addCycle, Cycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { DunningService } from "./dunning.service";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import { assertTenantNotPaymentOverdue, type OverdueEntryPoint } from "./payment-overdue";
 import { billingPauseMode } from "./dunning-config";
 import { transitionToActiveTx, type PauseExit } from "./transition-to-active";
@@ -264,6 +265,8 @@ export class SubscriptionMutationService {
     @Optional() private readonly scheduledPrice?: ScheduledPriceChangeService,
     // SA-733r7 PR-B3: a paused tenant that cancels lands on READ_ONLY(subscription_cancelled); exits clear the pause.
     @Optional() private readonly dunning?: DunningService,
+    // SA-775: the rollout pause also holds a tenant admin's own immediate trial-cancel lock.
+    @Optional() private readonly autoLocks?: AutoLockSwitchService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
