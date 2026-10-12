@@ -9,6 +9,8 @@ import {
   canDeleteOrder,
   canTransitionOrder,
   demotionRequiresReason,
+  isPosOrder,
+  posStatusMoveAllowed,
 } from "../lib/order-status-flow";
 
 describe("canTransitionOrder", () => {
@@ -96,6 +98,36 @@ describe("canDeleteOrder", () => {
       "CANCELLED",
     ]) {
       expect(canDeleteOrder(s)).toBe(true);
+    }
+  });
+});
+
+describe("POS mode predicate and status pin (SA-763r P-2)", () => {
+  it("isPosOrder is PICKUP and not a counter sale, literally", () => {
+    expect(isPosOrder({ fulfillPath: "PICKUP", counterSale: false })).toBe(true);
+    expect(isPosOrder({ fulfillPath: "PICKUP" })).toBe(true);
+    expect(isPosOrder({ fulfillPath: "PICKUP", counterSale: null })).toBe(true);
+    expect(isPosOrder({ fulfillPath: "PICKUP", counterSale: true })).toBe(false);
+    expect(isPosOrder({ fulfillPath: "ROUTE" })).toBe(false);
+    expect(isPosOrder({ fulfillPath: "SHIP", counterSale: false })).toBe(false);
+    expect(isPosOrder(null)).toBe(false);
+    expect(isPosOrder(undefined)).toBe(false);
+  });
+
+  it("a POS order is offered no Out-for-delivery and no DELIVERED move; everything else is", () => {
+    const pos = { fulfillPath: "PICKUP", counterSale: false };
+    expect(posStatusMoveAllowed(pos, "OUT_FOR_DELIVERY")).toBe(false);
+    expect(posStatusMoveAllowed(pos, "DELIVERED")).toBe(false);
+    expect(posStatusMoveAllowed(pos, "CONFIRMED")).toBe(true);
+    expect(posStatusMoveAllowed(pos, "CANCELLED")).toBe(true);
+    // ROUTE, SHIP and counter sales are untouched by the pin.
+    for (const o of [
+      { fulfillPath: "ROUTE" },
+      { fulfillPath: "SHIP" },
+      { fulfillPath: "PICKUP", counterSale: true },
+    ]) {
+      expect(posStatusMoveAllowed(o, "OUT_FOR_DELIVERY")).toBe(true);
+      expect(posStatusMoveAllowed(o, "DELIVERED")).toBe(true);
     }
   });
 });
