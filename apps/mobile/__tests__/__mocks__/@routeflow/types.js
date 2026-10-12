@@ -48,6 +48,9 @@ module.exports = {
     paymentLastMethod: "payment.lastMethod",
     ordersPosMode: "orders.posMode",
   },
+  // Subset of INVOICE_STATUS_VALUES, not a Prisma enum: pinned to the shared array by
+  // apps/api/src/invoices/open-invoice-statuses-pin.spec.ts (enum-parity's sweep skips it).
+  OPEN_INVOICE_STATUS_VALUES: ["SENT", "VIEWED", "PARTIAL", "OVERDUE"],
   VENDOR_BILL_STATUS_VALUES: ["DRAFT", "RECEIVED", "PARTIAL", "PAID", "OVERDUE", "VOID"],
   PURCHASE_ORDER_STATUS_VALUES: ["DRAFT", "SENT", "PARTIAL", "RECEIVED", "CLOSED"],
   // #2722: hand-copied; the parity sweep pins it to Prisma PaymentMethod (via enums.ts).
@@ -297,6 +300,9 @@ module.exports = {
     SUPPLIER_ALLOCATION_BILL_VOID: "SUPPLIER_ALLOCATION_BILL_VOID",
     SUPPLIER_ALLOCATION_OVER_BALANCE: "SUPPLIER_ALLOCATION_OVER_BALANCE",
     COUNTER_SALES_DISABLED: "COUNTER_SALES_DISABLED",
+    COUNTER_SALE_DAY_CLOSED: "COUNTER_SALE_DAY_CLOSED",
+    DAY_CLOSED_FOR_PAYMENT_DATE: "DAY_CLOSED_FOR_PAYMENT_DATE",
+    DAY_ALREADY_CLOSED: "DAY_ALREADY_CLOSED",
     PARK_LIMIT: "PARK_LIMIT",
     PARK_TAKEN: "PARK_TAKEN",
     PARK_ID_CONFLICT: "PARK_ID_CONFLICT",
@@ -368,6 +374,7 @@ module.exports = {
     INVALID_TIME_ZONE: "INVALID_TIME_ZONE",
     OVERDUE_FILTER_TOO_BROAD: "OVERDUE_FILTER_TOO_BROAD",
     REMINDER_NO_BALANCE_DUE: "REMINDER_NO_BALANCE_DUE",
+    REMINDER_NOT_ISSUED: "REMINDER_NOT_ISSUED",
   },
   CHECK_TRANSITIONS: {
     RECORDED: ["DEPOSITED", "BOUNCED"],

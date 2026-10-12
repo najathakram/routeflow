@@ -530,15 +530,32 @@ describe("structural pin: ONE writer of the coupon columns (L-223)", () => {
     expect(findCouponRawSqlWrites('UPDATE "Tenant" SET "name" = 1')).toBe(false);
   });
 
+  // Scripts that SELECT couponFull from TenantSubscription and carry it as a plain key of an in-memory
+  // snapshot object (the live-target classifier's `{ planKey, stripeSubId, couponFull }` input, or the default
+  // row of a tenant with no subscription). They never write the column: only the "couponFull outside
+  // select/where" read-shape finding is waived for them - a write object, a coupon{Id,EndsAt,SyncedAt}
+  // mention and raw SQL writes still fail for these files like any other (the raw-SQL test below has no waiver).
+  const SNAPSHOT_READERS = new Set([
+    "/scripts/backfill-b294-order-line-taxrate.mjs",
+    "/scripts/backfill-refund-tender.mjs",
+    "/scripts/lib/billing-catchup-core.cjs",
+    "/scripts/lib/live-target-guard.cjs",
+  ]);
+
   it("src, scripts and prisma (migrations excluded) hold no coupon-column write outside the writer", () => {
     const offenders: string[] = [];
     for (const f of files) {
       if (exempt(f) || f.endsWith(".sql")) continue;
       for (const hit of findCouponColumnWrites(readFileSync(f, "utf8"))) {
+        if (SNAPSHOT_READERS.has(rel(f)) && /couponFull outside select\/where/.test(hit)) continue;
         offenders.push(`${rel(f)}: ${hit}`);
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  it("the snapshot-reader waiver names files that exist (a rename cannot leave a stale waiver)", () => {
+    for (const p of SNAPSHOT_READERS) expect(files.map(rel)).toContain(p);
   });
 
   it("no raw SQL writes the coupon columns anywhere (src, scripts, prisma outside migrations)", () => {

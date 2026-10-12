@@ -67,7 +67,11 @@ describe("TRIAL / tenant-status write sites (back-office P2)", () => {
     expect(files).toEqual([
       "billing/billing-cron.service.ts",
       "billing/billing.service.ts",
+      // dunning: only moves readOnlyReason on an already READ_ONLY row (payment_overdue -> subscription_cancelled); never a TRIAL write
+      "billing/dunning.service.ts",
       "billing/subscription-mutation.service.ts",
+      // the one transition-to-ACTIVE helper (clears readOnlyReason, closes the dunning clock); writes ACTIVE, never TRIAL
+      "billing/transition-to-active.ts",
       "platform-admin/platform-admin.service.ts",
     ]);
   });

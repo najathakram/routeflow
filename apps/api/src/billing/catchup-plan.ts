@@ -259,6 +259,7 @@ export function stubLines(
       .map((a) => ({
         kind: "ADDON" as const,
         code: a.sku,
+        // scan-ok: money-rederive — a subscription add-on row (monthly price of one unit x count), never an order line; no case pack / unitsPerBox exists here, so no proration is lost.
         cents: toCents(price(roundMoney(a.unitPrice * a.quantity))),
       })),
   ];

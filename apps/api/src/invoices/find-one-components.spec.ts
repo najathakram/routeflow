@@ -11,6 +11,7 @@ function serviceReturning(inv: object) {
   );
   Object.assign(service, {
     prisma: {
+      getTenantId: () => null, // row 308: the zone lookup short-circuits with no tenant
       forTenant: () => ({
         invoice: { findUnique: jest.fn().mockResolvedValue(inv) },
         auditLog: { groupBy: jest.fn().mockResolvedValue([]) }, // revisedAt: never revised

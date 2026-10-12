@@ -71,7 +71,8 @@ describe("#2175 tripwire: no gateway.emit* inside a transaction callback", () =>
     const voidTx = fs.readFileSync(path.join(SRC, "invoices/payment-void-tx.ts"), "utf8");
     expect(inv.match(/after\.defer\(this\.gateway\)\.emitInvoiceUpdated\(/g)).toHaveLength(7);
     expect(voidTx.match(/after\.defer\(deps\.gateway\)\.emitInvoiceUpdated\(/g)).toHaveLength(1);
-    expect(inv.match(/withAfterCommit\(this\.prisma, async \(tx, after\) =>/g)).toHaveLength(5);
+    // + voidPayment's wrapper (lock, window check, then voidPaymentInTx on the same `after`)
+    expect(inv.match(/withAfterCommit\(this\.prisma, async \(tx, after\) =>/g)).toHaveLength(6);
     expect(cn.match(/this\.gateway\.emitCreditNote\w+\(/g)?.length).toBeGreaterThanOrEqual(2);
   });
 });
