@@ -124,4 +124,59 @@ describe("buyer verify-merge page: confirm only on click", () => {
     await waitFor(() => expect(fetchSpy).not.toHaveBeenCalled());
     expect(mockPost).not.toHaveBeenCalled();
   });
+
+  describe("state changes are announced (live region + focus)", () => {
+    it("wraps the confirm card in a polite status region that is not announced on load", async () => {
+      render(<VerifyMergePage />);
+
+      const region = await screen.findByRole("status");
+      expect(region).toHaveAttribute("aria-live", "polite");
+      expect(region).toContainElement(
+        screen.getByRole("button", { name: /confirm account merge/i }),
+      );
+      // an on-load render must not steal focus from the page
+      expect(region).not.toHaveFocus();
+    });
+
+    it("the same region carries the success text after a click, and takes focus", async () => {
+      const user = userEvent.setup();
+      mockPost.mockResolvedValueOnce({ data: { success: true } });
+      render(<VerifyMergePage />);
+      const region = await screen.findByRole("status");
+
+      await user.click(screen.getByRole("button", { name: /confirm account merge/i }));
+
+      await waitFor(() => expect(region).toHaveTextContent(/your account ownership is confirmed/i));
+      // the node was updated in place (a live region replaced wholesale is not announced)
+      expect(screen.getByRole("status")).toBe(region);
+      expect(region).toHaveAttribute("aria-live", "polite");
+      expect(region).toContainElement(screen.getByRole("link", { name: /go to login/i }));
+      // the confirm button unmounted: focus must not fall back to <body>
+      expect(region).toHaveFocus();
+    });
+
+    it("exposes the server error through the live region and takes focus", async () => {
+      const user = userEvent.setup();
+      mockPost.mockRejectedValueOnce({
+        response: { status: 404, data: { message: "Invalid verification token" } },
+      });
+      render(<VerifyMergePage />);
+      const region = await screen.findByRole("status");
+
+      await user.click(screen.getByRole("button", { name: /confirm account merge/i }));
+
+      await waitFor(() => expect(region).toHaveTextContent("Invalid verification token"));
+      expect(screen.getByRole("status")).toBe(region);
+      expect(region).toHaveFocus();
+    });
+
+    it("keeps the no-token failure inside the region without stealing focus on load", async () => {
+      mockSearchParams = new URLSearchParams();
+      render(<VerifyMergePage />);
+
+      const region = await screen.findByRole("status");
+      expect(region).toHaveTextContent("No verification token provided.");
+      expect(region).not.toHaveFocus();
+    });
+  });
 });

@@ -53,7 +53,22 @@ function build(over: Partial<Row> = {}) {
       Object.assign(row, args.data);
       return { ...row };
     }),
-    updateMany: jest.fn(),
+    // Honours a compare-and-set `where` (id + token + status) the way Postgres would: a row whose
+    // token was cleared or whose status moved on since the lookup is NOT written, count 0.
+    updateMany: jest.fn(
+      async (args: {
+        where: { id: string; verificationToken?: string; status?: BuyerMergeRequestStatus };
+        data: Partial<Row>;
+      }) => {
+        const w = args.where;
+        const match =
+          w.id === row.id &&
+          (w.verificationToken === undefined || w.verificationToken === row.verificationToken) &&
+          (w.status === undefined || w.status === row.status);
+        if (match) Object.assign(row, args.data);
+        return { count: match ? 1 : 0 };
+      },
+    ),
     create: jest.fn(),
     delete: jest.fn(),
     deleteMany: jest.fn(),
@@ -140,9 +155,13 @@ describe("BuyerMergeService.verifyMergeToken: the single-use consume is unchange
       message:
         "Your account ownership is confirmed. A platform admin will review and complete the merge shortly.",
     });
-    expect(ctx.buyerMergeRequest.update).toHaveBeenCalledTimes(1);
-    expect(ctx.buyerMergeRequest.update).toHaveBeenCalledWith({
-      where: { id: "req-1" },
+    expect(ctx.buyerMergeRequest.updateMany).toHaveBeenCalledTimes(1);
+    expect(ctx.buyerMergeRequest.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "req-1",
+        verificationToken: TOKEN,
+        status: BuyerMergeRequestStatus.PENDING_VERIFICATION,
+      },
       data: {
         status: BuyerMergeRequestStatus.PENDING_REVIEW,
         verifiedAt: expect.any(Date),
@@ -150,6 +169,9 @@ describe("BuyerMergeService.verifyMergeToken: the single-use consume is unchange
         verificationExpires: null,
       },
     });
+    // the consume is a compare-and-set: never a blind update by id
+    expect(ctx.buyerMergeRequest.update).not.toHaveBeenCalled();
+    expect(ctx.row.verificationToken).toBeNull();
     expect(ctx.row.status).toBe(BuyerMergeRequestStatus.PENDING_REVIEW);
   });
 
@@ -158,19 +180,68 @@ describe("BuyerMergeService.verifyMergeToken: the single-use consume is unchange
     await ctx.svc.verifyMergeToken(TOKEN);
     await expect(ctx.svc.verifyMergeToken(TOKEN)).rejects.toThrow(NotFoundException);
     await expect(ctx.svc.peekMergeToken(TOKEN)).rejects.toThrow(NotFoundException);
-    expect(ctx.buyerMergeRequest.update).toHaveBeenCalledTimes(1);
+    expect(ctx.buyerMergeRequest.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it("an expired token is Gone on consume and is not consumed", async () => {
     const ctx = build({ verificationExpires: new Date(Date.now() - 1000) });
     await expect(ctx.svc.verifyMergeToken(TOKEN)).rejects.toThrow(GoneException);
-    expect(ctx.buyerMergeRequest.update).not.toHaveBeenCalled();
+    expectNoWrites(ctx);
   });
 
   it("a processed request is BadRequest on consume", async () => {
     const ctx = build({ status: BuyerMergeRequestStatus.COMPLETED });
     await expect(ctx.svc.verifyMergeToken(TOKEN)).rejects.toThrow(BadRequestException);
+    expectNoWrites(ctx);
+  });
+});
+
+describe("BuyerMergeService.verifyMergeToken: the consume is compare-and-set", () => {
+  it("a lost race (updateMany count 0) is the replay 404 and has no further side effect", async () => {
+    const ctx = build();
+    ctx.buyerMergeRequest.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const err = await ctx.svc.verifyMergeToken(TOKEN).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(NotFoundException);
+    expect((err as NotFoundException).message).toBe("Invalid verification token");
+    expect(ctx.buyerMergeRequest.updateMany).toHaveBeenCalledTimes(1);
     expect(ctx.buyerMergeRequest.update).not.toHaveBeenCalled();
+    expect(ctx.auditLog.create).not.toHaveBeenCalled();
+    expect(ctx.auditLog.createMany).not.toHaveBeenCalled();
+    expect(ctx.prisma.$transaction).not.toHaveBeenCalled();
+    for (const fn of Object.values(ctx.email as Record<string, jest.Mock>))
+      expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("a request rejected between the lookup and the update never ends PENDING_REVIEW", async () => {
+    const ctx = build();
+    // the admin rejects right after the consume's lookup read PENDING_VERIFICATION
+    ctx.buyerMergeRequest.findUnique.mockImplementationOnce(async () => {
+      const seen = { ...ctx.row };
+      ctx.row.status = BuyerMergeRequestStatus.REJECTED;
+      return seen;
+    });
+
+    await expect(ctx.svc.verifyMergeToken(TOKEN)).rejects.toThrow(NotFoundException);
+
+    expect(ctx.row.status).toBe(BuyerMergeRequestStatus.REJECTED);
+    expect(ctx.row.verifiedAt).toBeNull();
+    expect(ctx.buyerMergeRequest.updateMany).toHaveBeenCalledTimes(1);
+    expect(ctx.buyerMergeRequest.update).not.toHaveBeenCalled();
+  });
+
+  it("a token cleared by a concurrent consume is a 404, not a second success", async () => {
+    const ctx = build();
+    ctx.buyerMergeRequest.findUnique.mockImplementationOnce(async () => {
+      const seen = { ...ctx.row };
+      ctx.row.status = BuyerMergeRequestStatus.PENDING_REVIEW;
+      ctx.row.verificationToken = null;
+      return seen;
+    });
+
+    await expect(ctx.svc.verifyMergeToken(TOKEN)).rejects.toThrow(NotFoundException);
+    expect(ctx.row.status).toBe(BuyerMergeRequestStatus.PENDING_REVIEW);
   });
 });
 

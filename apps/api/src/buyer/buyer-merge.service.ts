@@ -154,8 +154,16 @@ export class BuyerMergeService {
   async verifyMergeToken(token: string) {
     const mergeRequest = await this.findPendingMergeByToken(token);
 
-    await this.prisma.buyerMergeRequest.update({
-      where: { id: mergeRequest.id },
+    // Compare-and-set: the lookup above and this write are separate statements, so a concurrent
+    // consume (token cleared) or an admin rejection (status REJECTED, token left in place) could
+    // land in between. Only a row still holding THIS token and still PENDING_VERIFICATION is
+    // consumed; losing the race is the same 404 a replay gets, never an overwrite of REJECTED.
+    const consumed = await this.prisma.buyerMergeRequest.updateMany({
+      where: {
+        id: mergeRequest.id,
+        verificationToken: token,
+        status: BuyerMergeRequestStatus.PENDING_VERIFICATION,
+      },
       data: {
         status: BuyerMergeRequestStatus.PENDING_REVIEW,
         verifiedAt: new Date(),
@@ -163,6 +171,7 @@ export class BuyerMergeService {
         verificationExpires: null,
       },
     });
+    if (consumed.count === 0) throw new NotFoundException("Invalid verification token");
 
     return {
       success: true,

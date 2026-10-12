@@ -28,6 +28,17 @@ function VerifyMergeContent() {
   );
   const [message, setMessage] = React.useState(token ? "" : "No verification token provided.");
   const inFlight = React.useRef(false);
+  // The result region is a polite live region that is always mounted, so confirm -> loading ->
+  // success/error is announced as a content change. The confirm button unmounts on a result, so
+  // focus moves to the region (tabIndex -1) rather than falling back to <body>; only after a
+  // click, so a no-token failure on load never steals focus.
+  const resultRef = React.useRef<HTMLDivElement>(null);
+  const clicked = React.useRef(false);
+  React.useEffect(() => {
+    if (clicked.current && (status === "success" || status === "error")) {
+      resultRef.current?.focus();
+    }
+  }, [status]);
 
   // Row 404: deliberately requires the button click — nothing is sent on load.
   // Mail scanners and link prefetchers open emailed links (some run JS); an
@@ -35,6 +46,7 @@ function VerifyMergeContent() {
   const onConfirm = async () => {
     if (!token || inFlight.current) return;
     inFlight.current = true;
+    clicked.current = true;
     setStatus("loading");
     try {
       await buyerVerifyMerge(token);
@@ -62,7 +74,14 @@ function VerifyMergeContent() {
 
   return (
     <AuthShell audience="retailer" kicker="Retailer account" title={title}>
-      <div className="text-center">
+      <div
+        ref={resultRef}
+        role="status"
+        aria-live="polite"
+        aria-busy={status === "loading"}
+        tabIndex={-1}
+        className="text-center focus:outline-none"
+      >
         {(status === "confirm" || status === "loading") && (
           <div className="flex flex-col items-center gap-4 py-2">
             <Users className="h-8 w-8 text-brand-500" />
