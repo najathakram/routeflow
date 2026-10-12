@@ -8,6 +8,7 @@ import {
 } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { COUNTER_SALES_DISABLED_COPY } from "./counter-sale";
+import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
 
 /**
  * Counter sale PARK / RESUME (SA-748): the pure web side. The shapes, limits and the whitelist rebuild are the shared
@@ -46,6 +47,7 @@ const codeOf = (err: unknown) => (err as ErrLike)?.response?.data?.code;
 export function parkErrorCopy(err: unknown): string {
   const status = statusOf(err);
   const code = codeOf(err);
+  if (status === 403 && isReadOnlyRefusal(err)) return readOnlyRefusalCopy();
   if (status === 403 && code === API_ERROR_CODES.COUNTER_SALES_DISABLED)
     return COUNTER_SALES_DISABLED_COPY;
   if (status === 409 && code === API_ERROR_CODES.PARK_LIMIT) {
@@ -65,6 +67,7 @@ export function parkErrorCopy(err: unknown): string {
 function takenOr(err: unknown, fallback: string): string {
   const status = statusOf(err);
   const code = codeOf(err);
+  if (status === 403 && isReadOnlyRefusal(err)) return readOnlyRefusalCopy();
   if (status === 403 && code === API_ERROR_CODES.COUNTER_SALES_DISABLED)
     return COUNTER_SALES_DISABLED_COPY;
   if (status === 404 && code === API_ERROR_CODES.PARK_TAKEN) return PARK_TAKEN_COPY;

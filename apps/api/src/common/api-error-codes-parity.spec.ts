@@ -226,12 +226,13 @@ const PACKAGE_ALLOWLIST: Record<string, { codes: string[]; reason: string }> = {
       "PLAN_GATE_UNAVAILABLE",
       "RETURN_REFUND_OVER_LINE_HEADROOM",
       "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+      "READ_ONLY",
     ],
     reason:
       "CONVENTION, not a runtime constraint: compiled CJS package (like pricing) that keeps @routeflow/types imports type-only, so its dist never requires the raw-TS package; only pricing is bound by SA-478a",
   },
 };
-const PACKAGE_ALLOWLIST_TOTAL = 6;
+const PACKAGE_ALLOWLIST_TOTAL = 7;
 
 /**
  * `READ_ONLY` is ALSO a tenant STATUS value (`tenant.status === "READ_ONLY"`), which is not an error

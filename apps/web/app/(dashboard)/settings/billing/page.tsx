@@ -430,6 +430,9 @@ export default function BillingSettingsPage() {
   // is a 403 on these, hence no button. Rows with no canonical SKU (client-only legacy
   // keys such as developer_mode) are not billing lines and stay out.
   const managedAddons = s.addons.filter((a) => a.sku && !catalogSkus.has(a.sku));
+  // Row 350 / SA-693: an add-on RouteFlow granted free on purpose. It is never billed, so its row reads
+  // "Included" with no price anywhere (the catalog price is what it WOULD cost, which the tenant never pays).
+  const compSkus = new Set(s.addons.filter((a) => a.comp === true && a.sku).map((a) => a.sku));
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
@@ -662,6 +665,7 @@ export default function BillingSettingsPage() {
         <div className="divide-y divide-slate-100">
           {addonCatalog.map((a) => {
             const on = activeSkus.has(a.sku);
+            const comp = on && compSkus.has(a.sku);
             const busy =
               (enable.isPending || disable.isPending) &&
               (enable.variables?.sku === a.sku || disable.variables?.sku === a.sku);
@@ -677,8 +681,14 @@ export default function BillingSettingsPage() {
                     )}
                   </div>
                   <p className="text-sm text-slate-500">
-                    {money(a.monthlyPrice)}/mo
-                    {a.includedAtPlan ? ` · included on ${a.includedAtPlan}+` : ""}
+                    {comp ? (
+                      "Included"
+                    ) : (
+                      <>
+                        {money(a.monthlyPrice)}/mo
+                        {a.includedAtPlan ? ` · included on ${a.includedAtPlan}+` : ""}
+                      </>
+                    )}
                   </p>
                 </div>
                 {isAdmin && (
@@ -710,7 +720,12 @@ export default function BillingSettingsPage() {
                   </span>
                 </div>
                 <p className="text-sm text-slate-500">
-                  {a.monthly != null ? `${money(a.monthly)}/mo · ` : ""}Managed by RouteFlow
+                  {a.comp === true
+                    ? "Included · "
+                    : a.monthly != null
+                      ? `${money(a.monthly)}/mo · `
+                      : ""}
+                  Managed by RouteFlow
                 </p>
               </div>
               <span className="shrink-0 text-xs text-slate-400">Contact support to change</span>

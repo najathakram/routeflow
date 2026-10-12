@@ -47,6 +47,8 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-09-29-late.md](api/landing-2026-09-29-late.md) | Landing 2026-09-29 late: staff price-override rule, driver mode 1a, push-guard, lint-migrations exemptions |
 | [api/landing-2026-10-12-macbook.md](api/landing-2026-10-12-macbook.md) | Landing 2026-10-12 MacBook lane (pushed): delivery_pos business profile |
 | [api/landing-2026-10-11-r4.md](api/landing-2026-10-11-r4.md) | Landing 2026-10-11 Release 4: digital receipt, SA-764, POS mode, SA-770 overdue-by-balance, billing B1 Stripe-first |
+| [api/landing-2026-10-11-r41.md](api/landing-2026-10-11-r41.md) | Landing 2026-10-11 Release 4.1: day close and Z report, closed-day guards, receipt cashier, overdue and reminder fixes |
+| [api/landing-2026-10-11-r5.md](api/landing-2026-10-11-r5.md) | Landing 2026-10-11 Release 5: dunning B3, grace/read-only B4, October catch-up B2, coupon-unbilled, calendar RF windows, profile comps |
 | [api/landing-2026-10-10-w22a2-w23.md](api/landing-2026-10-10-w22a2-w23.md) | Landing 2026-10-10 W22a-2 + W23: sitting-3 schema, quick keys, zone resolver, counter void and park, refund tender, B1043 |
 | [api/landing-2026-10-09-w21b-w22a1.md](api/landing-2026-10-09-w21b-w22a1.md) | Landing 2026-10-09 W21b + W22a-1: counter price edit (POS-5), cash-refund void guard, units schema P0a, protected-tenant guard, operator groups, variant rules |
 | [api/landing-2026-10-06-w4-w10.md](api/landing-2026-10-06-w4-w10.md) | Landing 2026-10-06 (windows 4 to 10): merge-by-path predicate, one fulfil-path resolver, partial-invoice guard, comp add-ons, order suggestions; W19/W20 and W21a trains (counter refunds, today's sales, Settings fulfilment, product parent check, token audiences) |
