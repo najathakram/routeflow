@@ -128,3 +128,36 @@ describe("InvoicesService.findOne — customer-facing fields only", () => {
     );
   });
 });
+
+describe("InvoicesService.findOne — paidAtSale (row 401)", () => {
+  // The server answers "is this a counter sale paid at the till" once (the isPaidAtSale rule), so the
+  // buyer copy and mobile never need the order or the payment timestamps to show no terms.
+  const AT = new Date("2026-10-07T15:15:00.000Z");
+  const row = (over: Record<string, unknown> = {}) => {
+    const base = invoiceRow("PAID");
+    return {
+      ...base,
+      createdAt: AT,
+      order: { counterSale: true },
+      payments: [{ ...base.payments[0], createdAt: new Date(AT.getTime() + 2000) }],
+      ...over,
+    } as unknown as ReturnType<typeof invoiceRow>;
+  };
+
+  it.each(["OPERATOR", "CUSTOMER"])(
+    "%s: a counter sale paid in the same request is flagged",
+    async (role) => {
+      const { service } = serviceReading(row());
+      const out = (await service.findOne("inv-1", principal(role))) as unknown as Out;
+      expect(out.paidAtSale).toBe(true);
+    },
+  );
+
+  it("any other invoice is not flagged (on account, ordinary order, paid later)", async () => {
+    for (const over of [{ status: "SENT" }, { order: { counterSale: false } }, { order: null }]) {
+      const { service } = serviceReading(row(over));
+      const out = (await service.findOne("inv-1", principal("CUSTOMER"))) as unknown as Out;
+      expect(out.paidAtSale).toBe(false);
+    }
+  });
+});

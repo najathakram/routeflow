@@ -7362,6 +7362,15 @@ describe("InvoicesService", () => {
         }),
       );
     });
+
+    it("row 401: a paid-at-sale counter invoice's e-mail hides the due date and terms", async () => {
+      const at = new Date("2026-01-01T10:00:00Z");
+      const pay = { id: "p1", amount: 500, status: "PAID", method: "CASH", createdAt: at };
+      const inv = { ...invoiceFixture(InvoiceStatus.PAID), createdAt: at, payments: [pay] };
+      prisma.invoice.findUnique.mockResolvedValue({ ...inv, order: { counterSale: true } });
+      await service.sendEmail("inv-b102");
+      expect(mockEmailService.sendInvoice.mock.calls[0][0].hideTerms).toBe(true);
+    });
   });
 
   // F03 (B421) — a CREDIT_NOTE/ADVANCE application must never reach the

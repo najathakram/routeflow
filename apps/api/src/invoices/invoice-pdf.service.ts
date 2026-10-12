@@ -88,7 +88,7 @@ export class InvoicePdfService {
           orderBy: { paidAt: "asc" },
           include: { creditNote: { select: { creditNoteNumber: true, reason: true } } },
         },
-        order: { select: { status: true, fulfillPath: true, shippedAt: true } },
+        order: { select: { status: true, fulfillPath: true, shippedAt: true, counterSale: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
