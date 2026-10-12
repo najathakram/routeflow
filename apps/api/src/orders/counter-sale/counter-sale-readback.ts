@@ -1,5 +1,10 @@
 import { InternalServerErrorException } from "@nestjs/common";
-import { roundMoney, storedTaxRatePercent, sumConfirmed } from "@routeflow/pricing";
+import {
+  billedChargeLines,
+  roundMoney,
+  storedTaxRatePercent,
+  sumConfirmed,
+} from "@routeflow/pricing";
 import type { CounterSalePaymentMethod, CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { CounterSaleDto } from "./counter-sale.dto";
@@ -10,14 +15,46 @@ export type InvoiceRow = {
   total: unknown;
   /** the stored lines: the rate the tax rate is read from (`storedTaxRatePercent`) and the price facts a receipt strikes a list price from */
   items?: Array<{
+    id?: string;
+    createdAt?: Date | string;
+    /** the order line this invoice line came from: its scan `position` is the order the clerk rang the lines in */
+    orderItem?: { position?: number | null } | null;
     taxRate?: unknown;
     productId?: string | null;
     unitPrice?: unknown;
     originalPrice?: unknown;
     priceType?: string | null;
+    /** the levy this line billed (0 for an exempt customer) and its category: the receipt names it (CQ-03) */
+    categoryTaxAmount?: unknown;
+    trackedCategoryId?: string | null;
+    trackedCategory?: { id?: string | null; name?: string | null; taxType?: string | null } | null;
+    categoryTaxType?: string | null;
   }>;
   payments?: Array<{ id: string; amount: unknown; method?: string; status?: string }>;
 };
+
+type ScanOrdered = {
+  id?: string;
+  createdAt?: Date | string;
+  orderItem?: { position?: number | null } | null;
+};
+
+/**
+ * Row 322a: the stored lines in the order the clerk SCANNED them: by the order line's `position` (a legacy line with none
+ * comes after the positioned ones), then `createdAt`, then `id`. Lines created in one transaction share `createdAt` and the
+ * id is a random uuid, so the database order alone is repeatable but arbitrary; the web's "first unused stored line of the
+ * product" fallback is only meaningful against scan order. Stable: rows that tie keep the order they arrived in.
+ */
+export function inScanOrder<T extends ScanOrdered>(rows: readonly T[]): T[] {
+  const time = (r: T) => (r.createdAt == null ? 0 : new Date(r.createdAt).getTime());
+  return [...rows].sort((a, b) => {
+    const pa = a.orderItem?.position ?? Number.POSITIVE_INFINITY;
+    const pb = b.orderItem?.position ?? Number.POSITIVE_INFINITY;
+    if (pa !== pb) return pa < pb ? -1 : 1;
+    if (time(a) !== time(b)) return time(a) - time(b);
+    return (a.id ?? "") < (b.id ?? "") ? -1 : (a.id ?? "") > (b.id ?? "") ? 1 : 0;
+  });
+}
 
 /**
  * A payment the counter itself took (cash / card / check): not a credit-note or advance application.
@@ -162,6 +199,8 @@ export function buildCounterSaleResponse(input: {
     ...(order.tax != null
       ? {
           tax: roundMoney(Number(order.tax)),
+          // CQ-03: the deposit / excise the invoices billed, each its own named charge (never inside Tax)
+          charges: billedChargeLines(invoices.flatMap((i) => i.items ?? [])),
           taxRatePercent: storedTaxRatePercent(
             invoices.map((i) => ({ lines: i.items ?? [] })),
             input.configuredTaxPercent,
@@ -169,14 +208,12 @@ export function buildCounterSaleResponse(input: {
         }
       : {}),
     // the stored lines' price facts, so the live receipt applies the invoices' own original-price rule (not the cart's tier price)
-    lines: invoices.flatMap((i) =>
-      (i.items ?? []).map((l) => ({
-        productId: l.productId ?? null,
-        unitPrice: roundMoney(Number(l.unitPrice ?? 0)),
-        originalPrice: l.originalPrice == null ? null : roundMoney(Number(l.originalPrice)),
-        priceType: l.priceType ?? "STANDARD",
-      })),
-    ),
+    lines: inScanOrder(invoices.flatMap((i) => i.items ?? [])).map((l) => ({
+      productId: l.productId ?? null,
+      unitPrice: roundMoney(Number(l.unitPrice ?? 0)),
+      originalPrice: l.originalPrice == null ? null : roundMoney(Number(l.originalPrice)),
+      priceType: l.priceType ?? "STANDARD",
+    })),
     ...(replayed ? { replayed: true } : {}),
   };
 }

@@ -142,7 +142,9 @@ export interface AdminOrder {
    * carrier-shipped, excluded from every trip/route dispatch sweep. Every
    * order has one — not optional, just like the API's `@default(ROUTE)`.
    */
-  fulfillPath: "ROUTE" | "SHIP";
+  fulfillPath: "ROUTE" | "SHIP" | "PICKUP";
+  /** Walk-in counter sale (PICKUP + counterSale): never a POS-mode order (`isPosOrder`). */
+  counterSale?: boolean | null;
   /** `GET /orders/:id` only: why the server will not cancel the order (the parcel is with the carrier). */
   cancelBlockedReason?: OrderCancelBlockedReason | null;
   createdAt: string;
@@ -226,6 +228,7 @@ export interface AdminOrder {
     invoiceNumber: string;
     status: string;
     total: number;
+    balanceDue?: number;
     // #2404: `creditNote` is attached by the order read; `autoApplied` is SA-436 PR-1's column.
     payments?: Array<{
       id: string;
@@ -407,7 +410,14 @@ export interface AdminInvoice {
   notes?: string | null;
   /** The linked order's status — drives the draft/final PDF default
    *  (deriveInvoiceVariant). Already returned by findOne's `include`, was untyped. */
-  order?: { status?: string | null; orderNumber?: string | null } | null;
+  order?: {
+    status?: string | null;
+    orderNumber?: string | null;
+    /** Row 401: walk-in counter sale (read by the paid-at-sale rule that hides the due date / terms). */
+    counterSale?: boolean | null;
+  } | null;
+  /** Row 401: the server's one answer to "a counter sale paid at the till" — no due date / terms shown. */
+  paidAtSale?: boolean;
   /** Set when this invoice was created as part of a regulated sale split;
    *  sibling invoices from the same split share this id. Same "already
    *  returned, just untyped" situation as orderId (P10-REG-C). */

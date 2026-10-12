@@ -913,3 +913,340 @@ describe("NULL-tenant blind spot: guards read lines through the parent, never to
     },
   );
 });
+
+/**
+ * Row 372 (MF2) — every writer that changes an ORDER's lines moves the order's revision, or is classified
+ * why it need not. `expectedRevisionNumber` only protects an editor if EVERY lines-writer bumps it: a
+ * merge that folds carts into the winner (or an invoice edit that back-syncs a line) changed what the
+ * editor is looking at without the number moving, so a stale save silently reverted it.
+ *
+ * The writer set is REBUILT by predicate from the same AST scan as the units_v1 inventory above — every
+ * method/function that creates, updates or deletes an `orderItem` (or an order's nested `lineItems`) — and
+ * must equal this table both ways, so a new writer fails until it is classified.
+ *   BUMPS        appends a revision in its own tx (a real call to the in-tx helper is proved)
+ *   COVERED      only runs inside the named BUMPS writer's tx (the named writer must call it)
+ *   NEW_ORDER    writes the lines of an order that does not exist yet: no earlier revision to go stale
+ *   ORDER_GONE   deletes the order (or a merge loser) with its lines: nothing left to edit
+ *   STATUS_ONLY  writes status / delivery / invoicing / derived-tax columns only (the inventory's FIELD_ONLY
+ *                proof that it never writes qty, price or pack applies): the sale is unchanged
+ */
+type RevisionKind =
+  "BUMPS" | "COVERED" | "NEW_ORDER" | "ORDER_GONE" | "STATUS_ONLY" | "NOT_AN_ORDER";
+interface RevisionRow {
+  kind: RevisionKind;
+  why: string;
+  /** COVERED only: the BUMPS writer whose tx this one runs in. */
+  via?: string;
+  /** STATUS_ONLY only, REQUIRED when the row writes line `status`: why it cannot revive a CANCELLED line. */
+  lineStatus?: string;
+}
+const REVISION_CALLS = [
+  "appendOrderRevisionInTx",
+  "appendMergeRevisionInTx",
+  "appendReopenRevisionInTx",
+  "bumpRevisionIfSaleMoved",
+];
+/**
+ * The columns a STATUS_ONLY writer may touch: delivery/invoicing state and derived stamps, never the sale. A line
+ * `status` write can move a line between CANCELLED and live (a sale change), so it is NOT in this set: a row that
+ * writes `status` must carry a `lineStatus` reason saying why it cannot revive a line under an open editor.
+ */
+const STATUS_COLUMNS = new Set([
+  "deliveredQty",
+  "invoicedQty",
+  "backorderedPieces",
+  "categoryTaxAmount",
+  "categoryTaxType",
+  "categoryTaxRate",
+  "categoryPriceIncludesTax",
+  "compositionMode",
+  "recipeId",
+  "recipeVersion",
+]);
+const U = "orders/orders.service.ts::OrdersService";
+const UPDATE_ITEMS = `${U}.updateOrderItems`;
+const CHANGE_REQUEST = `${U}.approveChangeRequestAtStop`;
+const MERGE_ALL = `${U}.mergeAllPendingForCustomer`;
+const FORCE = `${U}.forceConsolidateCustomer`;
+const RECOMPUTE = "invoices/invoices.service.ts::InvoicesService.recomputeOrderFromInvoices";
+const covered = (via: string, why: string): RevisionRow => ({ kind: "COVERED", via, why });
+const statusOnly = (why: string, lineStatus?: string): RevisionRow => ({
+  kind: "STATUS_ONLY",
+  why,
+  lineStatus,
+});
+const REVISIONS: Record<string, RevisionRow> = {
+  [UPDATE_ITEMS]: { kind: "BUMPS", why: "staff/buyer/driver edit: EDIT revision at the tx tail" },
+  [CHANGE_REQUEST]: {
+    kind: "BUMPS",
+    why: "approved at-door change request: CHANGE_REQUEST revision in tx",
+  },
+  [MERGE_ALL]: {
+    kind: "BUMPS",
+    why: "folds loser carts into the winner: SYSTEM_MERGE revision in tx",
+  },
+  [FORCE]: { kind: "BUMPS", why: "same fold, forced: SYSTEM_MERGE revision in tx" },
+  [RECOMPUTE]: {
+    kind: "BUMPS",
+    why: "invoice edit back-synced onto the order's lines: SYSTEM_INVOICE_SYNC revision in tx, only when a sale field was written",
+  },
+  "invoices/finalize-order-recompute.ts::finalizeOrderRecompute": covered(
+    RECOMPUTE,
+    "cancels orphan lines; reports `touched` so the caller bumps",
+  ),
+  "orders/order-line-removal.ts::writeLineRemoval": covered(
+    UPDATE_ITEMS,
+    "line struck off / removed by the edit",
+  ),
+  "orders/order-line-removal.ts::writeLineUpdate": covered(
+    UPDATE_ITEMS,
+    "line qty/price written by the edit",
+  ),
+  "orders/unit-line-edit.ts::createUnitLine": covered(
+    UPDATE_ITEMS,
+    "unit-aware line created by the edit",
+  ),
+  "orders/settle-split-free-units.ts::settleSplitFreeUnits": covered(
+    UPDATE_ITEMS,
+    "re-derives free units + subtotal inside the edit/merge/approve tx",
+  ),
+  [`${U}.create`]: {
+    kind: "NEW_ORDER",
+    why: "the order does not exist yet: no earlier revision to go stale",
+  },
+  "order-templates/order-templates.service.ts::OrderTemplatesService.createOrderFromTemplate": {
+    kind: "NEW_ORDER",
+    why: "creates a new order; any merge into an existing one goes through mergeAllPendingForCustomer (BUMPS)",
+  },
+  "orders/merge-lock-recheck.ts::deleteLoserGuarded": {
+    kind: "ORDER_GONE",
+    why: "the merge loser's lines die with the loser order; the winner is bumped by the merge",
+  },
+  [`${U}.deleteOrder`]: { kind: "ORDER_GONE", why: "deletes the order and its lines" },
+  "customers/customers.service.ts::CustomersService.deleteCustomer": {
+    kind: "ORDER_GONE",
+    why: "deletes the customer's orders with their lines",
+  },
+  "customers/customers.service.ts::CustomersService.deleteAllCustomers": {
+    kind: "ORDER_GONE",
+    why: "deletes every customer's orders with their lines",
+  },
+  "customers/customers.service.ts::CustomersService.runImportedCustomersCleanup": {
+    kind: "ORDER_GONE",
+    why: "deletes imported customers' orders with their lines",
+  },
+  "products/products.service.ts::ProductsService.bulkDelete": {
+    kind: "ORDER_GONE",
+    why: "hard-deletes a product with no live history; its lines are removed with it (no editable order depends on it)",
+  },
+  "bookkeeping/bookkeeping.service.ts::BookkeepingService.createExpense": {
+    kind: "NOT_AN_ORDER",
+    why: "the nested `lineItems` are an expense's, not an order's",
+  },
+  [`${U}.reopenOrder`]: {
+    kind: "BUMPS",
+    why: "puts every item-CANCELLED line live again (a new sale of the whole order): SYSTEM_REOPEN revision in tx",
+  },
+  "orders/order-cancel-tx.ts::cancelOrderInTx": statusOnly(
+    "order cancel: line status only",
+    "moves lines TO cancelled with the order; a cancelled order takes no edit, and reopenOrder (BUMPS) is the only way back",
+  ),
+  "orders/delivered-stamp.ts::stampDeliveredInFull": statusOnly(
+    "delivery evidence (deliveredQty), not the sale",
+  ),
+  "orders/delivered-stamp.ts::clearUnevidencedDelivered": statusOnly(
+    "delivery evidence (deliveredQty), not the sale",
+  ),
+  "routes/routes.service.ts::RoutesService.completeWithPayment": statusOnly(
+    "delivery (deliveredQty), not the sale",
+  ),
+  "routes/routes.service.ts::RoutesService.reopenStop": statusOnly(
+    "delivery undo (deliveredQty/status), not the sale",
+    "its where-clause is `status: { not: CANCELLED }`: it only moves live lines between delivery states",
+  ),
+  "orders/backorder-marker-writes.ts::writeValues": statusOnly(
+    "backorder marker (backorderedPieces)",
+  ),
+  "orders/recompute-line-category-taxes.ts::recomputeLineCategoryTaxes":
+    statusOnly("derived levy stamp"),
+  "orders/line-composition.ts::syncLineCompositions": statusOnly(
+    "derived recipe/composition stamp",
+  ),
+  "orders/order-edit-composition.ts::restoreCarriedComposition": statusOnly(
+    "derived recipe/composition stamp",
+  ),
+  "invoices/finalize-order-recompute.ts::checkOrderCoverage": statusOnly("invoicedQty bookkeeping"),
+  "invoices/partial-invoice-cas.ts::bumpInvoicedQtyCas": statusOnly("invoicedQty bookkeeping"),
+  "invoices/invoices.service.ts::InvoicesService.adjustInvoicedQtyForInvoice":
+    statusOnly("invoicedQty bookkeeping"),
+  "invoices/invoices.service.ts::InvoicesService.rebuildSiblingDrafts":
+    statusOnly("invoicedQty bookkeeping"),
+  "invoices/invoices.service.ts::InvoicesService.reconcileOrderDraftInvoiceLocked":
+    statusOnly("invoicedQty bookkeeping"),
+  "invoices/invoices.service.ts::InvoicesService.resyncOrderInvoicesForEdit":
+    statusOnly("invoicedQty bookkeeping"),
+};
+
+/** The `data` keys of every DIRECT `orderItem` write in `node` ("..." for a spread or non-literal `data`). */
+function orderItemWriteKeys(node: ts.Node, sf: ts.SourceFile): string[] {
+  const keys: string[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
+      const table = n.expression.expression;
+      const op = n.expression.name.text;
+      if (
+        WRITE_OPS.has(op) &&
+        !op.startsWith("delete") &&
+        ts.isPropertyAccessExpression(table) &&
+        table.name.text === "orderItem"
+      ) {
+        const arg = n.arguments[0];
+        const data =
+          arg && ts.isObjectLiteralExpression(arg)
+            ? arg.properties.find(
+                (p) => ts.isPropertyAssignment(p) && p.name.getText(sf) === "data",
+              )
+            : undefined;
+        const lits = data && ts.isPropertyAssignment(data) ? objectLiterals(data.initializer) : [];
+        if (lits.length === 0) keys.push("...");
+        for (const lit of lits)
+          for (const p of lit.properties)
+            keys.push(
+              ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)
+                ? p.name.getText(sf)
+                : "...",
+            );
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return [...new Set(keys)];
+}
+
+/** Every named top-level unit of a file that can hold a line write: class methods, functions, arrow consts. */
+function namedUnits(file: string, sf: ts.SourceFile): Map<string, ts.Node> {
+  const out = new Map<string, ts.Node>();
+  for (const [name, m] of classMethods(sf)) out.set(`${file}::${name}`, m);
+  const visitClass = (n: ts.Node) => {
+    if (ts.isClassDeclaration(n) && n.name) {
+      for (const m of n.members) {
+        if (
+          ts.isPropertyDeclaration(m) &&
+          m.initializer &&
+          (ts.isArrowFunction(m.initializer) || ts.isFunctionExpression(m.initializer))
+        )
+          out.set(`${file}::${n.name.text}.${m.name.getText(sf)}`, m.initializer);
+      }
+    }
+    ts.forEachChild(n, visitClass);
+  };
+  visitClass(sf);
+  for (const st of sf.statements) {
+    if (ts.isFunctionDeclaration(st) && st.name && st.body) out.set(`${file}::${st.name.text}`, st);
+    if (ts.isVariableStatement(st)) {
+      for (const d of st.declarationList.declarations) {
+        const init = d.initializer;
+        if (
+          ts.isIdentifier(d.name) &&
+          init &&
+          (ts.isArrowFunction(init) || ts.isFunctionExpression(init))
+        )
+          out.set(`${file}::${d.name.text}`, init);
+      }
+    }
+  }
+  return out;
+}
+
+const isOrderLineWrite = (hits: string[]) =>
+  hits.some((h) => h.startsWith("orderItem.") || h.startsWith("nested lineItems."));
+
+/** The predicate: every named unit under apps/api/src that creates/updates/deletes an order's lines. */
+function orderLineWriters(): string[] {
+  const out: string[] = [];
+  for (const [file, sf] of sourceFiles) {
+    if (/(^|\/)testing\//.test(file)) continue; // spec fixtures, not product code
+    for (const [key, node] of namedUnits(file, sf)) {
+      if (isOrderLineWrite(lineWrites(node, sf))) out.push(key);
+    }
+  }
+  return out;
+}
+
+describe("every order-lines writer moves the order revision or is classified (row 372 MF2)", () => {
+  it("the predicate finds the known writers (a silent no-match cannot pass)", () => {
+    const found = orderLineWriters();
+    expect(found).toEqual(expect.arrayContaining([UPDATE_ITEMS, MERGE_ALL, FORCE, CHANGE_REQUEST]));
+    expect(found).toContain("invoices/finalize-order-recompute.ts::finalizeOrderRecompute");
+  });
+
+  it("the predicate-built writer set equals the revision classification, both directions", () => {
+    const scanned = orderLineWriters().sort();
+    const classified = Object.keys(REVISIONS).sort();
+    expect({ unclassified: scanned.filter((k) => !REVISIONS[k]) }).toEqual({ unclassified: [] });
+    expect({ stale: classified.filter((k) => !scanned.includes(k)) }).toEqual({ stale: [] });
+  });
+
+  it("a BUMPS writer really calls the in-tx revision helper", () => {
+    const missing = Object.entries(REVISIONS)
+      .filter(([, r]) => r.kind === "BUMPS")
+      .filter(([k]) => {
+        const [file, name] = k.split("::");
+        const node = namedUnits(file, sourceFiles.get(file)!).get(k);
+        return !REVISION_CALLS.some((c) => references(node!, c, { callOnly: true }));
+      })
+      .map(([k]) => k);
+    expect(missing).toEqual([]);
+  });
+
+  it("a COVERED writer names a BUMPS writer that actually reaches it", () => {
+    const bad: string[] = [];
+    for (const [k, r] of Object.entries(REVISIONS)) {
+      if (r.kind !== "COVERED") continue;
+      const via = r.via && REVISIONS[r.via];
+      if (!via || via.kind !== "BUMPS") {
+        bad.push(`${k}: via ${r.via} is not a BUMPS writer`);
+        continue;
+      }
+      const viaFile = r.via!.split("::")[0];
+      const viaNode = namedUnits(viaFile, sourceFiles.get(viaFile)!).get(r.via!)!;
+      const name = k.split("::")[1].split(".").pop()!;
+      if (!references(viaNode, name, { callOnly: false }))
+        bad.push(`${k}: ${r.via} never references ${name}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("a STATUS_ONLY writer writes only status/delivery/invoicing/derived columns (never qty, price or pack)", () => {
+    const bad: string[] = [];
+    for (const [k, r] of Object.entries(REVISIONS)) {
+      if (r.kind !== "STATUS_ONLY") continue;
+      const [file] = k.split("::");
+      const sf = sourceFiles.get(file)!;
+      const keys = orderItemWriteKeys(namedUnits(file, sf).get(k)!, sf);
+      // `status` can move a line between CANCELLED and live: only with a declared reason it cannot revive one
+      const off = keys.filter((c) => !STATUS_COLUMNS.has(c) && !(c === "status" && r.lineStatus));
+      if (keys.length === 0 || off.length > 0)
+        bad.push(`${k}: ${keys.join(",") || "no literal data"}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("no raw SQL writes an OrderItem outside the classified Prisma writers (the predicate cannot see it)", () => {
+    const raw = /(UPDATE\s+"OrderItem"|DELETE\s+FROM\s+"OrderItem"|INSERT\s+INTO\s+"OrderItem")/i;
+    const hits = [...sourceFiles.entries()]
+      .filter(([file]) => !/(^|\/)testing\//.test(file))
+      .filter(([, sf]) => raw.test(sf.text))
+      .map(([file]) => file);
+    expect(hits).toEqual([]);
+  });
+
+  it("class-property arrow functions are enumerated too (a writer cannot hide in one)", () => {
+    const sf = parse(
+      "inline.ts",
+      "class A { w = async (tx: any) => { await tx.orderItem.update({ data: { qty: 1 } }); }; }",
+    );
+    expect([...namedUnits("inline.ts", sf).keys()]).toContain("inline.ts::A.w");
+  });
+});

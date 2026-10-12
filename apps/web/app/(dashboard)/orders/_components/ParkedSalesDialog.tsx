@@ -7,6 +7,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Modal } from "@routeflow/ui/web";
 import type { ParkedCartListItem } from "@routeflow/pricing";
 import { apiClient } from "@/lib/api-client";
+import { cartTotals } from "@/lib/counter-sale";
+import { formatMoney } from "@/lib/format";
 import {
   PARKED_EMPTY_COPY,
   PARKED_LIST_FAILED_COPY,
@@ -14,6 +16,7 @@ import {
   formatParkedTime,
   isStaleParked,
   lineCountLabel,
+  parkedRowTitle,
 } from "@/lib/counter-park";
 import type { useParkedSales } from "./useParkedSales";
 
@@ -22,26 +25,46 @@ type Parked = ReturnType<typeof useParkedSales>;
 function ParkedRow({
   row,
   timezone,
+  taxRate,
   parked,
 }: {
   row: ParkedCartListItem;
   timezone: string | null;
+  /** The tenant's configured rate as a fraction (settings.taxRate / 100): the same rate the live cart totals at. */
+  taxRate: number;
   parked: Parked;
 }) {
   const stale = isStaleParked(row.createdAt);
+  const head = parkedRowTitle(row.label, row.createdAt, timezone);
+  // Row 330e: the live cart's own totals function over the stored lines' pricing inputs, never qty x price per line.
+  // No price lines (an older server, or none priceable) = no total, never a $0.00.
+  const total =
+    row.priceLines && row.priceLines.length > 0 ? cartTotals(row.priceLines, taxRate).total : null;
   const busyHere = parked.work?.id === row.id;
   return (
     <li className="space-y-2 py-3" data-testid={`parked-row-${row.id}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="min-w-0 break-words font-medium">{row.label}</span>
-        <span className="tabular-nums text-xs text-navy/70">
-          {formatParkedTime(row.createdAt, timezone)}
-        </span>
+        <span className="min-w-0 break-words font-medium">{head.title}</span>
+        {head.timeShown ? null : (
+          <span className="tabular-nums text-xs text-navy/70">
+            {formatParkedTime(row.createdAt, timezone)}
+          </span>
+        )}
       </div>
-      <p className="text-xs text-navy/70">
-        {lineCountLabel(row.lineCount)}
-        {row.customerName ? ` · ${row.customerName}` : ""}
-      </p>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-xs text-navy/70">
+          {lineCountLabel(row.lineCount)}
+          {row.customerName ? ` · ${row.customerName}` : ""}
+        </p>
+        {total !== null ? (
+          <span
+            data-testid="parked-row-total"
+            className="text-sm font-semibold tabular-nums text-navy"
+          >
+            {formatMoney(total)}
+          </span>
+        ) : null}
+      </div>
       {stale ? <p className="text-xs text-amber-800">{PARKED_STALE_COPY}</p> : null}
       <div className="flex flex-wrap gap-2">
         <Button
@@ -75,12 +98,13 @@ export function ParkedSalesDialog({
   parked: Parked;
   openerRef: React.RefObject<HTMLButtonElement | null>;
 }) {
-  const { data: settings } = useQuery<{ timezone?: string | null }>({
+  const { data: settings } = useQuery<{ timezone?: string | null; taxRate?: number | null }>({
     queryKey: ["settings"],
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
     staleTime: 60_000,
   });
   const timezone = typeof settings?.timezone === "string" ? settings.timezone : null;
+  const taxRate = (settings?.taxRate ?? 0) / 100; // percent on the wire, as the live cart reads it
   const dialogMessage = parked.message?.scope === "dialog" ? parked.message.text : null;
   const choice = "min-h-[44px]";
   return (
@@ -120,7 +144,13 @@ export function ParkedSalesDialog({
           ) : (
             <ul className="divide-y" aria-label="Parked sales">
               {parked.rows.map((r) => (
-                <ParkedRow key={r.id} row={r} timezone={timezone} parked={parked} />
+                <ParkedRow
+                  key={r.id}
+                  row={r}
+                  timezone={timezone}
+                  taxRate={taxRate}
+                  parked={parked}
+                />
               ))}
             </ul>
           )}

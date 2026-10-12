@@ -149,7 +149,76 @@ describe("SubscriptionService.getSubscription", () => {
     expect(s.cycle).toBe("ANNUAL");
     expect(s.monthlyPrice).toBe(149);
     expect(s.annualPrice).toBeNull(); // DEFS omits annualPrice → null-safe
-    expect(s.addons).toEqual([{ sku: "SEAT_EXTRA", name: "Extra seat", quantity: 2, monthly: 24 }]);
+    expect(s.addons).toEqual([
+      { sku: "SEAT_EXTRA", name: "Extra seat", quantity: 2, comp: false, monthly: 24 },
+    ]);
+  });
+
+  // Row 350 / SA-693: a comp add-on (TenantAddon.isComp) is granted free and never billed, so the tenant's
+  // add-on list must say so (`comp: true`) and never carry a price for it.
+  describe("row 350: comp add-ons are labelled and never priced", () => {
+    function makeFor(addonRows: Array<Record<string, unknown>>) {
+      const catalog = {
+        getVersionForTenant: jest.fn().mockResolvedValue({
+          definitions: DEFS,
+          addonSkus: [
+            { sku: "SEAT_EXTRA", name: "Extra seat", monthlyPrice: 12 },
+            { sku: "SALES_AGENTS", name: "Sales agents", monthlyPrice: 49 },
+          ],
+        }),
+      } as any;
+      const entitlements = {
+        resolve: jest.fn().mockResolvedValue({
+          planKey: "TEAM",
+          planName: "Team",
+          status: "ACTIVE",
+          planVersionId: "v7",
+          trialEndsAt: null,
+        }),
+      } as any;
+      const prisma = {
+        tenantSubscription: { findUnique: jest.fn().mockResolvedValue(null) },
+        tenantAddon: { findMany: jest.fn().mockResolvedValue(addonRows) },
+      } as any;
+      return new SubscriptionService(prisma, catalog, entitlements, {} as any);
+    }
+
+    it("a comp row carries comp:true and a null monthly, never price x quantity", async () => {
+      const s = await makeFor([
+        { addonKey: "sales_agents", sku: "SALES_AGENTS", quantity: 1, active: true, isComp: true },
+      ]).getSubscription("t1");
+      expect(s.addons).toEqual([
+        { sku: "SALES_AGENTS", name: "Sales agents", quantity: 1, comp: true, monthly: null },
+      ]);
+    });
+
+    it("a paid row beside a comp row keeps price x quantity and comp:false", async () => {
+      const s = await makeFor([
+        { addonKey: "seat_extra", sku: "SEAT_EXTRA", quantity: 3, active: true, isComp: false },
+        { addonKey: "sales_agents", sku: "SALES_AGENTS", quantity: 1, active: true, isComp: true },
+      ]).getSubscription("t1");
+      expect(s.addons.map((a) => [a.sku, a.comp, a.monthly])).toEqual([
+        ["SEAT_EXTRA", false, 36],
+        ["SALES_AGENTS", true, null],
+      ]);
+      // Anything that sums the list (a total, an export) must see the comp as 0.
+      expect(s.addons.reduce((sum, a) => sum + (a.monthly ?? 0), 0)).toBe(36);
+    });
+
+    it("a comp whose sku is not in the catalog is still comp:true with a null monthly", async () => {
+      const s = await makeFor([
+        { addonKey: "legacy_thing", sku: null, quantity: 1, active: true, isComp: true },
+      ]).getSubscription("t1");
+      expect(s.addons).toHaveLength(1);
+      expect(s.addons[0]).toMatchObject({ comp: true, monthly: null });
+    });
+
+    it("an unknown-sku paid row stays comp:false with a null monthly", async () => {
+      const s = await makeFor([
+        { addonKey: "legacy_thing", sku: null, quantity: 1, active: true, isComp: false },
+      ]).getSubscription("t1");
+      expect(s.addons[0]).toMatchObject({ comp: false, monthly: null });
+    });
   });
 
   // Feature-grants PR-1 (owner ruling 2026-09-16, Opus review fix 1): this IS the web's actual
@@ -469,5 +538,145 @@ describe("SubscriptionService.getSubscription", () => {
 
       expect(s.paymentRequired).toBe(false);
     });
+  });
+});
+
+// SA-733r6 (B4): the view carries the dunning facts + the extras the banner needs, so the web renders from ONE read.
+describe("SubscriptionService.getSubscription - B4 banner fields", () => {
+  function build(sub: any, extrasOut: any) {
+    const catalog = {
+      getVersionForTenant: jest.fn().mockResolvedValue({ definitions: DEFS, addonSkus: [] }),
+    } as any;
+    const entitlements = {
+      resolve: jest.fn().mockResolvedValue({
+        planKey: "TEAM",
+        planName: "Team",
+        status: "READ_ONLY",
+        planVersionId: "v7",
+        trialEndsAt: null,
+        readOnlyReason: "payment_overdue",
+      }),
+    } as any;
+    const prisma = {
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue(sub) },
+      tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+    } as any;
+    const extras = { read: jest.fn().mockResolvedValue(extrasOut) } as any;
+    const svc = new SubscriptionService(
+      prisma,
+      catalog,
+      entitlements,
+      {} as any,
+      undefined,
+      extras,
+    );
+    return { svc, extras };
+  }
+
+  it("returns pastDueSince, pastDueInvoiceId, billingContactEmail, openInvoiceAmount, card and next charge", async () => {
+    const sub = {
+      cycle: "MONTHLY",
+      periodEnd: new Date("2026-12-01T00:00:00Z"),
+      pastDueSince: new Date("2026-11-01T14:00:00Z"),
+      pastDueInvoiceId: "in_1",
+      pausedAt: new Date("2026-11-08T09:00:00Z"),
+      stripeCustomerId: "cus_1",
+      stripeSubscriptionId: "sub_1",
+    };
+    const extrasOut = {
+      billingContactEmail: "dana@acme.test",
+      openInvoiceAmount: 149,
+      paymentMethodSummary: { brand: "visa", last4: "4242", expMonth: 10, expYear: 2026 },
+      nextCharge: { amount: 149, date: "2026-12-01T00:00:00.000Z" },
+    };
+    const { svc, extras } = build(sub, extrasOut);
+
+    const view = await svc.getSubscription("t1");
+
+    expect(view.pastDueSince).toEqual(new Date("2026-11-01T14:00:00Z"));
+    expect(view.pastDueInvoiceId).toBe("in_1");
+    expect(view).not.toHaveProperty("billingContactName");
+    expect(view.billingContactEmail).toBe("dana@acme.test");
+    expect(view.openInvoiceAmount).toBe(149);
+    expect(view.paymentMethodSummary).toEqual(extrasOut.paymentMethodSummary);
+    expect(view.nextCharge).toEqual(extrasOut.nextCharge);
+    expect(extras.read).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({ pastDueInvoiceId: "in_1" }),
+    );
+  });
+
+  it("a tenant that never failed a payment has null dunning fields (an old shape sees the autopay card only)", async () => {
+    const { svc } = build(
+      { cycle: "MONTHLY", periodEnd: null, pastDueSince: null, pastDueInvoiceId: null },
+      {
+        billingContactEmail: "dana@acme.test",
+        openInvoiceAmount: null,
+        paymentMethodSummary: null,
+        nextCharge: null,
+      },
+    );
+    const view = await svc.getSubscription("t1");
+    expect(view.pastDueSince).toBeNull();
+    expect(view.pastDueInvoiceId).toBeNull();
+    expect(view.openInvoiceAmount).toBeNull();
+  });
+
+  it("without the extras collaborator the new fields are null (the 5-arg form keeps working)", async () => {
+    const catalog = {
+      getVersionForTenant: jest.fn().mockResolvedValue({ definitions: DEFS, addonSkus: [] }),
+    } as any;
+    const prisma = {
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue(null) },
+      tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+    } as any;
+    const svc = new SubscriptionService(
+      prisma,
+      catalog,
+      {
+        resolve: jest
+          .fn()
+          .mockResolvedValue({ planKey: "TEAM", status: "ACTIVE", planVersionId: "v7" }),
+      } as any,
+      {} as any,
+    );
+    const view = await svc.getSubscription("t1");
+    expect(view.billingContactEmail).toBeNull();
+    expect(view.openInvoiceAmount).toBeNull();
+    expect(view.paymentMethodSummary).toBeNull();
+  });
+});
+
+describe("SubscriptionService.openInvoiceUrl", () => {
+  it("is the hosted URL of the pastDueInvoiceId invoice, null when nothing is owed", async () => {
+    const extras = {
+      hostedInvoiceUrl: jest.fn().mockResolvedValue("https://invoice.example/i/1"),
+    } as any;
+    const prismaOwed = {
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue({ pastDueInvoiceId: "in_1" }) },
+    } as any;
+    const owed = new SubscriptionService(
+      prismaOwed,
+      {} as any,
+      {} as any,
+      {} as any,
+      undefined,
+      extras,
+    );
+    expect(await owed.openInvoiceUrl("t1")).toBe("https://invoice.example/i/1");
+    expect(extras.hostedInvoiceUrl).toHaveBeenCalledWith("in_1");
+
+    const prismaNone = {
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue({ pastDueInvoiceId: null }) },
+    } as any;
+    const none = new SubscriptionService(
+      prismaNone,
+      {} as any,
+      {} as any,
+      {} as any,
+      undefined,
+      extras,
+    );
+    expect(await none.openInvoiceUrl("t1")).toBeNull();
   });
 });

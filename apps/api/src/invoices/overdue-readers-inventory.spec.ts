@@ -41,8 +41,10 @@ const USES_CLASSIFIER: Record<string, string> = {
   "invoices/invoice-detail-read.ts": "detail read: balanceDue / isOverdue",
   "invoices/invoices.service.ts": "list enrichment (findAll), sendEmail and sendReminder balances",
   "invoices/invoice-kpi-summary.ts": "KPI tiles: per-invoice balance (confirmedBalance)",
+  "customers/customer-statement.ts":
+    "statement overdueAmount (row 309), buyer's and operator's: classifyInvoiceBalance in the statement's tenant zone, one zone lookup per statement. SIGNED by design (row 326): the statement's outstandingAmount (the Balance Due tile) is the net position over open invoices, sum(total - confirmed) with no clamp, so an overpaid open invoice nets the figure down (a customer in credit reads <= 0, which the tile colours as credit); it reconciles with the ledger's per-invoice signed runningBalance, and overdueAmount stays clamped at 0",
   "bookkeeping/bookkeeping.service.ts":
-    "receivables / aging / AR / per-customer balances: clamped confirmedBalance per invoice (row 310). SIGNED by design: the per-customer closingBalance (invoiced - received, the Dr/Cr net position) and recordPayment's capacity guard (totalOwed - alreadyPaid)",
+    "receivables / aging / AR / per-customer balances: clamped confirmedBalance per invoice (row 310). SIGNED by design: the Receivable Summary's invoice rows (signedBalance, owner ruling 2026-10-11), the per-customer closingBalance (invoiced - received, the Dr/Cr net position) and recordPayment's capacity guard (totalOwed - alreadyPaid)",
   "buyer/buyer.controller.ts":
     "getAnalytics: overdue / unpaid counts + BALANCE total (SA-770 r-note)",
   "buyer/buyer-dashboard.service.ts":
@@ -75,11 +77,6 @@ const FOLLOW_UP_READERS: Record<string, string> = {
  * which invoices count is unchanged). The spec asserts the clamp is still in the source.
  */
 const BALANCE_CLAMPED: Record<string, { clamp: RegExp; reason: string; method?: string }> = {
-  "customers/customer-statement.ts": {
-    clamp: /Math\.max\(0, roundMoney\(Number\(i\.total\) - i\.amountPaid\)\)/g,
-    reason:
-      "statement overdueAmount, both the buyer's (getMyStatement) and the operator's statement",
-  },
   "bookkeeping/bookkeeping.service.ts": {
     clamp: /confirmedBalance\(inv\.total, inv\.payments\)/g,
     method: "getCustomerBalanceSummary",
@@ -105,8 +102,14 @@ const BOOKKEEPING_BALANCE_READERS = [
   "getInvoiceDetailsReport",
   "getBadDebtsReport",
   "getArAgingDetails",
-  "getReceivableSummary",
 ];
+
+/**
+ * OWNER RULING 2026-10-11: the Receivable Summary report (and ONLY that report) shows an overpayment as a
+ * NEGATIVE invoice-row balance via `signedBalance`. It is the one reader that uses it, and it no longer
+ * calls confirmedBalance (so it is deliberately NOT in BOOKKEEPING_BALANCE_READERS).
+ */
+const SIGNED_BALANCE_READER = "getReceivableSummary";
 
 const CUTOFF_READER = [
   /\boverdueCutoff\s*\(/,
@@ -174,7 +177,6 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
     // pinned to the overdue site's own method when one is named, not to any call in the file
     const src = c.method ? methodSource(whole, c.method) : whole;
     expect(src.match(c.clamp)?.length ?? 0).toBeGreaterThanOrEqual(1);
-    if (rel.startsWith("customers/")) expect(src.match(c.clamp)).toHaveLength(2); // both statements
     // the raw, unclamped accumulations are gone
     expect(src).not.toMatch(/overdue\s*\+=\s*bal\b/);
   });
@@ -193,11 +195,57 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
     },
   );
 
+  // OWNER RULING 2026-10-11 — signed (unclamped) balance is a Receivable-Summary-only exception to row 310.
+  describe("signedBalance is the Receivable Summary's alone (owner ruling 2026-10-11)", () => {
+    const bookkeeping = () =>
+      stripComments(
+        fs.readFileSync(path.join(SRC_ROOT, "bookkeeping/bookkeeping.service.ts"), "utf8"),
+      );
+
+    it(`${SIGNED_BALANCE_READER} computes its invoice-row balance through signedBalance`, () => {
+      const body = methodSource(bookkeeping(), SIGNED_BALANCE_READER);
+      expect(body).toMatch(/\bsignedBalance\(inv\.total, inv\.payments\)/);
+      expect(body).not.toMatch(/\bconfirmedBalance\(/);
+      expect(body).not.toMatch(
+        /Number\((inv|i|invoice)\.total\)\s*-\s*(paid|inv\.payments|sumConfirmed)/,
+      );
+    });
+
+    it.each(BOOKKEEPING_BALANCE_READERS)(
+      "bookkeeping %s stays on the clamped confirmedBalance and never calls signedBalance (row 310)",
+      (name) => {
+        const body = methodSource(bookkeeping(), name);
+        expect(body).toMatch(/\bconfirmedBalance\(/);
+        expect(body).not.toMatch(/\bsignedBalance\b/);
+      },
+    );
+
+    it("signedBalance appears in no other source file than its definition, bookkeeping.service.ts and the one reader", () => {
+      const files = walk(SRC_ROOT)
+        .filter((f) => /\bsignedBalance\b/.test(stripComments(fs.readFileSync(f, "utf8"))))
+        .map(norm)
+        .sort();
+      // owner ruling 2026-10-11: Receivable Summary only; every other surface uses the clamped
+      // confirmedBalance. A new reader of signedBalance needs a new owner ruling, not a quiet import.
+      expect(files).toEqual([
+        "bookkeeping/bookkeeping.service.ts",
+        "invoices/invoice-balance-classify.ts",
+      ]);
+      // and inside bookkeeping.service.ts every use is in the one method
+      const src = bookkeeping();
+      const body = methodSource(src, SIGNED_BALANCE_READER);
+      const total = src.match(/\bsignedBalance\(/g)?.length ?? 0;
+      expect(total).toBe(body.match(/\bsignedBalance\(/g)?.length ?? -1);
+      expect(total).toBe(1);
+    });
+  });
+
   // What each classifier user must actually CALL (an import alone proves nothing).
   const REQUIRED_CALL: Record<string, RegExp> = {
     "invoices/invoice-detail-read.ts": /\bclassifyInvoiceBalance\(/,
     "invoices/invoices.service.ts": /\bclassifyInvoiceBalance\([\s\S]*\bconfirmedBalance\(/,
     "invoices/invoice-kpi-summary.ts": /\bclassifyInvoiceBalance\(/,
+    "customers/customer-statement.ts": /\bclassifyInvoiceBalance\(/,
     "bookkeeping/bookkeeping.service.ts": /\bconfirmedBalance\(/,
     "buyer/buyer.controller.ts": /\bsummarizeOpenInvoices\(/,
     "buyer/buyer-dashboard.service.ts": /\bsummarizeOpenInvoices\(/,
@@ -262,6 +310,30 @@ describe("SA-770 — BALANCE_CLAMPED readers behave (overpaid adds 0; a genuinel
       const want = rows.length === 1 ? 0 : 50;
       expect((await svc.getMyStatement({ sub: "u1" } as any)).overdueAmount).toBe(want);
       expect((await svc.getStatementForOperator("c1")).overdueAmount).toBe(want);
+    }
+  });
+
+  // Row 326: the statement's outstandingAmount is the SIGNED net position (by design, see the
+  // USES_CLASSIFIER note on customers/customer-statement.ts): an overpaid open invoice nets it down
+  // (overpaid 100 - 110 = -10; with a 50 invoice owed = 40), unlike overdueAmount, which is clamped.
+  it("customers: outstandingAmount is the signed net over open invoices (overpaid nets down)", async () => {
+    const prisma = createMockPrisma();
+    prisma.customer.findFirst.mockResolvedValue({ id: "c1", userId: "u1", businessName: "Acme" });
+    prisma.creditNote.findMany.mockResolvedValue([]);
+    prisma.advancePayment.findMany.mockResolvedValue([]);
+    prisma.order.findMany.mockResolvedValue([]);
+    const svc = Object.create(CustomersService.prototype) as CustomersService;
+    Object.assign(svc as any, {
+      prisma,
+      findCustomerOrThrow: jest.fn().mockResolvedValue({ id: "c1" }),
+    });
+    for (const [rows, want] of [
+      [[overpaid], -10],
+      [[overpaid, owes], 40],
+    ] as const) {
+      prisma.invoice.findMany.mockResolvedValue(rows);
+      expect((await svc.getMyStatement({ sub: "u1" } as any)).outstandingAmount).toBe(want);
+      expect((await svc.getStatementForOperator("c1")).outstandingAmount).toBe(want);
     }
   });
 

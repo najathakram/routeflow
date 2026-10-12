@@ -4,6 +4,7 @@ import * as React from "react";
 import NextLink from "next/link";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
+import { RESTRICTIONS_BUSINESS_STATE_MISSING_LINE } from "@routeflow/types";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -44,6 +45,8 @@ function fixes(r: RestrictionsEnableReadiness): string[] {
     out.push(`${r.addressesMissingStateCode} address(es) have no usable state.`);
   if (r.addressesNeedingReview)
     out.push(`${r.addressesNeedingReview} address(es) need a state review.`);
+  // Counter sales (the walk-in) are judged by the business's own state: without one every state rule is undecided.
+  if (r.businessStateMissing) out.push(RESTRICTIONS_BUSINESS_STATE_MISSING_LINE);
   return out;
 }
 

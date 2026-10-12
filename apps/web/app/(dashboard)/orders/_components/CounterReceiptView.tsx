@@ -7,10 +7,11 @@ import {
   formatReceiptMoney as money,
   type CounterReceiptModel,
 } from "@/lib/counter-receipt";
+import { ReadOnlyHint, WriteLink } from "@/lib/read-only-gate";
 
 /**
  * The ONE printable receipt view: the live receipt and the Today's-sales reprint both render through it, so a reprint can
- * never drift from the receipt the customer first saw. `reprintLabel` ("Reprint · sold …") marks a reprint.
+ * never drift from the receipt the customer first saw. `reprintLabel` ("Reprint · Sold …") marks a reprint.
  */
 export function CounterReceiptView({
   model: m,
@@ -22,7 +23,7 @@ export function CounterReceiptView({
   model: CounterReceiptModel;
   logoUrl?: string | null;
   reprintLabel?: string;
-  /** A reprint does not know who sold it (the Order stores no creator), so it names who reprinted instead. */
+  /** Who reprinted it, beside the sale's own `Cashier:` line (the model's `cashier`, from the stored `soldBy`). */
   reprintedBy?: string | null;
   /** POS-1: the screen focuses this heading when the receipt appears. */
   headingRef?: React.Ref<HTMLHeadingElement>;
@@ -65,9 +66,18 @@ export function CounterReceiptView({
         ) : (
           <p data-testid="receipt-date">{m.dateLabel}</p>
         )}
-        {reprintedBy ? <p data-testid="receipt-reprinted-by">Reprinted by {reprintedBy}</p> : null}
+        {/* owner ruling: who reprinted it and who sold it are staff-facing, on screen only; the printed copy (the customer's) omits both */}
+        {reprintedBy ? (
+          <p className="print:hidden" data-testid="receipt-reprinted-by">
+            Reprinted by {reprintedBy}
+          </p>
+        ) : null}
         {m.customerName ? <p data-testid="receipt-customer">Customer: {m.customerName}</p> : null}
-        {m.cashier ? <p data-testid="receipt-cashier">Cashier: {m.cashier}</p> : null}
+        {m.cashier ? (
+          <p className="print:hidden" data-testid="receipt-cashier">
+            Cashier: {m.cashier}
+          </p>
+        ) : null}
       </div>
       <ul className="divide-y text-sm">
         {m.lines.map((l) => (
@@ -101,7 +111,7 @@ export function CounterReceiptView({
                   className="block text-xs text-navy/70 print:text-black"
                   data-testid="receipt-line-discount"
                 >
-                  Discount -{money(l.discount)}
+                  Discount −{money(l.discount)}
                 </span>
               </span>
             ) : (
@@ -127,12 +137,13 @@ export function CounterReceiptView({
           data-testid="counter-payment-not-recorded"
         >
           <p className="font-semibold">Sale recorded — payment not recorded</p>
-          <Link
+          <WriteLink
             href={`/invoices/${m.invoiceId}`}
             className="inline-flex min-h-[44px] min-w-[44px] items-center text-brand-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 print:hidden"
           >
             Record payment
-          </Link>
+          </WriteLink>
+          <ReadOnlyHint className="text-xs text-slate-600 print:hidden" />
         </div>
       ) : null}
       <dl className="space-y-1 text-sm">
@@ -142,8 +153,8 @@ export function CounterReceiptView({
         </div>
         {m.discounts > 0 ? (
           <div className="flex justify-between" data-testid="receipt-discounts">
-            <dt>Discounts</dt>
-            <dd>-{money(m.discounts)}</dd>
+            <dt>Discount</dt>
+            <dd>−{money(m.discounts)}</dd>
           </div>
         ) : null}
         {m.tax !== 0 ? (
@@ -152,6 +163,12 @@ export function CounterReceiptView({
             <dd>{money(m.tax)}</dd>
           </div>
         ) : null}
+        {m.charges.map((c) => (
+          <div key={c.key} className="flex justify-between" data-testid={`receipt-charge-${c.key}`}>
+            <dt>{c.label}</dt>
+            <dd>{money(c.amount)}</dd>
+          </div>
+        ))}
         {m.adjustments !== 0 ? (
           <div className="flex justify-between" data-testid="receipt-adjustment">
             <dt>Adjustments</dt>

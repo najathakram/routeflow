@@ -96,6 +96,36 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(genericToastCopy({ code: "ECONNABORTED", request: {} })).toMatch(/couldn't confirm/);
   });
 
+  it("SA-733r5: the catch-up refusals show fixed copy, never the server message", () => {
+    for (const code of [
+      API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP,
+      API_ERROR_CODES.CATCHUP_SESSION_OPEN,
+      API_ERROR_CODES.CATCHUP_PENDING,
+      API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE,
+      API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG,
+      API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD,
+      API_ERROR_CODES.ACTIVATION_CATCHUP_SESSION_OPEN,
+    ]) {
+      const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
+      expect(copy).not.toContain("raw server text");
+      expect(copy).not.toBe(NEUTRAL_409);
+    }
+    expect(
+      genericToastCopy(err(409, { code: API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP })),
+    ).toMatch(/invoiced directly/);
+  });
+
+  it("SA-733r7: the dunning refusals show fixed copy, never the server message", () => {
+    for (const code of [API_ERROR_CODES.PAYMENT_OVERDUE, API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]) {
+      const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
+      expect(copy).not.toContain("raw server text");
+      expect(copy).not.toBe(NEUTRAL_409);
+    }
+    expect(genericToastCopy(err(409, { code: API_ERROR_CODES.PAYMENT_OVERDUE }))).toMatch(
+      /overdue/,
+    );
+  });
+
   it("ORDER_LINE_CHANGED is mapped through the shared constant", () => {
     expect(genericToastCopy(err(409, { code: API_ERROR_CODES.ORDER_LINE_CHANGED }))).toMatch(
       /changed while it was being billed/,
@@ -316,6 +346,7 @@ describe("genericToastCopy: codes users rely on", () => {
       // SA-770: the overdue list refuses past its id cap (422) and says how to narrow it.
       ["OVERDUE_FILTER_TOO_BROAD", /Too many invoices are overdue.*customer/],
       ["REMINDER_NO_BALANCE_DUE", /no balance due.*nothing to remind/],
+      ["REMINDER_NOT_ISSUED", /issued and is still unpaid/],
     ])("%s", (c, re) => {
       const copy = genericToastCopy(code(c));
       expect(copy).toMatch(re);
@@ -492,5 +523,91 @@ describe("P-4: ORDER_EDIT_WOULD_OVERPAY", () => {
     const copy = genericToastCopy(err(409, { code: "ORDER_EDIT_WOULD_OVERPAY", excess: 5 }));
     expect(copy).toMatch(/overpaid/);
     expect(copy).not.toContain(RAW);
+  });
+});
+
+describe("SELLER_UNAVAILABLE (a buyer write toward a paused seller)", () => {
+  const body = {
+    code: API_ERROR_CODES.SELLER_UNAVAILABLE,
+    message: "This seller isn't taking online orders right now. Please check back soon.",
+  };
+  const SELLER_COPY =
+    "This seller isn't taking online orders right now. Please check back soon or contact them.";
+
+  it("is the seller-unavailable copy, never the generic permission line", () => {
+    expect(genericToastCopy(err(403, body))).toBe(SELLER_COPY);
+    expect(codedToastCopy(err(403, body))).toBe(SELLER_COPY);
+    expect(genericToastCopy(err(403, body))).not.toMatch(/permission/i);
+  });
+
+  it("the app-wide handler toasts it once with that copy", () => {
+    const toast = jest.fn();
+    handleMutationError(err(403, body), { meta: undefined }, toast, { push: jest.fn() });
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith({ title: SELLER_COPY, variant: "error" });
+  });
+
+  it("a plain 403 keeps the permission line (unchanged)", () => {
+    expect(genericToastCopy(err(403, { message: "Forbidden" }))).toBe(
+      "You don't have permission to do that.",
+    );
+  });
+});
+
+describe("CQ-06: a license refusal (409 REGULATED_AUTH_REQUIRED) says what is wrong and the next step", () => {
+  const licenseErr = (blockedCategories: unknown) =>
+    err(409, { code: API_ERROR_CODES.REGULATED_AUTH_REQUIRED, blockedCategories });
+
+  it("is mapped by code, never the neutral 409 sentence or the server message", () => {
+    const copy = genericToastCopy(
+      licenseErr([{ trackedCategoryId: "c", categoryName: "Alcohol", reason: "EXPIRED" }]),
+    );
+    expect(copy).toBe(
+      "This sale includes regulated items (Alcohol), and the customer's license has expired. Renew it on the customer's Licenses tab, then try again.",
+    );
+    expect(copy).not.toBe(NEUTRAL_409);
+    expect(copy).not.toContain(RAW);
+  });
+
+  it("codedToastCopy recognises it (so a surface with its own fallback shows it, not the fallback)", () => {
+    expect(
+      codedToastCopy(
+        licenseErr([{ trackedCategoryId: "c", categoryName: "Alcohol", reason: "NO_AUTH" }]),
+      ),
+    ).toContain("no verified license on file");
+  });
+
+  it("a body with no categories still gets the license sentence", () => {
+    expect(genericToastCopy(licenseErr(undefined))).toContain("Licenses tab");
+  });
+});
+
+describe("a selling-restriction refusal (409 SELLING_RESTRICTED) in a dialog with no blocked-lines panel", () => {
+  const restricted = (blockedLines: unknown) =>
+    err(409, { code: API_ERROR_CODES.SELLING_RESTRICTED, blockedLines });
+
+  it("says what is wrong and the next step, never the neutral 409 sentence", () => {
+    const copy = genericToastCopy(
+      restricted([{ productId: "p", productName: "Item", reason: "STATE_BAN", message: "" }]),
+    );
+    expect(copy).toBe(
+      "This sale includes an item that can't be sold to this customer under your selling restrictions. Remove the item or change the customer, then try again.",
+    );
+    expect(copy).not.toBe(NEUTRAL_409);
+    expect(copy).not.toContain(RAW);
+  });
+
+  it("an undeterminable state says so and what to do", () => {
+    const copy = genericToastCopy(
+      restricted([
+        { productId: "p", productName: "Item", reason: "INDETERMINATE_ADDRESS", message: "" },
+      ]),
+    );
+    expect(copy).toContain("can't tell which state");
+    expect(copy).toContain("Choose a customer with an address on file");
+  });
+
+  it("a body with no lines still gets the sentence", () => {
+    expect(genericToastCopy(restricted(undefined))).toContain("selling restrictions");
   });
 });

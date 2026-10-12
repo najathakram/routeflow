@@ -41,6 +41,8 @@ describeDb("SA-763r — Today's sales Hand-overs on real Postgres", () => {
   const slug = assertTestTenant(`qa-handover-${run}`, "counter-sale-today.hand-overs.db.spec.ts");
   let tenantId = "";
   let userId = "";
+  let staffId = "";
+  let staffName = "";
   let customerId = "";
   const orderIds: string[] = [];
   const invoiceIds: string[] = [];
@@ -50,6 +52,9 @@ describeDb("SA-763r — Today's sales Hand-overs on real Postgres", () => {
     fulfillPath: "PICKUP" | "ROUTE";
     counterSale: boolean;
     invoiceStatus?: string;
+    /** row 342: the register + cashier stamped on the order (absent = an unstamped, older order) */
+    registerKey?: string | null;
+    soldById?: string | null;
     payments: Array<{
       method: string;
       amount: number;
@@ -68,6 +73,8 @@ describeDb("SA-763r — Today's sales Hand-overs on real Postgres", () => {
         orderNumber: `HO${run}-${n}`,
         total: 100,
         createdAt: new Date(AT),
+        registerKey: opts.registerKey ?? null,
+        soldById: opts.soldById ?? null,
       },
     });
     orderIds.push(order.id);
@@ -117,6 +124,17 @@ describeDb("SA-763r — Today's sales Hand-overs on real Postgres", () => {
         data: { email: `c-${run}@example.test`, username: `c-${run}`, role: "CUSTOMER", tenantId },
       })
     ).id;
+    staffName = `cashier-${run}`;
+    staffId = (
+      await raw.user.create({
+        data: {
+          email: `s-${run}@example.test`,
+          username: staffName,
+          role: "OPERATOR",
+          tenantId,
+        },
+      })
+    ).id;
     customerId = (
       await raw.customer.create({
         data: { userId, businessName: `Acme Test ${run}`, contactName: "Tester", tenantId },
@@ -129,7 +147,7 @@ describeDb("SA-763r — Today's sales Hand-overs on real Postgres", () => {
     await raw.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
     await raw.order.deleteMany({ where: { id: { in: orderIds } } });
     await raw.customer.deleteMany({ where: { id: customerId } });
-    await raw.user.deleteMany({ where: { id: userId } });
+    await raw.user.deleteMany({ where: { id: { in: [userId, staffId] } } });
     await raw.tenantConfig.deleteMany({ where: { tenantId } });
     await raw.tenant.deleteMany({ where: { id: tenantId } });
     await prisma?.$disconnect();
@@ -179,5 +197,84 @@ describeDb("SA-763r — Today's sales Hand-overs on real Postgres", () => {
     expect(s.moneyIn.cash).toBe(110); // 80 hand-over + 30 counter sale, each once
     expect(s.cashExpectedInDrawer).toBe(110);
     expect(s.sales.count).toBe(1); // the counter sale only
+  });
+  it("(12) row 342: rows carry the stamped register + cashier; a driver's cash and an office payment are NOT rows", async () => {
+    // a hand-over at register "reg-2" by a named cashier: cash + card tender (both the v5 group)
+    const stamped = await sale({
+      fulfillPath: "PICKUP",
+      counterSale: false,
+      registerKey: "reg-2",
+      soldById: staffId,
+      payments: [
+        { method: "CASH", amount: 40, group: "v5" },
+        { method: "CREDIT_CARD", amount: 10, group: "v5" },
+      ],
+    });
+    // an older, unstamped hand-over: no register, no cashier -> "main" and null
+    const unstamped = await sale({
+      fulfillPath: "PICKUP",
+      counterSale: false,
+      payments: [{ method: "CASH", amount: 15, group: "v5" }],
+    });
+    // the driver-cash leg: a driver collects CASH at the door of a ROUTE order (recordDeliveryPaymentInTx shape:
+    // ungrouped, paid on a route-stop order). Never a hand-over row, never in summary.handOvers.
+    const driverCash = await sale({
+      fulfillPath: "ROUTE",
+      counterSale: false,
+      registerKey: null,
+      soldById: null,
+      payments: [{ method: "CASH", amount: 25, group: null }],
+    });
+    // an office / back-office payment on a PICKUP order (ungrouped): not the hand-over's own tender
+    const office = await sale({
+      fulfillPath: "PICKUP",
+      counterSale: false,
+      registerKey: "reg-2",
+      soldById: staffId,
+      payments: [{ method: "CASH", amount: 12, group: null }],
+    });
+    const call = (page: number) =>
+      tenantCtx.run(tenantId, () =>
+        new CounterSaleTodayService(prisma).today({ day: DAY, page, limit: 50 } as never, NOW),
+      );
+    const res = await call(1);
+    const rows = res.handOverRows!;
+    const byId = new Map(rows.map((r) => [r.orderId, r]));
+
+    expect(byId.get(stamped)).toMatchObject({
+      amount: 50,
+      methods: [
+        { method: "CASH", amount: 40 },
+        { method: "CARD", amount: 10 },
+      ],
+      registerKey: "reg-2",
+      handedOverBy: staffName,
+      customerName: `Acme Test ${run}`,
+      paidAt: AT,
+    });
+    expect(byId.get(unstamped)).toMatchObject({
+      amount: 15,
+      registerKey: "main",
+      handedOverBy: null,
+    });
+    expect(byId.has(driverCash)).toBe(false);
+    expect(byId.has(office)).toBe(false);
+
+    // the Z's own consistency: the rows ARE the summary's hand-overs (same tenders, same filter)
+    const s = res.summary!;
+    expect(rows.length).toBe(s.handOvers.count);
+    expect(rows.reduce((t, r) => Math.round((t + r.amount) * 100) / 100, 0)).toBe(
+      s.handOvers.total,
+    );
+    // (11)'s $80 + $50 + $15; the driver's $25 and the office $12 are in neither
+    expect(s.handOvers).toEqual({ count: 3, total: 145 });
+    // newest first: nothing out of order
+    const paid = rows.map((r) => r.paidAt);
+    expect([...paid].sort().reverse()).toEqual(paid);
+
+    // later pages carry no rows and no summary (the hand-over read is page 1 only)
+    const page2 = await call(2);
+    expect(page2.summary).toBeNull();
+    expect(page2.handOverRows).toEqual([]);
   });
 });

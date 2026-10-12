@@ -612,9 +612,6 @@ describe("OrdersService — F06 guards (TP2)", () => {
       "REG-B63 (T7): a CUSTOMER items-edit on a %s order is refused before any side effect",
       async (status) => {
         primePostDispatchFixture(status);
-        const revisionSpy = jest
-          .spyOn(service as any, "appendOrderRevision")
-          .mockResolvedValue(undefined);
 
         const attempt = service.updateOrderItems(
           "ord-1",
@@ -632,7 +629,7 @@ describe("OrdersService — F06 guards (TP2)", () => {
         expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
         expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
         expect(prisma.orderItem.create).not.toHaveBeenCalled();
-        expect(revisionSpy).not.toHaveBeenCalled();
+        expect(prisma.orderRevision.create).not.toHaveBeenCalled();
       },
     );
 

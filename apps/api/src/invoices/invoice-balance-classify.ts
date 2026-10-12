@@ -14,8 +14,11 @@ import { type ConfirmablePaymentRow, sumConfirmed } from "./payment-predicates";
  * The rule: balance = `roundMoney(total - Σ CONFIRMED payments)` floored at 0 (cash, credit-note and
  * advance applications all reduce it; DRAFT, VOID and PENDING never do). A PAID / VOID / WRITTEN_OFF
  * invoice reads as settled (0). Overdue = not settled AND a balance is due AND the due DAY has ended
- * before `cutoff` (RF-202: the whole due day is grace). `cutoff` is `overdueCutoff(now, zone)` in the
- * INVOICE'S OWN tenant zone, so a reader spanning sellers passes each invoice its own seller's cutoff.
+ * before `cutoff` (RF-202: the whole due day is grace). Row 318b: only an ISSUED invoice (an
+ * `OPEN_INVOICE_STATUSES` status) can be overdue, so a past-due DRAFT keeps its balanceDue but reads
+ * isOverdue:false, as the KPI tiles and the list filter already judge it. `cutoff` is
+ * `overdueCutoff(now, zone)` in the INVOICE'S OWN tenant zone, so a reader spanning sellers passes each
+ * invoice its own seller's cutoff.
  */
 
 const SETTLED: readonly string[] = [
@@ -39,6 +42,22 @@ export function confirmedBalance(
   return Math.max(0, roundMoney(Number(total) - sumConfirmed(payments)));
 }
 
+/**
+ * `roundMoney(total - Σ confirmed payments)`, NOT clamped: an overpaid invoice reads NEGATIVE (-10.00 when
+ * it was paid $10 over its total). OWNER RULING 2026-10-11: the Receivable Summary report shows an
+ * overpayment as a negative balance on the invoice row; EVERY OTHER surface uses the clamped
+ * `confirmedBalance` above (row 310). `getReceivableSummary` is its only reader;
+ * overdue-readers-inventory.spec.ts fails if `signedBalance` appears anywhere else. Same
+ * confirmed-payment semantics as `confirmedBalance` (both go through `sumConfirmed`); rounding to cents
+ * first means float dust reads 0, and `+ 0` turns a rounded -0 into 0.
+ */
+export function signedBalance(
+  total: unknown,
+  payments: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined,
+): number {
+  return roundMoney(Number(total) - sumConfirmed(payments)) + 0;
+}
+
 export function classifyInvoiceBalance(
   inv: ClassifiableInvoice,
   cutoff: Date,
@@ -46,7 +65,7 @@ export function classifyInvoiceBalance(
   const settled = SETTLED.includes(inv.status);
   const balanceDue = settled ? 0 : confirmedBalance(inv.total, inv.payments);
   const isOverdue =
-    !settled &&
+    (OPEN_INVOICE_STATUSES as readonly string[]).includes(inv.status) &&
     balanceDue > 0 &&
     inv.dueDate != null &&
     startOfCalendarDay(inv.dueDate, "UTC").getTime() < cutoff.getTime();

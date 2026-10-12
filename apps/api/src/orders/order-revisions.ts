@@ -142,6 +142,57 @@ export async function appendOrderRevisionInTx(
   await insertRevision(tx, tenantId, args, revisionSnapshot(lines, args[2]));
 }
 
+/** Row 372 MF2: sources of a revision no operator edit produced (the order's lines changed under an editor). */
+export const SYSTEM_MERGE_REVISION = "SYSTEM_MERGE";
+export const SYSTEM_INVOICE_SYNC_REVISION = "SYSTEM_INVOICE_SYNC";
+export const SYSTEM_REOPEN_REVISION = "SYSTEM_REOPEN";
+
+/**
+ * Row 372 MF2: the ONE in-tx bump for a writer that changes an order's LINES without an operator edit, so
+ * an editor holding the earlier revision goes stale. Appended after the order's totals were written, from
+ * the stored totals themselves. A system revision is an EDIT revision (`EDIT_REVISIONS` only excludes
+ * ship-state markers), so it moves `revisionNumber`.
+ */
+async function appendSystemRevisionInTx(
+  tx: Prisma.TransactionClient,
+  tenantId: string | null,
+  orderId: string,
+  source: string,
+): Promise<void> {
+  const o = await tx.order.findUniqueOrThrow({
+    where: { id: orderId },
+    select: { subtotal: true, tax: true, total: true, shippingFee: true },
+  });
+  const totals = {
+    subtotal: Number(o.subtotal),
+    tax: Number(o.tax),
+    total: Number(o.total),
+    shippingFee: Number(o.shippingFee ?? 0),
+  };
+  await appendOrderRevisionInTx(tx, tenantId, orderId, undefined, totals, source);
+}
+
+/** A merge folded loser carts into the winner. */
+export const appendMergeRevisionInTx = (
+  tx: Prisma.TransactionClient,
+  tenantId: string | null,
+  winnerId: string,
+) => appendSystemRevisionInTx(tx, tenantId, winnerId, SYSTEM_MERGE_REVISION);
+
+/** A reopen put every item-CANCELLED line back live (a new sale of the whole order). */
+export const appendReopenRevisionInTx = (
+  tx: Prisma.TransactionClient,
+  tenantId: string | null,
+  orderId: string,
+) => appendSystemRevisionInTx(tx, tenantId, orderId, SYSTEM_REOPEN_REVISION);
+
+/** An invoice edit back-synced the order's lines or fee (`recomputeOrderFromInvoices`). */
+export const appendInvoiceSyncRevisionInTx = (
+  tx: Prisma.TransactionClient,
+  tenantId: string | null,
+  orderId: string,
+) => appendSystemRevisionInTx(tx, tenantId, orderId, SYSTEM_INVOICE_SYNC_REVISION);
+
 /** `GET /orders/:id`: `revisionNumber` from the EDIT revisions `findOne` already included (no extra read). */
 export function attachRevisionNumber(order: {
   revisions?: ReadonlyArray<{ revisionNumber: number }> | null;

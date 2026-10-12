@@ -310,7 +310,7 @@ describe("renderOrderReceipt (email)", () => {
 
   it("returns the model it rendered, a subject naming the business and the order, and html + a plain-text alternative", () => {
     expect(out.model.total).toBe(28.62);
-    expect(out.subject).toBe("Your receipt from Acme Test Store (Order ORD-1001)");
+    expect(out.subject).toBe("Your receipt from Acme Test Store for order ORD-1001");
     expect(out.html).toContain("<!DOCTYPE html>");
     expect(out.text.length).toBeGreaterThan(0);
   });
@@ -325,8 +325,8 @@ describe("renderOrderReceipt (email)", () => {
       expect(body).toContain("$15.00");
       expect(body).toContain("Subtotal");
       expect(body).toContain("$27.50");
-      expect(body).toContain("Discounts");
-      expect(body).toContain("-$1.00");
+      expect(body).toContain("Discount");
+      expect(body).toContain("−$1.00"); // the minus glyph, never a hyphen
       expect(body).toContain("$5.00"); // the struck list price of the discounted line
       expect(body).toContain("Tax (8%)");
       expect(body).toContain("$2.12");
@@ -432,7 +432,30 @@ describe("renderOrderReceipt (email)", () => {
       ...BRANDING,
       businessName: "",
     });
-    expect(r.subject).toBe("Your receipt (Order ORD-1001)");
+    expect(r.subject).toBe("Your receipt for order ORD-1001");
+  });
+
+  it("signs the email 'Sent by <business name>.' (row 345), never 'Receipt sent by'", () => {
+    for (const body of [out.html, out.text]) {
+      expect(body).toContain("Sent by Acme Test Store.");
+      expect(body).not.toContain("Receipt sent by");
+    }
+  });
+
+  // CQ-20: "Sent by Acme Co.." — a name that already ends in a period must not get a second one.
+  it.each([
+    ["Acme Co.", "Sent by Acme Co."],
+    ["Acme Co", "Sent by Acme Co."],
+    ["Acme Co. ", "Sent by Acme Co."],
+    ["Acme!", "Sent by Acme!"],
+    ["Acme\u2026", "Sent by Acme\u2026"],
+  ])("signs a business named %j as %j (never a doubled period)", (businessName, signed) => {
+    const r = render(orderFixture(), [INVOICE], paymentsFixture(), { ...BRANDING, businessName });
+    for (const body of [r.html, r.text]) {
+      expect(body).toContain(signed);
+      expect(body).not.toMatch(/Sent by [^<\n]*\.\./);
+      expect(body).not.toContain(`${signed}.`);
+    }
   });
 
   it("prints the footer only when the model carries one", () => {

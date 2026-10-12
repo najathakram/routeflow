@@ -17,6 +17,7 @@ import type {
   OrderCancelBlockedReason,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
+import type { HandOverSoldBy } from "@/lib/handover-stamp";
 
 export type { ChangeRequest } from "@/lib/change-requests";
 
@@ -50,6 +51,14 @@ export interface Order {
   fulfillPath: "ROUTE" | "SHIP" | "PICKUP";
   /** Walk-in counter sale (PICKUP + counterSale). Never a POS-mode order: see `isPosOrder` (pos-orders.ts). */
   counterSale?: boolean | null;
+  /** Row 342, STAFF reads only (absent on a buyer read / older API): the register the order was handed over at. */
+  registerKey?: string | null;
+  /** Row 342, staff reads only: the cashier's display name the API built once; null = none stamped. */
+  handedOverBy?: string | null;
+  /** Row 342: the moment the hand-over moved the order to DELIVERED (the stamp line's time). */
+  deliveredAt?: string | null;
+  /** Row 342, staff reads only: the cashier relation (the API selects the username). */
+  soldBy?: HandOverSoldBy | null;
   urgent: boolean;
   subtotal: number;
   tax: number;
@@ -72,6 +81,8 @@ export interface Order {
     total: number;
     /** The server's default PDF stage for this invoice: "final" once issued or settled at shipment. */
     pdfVariant?: "draft" | "final";
+    /** Each line's STORED tax rate (a fraction) and nothing else of the line: the edit panel names a rate only from these. */
+    items?: Array<{ taxRate?: number | string | null }>;
     /** CREDIT_NOTE payments only (server-scoped include), listed by the order's
      *  "Applied credits" panel (#2404). `creditNote` is attached by the order read
      *  (InvoicePayment has no relation); `autoApplied` is SA-436 PR-1's column. */

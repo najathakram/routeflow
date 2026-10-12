@@ -18,11 +18,9 @@ import { LeaderCron } from "../common/cron-lock";
 import { withAfterCommit } from "../common/after-commit";
 import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
-import {
-  attachPaymentCreditNotes,
-  ORDER_CREDIT_PAYMENT_SELECT,
-} from "./order-payment-credit-notes";
+import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment-credit-notes";
 import { attachInvoicesNeedReview } from "./order-invoices-review";
+import { customerIsTaxExempt, orderTotalsOf } from "./order-totals";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
@@ -31,8 +29,9 @@ import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
-  appendOrderRevision as appendOrderRevisionImpl,
-  AppendOrderRevisionArgs,
+  appendMergeRevisionInTx,
+  appendOrderRevisionInTx,
+  appendReopenRevisionInTx,
   attachRevisionNumber,
 } from "./order-revisions";
 import {
@@ -151,6 +150,7 @@ import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { openTenantGroups } from "./sweep-tenant-gate";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { orderFor, ordersFor } from "../common/staff-only-fields";
 import { currentTaxRate } from "../common/tax-rate";
@@ -229,6 +229,7 @@ import type { OrderCancelBlockedField } from "@routeflow/types";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
 import { shippedPushCopy } from "./shipped-push-copy";
 import { attachInvoiceStages } from "./order-invoice-stage";
+import { HANDOVER_SOLD_BY_SELECT, seesHandOverStamp, stampHandedOverBy } from "./handover-stamp";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
 import {
   heldAtBookedFloor,
@@ -334,9 +335,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * Falls back to 0 so that unconfigured tenants don't get a surprise 10% charge.
    */
   private async getTaxRate(): Promise<number> {
-    // Extracted to common/tax-rate.ts (Returns Inside Order Creation PR-1c) so
-    // InlineReturnsQuoteService's unreferenced-chunk pricing shares this exact reader
-    // instead of a second hand-rolled percent→fraction parse — same rule, one place.
+    // common/tax-rate.ts: the ONE reader (InlineReturnsQuoteService shares it).
     return currentTaxRate(this.systemConfig);
   }
 
@@ -349,9 +348,10 @@ export class OrdersService implements OnApplicationBootstrap {
    * RF-4 / B297 PR3: recompute + persist each regulated line's `categoryTaxAmount` at the line's OWN rate
    * snapshot (never the live category) and return the order-level Σ. The rule, the NULL-trio stamp and
    * the no-category keep live in `recompute-line-category-taxes.ts`; this binds the service's logger.
+   * An exempt customer's lines are zeroed there (RF-079 / RF-4), as on the invoice.
    */
-  private recomputeLineCategoryTaxes(tx: any, lines: any[]): Promise<number> {
-    return recomputeLineCategoryTaxes(tx, lines, this.logger);
+  private recomputeLineCategoryTaxes(tx: any, lines: any[], isTaxExempt: boolean): Promise<number> {
+    return recomputeLineCategoryTaxes(tx, lines, this.logger, isTaxExempt);
   }
 
   async findAll(query: ListOrdersDto, user: JwtPayload) {
@@ -488,29 +488,10 @@ export class OrdersService implements OnApplicationBootstrap {
           // sort LAST (NULLS LAST), with createdAt as the final tiebreak.
           orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         },
+        // row 342: who handed it over (staff only; `registerKey` is a scalar already on the row)
+        ...(seesHandOverStamp(user) ? { soldBy: HANDOVER_SOLD_BY_SELECT } : {}),
         transaction: true,
-        invoices: {
-          select: {
-            id: true,
-            invoiceNumber: true,
-            status: true,
-            total: true,
-            deliveryBatchId: true, // the invoice stage (pdfVariant) keys on it
-            // Applied credit-note payments, so clients can show per-credit dollars
-            // actually applied without a second roundtrip.
-            // Classification pending: whether this credit-note-application read
-            // should count DRAFT rows is decided by campaign batch F03's
-            // confirmed-payment sweep (sums go PAID-only, listings keep not-VOID
-            // with visible status). F03 converts this site or writes the reasoned
-            // exemption here.
-            // scan-ok: draft-payment-not-void — pending F03 classification, see above.
-            payments: {
-              where: { method: "CREDIT_NOTE", status: { not: "VOID" } },
-              // #2404: autoApplied (SA-436 PR-1) labels each credit Automatic / Manual.
-              select: ORDER_CREDIT_PAYMENT_SELECT,
-            },
-          },
-        },
+        invoices: { select: ORDER_INVOICES_SELECT }, // + each line's stored taxRate (row 329a)
         // Credit-note INTENTS selected for this order (join table) — the reason/
         // amount/status render at read time via the relation so an edit to the
         // credit note's reason shows up everywhere automatically.
@@ -588,6 +569,7 @@ export class OrdersService implements OnApplicationBootstrap {
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
     await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
 
+    stampHandedOverBy(order, user); // row 342: staff only; the display name is built once, here
     return orderFor(user, order); // customer-facing fields only for the customer
   }
 
@@ -900,22 +882,28 @@ export class OrdersService implements OnApplicationBootstrap {
             const subtotal = roundMoney(
               activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0),
             );
-            const tax = roundMoney(subtotal * taxRate);
             // RF-4: re-derive + persist each line's category tax from the merged set,
             // and fold Σ into the total (a merged-in regulated line keeps its levy).
-            const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
+            const isTaxExempt = await customerIsTaxExempt(tx, customerId);
+            await this.recomputeLineCategoryTaxes(tx, activeItems, isTaxExempt);
+            const totals = orderTotalsOf(activeItems, {
+              taxRate,
+              isTaxExempt,
+              shipping: Number(winner.shippingFee ?? 0),
+            });
             await tx.order.update({
               where: { id: winner.id },
               data: {
                 subtotal,
-                tax,
+                tax: totals.regularTax,
                 // Winner keeps ITS OWN stored fee; loser fees drop with the losers (the merged
                 // order is one delivery → one fee). Same asymmetry as discountAmount.
-                total: roundMoney(subtotal + tax + categoryTax + Number(winner.shippingFee ?? 0)),
+                total: totals.total,
                 // A merged-in regulated line flips the denormalized flag on.
                 hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
               },
             });
+            await appendMergeRevisionInTx(tx, this.prisma.getTenantId(), winner.id); // row 372 MF2
           });
 
           this.logger.log(
@@ -1132,10 +1120,15 @@ export class OrdersService implements OnApplicationBootstrap {
             const subtotal = roundMoney(
               activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0),
             );
-            const tax = roundMoney(subtotal * taxRate);
             // RF-4: re-derive + persist each line's category tax from the merged set,
             // and fold Σ into the total (a merged-in regulated line keeps its levy).
-            const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
+            const isTaxExempt = await customerIsTaxExempt(tx, customerId);
+            await this.recomputeLineCategoryTaxes(tx, activeItems, isTaxExempt);
+            const totals = orderTotalsOf(activeItems, {
+              taxRate,
+              isTaxExempt,
+              shipping: Number(winner.shippingFee ?? 0),
+            });
             const routeUpdate = routeAssignment
               ? {
                   routeRunId: routeAssignment.routeRunId,
@@ -1146,15 +1139,16 @@ export class OrdersService implements OnApplicationBootstrap {
               where: { id: winner.id },
               data: {
                 subtotal,
-                tax,
+                tax: totals.regularTax,
                 // Winner keeps ITS OWN stored fee; loser fees drop with the losers (the merged
                 // order is one delivery → one fee). Same asymmetry as discountAmount.
-                total: roundMoney(subtotal + tax + categoryTax + Number(winner.shippingFee ?? 0)),
+                total: totals.total,
                 // A merged-in regulated line flips the denormalized flag on.
                 hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
                 ...routeUpdate,
               },
             });
+            await appendMergeRevisionInTx(tx, this.prisma.getTenantId(), winner.id); // row 372 MF2
             // If the winner carries a pending mirror draft, re-sync it to the merged lines.
             await this.invoicesService.reconcileOrderDraftInvoice(winner.id, {
               basis: "order",
@@ -1241,10 +1235,9 @@ export class OrdersService implements OnApplicationBootstrap {
     }
     const skipped = nullTenantRows.length;
 
-    // Null-tenant groups are fully accounted for by the pass above (count + warn) —
-    // exclude them here so the same customer is never double-logged, and so `customers`
-    // below reflects only the groups actually eligible to merge.
-    const mergeCandidateGroups = groups.filter((g) => g.tenantId);
+    // Null-tenant groups are counted + warned above (never double-logged); SA-776: a tenant that is not
+    // TRIAL / ACTIVE gets no automated merge (sweep-tenant-gate.ts), so `customers` counts only eligible groups.
+    const mergeCandidateGroups = await openTenantGroups(this.prisma, groups);
 
     let merged = 0;
     let packMismatches = 0;
@@ -1674,6 +1667,8 @@ export class OrdersService implements OnApplicationBootstrap {
       priceHistory,
     });
 
+    // RF-079 / RF-4: an exempt customer owes $0 of BOTH taxes on the order, as on the invoice.
+    const isTaxExempt = await customerIsTaxExempt(this.prisma.forTenant(), customerId);
     let subtotal = 0;
     const lineItemsData = items.map((item, index) => {
       // Unlisted (ad-hoc) line: no catalog product. The operator supplies a
@@ -1883,15 +1878,16 @@ export class OrdersService implements OnApplicationBootstrap {
       const category = product.trackedCategoryId
         ? categoryMap.get(product.trackedCategoryId)
         : null;
-      const categoryTaxAmount = category
-        ? computeCategoryTax({
-            taxType: category.taxType as CategoryTaxType,
-            rate: Number(category.rate),
-            unitBasisQty: qtyPieces,
-            lineSubtotal: itemSubtotal,
-            priceIncludesTax: category.priceIncludesTax,
-          })
-        : 0;
+      const categoryTaxAmount =
+        category && !isTaxExempt
+          ? computeCategoryTax({
+              taxType: category.taxType as CategoryTaxType,
+              rate: Number(category.rate),
+              unitBasisQty: qtyPieces,
+              lineSubtotal: itemSubtotal,
+              priceIncludesTax: category.priceIncludesTax,
+            })
+          : 0;
       // B297 (SA-088): the trio this line was priced under — a later rate edit must never re-price it.
       const categorySnapshot = categoryTaxSnapshotOf(category ?? null);
 
@@ -1932,6 +1928,7 @@ export class OrdersService implements OnApplicationBootstrap {
       };
     });
 
+    if (isTaxExempt) for (const li of lineItemsData) li.categoryTaxAmount = 0; // unit lines priced their own levy
     subtotal = roundMoney(subtotal);
     // Opus review of 942d5d69: rounded here (not left raw) so the
     // discount-vs-subtotal comparison inside assertMoneyInvariantsOrThrow
@@ -1940,14 +1937,19 @@ export class OrdersService implements OnApplicationBootstrap {
     const orderDiscount = roundMoney(dto.discountAmount ?? 0);
     // Optional shipping fee — never taxed; added after tax like Invoice.shippingFee.
     const orderShippingFee = roundMoney(Math.max(0, dto.shippingFee ?? 0));
-    const tax = roundMoney(subtotal * (await this.getTaxRate()));
     // RF-4: fold the regulated category tax (Σ per-line) into the order total. The
     // `tax` column stays REGULAR tax only; category tax is reconstructable from the
     // line snapshots (Σ categoryTaxAmount), so no dedicated Order column is needed.
-    const categoryTax = roundMoney(
-      lineItemsData.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
-    );
-    const total = roundMoney(subtotal + tax + categoryTax - orderDiscount + orderShippingFee);
+    const {
+      regularTax: tax,
+      categoryTax,
+      total,
+    } = orderTotalsOf(lineItemsData, {
+      taxRate: await this.getTaxRate(),
+      isTaxExempt,
+      discount: orderDiscount,
+      shipping: orderShippingFee,
+    });
 
     // B451 gap 4: reject a bounded-but-oversized discountAmount before it can
     // drive the persisted total negative. Fails fast, before any stock lock
@@ -2078,8 +2080,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 // customer/agent default). Validated by parseCommissionRatePct above.
                 commissionRatePct,
                 fulfillPath,
-                // SA-672e: only the counter-sale POST passes this; every other order keeps the column default.
-                ...(options.counterSale ? { counterSale: true } : {}),
+                // SA-672e/row 317: only the counter-sale POST passes this; it also stamps the cashier (a replay writes nothing).
+                ...(options.counterSale ? { counterSale: true, soldById: user.sub } : {}),
                 lineItems: { create: lineItemsData },
               },
               include: {
@@ -2793,7 +2795,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // Re-take exactly what the cancel credited back (order-stock.ts).
         await restoreStockForReopen(this.stockDeps(), tx, id, cancelledLines);
 
-        return tx.order.update({
+        const reopened = await tx.order.update({
           where: { id },
           data: {
             status: OrderStatus.PENDING,
@@ -2806,11 +2808,10 @@ export class OrdersService implements OnApplicationBootstrap {
             customer: { select: { id: true, businessName: true } },
           },
         });
-        // Headroom over Prisma's 5s default, matching every other
-        // settleStockForEdit call site (:3053, :4755) — the re-decrement above runs
-        // that helper's per-product lock/read/write loop.
+        await appendReopenRevisionInTx(tx, this.prisma.getTenantId(), id); // row 372: lines went live again
+        return reopened;
       },
-      { timeout: 15_000 },
+      { timeout: 15_000 }, // headroom: the stock re-decrement above runs settleStockForEdit's per-product loop
     );
   }
 
@@ -2861,6 +2862,9 @@ export class OrdersService implements OnApplicationBootstrap {
     if (order.status === "CANCELLED") {
       throw new BadRequestException("Items can't be edited on a cancelled order");
     }
+    // Row 372 (MF4 nit e): an editor on an outdated order meets the 409 BEFORE any refusal can mask it and any
+    // un-tx'd side effect (the invoice revert, the return number). Advisory; the in-tx check below is the lock.
+    await assertRevisionCurrent(this.prisma.forTenant(), orderId, dto.expectedRevisionNumber);
     const isDiffPayload = classifyEditPayload(order, dto, user); // A4/B13: see order-edit-payload.ts
     // SA-422: never revive a seller-CANCELLED line (409 before any write; a strike-off of one is a
     // no-op). SA-422b: BEFORE every unit check, so a cancelled line's id gets this answer first.
@@ -3027,8 +3031,8 @@ export class OrdersService implements OnApplicationBootstrap {
     // write, so a blocked edit leaves the order byte-identical and appends no
     // revision. The guards intentionally consume the AUTHORITATIVE recomputed
     // totals/line set (not a pre-mutation simulation), so there is no second
-    // pricing formula to drift. reconcileOrderDraftInvoice and
-    // appendOrderRevision stay OUTSIDE (after commit), unchanged.
+    // pricing formula to drift. The revision is appended at this tx's tail
+    // (row 372 MF1); reconcileOrderDraftInvoice stays OUTSIDE (after commit).
     let skipInPlaceResync = false; // SA-763r P-3: set inside the edit tx, from the held lines
     const { subtotal, tax, total, shouldRevert, shippingFee } = await inlineReturn.runEditTx(
       inlineRet,
@@ -4093,11 +4097,11 @@ export class OrdersService implements OnApplicationBootstrap {
           where: { orderId, status: { not: "CANCELLED" } },
         });
         const subtotal = roundMoney(activeItems.reduce((s, li) => s + Number(li.subtotal), 0));
-        const tax = roundMoney(subtotal * taxRate);
         // RF-4: re-derive + persist each regulated line's category tax from the
         // edited set and fold Σ into the total (kept out of the `tax` column, which
         // stays regular tax only). `total` is reused by the credit guard + revision.
-        const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
+        const isTaxExempt = await customerIsTaxExempt(tx, order.customerId);
+        await this.recomputeLineCategoryTaxes(tx, activeItems, isTaxExempt);
         // Staff may set/change the fee on edit; everyone else keeps the stored fee.
         // Reading the STORED fee here is what stops an ordinary item edit from
         // silently zeroing shipping (the fee-wipe regression).
@@ -4107,7 +4111,8 @@ export class OrdersService implements OnApplicationBootstrap {
         const shippingFee = isStaffFeeEdit
           ? roundMoney(Math.max(0, dto.shippingFee!))
           : roundMoney(Number((order as any).shippingFee ?? 0));
-        const total = roundMoney(subtotal + tax + categoryTax + shippingFee);
+        const totals = orderTotalsOf(activeItems, { taxRate, isTaxExempt, shipping: shippingFee });
+        const { regularTax: tax, categoryTax, total } = totals;
 
         // B451 gap 4: defense-in-depth — UpdateOrderItemsDto carries no
         // discountAmount today (only create() does), so this path has no
@@ -4235,6 +4240,16 @@ export class OrdersService implements OnApplicationBootstrap {
           user,
         });
         if (inlineRet && creditGate) await creditGate();
+        // Row 372 MF1: the revision commits WITH the edit, under the Order lock the stale check read under.
+        await appendOrderRevisionInTx(
+          tx,
+          this.prisma.getTenantId(),
+          orderId,
+          user,
+          { subtotal, tax, total, shippingFee },
+          "EDIT",
+          dto.orderNotes,
+        );
         return { subtotal, tax, total, shouldRevert, shippingFee };
       },
       // Headroom over Prisma's 5s default: the merge branch issues per-line
@@ -4273,7 +4288,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // B215: the CONVERGENT tail — invoice resync/reconcile + credit sync/settle. Extracted so a
     // REPLAYED merge can re-run exactly this and nothing else (replayMergeReconcile): the fold
     // above runs at most once per key, while everything in here is idempotent and may run N
-    // times. The status event and the revision append BELOW stay fold-only.
+    // times. The status event BELOW stays fold-only (the revision rides the fold tx).
     const { issuedPartialsUnchanged } = await this.reconcileOrderAfterEdit(
       orderId,
       order.customerId,
@@ -4293,17 +4308,6 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
-    // P5-08: append an immutable revision snapshot of the post-edit state. Runs
-    // last — only after guards passed and every write committed — so a blocked or
-    // failed edit never records a revision. Totals copied verbatim (never recomputed).
-    await this.appendOrderRevision(
-      orderId,
-      user,
-      { subtotal, tax, total, shippingFee },
-      "EDIT",
-      dto.orderNotes ?? null,
-    );
-
     const edited = await cancelledLines.readEditedOrder(this.prisma, orderId);
     // SA-760 Q-760-1: an issued partial whose line price moved stays as issued; the UI is told.
     return issuedPartialsUnchanged.length > 0 ? { ...edited, issuedPartialsUnchanged } : edited;
@@ -4315,8 +4319,8 @@ export class OrdersService implements OnApplicationBootstrap {
    * choice, then the Serializable credit-note sync + settle. Every step here is idempotent, so
    * this may run N times for ONE fold — which is the point: a replayed merge re-runs it (see
    * `replayMergeReconcile`) instead of leaving the order's invoice and applied credits out of
-   * sync forever. The two steps that are NOT convergent — the status event and the
-   * `appendOrderRevision` snapshot — deliberately stay in `updateOrderItems`.
+   * sync forever. The status event is NOT convergent — it deliberately stays in `updateOrderItems`
+   * (the revision snapshot rides the fold tx).
    *
    * `appliedCreditNotes === undefined` means "DO NOT call syncOrderCreditSelections at all — leave
    * the stored selection exactly as it is": a non-staff caller, a request that sent no selection,
@@ -4507,11 +4511,6 @@ export class OrdersService implements OnApplicationBootstrap {
       postDeliveryEdit,
       skipInPlaceResync,
     });
-  }
-
-  /** P5-08: extracted verbatim to `order-revisions.ts` (SA-065 prefactor); thin delegator, same name. */
-  private appendOrderRevision(...args: AppendOrderRevisionArgs) {
-    return appendOrderRevisionImpl(this.prisma, ...args);
   }
 
   /** B283 / stock: extracted verbatim to `order-stock.ts` (B585 prefactor); thin delegators, same names. */
@@ -5102,12 +5101,13 @@ export class OrdersService implements OnApplicationBootstrap {
           where: { orderId: order.id, status: { not: "CANCELLED" } },
         });
         const subtotal = roundMoney(activeItems.reduce((s, l) => s + Number(l.subtotal), 0));
-        const tax = roundMoney(subtotal * taxRate);
         // RF-4: re-derive + persist each regulated line's category tax from the
         // post-change set and fold Σ into the total (kept out of the `tax` column).
-        const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
+        const isTaxExempt = await customerIsTaxExempt(tx, order.customerId);
+        await this.recomputeLineCategoryTaxes(tx, activeItems, isTaxExempt);
         const shippingFee = Number((live as any).shippingFee ?? 0);
-        const total = roundMoney(subtotal + tax + categoryTax + shippingFee);
+        const totals = orderTotalsOf(activeItems, { taxRate, isTaxExempt, shipping: shippingFee });
+        const { regularTax: tax, categoryTax, total } = totals;
 
         // ── G6: stock + credit guards RE-RUN inside the tx (:2175-2187).
         // A throw rolls back the claim AND the merge. Resolver role drives the
@@ -5158,23 +5158,23 @@ export class OrdersService implements OnApplicationBootstrap {
             },
           });
         }
-        // shippingFee rides out of the tx (updateOrderItems :4284 idiom) so the post-commit
-        // revision snapshots the value the total was actually built from.
+        // Row 372 MF1: the revision commits with the merge, under this Order lock.
+        await appendOrderRevisionInTx(
+          tx,
+          this.prisma.getTenantId(),
+          order.id,
+          resolver,
+          { subtotal, tax, total, shippingFee },
+          "CHANGE_REQUEST",
+          cr.note,
+        );
         return { subtotal, tax, total, shippingFee };
       },
       { timeout: 15_000 },
     );
 
-    // Post-commit, mirrors updateOrderItems :2222-2246: mirror draft invoice in
-    // lockstep + immutable revision. Never a new money formula.
+    // Post-commit: mirror the draft invoice in lockstep. Never a new money formula.
     await this.invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "order" });
-    await this.appendOrderRevision(
-      order.id,
-      resolver,
-      { subtotal, tax, total, shippingFee },
-      "CHANGE_REQUEST",
-      cr.note ?? null,
-    );
 
     return { merged: true, subtotal, tax, total };
   }

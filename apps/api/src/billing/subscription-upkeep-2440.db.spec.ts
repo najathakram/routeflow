@@ -37,6 +37,11 @@ describeDb("BillingService — #2440 subscription upkeep, real Postgres (SA-450/
   const stripe = {
     isConfigured: true,
     getSubscription: jest.fn(),
+    // SA-736r: the coupon sync's two Stripe reads - inert (no discount; no upcoming invoice -> nothing written).
+    retrieveSubscriptionWithDiscounts: jest
+      .fn()
+      .mockResolvedValue({ status: "active", discounts: [] }),
+    previewNextInvoice: jest.fn().mockResolvedValue(null),
     updateSubscription: jest.fn().mockResolvedValue({}),
     createBillingPortalSession: jest.fn(),
     client: { products: { create: jest.fn() } },

@@ -3,15 +3,19 @@ import * as path from "path";
 
 /**
  * Row 372 MUST 1a (SA-735): `createInvoiceFromOrder(orderId, callerTx)` skips its own Order lock
- * (`if (!callerTx)`), so every caller that passes a tx must already hold the Order row lock. The two callers are
- * `reconcileDeliveredOrdersInTx` (delivered-reconcile.ts, via `reconcileDeliveredStopOrders`) and
- * `recordDeliveryPaymentInTx`; both run only inside RoutesService.completeWithPayment, whose tx's FIRST
- * statements are `lockStopOrdersAndFit` -> `lockOrderRows(tx, null, <the stop's order ids>)` (FOR UPDATE, id
- * ordered, SA-706c), the same orders it then reconciles. The locks that tx takes before the Order locks: none
- * (lock-first). House order: Stop/Order rows -> Order -> Invoice (SA error rule 8). This spec fails if a caller of
- * the callerTx path appears in a method that does not lock the stop's orders first.
+ * (`if (!callerTx)`), so every caller that passes a tx must already hold the Order row lock. There is ONE call
+ * site that passes one: `deps.createInvoiceFromOrder(orderId, tx)` in delivered-reconcile.ts, reached only
+ * through `reconcileDeliveredOrdersInTx` (via `reconcileDeliveredStopOrders`) and `recordDeliveryPaymentInTx`;
+ * both run only inside RoutesService.completeWithPayment, whose tx's FIRST statements are
+ * `lockStopOrdersAndFit` -> `lockOrderRows(tx, null, <the stop's order ids>)` (FOR UPDATE, id ordered, SA-706c),
+ * the same orders it then reconciles. The locks that tx takes before the Order locks: none (lock-first). House
+ * order: Stop/Order rows -> Order -> Invoice (SA error rule 8). This spec fails if a caller of the callerTx path
+ * (any argument name, any file) appears outside delivered-reconcile.ts, or if a RoutesService method reaches the
+ * two entry points without locking the stop's orders first.
  */
 const SRC = path.resolve(__dirname, "..");
+const CALLER_TX_CALL =
+  /(?<!async\s+)\bcreateInvoiceFromOrder\(\s*(?:[^,()]|\([^()]*\))+,\s*(?!undefined\b|null\b)[^\s,)]/;
 const read = (f: string) => fs.readFileSync(path.join(SRC, f), "utf8");
 
 describe("createInvoiceFromOrder's callerTx callers hold the Order lock first (row 372, MUST 1a)", () => {
@@ -50,8 +54,13 @@ describe("createInvoiceFromOrder's callerTx callers hold the Order lock first (r
         const p = path.join(dir, e.name);
         if (e.isDirectory()) walk(p);
         else if (/\.ts$/.test(e.name) && !/\.(spec|test)\.ts$/.test(e.name)) {
-          if (/\.createInvoiceFromOrder\(\s*\w+,\s*tx\b/.test(fs.readFileSync(p, "utf8")))
-            hits.push(path.relative(SRC, p));
+          // any call (`x.createInvoiceFromOrder(` or a bare one) whose SECOND argument is not undefined/null,
+          // whatever it is named; a method DECLARATION (`async createInvoiceFromOrder(`) is not a call
+          const code = fs
+            .readFileSync(p, "utf8")
+            .replace(/\/\*[\s\S]*?\*\//g, "") // block comments and JSDoc name the call in prose
+            .replace(/(^|\s)\/\/.*$/gm, "$1");
+          if (CALLER_TX_CALL.test(code)) hits.push(path.relative(SRC, p).split(path.sep).join("/"));
         }
       }
     };

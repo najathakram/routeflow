@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { z } from "zod";
@@ -100,6 +100,8 @@ import { isInShell } from "@/lib/in-shell";
 import { TimeZoneDatalist } from "@/components/TimeZoneInput";
 import { TIME_ZONE_REQUIRED_COPY, canonicalTimeZone, isValidTimeZone } from "@/lib/timezones";
 import { useInvalidFocus } from "@/lib/form-errors";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { isReadOnlyRefusal, showReadOnlyRefusal } from "@/lib/read-only-refusal";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -161,6 +163,8 @@ function BusinessProfileTab() {
       });
     },
     onError: (err: unknown, sent) => {
+      if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
+
       const res = (err as { response?: { status?: number; data?: { code?: string } } })?.response;
       // The server's own text is never shown: a refused zone and a refused role each get one fixed line.
       if (res?.data?.code === API_ERROR_CODES.INVALID_TIME_ZONE) {
@@ -207,12 +211,32 @@ function BusinessProfileTab() {
       });
     },
     onError: (err: any) => {
+      // Drop the local preview so the saved logo (if any) shows instead of a stale one (also when read-only).
+      setLogoPreview(null);
+      if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
       const msg = err?.response?.data?.message ?? "Try a PNG, JPG, or WEBP under 5 MB.";
       toast({ title: "Logo upload failed", description: msg, variant: "error" });
-      // Drop the local preview so the saved logo (if any) shows instead of a stale one.
-      setLogoPreview(null);
     },
   });
+
+  // Row 327: this is ONE form with one Save button, so validate only the fields the user changed. A counter shop
+  // that never filled in the owner, phone or address (the API stores them as empty strings) can still save its
+  // tax rate; a field the user edits, or clears, is still checked. With nothing edited, the whole form is checked.
+  const dirtyRef = React.useRef<Record<string, unknown>>({});
+  const profileResolver = React.useMemo<Resolver<ProfileFormValues>>(() => {
+    const schema = profileSchemaFor(canEditTimeZone);
+    return async (values, context, options) => {
+      const mask: Record<string, true> = {};
+      for (const key of Object.keys(schema.shape)) if (dirtyRef.current[key]) mask[key] = true;
+      // Nothing changed: Save has nothing to scope to, so check the whole profile and say what is missing.
+      if (Object.keys(mask).length === 0) return zodResolver(schema)(values, context, options);
+      const res = await zodResolver(schema.pick(mask as never))(values, context, options);
+      // The picked schema strips every other key, so hand back the whole form with the parsed fields on top.
+      return Object.keys(res.errors).length === 0
+        ? { values: { ...values, ...res.values }, errors: {} }
+        : res;
+    };
+  }, [canEditTimeZone]);
 
   const {
     register,
@@ -223,7 +247,7 @@ function BusinessProfileTab() {
     setError,
     formState: { errors, isSubmitting, dirtyFields },
   } = useForm<ProfileFormValues>({
-    resolver: zodResolver(profileSchemaFor(canEditTimeZone)),
+    resolver: profileResolver,
     // onInvalidFocus (handleSubmit's second argument) is the single focus owner.
     shouldFocusError: false,
     defaultValues: {
@@ -241,6 +265,8 @@ function BusinessProfileTab() {
       receiptFooter: "",
     },
   });
+
+  dirtyRef.current = dirtyFields;
 
   React.useEffect(() => {
     if (savedSettings) {
@@ -718,6 +744,7 @@ function EditUserModal({
           onClose();
         },
         onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({ title: "Update failed", description: err.message, variant: "error" }),
       },
     );
@@ -727,7 +754,8 @@ function EditUserModal({
     if (!user) return;
     resetPassword.mutate(user.id, {
       onSuccess: (result) => setTempPassword(result.tempPassword),
-      onError: () => toast({ title: "Failed to reset password", variant: "error" }),
+      onError: (err) =>
+        isReadOnlyRefusal(err) || toast({ title: "Failed to reset password", variant: "error" }),
     });
   };
 
@@ -850,7 +878,8 @@ function UserManagementTab() {
     changeStatus.mutate(
       { id: user.id, status: nextStatus },
       {
-        onError: () => toast({ title: "Failed to update status", variant: "error" }),
+        onError: (err) =>
+          isReadOnlyRefusal(err) || toast({ title: "Failed to update status", variant: "error" }),
       },
     );
   };
@@ -865,10 +894,11 @@ function UserManagementTab() {
         <p className="text-sm text-navy/70">
           {isLoading ? "Loading..." : `${data?.meta.total ?? 0} users total`}
         </p>
-        <Button size="sm" onClick={() => setIsAddOpen(true)}>
+        <WriteButton size="sm" onClick={() => setIsAddOpen(true)}>
           Add User
-        </Button>
+        </WriteButton>
       </div>
+      <ReadOnlyHint className="text-xs text-slate-600" />
 
       <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
         <table className="w-full text-sm">
@@ -990,7 +1020,8 @@ function AIIntegrationsTab() {
         variant: "success",
       });
     },
-    onError: () => toast({ title: "Failed to save API key", variant: "error" }),
+    onError: (err) =>
+      isReadOnlyRefusal(err) || toast({ title: "Failed to save API key", variant: "error" }),
   });
 
   const removeKey = useMutation({
@@ -999,7 +1030,8 @@ function AIIntegrationsTab() {
       qc.invalidateQueries({ queryKey: ["settings", "anthropic"] });
       toast({ title: "API key removed", variant: "success" });
     },
-    onError: () => toast({ title: "Failed to remove key", variant: "error" }),
+    onError: (err) =>
+      isReadOnlyRefusal(err) || toast({ title: "Failed to remove key", variant: "error" }),
   });
 
   const isConfigured = anthropicStatus?.configured === true;
@@ -1404,7 +1436,8 @@ function EmailSettingsTab() {
       });
       qc.invalidateQueries({ queryKey: ["settings", "email"] });
       toast({ title: "Email settings saved", variant: "success" });
-    } catch {
+    } catch (err) {
+      if (showReadOnlyRefusal(err, toast)) return;
       toast({ title: "Failed to save settings", variant: "error" });
     } finally {
       setIsSaving(false);
@@ -2107,7 +2140,8 @@ function MyAccountTab() {
           : "Sign out and back in to access driver features.",
         variant: "success",
       });
-    } catch {
+    } catch (err) {
+      if (isReadOnlyRefusal(err)) return; // the app-wide handler already showed the shared line
       toast({ title: "Failed to update driver access", variant: "error" });
     }
   };
@@ -2254,7 +2288,8 @@ function CostingTab() {
       { costingMethod: method, defaultMarginFloor: floor },
       {
         onSuccess: () => toast({ title: "Costing settings saved", variant: "success" }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Could not save",
             description: "Only admins can change costing settings.",
@@ -2350,7 +2385,8 @@ function RemittanceTab() {
   const save = () => {
     update.mutate(form, {
       onSuccess: () => toast({ title: "Payment info saved", variant: "success" }),
-      onError: () =>
+      onError: (err) =>
+        isReadOnlyRefusal(err) ||
         toast({
           title: "Could not save",
           description: "Only admins can change how-to-pay settings.",
@@ -2485,6 +2521,7 @@ function TierLabelsCard() {
     update.mutate(form, {
       onSuccess: () => toast({ title: "Tier names saved", variant: "success" }),
       onError: (err: any) =>
+        isReadOnlyRefusal(err) ||
         toast({
           title: "Could not save",
           description: err?.response?.data?.message ?? "Please try again.",
@@ -2570,7 +2607,8 @@ function InvoicingTab() {
             description: "Default terms updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
@@ -2590,7 +2628,8 @@ function InvoicingTab() {
             description: "Original price display updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
@@ -2634,7 +2673,9 @@ function InvoicingTab() {
             variant: "success",
           }),
         onError: (err: any) => {
+          // restore the saved value (also when read-only: the typed figure was never saved)
           setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
+          if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
           toast({
             title: "Failed to save",
             description: err?.response?.data?.message ?? "Could not update invoice settings.",
@@ -2655,7 +2696,8 @@ function InvoicingTab() {
             description: "Deposit collection setting updated successfully.",
             variant: "success",
           }),
-        onError: () =>
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
           toast({
             title: "Failed to save",
             description: "Could not update invoice settings.",
@@ -2674,7 +2716,8 @@ function InvoicingTab() {
       });
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast({ title: "Invoice defaults saved", variant: "success" });
-    } catch {
+    } catch (err) {
+      if (showReadOnlyRefusal(err, toast)) return;
       toast({ title: "Failed to save", variant: "error" });
     } finally {
       setSavingDefaults(false);

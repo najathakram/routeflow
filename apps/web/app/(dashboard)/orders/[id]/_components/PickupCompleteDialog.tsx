@@ -8,7 +8,7 @@ import { API_ERROR_CODES } from "@routeflow/types";
 import type { CounterSalePaymentMethod, PickupCompleteResponse } from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
 import {
-  PAYMENT_PROBLEM_COPY,
+  paymentProblemCopy,
   PICKUP_DEAD_INVOICE,
   changeDue,
   clearHeldPickupKey,
@@ -140,7 +140,7 @@ export function PickupCompleteDialog({
       if (unknown) writeHeldPickupKey(storeKey, keyRef.current);
       else clearHeldPickupKey(storeKey);
       setErrorCode(pickupErrorCode(err));
-      setError(pickupCompleteErrorCopy(err));
+      setError(pickupCompleteErrorCopy(err, due ?? undefined));
     }
   }
 
@@ -159,7 +159,7 @@ export function PickupCompleteDialog({
       reference,
       isWalkIn,
     });
-    if (problem) return setError(PAYMENT_PROBLEM_COPY[problem]);
+    if (problem) return setError(paymentProblemCopy(problem, due));
     void send({
       payment: {
         method,
@@ -175,7 +175,7 @@ export function PickupCompleteDialog({
     <Modal
       open={open}
       onClose={onClose}
-      title={`${handOver ? "Hand over" : "Picked up"}${orderNumber ? ` — ${orderNumber}` : ""}`}
+      title={`${handOver ? "Hand over" : "Picked up"}${orderNumber ? ` ${orderNumber}` : ""}`}
       className="max-w-md"
       footer={
         outcome ? (
@@ -199,7 +199,9 @@ export function PickupCompleteDialog({
             <Button variant="ghost" type="button" disabled={complete.isPending} onClick={onClose}>
               Cancel
             </Button>
-            {errorCode === API_ERROR_CODES.PICKUP_KEY_CONFLICT ? (
+            {/* Both mean the order is already handed over: nothing to retry, only to reload what the page shows. */}
+            {errorCode === API_ERROR_CODES.PICKUP_KEY_CONFLICT ||
+            errorCode === API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED ? (
               <Button type="button" onClick={reload}>
                 Reload
               </Button>
@@ -241,8 +243,9 @@ export function PickupCompleteDialog({
               </p>
             ) : (
               <p className="text-sm font-semibold text-navy">
-                Picked up —{" "}
-                {outcome.balanceDue > 0 ? `${money(outcome.balanceDue)} still due` : "paid"}
+                {outcome.balanceDue > 0
+                  ? `Picked up. ${money(outcome.balanceDue)} still due.`
+                  : "Picked up and paid."}
               </p>
             )}
             {unrecorded && (

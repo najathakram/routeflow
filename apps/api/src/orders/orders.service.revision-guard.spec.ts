@@ -1,4 +1,5 @@
 import { buildOrdersService, operatorPayload } from "./testing/orders-service-harness";
+import { InvoicesService } from "../invoices/invoices.service";
 
 /**
  * Row 372 (SA-735 items 2-4, API half), through the REAL updateOrderItems with the harness' mock Prisma:
@@ -72,6 +73,15 @@ describe("updateOrderItems: revision guard, vanished line, B720 (row 372)", () =
     expect(writes()).toBe(0);
   });
 
+  it("a stale edit is refused BEFORE any un-tx'd side effect: no invoice revert, no transaction opened", async () => {
+    const invoices: any = h.module.get(InvoicesService);
+    await expect(
+      edit({ items: [{ id: "li-1", qty: 3 }], expectedRevisionNumber: 2 }),
+    ).rejects.toMatchObject({ response: { code: "ORDER_REVISION_STALE" } });
+    expect(invoices.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
+    expect(h.prisma.tenantTransaction).not.toHaveBeenCalled();
+  });
+
   it("the matching expectedRevisionNumber (and an omitted one) edits as before", async () => {
     await edit({ items: [{ id: "li-1", qty: 3 }], expectedRevisionNumber: 3 });
     expect(h.prisma.orderItem.update).toHaveBeenCalled();
@@ -95,12 +105,49 @@ describe("updateOrderItems: revision guard, vanished line, B720 (row 372)", () =
     expect(got?.revisionNumber).toBe(3);
   });
 
+  it("MF2: reopenOrder revives item-CANCELLED lines, so it appends a SYSTEM_REOPEN revision in the same tx", async () => {
+    h.prisma.order.findUnique.mockResolvedValue({
+      ...MOCK_ORDER,
+      status: "CANCELLED",
+      lineItems: [{ ...line, status: "CANCELLED" }],
+    });
+    h.prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "PENDING", lineItems: [] });
+    h.prisma.order.findUniqueOrThrow.mockResolvedValue({
+      subtotal: 20,
+      tax: 0,
+      total: 20,
+      shippingFee: 0,
+    });
+    h.prisma.invoice.findFirst.mockResolvedValue(null);
+    await h.service.reopenOrder("ord-1");
+    expect(h.prisma.orderItem.updateMany).toHaveBeenCalled();
+    expect(h.prisma.orderRevision.create).toHaveBeenCalledTimes(1);
+    expect(h.prisma.orderRevision.create.mock.calls[0][0].data).toMatchObject({
+      orderId: "ord-1",
+      source: "SYSTEM_REOPEN",
+    });
+  });
+
+  it("the PATCH response carries the revisionNumber the edit produced (a re-opened editor is based on it)", async () => {
+    const edited: any = await edit({ items: [{ id: "li-1", qty: 3 }] });
+    expect(edited.revisionNumber).toBe(3); // latestEditRevisionNumber over the mocked aggregate
+  });
+
   it("a payload line id absent from the locked lines is 409 CONCURRENT_UPDATE, with nothing written (no snapshot fallback)", async () => {
     // the pre-tx snapshot still lists li-1, but under the lock it is gone (another writer deleted it)
     h.prisma.orderItem.findMany.mockResolvedValue([]);
     await expect(edit({ items: [{ id: "li-1", qty: 3 }] })).rejects.toMatchObject({
       response: { code: "CONCURRENT_UPDATE" },
     });
+    expect(writes()).toBe(0);
+  });
+
+  it("a payload line id the order NEVER had stays a 404 (the prior contract), not a 409 CONCURRENT_UPDATE", async () => {
+    // the lock holds li-1 and the pre-tx snapshot listed li-1 only: li-foreign belongs to another order (or none)
+    const err: any = await edit({ items: [{ id: "li-foreign", action: "CANCEL" }] }).catch(
+      (e: any) => e,
+    );
+    expect(err?.response?.code).not.toBe("CONCURRENT_UPDATE");
     expect(writes()).toBe(0);
   });
 

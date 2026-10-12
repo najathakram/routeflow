@@ -105,6 +105,9 @@ function isScalar(v: unknown): boolean {
 export const EXPORT_EXCLUDED_EVENT_TYPES: readonly string[] = [
   "tenant.class_changed",
   "reconciliation.snapshot_backfilled",
+  // SA-736r: MRR-only ledger rows booked when a coupon makes the next invoice $0 (or stops doing so).
+  "coupon.unbilled",
+  "coupon.billed",
 ];
 
 export function projectInvoiceForExport(row: Record<string, unknown>) {
@@ -186,6 +189,7 @@ export const BILLING_EXPORT_SUBSCRIPTION_ADDON_FIELDS = [
   "sku",
   "name",
   "quantity",
+  "comp",
   "monthly",
 ] as const;
 

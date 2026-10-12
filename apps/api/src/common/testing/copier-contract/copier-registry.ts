@@ -371,10 +371,6 @@ export const NOT_A_COPIER: Record<string, string> = {
     "at-door line from the change-request payload",
   "recurring-invoices/recurring-invoices.service.ts::create": "template lines from the request",
   "recurring-invoices/recurring-invoices.service.ts::update": "template lines from the request",
-  // C13: a JSON snapshot (OrderRevision.snapshot.lineItems), not a line model. It DROPS unitLabel,
-  // deliveredQty, promoFreeUnits, categoryTaxAmount and position; readers see boxes for a Case.
-  "orders/orders.service.ts::appendOrderRevision":
-    "C13: JSON snapshot; drops unitLabel deliveredQty promoFreeUnits categoryTaxAmount position",
 };
 
 /** Whole files that write items of OTHER models (the discovery pass matches relation names, not types). */

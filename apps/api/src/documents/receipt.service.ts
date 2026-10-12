@@ -97,6 +97,8 @@ export class ReceiptService {
         counterCashTendered: true,
         // the name and the walk-in flag only: the customer's email is never read, a typed address is never kept
         customer: { select: { businessName: true, isWalkIn: true } },
+        // row 317: the cashier's username only, printed as "Cashier: <name>" (never an email)
+        soldBy: { select: { username: true } },
         lineItems: {
           orderBy: { createdAt: "asc" },
           select: {
@@ -117,6 +119,8 @@ export class ReceiptService {
                 variantName: true,
                 parentProductId: true,
                 parent: { select: { name: true } },
+                // row 317b: the unit word a plain line's detail prints
+                unit: true,
               },
             },
           },
@@ -127,8 +131,17 @@ export class ReceiptService {
             id: true,
             invoiceNumber: true,
             status: true,
-            // the stored line rates the receipt names its tax rate from (pricing's storedTaxRatePercent)
-            items: { select: { taxRate: true } },
+            // the stored line rates the receipt names its tax rate from (pricing's storedTaxRatePercent), and the
+            // levy each line billed with its category name (CQ-03: its own named charge)
+            items: {
+              select: {
+                taxRate: true,
+                categoryTaxAmount: true,
+                trackedCategoryId: true,
+                categoryTaxType: true,
+                trackedCategory: { select: { id: true, name: true, taxType: true } },
+              },
+            },
             // in the order they were taken: the first stored tender decides whether change is served
             payments: {
               orderBy: { createdAt: "asc" },

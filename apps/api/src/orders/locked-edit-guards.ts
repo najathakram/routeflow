@@ -25,15 +25,19 @@ export async function assertRevisionCurrent(
 }
 
 /**
- * Item 3: a payload line id that is not among the LOCKED lines was deleted by another writer. It is a retryable
- * 409, never a fallback to the pre-transaction snapshot (which turned a vanished id into a P2025 or a stale write).
+ * Item 3: a payload line id that WAS on this order when the edit began (the pre-lock snapshot) and is not among the
+ * LOCKED lines was deleted by another writer: a retryable 409, never a fallback to the pre-transaction snapshot
+ * (which turned a vanished id into a P2025 or a stale write). An id the order NEVER had (another order's line, or
+ * none) is not a concurrency matter: it keeps the prior contract, a 404 from the write that scopes by
+ * `{ id, orderId }` (#2563), so it is deliberately left alone here.
  */
 function assertPayloadLinesHeld(
   items: ReadonlyArray<{ id?: string | null }> | undefined,
   heldById: ReadonlyMap<string, unknown>,
+  snapshotById: ReadonlyMap<string, unknown>,
 ): void {
   for (const it of items ?? []) {
-    if (it.id && !heldById.has(it.id)) {
+    if (it.id && !heldById.has(it.id) && snapshotById.has(it.id)) {
       throw new ConflictException({
         code: API_ERROR_CODES.CONCURRENT_UPDATE,
         message: "A line on this order was changed by someone else. Reload and try again.",
@@ -102,7 +106,7 @@ export async function assertLockedEditLines(
     | undefined,
 ): Promise<ReadonlyMap<string, any>> {
   const heldById = new Map<string, any>(heldItems.map((h) => [h.id as string, h]));
-  assertPayloadLinesHeld(items, heldById);
+  assertPayloadLinesHeld(items, heldById, unitCtx.existingById);
   await loadMissingUnitProducts(tx, unitCtx, heldItems, heldById, items ?? []);
   return heldById;
 }
