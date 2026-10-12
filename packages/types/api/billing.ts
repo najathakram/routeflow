@@ -62,7 +62,15 @@ export interface SubscriptionView<TDate = string> {
    *  guard recorded (`"trial_expired"` | `"subscription_cancelled"` | `"trial_cancelled"` | `"payment_overdue"` (SA-733r7: a dunning pause), or
    *  another server-defined string). `null`/absent renders the generic read-only copy. */
   readOnlyReason?: string | null;
-  addons: Array<{ sku: string | null; name: string; quantity: number; monthly: number | null }>;
+  /** `comp: true` is an add-on RouteFlow granted free on purpose (SA-693): never billed, so `monthly` is
+   *  null and the UI shows "Included", never a price. Absent (an older server) reads as a normal paid row. */
+  addons: Array<{
+    sku: string | null;
+    name: string;
+    quantity: number;
+    comp?: boolean;
+    monthly: number | null;
+  }>;
   flags?: string[];
   paymentRequired: boolean;
   /** SA-733r6 (B4) - the dunning clock and the banner's facts. All optional/null: a tenant that never failed a
