@@ -74,6 +74,7 @@ import { CounterReceiptBody } from "./CounterReceiptBody";
 import { CounterCustomerCredit } from "./CounterCustomerCredit";
 import { CounterGateOffline } from "./CounterGateOffline";
 import { CounterCustomerMatches } from "./CounterCustomerMatches";
+import { CounterLastSale, useLastSaleNote } from "./CounterLastSale";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
@@ -175,6 +176,7 @@ export function CounterSaleScreen() {
   const [customer, setCustomer] = React.useState<PickedCustomer | null>(null); // null = Walk-in customer
   const [customerSearch, setCustomerSearch] = React.useState("");
   const [lines, setLines] = React.useState<SaleLine[]>([]);
+  const [lastSale, setLastSale] = useLastSaleNote(lines.length); // CQ-17: the order "Complete & next" just finished
   const [scanText, setScanText] = React.useState("");
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
   const [tendered, setTendered] = React.useState("");
@@ -218,6 +220,11 @@ export function CounterSaleScreen() {
     customerFindRef,
     awaitingCustomerRef,
   });
+  // CQ-18: a refusal shown in the checkout bar belongs to the cart that was refused. Any edit to the cart's lines (a scan, a
+  // quantity, a removal, a re-price) makes it stale, so it goes. The tender has its own rule just below.
+  React.useEffect(() => {
+    setError("");
+  }, [lines]);
   // Fixing the tender clears the "Enter at least $X" message and ONLY that one (never a server or final-sale error).
   const clearUnderpaidError = () => setError((e) => (isTenderShortCopy(e) ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
@@ -599,6 +606,7 @@ export function CounterSaleScreen() {
 
   function resetSale() {
     dropUndo();
+    setLastSale(null);
     setCustomer(null);
     setCustomerSearch("");
     setLines([]);
@@ -765,10 +773,12 @@ export function CounterSaleScreen() {
     const startFresh = next && !unpaid && !figuresDiffer;
     if (autoPrint) {
       // D6: the RECEIPT is rendered first, then printed once (the effect below), and only then does "next" reset.
-      printAfterRenderRef.current = { reset: startFresh };
+      printAfterRenderRef.current = { reset: startFresh, orderNumber: res.orderNumber };
       setReceipt(res);
-    } else if (startFresh) resetSale();
-    else setReceipt(res);
+    } else if (startFresh) {
+      resetSale();
+      setLastSale(res.orderNumber); // CQ-17: after the reset, so the fresh sale names the one just finished
+    } else setReceipt(res);
   };
 
   const completeSale = async (next: boolean, retry = false) => {
@@ -852,13 +862,16 @@ export function CounterSaleScreen() {
   };
 
   // Auto-print: runs after the receipt has committed to the DOM, so the page printed IS the receipt.
-  const printAfterRenderRef = React.useRef<{ reset: boolean } | null>(null);
+  const printAfterRenderRef = React.useRef<{ reset: boolean; orderNumber?: string } | null>(null);
   React.useEffect(() => {
     if (!receipt || !printAfterRenderRef.current) return;
-    const { reset } = printAfterRenderRef.current;
+    const { reset, orderNumber } = printAfterRenderRef.current;
     printAfterRenderRef.current = null;
     window.print(); // once per completed sale
-    if (reset) resetSale();
+    if (reset) {
+      resetSale();
+      if (orderNumber) setLastSale(orderNumber);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [receipt]);
 
@@ -950,6 +963,8 @@ export function CounterSaleScreen() {
           </WriteButton>
         ) : null}
       </div>
+
+      {lastSale ? <CounterLastSale orderNumber={lastSale} /> : null}
 
       <div
         className="flex flex-col gap-4 [&>*]:min-w-0 md:grid md:grid-cols-[minmax(0,1fr)_320px] md:items-start xl:grid-cols-[minmax(0,1fr)_380px]"
