@@ -1364,6 +1364,27 @@ export function CounterSaleScreen() {
                 <span>-{money(discounts)}</span>
               </div>
             ) : null}
+            {/* CQ-08: the number explains itself. Tax and each regulated charge are the same figures the receipt prints. */}
+            <div className="flex justify-between text-sm" data-testid="running-subtotal">
+              <span>Subtotal</span>
+              <span>{money(totals.subtotal)}</span>
+            </div>
+            {totals.tax > 0 ? (
+              <div className="flex justify-between text-sm" data-testid="running-tax">
+                <span>Tax</span>
+                <span>{money(totals.tax)}</span>
+              </div>
+            ) : null}
+            {totals.chargeLines.map((c) => (
+              <div
+                key={c.key}
+                className="flex justify-between text-sm"
+                data-testid={`running-charge-${c.key}`}
+              >
+                <span>{c.label}</span>
+                <span>{money(c.amount)}</span>
+              </div>
+            ))}
             <div className="flex justify-between text-lg font-semibold" data-testid="running-total">
               <span>Estimated total</span>
               <span>{money(totals.total)}</span>

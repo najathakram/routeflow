@@ -133,7 +133,7 @@ describe("preselectFulfilment: mirrors the resolver (the customer's stored path 
 
 describe("cartTotals: money only through @routeflow/pricing", () => {
   it("a loose line is price x qty, cents rounded once", () => {
-    expect(cartTotals([{ unitPrice: 1.005, qty: 3 }], 0)).toEqual({
+    expect(cartTotals([{ unitPrice: 1.005, qty: 3 }], 0)).toMatchObject({
       subtotal: 3.02,
       tax: 0,
       charges: 0,
@@ -145,7 +145,7 @@ describe("cartTotals: money only through @routeflow/pricing", () => {
     expect(t.subtotal).toBe(180);
   });
   it("tax is one roundMoney of the subtotal, total = subtotal + tax", () => {
-    expect(cartTotals([{ unitPrice: 10, qty: 3 }], 0.0825)).toEqual({
+    expect(cartTotals([{ unitPrice: 10, qty: 3 }], 0.0825)).toMatchObject({
       subtotal: 30,
       tax: 2.48,
       charges: 0,
@@ -153,7 +153,7 @@ describe("cartTotals: money only through @routeflow/pricing", () => {
     });
   });
   it("empty cart is zero", () => {
-    expect(cartTotals([], 0.1)).toEqual({ subtotal: 0, tax: 0, charges: 0, total: 0 });
+    expect(cartTotals([], 0.1)).toMatchObject({ subtotal: 0, tax: 0, charges: 0, total: 0 });
   });
 });
 
@@ -169,7 +169,7 @@ describe("cartTotals: the regulated levy and the exempt customer (CQ-01, CQ-02, 
 
   it("CQ-01: the deposit and the excise are in the total the screen shows, as on the receipt", () => {
     // 80.00 + 6.60 tax + 0.40 deposit + 2.00 excise
-    expect(cartTotals(cart, 0.0825, { categories })).toEqual({
+    expect(cartTotals(cart, 0.0825, { categories })).toMatchObject({
       subtotal: 80,
       tax: 6.6,
       charges: 2.4,
@@ -183,7 +183,7 @@ describe("cartTotals: the regulated levy and the exempt customer (CQ-01, CQ-02, 
   });
 
   it("CQ-02: an exempt customer pays $0 tax and $0 levy, so the screen, the order and the invoice agree", () => {
-    expect(cartTotals(cart, 0.0825, { categories, isTaxExempt: true })).toEqual({
+    expect(cartTotals(cart, 0.0825, { categories, isTaxExempt: true })).toMatchObject({
       subtotal: 80,
       tax: 0,
       charges: 0,
@@ -202,7 +202,7 @@ describe("cartTotals: the regulated levy and the exempt customer (CQ-01, CQ-02, 
   it("a line with no category, or a category the list does not know, is just taxed", () => {
     expect(
       cartTotals([{ unitPrice: 10, qty: 1, trackedCategoryId: "gone" }], 0.1, { categories }),
-    ).toEqual({ subtotal: 10, tax: 1, charges: 0, total: 11 });
+    ).toMatchObject({ subtotal: 10, tax: 1, charges: 0, total: 11 });
   });
 });
 

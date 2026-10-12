@@ -1,6 +1,7 @@
 import {
   roundMoney,
   saleTotals,
+  type ChargeLine,
   validCustomer,
   validLine,
   type CategoryTaxType,
@@ -93,6 +94,9 @@ export interface CartLine {
 
 /** A regulated category as the tracked-categories list serialises it (`rate` is a Decimal string). */
 export interface CartCategory {
+  id?: string;
+  /** the category's name: the levy prints as its own named charge ("CRV deposit") */
+  name?: string;
   taxType: string;
   rate: string | number;
   priceIncludesTax?: boolean | null;
@@ -115,7 +119,14 @@ export function cartTotals(
   lines: readonly CartLine[],
   taxRate: number,
   ctx: CartTotalsContext = {},
-): { subtotal: number; tax: number; charges: number; total: number } {
+): {
+  subtotal: number;
+  tax: number;
+  charges: number;
+  total: number;
+  /** the levy as named charges, one per regulated category (CQ-08) */
+  chargeLines: ChargeLine[];
+} {
   const t = saleTotals(
     lines.map((l) => {
       const c = l.trackedCategoryId ? ctx.categories?.get(l.trackedCategoryId) : undefined;
@@ -127,6 +138,8 @@ export function cartTotals(
         unitsPerBox: l.unitsPerBox ?? undefined,
         category: c
           ? {
+              id: c.id ?? l.trackedCategoryId,
+              name: c.name,
               taxType: c.taxType as CategoryTaxType,
               rate: Number(c.rate),
               priceIncludesTax: c.priceIncludesTax ?? false,
@@ -136,7 +149,13 @@ export function cartTotals(
     }),
     { taxRate, isTaxExempt: ctx.isTaxExempt === true },
   );
-  return { subtotal: t.subtotal, tax: t.regularTax, charges: t.categoryTax, total: t.total };
+  return {
+    subtotal: t.subtotal,
+    tax: t.regularTax,
+    charges: t.categoryTax,
+    total: t.total,
+    chargeLines: t.chargeLines,
+  };
 }
 
 export interface QuickTender {
