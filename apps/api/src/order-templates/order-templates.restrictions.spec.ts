@@ -13,7 +13,8 @@ jest.mock("../common/db-locks", () => ({
  *  - the UNATTENDED run skips the banned line(s), orders the rest, notifies once and suspends THAT template
  *    line (an AuditLog row); an all-banned or all-suspended template orders nothing, still with a notice;
  *  - the run's channel follows the template's snapshotted creator through the live predicate, and unknown
- *    provenance (NULL) is the STRICTER buyer channel, never staff;
+ *    provenance (NULL) is the STRICTER buyer channel, never staff, EXCEPT that a legacy template (a NULL role
+ *    beside known staff) is staff-built, so a portal-only limit never suspends its lines (a legal ban still does);
  *  - an edit keeps a line's suspension unless THAT line's product or qty changed (audited lift); an explicit
  *    lift is its own audited action.
  * The choke point itself is proven in `selling-restrictions.service.spec.ts`.
@@ -219,6 +220,25 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
         expect(restrictions.checkLinesSellable).toHaveBeenCalledWith(
           expect.objectContaining({ channel }),
         );
+      },
+    );
+
+    it.each([
+      // [createdByRole, itemsEditedByRole, a portal-only limit is skipped]: legacy provenance (a NULL role beside
+      // known staff) is a staff-built template, so a portal limit never suspends its lines; a legal ban still binds.
+      ["OPERATOR", null, true],
+      [null, "OPERATOR", true],
+      [null, null, true],
+      ["OPERATOR", "OPERATOR", false], // known staff: judged as STAFF, portal-only rules never bind it anyway
+      ["CUSTOMER", null, false], // a buyer authored it: the full portal rules
+      ["OPERATOR", "CUSTOMER", false],
+      ["CUSTOMER", "CUSTOMER", false],
+    ])(
+      "legacy provenance: created by %s, edited by %s skips portal-only limits = %s",
+      async (c, e, skips) => {
+        await run(template({ createdByRole: c, itemsEditedByRole: e }));
+        const arg = restrictions.checkLinesSellable.mock.calls[0][0];
+        expect(Boolean(arg.skipPortalOnlyRules)).toBe(skips);
       },
     );
 

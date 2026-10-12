@@ -144,6 +144,8 @@ export interface SellableLinesParams {
   at?: Date;
   /** As `EvaluateOptions.switchGated`. */
   switchGated?: boolean;
+  /** As `EvaluateOptions.skipPortalOnlyRules`. */
+  skipPortalOnlyRules?: boolean;
 }
 
 export interface EvaluateOptions {
@@ -157,6 +159,12 @@ export interface EvaluateOptions {
    * (the merge warning), so a portal limit alone does not start raising operator alerts.
    */
   switchGated?: boolean;
+  /**
+   * Judge as the portal channel but ignore rules whose surface is BUYER_PORTAL: a portal limit asks to hide a product
+   * from the buyer portal, not to block a staff-built order. A legal ban (surface ALL) still binds. For a standing
+   * order of legacy provenance (a NULL creator/editor role beside known staff), which is staff-built.
+   */
+  skipPortalOnlyRules?: boolean;
 }
 
 /**
@@ -386,7 +394,7 @@ export class SellingRestrictionsService {
       for (const id of p.lineageIds ?? new Set<string>()) lineageIds.add(id);
     }
 
-    const rules: RestrictionRuleFacts[] = await db.sellingRestriction.findMany({
+    const loadedRules: RestrictionRuleFacts[] = await db.sellingRestriction.findMany({
       where: {
         tenantId,
         OR: [
@@ -402,6 +410,10 @@ export class SellingRestrictionsService {
       orderBy: [{ effectiveFrom: "desc" }, { id: "asc" }],
       select: RULE_FACTS_SELECT,
     });
+    // A staff-built run ignores portal-only limits (a legal ban, surface ALL, still binds).
+    const rules = options?.skipPortalOnlyRules
+      ? loadedRules.filter((r) => (r.surface as string) !== "BUYER_PORTAL")
+      : loadedRules;
 
     // Load addresses only when some matching rule could actually need a state.
     const matched = products.flatMap((p) => matchingRules(rules, p, channel, at));
@@ -563,7 +575,12 @@ export class SellingRestrictionsService {
       params.tenantId,
       params.customerId,
       checkable.map((productId) => ({ productId })),
-      { channel: params.channel, at: params.at, switchGated: params.switchGated },
+      {
+        channel: params.channel,
+        at: params.at,
+        switchGated: params.switchGated,
+        skipPortalOnlyRules: params.skipPortalOnlyRules,
+      },
     );
   }
 

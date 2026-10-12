@@ -61,6 +61,21 @@ function leastPrivilegedAuthor(t: {
     : { type: "BUYER" };
 }
 
+/**
+ * A template of LEGACY provenance: a creator or last items-editor role that was never recorded, with every recorded
+ * role staff. It predates provenance and was staff-built, so a portal limit (a request to hide a product from the
+ * portal) must not suspend its lines; a legal ban (surface ALL) still binds it, judged at the stricter channel.
+ */
+function isLegacyStaffBuilt(t: {
+  createdByRole?: string | null;
+  itemsEditedByRole?: string | null;
+}) {
+  const roles = [t.createdByRole, t.itemsEditedByRole];
+  const known = roles.filter((r): r is string => !!r);
+  const staff = (role: string) => restrictionChannelForPrincipal({ role }) === "STAFF";
+  return known.length < roles.length && known.every(staff);
+}
+
 @Injectable()
 export class OrderTemplatesService {
   private readonly logger = new Logger(OrderTemplatesService.name);
@@ -677,6 +692,8 @@ export class OrderTemplatesService {
         customerId,
         lines: live.map((i) => ({ productId: i.productId })),
         channel,
+        // A staff-built legacy template is not suspended by a portal limit; a legal ban still is.
+        ...(isLegacyStaffBuilt(template) ? { skipPortalOnlyRules: true } : {}),
       });
       const banned = new Set(
         verdict.outcome === "BLOCK" || verdict.outcome === "INDETERMINATE"

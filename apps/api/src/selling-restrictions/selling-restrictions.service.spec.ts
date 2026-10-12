@@ -159,6 +159,29 @@ describe("SellingRestrictionsService.evaluate", () => {
     expect(prisma.product.findMany).not.toHaveBeenCalled();
   });
 
+  it("skipPortalOnlyRules: a BUYER_PORTAL-surface rule is ignored, a legal ban (ALL) still binds", async () => {
+    enable(true);
+    withProduct();
+    prisma.sellingRestriction.findMany.mockResolvedValue([
+      dbRule({ id: "portal", jurisdiction: "FEDERAL", states: [], surface: "BUYER_PORTAL" }),
+    ]);
+    const opts = { at: NOW, channel: "BUYER_PORTAL" as const, skipPortalOnlyRules: true };
+    expect((await service.evaluate(T, "c1", [{ productId: "p1" }], opts)).outcome).toBe("ALLOW");
+    // same call without the option: the portal rule binds
+    expect(
+      (
+        await service.evaluate(T, "c1", [{ productId: "p1" }], {
+          ...opts,
+          skipPortalOnlyRules: false,
+        })
+      ).outcome,
+    ).toBe("BLOCK");
+    prisma.sellingRestriction.findMany.mockResolvedValue([
+      dbRule({ id: "ban", jurisdiction: "FEDERAL", states: [], surface: "ALL" }),
+    ]);
+    expect((await service.evaluate(T, "c1", [{ productId: "p1" }], opts)).outcome).toBe("BLOCK");
+  });
+
   it("switchGated: a portal-channel call follows the tenant switch (off = OFF, the rule is never read)", async () => {
     enable(false);
     prisma.sellingRestriction.findMany.mockResolvedValue([
