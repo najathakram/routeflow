@@ -9,7 +9,7 @@ import { EMAIL_CONNECTED_MAILBOX_ADDON, MailboxCard } from "./MailboxCard";
 import { useHashScroll } from "./use-hash-scroll";
 
 /**
- * Settings PR1: the hub list (below lg), the rail (lg and up), the Business card, trailing values, the
+ * Settings PR1: the hub list (below xl), the rail (xl and up), the Business card, trailing values, the
  * shell, and the "nothing lost" parity matrix (brief section 4: every link / anchor / tab key still resolves).
  */
 
@@ -333,6 +333,20 @@ describe("hub list (below xl)", () => {
     expect(screen.getByText("Try: counter, carrier, backorder, time zone")).toBeInTheDocument();
   });
 
+  it("admins still see Needs attention in the list (as PR1a), not only in the xl pane", async () => {
+    seedApi({
+      "/settings/remittance": {},
+      "/settings/stripe-connect": { configured: true, connected: false },
+    });
+    renderWithProviders(<SettingsHub isAdmin />);
+    const list = await screen.findByRole("list", { name: "Needs attention" });
+    expect(
+      within(list)
+        .getAllByRole("link")
+        .map((l) => l.getAttribute("href")),
+    ).toEqual(["/settings?tab=remittance", "/settings#card-payments"]);
+  });
+
   it("operators never get the regulated or product-label rows", () => {
     mockUser = OPERATOR;
     renderWithProviders(<SettingsHub isAdmin={false} />);
@@ -450,7 +464,7 @@ describe("rail (xl and up)", () => {
     renderWithProviders(<SettingsRail isAdmin />);
     const nav = screen.getByRole("navigation", { name: "Settings" });
     expect(within(nav).getByLabelText("Search settings")).toBeInTheDocument();
-    expect(within(nav).getByTestId("business-card")).toBeInTheDocument();
+    expect(within(nav).getByTestId("business-card-rail")).toBeInTheDocument();
     expect(within(nav).getAllByTestId(/^settings-group-/)).toHaveLength(7);
   });
 
@@ -472,7 +486,7 @@ describe("rail (xl and up)", () => {
   it("rail rows and the Business card use an inset focus ring (the aside clips an outer one)", () => {
     renderWithProviders(<SettingsRail isAdmin />);
     expect(row("invoicing").className).toMatch(/focus-visible:ring-inset/);
-    expect(screen.getByTestId("business-card").className).toMatch(/focus-visible:ring-inset/);
+    expect(screen.getByTestId("business-card-rail").className).toMatch(/focus-visible:ring-inset/);
   });
 
   it("rows are compact: label only, no helper line, no 'Admin' tags", () => {
@@ -498,7 +512,11 @@ describe("rail (xl and up)", () => {
   it("highlights on sub-routes too: /settings/billing lights the Business card", () => {
     mockPath = "/settings/billing";
     renderWithProviders(<SettingsRail isAdmin />);
-    expect(screen.getByTestId("business-card")).toHaveAttribute("aria-current", "page");
+    const card = screen.getByTestId("business-card-rail");
+    expect(card).toHaveAttribute("aria-current", "page");
+    // "current" is a tint like the rail rows; the ring is for keyboard focus only
+    expect(card.className).toMatch(/bg-\[var\(--accent-soft\)\]/);
+    expect(card.className).not.toMatch(/(^|\s)ring-2/);
   });
 
   it("in-page anchors become absolute so they work from any settings page", () => {
@@ -539,7 +557,18 @@ describe("shell", () => {
     expect(screen.getByText("page-body")).toBeInTheDocument();
   });
 
-  it("staff at lg get the rail beside the page; below lg the page alone", () => {
+  it("the rail and the pane carry distinct Business card testids", () => {
+    mockDesktop = true;
+    renderWithProviders(
+      <SettingsShell>
+        <SettingsHub isAdmin />
+      </SettingsShell>,
+    );
+    expect(screen.getAllByTestId("business-card-rail")).toHaveLength(1);
+    expect(screen.getAllByTestId("business-card")).toHaveLength(1);
+  });
+
+  it("staff at xl get the rail beside the page; below xl the page alone", () => {
     mockDesktop = true;
     const { unmount } = renderWithProviders(
       <SettingsShell>

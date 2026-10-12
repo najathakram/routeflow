@@ -38,7 +38,7 @@ for (const vp of VIEWPORTS) {
       await expect(search).toBeVisible({ timeout: 15_000 });
       const results = page.getByRole("list", { name: "Search results" });
       const rail = page.getByRole("navigation", { name: "Settings" });
-      if (vp.width >= 1024) await expect(rail).toBeVisible();
+      if (vp.width >= 1280) await expect(rail).toBeVisible();
       else await expect(rail).toHaveCount(0);
 
       await search.fill("carrier");
@@ -51,7 +51,7 @@ for (const vp of VIEWPORTS) {
       await noHorizontalScroll(page);
       await digest.click();
       await expect(page).toHaveURL(/tab=notifications/);
-      if (vp.width >= 1024) {
+      if (vp.width >= 1280) {
         await expect(rail.getByTestId("settings-row-notifications")).toHaveAttribute(
           "aria-current",
           "page",
