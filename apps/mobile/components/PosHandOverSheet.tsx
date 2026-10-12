@@ -29,6 +29,7 @@ export function PosHandOverSheet({
   isWalkIn,
   balanceDue,
   submitting,
+  loading,
   error,
   onCancel,
   onSubmit,
@@ -38,6 +39,8 @@ export function PosHandOverSheet({
   isWalkIn: boolean | null | undefined;
   balanceDue: number;
   submitting?: boolean;
+  /** The invoices' balances are still being read: the tender cannot be judged yet. */
+  loading?: boolean;
   /** Fixed copy for the last failed attempt (never a server message). */
   error?: string | null;
   onCancel: () => void;
@@ -57,6 +60,12 @@ export function PosHandOverSheet({
     }
   }, [visible, balanceDue]);
 
+  // A hand-over in flight must not be abandoned: the outcome is unknown until it answers.
+  const cancel = () => {
+    if (!submitting) onCancel();
+  };
+  const nothingOwed = !loading && balanceDue <= 0;
+
   const submit = (skip: boolean) => {
     const plan = planPosTender({
       isWalkIn,
@@ -75,8 +84,8 @@ export function PosHandOverSheet({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
-      <Pressable style={styles.backdrop} onPress={onCancel} />
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={cancel}>
+      <Pressable style={styles.backdrop} onPress={cancel} />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={styles.sheetWrap}
@@ -88,61 +97,73 @@ export function PosHandOverSheet({
               ? "Take payment now, or hand over and leave the invoice open."
               : "Take payment to hand the order over."}
           </Text>
-          <View style={styles.chips}>
-            {POS_TENDER_METHODS.map((m) => (
-              <Pressable
-                key={m.method}
-                onPress={() => setMethod(m.method)}
-                style={[styles.chip, method === m.method && styles.chipActive]}
-                accessibilityRole="button"
-                accessibilityState={{ selected: method === m.method }}
-              >
-                <Text style={[styles.chipText, method === m.method && styles.chipTextActive]}>
-                  {m.label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-          {method === "CASH" ? (
-            <>
-              <Text style={styles.label}>Amount ($)</Text>
-              <TextInput
-                value={amount}
-                accessibilityLabel="Amount"
-                onChangeText={setAmount}
-                keyboardType="decimal-pad"
-                placeholder={balanceDue.toFixed(2)}
-                placeholderTextColor={ios.label3}
-                style={styles.input}
-              />
-            </>
+          {nothingOwed ? (
+            <Text style={styles.hint}>Nothing is owed on this order.</Text>
           ) : (
-            <Text style={styles.hint}>Pays the balance: ${balanceDue.toFixed(2)}</Text>
-          )}
-          {method === "CHECK" ? (
             <>
-              <Text style={styles.label}>Check number</Text>
-              <TextInput
-                value={reference}
-                accessibilityLabel="Check number"
-                onChangeText={setReference}
-                placeholderTextColor={ios.label3}
-                style={styles.input}
-              />
+              <View style={styles.chips}>
+                {POS_TENDER_METHODS.map((m) => (
+                  <Pressable
+                    key={m.method}
+                    onPress={() => setMethod(m.method)}
+                    style={[styles.chip, method === m.method && styles.chipActive]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: method === m.method }}
+                  >
+                    <Text style={[styles.chipText, method === m.method && styles.chipTextActive]}>
+                      {m.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              {method === "CASH" ? (
+                <>
+                  <Text style={styles.label}>Amount ($)</Text>
+                  <TextInput
+                    value={amount}
+                    accessibilityLabel="Amount"
+                    onChangeText={setAmount}
+                    keyboardType="decimal-pad"
+                    placeholder={balanceDue.toFixed(2)}
+                    placeholderTextColor={ios.label3}
+                    style={styles.input}
+                  />
+                </>
+              ) : (
+                <Text style={styles.hint}>Pays the balance: ${balanceDue.toFixed(2)}</Text>
+              )}
+              {method === "CHECK" ? (
+                <>
+                  <Text style={styles.label}>Check number</Text>
+                  <TextInput
+                    value={reference}
+                    accessibilityLabel="Check number"
+                    onChangeText={setReference}
+                    placeholderTextColor={ios.label3}
+                    style={styles.input}
+                  />
+                </>
+              ) : null}
             </>
-          ) : null}
+          )}
           {problem || error ? <Text style={styles.error}>{problem ?? error}</Text> : null}
           <Pressable
             style={[styles.primary, submitting && { opacity: 0.5 }]}
-            disabled={submitting}
+            disabled={submitting || loading}
             onPress={() => submit(false)}
             accessibilityRole="button"
           >
             <Text style={styles.primaryText}>
-              {submitting ? "Saving…" : `${POS_COPY.handOver} and take payment`}
+              {submitting
+                ? "Saving…"
+                : loading
+                  ? "Loading balance…"
+                  : nothingOwed
+                    ? POS_COPY.handOver
+                    : `${POS_COPY.handOver} and take payment`}
             </Text>
           </Pressable>
-          {posMayHandOverUnpaid(isWalkIn) ? (
+          {posMayHandOverUnpaid(isWalkIn) && !nothingOwed ? (
             <Pressable
               style={styles.secondary}
               disabled={submitting}
@@ -152,7 +173,12 @@ export function PosHandOverSheet({
               <Text style={styles.secondaryText}>{POS_COPY.handOver}, no payment</Text>
             </Pressable>
           ) : null}
-          <Pressable style={styles.secondary} onPress={onCancel} accessibilityRole="button">
+          <Pressable
+            style={[styles.secondary, submitting && { opacity: 0.5 }]}
+            disabled={submitting}
+            onPress={cancel}
+            accessibilityRole="button"
+          >
             <Text style={styles.secondaryText}>Cancel</Text>
           </Pressable>
         </View>

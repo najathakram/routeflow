@@ -125,3 +125,17 @@ export function useSwitchOrderToDelivery() {
     onSuccess: () => invalidateOrderCaches(qc),
   });
 }
+
+/**
+ * The order's live invoices read in full, for their server-computed `balanceDue` (GET /orders/:id
+ * invoices carry no paid figure, so a deposit would otherwise read as the gross total).
+ */
+export function usePickupInvoiceBalances(invoiceIds: readonly string[], enabled: boolean) {
+  return useQuery<{ status: string; total: number; balanceDue?: number }[]>({
+    queryKey: ["invoices", "pickup-balance", ...invoiceIds],
+    enabled: enabled && invoiceIds.length > 0,
+    staleTime: 0,
+    queryFn: () =>
+      Promise.all(invoiceIds.map((id) => apiClient.get(`/invoices/${id}`).then((r) => r.data))),
+  });
+}

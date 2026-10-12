@@ -2011,7 +2011,8 @@ function ProductPickView({
   };
 
   const onSave = (asDraft = false, finish: "invoice" | "confirm" = "invoice") => {
-    pos.finishRef.current = finish;
+    // Not while a submit is in flight: Confirm only mid-flight must not downgrade Confirm & invoice.
+    if (!submittingRef.current) pos.finishRef.current = finish;
     const gate = orderSubmitGate({ hasCustomer: !!customerId, itemCount: totalItems, asDraft });
     if (!gate.ok) {
       alertInfo(gate.title ?? "Can't save yet", gate.message ?? "");

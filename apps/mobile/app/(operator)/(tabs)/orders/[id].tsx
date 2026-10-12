@@ -82,6 +82,7 @@ import {
   pickupCompleteErrorCopy,
   decidePickupResponse,
   posBalanceDue,
+  posLiveInvoices,
   posCanSwitchToDelivery,
   posCutNote,
   posOrderActions,
@@ -93,6 +94,7 @@ import { useCustomer } from "../../../../lib/api/customers";
 import {
   releasePickupKey,
   usePickupComplete,
+  usePickupInvoiceBalances,
   useSwitchOrderToDelivery,
 } from "../../../../lib/api/pos-orders";
 import { statusActions, type StatusAction } from "../../../../lib/order-actions";
@@ -193,6 +195,11 @@ export default function OrderDetailScreen() {
   const [handOverError, setHandOverError] = useState<string | null>(null);
   // Balance the server says is still owed after a 200 whose payment was not recorded (same key retry).
   const [handOverOwed, setHandOverOwed] = useState<number | null>(null);
+  // The order payload's invoices carry no balance: read each live invoice for its server balanceDue.
+  const balances = usePickupInvoiceBalances(
+    posLiveInvoices(order).map((i) => i.id),
+    handOverOpen && isPosOrder(order),
+  );
 
   if (isLoading) {
     return (
@@ -1238,7 +1245,13 @@ export default function OrderDetailScreen() {
       <PosHandOverSheet
         visible={handOverOpen}
         isWalkIn={walkInCustomer?.isWalkIn}
-        balanceDue={handOverOwed ?? posBalanceDue(Number(order.total), order.invoices)}
+        loading={balances.isLoading}
+        balanceDue={
+          handOverOwed ??
+          (balances.data
+            ? posBalanceDue(Number(order.total), balances.data)
+            : posBalanceDue(Number(order.total), order.invoices))
+        }
         submitting={pickupMut.isPending}
         error={handOverError}
         onCancel={() => setHandOverOpen(false)}

@@ -152,20 +152,15 @@ export function posOrderActions(
   }
   if (status === "DELIVERED" && first) {
     const paid = invoices.every((i) => i.status === "PAID");
+    // Record payment opens the first invoice that is not yet PAID; Print the first live one.
+    const target = paid ? first : (invoices.find((i) => i.status !== "PAID") ?? first);
     return [
-      paid
-        ? {
-            key: "printInvoice",
-            label: POS_COPY.printInvoice,
-            tier: "primary",
-            invoiceId: first.id,
-          }
-        : {
-            key: "recordPayment",
-            label: POS_COPY.recordPayment,
-            tier: "primary",
-            invoiceId: first.id,
-          },
+      {
+        key: paid ? "printInvoice" : "recordPayment",
+        label: paid ? POS_COPY.printInvoice : POS_COPY.recordPayment,
+        tier: "primary",
+        invoiceId: target.id,
+      },
     ];
   }
   return [];
@@ -338,6 +333,8 @@ export function planPosTender(input: {
   reference: string;
   balanceDue: number;
 }): PosTenderPlan {
+  // Nothing owed (a fully paid invoice): there is no tender to take, whoever the customer is.
+  if (input.balanceDue <= 0) return { ok: true, body: {} };
   if (input.skip) {
     return posMayHandOverUnpaid(input.isWalkIn)
       ? { ok: true, body: {} }
@@ -417,7 +414,14 @@ export function decidePickupResponse(res: PickupCompleteResponse): PickupDecisio
     kind: "done",
     releaseKey: true,
     message: res.paymentRecorded
-      ? "Handed over"
+      ? (res.change ?? 0) > 0
+        ? `Handed over. Change ${posMoney(res.change ?? 0)}`
+        : "Handed over"
       : "Handed over, but the payment wasn't recorded. Record it on the invoice.",
   };
+}
+
+/** Dollars for a toast: rounded to cents. */
+export function posMoney(n: number): string {
+  return `$${roundMoney(n).toFixed(2)}`;
 }

@@ -322,3 +322,45 @@ describe("Confirm & invoice from a merged DRAFT (row 311)", () => {
     expect(posFinishFailureMessage("invoice", true)).toMatch(/invoice wasn't created/);
   });
 });
+
+describe("hand-over balance, change and zero-owed", () => {
+  it("a $100 invoice with a $40 deposit owes $60 (server balanceDue per invoice)", () => {
+    expect(posBalanceDue(100, [{ status: "SENT", total: 100, balanceDue: 60 }])).toBe(60);
+  });
+  it("only live invoices count; a VOID or WRITTEN_OFF one does not", () => {
+    expect(
+      posBalanceDue(100, [
+        { status: "SENT", total: 100, balanceDue: 60.005 },
+        { status: "VOID", total: 100, balanceDue: 100 },
+        { status: "WRITTEN_OFF", total: 50, balanceDue: 50 },
+      ]),
+    ).toBe(60.01);
+  });
+  it("nothing owed needs no tender, even for a walk-in", () => {
+    const base = { method: "CASH" as const, amountRaw: "", reference: "" };
+    expect(planPosTender({ ...base, isWalkIn: true, skip: false, balanceDue: 0 })).toEqual({
+      ok: true,
+      body: {},
+    });
+    expect(planPosTender({ ...base, isWalkIn: true, skip: true, balanceDue: 0 })).toEqual({
+      ok: true,
+      body: {},
+    });
+  });
+  it("cash change is shown on the done message; absent or zero change adds nothing", () => {
+    const r = (over: Record<string, unknown>) =>
+      ({ paymentRecorded: true, balanceDue: 0, ...over }) as never;
+    expect(decidePickupResponse(r({ change: 3.5 })).message).toBe("Handed over. Change $3.50");
+    expect(decidePickupResponse(r({ change: 0 })).message).toBe("Handed over");
+    expect(decidePickupResponse(r({})).message).toBe("Handed over");
+  });
+  it("Record payment / Print pick the first unpaid live invoice, else the first live one", () => {
+    const a = posOrderActions(
+      { invoices: [inv("PAID", "p"), inv("VOID", "v"), inv("SENT", "u"), inv("PARTIAL", "w")] },
+      "DELIVERED",
+    );
+    expect(a[0]).toMatchObject({ key: "recordPayment", invoiceId: "u" });
+    const paid = posOrderActions({ invoices: [inv("VOID", "v"), inv("PAID", "p")] }, "DELIVERED");
+    expect(paid[0]).toMatchObject({ key: "printInvoice", invoiceId: "p" });
+  });
+});
