@@ -35,6 +35,7 @@ const TAB_KEYS = [
   "gohighlevel",
   "account",
   "regulated",
+  "fulfilment",
 ];
 
 const admin = buildIndex({ isAdmin: true, fleet: true });
@@ -125,8 +126,9 @@ describe("#3320 review folds", () => {
     expect(byId("margin-floors")?.desc).toMatch(/warn/i);
   });
 
-  it("N4 card payments reads as a hub card, not a billing page", () => {
-    expect(byId("card-payments")?.groupKey).toBe("hub");
+  it("N4 card payments reads as a payments row (a card on the hub, not a billing page)", () => {
+    expect(byId("card-payments")?.groupKey).toBe("payments");
+    expect(byId("card-payments")?.href).toBe("/settings#card-payments");
   });
 
   it("N5 regulated sections and product labels answer the restriction words", () => {

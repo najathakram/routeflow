@@ -18,13 +18,13 @@ jest.mock("./BuyerOversellCard", () => ({
 }));
 
 const TITLES = [
+  "How you sell",
   "Business & team",
-  "Selling & catalog",
-  "Orders & stock",
+  "Invoicing & payments",
+  "Selling & pricing",
   "Notifications",
   "Compliance",
-  "Integrations",
-  "Billing",
+  "Integrations & import",
 ];
 
 beforeEach(() => {
@@ -32,7 +32,7 @@ beforeEach(() => {
 });
 
 const SECTION_IDS: Record<string, string> = {
-  "Selling & catalog": "selling",
+  "Selling & pricing": "selling",
   Compliance: "compliance",
 };
 
@@ -55,9 +55,9 @@ describe("SettingsHub regroup", () => {
     expect(screen.getAllByText("Invoicing").length).toBeGreaterThan(0);
   });
 
-  it("lists Selling restrictions under both Selling & catalog and Compliance", () => {
+  it("lists Selling restrictions under both Selling & pricing and Compliance", () => {
     renderWithProviders(<SettingsHub isAdmin />);
-    for (const t of ["Selling & catalog", "Compliance"]) {
+    for (const t of ["Selling & pricing", "Compliance"]) {
       const link = within(section(t)).getByRole("link", { name: /selling restrictions/i });
       expect(link).toHaveAttribute("href", "/settings/restrictions");
     }
@@ -65,8 +65,7 @@ describe("SettingsHub regroup", () => {
 
   it("operators see Selling restrictions in both groups (read-only page)", () => {
     renderWithProviders(<SettingsHub isAdmin={false} />);
-    for (const t of ["Selling & catalog", "Compliance"]) {
-      // Compliance collapses to a single card for operators (other items are admin-only).
+    for (const t of ["Selling & pricing", "Compliance"]) {
       const hrefs = within(section(t))
         .getAllByRole("link")
         .map((l) => l.getAttribute("href"));
@@ -108,7 +107,7 @@ describe("SettingsHub regroup", () => {
       .getAllByRole("link")
       .filter((l) => l.getAttribute("href") === "/settings/restrictions");
     expect(hrefs).toHaveLength(2);
-    expect(screen.getByText("Selling & catalog › Selling restrictions")).toBeInTheDocument();
+    expect(screen.getByText("Selling & pricing › Selling restrictions")).toBeInTheDocument();
     expect(screen.getByText("Compliance › Selling restrictions")).toBeInTheDocument();
   });
 
@@ -148,7 +147,7 @@ describe("SettingsHub regroup", () => {
     expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
   });
 
-  it("lists Out-of-stock ordering under Orders & stock and mounts its card at the anchor", () => {
+  it("lists Out-of-stock ordering under How you sell and mounts its card at the anchor", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     const link = screen
       .getAllByRole("link")
@@ -238,7 +237,9 @@ describe("SettingsHub search speaks the user's words", () => {
   it("2: 'stock' lists Out-of-stock ordering, not Route defaults or Batch invoice import", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     search("stock");
-    expect(within(results()).getByText("Out-of-stock ordering")).toBeInTheDocument();
+    expect(
+      within(results()).getByRole("link", { name: /^Out-of-\s*stock ordering/ }),
+    ).toBeInTheDocument();
     expect(within(results()).queryByText("Route defaults")).not.toBeInTheDocument();
     expect(within(results()).queryByText("Batch invoice import")).not.toBeInTheDocument();
   });
@@ -268,11 +269,11 @@ describe("SettingsHub search speaks the user's words", () => {
     expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
   });
 
-  it("6: 'invoice terms' lists Payment terms under Selling & catalog > Invoicing", () => {
+  it("6: 'invoice terms' lists Payment terms under Invoicing & payments > Invoicing", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     search("invoice terms");
     const row = within(results()).getByRole("link", { name: /Payment terms/ });
-    expect(within(row).getByText("Selling & catalog › Invoicing")).toBeInTheDocument();
+    expect(within(row).getByText("Invoicing & payments › Invoicing")).toBeInTheDocument();
   });
 
   it("7: 'restrictions' gives exactly two links to the restrictions page", () => {
