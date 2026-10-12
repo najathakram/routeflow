@@ -1,6 +1,6 @@
 "use client";
 
-import { priceUnitWord } from "@/lib/product-unit-label";
+import { priceRowLabel } from "@/lib/product-unit-label";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import * as React from "react";
 import Link from "next/link";
@@ -1777,7 +1777,10 @@ export default function ProductDetailPage() {
                     }
                   />
                   <InfoRow
-                    label={`Price per ${priceUnitWord(isEditing ? (editDraft.unit as string) : product.unit)} (${tierLabel(tierLabels, 1)})`}
+                    label={priceRowLabel(
+                      isEditing ? (editDraft.unit as string) : product.unit,
+                      tierLabel(tierLabels, 1),
+                    )}
                     value={
                       isEditing ? (
                         <>
