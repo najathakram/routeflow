@@ -72,7 +72,7 @@ import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
-import { remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { invoiceTaxSplit, remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
@@ -1468,6 +1468,22 @@ export default function InvoiceDetailPage() {
     () => new Map((invTrackedCategories ?? []).map((c) => [c.id, c])),
     [invTrackedCategories],
   );
+  // CQ-03: the levy is its own named charge under Tax. Names come from ALL categories (an inactive one still bills).
+  const { data: allTrackedCategories } = useTrackedCategories({}, { enabled: !!invoice });
+  const taxSplit = React.useMemo(() => {
+    const byId = new Map(
+      (Array.isArray(allTrackedCategories) ? allTrackedCategories : []).map((c) => [c.id, c]),
+    );
+    return invoiceTaxSplit(
+      invoice?.taxAmount,
+      (invoice?.items ?? []).map((it) => ({
+        categoryTaxAmount: it.categoryTaxAmount,
+        trackedCategoryId: it.trackedCategoryId,
+        categoryTaxType: it.categoryTaxType,
+        trackedCategory: it.trackedCategoryId ? (byId.get(it.trackedCategoryId) ?? null) : null,
+      })),
+    );
+  }, [invoice, allTrackedCategories]);
   const sectionedRows = React.useMemo(() => {
     const its = invoice?.items ?? [];
     const inline: typeof its = [];
@@ -2475,7 +2491,8 @@ export default function InvoiceDetailPage() {
               <InvoiceTotalsSummary
                 subtotal={Number(invoice.subtotal)}
                 discount={discount}
-                taxAmount={Number(invoice.taxAmount ?? 0)}
+                taxAmount={taxSplit.tax}
+                chargeLines={taxSplit.charges}
                 shippingFee={shippingFee}
                 amountPaid={amountPaid}
                 creditApplied={creditApplied}

@@ -6,7 +6,13 @@ import {
   ReturnStatus,
   type Prisma,
 } from "@prisma/client";
-import { cashierNameOf, roundMoney, storedTaxRatePercent, sumConfirmed } from "@routeflow/pricing";
+import {
+  billedChargeLines,
+  cashierNameOf,
+  roundMoney,
+  storedTaxRatePercent,
+  sumConfirmed,
+} from "@routeflow/pricing";
 import type {
   TodaysSaleMethod,
   TodaysSalePaymentState,
@@ -237,8 +243,17 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
             orderBy: { createdAt: "asc" },
             select: { method: true, amount: true, status: true },
           },
-          // the stored line rates the sale's tax rate is read from (pricing's storedTaxRatePercent)
-          items: { select: { taxRate: true } },
+          // the stored line rates the sale's tax rate is read from (pricing's storedTaxRatePercent), and the
+          // levy each line billed with its category (CQ-03: named charges on the reprint)
+          items: {
+            select: {
+              taxRate: true,
+              categoryTaxAmount: true,
+              trackedCategoryId: true,
+              categoryTaxType: true,
+              trackedCategory: { select: { id: true, name: true, taxType: true } },
+            },
+          },
         },
       },
       returns: {
@@ -281,8 +296,18 @@ export interface TodayOrderRecord {
     invoiceNumber: string | null;
     status: string;
     payments: Array<{ method: string; amount: unknown; status: string }>;
-    /** SA-764: each line's stored tax rate (a fraction, 0.0825) */
-    items?: Array<{ taxRate: unknown }>;
+    /** SA-764: each line's stored tax rate (a fraction, 0.0825); CQ-03: its billed levy and category */
+    items?: Array<{
+      taxRate: unknown;
+      categoryTaxAmount?: unknown;
+      trackedCategoryId?: string | null;
+      categoryTaxType?: string | null;
+      trackedCategory?: {
+        id?: string | null;
+        name?: string | null;
+        taxType?: string | null;
+      } | null;
+    }>;
   }>;
   returns: Array<{
     id: string;
@@ -405,6 +430,8 @@ export function toTodaysSaleRow(
       live.map((i) => ({ lines: i.items ?? [] })),
       configuredTaxPercent,
     ),
+    // CQ-03: the deposit / excise the live invoices billed, each its own named charge
+    charges: billedChargeLines(live.flatMap((i) => i.items ?? [])),
     returned: { amount: returnedAmount, state: returnState, returns },
     voided,
   };

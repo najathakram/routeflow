@@ -163,6 +163,12 @@ export function CounterReceiptView({
             <dd>{money(m.tax)}</dd>
           </div>
         ) : null}
+        {m.charges.map((c) => (
+          <div key={c.key} className="flex justify-between" data-testid={`receipt-charge-${c.key}`}>
+            <dt>{c.label}</dt>
+            <dd>{money(c.amount)}</dd>
+          </div>
+        ))}
         {m.adjustments !== 0 ? (
           <div className="flex justify-between" data-testid="receipt-adjustment">
             <dt>Adjustments</dt>

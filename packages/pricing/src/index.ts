@@ -29,5 +29,6 @@ export * from "./pending-unit";
 export * from "./invoice-totals";
 export * from "./sale-totals";
 export * from "./charge-lines";
+export * from "./receipt-figures";
 export * from "./unit-words";
 export * from "./counter-park";

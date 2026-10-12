@@ -516,6 +516,11 @@ export class CounterSaleService {
             unitPrice: true,
             originalPrice: true,
             priceType: true,
+            // CQ-03: the levy each line billed and its category name, so the receipt prints it as its own charge
+            categoryTaxAmount: true,
+            trackedCategoryId: true,
+            categoryTaxType: true,
+            trackedCategory: { select: { id: true, name: true, taxType: true } },
           },
           // a deterministic base order (row 322a); the read-back then sorts by scan position (inScanOrder)
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],

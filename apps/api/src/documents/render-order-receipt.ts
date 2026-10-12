@@ -44,6 +44,7 @@ function totalsOf(m: ReceiptModel): Array<[string, string, boolean]> {
   const rows: Array<[string, string, boolean]> = [["Subtotal", money(m.subtotal), false]];
   if (m.discounts > 0) rows.push(["Discounts", `-${money(m.discounts)}`, false]);
   if (m.tax !== 0) rows.push([taxRowLabel(m.taxRatePercent), money(m.tax), false]);
+  for (const c of m.charges) rows.push([c.label, money(c.amount), false]);
   if (m.adjustments !== 0) rows.push(["Adjustments", money(m.adjustments), false]);
   rows.push(["Total", money(m.total), true]);
   if (m.methodLabel) rows.push(["Payment method", m.methodLabel, false]);

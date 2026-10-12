@@ -205,6 +205,7 @@ function Reprint({
               isWalkIn: row.isWalkIn,
             }),
             taxRatePercent: row.taxRatePercent,
+            charges: row.charges,
             timezone,
           },
         })

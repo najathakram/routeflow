@@ -1,5 +1,10 @@
 import { InternalServerErrorException } from "@nestjs/common";
-import { roundMoney, storedTaxRatePercent, sumConfirmed } from "@routeflow/pricing";
+import {
+  billedChargeLines,
+  roundMoney,
+  storedTaxRatePercent,
+  sumConfirmed,
+} from "@routeflow/pricing";
 import type { CounterSalePaymentMethod, CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { CounterSaleDto } from "./counter-sale.dto";
@@ -19,6 +24,11 @@ export type InvoiceRow = {
     unitPrice?: unknown;
     originalPrice?: unknown;
     priceType?: string | null;
+    /** the levy this line billed (0 for an exempt customer) and its category: the receipt names it (CQ-03) */
+    categoryTaxAmount?: unknown;
+    trackedCategoryId?: string | null;
+    trackedCategory?: { id?: string | null; name?: string | null; taxType?: string | null } | null;
+    categoryTaxType?: string | null;
   }>;
   payments?: Array<{ id: string; amount: unknown; method?: string; status?: string }>;
 };
@@ -189,6 +199,8 @@ export function buildCounterSaleResponse(input: {
     ...(order.tax != null
       ? {
           tax: roundMoney(Number(order.tax)),
+          // CQ-03: the deposit / excise the invoices billed, each its own named charge (never inside Tax)
+          charges: billedChargeLines(invoices.flatMap((i) => i.items ?? [])),
           taxRatePercent: storedTaxRatePercent(
             invoices.map((i) => ({ lines: i.items ?? [] })),
             input.configuredTaxPercent,
