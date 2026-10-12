@@ -9,10 +9,10 @@ import {
   useUploadPaymentImage,
   useInvoices,
   type StandalonePaymentDto,
-  type InvoiceStatus,
 } from "@/lib/api/invoices";
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { fmt } from "@/lib/formatting";
+import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { clampAllocationInput } from "@/lib/payment-allocation";
 import {
   SELECTABLE_PAYMENT_METHODS,
@@ -27,10 +27,8 @@ const BANK_DATE_LABEL = "Money received in bank";
 const BANK_DATE_HELP =
   "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
 
-/** Statuses an invoice can be paid against. Mirrors finance/payments/page.tsx's
- *  OPEN_STATUSES — filtered client-side, since ListInvoicesDto validates
- *  `status` as a single enum value (a comma-list 400s server-side). */
-const OPEN_STATUSES: InvoiceStatus[] = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+// An invoice can be paid against the open statuses (isOpenInvoiceStatus) — filtered client-side, since
+// ListInvoicesDto validates `status` as a single enum value (a comma-list 400s server-side).
 
 interface AllocRow {
   invoiceId: string;
@@ -84,7 +82,7 @@ export function CustomerRecordPaymentModal({
   // IS the pre-fill allocation order.
   const openInvoices = React.useMemo(() => {
     const rows = (invoicesData?.data ?? []).filter(
-      (inv) => OPEN_STATUSES.includes(inv.status) && (inv.balanceDue ?? 0) > 0.001,
+      (inv) => isOpenInvoiceStatus(inv.status) && (inv.balanceDue ?? 0) > 0.001,
     );
     return [...rows].sort((a, b) => {
       const ad = a.issueDate ?? "";
