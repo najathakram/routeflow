@@ -1,4 +1,4 @@
-import { isPaidAtSale } from "./invoice-sale-terms";
+import { isPaidAtSale, termsAndConditionsToShow } from "./invoice-sale-terms";
 
 const base = {
   status: "PAID",
@@ -29,5 +29,30 @@ describe("isPaidAtSale (CQ-26)", () => {
     expect(isPaidAtSale({ ...base, createdAt: undefined })).toBe(false);
     expect(isPaidAtSale({ ...base, payments: [{}] })).toBe(false);
     expect(isPaidAtSale(null)).toBe(false);
+  });
+});
+
+describe("termsAndConditionsToShow (CQ-26 follow-up)", () => {
+  const paid = { ...base, paymentTermsLabel: "Net 30" };
+  it("a paid-at-sale invoice drops a T&C text that is only the payment terms", () => {
+    expect(termsAndConditionsToShow({ ...paid, terms: "Net 30" })).toBeNull();
+    expect(
+      termsAndConditionsToShow({ ...paid, terms: " Due on Receipt ", paymentTermsLabel: null }),
+    ).toBeNull();
+  });
+  it("a real long-form T&C text stays on a paid-at-sale invoice", () => {
+    expect(termsAndConditionsToShow({ ...paid, terms: "All sales final." })).toBe(
+      "All sales final.",
+    );
+  });
+  it("any other invoice keeps its text, payment terms included", () => {
+    expect(termsAndConditionsToShow({ ...paid, status: "SENT", terms: "Net 30" })).toBe("Net 30");
+    expect(
+      termsAndConditionsToShow({ ...paid, order: { counterSale: false }, terms: "Net 30" }),
+    ).toBe("Net 30");
+  });
+  it("no text is no row", () => {
+    expect(termsAndConditionsToShow({ ...paid, terms: "  " })).toBeNull();
+    expect(termsAndConditionsToShow(null)).toBeNull();
   });
 });
