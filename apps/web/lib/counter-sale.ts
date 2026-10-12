@@ -314,6 +314,18 @@ export function isCounterSaleChanged(err: unknown): boolean {
   return res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_CHANGED;
 }
 
+/**
+ * A message that says something about a sale that EXISTS (voided or changed after it was rung, or saved without payment for a
+ * closed day). Unlike a stale refusal it stays when the cart is edited, because editing the cart does not undo it (CQ-18).
+ */
+export function isFinalSaleMessage(message: string): boolean {
+  return (
+    message === COUNTER_SALE_VOIDED_COPY ||
+    message === COUNTER_SALE_CHANGED_COPY ||
+    message === COUNTER_SALE_DAY_CLOSED_TILL_COPY
+  );
+}
+
 /** The fixed copy of a FINAL answer (voided / changed after it was rung), else null: such a sale is never retried. */
 export function finalCounterSaleCopy(err: unknown): string | null {
   if (isCounterSaleVoided(err)) return COUNTER_SALE_VOIDED_COPY;

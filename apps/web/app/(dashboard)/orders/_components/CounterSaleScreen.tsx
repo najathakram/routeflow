@@ -57,6 +57,7 @@ import {
   isCounterSaleIncomplete,
   isCounterSaleNotFound,
   isDefinitiveCounterSaleRefusal,
+  isFinalSaleMessage,
   isNotSentOffline,
   newIdempotencyKey,
   paymentMethodOptions,
@@ -219,9 +220,10 @@ export function CounterSaleScreen() {
     awaitingCustomerRef,
   });
   // CQ-18: a refusal shown in the checkout bar belongs to the cart that was refused. Any edit to the cart's lines (a scan, a
-  // quantity, a removal, a re-price) makes it stale, so it goes. The tender has its own rule just below.
+  // quantity, a removal, a re-price) makes it stale, so it goes. A FINAL message (the sale was voided / changed / saved
+  // unpaid) is about a sale that exists and stays. The tender has its own rule just below.
   React.useEffect(() => {
-    setError("");
+    setError((e) => (isFinalSaleMessage(e) ? e : ""));
   }, [lines]);
   // Fixing the tender clears the "Enter at least $X" message and ONLY that one (never a server or final-sale error).
   const clearUnderpaidError = () => setError((e) => (isTenderShortCopy(e) ? "" : e));

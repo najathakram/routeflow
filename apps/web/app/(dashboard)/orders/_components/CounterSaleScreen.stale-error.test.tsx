@@ -1,5 +1,7 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
+import { API_ERROR_CODES } from "@routeflow/types";
+import { COUNTER_SALE_VOIDED_COPY } from "@/lib/counter-sale";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
@@ -92,6 +94,19 @@ describe("CounterSaleScreen: a refusal goes when the cart changes (CQ-18)", () =
     await refused();
     fireEvent.click(screen.getByRole("button", { name: "Remove Cola" }));
     expect(screen.queryByText(CHANGED)).toBeNull();
+  });
+
+  it("a FINAL message (the sale was voided) stays when the cart is edited", async () => {
+    mutateAsync.mockRejectedValue({
+      response: { status: 409, data: { code: API_ERROR_CODES.COUNTER_SALE_VOIDED } },
+    });
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("COLA");
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(COUNTER_SALE_VOIDED_COPY);
+    await scan("WATER", "Water");
+    expect(screen.getByRole("alert")).toHaveTextContent(COUNTER_SALE_VOIDED_COPY);
   });
 
   it("without an edit the refusal stays put", async () => {
