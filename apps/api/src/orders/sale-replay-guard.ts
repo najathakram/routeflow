@@ -9,8 +9,8 @@ export type StoredSaleState = "live" | "incomplete" | "voided" | "changed";
  * createSale's replay guard (which separates a moved order BEFORE asking, see assertSaleReplayable):
  *  - voided: the order is CANCELLED, or there is at least one invoice and EVERY one is VOID / WRITTEN_OFF;
  *  - incomplete: a PENDING or DELIVERED order with NO invoice rows at all, OR whose live invoice is still a DRAFT
- *    (createSale sends every invoice before the tender, so an unsent DRAFT means the send step never finished and no
- *    payment can exist). A re-POST with the same key finishes it; by-key must say so, never "done";
+ *    (createSale sends every invoice before the tender, so a DRAFT means the send step never finished, or the office
+ *    pulled the invoice back to draft). A re-POST with the same key finishes it; by-key must say so, never "done";
  *  - changed: an order in any OTHER status (CONFIRMED, OUT_FOR_DELIVERY, PARTIALLY_DELIVERED, ...) with NO invoice
  *    rows: staff moved it on and nothing can be read back;
  *  - live: anything else, which includes a PAID sale that staff moved to CONFIRMED or PARTIALLY_DELIVERED (a live

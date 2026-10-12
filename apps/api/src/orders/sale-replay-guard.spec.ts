@@ -25,10 +25,13 @@ describe("storedSaleState", () => {
     expect(storedSaleState("DELIVERED", ["SENT", "DRAFT"])).toBe("incomplete");
     // a voided sibling does not hide a live DRAFT
     expect(storedSaleState("DELIVERED", ["VOID", "DRAFT"])).toBe("incomplete");
+    // INTENDED: a sibling the office pulled back to draft (reopen) reads incomplete too; a held till then re-POSTs the
+    // same key, which re-sends it (the tender only records the shortfall, so there is no double charge)
+    expect(storedSaleState("DELIVERED", ["PAID", "DRAFT"])).toBe("incomplete");
   });
 
   it("PIN: a fully sent (or paid, overdue, partial) sale reads live; so does a moved-on order with a DRAFT", () => {
-    for (const s of ["SENT", "PAID", "PARTIALLY_PAID", "OVERDUE"]) {
+    for (const s of ["SENT", "VIEWED", "PAID", "PARTIAL", "OVERDUE"]) {
       expect(storedSaleState("DELIVERED", [s])).toBe("live");
     }
     expect(storedSaleState("DELIVERED", ["SENT", "PAID"])).toBe("live");

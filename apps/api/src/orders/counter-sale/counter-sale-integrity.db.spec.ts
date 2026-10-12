@@ -622,6 +622,19 @@ describeDb("Counter Sale integrity, the real chain on Postgres (row 383)", () =>
 
     // Row 383 (P1, FIXED here): storedSaleState() used to call an order whose only invoice is an unsent DRAFT "live", so
     // by-key answered 200 {paymentRecorded: true} for a half sale and the till stopped retrying. It is now "incomplete".
+    it("RED-FIRST (the till's own path): an ON_ACCOUNT half sale read WITH its method is also 409 INCOMPLETE, not a receipt for an unsent DRAFT", async () => {
+      const k = key();
+      const spy = jest.spyOn(invoices, "send").mockRejectedValueOnce(new Error("send unavailable"));
+      await expect(ring(A, k, { payment: { method: "ON_ACCOUNT" } as Pay })).rejects.toThrow(
+        /send unavailable/,
+      );
+      spy.mockRestore();
+      // the real till passes its method to by-key; the old rule answered 200 paymentRecorded:true for ON_ACCOUNT
+      await expect(
+        tenantCtx.run(A.tenantId, () => service.byKey(k, "ON_ACCOUNT" as never)),
+      ).rejects.toMatchObject({ response: { code: "COUNTER_SALE_INCOMPLETE" } });
+    });
+
     it("RED-FIRST: after the send step failed (invoice DRAFT, no payment) by-key is 409 COUNTER_SALE_INCOMPLETE, and the same-key re-POST finishes it", async () => {
       const k = key();
       const spy = jest.spyOn(invoices, "send").mockRejectedValueOnce(new Error("send unavailable"));
