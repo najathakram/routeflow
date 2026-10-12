@@ -1,4 +1,5 @@
 import { buildOrdersService, operatorPayload } from "./testing/orders-service-harness";
+import { InvoicesService } from "../invoices/invoices.service";
 
 /**
  * Row 372 (SA-735 items 2-4, API half), through the REAL updateOrderItems with the harness' mock Prisma:
@@ -70,6 +71,15 @@ describe("updateOrderItems: revision guard, vanished line, B720 (row 372)", () =
       edit({ items: [{ id: "li-1", qty: 3 }], expectedRevisionNumber: 2 }),
     ).rejects.toMatchObject({ response: { code: "ORDER_REVISION_STALE" } });
     expect(writes()).toBe(0);
+  });
+
+  it("a stale edit is refused BEFORE any un-tx'd side effect: no invoice revert, no transaction opened", async () => {
+    const invoices: any = h.module.get(InvoicesService);
+    await expect(
+      edit({ items: [{ id: "li-1", qty: 3 }], expectedRevisionNumber: 2 }),
+    ).rejects.toMatchObject({ response: { code: "ORDER_REVISION_STALE" } });
+    expect(invoices.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
+    expect(h.prisma.tenantTransaction).not.toHaveBeenCalled();
   });
 
   it("the matching expectedRevisionNumber (and an omitted one) edits as before", async () => {
