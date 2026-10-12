@@ -1,5 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
+import { assertSafeTextCell } from "../common/safe-text-cell";
 import {
   addressStateFields,
   restoredStateFields,
@@ -40,6 +41,9 @@ export async function setChosenAddressState(
   customerId?: string,
 ): Promise<number> {
   assertIds(tenantId, addressIds);
+  // The chosen state is a normalised code, but the text-cell write guard is the one door every
+  // writer of a guarded address cell goes through (text-cell-writer-scan.spec.ts).
+  assertSafeTextCell({ state: chosenState });
   const { count } = await tx.customerAddress.updateMany({
     where: {
       tenantId,
@@ -75,6 +79,7 @@ export async function createMinimalAddresses(
     tenantId,
     rows.flatMap((r) => [r.id, r.customerId]),
   );
+  for (const r of rows) assertSafeTextCell({ state: chosenState, zip: r.zip });
   const { count } = await tx.customerAddress.createMany({
     data: rows.map((r) => ({
       id: r.id,
