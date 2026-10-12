@@ -74,6 +74,7 @@ import {
 } from "../_components/use-order-inline-return-save";
 import { OrderReturnsPanel } from "./_components/OrderReturnsPanel";
 import { useOrderOverpayGuard } from "./_components/OrderOverpayNotice";
+import { useOrderStaleRevision } from "./_components/OrderStaleNotice";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -1955,7 +1956,7 @@ export default function OrderDetailPage() {
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
   const guardError = (retry: () => void) => (err: unknown) => {
-    if (overpay.capture(err)) return;
+    if (overpay.capture(err) || stale.capture(err)) return;
     const restricted = parseSellingRestricted(err);
     if (restricted) {
       setRestrictedBlock(restricted);
@@ -1978,7 +1979,10 @@ export default function OrderDetailPage() {
   // Item editing
   const [isEditing, setIsEditing] = React.useState(false);
   const overpay = useOrderOverpayGuard(order, isEditing);
-  const updateItems = useUpdateOrderItems({ localErrorToast: overpay.ownsToast });
+  const stale = useOrderStaleRevision(order, isEditing); // row 372
+  const updateItems = useUpdateOrderItems({
+    localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
+  });
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
   const [pendingDeletes, setPendingDeletes] = React.useState<string[]>([]);
   const [draftAutoEntered, setDraftAutoEntered] = React.useState(false);
@@ -2245,6 +2249,7 @@ export default function OrderDetailPage() {
         id: order!.id,
         items: updates,
         replaceAll: false,
+        expectedRevisionNumber: stale.expected(), // row 372: the revision this editor loaded
         ...(feeChanged ? { shippingFee: editShippingFee } : {}),
         // Credit-note selection: only sent when the operator actually touched
         // the picker — undefined on the wire leaves the server's stored
@@ -2932,6 +2937,7 @@ export default function OrderDetailPage() {
                   applied when you save.
                 </p>
                 {overpay.node}
+                {stale.node}
                 <EditableLineItems
                   items={editItems}
                   onChange={setEditItems}
