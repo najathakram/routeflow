@@ -1,5 +1,6 @@
 import { ExecutionContext, ForbiddenException } from "@nestjs/common";
-import { TenantStatusGuard, READ_ONLY_ALLOWED_MUTATIONS } from "./tenant-status.guard";
+import { TenantStatusGuard } from "./tenant-status.guard";
+import { READ_ONLY_ALLOWED_MUTATIONS } from "./read-only-registry";
 import { PrismaService } from "../prisma/prisma.service";
 
 const token = `h.${Buffer.from(JSON.stringify({ tenantId: "t1" })).toString("base64url")}.s`;
@@ -195,18 +196,18 @@ describe("TenantStatusGuard - READ_ONLY allow-list (B4 pin)", () => {
     expect((err.getResponse() as { code: string }).code).toBe("READ_ONLY");
   });
 
-  it("pins the allow-list entries EXACTLY (anchored patterns; the day-close ones match nothing on bases without SA-750)", () => {
-    expect(READ_ONLY_ALLOWED_MUTATIONS.map((e) => [e.methods, e.pattern])).toEqual([
+  it("pins the allow-list entries EXACTLY (anchored patterns, each with a reason)", () => {
+    expect(READ_ONLY_ALLOWED_MUTATIONS.map((e) => [e.method, e.pattern])).toEqual([
       ["ANY", /^\/api\/v1\/auth\//],
-      [["POST"], /^\/api\/v1\/billing\/subscribe$/],
-      [["POST"], /^\/api\/v1\/billing\/quote$/],
-      [["POST"], /^\/api\/v1\/billing\/subscription$/],
-      [["POST"], /^\/api\/v1\/billing\/subscription\/(downgrade|cancel|resume|checkout)$/],
-      [["POST"], /^\/api\/v1\/billing\/portal$/],
-      [["POST"], /^\/api\/v1\/orders\/counter-sale\/day-close$/],
-      [["POST"], /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/reopen$/],
-      [["POST"], /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/report$/],
-      [["POST"], /^\/api\/v1\/orders\/[0-9a-fA-F-]{36}\/receipt$/],
+      ["POST", /^\/api\/v1\/billing\/subscribe$/],
+      ["POST", /^\/api\/v1\/billing\/quote$/],
+      ["POST", /^\/api\/v1\/billing\/subscription$/],
+      ["POST", /^\/api\/v1\/billing\/subscription\/(downgrade|cancel|resume|checkout)$/],
+      ["POST", /^\/api\/v1\/billing\/portal$/],
+      ["POST", /^\/api\/v1\/orders\/counter-sale\/day-close$/],
+      ["POST", /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/reopen$/],
+      ["POST", /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/report$/],
+      ["POST", /^\/api\/v1\/orders\/[0-9a-fA-F-]{36}\/receipt$/],
     ]);
   });
 });
