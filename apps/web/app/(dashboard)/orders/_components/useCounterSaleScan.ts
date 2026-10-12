@@ -7,6 +7,7 @@ import {
   resolveProductByCode,
   type BarcodeResolveResult,
 } from "@/lib/barcode-resolve";
+import { fetchCategoryPage, findCategoryProducts } from "@/lib/counter-category-search";
 import { parseScanField } from "@/lib/counter-sale";
 import { scanLevelForHit } from "./scan/useScanCodeHandler";
 
@@ -22,6 +23,8 @@ export interface ScanPicker {
   code: string;
   qty: number;
   matches: any[];
+  /** CQ-10: set when the typed text named a CATEGORY: its stored name, the page shown and the total in it. */
+  category?: { name: string; page: number; total: number; hasMore: boolean };
 }
 
 interface Deps {
@@ -104,6 +107,24 @@ export function useCounterSaleScan(deps: Deps) {
           continue;
         }
         if (result.notFound) {
+          // CQ-10: not a code, but possibly a CATEGORY name: list its products (a miss here is still "not found")
+          const byCategory = item.kind === "code" ? await findCategoryProducts(item.code) : null;
+          if (!aliveRef.current || epoch !== epochRef.current) return;
+          if (byCategory) {
+            pausedRef.current = true;
+            setPicker({
+              code: item.code,
+              qty: carryRef.current,
+              matches: byCategory.products,
+              category: {
+                name: byCategory.category,
+                page: byCategory.page,
+                total: byCategory.total,
+                hasMore: byCategory.hasMore,
+              },
+            });
+            return; // the item stays at the head until one is chosen
+          }
           setMessage(COUNTER_SCAN_NOT_FOUND_COPY);
           setCarry(1);
         } else if (result.archived) {
@@ -160,6 +181,30 @@ export function useCounterSaleScan(deps: Deps) {
     shift();
     resume();
   };
+  const [moreBusy, setMoreBusy] = React.useState(false);
+  /** CQ-10: the next page of the open category list, appended (a product never appears twice). */
+  const loadMore = async () => {
+    const cur = picker;
+    if (!cur?.category || !cur.category.hasMore || moreBusy) return;
+    setMoreBusy(true);
+    try {
+      const next = await fetchCategoryPage(cur.category.name, cur.category.page + 1);
+      if (!aliveRef.current) return;
+      setPicker((p) => {
+        if (!p?.category) return p;
+        const have = new Set(p.matches.map((m: any) => m.id));
+        return {
+          ...p,
+          matches: [...p.matches, ...next.products.filter((m: any) => !have.has(m.id))],
+          category: { ...p.category, page: next.page, total: next.total, hasMore: next.hasMore },
+        };
+      });
+    } catch {
+      // the list stays as it is; "Show more" can be tried again
+    } finally {
+      setMoreBusy(false);
+    }
+  };
   const cancelPicker = () => {
     setPicker(null);
     setCarry(1);
@@ -195,6 +240,8 @@ export function useCounterSaleScan(deps: Deps) {
     waiting,
     submit,
     choose,
+    loadMore,
+    moreBusy,
     cancelPicker,
     retry,
     dismissFailure,

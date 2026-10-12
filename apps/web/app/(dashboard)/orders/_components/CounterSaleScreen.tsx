@@ -1126,6 +1126,12 @@ export function CounterSaleScreen() {
           ) : null}
           {scan.picker ? (
             <div className="space-y-1" data-testid="counter-scan-picker">
+              {scan.picker.category ? (
+                <p className="text-sm font-medium" data-testid="counter-category-heading">
+                  {scan.picker.category.name}: {scan.picker.matches.length} of{" "}
+                  {scan.picker.category.total}
+                </p>
+              ) : null}
               <DidYouMeanPicker
                 matches={scan.picker.matches.map((p: any) => ({
                   id: p.id,
@@ -1136,6 +1142,17 @@ export function CounterSaleScreen() {
                 }
                 onCancel={scan.cancelPicker}
               />
+              {scan.picker.category?.hasMore ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="min-h-[44px]"
+                  disabled={scan.moreBusy}
+                  onClick={() => void scan.loadMore()}
+                >
+                  Show more
+                </Button>
+              ) : null}
               {scan.waiting > 1 ? (
                 <p className="text-sm">{scan.waiting - 1} more scans waiting</p>
               ) : null}
