@@ -696,6 +696,7 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         metadata: { tenantId: "t1" },
         subscription: "sub_1",
         customer: "cus_1",
+        payment_status: "paid", // P0 hotfix: only a settled session activates
       });
       expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
     });
@@ -709,8 +710,70 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
         metadata: { tenantId: "t1" },
         subscription: "sub_1",
         customer: "cus_1",
+        payment_status: "paid", // P0 hotfix: only a settled session activates
       });
       expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    });
+
+    // P0 HOTFIX (live money): an ACH / bank-debit checkout completes UNPAID; activating then flips the tenant ACTIVE
+    // days before the funds clear, and a failed debit would leave them ACTIVE and unpaid.
+    describe("payment_status gate", () => {
+      const sessionOf = (payment_status?: string) => ({
+        id: "cs_ach",
+        metadata: { tenantId: "t1" },
+        subscription: "sub_1",
+        customer: "cus_1",
+        ...(payment_status === undefined ? {} : { payment_status }),
+      });
+
+      it.each(["unpaid", undefined, "weird"])(
+        "payment_status %s: linked, NOT activated, no marker, no MRR delta",
+        async (status) => {
+          const { svc, prisma, events } = make({ transitionCount: 1 });
+          await (svc as any).onCheckoutCompleted(sessionOf(status as string | undefined));
+          expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1); // the linking writes land
+          expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+          expect(prisma.auditLog.create).not.toHaveBeenCalledWith(
+            expect.objectContaining({
+              data: expect.objectContaining({ action: "STRIPE_CHECKOUT_APPLIED" }),
+            }),
+          );
+        },
+      );
+
+      it.each(["paid", "no_payment_required"])("payment_status %s activates", async (status) => {
+        const { svc, events } = make({ transitionCount: 1 });
+        await (svc as any).onCheckoutCompleted(sessionOf(status));
+        expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
+      });
+
+      it("the webhook routes async_payment_succeeded to the same handler (the payload is the now-paid session)", async () => {
+        const { svc } = make({ transitionCount: 1 });
+        const spy = jest.spyOn(svc as any, "onCheckoutCompleted").mockResolvedValue(undefined);
+        const object = sessionOf("paid");
+        await svc.handleWebhookEvent({
+          id: "evt_1",
+          type: "checkout.session.async_payment_succeeded",
+          data: { object },
+        });
+        expect(spy).toHaveBeenCalledWith(object);
+      });
+
+      it("async_payment_failed activates nothing and routes only to the notice handler", async () => {
+        const { svc } = make({ transitionCount: 1 });
+        const done = jest.spyOn(svc as any, "onCheckoutCompleted").mockResolvedValue(undefined);
+        const failed = jest
+          .spyOn(svc as any, "onCheckoutAsyncPaymentFailed")
+          .mockResolvedValue(undefined);
+        const object = sessionOf("unpaid");
+        await svc.handleWebhookEvent({
+          id: "evt_2",
+          type: "checkout.session.async_payment_failed",
+          data: { object },
+        });
+        expect(failed).toHaveBeenCalledWith(object);
+        expect(done).not.toHaveBeenCalled();
+      });
     });
   });
 });
@@ -728,6 +791,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
     metadata: { tenantId: "t1", ...(planKey ? { planKey } : {}) },
     subscription: "sub_1",
     customer: "cus_1",
+    payment_status: "paid", // P0 hotfix: only a settled session activates
   });
 
   it("(1) create branch: writes planKey + basePriceSnapshot (and maps currentPlan via planKeyToEnum) and emits exactly one MRR delta", async () => {
@@ -906,6 +970,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         metadata: { tenantId: "t1", plan: "BUSINESS" },
         subscription: "sub_1",
         customer: "cus_1",
+        payment_status: "paid", // P0 hotfix: only a settled session activates
       });
 
       const [, transition] = planTransition.onPlanChange.mock.calls[0];
@@ -919,6 +984,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         metadata: { tenantId: "t1", plan: "BUSINESS" }, // a legacy alias resolves to a canonical key
         subscription: "sub_1",
         customer: "cus_1",
+        payment_status: "paid", // P0 hotfix: only a settled session activates
       });
 
       const canonical = normalizePlanKey("BUSINESS")!;
@@ -935,6 +1001,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
         metadata: { tenantId: "t1", plan: "BUSINESS" },
         subscription: "sub_1",
         customer: "cus_1",
+        payment_status: "paid", // P0 hotfix: only a settled session activates
       });
 
       const args = prisma.tenantSubscription.upsert.mock.calls[0][0];
@@ -1467,6 +1534,7 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
           metadata: { tenantId: "t1" },
           subscription: "sub_1",
           customer: "cus_1",
+          payment_status: "paid", // P0 hotfix: only a settled session activates
           id: "cs_np",
         };
 
@@ -1571,6 +1639,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
     metadata: { tenantId: "t1" },
     subscription: "sub_1",
     customer: "cus_1",
+    payment_status: "paid", // P0 hotfix: only a settled session activates
   };
 
   it("REG-B216 onPaymentSucceeded reinstatement (CAS won) leaves the armed downgrade ALONE and names it on the resume event", async () => {
@@ -2449,6 +2518,7 @@ describe("#2436 Stripe API dahlia — the subscription period lives on items", (
       metadata: { tenantId: "t1" },
       subscription: "sub_1",
       customer: "cus_1",
+      payment_status: "paid", // P0 hotfix: only a settled session activates
     });
     const args = prisma.tenantSubscription.upsert.mock.calls[0][0];
     expect(args.update.stripeSubId).toBe("sub_1");
@@ -2925,6 +2995,7 @@ describe("#2440 Opus nits on #2446 — period source and null-period warnings", 
       metadata: { tenantId: "t1" },
       subscription: "sub_1",
       customer: "cus_1",
+      payment_status: "paid", // P0 hotfix: only a settled session activates
     });
     expect(prisma.tenantSubscription.upsert.mock.calls[0][0].update.stripeSubId).toBe("sub_1");
     expect(warn.mock.calls.some((c: any[]) => /no billing period/.test(String(c[0])))).toBe(true);

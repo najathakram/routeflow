@@ -73,6 +73,7 @@ import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-ac
 import { retryOnTxConflict } from "../common/tx-retry";
 import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
+  STRIPE_CHECKOUT_ASYNC_FAILED_ACTION,
   STRIPE_CHECKOUT_ENTITY,
   STRIPE_CHECKOUT_HOOK_FAILED_ACTION,
   STRIPE_CHECKOUT_DUPLICATE_ACTION,
@@ -107,6 +108,17 @@ const MANUAL_MARKER_SKEW_S = 60;
 
 /** Returned by the checkout transaction when the session was already applied (a redelivery). */
 const ALREADY_APPLIED = Symbol("checkout-session-already-applied");
+
+/**
+ * P0 hotfix: the ONLY Checkout payment states that may ACTIVATE a tenant (and write the APPLIED marker). A card
+ * completes `paid`; a 100%-off / free-trial session `no_payment_required`. A bank debit (ACH / SEPA) completes
+ * `unpaid` and settles days later: that session is LINKED (customer, subscription, period, plan) but not activated
+ * until `checkout.session.async_payment_succeeded` re-delivers it as `paid`. An absent status is NOT settled.
+ */
+const SETTLED_CHECKOUT_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
+  "paid",
+  "no_payment_required",
+]);
 
 /** Why a completed checkout session is not applied (X1). */
 type DuplicateVerdict = {
@@ -976,6 +988,17 @@ export class BillingService {
         await this.catchup?.onSessionCompleted(event.data.object);
         break;
 
+      case "checkout.session.async_payment_succeeded":
+        // The payload is the now-PAID session: the same handler applies it, exactly once (the APPLIED marker is
+        // only written for a settled session, so the unpaid completion before it left none).
+        await this.onCheckoutCompleted(event.data.object);
+        break;
+
+      case "checkout.session.async_payment_failed":
+        // A notice row only: nothing is activated (the unpaid completion never did). Cancel / void is SA-774r2.
+        await this.onCheckoutAsyncPaymentFailed(event.data.object);
+        break;
+
       case "checkout.session.expired":
         await this.catchup?.onSessionExpired(event.data.object);
         break;
@@ -1740,6 +1763,48 @@ export class BillingService {
     };
   }
 
+  /**
+   * `checkout.session.async_payment_failed`: the bank debit of a checkout that was linked unpaid did NOT clear. The
+   * tenant was never activated by it (see onCheckoutCompleted), so there is nothing to undo here: ONE audit row per
+   * session plus a platform notice. Cancelling the linked subscription / voiding is SA-774r2. Best-effort: a failed
+   * write never changes the 200 Stripe gets.
+   */
+  private async onCheckoutAsyncPaymentFailed(session: any): Promise<void> {
+    const tenantId: string | null = session.metadata?.tenantId ?? null;
+    this.logger.warn(
+      `checkout.async_payment_failed ${session.id ?? "?"} for tenant ${tenantId ?? "?"}: the bank debit failed - ` +
+        `nothing was activated by this checkout`,
+    );
+    if (!tenantId) return;
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true, slug: true },
+    });
+    const label = tenant?.name ?? tenant?.slug ?? tenantId;
+    const message =
+      `The bank debit for ${label}'s checkout FAILED: it was not activated by this checkout. ` +
+      `Check Stripe and follow up with the tenant (a failed debit is not cancelled automatically yet).`;
+    const notice = {
+      tenantId,
+      action: AdminAuditAction.STRIPE_ASYNC_PAYMENT_FAILED,
+      message,
+      meta: {
+        reason: "async_payment_failed",
+        checkoutSessionId: session.id ?? null,
+        sessionPaymentStatus: session.payment_status ?? null,
+      },
+    };
+    await this.recordCheckoutRefusal(
+      session,
+      tenantId,
+      { reason: "async_payment_failed", checkoutSessionId: session.id ?? null },
+      {
+        action: STRIPE_CHECKOUT_ASYNC_FAILED_ACTION,
+        alsoWrite: tenant ? (tx) => writeAdminNotice(tx, notice) : undefined,
+      },
+    );
+  }
+
   private async onCheckoutCompleted(session: any): Promise<void> {
     const tenantId = session.metadata?.tenantId;
     if (!tenantId) {
@@ -1754,6 +1819,10 @@ export class BillingService {
       this.logger.warn("checkout.session.completed without subscription ID");
       return;
     }
+
+    // P0 hotfix: is the money in (or none due)? Only then may this session ACTIVATE the tenant and write its APPLIED
+    // marker; an unpaid session (an ACH debit in flight) still LINKS the customer / subscription / period / plan below.
+    const settled = SETTLED_CHECKOUT_PAYMENT_STATUSES.has(session.payment_status ?? "");
 
     // Fetch the full subscription to get period dates. SA-690: with each item's product expanded, so
     // the add-on items this checkout billed (tagged `addonSku` on their product) can be told apart
@@ -2130,7 +2199,8 @@ export class BillingService {
                 }
                 const row = await tx.tenantSubscription.upsert(upsertArgs);
                 await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
-                if (session.id) {
+                // P0 hotfix: only a SETTLED session leaves the marker (an unpaid bank debit is linked, not applied)
+                if (session.id && settled) {
                   await this.writeAppliedMarker(tx, tenantId, session.id, {
                     fromPlanKey: transition.fromPlanKey,
                     toPlanKey: transition.toPlanKey,
@@ -2195,7 +2265,7 @@ export class BillingService {
             const previousSubId = await this.storedStripeSubIdTx(tx, tenantId);
             const row = await tx.tenantSubscription.upsert(upsertArgs);
             await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
-            if (session.id) {
+            if (session.id && settled) {
               await this.writeAppliedMarker(tx, tenantId, session.id, {
                 toPlanKey: planKeyForCheckout,
                 subscriptionId,
@@ -2232,6 +2302,17 @@ export class BillingService {
       // SA-736r F2: a redelivery that finds the session applied STILL syncs the coupon (idempotent), so a
       // sync that threw after the upsert is retried instead of being lost behind ALREADY_APPLIED.
       await this.syncCoupon(tenantId, subscriptionId, "checkout_completed");
+      return;
+    }
+
+    if (!settled) {
+      // A bank debit in flight: linked above, NOT activated. It activates (once) when
+      // checkout.session.async_payment_succeeded re-delivers this session as `paid`; a failed debit leaves a notice
+      // row instead (onCheckoutAsyncPaymentFailed). No marker was written, so that delivery is not "already applied".
+      this.logger.log(
+        `checkout.awaiting_async_payment ${session.id ?? "?"}: tenant ${tenantId} linked to ${subscriptionId} ` +
+          `(payment_status=${session.payment_status ?? "unknown"}) - NOT activated until the payment settles`,
+      );
       return;
     }
 
