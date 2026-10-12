@@ -5,6 +5,8 @@ import { getOrderSubmitKey, resetOrderSubmitKey } from "../order-submit-key";
 import { invalidateOrderCaches } from "./orders";
 import {
   POS_MODE_PREF_KEY,
+  pendingRefusalIsDone,
+  posConfirmSteps,
   posModeFromPreferences,
   posModePrefPatch,
   type PosFinishStep,
@@ -36,16 +38,38 @@ export class PosFinishError extends Error {
   }
 }
 
+async function promotedAlready(orderId: string, e: unknown): Promise<boolean> {
+  const httpStatus = (e as { response?: { status?: number } } | null)?.response?.status;
+  if (httpStatus !== 400 && httpStatus !== 409) return false;
+  try {
+    const cur = (await apiClient.get(`/orders/${orderId}`)).data as { status?: string } | undefined;
+    return pendingRefusalIsDone(httpStatus, cur?.status);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * "Confirm & invoice": PATCH status CONFIRMED, then POST /invoices/from-order/:id. Both are idempotent
  * on the server; a failure names the step so the caller says which half is missing.
  */
 export function usePosFinish() {
   const qc = useQueryClient();
-  return useMutation<void, PosFinishError, { orderId: string; invoice: boolean }>({
-    mutationFn: async ({ orderId, invoice }) => {
+  return useMutation<
+    void,
+    PosFinishError,
+    { orderId: string; invoice: boolean; fromStatus?: string | null }
+  >({
+    mutationFn: async ({ orderId, invoice, fromStatus }) => {
       try {
-        await apiClient.patch(`/orders/${orderId}/status`, { status: "CONFIRMED" });
+        for (const status of posConfirmSteps(fromStatus)) {
+          try {
+            await apiClient.patch(`/orders/${orderId}/status`, { status });
+          } catch (e) {
+            // PENDING is the only step that can be a re-run; a refusal is "done" only if a re-read agrees.
+            if (status !== "PENDING" || !(await promotedAlready(orderId, e))) throw e;
+          }
+        }
       } catch (e) {
         throw new PosFinishError("confirm", e);
       }

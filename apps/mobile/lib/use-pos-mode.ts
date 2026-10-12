@@ -27,18 +27,33 @@ export function usePosModeState(enabled: boolean) {
     });
   };
   /** Confirm (+ invoice) the freshly created order; resolves with the toast copy to show. */
-  const finishOrder = async (orderId: string): Promise<string> => {
+  const finishOrder = async (
+    orderId: string,
+    target?: { status?: string | null; merged?: boolean },
+  ): Promise<string> => {
     const mode = finishRef.current;
     try {
-      await finish.mutateAsync({ orderId, invoice: mode === "invoice" });
+      await finish.mutateAsync({
+        orderId,
+        invoice: mode === "invoice",
+        fromStatus: target?.status,
+      });
       return posFinishSuccessMessage(mode === "invoice");
     } catch (e) {
-      return posFinishFailureMessage(e instanceof PosFinishError ? e.step : "confirm");
+      return posFinishFailureMessage(
+        e instanceof PosFinishError ? e.step : "confirm",
+        !!target?.merged,
+      );
     }
   };
   /** Confirm (+ invoice), toast the outcome, then open the new order (Hand over / Print live there). */
-  const finishAndOpen = async (orderId: string, toast: (m: string) => void, open: () => void) => {
-    toast(await finishOrder(orderId));
+  const finishAndOpen = async (
+    orderId: string,
+    target: { status?: string | null; merged?: boolean },
+    toast: (m: string) => void,
+    open: () => void,
+  ) => {
+    toast(await finishOrder(orderId, target));
     open();
   };
   return {

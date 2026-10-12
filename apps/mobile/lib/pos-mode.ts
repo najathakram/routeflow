@@ -38,6 +38,7 @@ export const POS_COPY = {
   confirmedInvoiced: "Order confirmed and invoiced",
   confirmedOnly: "Order confirmed",
   confirmMissing: "Order created, but it couldn't be confirmed. Open it to confirm.",
+  mergedConfirmMissing: "Order merged, but it couldn't be confirmed. Open it to confirm.",
   invoiceMissing:
     "Order confirmed, but the invoice wasn't created. Open it and choose Create invoice.",
   mergeTitle: "This customer already has an open counter order",
@@ -186,8 +187,33 @@ export function posCutNote(
 export type PosFinishStep = "confirm" | "invoice";
 
 /** Which half of "Confirm & invoice" is missing, as the fixed toast copy. */
-export function posFinishFailureMessage(step: PosFinishStep): string {
-  return step === "invoice" ? POS_COPY.invoiceMissing : POS_COPY.confirmMissing;
+export function posFinishFailureMessage(step: PosFinishStep, merged = false): string {
+  if (step === "invoice") return POS_COPY.invoiceMissing;
+  return merged ? POS_COPY.mergedConfirmMissing : POS_COPY.confirmMissing;
+}
+
+/**
+ * The status PATCHes of "Confirm & invoice". The API has no DRAFT -> CONFIRMED edge (DRAFT goes to
+ * PENDING or CANCELLED), so "Add to it" on an open DRAFT promotes it to PENDING first.
+ */
+export function posConfirmSteps(
+  fromStatus: string | null | undefined,
+): ("PENDING" | "CONFIRMED")[] {
+  return fromStatus === "DRAFT" ? ["PENDING", "CONFIRMED"] : ["CONFIRMED"];
+}
+
+/**
+ * The status PATCHes are NOT idempotent (PENDING -> PENDING is a 400). A refused PENDING step carries
+ * on only when it was a 400/409 AND a re-read of the order shows PENDING or CONFIRMED.
+ */
+export function pendingRefusalIsDone(
+  httpStatus: number | undefined,
+  rereadStatus: string | null | undefined,
+): boolean {
+  return (
+    (httpStatus === 400 || httpStatus === 409) &&
+    (rereadStatus === "PENDING" || rereadStatus === "CONFIRMED")
+  );
 }
 
 export function posFinishSuccessMessage(invoice: boolean): string {

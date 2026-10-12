@@ -7,7 +7,9 @@ import {
   POS_MODE_PREF_KEY,
   pickupCompleteErrorCopy,
   decidePickupResponse,
+  pendingRefusalIsDone,
   planPosTender,
+  posConfirmSteps,
   posMergeAlert,
   posMayHandOverUnpaid,
   posBalanceDue,
@@ -294,5 +296,29 @@ describe("POS merge alert buttons", () => {
   it("offers Add to it only when not backdated", () => {
     expect(labels(false)).toEqual(["Cancel", "Add to it", "Start a new one"]);
     expect(labels(true)).toEqual(["Cancel", "Start a new one"]);
+  });
+});
+
+describe("Confirm & invoice from a merged DRAFT (row 311)", () => {
+  it("a DRAFT target is promoted to PENDING first; others go straight to CONFIRMED", () => {
+    expect(posConfirmSteps("DRAFT")).toEqual(["PENDING", "CONFIRMED"]);
+    expect(posConfirmSteps("PENDING")).toEqual(["CONFIRMED"]);
+    expect(posConfirmSteps(undefined)).toEqual(["CONFIRMED"]);
+    expect(posConfirmSteps(null)).toEqual(["CONFIRMED"]);
+  });
+  it("a refused PENDING step is done only on a 400/409 whose re-read shows PENDING or CONFIRMED", () => {
+    expect(pendingRefusalIsDone(400, "PENDING")).toBe(true);
+    expect(pendingRefusalIsDone(409, "CONFIRMED")).toBe(true);
+    expect(pendingRefusalIsDone(400, "DRAFT")).toBe(false);
+    expect(pendingRefusalIsDone(400, undefined)).toBe(false);
+    expect(pendingRefusalIsDone(500, "PENDING")).toBe(false);
+    expect(pendingRefusalIsDone(undefined, "PENDING")).toBe(false);
+  });
+  it("merged half-failure copy is specific", () => {
+    expect(posFinishFailureMessage("confirm", true)).toBe(
+      "Order merged, but it couldn't be confirmed. Open it to confirm.",
+    );
+    expect(posFinishFailureMessage("confirm", false)).toMatch(/Order created/);
+    expect(posFinishFailureMessage("invoice", true)).toMatch(/invoice wasn't created/);
   });
 });

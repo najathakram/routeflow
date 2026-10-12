@@ -1847,8 +1847,11 @@ function ProductPickView({
             return;
           }
           if (posMode && !asDraft && order.id) {
-            await pos.finishAndOpen(order.id, showToast, () =>
-              router.replace(`/(operator)/orders/${order.id}` as any),
+            await pos.finishAndOpen(
+              order.id,
+              { status: order.status, merged: mergeChoice === "merge" },
+              showToast,
+              () => router.replace(`/(operator)/orders/${order.id}` as any),
             );
             return;
           }
