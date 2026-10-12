@@ -960,7 +960,6 @@ describe("OrdersService — F06 guards (TP2)", () => {
       });
       prisma.order.findUnique.mockResolvedValue(twoLineOrder);
       prisma.product.findMany.mockResolvedValue([promoProduct]);
-      prisma.orderItem.findMany.mockResolvedValue([]);
       promotionsService.activeForCatalog.mockResolvedValue([bogoRule]);
 
       // Row 373b: id-less entries cannot be paired with two stored lines of one product. They are refused

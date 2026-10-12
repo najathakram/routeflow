@@ -133,6 +133,16 @@ export class UpdateOrderItemsDto {
   replaceAll?: boolean;
 
   /**
+   * Row 372 (SA-735 item 2): the `revisionNumber` the client loaded the order at (GET /orders/:id). When it is
+   * behind the order's latest revision the PATCH is 409 ORDER_REVISION_STALE before any write. Optional: a
+   * client that omits it keeps the old last-writer behaviour.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  expectedRevisionNumber?: number;
+
+  /**
    * B297 row 352 — BUYER edit only: the client names every existing line with `items[].orderItemId`, so an
    * entry without one is a NEW line. Absent = a legacy client: the server falls back to the product's only
    * line when exactly one exists (one release), and 409s `ORDER_EDIT_NEEDS_LINE_IDS` when two or more could be meant.

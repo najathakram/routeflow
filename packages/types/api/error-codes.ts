@@ -16,6 +16,8 @@
 //                    409 (#2629, disabled until a real import marker exists).
 //   ORDER_LINE_CHANGED — `body.code` of the order-line CAS 409 (invoice-from-order paths:
 //                    qty/price/tax/pack changed mid-create; nothing billed, retriable).
+//   ORDER_REVISION_STALE — `body.code` of the 409 on PATCH /orders/:id/items when the client's
+//                    `expectedRevisionNumber` is behind the order's latest revision (nothing written; reload).
 //   ORDER_INVOICE_SETTLE_FAILED — `body.code` of the 409 raised AFTER a ship/deliver status committed when its
 //                    invoice could not be created, updated or checked (the status stays; open the order).
 //   ORDER_INVOICES_NEED_REVIEW — `body.code` of the 409 when more would be billed on an order whose
@@ -199,6 +201,7 @@ export const API_ERROR_CODES = {
   DUPLICATE_VENDOR_BILL: "DUPLICATE_VENDOR_BILL",
   CLEANUP_IMPORTED_DISABLED: "CLEANUP_IMPORTED_DISABLED",
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
+  ORDER_REVISION_STALE: "ORDER_REVISION_STALE",
   ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   ORDER_INVOICE_SETTLE_FAILED: "ORDER_INVOICE_SETTLE_FAILED",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",

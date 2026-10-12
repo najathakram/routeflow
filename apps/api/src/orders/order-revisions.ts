@@ -1,3 +1,4 @@
+import { EDIT_REVISIONS } from "./ship-state-markers";
 import type { Prisma } from "@prisma/client";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
@@ -69,6 +70,22 @@ function revisionSnapshot(lines: RevisionLine[], totals: AppendOrderRevisionArgs
   };
 }
 
+/**
+ * Row 372: the revision an editing client holds. ONE derivation, over the order's EDIT revisions (the same
+ * `EDIT_REVISIONS.where` `findOne` includes: ship-state markers are not edits), so the `revisionNumber` GET
+ * /orders/:id exposes and the PATCH items `expectedRevisionNumber` check always read the same number.
+ */
+export async function latestEditRevisionNumber(
+  db: { orderRevision: { aggregate(args: any): Promise<any> } },
+  orderId: string,
+): Promise<number> {
+  const max = await db.orderRevision.aggregate({
+    where: { orderId, ...EDIT_REVISIONS.where },
+    _max: { revisionNumber: true },
+  });
+  return max?._max?.revisionNumber ?? 0;
+}
+
 /** The insert, on a transaction client `tx`: the revision number is max+1 under that transaction. */
 async function insertRevision(
   tx: Prisma.TransactionClient,
@@ -76,15 +93,13 @@ async function insertRevision(
   [orderId, user, , source, reason]: AppendOrderRevisionArgs,
   snapshot: ReturnType<typeof revisionSnapshot>,
 ): Promise<void> {
-  const max = await tx.orderRevision.aggregate({
-    where: { orderId },
-    _max: { revisionNumber: true },
-  });
   await tx.orderRevision.create({
     data: {
       tenantId,
       orderId,
-      revisionNumber: (max._max.revisionNumber ?? 0) + 1,
+      revisionNumber:
+        ((await tx.orderRevision.aggregate({ where: { orderId }, _max: { revisionNumber: true } }))
+          ._max.revisionNumber ?? 0) + 1,
       editedById: user?.sub ?? null,
       editedByName: user?.username ?? null,
       editedByRole: user?.role ?? null,
@@ -125,4 +140,12 @@ export async function appendOrderRevisionInTx(
     orderBy: LIVE_LINES.orderBy,
   });
   await insertRevision(tx, tenantId, args, revisionSnapshot(lines, args[2]));
+}
+
+/** `GET /orders/:id`: `revisionNumber` from the EDIT revisions `findOne` already included (no extra read). */
+export function attachRevisionNumber(order: {
+  revisions?: ReadonlyArray<{ revisionNumber: number }> | null;
+}): void {
+  const latest = (order.revisions ?? []).reduce((m, r) => Math.max(m, r.revisionNumber), 0);
+  Object.assign(order, { revisionNumber: latest });
 }

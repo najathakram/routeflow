@@ -33,6 +33,7 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
   appendOrderRevision as appendOrderRevisionImpl,
   AppendOrderRevisionArgs,
+  attachRevisionNumber,
 } from "./order-revisions";
 import {
   isSpecialTier,
@@ -169,6 +170,7 @@ import {
 import { recomputeLineCategoryTaxes } from "./recompute-line-category-taxes";
 import { loadLiveTrioByProduct } from "./fold-target";
 import { carriedLineFor } from "./carry-line-category";
+import { assertLockedEditLines, assertRevisionCurrent } from "./locked-edit-guards";
 import { guardBuyerEditLineIds, pairEditLines, piecesDenominated } from "./buyer-edit-lines";
 import { planSplitPromos, type SplitPromoGroup } from "./split-promo-group";
 import { settleSplitFreeUnits } from "./settle-split-free-units";
@@ -580,6 +582,7 @@ export class OrdersService implements OnApplicationBootstrap {
       cancelBlockedReason: await carrierGuard.carrierBlocked(this, order),
     } satisfies OrderCancelBlockedField);
     await attachInvoiceStages(this.featureConfig, order); // fold 4: each invoice's pdfVariant
+    attachRevisionNumber(order); // row 372
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
@@ -3041,6 +3044,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // orderItem write below, so it is the true pre-edit state.
         await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
         await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+        await assertRevisionCurrent(tx, orderId, dto.expectedRevisionNumber); // row 372: stale -> 409, nothing written
         let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
         let markerCarry: Map<string, number> | undefined; // SA-716 M2: the create-merge fold only
         const carrierLocked = await carrierGuard.carrierRevertUnderLock(
@@ -3053,7 +3057,7 @@ export class OrdersService implements OnApplicationBootstrap {
         );
         const heldItems = await tx.orderItem.findMany({
           where: { orderId },
-          // B709: plus every column the diff branch reads off an existing line (see heldOrSnapshot).
+          // B709: plus every column the diff branch reads off an existing line.
           select: {
             ...EXISTING_LINE_SELECT,
             deliveredQty: true,
@@ -3071,14 +3075,9 @@ export class OrdersService implements OnApplicationBootstrap {
         // concurrent edit of the SAME line — re-run it against the just-locked, authoritative
         // heldItems (never the pre-tx `order.lineItems`) before any write. `unitRows.set` keys
         // by the same `item` object reference, so this simply overwrites each entry in place.
-        const heldById = new Map<string, any>(heldItems.map((h: any) => [h.id, h]));
-        // B709: the diff branch reads every existing line from the LOCKED rows, never from the
-        // pre-tx `order.lineItems` snapshot another writer may have replaced while this tx waited
-        // on the lock. The `?? snapshot` arm is the B135 interim (`liveLine ?? li`): a row the held
-        // read lacks was hard-deleted under the lock, and its write then fails loudly on P2025. The
-        // items[].expectedQty follow-up turns that arm into a CONCURRENT_UPDATE 409.
-        const heldOrSnapshot = (id: string): any =>
-          heldById.get(id) ?? order.lineItems.find((l) => l.id === id);
+        // B709 / row 372: every read of an existing line below is the LOCKED row; a payload id the lock does not
+        // hold is 409 before any write (no snapshot fallback), and B720's missing products load here.
+        const heldById = await assertLockedEditLines(tx, unitCtx, heldItems, dto.items);
         for (const item of dto.items ?? []) {
           const li = item.id ? heldById.get(item.id) : undefined;
           unitEdit.assertUnitLabelNamed(li, item);
@@ -3354,7 +3353,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // gets fetched and the line silently falls back to the customer's DEFAULT
           // tier instead of a genuinely SPECIAL per-product row (or vice versa).
           const existingLineProductIds = dto.items
-            .map((i) => (i.id ? heldOrSnapshot(i.id)?.productId : null)) // B709: locked row
+            .map((i) => (i.id ? heldById.get(i.id)?.productId : null)) // B709: locked row
             .filter((id): id is string => !!id);
           // B466: a substitution's NEW product id must resolve tier pricing too — it
           // was missing from this collection entirely (neither a fresh add's productId
@@ -3712,7 +3711,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // Hard-remove a line added by mistake. Only safe when nothing
                 // downstream references it — a billed or delivered line is struck
                 // off instead so invoice/delivery history stays intact.
-                const li = heldOrSnapshot(item.id);
+                const li = heldById.get(item.id);
                 const hasDeliveries = await tx.deliveryMutation.count({
                   where: { orderItemId: item.id },
                 });
@@ -3735,7 +3734,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 }
                 // B297 (SA-098a): the pack-line substitute path only — its own scoped load.
                 const substituteCategoryMap = await loadCategoryMapForProducts(tx, [product]);
-                const existingQty = heldOrSnapshot(item.id!)?.qty ?? 1;
+                const existingQty = heldById.get(item.id!)?.qty ?? 1;
                 // Substitution may also carry a box/piece split when the substitute
                 // is itself a boxed product. Honor it the same way as a fresh add —
                 // but only when the SUBSTITUTE is case-packed: the incoming split is
@@ -3850,7 +3849,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 item.overrideReason !== undefined ||
                 item.notes !== undefined
               ) {
-                const li = item.id ? heldOrSnapshot(item.id) : undefined;
+                const li = item.id ? heldById.get(item.id) : undefined;
                 if (!li) continue;
 
                 // N4 (independent review round 2, PR-2): a payload carrying ONLY
@@ -3890,7 +3889,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 }
                 const unitRow = unitRows.get(item);
                 if (unitRow && unitLines.isUnitAware(unitRow)) {
-                  const p = unitCtx.products.get(li.productId!)!;
+                  const p = unitCtx.products.get(li.productId!);
+                  if (!p) throw new ConflictException({ code: API_ERROR_CODES.CONCURRENT_UPDATE });
                   // B297: same product, not a substitute — updateUnitLine must PRESERVE the trio.
                   await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false);
                   continue;
