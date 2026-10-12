@@ -307,22 +307,30 @@ describe("counterSaleErrorCopy: a license refusal (CQ-06) is never the generic '
       data: {
         code: "REGULATED_AUTH_REQUIRED",
         message: "RAW SERVER TEXT",
-        blockedCategories: [{ trackedCategoryId: "c1", categoryName: "Tobacco", reason }],
+        blockedCategories: [{ trackedCategoryId: "c1", categoryName: "Alcohol", reason }],
       },
     },
   });
   it("expired: says it expired, where to renew, and that nothing was charged", () => {
     const copy = counterSaleErrorCopy(licenseErr("EXPIRED"));
     expect(copy).toBe(
-      "This sale includes regulated items (Tobacco), and the customer's license has expired. Renew it on the customer's Licenses tab, then try again. Nothing was charged.",
+      "This sale includes regulated items (Alcohol), and the customer's license has expired. Renew it on the customer's Licenses tab, then try again. Nothing was charged.",
     );
     expect(copy).not.toMatch(/Something changed|RAW SERVER TEXT/);
   });
-  it("none on file: says where to add it or to choose another customer", () => {
+  it("none on file: says where to add, verify or renew it, or to choose another customer", () => {
     const copy = counterSaleErrorCopy(licenseErr("NO_AUTH"));
     expect(copy).toContain("no verified license on file");
+    expect(copy).toContain("Add, verify or renew it on the customer's Licenses tab");
     expect(copy).toContain("choose a customer who has one");
     expect(copy).not.toMatch(/Something changed/);
+  });
+  it("a WALK-IN sale has no license tab to fix: only 'choose a customer who has a valid license'", () => {
+    const copy = counterSaleErrorCopy(licenseErr("NO_AUTH"), { walkIn: true });
+    expect(copy).toBe(
+      "This sale includes regulated items (Alcohol), which need a customer with a valid license. Choose a customer who has a valid license, then try again. Nothing was charged.",
+    );
+    expect(copy).not.toContain("Licenses tab");
   });
   it("it is a definitive refusal (the sale is retryable after fixing the license)", () => {
     expect(isDefinitiveCounterSaleRefusal(licenseErr("EXPIRED"))).toBe(true);
@@ -331,6 +339,53 @@ describe("counterSaleErrorCopy: a license refusal (CQ-06) is never the generic '
     expect(counterSaleErrorCopy({ response: { status: 409, data: { code: "OTHER" } } })).toMatch(
       /^Something changed while you were checking out/,
     );
+  });
+});
+
+describe("counterSaleErrorCopy: a credit-limit or selling-restriction refusal says what to fix (CQ-06 review)", () => {
+  const credit = (data: Record<string, unknown> = {}) => ({
+    response: {
+      status: 409,
+      data: { code: "CREDIT_LIMIT_EXCEEDED", message: "RAW SERVER TEXT", ...data },
+    },
+  });
+  const restricted = (reason: string | null) => ({
+    response: {
+      status: 409,
+      data: {
+        code: "SELLING_RESTRICTED",
+        message: "RAW SERVER TEXT",
+        blockedLines: reason ? [{ productId: "p1", productName: "Item", reason, message: "" }] : [],
+      },
+    },
+  });
+  it("credit limit: the structured numbers, the next step, and that nothing was charged", () => {
+    const copy = counterSaleErrorCopy(credit({ limit: 500, exposure: 640.5 }));
+    expect(copy).toBe(
+      "This sale would put the customer's balance at $640.50, over their $500.00 credit limit. Collect a payment on their account, or choose another customer, then try again. Nothing was charged.",
+    );
+  });
+  it("credit limit without numbers still names the cause and the way out", () => {
+    const copy = counterSaleErrorCopy(credit());
+    expect(copy).toContain("exceed the customer's credit limit");
+    expect(copy).toContain("Nothing was charged.");
+    expect(copy).not.toMatch(/Something changed|RAW SERVER TEXT/);
+  });
+  it("selling restricted: names the cause and the next step", () => {
+    const copy = counterSaleErrorCopy(restricted("STATE_BAN"));
+    expect(copy).toBe(
+      "This sale includes an item that can't be sold to this customer under your selling restrictions. Remove the item or change the customer, then try again. Nothing was charged.",
+    );
+    expect(copy).not.toMatch(/Something changed|RAW SERVER TEXT/);
+  });
+  it("selling restricted because the state is unknown: say so and ask for a customer with an address", () => {
+    const copy = counterSaleErrorCopy(restricted("INDETERMINATE_ADDRESS"));
+    expect(copy).toContain("can't tell which state");
+    expect(copy).toContain("Choose a customer with an address on file");
+    expect(copy).toMatch(/Nothing was charged\.$/);
+  });
+  it("selling restricted with no lines in the body still gets the sentence", () => {
+    expect(counterSaleErrorCopy(restricted(null))).toContain("selling restrictions");
   });
 });
 

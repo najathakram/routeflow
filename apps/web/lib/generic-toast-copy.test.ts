@@ -532,10 +532,10 @@ describe("CQ-06: a license refusal (409 REGULATED_AUTH_REQUIRED) says what is wr
 
   it("is mapped by code, never the neutral 409 sentence or the server message", () => {
     const copy = genericToastCopy(
-      licenseErr([{ trackedCategoryId: "c", categoryName: "Tobacco", reason: "EXPIRED" }]),
+      licenseErr([{ trackedCategoryId: "c", categoryName: "Alcohol", reason: "EXPIRED" }]),
     );
     expect(copy).toBe(
-      "This sale includes regulated items (Tobacco), and the customer's license has expired. Renew it on the customer's Licenses tab, then try again.",
+      "This sale includes regulated items (Alcohol), and the customer's license has expired. Renew it on the customer's Licenses tab, then try again.",
     );
     expect(copy).not.toBe(NEUTRAL_409);
     expect(copy).not.toContain(RAW);
@@ -544,12 +544,42 @@ describe("CQ-06: a license refusal (409 REGULATED_AUTH_REQUIRED) says what is wr
   it("codedToastCopy recognises it (so a surface with its own fallback shows it, not the fallback)", () => {
     expect(
       codedToastCopy(
-        licenseErr([{ trackedCategoryId: "c", categoryName: "Tobacco", reason: "NO_AUTH" }]),
+        licenseErr([{ trackedCategoryId: "c", categoryName: "Alcohol", reason: "NO_AUTH" }]),
       ),
     ).toContain("no verified license on file");
   });
 
   it("a body with no categories still gets the license sentence", () => {
     expect(genericToastCopy(licenseErr(undefined))).toContain("Licenses tab");
+  });
+});
+
+describe("a selling-restriction refusal (409 SELLING_RESTRICTED) in a dialog with no blocked-lines panel", () => {
+  const restricted = (blockedLines: unknown) =>
+    err(409, { code: API_ERROR_CODES.SELLING_RESTRICTED, blockedLines });
+
+  it("says what is wrong and the next step, never the neutral 409 sentence", () => {
+    const copy = genericToastCopy(
+      restricted([{ productId: "p", productName: "Item", reason: "STATE_BAN", message: "" }]),
+    );
+    expect(copy).toBe(
+      "This sale includes an item that can't be sold to this customer under your selling restrictions. Remove the item or change the customer, then try again.",
+    );
+    expect(copy).not.toBe(NEUTRAL_409);
+    expect(copy).not.toContain(RAW);
+  });
+
+  it("an undeterminable state says so and what to do", () => {
+    const copy = genericToastCopy(
+      restricted([
+        { productId: "p", productName: "Item", reason: "INDETERMINATE_ADDRESS", message: "" },
+      ]),
+    );
+    expect(copy).toContain("can't tell which state");
+    expect(copy).toContain("Choose a customer with an address on file");
+  });
+
+  it("a body with no lines still gets the sentence", () => {
+    expect(genericToastCopy(restricted(undefined))).toContain("selling restrictions");
   });
 });

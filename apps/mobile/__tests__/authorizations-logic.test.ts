@@ -66,12 +66,12 @@ describe("regulatedAuthErrorCopy (CQ-06): the shared license-refusal sentence, n
         code: "REGULATED_AUTH_REQUIRED",
         message: "Conflict Exception",
         blockedCategories: [
-          { trackedCategoryId: "t1", categoryName: "Tobacco", reason: "EXPIRED" },
+          { trackedCategoryId: "t1", categoryName: "Alcohol", reason: "EXPIRED" },
         ],
       }),
     );
     expect(copy).toBe(
-      "This sale includes regulated items (Tobacco), and the customer's license has expired. Renew it on the customer's Licenses tab, then try again.",
+      "This sale includes regulated items (Alcohol), and the customer's license has expired. Renew it on the customer's Licenses tab, then try again.",
     );
   });
 

@@ -7,7 +7,7 @@ import { regulatedAuthCopy, regulatedAuthErrorCopy } from "@routeflow/types/regu
  * only ever shows a category name that passes a conservative text check (never a formula-led or long string).
  */
 const NEXT_STEP_TAB = "Licenses tab";
-const blocked = (reason: "NO_AUTH" | "EXPIRED", categoryName = "Tobacco") => ({
+const blocked = (reason: "NO_AUTH" | "EXPIRED", categoryName = "Alcohol") => ({
   trackedCategoryId: "cat-1",
   categoryName,
   reason,
@@ -17,24 +17,24 @@ describe("regulatedAuthCopy", () => {
   it("EXPIRED: names the item group, says it expired, and where to renew", () => {
     const copy = regulatedAuthCopy([blocked("EXPIRED")]);
     expect(copy).toBe(
-      "This sale includes regulated items (Tobacco), and the customer's license has expired. Renew it on the customer's Licenses tab, then try again.",
+      "This sale includes regulated items (Alcohol), and the customer's license has expired. Renew it on the customer's Licenses tab, then try again.",
     );
   });
 
   it("NO_AUTH: says none is on file, where to add it, and the choose-another-customer exit", () => {
     const copy = regulatedAuthCopy([blocked("NO_AUTH")]);
     expect(copy).toBe(
-      "This sale includes regulated items (Tobacco), and the customer has no verified license on file. Add it on the customer's Licenses tab, or choose a customer who has one, then try again.",
+      "This sale includes regulated items (Alcohol), and the customer has no verified license on file. Add, verify or renew it on the customer's Licenses tab, or choose a customer who has one, then try again.",
     );
   });
 
   it("mixed reasons: one sentence that covers add-or-renew", () => {
     const copy = regulatedAuthCopy([
-      blocked("EXPIRED", "Tobacco"),
+      blocked("EXPIRED", "Alcohol"),
       { ...blocked("NO_AUTH", "Hemp"), trackedCategoryId: "cat-2" },
     ]);
     expect(copy).toBe(
-      "This sale includes regulated items (Tobacco, Hemp) that need a valid license on file for the customer. Add or renew it on the customer's Licenses tab, then try again.",
+      "This sale includes regulated items (Alcohol, Hemp) that need a valid license on file for the customer. Add, verify or renew it on the customer's Licenses tab, then try again.",
     );
   });
 
@@ -64,16 +64,48 @@ describe("regulatedAuthCopy", () => {
     }
   });
 
-  it("de-duplicates repeated names and caps the list at three", () => {
+  it("de-duplicates repeated names and says how many more when the list is capped at three", () => {
     const copy = regulatedAuthCopy([
       blocked("NO_AUTH", "A1"),
       blocked("NO_AUTH", "A1"),
       blocked("NO_AUTH", "B2"),
       blocked("NO_AUTH", "C3"),
       blocked("NO_AUTH", "D4"),
+      blocked("NO_AUTH", "E5"),
     ]);
-    expect(copy).toContain("(A1, B2, C3)");
+    expect(copy).toContain("(A1, B2, C3 and 2 more)");
     expect(copy).not.toContain("D4");
+  });
+
+  it("a filtered-out name is counted, never silently dropped", () => {
+    const copy = regulatedAuthCopy([
+      blocked("NO_AUTH", "Alcohol"),
+      blocked("NO_AUTH", "=HYPERLINK(1)"),
+    ]);
+    expect(copy).toContain("(Alcohol and 1 more)");
+    expect(copy).not.toContain("HYPERLINK");
+  });
+
+  describe("a walk-in at the counter has no license tab to fix", () => {
+    it("says only to choose a customer who has a valid license", () => {
+      for (const reason of ["EXPIRED", "NO_AUTH"] as const) {
+        const copy = regulatedAuthCopy([blocked(reason)], { walkIn: true });
+        expect(copy).toBe(
+          "This sale includes regulated items (Alcohol), which need a customer with a valid license. Choose a customer who has a valid license, then try again.",
+        );
+        expect(copy).not.toContain("Licenses tab");
+      }
+    });
+    it("the error helper passes the option through", () => {
+      const e = {
+        response: {
+          status: 409,
+          data: { code: API_ERROR_CODES.REGULATED_AUTH_REQUIRED, blockedCategories: [] },
+        },
+      };
+      expect(regulatedAuthErrorCopy(e, { walkIn: true })).toContain("Choose a customer");
+      expect(regulatedAuthErrorCopy(e)).toContain("Licenses tab");
+    });
   });
 });
 

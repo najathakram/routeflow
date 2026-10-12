@@ -660,7 +660,8 @@ export function CounterSaleScreen() {
         attemptRef.current = null;
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
-        setError(counterSaleErrorCopy(err)); // FIXED copy, never the server message
+        // FIXED copy, never the server message; a walk-in sale has no customer record to fix a license on
+        setError(counterSaleErrorCopy(err, { walkIn: attempt.dto.walkIn === true }));
         liveCart.endSend();
       } else {
         attempt.unknown = true;

@@ -14,6 +14,7 @@ import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
 import { ORDER_OVERPAY_GENERIC_COPY } from "./order-overpay";
 import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
+import { sellingRestrictedCopy } from "./selling-restricted-copy";
 
 /**
  * B980 (owner rule: no raw strings in the UI): the app-wide mutation error toast shows FIXED copy,
@@ -295,6 +296,8 @@ export function codedToastCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);
+  // CQ-06 review: a selling-restriction refusal with no dialog of its own says what is wrong and the next step.
+  if (code === API_ERROR_CODES.SELLING_RESTRICTED) return sellingRestrictedCopy(data.blockedLines);
   // CQ-06: the license refusal says what is wrong (expired / none on file) and where to fix it (shared with mobile).
   if (code === API_ERROR_CODES.REGULATED_AUTH_REQUIRED)
     return regulatedAuthCopy(data.blockedCategories);

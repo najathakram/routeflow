@@ -13,6 +13,8 @@ import {
   type FulfilmentCapability,
 } from "@routeflow/types";
 import { regulatedAuthErrorCopy } from "@routeflow/types/regulated-auth-copy";
+import { creditLimitCounterSentence } from "./credit-limit-copy";
+import { sellingRestrictedCopy } from "./selling-restricted-copy";
 import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
 
 /**
@@ -402,9 +404,17 @@ export const COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY =
  * FIXED copy by status (and the one named 403 code); the server's own message is never shown. "Nothing was charged" is
  * said ONLY for a refusal that proves nothing was written; a 5xx / network error / timeout is an unknown outcome.
  */
-export function counterSaleErrorCopy(err: unknown): string {
+export function counterSaleErrorCopy(err: unknown, opts: { walkIn?: boolean } = {}): string {
   const res = (
-    err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
+    err as
+      | {
+          response?: {
+            status?: number;
+            data?: { code?: unknown; limit?: unknown; exposure?: unknown; blockedLines?: unknown };
+          };
+        }
+      | null
+      | undefined
   )?.response;
   const status = res?.status;
   if (status === 403 && res?.data?.code === API_ERROR_CODES.COUNTER_SALES_DISABLED)
@@ -430,8 +440,15 @@ export function counterSaleErrorCopy(err: unknown): string {
   if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_KEY_CONFLICT)
     return "That sale reference was already used. Ring the sale again.";
   // CQ-06: a license refusal (create()'s regulated guard, before anything is written) says what to fix, not "Something changed".
-  const license = regulatedAuthErrorCopy(err);
+  const license = regulatedAuthErrorCopy(err, { walkIn: opts.walkIn === true });
   if (license) return `${license} Nothing was charged.`;
+  // CQ-06 review: the credit-limit and selling-restriction guards also run in create() before any write; each says what to fix.
+  if (status === 409 && res?.data?.code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED) {
+    return `${creditLimitCounterSentence(res.data.limit, res.data.exposure)} Nothing was charged.`;
+  }
+  if (status === 409 && res?.data?.code === API_ERROR_CODES.SELLING_RESTRICTED) {
+    return `${sellingRestrictedCopy(res.data.blockedLines)} Nothing was charged.`;
+  }
   if (status === 409)
     return "Something changed while you were checking out. Review the sale and try again. Nothing was charged.";
   if (status === 400 || status === 404 || status === 422 || status === 429)
