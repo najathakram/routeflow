@@ -1,4 +1,3 @@
-import { InvoiceStatus, OrderStatus } from "@prisma/client";
 import type { PrismaService } from "../../../prisma/prisma.service";
 import {
   creditNotesInWindowWhere,
@@ -33,13 +32,9 @@ export async function readWindowFacts(
     _count: { _all: true },
     _sum: { total: true },
   });
-  // Cash that was taken stays in the drawer when the office later writes the rest off: only a VOID invoice drops its payments
-  // (the rest of the where is Today's sales' own definition of money in).
-  const inWindow = salePaymentsWhere(tenantId, w);
-  const taken = {
-    ...inWindow,
-    invoice: { ...inWindow.invoice, status: { not: InvoiceStatus.VOID } },
-  };
+  // Today's sales' own definition of money in, unchanged: only a VOID invoice drops its payments, so cash taken stays in the
+  // drawer when the office later writes the rest off (row 374: Today's reads this same where).
+  const taken = salePaymentsWhere(tenantId, w);
   const paymentSelect = {
     amount: true,
     method: true,
@@ -56,19 +51,10 @@ export async function readWindowFacts(
   // candidates are the Today's-sales hand-over query (PAID, dated in the window, non-counter PICKUP orders, group id set) with
   // the close's own rules on top (only a VOID invoice drops its payments; the register filter on the order); the v5 group id
   // cannot be computed in SQL, so the rows are matched here. Counter sales are not read twice: `counterSale: false` is disjoint.
-  const handOverBase = handOverCandidatesWhere(tenantId, w);
+  // handOverCandidatesWhere already carries the day close's own rules (only a VOID invoice drops its payments, a CANCELLED
+  // order's money is not the day's): one definition, with the register filter AND-ed on the order.
   const handOverRows = await db.invoicePayment.findMany({
-    where: {
-      AND: [
-        {
-          ...handOverBase,
-          invoice: { ...handOverBase.invoice, status: { not: InvoiceStatus.VOID } },
-        },
-        { invoice: { order: reg } },
-        // the same rule as a counter sale: a cancelled order's money is not the day's
-        { invoice: { order: { status: { not: OrderStatus.CANCELLED } } } },
-      ],
-    },
+    where: { AND: [handOverCandidatesWhere(tenantId, w), { invoice: { order: reg } }] },
     select: paymentSelect,
   });
   // SELECTION is by the order's own pickup group id only (the group clause of the one predicate, `isCounterTenderGroup`, told
