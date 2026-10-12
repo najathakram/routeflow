@@ -152,7 +152,9 @@ describe("CounterSaleScreen", () => {
     expect(screen.getByTestId("change-due")).toHaveTextContent("Change $17.50");
     expect(screen.getByTestId("change-due").className).toMatch(/text-3xl/);
     fireEvent.click(screen.getByRole("button", { name: "Exact" }));
-    expect(screen.getByTestId("change-due")).toHaveTextContent("Change $0.00");
+    // nothing to give back: the hero stays "Amount due", never "Change $0.00"
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $0.00");
+    expect(screen.getByTestId("change-due")).not.toHaveTextContent("Change");
   });
 
   it("cash: the change line sits inside the sticky checkout bar, never under it (row 112)", async () => {
@@ -163,6 +165,13 @@ describe("CounterSaleScreen", () => {
     expect(screen.getByTestId("counter-checkout-bar")).toContainElement(
       screen.getByTestId("change-due"),
     );
+  });
+
+  it("the scan field is short enough for a phone and carries the multiply tip as a hint below it", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    const input = screen.getByLabelText("Scan or search items");
+    expect(input).toHaveAttribute("placeholder", "Scan or type an item");
+    expect(screen.getByTestId("scan-hint")).toHaveTextContent("Type a quantity first to multiply");
   });
 
   it("cash: an underpayment reads 'Amount due', never 'Change $0.00' (row 188)", async () => {
@@ -1404,11 +1413,12 @@ describe("CounterSaleScreen: API contract wiring", () => {
   });
 
   describe("the displayed total is an ESTIMATE; the receipt carries the server's number", () => {
-    it("the running figure is labelled 'Estimated total' (and still drives quick tender / change)", async () => {
+    it("the running figure is labelled 'Total' (and still drives quick tender / change)", async () => {
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
       const running = screen.getByTestId("running-total");
-      expect(running).toHaveTextContent("Estimated total");
+      expect(running).toHaveTextContent("Total");
+      expect(running).not.toHaveTextContent("Estimated");
       expect(running).toHaveTextContent("$2.50");
       expect(screen.getByTestId("change-due")).toHaveTextContent("Change $17.50");
     });

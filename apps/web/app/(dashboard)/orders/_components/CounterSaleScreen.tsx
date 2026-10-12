@@ -1007,7 +1007,7 @@ export function CounterSaleScreen() {
               ref={scanRef}
               aria-label="Scan or search items"
               className="min-h-[44px] w-full rounded border px-3 py-2 text-base"
-              placeholder="Scan or type an item (type a quantity first to multiply)"
+              placeholder="Scan or type an item"
               value={scanText}
               disabled={lineLocked}
               onChange={(e) => {
@@ -1036,6 +1036,9 @@ export function CounterSaleScreen() {
               </span>
             ) : null}
           </form>
+          <p className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
+            Type a quantity first to multiply the next scan.
+          </p>
           {scanCue ? (
             <p
               role="status"
@@ -1353,15 +1356,15 @@ export function CounterSaleScreen() {
               </div>
             ) : null}
             <div className="flex justify-between text-lg font-semibold" data-testid="running-total">
-              <span>Estimated total</span>
+              <span>Total</span>
               <span>{money(totals.total)}</span>
             </div>
 
             {method === "CASH" ? (
               <p className="text-3xl font-bold" data-testid="change-due" role="status">
-                {amountDue(totals.total, tenderedNum) > 0
-                  ? `Amount due ${money(amountDue(totals.total, tenderedNum))}`
-                  : `Change ${money(changeDue(totals.total, tenderedNum))}`}
+                {changeDue(totals.total, tenderedNum) > 0
+                  ? `Change ${money(changeDue(totals.total, tenderedNum))}`
+                  : `Amount due ${money(amountDue(totals.total, tenderedNum))}`}
               </p>
             ) : null}
 
