@@ -47,6 +47,10 @@ export function useCounterSaleGate(options?: { enabled?: boolean }) {
 export function useCreateCounterSale() {
   const qc = useQueryClient();
   return useMutation({
+    // CQ-29: React Query's default ("online") PAUSES a mutation while the browser is offline, so `mutateAsync` never settles
+    // and the till sits "sending" until the connection comes back (and then sends by itself). The till must try the request
+    // and see the network failure, so it can say so and unfreeze; the sale's Idempotency-Key makes any retry safe.
+    networkMode: "always",
     mutationFn: ({ dto, idempotencyKey }: { dto: CounterSaleRequest; idempotencyKey: string }) =>
       apiClient
         .post<CounterSaleResponse>("/orders/counter-sale", dto, {
@@ -67,6 +71,7 @@ export function useCreateCounterSale() {
 export function useCounterSaleByKey() {
   const qc = useQueryClient();
   return useMutation({
+    networkMode: "always", // CQ-29: "Check sale status" must answer (or fail) while offline, never pause silently
     mutationFn: ({
       idempotencyKey,
       method,
