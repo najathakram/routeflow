@@ -249,10 +249,16 @@ export function pickCustomerInvoiceFields<T>(
   // Row 398: the header `taxAmount` holds the regular tax PLUS the levy (deposit, excise). The buyer sees them apart, as
   // on the PDF: the regular tax and one named charge per category, derived from the RAW lines here (the projected line
   // carries neither the category row nor the snapshot type). The stored header is left as it is.
-  if ("items" in invoice && Array.isArray(invoice.items) && "taxAmount" in invoice) {
+  if (Array.isArray(invoice.chargeLines) && typeof invoice.regularTaxAmount === "number") {
+    // already projected (the service and the controller may both apply this): the stripped lines carry no category,
+    // so recomputing would rename the charges. Carry the first pass through.
+    out.regularTaxAmount = invoice.regularTaxAmount;
+    out.chargeLines = invoice.chargeLines;
+  } else if ("items" in invoice && Array.isArray(invoice.items) && "taxAmount" in invoice) {
     const split = invoiceTaxSplit(invoice.taxAmount, invoice.items as BilledChargeItem[]);
     out.regularTaxAmount = split.tax;
-    out.chargeLines = split.charges;
+    // the key is opaque: the buyer's line carries no category id (trackedCategoryId is off the allowlist on purpose)
+    out.chargeLines = split.charges.map((c, i) => ({ ...c, key: String(i) }));
   }
   if ("payments" in invoice) {
     const payments =

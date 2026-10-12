@@ -7,6 +7,8 @@ interface SplitLine {
   categoryTaxAmount?: number | string | null;
   trackedCategoryId?: string | null;
   categoryTaxType?: string | null;
+  /** the category row the payload already carries (name, type): used until / unless the categories list answers */
+  trackedCategory?: { id?: string | null; name?: string | null; taxType?: string | null } | null;
 }
 
 /**
@@ -28,7 +30,9 @@ export function useInvoiceTaxSplit(
         categoryTaxAmount: it.categoryTaxAmount,
         trackedCategoryId: it.trackedCategoryId,
         categoryTaxType: it.categoryTaxType,
-        trackedCategory: it.trackedCategoryId ? (byId.get(it.trackedCategoryId) ?? null) : null,
+        trackedCategory: it.trackedCategoryId
+          ? (byId.get(it.trackedCategoryId) ?? it.trackedCategory ?? null)
+          : null,
       })),
     );
   }, [invoice, data]);
@@ -47,7 +51,9 @@ export function useOrderCharges(
         categoryTaxAmount: l.categoryTaxAmount,
         trackedCategoryId: l.trackedCategoryId,
         categoryTaxType: l.categoryTaxType,
-        trackedCategory: l.trackedCategoryId ? (byId.get(l.trackedCategoryId) ?? null) : null,
+        trackedCategory: l.trackedCategoryId
+          ? (byId.get(l.trackedCategoryId) ?? l.trackedCategory ?? null)
+          : null,
       })),
     );
   }, [lines, data]);

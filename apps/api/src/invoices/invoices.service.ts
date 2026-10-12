@@ -2998,7 +2998,9 @@ export class InvoicesService {
             product: { select: { id: true, name: true, unit: true, unitsPerBox: true } },
             // RF-2-lite: surface the regulated category/subcategory NAME so clients can
             // label regulated lines (previously only the trackedCategoryId was returned).
-            trackedCategory: { select: { id: true, name: true, invoiceTreatment: true } },
+            trackedCategory: {
+              select: { id: true, name: true, taxType: true, invoiceTreatment: true },
+            },
             trackedSubcategory: { select: { id: true, name: true } },
           },
         },

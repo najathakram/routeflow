@@ -106,10 +106,11 @@ export function OrderPreviewModal({
   orderId: string;
 }) {
   const { data: order, isLoading } = useOrder(open ? orderId : "");
-  const charges = useOrderCharges(
-    order?.lineItems?.filter((li) => li.status !== "CANCELLED"),
-    open,
+  const liveLines = React.useMemo(
+    () => order?.lineItems?.filter((li) => li.status !== "CANCELLED"),
+    [order],
   );
+  const charges = useOrderCharges(liveLines, open);
   // Sum this order's own non-void invoice totals for the divergence note. Only
   // meaningful once the order is fully invoiced; a partial split legitimately bills
   // less, so suppress the note unless the whole order has been invoiced.
