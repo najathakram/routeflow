@@ -15,11 +15,12 @@ import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useRouteRun, useSettleRun, useUpdateRunStatus } from "../../../lib/api/routes";
 import { useRunSettlementStore } from "../../../store/runSettlementStore";
 import {
+  buildSettlementRows,
+  settlementTotalsReady,
   summarizeCollections,
   computeVariance,
   expectedPhysicalCash,
   isReconciled,
-  COLLECTED_METHODS,
   type CollectedMethod,
   type CollectionEntry,
 } from "../../../lib/run-settlement";
@@ -49,7 +50,12 @@ export default function RunSettlementScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ runId: string }>();
   const runId = params.runId;
-  const { data: run, isLoading, refetch: refetchRun } = useRouteRun(runId ?? "");
+  const {
+    data: run,
+    isLoading,
+    refetch: refetchRun,
+    isFetchedAfterMount,
+  } = useRouteRun(runId ?? "");
 
   const collections = useRunSettlementStore((s) =>
     runId ? (s.collectionsByRun[runId] ?? EMPTY_COLLECTIONS) : EMPTY_COLLECTIONS,
@@ -62,6 +68,17 @@ export default function RunSettlementScreen() {
   // label asks the driver to count); `collectedPayments` splits cash and checks,
   // so reading `cashTotal` alone would drop every check and invent a variance.
   const expectedCash = expectedPhysicalCash(run?.collectedPayments) ?? summary.cashTotal;
+  // B1008 (SA-644): the table rows come from the SAME server payload as the total; card / Zelle /
+  // advance are not part of the cash settlement and are listed apart. Until the payload has loaded
+  // every figure is this device's own tally, so closing the run is disabled (see closeRun).
+  const { rows, deviceOnly, serverLoaded } = useMemo(
+    () => buildSettlementRows(run?.collectedPayments, collections),
+    [run?.collectedPayments, collections],
+  );
+  const totalsReady = settlementTotalsReady({
+    serverLoaded,
+    fetchedAfterMount: isFetchedAfterMount,
+  });
 
   const [counted, setCounted] = useState("");
   const [reason, setReason] = useState("");
@@ -88,6 +105,7 @@ export default function RunSettlementScreen() {
 
   async function closeRun() {
     if (!runId || !run) return;
+    if (!totalsReady) return;
     if (counted === "") {
       setError("Enter the cash & checks you counted.");
       return;
@@ -172,15 +190,18 @@ export default function RunSettlementScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.caption}>
-          Collected on this device during this run — {summary.count} payment
-          {summary.count === 1 ? "" : "s"}.
+          {totalsReady
+            ? `Collected during this run — ${run.collectedPayments?.count ?? summary.count} cash/check payment${
+                (run.collectedPayments?.count ?? summary.count) === 1 ? "" : "s"
+              }.`
+            : "Totals are loading or you are offline: showing this device's tally only. Close run is unavailable until they load."}
         </Text>
 
         <View style={styles.card}>
-          {COLLECTED_METHODS.filter((m) => summary.byMethod[m]).map((m) => (
-            <View key={m} style={styles.row}>
-              <Text style={styles.rowLabel}>{methodLabel(m)}</Text>
-              <Text style={styles.rowValue}>${(summary.byMethod[m] ?? 0).toFixed(2)}</Text>
+          {rows.map((r) => (
+            <View key={r.method} style={styles.row}>
+              <Text style={styles.rowLabel}>{methodLabel(r.method)}</Text>
+              <Text style={styles.rowValue}>${r.amount.toFixed(2)}</Text>
             </View>
           ))}
           <View style={[styles.row, styles.rowTotal]}>
@@ -188,6 +209,18 @@ export default function RunSettlementScreen() {
             <Text style={styles.rowTotalValue}>${expectedCash.toFixed(2)}</Text>
           </View>
         </View>
+
+        {deviceOnly.length > 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.caption}>This device only, not part of the cash settlement</Text>
+            {deviceOnly.map((r) => (
+              <View key={r.method} style={styles.row}>
+                <Text style={styles.rowLabel}>{methodLabel(r.method)}</Text>
+                <Text style={styles.rowValue}>${r.amount.toFixed(2)}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
 
         <Text style={styles.fieldLabel}>Counted cash & checks</Text>
         <TextInput
@@ -226,9 +259,9 @@ export default function RunSettlementScreen() {
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
         <Pressable
-          style={[styles.closeBtn, saving && styles.closeBtnDisabled]}
-          onPress={saving ? undefined : closeRun}
-          disabled={saving}
+          style={[styles.closeBtn, (saving || !totalsReady) && styles.closeBtnDisabled]}
+          onPress={saving || !totalsReady ? undefined : closeRun}
+          disabled={saving || !totalsReady}
         >
           <Text style={styles.closeBtnText}>{saving ? "Closing…" : "Close run"}</Text>
         </Pressable>
