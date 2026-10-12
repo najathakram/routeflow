@@ -10,6 +10,7 @@ import {
   type CounterSalePaymentMethod,
   type FulfilmentCapability,
 } from "@routeflow/types";
+import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
 
 /**
  * Counter sale (walk-in pickup) — the pure logic behind the one screen. Money goes ONLY through @routeflow/pricing
@@ -229,7 +230,7 @@ const ORDER_EXISTS_CODES: ReadonlySet<unknown> = new Set([
 
 /** 409 COUNTER_SALE_DAY_CLOSED from the till's sale: the sale is saved, only its payment was refused (the tender's day is closed). */
 export const COUNTER_SALE_DAY_CLOSED_TILL_COPY =
-  "This day is closed, so no payment was taken. The sale is saved. Ask the office to reopen the close, then use Try again.";
+  "This day is closed, so no payment was taken. The sale is saved without payment.";
 
 /**
  * True only for a 4xx that PROVES nothing was written (the auth guard, the throttler and validation all reject BEFORE the
@@ -309,6 +310,8 @@ export function counterSaleErrorCopy(err: unknown): string {
   // POS-5: a refused price edit says so (and what to do), before the generic permission copy below.
   if (status === 403 && res?.data?.code === API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED)
     return COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY;
+  // A READ_ONLY workspace's 403: the guard refused before the handler ran (nothing was written), and the permission is fine.
+  if (status === 403 && isReadOnlyRefusal(err)) return readOnlyRefusalCopy();
   if (status === 401 || status === 403)
     return "You don't have permission to complete a counter sale.";
   const final = finalCounterSaleCopy(err);

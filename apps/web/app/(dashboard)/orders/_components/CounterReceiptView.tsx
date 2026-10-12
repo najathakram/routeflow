@@ -7,6 +7,7 @@ import {
   formatReceiptMoney as money,
   type CounterReceiptModel,
 } from "@/lib/counter-receipt";
+import { ReadOnlyHint, WriteLink } from "@/lib/read-only-gate";
 
 /**
  * The ONE printable receipt view: the live receipt and the Today's-sales reprint both render through it, so a reprint can
@@ -136,12 +137,13 @@ export function CounterReceiptView({
           data-testid="counter-payment-not-recorded"
         >
           <p className="font-semibold">Sale recorded — payment not recorded</p>
-          <Link
+          <WriteLink
             href={`/invoices/${m.invoiceId}`}
             className="inline-flex min-h-[44px] min-w-[44px] items-center text-brand-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 print:hidden"
           >
             Record payment
-          </Link>
+          </WriteLink>
+          <ReadOnlyHint className="text-xs text-slate-600 print:hidden" />
         </div>
       ) : null}
       <dl className="space-y-1 text-sm">

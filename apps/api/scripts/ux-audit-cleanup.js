@@ -146,7 +146,7 @@ async function main() {
     if (!isTestTenant(tenantRow.slug))
       throw new Error(`tenant ${m.tenantId} is not an approved test tenant: refusing`);
     const sr0 = await pg.query(
-      `SELECT "planKey", "stripeSubId" FROM "TenantSubscription" WHERE "tenantId" = $1`,
+      `SELECT "planKey", "stripeSubId", "couponFull" FROM "TenantSubscription" WHERE "tenantId" = $1`,
       [m.tenantId],
     );
     assertWritableTenant(tenantRow, sr0.rows[0] ?? null, protectedSlugs);

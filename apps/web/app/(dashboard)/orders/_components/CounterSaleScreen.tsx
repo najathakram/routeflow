@@ -101,6 +101,7 @@ import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 import { ParkedSales } from "./ParkedSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
+import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 interface PickedCustomer {
   id: string;
@@ -120,6 +121,7 @@ const UNDO_MS = 5000;
 export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
 
 export function CounterSaleScreen() {
+  const readOnlyGate = useReadOnlyGate();
   const router = useRouter();
   const gate = useCounterSaleGate();
   const createSale = useCreateCounterSale();
@@ -881,14 +883,14 @@ export function CounterSaleScreen() {
           onRestore={restoreParked}
         />
         {gate.offerShipInstead ? (
-          <Button
+          <WriteButton
             className="min-h-[44px]"
             variant="secondary"
             disabled={locked || salePosting || createDraft.isPending}
             onClick={onShipClick}
           >
             Ship this order instead
-          </Button>
+          </WriteButton>
         ) : null}
       </div>
 
@@ -1346,6 +1348,8 @@ export function CounterSaleScreen() {
             </p>
           ) : null}
 
+          {/* SA-733r6: read-only keeps the cart; Charge is disabled and says why - above the bar, so the bar's box never moves. */}
+          <ReadOnlyHint className="text-sm text-slate-700" />
           <div
             ref={barRef}
             className="sticky bottom-0 z-20 space-y-2 border-t bg-white py-2 md:static md:border-t-0 md:py-0"
@@ -1381,7 +1385,9 @@ export function CounterSaleScreen() {
               <Button
                 className="min-h-[44px]"
                 onClick={() => void completeSale(false)}
+                aria-describedby={readOnlyGate.readOnly ? readOnlyGate.hintId : undefined}
                 disabled={
+                  readOnlyGate.readOnly ||
                   salePosting ||
                   createDraft.isPending ||
                   locked ||
@@ -1396,7 +1402,9 @@ export function CounterSaleScreen() {
                 className="min-h-[44px]"
                 variant="secondary"
                 onClick={() => void completeSale(true)}
+                aria-describedby={readOnlyGate.readOnly ? readOnlyGate.hintId : undefined}
                 disabled={
+                  readOnlyGate.readOnly ||
                   salePosting ||
                   createDraft.isPending ||
                   locked ||

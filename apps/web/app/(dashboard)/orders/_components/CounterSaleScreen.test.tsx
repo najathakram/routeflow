@@ -794,7 +794,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       expect(banner).toBeInTheDocument();
       expect(
         screen.getByText(
-          "This day is closed, so no payment was taken. The sale is saved. Ask the office to reopen the close, then use Try again.",
+          "This day is closed, so no payment was taken. The sale is saved without payment.",
         ),
       ).toBeInTheDocument();
       expect(document.body.textContent).not.toContain("RAW");

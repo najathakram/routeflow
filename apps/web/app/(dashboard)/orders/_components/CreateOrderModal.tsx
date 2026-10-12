@@ -123,6 +123,7 @@ import { useOrderSuggestions } from "@/lib/api/order-suggestions";
 import { mergeOrderedIntoLine, type OrderedAdd } from "./order-again";
 import { OrderSuggestionsBar } from "./OrderSuggestionsBar";
 import { useOrderSuggestionActions } from "./use-order-suggestion-actions";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -1879,7 +1880,8 @@ export function CreateOrderModal({
             <Button variant="ghost" type="button" className="max-sm:h-11" onClick={handleDismiss}>
               Cancel
             </Button>
-            <Button
+            <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
+            <WriteButton
               variant="secondary"
               type="button"
               className="max-sm:h-11"
@@ -1888,9 +1890,9 @@ export function CreateOrderModal({
               onClick={onSaveDraft}
             >
               Save as draft
-            </Button>
+            </WriteButton>
             {posMode && (
-              <Button
+              <WriteButton
                 variant="secondary"
                 type="button"
                 className="max-sm:h-11"
@@ -1904,9 +1906,9 @@ export function CreateOrderModal({
                 }}
               >
                 {POS_COPY.confirmOnly}
-              </Button>
+              </WriteButton>
             )}
-            <Button
+            <WriteButton
               type="submit"
               form="create-order-form"
               className="max-sm:h-11"
@@ -1921,7 +1923,7 @@ export function CreateOrderModal({
               aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
             >
               {posMode ? POS_COPY.confirmAndInvoice : "Create Order"}
-            </Button>
+            </WriteButton>
           </div>
         </div>
       }

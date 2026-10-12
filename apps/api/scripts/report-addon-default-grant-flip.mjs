@@ -136,7 +136,8 @@ async function main() {
     const tenants = await q(
       client,
       `SELECT t.id, t.plan, t.status, t.class, t."deletedAt", t."planVersionId",
-              s."planKey" AS "subPlanKey"
+              s."planKey" AS "subPlanKey",
+              s."couponFull" AS "subCouponFull"
          FROM "Tenant" t
          LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
         WHERE t."deletedAt" IS NULL`,
@@ -233,7 +234,11 @@ async function main() {
         planKey: effectivePlanKey,
         bucket,
         hasInactiveRow: inactiveTargetTenantIds.has(tenant.id),
-        paying: isPayingTenant(tenant, tenant.subPlanKey),
+        // a tenant with no plan is never paying; otherwise the flag is passed raw (undefined THROWS, never coerced)
+        paying:
+          tenant.subPlanKey == null
+            ? false
+            : isPayingTenant(tenant, tenant.subPlanKey, tenant.subCouponFull),
       });
     }
 

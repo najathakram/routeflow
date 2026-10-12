@@ -1,6 +1,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
+import { WriteLink } from "@/lib/read-only-gate";
 
 /**
  * What a customer can do about an order that is with the carrier. Its lines are frozen (SA-696), so
@@ -20,9 +21,9 @@ export function ShippedOrderExits() {
           start a return
         </Link>{" "}
         or{" "}
-        <Link href="/orders?action=new" className="font-medium text-brand-600 underline">
+        <WriteLink href="/orders?action=new" className="font-medium text-brand-600 underline">
           place a new order
-        </Link>
+        </WriteLink>
         .
       </p>
     </div>

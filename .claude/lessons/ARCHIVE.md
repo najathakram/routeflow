@@ -3856,3 +3856,29 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **Declare the FK inline: `ADD COLUMN "x" TEXT CONSTRAINT "T_x_fkey" REFERENCES ...`, not a separate `ADD CONSTRAINT` (probe on 1M rows: 0.7 ms inline vs 33 ms separate; the constraint name is unchanged, so Prisma shows no drift). Write the real lock duration in the migration header.**
 - **Guard:** the sitting-3 migration headers; replay plus `apps/api/scripts/schema-drift.mjs`.
   (Archived 2026-10-11 whole and verbatim to make room at cap: L-286: guarded by the sitting-3 migration headers and `apps/api/scripts/schema-drift.mjs`; no outside citation.)
+
+## Archived 2026-10-11 — least-cited, guarded; headroom for L-295..L-297 (Release 5 bookkeeping)
+
+### L-254 · 2026-10-02 · tooling · a fresh worktree runs the fleet hook shim, never `npx husky`, and hooks fail fast when the worktree has no install
+
+- **Symptom:** a worktree made with `npm ci --ignore-scripts` has no `.husky/_`, so before the shared shim a push silently skipped pre-push verify; with the shim, a worktree with no `node_modules` fails pre-commit (`prettier` ENOENT through lint-staged) and pre-push (`semver is not resolvable`). `npx husky` resets the shared `core.hooksPath`.
+- **Root cause:** hooks resolve per checkout, while the fleet shares one shim (`.git/husky-shim/_`) that runs each worktree's own `.husky` scripts; the tools the hooks call come from that worktree's own `node_modules`.
+- **Lesson:** **In a fresh worktree never run `npx husky`, `HUSKY=0` or `--no-verify`; read the first lines of a hook failure that appears within seconds (it names the missing tool). For code, install first (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`). For a docs-only commit, link a full install's `node_modules` (any worktree with a working install; the main checkout's can be broken) for the commit and remove the link after; for a docs-only push use the audited `SKIP_VERIFY=1 SKIP_VERIFY_REASON="..."`.**
+- **Guard:** `scripts/check-git-hooks.mjs` (first step of `npm run verify`); the audit line `SKIP_VERIFY_REASON` writes to `.git/skip-verify.log`.
+  (Archived 2026-10-11 whole and verbatim to make room at cap: L-254: guarded by `scripts/check-git-hooks.mjs` (first step of `npm run verify`) and the audited `SKIP_VERIFY_REASON` line; three outside citations, all in bookkeeping files.)
+
+### L-293 · 2026-10-11 · tooling · a builder's local tsc that excludes specs misses spec type errors: hand back only after the repo's own check-types ratchet
+
+- **Symptom:** a spec type error passed the builder's local type-check and only failed later, in the ratchet and CI, after the work had been handed back.
+- **Root cause:** the builder's bare `tsc` used a config that excludes spec files, so spec errors never showed; the repo's check-types ratchet compiles specs. The abandoned approach was trusting the local tsc as the type gate.
+- **Lesson:** **Before handing work back, run the repo's own check-types ratchet (the one verify runs), never a bare local `tsc`; a green local tsc that skips specs proves nothing about the spec files you just wrote.**
+- **Guard:** the check-types ratchet in `npm run verify` and CI; none for the local habit beyond the hand-back checklist.
+  (Archived 2026-10-11 whole and verbatim to make room at cap: L-293: guarded by the check-types ratchet in `npm run verify` and CI; one outside citation (the code map changelog).)
+
+### L-270 · 2026-10-07 · testing · a probe asserts the branch it entered before reading the effect it measures
+
+- **Symptom:** a replace-all stock probe looked like a double-decrement of stock.
+- **Root cause:** the probe sent no `replaceAll: true`, so the edit took MERGE mode, a different branch from the one under test; the effect was read without ever checking which path ran.
+- **Lesson:** **A probe asserts the mode or path it actually entered (the edit mode, the line count after) before it reads the effect it measures; otherwise a fixture that took a different branch reads as a bug.**
+- **Guard:** probes print and assert the branch marker (mode, resulting line count) before any effect assertion; a probe with no such line is not evidence.
+  (Archived 2026-10-11 whole and verbatim to make room at cap: L-270: guarded by the probes' own branch-marker assertion; no outside citation.)

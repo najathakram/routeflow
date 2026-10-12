@@ -12,6 +12,13 @@
 
 ## process
 
+### L-297 · 2026-10-11 · process · a helper made stricter breaks every caller written on the other side of a merge: audit callers, run the full verify on the merged tip
+
+- **Symptom:** after `isPayingTenant` was made to throw unless `couponFull` is a boolean, a master-origin backfill script that never selected that column would have thrown in apply mode; only the full verify, including the serial script lane, caught it.
+- **Root cause:** the stricter contract was proven against the callers on the author's branch; callers added on master (scripts, which no touched spec covers) were invisible until the merge. A branch's own green and a run of only the touched specs cannot see them.
+- **Lesson:** **When a helper starts throwing on a missing input, grep every caller in the same PR and update each; then run the FULL verify (script lane included) on the merged tip of a stack and on master, never just the touched specs. Cf. [[L-247]], [[L-264]].**
+- **Guard:** `scripts-live-target-guard.spec.ts` and the script-lane spec `backfill-refund-tender-script.spec.ts`, which execute the real callers against the strict helper.
+
 ### L-294 · 2026-10-11 · process · a review lists every writer of a row shape before it calls that shape anomalous
 
 - **Symptom:** a review flagged a stored row shape as an anomaly, when another legitimate writer produces exactly that shape.
@@ -218,12 +225,12 @@
 
 ## tooling
 
-### L-293 · 2026-10-11 · tooling · a builder's local tsc that excludes specs misses spec type errors: hand back only after the repo's own check-types ratchet
+### L-295 · 2026-10-11 · tooling · Git Bash rewrites `cmd /c` into an interactive `cmd`: a batch job run that way waits on stdin forever and holds the shared slot
 
-- **Symptom:** a spec type error passed the builder's local type-check and only failed later, in the ratchet and CI, after the work had been handed back.
-- **Root cause:** the builder's bare `tsc` used a config that excludes spec files, so spec errors never showed; the repo's check-types ratchet compiles specs. The abandoned approach was trusting the local tsc as the type gate.
-- **Lesson:** **Before handing work back, run the repo's own check-types ratchet (the one verify runs), never a bare local `tsc`; a green local tsc that skips specs proves nothing about the spec files you just wrote.**
-- **Guard:** the check-types ratchet in `npm run verify` and CI; none for the local habit beyond the hand-back checklist.
+- **Symptom:** a batch script launched from Git Bash as `cmd /c <script>` never returned; run inside the heavy slot it held the single shared slot for about three hours while every other lane queued behind it.
+- **Root cause:** MSYS path conversion rewrites the `/c` switch into a drive path (`cmd C:/ <script>`), so `cmd` starts as an INTERACTIVE shell that blocks on stdin; the script was never the problem. The abandoned approach was waiting for it.
+- **Lesson:** **In Git Bash write `cmd //c` (or set `MSYS_NO_PATHCONV=1`, or launch with PowerShell `Start-Process`), give every batch job `< nul` so a stray prompt reads EOF instead of waiting, and give every slot job a hold cap and a closed stdin. Treat a silent hang right after launching a `.cmd` from Git Bash as this trap first. Cf. [[L-291]].**
+- **Guard:** the heavy-slot status line prints `OVER HOLD CAP (> 180 min)` for an over-long holder (`scripts/lib/heavy-slot.mjs`, pinned by `scripts/heavy-slot.self-test.mjs`); it only warns, so the quoting and `< nul` habits are convention only.
 
 ### L-291 · 2026-10-10 · tooling · never feed python a heredoc on Windows (`python3 -`): it hangs; write the script to a file or use node
 
@@ -364,13 +371,6 @@
   `dist` is older than `src` for any workspace package; the third recurrence's specific gap (which
   consumers lack a `moduleNameMapper` for which package) would need the same kind of check.
 
-### L-254 · 2026-10-02 · tooling · a fresh worktree runs the fleet hook shim, never `npx husky`, and hooks fail fast when the worktree has no install
-
-- **Symptom:** a worktree made with `npm ci --ignore-scripts` has no `.husky/_`, so before the shared shim a push silently skipped pre-push verify; with the shim, a worktree with no `node_modules` fails pre-commit (`prettier` ENOENT through lint-staged) and pre-push (`semver is not resolvable`). `npx husky` resets the shared `core.hooksPath`.
-- **Root cause:** hooks resolve per checkout, while the fleet shares one shim (`.git/husky-shim/_`) that runs each worktree's own `.husky` scripts; the tools the hooks call come from that worktree's own `node_modules`.
-- **Lesson:** **In a fresh worktree never run `npx husky`, `HUSKY=0` or `--no-verify`; read the first lines of a hook failure that appears within seconds (it names the missing tool). For code, install first (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`). For a docs-only commit, link a full install's `node_modules` (any worktree with a working install; the main checkout's can be broken) for the commit and remove the link after; for a docs-only push use the audited `SKIP_VERIFY=1 SKIP_VERIFY_REASON="..."`.**
-- **Guard:** `scripts/check-git-hooks.mjs` (first step of `npm run verify`); the audit line `SKIP_VERIFY_REASON` writes to `.git/skip-verify.log`.
-
 ### L-265 · 2026-10-06 · tooling · a `next dev` proof leaves `apps/web/.next/types`, which breaks the web type-check in pre-push; wipe `apps/web/.next` before committing or pushing
 
 - **Symptom:** three builders (#3233, #3238, #3223, 2026-10-06) ran the app under `next dev` to prove a change, then their pre-push `check-types -w apps/web` failed on errors from generated files, none in the diff.
@@ -394,6 +394,13 @@
 - **Guard:** none automatic; cf. [[L-272]] and the Mac slot rule.
 
 ## testing
+
+### L-296 · 2026-10-11 · testing · a pin that hard-codes a ruling's literal text or list goes stale, and fails only on the merge with a moved master
+
+- **Symptom:** a spec asserting "only these 2 routes", "the report re-send is blocked" or "exactly these N files write tenant status" was green on its own branch and red after the merge with a master that held a later ruling or a new legitimate writer.
+- **Root cause:** the pin copied the wording of the ruling it was written under instead of encoding the invariant, so every later ruling or writer made it lie. A branch's own green cannot see master's changes.
+- **Lesson:** **Pin the invariant structurally: one named constant, assertions derived from it, and an allow-list that carries a reason per entry plus a stale-entry guard (an entry that no longer matches fails). When a ruling changes, change the constant and its pin in the same diff, and replay the merged tip before landing. Cf. [[L-264]].**
+- **Guard:** `SNAPSHOT_READERS` in `coupon-state.spec.ts` and `PACKAGE_ALLOWLIST` in `api-error-codes-parity.spec.ts` (reason per entry, stale-entry check, total pinned); the replay of the merged tip.
 
 ### L-292 · 2026-10-10 · testing · a fixture that leaks an environment variable (RF_VERIFY_MODE) makes the pre-push hook and CI disagree
 
@@ -495,13 +502,6 @@
 - **Root cause:** `prisma generate` writes the client into `node_modules/.prisma`, so a shared install serves whichever schema its owner last generated, and mocked specs accept any shape; trusting the green run was the mistake.
 - **Lesson:** **In the tree under test run `npx prisma generate` from `apps/api` after the install, and prove any changed `select`/`include`/`where` with an executed query against a database migrated from THAT tree's `prisma/migrations` (`npm run local:migrate`, then the DB lane). A link to another tree's `node_modules` is fine for docs-only work and never for code that touches the schema.**
 - **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. [[L-176]].
-
-### L-270 · 2026-10-07 · testing · a probe asserts the branch it entered before reading the effect it measures
-
-- **Symptom:** a replace-all stock probe looked like a double-decrement of stock.
-- **Root cause:** the probe sent no `replaceAll: true`, so the edit took MERGE mode, a different branch from the one under test; the effect was read without ever checking which path ran.
-- **Lesson:** **A probe asserts the mode or path it actually entered (the edit mode, the line count after) before it reads the effect it measures; otherwise a fixture that took a different branch reads as a bug.**
-- **Guard:** probes print and assert the branch marker (mode, resulting line count) before any effect assertion; a probe with no such line is not evidence.
 
 ### L-276 · 2026-10-07 · testing · a scoped jest run leaves a partial campaign report, and a jest path argument is a regex
 
