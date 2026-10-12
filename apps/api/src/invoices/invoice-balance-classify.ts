@@ -39,6 +39,22 @@ export function confirmedBalance(
   return Math.max(0, roundMoney(Number(total) - sumConfirmed(payments)));
 }
 
+/**
+ * `roundMoney(total - Σ confirmed payments)`, NOT clamped: an overpaid invoice reads NEGATIVE (-10.00 when
+ * it was paid $10 over its total). OWNER RULING 2026-10-11: the Receivable Summary report shows an
+ * overpayment as a negative balance on the invoice row; EVERY OTHER surface uses the clamped
+ * `confirmedBalance` above (row 310). `getReceivableSummary` is its only reader;
+ * overdue-readers-inventory.spec.ts fails if `signedBalance` appears anywhere else. Same
+ * confirmed-payment semantics as `confirmedBalance` (both go through `sumConfirmed`); rounding to cents
+ * first means float dust reads 0, and `+ 0` turns a rounded -0 into 0.
+ */
+export function signedBalance(
+  total: unknown,
+  payments: ReadonlyArray<Pick<ConfirmablePaymentRow, "amount" | "status">> | null | undefined,
+): number {
+  return roundMoney(Number(total) - sumConfirmed(payments)) + 0;
+}
+
 export function classifyInvoiceBalance(
   inv: ClassifiableInvoice,
   cutoff: Date,

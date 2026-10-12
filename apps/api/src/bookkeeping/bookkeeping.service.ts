@@ -44,7 +44,7 @@ import {
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { lockInvoicesForPayment } from "../invoices/invoice-send-guard";
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
-import { confirmedBalance } from "../invoices/invoice-balance-classify";
+import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
 
 /**
  * Receipt-extraction model. Receipts are small documents where a misread line
@@ -2374,7 +2374,11 @@ export class BookkeepingService implements OnModuleInit {
         type: "INVOICE",
         status: inv.status,
         total: Number(inv.total),
-        balance: confirmedBalance(inv.total, inv.payments),
+        // OWNER RULING 2026-10-11 (Receivable Summary only): an overpaid invoice shows its NEGATIVE
+        // balance (-10.00 when paid $10 over). Every other report stays on the clamped
+        // confirmedBalance (row 310). The web footer total stays clamped per row
+        // (receivableSummaryBalanceTotal), so the surplus never nets against what is owed.
+        balance: signedBalance(inv.total, inv.payments),
       });
     }
 

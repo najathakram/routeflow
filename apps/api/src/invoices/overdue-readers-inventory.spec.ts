@@ -42,7 +42,7 @@ const USES_CLASSIFIER: Record<string, string> = {
   "invoices/invoices.service.ts": "list enrichment (findAll), sendEmail and sendReminder balances",
   "invoices/invoice-kpi-summary.ts": "KPI tiles: per-invoice balance (confirmedBalance)",
   "bookkeeping/bookkeeping.service.ts":
-    "receivables / aging / AR / per-customer balances: clamped confirmedBalance per invoice (row 310). SIGNED by design: the per-customer closingBalance (invoiced - received, the Dr/Cr net position) and recordPayment's capacity guard (totalOwed - alreadyPaid)",
+    "receivables / aging / AR / per-customer balances: clamped confirmedBalance per invoice (row 310). SIGNED by design: the Receivable Summary's invoice rows (signedBalance, owner ruling 2026-10-11), the per-customer closingBalance (invoiced - received, the Dr/Cr net position) and recordPayment's capacity guard (totalOwed - alreadyPaid)",
   "buyer/buyer.controller.ts":
     "getAnalytics: overdue / unpaid counts + BALANCE total (SA-770 r-note)",
   "buyer/buyer-dashboard.service.ts":
