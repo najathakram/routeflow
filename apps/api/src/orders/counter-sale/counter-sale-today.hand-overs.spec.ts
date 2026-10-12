@@ -74,8 +74,14 @@ describe("handOverPayments — ONE tender predicate with the day close (row 342)
     for (const f of ["counter-sale-today.ts", "day-close/day-close-facts.ts"]) {
       const src = readFileSync(join(__dirname, f), "utf8");
       expect(src).not.toMatch(/===\s*pickupTenderGroupId\(/);
-      expect(src).toMatch(/isCounterTenderRow/);
     }
+    // Today's rows read the full predicate; the day close's facts SELECT by its group clause and the fold decides the bucket
+    expect(readFileSync(join(__dirname, "counter-sale-today.ts"), "utf8")).toMatch(
+      /isCounterTenderRow/,
+    );
+    expect(readFileSync(join(__dirname, "day-close/day-close-facts.ts"), "utf8")).toMatch(
+      /isCounterTenderGroup/,
+    );
   });
 });
 

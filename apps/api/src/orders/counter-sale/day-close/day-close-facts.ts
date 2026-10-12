@@ -9,7 +9,7 @@ import {
   windowReturnsWhere,
   type DayWindow,
 } from "../counter-sale-today";
-import { isCounterTenderRow } from "../counter-tender-row";
+import { isCounterTenderGroup } from "../counter-tender-row";
 import type { WindowFacts, WindowPayment } from "./day-close-fold";
 import { registerOrderWhere } from "./day-close-register";
 
@@ -71,11 +71,14 @@ export async function readWindowFacts(
     },
     select: paymentSelect,
   });
-  // the same predicate Today's sales rows and the fold read (`isCounterTenderRow`, a POS pickup order): never a second rule here
+  // SELECTION is by the order's own pickup group id only (the group clause of the one predicate, `isCounterTenderGroup`, told
+  // the order is a POS pickup). The FOLD then decides the bucket with the full predicate: a hand-over row that is no longer
+  // till money (a check the bank has taken, a method the till does not take) is read here so it folds to `notAtTill`, and
+  // never drops out of the Z report. Filtering by the full predicate here would lose that row from every bucket.
   const handOvers: WindowPayment[] = handOverRows.filter(
     (r) =>
       r.invoice?.orderId != null &&
-      isCounterTenderRow(r.invoice.orderId, r, { counterSale: false }),
+      isCounterTenderGroup(r.invoice.orderId, r.paymentGroupId, { counterSale: false }),
   );
   const payments: WindowPayment[] = [...counterPayments, ...handOvers];
   const paidOnSales = await db.invoicePayment.aggregate({
