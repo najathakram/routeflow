@@ -39,7 +39,17 @@ function dbOver(rows: any[], extra: Record<string, any> = {}) {
   const createMany = jest.fn().mockResolvedValue({ count: 0 });
   const db = {
     regulatedSalesLedger: {
-      findMany: jest.fn(async (a: any) => rows.filter((r) => matches(r, a?.where))),
+      // honours `select` like Prisma does: a column the service forgot to select reads as undefined here too
+      // (a mock that ignores it hid a missing `id` from deadSaleIdsOf in the credit path)
+      findMany: jest.fn(async (a: any) =>
+        rows
+          .filter((r) => matches(r, a?.where))
+          .map((r) =>
+            a?.select
+              ? Object.fromEntries(Object.keys(a.select).map((k) => [k, (r as any)[k]]))
+              : r,
+          ),
+      ),
       createMany,
     },
     invoiceItem: { findMany: jest.fn().mockResolvedValue([{ id: "ii-1", productId: "p1" }]) },
@@ -407,6 +417,108 @@ describe("review fold (row 341): dead keys under full netting, and the piece rat
       },
     ]);
     await svc().reverseCreditNoteEntries({ creditNoteId: "cn-8", db });
+    expect(written()).toHaveLength(1);
+    expect(written()[0]).toMatchObject({ qty: -5, unitBasisQty: -60 });
+  });
+
+  it("a credit after a SAME-category subcategory re-file prices pieces from the live key, not the dead sale blended in", async () => {
+    // sub-a: 10 boxes / 10 pieces, re-filed to sub-b (same category, same order line) at 10 boxes / 120 pieces
+    const rows = [
+      row({
+        id: "a1",
+        trackedCategoryId: "cat-2",
+        trackedSubcategoryId: "sub-a",
+        qty: 10,
+        unitBasisQty: 10,
+        netSales: 100,
+        categoryTax: 0,
+      }),
+      row({
+        id: "a1-rev",
+        trackedCategoryId: "cat-2",
+        trackedSubcategoryId: "sub-a",
+        entryType: "REVERSAL",
+        qty: -10,
+        unitBasisQty: -10,
+        netSales: -100,
+        categoryTax: 0,
+        createdAt: new Date("2026-10-02T00:00:00Z"),
+      }),
+      row({
+        id: "b1",
+        trackedCategoryId: "cat-2",
+        trackedSubcategoryId: "sub-b",
+        qty: 10,
+        unitBasisQty: 120,
+        netSales: 100,
+        categoryTax: 0,
+        createdAt: new Date("2026-10-02T00:00:01Z"),
+      }),
+    ];
+    const { db, written } = dbOver(rows);
+    db.creditNoteItem.findMany.mockResolvedValue([
+      {
+        tenantId: "t1",
+        invoiceItemId: "ii-1",
+        trackedCategoryId: "cat-2",
+        amount: 50,
+        qty: 5,
+        categoryTax: 0,
+      },
+    ]);
+    await svc().reverseCreditNoteEntries({ creditNoteId: "cn-7", db });
+    expect(written()).toHaveLength(1);
+    expect(written()[0]).toMatchObject({
+      trackedSubcategoryId: "sub-b",
+      qty: -5,
+      unitBasisQty: -60,
+    });
+  });
+
+  it("a sale superseded after a return AND a void is dead even though the void did not offset its whole quantity", async () => {
+    // S1 10 (10 pieces); return -4; void -6 (no returnId); S2 rebooked on the SAME key at 10 boxes / 120 pieces.
+    const k = { trackedCategoryId: "cat-2", trackedSubcategoryId: "sub-b" };
+    const rows = [
+      row({ id: "s1", ...k, qty: 10, unitBasisQty: 10, netSales: 100, categoryTax: 0 }),
+      row({
+        id: "r1",
+        ...k,
+        entryType: "REVERSAL",
+        returnId: "ret-0",
+        qty: -4,
+        unitBasisQty: -4,
+        netSales: -40,
+        categoryTax: 0,
+        createdAt: new Date("2026-10-01T12:00:00Z"),
+      }),
+      row({
+        id: "v1",
+        ...k,
+        entryType: "REVERSAL",
+        qty: -6,
+        unitBasisQty: -6,
+        netSales: -60,
+        categoryTax: 0,
+        createdAt: new Date("2026-10-02T00:00:00Z"),
+      }),
+      row({
+        id: "s2",
+        ...k,
+        qty: 10,
+        unitBasisQty: 120,
+        netSales: 100,
+        categoryTax: 0,
+        createdAt: new Date("2026-10-02T00:00:01Z"),
+      }),
+    ];
+    const { db, written } = dbOver(rows);
+    await svc().reverseReturnEntries({
+      returnId: "ret-3",
+      orderId: "o1",
+      returnedByProduct: new Map([["p1", 5]]),
+      returnedUnit: "LINE_UNIT",
+      db,
+    });
     expect(written()).toHaveLength(1);
     expect(written()[0]).toMatchObject({ qty: -5, unitBasisQty: -60 });
   });
