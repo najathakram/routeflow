@@ -26,8 +26,13 @@
  *
  * KNOWN, SAFE occurrences that legitimately do NOT stamp the trio (both counted below, neither
  * a "creator of a line with trackedCategoryId" in the sense this guard cares about):
- *   - orders.service.ts's `recomputeLineCategoryTaxes` (RE-writes an EXISTING line's amount only
- *     — reads the snapshot in PR 3, doesn't touch trackedCategoryId or the trio here).
+ *   - orders/recompute-line-category-taxes.ts (B297 PR3; was orders.service.ts's
+ *     `recomputeLineCategoryTaxes`): RE-writes an EXISTING line's amount from the line's own
+ *     snapshot, and stamps the trio only on a NULL-trio line (once, `recomputeCategoryTax`'s
+ *     `stamp`); the count includes its member read `li.categoryTaxAmount` (storedAmount).
+ *   - invoices/price-adjustment-ledger.ts's buildPriceAdjustmentUpdates (B297 PR3): the count is its
+ *     member read `item.categoryTaxAmount` (storedAmount); the write is `data.categoryTaxAmount =`,
+ *     which the fingerprint does not see, and the stamp is `Object.assign(data, r.stamp)`.
  *   - orders.service.ts's unlisted-item branch (`trackedCategoryId: null` is a compile-time
  *     constant — an unlisted line is never a catalog product, so it can never be regulated).
  *
@@ -74,7 +79,32 @@ const ALLOWLIST: { file: string; count: number; note: string }[] = [
   {
     file: "orders/orders.service.ts",
     count: 3,
-    note: "create() stamps; recompute (:274) and the unlisted-item branch (:1953) legitimately don't — see header",
+    note: "create() stamps; the unlisted-item branch legitimately doesn't; the pack-line substitute writes categoryTaxAmount: 0 beside its re-stamped trio (B297 PR3; the recompute moved to recompute-line-category-taxes.ts) — see header",
+  },
+  {
+    file: "orders/recompute-line-category-taxes.ts",
+    count: 3,
+    note: "B297 PR3: snapshot recompute — 2 writes (amount; amount + stamped trio on a NULL-trio line) + the storedAmount member read",
+  },
+  {
+    file: "invoices/price-adjustment-ledger.ts",
+    count: 1,
+    note: "B297 PR3: the storedAmount member read; the write is data.categoryTaxAmount = (+ Object.assign stamp) — see header",
+  },
+  {
+    file: "orders/unit-line-edit.ts",
+    count: 2,
+    note: "B297 row 338: updateUnitLine's destructure + its SUBSTITUTE-only data spread (a same-product edit writes no category, levy or trio; the new product's are stamped only on a substitute)",
+  },
+  {
+    file: "orders/carry-line-category.ts",
+    count: 1,
+    note: "B297 row 340: carriedCategory — a fold's no-category line carries its STORED levy (never a computed one); a full trio carries the line's own trio, copied not derived",
+  },
+  {
+    file: "orders/replace-all-line-build.ts",
+    count: 2,
+    note: "B297 row 340: both matches are on the existing-line map entry (the `categoryTaxAmount:` key and the `li.categoryTaxAmount,` member read); the carry itself is carriedCategory in carry-line-category.ts",
   },
   {
     file: "orders/unit-line-build.ts",
@@ -94,8 +124,8 @@ const ALLOWLIST: { file: string; count: number; note: string }[] = [
   { file: "invoices/manual-invoice-lines.ts", count: 1, note: "buildManualInvoiceLines — stamps" },
   {
     file: "invoices/invoice-edit-plan.ts",
-    count: 2,
-    note: "buildEditedLines stamp + inPlacePatch (writes only a CHANGED amount)",
+    count: 3,
+    note: "buildEditedLines stamp + the B297 PR3 matched-row storedAmount read + inPlacePatch (writes only a CHANGED amount)",
   },
   { file: "invoices/invoice-unit-line.ts", count: 1, note: "buildInvoiceUnitLine — stamps" },
   {
@@ -142,8 +172,8 @@ describe("category tax trio callsites — every categoryTaxAmount writer enumera
     expect(offenders).toEqual([]);
   });
 
-  it("total categoryTaxAmount writes across apps/api/src is exactly 18", () => {
+  it("total categoryTaxAmount writes across apps/api/src is exactly 28", () => {
     const total = FILES.reduce((n, f) => n + writeCount(fs.readFileSync(f, "utf8")), 0);
-    expect(total).toBe(18);
+    expect(total).toBe(28);
   });
 });

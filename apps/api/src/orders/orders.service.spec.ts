@@ -5319,7 +5319,6 @@ describe("OrdersService", () => {
     it("action DELETE hard-removes a clean (un-invoiced, undelivered) line", async () => {
       prisma.order.findUnique.mockResolvedValue(orderWithItems);
       prisma.deliveryMutation.count.mockResolvedValue(0);
-      prisma.orderItem.findMany.mockResolvedValue([]);
       prisma.orderItem.deleteMany.mockResolvedValue({ count: 1 });
 
       await service.updateOrderItems(
@@ -5341,7 +5340,6 @@ describe("OrdersService", () => {
       };
       prisma.order.findUnique.mockResolvedValue(billed);
       prisma.deliveryMutation.count.mockResolvedValue(0);
-      prisma.orderItem.findMany.mockResolvedValue([]);
       prisma.orderItem.updateMany.mockResolvedValue({ count: 1 });
 
       await service.updateOrderItems(
@@ -8047,7 +8045,9 @@ describe("OrdersService", () => {
     // post-edit totals recompute) return whatever the test stubs via
     // `setPostEditItems`. Stubbing both from one mockResolvedValue would make
     // held === requested and silently neuter every case in this block.
-    const heldSnapshot = [{ productId: "prod-1", qty: 5, deliveredQty: 0, status: "PENDING" }];
+    const heldSnapshot = [
+      { id: "li-1", productId: "prod-1", qty: 5, deliveredQty: 0, status: "PENDING" },
+    ];
     let postEditItems: any[] = [];
     const setPostEditItems = (items: any[]) => {
       postEditItems = items;

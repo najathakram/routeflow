@@ -74,6 +74,15 @@ export function SubscriptionStrip({
     setAlertKind(claimed.current.alert ? announceKind : null);
   }, [announceKind]);
   const alertNow = announceKind !== null && alertKind === announceKind;
+  // SA-777: a Pay action that carries the oldest owed invoice's hosted page opens it directly (new tab); any
+  // other action (or a Pay with no link) goes through the portal route exactly as before.
+  const runAction = (a: { intent: string; url?: string }) => {
+    if (a.intent === "pay" && a.url && a.url.startsWith("https://")) {
+      window.open(a.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    portal.mutate({ intent: a.intent as "pay" | "update-payment" });
+  };
   const [sheet, setSheet] = React.useState(false);
   const [tick, setTick] = React.useState(0);
   const dismissKey = state.dismiss?.key;
@@ -125,7 +134,7 @@ export function SubscriptionStrip({
             variant="secondary"
             className="h-6 shrink-0 md:h-7"
             loading={portal.isPending}
-            onClick={() => portal.mutate({ intent: action.intent as "pay" | "update-payment" })}
+            onClick={() => runAction(action)}
           >
             {action.label}
           </Button>
@@ -150,10 +159,7 @@ export function SubscriptionStrip({
         title="Billing"
         footer={
           action && action.intent !== "open-billing" ? (
-            <Button
-              loading={portal.isPending}
-              onClick={() => portal.mutate({ intent: action.intent as "pay" | "update-payment" })}
-            >
+            <Button loading={portal.isPending} onClick={() => runAction(action)}>
               {action.label}
             </Button>
           ) : undefined

@@ -98,6 +98,20 @@ export interface SubscriptionView<TDate = string> {
   /** True only when the server will really pause an unpaid workspace (BILLING_PAUSE_MODE=enforced). In dark / off the
    *  banner never threatens a read-only date. */
   pauseEnforced?: boolean;
+  /** SA-777 - server-derived from the tenant's OPEN Stripe invoices (precedence processing > overdue > due >
+   *  current). OMITTED, never zeroed, when Stripe could not answer: the UI then hides the amount and never says
+   *  "current". `outstandingTotal` and `payNowUrl` are admins only (an operator's view omits them). */
+  billingState?: "current" | "due" | "overdue" | "processing";
+  /** Σ amount_remaining over the open invoices, dollars (integer cents converted once, server-side). */
+  outstandingTotal?: number;
+  /** A payment on an open invoice is still settling (a bank debit): the Pay control hides. */
+  paymentProcessing?: boolean;
+  /** "Oct 15": when the oldest owed invoice fell due / went overdue, formatted by the SERVER in the tenant's zone. */
+  openInvoiceDueLabel?: string;
+  /** The OLDEST owed invoice's hosted page (admins only; omitted while a payment is processing). */
+  payNowUrl?: string;
+  /** What `payNowUrl` collects (that one invoice's amount remaining, dollars): the Pay button's own figure. */
+  payNowAmount?: number;
 }
 
 /**

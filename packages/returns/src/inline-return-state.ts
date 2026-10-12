@@ -584,11 +584,12 @@ export const INLINE_RETURN_OVER_LINE_HEADROOM_MESSAGE =
   "This return would credit more than the invoice line is worth, because part of it was already credited (by a credit note or an earlier return). Lower the quantity, or issue the credit note manually.";
 
 /**
- * A write refused by a READ_ONLY workspace (403, code READ_ONLY). The sentence is web's `readOnlyLine(null)`
- * (apps/web/lib/subscription-banner-state.ts), kept equal by a web parity test; this package cannot import apps/web.
+ * A write refused by a READ_ONLY workspace (403, code READ_ONLY). The sentence is the owner's read-only sentence,
+ * web's `readOnlyLine(null, false)` (`READ_ONLY_SENTENCE`, packages/types/read-only-copy.ts), kept equal by a web
+ * parity test; this package cannot import apps/web.
  */
 export const INLINE_RETURN_READ_ONLY_MESSAGE =
-  "Not available while read-only. Your admin can restore it.";
+  "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.";
 
 export function extractRefusalMessage(error: unknown, fallback = "Something went wrong"): string {
   const body = (error as ApiErrorLike | undefined)?.response?.data;
