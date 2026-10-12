@@ -882,6 +882,12 @@ export function listGroup(
     .sort((a, b) => rank(a.id) - rank(b.id));
 }
 
+/** An in-page anchor ("#route-defaults") made absolute, so a row works from any settings page. */
+export function rowHref(e: Pick<IndexEntry, "href">): string {
+  const h = e.href ?? "/settings";
+  return h.startsWith("#") ? `/settings${h}` : h;
+}
+
 /** Search for the UI: linked results first (best match, anchored target on ties), then plain answers; no repeats. */
 export function searchSettings(q: string, entries: IndexEntry[]): IndexEntry[] {
   const hits = searchIndex(q, entries);
@@ -907,4 +913,37 @@ export function splitHighlight(label: string, q: string): { text: string; hit: b
     .split(new RegExp(`(${words.join("|")})`, "gi"))
     .filter((t) => t !== "")
     .map((text) => ({ text, hit: words.includes(text.toLowerCase()) }));
+}
+
+function parseHref(href: string) {
+  const [pq, h = ""] = href.split("#");
+  const [p, qs = ""] = pq.split("?");
+  return {
+    path: p || "/settings",
+    tab: new URLSearchParams(qs).get("tab"),
+    hash: h ? `#${h}` : "",
+  };
+}
+
+/** Which row(s) are open: by ?tab=, by sub-route, or (bare hub) by card hash. */
+export function activeEntryIds(
+  entries: IndexEntry[],
+  loc: { pathname: string; tab: string | null; hash: string },
+): string[] {
+  const rows = entries
+    .filter((e) => e.kind === "item" && e.href)
+    .map((e) => ({ id: e.id, ...parseHref(e.href!) }));
+  if (loc.pathname !== "/settings") {
+    // Selling restrictions is listed in two groups; only the first is the open row.
+    const hit = rows.find((r) => r.path === loc.pathname);
+    return hit ? [hit.id] : [];
+  }
+  if (!loc.tab)
+    return loc.hash
+      ? rows.filter((r) => r.path === "/settings" && !r.tab && r.hash === loc.hash).map((r) => r.id)
+      : [];
+  const onTab = rows.filter((r) => r.path === "/settings" && r.tab === loc.tab);
+  const exact = onTab.find((r) => r.hash && r.hash === loc.hash);
+  const one = exact ?? onTab[0];
+  return one ? [one.id] : [];
 }

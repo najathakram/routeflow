@@ -7,19 +7,23 @@ import { cn } from "@routeflow/ui/web";
 import { ReadinessBanner } from "./ReadinessBanner";
 import { RouteDefaultsCard } from "./RouteDefaultsCard";
 import { BuyerOversellCard } from "./BuyerOversellCard";
+import { BusinessCard } from "./BusinessCard";
 import { NeedsAttention } from "./NeedsAttention";
 import { SettingsFinder } from "./SettingsFinder";
 import { normalize, searchSettings } from "./settings-index";
 import { hashId } from "./use-hash-scroll";
+import { useDesktopRail } from "./use-desktop-rail";
 import { useSettingsNav } from "./use-settings-nav";
 
 /**
- * Settings hub: the bare /settings screen. One list at every width: search, your business, what needs
- * attention, frequent links, the groups with their values, then the loose cards below. Every setting screen
- * stays reachable; role-gated rows are hidden the same way the sidebar hides them.
+ * Settings hub: the bare /settings screen. Below lg it is the whole settings list (search, your business,
+ * frequent links, the groups with their values). At lg and up the rail (SettingsShell) holds all of that and
+ * this shows the big Business card, what needs attention, and the loose cards. Every setting screen stays
+ * reachable; role-gated rows are hidden the same way the sidebar hides them.
  */
 export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
   const [query, setQuery] = React.useState("");
+  const desktop = useDesktopRail();
   const nav = useSettingsNav({ isAdmin });
 
   // A row that points at a card on this page ("#out-of-stock-ordering", "#route-defaults") is a plain hash
@@ -30,8 +34,8 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
     if (id) document.getElementById(id)?.scrollIntoView({ block: "start" });
   }, []);
 
-  // The loose cards follow the search: a card shows when a result points at its anchor.
-  const searching = normalize(query) !== "";
+  // The loose cards follow the search: a card shows when a result points at its anchor (the rail never filters the pane).
+  const searching = !desktop && normalize(query) !== "";
   const results = React.useMemo(
     () => (searching ? searchSettings(query, nav.entries) : []),
     [searching, query, nav.entries],
@@ -46,12 +50,14 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
 
       <ReadinessBanner isAdmin={isAdmin} />
 
-      <SettingsFinder
-        nav={nav}
-        query={query}
-        onQuery={setQuery}
-        afterCard={<NeedsAttention isAdmin={isAdmin} />}
-      />
+      {desktop ? (
+        <>
+          <BusinessCard variant="pane" />
+          <NeedsAttention isAdmin={isAdmin} />
+        </>
+      ) : (
+        <SettingsFinder variant="list" nav={nav} query={query} onQuery={setQuery} />
+      )}
 
       {nav.fleet && (!searching || listed("route-defaults")) && (
         <div id="route-defaults" className="max-w-3xl scroll-mt-28">
@@ -65,8 +71,8 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      {/* My account footer */}
-      {!searching && (
+      {/* My account footer (the rail has its own row) */}
+      {!desktop && !searching && (
         <Link
           href="/settings?tab=account"
           className={cn(

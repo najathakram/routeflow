@@ -2,6 +2,8 @@
  * Settings search speaks the user's words (13): on the /settings hub, "carrier" finds the carrier
  * answer, "low stock" finds the Low-stock digest and opens the notifications tab, and clearing the
  * box brings the grouped hub back. At 1440 and 390 px; the page never scrolls sideways.
+ * PR1: at 1440 the groups live in a "Settings" rail that stays beside the open section (the open row is
+ * aria-current); at 390 there is no rail, the list is the hub.
  *
  * Role: admin (the pre-authed operator state). READ-ONLY: nothing is saved.
  */
@@ -35,6 +37,9 @@ for (const vp of VIEWPORTS) {
       const search = page.getByLabel("Search settings");
       await expect(search).toBeVisible({ timeout: 15_000 });
       const results = page.getByRole("list", { name: "Search results" });
+      const rail = page.getByRole("navigation", { name: "Settings" });
+      if (vp.width >= 1024) await expect(rail).toBeVisible();
+      else await expect(rail).toHaveCount(0);
 
       await search.fill("carrier");
       await expect(results.getByText(/choose the carrier on each order/i)).toBeVisible();
@@ -46,6 +51,12 @@ for (const vp of VIEWPORTS) {
       await noHorizontalScroll(page);
       await digest.click();
       await expect(page).toHaveURL(/tab=notifications/);
+      if (vp.width >= 1024) {
+        await expect(rail.getByTestId("settings-row-notifications")).toHaveAttribute(
+          "aria-current",
+          "page",
+        );
+      }
 
       await page.goto("/settings");
       await page.getByLabel("Search settings").fill("zzzzqq");

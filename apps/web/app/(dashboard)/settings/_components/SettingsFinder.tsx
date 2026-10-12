@@ -9,11 +9,14 @@ import { CHIPS, GROUP_META, GROUP_TITLES, ROW_ICONS, type GroupMeta } from "./se
 import {
   listGroup,
   normalize,
+  rowHref,
   searchSettings,
   splitHighlight,
   type IndexEntry,
 } from "./settings-index";
 import type { SettingsNav } from "./use-settings-nav";
+
+type Variant = "rail" | "list";
 
 const HEADING =
   "px-3 pb-1.5 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--ink-500)]";
@@ -37,30 +40,65 @@ function useSlashFocus(ref: React.RefObject<HTMLInputElement | null>) {
   }, [ref]);
 }
 
-function Row({ entry, group, value }: { entry: IndexEntry; group: GroupMeta; value?: string }) {
+function Row({
+  entry,
+  group,
+  variant,
+  value,
+  current,
+}: {
+  entry: IndexEntry;
+  group: GroupMeta;
+  variant: Variant;
+  value?: string;
+  current: boolean;
+}) {
+  const rail = variant === "rail";
   const Icon = ROW_ICONS[entry.id] ?? group.icon;
   return (
-    <li className="relative after:absolute after:bottom-0 after:left-[3.25rem] after:right-0 after:h-px after:bg-[var(--line)] last:after:hidden">
+    <li
+      className={cn(
+        !rail &&
+          "relative after:absolute after:bottom-0 after:left-[3.25rem] after:right-0 after:h-px after:bg-[var(--line)] last:after:hidden",
+      )}
+    >
       <Link
-        href={entry.href!}
+        href={rail ? rowHref(entry) : entry.href!}
         data-testid={`settings-row-${entry.id}`}
-        className={cn("flex min-h-[52px] items-center gap-3 px-3.5 py-2", PRESS)}
+        aria-current={current ? "page" : undefined}
+        className={cn(
+          "flex items-center gap-3",
+          PRESS,
+          rail
+            ? "min-h-9 rounded-lg px-2 py-1 text-sm font-medium text-[var(--ink-900)] aria-[current=page]:bg-[var(--accent-soft)] aria-[current=page]:text-[var(--accent-strong)]"
+            : "min-h-[52px] px-3.5 py-2",
+        )}
       >
         <span
           aria-hidden="true"
-          className="flex h-7 w-7 flex-none items-center justify-center rounded-[7px] bg-[var(--accent-soft)] text-[var(--accent)]"
+          className={cn(
+            "flex flex-none items-center justify-center bg-[var(--accent-soft)] text-[var(--accent)]",
+            rail ? "h-[22px] w-[22px] rounded-md" : "h-7 w-7 rounded-[7px]",
+          )}
         >
-          <Icon className="h-4 w-4" />
+          <Icon className={rail ? "h-3.5 w-3.5" : "h-4 w-4"} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[15px] font-medium leading-5 text-[var(--ink-900)]">
+          <span
+            className={cn(
+              "block truncate",
+              !rail && "text-[15px] font-medium leading-5 text-[var(--ink-900)]",
+            )}
+          >
             {entry.label}
           </span>
-          <span className="block truncate text-[13px] leading-[18px] text-[var(--ink-500)]">
-            {entry.desc}
-          </span>
+          {!rail && (
+            <span className="block truncate text-[13px] leading-[18px] text-[var(--ink-500)]">
+              {entry.desc}
+            </span>
+          )}
         </span>
-        {value && (
+        {!rail && value && (
           <span
             data-testid="row-value"
             className="max-w-[40%] flex-none truncate text-sm tabular-nums text-[var(--ink-500)]"
@@ -68,7 +106,9 @@ function Row({ entry, group, value }: { entry: IndexEntry; group: GroupMeta; val
             {value}
           </span>
         )}
-        <ChevronRight aria-hidden="true" className="h-4 w-4 flex-none text-[var(--ink-400)]" />
+        {!rail && (
+          <ChevronRight aria-hidden="true" className="h-4 w-4 flex-none text-[var(--ink-400)]" />
+        )}
       </Link>
     </li>
   );
@@ -77,10 +117,12 @@ function Row({ entry, group, value }: { entry: IndexEntry; group: GroupMeta; val
 function ResultRow({
   entry,
   query,
+  variant,
   linkRef,
 }: {
   entry: IndexEntry;
   query: string;
+  variant: Variant;
   linkRef?: React.ComponentProps<typeof Link>["ref"];
 }) {
   const body = (
@@ -113,7 +155,11 @@ function ResultRow({
   return (
     <li className="border-b border-[var(--line)] last:border-b-0">
       {entry.href ? (
-        <Link ref={linkRef} href={entry.href} className={cn(cls, PRESS)}>
+        <Link
+          ref={linkRef}
+          href={variant === "rail" ? rowHref(entry) : entry.href}
+          className={cn(cls, PRESS)}
+        >
           {body}
           <ChevronRight aria-hidden="true" className="h-4 w-4 flex-none text-[var(--ink-400)]" />
         </Link>
@@ -125,21 +171,23 @@ function ResultRow({
 }
 
 /**
- * Search, your business, what needs attention, frequent links and the groups. Typing swaps the groups for
- * one flat result list; Enter opens the first link.
+ * Search, your business, frequent links and the groups: the one body shared by the lg rail and the
+ * below-lg hub list. Typing swaps the groups for one flat result list; Enter opens the first link.
  */
 export function SettingsFinder({
+  variant,
   nav,
   query,
   onQuery,
-  afterCard,
+  active = [],
 }: {
+  variant: Variant;
   nav: SettingsNav;
   query: string;
   onQuery: (q: string) => void;
-  /** Shown under the Business card while not searching (the "Needs attention" list). */
-  afterCard?: React.ReactNode;
+  active?: string[];
 }) {
+  const rail = variant === "rail";
   const inputRef = React.useRef<HTMLInputElement>(null);
   const firstRef = React.useRef<HTMLAnchorElement>(null);
   useSlashFocus(inputRef);
@@ -153,6 +201,7 @@ export function SettingsFinder({
     g,
     rows: listGroup(nav.entries, g.key, { fleet: nav.fleet, counter: nav.counter }),
   })).filter((x) => x.rows.length > 0);
+  const account = nav.entries.find((e) => e.id === "my-account");
 
   return (
     <div className="space-y-4">
@@ -173,6 +222,14 @@ export function SettingsFinder({
             className="pl-9"
             aria-label="Search settings"
           />
+          {rail && !query && (
+            <kbd
+              aria-hidden="true"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-[var(--line)] px-1.5 text-xs text-[var(--ink-500)]"
+            >
+              /
+            </kbd>
+          )}
         </div>
       </div>
 
@@ -201,6 +258,7 @@ export function SettingsFinder({
               key={r.id}
               entry={r}
               query={query}
+              variant={variant}
               linkRef={r === firstLinked ? firstRef : undefined}
             />
           ))}
@@ -209,8 +267,7 @@ export function SettingsFinder({
 
       {!searching && (
         <>
-          <BusinessCard />
-          {afterCard}
+          <BusinessCard variant={variant} active={active.includes("plan-billing")} />
           <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--ink-500)]">
             <span>Frequently used:</span>
             {CHIPS.map((c) => (
@@ -229,13 +286,30 @@ export function SettingsFinder({
           {groups.map(({ g, rows }) => (
             <section key={g.key} data-testid={`settings-group-${g.key}`}>
               <h3 className={HEADING}>{g.title}</h3>
-              <ul className={INSET}>
+              <ul className={cn(!rail && INSET)}>
                 {rows.map((e) => (
-                  <Row key={e.id} entry={e} group={g} value={nav.trailing[e.id]} />
+                  <Row
+                    key={e.id}
+                    entry={e}
+                    group={g}
+                    variant={variant}
+                    value={nav.trailing[e.id]}
+                    current={active.includes(e.id)}
+                  />
                 ))}
               </ul>
             </section>
           ))}
+          {rail && account && (
+            <ul className="border-t border-[var(--line)] pt-2">
+              <Row
+                entry={account}
+                group={GROUP_META[1]}
+                variant="rail"
+                current={active.includes(account.id)}
+              />
+            </ul>
+          )}
         </>
       )}
     </div>
