@@ -77,6 +77,7 @@ import { useOrderOverpayGuard } from "./_components/OrderOverpayNotice";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
+import { OrderRevisionLog } from "./_components/OrderRevisionLog";
 import {
   describeChangeRequest,
   describeResolution,
@@ -2602,20 +2603,8 @@ export default function OrderDetailPage() {
             </span>
           )}
 
-          {/* P5-08: revision count (append-only edit history). */}
-          {!isEditing && (order?.revisions?.length ?? 0) > 0 && (
-            <span
-              className="inline-flex items-center rounded-full bg-navy/5 px-2 py-1 text-xs font-medium text-navy/70"
-              title={order!
-                .revisions!.map(
-                  (r) =>
-                    `v${r.revisionNumber} · ${r.editedByName ?? r.editedByRole ?? "system"} · ${new Date(r.createdAt).toLocaleString()} · ${formatMoney(r.snapshot.total)}`,
-                )
-                .join("\n")}
-            >
-              Edited {order!.revisions!.length}×
-            </span>
-          )}
+          {/* P5-08: revision count + log (append-only edit history), one tap (row 330d). */}
+          {!isEditing && <OrderRevisionLog revisions={order?.revisions ?? []} />}
 
           {/* P5-11: pending post-dispatch change requests awaiting resolution. */}
           {!isEditing && pendingChangeRequests.length > 0 && (

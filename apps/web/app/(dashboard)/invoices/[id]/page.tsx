@@ -2017,6 +2017,7 @@ export default function InvoiceDetailPage() {
             <TenantInvoiceRevisionMarks
               revisedAt={invoice.revisedAt}
               overpaidBy={invoice.overpaidBy}
+              orderId={invoice.orderId}
             />
           </div>
           <p className="mt-1 text-sm text-navy/70">

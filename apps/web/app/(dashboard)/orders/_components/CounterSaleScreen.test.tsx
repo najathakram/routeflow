@@ -235,6 +235,75 @@ describe("CounterSaleScreen", () => {
       await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
     });
 
+    it("row 330a: the scroll container keeps a focused control clear of the bar (scroll-padding-bottom), and lets go on unmount", async () => {
+      const main = document.createElement("main");
+      main.id = "main-content";
+      main.style.paddingBottom = "96px"; // the shell's pb-24: the bar sticks above it
+      document.body.appendChild(main);
+      try {
+        const view = renderWithProviders(<CounterSaleScreen />);
+        await waitFor(() =>
+          expect(main.style.getPropertyValue("scroll-padding-bottom")).toBe("180px"),
+        ); // exactly the bar's height (row 368)
+        view.unmount();
+        expect(main.style.getPropertyValue("scroll-padding-bottom")).toBe("");
+      } finally {
+        main.remove();
+      }
+    });
+
+    it("row 368: below md the bar sticks to the real bottom (through the shell's pb-24), and the space reserved is the bar's own height, not extra padding", async () => {
+      const main = document.createElement("main");
+      main.id = "main-content";
+      main.style.paddingBottom = "96px";
+      document.body.appendChild(main);
+      try {
+        const view = renderWithProviders(<CounterSaleScreen />);
+        const root = screen.getByTestId("counter-sale-screen");
+        await waitFor(() => expect(root.style.getPropertyValue("--counter-main-pb")).toBe("96px"));
+        // the bar sits at the scrollport's bottom edge, not 96 px up (sticky respects the container's own padding)
+        expect(screen.getByTestId("counter-checkout-bar").className).toContain(
+          "max-md:bottom-[calc(-1*var(--counter-main-pb,0px))]",
+        );
+        // the screen draws that padding back in and adds none of its own below the bar
+        expect(root.className).toContain("max-md:mb-[calc(-1*var(--counter-main-pb,0px))]");
+        expect(root.className).toContain("max-md:pb-0");
+        expect(root.className).not.toContain("--counter-bar-h");
+        view.unmount();
+      } finally {
+        main.remove();
+      }
+    });
+
+    it("row 330a: at md and wider the bar is static, so no scroll padding is reserved", async () => {
+      const real = window.matchMedia;
+      window.matchMedia = ((q: string) => ({
+        matches: q === "(min-width: 768px)",
+        media: q,
+        addEventListener() {},
+        removeEventListener() {},
+      })) as never;
+      const main = document.createElement("main");
+      main.id = "main-content";
+      document.body.appendChild(main);
+      try {
+        const view = renderWithProviders(<CounterSaleScreen />);
+        const root = screen.getByTestId("counter-sale-screen");
+        await waitFor(() => expect(root.style.getPropertyValue("--counter-bar-h")).toBe("180px"));
+        expect(main.style.getPropertyValue("scroll-padding-bottom")).toBe("");
+        view.unmount();
+      } finally {
+        window.matchMedia = real;
+        main.remove();
+      }
+    });
+
+    it("row 330a: below md the bar clears the home indicator (safe-area inset), so its measured height includes it", () => {
+      renderWithProviders(<CounterSaleScreen />);
+      const bar = screen.getByTestId("counter-checkout-bar");
+      expect(bar.className).toContain("env(safe-area-inset-bottom");
+    });
+
     it("a cold load (gate loading first) still measures the bar once it mounts", async () => {
       const loaded = gate;
       gate = { ...loaded, loading: true };

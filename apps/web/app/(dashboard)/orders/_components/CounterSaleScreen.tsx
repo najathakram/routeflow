@@ -316,6 +316,28 @@ export function CounterSaleScreen() {
     barObserver.current = new ResizeObserver(measure);
     barObserver.current.observe(el);
   }, []);
+  // Rows 330a / 368: below md the checkout bar floats at the bottom of the scroll container. `position: sticky` stops at the
+  // container's own padding (the shell's pb-24), so left alone the bar floated 96 px up with cart lines showing below it.
+  // The bar's `bottom` is pulled down through that padding and the screen draws the same padding back in (a negative
+  // margin), so the bar is the LAST thing in the scroll and rests at the real bottom: the only space reserved for it is its
+  // own in-flow height. A control that takes focus mid-page (a quantity, Tab, the keyboard) is scrolled to the container's
+  // bottom edge, under the floating bar, so the container's scroll-padding is exactly the bar's height. Let go on unmount.
+  const [mainPad, setMainPad] = React.useState(0);
+  React.useEffect(() => {
+    const main = document.getElementById("main-content");
+    // md+ lays the bar out in the payment column (static), so only the floating one needs this
+    const floating = !window.matchMedia?.("(min-width: 768px)").matches;
+    if (!main || !floating) {
+      setMainPad(0);
+      return;
+    }
+    setMainPad(parseFloat(getComputedStyle(main).paddingBottom) || 0);
+    if (barHeight === 0) return;
+    main.style.setProperty("scroll-padding-bottom", `${barHeight}px`);
+    return () => {
+      main.style.removeProperty("scroll-padding-bottom");
+    };
+  }, [barHeight]);
   const refocusAfterPointer = (e: React.MouseEvent) => {
     if (e.detail > 0) refocus();
   };
@@ -858,8 +880,13 @@ export function CounterSaleScreen() {
 
   return (
     <div
-      className="mx-auto w-full max-w-5xl space-y-4 p-4 pb-[calc(1rem+var(--counter-bar-h,0px))] md:pb-4"
-      style={{ "--counter-bar-h": `${barHeight}px` } as React.CSSProperties}
+      className="mx-auto w-full max-w-5xl space-y-4 p-4 max-md:mb-[calc(-1*var(--counter-main-pb,0px))] max-md:pb-0"
+      style={
+        {
+          "--counter-bar-h": `${barHeight}px`,
+          "--counter-main-pb": `${mainPad}px`,
+        } as React.CSSProperties
+      }
       data-testid="counter-sale-screen"
       data-counter-screen
     >
@@ -1343,7 +1370,7 @@ export function CounterSaleScreen() {
           <ReadOnlyHint className="text-sm text-slate-700" />
           <div
             ref={barRef}
-            className="sticky bottom-0 z-20 space-y-2 border-t bg-white py-2 md:static md:border-t-0 md:py-0"
+            className="sticky bottom-0 z-20 space-y-2 border-t bg-white pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-2 max-md:bottom-[calc(-1*var(--counter-main-pb,0px))] md:static md:border-t-0 md:py-0"
             data-testid="counter-checkout-bar"
           >
             {discounts > 0 ? (
