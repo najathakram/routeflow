@@ -178,7 +178,8 @@ describe("CounterDayClose: the form", () => {
     expect(screen.getByTestId("close-counted")).toHaveTextContent("$0.00");
     // expected = 100 + 30 - 0
     expect(screen.getByTestId("close-expected")).toHaveTextContent("$130.00");
-    expect(screen.getByTestId("close-variance")).toHaveTextContent("Short $130.00");
+    // nothing counted yet: the hero says so (row 378), never "Short $130.00"
+    expect(screen.getByTestId("close-variance")).toHaveTextContent("Not counted yet");
   });
 
   it("has a row per denomination, the $1 bill and the $1 coin distinct", async () => {
@@ -235,8 +236,9 @@ describe("CounterDayClose: the form", () => {
   it("the variance is the sticky hero, neutral (not red) until the first count entry", async () => {
     await openForm();
     const v = screen.getByTestId("close-variance");
-    // nothing counted yet: the same words, but no alarm colour
-    expect(v).toHaveTextContent("Short $130.00");
+    // nothing counted yet: a plain prompt, no verdict and no alarm colour
+    expect(v).toHaveTextContent("Not counted yet");
+    expect(v.textContent).not.toMatch(/Short|Over|Balanced/);
     expect(v.className).not.toMatch(/red|amber|green/);
     expect(v.className).toMatch(/text-2xl font-semibold/);
     expect(screen.getByTestId("day-close-variance-hero").className).toMatch(/sticky top-0/);

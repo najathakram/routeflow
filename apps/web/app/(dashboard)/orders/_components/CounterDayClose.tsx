@@ -267,7 +267,8 @@ function DayCloseFormBody({
           )}
           data-testid="close-variance"
         >
-          {view ? view.text : "—"}
+          {/* nothing counted yet: a plain prompt, never "Short $130.00" for a drawer nobody has counted */}
+          {counted > 0 ? (view ? view.text : "—") : "Not counted yet"}
         </p>
       </div>
       <dl
