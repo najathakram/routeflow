@@ -4,6 +4,7 @@ import { RedisThrottlerStorage } from "../common/redis-throttler.storage";
 import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
 import { RestrictionsSettingsController } from "./restrictions-settings.controller";
 import { READINESS_LIMITER, RestrictionsSettingsService } from "./restrictions-settings.service";
+import { UnknownStateBulkService } from "./unknown-state-bulk.service";
 import { UnknownStateCustomersController } from "./unknown-state-customers.controller";
 import { UnknownStateCustomersService } from "./unknown-state-customers.service";
 
@@ -14,6 +15,7 @@ import { UnknownStateCustomersService } from "./unknown-state-customers.service"
   providers: [
     RestrictionsSettingsService,
     UnknownStateCustomersService,
+    UnknownStateBulkService,
     // The repo's own Redis-backed throttler storage (fixed-window INCR), used per tenant.
     {
       provide: READINESS_LIMITER,

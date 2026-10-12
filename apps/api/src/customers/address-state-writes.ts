@@ -1,6 +1,10 @@
 import { BadRequestException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
-import { addressStateFields } from "./address-state";
+import {
+  addressStateFields,
+  restoredStateFields,
+  type AddressStateSnapshot,
+} from "./address-state";
 
 /**
  * The ONE pair of writers for "a person chose this state" (Addendum D: fix a customer's state in
@@ -104,4 +108,47 @@ export async function hasDefaultBillingAddress(
     select: { addressType: true },
   });
   return defaults.some((a) => isBillingType(a.addressType));
+}
+
+/**
+ * Bulk-state UNDO: restores one address's captured state columns, only if the row is untouched since
+ * the bulk write (`updatedAt` still the value it wrote). Returns 1 when restored, 0 when the row was
+ * edited since, removed, or already restored (the restore itself moves `updatedAt`, so a repeat is 0).
+ */
+export async function restoreAddressState(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  addressId: string,
+  untouchedSince: Date,
+  prior: AddressStateSnapshot,
+): Promise<number> {
+  assertIds(tenantId, [addressId]);
+  const { count } = await tx.customerAddress.updateMany({
+    where: { tenantId, id: addressId, updatedAt: untouchedSince },
+    data: { ...restoredStateFields(prior) },
+  });
+  return count;
+}
+
+/**
+ * Bulk-state UNDO: removes an address the same bulk action created, only if it is untouched since
+ * (`updatedAt` unchanged) and no route stop points at it. Returns 1 when removed, else 0.
+ */
+export async function deleteUntouchedAddress(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  addressId: string,
+  untouchedSince: Date,
+): Promise<number> {
+  assertIds(tenantId, [addressId]);
+  const { count } = await tx.customerAddress.deleteMany({
+    where: {
+      tenantId,
+      id: addressId,
+      updatedAt: untouchedSince,
+      routeStops: { none: {} },
+      routeRunStops: { none: {} },
+    },
+  });
+  return count;
 }
