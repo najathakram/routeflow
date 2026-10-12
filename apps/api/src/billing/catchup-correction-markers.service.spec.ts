@@ -179,7 +179,9 @@ describe("RED: a coverage-void marker removes an activation window from the paid
     const r = await h.svc.plan(T, d("2026-10-13T10:00:00Z"));
     expect(r.plan).toMatchObject({ ok: true, shape: "trial_one_time" });
     if (!r.plan.ok) return;
-    expect(r.plan.stub.from.getTime()).toBeLessThan(d("2026-11-11T04:08:24Z").getTime());
+    // a VOIDED activation still supplies the floor's first-activation term (the activation happened as an event;
+    // only its coverage is void): with nothing else paid, S is that activation's own period start
+    expect(r.plan.stub.from.toISOString()).toBe("2026-10-12T04:08:24.000Z");
     expect(r.plan.stub.totalCents).toBeGreaterThan(0);
   });
 
