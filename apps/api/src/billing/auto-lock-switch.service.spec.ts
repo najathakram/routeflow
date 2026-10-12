@@ -73,6 +73,68 @@ describe("AutoLockSwitchService", () => {
       since: updatedAt,
       reason: "go live",
       by: "u1",
+      unpausedAt: updatedAt, // no `at` in the value: the row's write time stands in (row 412)
+    });
+  });
+
+  describe("row 412: unpausedAt is the instant of the last flip to UNPAUSED", () => {
+    const updatedAt = new Date("2026-10-13T12:00:00.000Z");
+    const at = "2026-10-20T08:30:00.000Z";
+
+    it("an unpaused value carries its `at`", async () => {
+      const { svc } = make([
+        { value: `{"paused":false,"reason":"go live","by":"u1","at":"${at}"}`, updatedAt },
+      ]);
+      expect((await svc.getState()).unpausedAt).toEqual(new Date(at));
+      expect(await svc.unpausedSince()).toEqual(new Date(at));
+    });
+
+    it("PAUSED (any form), a missing key and a read error expose no unpausedAt", async () => {
+      for (const rows of [
+        [{ value: `{"paused":true,"at":"${at}"}`, updatedAt }],
+        [{ value: "true", updatedAt }],
+        [],
+        new Error("db down"),
+      ] as const) {
+        const { svc } = make(rows as any);
+        expect((await svc.getState()).unpausedAt).toBeNull();
+        expect(await svc.unpausedSince()).toBeNull();
+      }
+    });
+
+    it.each(["false", '{"paused":false}', '{"paused":false,"at":"not a date"}'])(
+      "legacy %s (no usable `at`): the row's write time is the boundary, so any final sent before it is stale",
+      async (value) => {
+        const { svc } = make([{ value, updatedAt }]);
+        expect((await svc.getState()).unpausedAt).toEqual(updatedAt);
+        expect(await svc.unpausedSince()).toEqual(updatedAt);
+      },
+    );
+
+    it("unpausedSince() on an UNPAUSED value is never cached: it re-reads the store, so a re-pause is seen at once", async () => {
+      const { svc, set } = makeStore(`{"paused":false,"at":"${at}"}`);
+      expect(await svc.unpausedSince()).toEqual(new Date(at));
+      set('{"paused":true,"reason":"re-pause","by":"u2"}');
+      expect(await svc.unpausedSince()).toBeNull();
+    });
+
+    it("setPaused(false) records `at` = now, and the returned state's unpausedAt is that instant; setPaused(true) clears it", async () => {
+      let stored = "";
+      const prisma = {
+        $executeRaw: jest.fn(async (_s: unknown, _k: unknown, v: string) => {
+          stored = v;
+          return 1;
+        }),
+        $queryRaw: jest.fn(async () => [{ value: stored, updatedAt }]),
+      } as any;
+      const svc = new AutoLockSwitchService(prisma);
+      const before = Date.now();
+      const open = await svc.setPaused(false, "go live", "u1");
+      expect(JSON.parse(stored).at).toEqual(expect.any(String));
+      expect(open.unpausedAt?.getTime()).toBe(new Date(JSON.parse(stored).at).getTime());
+      expect(open.unpausedAt!.getTime()).toBeGreaterThanOrEqual(before);
+      const shut = await svc.setPaused(true, "re-pause", "u1");
+      expect(shut.unpausedAt).toBeNull();
     });
   });
 
