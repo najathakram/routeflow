@@ -119,6 +119,17 @@ function formatTenantReport(r) {
     `  census        stripe subscription: ${r.hasStripeSubscription ? "YES" : "no"} · manual invoicing: ${r.externalPayment ? "yes" : "NO"} · claim: ${r.claimState ?? "none"}`,
   );
   lines.push(`  RfInvoices    ${r.rfInvoices.open} open · ${r.rfInvoices.paid} paid`);
+  if (r.billingStartOverride) {
+    const o = r.billingStartOverride;
+    lines.push(
+      `  override      billing-start override ${o.valid ? day(o.billingStart) : `INVALID (${o.billingStart}) - refused`}`,
+    );
+  }
+  for (const m of r.markers ?? []) {
+    lines.push(
+      `  marker        ${m.id}  ${day(m.periodStart)} -> ${day(m.periodEnd)}  ${m.state}${m.state === "voided" ? " (not paid coverage)" : m.state === "restored" ? " (counts again)" : ""}`,
+    );
+  }
   if (r.subPeriod) {
     lines.push(
       `  sub period    ${day(r.subPeriod.start)} -> ${day(r.subPeriod.end)} (manual subscription)`,
@@ -128,8 +139,18 @@ function formatTenantReport(r) {
     lines.push(`  catch-up      CANNOT PLAN: ${r.plan.reason} (NEEDS RULING)`);
   } else {
     const p = r.plan;
+    // N10: say where the floor comes from; "(nothing paid)" never claims it is go-live
+    if (p.floor) {
+      const source =
+        {
+          billing_start_override: "billing-start override",
+          first_activation: "first activation's period start",
+          go_live: "go-live",
+        }[p.floorSource] ?? "unknown";
+      lines.push(`  floor         ${day(p.floor)} (${source})`);
+    }
     lines.push(
-      `  paid through  ${day(p.paidThrough)}${p.paidFromInvoices ? "" : " (nothing paid: go-live)"}`,
+      `  paid through  ${day(p.paidThrough)}${p.paidFromInvoices ? "" : " (nothing paid since the floor)"}`,
     );
     lines.push(`  anchor        ${day(p.anchorAt)} 12:00Z · trial end ${day(p.trialEndAt)} 12:00Z`);
     lines.push(`  checkout      ${p.shape}`);

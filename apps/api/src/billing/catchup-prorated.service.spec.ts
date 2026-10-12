@@ -363,6 +363,37 @@ describe("RED: a line under 50 cents is forgiven once per session and settles AT
   });
 });
 
+describe("S2: the $0.50 boundary through the claim (49 forgiven once, 50 and 51 charged with no audit row)", () => {
+  async function run(monthly: number) {
+    const h = make({ monthly, invoices: [OCT_OPEN] });
+    const now = d("2026-10-09T10:00:00Z");
+    const r = await h.svc.plan(T, now);
+    const expected = r.plan.ok ? r.plan.stub.totalCents : -1;
+    const out = await h.svc.open(T, { now, expectedStubCents: expected });
+    const session = await complete(h, out.sessionId);
+    return { h, out, session, params: h.stripe.client.checkout.sessions.create.mock.calls[0][0] };
+  }
+
+  it("49 cents: forgiven - no line, settled at completion, EXACTLY one catchup.minimum-forgiven row (none on replay)", async () => {
+    const { h, out, session } = await run(0.49);
+    expect(h.sub().catchupState).toBeNull();
+    expect(forgivenRows(h)).toHaveLength(1);
+    expect(forgivenRows(h)[0].meta).toMatchObject({ cents: 49, sessionId: out.sessionId });
+    await h.claim.onSessionCompleted(session);
+    expect(forgivenRows(h)).toHaveLength(1);
+  });
+
+  it.each([0.5, 0.51])(
+    "%s dollars: a real $0.50+ line is charged - one line, NO audit row, the claim waits for the money",
+    async (monthly) => {
+      const { h, params } = await run(monthly);
+      expect(params.line_items.filter((l: any) => !l.price_data.recurring)).toHaveLength(1);
+      expect(h.sub().catchupState).toBe("AWAITING_FIRST_PAYMENT");
+      expect(forgivenRows(h)).toHaveLength(0);
+    },
+  );
+});
+
 describe("RED: the Enterprise scenario numbers (r10): $100 override, activation [Oct 12, Nov 11) at its recorded time of day", () => {
   // 04:08:24Z is the time of day that makes the stub span exactly 20.3275 days: Dec 1 12:00Z - Nov 11 04:08:24Z
   const START = "2026-10-12T04:08:24Z";

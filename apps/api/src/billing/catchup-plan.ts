@@ -244,23 +244,30 @@ export function activationClusters(rows: readonly ActivationRecord[]): Activatio
     prev = r.at.getTime();
   }
   const clusters: ActivationCluster[] = [];
+  // starts of voided activations that recorded no period at all: no window to ignore, but the activation still
+  // happened as an event, so its earliest `at` still supplies the floor's first-activation term (N5)
+  const eventStarts: Date[] = [];
   for (const g of groups) {
     const voided = g.some((r) => r.voided === true);
     const ends = g.map((r) => r.periodEnd).filter(validDate);
-    if (ends.length === 0) {
-      if (voided) continue; // a voided activation with no period paid nothing and has no window to ignore
-      return { ok: false, reason: "manual_marker_without_period" };
-    }
     const starts = g.map((r) => r.periodStart).filter(validDate);
     const start = starts.length ? new Date(Math.min(...starts.map((x) => x.getTime()))) : g[0].at; // sorted: the earliest `at`
+    if (ends.length === 0) {
+      if (voided) {
+        eventStarts.push(start); // a voided activation with no period paid nothing and has no window to ignore
+        continue;
+      }
+      return { ok: false, reason: "manual_marker_without_period" };
+    }
     clusters.push({
       start,
       end: new Date(Math.max(...ends.map((e) => e.getTime()))),
       voided,
     });
   }
-  const firstStart = clusters.length
-    ? new Date(Math.min(...clusters.map((c) => c.start.getTime())))
+  const allStarts = [...clusters.map((c) => c.start), ...eventStarts];
+  const firstStart = allStarts.length
+    ? new Date(Math.min(...allStarts.map((x) => x.getTime())))
     : null;
   return { ok: true, clusters, firstStart };
 }
@@ -339,6 +346,8 @@ const MON = MONTHS.map((m) => m.slice(0, 3));
  * billed day: "Subscription — Nov 11 to Nov 30, 2026" (never a bare month name - SA-733r10 nit 2).
  */
 export function describeStub(from: Date, to: Date): string {
+  // S === A: there is no line to describe (never "December 2026 to November 2026")
+  if (snapToBoundary(from).getTime() >= snapToBoundary(to).getTime()) return "No catch-up line";
   const monthOf = (d: Date) => `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
   const snapped = snapToBoundary(from);
   const startsOnBoundary =
@@ -389,6 +398,8 @@ export interface CatchupPlan {
   now: Date;
   /** max(go-live, the billing start): nothing before it is ever billed. */
   floor: Date;
+  /** Where the floor comes from: the operator's override, the first activation's period start, or go-live. */
+  floorSource: "billing_start_override" | "first_activation" | "go_live";
   /** S: the snapped paid-through (the floor when nothing is paid) - where the one-time line starts. */
   paidThrough: Date;
   paidFromInvoices: boolean;
@@ -483,6 +494,12 @@ export function planCatchup(i: {
   const floor =
     startTerm && startTerm.getTime() > CATCHUP_GO_LIVE.getTime() ? startTerm : CATCHUP_GO_LIVE;
 
+  const floorSource: CatchupPlan["floorSource"] = i.billingStart
+    ? "billing_start_override"
+    : floor.getTime() > CATCHUP_GO_LIVE.getTime()
+      ? "first_activation"
+      : "go_live";
+
   const paid = i.invoices.filter((x) => x.status === "PAID");
   if (paid.some((x) => !x.periodStart || !x.periodEnd)) {
     return { ok: false, reason: "paid_invoice_without_period" };
@@ -521,6 +538,7 @@ export function planCatchup(i: {
     ok: true,
     now: i.now,
     floor,
+    floorSource,
     paidThrough: s,
     paidFromInvoices: cov.reached,
     anchorAt: a,

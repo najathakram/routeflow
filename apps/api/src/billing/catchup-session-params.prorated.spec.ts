@@ -146,3 +146,28 @@ describe("PIN (r9 rule 3): no coupons in the catch-up - the paid amount always e
     },
   );
 });
+
+describe("S2: the $0.50 boundary on the session (49 forgiven, 50 and 51 a real one-time line)", () => {
+  const now = d("2026-10-09T10:00:00Z");
+  const build49 = (cents: number) => {
+    const plan = planCatchup({ now, monthly: cents / 100, addons: [], invoices: [] });
+    if (!plan.ok) throw new Error(plan.reason);
+    return build(plan, now);
+  };
+  const oneTime = (p: any) => p.line_items.filter((l: any) => !l.price_data.recurring);
+
+  it("49 cents: no one-time line, stub 0, the forgiven cents named for the audit row", () => {
+    const p = build49(49);
+    expect(oneTime(p)).toHaveLength(0);
+    expect(p.metadata[CATCHUP_META.stubCents]).toBe("0");
+    expect(p.metadata[CATCHUP_META.forgivenCents]).toBe("49");
+  });
+
+  it.each([50, 51])("%s cents: ONE one-time line of exactly that, no forgiven marker", (cents) => {
+    const p = build49(cents);
+    expect(oneTime(p)).toHaveLength(1);
+    expect(oneTime(p)[0].price_data.unit_amount).toBe(cents);
+    expect(p.metadata[CATCHUP_META.stubCents]).toBe(String(cents));
+    expect(p.metadata).not.toHaveProperty(CATCHUP_META.forgivenCents);
+  });
+});

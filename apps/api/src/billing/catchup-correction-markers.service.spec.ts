@@ -275,6 +275,62 @@ describe("RED: an invalid billingStart is refused (anchor 1st at 12:00Z and >= g
   });
 });
 
+describe("N5: a voided activation with NO recorded period still supplies its earliest `at` as the floor's first-activation term", () => {
+  it("activation marker + trail with no period on either row, voided: the floor is that activation's own instant, not go-live", async () => {
+    const h = make({ monthly: 100, invoices: [OCT_OPEN] });
+    const at = d("2026-10-15T09:00:00Z");
+    h.db.audits.push(
+      {
+        id: "m_legacy",
+        tenantId: T,
+        entityType: ADMIN_AUDIT_ENTITY,
+        action: "TENANT_MANUAL_ACTIVATION_MARKER",
+        createdAt: at,
+        meta: {},
+      },
+      {
+        id: "m_legacy-trail",
+        tenantId: T,
+        entityType: ADMIN_AUDIT_ENTITY,
+        action: "TENANT_SUBSCRIPTION_ACTIVATED",
+        createdAt: new Date(at.getTime() + 3000),
+        meta: {},
+      },
+    );
+    voidMarker(h, "m_legacy");
+    const r = await h.svc.plan(T, d("2026-10-20T10:00:00Z"));
+    expect(r.plan).toMatchObject({ ok: true });
+    if (!r.plan.ok) return;
+    expect(r.plan.stub.from.toISOString()).toBe("2026-10-15T09:00:00.000Z");
+  });
+});
+
+describe("N10: the report and dry-run JSON show the floor, the active billing-start override and the marker states", () => {
+  it("floor, its source and the override are in the JSON; a voided / restored marker is labelled", async () => {
+    const h = make({ monthly: 100, invoices: [OCT_OPEN] });
+    activation(h, "m_act1", "2026-10-12T04:08:24Z", "2026-11-11T04:08:24Z");
+    voidMarker(h, "m_act1", "2026-10-13T08:00:00Z");
+    billingStart(h, "2026-10-01T12:00:00.000Z");
+    const json = catchupReportJson(await h.svc.plan(T, d("2026-10-13T10:00:00Z"))) as any;
+    expect(json.plan.floor).toBe("2026-10-01T12:00:00.000Z");
+    expect(json.plan.floorSource).toBe("billing_start_override");
+    expect(json.billingStartOverride).toEqual({
+      billingStart: "2026-10-01T12:00:00.000Z",
+      valid: true,
+    });
+    expect(json.markers).toEqual([expect.objectContaining({ id: "m_act1", state: "voided" })]);
+
+    const g = make({ monthly: 100, invoices: [OCT_OPEN] });
+    activation(g, "m_act1", "2026-09-20T12:00:00Z", "2026-11-01T12:00:00Z");
+    voidMarker(g, "m_act1", "2026-10-13T08:00:00Z");
+    restoreMarker(g, "m_act1", "2026-10-13T09:00:00Z");
+    const j2 = catchupReportJson(await g.svc.plan(T, d("2026-10-13T10:00:00Z"))) as any;
+    expect(j2.billingStartOverride).toBeNull();
+    expect(j2.plan.floorSource).toBe("go_live");
+    expect(j2.markers[0]).toMatchObject({ id: "m_act1", state: "restored" });
+  });
+});
+
 describe("RED (SA-733r12): per activation marker the LATEST void / restore wins", () => {
   // activation [Sep 20, Nov 1 12:00): it starts before go-live, so the floor is go-live whatever the void says;
   // counted => paidThrough Nov 1 (S = A, the stub-free trial); ignored => paidThrough = floor (S = Oct 1, $100).
@@ -325,7 +381,7 @@ describe("RED (SA-733r12): per activation marker the LATEST void / restore wins"
     expect(await counts(setup(R("2026-10-13T10:00:00Z"), V("2026-10-13T08:00:00Z")))).toBe(true);
   });
 
-  it("RED: same-createdAt ties are resolved by id (the greater id is the later row)", async () => {
+  it("same-createdAt ties resolve deterministically by id (determinism only: uuid ids carry no time order, and parseArgs forbids void + restore of one marker in one run)", async () => {
     const at = "2026-10-13T09:00:00Z";
     expect(await counts(setup(V(at, "row-a"), R(at, "row-b")))).toBe(true); // restore has the greater id
     expect(await counts(setup(V(at, "row-b"), R(at, "row-a")))).toBe(false); // void has the greater id

@@ -248,3 +248,45 @@ describe("the void rule (r9 rule 4): master's rule, no upper bound - these rows 
     expect(p.voidInvoiceIds).toEqual([]);
   });
 });
+
+describe("S2: the $0.50 boundary - 49 cents is forgiven, 50 and 51 are charged", () => {
+  // a full October (31/31) on a monthly price of N cents
+  const line = (cents: number) => {
+    const p = planCatchup({ now: NOW, monthly: cents / 100, addons: [], invoices: [] });
+    if (!p.ok) throw new Error(p.reason);
+    return p;
+  };
+
+  it("49 cents: flagged below the minimum (forgiven by the session builder)", () => {
+    const p = line(49);
+    expect(p.stub.totalCents).toBe(49);
+    expect(p.stub.belowStripeMinimum).toBe(true);
+  });
+
+  it.each([50, 51])("%s cents: a real line, not below the minimum", (cents) => {
+    const p = line(cents);
+    expect(p.stub.totalCents).toBe(cents);
+    expect(p.stub.belowStripeMinimum).toBe(false);
+  });
+});
+
+describe("N2: describeStub with S === A (no line) is clean, never 'December 2026 to November 2026'", () => {
+  it("equal instants have no line to describe", () => {
+    const x = d("2026-12-01T12:00:00Z");
+    const label = describeStub(x, x);
+    expect(label).not.toMatch(/December 2026 to November 2026/);
+    expect(label).toBe("No catch-up line");
+  });
+
+  it("the stub-free trial plan carries that label", () => {
+    const p = planCatchup({
+      now: NOW,
+      monthly: 310,
+      addons: [],
+      invoices: [inv("o", "PAID", "2026-10-01T12:00:00Z", "2026-12-01T12:00:00Z")],
+    });
+    if (!p.ok) throw new Error(p.reason);
+    expect(p.shape).toBe("trial");
+    expect(p.stub.label).toBe("No catch-up line");
+  });
+});

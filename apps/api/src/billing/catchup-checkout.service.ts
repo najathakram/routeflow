@@ -23,6 +23,7 @@ import {
   CATCHUP_MARKER_ACTIONS,
   CATCHUP_MARKER_SELECT,
   readCatchupMarkers,
+  type MarkerView,
 } from "./catchup-markers";
 import { planRefusalException, refusalCodesOf } from "./catchup-refusal";
 import { buildCatchupSessionParams } from "./catchup-session-params";
@@ -55,6 +56,10 @@ export interface CatchupReport {
   monthlyCents: number | null;
   /** The subscription row's stored base-price snapshot, dollars (null when none) - the dry-run flags an override without one. */
   basePriceSnapshot: number | null;
+  /** The latest billing-start override marker (valid or not), for the dry-run. */
+  billingStartOverride: { billingStart: string | null; valid: boolean } | null;
+  /** The activation markers and whether each counts as paid coverage, is voided, or was restored. */
+  markers: MarkerView[];
   rfInvoices: { open: number; paid: number };
   /** The manual subscription's current period (printed in the dry-run: the owner checks it against the invoices). */
   subPeriod?: { start: Date | null; end: Date | null } | null;
@@ -91,6 +96,8 @@ export function catchupReportJson(r: CatchupReport) {
     priceSource: r.priceSource,
     monthlyCents: r.monthlyCents,
     basePriceSnapshot: r.basePriceSnapshot,
+    billingStartOverride: r.billingStartOverride,
+    markers: r.markers,
     rfInvoices: r.rfInvoices,
     subPeriod: r.subPeriod
       ? {
@@ -102,6 +109,8 @@ export function catchupReportJson(r: CatchupReport) {
       ? {
           ok: true as const,
           shape: p.shape,
+          floor: iso(p.floor),
+          floorSource: p.floorSource,
           paidThrough: iso(p.paidThrough),
           paidFromInvoices: p.paidFromInvoices,
           anchorAt: iso(p.anchorAt),
@@ -259,6 +268,13 @@ export class CatchupCheckoutService {
       priceSource: source,
       monthlyCents: monthly == null ? null : toCents(monthly),
       basePriceSnapshot: sub?.basePriceSnapshot == null ? null : Number(sub.basePriceSnapshot),
+      billingStartOverride: override
+        ? {
+            billingStart: override.ok ? override.billingStart.toISOString() : String(override.raw),
+            valid: override.ok,
+          }
+        : null,
+      markers: markers.markers,
       rfInvoices: {
         open: rows.filter((r) => r.status === "OPEN").length,
         paid: rows.filter((r) => r.status === "PAID").length,

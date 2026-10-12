@@ -107,14 +107,14 @@ export function activationClaimRefusal(state: string | null | undefined): Confli
   return claimRefusal(state);
 }
 
-/** The two values of the `catchup` marker: `period` (trial_one_time) and `prepaid` (trial / anchor_no_line). */
+/** The two values of the `catchup` marker: `period` (trial_one_time) and `prepaid` (the stub-free trial). */
 export const CATCHUP_KINDS = ["period", "prepaid"] as const;
 
 /** What the catch-up checkout stamps on the Stripe session / subscription so the webhook can act on it. */
 export const CATCHUP_META = {
   /**
-   * One of CATCHUP_KINDS: "period" (trial_one_time - a one-time line covers [from, to)) or "prepaid" (the `trial`
-   * and `anchor_no_line` shapes - nothing is owed for the period before the trial end).
+   * One of CATCHUP_KINDS: "period" (trial_one_time - a one-time line covers [from, to)) or "prepaid" (the stub-free
+   * `trial` shape - nothing is owed for the period before the trial end).
    */
   catchup: "catchup",
   shape: "catchup_shape",

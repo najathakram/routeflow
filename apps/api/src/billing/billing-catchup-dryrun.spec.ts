@@ -90,3 +90,56 @@ describe("the dry-run prints planKey and the resolved basePriceSnapshot (r10 nit
     expect(text(report())).not.toMatch(/price override set but no snapshot/i);
   });
 });
+
+describe("N10: the dry-run never calls a billing-start floor 'go-live', and shows the floor, the override and the marker states", () => {
+  const withFloor = (floorSource: string, over: Record<string, unknown> = {}) => {
+    const r = report({
+      billingStartOverride:
+        floorSource === "billing_start_override"
+          ? { billingStart: "2026-10-01T12:00:00.000Z", valid: true }
+          : null,
+      markers: [
+        {
+          id: "marker-act-1",
+          action: "TENANT_MANUAL_ACTIVATION_MARKER",
+          periodStart: "2026-10-12T04:08:24.000Z",
+          periodEnd: "2026-11-11T04:08:24.000Z",
+          state: "voided",
+        },
+        {
+          id: "marker-act-2",
+          action: "TENANT_MANUAL_ACTIVATION_MARKER",
+          periodStart: "2026-09-01T12:00:00.000Z",
+          periodEnd: "2026-10-01T12:00:00.000Z",
+          state: "restored",
+        },
+      ],
+      ...over,
+    });
+    (r.plan as any).floor = "2026-10-01T12:00:00.000Z";
+    (r.plan as any).floorSource = floorSource;
+    (r.plan as any).paidFromInvoices = false;
+    return r;
+  };
+
+  it("an override floor: names the floor and its source, never '(nothing paid: go-live)'", () => {
+    const t = text(withFloor("billing_start_override"));
+    expect(t).toMatch(/floor\s+2026-10-01[^\n]*billing-start override/i);
+    expect(t).not.toMatch(/nothing paid: go-live/);
+    expect(t).toMatch(/billing-start override[^\n]*2026-10-01/i);
+  });
+
+  it("a first-activation floor says so", () => {
+    expect(text(withFloor("first_activation"))).toMatch(/floor[^\n]*first activation/i);
+  });
+
+  it("only a real go-live floor says go-live", () => {
+    expect(text(withFloor("go_live"))).toMatch(/floor[^\n]*go-live/i);
+  });
+
+  it("lists which activation markers are voided or restored", () => {
+    const t = text(withFloor("go_live"));
+    expect(t).toMatch(/marker-act-1[^\n]*voided/i);
+    expect(t).toMatch(/marker-act-2[^\n]*restored/i);
+  });
+});
