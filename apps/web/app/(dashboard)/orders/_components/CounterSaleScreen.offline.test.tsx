@@ -1,10 +1,11 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
+import { COUNTER_OFFLINE_COPY } from "@/lib/counter-sale";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
  * CQ-29: Complete pressed while the browser is OFFLINE. The request cannot have reached the server, so the screen says
- * "No connection. Nothing was charged yet..." in the checkout bar, the form is usable again (no unknown-outcome lock), and the
+ * "No connection. Nothing was recorded yet..." in the checkout bar, the form is usable again (no unknown-outcome lock), and the
  * retry reuses the sale's Idempotency-Key. A network failure while the browser believed it was ONLINE stays an unknown outcome
  * (the request may have landed): the lock and banner of the existing contract, never "nothing was charged".
  */
@@ -62,7 +63,7 @@ const SALE = {
   change: 0,
   paymentRecorded: true,
 };
-const COPY = "No connection. Nothing was charged yet. Check your connection and try again.";
+const COPY = COUNTER_OFFLINE_COPY;
 const complete = () => screen.getByRole("button", { name: "Complete & show receipt" });
 const keyOfCall = (i: number) => mutateAsync.mock.calls[i][0].idempotencyKey as string;
 
@@ -115,6 +116,15 @@ describe("CounterSaleScreen: offline at Complete (CQ-29)", () => {
     expect(complete()).not.toBeDisabled();
     expect(screen.getByRole("button", { name: "Complete & next sale" })).not.toBeDisabled();
     expect(screen.getByRole("button", { name: "Remove Cola" })).not.toBeDisabled();
+  });
+
+  // S2: card and check are run on an outside terminal, so the money may be taken while only the sale is missing.
+  it("says 'recorded' (never 'charged') and tells the clerk not to run a card twice", () => {
+    expect(COUNTER_OFFLINE_COPY).toMatch(/^No connection\. Nothing was recorded yet\./);
+    expect(COUNTER_OFFLINE_COPY).not.toMatch(/nothing was charged/i);
+    expect(COUNTER_OFFLINE_COPY).toMatch(
+      /if a card was already charged on the terminal, do not charge it again/i,
+    );
   });
 
   it("the retry reuses the Idempotency-Key, even after the clerk changed the cart, and then succeeds", async () => {

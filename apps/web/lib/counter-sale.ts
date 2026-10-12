@@ -231,13 +231,17 @@ export const COUNTER_LOOKUP_FAILED_COPY = "Couldn't check the sale. Try again.";
 export const COUNTER_OUTCOME_UNKNOWN_COPY =
   "We couldn't confirm the sale. Check recent sales before trying again.";
 
-/** CQ-29: offline at Complete. Shown in the checkout bar; the form stays usable and the sale can be sent again. */
+/**
+ * CQ-29: offline at Complete. Shown in the checkout bar; the form stays usable and the sale can be sent again. It says
+ * "recorded", not "charged": a card or check is run on an outside terminal, which may already have taken the money while
+ * only the RouteFlow sale is missing, so the line also tells the clerk not to run the card a second time.
+ */
 export const COUNTER_OFFLINE_COPY =
-  "No connection. Nothing was charged yet. Check your connection and try again.";
+  "No connection. Nothing was recorded yet. Check your connection and try again. If a card was already charged on the terminal, do not charge it again.";
 
 /**
  * CQ-29: the request got no answer AND the browser already reported itself offline when it was sent. Only that combination
- * proves nothing reached the server, so only it may say "nothing was charged". Any other no-answer failure (a drop in flight, a
+ * proves nothing reached the server, so only it may say "nothing was recorded". Any other no-answer failure (a drop in flight, a
  * timeout, a 5xx) stays an UNKNOWN outcome. The sale keeps its Idempotency-Key for the retry either way.
  */
 export function isNotSentOffline(err: unknown, offlineAtSend: boolean): boolean {
