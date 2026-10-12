@@ -142,6 +142,15 @@ describe("updateOrderItems: revision guard, vanished line, B720 (row 372)", () =
     expect(writes()).toBe(0);
   });
 
+  it("a payload line id the order NEVER had stays a 404 (the prior contract), not a 409 CONCURRENT_UPDATE", async () => {
+    // the lock holds li-1 and the pre-tx snapshot listed li-1 only: li-foreign belongs to another order (or none)
+    const err: any = await edit({ items: [{ id: "li-foreign", action: "CANCEL" }] }).catch(
+      (e: any) => e,
+    );
+    expect(err?.response?.code).not.toBe("CONCURRENT_UPDATE");
+    expect(writes()).toBe(0);
+  });
+
   it("B720: a product the pre-lock context never loaded is read inside the transaction, after the lock", async () => {
     // the line is unit-aware only under the lock (a concurrent edit gave it a unit): its product was not loaded
     h.prisma.orderItem.findMany.mockResolvedValue([{ ...line, unitLabel: "Case" }]);
