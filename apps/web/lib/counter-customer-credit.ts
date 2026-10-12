@@ -19,7 +19,7 @@ export interface CounterCustomerCreditInput {
 export interface CounterCustomerCreditView {
   /** the customer's own terms, else the business default; null when neither is known */
   terms: string | null;
-  /** null = no limit configured (0 / absent), a positive number otherwise */
+  /** null = no limit configured (the server treats only NULL as "no limit"); 0 is a real zero limit; else the limit */
   creditLimit: number | null;
   /** the statement's outstanding amount; null while unknown */
   openBalance: number | null;
@@ -46,7 +46,9 @@ export function counterCustomerCreditView(
   input: CounterCustomerCreditInput,
 ): CounterCustomerCreditView {
   const limitRaw = num(field(input.customer, "creditLimit"));
-  const creditLimit = limitRaw !== null && limitRaw > 0 ? limitRaw : null;
+  // CQ-07 (S4): only a missing limit is "no limit". A limit of 0 is a zero limit (the server's credit guard and the customer
+  // page read it that way), so any open balance is over it.
+  const creditLimit = limitRaw !== null && limitRaw >= 0 ? limitRaw : null;
   const openBalance = num(field(input.statement, "outstandingAmount"));
   const overdueRaw = num(field(input.statement, "overdueAmount"));
   const overdue = overdueRaw !== null && roundMoney(overdueRaw) > 0 ? roundMoney(overdueRaw) : 0;

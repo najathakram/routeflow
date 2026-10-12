@@ -73,8 +73,29 @@ describe("CounterSaleScreen: a picked customer's account signal (CQ-07)", () => 
     expect(screen.queryByTestId("counter-customer-over-limit")).toBeNull();
   });
 
+  it("a credit limit of 0 is a zero limit, not 'no limit': any open balance is over it", async () => {
+    customerRecord = { id: "c-acme", defaultPaymentTerms: "Net 15", creditLimit: 0 };
+    renderWithProviders(<CounterSaleScreen />);
+    pickAcme();
+    const box = await screen.findByTestId("counter-customer-credit");
+    await waitFor(() => expect(box).toHaveTextContent("Credit limit$0.00"));
+    expect(box).not.toHaveTextContent("No limit");
+    const note = await screen.findByTestId("counter-customer-over-limit");
+    expect(note).toHaveTextContent("$400.00");
+  });
+
+  it("a zero limit with nothing owed shows no over-limit note", async () => {
+    customerRecord = { id: "c-acme", defaultPaymentTerms: "Net 15", creditLimit: "0.00" };
+    statement = { outstandingAmount: 0, overdueAmount: 0, creditExposure: 0 };
+    renderWithProviders(<CounterSaleScreen />);
+    pickAcme();
+    const box = await screen.findByTestId("counter-customer-credit");
+    await waitFor(() => expect(box).toHaveTextContent("Credit limit$0.00"));
+    expect(screen.queryByTestId("counter-customer-over-limit")).toBeNull();
+  });
+
   it("falls back to the business's default terms when the customer has none of their own", async () => {
-    customerRecord = { id: "c-acme", defaultPaymentTerms: "", creditLimit: 0 };
+    customerRecord = { id: "c-acme", defaultPaymentTerms: "", creditLimit: null };
     renderWithProviders(<CounterSaleScreen />);
     pickAcme();
     const box = await screen.findByTestId("counter-customer-credit");
