@@ -1,3 +1,4 @@
+import { codedToastCopy } from "./generic-toast-copy";
 import { applyBestPromotion, computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 import type { PromotionRule } from "@routeflow/pricing";
 import type { BuyerOrderTemplate, BuyerProduct } from "@/lib/api/buyer";
@@ -97,9 +98,11 @@ export function reorderSkippedNote(res: unknown): string | null {
 
 const NONE_AVAILABLE = "None of these items are available to you right now.";
 
-/** Every line was restricted: the API answers 400 with that sentence and places nothing. Show it as-is. */
+/**
+ * Every line was restricted: the API answers 400 with that sentence and places nothing. Recognised through the closed
+ * known-sentence table (never a raw message read) and shown as-is.
+ */
 export function reorderNoneAvailable(err: unknown): string | null {
-  const r = (err as { response?: { status?: number; data?: { message?: unknown } } } | null)
-    ?.response;
-  return r?.status === 400 && r.data?.message === NONE_AVAILABLE ? NONE_AVAILABLE : null;
+  const status = (err as { response?: { status?: number } } | null)?.response?.status;
+  return status === 400 && codedToastCopy(err) === NONE_AVAILABLE ? NONE_AVAILABLE : null;
 }

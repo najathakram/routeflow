@@ -20,15 +20,7 @@ export const BUCKET_KEYS: readonly BucketKey[] = UNKNOWN_STATE_BUCKET_VALUES;
 
 export type UnknownStateRow = UnknownStateCustomerRow;
 export type { UnknownStateBucket };
-/**
- * The three buckets plus the two page-level facts the API adds: `customersTotal` (distinct customers across the
- * buckets: a customer with two bad addresses counts once) and `businessStateMissing` (a legal ban is in play and the
- * business has no state, so counter sales cannot be judged). Optional here so an older API still renders.
- */
-export type UnknownStateBuckets = UnknownStateCustomersResponse & {
-  customersTotal?: number;
-  businessStateMissing?: boolean;
-};
+export type UnknownStateBuckets = UnknownStateCustomersResponse;
 export type StateWriteResult = AddressStateResponse;
 export type BulkStateResult = BulkStateResponse;
 
