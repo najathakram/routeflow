@@ -20,7 +20,7 @@ export interface ReadOnlyBannerProps {
   overdueAmount?: number | null;
   /** `SubscriptionView.billingContactEmail`: the non-admin's "contact your admin" line. */
   billingContactEmail?: string | null;
-  /** A TENANT_ADMIN sees the Choose a plan action; anyone else the contact line. Defaults to admin (old shape). */
+  /** A TENANT_ADMIN sees the action (Choose a plan for an expired trial, else Billing); anyone else the contact line. Defaults to admin (old shape). */
   isAdmin?: boolean;
 }
 
@@ -44,6 +44,12 @@ export function ReadOnlyBanner({
     isAdmin,
   });
 
+  // billing-ux §4: an expired trial is the one reason where choosing a plan is the way out; every other reason
+  // (cancelled, an unpaid invoice, set by an administrator) gets the Billing page, never a plan purchase.
+  const action =
+    readOnlyReason === "trial_expired"
+      ? { label: "Choose a plan", href: "/choose-plan" }
+      : { label: "Billing", href: "/settings/billing" };
   // UX QA: the three lines are STACKED (sentence / reason / contact or the action), the contact printed once, and the
   // admin's action is a >= 44 px control, full width at 390.
   return (
@@ -67,14 +73,13 @@ export function ReadOnlyBanner({
         ))}
         {isAdmin ? (
           <a
-            href="/choose-plan"
+            href={action.href}
             onClick={(e) => {
-              if (guardCounterLeave(() => window.location.assign("/choose-plan")))
-                e.preventDefault(); // POS-7: not mid-sale
+              if (guardCounterLeave(() => window.location.assign(action.href))) e.preventDefault(); // POS-7: not mid-sale
             }}
             className="mt-1 inline-flex min-h-[44px] w-full items-center justify-center rounded-ctl border border-amber-300 bg-paper px-3 font-medium text-amber-900 underline-offset-2 sm:w-auto"
           >
-            Choose a plan
+            {action.label}
           </a>
         ) : null}
       </div>
