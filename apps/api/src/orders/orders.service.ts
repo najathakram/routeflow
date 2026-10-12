@@ -169,7 +169,7 @@ import {
 import { recomputeLineCategoryTaxes } from "./recompute-line-category-taxes";
 import { loadLiveTrioByProduct } from "./fold-target";
 import { carriedLineFor } from "./carry-line-category";
-import { applyBuyerEditLines, guardBuyerEditLineIds, piecesDenominated } from "./buyer-edit-lines";
+import { guardBuyerEditLineIds, pairEditLines, piecesDenominated } from "./buyer-edit-lines";
 import { planSplitPromos, type SplitPromoGroup } from "./split-promo-group";
 import { settleSplitFreeUnits } from "./settle-split-free-units";
 import { dateAndShipmentFilters } from "./list-filters";
@@ -3164,9 +3164,8 @@ export class OrdersService implements OnApplicationBootstrap {
           // references survive); client-supplied unlisted input is ignored on the
           // buyer path. Drivers keep today's authoring behavior.
           // SA-422 (1): a buyer save never deletes the seller's CANCELLED rows (F07 reopen marks).
-          if (isBuyerEdit && opts?.buyerLineIds) {
-            applyBuyerEditLines(dto, order.lineItems ?? [], productMap, buyerCategoryMap); // row 352
-          }
+          // rows 352 / 373b: the ONE pairing helper (buyer names lines by orderItemId, staff / driver by id)
+          pairEditLines(dto, order, productMap, buyerCategoryMap, user, opts);
           const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items); // #2717 SA-591(b)
           lineIdentity = await markLinesRecreated(tx, orderId, heldItems); // SA-763r M2
           await tx.orderItem.deleteMany({
@@ -3407,6 +3406,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // B297 (SA-098a): a superset of `uctx.categoryMap` (unit-aware products only) —
             // this pack-line create() below needs every product this replaceAll touches.
             const operatorReplaceCategoryMap = await loadCategoryMapForProducts(tx, productMap);
+            pairEditLines(dto, order, productMap, operatorReplaceCategoryMap, user, opts); // row 373b
 
             // B60 (REG-B60): the pre-edit BOGO counterparts and per-product line counts (see
             // buildReplaceAllPairing) — built once from the PRE-edit lines, before the delete below.

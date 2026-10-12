@@ -52,6 +52,8 @@ export interface BuyerEditEntry {
 }
 
 export interface ResolveBuyerEditArgs {
+  /** Receives, per output entry, the index of the input entry it came from (a split yields two for one input). */
+  trace?: number[];
   items: BuyerEditEntry[];
   lineItems: ReadonlyArray<StoredEditLine>;
   liveTrioByProduct: ReadonlyMap<string, FoldTrio>;
@@ -99,6 +101,8 @@ export function resolveBuyerEditLines(args: ResolveBuyerEditArgs): BuyerEditEntr
   const live = lineItems.filter((l) => l.productId && l.status !== "CANCELLED");
   const byId = new Map(live.map((l) => [l.id, l]));
   const claimed = new Set<string>();
+  // A pre-paired entry (a fold's `sourceLineId`) keeps its line: nothing else may claim it by the fallback.
+  for (const it of items) if (it.productId && it.sourceLineId) claimed.add(it.sourceLineId);
   for (const it of items) {
     if (!it.productId || !it.orderItemId) continue;
     const own = byId.get(it.orderItemId);
@@ -115,15 +119,21 @@ export function resolveBuyerEditLines(args: ResolveBuyerEditArgs): BuyerEditEntr
   }
   const idlessCount = new Map<string, number>();
   for (const it of items) {
-    if (it.productId && !it.orderItemId) {
+    if (it.productId && !it.orderItemId && !it.sourceLineId) {
       idlessCount.set(it.productId, (idlessCount.get(it.productId) ?? 0) + 1);
     }
   }
 
   const out: BuyerEditEntry[] = [];
+  let inputIndex = -1;
+  const push = (e: BuyerEditEntry) => {
+    out.push(e);
+    args.trace?.push(inputIndex);
+  };
   for (const it of items) {
-    if (!it.productId) {
-      out.push(it);
+    inputIndex += 1;
+    if (!it.productId || (it.sourceLineId && !it.orderItemId)) {
+      push(it); // an unlisted line, or an entry a fold already paired: left exactly as it is
       continue;
     }
     const productId = it.productId;
@@ -147,7 +157,7 @@ export function resolveBuyerEditLines(args: ResolveBuyerEditArgs): BuyerEditEntr
     const { orderItemId: _drop, ...rest } = it;
     void _drop;
     if (!own) {
-      out.push(rest); // a new line: stamps live in the write
+      push(rest); // a new line: stamps live in the write
       continue;
     }
     const upb = upbByProduct.get(productId) ?? 0;
@@ -157,11 +167,11 @@ export function resolveBuyerEditLines(args: ResolveBuyerEditArgs): BuyerEditEntr
     const want = Number(it.qty ?? 0);
     const live2: FoldTrio = liveTrioByProduct.get(productId) ?? { trackedCategoryId: null };
     if (want > have && foldTarget(own, live2) === "SPLIT") {
-      out.push({ ...withQty(rest, have, upb, payloadInPieces), sourceLineId: own.id });
-      out.push(withQty(rest, want - have, upb, payloadInPieces)); // a sale made today: its own live line
+      push({ ...withQty(rest, have, upb, payloadInPieces), sourceLineId: own.id });
+      push(withQty(rest, want - have, upb, payloadInPieces)); // a sale made today: its own live line
       continue;
     }
-    out.push({ ...rest, sourceLineId: own.id });
+    push({ ...rest, sourceLineId: own.id });
   }
   return out;
 }
@@ -192,12 +202,20 @@ export function preflightBuyerEditLines(
  */
 export function guardBuyerEditLineIds(
   order: { lineItems?: ReadonlyArray<StoredEditLine> | null },
-  dto: { items?: BuyerEditEntry[]; namesLines?: boolean },
+  dto: { items?: BuyerEditEntry[]; namesLines?: boolean; replaceAll?: boolean },
   user: { role?: string } | undefined,
-  opts: { buyerLineIds?: boolean } | undefined,
+  opts: { buyerLineIds?: boolean; isCreateMerge?: boolean } | undefined,
   isDiffPayload: boolean,
 ): void {
   const items = dto.items ?? [];
+  // Row 373b: a staff / driver replace payload gets the buyer's strict pairing fallback; its 409 is raised here
+  // (before `revertLinkedInvoicesForOrderEdit` commits), through the same helper.
+  if (
+    !opts?.isCreateMerge &&
+    user?.role !== "CUSTOMER" &&
+    (user?.role === "DRIVER" ? !isDiffPayload : dto.replaceAll === true)
+  )
+    preflightEditLinePairing(items, order.lineItems ?? []);
   // A diff payload (a per-line change by `id`) is not the replace-by-line contract: never silently ignored.
   if (!opts?.buyerLineIds || isDiffPayload) assertNoOrderItemIdOutsideBuyerEdit(items);
   else if (user?.role === "CUSTOMER") {
@@ -280,4 +298,115 @@ export function piecesDenominated(
   if (!isBuyerEdit) return !!item.productId && productPieceDenominated.has(item.productId);
   const live = lines.filter((l) => l.productId === item.productId && l.status !== "CANCELLED");
   return live.length > 0 && live.every((l) => l.boxes != null || l.pieces != null);
+}
+
+/** Who is editing: the three replace paths share ONE pairing (row 373b). */
+export type PairingRole = "BUYER" | "STAFF" | "DRIVER";
+
+/**
+ * B297 row 373(b) (SA-734r2 r-note 8): the ONE pairing of a replace payload's entries with the order's stored
+ * lines, for the buyer, the staff and the driver edit (a structural pin in `edit-line-pairing.structure.spec.ts`
+ * fails if any of the three stops calling it). SA-098a ("a re-created line is a new sale") is superseded by line
+ * identity: a line is a NEW SALE only when unpaired or a product substitute. A paired line carries its category,
+ * trio and createdAt through `sourceLineId`; added quantity at a different live trio splits (foldTarget); an
+ * entry naming no line gets the strict fallback (exactly one unclaimed line of the product and unit carries,
+ * two or more are 409 ORDER_EDIT_NEEDS_LINE_IDS). The buyer names a line by `orderItemId`, staff and driver by
+ * `id`; an `id` that is not a live line of the product is not a name (it is ignored, never a 400).
+ */
+export function pairEditLines<T extends BuyerEditEntry & { id?: string }>(
+  dto: { items: T[]; namesLines?: boolean },
+  order: { lineItems?: ReadonlyArray<StoredEditLine> | null },
+  productMap: ReadonlyMap<string, any>,
+  categoryMap: ReadonlyMap<string, any>,
+  who: PairingRole | { role?: string } | null | undefined,
+  opts?: { buyerLineIds?: boolean; isCreateMerge?: boolean },
+): void {
+  const role: PairingRole =
+    typeof who === "string"
+      ? who
+      : who?.role === "CUSTOMER"
+        ? "BUYER"
+        : who?.role === "DRIVER"
+          ? "DRIVER"
+          : "STAFF";
+  const lineItems = order.lineItems ?? [];
+  // a create() merge arrives already paired by the fold (`sourceLineId`); a buyer pairs only on the items route
+  if (opts?.isCreateMerge || (role === "BUYER" && !opts?.buyerLineIds)) return;
+  if (role === "BUYER") return applyBuyerEditLines(dto, lineItems, productMap, categoryMap);
+  const liveById = new Map(
+    lineItems.filter((l) => l.productId && l.status !== "CANCELLED").map((l) => [l.id, l]),
+  );
+  const liveTrioByProduct = new Map<string, FoldTrio>();
+  const upbByProduct = new Map<string, number>();
+  for (const [id, p] of productMap) {
+    liveTrioByProduct.set(
+      id,
+      liveTrioFor(p, p.trackedCategoryId ? categoryMap.get(p.trackedCategoryId) : null),
+    );
+    upbByProduct.set(id, Number(p.unitsPerBox ?? 0));
+  }
+  const named = dto.items.map((it) => ({
+    ...it,
+    orderItemId:
+      it.orderItemId ??
+      (!it.sourceLineId && it.id && liveById.get(it.id)?.productId === it.productId
+        ? it.id
+        : undefined),
+  }));
+  const trace: number[] = [];
+  const resolved = resolveBuyerEditLines({
+    items: named,
+    lineItems,
+    liveTrioByProduct,
+    upbByProduct,
+    allowIdlessFallback: true,
+    trace,
+  });
+  // Keep the ORIGINAL entry objects (updateOrderItems keys its per-item unit rows by object identity): the first
+  // output of an input writes its pairing back onto that object; a split's extra half is a new entry.
+  const originals = dto.items.slice();
+  const seen = new Set<number>();
+  const out: T[] = [];
+  resolved.forEach((r, k) => {
+    const i = trace[k];
+    if (seen.has(i)) {
+      out.push(r as unknown as T);
+      return;
+    }
+    seen.add(i);
+    const orig = originals[i];
+    if (r.sourceLineId !== undefined) orig.sourceLineId = r.sourceLineId;
+    if (r.qty !== orig.qty && r.qty !== undefined) orig.qty = r.qty;
+    if ((r.boxes ?? null) !== (orig.boxes ?? null)) orig.boxes = r.boxes;
+    if ((r.pieces ?? null) !== (orig.pieces ?? null)) orig.pieces = r.pieces;
+    out.push(orig);
+  });
+  dto.items.splice(0, dto.items.length, ...out);
+}
+
+/**
+ * The refusals alone for a staff / driver replace payload (the strict fallback's 409), run BEFORE
+ * `revertLinkedInvoicesForOrderEdit` commits, exactly like the buyer's preflight.
+ */
+export function preflightEditLinePairing(
+  items: ReadonlyArray<BuyerEditEntry & { id?: string }>,
+  lineItems: ReadonlyArray<StoredEditLine>,
+): void {
+  const liveById = new Map(
+    lineItems.filter((l) => l.productId && l.status !== "CANCELLED").map((l) => [l.id, l]),
+  );
+  resolveBuyerEditLines({
+    items: items.map((it) => ({
+      ...it,
+      orderItemId:
+        it.orderItemId ??
+        (!it.sourceLineId && it.id && liveById.get(it.id)?.productId === it.productId
+          ? it.id
+          : undefined),
+    })),
+    lineItems,
+    liveTrioByProduct: new Map(),
+    upbByProduct: new Map(),
+    allowIdlessFallback: true,
+  });
 }

@@ -963,13 +963,30 @@ describe("OrdersService — F06 guards (TP2)", () => {
       prisma.orderItem.findMany.mockResolvedValue([]);
       promotionsService.activeForCatalog.mockResolvedValue([bogoRule]);
 
-      // A no-op save: both lines echoed at their stored qty and price.
+      // Row 373b: id-less entries cannot be paired with two stored lines of one product. They are refused
+      // (the strict fallback), never guessed and never granted a snapshot.
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          {
+            items: [
+              { productId: "prod-promo", qty: 10, unitPrice: 5 },
+              { productId: "prod-promo", qty: 5, unitPrice: 5 },
+            ],
+            replaceAll: true,
+          },
+          operatorPayload,
+        ),
+      ).rejects.toMatchObject({ response: { code: "ORDER_EDIT_NEEDS_LINE_IDS" } });
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+
+      // A no-op save that NAMES both lines: each is paired with its own stored line; the sibling stays plain.
       await service.updateOrderItems(
         "ord-1",
         {
           items: [
-            { productId: "prod-promo", qty: 10, unitPrice: 5 },
-            { productId: "prod-promo", qty: 5, unitPrice: 5 },
+            { id: "li-promo", productId: "prod-promo", qty: 10, unitPrice: 5 },
+            { id: "li-plain", productId: "prod-promo", qty: 5, unitPrice: 5 },
           ],
           replaceAll: true,
         },
