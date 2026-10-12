@@ -103,6 +103,46 @@ describe("RegulatedFilingCronService", () => {
     );
   });
 
+  // SA-776: compliance prep over CLOSED periods is record-keeping - it keeps running for a READ_ONLY tenant ("view
+  // records" stays true) and is skipped for a SUSPENDED or CANCELLED one.
+  it.each(["SUSPENDED", "CANCELLED"])("SA-776: skips a %s tenant's categories", async (status) => {
+    prisma.trackedCategory.findMany.mockResolvedValue([
+      { id: "cat-1", tenantId: "t1", reportCadence: "MONTHLY" },
+      { id: "cat-2", tenantId: "t2", reportCadence: "MONTHLY" },
+    ]);
+    prisma.tenantAddon.findMany.mockResolvedValue([{ tenantId: "t1" }, { tenantId: "t2" }]);
+    prisma.tenant.findMany.mockResolvedValue([
+      { id: "t1", status },
+      { id: "t2", status: "ACTIVE" },
+    ]);
+    prisma.regulatedFiling.findFirst.mockResolvedValue(null);
+
+    await svc.autoPrepareClosedFilings();
+
+    expect(filing.prepareFiling).toHaveBeenCalledTimes(1);
+    expect(filing.prepareFiling).toHaveBeenCalledWith(
+      expect.objectContaining({ trackedCategoryId: "cat-2" }),
+    );
+    expect(tenantCtx.run).not.toHaveBeenCalledWith("t1", expect.any(Function));
+  });
+
+  it("SA-776: still prepares for a READ_ONLY (and a TRIAL) tenant", async () => {
+    prisma.trackedCategory.findMany.mockResolvedValue([
+      { id: "cat-1", tenantId: "t1", reportCadence: "MONTHLY" },
+      { id: "cat-2", tenantId: "t2", reportCadence: "MONTHLY" },
+    ]);
+    prisma.tenantAddon.findMany.mockResolvedValue([{ tenantId: "t1" }, { tenantId: "t2" }]);
+    prisma.tenant.findMany.mockResolvedValue([
+      { id: "t1", status: "READ_ONLY" },
+      { id: "t2", status: "TRIAL" },
+    ]);
+    prisma.regulatedFiling.findFirst.mockResolvedValue(null);
+
+    await svc.autoPrepareClosedFilings();
+
+    expect(filing.prepareFiling).toHaveBeenCalledTimes(2);
+  });
+
   it("is idempotent — skips a category whose filing already exists", async () => {
     prisma.trackedCategory.findMany.mockResolvedValue([
       { id: "cat-1", tenantId: "t1", reportCadence: "MONTHLY" },

@@ -147,6 +147,7 @@ import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { openTenantGroups } from "./sweep-tenant-gate";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { orderFor, ordersFor } from "../common/staff-only-fields";
 import { currentTaxRate } from "../common/tax-rate";
@@ -1249,10 +1250,9 @@ export class OrdersService implements OnApplicationBootstrap {
     }
     const skipped = nullTenantRows.length;
 
-    // Null-tenant groups are fully accounted for by the pass above (count + warn) —
-    // exclude them here so the same customer is never double-logged, and so `customers`
-    // below reflects only the groups actually eligible to merge.
-    const mergeCandidateGroups = groups.filter((g) => g.tenantId);
+    // Null-tenant groups are counted + warned above (never double-logged); SA-776: a tenant that is not
+    // TRIAL / ACTIVE gets no automated merge (sweep-tenant-gate.ts), so `customers` counts only eligible groups.
+    const mergeCandidateGroups = await openTenantGroups(this.prisma, groups);
 
     let merged = 0;
     let packMismatches = 0;

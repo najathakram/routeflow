@@ -72,6 +72,11 @@ export const buyerPseudoUser = { ...customerPayload, type: "BUYER" as const };
 
 export async function buildOrdersService() {
   const prisma = createMockPrisma();
+  // SA-776: the sweep reads each candidate tenant's status; every tenant is ACTIVE unless a test says otherwise.
+  prisma.tenant.findMany.mockImplementation(
+    async ({ where }: { where?: { id?: { in?: string[] } } }) =>
+      (where?.id?.in ?? []).map((id) => ({ id, status: "ACTIVE" })),
+  );
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       oversellReaderOffProvider,
