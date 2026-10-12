@@ -21,3 +21,16 @@ export function isPendingMirrorInvoice(inv: {
     inv.order.status !== "PARTIALLY_DELIVERED"
   );
 }
+
+/**
+ * The wording of the pending-mirror draft: a delivery business reviews and sends the invoice "after delivery"; a store-only
+ * (POS-forced) business has no delivery at all, so the same draft is ready "after hand-over". Pure, so the page and its test
+ * cannot drift.
+ */
+export function pendingMirrorCopy(storeOnly: boolean): { badge: string; note: string } {
+  const moment = storeOnly ? "hand-over" : "delivery";
+  return {
+    badge: `Mirrors the order \u2014 ready to send after ${moment}`,
+    note: `you'll review and send this invoice after ${moment}.`,
+  };
+}

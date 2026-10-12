@@ -1,4 +1,4 @@
-import { dayCloseZSections, type ZRow } from "@routeflow/pricing";
+import { dayCloseDateLabel, dayCloseZSections, type ZRow } from "@routeflow/pricing";
 import type { DayCloseSnapshot } from "@routeflow/types";
 import { escapeHtml } from "../../../common/html-escape";
 
@@ -31,8 +31,6 @@ interface Clock {
   ymd: string;
   /** "Thu" */
   weekday: string;
-  /** "Thu, Oct 9" */
-  dateLabel: string;
   /** "9:42 PM" */
   time: string;
 }
@@ -57,7 +55,6 @@ function clock(iso: string, zone: string): Clock & { utc: boolean } {
     return {
       ymd: `${get("year")}-${monthNum}-${dayNum}`,
       weekday: get("weekday"),
-      dateLabel: `${get("weekday")}, ${get("month")} ${get("day")}`,
       time: `${get("hour")}:${get("minute")} ${get("dayPeriod").toUpperCase()}`,
     };
   };
@@ -88,14 +85,16 @@ export function buildZReportEmail(input: {
   snapshot: DayCloseSnapshot;
 }): ZReportEmail {
   const { snapshot: s } = input;
-  const subject = `Z report for ${s.day} - ${input.businessName}`;
   const z = dayCloseZSections(s);
+  // The report's own calendar day, worded as the Z screen's title is ("Sun, Oct 11"): subject, title line and screen agree.
+  const dayLabel = dayCloseDateLabel(s.day);
+  const subject = `Z report ${DOT} ${dayLabel} ${DOT} ${input.businessName}`;
 
   const closed = clock(s.closedAt, s.zone);
   const start = clock(s.windowStart, s.zone);
   const end = clock(s.windowEnd, s.zone);
   const suffix = closed.utc ? " UTC" : "";
-  const titleLine = `Z report ${DOT} ${closed.dateLabel}`;
+  const titleLine = `Z report ${DOT} ${dayLabel}`;
   const closedLine = `Closed ${closed.time}${s.closedByName ? ` by ${s.closedByName}` : ""}${suffix}`;
   const crossesDay = start.ymd !== end.ymd;
   const windowLine = crossesDay

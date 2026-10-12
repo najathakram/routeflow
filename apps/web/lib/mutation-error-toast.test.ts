@@ -1,4 +1,5 @@
 import { handleMutationError } from "./mutation-error-toast";
+import { isReadOnlyRefused, resetReadOnlyRefusedForTests } from "./read-only-gate";
 
 /**
  * The app-wide MutationCache error handler (extracted from app/providers.tsx, #1965). A mutation
@@ -118,5 +119,97 @@ describe("handleMutationError (#1965)", () => {
       title: "Product name can't start with =, +, -, @ or a tab/line break.",
       variant: "error",
     });
+  });
+});
+
+// SA-733r6 (B4): a 403 READ_ONLY on a workspace that owes an invoice shows the fixed blocked-control line (no
+// "Choose a plan" - the server answers a plan change with 409 PAYMENT_OVERDUE) and refreshes the subscription so
+// every write control on screen switches to its disabled-with-the-line state.
+describe("handleMutationError - 403 READ_ONLY while a payment is owed (B4)", () => {
+  const readOnly = { response: { status: 403, data: { code: "READ_ONLY", message: "x" } } };
+  const owedView = {
+    status: "READ_ONLY",
+    readOnlyReason: "payment_overdue",
+    pastDueInvoiceId: "in_1",
+    billingContactName: "Dana",
+  } as any;
+
+  it("shows the exact line, no plan CTA, and refreshes the subscription read", () => {
+    const toast = jest.fn();
+    const router = { push: jest.fn() };
+    const refresh = jest.fn();
+    handleMutationError(readOnly, {}, toast, router, { view: () => owedView, refresh });
+    expect(toast).toHaveBeenCalledTimes(1);
+    const arg = toast.mock.calls[0][0];
+    expect(arg.title).toBe("Not available while read-only. Dana can restore it.");
+    expect(arg.action).toBeUndefined();
+    expect(JSON.stringify(arg)).not.toMatch(/choose a plan/i);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("an opted-out mutation still gets the line (the read-only branch comes first)", () => {
+    const toast = jest.fn();
+    handleMutationError(
+      readOnly,
+      { meta: { localErrorToast: true } },
+      toast,
+      { push: jest.fn() },
+      {
+        view: () => owedView,
+        refresh: jest.fn(),
+      },
+    );
+    expect(toast.mock.calls[0][0].title).toBe(
+      "Not available while read-only. Dana can restore it.",
+    );
+  });
+
+  it("no admin on file: 'Your admin can restore it.'", () => {
+    const toast = jest.fn();
+    handleMutationError(
+      readOnly,
+      {},
+      toast,
+      { push: jest.fn() },
+      {
+        view: () => ({ ...owedView, billingContactName: null }),
+        refresh: jest.fn(),
+      },
+    );
+    expect(toast.mock.calls[0][0].title).toBe(
+      "Not available while read-only. Your admin can restore it.",
+    );
+  });
+
+  it("a trial-ended workspace keeps the existing toast and its Choose a plan action", () => {
+    const toast = jest.fn();
+    handleMutationError(
+      readOnly,
+      {},
+      toast,
+      { push: jest.fn() },
+      {
+        view: () => ({ status: "READ_ONLY", readOnlyReason: "trial_expired" }) as any,
+        refresh: jest.fn(),
+      },
+    );
+    expect(toast.mock.calls[0][0].title).toBe("Your workspace is read-only");
+  });
+});
+
+describe("handleMutationError - a 403 READ_ONLY flips the controls on screen (S5)", () => {
+  beforeEach(() => resetReadOnlyRefusedForTests());
+  afterEach(() => resetReadOnlyRefusedForTests());
+
+  it("marks the refusal so the gated controls show the line next to themselves", () => {
+    expect(isReadOnlyRefused()).toBe(false);
+    handleMutationError(
+      { response: { status: 403, data: { code: "READ_ONLY" } } },
+      {},
+      jest.fn(),
+      { push: jest.fn() },
+      { view: () => undefined, refresh: jest.fn() },
+    );
+    expect(isReadOnlyRefused()).toBe(true);
   });
 });

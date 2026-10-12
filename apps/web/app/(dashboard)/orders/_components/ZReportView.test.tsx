@@ -1,7 +1,13 @@
 import * as React from "react";
-import { renderWithProviders, screen, within } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import type { DayCloseSnapshot, DayCloseTotals } from "@routeflow/types";
+import { Modal } from "@routeflow/ui/web";
 import { ZReportBody, ZReportView } from "./ZReportView";
+
+const post = jest.fn();
+jest.mock("@/lib/api-client", () => ({
+  apiClient: { get: jest.fn(), post: (...a: unknown[]) => post(...a) },
+}));
 
 /**
  * SA-750r3 §4: the Z view prints the groups of `dayCloseZSections` in the plan's order. Every figure below is the fixture's own;
@@ -54,6 +60,10 @@ const snap = (over: Partial<DayCloseSnapshot> = {}): DayCloseSnapshot => ({
 
 const row = (label: string) => screen.getByTestId(`z-row-${label}`);
 
+beforeEach(() => {
+  jest.clearAllMocks();
+});
+
 describe("ZReportView", () => {
   it("prints the title, the closer line, the window and the bold headline, then the four groups in order", () => {
     renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
@@ -95,6 +105,10 @@ describe("ZReportView", () => {
     expect(row("Total")).toHaveTextContent("$300.00");
     expect(row("Pickup hand-overs (in till cash)")).toHaveTextContent("$60.00");
     expect(row("Pickup hand-overs (in till cash)")).toHaveTextContent("2 hand-overs");
+    // one vocabulary with the email: the count first, a space on both sides of every middle dot
+    expect(row("Pickup hand-overs (in till cash)").querySelector("dd")?.textContent).toBe(
+      "2 hand-overs · $60.00",
+    );
     expect(row("On account")).toHaveTextContent("$12.50");
     expect(row("Cash refunds")).toHaveTextContent("$15.00");
     expect(row("Net collected")).toHaveTextContent("$285.00");
@@ -200,5 +214,130 @@ describe("ZReportView", () => {
     expect(dialog.className).toMatch(/w-screen/);
     expect(within(dialog).getByRole("button", { name: "Close" }).className).toMatch(/min-h-11/);
     expect(within(dialog).queryAllByRole("listitem")).toHaveLength(0);
+  });
+
+  it("never prints a middle dot glued to a word or a figure", () => {
+    renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).not.toMatch(/\S·|·\S/);
+  });
+});
+
+describe("ZReportView: actions (Print, Resend, Back to sales)", () => {
+  const actions = () => screen.getByTestId("z-actions");
+
+  it("puts Print first and primary, then Resend, then Back to sales, above the report", () => {
+    renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
+    const buttons = within(actions()).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["Print", "Resend", "Back to sales"]);
+    // Print is the primary action: the filled variant, Resend and Back to sales the quiet one
+    expect(buttons[0].className).toMatch(/bg-accent-strong/);
+    expect(buttons[1].className).not.toMatch(/bg-accent-strong/);
+    expect(buttons[2].className).not.toMatch(/bg-accent-strong/);
+    expect(
+      actions().compareDocumentPosition(screen.getByTestId("z-report")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("every action is a 44px target, and the modal's own X stays", () => {
+    renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
+    for (const b of within(actions()).getAllByRole("button"))
+      expect(b.className).toMatch(/min-h-11/);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: "Close" })).toBeInTheDocument();
+  });
+
+  it("the action row is hidden when printing, and the report prints alone", () => {
+    renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
+    expect(actions().className).toMatch(/print:hidden/);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.className).toMatch(/z-report-print-root/);
+    expect(dialog.className).toMatch(/print:static/);
+    expect(dialog.className).toMatch(/print:h-auto/);
+    expect(dialog.className).toMatch(/print:overflow-visible/);
+    expect(screen.getByTestId("z-report").className).toMatch(/print:text-black/);
+  });
+
+  it("Print calls window.print", () => {
+    const print = jest.spyOn(window, "print").mockImplementation(() => {});
+    renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
+    fireEvent.click(within(actions()).getByRole("button", { name: "Print" }));
+    expect(print).toHaveBeenCalledTimes(1);
+    print.mockRestore();
+  });
+
+  it("marks the body while the Z view is open so the page prints only the report", () => {
+    const { rerender } = renderWithProviders(
+      <ZReportView snapshot={snap()} open onClose={() => {}} />,
+    );
+    expect(document.body.classList.contains("z-report-open")).toBe(true);
+    rerender(<ZReportView snapshot={snap()} open={false} onClose={() => {}} />);
+    expect(document.body.classList.contains("z-report-open")).toBe(false);
+  });
+
+  it("Back to sales closes the Z view", () => {
+    const onClose = jest.fn();
+    renderWithProviders(<ZReportView snapshot={snap()} open onClose={onClose} />);
+    fireEvent.click(within(actions()).getByRole("button", { name: "Back to sales" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("Resend posts the report route for this close, even when the report was already sent", async () => {
+    post.mockResolvedValue({ data: { reportSent: true } });
+    renderWithProviders(
+      <ZReportView snapshot={snap({ reportSent: true })} open onClose={() => {}} />,
+    );
+    fireEvent.click(within(actions()).getByRole("button", { name: "Resend" }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/orders/counter-sale/day-close/dc1/report"),
+    );
+    expect(await screen.findByTestId("z-resend-status")).toHaveTextContent(
+      "Report sent to the admins",
+    );
+  });
+
+  it("a Resend the server could not deliver shows the fixed failure copy", async () => {
+    post.mockResolvedValue({ data: { reportSent: false } });
+    renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
+    fireEvent.click(within(actions()).getByRole("button", { name: "Resend" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not send the report. Try again.",
+    );
+  });
+
+  it("a failed Resend shows fixed copy, never the server text", async () => {
+    post.mockRejectedValue({ response: { status: 500, data: { message: "smtp password wrong" } } });
+    renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
+    fireEvent.click(within(actions()).getByRole("button", { name: "Resend" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not send the report. Try again.",
+    );
+    expect(document.body.textContent).not.toMatch(/smtp password/);
+  });
+});
+
+describe("ZReportView: Escape closes only the innermost layer", () => {
+  function Sheet() {
+    const [sheet, setSheet] = React.useState(true);
+    const [z, setZ] = React.useState(true);
+    return (
+      <>
+        <Modal open={sheet} onClose={() => setSheet(false)} title="Today's sales">
+          <ZReportView snapshot={snap()} open={z} onClose={() => setZ(false)} />
+        </Modal>
+      </>
+    );
+  }
+  it("the first Escape leaves the Z view, the second leaves the sheet", async () => {
+    renderWithProviders(<Sheet />);
+    expect(screen.getByRole("dialog", { name: "Z report · Fri, Oct 9" })).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape", code: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Z report · Fri, Oct 9" })).toBeNull(),
+    );
+    expect(screen.getByRole("dialog", { name: "Today's sales" })).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape", code: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });

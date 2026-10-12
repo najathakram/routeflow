@@ -12,12 +12,26 @@
 
 ## process
 
+### L-297 · 2026-10-11 · process · a helper made stricter breaks every caller written on the other side of a merge: audit callers, run the full verify on the merged tip
+
+- **Symptom:** after `isPayingTenant` was made to throw unless `couponFull` is a boolean, a master-origin backfill script that never selected that column would have thrown in apply mode; only the full verify, including the serial script lane, caught it.
+- **Root cause:** the stricter contract was proven against the callers on the author's branch; callers added on master (scripts, which no touched spec covers) were invisible until the merge. A branch's own green and a run of only the touched specs cannot see them.
+- **Lesson:** **When a helper starts throwing on a missing input, grep every caller in the same PR and update each; then run the FULL verify (script lane included) on the merged tip of a stack and on master, never just the touched specs. Cf. [[L-247]], [[L-264]].**
+- **Guard:** `scripts-live-target-guard.spec.ts` and the script-lane spec `backfill-refund-tender-script.spec.ts`, which execute the real callers against the strict helper.
+
+### L-294 · 2026-10-11 · process · a review lists every writer of a row shape before it calls that shape anomalous
+
+- **Symptom:** a review flagged a stored row shape as an anomaly, when another legitimate writer produces exactly that shape.
+- **Root cause:** the reviewer counted only the writers it had read; a row shape is only anomalous relative to ALL the code paths that can write it (create, update, import, backfill, replay), and the finding never listed them.
+- **Lesson:** **Before calling a stored shape anomalous, search for every writer of that row (create, update, import, backfill, cron, replay) and list them in the finding. A shape one of them legitimately produces is not an anomaly; if none does, name the one that must have.**
+- **Guard:** none automatic; the review checklist. Cf. [[L-223]] (a sweep covers every emit site, not the named ones).
+
 ### L-290 · 2026-10-10 · process · a train member that is red on its own branch does not enter the train: read each member's own latest CI before merging it
 
 - **Symptom:** a member whose own branch had a red database spec was merged into Train 3 and had to be ejected after the train was assembled, costing a revert on the tip.
 - **Root cause:** the train gate read the local checks and the assembled tip, never each member's own latest CI run on its head sha, so a red member only showed up once it was already in; the abandoned approach was "assemble first, find the reds on the tip".
 - **Lesson:** **Before a member is merged into a train, read that member's own latest CI result for its exact head sha. Red, missing or stale means it does not enter, whatever the local checks said; the tip's CI is the second check, not the first.**
-- **Guard:** none automatic; the train checklist (per member: head sha, its latest run, green). Cf. [[L-288]].
+- **Guard:** none automatic; train assembly reads each member's own latest CI (all jobs, not just Verify) and runs its changed specs before merging it. Cf. [[L-288]].
 
 ### L-289 · 2026-10-09 · process · a lead decides within its own authority when the owner is away; it never parks a train on an absent owner's reply
 
@@ -211,6 +225,13 @@
 
 ## tooling
 
+### L-295 · 2026-10-11 · tooling · Git Bash rewrites `cmd /c` into an interactive `cmd`: a batch job run that way waits on stdin forever and holds the shared slot
+
+- **Symptom:** a batch script launched from Git Bash as `cmd /c <script>` never returned; run inside the heavy slot it held the single shared slot for about three hours while every other lane queued behind it.
+- **Root cause:** MSYS path conversion rewrites the `/c` switch into a drive path (`cmd C:/ <script>`), so `cmd` starts as an INTERACTIVE shell that blocks on stdin; the script was never the problem. The abandoned approach was waiting for it.
+- **Lesson:** **In Git Bash write `cmd //c` (or set `MSYS_NO_PATHCONV=1`, or launch with PowerShell `Start-Process`), give every batch job `< nul` so a stray prompt reads EOF instead of waiting, and give every slot job a hold cap and a closed stdin. Treat a silent hang right after launching a `.cmd` from Git Bash as this trap first. Cf. [[L-291]].**
+- **Guard:** the heavy-slot status line prints `OVER HOLD CAP (> 180 min)` for an over-long holder (`scripts/lib/heavy-slot.mjs`, pinned by `scripts/heavy-slot.self-test.mjs`); it only warns, so the quoting and `< nul` habits are convention only.
+
 ### L-291 · 2026-10-10 · tooling · never feed python a heredoc on Windows (`python3 -`): it hangs; write the script to a file or use node
 
 - **Symptom:** a lane's shell hung indefinitely on a `python3 - <<EOF` edit on a Windows machine.
@@ -350,13 +371,6 @@
   `dist` is older than `src` for any workspace package; the third recurrence's specific gap (which
   consumers lack a `moduleNameMapper` for which package) would need the same kind of check.
 
-### L-254 · 2026-10-02 · tooling · a fresh worktree runs the fleet hook shim, never `npx husky`, and hooks fail fast when the worktree has no install
-
-- **Symptom:** a worktree made with `npm ci --ignore-scripts` has no `.husky/_`, so before the shared shim a push silently skipped pre-push verify; with the shim, a worktree with no `node_modules` fails pre-commit (`prettier` ENOENT through lint-staged) and pre-push (`semver is not resolvable`). `npx husky` resets the shared `core.hooksPath`.
-- **Root cause:** hooks resolve per checkout, while the fleet shares one shim (`.git/husky-shim/_`) that runs each worktree's own `.husky` scripts; the tools the hooks call come from that worktree's own `node_modules`.
-- **Lesson:** **In a fresh worktree never run `npx husky`, `HUSKY=0` or `--no-verify`; read the first lines of a hook failure that appears within seconds (it names the missing tool). For code, install first (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`). For a docs-only commit, link a full install's `node_modules` (any worktree with a working install; the main checkout's can be broken) for the commit and remove the link after; for a docs-only push use the audited `SKIP_VERIFY=1 SKIP_VERIFY_REASON="..."`.**
-- **Guard:** `scripts/check-git-hooks.mjs` (first step of `npm run verify`); the audit line `SKIP_VERIFY_REASON` writes to `.git/skip-verify.log`.
-
 ### L-265 · 2026-10-06 · tooling · a `next dev` proof leaves `apps/web/.next/types`, which breaks the web type-check in pre-push; wipe `apps/web/.next` before committing or pushing
 
 - **Symptom:** three builders (#3233, #3238, #3223, 2026-10-06) ran the app under `next dev` to prove a change, then their pre-push `check-types -w apps/web` failed on errors from generated files, none in the diff.
@@ -372,14 +386,6 @@
 - **Guard:** none automated; a pre-build free-space check in the local runbook is the proposal.
 - **Recurrence (2026-10-08):** a deps-only `db:up` left for a one-off DB diagnostic kept the fixed-name postgres and redis containers, which blocked the next `local:up` and cost an 8.5 minute failed build. Run `db:down` in the same step that ran `db:up`.
 
-### L-274 · 2026-10-07 · tooling · a plain `npm ci` runs the root `prepare` (husky) and rewrites the SHARED hooksPath
-
-- **Symptom:** after `npm ci` in a worktree, `core.hooksPath` (shared by every worktree) turned relative and later pushes ran without the fleet shim's checks.
-- **Root cause:** the root `"prepare": "husky"` script runs on a plain `npm ci`, doing exactly what `npx husky` does: it rewrites the one repo-wide `core.hooksPath`.
-- **Lesson:** **In a worktree install with `npm ci --ignore-scripts`, never a plain `npm ci`. After any install, reset the absolute shim path, print `git config core.hooksPath`, and run `check-git-hooks` before committing or pushing.**
-- **Guard:** none automatic beyond `scripts/check-git-hooks.mjs`; the install order in [[L-254]].
-- **Recurrence (2026-10-08):** a second recurrence on the shared Mac mini of a plain `npm ci` rewriting `core.hooksPath`. `npm ci --ignore-scripts` plus a manual `prisma generate` avoids it.
-
 ### L-275 · 2026-10-07 · tooling · local stack image tags are shared across worktrees
 
 - **Symptom:** a proof run used an api image another worktree had built, and its result was reported as the branch's own.
@@ -389,12 +395,20 @@
 
 ## testing
 
+### L-296 · 2026-10-11 · testing · a pin that hard-codes a ruling's literal text or list goes stale, and fails only on the merge with a moved master
+
+- **Symptom:** a spec asserting "only these 2 routes", "the report re-send is blocked" or "exactly these N files write tenant status" was green on its own branch and red after the merge with a master that held a later ruling or a new legitimate writer.
+- **Root cause:** the pin copied the wording of the ruling it was written under instead of encoding the invariant, so every later ruling or writer made it lie. A branch's own green cannot see master's changes.
+- **Lesson:** **Pin the invariant structurally: one named constant, assertions derived from it, and an allow-list that carries a reason per entry plus a stale-entry guard (an entry that no longer matches fails). When a ruling changes, change the constant and its pin in the same diff, and replay the merged tip before landing. Cf. [[L-264]].**
+- **Guard:** `SNAPSHOT_READERS` in `coupon-state.spec.ts` and `PACKAGE_ALLOWLIST` in `api-error-codes-parity.spec.ts` (reason per entry, stale-entry check, total pinned); the replay of the merged tip.
+
 ### L-292 · 2026-10-10 · testing · a fixture that leaks an environment variable (RF_VERIFY_MODE) makes the pre-push hook and CI disagree
 
 - **Symptom:** the same checks gave different results in the local pre-push hook and in CI.
-- **Root cause:** a fixture left `RF_VERIFY_MODE` set in the process environment, so what a spec saw depended on which runner (and which earlier spec in the worker) had set it; the abandoned approach was re-running until the two agreed.
-- **Lesson:** **A test or fixture that sets a process environment variable restores it afterwards (save in a before hook, restore in an after hook, even on failure), and a spec whose behavior depends on such a variable sets it explicitly instead of inheriting it. When the hook and CI disagree, diff the environment first.**
-- **Guard:** none automatic; review check on fixtures that write `process.env`.
+- **Root cause:** fixtures ran the real `main()` of a script and inherited `RF_VERIFY_MODE=fast` from the hook environment, so the hook (fast mode) and CI (full mode) exercised different code; the abandoned approach was re-running until the two agreed.
+- **Lesson:** **A fixture that runs a script's real `main()` scrubs the environment first, through one shared helper, so a mode variable inherited from the hook (`RF_VERIFY_MODE=fast`) cannot change what the spec exercises; any test that sets a process variable restores it afterwards. When the hook and CI disagree, diff the environment first.**
+- **Guard:** the shared environment scrub in the fixtures; a review check on any fixture that runs a real `main()` or writes `process.env`.
+- **Recurrence (2026-10-11, Release 4):** the same class with database state: a spec that seeds tenant settings (a tax rate, a preference) restores them in an after hook, or later specs in the same file inherit them and pass or fail by order.
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
 
@@ -489,13 +503,6 @@
 - **Lesson:** **In the tree under test run `npx prisma generate` from `apps/api` after the install, and prove any changed `select`/`include`/`where` with an executed query against a database migrated from THAT tree's `prisma/migrations` (`npm run local:migrate`, then the DB lane). A link to another tree's `node_modules` is fine for docs-only work and never for code that touches the schema.**
 - **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. [[L-176]].
 
-### L-270 · 2026-10-07 · testing · a probe asserts the branch it entered before reading the effect it measures
-
-- **Symptom:** a replace-all stock probe looked like a double-decrement of stock.
-- **Root cause:** the probe sent no `replaceAll: true`, so the edit took MERGE mode, a different branch from the one under test; the effect was read without ever checking which path ran.
-- **Lesson:** **A probe asserts the mode or path it actually entered (the edit mode, the line count after) before it reads the effect it measures; otherwise a fixture that took a different branch reads as a bug.**
-- **Guard:** probes print and assert the branch marker (mode, resulting line count) before any effect assertion; a probe with no such line is not evidence.
-
 ### L-276 · 2026-10-07 · testing · a scoped jest run leaves a partial campaign report, and a jest path argument is a regex
 
 - **Symptom:** a push carried a campaign report listing only a handful of specs, and turbo's cached test replay did not rewrite it; a scoped run of `app/(dashboard)/...` matched nothing and looked green.
@@ -581,13 +588,6 @@
   named query params on any new route.
 
 ## deploy
-
-### L-286 · 2026-10-08 · deploy · add a foreign key to a populated table inline on the new column, and state lock durations honestly
-
-- **Symptom:** recorded by the 2026-10-08 operating review from the sitting-3 migrations; the incident detail is in the lead's notes.
-- **Root cause:** Postgres skips the validation scan for a new column with no default only when the foreign key is declared inline. Inside one transaction an `ALTER TABLE` holds ACCESS EXCLUSIVE until COMMIT, so an index built later in the same file blocks reads as well as writes.
-- **Lesson:** **Declare the FK inline: `ADD COLUMN "x" TEXT CONSTRAINT "T_x_fkey" REFERENCES ...`, not a separate `ADD CONSTRAINT` (probe on 1M rows: 0.7 ms inline vs 33 ms separate; the constraint name is unchanged, so Prisma shows no drift). Write the real lock duration in the migration header.**
-- **Guard:** the sitting-3 migration headers; replay plus `apps/api/scripts/schema-drift.mjs`.
 
 ### L-282 · 2026-10-08 · deploy · a feature PR never adds or changes tenants or rows in the shared e2e seed that runs against production
 

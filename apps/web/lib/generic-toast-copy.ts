@@ -7,6 +7,7 @@ import {
 } from "./credit-note-error-copy";
 import { creditLimitSentence } from "./credit-limit-copy";
 import { COUNTER_VOID_ERROR_COPY } from "./counter-void-copy";
+import { COUNTER_SALE_DAY_CLOSED_COPY, DAY_CLOSED_FOR_PAYMENT_DATE_COPY } from "./day-closed-copy";
 import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
 import { ORDER_OVERPAY_GENERIC_COPY } from "./order-overpay";
 import { parsePlanGate } from "./plan-gate";
@@ -119,9 +120,36 @@ const CODE_COPY: Record<string, string> = {
     COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_NOT_TODAY],
   [API_ERROR_CODES.COUNTER_SALE_VOID_BUSY]:
     COUNTER_VOID_ERROR_COPY[API_ERROR_CODES.COUNTER_SALE_VOID_BUSY],
+  // SA-750r3: the end-of-day close refusals. The FALLBACK for any dialog with no copy of its own (a void-payment, a bookkeeping
+  // payment, a refund): a surface with a better next step (Void: Return, Refund: store credit) says it itself.
+  [API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED]: COUNTER_SALE_DAY_CLOSED_COPY,
+  [API_ERROR_CODES.DAY_CLOSED_FOR_PAYMENT_DATE]: DAY_CLOSED_FOR_PAYMENT_DATE_COPY,
   // P-4: the one overpay copy (order-overpay.ts); a surface with the structured numbers uses orderOverpayCopy.
   [API_ERROR_CODES.ORDER_EDIT_WOULD_OVERPAY]: ORDER_OVERPAY_GENERIC_COPY,
   HANDOFF_CODE_INVALID: "This sign-in link is invalid or has expired. Sign in again.",
+  // SA-733r5 (billing go-live): a manual-pay account completes card setup through its RouteFlow contact, and a card
+  // checkout already in progress blocks a second one. Fixed sentences; no ids.
+  [API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP]:
+    "Your account is invoiced directly. Your RouteFlow contact will send you a secure link to set up card payment.",
+  [API_ERROR_CODES.CATCHUP_SESSION_OPEN]:
+    "A card checkout is open for this account (October catch-up), so this change isn't available yet. Wait for it to complete or expire, then try again.",
+  [API_ERROR_CODES.CATCHUP_PENDING]:
+    "This account's card payment is being confirmed (October catch-up). This change is available once it clears.",
+  // SA-733r5 r-note: a catch-up the plan refuses because card billing would lose or change a charge. The account
+  // stays on invoiced billing; fixed sentences, no ids.
+  [API_ERROR_CODES.CATCHUP_ADDON_NOT_CARD_BILLABLE]:
+    "This account has an add-on that card billing can't carry yet, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  [API_ERROR_CODES.ACTIVATION_CATCHUP_SESSION_OPEN]:
+    "A card checkout is open for this account (October catch-up), so it can't be activated by hand yet. Wait for the checkout to complete or expire, then try again.",
+  [API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]:
+    "This account has days already paid that end part-way through a month, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  [API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG]:
+    "This account's add-on price or quantity differs from the standard one, so it stays on invoiced billing for now. Your RouteFlow contact will follow up.",
+  // SA-733r7 PR-B3 (dunning): a plan change is refused while an invoice is overdue; paying it restores everything.
+  [API_ERROR_CODES.PAYMENT_OVERDUE]:
+    "An invoice on this account is overdue. Pay it to continue; plan changes are available again right after.",
+  [API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]:
+    "We couldn't confirm your open invoice just now. Please try again in a moment.",
 };
 
 /** Exact server sentences (already product text) for refusals with no `code`; matched whole, never partially. */

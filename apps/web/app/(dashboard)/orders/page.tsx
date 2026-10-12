@@ -45,6 +45,7 @@ import { CreateOrderModal } from "./_components/CreateOrderModal";
 import { BatchShipActions } from "./_components/BatchShipActions";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Saved view definitions ───────────────────────────────────────────────────
 
@@ -730,17 +731,17 @@ export default function OrdersPage() {
               </Button>
             ) : null}
             {counterGate.showButton ? (
-              <Button
+              <WriteButton
                 // A store-only tenant has one place to ring a sale: the counter is the filled primary (UX G7).
                 variant={storeOnlyHeader ? undefined : "secondary"}
                 className={cn(storeOnlyHeader && "max-sm:h-11")}
                 onClick={() => router.push("/orders/counter-sale")}
               >
                 Counter sale
-              </Button>
+              </WriteButton>
             ) : null}
             {storeOnlyHeader ? null : (
-              <Button
+              <WriteButton
                 onClick={() =>
                   counterGate.opensAsCounter
                     ? router.push("/orders/counter-sale")
@@ -748,8 +749,9 @@ export default function OrdersPage() {
                 }
               >
                 New Order
-              </Button>
+              </WriteButton>
             )}
+            <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
           </div>
         }
       />
@@ -1120,9 +1122,9 @@ export default function OrdersPage() {
               title="No orders yet"
               description="Create an order on behalf of a customer to get started."
               action={
-                <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                <WriteButton size="sm" onClick={() => setIsCreateOpen(true)}>
                   Create order
-                </Button>
+                </WriteButton>
               }
             />
           )}

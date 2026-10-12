@@ -19,6 +19,7 @@ import {
   isStoreOnly,
   PAYMENT_PROBLEM_COPY,
   paymentMethodOptions,
+  COUNTER_SALE_DAY_CLOSED_TILL_COPY,
   PICKUP_DAY_CLOSED_COPY,
   isPickupHandledError,
   PICKUP_NOT_READY_COPY,
@@ -280,6 +281,14 @@ describe("counterSaleErrorCopy: an UNKNOWN outcome never claims nothing was char
     const err = { response: { status: 409, data: { code } } };
     expect(isDefinitiveCounterSaleRefusal(err)).toBe(false);
     expect(counterSaleErrorCopy(err)).toBe(COUNTER_OUTCOME_UNKNOWN_COPY);
+  });
+  it("a 409 COUNTER_SALE_DAY_CLOSED: the sale is saved and unpaid (never a fresh key), with its own fixed copy", () => {
+    const err = {
+      response: { status: 409, data: { code: "COUNTER_SALE_DAY_CLOSED", message: "RAW" } },
+    };
+    expect(isDefinitiveCounterSaleRefusal(err)).toBe(false);
+    expect(counterSaleErrorCopy(err)).toBe(COUNTER_SALE_DAY_CLOSED_TILL_COPY);
+    expect(counterSaleErrorCopy(err)).not.toMatch(/nothing was charged|RAW/i);
   });
   it("only a 404 COUNTER_SALE_NOT_FOUND from the by-key lookup is 'not found'", () => {
     expect(

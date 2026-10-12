@@ -23,3 +23,11 @@ html[data-shell="1"] [data-hide-in-shell] {
     display: none !important;
   }
 }
+
+/* Z report: print only the report (its modal root, a direct child of <body>), whatever sheet it was opened from.
+   Lives here, not in globals.css, which MKT-PIN T7 pins byte-for-byte. */
+@media print {
+  body.z-report-open > *:not(.z-report-print-root) {
+    display: none !important;
+  }
+}

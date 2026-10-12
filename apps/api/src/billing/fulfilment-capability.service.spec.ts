@@ -136,16 +136,74 @@ describe("GET /buyer/capabilities", () => {
     expect(Reflect.getMetadata(INTERCEPTORS_METADATA, handler())).toEqual([BuyerTenantInterceptor]);
   });
 
-  it("the body is EXACTLY { portalMethods, portalDefault, fleet } for the active seller", async () => {
+  it("the body is EXACTLY { portalMethods, portalDefault, fleet, acceptingOrders } for the active seller", async () => {
     const { svc } = makeService({ mode: "ship" });
     const forBuyer = jest.spyOn(svc, "forBuyer");
     const controller = new BuyerCapabilitiesController(svc);
     const body = await handler().call(controller, { tenantId: "tenant-ship", customerId: "c1" });
-    expect(Object.keys(body).sort()).toEqual(BUYER_KEYS);
+    expect(Object.keys(body).sort()).toEqual([...BUYER_KEYS, "acceptingOrders"].sort());
     for (const staffField of ["methods", "staffDefault", "staffOpensAs", "counter", "consistent"]) {
       expect(body).not.toHaveProperty(staffField);
     }
-    expect(body).toEqual({ portalMethods: ["SHIP"], portalDefault: "SHIP", fleet: false });
+    expect(body).toEqual({
+      portalMethods: ["SHIP"],
+      portalDefault: "SHIP",
+      fleet: false,
+      acceptingOrders: true,
+    });
     expect(forBuyer).toHaveBeenCalledWith("tenant-ship");
+  });
+
+  // SA-733r6 (B4): a read-only (paused) seller says only "not taking online orders" - one boolean, no reason,
+  // nothing about billing or plans reaches a buyer.
+  // A3: acceptingOrders follows SELLER_READ_ONLY_BUYER_GATE - false only while the gate is ENFORCED (a dark gate
+  // still takes the order, so the UI must not claim otherwise). The gate matrix itself lives in
+  // buyer-capabilities.authz.spec.ts; this pins the no-reason body for the enforced case.
+  it("acceptingOrders is false for a READ_ONLY seller when the gate is enforced, and the body names no billing reason", async () => {
+    const saved = process.env.SELLER_READ_ONLY_BUYER_GATE;
+    process.env.SELLER_READ_ONLY_BUYER_GATE = "enforced";
+    try {
+      const { svc } = makeService({ mode: "ship" });
+      const controller = new BuyerCapabilitiesController(svc);
+      const body = await handler().call(controller, {
+        tenantId: "tenant-ship",
+        customerId: "c1",
+        sellerStatus: "READ_ONLY",
+      });
+      expect(body.acceptingOrders).toBe(false);
+      expect(JSON.stringify(body)).not.toMatch(/payment|billing|subscri|overdue|plan/i);
+    } finally {
+      if (saved === undefined) delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+      else process.env.SELLER_READ_ONLY_BUYER_GATE = saved;
+    }
+  });
+
+  it("acceptingOrders stays true for a READ_ONLY seller while the gate is dark (the default)", async () => {
+    const saved = process.env.SELLER_READ_ONLY_BUYER_GATE;
+    delete process.env.SELLER_READ_ONLY_BUYER_GATE;
+    try {
+      const { svc } = makeService({ mode: "ship" });
+      const body = await handler().call(new BuyerCapabilitiesController(svc), {
+        tenantId: "tenant-ship",
+        customerId: "c1",
+        sellerStatus: "READ_ONLY",
+      });
+      expect(body.acceptingOrders).toBe(true);
+    } finally {
+      if (saved !== undefined) process.env.SELLER_READ_ONLY_BUYER_GATE = saved;
+    }
+  });
+
+  it("acceptingOrders is true for an ACTIVE or TRIAL seller", async () => {
+    const { svc } = makeService({ mode: "ship" });
+    const controller = new BuyerCapabilitiesController(svc);
+    for (const sellerStatus of ["ACTIVE", "TRIAL"]) {
+      const body = await handler().call(controller, {
+        tenantId: "t",
+        customerId: "c",
+        sellerStatus,
+      });
+      expect(body.acceptingOrders).toBe(true);
+    }
   });
 });

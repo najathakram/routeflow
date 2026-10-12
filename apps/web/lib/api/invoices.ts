@@ -1,6 +1,7 @@
 import type { InvoiceItemSystemKind } from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { isDayClosedRefusal } from "../day-closed-copy";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
 import { priceAdjustmentFailure } from "../price-adjustment-failure";
 import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-methods";
@@ -620,6 +621,8 @@ export function useRecordInvoicePayment() {
   return useMutation<Invoice & { createdPaymentId?: string }, Error, RecordInvoicePaymentDto>({
     mutationFn: ({ id, ...data }) =>
       apiClient.post(`/invoices/${id}/payments`, data).then((r) => r.data),
+    // SA-750r3: the invoice page answers a closed-day refusal with its own fixed copy (dayClosedCopy): no second toast.
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", id] });
@@ -646,6 +649,7 @@ export function useUpdateInvoicePayment() {
   return useMutation<Invoice, Error, UpdateInvoicePaymentDto>({
     mutationFn: ({ invoiceId, paymentId, ...data }) =>
       apiClient.patch(`/invoices/${invoiceId}/payments/${paymentId}`, data).then((r) => r.data),
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (updated) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
@@ -658,6 +662,7 @@ export function useDeleteInvoicePayment() {
   return useMutation<Invoice, Error, { invoiceId: string; paymentId: string }>({
     mutationFn: ({ invoiceId, paymentId }) =>
       apiClient.delete(`/invoices/${invoiceId}/payments/${paymentId}`).then((r) => r.data),
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (updated) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
@@ -750,6 +755,7 @@ export function useSetCheckStatus() {
       apiClient
         .patch(`/invoices/${invoiceId}/payments/${paymentId}/check-status`, data)
         .then((r) => r.data),
+    meta: { localErrorToast: isDayClosedRefusal },
     onSuccess: (_, { invoiceId }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });

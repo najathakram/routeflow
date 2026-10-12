@@ -79,6 +79,7 @@ import {
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Terms options ─────────────────────────────────────────────────────────────
 
@@ -2289,23 +2290,23 @@ export default function NewInvoicePage() {
           <div className="flex items-center gap-2">
             {isSale ? (
               deliveredNow ? (
-                <Button
+                <WriteButton
                   onClick={() => handleSubmitSale(true)}
                   loading={createSale.isPending}
                   disabled={createSale.isPending}
                 >
                   Create sale &amp; invoice
-                </Button>
+                </WriteButton>
               ) : (
                 // Deliver later → only create the draft. It mirrors the order and
                 // becomes sendable after the order is delivered (never sent here).
-                <Button
+                <WriteButton
                   onClick={() => handleSubmitSale(false)}
                   loading={createSale.isPending}
                   disabled={createSale.isPending}
                 >
                   Save draft invoice
-                </Button>
+                </WriteButton>
               )
             ) : (
               <>
@@ -2318,7 +2319,7 @@ export default function NewInvoicePage() {
                 >
                   Preview
                 </Button>
-                <Button
+                <WriteButton
                   variant="secondary"
                   leftIcon={<Download className="h-4 w-4" />}
                   onClick={handleDownload}
@@ -2327,24 +2328,25 @@ export default function NewInvoicePage() {
                   title="Save as draft and download the PDF without sending"
                 >
                   Download
-                </Button>
-                <Button
+                </WriteButton>
+                <WriteButton
                   variant="secondary"
                   onClick={() => handleSubmit(false)}
                   loading={createInvoice.isPending || updateInvoice.isPending}
                   disabled={createInvoice.isPending || updateInvoice.isPending}
                 >
                   Save as Draft
-                </Button>
-                <Button
+                </WriteButton>
+                <WriteButton
                   onClick={() => handleSubmit(true)}
                   loading={createInvoice.isPending || updateInvoice.isPending}
                   disabled={createInvoice.isPending || updateInvoice.isPending}
                 >
                   Save and Send
-                </Button>
+                </WriteButton>
               </>
             )}
+            <ReadOnlyHint className="ml-2 text-xs text-slate-600" />
             <button
               onClick={() => router.push("/invoices")}
               className="px-3 py-1.5 text-sm text-navy/70 hover:text-navy transition-colors"

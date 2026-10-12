@@ -30,7 +30,7 @@ import {
 } from "@/lib/api/counter-day-close";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { formatReceiptMoney as money } from "@/lib/counter-receipt";
-import { ZReportView, zHeadlineText, zTime } from "./ZReportView";
+import { ZReportView, verdictText, zHeadlineText, zTime } from "./ZReportView";
 
 const FORM_ID = "counter-day-close-form";
 const ROW_KEY = (d: { kind: string; value: number }) => `${d.kind}:${d.value}`;
@@ -50,12 +50,11 @@ function parseFloatInput(raw: string): number | null {
   return validOpeningFloat(n) ? n : null;
 }
 
-/** Over / Under / Balanced, in words AND colour (never colour alone). */
-function varianceView(variance: number): { word: string; text: string; tone: string } {
-  if (variance === 0) return { word: "Balanced", text: "Balanced", tone: "text-green-700" };
-  if (variance > 0)
-    return { word: "Over", text: `Over ${money(variance)}`, tone: "text-amber-700" };
-  return { word: "Under", text: `Under ${money(Math.abs(variance))}`, tone: "text-red-700" };
+/** Short / Even / Over, in words AND colour (never colour alone); the wording is the Z view's own (`verdictText`). */
+function varianceView(variance: number): { text: string; tone: string } {
+  if (variance === 0) return { text: verdictText("even", 0), tone: "text-green-700" };
+  if (variance > 0) return { text: verdictText("over", variance), tone: "text-amber-700" };
+  return { text: verdictText("short", Math.abs(variance)), tone: "text-red-700" };
 }
 
 /** The browser's own online flag, kept live: false = the close cannot reach the server and the button says so. */

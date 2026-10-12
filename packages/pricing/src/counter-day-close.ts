@@ -190,6 +190,21 @@ export interface ZSections {
   refundsTenderKnown: boolean;
 }
 
+/**
+ * "Thu, Oct 9" from a close's own calendar date ("YYYY-MM-DD"): the Z report's date on the screen title and in the Z email
+ * (title and subject). Read as a calendar date at UTC noon so no tenant zone can shift it; a malformed date is returned as is.
+ */
+export function dayCloseDateLabel(day: string): string {
+  const d = new Date(`${day}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return day;
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(d);
+}
+
 export function dayCloseZSections(s: ZReportInput): ZSections {
   const t = s.totals;
   const variance = roundMoney(s.variance);

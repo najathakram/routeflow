@@ -787,6 +787,25 @@ describe("CounterSaleScreen: API contract wiring", () => {
       expect(keyOfCall(1)).toBe(keyOfCall(0));
     });
 
+    it("a 409 COUNTER_SALE_DAY_CLOSED: the sale is saved and unpaid, so the closed-day line, the lock and the SAME key", async () => {
+      const banner = await goUnknown({
+        response: { status: 409, data: { code: "COUNTER_SALE_DAY_CLOSED", message: "RAW" } },
+      });
+      expect(banner).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "This day is closed, so no payment was taken. The sale is saved without payment.",
+        ),
+      ).toBeInTheDocument();
+      expect(document.body.textContent).not.toContain("RAW");
+      expect(screen.queryByText(/nothing was charged/i)).toBeNull();
+      expect(screen.queryByText(/something changed/i)).toBeNull();
+      expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+      expect(keyOfCall(1)).toBe(keyOfCall(0));
+    });
+
     it("any other 409 is still a definitive refusal (editable, new key)", async () => {
       mutateAsync.mockRejectedValueOnce({
         response: { status: 409, data: { code: "WALK_IN_OPEN_CREDIT" } },

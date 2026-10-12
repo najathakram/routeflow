@@ -29,7 +29,7 @@ function build(
     tenant?: { id: string } | null;
     overrides?: ReturnType<typeof overrideRow>[];
     /** Active TenantAddon rows; `paid` = a Stripe item or a positive price, else a comped row. */
-    addons?: (string | { key: string; paid: boolean; manual?: boolean })[];
+    addons?: (string | { key: string; paid: boolean; manual?: boolean; comp?: boolean })[];
     modes?: Record<string, string>;
   } = {},
 ) {
@@ -52,6 +52,7 @@ function build(
               // manual pay = a price, no Stripe item (a manual/external-payment activation)
               stripeItemId: row.paid && !row.manual ? "si_x" : null,
               priceSnapshot: row.paid ? "49.00" : null,
+              isComp: row.comp === true,
             }
           : null;
       }),
@@ -153,6 +154,7 @@ describe("BusinessProfileService.preview", () => {
           { featureKey: "order_delivery", effect: "DENY", action: "skip" },
           { featureKey: "driver_payments", effect: "DENY", action: "create" },
         ],
+        comps: [],
         modes: [{ key: "fulfilment_model", from: "unset", to: "ship" }],
         billing: [{ featureKey: "recurring_routes", action: "disable", manual: false }],
       },
@@ -230,10 +232,16 @@ describe("BusinessProfileService.plan — the confirm-time plan", () => {
       ],
     });
     const res = await svc.plan(T, "delivery_distributor");
+    // SA-769: the live DENY is revoked on its own; every module the tenant lacks is a COMP row
     expect(res.plan.overrides).toEqual([
-      { featureKey: "recurring_routes", effect: "GRANT", action: "create" },
-      { featureKey: "order_delivery", effect: "GRANT", action: "replace" },
-      { featureKey: "driver_payments", effect: "GRANT", action: "create" },
+      { featureKey: "recurring_routes", effect: "GRANT", action: "skip" },
+      { featureKey: "order_delivery", effect: "GRANT", action: "revoke" },
+      { featureKey: "driver_payments", effect: "GRANT", action: "skip" },
+    ]);
+    expect(res.plan.comps.map((c) => c.featureKey)).toEqual([
+      "recurring_routes",
+      "order_delivery",
+      "driver_payments",
     ]);
     expect(res.revokeOverrideIds).toEqual({ order_delivery: "live" });
     expect(res.profile.key).toBe("delivery_distributor");
@@ -254,30 +262,118 @@ describe("BusinessProfileService.plan — the confirm-time plan", () => {
 describe("SA-671 M2 — driver payments is held exactly as its guard decides", () => {
   const plannedDriverPayments = async (opts: Parameters<typeof build>[0]) => {
     const res = await build(opts).svc.plan(T, "delivery_distributor");
-    return res.plan.overrides.find((o) => o.featureKey === "driver_payments");
+    return {
+      override: res.plan.overrides.find((o) => o.featureKey === "driver_payments"),
+      comped: res.plan.comps.some((c) => c.featureKey === "driver_payments"),
+    };
   };
 
-  it("no add-on row and no override = NOT held (the guard 403s), so the profile grants it", async () => {
+  it("SA-769: no add-on row and no override = NOT held (the guard 403s), so the profile COMPS it (no override)", async () => {
     expect(await plannedDriverPayments({})).toEqual({
-      featureKey: "driver_payments",
-      effect: "GRANT",
-      action: "create",
+      override: { featureKey: "driver_payments", effect: "GRANT", action: "skip" },
+      comped: true,
     });
   });
 
-  it("an active add-on row = held: skip", async () => {
-    expect((await plannedDriverPayments({ addons: ["driver_payments"] }))?.action).toBe("skip");
+  it("an active add-on row = held: nothing to do, not comped", async () => {
+    expect(await plannedDriverPayments({ addons: ["driver_payments"] })).toEqual({
+      override: { featureKey: "driver_payments", effect: "GRANT", action: "skip" },
+      comped: false,
+    });
   });
 
-  it("a DENY override beats the add-on row (override is absolute): replace", async () => {
+  it("SA-769: a DENY override beats the add-on row (override is absolute): it is revoked, and the row it hid holds the module (no comp)", async () => {
     expect(
-      (
-        await plannedDriverPayments({
-          addons: ["driver_payments"],
-          overrides: [overrideRow({ id: "x", featureKey: "driver_payments", effect: "DENY" })],
-        })
-      )?.action,
-    ).toBe("replace");
+      await plannedDriverPayments({
+        addons: ["driver_payments"],
+        overrides: [overrideRow({ id: "x", featureKey: "driver_payments", effect: "DENY" })],
+      }),
+    ).toEqual({
+      override: { featureKey: "driver_payments", effect: "GRANT", action: "revoke" },
+      comped: false,
+    });
+  });
+});
+
+describe("SA-769 — a profile grants add-on modules as COMPS and never re-prices what exists", () => {
+  it("a tenant holding nothing: three comps, no GRANT override planned, the preview models the end state as ON", async () => {
+    const { svc, featurePreview } = build();
+    const res = await svc.preview(T, "delivery_distributor");
+    expect(res.plan.comps.map((c) => c.featureKey)).toEqual([
+      "recurring_routes",
+      "order_delivery",
+      "driver_payments",
+    ]);
+    expect(res.plan.overrides.every((o) => o.action === "skip")).toBe(true);
+    const reason = "Business profile: Delivery distributor";
+    expect(featurePreview.preview).toHaveBeenCalledWith(T, {
+      overrides: [
+        { featureKey: "recurring_routes", effect: "GRANT", reason },
+        { featureKey: "order_delivery", effect: "GRANT", reason },
+        { featureKey: "driver_payments", effect: "GRANT", reason },
+      ],
+      modes: { fulfilment_model: "delivery" },
+    });
+    expect(res.summary.slice(0, 3)).toEqual([
+      "Turn on Recurring routes: included free with this profile, no charge added",
+      "Turn on Ad hoc order delivery: included free with this profile, no charge added",
+      "Turn on At-door payment collection: included free with this profile, no charge added",
+    ]);
+    // the comp lines are NOT in changes (the modal renders them from plan.comps)
+    expect(res.changes).toEqual([
+      "Where orders go: Not configured (today's behavior) → Own delivery",
+    ]);
+  });
+
+  it("a tenant already paying for one fleet add-on: that module is not comped and nothing about it changes", async () => {
+    const { svc } = build({ addons: [{ key: "order_delivery", paid: true }] });
+    const res = await svc.plan(T, "delivery_distributor");
+    expect(res.plan.comps.map((c) => c.featureKey)).toEqual([
+      "recurring_routes",
+      "driver_payments",
+    ]);
+    expect(res.plan.billing).toEqual([]);
+    expect(res.summary.join("|")).not.toContain("Ad hoc order delivery");
+  });
+
+  it("a tenant already holding comp rows plans no second comp (idempotent re-apply)", async () => {
+    const all = ["recurring_routes", "order_delivery", "driver_payments"].map((key) => ({
+      key,
+      paid: false,
+      comp: true,
+    }));
+    const { svc } = build({
+      addons: all,
+      modes: { fulfilment_model: "delivery", counter_sales: "unset" },
+    });
+    const res = await svc.plan(T, "delivery_distributor");
+    expect(res.plan.comps).toEqual([]);
+    expect(res.plan.overrides.every((o) => o.action === "skip")).toBe(true);
+    expect(res.summary).toEqual([]);
+  });
+
+  it("old shape: a GRANT override written by an earlier apply is left alone (no comp, no revoke)", async () => {
+    const { svc } = build({
+      overrides: [overrideRow({ id: "g", featureKey: "recurring_routes", effect: "GRANT" })],
+    });
+    const res = await svc.plan(T, "delivery_distributor");
+    expect(res.plan.comps.map((c) => c.featureKey)).toEqual(["order_delivery", "driver_payments"]);
+    expect(res.revokeOverrideIds).toEqual({});
+  });
+
+  it("fleet:false: a COMP row is planned as a disable flagged comp, a paid row keeps its billing stop", async () => {
+    const { svc } = build({
+      addons: [
+        { key: "recurring_routes", paid: true },
+        { key: "order_delivery", paid: false, comp: true },
+      ],
+    });
+    const res = await svc.plan(T, "shipping_wholesaler");
+    expect(res.plan.billing).toEqual([
+      { featureKey: "order_delivery", action: "disable", manual: false, comp: true },
+      { featureKey: "recurring_routes", action: "disable", manual: false },
+    ]);
+    expect(res.plan.overrides.every((o) => o.action === "skip")).toBe(true);
   });
 });
 

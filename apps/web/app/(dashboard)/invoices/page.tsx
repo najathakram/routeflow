@@ -37,6 +37,7 @@ import { invoiceListStatusParams } from "@/lib/invoice-list-filter";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
 import { fmt, fmtCalendarDate, calendarDaysUntil } from "@/lib/formatting";
 import { useAuth } from "@/lib/auth-context";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 /** Add calendar days to a YYYY-MM-DD date, in UTC end to end — mirrors
  *  invoices/new/page.tsx's addDaysIso (local-getter math loses a day across a
@@ -601,13 +602,14 @@ export default function InvoicesPage() {
               >
                 Recurring
               </Button>
-              <Button
+              <WriteButton
                 size="sm"
                 leftIcon={<Plus className="h-4 w-4" />}
                 onClick={() => router.push("/invoices/new")}
               >
                 New Invoice
-              </Button>
+              </WriteButton>
+              <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
             </div>
           ) : undefined
         }
@@ -792,9 +794,9 @@ export default function InvoicesPage() {
                         title="No invoices yet"
                         description="Create an invoice to bill a customer and start tracking receivables."
                         action={
-                          <Button size="sm" onClick={() => router.push("/invoices/new")}>
+                          <WriteButton size="sm" onClick={() => router.push("/invoices/new")}>
                             New Invoice
-                          </Button>
+                          </WriteButton>
                         }
                       />
                     )}

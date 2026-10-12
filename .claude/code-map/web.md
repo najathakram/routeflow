@@ -22,6 +22,10 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/components-shared.md](web/components-shared.md) | Components & shared                                                                                    |
 | [web/api-hooks.md](web/api-hooks.md)                 | API hooks (`lib/api/`)                                                                                 |
 | [web/catchup-2026-09-21.md](web/catchup-2026-09-21.md) | Catch-up 2026-09-21: restrictions UI, product labels, PO tab, scan-to-order, credit-limit guard, config snapshots tab |
+| [web/landing-2026-10-11-r4.md](web/landing-2026-10-11-r4.md) | Landing 2026-10-11 Release 4: email receipt, counter pass 2, last 7 days, refund slip, POS order page, revision marks |
+| [web/landing-2026-10-11-r41.md](web/landing-2026-10-11-r41.md) | Landing 2026-10-11 Release 4.1: day close form and Z view, store-only invoice entry, receipt cashier, closed-day copy |
+| [web/landing-2026-10-11-r5.md](web/landing-2026-10-11-r5.md) | Landing 2026-10-11 Release 5: billing strip, read-only gate (WriteButton), Billing status card, buyer seller-unavailable line, profile comps |
+| [web/landing-2026-10-10-w22a2-w23.md](web/landing-2026-10-10-w22a2-w23.md) | Landing 2026-10-10 W22a-2 + W23: quick keys, create tenant, readiness card, park, void, zone UI, unit words |
 | [web/landing-2026-10-09-w21b-w22a1.md](web/landing-2026-10-09-w21b-w22a1.md) | Landing 2026-10-09 W21b + W22a-1: counter price edit, leave guard, live cart persist, discount reapply, variant pickers, family cascade |
 | [web/landing-2026-10-08-w21a.md](web/landing-2026-10-08-w21a.md) | Landing 2026-10-08 W21a: counter refund or store credit, Today's sales, register look and exit guard, Settings > Fulfillment (dark) |
 | [web/landing-2026-10-06-w4-w10.md](web/landing-2026-10-06-w4-w10.md) | Landing 2026-10-06 (windows 4 to 10): order actions by role, business profile picker, billing confirm sheets, order suggestions |
