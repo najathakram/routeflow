@@ -212,3 +212,44 @@ The merge order is A, then B, then C (C rebases on B's types). Each branch is in
 Active SellingRestriction rules in prod: NONE. R2 risk is zero; the switch-off guard is not needed.
 ## Owner rulings (10-12)
 Hide completely in the portal; no-state customers allowed and flagged; readiness is advisory; operators may create limits (owner 10-07: operators are near-admins).
+
+## Addendum D: fix customer-data issues in place (owner 10-12 ~20:25Z; apple-ux + apple-design)
+Owner: "we also need a way to fix those issues from there itself, rather than going on a treasure hunt."
+
+**Placement (A1/A2):** fixes happen on the row that names the problem, on the Selling restrictions page, with no navigation. One primary action per row.
+**Tone:** readiness is advisory now (owner ruling 3), so it is amber/neutral, never red; amber means "needs a look".
+
+### Card "Customers without a state on file" (replaces "Is your customer data ready?")
+- Header line: `9 customers need a state. They can still order — state limits just can't reach them until it's set.`
+- If all clear: `Every customer has a state on file.` with a success check. There is no Check readiness button: the card loads its own data, with a quiet `Refresh` text button.
+
+Each issue bucket is one disclosure row with a count, and is collapsed by default:
+- `7 have no address`, button `Fix`
+- `1 address has no usable state`, button `Fix`
+- `1 address needs a state check`, button `Review`
+
+### Expanding a row shows an inline list (20 per page, `Show more`)
+1. **No address:** `Customer name` · State select (required, typeahead "TX — Texas") · optional `ZIP` · primary `Save`. The secondary link `Add full address` opens the existing customer address form in a side sheet (not a new page). Save creates the default billing address with that state (street optional, flagged incomplete).
+2. **Unusable state:** `Customer name` · the raw address text in muted type · State select prefilled with the best guess when the server can infer one from the ZIP or city · `Save`.
+3. **Needs review:** `Customer name` · `We read TX from "Dallas, Tx 75201"` · two buttons, `Looks right` (primary) and `Change` (reveals the select).
+
+### Behaviour
+- **Saving a row:** the row confirms inline (`Saved`, with a check, 1.2 s) and leaves the list with a 200 ms collapse that respects reduced motion. The bucket count and header count decrement immediately, and the server read is the truth on refresh.
+- **On error:** the row stays, the input is kept, and an inline message shows under the field. Never a toast-only error (A4).
+- **Bulk:** within one bucket, `Set state for all shown…` applies one state to the visible rows. It is for the common case where a whole list sits in the home state. It asks for confirmation with an exact count, and offers Undo for 10 s.
+- **Keyboard:** Tab moves to the state field, Enter saves, and focus jumps to the next row's field (fast data entry).
+- **Roles:** operators and admins can fix (owner ruling: operators are near-admins). Read-only workspace: rows render with no Save, and show the shared read-only line.
+
+### Server (Branch B)
+- `GET /settings/restrictions/unknown-state-customers` returns `{ noAddress: Row[], unusableState: Row[], needsReview: Row[] }`, cursor-paged. Each Row is `{ customerId, name, addressId?, addressText?, suggestedState? }`. `suggestedState` is computed from a ZIP prefix → state table (shared in packages/types, no network call).
+- **Writes:** reuse the existing customer-address service. Add `PATCH /customers/:id/addresses/:addressId/state { state, confirmReview? }`, plus `POST /customers/:id/addresses/minimal { state, zip? }` for no-address customers. A minimal address is created as default billing, `street` null, `incomplete: true` if that column exists; otherwise the street is left empty. **No new table.** Each write is audited.
+- The bulk set is `POST /settings/restrictions/unknown-state-customers/bulk-state { bucket, customerIds[], state }` (≤ 200, one tx, one audit row), with Undo via the returned `changedAddressIds[]`.
+
+### Shared naming (B ↔ C)
+- Bulk-create restriction response: `{ created: number, skipped: number, createdIds: string[] }`.
+- Bulk-state response: `{ changed: number, changedAddressIds: string[] }`.
+
+### Red rows
+- **B:** buckets returned correctly; a minimal address makes the customer leave `noAddress`; review-confirm clears `needsReview`; the bulk cap is 200; a non-admin buyer gets 403; tenant isolation.
+- **C:** rows render per bucket; Save removes the row and decrements counts; an error keeps the input; Enter saves and moves focus; read-only shows no Save; amber not red.
+- **Playwright:** 1440 + 390. Fix 3 customers inline without leaving the page.
