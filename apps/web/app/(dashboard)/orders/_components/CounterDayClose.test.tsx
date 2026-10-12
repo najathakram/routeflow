@@ -293,7 +293,9 @@ describe("CounterDayClose: the form", () => {
     const form = dialogs[dialogs.length - 1];
     expect(form.className).toMatch(/h-\[100dvh\]/);
     expect(form.className).toMatch(/w-screen/);
-    expect(screen.getByRole("button", { name: "More $20 bill" }).className).toMatch(/min-h-11/);
+    expect(screen.getByRole("button", { name: "More $20 bill" }).className).toMatch(
+      /min-h-\[44px\]/,
+    );
     expect(screen.getByLabelText("$20 bill count").className).toMatch(/h-11/);
     expect(screen.getByLabelText("$20 bill count")).toHaveAttribute("inputmode", "numeric");
   });
@@ -897,21 +899,21 @@ describe("CounterDayClose: phone layout", () => {
     await openSheet();
     const card = await screen.findByTestId("day-close-closed");
     for (const name of ["Resend", "View Z report", "Edit count"]) {
-      expect(within(card).getByRole("button", { name }).className).toMatch(/min-h-11/);
+      expect(within(card).getByRole("button", { name }).className).toMatch(/min-h-\[44px\]/);
     }
     fireEvent.click(within(card).getByRole("button", { name: "Edit count" }));
     const form = await screen.findByTestId("day-close-form");
     const dialogs = screen.getAllByRole("dialog");
     expect(dialogs[dialogs.length - 1].className).toMatch(/h-\[100dvh\]/);
     for (const name of ["Save count", "Cancel"]) {
-      expect(within(form).getByRole("button", { name }).className).toMatch(/min-h-11/);
+      expect(within(form).getByRole("button", { name }).className).toMatch(/min-h-\[44px\]/);
     }
     expect(within(form).getByLabelText("$20 bill count").className).toMatch(/h-11/);
     expect(
       within(form).getByLabelText("Opening float (kept from the first close)").className,
     ).toMatch(/h-11/);
     expect(within(form).getByRole("button", { name: "More $20 bill" }).className).toMatch(
-      /min-h-11/,
+      /min-h-\[44px\]/,
     );
   });
 });

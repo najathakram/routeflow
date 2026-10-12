@@ -11,7 +11,7 @@ import {
 } from "@routeflow/pricing";
 import type { ZRow } from "@routeflow/pricing";
 import type { DayCloseSnapshot } from "@routeflow/types";
-import { Button, Modal, cn } from "@routeflow/ui/web";
+import { Button, Modal, TAP_TARGET, cn } from "@routeflow/ui/web";
 import {
   Z_REPORT_EMAILED_COPY,
   Z_REPORT_RESEND_FAILED_COPY,
@@ -20,6 +20,7 @@ import {
 import { formatReceiptMoney as money } from "@/lib/counter-receipt";
 
 const NOT_RECORDED = "Not recorded";
+const MINUS = "−";
 
 /** "9:42 PM" in the tenant zone (no zone name: the Z lines are already in the tenant's own clock). */
 export const zTime = (iso: string, timeZone: string) =>
@@ -62,6 +63,8 @@ export function zHeadlineText(h: ReturnType<typeof dayCloseZSections>["headline"
 function rowValue(row: ZRow): string {
   if (row.amount === null) return NOT_RECORDED;
   if (row.signed && row.amount > 0) return `+${money(row.amount)}`;
+  // a negative signed row (a short drawer) wears the real minus sign, the same glyph the Z email prints
+  if (row.signed && row.amount < 0) return `${MINUS}${money(Math.abs(row.amount))}`;
   return money(row.amount);
 }
 
@@ -189,19 +192,19 @@ export function ZReportView({
         </p>
       ) : null}
       <div className="flex flex-wrap justify-end gap-2" data-testid="z-actions">
-        <Button type="button" className="min-h-11" onClick={() => window.print()}>
+        <Button type="button" className="min-h-[44px]" onClick={() => window.print()}>
           Print
         </Button>
         <Button
           type="button"
           variant="secondary"
-          className="min-h-11"
+          className="min-h-[44px]"
           loading={resend.isPending}
           onClick={onResend}
         >
           Email
         </Button>
-        <Button type="button" variant="secondary" className="min-h-11" onClick={onClose}>
+        <Button type="button" variant="secondary" className="min-h-[44px]" onClick={onClose}>
           Close
         </Button>
       </div>
@@ -219,7 +222,7 @@ export function ZReportView({
         e.preventDefault();
         (e.target as HTMLElement).querySelector<HTMLElement>("h2")?.focus();
       }}
-      closeClassName="min-h-11 min-w-11 flex items-center justify-center"
+      closeClassName={TAP_TARGET}
       className={cn(
         PRINT_ROOT_CLASS,
         "left-0 top-0 h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 rounded-none p-4",

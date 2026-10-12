@@ -119,7 +119,7 @@ describe("ZReportView", () => {
     expect(row("Cash from sales")).toHaveTextContent("$200.00");
     expect(row("Expected cash")).toHaveTextContent("$285.00");
     expect(row("Counted")).toHaveTextContent("$282.50");
-    expect(row("Variance")).toHaveTextContent("-$2.50");
+    expect(row("Variance")).toHaveTextContent("−$2.50");
     // the unpaid pickups are a Drawer row, never an orphan line under the report
     expect(row("Unpaid pickups")).toHaveTextContent("$40.00");
     expect(within(screen.getByTestId("z-group-Drawer")).getByTestId("z-row-Unpaid pickups")).toBe(
@@ -164,7 +164,7 @@ describe("ZReportView", () => {
   });
 
   it.each([
-    [-2.5, "Short $2.50", "Counted $282.50", "-$2.50"],
+    [-2.5, "Short $2.50", "Counted $282.50", "−$2.50"],
     [0, "Balanced", "Counted $285.00", "$0.00"],
     [1, "Over $1.00", "Counted $286.00", "+$1.00"],
   ])("variance %s reads %s", (variance, headline, counted, over) => {
@@ -226,7 +226,7 @@ describe("ZReportView", () => {
     expect(dialog.className).toMatch(/h-\[100dvh\]/);
     expect(dialog.className).toMatch(/w-screen/);
     for (const b of within(dialog).getAllByRole("button", { name: "Close" }))
-      expect(b.className).toMatch(/min-h-11/);
+      expect(b.className).toMatch(/min-h-\[44px\]/);
     expect(within(dialog).queryAllByRole("listitem")).toHaveLength(0);
   });
 
@@ -259,7 +259,7 @@ describe("ZReportView: actions (Print, Email, Close)", () => {
   it("every action is a 44px target, and the modal's own X stays", () => {
     renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
     for (const b of within(actions()).getAllByRole("button"))
-      expect(b.className).toMatch(/min-h-11/);
+      expect(b.className).toMatch(/min-h-\[44px\]/);
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getAllByRole("button", { name: "Close" })).toHaveLength(2); // the X and the footer
   });
