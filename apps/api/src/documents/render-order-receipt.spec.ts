@@ -448,6 +448,7 @@ describe("renderOrderReceipt (email)", () => {
     ["Acme Co", "Sent by Acme Co."],
     ["Acme Co. ", "Sent by Acme Co."],
     ["Acme!", "Sent by Acme!"],
+    ["Acme\u2026", "Sent by Acme\u2026"],
   ])("signs a business named %j as %j (never a doubled period)", (businessName, signed) => {
     const r = render(orderFixture(), [INVOICE], paymentsFixture(), { ...BRANDING, businessName });
     for (const body of [r.html, r.text]) {

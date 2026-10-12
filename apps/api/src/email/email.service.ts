@@ -252,7 +252,7 @@ export function tenantHeaderHtml(businessName: string): string {
  */
 export function endSentence(text: string): string {
   const t = text.trimEnd();
-  return /[.!?]$/.test(t) ? t : `${t}.`;
+  return /[.!?\u2026]$/.test(t) ? t : `${t}.`; // . ! ? and the ellipsis character
 }
 
 /**
