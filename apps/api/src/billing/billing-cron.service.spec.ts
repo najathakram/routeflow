@@ -16,6 +16,7 @@ import { Logger } from "@nestjs/common";
 import { BillingCronService } from "./billing-cron.service";
 import { BILLING_EVENTS, normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
 import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
+import { RfInvoiceIssuerService } from "./rf-invoice/rf-invoice-issuer.service";
 
 function make(
   data: {
@@ -1203,6 +1204,29 @@ describe("BillingCronService", () => {
     });
   });
 
+  it("N4: the churn delta never includes a COMP add-on (a platform grant: never billed, never in MRR)", async () => {
+    const { svc, tx, events } = make({
+      cancellations: [
+        { tenantId: "t1", planKey: "BUSINESS", basePriceSnapshot: 349, discount: 10 },
+      ],
+    });
+    const rows = [
+      { priceSnapshot: 12, quantity: 2, isComp: false },
+      { priceSnapshot: 20, quantity: 1, isComp: true },
+    ];
+    tx.tenantAddon.findMany.mockImplementation(async (a: any) =>
+      rows.filter((r) => (a?.where?.isComp === false ? !r.isComp : true)),
+    );
+    await svc.applyScheduledCancellations();
+    // -(349 + 12x2 - 10) = -363; the comp's 20 is not in it (-383 would be the bug)
+    expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-363);
+    expect(tx.tenantAddon.findMany.mock.calls[0][0].where).toEqual({
+      tenantId: "t1",
+      active: true,
+      isComp: false,
+    });
+  });
+
   it("rollCycles advances the billing period so meters bucket into the new cycle", async () => {
     const periodEnd = new Date("2026-06-01T00:00:00Z"); // in the past
     const { svc, prisma } = make({
@@ -1255,7 +1279,7 @@ describe("BillingCronService", () => {
   // mislabeled (or whose real billing period doesn't match the stored cycle enum) rolls by
   // the wrong span forever. An externally-paid row must instead roll by its OWN observed
   // period length (periodEnd - periodStart), not by the `cycle` column.
-  it("REG-B863-ROLL 365-day external row rolls +365d (flips REG-ROLL-MANUAL-ANNUAL, SA-277)", async () => {
+  it("REG-B863-ROLL 365-day external row labelled MONTHLY rolls onto the ANNUAL calendar (SA-744r2 M4; master: +365d)", async () => {
     const periodStart = new Date("2025-01-01T00:00:00.000Z");
     const periodEnd = new Date("2026-01-01T00:00:00.000Z");
     const { svc, prisma } = make({
@@ -1272,8 +1296,9 @@ describe("BillingCronService", () => {
     await svc.rollCycles();
 
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
-    expect(data.periodStart).toEqual(periodEnd);
-    expect(data.periodEnd.toISOString()).toBe("2027-01-01T00:00:00.000Z");
+    // BOTH ends are written: the SNAPPED start (never the raw old end) and a full calendar year.
+    expect(data.periodStart.toISOString()).toBe("2026-01-01T12:00:00.000Z");
+    expect(data.periodEnd.toISOString()).toBe("2027-01-01T12:00:00.000Z");
     expect(prisma.tenantSubscription.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         select: expect.objectContaining({ periodStart: true, externalPayment: true }),
@@ -1281,7 +1306,7 @@ describe("BillingCronService", () => {
     );
   });
 
-  it("REG-B863-ROLL 90-day external row rolls +90d", async () => {
+  it("REG-B863-ROLL 90-day external row rolls MONTHLY on the calendar, not +90d (SA-744r2; master: Apr 1 00:00Z)", async () => {
     const periodStart = new Date("2025-10-03T00:00:00.000Z");
     const periodEnd = new Date("2026-01-01T00:00:00.000Z");
     const { svc, prisma } = make({
@@ -1291,10 +1316,11 @@ describe("BillingCronService", () => {
     });
     await svc.rollCycles();
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
-    expect(data.periodEnd.toISOString()).toBe("2026-04-01T00:00:00.000Z");
+    expect(data.periodStart.toISOString()).toBe("2026-01-01T12:00:00.000Z");
+    expect(data.periodEnd.toISOString()).toBe("2026-02-01T12:00:00.000Z");
   });
 
-  it("REG-B863-ROLL 180-day external row rolls +180d", async () => {
+  it("REG-B863-ROLL 180-day external row rolls MONTHLY on the calendar, not +180d", async () => {
     const periodStart = new Date("2025-07-05T00:00:00.000Z");
     const periodEnd = new Date("2026-01-01T00:00:00.000Z");
     const { svc, prisma } = make({
@@ -1304,7 +1330,94 @@ describe("BillingCronService", () => {
     });
     await svc.rollCycles();
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
-    expect(data.periodEnd.toISOString()).toBe("2026-06-30T00:00:00.000Z");
+    expect(data.periodEnd.toISOString()).toBe("2026-02-01T12:00:00.000Z");
+  });
+
+  // SA-744r2 red rows (master gives a length-preserving roll for each).
+  it("SA-744r2: a 17-day activation ending Nov 1 00:00Z rolls to [Nov 1 12:00Z, Dec 1 12:00Z) (master: another 17 days)", async () => {
+    const { svc, prisma } = make({
+      rollSubs: [
+        {
+          tenantId: "t1",
+          cycle: "MONTHLY",
+          externalPayment: true,
+          periodStart: new Date("2026-10-15T00:00:00.000Z"),
+          periodEnd: new Date("2026-11-01T00:00:00.000Z"),
+        },
+      ],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect([data.periodStart.toISOString(), data.periodEnd.toISOString()]).toEqual([
+      "2026-11-01T12:00:00.000Z",
+      "2026-12-01T12:00:00.000Z",
+    ]);
+  });
+
+  it("SA-744r2: a 45-day prepay ending Nov 22 rolls to the ALIGNMENT window [Nov 22, Dec 1 12:00Z), then plain months (master: 45 days forever)", async () => {
+    const { svc, prisma } = make({
+      rollSubs: [
+        {
+          tenantId: "t1",
+          cycle: "MONTHLY",
+          externalPayment: true,
+          periodStart: new Date("2026-10-08T00:00:00.000Z"),
+          periodEnd: new Date("2026-11-22T00:00:00.000Z"),
+        },
+      ],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect([data.periodStart.toISOString(), data.periodEnd.toISOString()]).toEqual([
+      "2026-11-22T00:00:00.000Z",
+      "2026-12-01T12:00:00.000Z",
+    ]);
+  });
+
+  it("SA-744r2 M4: an ANNUAL row on a non-1st fixture merges the alignment into the first year, then rolls plain years", async () => {
+    const first = {
+      tenantId: "t1",
+      cycle: "ANNUAL",
+      externalPayment: true,
+      periodStart: new Date("2025-10-08T00:00:00.000Z"),
+      periodEnd: new Date("2026-10-08T00:00:00.000Z"),
+    };
+    const a = make({ rollSubs: [first] });
+    await a.svc.rollCycles();
+    const d1 = a.prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect([d1.periodStart.toISOString(), d1.periodEnd.toISOString()]).toEqual([
+      "2026-10-08T00:00:00.000Z",
+      "2027-11-01T12:00:00.000Z",
+    ]);
+    const b = make({
+      rollSubs: [{ ...first, periodStart: d1.periodStart, periodEnd: d1.periodEnd }],
+    });
+    await b.svc.rollCycles();
+    const d2 = b.prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect([d2.periodStart.toISOString(), d2.periodEnd.toISOString()]).toEqual([
+      "2027-11-01T12:00:00.000Z",
+      "2028-11-01T12:00:00.000Z",
+    ]);
+  });
+
+  it("SA-744r2: a merged (< 3 days) alignment rolls to [Nov 29, Jan 1 12:00Z) in ONE write (rollCycles == the issuer's helper)", async () => {
+    const { svc, prisma } = make({
+      rollSubs: [
+        {
+          tenantId: "t1",
+          cycle: "MONTHLY",
+          externalPayment: true,
+          periodStart: new Date("2026-10-30T00:00:00.000Z"),
+          periodEnd: new Date("2026-11-29T00:00:00.000Z"),
+        },
+      ],
+    });
+    await svc.rollCycles();
+    const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+    expect([data.periodStart.toISOString(), data.periodEnd.toISOString()]).toEqual([
+      "2026-11-29T00:00:00.000Z",
+      "2027-01-01T12:00:00.000Z",
+    ]);
   });
 
   // Pin: a Stripe/catalog-priced row (externalPayment: false) is still rolled by `addCycle`
@@ -1322,9 +1435,9 @@ describe("BillingCronService", () => {
     expect(data.periodEnd.toISOString()).toBe("2026-02-01T00:00:00.000Z");
   });
 
-  // Pin: an external row with no periodStart on record can't derive an observed period
-  // length, so it falls back to the old addCycle(periodEnd, cycle) behavior.
-  it("rollCycles falls back to addCycle for an external row with periodStart: null", async () => {
+  // SA-744r2: an external row with no periodStart on record has no observed length to preserve; it follows
+  // the calendar by its label (it used to fall back to addCycle).
+  it("rollCycles rolls an external row with periodStart: null onto the calendar by its label", async () => {
     const periodEnd = new Date("2026-01-01T00:00:00.000Z");
     const { svc, prisma } = make({
       rollSubs: [
@@ -1339,7 +1452,8 @@ describe("BillingCronService", () => {
     });
     await svc.rollCycles();
     const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
-    expect(data.periodEnd.toISOString()).toBe("2026-02-01T00:00:00.000Z");
+    expect(data.periodStart.toISOString()).toBe("2026-01-01T12:00:00.000Z");
+    expect(data.periodEnd.toISOString()).toBe("2026-02-01T12:00:00.000Z");
   });
 });
 
@@ -1587,5 +1701,40 @@ describe("#2641 scheduled sweeps book on the paying predicate, re-read under the
     await svc.applyScheduledCancellations();
     expect(tx.tenant.update).toHaveBeenCalledTimes(1);
     expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(0);
+  });
+});
+
+// SA-744r2 parity guard (green on master too, by the spec's own label): the window rollCycles writes for an
+// external row is EXACTLY the window the issuer's windowsFor issues next - start AND end - for random ends
+// and both cycles (L-167: one helper behind both).
+describe("SA-744r2: rollCycles == windowsFor (start AND end)", () => {
+  it("200 random external ends x both cycles agree", async () => {
+    let seed = 744;
+    const rand = () => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+      return seed / 4294967296;
+    };
+    const issuer = new (RfInvoiceIssuerService as any)(
+      { rfInvoice: { findMany: async () => [], findFirst: async () => null } },
+      {},
+      {},
+    ) as RfInvoiceIssuerService;
+    const DAY = 24 * 60 * 60 * 1000;
+    const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
+    for (let i = 0; i < 200; i++) {
+      for (const cycle of ["MONTHLY", "ANNUAL"] as const) {
+        const periodEnd = new Date(t0 + Math.floor(rand() * 3 * 365 * DAY));
+        const periodStart = new Date(periodEnd.getTime() - (cycle === "ANNUAL" ? 365 : 30) * DAY);
+        const sub = { tenantId: "t1", cycle, externalPayment: true, periodStart, periodEnd };
+        const { svc, prisma } = make({ rollSubs: [sub] });
+        await svc.rollCycles();
+        const data = prisma.tenantSubscription.update.mock.calls[0][0].data;
+        const next = (await issuer.windowsFor(sub as any, periodEnd, Infinity))[0];
+        expect([data.periodStart.getTime(), data.periodEnd.getTime()]).toEqual([
+          next?.periodStart.getTime(),
+          next?.periodEnd.getTime(),
+        ]);
+      }
+    }
   });
 });

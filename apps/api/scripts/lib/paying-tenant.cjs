@@ -16,12 +16,22 @@ const PAYING_TENANT_CONDITIONS = {
 };
 
 /**
+ * SA-736r M2: `couponFull` is REQUIRED (a boolean). `undefined` - a select that never fetched the column -
+ * THROWS, so a script can never silently count a coupon-unbilled tenant as paying.
+ *
  * @param {{ status: string, deletedAt: Date | null | undefined, class: string }} tenant
  * @param {string | null | undefined} planKey the tenant's TenantSubscription.planKey
+ * @param {boolean} couponFull the tenant's TenantSubscription.couponFull
  * @returns {boolean}
  */
-function isPayingTenant(tenant, planKey) {
+function isPayingTenant(tenant, planKey, couponFull) {
+  if (typeof couponFull !== "boolean") {
+    throw new TypeError(
+      "isPayingTenant: couponFull must be a boolean (select it with the subscription)",
+    );
+  }
   return (
+    couponFull !== true &&
     tenant.status === PAYING_TENANT_CONDITIONS.status &&
     // Loose, exactly like isPayingRow: `undefined` (a select that never fetched it) reads as null.
     tenant.deletedAt == PAYING_TENANT_CONDITIONS.deletedAt &&
@@ -43,14 +53,18 @@ function isPayingTenant(tenant, planKey) {
  * deletedAt: a soft-deleted tenant the operator listed stays protected.
  *
  * @param {{ slug?: string, status: string, deletedAt: Date | null | undefined, class: string }} tenant
- * @param {{ planKey?: string | null, stripeSubId?: string | null } | null | undefined} sub
+ * @param {{ planKey?: string | null, stripeSubId?: string | null, couponFull?: boolean } | null | undefined} sub
  * @param {Set<string>} protectedSlugs
  * @returns {"paying" | "stripe-linked" | "env-listed" | null}
  */
 function protectedArm(tenant, sub, protectedSlugs) {
   if (!(protectedSlugs instanceof Set))
     throw new TypeError("protectedArm needs the protectedSlugs Set from loadProtectedSlugs");
-  if (isPayingTenant(tenant, sub?.planKey ?? null)) return "paying";
+  // A coupon-unbilled tenant is not "paying" - it still has a stripeSubId, so it stays PROTECTED via the next arm.
+  // `couponFull` is NOT coerced: a subscription whose select never fetched it THROWS (isPayingTenant). A target
+  // with no subscription row, or no plan, is never paying and needs no flag.
+  if (sub && sub.planKey != null && isPayingTenant(tenant, sub.planKey, sub.couponFull))
+    return "paying";
   if (sub?.stripeSubId != null && tenant.deletedAt == null) return "stripe-linked";
   if (protectedSlugs.size > 0) {
     // Fail closed: with a non-empty list, a row whose slug was never fetched cannot be judged.

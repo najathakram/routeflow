@@ -47,6 +47,8 @@ export interface PricePushResult {
   proration?: StripeProrationBehavior;
   /** The item already billed this amount, so Stripe was not called. */
   unchanged?: boolean;
+  /** SA-733r3 N4: this push raised `needsReconcile` before the Stripe write; the flow clears it after its local write. */
+  reconcile?: { owned: boolean };
 }
 
 export function prorationBehaviorFor(effective: PriceOverrideEffective): StripeProrationBehavior {
@@ -68,6 +70,8 @@ export const PRICE_PUSH_FAILURE_REASONS: readonly string[] = [
   "stripe_retrieve_failed",
   "stripe_product_create_failed",
   "stripe_update_failed",
+  // N4: the needsReconcile flag could not be committed BEFORE the Stripe write, so nothing was sent.
+  "reconcile_flag_failed",
   // A live stripeSubId whose Stripe side cannot be repriced (no base item, or Stripe unconfigured) must
   // REFUSE the change: writing the fee locally would leave Stripe billing the old price. Manual-pay
   // tenants have no stripeSubId and never get here.

@@ -1,0 +1,7 @@
+# graphify: map the source, not local scratch / copies
+.claude/worktrees/
+.claude/handoffs/
+.claude/campaign/
+.claude/pipeline/
+local-assets/
+graphify-out/

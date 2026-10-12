@@ -18,6 +18,52 @@ interface CachedStatus {
 const CACHE_TTL_MS = 60_000;
 
 /**
+ * The ONE read-only allow-list (SA-733r6 / SA-750r3 O1): the only non-read requests a READ_ONLY tenant may make.
+ * Anchored patterns, never substrings, so a neighbouring route cannot ride in. Route-scoped, never a role bypass.
+ *  - the auth routes and the plan-restore paths (a tenant must be able to sign in and buy its way out);
+ *  - the admin's billing portal (`@Roles(TENANT_ADMIN)` on the route);
+ *  - the end-of-day close (also the re-close), its reopen and the Z-report re-send (housekeeping on cash already taken);
+ *  - the e-mailed receipt of an EXISTING sale (it counts as print / export; only the send log is written).
+ * Everything else (sales, orders, invoices, estimates, payments) stays refused with 403 READ_ONLY.
+ * The day-close routes ship with SA-750; until they land the entries match nothing.
+ */
+export const READ_ONLY_ALLOWED_MUTATIONS: ReadonlyArray<{
+  methods: readonly string[] | "ANY";
+  pattern: RegExp;
+}> = [
+  { methods: "ANY", pattern: /^\/api\/v1\/auth\// },
+  { methods: ["POST"], pattern: /^\/api\/v1\/billing\/subscribe$/ },
+  { methods: ["POST"], pattern: /^\/api\/v1\/billing\/quote$/ },
+  { methods: ["POST"], pattern: /^\/api\/v1\/billing\/subscription$/ },
+  {
+    methods: ["POST"],
+    pattern: /^\/api\/v1\/billing\/subscription\/(downgrade|cancel|resume|checkout)$/,
+  },
+  { methods: ["POST"], pattern: /^\/api\/v1\/billing\/portal$/ },
+  // SA-750r3 O1 (as built on feat/counter-day-close): the close AND the re-close are the same POST.
+  { methods: ["POST"], pattern: /^\/api\/v1\/orders\/counter-sale\/day-close$/ },
+  {
+    methods: ["POST"],
+    pattern: /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/reopen$/,
+  },
+  // The Z-report re-send (log-only).
+  {
+    methods: ["POST"],
+    pattern: /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/report$/,
+  },
+  // The e-mailed receipt of an EXISTING sale (SA r-note, lead ruling 10-10). NO such route exists on this base: it
+  // ships with the counter receipt e-mail work (SA-751r; not on this base), so this entry matches nothing here.
+  { methods: ["POST"], pattern: /^\/api\/v1\/orders\/[0-9a-fA-F-]{36}\/receipt$/ },
+];
+
+export function isReadOnlyAllowedMutation(method: string, path: string): boolean {
+  const m = method.toUpperCase();
+  return READ_ONLY_ALLOWED_MUTATIONS.some(
+    (e) => (e.methods === "ANY" || e.methods.includes(m)) && e.pattern.test(path),
+  );
+}
+
+/**
  * Global guard that blocks all API requests from tenants whose status is
  * SUSPENDED or CANCELLED.
  *
@@ -31,19 +77,6 @@ const CACHE_TTL_MS = 60_000;
  * An in-memory cache (Map) with 60 s TTL avoids a DB hit on every request.
  * Call `invalidate(tenantId)` when a tenant's status changes.
  */
-/**
- * Owner ruling 2026-10-10 (SA-750r3 O1): closing the day stays possible while the workspace is read-only; sales, orders, invoices
- * and payments stay blocked. ONE constant, route-scoped (method AND an anchored path), never a role bypass: the close (and
- * re-close, the same POST) and the reopen. The report resend is not exempt. The guard spec lists exactly these entries.
- */
-export const READ_ONLY_ALLOWED_ROUTES: ReadonlyArray<{ method: string; path: RegExp }> = [
-  { method: "POST", path: /^\/api\/v1\/orders\/counter-sale\/day-close$/ },
-  {
-    method: "POST",
-    path: /^\/api\/v1\/orders\/counter-sale\/day-close\/[0-9a-fA-F-]{36}\/reopen$/,
-  },
-];
-
 @Injectable()
 export class TenantStatusGuard implements CanActivate {
   private readonly logger = new Logger(TenantStatusGuard.name);
@@ -61,12 +94,14 @@ export class TenantStatusGuard implements CanActivate {
     }
 
     let tenantId: string | null = null;
+    let role: string | null = null;
     try {
       const token = authHeader.slice(7);
       const payloadPart = token.split(".")[1];
       if (!payloadPart) return true;
       const payload = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf8"));
       tenantId = payload.tenantId ?? null;
+      role = typeof payload.role === "string" ? payload.role : null;
     } catch {
       // Malformed JWT — pass through; JwtAuthGuard will reject it downstream
       return true;
@@ -79,7 +114,7 @@ export class TenantStatusGuard implements CanActivate {
     const now = Date.now();
     const cached = this.statusCache.get(tenantId);
     if (cached && cached.expiresAt > now) {
-      return this.assertAllowed(cached.status, req);
+      return this.assertAllowed(cached.status, req, role);
     }
 
     // ── Query DB ─────────────────────────────────────────────────────────────
@@ -105,14 +140,14 @@ export class TenantStatusGuard implements CanActivate {
         this.cleanExpiredEntries(now);
       }
 
-      return this.assertAllowed(tenant.status, req);
+      return this.assertAllowed(tenant.status, req, role);
     } catch (err) {
       if (err instanceof ForbiddenException) throw err;
       // On DB error, prefer the last-known status (even past TTL) so the READ_ONLY /
       // SUSPENDED enforcement boundary doesn't evaporate during a DB blip. Only fail
       // open when status is genuinely unknown, to avoid bricking healthy tenants.
       const stale = this.statusCache.get(tenantId);
-      if (stale) return this.assertAllowed(stale.status, req);
+      if (stale) return this.assertAllowed(stale.status, req, role);
       this.logger.error("Failed to check tenant status", err);
       return true;
     }
@@ -132,7 +167,7 @@ export class TenantStatusGuard implements CanActivate {
 
   // ── Private helpers ──────────────────────────────────────────────────────────
 
-  private assertAllowed(status: string, req: Request): true {
+  private assertAllowed(status: string, req: Request, role: string | null = null): true {
     if (status === "SUSPENDED" || status === "CANCELLED") {
       throw new ForbiddenException("Tenant account is suspended. Please contact support.");
     }
@@ -143,16 +178,17 @@ export class TenantStatusGuard implements CanActivate {
       const method = (req.method ?? "GET").toUpperCase();
       const path = req.path || (req as unknown as { originalUrl?: string }).originalUrl || "";
       const isRead = method === "GET" || method === "HEAD" || method === "OPTIONS";
-      // Anchored allowlist (not substring) so an unrelated route can't smuggle a mutation
-      // through by merely containing these strings. Global prefix is /api/v1.
-      const allowedMutation =
-        path.startsWith("/api/v1/auth/") ||
-        READ_ONLY_ALLOWED_ROUTES.some((r) => r.method === method && r.path.test(path)) ||
-        path === "/api/v1/billing/subscribe" ||
-        path === "/api/v1/billing/quote" ||
-        path === "/api/v1/billing/subscription" ||
-        path.startsWith("/api/v1/billing/subscription/");
+      // Anchored allowlist (not substring): READ_ONLY_ALLOWED_MUTATIONS above. Global prefix is /api/v1.
+      const allowedMutation = isReadOnlyAllowedMutation(method, path);
       if (!isRead && !allowedMutation) {
+        // SA-733r6: a BUYER's write to a read-only seller is a coded, seller-neutral refusal. The buyer is never
+        // told about the seller's billing or plan; the buyer UI turns this into its one quiet line.
+        if (role === "CUSTOMER") {
+          throw new ForbiddenException({
+            code: API_ERROR_CODES.SELLER_UNAVAILABLE,
+            message: "This seller isn't taking online orders right now. Please check back soon.",
+          });
+        }
         throw new ForbiddenException({
           code: API_ERROR_CODES.READ_ONLY,
           message:

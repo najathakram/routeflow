@@ -240,7 +240,7 @@ function printPlan(plan) {
   if (execute) {
     const sub = await prisma.tenantSubscription.findUnique({
       where: { tenantId: tenant.id },
-      select: { planKey: true, stripeSubId: true },
+      select: { planKey: true, stripeSubId: true, couponFull: true },
     });
     try {
       assertWritableTenant(tenant, sub, protectedSlugs);

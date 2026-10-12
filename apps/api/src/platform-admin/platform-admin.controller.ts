@@ -60,6 +60,7 @@ import {
 } from "./dto/apply-business-profile.dto";
 import type {
   BusinessProfileApplyResponse,
+  BusinessProfileBillingFailedAddon,
   BusinessProfileListResponse,
   BusinessProfilePreviewResponse,
 } from "@routeflow/types";
@@ -791,7 +792,8 @@ export class PlatformAdminController {
   /**
    * Confirm. The plan is recomputed HERE from the tenant's current state (never trusted from the
    * client) and validated whole before the first write. Writes go through the existing audited
-   * paths only — this controller's own add-on disable and override create/revoke, and
+   * paths only — this controller's own add-on disable, the add-on comp enable (SA-769: a profile's
+   * add-on grants are comp rows, never GRANT overrides) and override create/revoke, and
    * `FeatureConfigService.set` — in the order billing disables → grants → modes → denies. The
    * disables (paid modules, owner ruling) come first so a billing failure refuses the apply before
    * anything else is written; only fleet-OFF profiles have any, and their modes need no fleet.
@@ -844,19 +846,42 @@ export class PlatformAdminController {
     const billingFailed = () => {
       const label = (k: string) => FEATURE_REGISTRY.find((f) => f.key === k)?.label ?? k;
       const done = alreadyDisabled.map(label).join(", ") || "none";
+      // SA-769: a COMP row has no billing to stop, so its copy says "switched off" only. The billing wording
+      // stays whenever a paid add-on is involved (a paid one was stopped, or is the one that failed).
+      const compOff = new Set(resolved.plan.billing.filter((b) => b.comp).map((b) => b.featureKey));
+      const billingWords =
+        alreadyDisabled.length > 0
+          ? alreadyDisabled.some((k) => !compOff.has(k))
+          : !compOff.has(current.key);
       const what =
         current.step === "billing"
-          ? `The profile was not applied: billing for ${label(current.key)} could not be stopped.`
+          ? compOff.has(current.key)
+            ? `The profile was not applied: ${label(current.key)} could not be switched off.`
+            : `The profile was not applied: billing for ${label(current.key)} could not be stopped.`
           : `The profile was only partly applied: the ${current.step} step for ` +
-            `${label(current.key)} failed after billing was stopped.`;
+            `${label(current.key)} failed after ` +
+            (billingWords ? "billing was stopped." : "the add-ons were switched off.");
+      // ROW c: say per add-on what happened. The one whose switch-off failed first, then the ones already switched
+      // off (they are in the billing disable order). A comp has no billing to stop; a paid row's billing is stopped
+      // exactly when its disable succeeded.
+      const failedKey = current.step === "billing" ? current.key : null;
+      const addons: BusinessProfileBillingFailedAddon[] = [
+        ...(failedKey ? [failedKey] : []),
+        ...alreadyDisabled,
+      ].map((key) => {
+        const wasComp = compOff.has(key);
+        const switchedOff = key !== failedKey;
+        return { key, wasComp, billingStopped: switchedOff && !wasComp, switchedOff };
+      });
       return new ServiceUnavailableException({
         statusCode: 503,
         code: API_ERROR_CODES.BUSINESS_PROFILE_BILLING_FAILED,
         featureKey: current.key,
         alreadyDisabled: [...alreadyDisabled],
         failedStep: { ...current },
+        addons,
         message:
-          `${what} Already switched off with billing stopped: ${done}. ` +
+          `${what} Already switched off${billingWords ? " with billing stopped" : ""}: ${done}. ` +
           (current.step === "billing" ? "Nothing else was changed; " : "") +
           "retry to finish.",
       });
@@ -873,18 +898,44 @@ export class PlatformAdminController {
     }
     if (alreadyDisabled.length > 0) this.authority.invalidate(id);
 
+    // SA-769 (D-S2): an add-on module the profile grants is a COMP row (the SA-693 comp path:
+    // isComp, no Stripe call, nothing booked), not a GRANT override. The confirm already holds this
+    // module's add-on key, so the enable runs under it (`lockHeld`) instead of waiting on itself.
+    // The audit row is the same ADDON_COMPED the admin comp route writes, with the profile as reason.
+    const compKeys = new Set(resolved.plan.comps.map((c) => c.featureKey));
+    const compModule = async (featureKey: string) => {
+      const compReason = `business profile ${resolved.profile.key}`;
+      await this.addonService.enableAddon(id, featureKey, undefined, undefined, {
+        comp: true,
+        lockHeld: true,
+        actorId: admin.sub,
+        reason: compReason,
+      });
+      // a later module (driver_payments) `requires` this one: its comp must be visible to that check
+      this.authority.invalidate(id);
+      await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_COMPED, {
+        addonKey: featureKey,
+        acknowledgeUnmetRequires: false,
+        reason: compReason,
+        profile: resolved.profile.key,
+      });
+    };
     const applyOverrides = async (effect: "GRANT" | "DENY") => {
       for (const o of resolved.plan.overrides) {
-        if (o.effect !== effect || o.action === "skip") continue;
+        if (o.effect !== effect) continue;
         current = { step: effect === "GRANT" ? "grant" : "deny", key: o.featureKey };
-        if (o.action === "replace") {
+        if (o.action === "replace" || o.action === "revoke") {
           await this.revokeFeatureOverride(id, resolved.revokeOverrideIds[o.featureKey], admin);
         }
-        await this.createFeatureOverride(
-          id,
-          { featureKey: o.featureKey, effect: o.effect, reason } as CreateFeatureOverrideDto,
-          admin,
-        );
+        if (o.action === "create" || o.action === "replace") {
+          await this.createFeatureOverride(
+            id,
+            { featureKey: o.featureKey, effect: o.effect, reason } as CreateFeatureOverrideDto,
+            admin,
+          );
+        }
+        // module order: the fleet keys first, driver_payments last (it requires a fleet key)
+        if (effect === "GRANT" && compKeys.has(o.featureKey)) await compModule(o.featureKey);
       }
     };
     try {
@@ -900,6 +951,8 @@ export class PlatformAdminController {
         profile: resolved.profile.key,
         reason,
         plan: resolved.plan,
+        // SA-769: the comp rows this apply wrote, listed so the audit row alone shows what was granted free
+        comps: resolved.plan.comps.map((c) => c.featureKey),
         summary: resolved.summary,
       });
     } catch (err) {

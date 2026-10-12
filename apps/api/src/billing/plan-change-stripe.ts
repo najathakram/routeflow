@@ -12,6 +12,13 @@ import { CHECKOUT_ADDON_EXPAND, checkoutAddonItems } from "./stripe-addon-items"
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { prorationAllowedFor } from "./price-override";
 import {
+  armNeedsReconcile,
+  clearNeedsReconcile,
+  markNeedsReconcile,
+  type Armed,
+  type ReconcilePrisma,
+} from "./needs-reconcile";
+import {
   isLiveStripeSubscriptionStatus,
   isTerminalStripeSubscriptionStatus,
   stripeBaseItem,
@@ -25,7 +32,12 @@ import {
  * prior items; if that fails too, `markNeedsReconcile` raises an ERROR-level alert. Stripe is never left
  * silently ahead of the local row.
  *
- * Stripe amounts go through `toCents` only (SA-733 D9). No Prisma, no ledger: this file only talks to Stripe.
+ * SA-733r3 [N4]: when the caller supplies `deps.prisma`, `needsReconcile` + the attempt nonce are COMMITTED
+ * before the Stripe write (needs-reconcile.ts) and the push reports whether it armed the flag, so the caller
+ * can clear it after the local write.
+ *
+ * Stripe amounts go through `toCents` only (SA-733 D9). No ledger: this file only talks to Stripe (and, for the
+ * flag, the one needs-reconcile module).
  */
 
 /** Fixed tenant-facing copy — never a Stripe/internal message. */
@@ -63,6 +75,8 @@ export type PlanChangeStripe = Pick<
 export interface PlanChangeDeps {
   stripe: PlanChangeStripe;
   logger: Pick<Logger, "log" | "warn" | "error">;
+  /** Present in production: the needsReconcile flag is armed before Stripe and raised on a stuck outcome. */
+  prisma?: ReconcilePrisma | null;
 }
 
 /** An add-on's Stripe item that the new plan makes redundant, with the local row that owns it. */
@@ -117,6 +131,8 @@ export interface PlanChangePush {
   /** The per-attempt idempotency key; the revert uses `${key}:revert`. */
   key?: string;
   nonce?: string;
+  /** N4: this attempt raised `needsReconcile` before the Stripe write - the caller clears it after the local write. */
+  reconcile?: Armed;
   /** Add-on item ids confirmed gone from Stripe: deleted by this push, or already absent. */
   settledItemIds: ReadonlySet<string>;
   /** True when nothing was sent BUT the live Stripe subscription was read (a custom-fee price that did not change). */
@@ -290,6 +306,23 @@ export async function pushPlanChange(
       deleteItemIds: deletes.map((d) => d.itemId),
     })}`,
   );
+  // N4: the flag and the attempt's audit row (key + nonce) are COMMITTED before Stripe is touched. Unwritable =>
+  // nothing was sent, so the caller's row and Stripe still agree.
+  let reconcile: Armed | undefined;
+  try {
+    reconcile = await armNeedsReconcile(deps, {
+      tenantId: a.tenantId,
+      kind: "plan_change",
+      key,
+      nonce,
+      stripeSubId: a.stripeSubId,
+    });
+  } catch (err) {
+    logger.error(
+      `Plan change tenant ${a.tenantId}: could not record needsReconcile before the Stripe write (${(err as Error).message}) - nothing was sent`,
+    );
+    throw new ServiceUnavailableException(PLAN_CHANGE_BILLING_FAILED);
+  }
   try {
     await stripe.updateSubscription(
       a.stripeSubId,
@@ -313,7 +346,7 @@ export async function pushPlanChange(
       .catch(() => null);
     if (!live) {
       // Cannot tell whether Stripe moved: it may now be ahead of the database. Alert, and say so distinctly.
-      markNeedsReconcile(logger, {
+      await markNeedsReconcile(deps, {
         tenantId: a.tenantId,
         stripeSubId: a.stripeSubId,
         key,
@@ -335,8 +368,11 @@ export async function pushPlanChange(
       !baseChanged ||
       liveItems.find((i) => i?.id === base.id)?.price?.unit_amount === newAmountCents;
     const deletesApplied = deletes.every((d) => !liveItems.some((i) => i?.id === d.itemId));
-    if (!(baseApplied && deletesApplied))
+    if (!(baseApplied && deletesApplied)) {
+      // Stripe was READ and did not apply it: local and Stripe still agree - this attempt's flag comes down.
+      await clearNeedsReconcile(deps, a.tenantId, reconcile);
       throw new ServiceUnavailableException(PLAN_CHANGE_BILLING_FAILED);
+    }
     logger.warn(
       `Plan change tenant ${a.tenantId}: the Stripe update reported a failure but Stripe APPLIED it (${key}) - continuing`,
     );
@@ -354,6 +390,7 @@ export async function pushPlanChange(
     proration,
     key,
     nonce,
+    reconcile,
     settledItemIds: settled,
     newAmountCents,
     productId,
@@ -414,42 +451,6 @@ export async function revertPlanChange(
         (i) => i?.metadata?.restoredFromItem === r.oldItemId && typeof i?.id === "string",
       )?.id ?? null,
   }));
-}
-
-export interface NeedsReconcileInfo {
-  tenantId: string;
-  stripeSubId?: string;
-  /** The idempotency key of the push that Stripe applied. */
-  key?: string;
-  /** What the local row holds (it is NOT where Stripe now is). */
-  local?: unknown;
-  /** What Stripe now holds after the forward push (the intended state) and what the revert tried to restore. */
-  stripe?: unknown;
-  error?: unknown;
-}
-
-/**
- * SEAM — SA-733r [M7]: "if the revert fails, set `needsReconcile` and alert". Stripe is ahead of the local row
- * and nothing automatic will fix it, so a human must.
- *
- * TODO(SA-733r M7 / B2-B3 migration): `TenantSubscription.needsReconcile` is a COLUMN that ships in the B2/B3
- * migration, NOT in this PR (no schema change here). When it lands, set it in this function (and clear it after
- * the next successful local write, SA-733r3 N4). Until then this raises the ERROR-level structured alert only —
- * grep the logs for `billing.plan_change.needs_reconcile`.
- */
-export function markNeedsReconcile(logger: Pick<Logger, "error">, info: NeedsReconcileInfo): void {
-  logger.error(
-    `billing.plan_change.needs_reconcile ${JSON.stringify({
-      event: "billing.plan_change.needs_reconcile",
-      severity: "ERROR",
-      tenantId: info.tenantId,
-      stripeSubId: info.stripeSubId ?? null,
-      idempotencyKey: info.key ?? null,
-      localState: info.local ?? null,
-      stripeState: info.stripe ?? null,
-      error: info.error instanceof Error ? info.error.message : (info.error ?? null),
-    })}`,
-  );
 }
 
 /** A plan-change compare-and-set that lost its race is a 409 — kept here so callers share one message. */

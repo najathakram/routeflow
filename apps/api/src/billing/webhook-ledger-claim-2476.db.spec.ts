@@ -395,6 +395,9 @@ describeDb("#2476 webhook ledger exclusive claim on redelivery (real Postgres, S
       {
         isConfigured: true,
         createBillingPortalSession: async () => ({ url: "https://billing.stripe.test/p/s" }),
+        // SA-736r: the coupon sync's two Stripe reads - inert (no discount; no upcoming invoice).
+        retrieveSubscriptionWithDiscounts: async () => ({ status: "active", discounts: [] }),
+        previewNextInvoice: async () => null,
       } as any,
       email as any,
       { invalidate: () => undefined } as any,

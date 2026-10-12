@@ -20,13 +20,15 @@ import {
   UnknownPlanKeyError,
 } from "./plan-catalog.constants";
 import { addCycle } from "./billing-math";
+import { billableAddonWhere } from "./addon-row";
+import { effectiveCycle, nextBillingWindow } from "./rf-invoice/calendar-windows";
 import { lockTenantForLedger } from "./addon-ledger";
 import { isPayingRow } from "./mrr.service";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transition-config.service";
 import { StripeService } from "./stripe.service";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
-import { markNeedsReconcile } from "./plan-change-stripe";
+import { markNeedsReconcile } from "./needs-reconcile";
 import { resolvePlanPrice } from "./plan-price";
 import { CHECKOUT_ADDON_EXPAND, stripeAddonItemIds } from "./stripe-addon-items";
 import { stripeBaseItem } from "./stripe-period";
@@ -380,6 +382,7 @@ export class BillingCronService {
               stripeSubId: true,
               downgradeToPlanKey: true,
               downgradeEffectiveAt: true,
+              couponFull: true,
             },
           });
           if (
@@ -398,8 +401,8 @@ export class BillingCronService {
             throw new DowngradeOvertakenError();
           }
           const amountDelta = roundMoney(
-            (isPayingRow(lockedTenant, target) ? newBase : 0) -
-              (isPayingRow(lockedTenant, lockedSub.planKey)
+            (isPayingRow(lockedTenant, target, lockedSub.couponFull) ? newBase : 0) -
+              (isPayingRow(lockedTenant, lockedSub.planKey, lockedSub.couponFull)
                 ? Number(lockedSub.basePriceSnapshot ?? 0)
                 : 0),
           );
@@ -579,13 +582,16 @@ export class BillingCronService {
       if (!base || ids.has(base.id) || base.price?.recurring?.interval !== "month") return;
       const expectedCents = toCents(expectedMonthly);
       if (base.price?.unit_amount === expectedCents) return;
-      markNeedsReconcile(this.logger, {
-        tenantId,
-        stripeSubId,
-        local: { planKey: target, monthly: Number(expectedMonthly) },
-        stripe: { billedCents: base.price?.unit_amount ?? null, expectedCents },
-        error: "the downgrade flipped locally but Stripe still bills a different price",
-      });
+      await markNeedsReconcile(
+        { prisma: this.prisma, logger: this.logger },
+        {
+          tenantId,
+          stripeSubId,
+          local: { planKey: target, monthly: Number(expectedMonthly) },
+          stripe: { billedCents: base.price?.unit_amount ?? null, expectedCents },
+          error: "the downgrade flipped locally but Stripe still bills a different price",
+        },
+      );
     } catch (e) {
       this.logger.warn(
         `Could not verify Stripe's price after the downgrade of tenant=${tenantId}: ${(e as Error).message}`,
@@ -625,6 +631,7 @@ export class BillingCronService {
             discount: true,
             cancelAtPeriodEnd: true,
             periodEnd: true,
+            couponFull: true,
           },
         });
         if (
@@ -641,15 +648,16 @@ export class BillingCronService {
         // MRR delta (base + active add-ons − discount) so the append-only ledger nets down with
         // churn instead of over-counting the tenant's last plan forever. Booked only for a row in
         // the shared paying set (isPayingRow) — any other class was never counted, so Δ0.
+        // N4: only BILLABLE add-ons were ever in the run-rate (a comp is a platform grant, never booked).
         const addons = await tx.tenantAddon.findMany({
-          where: { tenantId: s.tenantId, active: true },
+          where: billableAddonWhere({ tenantId: s.tenantId, active: true }),
           select: { priceSnapshot: true, quantity: true },
         });
         const addonMrr = addons.reduce(
           (sum, a) => sum + (a.priceSnapshot != null ? Number(a.priceSnapshot) : 0) * a.quantity,
           0,
         );
-        const contribution = isPayingRow(tenant, sub.planKey ?? null)
+        const contribution = isPayingRow(tenant, sub.planKey ?? null, sub.couponFull)
           ? roundMoney(
               (sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0) +
                 addonMrr -
@@ -735,16 +743,19 @@ export class BillingCronService {
     });
     for (const s of subs) {
       const start = s.periodEnd as Date;
-      // B863 / SA-277: an external (prepaid) row rolls by its OWN prior length (start := old end, end := start + prior
-      // length); Stripe/catalog rows keep addCycle's calendar clamping (B329 note above).
-      const priorMs = s.periodStart ? start.getTime() - s.periodStart.getTime() : 0;
-      const periodEnd =
-        s.externalPayment && priorMs > 0
-          ? new Date(start.getTime() + priorMs)
-          : addCycle(start, s.cycle);
+      // SA-744r2: an external (manual-pay) row rolls onto the owner's CALENDAR - the same helper the RF
+      // invoice issuer uses for "the next window" (L-167), so the two always agree - and BOTH ends are
+      // written (the snapped start, never the raw old end). Stripe/catalog rows keep addCycle's calendar
+      // clamping (B329 note above).
+      let next: { periodStart: Date; periodEnd: Date };
+      if (s.externalPayment) {
+        next = nextBillingWindow(start, effectiveCycle(s.cycle, s.periodStart, start));
+      } else {
+        next = { periodStart: start, periodEnd: addCycle(start, s.cycle) };
+      }
       await this.prisma.tenantSubscription.update({
         where: { tenantId: s.tenantId },
-        data: { periodStart: start, periodEnd },
+        data: { periodStart: next.periodStart, periodEnd: next.periodEnd },
       });
     }
     if (subs.length) this.logger.log(`Rolled ${subs.length} billing cycles`);

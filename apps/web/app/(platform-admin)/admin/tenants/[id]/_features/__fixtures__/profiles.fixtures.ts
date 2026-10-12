@@ -58,6 +58,7 @@ export function shippingPreviewWithBilling(
       effect: "DENY" as const,
       action: "skip" as const,
     })),
+    comps: [],
     modes: [{ key: "fulfilment_model", from: "delivery", to: "ship" }],
     billing: [
       { featureKey: "driver_payments", action: "disable", manual: false },
@@ -85,12 +86,48 @@ export function shippingPreviewWithBilling(
 export function matchingPreview(profile: BusinessProfileKey): BusinessProfilePreviewResponse {
   return {
     profile,
-    plan: { overrides: [], modes: [], billing: [] },
+    plan: { overrides: [], comps: [], modes: [], billing: [] },
     summary: [],
     changes: [],
     planFingerprint: "b".repeat(64),
     before: EFFECTIVE_FIXTURE,
     after: EFFECTIVE_FIXTURE,
     changed: [],
+  };
+}
+
+/**
+ * SA-769: a `delivery_distributor` preview for a tenant that holds nothing - every fleet module becomes a COMP row
+ * ("Included free with this profile"), so nothing is billed and no GRANT override is written.
+ */
+export function deliveryPreviewWithComps(
+  extra: Partial<BusinessProfilePreviewResponse> = {},
+): BusinessProfilePreviewResponse {
+  const plan: BusinessProfilePlan = {
+    overrides: FLEET.map((featureKey) => ({
+      featureKey,
+      effect: "GRANT" as const,
+      action: "skip" as const,
+    })),
+    comps: FLEET.map((featureKey) => ({ featureKey })),
+    modes: [{ key: "fulfilment_model", from: "unset", to: "delivery" }],
+    billing: [],
+  };
+  return {
+    profile: "delivery_distributor" as BusinessProfileKey,
+    plan,
+    summary: [
+      "Turn on Recurring routes: included free with this profile, no charge added",
+      "Turn on Ad hoc order delivery: included free with this profile, no charge added",
+      "Turn on At-door payment collection: included free with this profile, no charge added",
+      "Where orders go: Not configured (today's behavior) → Own delivery",
+    ],
+    // the comp lines are NOT in changes: the modal renders them from plan.comps
+    changes: ["Where orders go: Not configured (today's behavior) → Own delivery"],
+    planFingerprint: "c".repeat(64),
+    before: EFFECTIVE_FIXTURE,
+    after: EFFECTIVE_FIXTURE,
+    changed: FLEET,
+    ...extra,
   };
 }

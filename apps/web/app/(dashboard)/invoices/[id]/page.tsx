@@ -102,6 +102,7 @@ import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
+import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -250,9 +251,13 @@ function WhatsNextBanner({
             <strong>Invoice has been sent.</strong> Record payment as soon as you receive it.
           </p>
         </div>
-        <Button size="sm" onClick={onRecordPayment} leftIcon={<CreditCard className="h-4 w-4" />}>
+        <WriteButton
+          size="sm"
+          onClick={onRecordPayment}
+          leftIcon={<CreditCard className="h-4 w-4" />}
+        >
           Record Payment
-        </Button>
+        </WriteButton>
       </div>
     );
   }
@@ -266,9 +271,13 @@ function WhatsNextBanner({
             <strong>Partial payment received.</strong> Follow up for the remaining balance.
           </p>
         </div>
-        <Button size="sm" onClick={onRecordPayment} leftIcon={<CreditCard className="h-4 w-4" />}>
+        <WriteButton
+          size="sm"
+          onClick={onRecordPayment}
+          leftIcon={<CreditCard className="h-4 w-4" />}
+        >
           Record Payment
-        </Button>
+        </WriteButton>
       </div>
     );
   }
@@ -282,7 +291,7 @@ function WhatsNextBanner({
             <strong>This invoice is overdue.</strong> Contact your customer for payment.
           </p>
         </div>
-        <Button
+        <WriteButton
           size="sm"
           variant="secondary"
           onClick={onRecordPayment}
@@ -290,7 +299,7 @@ function WhatsNextBanner({
           className="border-orange-300 text-orange-700 hover:bg-orange-100"
         >
           Record Payment
-        </Button>
+        </WriteButton>
       </div>
     );
   }
@@ -1380,6 +1389,7 @@ function DropdownMenu({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function InvoiceDetailPage() {
+  const readOnlyGate = useReadOnlyGate();
   const params = useParams();
   const id = params.id as string;
   const router = useRouter();
@@ -2148,7 +2158,22 @@ export default function InvoiceDetailPage() {
           )}
 
           {/* Record Payment dropdown */}
-          {canRecordPayment && (
+          {canRecordPayment && readOnlyGate.readOnly && (
+            <div>
+              <button
+                type="button"
+                disabled
+                aria-describedby={readOnlyGate.hintId}
+                data-testid="record-payment-trigger"
+                className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card opacity-50"
+              >
+                <CreditCard className="h-3.5 w-3.5" />
+                Record Payment
+              </button>
+              <ReadOnlyHint />
+            </div>
+          )}
+          {canRecordPayment && !readOnlyGate.readOnly && (
             <DropdownMenu
               trigger={
                 <button
@@ -2161,14 +2186,29 @@ export default function InvoiceDetailPage() {
                 </button>
               }
               items={[
-                { label: "Record Payment", onClick: () => setIsPaymentOpen(true) },
+                {
+                  label: "Record Payment",
+                  onClick: () => setIsPaymentOpen(true),
+                  disabled: readOnlyGate.readOnly,
+                },
                 // B13: web had no way to apply a customer's advance-payment wallet balance —
                 // only mobile could. Same gate as Record Payment; the server also refuses a
                 // settled/dead/forgiven invoice (CREDIT_NOT_APPLICABLE) regardless.
                 ...(invoice.customerId
-                  ? [{ label: "Apply Advance", onClick: () => setIsAdvanceOpen(true) }]
+                  ? [
+                      {
+                        label: "Apply Advance",
+                        onClick: () => setIsAdvanceOpen(true),
+                        disabled: readOnlyGate.readOnly,
+                      },
+                    ]
                   : []),
-                { label: "Write Off", onClick: () => setIsWriteOffOpen(true), danger: true },
+                {
+                  label: "Write Off",
+                  onClick: () => setIsWriteOffOpen(true),
+                  danger: true,
+                  disabled: readOnlyGate.readOnly,
+                },
               ]}
             />
           )}
@@ -2660,6 +2700,7 @@ export default function InvoiceDetailPage() {
                                   label: "Mark deposited",
                                   onClick: () => handleSetCheckStatus(pmt.id, "DEPOSITED"),
                                   disabled:
+                                    readOnlyGate.readOnly ||
                                     !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
                                       "DEPOSITED",
                                     ),
@@ -2668,6 +2709,7 @@ export default function InvoiceDetailPage() {
                                   label: "Mark cleared",
                                   onClick: () => handleSetCheckStatus(pmt.id, "CLEARED"),
                                   disabled:
+                                    readOnlyGate.readOnly ||
                                     !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
                                       "CLEARED",
                                     ),
@@ -2677,6 +2719,7 @@ export default function InvoiceDetailPage() {
                                   onClick: () => setBouncingPayment(pmt),
                                   danger: true,
                                   disabled:
+                                    readOnlyGate.readOnly ||
                                     !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
                                       "BOUNCED",
                                     ),
@@ -2693,7 +2736,7 @@ export default function InvoiceDetailPage() {
             )}
             {canRecordPayment && (
               <div className="mt-4">
-                <Button
+                <WriteButton
                   variant="secondary"
                   size="sm"
                   className="w-full"
@@ -2701,7 +2744,8 @@ export default function InvoiceDetailPage() {
                   onClick={() => setIsPaymentOpen(true)}
                 >
                   Record Payment
-                </Button>
+                </WriteButton>
+                <ReadOnlyHint />
               </div>
             )}
           </Card>

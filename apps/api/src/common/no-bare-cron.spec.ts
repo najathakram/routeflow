@@ -29,6 +29,11 @@ const EXPECTED_NAMES = [
   "billing-invoice.remind",
   "billing.suspendOverdueTenants",
   "billing.reconcileParkedCheckouts",
+  "billing.catchupSweep",
+  "billing.dunningSweep",
+  "billing.dunningDiscovery",
+  "billing.pauseReconcile",
+  "billing.pauseReconcileFirst",
   "order-templates.generateDailyOrders",
   "orders.cronSweepPendingOrders",
   "recurring-invoices.generateDueRecurringInvoices",
@@ -124,7 +129,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("has exactly 30 `@LeaderCron(` sites, every one of them well-formed", () => {
+  it("has exactly 35 `@LeaderCron(` sites, every one of them well-formed", () => {
     const declared = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON), 0);
     const wellFormed = sources.reduce((n, s) => n + countMatches(s.text, LEADER_CRON_SITE), 0);
 
@@ -141,7 +146,10 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     // B1158 added billing.reconcileParkedCheckouts (parked ACH/SEPA checkouts), 27 -> 28.
     // R1 option B added billing-cron.pushUpcomingDowngradePrices (the pre-renewal downgrade price push), 28 -> 29.
     // SA-748 added counter.parkSweep (hourly parked-cart cleanup), 29 -> 30.
-    expect(declared).toBe(30);
+    // SA-733r3 N2 added billing.catchupSweep (the October catch-up claim sweep), 30 -> 31.
+    // SA-733r7 PR-B3 added billing.dunningSweep, billing.pauseReconcile, billing.pauseReconcileFirst and the daily
+    // billing.dunningDiscovery (SA-733r M2), 31 -> 35.
+    expect(declared).toBe(35);
     // A site that does not match the full `(expr, "name")` shape would be invisible to the name
     // assertions below, so pin the two counts together.
     expect(wellFormed).toBe(declared);
@@ -175,7 +183,7 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     });
   });
 
-  it("registers the 30 expected job names, all unique", () => {
+  it("registers the 35 expected job names, all unique", () => {
     const names: string[] = [];
     for (const s of sources) {
       const re = new RegExp(LEADER_CRON_SITE.source, "g");
