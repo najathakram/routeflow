@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { OP_KEYS, BUYER_KEYS } from "@/lib/auth-keys";
 import { setOpPresenceCookie, setBuyerPresenceCookie } from "@/lib/presence-cookies";
+import { buyerLandingDestination } from "@/lib/google-callback-destination";
 
 // ─── Error messages shown to the user ────────────────────────────────────────
 
@@ -23,9 +24,6 @@ const ERROR_MESSAGES: Record<string, string> = {
     "This Google account is already linked to a different user. Sign in with that account or use a different Google account.",
   google_account_mismatch:
     "This Google account doesn't match the one already linked to this email. Sign in with your linked Google account or your password.",
-  // The invite on this sign-in belongs to a seller that is not taking online orders right now (fixed copy, no reason).
-  seller_unavailable:
-    "This seller isn't taking online orders right now. Please check back soon or contact them.",
   oauth_cancelled: "Sign-in was cancelled. Please try again.",
   unknown_error: "An unexpected error occurred. Please try again.",
 };
@@ -104,6 +102,7 @@ function GoogleCallbackInner() {
         tenantSlug: params.get("tenantSlug") ?? "",
         sellerCount: params.get("sellerCount") ?? "",
         linked: params.get("linked") ?? "",
+        invite: params.get("invite") ?? "",
       };
     }
 
@@ -117,8 +116,9 @@ function GoogleCallbackInner() {
       const role = bundle.role || null; // OPERATOR, DRIVER, CUSTOMER, TENANT_ADMIN
       const tenantSlug = bundle.tenantSlug || null;
       const linked = bundle.linked || null;
+      const invite = bundle.invite || null; // "seller_unavailable": signed in, the invite's seller is not taking it
 
-      handleTokens(accessToken, refreshToken, type, role, tenantSlug, linked);
+      handleTokens(accessToken, refreshToken, type, role, tenantSlug, linked, invite);
     });
 
     function handleTokens(
@@ -128,6 +128,7 @@ function GoogleCallbackInner() {
       role: string | null,
       tenantSlug: string | null,
       linked: string | null,
+      invite: string | null,
     ) {
       if (type === "BUYER") {
         // Store buyer tokens under the namespaced keys that `BuyerAuthProvider`
@@ -149,7 +150,7 @@ function GoogleCallbackInner() {
         // guard would bounce the user back to login on the first attempt and they'd
         // have to click "Sign in with Google" twice. A hard load remounts the
         // providers so the new session is picked up immediately.
-        const destination = linked === "true" ? "/buyer/portal?linked=true" : "/buyer/portal";
+        const destination = buyerLandingDestination(linked, invite);
         window.location.replace(destination);
       } else {
         // Store staff tokens under both the namespaced keys (read by
@@ -256,7 +257,6 @@ function GoogleCallbackInner() {
           </a>
         ) : errorCode === "unauthorized" ||
           errorCode === "tenant_suspended" ||
-          errorCode === "seller_unavailable" ||
           errorCode === "google_account_mismatch" ? (
           <a
             href="/login"
