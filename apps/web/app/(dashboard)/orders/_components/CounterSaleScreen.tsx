@@ -41,6 +41,7 @@ import {
 import { displayProductName } from "@/lib/product-display";
 import {
   COUNTER_LOOKUP_FAILED_COPY,
+  COUNTER_OFFLINE_COPY,
   COUNTER_DISCARD_COPY,
   COUNTER_OUTCOME_UNKNOWN_COPY,
   COUNTER_SALES_DISABLED_COPY,
@@ -56,6 +57,7 @@ import {
   isCounterSaleIncomplete,
   isCounterSaleNotFound,
   isDefinitiveCounterSaleRefusal,
+  isNotSentOffline,
   newIdempotencyKey,
   paymentMethodOptions,
   preselectFulfilment,
@@ -150,6 +152,9 @@ export function CounterSaleScreen() {
   const [outcomeUnknown, setOutcomeUnknown] = React.useState(false);
   const [heldCorrupt, setHeldCorrupt] = React.useState(false); // a stored attempt was unreadable: locked, only "recent sales" or discard
   const [lookupFailed, setLookupFailed] = React.useState(false); // "Check sale status" itself failed (not a 404 answer)
+  // CQ-29: the key of a sale that got no answer for want of a connection. The form is usable again, and the next Complete reuses
+  // it: the server answers an identical retry with the same sale, and a changed cart with a key mismatch (never a second sale).
+  const offlineKeyRef = React.useRef<string | null>(null);
   const submittingRef = React.useRef(false);
   const customerFindRef = React.useRef<HTMLInputElement>(null);
   // B1210: "Ship this order instead" is an intent that completes on its own once the cart can be handed over (a customer is
@@ -603,6 +608,7 @@ export function CounterSaleScreen() {
     setReceipt(null);
     setEnteredTender(null);
     attemptRef.current = null;
+    offlineKeyRef.current = null;
     clearHeldAttempt(heldKey);
     liveCart.endSend();
     setOutcomeUnknown(false);
@@ -636,11 +642,14 @@ export function CounterSaleScreen() {
     unknown: boolean;
   }): Promise<CounterSaleResponse | null> => {
     setLookupFailed(false);
+    // CQ-29: read BEFORE the request leaves: a browser already offline cannot have delivered it.
+    const offlineAtSend = typeof navigator !== "undefined" && navigator.onLine === false;
     setSending(true); // from here to the answer the cart is frozen (a validation refusal never reaches this point)
     liveCart.beginSend(); // the stored cart goes NOW, before the POST can leave: a refresh mid-send must not bring it back
     try {
       const res = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
       attemptRef.current = null;
+      offlineKeyRef.current = null;
       clearHeldAttempt(heldKey);
       setOutcomeUnknown(false);
       return res;
@@ -652,6 +661,14 @@ export function CounterSaleScreen() {
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
         setError(finalCopy);
+        liveCart.endSend();
+      } else if (!attempt.unknown && isNotSentOffline(err, offlineAtSend)) {
+        // CQ-29: offline, so nothing was sent. Say so, unfreeze the form, and keep the key for the retry.
+        offlineKeyRef.current = attempt.key;
+        attemptRef.current = null;
+        clearHeldAttempt(heldKey);
+        setOutcomeUnknown(false);
+        setError(COUNTER_OFFLINE_COPY);
         liveCart.endSend();
       } else if (!attempt.unknown && isDefinitiveCounterSaleRefusal(err)) {
         attemptRef.current = null;
@@ -719,7 +736,12 @@ export function CounterSaleScreen() {
       },
     };
     dropUndo(); // the sale is going out: a removed line can no longer come back
-    attemptRef.current = { key: newIdempotencyKey(), dto, next, unknown: false };
+    attemptRef.current = {
+      key: offlineKeyRef.current ?? newIdempotencyKey(),
+      dto,
+      next,
+      unknown: false,
+    };
     estimateRef.current = {
       total: totals.total,
       change: method === "CASH" ? changeDue(totals.total, tenderAmount) : 0,

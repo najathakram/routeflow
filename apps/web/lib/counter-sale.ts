@@ -231,6 +231,20 @@ export const COUNTER_LOOKUP_FAILED_COPY = "Couldn't check the sale. Try again.";
 export const COUNTER_OUTCOME_UNKNOWN_COPY =
   "We couldn't confirm the sale. Check recent sales before trying again.";
 
+/** CQ-29: offline at Complete. Shown in the checkout bar; the form stays usable and the sale can be sent again. */
+export const COUNTER_OFFLINE_COPY =
+  "No connection. Nothing was charged yet. Check your connection and try again.";
+
+/**
+ * CQ-29: the request got no answer AND the browser already reported itself offline when it was sent. Only that combination
+ * proves nothing reached the server, so only it may say "nothing was charged". Any other no-answer failure (a drop in flight, a
+ * timeout, a 5xx) stays an UNKNOWN outcome. The sale keeps its Idempotency-Key for the retry either way.
+ */
+export function isNotSentOffline(err: unknown, offlineAtSend: boolean): boolean {
+  const e = err as { response?: unknown } | null | undefined;
+  return offlineAtSend && !!e && !e.response;
+}
+
 const DEFINITIVE_REFUSALS = new Set([400, 401, 403, 404, 409, 422, 429]);
 
 /** 409 codes that mean the order EXISTS (the key was already used): an unknown outcome, never a refusal. */
