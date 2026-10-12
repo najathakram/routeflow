@@ -26,8 +26,9 @@
 //
 // POST /settings/restrictions/unknown-state-customers/bulk-state/undo   (TENANT_ADMIN, OPERATOR)
 //   body BulkStateUndoRequest → 200 BulkStateUndoResponse. Restores the prior state of each
-//   address and removes only the addresses that same bulk action created. Honoured within
-//   BULK_STATE_UNDO_WINDOW_MINUTES of the bulk write; idempotent (a second call restores 0).
+//   address and removes only the addresses that same bulk action created. 409 when the 10-minute
+//   window (BULK_STATE_UNDO_WINDOW_MINUTES) has passed, 404 for ids it does not know, and
+//   { restored: 0 } for an idempotent repeat.
 //
 // PATCH /customers/:id/addresses/:addressId/state   (TENANT_ADMIN, OPERATOR)
 //   body AddressStateRequest → 200 AddressStateResponse. Sets the state on one existing address.
@@ -115,7 +116,7 @@ export interface BulkStateUndoRequest {
 }
 
 export interface BulkStateUndoResponse {
-  /** Addresses restored or removed; 0 on a repeat call or after the undo window. */
+  /** Addresses restored or removed; 0 on an idempotent repeat (409 after the 10-minute window, 404 for unknown ids). */
   restored: number;
 }
 

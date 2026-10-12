@@ -456,6 +456,42 @@ describe("POST .../bulk-state/undo", () => {
     expect(s.store.addresses.some((a) => a.id === noAddr.changedAddressIds[0])).toBe(true);
   });
 
+  it("a retried undo of an EARLIER action never reverts a later action that shares an id", async () => {
+    const s = setup();
+    s.syncNow();
+    s.cust("u1");
+    s.cust("u2");
+    const a = s.addr("u1", { state: "Unknown", stateNeedsReview: true, zip: "75201" });
+    const b = s.addr("u2", { state: "Unknown", stateNeedsReview: true, zip: "75201" });
+    const bulk1 = await s.service.bulkSet(
+      { bucket: "unusableState", customerIds: ["u1", "u2"], state: "TX" },
+      user,
+    );
+    expect(bulk1.changedAddressIds).toEqual([a.id, b.id]);
+    expect(await s.service.undo({ changedAddressIds: bulk1.changedAddressIds }, user)).toEqual({
+      restored: 2,
+    });
+    // bulk2 sets A again (it is back in the bucket after the undo)
+    const bulk2 = await s.service.bulkSet(
+      { bucket: "unusableState", customerIds: ["u1"], state: "OK" },
+      user,
+    );
+    expect(bulk2.changedAddressIds).toEqual([a.id]);
+    const audits = s.store.audits.length;
+    // a client retry of bulk1's undo: matches bulk1 (it names ALL the ids), not bulk2
+    expect(await s.service.undo({ changedAddressIds: bulk1.changedAddressIds }, user)).toEqual({
+      restored: 0,
+    });
+    expect(a).toMatchObject({ stateCode: "OK", stateNeedsReview: false });
+    expect(b).toMatchObject({ state: "Unknown", stateCode: null, stateNeedsReview: true });
+    expect(s.store.audits).toHaveLength(audits);
+    // bulk2's own undo still works
+    expect(await s.service.undo({ changedAddressIds: bulk2.changedAddressIds }, user)).toEqual({
+      restored: 1,
+    });
+    expect(a).toMatchObject({ state: "Unknown", stateCode: null, stateNeedsReview: true });
+  });
+
   it("409 after the undo window, with nothing changed", async () => {
     const { s, updated, unusable } = await bulkThenUndoSetup();
     s.advanceMinutes(11);

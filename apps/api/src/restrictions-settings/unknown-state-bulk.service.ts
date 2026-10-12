@@ -206,6 +206,7 @@ export class UnknownStateBulkService {
    * POST .../bulk-state/undo: within BULK_STATE_UNDO_WINDOW_MIN of the bulk write that produced these
    * address ids, restores each updated address's prior state columns and removes each address that
    * same action created — each only while untouched since (an address edited meanwhile is left alone).
+   * The origin is the newest bulk action that recorded ALL the ids (else the newest naming any).
    * Idempotent: a repeat restores 0 and answers `{ restored: 0 }`. 404 when no bulk action of this
    * tenant names the ids; 409 (nothing changed) once the window has passed.
    */
@@ -226,9 +227,16 @@ export class UnknownStateBulkService {
         take: UNDO_SEARCH_ROWS,
         select: { id: true, createdAt: true, meta: true },
       });
-      const origin = recent.find((r) =>
-        bulkStateEntries(r.meta).some((e) => wanted.has(e.addressId)),
-      );
+      // The action these ids came from: the newest one that recorded ALL of them, so a retried undo
+      // of an earlier action never lands on a later action that shares an id (that would revert it).
+      // Only when no single action recorded them all, the newest one naming any of them.
+      const named = (r: (typeof recent)[number]) =>
+        new Set(bulkStateEntries(r.meta).map((e) => e.addressId));
+      const origin =
+        recent.find((r) => {
+          const has = named(r);
+          return ids.every((id) => has.has(id));
+        }) ?? recent.find((r) => ids.some((id) => named(r).has(id)));
       if (!origin) throw new NotFoundException("There is no change to undo for these addresses.");
       if (now - origin.createdAt.getTime() > BULK_STATE_UNDO_WINDOW_MIN * 60_000) {
         throw new ConflictException(
