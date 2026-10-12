@@ -96,6 +96,7 @@ import { ConflictException, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { Pool, type PoolClient } from "pg";
 import { API_ERROR_CODES } from "./api-error-codes";
+import { STOCK_LOCK_TIMEOUT } from "./product-locks";
 
 export type LockMode = "wait" | "try";
 /**
@@ -575,7 +576,7 @@ export async function withAdvisoryLocks<T>(
  * (blocking `pg_advisory_xact_lock`; released by Postgres when `tx` ends). For a check-then-insert that
  * must serialise concurrent adders - SA-767 r-note 5 SA-3: two sessions adding the same product take
  * `stock-count-product:<tenantId>:<productId>` one after the other, and the second one sees the first
- * one's committed line. The key pair is derived like {@link withAdvisoryLock}'s (`hashtext` x 2). A caller
+ * one's committed line. The wait is bounded (lock_timeout, below). The key pair is derived like {@link withAdvisoryLock}'s (`hashtext` x 2). A caller
  * that needs several keys takes them in SORTED order, so two such callers can never deadlock.
  */
 export async function advisoryXactLock(
@@ -589,6 +590,10 @@ export async function advisoryXactLock(
   if (!(LOCK_FAMILIES as readonly string[]).includes(family)) {
     throw new TypeError(`advisoryXactLock: unknown lock family "${family}"`);
   }
+  // The wait is bounded like every other stock lock (common/product-locks.ts): a tx with no lock_timeout
+  // yet gets the stock default (SET LOCAL, so the pooled connection never carries it out), and a stuck
+  // holder surfaces as 55P03 - which retryStockTx and the lock filter map - instead of a hung backend.
+  await tx.$executeRaw`SELECT set_config('lock_timeout', ${STOCK_LOCK_TIMEOUT}, true) WHERE current_setting('lock_timeout') = '0'`;
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${family}), hashtext(${key}))`;
 }
 

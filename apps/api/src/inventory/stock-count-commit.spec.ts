@@ -1,6 +1,6 @@
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { LOCK_FAMILIES, tryAdvisoryXactLockShared } from "../common/db-locks";
+import { advisoryXactLock, LOCK_FAMILIES, tryAdvisoryXactLockShared } from "../common/db-locks";
 import {
   absoluteCountChanged,
   COUNT_COMMIT_BATCH,
@@ -190,5 +190,32 @@ describe("absoluteCountChanged (SA-767 r-note 4 A, MF1)", () => {
         { countedQty: q, boxes: 3, pieces: 0 },
       ),
     ).toBe(false);
+  });
+});
+
+describe("advisoryXactLock (SA-767 r-note 5 SA-3)", () => {
+  const txRecording = () => ({ $executeRaw: jest.fn().mockResolvedValue(0) });
+  const sql = (call: unknown[]) => (call[0] as TemplateStringsArray).join("?").replace(/\s+/g, " ");
+
+  it("bounds the wait first (lock_timeout where the tx has none), THEN takes the blocking lock", async () => {
+    const tx = txRecording();
+
+    await advisoryXactLock(tx, "stock-count-product", "t1:p1");
+
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+    const first = tx.$executeRaw.mock.calls[0];
+    expect(sql(first)).toContain("set_config('lock_timeout', ?, true)");
+    expect(sql(first)).toContain("WHERE current_setting('lock_timeout') = '0'");
+    expect(first[1]).toBe("5s");
+    const second = tx.$executeRaw.mock.calls[1];
+    expect(sql(second)).toContain("pg_advisory_xact_lock(hashtext(?), hashtext(?))");
+    expect(second.slice(1)).toEqual(["stock-count-product", "t1:p1"]);
+  });
+
+  it("refuses an empty key and an unknown family before any statement", async () => {
+    const tx = txRecording();
+    await expect(advisoryXactLock(tx, "stock-count-product", "")).rejects.toThrow(TypeError);
+    await expect(advisoryXactLock(tx, "nope" as never, "k")).rejects.toThrow(TypeError);
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
   });
 });

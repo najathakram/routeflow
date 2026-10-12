@@ -176,6 +176,15 @@ describe("LockConflictFilter (unit)", () => {
     ]);
   });
 
+  it("the warn log carries the path WITHOUT the query string", () => {
+    const { host } = makeHost("GET", "/api/v1/orders?token=secret&x=1");
+    filter.catch(pgCode("55P03"), host);
+    const line = String(warn.mock.calls[0][0]);
+    expect(line).toContain("GET /api/v1/orders");
+    expect(line).not.toContain("token");
+    expect(line).not.toContain("?");
+  });
+
   // "maps ONLY these": everything else is delegated to the next filter, response untouched.
   const NOT_MAPPED: Array<[string, () => unknown]> = [
     ["a plain Error", () => new Error("boom")],

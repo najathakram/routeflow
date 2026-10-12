@@ -59,7 +59,7 @@ export class LockConflictFilter implements ExceptionFilter {
     const req = ctx.getRequest<Request>();
     const res = ctx.getResponse<Response>();
     this.logger.warn(
-      `${req?.method ?? "?"} ${req?.originalUrl ?? req?.url ?? "?"}: stock lock conflict ${mapped.code}` +
+      `${this.routeOf(req)}: stock lock conflict ${mapped.code}` +
         ` -> 503 ${API_ERROR_CODES.LOCK_UNAVAILABLE}`,
     );
     this.report(exception, req, mapped.code);
@@ -90,15 +90,23 @@ export class LockConflictFilter implements ExceptionFilter {
   }
 
   /**
+   * `METHOD route` for the log and the Sentry fingerprint: the MATCHED pattern (`/orders/:id/status`) when
+   * Express has one, else the path - never the query string (it can carry tokens and splits groups).
+   */
+  private routeOf(req: Request | undefined): string {
+    const pattern = req?.route?.path
+      ? `${req.baseUrl ?? ""}${req.route.path}`
+      : String(req?.originalUrl ?? req?.url ?? "?").split("?")[0];
+    return `${req?.method ?? "?"} ${pattern}`;
+  }
+
+  /**
    * One Sentry event at warning level, grouped by route + code. The route is the MATCHED pattern
    * (`/orders/:id/status`), not the URL, so ids and queries never split a group.
    */
   private report(exception: unknown, req: Request | undefined, code: string): void {
     try {
-      const pattern = req?.route?.path
-        ? `${req.baseUrl ?? ""}${req.route.path}`
-        : String(req?.originalUrl ?? req?.url ?? "?").split("?")[0];
-      const route = `${req?.method ?? "?"} ${pattern}`;
+      const route = this.routeOf(req);
       const user = (req as { user?: { tenantSlug?: string; tenantId?: string } } | undefined)?.user;
       Sentry.withScope((scope) => {
         scope.setLevel("warning");
