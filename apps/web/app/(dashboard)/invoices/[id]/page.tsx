@@ -99,6 +99,7 @@ import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
+import { isPaidAtSale } from "@/lib/invoice-sale-terms";
 import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
@@ -1545,6 +1546,8 @@ export default function InvoiceDetailPage() {
     payments,
   );
   const status = invoice.status;
+  // CQ-26: a counter sale paid at the till has no terms or due date to show (display only; stored values untouched).
+  const showTerms = !isPaidAtSale(invoice);
 
   // Draft/Final invoice-PDF stage. Default: DRAFT while it's still the
   // pre-delivery proforma; FINAL once the order is delivered or the invoice is
@@ -2029,7 +2032,7 @@ export default function InvoiceDetailPage() {
             {invoice.customer?.businessName ?? "—"}
             {(invoice as any).orderNumber ? ` · from ${(invoice as any).orderNumber}` : ""} · issued{" "}
             {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
-            {invoice.dueDate ? ` · due ${fmtCalendarDate(invoice.dueDate)}` : ""}
+            {invoice.dueDate && showTerms ? ` · due ${fmtCalendarDate(invoice.dueDate)}` : ""}
           </p>
           {/* Row 342: where and by whom the linked order was handed over (staff reads only) */}
           {invoice.order ? (
@@ -2365,7 +2368,7 @@ export default function InvoiceDetailPage() {
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
                   {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
                 </p>
-                {invoice.dueDate && (
+                {invoice.dueDate && showTerms && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Due Date:</span>{" "}
                     <span className={cn(status === "OVERDUE" && "font-medium text-danger")}>
@@ -2375,7 +2378,7 @@ export default function InvoiceDetailPage() {
                 )}
                 {/* Structured "Net 30"-style label — distinct from the long-form
                     Terms & Conditions text below, which keeps its own line. */}
-                {invoice.paymentTermsLabel && (
+                {invoice.paymentTermsLabel && showTerms && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Terms:</span>{" "}
                     {invoice.paymentTermsLabel}
