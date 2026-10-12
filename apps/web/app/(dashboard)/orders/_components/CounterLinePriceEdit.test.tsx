@@ -58,6 +58,17 @@ describe("CounterLinePriceEdit: hidden without the flag", () => {
     expect(screen.getByRole("button", { name: "Edit price for Cola" })).toBeEnabled();
   });
 
+  // CQ-32: a 44 px target through the tablet width (768), compact only from a desktop (lg) up.
+  it("Edit price and Reset price stay 44 px targets until a desktop width", () => {
+    mount({ edited: true });
+    for (const name of ["Edit price for Cola", "Reset price"]) {
+      const btn = screen.getByRole("button", { name });
+      expect(btn).toHaveClass("min-h-[44px]");
+      expect(btn).toHaveClass("lg:min-h-0");
+      expect(btn.className).not.toMatch(/(^|\s)(sm|md):min-h-0/);
+    }
+  });
+
   it("locked disables the control (an unknown-outcome sale)", () => {
     mount({ locked: true, edited: true });
     expect(screen.getByRole("button", { name: "Edit price for Cola" })).toBeDisabled();

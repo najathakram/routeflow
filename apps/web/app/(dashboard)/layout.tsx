@@ -569,7 +569,7 @@ function HeaderTools({
       {/* Command palette trigger — Ledger search pill */}
       <button
         onClick={onOpenPalette}
-        className="hidden h-[34px] w-[280px] items-center gap-2.5 rounded-full border border-line-strong bg-surface-raised px-3 text-[13px] text-ink-400 transition-colors hover:border-brand-300 hover:text-ink-500 md:flex"
+        className="hidden h-11 w-[280px] items-center gap-2.5 rounded-full border border-line-strong bg-surface-raised px-3 text-[13px] text-ink-400 transition-colors hover:border-brand-300 hover:text-ink-500 md:flex lg:h-[34px]"
         aria-label="Open command palette"
       >
         <Search className="h-[15px] w-[15px]" />

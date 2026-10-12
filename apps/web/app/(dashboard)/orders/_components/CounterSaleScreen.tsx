@@ -1274,7 +1274,7 @@ export function CounterSaleScreen() {
           <label className="flex min-h-[44px] items-center gap-2 text-sm">
             <input
               type="checkbox"
-              className="h-5 w-5"
+              className="h-5 w-5 max-lg:h-11 max-lg:w-11"
               checked={autoPrint}
               onChange={(e) => toggleAutoPrint(e.target.checked)}
             />
