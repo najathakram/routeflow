@@ -70,6 +70,11 @@ describe("signedBalance — owner ruling 2026-10-11: the Receivable Summary's un
     expect(Object.is(got, -0)).toBe(false);
   });
 
+  it("a sub-cent negative residue is +0, never -0 (0.3 - 0.30000000000000004 = -5.5e-17)", () => {
+    const got = signedBalance(0.3, [pay(0.1), pay(0.2)]);
+    expect(Object.is(got, 0)).toBe(true);
+  });
+
   it("agrees with confirmedBalance wherever the balance is not negative", () => {
     for (const p of [[], [pay(40)], [pay(100)], [pay(99.99)]]) {
       expect(signedBalance(100, p)).toBe(confirmedBalance(100, p));

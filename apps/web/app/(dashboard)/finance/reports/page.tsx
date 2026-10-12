@@ -1266,7 +1266,7 @@ function ReceivableSummaryReport({ from, to }: { from?: string; to?: string }) {
         <tfoot>
           <tr className="border-t-2 border-navy bg-surface-raised">
             <td colSpan={5} className="px-4 py-2.5 font-semibold text-navy">
-              Total
+              Total (overpayments not netted)
             </td>
             <td className="px-4 py-2.5 text-right font-bold text-navy">
               {fmt(rows.reduce((s, r) => s + r.total, 0))}
