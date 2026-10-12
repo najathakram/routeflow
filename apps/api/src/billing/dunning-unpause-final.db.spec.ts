@@ -319,21 +319,27 @@ describeDb("row 412: a pre-pause final is stale after an unpause (real Postgres)
     expect((await tenantRow(d.t)).status).toBe("READ_ONLY");
   });
 
-  it("a legacy bare 'false' (no `at`): the row's write time is the boundary, so the old final is stale (re-sent)", async () => {
-    await setSwitch("unpaused", at(0), true); // the row is written NOW (real clock, far before 2099)
-    const d = await tenantWithRealFinal("legacy", TenantClass.PRODUCTION);
-    const boundary = await sw.unpausedSince();
-    expect(boundary).toBeInstanceOf(Date);
-    await sweepAt(270);
-    // 2099 sentAt values are all after a real-clock boundary, so the old final is honoured here: nothing re-sent.
-    expect(await finals(d.t)).toHaveLength(1);
-    // while a boundary AFTER the old final (the same legacy shape written later) makes it stale
+  it("a legacy bare 'false' (no at): the row's write time is the boundary - a final sent before it is re-sent", async () => {
+    await setSwitch("unpaused", at(0), true);
+    // the legacy row was last written AFTER the old final (+150 h) but before the sweep
     await prisma.platformConfig.update({
       where: { key: AUTO_LOCKS_PAUSED_KEY },
-      data: { value: "false", updatedAt: at(200) },
+      data: { updatedAt: at(200) },
     });
     sw.invalidate();
+    expect((await sw.unpausedSince())?.getTime()).toBe(at(200).getTime());
+    const d = await tenantWithRealFinal("legacy", TenantClass.PRODUCTION);
     await sweepAt(272);
-    expect(await finals(d.t)).toHaveLength(2);
+    const f = await finals(d.t);
+    expect(f.map((x) => x.key)).toEqual([d.ep, `${d.ep}:u${at(200).toISOString()}`]);
+    expect((await tenantRow(d.t)).status).toBe("ACTIVE");
+  });
+
+  it("a legacy bare 'false' written BEFORE the final: the final is honoured (no resend), the normal lock follows", async () => {
+    await setSwitch("unpaused", at(0), true); // written now (real clock, long before the 2099 final)
+    const d = await tenantWithRealFinal("legacy2", TenantClass.PRODUCTION);
+    await sweepAt(272);
+    expect(await finals(d.t)).toHaveLength(1);
+    expect((await tenantRow(d.t)).status).toBe("READ_ONLY");
   });
 });

@@ -8,6 +8,27 @@ export interface AutoLockSwitchState {
   since: Date | null;
   reason: string | null;
   by: string | null;
+  /**
+   * Row 412: the instant of the last flip to UNPAUSED; null while paused. The stored `at` when the value has a
+   * valid one; otherwise (a legacy bare `false`, JSON without `at`) the row's write time `since` - an
+   * upper bound of the real flip, so every notice sent before it is treated as stale: the safe direction
+   * (the tenant is told again, never locked unwarned).
+   */
+  unpausedAt: Date | null;
+}
+
+/** The `at` ISO instant inside a JSON switch value, or null (absent, malformed, bare text). */
+export function parseAutoLockAt(raw: string | null | undefined): Date | null {
+  if (raw == null) return null;
+  try {
+    const v: unknown = JSON.parse(raw.trim());
+    const at = v && typeof v === "object" ? (v as { at?: unknown }).at : undefined;
+    if (typeof at !== "string") return null;
+    const d = new Date(at);
+    return Number.isNaN(d.getTime()) ? null : d;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -85,11 +106,13 @@ export class AutoLockSwitchService implements AutoLockSwitch {
       `;
       const row = rows[0];
       const parsed = parseAutoLockStored(row?.value);
+      const since = row?.updatedAt ?? null;
       const state: AutoLockSwitchState = {
         paused: parsed.paused,
-        since: row?.updatedAt ?? null,
+        since,
         reason: parsed.reason,
         by: parsed.by,
+        unpausedAt: parsed.paused ? null : (parseAutoLockAt(row?.value) ?? since),
       };
       // Cache ONLY paused: an unpaused result must be re-read so a re-pause is seen at once.
       this.cached = state.paused
@@ -101,8 +124,16 @@ export class AutoLockSwitchService implements AutoLockSwitch {
         "Failed to read platform.autoLocksPaused - treating as PAUSED",
         err as Error,
       );
-      return { paused: true, since: null, reason: null, by: null };
+      return { paused: true, since: null, reason: null, by: null, unpausedAt: null };
     }
+  }
+
+  /**
+   * Row 412: the last unpause instant while the switch is UNPAUSED, null while paused (or unreadable). Uncached
+   * when unpaused, exactly like `isPaused`, so a re-pause is seen at once.
+   */
+  async unpausedSince(): Promise<Date | null> {
+    return (await this.getState()).unpausedAt;
   }
 
   /** Super admin only (the controller): writes the switch with its reason and actor, then refreshes the cache. */
