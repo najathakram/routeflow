@@ -20,37 +20,87 @@ const VERBS = new Set([
   "delete",
   "deleteMany",
 ]);
-const GATE_CALL = "sellerAcceptsBuyerWrite(";
+/** Nested forms inside another model's data (`customerLink: { connect: ... }`): the writes plus relation edits. */
+const NESTED_VERBS = new Set([...VERBS, "connect", "connectOrCreate", "set", "disconnect"]);
+const GATE_FN = "sellerAcceptsBuyerWrite";
 
-type Write = { key: string; method: string; methodText: string; callText: string };
+type Write = {
+  key: string;
+  method: string;
+  callText: string;
+  /** Start offsets (within the file) of every gate call in the enclosing method, and of this write. */
+  gatePositions: number[];
+  writePos: number;
+};
 
-/** Every `<x>.customerLink.<write>(...)` call in one source text, keyed file::method::verb#n. */
+/** Names a file binds to the customerLink delegate: `const l = db.customerLink`, `const { customerLink } = tx`. */
+function delegateAliases(sf: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  const isDelegate = (e: ts.Expression | undefined): boolean =>
+    !!e &&
+    ((ts.isPropertyAccessExpression(e) && e.name.text === "customerLink") ||
+      (ts.isNonNullExpression(e) && isDelegate(e.expression)) ||
+      (ts.isParenthesizedExpression(e) && isDelegate(e.expression)));
+  const visit = (n: ts.Node) => {
+    if (ts.isVariableDeclaration(n)) {
+      if (ts.isIdentifier(n.name) && isDelegate(n.initializer)) names.add(n.name.text);
+      if (ts.isObjectBindingPattern(n.name)) {
+        for (const el of n.name.elements) {
+          const source = (el.propertyName ?? el.name).getText(sf);
+          if (source === "customerLink" && ts.isIdentifier(el.name)) names.add(el.name.text);
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return names;
+}
+
+/** Every `<x>.customerLink.<write>(...)` call (or one on an alias of the delegate), keyed file::method::verb#n. */
 export function customerLinkWrites(source: string, file = "x.ts"): Write[] {
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const aliases = delegateAliases(sf);
   const seen = new Map<string, number>();
   const out: Write[] = [];
   const visit = (n: ts.Node) => {
     if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
       const verb = n.expression.name.text;
       const target = n.expression.expression;
-      if (
-        VERBS.has(verb) &&
-        ts.isPropertyAccessExpression(target) &&
-        target.name.text === "customerLink"
-      ) {
+      const onDelegate =
+        (ts.isPropertyAccessExpression(target) && target.name.text === "customerLink") ||
+        (ts.isIdentifier(target) && (target.text === "customerLink" || aliases.has(target.text)));
+      if (VERBS.has(verb) && onDelegate) {
         let method = "<module>";
-        let methodText = "";
+        let scope: ts.Node = sf;
         for (let c: ts.Node | undefined = n.parent; c; c = c.parent) {
           if ((ts.isMethodDeclaration(c) || ts.isFunctionDeclaration(c)) && c.name) {
             method = c.name.getText(sf);
-            methodText = c.getText(sf);
+            scope = c;
             break;
           }
         }
+        const gatePositions: number[] = [];
+        const findGates = (g: ts.Node) => {
+          if (
+            ts.isCallExpression(g) &&
+            ts.isIdentifier(g.expression) &&
+            g.expression.text === GATE_FN
+          )
+            gatePositions.push(g.getStart(sf));
+          ts.forEachChild(g, findGates);
+        };
+        findGates(scope);
         const base = `${file}::${method}::${verb}`;
         const i = seen.get(base) ?? 0;
         seen.set(base, i + 1);
-        out.push({ key: `${base}#${i}`, method, methodText, callText: n.getText(sf) });
+        out.push({
+          key: `${base}#${i}`,
+          method,
+          callText: n.getText(sf),
+          gatePositions,
+          writePos: n.getStart(sf),
+        });
       }
     }
     ts.forEachChild(n, visit);
@@ -68,7 +118,7 @@ export function nestedCustomerLinkWrites(source: string, file = "x.ts"): string[
       ts.isPropertyAssignment(n) &&
       ["customerLink", "customerLinks"].includes(n.name.getText(sf)) &&
       ts.isObjectLiteralExpression(n.initializer) &&
-      n.initializer.properties.some((p) => p.name && VERBS.has(p.name.getText(sf)))
+      n.initializer.properties.some((p) => p.name && NESTED_VERBS.has(p.name.getText(sf)))
     )
       out.push(`${file}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}`);
     ts.forEachChild(n, visit);
@@ -78,11 +128,17 @@ export function nestedCustomerLinkWrites(source: string, file = "x.ts"): string[
 }
 
 /** What is wrong with one classified write, or null. */
-export function writeProblem(row: Row, w: Pick<Write, "methodText">): string | null {
-  if (row.kind === "GATED")
-    return w.methodText.includes(GATE_CALL)
+export function writeProblem(
+  row: Row,
+  w: Pick<Write, "gatePositions" | "writePos">,
+): string | null {
+  if (row.kind === "GATED") {
+    if (w.gatePositions.length === 0)
+      return "is GATED but its method never calls sellerAcceptsBuyerWrite";
+    return Math.min(...w.gatePositions) < w.writePos
       ? null
-      : "is GATED but its method never calls sellerAcceptsBuyerWrite";
+      : "is GATED but the gate call comes AFTER the write";
+  }
   return row.why.trim().length > 0 ? null : "is ALLOWED without a reason";
 }
 
@@ -182,7 +238,7 @@ describe("every CustomerLink write is gated by the shared seller-status rule or 
     expect(rawSql).toEqual([]);
   });
 
-  it("every GATED write sits in a method that calls the shared function; every ALLOWED row has a reason", () => {
+  it("every GATED write sits in a method that calls the shared function BEFORE the write; every ALLOWED row has a reason", () => {
     const problems = Object.entries(TABLE).flatMap(([key, row]) => {
       const w = scanned.get(key);
       const p = w ? writeProblem(row, w) : null;
@@ -229,9 +285,31 @@ describe("every CustomerLink write is gated by the shared seller-status rule or 
       ]);
     });
 
-    it("flags a GATED row whose method never asks the shared function, and an ALLOWED row with no reason", () => {
+    it("finds a write through a delegate alias or a destructured delegate", () => {
+      const found = customerLinkWrites(
+        `class A {
+          m(tx) {
+            const links = tx.customerLink;
+            links.updateMany({});
+            const { customerLink } = tx;
+            customerLink.create({});
+            const { customerLink: cl } = this.prisma;
+            cl.delete({});
+            const other = tx.customer;
+            other.update({});
+          }
+        }`,
+      ).map((w) => w.key);
+      expect(found).toEqual(["x.ts::m::updateMany#0", "x.ts::m::create#0", "x.ts::m::delete#0"]);
+    });
+
+    it("flags a GATED row whose method never asks the shared function, one that asks AFTER the write, and an ALLOWED row with no reason", () => {
       const [bare] = customerLinkWrites(src(`this.prisma.customerLink.update({});`));
       expect(writeProblem(G, bare)).toMatch(/never calls sellerAcceptsBuyerWrite/);
+      const [late] = customerLinkWrites(
+        src(`this.prisma.customerLink.update({}); sellerAcceptsBuyerWrite({});`),
+      );
+      expect(writeProblem(G, late)).toMatch(/comes AFTER the write/);
       const [gated] = customerLinkWrites(
         src(`sellerAcceptsBuyerWrite({}); this.prisma.customerLink.update({});`),
       );
@@ -244,6 +322,9 @@ describe("every CustomerLink write is gated by the shared seller-status rule or 
         nestedCustomerLinkWrites(`db.customer.update({ data: ${data} });`);
       expect(nestedOf("{ customerLink: { create: { tenantId } } }")).toHaveLength(1);
       expect(nestedOf("{ customerLinks: { updateMany: { where, data } } }")).toHaveLength(1);
+      expect(nestedOf("{ customerLink: { connect: { id } } }")).toHaveLength(1);
+      expect(nestedOf("{ customerLink: { connectOrCreate: { where, create } } }")).toHaveLength(1);
+      expect(nestedOf("{ customerLinks: { set: [{ id }] } }")).toHaveLength(1);
       expect(nestedOf("{ customerLink: { select: { id: true } } }")).toEqual([]);
     });
   });
