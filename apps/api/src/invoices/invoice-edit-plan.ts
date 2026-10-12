@@ -384,7 +384,11 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
         unitsPerBox: unitsPerBox ?? ownPack ?? null,
         promoFreeUnits: freeUnits > 0 ? freeUnits : null,
         trackedCategoryId: lineCategoryId,
-        trackedSubcategoryId: product?.trackedSubcategoryId ?? null,
+        // Row 338: a kept row keeps the subcategory it was sold under (as it keeps its category and trio); only a
+        // new row or a product substitute (a new sale) takes the product's CURRENT subcategory.
+        trackedSubcategoryId: keepsRow
+          ? (row.trackedSubcategoryId ?? null)
+          : (product?.trackedSubcategoryId ?? null),
         categoryTaxAmount,
         ...categoryTrio,
         notes: item.notes ?? null,
