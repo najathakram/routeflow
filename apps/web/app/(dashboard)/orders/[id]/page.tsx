@@ -162,7 +162,7 @@ import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import type { UnitOption } from "@/lib/unit-options";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { markSentErrorText, orderErrorText, sendEmailErrorText } from "@/lib/order-error-text";
-import { WriteButton } from "@/lib/read-only-gate";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
 
@@ -2598,18 +2598,19 @@ export default function OrderDetailPage() {
         </div>
 
         {/* Action bar */}
+        <ReadOnlyHint className="text-xs text-slate-600" />
         <div className="flex flex-wrap items-center gap-2">
           {/* Edit Items button */}
           {canEdit && access.editItems && !isEditing && (
             <ActionTier tier="secondary">
-              <Button
+              <WriteButton
                 size="sm"
                 variant="secondary"
                 leftIcon={<Pencil className="h-4 w-4" />}
                 onClick={enterEditMode}
               >
                 {isPos ? "Edit order" : "Edit Items"}
-              </Button>
+              </WriteButton>
             </ActionTier>
           )}
 

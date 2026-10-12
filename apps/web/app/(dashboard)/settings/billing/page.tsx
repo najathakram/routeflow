@@ -458,6 +458,7 @@ export default function BillingSettingsPage() {
         <ReadOnlyBanner
           status={s.status}
           readOnlyReason={s.readOnlyReason}
+          hideAction={s.readOnlyReason !== "trial_expired"}
           overdueAmount={s.openInvoiceAmount}
           billingContactEmail={s.billingContactEmail}
           isAdmin={isAdmin}

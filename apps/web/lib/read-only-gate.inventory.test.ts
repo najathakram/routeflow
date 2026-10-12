@@ -13,7 +13,7 @@ import * as path from "path";
  */
 const WEB = path.resolve(__dirname, "..");
 const LABEL =
-  /Record Payment|Create (Order|Invoice|Estimate)|New (Order|Invoice|Estimate|sale|Product|Customer)|Add User|Void Invoice|Mark (cleared|bounced)|Apply Advance|Write Off/i;
+  /Record Payment|Create (Order|Invoice|Estimate)|New (Order|Invoice|Estimate|sale|Product|Customer)|Add User|Add customer(?! rate)|Void Invoice|Mark (cleared|bounced)|Apply Advance|Write Off/i;
 /** Elements that are controls (headings, paragraphs and spans that merely mention a label are not). */
 const CONTROL_TAGS = new Set(["Button", "button", "Link", "a", "WriteButton", "WriteLink"]);
 const GATED_TAGS = new Set(["WriteButton", "WriteLink"]);

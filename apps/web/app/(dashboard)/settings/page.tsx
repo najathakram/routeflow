@@ -211,12 +211,11 @@ function BusinessProfileTab() {
       });
     },
     onError: (err: any) => {
+      // Drop the local preview so the saved logo (if any) shows instead of a stale one (also when read-only).
+      setLogoPreview(null);
       if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
-
       const msg = err?.response?.data?.message ?? "Try a PNG, JPG, or WEBP under 5 MB.";
       toast({ title: "Logo upload failed", description: msg, variant: "error" });
-      // Drop the local preview so the saved logo (if any) shows instead of a stale one.
-      setLogoPreview(null);
     },
   });
 
@@ -2672,9 +2671,9 @@ function InvoicingTab() {
             variant: "success",
           }),
         onError: (err: any) => {
-          if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
-
+          // restore the saved value (also when read-only: the typed figure was never saved)
           setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
+          if (isReadOnlyRefusal(err)) return; // F5: the app-wide handler already showed the shared line
           toast({
             title: "Failed to save",
             description: err?.response?.data?.message ?? "Could not update invoice settings.",

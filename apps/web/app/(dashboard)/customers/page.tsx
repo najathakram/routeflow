@@ -1115,9 +1115,9 @@ export default function CustomersPage() {
                   title="No customers yet"
                   description="Add your first customer to start taking orders and sending invoices."
                   action={
-                    <Button size="sm" onClick={() => setIsAddOpen(true)}>
+                    <WriteButton size="sm" onClick={() => setIsAddOpen(true)}>
                       Add customer
-                    </Button>
+                    </WriteButton>
                   }
                 />
               )

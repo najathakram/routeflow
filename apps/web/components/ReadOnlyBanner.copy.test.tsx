@@ -135,3 +135,18 @@ describe("ReadOnlyBanner admin action by reason (F1/F2, billing-ux §4)", () => 
     expect(link.className).toMatch(/min-h-\[44px\]/);
   });
 });
+
+describe("ReadOnlyBanner on the Billing page itself (S4)", () => {
+  it("hideAction: no self-link to /settings/billing", () => {
+    render(
+      <ReadOnlyBanner
+        status="READ_ONLY"
+        readOnlyReason="subscription_cancelled"
+        isAdmin
+        hideAction
+      />,
+    );
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByText(/read-only mode/)).toBeInTheDocument();
+  });
+});

@@ -20,6 +20,8 @@ export interface ReadOnlyBannerProps {
   overdueAmount?: number | null;
   /** `SubscriptionView.billingContactEmail`: the non-admin's "contact your admin" line. */
   billingContactEmail?: string | null;
+  /** The page already IS the destination (the Billing page): no action link. */
+  hideAction?: boolean;
   /** A TENANT_ADMIN sees the action (Choose a plan for an expired trial, else Billing); anyone else the contact line. Defaults to admin (old shape). */
   isAdmin?: boolean;
 }
@@ -35,6 +37,7 @@ export function ReadOnlyBanner({
   overdueAmount,
   billingContactEmail,
   isAdmin = true,
+  hideAction = false,
 }: ReadOnlyBannerProps) {
   if (status !== "READ_ONLY") return null;
   const copy = readOnlyCopy({
@@ -71,7 +74,7 @@ export function ReadOnlyBanner({
             {i < all.length - 1 || isAdmin ? " " : ""}
           </p>
         ))}
-        {isAdmin ? (
+        {isAdmin && !hideAction ? (
           <a
             href={action.href}
             onClick={(e) => {

@@ -90,8 +90,12 @@ export function handleMutationError(
       title: copy.sentence,
       description: [copy.reasonLine, copy.contactLine].filter(Boolean).join(" ") || undefined,
       variant: "warning",
+      // billing-ux section 4: choosing a plan is the way out of an expired trial only; every other reason (cancelled,
+      // set by an administrator) gets the Billing page. The reason is the cached view's, else the 403 body's.
       ...(isAdmin
-        ? { action: { label: "Choose a plan", onClick: () => router.push("/choose-plan") } }
+        ? (view?.readOnlyReason ?? data?.reason) === "trial_expired"
+          ? { action: { label: "Choose a plan", onClick: () => router.push("/choose-plan") } }
+          : { action: { label: "Billing", onClick: () => router.push("/settings/billing") } }
         : {}),
     });
     return;

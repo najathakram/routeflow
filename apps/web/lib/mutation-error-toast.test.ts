@@ -33,7 +33,7 @@ describe("handleMutationError (#1965)", () => {
     expect(toast).not.toHaveBeenCalled();
   });
 
-  it("a read-only tenant still gets 'Choose a plan' even from an opted-out mutation (review a)", () => {
+  it("a read-only tenant still gets a way out (Billing) even from an opted-out mutation (review a)", () => {
     const { toast, router } = setup();
     handleMutationError(
       axiosErr({ code: "READ_ONLY", message: "x" }),
@@ -47,8 +47,26 @@ describe("handleMutationError (#1965)", () => {
     );
     // B980: fixed copy too, never the raw guard message ("x"); no reason known -> no description.
     expect(toast.mock.calls[0][0].description).toBeUndefined();
-    expect(toast.mock.calls[0][0].action).toMatchObject({ label: "Choose a plan" });
+    // billing-ux section 4: only an expired trial is told to choose a plan; any other reason gets the Billing page
+    expect(toast.mock.calls[0][0].action).toMatchObject({ label: "Billing" });
+    toast.mock.calls[0][0].action.onClick();
+    expect(router.push).toHaveBeenCalledWith("/settings/billing");
   });
+
+  it.each(["subscription_cancelled", "trial_cancelled", "set_by_admin"])(
+    "reason %s: the admin's toast action is Billing, never Choose a plan",
+    (reason) => {
+      const t = jest.fn();
+      handleMutationError(
+        axiosErr({ code: "READ_ONLY", reason, message: "x" }),
+        {},
+        t,
+        { push: jest.fn() },
+        { view: () => undefined, refresh: jest.fn(), isAdmin: () => true },
+      );
+      expect(t.mock.calls[0][0].action).toMatchObject({ label: "Billing" });
+    },
+  );
 
   it("still swallows HANDLED_CODES and still turns READ_ONLY into the read-only toast", () => {
     const { toast, router } = setup();
