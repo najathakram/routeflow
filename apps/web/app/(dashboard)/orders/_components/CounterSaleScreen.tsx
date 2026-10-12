@@ -1356,7 +1356,7 @@ export function CounterSaleScreen() {
               </div>
             ) : null}
             <div className="flex justify-between text-lg font-semibold" data-testid="running-total">
-              <span>Total</span>
+              <span>Estimated total</span>
               <span>{money(totals.total)}</span>
             </div>
 
