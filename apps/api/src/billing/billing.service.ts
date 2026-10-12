@@ -78,6 +78,7 @@ import { SUSPENDED_REASON_SUBSCRIPTION_CANCELED } from "./billing-notification.t
 import { writeAdminNotice } from "./manual-invoice-notice";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { retryOnTxConflict } from "../common/tx-retry";
+import { withCheckoutPolicy } from "./checkout-session-params";
 import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
   STRIPE_CHECKOUT_ASYNC_FAILED_ACTION,
@@ -622,30 +623,32 @@ export class BillingService {
     // Inline price_data line item — bypasses StripeService.createCheckoutSession
     // (which only accepts a pre-created `priceId`) via the underlying client, since
     // no env-configured Stripe Price exists for catalog-driven plans/tiers.
-    const session = await this.stripe.client.checkout.sessions.create({
-      customer: customerId,
-      mode: "subscription",
-      line_items: [{ price_data: priceData, quantity: 1 }, ...addons.lineItems],
-      success_url:
-        opts?.successUrl ?? `${baseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: opts?.cancelUrl ?? `${baseUrl}/billing/cancel`,
-      metadata: {
-        tenantId,
-        slug: tenant.slug,
-        planKey: pricing.planKey,
-        interval,
-        ...(addons.skus.length ? { [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } : {}),
-      },
-      expires_at: anchor.expiresAt,
-      subscription_data: {
-        ...checkoutAnchorParams(anchor),
-        // The SKUs also ride the subscription itself, so a later reader of the subscription (not just
-        // the session) can see which add-ons its first invoice billed. A plan-only checkout sends none.
-        ...(addons.skus.length
-          ? { metadata: { tenantId, [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } }
-          : {}),
-      },
-    });
+    const session = await this.stripe.client.checkout.sessions.create(
+      withCheckoutPolicy({
+        customer: customerId,
+        mode: "subscription",
+        line_items: [{ price_data: priceData, quantity: 1 }, ...addons.lineItems],
+        success_url:
+          opts?.successUrl ?? `${baseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: opts?.cancelUrl ?? `${baseUrl}/billing/cancel`,
+        metadata: {
+          tenantId,
+          slug: tenant.slug,
+          planKey: pricing.planKey,
+          interval,
+          ...(addons.skus.length ? { [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } : {}),
+        },
+        expires_at: anchor.expiresAt,
+        subscription_data: {
+          ...checkoutAnchorParams(anchor),
+          // The SKUs also ride the subscription itself, so a later reader of the subscription (not just
+          // the session) can see which add-ons its first invoice billed. A plan-only checkout sends none.
+          ...(addons.skus.length
+            ? { metadata: { tenantId, [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } }
+            : {}),
+        },
+      }),
+    );
 
     this.logger.log(
       `Checkout session ${session.id} created for tenant ${tenantId} (plan ${pricing.planKey}, ${interval}, anchor ${anchor.anchorAt.toISOString()})`,

@@ -325,6 +325,17 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
     expect(h.sub().catchupState).toBe("SESSION_OPEN");
   });
 
+  it("F1: the catch-up session says Managed Payments is OFF and never enables automatic tax", async () => {
+    const h = make({ invoices: [OCT_OPEN], sub: sub() });
+    activationRows(h, "2026-09-10T09:00:00Z", "2026-10-10T09:00:00Z");
+    const r = await h.svc.plan("t1", NOW);
+    if (!r.plan.ok) throw new Error("plan not ok");
+    await h.svc.open("t1", { now: NOW, expectedStubCents: r.plan.stub.totalCents });
+    const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+    expect(params.managed_payments).toEqual({ enabled: false });
+    expect(params.automatic_tax?.enabled).not.toBe(true);
+  });
+
   it("activated Sep 26 ([Sep 26, Oct 26)): eligible before AND after the next window is issued (S = Oct 26)", async () => {
     const nextWindow = {
       ...OCT_OPEN,

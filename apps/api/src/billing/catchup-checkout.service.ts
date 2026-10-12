@@ -28,6 +28,7 @@ import {
 import { planRefusalException, refusalCodesOf } from "./catchup-refusal";
 import { buildCatchupSessionParams } from "./catchup-session-params";
 import { PlatformPricingService } from "./platform-pricing.service";
+import { withCheckoutPolicy } from "./checkout-session-params";
 import { StripeService } from "./stripe.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 
@@ -399,7 +400,7 @@ export class CatchupCheckoutService {
         successUrl: `${base}/settings/billing?checkout=success`,
         cancelUrl: `${base}/settings/billing?checkout=cancelled`,
       });
-      session = await this.stripe.client.checkout.sessions.create(params, {
+      session = await this.stripe.client.checkout.sessions.create(withCheckoutPolicy(params), {
         idempotencyKey: `${tenantId}:catchup-session:${plan.paidThrough.getTime()}:${now.getTime()}`,
       });
     } catch (err) {
