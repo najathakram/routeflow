@@ -618,6 +618,17 @@ describe("held attempt: minimal customer, validated read", () => {
     expect(Object.keys(c).sort()).toEqual(["businessName", "fulfillPath", "id", "pricingTier"]);
   });
 
+  it("keeps the tax exemption through a held attempt, so a restored cart still prices without tax (CQ-02)", () => {
+    writeHeldAttempt(
+      SK,
+      snap({
+        customer: { id: "c1", businessName: "Acme", isTaxExempt: true, email: "a@b.c" },
+      }),
+    );
+    const c = (readHeldAttempt(SK) as { customer: Record<string, unknown> }).customer;
+    expect(c).toEqual({ id: "c1", businessName: "Acme", isTaxExempt: true });
+  });
+
   it("reads a valid attempt back", () => {
     writeHeldAttempt(SK, snap());
     expect((readHeldAttempt(SK) as { key: string }).key).toBe("k1");

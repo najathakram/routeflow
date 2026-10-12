@@ -526,7 +526,7 @@ export function writeHeldAttempt(storeKey: string | null, snap: HeldAttemptSnaps
     const c = snap.customer as Record<string, unknown> | null | undefined;
     const customer = c
       ? Object.fromEntries(
-          (["id", "businessName", "pricingTier", "fulfillPath"] as const)
+          (["id", "businessName", "pricingTier", "fulfillPath", "isTaxExempt"] as const)
             .filter((k) => c[k] !== undefined)
             .map((k) => [k, c[k]]),
         )

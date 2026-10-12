@@ -12,6 +12,8 @@ const SRC = join(__dirname, "..");
 const ALLOWED = new Set(["returns/inline-returns-pricing.ts"]);
 const SECOND_FORMULA = [
   /roundMoney\(\s*subtotal\s*\*/,
+  // any identifier times the tenant rate, however it is named (sub, itemsSubtotal, ...)
+  /roundMoney\(\s*[\w.]+\s*\*\s*(?:\(await this\.getTaxRate\(\)\)|taxRate\b|effectiveTaxRate\b)/,
   /subtotal\s*\+\s*tax\s*\+\s*categoryTax/,
   /subtotal\s*\+\s*tax\s*\+\s*Number\(/,
 ];

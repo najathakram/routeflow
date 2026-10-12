@@ -336,7 +336,7 @@ export function CounterSaleScreen() {
   const taxRate = (settings?.taxRate ?? 0) / 100;
   // The regulated levy and the exempt customer's $0 tax are in the estimate, so it is the receipt's figure to the cent
   // (CQ-01 / CQ-02 / CQ-28): the same saleTotals the order and invoice sums run.
-  const { data: categoryRows } = useTrackedCategories();
+  const { data: categoryRows, isSuccess: categoriesLoaded } = useTrackedCategories();
   const categories = React.useMemo(
     () => new Map((Array.isArray(categoryRows) ? categoryRows : []).map((c) => [c.id, c])),
     [categoryRows],
@@ -675,6 +675,12 @@ export function CounterSaleScreen() {
     if (attemptRef.current) return send(attemptRef.current); // an unknown outcome: the SAME body, the SAME key
     if (lines.length === 0) {
       setError("Add at least one item.");
+      return null;
+    }
+    // A regulated line's deposit / excise comes from the categories list: until it has loaded the total is short by
+    // exactly that, so the sale waits rather than tender against a figure the server will refuse (CQ-01 / CQ-28).
+    if (!categoriesLoaded && lines.some((l) => l.trackedCategoryId)) {
+      setError("Still loading the regulated charges. Try again in a moment.");
       return null;
     }
     // POS-5: the shared rule (decideStaffOverride) says a special-price customer's edited line needs a reason: no POST.

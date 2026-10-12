@@ -139,3 +139,21 @@ describe("counter checkout panel: the number explains itself (CQ-08) and matches
     expect(screen.queryByTestId("running-tax")).toBeNull();
   });
 });
+
+describe("a regulated line waits for the categories before it can be paid (fail-safe)", () => {
+  it("while the categories load, Complete says why and sends nothing", async () => {
+    get.mockImplementation((url: string) => {
+      if (url === "/settings") return Promise.resolve({ data: { taxRate: 8.25 } });
+      if (url === "/tracked-categories") return new Promise(() => undefined); // never answers
+      return Promise.resolve({ data: [] });
+    });
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("SODA");
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Still loading the regulated charges. Try again in a moment.",
+      ),
+    );
+  });
+});
