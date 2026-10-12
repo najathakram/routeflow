@@ -36,3 +36,20 @@ describe("bearerTokenOf (reads the Authorization scheme like the JWT strategy)",
     },
   );
 });
+
+describe("bearerTokenOf is linear on a long header", () => {
+  it("reads a 64 KB header with no whitespace without a stall, and still agrees with the strategy", () => {
+    const long = "A".repeat(64 * 1024);
+    const started = Date.now();
+    expect(bearerTokenOf(long)).toBeNull();
+    expect(bearerTokenOf(`Bearer ${long}`)).toBe(long);
+    expect(Date.now() - started).toBeLessThan(250);
+  });
+
+  it("keeps passport's reading for padded and multi-token headers", () => {
+    const extract = ExtractJwt.fromAuthHeaderAsBearerToken();
+    for (const h of ["  Bearer   x  ", "Bearer\n\tx y z", "\tbearer x", "Bearer", "", "   "]) {
+      expect(bearerTokenOf(h)).toBe(extract({ headers: { authorization: h } } as never) ?? null);
+    }
+  });
+});

@@ -6,10 +6,10 @@
  * strategy runs (the global tenant-status guard, the impersonation audit guard) must use this exact reading, so
  * both agree on which requests carry a token. Returns null when the header is not a string or is not a bearer header.
  */
-const AUTH_HEADER = /(\S+)\s+(\S+)/;
-
 export function bearerTokenOf(header: unknown): string | null {
   if (typeof header !== "string") return null;
-  const m = AUTH_HEADER.exec(header);
-  return m && m[1].toLowerCase() === "bearer" ? m[2] : null;
+  // Linear on purpose: passport's /(\S+)\s+(\S+)/ is quadratic on a long header with no whitespace, and this runs for
+  // every request (both global guards). The first two whitespace-separated tokens are the same answer.
+  const parts = header.trim().split(/\s+/, 2);
+  return parts.length === 2 && parts[0].toLowerCase() === "bearer" ? parts[1] : null;
 }
