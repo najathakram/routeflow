@@ -140,16 +140,6 @@ export class BuyerMergeService {
     return mergeRequest;
   }
 
-  /**
-   * Row 404: the non-mutating preview behind `GET verify-merge/:token`. A link scanner's prefetch
-   * may call it any number of times; it writes nothing and returns no account details (no e-mail,
-   * name or id), only whether the token can still be confirmed.
-   */
-  async peekMergeToken(token: string) {
-    const mergeRequest = await this.findPendingMergeByToken(token);
-    return { valid: true as const, expiresAt: mergeRequest.verificationExpires };
-  }
-
   /** The single-use consume, reached only by the explicit `POST verify-merge` confirm click. */
   async verifyMergeToken(token: string) {
     const mergeRequest = await this.findPendingMergeByToken(token);

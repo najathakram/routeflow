@@ -106,49 +106,9 @@ function expectNoWrites(ctx: ReturnType<typeof build>) {
     expect(fn).not.toHaveBeenCalled();
 }
 
-describe("BuyerMergeService.peekMergeToken: a link scanner's prefetch must not complete the merge", () => {
-  it("previews a pending token and writes nothing", async () => {
-    const ctx = build();
-    const before = { ...ctx.row };
-    const out = await ctx.svc.peekMergeToken(TOKEN);
-    expect(out).toEqual({ valid: true, expiresAt: before.verificationExpires });
-    expectNoWrites(ctx);
-    expect(ctx.row).toEqual(before);
-  });
-
-  it("returns no e-mail address, name or account id (no PII on an unauthenticated read)", async () => {
-    const ctx = build();
-    const out = (await ctx.svc.peekMergeToken(TOKEN)) as Record<string, unknown>;
-    expect(Object.keys(out).sort()).toEqual(["expiresAt", "valid"]);
-    expect(JSON.stringify(out)).not.toMatch(/buyer-primary|buyer-secondary|req-1|@/);
-  });
-
-  it("an unknown token is NotFound and writes nothing", async () => {
-    const ctx = build();
-    await expect(ctx.svc.peekMergeToken("b".repeat(64))).rejects.toThrow(NotFoundException);
-    expectNoWrites(ctx);
-  });
-
-  it("an expired token is Gone and writes nothing", async () => {
-    const ctx = build({ verificationExpires: new Date(Date.now() - 1000) });
-    await expect(ctx.svc.peekMergeToken(TOKEN)).rejects.toThrow(GoneException);
-    expectNoWrites(ctx);
-  });
-
-  it("a request no longer pending verification is BadRequest and writes nothing", async () => {
-    const ctx = build({ status: BuyerMergeRequestStatus.PENDING_REVIEW });
-    await expect(ctx.svc.peekMergeToken(TOKEN)).rejects.toThrow(BadRequestException);
-    expectNoWrites(ctx);
-  });
-});
-
 describe("BuyerMergeService.verifyMergeToken: the single-use consume is unchanged", () => {
-  it("two previews then one consume still succeed exactly once", async () => {
+  it("one consume succeeds exactly once", async () => {
     const ctx = build();
-    await ctx.svc.peekMergeToken(TOKEN);
-    await ctx.svc.peekMergeToken(TOKEN);
-    expectNoWrites(ctx);
-
     const out = await ctx.svc.verifyMergeToken(TOKEN);
     expect(out).toEqual({
       success: true,
@@ -179,8 +139,13 @@ describe("BuyerMergeService.verifyMergeToken: the single-use consume is unchange
     const ctx = build();
     await ctx.svc.verifyMergeToken(TOKEN);
     await expect(ctx.svc.verifyMergeToken(TOKEN)).rejects.toThrow(NotFoundException);
-    await expect(ctx.svc.peekMergeToken(TOKEN)).rejects.toThrow(NotFoundException);
     expect(ctx.buyerMergeRequest.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("an unknown token is NotFound on consume and writes nothing", async () => {
+    const ctx = build();
+    await expect(ctx.svc.verifyMergeToken("b".repeat(64))).rejects.toThrow(NotFoundException);
+    expectNoWrites(ctx);
   });
 
   it("an expired token is Gone on consume and is not consumed", async () => {
@@ -245,7 +210,7 @@ describe("BuyerMergeService.verifyMergeToken: the consume is compare-and-set", (
   });
 });
 
-describe("BuyerMergeController: GET previews, POST consumes", () => {
+describe("BuyerMergeController: the only consume path is the POST (row 413)", () => {
   const proto = BuyerMergeController.prototype as unknown as Record<string, () => unknown>;
   const handlerFor = (method: RequestMethod, path: string) =>
     Object.getOwnPropertyNames(BuyerMergeController.prototype).find(
@@ -257,19 +222,31 @@ describe("BuyerMergeController: GET previews, POST consumes", () => {
 
   function controller() {
     const svc = {
-      peekMergeToken: jest.fn().mockResolvedValue({ valid: true, expiresAt: null }),
       verifyMergeToken: jest.fn().mockResolvedValue({ success: true }),
     };
     return { ctrl: new BuyerMergeController(svc as any), svc };
   }
 
-  it("GET verify-merge/:token calls the read-only preview, never the consume", async () => {
-    const key = handlerFor(RequestMethod.GET, "verify-merge/:token");
-    expect(key).toBeDefined();
-    const { ctrl, svc } = controller();
-    await (ctrl as any)[key!](TOKEN);
-    expect(svc.peekMergeToken).toHaveBeenCalledWith(TOKEN);
-    expect(svc.verifyMergeToken).not.toHaveBeenCalled();
+  it("no GET route reaches verify-merge: a link scanner's prefetch has nothing to hit (row 413)", () => {
+    const gets = Object.getOwnPropertyNames(BuyerMergeController.prototype)
+      .filter((k) => k !== "constructor")
+      .filter((k) => Reflect.getMetadata(METHOD_METADATA, proto[k]) === RequestMethod.GET)
+      .map((k) => String(Reflect.getMetadata(PATH_METADATA, proto[k])));
+    expect(gets.filter((p) => p.includes("verify-merge"))).toEqual([]);
+    const routes = Object.getOwnPropertyNames(BuyerMergeController.prototype)
+      .filter((k) => k !== "constructor")
+      .map((k) => [
+        Reflect.getMetadata(METHOD_METADATA, proto[k]),
+        String(Reflect.getMetadata(PATH_METADATA, proto[k])),
+      ])
+      .filter(([, path]) => String(path).includes("verify-merge"));
+    expect(routes).toEqual([[RequestMethod.POST, "verify-merge"]]);
+  });
+
+  it("the service has no non-consuming token read left", () => {
+    expect((BuyerMergeService.prototype as unknown as Record<string, unknown>).peekMergeToken).toBe(
+      undefined,
+    );
   });
 
   it("POST verify-merge (token in the body) consumes, answers 200 and is throttled like verify-email", async () => {
@@ -282,7 +259,6 @@ describe("BuyerMergeController: GET previews, POST consumes", () => {
     const { ctrl, svc } = controller();
     await (ctrl as any)[key!]({ token: TOKEN });
     expect(svc.verifyMergeToken).toHaveBeenCalledWith(TOKEN);
-    expect(svc.peekMergeToken).not.toHaveBeenCalled();
   });
 
   it("no POST route carries the token in its path", () => {

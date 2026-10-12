@@ -1,13 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  HttpStatus,
-  Param,
-  Post,
-  UseGuards,
-} from "@nestjs/common";
+import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import { BuyerMergeService } from "./buyer-merge.service";
@@ -33,15 +24,8 @@ export class BuyerMergeController {
     return this.mergeService.initiateMerge(buyer.sub, dto.secondaryEmail, dto.notes);
   }
 
-  // Row 404: a link scanner's prefetch must not complete the merge. The GET only previews the
-  // token (writes nothing); the single-use consume is the POST below, sent by a human click.
-  @Get("verify-merge/:token")
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Preview a merge-verification token (read-only, no account details)" })
-  previewMerge(@Param("token") token: string) {
-    return this.mergeService.peekMergeToken(token);
-  }
-
+  // Rows 404 / 413: a link scanner's prefetch must not complete the merge, so there is NO GET for the
+  // token: the single-use consume is this POST only, sent by a human click on the confirm page.
   @Post("verify-merge")
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 900_000, limit: 5 } }) // 5 per 15 min per IP — matches verify-email
