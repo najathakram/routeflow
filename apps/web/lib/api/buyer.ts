@@ -6,6 +6,7 @@ import { getStoredActiveSeller, getStoredBuyerId } from "@/lib/buyer-auth";
 import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "./buyer-submit-key";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
+import type { BuyerOrderItemEdit } from "@routeflow/types";
 import type { ChangeRequest } from "@/lib/change-requests";
 import { buyerOrderConflict } from "@/lib/buyer-order-conflict";
 import {
@@ -427,13 +428,10 @@ export function useBuyerCreateOrder() {
 export function useBuyerUpdateOrderItems() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      orderId,
-      items,
-    }: {
-      orderId: string;
-      items: Array<{ productId: string; qty: number }>;
-    }) => buyerApiClient.patch(`/buyer/orders/${orderId}/items`, { items }).then((r) => r.data),
+    mutationFn: ({ orderId, items }: { orderId: string; items: BuyerOrderItemEdit[] }) =>
+      buyerApiClient
+        .patch(`/buyer/orders/${orderId}/items`, { items, namesLines: true })
+        .then((r) => r.data),
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ["buyer", "order", vars.orderId] });
       qc.invalidateQueries({ queryKey: ["buyer", "orders"] });

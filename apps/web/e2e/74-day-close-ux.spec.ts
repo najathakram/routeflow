@@ -297,9 +297,9 @@ for (const v of VIEWS) {
       await expect(z.getByTestId("z-row-Pickup hand-overs (in till cash)")).toContainText(
         "$18.94 · 1 hand-over",
       );
-      // the footer is pinned: Print, Email, Close, in reach without scrolling
+      // the footer is pinned: Close, Email, Print (the primary trails), in reach without scrolling
       const actions = z.getByTestId("z-actions");
-      await expect(actions.getByRole("button")).toHaveText(["Print", "Email", "Close"]);
+      await expect(actions.getByRole("button")).toHaveText(["Close", "Email", "Print"]);
       await expect(actions).toBeInViewport();
       // focus opens on the title, not on the ×
       expect(await page.evaluate(() => document.activeElement?.tagName.toLowerCase())).toBe("h2");

@@ -59,6 +59,7 @@ import { depositOverdueLine, groupArAgingByCustomer } from "@/lib/ar-aging-rows"
 import { receivableSummaryBalanceTotal } from "@/lib/receivable-summary-total";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
+import { dayClosedCopy, isDayClosedRefusal } from "@/lib/day-closed-copy";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useFleetAccess } from "@/lib/api/addons";
@@ -1967,7 +1968,8 @@ function LedgerReport() {
   const [payAmount, setPayAmount] = React.useState("");
   const [payMethod, setPayMethod] = React.useState<SelectablePaymentMethod>("CASH");
   const [payRef, setPayRef] = React.useState("");
-  const recordPayment = useRecordPayment();
+  // Row 348: this report toasts a closed-day refusal itself, so the global toast stays quiet for it (one toast).
+  const recordPayment = useRecordPayment({ localErrorToast: isDayClosedRefusal });
   const { toast } = React.useContext(ToastContext);
 
   const { data, isLoading } = useTransactions({
@@ -2003,8 +2005,9 @@ function LedgerReport() {
       });
       toast({ title: "Payment recorded", variant: "success" });
       setPaymentModal(null);
-    } catch {
-      toast({ title: "Failed to record payment", variant: "error" });
+    } catch (err: unknown) {
+      // The global toast is quiet for a closed-day refusal (the hook's option): this one says why, once.
+      toast({ title: dayClosedCopy(err) ?? "Failed to record payment", variant: "error" });
     }
   };
 

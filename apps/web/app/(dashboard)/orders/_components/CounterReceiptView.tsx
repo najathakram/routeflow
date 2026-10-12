@@ -11,7 +11,7 @@ import { ReadOnlyHint, WriteLink } from "@/lib/read-only-gate";
 
 /**
  * The ONE printable receipt view: the live receipt and the Today's-sales reprint both render through it, so a reprint can
- * never drift from the receipt the customer first saw. `reprintLabel` ("Reprint · sold …") marks a reprint.
+ * never drift from the receipt the customer first saw. `reprintLabel` ("Reprint · Sold …") marks a reprint.
  */
 export function CounterReceiptView({
   model: m,

@@ -435,6 +435,13 @@ describe("renderOrderReceipt (email)", () => {
     expect(r.subject).toBe("Your receipt for order ORD-1001");
   });
 
+  it("signs the email 'Sent by <business name>.' (row 345), never 'Receipt sent by'", () => {
+    for (const body of [out.html, out.text]) {
+      expect(body).toContain("Sent by Acme Test Store.");
+      expect(body).not.toContain("Receipt sent by");
+    }
+  });
+
   it("prints the footer only when the model carries one", () => {
     expect(out.html).not.toContain("Thanks for");
     const withFooter = render(orderFixture(), [INVOICE], paymentsFixture(), {

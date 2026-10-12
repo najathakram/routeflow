@@ -177,7 +177,8 @@ export function ZReportView({
       onError: () => setOutcome("failed"),
     });
   };
-  // Print, Email, Close: the Z view's own actions (SA-750r3 §3), PINNED at the foot of the sheet so a phone keeps them in reach.
+  // Close, Email, Print: the Z view's own actions (SA-750r3 §3), PINNED at the foot of the sheet so a phone keeps them in reach.
+  // The primary action (Print) trails, like every other dialog footer: quiet actions first (row 345).
   // Email re-sends the stored report (always offered); its outcome is a fixed line, never the server's text.
   const footer = (
     <div className="flex w-full flex-col gap-2 print:hidden">
@@ -192,8 +193,8 @@ export function ZReportView({
         </p>
       ) : null}
       <div className="flex flex-wrap justify-end gap-2" data-testid="z-actions">
-        <Button type="button" className="min-h-[44px]" onClick={() => window.print()}>
-          Print
+        <Button type="button" variant="secondary" className="min-h-[44px]" onClick={onClose}>
+          Close
         </Button>
         <Button
           type="button"
@@ -204,8 +205,8 @@ export function ZReportView({
         >
           Email
         </Button>
-        <Button type="button" variant="secondary" className="min-h-[44px]" onClick={onClose}>
-          Close
+        <Button type="button" className="min-h-[44px]" onClick={() => window.print()}>
+          Print
         </Button>
       </div>
     </div>

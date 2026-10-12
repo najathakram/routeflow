@@ -719,7 +719,7 @@ describe("the live counter receipt splits Tax and Adjustments like the reprint a
   });
 });
 
-describe("row 317b: the unit word ('/ each') is ONE text on the live receipt, the reprint and the email", () => {
+describe("row 317b: the unit word ('each') is ONE text on the live receipt, the reprint and the email", () => {
   const line = (
     id: string,
     name: string,

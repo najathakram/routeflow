@@ -1,13 +1,13 @@
 import { BadRequestException, ConflictException, Logger } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import {
-  computeCategoryTax,
   computeLineSubtotal,
+  hasNullTrio,
   inferredGoodsFlatRate,
   packFromOwnSplit,
+  recomputeCategoryTax,
   regulatedUnitBasis,
   roundMoney,
-  type CategoryTaxType,
 } from "@routeflow/pricing";
 import type { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -184,9 +184,18 @@ export function buildPriceAdjustmentUpdates(args: {
   isTaxExempt: boolean;
   /** The invoice's status: it picks the remedy in a refusal's copy (a DRAFT can be edited, an issued one cannot). */
   invoiceStatus?: string;
+  /** Where the B297 "stamped a NULL snapshot" warn goes, naming the line. Left out by the pre-flight projection (it writes nothing). */
+  warn?: (message: string) => void;
 }): Array<{ id: string; data: Record<string, any> }> {
-  const { items, localPriceMap, categoriesById, unitsPerBoxByProduct, isTaxExempt, invoiceStatus } =
-    args;
+  const {
+    items,
+    localPriceMap,
+    categoriesById,
+    unitsPerBoxByProduct,
+    isTaxExempt,
+    invoiceStatus,
+    warn,
+  } = args;
   // B679: mirrors orders.service.recomputeLineCategoryTaxes — a box-split line stores qty already in
   // pieces; a boxed selling-unit line expands by its snapshotted unitsPerBox, falling back to the
   // product's. Unused by PERCENT_OF_SALE (unitBasisQty is ignored there) but correct for an
@@ -215,17 +224,27 @@ export function buildPriceAdjustmentUpdates(args: {
       invoiceStatus,
     );
     const data: Record<string, any> = { unitPrice: newPrice, subtotal: newSubtotal };
-    const category = item.trackedCategoryId ? categoriesById.get(item.trackedCategoryId) : null;
-    if (category) {
-      data.categoryTaxAmount = isTaxExempt
-        ? 0
-        : computeCategoryTax({
-            taxType: category.taxType as CategoryTaxType,
-            rate: Number(category.rate),
-            unitBasisQty: linePieceQty(item),
-            lineSubtotal: newSubtotal,
-            priceIncludesTax: category.priceIncludesTax,
-          });
+    if (item.trackedCategoryId && isTaxExempt) {
+      data.categoryTaxAmount = 0; // A4: the price-adjust path zeroes for an exempt customer (the order path does not)
+    } else if (item.trackedCategoryId) {
+      // B297 PR3: priced at the line's OWN rate snapshot, never the live category. A NULL-trio line prices at the
+      // live category once and stamps the trio it used (a present trio is never overwritten). Only such a line's
+      // category was loaded (loadPriceAdjustmentReference), so an unresolved category keeps the stored amount.
+      const r = recomputeCategoryTax(
+        {
+          trackedCategoryId: item.trackedCategoryId,
+          categoryTaxType: item.categoryTaxType,
+          categoryTaxRate: item.categoryTaxRate,
+          categoryPriceIncludesTax: item.categoryPriceIncludesTax,
+          storedAmount: item.categoryTaxAmount,
+          unitBasisQty: linePieceQty(item),
+          lineSubtotal: newSubtotal,
+        },
+        categoriesById.get(item.trackedCategoryId),
+      );
+      if (r.warn) warn?.(`applyPriceAdjustment: invoice line ${item.id}: ${r.warn}`);
+      if (r.reason !== "kept-unpriceable") data.categoryTaxAmount = r.amount;
+      if (r.stamp) Object.assign(data, r.stamp);
     }
     updates.push({ id: item.id, data });
   }
@@ -543,7 +562,11 @@ export async function loadPriceAdjustmentReference(
   unitsPerBoxByProduct: Map<string, number>;
 }> {
   const regulated = items.filter((i) => localPriceMap.get(i.id) != null && i.trackedCategoryId);
-  const catIds = [...new Set(regulated.map((i) => i.trackedCategoryId as string))];
+  // B297 PR3 (A3): the live category only prices a NULL-trio line (once, then stamps it); a line with its own
+  // snapshot is priced at THAT, so its category is not read.
+  const catIds = [
+    ...new Set(regulated.filter((i) => hasNullTrio(i)).map((i) => i.trackedCategoryId as string)),
+  ];
   const productIds = [...new Set(regulated.map((i) => i.productId).filter(Boolean))] as string[];
   const cats = catIds.length
     ? await tx.trackedCategory.findMany({ where: { id: { in: catIds } } })

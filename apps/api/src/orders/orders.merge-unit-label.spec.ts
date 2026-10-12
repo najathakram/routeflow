@@ -131,6 +131,7 @@ function fakeOrdersService() {
   return {
     findActiveOrder: jest.fn(async () => ({ ...activeOrderFixture })),
     findOrderIdByIdempotencyKey: jest.fn().mockResolvedValue(null),
+    liveTrioByProduct: jest.fn().mockResolvedValue(new Map()),
     updateOrderItems: jest.fn().mockResolvedValue(undefined),
     recordIdempotencyKey: jest.fn().mockResolvedValue(undefined),
     // Post-commit sweep, unrelated to this bug — always reached on a non-replayed merge.

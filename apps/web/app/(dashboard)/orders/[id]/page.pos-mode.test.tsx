@@ -111,7 +111,7 @@ describe("POS order page: one primary per state", () => {
     expect(has(/^Mark delivered$/)).toBe(false);
   });
 
-  it("Create invoice POSTs from-order (the retry after a failed 2nd step of Confirm & invoice)", async () => {
+  it("Create invoice POSTs from-order (the retry after a failed 2nd step of Confirm and invoice)", async () => {
     post.mockResolvedValue({ data: [] });
     await open("CONFIRMED");
     fireEvent.click(screen.getByRole("button", { name: /^Create invoice$/ }));

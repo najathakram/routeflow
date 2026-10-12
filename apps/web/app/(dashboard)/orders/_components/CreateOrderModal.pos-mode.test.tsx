@@ -6,7 +6,7 @@ import { apiClient } from "@/lib/api-client";
 /**
  * SA-763r P-2: the "POS mode" switch in the Create Order header. Seeded from GET /users/me/preferences,
  * written with PATCH on flip (never localStorage); when on the order is sent as PICKUP, the delivery-only
- * fields step aside (restorable) and the primary action is "Confirm & invoice".
+ * fields step aside (restorable) and the primary action is "Confirm and invoice".
  */
 window.HTMLElement.prototype.scrollIntoView = jest.fn();
 
@@ -183,7 +183,7 @@ describe("CreateOrderModal: POS mode switch", () => {
     expect(screen.getByRole("button", { name: /^create order$/i })).toBeInTheDocument();
   });
 
-  it("Confirm & invoice: creates a PICKUP order, then PATCH status CONFIRMED, then POST from-order", async () => {
+  it("Confirm and invoice: creates a PICKUP order, then PATCH status CONFIRMED, then POST from-order", async () => {
     mockPrefs = { "orders.posMode": "true" };
     await openWithLine();
     await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
@@ -242,7 +242,7 @@ describe("CreateOrderModal: POS mode switch", () => {
     expect(onViewOrder).toHaveBeenCalledWith("o1");
   });
 
-  it("Save as Draft is kept and sends the draft as PICKUP without confirming", async () => {
+  it("Save as draft is kept and sends the draft as PICKUP without confirming", async () => {
     mockPrefs = { "orders.posMode": "true" };
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
@@ -326,7 +326,7 @@ describe("CreateOrderModal: POS mode merge into an open DRAFT (row 311)", () => 
 });
 
 describe("CreateOrderModal: POS mode landing and Enter", () => {
-  it("lands on the new order's page after Confirm & invoice (not the list)", async () => {
+  it("lands on the new order's page after Confirm and invoice (not the list)", async () => {
     mockPrefs = { "orders.posMode": "true" };
     const { onViewOrder } = await openWithLine();
     await waitFor(() => expect(screen.getByRole("switch", { name: /pos mode/i })).toBeChecked());
@@ -383,7 +383,7 @@ describe("CreateOrderModal: a store-only tenant (row 331)", () => {
       }),
     );
 
-  it("is in POS mode with no stored preference: Confirm & invoice, no delivery steps, no switch", async () => {
+  it("is in POS mode with no stored preference: Confirm and invoice, no delivery steps, no switch", async () => {
     asStoreOnly();
     await openWithLine();
     expect(await screen.findByRole("button", { name: "Confirm and invoice" })).toBeInTheDocument();

@@ -2,6 +2,7 @@ import { roundMoney } from "@routeflow/pricing";
 import {
   buildCounterReceipt,
   formatReceiptMoney,
+  formatSaleDayTime,
   formatSaleTime,
   type ReceiptLineInput,
 } from "./counter-receipt";
@@ -145,6 +146,22 @@ describe("buildCounterReceipt", () => {
     expect(m.methodLabel).toBe("Cash");
     expect(m.tendered).toBe(30);
     expect(m.cashier).toBe("pat");
+  });
+});
+
+describe("formatSaleDayTime (the reprint label's 'Sold Sun, Oct 11, 2:46 PM')", () => {
+  it("reads the sale's own day and time in the sale's zone, day label from the shared helper", () => {
+    expect(formatSaleDayTime("2026-10-11T18:46:00.000Z", "America/New_York")).toBe(
+      "Sun, Oct 11, 2:46 PM",
+    );
+  });
+  it("a sale near midnight keeps the zone's calendar day, not UTC's", () => {
+    expect(formatSaleDayTime("2026-10-08T02:30:00.000Z", "America/New_York")).toBe(
+      "Wed, Oct 7, 10:30 PM",
+    );
+  });
+  it("an unknown zone falls back to UTC and never throws", () => {
+    expect(formatSaleDayTime("2026-10-11T18:46:00.000Z", "Not/AZone")).toBe("Sun, Oct 11, 6:46 PM");
   });
 });
 

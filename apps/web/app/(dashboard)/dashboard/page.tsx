@@ -43,6 +43,7 @@ import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusB
 import { isUnsetCapabilities, useFulfilmentCaps } from "@/lib/fulfilment-caps";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { quickCreateRule } from "@/lib/counter-sale";
+import { staffMay } from "@routeflow/types";
 import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
@@ -843,6 +844,19 @@ export default function DashboardPage() {
                 New Route
               </Button>
             )}
+            {/* Store-only tenant: the SAME rule as the Orders header. New Order would open the counter too, so the
+                header is Invoice a customer (secondary) + Counter sale (primary); `builder=1` opens the builder
+                itself where the counter is the default. */}
+            {quickCreate.storeOnly && staffMay(user?.role, "USE_POS_MODE") ? (
+              <WriteButton
+                href="/orders?action=new&builder=1"
+                size="sm"
+                variant="secondary"
+                className="max-sm:h-11"
+              >
+                Invoice a customer
+              </WriteButton>
+            ) : null}
             {counterGate.showButton ? (
               <WriteButton
                 href="/orders/counter-sale"

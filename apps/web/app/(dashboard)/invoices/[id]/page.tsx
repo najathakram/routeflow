@@ -104,6 +104,7 @@ import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
+import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
@@ -1565,10 +1566,8 @@ export default function InvoiceDetailPage() {
   // order, not the invoice.
   const isPendingMirror = isPendingMirrorInvoice({ ...invoice, status });
 
-  const canRecordPayment =
-    status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
-  const canWriteOff =
-    status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
+  const canRecordPayment = isOpenInvoiceStatus(status);
+  const canWriteOff = isOpenInvoiceStatus(status);
   const canVoid = status !== "PAID" && status !== "VOID" && status !== "WRITTEN_OFF";
 
   // ── Action handlers ─────────────────────────────────────────────────────────

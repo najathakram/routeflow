@@ -299,6 +299,32 @@ export function createMockPrisma(): MockPrisma {
 
   const models = allModels();
 
+  // Row 372: an order edit's LOCKED line read (`tx.orderItem.findMany({ where: { orderId }, select: { ...,
+  // invoicedQty } })`) sees the order's own lines, like Postgres would. Without this a spec that mocks only
+  // `order.findUnique`, or stubs `orderItem.findMany` with the recompute-shaped rows (`{ subtotal, status }`, no id),
+  // reads an EMPTY / id-less locked set and the vanished-line guard (409) fires on every line id. A spec that stubs
+  // lines WITH ids keeps exactly what it stubbed.
+  let lastOrder: any = null;
+  const orderFindUnique = models.order.findUnique;
+  const stubOrder = orderFindUnique.mockResolvedValue.bind(orderFindUnique);
+  orderFindUnique.mockResolvedValue = (v: any) => {
+    lastOrder = v;
+    return stubOrder(v);
+  };
+  const isHeldRead = (a: any) => !!a?.select && a.select.invoicedQty === true;
+  const heldOr = (rows: any, a: any) =>
+    isHeldRead(a) && Array.isArray(rows) && rows.some((r) => r?.id == null)
+      ? (lastOrder?.lineItems ?? rows)
+      : rows;
+  const itemFindMany = models.orderItem.findMany;
+  itemFindMany.mockImplementation(async (a: any) =>
+    isHeldRead(a) ? (lastOrder?.lineItems ?? []) : [],
+  );
+  const stubRows = itemFindMany.mockResolvedValue.bind(itemFindMany);
+  itemFindMany.mockResolvedValue = (rows: any) =>
+    itemFindMany.mockImplementation(async (a: any) => heldOr(rows, a));
+  void stubRows;
+
   return {
     ...models,
     // forTenant() returns the same model surface — tests can stub individual methods
