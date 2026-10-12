@@ -38,13 +38,16 @@ describe("B889: seller-added custom lines on the buyer edit-items screen", () =>
 
   it("the draft skips custom lines: no 'null' key, no 'Product' row, no collapse", () => {
     const draft = hydrateBuyerDraft(lines);
-    expect(Object.keys(draft)).toEqual(["p1"]);
+    expect(Object.keys(draft)).toEqual(["L1"]);
     expect(Object.values(draft).map((d) => d.name)).toEqual(["Cleaner"]);
   });
 
   it("Save never sends a null productId — only the catalog lines ride the replace", () => {
     const plan = buyerSavePlan(lines, hydrateBuyerDraft(lines));
-    expect(plan).toEqual({ kind: "replace", items: [{ productId: "p1", qty: 1 }] });
+    expect(plan).toEqual({
+      kind: "replace",
+      items: [{ productId: "p1", qty: 1, orderItemId: "L1" }],
+    });
   });
 
   it("a stray null-product draft entry is still dropped from Save (belt)", () => {
@@ -63,12 +66,12 @@ describe("B889: seller-added custom lines on the buyer edit-items screen", () =>
   it("a catalog line with a missing product relation stays in the draft AND the Save plan", () => {
     const orphan = catalogLine({ id: "L9", productId: "p9", product: null, qty: 4 });
     const draft = hydrateBuyerDraft([catalogLine(), orphan]);
-    expect(Object.keys(draft).sort()).toEqual(["p1", "p9"]);
+    expect(Object.keys(draft).sort()).toEqual(["L1", "L9"]);
     expect(buyerSavePlan([catalogLine(), orphan], draft)).toEqual({
       kind: "replace",
       items: [
-        { productId: "p1", qty: 1 },
-        { productId: "p9", qty: 4 },
+        { productId: "p1", qty: 1, orderItemId: "L1" },
+        { productId: "p9", qty: 4, orderItemId: "L9" },
       ],
     });
     expect(customLineCount([orphan])).toBe(0);

@@ -239,7 +239,14 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
       expect(select.tax).toBe(true);
       expect(select.counterCashTendered).toBe(true);
       // the STORED line rate only: a rate is never inferred from the invoice header
-      expect(select.invoices.select.items.select).toEqual({ taxRate: true });
+      // CQ-03: the rate AND the billed levy with its category name
+      expect(select.invoices.select.items.select).toEqual({
+        taxRate: true,
+        categoryTaxAmount: true,
+        trackedCategoryId: true,
+        categoryTaxType: true,
+        trackedCategory: { select: { id: true, name: true, taxType: true } },
+      });
       expect(select.invoices.select).not.toHaveProperty("subtotal");
       expect(select.invoices.select).not.toHaveProperty("taxAmount");
     });

@@ -5,6 +5,13 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cn } from "./utils";
 
+/**
+ * A notice every open Modal renders at the top of its body (F3/F4): the web app's read-only gate provides the shared
+ * read-only line after a 403 READ_ONLY, so ANY dialog tells the user why the write was refused INLINE, instead of
+ * staying open with only a toast behind its overlay. `null` (the default) renders nothing.
+ */
+export const ModalNoticeContext = React.createContext<React.ReactNode>(null);
+
 export interface ModalProps {
   open: boolean;
   onClose: () => void;
@@ -66,10 +73,15 @@ export const Modal = ({
   closeClassName,
 }: ModalProps) => {
   const contentRef = React.useRef<HTMLDivElement>(null);
+  const notice = React.useContext(ModalNoticeContext);
   return (
     <Dialog.Root open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+        {/* print:hidden: a printed page never carries the dimmed, blurred backdrop (CQ-21) */}
+        <Dialog.Overlay
+          data-modal-overlay
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm print:hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+        />
         <Dialog.Content
           ref={contentRef}
           onEscapeKeyDown={onEscapeKeyDown}
@@ -130,6 +142,8 @@ export const Modal = ({
               <X className="h-4 w-4" />
             </Dialog.Close>
           </div>
+
+          {notice ? <div className={cn("mb-3", scroll && "shrink-0")}>{notice}</div> : null}
 
           {/* Body */}
           <div

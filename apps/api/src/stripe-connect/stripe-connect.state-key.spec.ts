@@ -37,7 +37,12 @@ describe("StripeConnectService state key and audience", () => {
     };
     prisma.tenantStripeConnect = tsc;
     prisma.user.findFirst.mockResolvedValue({ email: "a@acme.example", role: "TENANT_ADMIN" });
-    prisma.tenant.findUnique.mockResolvedValue({ id: "tenant-1", slug: "acme", name: "Acme" });
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: "tenant-1",
+      slug: "acme",
+      name: "Acme",
+      status: "ACTIVE",
+    });
     oauth = {
       isConfigured: true,
       exchangeCode: jest.fn().mockResolvedValue({ accountRef: "acct_1", livemode: false }),

@@ -273,12 +273,12 @@ describe("CounterTodaysSales", () => {
     expect(within(r).getByRole("link", { name: "View order" })).toBeInTheDocument();
   });
 
-  it("Reprint opens the shared receipt view: 'Reprint · Sold …', no Tendered or Change", async () => {
+  it("Reprint opens the shared receipt view: 'Reprint · Sold Wed, Oct 7, 11:15 AM', no Tendered or Change", async () => {
     await open();
     fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
     const root = await screen.findByTestId("receipt-print-root");
     expect(within(root).getByTestId("receipt-reprint")).toHaveTextContent(
-      /^Reprint · Sold .*11:15 AM/,
+      /^Reprint · Sold Wed, Oct 7, 11:15 AM$/,
     );
     expect(within(root).getByTestId("receipt-numbers")).toHaveTextContent("Order ORD-1");
     expect(within(root).getByTestId("receipt-total")).toHaveTextContent("$22.50");
@@ -352,6 +352,24 @@ describe("CounterTodaysSales", () => {
     );
     const root2 = await screen.findByTestId("receipt-print-root");
     expect(within(root2).queryByTestId("receipt-customer")).toBeNull();
+  });
+
+  // CQ-21: print media keeps the dialog backdrop and has no page margins.
+  it("a printed sheet drops the dialog backdrop and carries page margins (list) or the 80 mm page (reprint)", async () => {
+    await open();
+    await screen.findByTestId("today-row-o1");
+    const overlay = document.querySelector("[data-modal-overlay]");
+    expect(overlay).not.toBeNull();
+    expect(overlay).toHaveClass("print:hidden");
+    const pageRules = () =>
+      Array.from(screen.getByRole("dialog").querySelectorAll("style")).map((s) => s.textContent);
+    expect(pageRules().join("")).toMatch(/@page\s*\{\s*margin:\s*10mm/);
+    fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
+    await screen.findByTestId("receipt-print-root");
+    // the reprint sets its own page (80 mm, 4 mm margins) and the list's rule is gone, so the two never fight
+    expect(pageRules().join("")).not.toMatch(/margin:\s*10mm/);
+    expect(pageRules().join("")).toMatch(/margin:\s*4mm/);
+    expect(document.querySelector("[data-modal-overlay]")).toHaveClass("print:hidden");
   });
 
   it("while a reprint is open the page prints only the receipt; closing it undoes that", async () => {

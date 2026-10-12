@@ -11,7 +11,7 @@ import { ReadOnlyHint, WriteLink } from "@/lib/read-only-gate";
 
 /**
  * The ONE printable receipt view: the live receipt and the Today's-sales reprint both render through it, so a reprint can
- * never drift from the receipt the customer first saw. `reprintLabel` ("Reprint · sold …") marks a reprint.
+ * never drift from the receipt the customer first saw. `reprintLabel` ("Reprint · Sold …") marks a reprint.
  */
 export function CounterReceiptView({
   model: m,
@@ -163,6 +163,12 @@ export function CounterReceiptView({
             <dd>{money(m.tax)}</dd>
           </div>
         ) : null}
+        {m.charges.map((c) => (
+          <div key={c.key} className="flex justify-between" data-testid={`receipt-charge-${c.key}`}>
+            <dt>{c.label}</dt>
+            <dd>{money(c.amount)}</dd>
+          </div>
+        ))}
         {m.adjustments !== 0 ? (
           <div className="flex justify-between" data-testid="receipt-adjustment">
             <dt>Adjustments</dt>

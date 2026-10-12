@@ -1,7 +1,9 @@
 "use client";
 
 import * as React from "react";
+import { isSpecialTier } from "@routeflow/pricing";
 import { Button, Input, Modal, cn } from "@routeflow/ui/web";
+import { formatReceiptMoney as money } from "@routeflow/pricing";
 import {
   isBoxedLine,
   resolveCounterPriceEdit,
@@ -9,9 +11,6 @@ import {
   type PriceEditMode,
   type PriceEditRefusal,
 } from "@/lib/counter-price-edit";
-
-const money = (n: number) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 
 /** What Apply hands back: the screen replaces ONE line's override with it and never posts from here. */
 export interface CounterPriceEdit {
@@ -64,14 +63,20 @@ function refusalCopy(
   refused: PriceEditRefusal,
   customerName: string | undefined,
   max: number | undefined,
+  mode: PriceEditMode,
 ): string {
   switch (refused) {
     case "NOT_A_NUMBER":
+      // the copy names what the open mode asks for: a percentage is not "a price" (CQ-15)
+      if (mode === "percent") return "Enter a percentage, like 10 or 12.5.";
+      if (mode === "amount") return "Enter an amount off, like 1.50.";
       return "Enter a price, like 12.50.";
     case "NEGATIVE":
       return "Enter 0 or more.";
     case "PERCENT_RANGE":
       return "Enter a percentage from 0 to 100.";
+    case "PERCENT_PRECISION":
+      return "Use at most two decimals, like 12.5.";
     case "AMOUNT_OVER_PRICE":
       return `That's more than the price. Enter ${money(max ?? 0)} or less.`;
     case "REASON_REQUIRED":
@@ -109,6 +114,9 @@ export function CounterLinePriceEdit({
 
   const boxed = isBoxedLine(line);
   const unitWord = boxed ? "box" : "item";
+  // CQ-14: the label says what Apply will do. The reason is required for exactly the lines the shared rule
+  // (`decideStaffOverride`, which `resolveCounterPriceEdit` runs) refuses without one: a special-tier line.
+  const reasonRequired = isSpecialTier(line.tier);
 
   const openDialog = () => {
     setMode("set");
@@ -126,7 +134,7 @@ export function CounterLinePriceEdit({
     e?.preventDefault();
     const result = resolveCounterPriceEdit(mode, value, line, reason);
     if (!result.ok) {
-      setError(refusalCopy(result.refused, customerName, result.max));
+      setError(refusalCopy(result.refused, customerName, result.max, mode));
       valueRef.current?.focus();
       return;
     }
@@ -147,7 +155,7 @@ export function CounterLinePriceEdit({
           type="button"
           variant="secondary"
           size="sm"
-          className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0"
+          className="min-h-[44px] min-w-[44px] lg:min-h-0 lg:min-w-0"
           aria-label={`Edit price for ${name}`}
           disabled={locked}
           onClick={openDialog}
@@ -159,7 +167,7 @@ export function CounterLinePriceEdit({
             type="button"
             variant="link"
             size="sm"
-            className="min-h-[44px] sm:min-h-0"
+            className="min-h-[44px] lg:min-h-0"
             disabled={locked}
             onClick={onReset}
           >
@@ -197,7 +205,7 @@ export function CounterLinePriceEdit({
               <label
                 key={m.mode}
                 className={cn(
-                  "flex min-h-[44px] cursor-pointer items-center justify-center rounded-md px-2 text-center text-[13px] font-medium text-navy sm:min-h-9",
+                  "flex min-h-[44px] cursor-pointer items-center justify-center rounded-md px-2 text-center text-[13px] font-medium text-navy lg:min-h-9",
                   "focus-within:ring-2 focus-within:ring-brand-500",
                   mode === m.mode ? "bg-white shadow-card" : "text-navy/70 hover:text-navy",
                 )}
@@ -234,7 +242,8 @@ export function CounterLinePriceEdit({
           />
 
           <Input
-            label="Reason (optional)"
+            label={reasonRequired ? "Reason (required)" : "Reason (optional)"}
+            aria-required={reasonRequired ? true : undefined}
             type="text"
             maxLength={200}
             autoComplete="off"

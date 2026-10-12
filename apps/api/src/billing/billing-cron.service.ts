@@ -1,5 +1,5 @@
 import { priceOverrideOf, sameOverride } from "./price-override";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
@@ -28,6 +28,9 @@ import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService, SnapshotFailedError } from "./plan-transition-config.service";
 import { StripeService } from "./stripe.service";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
+import { autoLockAllowed, recordAutoLockSkip } from "./auto-lock-gate";
+import { expiredTrialWhere, scheduledCancellationWhere } from "./auto-lock-candidates";
 import { markNeedsReconcile } from "./needs-reconcile";
 import { resolvePlanPrice } from "./plan-price";
 import { CHECKOUT_ADDON_EXPAND, stripeAddonItemIds } from "./stripe-addon-items";
@@ -68,6 +71,9 @@ export class BillingCronService {
     private readonly stripe: StripeService,
     // R1 option B: the backup sweep for a downgrade price whose `invoice.upcoming` webhook was missed.
     private readonly scheduledPrice: ScheduledPriceChangeService,
+    // SA-775: the rollout pause on AUTOMATIC locks (trial expiry, scheduled cancellation). @Optional only so a
+    // unit spec can build the sweep bare; billing.module-wiring.spec.ts pins that production injects it.
+    @Optional() private readonly autoLocks?: AutoLockSwitchService,
   ) {}
 
   private planMonthly(version: PlanVersionWithCatalog | null, planKey: string | null): number {
@@ -96,14 +102,38 @@ export class BillingCronService {
   async expireTrials(): Promise<void> {
     const now = new Date();
     const expired = await this.prisma.tenant.findMany({
-      where: { status: "TRIAL", trialEndsAt: { lt: now }, deletedAt: null },
-      select: { id: true, trialEndsAt: true },
+      where: expiredTrialWhere(now),
+      select: { id: true, trialEndsAt: true, class: true },
     });
+    let locked = 0;
+    let held = 0;
     for (const t of expired) {
-      await this.prisma.tenant.update({
-        where: { id: t.id },
+      // SA-775 (row 381): the rollout pause. While the switch is paused a PRODUCTION trial is NOT locked: no
+      // status write, no notice. ONE durable skip record per trialEndsAt; the hourly pass meeting it again writes
+      // nothing, and the pass after an unpause finds the case again (it is still TRIAL and past its end).
+      if (!(await autoLockAllowed(this.autoLocks, t, "trial_expired"))) {
+        await recordAutoLockSkip(
+          this.prisma,
+          {
+            tenantId: t.id,
+            kind: "trial_expired",
+            key: (t.trialEndsAt as Date).toISOString(),
+            wouldHaveSet: { status: "READ_ONLY", readOnlyReason: "trial_expired" },
+          },
+          this.logger,
+        );
+        held++;
+        continue;
+      }
+      // Compare-and-swap (SA-774r5 MF9): only a tenant that is STILL on TRIAL is locked and announced, so a
+      // concurrent activation or a repeated pass writes nothing and emits nothing. The class the gate judged is part of
+      // the CAS (SA-775 S3): a TEST->PRODUCTION reclassification between the scan and this write cannot lock.
+      const { count } = await this.prisma.tenant.updateMany({
+        where: { id: t.id, status: "TRIAL", class: t.class },
         data: { status: "READ_ONLY", readOnlyReason: "trial_expired" },
       });
+      if (count !== 1) continue;
+      locked++;
       await this.events.emit(t.id, BILLING_EVENTS.TRIAL_EXPIRED, { at: now.toISOString() });
       this.entitlements.invalidate(t.id);
       this.tenantStatus.invalidate(t.id);
@@ -121,7 +151,8 @@ export class BillingCronService {
         );
       }
     }
-    if (expired.length) this.logger.log(`Expired ${expired.length} trials → READ_ONLY`);
+    if (locked) this.logger.log(`Expired ${locked} trials → READ_ONLY`);
+    if (held) this.logger.log(`Held ${held} expired trials: automatic locks are paused`);
   }
 
   /**
@@ -605,14 +636,11 @@ export class BillingCronService {
   async applyScheduledCancellations(): Promise<void> {
     const now = new Date();
     const subs = await this.prisma.tenantSubscription.findMany({
-      where: {
-        cancelAtPeriodEnd: true,
-        periodEnd: { not: null, lt: now },
-        tenant: { status: "ACTIVE", deletedAt: null },
-      },
+      where: scheduledCancellationWhere(now),
       select: { tenantId: true },
     });
     let applied = 0;
+    let held = 0;
     for (const s of subs) {
       // #2641 / SA-544: ONE transaction per tenant, Tenant row lock FIRST; the scan's filter is
       // re-proved on the rows read under it (suspended/deleted, cancellation resumed, or period
@@ -643,6 +671,18 @@ export class BillingCronService {
           sub.periodEnd >= now
         ) {
           return false;
+        }
+        // SA-775 (row 381): the rollout pause. A PRODUCTION tenant is NOT locked while the switch is paused: no
+        // READ_ONLY, its add-ons stay active, no churn event, and cancelAtPeriodEnd stays armed so the pass after
+        // an unpause finds it again. The skip record is written after this transaction (one per periodEnd).
+        if (
+          !(await autoLockAllowed(
+            this.autoLocks,
+            { id: s.tenantId, class: tenant.class },
+            "subscription_cancelled",
+          ))
+        ) {
+          return { heldPeriodEnd: sub.periodEnd };
         }
         // The run-rate this tenant stops contributing once access ends → emit it as a NEGATIVE
         // MRR delta (base + active add-ons − discount) so the append-only ledger nets down with
@@ -688,6 +728,20 @@ export class BillingCronService {
         );
         return true;
       });
+      if (done && typeof done === "object") {
+        await recordAutoLockSkip(
+          this.prisma,
+          {
+            tenantId: s.tenantId,
+            kind: "subscription_cancelled",
+            key: done.heldPeriodEnd.toISOString(),
+            wouldHaveSet: { status: "READ_ONLY", readOnlyReason: "subscription_cancelled" },
+          },
+          this.logger,
+        );
+        held++;
+        continue;
+      }
       if (!done) continue;
       // After commit: caches never observe a rolled-back transition.
       this.entitlements.invalidate(s.tenantId);
@@ -695,9 +749,10 @@ export class BillingCronService {
       applied++;
     }
     if (applied) this.logger.log(`Applied ${applied} scheduled cancellations → READ_ONLY`);
-    if (subs.length > applied) {
+    if (held) this.logger.log(`Held ${held} scheduled cancellations: automatic locks are paused`);
+    if (subs.length > applied + held) {
       this.logger.log(
-        `Skipped ${subs.length - applied} scheduled cancellations changed since the scan`,
+        `Skipped ${subs.length - applied - held} scheduled cancellations changed since the scan`,
       );
     }
   }

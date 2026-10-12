@@ -1,7 +1,7 @@
 import { taxRowLabel } from "@routeflow/pricing";
 import type { ReceiptModel } from "@routeflow/types";
 import { escapeHtml } from "../common/html-escape";
-import { renderBrandedEmail, tenantHeaderHtml } from "../email/email.service";
+import { endSentence, renderBrandedEmail, tenantHeaderHtml } from "../email/email.service";
 import {
   buildReceiptModel,
   formatReceiptMoney as money,
@@ -44,6 +44,7 @@ function totalsOf(m: ReceiptModel): Array<[string, string, boolean]> {
   const rows: Array<[string, string, boolean]> = [["Subtotal", money(m.subtotal), false]];
   if (m.discounts > 0) rows.push(["Discount", `−${money(m.discounts)}`, false]);
   if (m.tax !== 0) rows.push([taxRowLabel(m.taxRatePercent), money(m.tax), false]);
+  for (const c of m.charges) rows.push([c.label, money(c.amount), false]);
   if (m.adjustments !== 0) rows.push(["Adjustments", money(m.adjustments), false]);
   rows.push(["Total", money(m.total), true]);
   if (m.methodLabel) rows.push(["Payment method", m.methodLabel, false]);
@@ -158,7 +159,7 @@ export function renderOrderReceipt(
     heading: "Receipt",
     bodyHtml: bodyHtmlOf(model),
     bodyText: bodyTextOf(model),
-    footerNote: name ? `Sent by ${name}.` : "Sent by RouteFlow.",
+    footerNote: name ? endSentence(`Sent by ${name}`) : "Sent by RouteFlow.",
   });
   return { model, subject, html, text };
 }

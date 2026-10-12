@@ -77,7 +77,7 @@ export class PosFinishError extends Error {
 }
 
 /**
- * "Confirm & invoice": (DRAFT target only: PATCH status PENDING first,) PATCH status CONFIRMED, then POST /invoices/from-order/:id.
+ * "Confirm and invoice": (DRAFT target only: PATCH status PENDING first,) PATCH status CONFIRMED, then POST /invoices/from-order/:id.
  * The status PATCHes are NOT idempotent (the API refuses PENDING -> PENDING and CONFIRMED -> CONFIRMED), so the
  * PENDING step re-reads the order when it is refused with a 400/409 and carries on only if the order already is
  * PENDING or CONFIRMED (someone else promoted it, or a retry). A failure names the step so the caller can say which

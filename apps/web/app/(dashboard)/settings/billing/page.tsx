@@ -1,5 +1,6 @@
 "use client";
 
+import { endTrialToast } from "./end-trial-toast";
 import * as React from "react";
 import { CreditCard, Check, AlertTriangle, Loader2, Zap } from "lucide-react";
 import { API_ERROR_CODES, type AddonBillingMode, type EnableAddonResult } from "@routeflow/types";
@@ -455,7 +456,14 @@ export default function BillingSettingsPage() {
       />
       <TrialBanner sub={s} />
       {!ownsBillingBanner(s) && (
-        <ReadOnlyBanner status={s.status} readOnlyReason={s.readOnlyReason} />
+        <ReadOnlyBanner
+          status={s.status}
+          readOnlyReason={s.readOnlyReason}
+          hideAction={s.readOnlyReason !== "trial_expired"}
+          overdueAmount={s.openInvoiceAmount}
+          billingContactEmail={s.billingContactEmail}
+          isAdmin={isAdmin}
+        />
       )}
 
       {s.cancelAtPeriodEnd && s.status !== "READ_ONLY" && (
@@ -577,7 +585,7 @@ export default function BillingSettingsPage() {
         onClose={() => setEndTrialOpen(false)}
         onConfirm={() => {
           cancel.mutate(undefined, {
-            onSuccess: () => toast({ title: "Trial ended" }),
+            onSuccess: (data) => toast(endTrialToast(data)),
             onError: () =>
               toast({
                 title: "Trial not ended",

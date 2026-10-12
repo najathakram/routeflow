@@ -195,7 +195,7 @@ describe("Email receipt: sending", () => {
     await screen.findByText("Receipt sent to buyer@example.com.");
     await user.clear(field());
     await user.type(field(), "other@example.com");
-    // editing retires the old 'Sent to' line: it was about the other address
+    // editing retires the old 'Receipt sent to' line: it was about the other address
     expect(screen.queryByText("Receipt sent to buyer@example.com.")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Send again" }));
     expect(await screen.findByText("Receipt sent to other@example.com.")).toBeInTheDocument();

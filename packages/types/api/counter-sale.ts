@@ -94,6 +94,11 @@ export interface CounterSaleResponse {
    */
   tax?: number;
   /**
+   * The regulated levies the invoices billed, one named charge per category ("CRV deposit"), taken from the stored invoice
+   * lines (an exempt customer's are zero). The receipt prints them as their own rows; omitted by an older server.
+   */
+  charges?: Array<{ key: string; label: string; amount: number }>;
+  /**
    * The sale's stored tax rate in percent (`@routeflow/pricing` `storedTaxRatePercent`), a CANDIDATE: the receipt names it
    * only through `explainedTaxRatePercent`. null = mixed / none; omitted with `tax`.
    */
@@ -229,6 +234,12 @@ export interface TodaysSaleRow {
    * names it only through `explainedTaxRatePercent`.
    */
   taxRatePercent: number | null;
+  /**
+   * The regulated levies the sale's live invoices billed, one named charge per category ("CRV deposit"), from the stored
+   * invoice lines (an exempt customer's are zero). The reprint prints them as their own rows, never inside Tax.
+   * Omitted by an older server: then none print.
+   */
+  charges?: Array<{ key: string; label: string; amount: number }>;
   returned: {
     amount: number;
     state: TodaysSaleReturnState;

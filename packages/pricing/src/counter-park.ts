@@ -93,6 +93,8 @@ export interface ParkedCartLine {
   unit?: string;
   priceType?: "STANDARD" | "SPECIAL";
   category?: string;
+  /** The product's regulated category, so a resumed cart's estimate still carries the levy (CQ-01). */
+  trackedCategoryId?: string;
   tierPrices?: {
     pricePerUnit?: number | string | null;
     priceTier2?: number | string | null;
@@ -105,12 +107,14 @@ export interface ParkedCartLine {
   override?: { mode: ParkedPriceEditMode; value: number; reason?: string };
 }
 
-/** The customer is kept to these four fields; an email is NEVER stored. */
+/** The customer is kept to these five fields; an email is NEVER stored. */
 export interface ParkedCartCustomer {
   id: string;
   businessName: string;
   pricingTier?: number;
   fulfillPath?: string;
+  /** Tax-exempt customers owe no tax or levy: a resumed cart's estimate must still say so (CQ-02). */
+  isTaxExempt?: boolean;
 }
 
 export interface ParkedCartPayload {
@@ -188,6 +192,8 @@ function rebuildLine(raw: unknown): ParkedCartLine | null {
   if (raw.priceType === "STANDARD" || raw.priceType === "SPECIAL") line.priceType = raw.priceType;
   const category = str(raw.category, 100);
   if (category !== undefined) line.category = category;
+  const trackedCategoryId = str(raw.trackedCategoryId, 64);
+  if (trackedCategoryId !== undefined) line.trackedCategoryId = trackedCategoryId;
   if (isObj(raw.tierPrices)) {
     const tp: NonNullable<ParkedCartLine["tierPrices"]> = {};
     for (const k of TIER_KEYS) {
@@ -227,6 +233,7 @@ function rebuildCustomer(raw: unknown): ParkedCartCustomer | null | undefined {
   if (isNum(raw.pricingTier)) c.pricingTier = raw.pricingTier;
   const fulfillPath = str(raw.fulfillPath, 20);
   if (fulfillPath !== undefined) c.fulfillPath = fulfillPath;
+  if (typeof raw.isTaxExempt === "boolean") c.isTaxExempt = raw.isTaxExempt;
   return c;
 }
 

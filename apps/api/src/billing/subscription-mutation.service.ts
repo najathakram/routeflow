@@ -57,6 +57,8 @@ import { addCycle, Cycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { DunningService } from "./dunning.service";
+import { AutoLockSwitchService } from "./auto-lock-switch.service";
+import { autoLockAllowed, recordAutoLockSkip } from "./auto-lock-gate";
 import { assertTenantNotPaymentOverdue, type OverdueEntryPoint } from "./payment-overdue";
 import { billingPauseMode } from "./dunning-config";
 import { transitionToActiveTx, type PauseExit } from "./transition-to-active";
@@ -264,6 +266,8 @@ export class SubscriptionMutationService {
     @Optional() private readonly scheduledPrice?: ScheduledPriceChangeService,
     // SA-733r7 PR-B3: a paused tenant that cancels lands on READ_ONLY(subscription_cancelled); exits clear the pause.
     @Optional() private readonly dunning?: DunningService,
+    // SA-775: the rollout pause also holds a tenant admin's own immediate trial-cancel lock.
+    @Optional() private readonly autoLocks?: AutoLockSwitchService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
@@ -1366,7 +1370,7 @@ export class SubscriptionMutationService {
   async cancel(tenantId: string, actorId?: string) {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { status: true },
+      select: { status: true, class: true, trialEndsAt: true },
     });
 
     // Already read-only — with or without a row — is where cancellation lands. Checked
@@ -1402,6 +1406,35 @@ export class SubscriptionMutationService {
 
     if (tenant?.status === "TRIAL") {
       const now = new Date();
+      // SA-775 (row 381, an SA decision flagged for veto): the rollout pause also holds a tenant admin's own
+      // immediate trial-cancel lock. While the switch is paused a PRODUCTION tenant is NOT locked at once; the
+      // intent is the durable skip record + audit row (key = the trial's end, the user who clicked), and
+      // trialEndsAt is untouched, so the trial ends and locks through the ordinary expiry once locks are unpaused.
+      // The answer is a success shape (the web ignores the body and toasts); nothing is invented in the schema.
+      if (
+        !(await autoLockAllowed(
+          this.autoLocks,
+          { id: tenantId, class: tenant.class },
+          "trial_cancelled",
+        ))
+      ) {
+        await recordAutoLockSkip(
+          this.prisma,
+          {
+            tenantId,
+            kind: "trial_cancelled",
+            key: tenant.trialEndsAt ? tenant.trialEndsAt.toISOString() : "",
+            wouldHaveSet: {
+              status: "READ_ONLY",
+              readOnlyReason: "trial_cancelled",
+              trialEndsAt: now.toISOString(),
+            },
+            actorId: actorId ?? null,
+          },
+          this.logger,
+        );
+        return { cancelled: "trial_recorded" as const };
+      }
       const result = await this.prisma.$transaction(async (tx) => {
         // Compare-and-swap: only end the trial if it is STILL TRIAL — a concurrent
         // cancel/webhook can race this call between the read above and here.

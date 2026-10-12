@@ -907,7 +907,7 @@ describe("extractRefusalMessage: READ_ONLY", () => {
 
   it("a 403 READ_ONLY is the read-only line, never the server's guard text (web + mobile share this)", () => {
     expect(extractRefusalMessage(readOnly403)).toBe(
-      "Not available while read-only. Your admin can restore it.",
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
     );
   });
 

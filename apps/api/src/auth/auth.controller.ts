@@ -402,6 +402,14 @@ export class AuthController {
 
     try {
       const profile = await this.googleOAuth.verifyCallback(code, state);
+
+      // Platform accounts sign in only through the platform callback. Turn a platform-type
+      // state away before the link or sign-in step, so on this path no account is linked,
+      // looked up or signed in and no token pair or exchange code is issued.
+      if (profile.type === "platform") {
+        return res.redirect(`${base}?error=unauthorized`);
+      }
+
       // B825: profile.returnOrigin was already validated at mint time (googleAuthUrl's
       // resolveReturnOrigin call) and the signature above proves it wasn't tampered
       // with since — resolveReturnOrigin here is defense-in-depth, never a second
@@ -422,9 +430,10 @@ export class AuthController {
       // ── Sign-in flow ─────────────────────────────────────────────────────────
       const result = await this.googleOAuth.findOrCreateUser(profile, extractDeviceInfo(req));
 
-      // Build the param bundle the web callback page expects.
+      // Build the param bundle the web callback page expects. Platform results are
+      // unreachable here: the platform-type state check above turns them away first.
       let bundle: Record<string, string>;
-      if (result.kind === "staff" || result.kind === "platform") {
+      if (result.kind === "staff") {
         const r = result as any;
         bundle = {
           accessToken: r.accessToken,
@@ -439,7 +448,10 @@ export class AuthController {
           refreshToken: r.refreshToken,
           type: "BUYER",
           sellerCount: String(r.sellerCount),
-          linked: profile.inviteToken ? "true" : "false",
+          // true only when this sign-in actually activated a link (a dead, removed, expired or refused invite is not).
+          linked: r.inviteOutcome === "accepted" ? "true" : "false",
+          // The seller's workspace is not taking the invite right now: the buyer is signed in, the link was skipped.
+          ...(r.inviteOutcome === "seller_unavailable" ? { invite: "seller_unavailable" } : {}),
         };
       }
 

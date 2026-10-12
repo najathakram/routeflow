@@ -1,15 +1,25 @@
-import { computeLineSubtotal, roundMoney, validCustomer, validLine } from "@routeflow/pricing";
+import {
+  roundMoney,
+  saleTotals,
+  type ChargeLine,
+  validCustomer,
+  validLine,
+  type CategoryTaxType,
+} from "@routeflow/pricing";
 import { formatReceiptMoney } from "./counter-receipt";
 import {
   API_ERROR_CODES,
   type CounterSalePaymentMethod,
   type FulfilmentCapability,
 } from "@routeflow/types";
+import { regulatedAuthErrorCopy } from "@routeflow/types/regulated-auth-copy";
+import { creditLimitCounterSentence } from "./credit-limit-copy";
+import { sellingRestrictedCopy } from "./selling-restricted-copy";
 import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
 
 /**
  * Counter sale (walk-in pickup) — the pure logic behind the one screen. Money goes ONLY through @routeflow/pricing
- * (`computeLineSubtotal`, `roundMoney`); there is no ad-hoc rounding here.
+ * (`saleTotals`, `roundMoney`); there is no ad-hoc rounding here.
  */
 
 export interface CounterSaleGate {
@@ -104,29 +114,74 @@ export interface CartLine {
   boxes?: number | null;
   pieces?: number | null;
   unitsPerBox?: number | null;
+  /** The product's regulated category (levy), snapshotted when the line was added. */
+  trackedCategoryId?: string | null;
 }
 
-/** Subtotal = the sum of each line's `computeLineSubtotal`; tax = one `roundMoney` of the subtotal; total = their sum. */
+/** A regulated category as the tracked-categories list serialises it (`rate` is a Decimal string). */
+export interface CartCategory {
+  id?: string;
+  /** the category's name: the levy prints as its own named charge ("CRV deposit") */
+  name?: string;
+  taxType: string;
+  rate: string | number;
+  priceIncludesTax?: boolean | null;
+}
+
+export interface CartTotalsContext {
+  /** Tax-exempt customer: $0 of BOTH the sales tax and the levy (RF-079 / RF-4), as on the order and invoice. */
+  isTaxExempt?: boolean;
+  /** The tenant's regulated categories by id; a line whose category is absent here is not levied. */
+  categories?: ReadonlyMap<string, CartCategory>;
+}
+
+/**
+ * The till's cart total: the SAME figure the server writes on the order and the invoice, from the one
+ * `saleTotals` (@routeflow/pricing): subtotal = the sum of each line's `computeLineSubtotal`; `tax` = the sales
+ * tax; `charges` = the regulated levy (excise / deposit); total = their sum. A line's levy needs `categories`; an
+ * exempt customer owes neither tax nor levy.
+ */
 export function cartTotals(
   lines: readonly CartLine[],
   taxRate: number,
-): { subtotal: number; tax: number; total: number } {
-  const subtotal = roundMoney(
-    lines.reduce(
-      (sum, l) =>
-        sum +
-        computeLineSubtotal({
-          unitPrice: l.unitPrice,
-          qty: l.qty,
-          boxes: l.boxes ?? undefined,
-          pieces: l.pieces ?? undefined,
-          unitsPerBox: l.unitsPerBox ?? undefined,
-        }),
-      0,
-    ),
+  ctx: CartTotalsContext = {},
+): {
+  subtotal: number;
+  tax: number;
+  charges: number;
+  total: number;
+  /** the levy as named charges, one per regulated category (CQ-08) */
+  chargeLines: ChargeLine[];
+} {
+  const t = saleTotals(
+    lines.map((l) => {
+      const c = l.trackedCategoryId ? ctx.categories?.get(l.trackedCategoryId) : undefined;
+      return {
+        unitPrice: l.unitPrice,
+        qty: l.qty,
+        boxes: l.boxes ?? undefined,
+        pieces: l.pieces ?? undefined,
+        unitsPerBox: l.unitsPerBox ?? undefined,
+        category: c
+          ? {
+              id: c.id ?? l.trackedCategoryId,
+              name: c.name,
+              taxType: c.taxType as CategoryTaxType,
+              rate: Number(c.rate),
+              priceIncludesTax: c.priceIncludesTax ?? false,
+            }
+          : null,
+      };
+    }),
+    { taxRate, isTaxExempt: ctx.isTaxExempt === true },
   );
-  const tax = roundMoney(subtotal * taxRate);
-  return { subtotal, tax, total: roundMoney(subtotal + tax) };
+  return {
+    subtotal: t.subtotal,
+    tax: t.regularTax,
+    charges: t.categoryTax,
+    total: t.total,
+    chargeLines: t.chargeLines,
+  };
 }
 
 export interface QuickTender {
@@ -220,12 +275,38 @@ export function parseScanField(
 
 export const COUNTER_SALES_DISABLED_COPY = "Counter sales are not turned on for this business.";
 
+/** CQ-30: shown after a Retry that got no answer either (still offline); the lookup resumes by itself when the network is back. */
+export const COUNTER_GATE_STILL_OFFLINE_COPY =
+  "Still no answer. It will open by itself when you are back online.";
+
+/** CQ-30: the capability lookup failed (offline, a server error): say so, never "not turned on". Shown with a Retry button. */
+export const COUNTER_GATE_CHECK_FAILED_COPY =
+  "Couldn't check whether counter sales are on. Check your connection and try again.";
+
 /** Shown under the unknown-outcome banner when "Check sale status" itself failed (anything but a 404 answer). */
 export const COUNTER_LOOKUP_FAILED_COPY = "Couldn't check the sale. Try again.";
 
 /** After a 5xx, a network error or a timeout the sale may or may not have been written: say exactly that. */
 export const COUNTER_OUTCOME_UNKNOWN_COPY =
   "We couldn't confirm the sale. Check recent sales before trying again.";
+
+/**
+ * CQ-29: offline at Complete. Shown in the checkout bar; the form stays usable and the sale can be sent again. It says
+ * "recorded", not "charged": a card or check is run on an outside terminal, which may already have taken the money while
+ * only the RouteFlow sale is missing, so the line also tells the clerk not to run the card a second time.
+ */
+export const COUNTER_OFFLINE_COPY =
+  "No connection. Nothing was recorded yet. Check your connection and try again. If a card was already charged on the terminal, do not charge it again.";
+
+/**
+ * CQ-29: the request got no answer AND the browser already reported itself offline when it was sent. Only that combination
+ * proves nothing reached the server, so only it may say "nothing was recorded". Any other no-answer failure (a drop in flight, a
+ * timeout, a 5xx) stays an UNKNOWN outcome. The sale keeps its Idempotency-Key for the retry either way.
+ */
+export function isNotSentOffline(err: unknown, offlineAtSend: boolean): boolean {
+  const e = err as { response?: unknown } | null | undefined;
+  return offlineAtSend && !!e && !e.response;
+}
 
 const DEFINITIVE_REFUSALS = new Set([400, 401, 403, 404, 409, 422, 429]);
 
@@ -288,6 +369,18 @@ export function isCounterSaleChanged(err: unknown): boolean {
   return res?.status === 409 && res.data?.code === API_ERROR_CODES.COUNTER_SALE_CHANGED;
 }
 
+/**
+ * A message that says something about a sale that EXISTS (voided or changed after it was rung, or saved without payment for a
+ * closed day). Unlike a stale refusal it stays when the cart is edited, because editing the cart does not undo it (CQ-18).
+ */
+export function isFinalSaleMessage(message: string): boolean {
+  return (
+    message === COUNTER_SALE_VOIDED_COPY ||
+    message === COUNTER_SALE_CHANGED_COPY ||
+    message === COUNTER_SALE_DAY_CLOSED_TILL_COPY
+  );
+}
+
 /** The fixed copy of a FINAL answer (voided / changed after it was rung), else null: such a sale is never retried. */
 export function finalCounterSaleCopy(err: unknown): string | null {
   if (isCounterSaleVoided(err)) return COUNTER_SALE_VOIDED_COPY;
@@ -311,9 +404,17 @@ export const COUNTER_PRICE_EDIT_NOT_PERMITTED_COPY =
  * FIXED copy by status (and the one named 403 code); the server's own message is never shown. "Nothing was charged" is
  * said ONLY for a refusal that proves nothing was written; a 5xx / network error / timeout is an unknown outcome.
  */
-export function counterSaleErrorCopy(err: unknown): string {
+export function counterSaleErrorCopy(err: unknown, opts: { walkIn?: boolean } = {}): string {
   const res = (
-    err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
+    err as
+      | {
+          response?: {
+            status?: number;
+            data?: { code?: unknown; limit?: unknown; exposure?: unknown; blockedLines?: unknown };
+          };
+        }
+      | null
+      | undefined
   )?.response;
   const status = res?.status;
   if (status === 403 && res?.data?.code === API_ERROR_CODES.COUNTER_SALES_DISABLED)
@@ -338,6 +439,16 @@ export function counterSaleErrorCopy(err: unknown): string {
     return PICKUP_TENDER_SHORT_COPY;
   if (status === 409 && res?.data?.code === API_ERROR_CODES.COUNTER_SALE_KEY_CONFLICT)
     return "That sale reference was already used. Ring the sale again.";
+  // CQ-06: a license refusal (create()'s regulated guard, before anything is written) says what to fix, not "Something changed".
+  const license = regulatedAuthErrorCopy(err, { walkIn: opts.walkIn === true });
+  if (license) return `${license} Nothing was charged.`;
+  // CQ-06 review: the credit-limit and selling-restriction guards also run in create() before any write; each says what to fix.
+  if (status === 409 && res?.data?.code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED) {
+    return `${creditLimitCounterSentence(res.data.limit, res.data.exposure)} Nothing was charged.`;
+  }
+  if (status === 409 && res?.data?.code === API_ERROR_CODES.SELLING_RESTRICTED) {
+    return `${sellingRestrictedCopy(res.data.blockedLines)} Nothing was charged.`;
+  }
   if (status === 409)
     return "Something changed while you were checking out. Review the sale and try again. Nothing was charged.";
   if (status === 400 || status === 404 || status === 422 || status === 429)
@@ -514,7 +625,7 @@ export function writeHeldAttempt(storeKey: string | null, snap: HeldAttemptSnaps
     const c = snap.customer as Record<string, unknown> | null | undefined;
     const customer = c
       ? Object.fromEntries(
-          (["id", "businessName", "pricingTier", "fulfillPath"] as const)
+          (["id", "businessName", "pricingTier", "fulfillPath", "isTaxExempt"] as const)
             .filter((k) => c[k] !== undefined)
             .map((k) => [k, c[k]]),
         )

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Info, X } from "lucide-react";
 import type { SubscriptionView } from "@routeflow/types";
-import { Button, Modal, cn } from "@routeflow/ui/web";
+import { Button, cn } from "@routeflow/ui/web";
 import { useBillingPortal } from "@/lib/api/billing";
 import { useGuardedRouter } from "@/lib/use-guarded-router";
 import { dismissBanner, isBannerDismissed } from "@/lib/banner-dismiss";
@@ -45,9 +45,12 @@ export function SubscriptionStrip({
   view,
   role,
   state: given,
+  hideBillingLink = false,
 }: {
   view: SubscriptionView;
   role: BannerRole;
+  /** The page is /settings/billing itself: a "Billing" link would point at the page already open. */
+  hideBillingLink?: boolean;
   /** A caller that already computed the state passes it. */
   state?: BannerState;
 }) {
@@ -74,7 +77,15 @@ export function SubscriptionStrip({
     setAlertKind(claimed.current.alert ? announceKind : null);
   }, [announceKind]);
   const alertNow = announceKind !== null && alertKind === announceKind;
-  const [sheet, setSheet] = React.useState(false);
+  // SA-777: a Pay action that carries the oldest owed invoice's hosted page opens it directly (new tab); any
+  // other action (or a Pay with no link) goes through the portal route exactly as before.
+  const runAction = (a: { intent: string; url?: string }) => {
+    if (a.intent === "pay" && a.url && a.url.startsWith("https://")) {
+      window.open(a.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    portal.mutate({ intent: a.intent as "pay" | "update-payment" });
+  };
   const [tick, setTick] = React.useState(0);
   const dismissKey = state.dismiss?.key;
   const dismissed = React.useMemo(
@@ -86,35 +97,40 @@ export function SubscriptionStrip({
   if (!state.inShell || state.tone === "none" || dismissed) return null;
 
   const action = state.action;
+  // UX QA: no fixed height and no truncation: the sentence wraps (read-only stacks its 3 lines), the controls sit
+  // on their own row at 390 (>= 44 px hit areas, the action full width) and beside the text from 640.
+  const HIT = "min-h-[44px] min-w-[44px]";
   return (
-    <>
-      <div
-        data-testid="subscription-strip"
-        data-state={state.kind}
-        role={alertNow ? "alert" : "status"}
-        className={cn(
-          "flex h-8 shrink-0 items-center gap-2 px-3 text-[13px] ring-1 md:h-9 md:px-4 md:text-sm",
-          TONE[state.tone],
-        )}
-      >
-        <Info className="h-4 w-4 shrink-0" aria-hidden="true" />
-        {/* The text is a button: a tap opens the full sentence (the strip truncates to one line at 390). */}
-        <button
-          type="button"
-          onClick={() => setSheet(true)}
-          className="min-w-0 flex-1 truncate text-left"
-          title={state.copy}
-        >
-          {state.copy}
-        </button>
-        {action && action.intent === "open-billing" && (
+    <div
+      data-testid="subscription-strip"
+      data-state={state.kind}
+      role={alertNow ? "alert" : "status"}
+      className={cn(
+        "flex min-h-8 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1.5 text-[13px] ring-1 md:min-h-9 md:px-4 md:text-sm",
+        TONE[state.tone],
+      )}
+    >
+      <Info className="h-4 w-4 shrink-0 self-start mt-0.5" aria-hidden="true" />
+      <div className="min-w-0 flex-1 basis-[12rem] space-y-1">
+        {(state.lines ?? [state.copy]).map((line, i, all) => (
+          <p key={i} data-testid="strip-line" className="break-words">
+            {line}
+            {i < all.length - 1 ? " " : ""}
+          </p>
+        ))}
+      </div>
+      <div className="flex w-full items-center gap-2 sm:w-auto">
+        {action && action.intent === "open-billing" && !hideBillingLink && (
           <a
             href="/settings/billing"
             onClick={(e) => {
               e.preventDefault();
               router.push("/settings/billing"); // guarded: never drops an open cart silently
             }}
-            className="shrink-0 rounded-ctl border border-line-strong bg-paper px-2.5 text-[12.5px] font-medium leading-6 text-navy"
+            className={cn(
+              HIT,
+              "inline-flex min-w-0 flex-1 items-center justify-center rounded-ctl border border-line-strong bg-paper px-3 text-[13px] font-medium text-navy sm:flex-none",
+            )}
           >
             {action.label}
           </a>
@@ -123,9 +139,9 @@ export function SubscriptionStrip({
           <Button
             size="sm"
             variant="secondary"
-            className="h-6 shrink-0 md:h-7"
+            className={cn(HIT, "min-w-0 flex-1 sm:flex-none")}
             loading={portal.isPending}
-            onClick={() => portal.mutate({ intent: action.intent as "pay" | "update-payment" })}
+            onClick={() => runAction(action)}
           >
             {action.label}
           </Button>
@@ -134,7 +150,10 @@ export function SubscriptionStrip({
           <button
             type="button"
             aria-label="Dismiss"
-            className="shrink-0 rounded p-1 hover:bg-black/5"
+            className={cn(
+              HIT,
+              "inline-flex shrink-0 items-center justify-center rounded hover:bg-black/5",
+            )}
             onClick={() => {
               dismissBanner(state.dismiss!);
               setTick((n) => n + 1);
@@ -144,23 +163,6 @@ export function SubscriptionStrip({
           </button>
         )}
       </div>
-      <Modal
-        open={sheet}
-        onClose={() => setSheet(false)}
-        title="Billing"
-        footer={
-          action && action.intent !== "open-billing" ? (
-            <Button
-              loading={portal.isPending}
-              onClick={() => portal.mutate({ intent: action.intent as "pay" | "update-payment" })}
-            >
-              {action.label}
-            </Button>
-          ) : undefined
-        }
-      >
-        <p className="text-sm text-slate-700">{state.copy}</p>
-      </Modal>
-    </>
+    </div>
   );
 }

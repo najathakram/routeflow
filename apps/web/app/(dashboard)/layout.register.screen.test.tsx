@@ -178,3 +178,14 @@ describe("g shortcut with the real counter screen", () => {
     expect(screen.queryByText("Discard this sale?")).toBeNull();
   });
 });
+
+/** CQ-32: at tablet width (768) the shell's search control is a 44 px target; only a desktop width goes compact. */
+describe("the search pill's touch target (CQ-32)", () => {
+  it("is 44 px high from md and compact (34 px) only from lg", async () => {
+    mount(COUNTER);
+    await screen.findByLabelText("Scan or search items");
+    const pill = screen.getAllByRole("button", { name: "Open command palette" })[0];
+    expect(pill).toHaveClass("h-11");
+    expect(pill).toHaveClass("lg:h-[34px]");
+  });
+});

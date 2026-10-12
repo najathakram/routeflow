@@ -19,7 +19,7 @@ export type { TextareaProps } from "./Textarea";
 export { Select } from "./Select";
 export type { SelectProps, SelectOption } from "./Select";
 
-export { Modal } from "./Modal";
+export { Modal, ModalNoticeContext } from "./Modal";
 export type { ModalProps } from "./Modal";
 
 export { Table } from "./Table";

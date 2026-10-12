@@ -186,6 +186,7 @@ const INVOICE_LIST = {
   isOverdue: "keep",
   overpaidBy: "keep",
   revisedAt: "keep",
+  paidAtSale: "keep",
   customer: { plan: CUSTOMER },
 } satisfies Record<keyof BuyerInvoiceListItem, Plan>;
 

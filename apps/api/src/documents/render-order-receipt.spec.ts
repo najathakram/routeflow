@@ -435,6 +435,29 @@ describe("renderOrderReceipt (email)", () => {
     expect(r.subject).toBe("Your receipt for order ORD-1001");
   });
 
+  it("signs the email 'Sent by <business name>.' (row 345), never 'Receipt sent by'", () => {
+    for (const body of [out.html, out.text]) {
+      expect(body).toContain("Sent by Acme Test Store.");
+      expect(body).not.toContain("Receipt sent by");
+    }
+  });
+
+  // CQ-20: "Sent by Acme Co.." — a name that already ends in a period must not get a second one.
+  it.each([
+    ["Acme Co.", "Sent by Acme Co."],
+    ["Acme Co", "Sent by Acme Co."],
+    ["Acme Co. ", "Sent by Acme Co."],
+    ["Acme!", "Sent by Acme!"],
+    ["Acme\u2026", "Sent by Acme\u2026"],
+  ])("signs a business named %j as %j (never a doubled period)", (businessName, signed) => {
+    const r = render(orderFixture(), [INVOICE], paymentsFixture(), { ...BRANDING, businessName });
+    for (const body of [r.html, r.text]) {
+      expect(body).toContain(signed);
+      expect(body).not.toMatch(/Sent by [^<\n]*\.\./);
+      expect(body).not.toContain(`${signed}.`);
+    }
+  });
+
   it("prints the footer only when the model carries one", () => {
     expect(out.html).not.toContain("Thanks for");
     const withFooter = render(orderFixture(), [INVOICE], paymentsFixture(), {

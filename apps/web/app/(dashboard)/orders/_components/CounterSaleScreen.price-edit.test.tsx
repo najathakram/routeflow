@@ -147,7 +147,7 @@ async function editPrice(
   if (o.mode) fireEvent.click(screen.getByRole("radio", { name: o.mode }));
   fireEvent.change(screen.getByRole("textbox", { name: o.label }), { target: { value: o.value } });
   if (o.reason !== undefined) {
-    fireEvent.change(screen.getByRole("textbox", { name: "Reason (optional)" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /^Reason \((optional|required)\)$/ }), {
       target: { value: o.reason },
     });
   }
@@ -216,6 +216,8 @@ describe("POS-5 price edit: the cart and totals", () => {
     expect(within(li).getByTestId("line-net-total")).toHaveTextContent("$9.00");
     expect(within(li).getByTestId("line-price-chip")).toHaveTextContent("10% off");
     expect(screen.getByTestId("running-discounts")).toHaveTextContent("Discount−$1.00");
+    // CQ-08: the panel reads like the receipt: Subtotal at the system prices (10.00), then Discount, then the total
+    expect(screen.getByTestId("running-subtotal")).toHaveTextContent("Subtotal$10.00");
     expect(total()).toHaveTextContent("$9.00");
     // the estimate IS cartTotals of the edited cart
     expect(cartTotals([{ unitPrice: 9, qty: 1 }], 0).total).toBe(9);
@@ -458,7 +460,7 @@ describe("POS-5 price edit: a special-price customer needs a reason", () => {
       "Add a reason. Acme Cafe has a special price on this item.",
     );
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    fireEvent.change(screen.getByRole("textbox", { name: "Reason (optional)" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /^Reason \((optional|required)\)$/ }), {
       target: { value: "Damaged box" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));

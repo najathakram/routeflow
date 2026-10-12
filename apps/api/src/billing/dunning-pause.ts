@@ -1,4 +1,5 @@
 import { lockTenantForLedger } from "./addon-ledger";
+import { autoLockAllowed, recordAutoLockSkip } from "./auto-lock-gate";
 import { HOUR_MS, PAYMENT_OVERDUE_REASON, READ_ONLY_STATUS } from "./dunning-config";
 import { type DunningDeps, type DunningRow, isStripeMissing } from "./dunning-core";
 import { forEachRotated } from "./dunning-paging";
@@ -32,14 +33,27 @@ export async function pauseTenantTx(
   now: Date,
 ): Promise<boolean> {
   const { tenantId } = row;
+  let held = false;
   try {
-    return await deps.prisma.$transaction(async (tx) => {
+    const paused = await deps.prisma.$transaction(async (tx) => {
       await lockTenantForLedger(tx, tenantId);
       const tenant = await tx.tenant.findUnique({
         where: { id: tenantId },
-        select: { status: true },
+        select: { status: true, class: true },
       });
       if (tenant?.status !== "ACTIVE") return false;
+      // SA-775 (row 381): the rollout pause. While the switch is paused a PRODUCTION tenant is NOT paused: no
+      // subscription CAS, no status write. The skip record (one per dunning invoice) is written after this tx.
+      if (
+        !(await autoLockAllowed(
+          deps.autoLocks,
+          { id: tenantId, class: tenant.class },
+          "payment_overdue",
+        ))
+      ) {
+        held = true;
+        return false;
+      }
       const cas = await tx.tenantSubscription.updateMany({
         where: {
           tenantId,
@@ -63,6 +77,19 @@ export async function pauseTenantTx(
       if (!moved) throw new PauseRollback();
       return true;
     });
+    if (held) {
+      await recordAutoLockSkip(
+        deps.prisma,
+        {
+          tenantId,
+          kind: "payment_overdue",
+          key: invoiceId,
+          wouldHaveSet: { status: READ_ONLY_STATUS, readOnlyReason: PAYMENT_OVERDUE_REASON },
+        },
+        deps.logger,
+      );
+    }
+    return paused;
   } catch (err) {
     if (err instanceof PauseRollback) return false;
     throw err;

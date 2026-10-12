@@ -94,6 +94,34 @@ describe("PickupCompleteDialog — nothing to collect", () => {
   });
 });
 
+describe("PickupCompleteDialog — hand-over copy (row 345)", () => {
+  it("the hand-over title drops the dash: 'Hand over ORD-00008'", async () => {
+    balance(0, "PAID");
+    mount({ handOver: true, orderNumber: "ORD-00008" });
+    expect(await screen.findByRole("dialog", { name: "Hand over ORD-00008" })).toBeInTheDocument();
+  });
+
+  it("a fully paid hand-over reads 'Picked up and paid.'", async () => {
+    balance(0, "PAID");
+    post.mockResolvedValue(result({ balanceDue: 0 }));
+    mount();
+    expect(await screen.findByText("Paid — nothing to collect")).toBeInTheDocument();
+    confirm();
+    expect(await screen.findByTestId("pickup-outcome")).toHaveTextContent("Picked up and paid.");
+  });
+
+  it("a hand-over with a balance left reads 'Picked up. $7.58 still due.'", async () => {
+    balance(0, "PAID");
+    post.mockResolvedValue(result({ balanceDue: 7.58, paid: 17.42 }));
+    mount();
+    expect(await screen.findByText("Paid — nothing to collect")).toBeInTheDocument();
+    confirm();
+    expect(await screen.findByTestId("pickup-outcome")).toHaveTextContent(
+      "Picked up. $7.58 still due.",
+    );
+  });
+});
+
 describe("PickupCompleteDialog — tender", () => {
   it("cash: a short tender is refused with the till's copy and nothing is posted", async () => {
     balance(25);
@@ -101,6 +129,7 @@ describe("PickupCompleteDialog — tender", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10" } });
     confirm();
+    // names what to enter: the order's amount due, through the shared money formatter
     expect(await screen.findByText("Enter at least $25.00.")).toBeVisible();
     expect(post).not.toHaveBeenCalled();
   });

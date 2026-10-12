@@ -19,7 +19,9 @@ import { useTenantFeatures } from "../tenant-features";
  */
 export function useCounterSaleGate(options?: { enabled?: boolean }) {
   const enabled = options?.enabled ?? true;
-  const { data, isLoading } = useTenantFeatures({ enabled });
+  const { data, isLoading, isError, fetchStatus, isFetching, refetch } = useTenantFeatures({
+    enabled,
+  });
   // The response type says `capabilities` is always there; a stale or partial answer may not have it, and that means DARK.
   const cap = (data as { capabilities?: { fulfilment?: FulfilmentCapability } } | undefined)
     ?.capabilities?.fulfilment;
@@ -33,12 +35,27 @@ export function useCounterSaleGate(options?: { enabled?: boolean }) {
         offerShipInstead: false,
         offerInvoiceOrder: false,
       };
-  return { ...gate, capability: enabled ? cap : null, loading: enabled && isLoading === true };
+  return {
+    ...gate,
+    capability: enabled ? cap : null,
+    loading: enabled && isLoading === true,
+    // CQ-30: the lookup itself FAILED (a server error) or could not even start (React Query PAUSES a query while the browser is
+    // offline: not loading, not an error) and there is no earlier answer. That is not "counter sales are off": the screen says
+    // it could not check and offers a retry. The gate stays dark (no sale UI) either way.
+    failed: enabled && data === undefined && (isError === true || fetchStatus === "paused"),
+    /** a retry is in flight (the screen shows "Retrying..." and disables the button meanwhile) */
+    retrying: enabled && isFetching === true,
+    retry: () => refetch?.(),
+  };
 }
 
 export function useCreateCounterSale() {
   const qc = useQueryClient();
   return useMutation({
+    // CQ-29: React Query's default ("online") PAUSES a mutation while the browser is offline, so `mutateAsync` never settles
+    // and the till sits "sending" until the connection comes back (and then sends by itself). The till must try the request
+    // and see the network failure, so it can say so and unfreeze; the sale's Idempotency-Key makes any retry safe.
+    networkMode: "always",
     mutationFn: ({ dto, idempotencyKey }: { dto: CounterSaleRequest; idempotencyKey: string }) =>
       apiClient
         .post<CounterSaleResponse>("/orders/counter-sale", dto, {
@@ -59,6 +76,7 @@ export function useCreateCounterSale() {
 export function useCounterSaleByKey() {
   const qc = useQueryClient();
   return useMutation({
+    networkMode: "always", // CQ-29: "Check sale status" must answer (or fail) while offline, never pause silently
     mutationFn: ({
       idempotencyKey,
       method,

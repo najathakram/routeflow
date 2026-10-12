@@ -41,6 +41,7 @@ import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
 import { ReadOnlyGateProvider } from "@/lib/read-only-gate";
 import { BillingShellBanner, BillingStripReserve } from "@/components/BillingShellBanner";
+import { DriverReadOnlyBanner } from "@/components/DriverReadOnlyBanner";
 import { subscriptionPollInterval } from "@/lib/subscription-banner-state";
 import { useSubscription } from "@/lib/api/billing";
 import { useAuth } from "@/lib/auth-context";
@@ -569,7 +570,7 @@ function HeaderTools({
       {/* Command palette trigger — Ledger search pill */}
       <button
         onClick={onOpenPalette}
-        className="hidden h-[34px] w-[280px] items-center gap-2.5 rounded-full border border-line-strong bg-surface-raised px-3 text-[13px] text-ink-400 transition-colors hover:border-brand-300 hover:text-ink-500 md:flex"
+        className="hidden h-11 w-[280px] items-center gap-2.5 rounded-full border border-line-strong bg-surface-raised px-3 text-[13px] text-ink-400 transition-colors hover:border-brand-300 hover:text-ink-500 md:flex lg:h-[34px]"
         aria-label="Open command palette"
       >
         <Search className="h-[15px] w-[15px]" />
@@ -1363,6 +1364,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           />
         ) : isStaff && !subscriptionFailed ? (
           <BillingStripReserve scope={billingScope} />
+        ) : user?.role === "DRIVER" ? (
+          <DriverReadOnlyBanner />
         ) : null}
         {register ? (
           <RegisterHeader
@@ -1395,7 +1398,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           tabIndex={-1}
           className="flex-1 focus:outline-none overflow-x-hidden overflow-y-auto bg-surface-raised pb-24"
         >
-          <ReadOnlyGateProvider view={subscriptionStatus} readAt={subscriptionReadAt}>
+          <ReadOnlyGateProvider
+            view={subscriptionStatus}
+            readAt={subscriptionReadAt}
+            isAdmin={user?.role === "TENANT_ADMIN"}
+          >
             {children}
           </ReadOnlyGateProvider>
         </main>
@@ -1404,7 +1411,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         <DraftDock />
       </div>
 
-      <ReadOnlyGateProvider view={subscriptionStatus} readAt={subscriptionReadAt}>
+      <ReadOnlyGateProvider
+        view={subscriptionStatus}
+        readAt={subscriptionReadAt}
+        isAdmin={user?.role === "TENANT_ADMIN"}
+      >
         <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       </ReadOnlyGateProvider>
       <PwaInstallPrompt logoSrc={BRAND_MARK_SRC} accentClass="bg-brand-600 hover:bg-brand-700" />
