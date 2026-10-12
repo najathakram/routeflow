@@ -129,12 +129,12 @@ describe("SA-776 read-only route pin: every mutating route is classified", () =>
     for (const r of buyer) expect(r.route.guards).toContain("BuyerSellerContextGuard");
   });
 
-  it("invites/:token/accept and sellers/request are classified with the follow-up reason (SA-776 GAP-2)", () => {
+  it("invites/:token/accept and sellers/request are classified as gated by the shared seller-status rule (SA-776 GAP-2)", () => {
     const reasons = BUYER_ACCOUNT_WRITES.filter((e) =>
       /invites\/:token\/accept$|sellers\/request$/.test(e.route),
     ).map((e) => e.reason);
     expect(reasons).toHaveLength(2);
-    for (const r of reasons) expect(r).toMatch(/gated under the dark buyer gate in a follow-up/);
+    for (const r of reasons) expect(r).toMatch(/gated by the shared seller-status rule/);
   });
 });
 
