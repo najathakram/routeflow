@@ -136,6 +136,7 @@ describe("cartTotals: money only through @routeflow/pricing", () => {
     expect(cartTotals([{ unitPrice: 1.005, qty: 3 }], 0)).toEqual({
       subtotal: 3.02,
       tax: 0,
+      charges: 0,
       total: 3.02,
     });
   });
@@ -147,11 +148,61 @@ describe("cartTotals: money only through @routeflow/pricing", () => {
     expect(cartTotals([{ unitPrice: 10, qty: 3 }], 0.0825)).toEqual({
       subtotal: 30,
       tax: 2.48,
+      charges: 0,
       total: 32.48,
     });
   });
   it("empty cart is zero", () => {
-    expect(cartTotals([], 0.1)).toEqual({ subtotal: 0, tax: 0, total: 0 });
+    expect(cartTotals([], 0.1)).toEqual({ subtotal: 0, tax: 0, charges: 0, total: 0 });
+  });
+});
+
+describe("cartTotals: the regulated levy and the exempt customer (CQ-01, CQ-02, CQ-28)", () => {
+  const categories = new Map([
+    ["dep", { taxType: "DEPOSIT_PER_CONTAINER", rate: "0.1000", priceIncludesTax: false }],
+    ["exc", { taxType: "EXCISE_PER_UNIT", rate: "0.5000", priceIncludesTax: false }],
+  ] as const);
+  const cart = [
+    { unitPrice: 10, qty: 4, trackedCategoryId: "dep" },
+    { unitPrice: 10, qty: 4, trackedCategoryId: "exc" },
+  ];
+
+  it("CQ-01: the deposit and the excise are in the total the screen shows, as on the receipt", () => {
+    // 80.00 + 6.60 tax + 0.40 deposit + 2.00 excise
+    expect(cartTotals(cart, 0.0825, { categories })).toEqual({
+      subtotal: 80,
+      tax: 6.6,
+      charges: 2.4,
+      total: 89,
+    });
+  });
+
+  it("CQ-01: the change on a $100 tender is the receipt's, not 2.40 too high", () => {
+    const { total } = cartTotals(cart, 0.0825, { categories });
+    expect(changeDue(total, 100)).toBe(11);
+  });
+
+  it("CQ-02: an exempt customer pays $0 tax and $0 levy, so the screen, the order and the invoice agree", () => {
+    expect(cartTotals(cart, 0.0825, { categories, isTaxExempt: true })).toEqual({
+      subtotal: 80,
+      tax: 0,
+      charges: 0,
+      total: 80,
+    });
+  });
+
+  it("CQ-28: Exact on a cart holding a deposit item tenders the receipt's total, so a walk-in is not refused", () => {
+    const { total } = cartTotals([cart[0]], 0.0825, { categories });
+    const exact = quickTenderOptions(total).find((q) => q.label === "Exact");
+    expect(total).toBe(43.7);
+    expect(exact?.amount).toBe(43.7);
+    expect(amountDue(total, exact!.amount)).toBe(0);
+  });
+
+  it("a line with no category, or a category the list does not know, is just taxed", () => {
+    expect(
+      cartTotals([{ unitPrice: 10, qty: 1, trackedCategoryId: "gone" }], 0.1, { categories }),
+    ).toEqual({ subtotal: 10, tax: 1, charges: 0, total: 11 });
   });
 });
 

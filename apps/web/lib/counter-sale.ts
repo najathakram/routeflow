@@ -1,4 +1,10 @@
-import { computeLineSubtotal, roundMoney, validCustomer, validLine } from "@routeflow/pricing";
+import {
+  roundMoney,
+  saleTotals,
+  validCustomer,
+  validLine,
+  type CategoryTaxType,
+} from "@routeflow/pricing";
 import {
   API_ERROR_CODES,
   type CounterSalePaymentMethod,
@@ -8,7 +14,7 @@ import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
 
 /**
  * Counter sale (walk-in pickup) — the pure logic behind the one screen. Money goes ONLY through @routeflow/pricing
- * (`computeLineSubtotal`, `roundMoney`); there is no ad-hoc rounding here.
+ * (`saleTotals`, `roundMoney`); there is no ad-hoc rounding here.
  */
 
 export interface CounterSaleGate {
@@ -81,29 +87,56 @@ export interface CartLine {
   boxes?: number | null;
   pieces?: number | null;
   unitsPerBox?: number | null;
+  /** The product's regulated category (levy), snapshotted when the line was added. */
+  trackedCategoryId?: string | null;
 }
 
-/** Subtotal = the sum of each line's `computeLineSubtotal`; tax = one `roundMoney` of the subtotal; total = their sum. */
+/** A regulated category as the tracked-categories list serialises it (`rate` is a Decimal string). */
+export interface CartCategory {
+  taxType: string;
+  rate: string | number;
+  priceIncludesTax?: boolean | null;
+}
+
+export interface CartTotalsContext {
+  /** Tax-exempt customer: $0 of BOTH the sales tax and the levy (RF-079 / RF-4), as on the order and invoice. */
+  isTaxExempt?: boolean;
+  /** The tenant's regulated categories by id; a line whose category is absent here is not levied. */
+  categories?: ReadonlyMap<string, CartCategory>;
+}
+
+/**
+ * The till's cart total: the SAME figure the server writes on the order and the invoice, from the one
+ * `saleTotals` (@routeflow/pricing): subtotal = the sum of each line's `computeLineSubtotal`; `tax` = the sales
+ * tax; `charges` = the regulated levy (excise / deposit); total = their sum. A line's levy needs `categories`; an
+ * exempt customer owes neither tax nor levy.
+ */
 export function cartTotals(
   lines: readonly CartLine[],
   taxRate: number,
-): { subtotal: number; tax: number; total: number } {
-  const subtotal = roundMoney(
-    lines.reduce(
-      (sum, l) =>
-        sum +
-        computeLineSubtotal({
-          unitPrice: l.unitPrice,
-          qty: l.qty,
-          boxes: l.boxes ?? undefined,
-          pieces: l.pieces ?? undefined,
-          unitsPerBox: l.unitsPerBox ?? undefined,
-        }),
-      0,
-    ),
+  ctx: CartTotalsContext = {},
+): { subtotal: number; tax: number; charges: number; total: number } {
+  const t = saleTotals(
+    lines.map((l) => {
+      const c = l.trackedCategoryId ? ctx.categories?.get(l.trackedCategoryId) : undefined;
+      return {
+        unitPrice: l.unitPrice,
+        qty: l.qty,
+        boxes: l.boxes ?? undefined,
+        pieces: l.pieces ?? undefined,
+        unitsPerBox: l.unitsPerBox ?? undefined,
+        category: c
+          ? {
+              taxType: c.taxType as CategoryTaxType,
+              rate: Number(c.rate),
+              priceIncludesTax: c.priceIncludesTax ?? false,
+            }
+          : null,
+      };
+    }),
+    { taxRate, isTaxExempt: ctx.isTaxExempt === true },
   );
-  const tax = roundMoney(subtotal * taxRate);
-  return { subtotal, tax, total: roundMoney(subtotal + tax) };
+  return { subtotal: t.subtotal, tax: t.regularTax, charges: t.categoryTax, total: t.total };
 }
 
 export interface QuickTender {

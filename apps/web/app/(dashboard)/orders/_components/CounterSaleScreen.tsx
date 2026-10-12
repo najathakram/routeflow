@@ -26,6 +26,7 @@ import {
   setCounterDiscardHook,
 } from "@/lib/counter-cart-signal";
 import { useCustomers } from "@/lib/api/customers";
+import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useCreateDraft } from "@/lib/api/drafts";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import {
@@ -110,6 +111,8 @@ interface PickedCustomer {
   fulfillPath?: string | null;
   /** the system walk-in customer record (a pick of it is still a walk-in on the receipt) */
   isWalkIn?: boolean | null;
+  /** owes no sales tax and no levy: the estimate, the order and the invoice all say so */
+  isTaxExempt?: boolean | null;
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -332,7 +335,17 @@ export function CounterSaleScreen() {
     staleTime: 60_000,
   });
   const taxRate = (settings?.taxRate ?? 0) / 100;
-  const totals = cartTotals(lines, taxRate);
+  // The regulated levy and the exempt customer's $0 tax are in the estimate, so it is the receipt's figure to the cent
+  // (CQ-01 / CQ-02 / CQ-28): the same saleTotals the order and invoice sums run.
+  const { data: categoryRows } = useTrackedCategories();
+  const categories = React.useMemo(
+    () => new Map((Array.isArray(categoryRows) ? categoryRows : []).map((c) => [c.id, c])),
+    [categoryRows],
+  );
+  const totals = cartTotals(lines, taxRate, {
+    categories,
+    isTaxExempt: customer?.isTaxExempt === true,
+  });
   const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
 
