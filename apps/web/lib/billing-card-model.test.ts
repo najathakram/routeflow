@@ -128,8 +128,77 @@ describe("billingCardModel (SA-777)", () => {
       "admin",
       NOW,
     )!;
-    expect(m.amountLine).toBe("$298.00 overdue since Oct 1");
+    // every amount next to Pay equals what Pay collects: ONE invoice's $149.00, with the rest named underneath
+    expect(m.amountLine).toBe("$149.00 overdue since Oct 1");
     expect(m.pay?.label).toBe("Pay $149.00");
+    expect(m.totalLine).toBe("Total open: $298.00"); // the count is unknown on this older shape: just the total
+  });
+
+  it("two open invoices: the big number is what Pay collects, the total is a secondary line", () => {
+    const m = billingCardModel(
+      view({
+        billingState: "overdue",
+        outstandingTotal: 298,
+        payNowAmount: 149,
+        openInvoiceCount: 2,
+        payNowUrl: "https://pay.example/in_1",
+        openInvoiceDueLabel: "Oct 1",
+      }),
+      "admin",
+      NOW,
+    )!;
+    expect(m.amountLine).toBe("$149.00 overdue since Oct 1");
+    expect(m.pay?.label).toBe("Pay $149.00");
+    expect(m.totalLine).toBe("Total open: $298.00 · 2 invoices");
+  });
+
+  it("one invoice settling and one payable: the total line says what is processing (never read as still to pay)", () => {
+    const m = billingCardModel(
+      view({
+        billingState: "overdue",
+        outstandingTotal: 298,
+        payNowAmount: 149,
+        openInvoiceCount: 2,
+        settlingCount: 1,
+        payNowUrl: "https://pay.example/in_2",
+        openInvoiceDueLabel: "Oct 15",
+      }),
+      "admin",
+      NOW,
+    )!;
+    expect(m.totalLine).toBe("Total open: $298.00 · 2 invoices (1 processing)");
+  });
+
+  it("one open invoice: no 'Total open' line (it would repeat the amount)", () => {
+    const m = billingCardModel(
+      view({
+        billingState: "due",
+        outstandingTotal: 149,
+        payNowAmount: 149,
+        openInvoiceCount: 1,
+        openInvoiceDueLabel: "Oct 15",
+      }),
+      "admin",
+      NOW,
+    )!;
+    expect(m.totalLine).toBeNull();
+  });
+
+  it("read-only while a payment is settling: Pay is hidden (never invite a double payment)", () => {
+    const m = billingCardModel(
+      view({
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
+        billingState: "processing",
+        paymentProcessing: true,
+        outstandingTotal: 149,
+      }),
+      "admin",
+      NOW,
+    )!;
+    expect(m.state).toBe("read-only");
+    expect(m.pay).toBeNull();
+    expect(m.portal).toBe(true);
   });
 
   it("a zero total is never 'overdue': no amount line, no '$0.00' Pay", () => {

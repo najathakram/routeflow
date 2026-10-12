@@ -1,4 +1,5 @@
 import type { SubscriptionView } from "@routeflow/types";
+import { readOnlyCopyForView } from "./read-only-copy";
 import {
   bannerRoleOf,
   readOnlyLine,
@@ -460,6 +461,64 @@ describe("subscriptionBannerState - pause NOT enforced (dark / off): the owner's
       label: "Pay $149.00",
       intent: "pay",
     });
+  });
+});
+
+describe("subscriptionBannerState - every amount next to Pay is the amount Pay collects (lead ruling)", () => {
+  const two = (over: Partial<SubscriptionView> = {}) =>
+    owing({
+      pauseEnforced: false,
+      outstandingTotal: 298,
+      payNowAmount: 149,
+      openInvoiceCount: 2,
+      payNowUrl: "https://pay.example/in_1",
+      ...over,
+    });
+
+  it("the overdue strip names the ONE invoice Pay collects, never the total of two", () => {
+    const s = subscriptionBannerState(two(), "admin", at(2));
+    expect(s.copy).toContain("payment of $149.00 is overdue");
+    expect(s.copy).not.toContain("$298.00");
+  });
+
+  it("the read-only reason line uses the same source (payNowAmount)", () => {
+    const text = readOnlyCopyForView(
+      two({ status: "READ_ONLY", readOnlyReason: "payment_overdue", openInvoiceAmount: 298 }),
+      true,
+    ).text;
+    expect(text).toContain("Your subscription payment of $149.00 is overdue.");
+    expect(text).not.toContain("$298.00");
+  });
+
+  it("read-only while a payment settles: the reason line does not call it overdue with an amount", () => {
+    const text = readOnlyCopyForView(
+      two({
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
+        billingState: "processing",
+        paymentProcessing: true,
+        openInvoiceAmount: 149,
+      }),
+      true,
+    ).text;
+    expect(text).not.toContain("$149.00");
+    expect(text).toContain("Your subscription payment is overdue.");
+  });
+
+  it("read-only while a payment is settling: no Pay anywhere (strip action or card pay)", () => {
+    const s = subscriptionBannerState(
+      two({
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
+        billingState: "processing",
+        paymentProcessing: true,
+      }),
+      "admin",
+      at(2),
+    );
+    expect(s.kind).toBe("read-only");
+    expect(s.action).toBeNull();
+    expect(s.cardPay).toBeNull();
   });
 });
 
