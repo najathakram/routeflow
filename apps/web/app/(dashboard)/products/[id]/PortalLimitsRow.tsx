@@ -59,7 +59,9 @@ export function PortalLimitsRow({ productId }: { productId: string }) {
       )}
       <LiftLimitsDialog
         ids={lifting ? [lifting] : []}
-        inheritedFrom={limits.find((l) => l.id === lifting && l.via !== "PRODUCT")?.viaName ?? null}
+        inheritedFrom={
+          limits.find((l) => l.id === lifting && l.via !== "PRODUCT")?.viaLabel ?? null
+        }
         onClose={() => setLifting(null)}
       />
     </div>

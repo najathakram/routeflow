@@ -26,7 +26,7 @@ const limit = (over: Record<string, unknown>) => ({
   states: ["TX"],
   surface: "BUYER_PORTAL",
   via: "PRODUCT",
-  viaName: null,
+  viaLabel: null,
   reason: "x",
   ...over,
 });
@@ -39,10 +39,19 @@ beforeEach(() => {
 describe("PortalLimitsRow (C f)", () => {
   it("renders `Not offered in TX` and `via Vapes` for an inherited rule", async () => {
     mockGet.mockResolvedValue({
-      data: [
-        limit({ id: "r1" }),
-        limit({ id: "r2", jurisdiction: "FEDERAL", states: [], via: "CATEGORY", viaName: "Vapes" }),
-      ],
+      data: {
+        items: [
+          limit({ id: "r1" }),
+          limit({
+            id: "r2",
+            jurisdiction: "FEDERAL",
+            states: [],
+            via: "CATEGORY",
+            viaLabel: "Vapes",
+          }),
+        ],
+        nextCursor: null,
+      },
     });
     renderWithProviders(<PortalLimitsRow productId="p1" />);
     expect(await screen.findByText("Not offered in TX")).toBeInTheDocument();
@@ -53,7 +62,7 @@ describe("PortalLimitsRow (C f)", () => {
 
   it("Lift asks `Lift this limit?`, then lifts that rule with the note", async () => {
     const user = userEvent.setup();
-    mockGet.mockResolvedValue({ data: [limit({ id: "r1" })] });
+    mockGet.mockResolvedValue({ data: { items: [limit({ id: "r1" })], nextCursor: null } });
     mockPost.mockResolvedValue({ data: { lifted: 1 } });
     renderWithProviders(<PortalLimitsRow productId="p1" />);
     await user.click(await screen.findByRole("button", { name: "Lift" }));
@@ -70,14 +79,14 @@ describe("PortalLimitsRow (C f)", () => {
 
   it("a customer-facing or read-only role sees the chips without Lift", async () => {
     mockRole = "DRIVER";
-    mockGet.mockResolvedValue({ data: [limit({ id: "r1" })] });
+    mockGet.mockResolvedValue({ data: { items: [limit({ id: "r1" })], nextCursor: null } });
     renderWithProviders(<PortalLimitsRow productId="p1" />);
     expect(await screen.findByText("Not offered in TX")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Lift" })).toBeNull();
   });
 
   it("no rules reads as offered to everyone", async () => {
-    mockGet.mockResolvedValue({ data: [] });
+    mockGet.mockResolvedValue({ data: { items: [], nextCursor: null } });
     renderWithProviders(<PortalLimitsRow productId="p1" />);
     expect(await screen.findByText("Offered to every portal customer.")).toBeInTheDocument();
   });

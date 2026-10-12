@@ -1,51 +1,20 @@
-import { US_STATES } from "@routeflow/types";
-import { BULK_PORTAL_MAX } from "./product-portal-visibility-ui";
+import {
+  BULK_RESTRICTION_MAX_PRODUCTS,
+  US_STATES,
+  type BulkRestrictionRequest,
+  type ProductLimitDto,
+} from "@routeflow/types";
 
 /**
- * State portal limits (state-restrictions UX spec): the contracts the web codes against and every exact sentence the
- * "Limit in portal…" flow shows, in one place. Wire shapes mirror the spec §5.6 names; the API branch exports the same
- * names from `@routeflow/types` and these re-point there when it lands.
+ * State portal limits (state-restrictions UX spec): every exact sentence the "Limit in portal…" flow shows, and the
+ * request builder, in one place. Wire shapes are `@routeflow/types` (restrictions-admin.ts).
  */
-
-export interface BulkRestrictionRequest {
-  /** 1..200 ids XOR `categoryId`. */
-  productIds?: string[];
-  categoryId?: string;
-  jurisdiction: "FEDERAL" | "STATE";
-  states?: string[];
-  surface?: "ALL" | "BUYER_PORTAL";
-  reason?: string;
-}
-
-export interface BulkRestrictionResponse {
-  created: number;
-  skipped: number;
-  unknownStateCustomerCount: number;
-  /** The rows this call created, so Undo lifts exactly them. */
-  createdIds: string[];
-}
-
-export interface LiftBatchRequest {
-  ids: string[];
-  reason: string;
-}
-
-/** One rule binding a product, for the product page chips. `via` names where it was inherited from. */
-export interface ProductLimitDto {
-  id: string;
-  jurisdiction: "FEDERAL" | "STATE";
-  states: string[];
-  surface: "ALL" | "BUYER_PORTAL";
-  via: "PRODUCT" | "PARENT" | "CATEGORY";
-  viaName: string | null;
-  reason: string;
-}
 
 export type LimitScope =
   | { kind: "products"; productIds: string[] }
   | { kind: "category"; categoryId: string; categoryName: string; productCount: number };
 
-export const LIMIT_MAX = BULK_PORTAL_MAX;
+export const LIMIT_MAX = BULK_RESTRICTION_MAX_PRODUCTS;
 export const UNDO_REASON = "Undone right after creating";
 export const UNDO_VISIBLE_MS = 10_000;
 export const LIFT_DEFAULT_REASON = "Limit lifted";
@@ -138,7 +107,8 @@ export function buildBulkRequest(args: {
       ? { categoryId: scope.categoryId }
       : { productIds: scope.productIds }),
     jurisdiction: states === null ? "FEDERAL" : "STATE",
-    ...(states === null ? {} : { states: states.map((s) => s.toUpperCase()) }),
+    // FEDERAL (hide from everyone) carries no states; STATE carries the picked USPS codes
+    states: states === null ? [] : states.map((s) => s.toUpperCase()),
     surface: legalBan ? "ALL" : "BUYER_PORTAL",
     ...(reason ? { reason } : {}),
   };
@@ -154,8 +124,8 @@ export function limitChipText(l: Pick<ProductLimitDto, "jurisdiction" | "states"
 }
 
 /** "via Vapes" when the rule is inherited from a category or a parent product; null when it targets this product. */
-export function limitViaText(l: Pick<ProductLimitDto, "via" | "viaName">): string | null {
+export function limitViaText(l: Pick<ProductLimitDto, "via" | "viaLabel">): string | null {
   if (l.via === "PRODUCT") return null;
-  if (l.viaName) return `via ${l.viaName}`;
+  if (l.viaLabel) return `via ${l.viaLabel}`;
   return l.via === "PARENT" ? "via parent" : "via category";
 }

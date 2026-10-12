@@ -3,35 +3,29 @@
  * pure helpers of the in-place fixer. Readiness is advice now (owner ruling 3), so nothing here ever blocks.
  */
 
-export type BucketKey = "noAddress" | "unusableState" | "needsReview";
-export const BUCKET_KEYS: readonly BucketKey[] = ["noAddress", "unusableState", "needsReview"];
+import {
+  BULK_STATE_MAX_CUSTOMERS,
+  UNKNOWN_STATE_BUCKET_VALUES,
+  UNKNOWN_STATE_PAGE_DEFAULT,
+  type AddressStateResponse,
+  type BulkStateResponse,
+  type UnknownStateBucket,
+  type UnknownStateBucketName,
+  type UnknownStateCustomerRow,
+  type UnknownStateCustomersResponse,
+} from "@routeflow/types";
 
-export interface UnknownStateRow {
-  customerId: string;
-  name: string;
-  addressId: string | null;
-  addressText: string | null;
-  suggestedState: string | null;
-}
-export interface UnknownStateBucket {
-  total: number;
-  rows: UnknownStateRow[];
-  nextCursor: string | null;
-}
-export type UnknownStateBuckets = Record<BucketKey, UnknownStateBucket>;
+export type BucketKey = UnknownStateBucketName;
+export const BUCKET_KEYS: readonly BucketKey[] = UNKNOWN_STATE_BUCKET_VALUES;
 
-export interface StateWriteResult {
-  customerId: string;
-  addressId: string;
-  state: string;
-}
-export interface BulkStateResult {
-  changed: number;
-  changedAddressIds: string[];
-}
+export type UnknownStateRow = UnknownStateCustomerRow;
+export type { UnknownStateBucket };
+export type UnknownStateBuckets = UnknownStateCustomersResponse;
+export type StateWriteResult = AddressStateResponse;
+export type BulkStateResult = BulkStateResponse;
 
-export const PAGE = 20;
-export const BULK_MAX = 200;
+export const PAGE = UNKNOWN_STATE_PAGE_DEFAULT;
+export const BULK_MAX = BULK_STATE_MAX_CUSTOMERS;
 export const SAVED_MS = 1200;
 export const BULK_UNDO_MS = 10_000;
 

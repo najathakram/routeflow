@@ -4,8 +4,10 @@ import type {
   BulkRestrictionRequest,
   BulkRestrictionResponse,
   LiftBatchRequest,
+  LiftBatchResponse,
   ProductLimitDto,
-} from "../portal-limits";
+  ProductLimitsResponse,
+} from "@routeflow/types";
 
 const RULES = ["selling-restrictions"] as const;
 
@@ -25,7 +27,7 @@ export function useBulkLimit() {
 /** Lift a batch (one reason). The Undo toast, "Lift N" on the rules page and a chip's Lift all use this. */
 export function useLiftBatch() {
   const qc = useQueryClient();
-  return useMutation<{ lifted: number }, Error, LiftBatchRequest>({
+  return useMutation<LiftBatchResponse, Error, LiftBatchRequest>({
     mutationFn: (body) =>
       apiClient.post("/selling-restrictions/lift-batch", body).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: RULES }),
@@ -37,7 +39,9 @@ export function useProductLimits(productId: string) {
   return useQuery<ProductLimitDto[]>({
     queryKey: [...RULES, "product", productId],
     queryFn: () =>
-      apiClient.get("/selling-restrictions", { params: { productId } }).then((r) => r.data),
+      apiClient
+        .get<ProductLimitsResponse>("/selling-restrictions", { params: { productId } })
+        .then((r) => r.data.items),
     enabled: !!productId,
   });
 }
@@ -46,7 +50,7 @@ export function useProductLimits(productId: string) {
  * The same lift as `useLiftBatch`, as a plain call. A toast's Undo outlives the component that raised it (the selection
  * is cleared, the dialog unmounts), and a hook's per-call callbacks do not run on an unmounted observer.
  */
-export async function liftBatchRequest(body: LiftBatchRequest): Promise<{ lifted: number }> {
+export async function liftBatchRequest(body: LiftBatchRequest): Promise<LiftBatchResponse> {
   const { data } = await apiClient.post("/selling-restrictions/lift-batch", body);
   return data;
 }
