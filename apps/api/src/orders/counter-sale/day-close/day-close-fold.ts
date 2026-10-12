@@ -1,7 +1,7 @@
 import { roundMoney } from "@routeflow/pricing";
 import type { DayCloseTotals } from "@routeflow/types";
 import { refundTenderOfColumn } from "../../../returns/refund-tender";
-import { isCounterTenderRow } from "../counter-tender-row";
+import { groupWindowPayments } from "../window-payment-groups";
 import {
   REFUND_METHOD_EXTERNAL,
   foldSummary,
@@ -48,36 +48,13 @@ export interface DayCloseFold {
   cashRefunds: number;
 }
 
-const num = (v: unknown): number => (v == null ? 0 : Number(v));
-const CREDIT_APPLICATIONS: readonly string[] = ["CREDIT_NOTE", "ADVANCE"];
-
 export function foldDayClose(facts: WindowFacts): DayCloseFold {
-  const groups = new Map<string, number>();
-  let notAtTill = 0;
-  let handOverCount = 0;
-  let handOverCash = 0;
-  for (const p of facts.payments) {
-    if (p.status !== "PAID") continue; // sumConfirmed rule: PAID only
-    const amount = num(p.amount);
-    if (CREDIT_APPLICATIONS.includes(p.method)) {
-      groups.set(p.method, roundMoney((groups.get(p.method) ?? 0) + amount));
-    } else if (
-      isCounterTenderRow(p.invoice?.orderId ?? "", p, {
-        counterSale: p.invoice?.order?.counterSale,
-      })
-    ) {
-      groups.set(p.method, roundMoney((groups.get(p.method) ?? 0) + amount));
-      // Only the NON-counter clause makes a POS pickup hand-over: a counter order's own pickup cash is ordinary counter till
-      // cash (already in the groups above) and must not be counted a second time here (informational, never added to the money).
-      if (p.invoice?.order?.counterSale !== true) {
-        handOverCount += 1;
-        if (p.method === "CASH") handOverCash = roundMoney(handOverCash + amount);
-      }
-    } else {
-      notAtTill = roundMoney(notAtTill + amount);
-    }
-  }
-  const payments: PaymentGroup[] = [...groups].map(([method, amount]) => ({
+  // ONE classification, shared with Today's sales (window-payment-groups.ts): tender, credit application, or notAtTill
+  const grouped = groupWindowPayments(facts.payments);
+  const { notAtTill } = grouped;
+  const handOverCount = grouped.handOver.count;
+  const handOverCash = grouped.handOver.cash;
+  const payments: PaymentGroup[] = [...grouped.byMethod].map(([method, amount]) => ({
     method,
     _sum: { amount },
   }));

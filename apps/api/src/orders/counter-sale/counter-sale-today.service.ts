@@ -24,12 +24,14 @@ import {
   liveCounterSalesWhere,
   pageQuery,
   paidOnDaysSalesWhere,
+  salePaymentSelect,
   salePaymentsWhere,
   toHandOverRows,
   toTodaysSaleRow,
   windowReturnsWhere,
   type TodayOrderRecord,
 } from "./counter-sale-today";
+import { groupWindowPayments } from "./window-payment-groups";
 
 /**
  * The zone the window is cut in: the tenant's, or UTC when it has none or an unknown one. Delegates to the one
@@ -49,7 +51,8 @@ const badDay = (message: string) =>
  * calendar-date helpers (DST-safe), never by this class.
  *
  * Query budget (a spec pins it): the zone (1) + the page `findMany` (1) + the `count` (1), and on page 1 only the
- * six whole-day summary queries: `order.aggregate`, `invoicePayment.groupBy` (money in, by paid date),
+ * six whole-day summary queries: `order.aggregate`, `invoicePayment.findMany` (the day's counter payments, classified in code
+ * by the day close's own predicate),
  * `invoicePayment.aggregate` (paid on the day's own sales), `creditNote.findMany` (ids created in the window),
  * `invoicePayment.findMany` (the day's POS-mode hand-over candidates, v5-filtered in code; the same rows feed
  * the summary's hand-over line and `handOverRows`, so the rows add no query) and `return.findMany` (a day's few
@@ -125,10 +128,10 @@ export class CounterSaleTodayService {
         _count: { _all: true },
         _sum: { total: true },
       }),
-      db.invoicePayment.groupBy({
-        by: ["method"],
+      // the rows, not a grouped sum: the till-money predicate needs each row's group id and check state (row 374 a)
+      db.invoicePayment.findMany({
         where: salePaymentsWhere(tenantId, window),
-        _sum: { amount: true },
+        select: salePaymentSelect,
       }),
       db.invoicePayment.aggregate({
         where: paidOnDaysSalesWhere(tenantId, window),
@@ -161,8 +164,26 @@ export class CounterSaleTodayService {
     });
     // ONE filter, two folds: the summary's hand-over line and the rows come from the same tenders (row 342).
     const handOvers = handOverPayments(handOverCandidates);
+    // The counter sales' money in goes through the SAME classification the Z report folds with (a counter tender row, a credit
+    // application, or not till money): an office CASH payment with its own group id on a counter invoice is not till cash here.
+    const grouped = groupWindowPayments(
+      payments.map((p) => ({
+        ...p,
+        invoice: { orderId: p.invoice?.orderId ?? null, order: { counterSale: true } },
+      })),
+    );
+    const paymentGroups = [...grouped.byMethod].map(([method, amount]) => ({
+      method,
+      _sum: { amount },
+    }));
     return {
-      summary: foldSummary({ sales, payments, paidOnSales, returns, handOvers }),
+      summary: foldSummary({
+        sales,
+        payments: paymentGroups,
+        paidOnSales,
+        returns,
+        handOvers,
+      }),
       handOverRows: toHandOverRows(handOvers),
     };
   }

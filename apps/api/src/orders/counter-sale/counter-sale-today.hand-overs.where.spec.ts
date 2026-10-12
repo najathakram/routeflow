@@ -58,7 +58,9 @@ const FIXTURES = {
   counter: row("o-counter", {}, { counterSale: true }),
   voidPayment: row("o-vp", { status: "VOID" }),
   voidInvoice: row("o-vi", {}, {}, { status: "VOID" }),
+  // the day close's own rules (row 374 b): a written-off invoice KEEPS the cash that was taken; a cancelled order's money is not the day's
   writtenOff: row("o-wo", {}, {}, { status: "WRITTEN_OFF" }),
+  cancelled: row("o-cx", {}, { status: "CANCELLED" }),
   otherDay: row("o-day", { paidAt: new Date("2026-10-09T15:00:00Z") }),
   otherTenant: row("o-t", { tenantId: "other" }),
   deposit: row("o-dep", { paymentGroupId: "11111111-2222-5333-8444-555555555555" }),
@@ -68,13 +70,15 @@ const ALL = Object.values(FIXTURES);
 
 describe("hand-over candidates: each filter keeps its row out", () => {
   it("counts only the PAID, in-window, live-invoice, PICKUP non-counter payment with the order's v5 id", () => {
-    expect(counted(ALL)).toEqual(["o-good"]);
+    // the written-off invoice's cash stays; the cancelled order's does not
+    expect(counted(ALL)).toEqual(["o-good", "o-wo"]);
   });
 
   it.each([
     ["fulfillPath PICKUP", "route", (w: any) => delete w.invoice.order.fulfillPath],
     ["counterSale false", "counter", (w: any) => delete w.invoice.order.counterSale],
-    ["invoice not VOID / WRITTEN_OFF", "voidInvoice", (w: any) => delete w.invoice.status],
+    ["invoice not VOID", "voidInvoice", (w: any) => delete w.invoice.status],
+    ["order not CANCELLED", "cancelled", (w: any) => delete w.invoice.order.status],
     ["paidAt window", "otherDay", (w: any) => delete w.paidAt],
     ["tenant", "otherTenant", (w: any) => delete w.tenantId],
   ] as const)(

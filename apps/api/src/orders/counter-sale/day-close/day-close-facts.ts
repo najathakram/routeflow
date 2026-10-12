@@ -1,4 +1,4 @@
-import { InvoiceStatus, OrderStatus } from "@prisma/client";
+import { InvoiceStatus } from "@prisma/client";
 import type { PrismaService } from "../../../prisma/prisma.service";
 import {
   creditNotesInWindowWhere,
@@ -56,19 +56,10 @@ export async function readWindowFacts(
   // candidates are the Today's-sales hand-over query (PAID, dated in the window, non-counter PICKUP orders, group id set) with
   // the close's own rules on top (only a VOID invoice drops its payments; the register filter on the order); the v5 group id
   // cannot be computed in SQL, so the rows are matched here. Counter sales are not read twice: `counterSale: false` is disjoint.
-  const handOverBase = handOverCandidatesWhere(tenantId, w);
+  // handOverCandidatesWhere already carries the day close's own rules (only a VOID invoice drops its payments, a CANCELLED
+  // order's money is not the day's): one definition, with the register filter AND-ed on the order.
   const handOverRows = await db.invoicePayment.findMany({
-    where: {
-      AND: [
-        {
-          ...handOverBase,
-          invoice: { ...handOverBase.invoice, status: { not: InvoiceStatus.VOID } },
-        },
-        { invoice: { order: reg } },
-        // the same rule as a counter sale: a cancelled order's money is not the day's
-        { invoice: { order: { status: { not: OrderStatus.CANCELLED } } } },
-      ],
-    },
+    where: { AND: [handOverCandidatesWhere(tenantId, w), { invoice: { order: reg } }] },
     select: paymentSelect,
   });
   // SELECTION is by the order's own pickup group id only (the group clause of the one predicate, `isCounterTenderGroup`, told

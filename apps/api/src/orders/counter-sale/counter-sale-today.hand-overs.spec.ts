@@ -11,6 +11,7 @@ import {
   type HandOverPayment,
 } from "./counter-sale-today";
 import { CounterSaleTodayService } from "./counter-sale-today.service";
+import { salePaymentSelect } from "./counter-sale-today";
 import { pickupTenderGroupId } from "./pickup-tender-group";
 import { isCounterTenderRow } from "./counter-tender-row";
 import { readFileSync } from "node:fs";
@@ -70,10 +71,37 @@ describe("handOverPayments — ONE tender predicate with the day close (row 342)
     expect(kept).not.toContain("o-4");
   });
 
-  it("the sale-day sources hold no second copy of the group-id rule", () => {
-    for (const f of ["counter-sale-today.ts", "day-close/day-close-facts.ts"]) {
-      const src = readFileSync(join(__dirname, f), "utf8");
-      expect(src).not.toMatch(/===\s*pickupTenderGroupId\(/);
+  it("the sale-day sources hold no second copy of the group-id rule (planted copies are caught)", () => {
+    // forms of a second rule: the v5 helper or namespace by name, an inline uuidv5, any comparison against a payment's
+    // group id (either operand order, == or ===, != or !==). The one home is counter-tender-row.ts.
+    const COPY =
+      /pickupTenderGroupId|PICKUP_TENDER_NS|uuidv5|paymentGroupId\s*[!=]==?|[!=]==?\s*[\w.?!]*paymentGroupId|pickupGroupId\s*[!=]==?/;
+    const copies = (text: string) => COPY.test(text);
+    // the scan itself: each shape of a second copy is caught
+    expect(copies("r.paymentGroupId === pickupTenderGroupId(id)")).toBe(true);
+    expect(copies("pickupTenderGroupId(id) === r.paymentGroupId")).toBe(true);
+    expect(copies("if (r.paymentGroupId !== other) return;")).toBe(true);
+    expect(copies("if (other == r.paymentGroupId) return;")).toBe(true);
+    expect(copies("const g = uuidv5(`${id}:pickup:0`, NS);")).toBe(true);
+    expect(copies("isCounterTenderGroup(id, r.paymentGroupId, { counterSale: false })")).toBe(
+      false,
+    );
+    // and the sale-day sources hold none
+    for (const f of [
+      "counter-sale-today.ts",
+      "counter-sale-today.service.ts",
+      "window-payment-groups.ts",
+      "day-close/day-close-facts.ts",
+      "day-close/day-close-fold.ts",
+      "../../invoices/counter-payment-guard.ts",
+    ]) {
+      const code = readFileSync(join(__dirname, f), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "") // a doc comment may name the helper; code may not
+        .replace(/\/\/.*$/gm, "");
+      expect({ f, copy: copies(code) }).toEqual({
+        f,
+        copy: false,
+      });
     }
     // Today's rows read the full predicate; the day close's facts SELECT by its group clause and the fold decides the bucket
     expect(readFileSync(join(__dirname, "counter-sale-today.ts"), "utf8")).toMatch(
@@ -137,20 +165,34 @@ describe("foldSummary — hand-overs are money in and cash expected", () => {
   });
 });
 
+/** a counter sale's payment row as the service reads it (row 374 a: rows, classified by the Z's own predicate) */
+const salePay = (orderId: string, amount: string, over: Record<string, unknown> = {}) => ({
+  amount,
+  method: "CASH",
+  status: "PAID",
+  paymentGroupId: null,
+  checkStatus: null,
+  invoice: { orderId },
+  ...over,
+});
+/** serves the counter payments to the sale-payments read and the candidates to the hand-over read */
+function serveRows(prisma: MockPrisma, sale: unknown[], candidates: unknown[]) {
+  prisma.invoicePayment.findMany.mockImplementation(async (args: any) =>
+    args.select === salePaymentSelect ? sale : candidates,
+  );
+}
+
 describe("CounterSaleTodayService — a hand-over and a counter sale on the same day (row 11)", () => {
-  function setup(candidates: unknown[]) {
+  function setup(candidates: unknown[], sale: unknown[] = [salePay("o-sale", "30.00")]) {
     const prisma: MockPrisma = createMockPrisma();
     prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: "America/New_York" });
     prisma.order.findMany.mockResolvedValue([]);
     prisma.order.count.mockResolvedValue(0);
     prisma.order.aggregate.mockResolvedValue({ _count: { _all: 1 }, _sum: { total: "30.00" } });
-    prisma.invoicePayment.groupBy.mockResolvedValue([
-      { method: "CASH", _sum: { amount: "30.00" } },
-    ]);
     prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: "30.00" } });
     prisma.creditNote.findMany.mockResolvedValue([]);
     prisma.return.findMany.mockResolvedValue([]);
-    prisma.invoicePayment.findMany.mockResolvedValue(candidates);
+    serveRows(prisma, sale, candidates);
     return {
       prisma,
       today: () =>
@@ -169,14 +211,35 @@ describe("CounterSaleTodayService — a hand-over and a counter sale on the same
     expect(res.summary!.cashExpectedInDrawer).toBe(80);
   });
 
-  it("reads the candidates with the hand-over predicate, once, and the counter sale's money in unchanged", async () => {
+  it("reads the candidates with the hand-over predicate, once, and the counter payments as rows", async () => {
     const { prisma, today } = setup([]);
     await today();
-    expect(prisma.invoicePayment.findMany).toHaveBeenCalledTimes(1);
-    const where = (prisma.invoicePayment.findMany.mock.calls[0][0] as any).where;
-    expect(where.invoice.order).toMatchObject({ fulfillPath: "PICKUP", counterSale: false });
-    const groupWhere = (prisma.invoicePayment.groupBy.mock.calls[0][0] as any).where;
-    expect(groupWhere.invoice.order.counterSale).toBe(true);
+    const calls = prisma.invoicePayment.findMany.mock.calls as any[];
+    expect(calls).toHaveLength(2); // the counter payments and the hand-over candidates
+    const cand = calls.find((c) => c[0].select !== salePaymentSelect)![0].where;
+    expect(cand.invoice.order).toMatchObject({ fulfillPath: "PICKUP", counterSale: false });
+    const sale = calls.find((c) => c[0].select === salePaymentSelect)![0].where;
+    expect(sale.invoice.order.counterSale).toBe(true);
+    expect(prisma.invoicePayment.groupBy).not.toHaveBeenCalled();
+  });
+
+  // row 374 a: Today's money in is the Z's own classification, so the two cannot disagree about till money
+  it("an office CASH payment with its own group id on a counter invoice is not till cash on Today's (it is on the Z's notAtTill)", async () => {
+    const { today } = setup(
+      [],
+      [
+        salePay("o-sale", "30.00"), // the till's own tender (ungrouped)
+        salePay("o-sale", "7.00", { paymentGroupId: "11111111-2222-5333-8444-555555555555" }), // an office payment
+        salePay("o-sale", "40.00", { method: "CHECK", checkStatus: "DEPOSITED" }), // the bank has it
+        salePay("o-sale", "9.00", { method: "CREDIT_NOTE" }), // a credit application: store credit used
+      ],
+    );
+    const res = await today();
+    expect(res.summary!.moneyIn.cash).toBe(30);
+    expect(res.summary!.moneyIn.check).toBe(0);
+    expect(res.summary!.moneyIn.total).toBe(30);
+    expect(res.summary!.storeCreditUsed).toBe(9);
+    expect(res.summary!.cashExpectedInDrawer).toBe(30);
   });
 });
 
@@ -289,8 +352,21 @@ describe("toHandOverRows", () => {
     expect(rows.map((r) => r.orderId)).toEqual(["o-c", "o-a", "o-b"]);
   });
 
-  it("tolerates a hand-built tender with no order or paidAt (empty strings, never a throw)", () => {
-    const [r] = toHandOverRows([{ method: "CASH", amount: "3.00", orderId: "o-1" }]);
+  it("a tender with no recorded time is no row, never an invented 1970 one (row 374 g)", () => {
+    expect(toHandOverRows([{ method: "CASH", amount: "3.00", orderId: "o-1" }])).toEqual([]);
+    // an order with one timed and one untimed tender keeps its row, at the timed tender's time
+    const rows = toHandOverRows([
+      { method: "CASH", amount: "3.00", orderId: "o-2" },
+      { method: "CASH", amount: "4.00", orderId: "o-2", paidAt: new Date("2026-10-07T14:00:00Z") },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].paidAt).toBe("2026-10-07T14:00:00.000Z");
+  });
+
+  it("tolerates a hand-built tender with no order (empty strings, never a throw)", () => {
+    const [r] = toHandOverRows([
+      { method: "CASH", amount: "3.00", orderId: "o-1", paidAt: new Date("2026-10-07T14:00:00Z") },
+    ]);
     expect(r).toMatchObject({
       orderNumber: "",
       customerName: "",
@@ -358,11 +434,10 @@ describe("CounterSaleTodayService: handOverRows on page 1, none on page 2", () =
     prisma.order.findMany.mockResolvedValue([]);
     prisma.order.count.mockResolvedValue(0);
     prisma.order.aggregate.mockResolvedValue({ _count: { _all: 0 }, _sum: { total: null } });
-    prisma.invoicePayment.groupBy.mockResolvedValue([]);
     prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: null } });
     prisma.creditNote.findMany.mockResolvedValue([]);
     prisma.return.findMany.mockResolvedValue([]);
-    prisma.invoicePayment.findMany.mockResolvedValue(candidates());
+    serveRows(prisma, [], candidates());
     return prisma;
   }
   const call = (prisma: MockPrisma, page: number) =>
@@ -384,10 +459,10 @@ describe("CounterSaleTodayService: handOverRows on page 1, none on page 2", () =
       },
     ]);
     expect(res.summary!.handOvers).toEqual({ count: 1, total: 50 });
-    expect(prisma.invoicePayment.findMany).toHaveBeenCalledTimes(1);
-    expect((prisma.invoicePayment.findMany.mock.calls[0][0] as any).select).toBe(
-      handOverCandidateSelect,
+    const candidateReads = (prisma.invoicePayment.findMany.mock.calls as any[]).filter(
+      (c) => c[0].select === handOverCandidateSelect,
     );
+    expect(candidateReads).toHaveLength(1);
   });
 
   it("page 2: no rows, no summary, no candidate read", async () => {

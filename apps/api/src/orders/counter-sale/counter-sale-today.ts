@@ -121,11 +121,31 @@ export function handOverCandidatesWhere(tenantId: string, w: DayWindow) {
     paymentGroupId: { not: null },
     invoice: {
       tenantId,
-      status: { notIn: DEAD_INVOICE_STATUSES },
-      order: { tenantId, fulfillPath: FulfillPath.PICKUP, counterSale: false },
+      // the day close's own rules (row 374 b): cash taken stays in the day when the office later WRITES the invoice off (only
+      // a VOID invoice drops its payments), and a CANCELLED order's money is not the day's
+      status: { not: InvoiceStatus.VOID },
+      order: {
+        tenantId,
+        fulfillPath: FulfillPath.PICKUP,
+        counterSale: false,
+        status: { not: OrderStatus.CANCELLED },
+      },
     },
   };
 }
+
+/**
+ * The fields the shared classification (`groupWindowPayments`) reads off a counter sale's payment row: the same predicate
+ * the Z report folds with, so Today's money in and the Z cannot disagree about what is till money (row 374 a).
+ */
+export const salePaymentSelect = {
+  amount: true,
+  method: true,
+  status: true,
+  paymentGroupId: true,
+  checkStatus: true,
+  invoice: { select: { orderId: true } },
+} as const;
 
 /**
  * What a hand-over ROW needs on top of the summary's method / amount / group id: when the tender came in and the
@@ -250,35 +270,39 @@ export function toHandOverRows(handOvers: readonly HandOverPayment[]): TodaysHan
     g.order ??= h.order;
     byOrder.set(h.orderId, g);
   }
-  return [...byOrder.entries()]
-    .map(([orderId, g]): TodaysHandOverRow => {
-      const registerKey = (g.order?.registerKey ?? "").trim();
-      return {
-        orderId,
-        orderNumber: g.order?.orderNumber ?? "",
-        customerName: g.order?.customer?.businessName ?? "",
-        paidAt: new Date(Number.isFinite(g.paidAt) ? g.paidAt : 0).toISOString(),
-        amount: g.amount,
-        methods: METHOD_ORDER.flatMap((method) => {
-          const a = g.methods.get(method) ?? 0;
-          return a > 0 ? [{ method, amount: a }] : [];
-        }),
-        registerKey: registerKey || COUNTER_DEFAULT_REGISTER,
-        handedOverBy: cashierNameOf(g.order?.soldBy),
-      };
-    })
-    .sort((a, b) =>
-      a.paidAt === b.paidAt
-        ? a.orderId < b.orderId
-          ? -1
-          : a.orderId > b.orderId
+  return (
+    [...byOrder.entries()]
+      // a tender with no recorded time is no row (never an invented 1970 one); the query's own window filter means a real one has it
+      .filter(([, g]) => Number.isFinite(g.paidAt))
+      .map(([orderId, g]): TodaysHandOverRow => {
+        const registerKey = (g.order?.registerKey ?? "").trim();
+        return {
+          orderId,
+          orderNumber: g.order?.orderNumber ?? "",
+          customerName: g.order?.customer?.businessName ?? "",
+          paidAt: new Date(g.paidAt).toISOString(),
+          amount: g.amount,
+          methods: METHOD_ORDER.flatMap((method) => {
+            const a = g.methods.get(method) ?? 0;
+            return a > 0 ? [{ method, amount: a }] : [];
+          }),
+          registerKey: registerKey || COUNTER_DEFAULT_REGISTER,
+          handedOverBy: cashierNameOf(g.order?.soldBy),
+        };
+      })
+      .sort((a, b) =>
+        a.paidAt === b.paidAt
+          ? a.orderId < b.orderId
+            ? -1
+            : a.orderId > b.orderId
+              ? 1
+              : 0
+          : a.paidAt < b.paidAt
             ? 1
-            : 0
-        : a.paidAt < b.paidAt
-          ? 1
-          : -1,
-    )
-    .slice(0, HAND_OVER_ROWS_MAX);
+            : -1,
+      )
+      .slice(0, HAND_OVER_ROWS_MAX)
+  );
 }
 
 /**
