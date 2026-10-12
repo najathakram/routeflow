@@ -2462,32 +2462,47 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       },
     );
 
-    it("async_payment_succeeded after an unpaid completion: ACTIVE once, one marker, one resume delta; a replay of either changes nothing", async () => {
+    it.each([false, true])(
+      "async_payment_succeeded after an unpaid completion (flag %s): ACTIVE once, one marker, one resume delta; a replay of either changes nothing",
+      async (flagOn) => {
+        const r = await rig({ rows: [], items: [base()], flagOn });
+        await sessionEvent(r, "checkout.session.completed", { payment_status: "unpaid" });
+        await sessionEvent(r, "checkout.session.async_payment_succeeded", {
+          payment_status: "paid",
+        });
+
+        expect(await tenantStatusOf(r.tenantId)).toBe(TenantStatus.ACTIVE);
+        expect(await markers(r)).toBe(1);
+        expect(await resumed(r)).toHaveLength(1);
+        const ledgerAfter = await r.ledger();
+
+        // replays: Stripe redelivers both events
+        await sessionEvent(r, "checkout.session.async_payment_succeeded", {
+          payment_status: "paid",
+        });
+        await sessionEvent(r, "checkout.session.completed", { payment_status: "unpaid" });
+
+        expect(await tenantStatusOf(r.tenantId)).toBe(TenantStatus.ACTIVE);
+        expect(await markers(r)).toBe(1);
+        expect(await r.ledger()).toEqual(ledgerAfter);
+        // settling never re-wrote the plan the unpaid delivery linked
+        expect(
+          (await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: r.tenantId } }))
+            .planKey,
+        ).toBe("STARTER");
+      },
+    );
+
+    it("two simultaneous async_payment_succeeded deliveries apply once (a loser may be a retryable conflict, never a second activation)", async () => {
       const r = await plainRig();
       await sessionEvent(r, "checkout.session.completed", { payment_status: "unpaid" });
-      await sessionEvent(r, "checkout.session.async_payment_succeeded", { payment_status: "paid" });
-
-      expect(await tenantStatusOf(r.tenantId)).toBe(TenantStatus.ACTIVE);
-      expect(await markers(r)).toBe(1);
-      expect(await resumed(r)).toHaveLength(1);
-      const ledgerAfter = await r.ledger();
-
-      // replays: Stripe redelivers both events
-      await sessionEvent(r, "checkout.session.async_payment_succeeded", { payment_status: "paid" });
-      await sessionEvent(r, "checkout.session.completed", { payment_status: "unpaid" });
-
-      expect(await tenantStatusOf(r.tenantId)).toBe(TenantStatus.ACTIVE);
-      expect(await markers(r)).toBe(1);
-      expect(await r.ledger()).toEqual(ledgerAfter);
-    });
-
-    it("two simultaneous async_payment_succeeded deliveries apply once", async () => {
-      const r = await plainRig();
-      await sessionEvent(r, "checkout.session.completed", { payment_status: "unpaid" });
-      await Promise.allSettled([
+      const results = await Promise.allSettled([
         sessionEvent(r, "checkout.session.async_payment_succeeded", {}, "evt_a"),
         sessionEvent(r, "checkout.session.async_payment_succeeded", {}, "evt_b"),
       ]);
+      const rejected = results.filter((x) => x.status === "rejected") as PromiseRejectedResult[];
+      expect(rejected.length).toBeLessThanOrEqual(1);
+      for (const x of rejected) expect(x.reason).toBeInstanceOf(ConflictException);
 
       expect(await tenantStatusOf(r.tenantId)).toBe(TenantStatus.ACTIVE);
       expect(await markers(r)).toBe(1);

@@ -1781,23 +1781,34 @@ export class BillingService {
       select: { name: true, slug: true },
     });
     const label = tenant?.name ?? tenant?.slug ?? tenantId;
-    const message =
-      `The bank debit for ${label}'s checkout FAILED: it was not activated by this checkout. ` +
-      `Check Stripe and follow up with the tenant (a failed debit is not cancelled automatically yet).`;
+    // A session that completed BEFORE the hotfix activated the tenant and left its APPLIED marker: its debit has now
+    // failed, so that tenant is ACTIVE and UNPAID. The notice must say so, never "nothing was activated".
+    const wasActivated = session.id ? await this.hasAppliedMarker(tenantId, session.id) : false;
+    const message = wasActivated
+      ? `The bank debit for ${label}'s checkout FAILED, and that checkout ACTIVATED the tenant before the payment ` +
+        `cleared (completed before the payment gate): the tenant is ACTIVE and UNPAID. Follow up or suspend it, and ` +
+        `check Stripe (a failed debit is not cancelled automatically yet).`
+      : `The bank debit for ${label}'s checkout FAILED: it was not activated by this checkout. ` +
+        `Check Stripe and follow up with the tenant (a failed debit is not cancelled automatically yet).`;
     const notice = {
       tenantId,
       action: AdminAuditAction.STRIPE_ASYNC_PAYMENT_FAILED,
       message,
       meta: {
         reason: "async_payment_failed",
+        activated: wasActivated,
         checkoutSessionId: session.id ?? null,
         sessionPaymentStatus: session.payment_status ?? null,
       },
     };
     await this.recordCheckoutRefusal(
       session,
-      tenantId,
-      { reason: "async_payment_failed", checkoutSessionId: session.id ?? null },
+      tenant ? tenantId : null, // an unknown tenant id would fail the AuditLog FK and leave no trail
+      {
+        reason: "async_payment_failed",
+        activated: wasActivated,
+        checkoutSessionId: session.id ?? null,
+      },
       {
         action: STRIPE_CHECKOUT_ASYNC_FAILED_ACTION,
         alsoWrite: tenant ? (tx) => writeAdminNotice(tx, notice) : undefined,
@@ -2034,6 +2045,11 @@ export class BillingService {
       snapshotOn && resolvedPlanKey
         ? (normalizePlanKey(resolvedPlanKey) ?? resolvedPlanKey)
         : resolvedPlanKey;
+    // P0 hotfix: THIS session's own subscription is already the stored one, so an earlier (unpaid) delivery of it linked
+    // the plan and ran the plan-transition hook. Settling it must not re-judge the plan: the "newer downgrade" query
+    // below would find that delivery's OWN snapshot (a false "plan not changed" email to the tenant admin), and a
+    // re-write could reverse a change made while the debit was in flight. It only activates.
+    const alreadyLinked = existingOverride?.stripeSubId === subscriptionId;
     if (snapshotOn) {
       const storedCustomer = existingOverride?.stripeCustomerId;
       if (!tenantRow || (storedCustomer && storedCustomer !== session.customer)) {
@@ -2050,7 +2066,7 @@ export class BillingService {
         });
         return;
       }
-      if (typeof session.created === "number") {
+      if (typeof session.created === "number" && !alreadyLinked) {
         // A downgrade that committed AFTER this session was created is the tenant's (or an admin's)
         // newer decision: an out-of-order/redelivered checkout must not reverse it. The Stripe ids
         // and period still land (money moved); only the PLAN change is skipped.
@@ -2091,6 +2107,8 @@ export class BillingService {
         }
       }
     }
+
+    if (alreadyLinked) planKeyForCheckout = null; // linked (plan, base price) at the first delivery: never re-written
 
     const transition =
       planKeyForCheckout && tenantRow
@@ -2267,7 +2285,7 @@ export class BillingService {
             await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
             if (session.id && settled) {
               await this.writeAppliedMarker(tx, tenantId, session.id, {
-                toPlanKey: planKeyForCheckout,
+                toPlanKey: planKeyForCheckout ?? resolvedPlanKey,
                 subscriptionId,
               });
             }

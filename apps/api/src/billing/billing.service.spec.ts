@@ -729,15 +729,12 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       it.each(["unpaid", undefined, "weird"])(
         "payment_status %s: linked, NOT activated, no marker, no MRR delta",
         async (status) => {
-          const { svc, prisma, events } = make({ transitionCount: 1 });
+          const { svc, prisma, tx, events } = make({ transitionCount: 1 });
           await (svc as any).onCheckoutCompleted(sessionOf(status as string | undefined));
           expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1); // the linking writes land
           expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
-          expect(prisma.auditLog.create).not.toHaveBeenCalledWith(
-            expect.objectContaining({
-              data: expect.objectContaining({ action: "STRIPE_CHECKOUT_APPLIED" }),
-            }),
-          );
+          // the APPLIED marker is written through the apply transaction's client, never for an unpaid session
+          expect(tx.auditLog.create).not.toHaveBeenCalled();
         },
       );
 
@@ -757,6 +754,44 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
           data: { object },
         });
         expect(spy).toHaveBeenCalledWith(object);
+      });
+
+      it("a PAID session writes the marker through the apply transaction (the control for the row above)", async () => {
+        const { svc, tx } = make({ transitionCount: 1 });
+        await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+        expect(tx.auditLog.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              action: "STRIPE_CHECKOUT_APPLIED",
+              entityId: "cs_ach",
+            }),
+          }),
+        );
+      });
+
+      it("a failed debit of a session that completed BEFORE the hotfix (marker present) says the tenant is ACTIVE and UNPAID", async () => {
+        const { svc, prisma, tx } = make({ transitionCount: 1 });
+        prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+          where.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "a1" } : null,
+        );
+        await (svc as any).onCheckoutAsyncPaymentFailed(sessionOf("unpaid"));
+        const rows = tx.auditLog.create.mock.calls.map((c: any[]) => c[0].data);
+        const trail = rows.find((r: any) => r.action === "STRIPE_CHECKOUT_ASYNC_PAYMENT_FAILED");
+        const notice = rows.find((r: any) => r.action === "STRIPE_ASYNC_PAYMENT_FAILED");
+        expect(trail.meta).toMatchObject({ reason: "async_payment_failed", activated: true });
+        expect(notice.meta.activated).toBe(true);
+        expect(notice.meta.message).toMatch(/ACTIVE and UNPAID/);
+        expect(notice.meta.message).not.toMatch(/not activated/);
+      });
+
+      it("a failed debit of a session that never activated says so (no marker)", async () => {
+        const { svc, tx } = make({ transitionCount: 1 });
+        await (svc as any).onCheckoutAsyncPaymentFailed(sessionOf("unpaid"));
+        const notice = tx.auditLog.create.mock.calls
+          .map((c: any[]) => c[0].data)
+          .find((r: any) => r.action === "STRIPE_ASYNC_PAYMENT_FAILED");
+        expect(notice.meta.activated).toBe(false);
+        expect(notice.meta.message).toMatch(/not activated by this checkout/);
       });
 
       it("async_payment_failed activates nothing and routes only to the notice handler", async () => {
@@ -1243,6 +1278,31 @@ describe("onCheckoutCompleted — B445 planKey + basePriceSnapshot write", () =>
           action: "STRIPE_CHECKOUT_PLAN_SKIPPED_STALE",
           meta: { requestedPlanKey: "GROWTH" },
         });
+      });
+
+      it("P0: settling a session that ALREADY linked itself never re-judges the plan: no stale query, no false 'plan not changed' email, no plan re-write", async () => {
+        const { svc, prisma, planTransition } = make({ transitionCount: 1 });
+        prisma.tenantSubscription.findUnique.mockResolvedValue({
+          tenantId: "t1",
+          planKey: "GROWTH",
+          basePriceSnapshot: 349,
+          discount: 0,
+          stripeCustomerId: "cus_1",
+          stripeSubId: "sub_1", // THIS session's own subscription, linked by its unpaid completion
+        });
+        // that unpaid delivery's own downgrade snapshot is "newer than the session was created"
+        prisma.tenantFeatureConfigSnapshot.findFirst.mockResolvedValue({ id: "snap-own" });
+
+        await (svc as any).onCheckoutCompleted(withId("cs_ach", { created: 1_700_000_000 }));
+
+        expect(prisma.tenantFeatureConfigSnapshot.findFirst).not.toHaveBeenCalled();
+        expect(planTransition.onPlanChange).not.toHaveBeenCalled();
+        expect(
+          (svc as any).billingNotification.notifyCheckoutPlanNotApplied,
+        ).not.toHaveBeenCalled();
+        const update = prisma.tenantSubscription.upsert.mock.calls[0][0].update;
+        expect(update).not.toHaveProperty("planKey");
+        expect(prisma.auditLog.create).not.toHaveBeenCalled(); // no STALE row
       });
 
       it("MAJOR 4: an unknown tenant is REFUSED (nothing written), not warned-and-upserted", async () => {
