@@ -2905,7 +2905,8 @@ export class InvoicesService {
           customer: { select: { id: true, businessName: true } },
           payments: { orderBy: { createdAt: "desc" } },
           // Shipments lists hide the shipped date of an unmarked order (status only, no column).
-          order: { select: { status: true } },
+          // counterSale: the paid-at-sale flag below (row 401), so a till sale's list row shows no due date.
+          order: { select: { status: true, counterSale: true } },
         },
         skip,
         take: limit,
@@ -2961,6 +2962,7 @@ export class InvoicesService {
         isOverdue,
         depositAmount,
         depositOverdue,
+        paidAtSale: isPaidAtSale(inv),
       };
     });
 

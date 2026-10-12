@@ -161,3 +161,41 @@ describe("InvoicesService.findOne — paidAtSale (row 401)", () => {
     }
   });
 });
+
+describe("InvoicesService.findAll — paidAtSale on list rows (row 401 follow-up)", () => {
+  const AT = new Date("2026-10-07T15:15:00.000Z");
+  const till = () => {
+    const base = invoiceRow("PAID");
+    return {
+      ...base,
+      createdAt: AT,
+      order: { status: "DELIVERED", counterSale: true },
+      payments: [{ ...base.payments[0], createdAt: new Date(AT.getTime() + 2000) }],
+    } as unknown as ReturnType<typeof invoiceRow>;
+  };
+
+  it.each(["OPERATOR", "CUSTOMER"])(
+    "%s: a till sale's list row is flagged, any other is not",
+    async (role) => {
+      const flagged = serviceReading(till());
+      const out = (await flagged.service.findAll({} as never, principal(role))) as unknown as {
+        data: Array<Record<string, unknown>>;
+      };
+      expect(out.data[0].paidAtSale).toBe(true);
+
+      const onAccount = serviceReading({ ...till(), status: "SENT" } as never);
+      const other = (await onAccount.service.findAll({} as never, principal(role))) as unknown as {
+        data: Array<Record<string, unknown>>;
+      };
+      expect(other.data[0].paidAtSale).toBe(false);
+    },
+  );
+
+  it("the list read selects the order's counterSale", async () => {
+    const { service, findMany } = serviceReading(till());
+    await service.findAll({} as never, principal("OPERATOR"));
+    expect(findMany.mock.calls[0][0].include.order.select).toEqual(
+      expect.objectContaining({ counterSale: true }),
+    );
+  });
+});
