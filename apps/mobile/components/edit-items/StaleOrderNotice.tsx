@@ -10,6 +10,7 @@ import {
   isOrderRevisionStale,
   rebaseRevision,
 } from "../../lib/order-revision-guard";
+import { rebaseEditOnReload } from "../../lib/edit-items-draft";
 import { styles } from "./styles";
 
 /**
@@ -18,22 +19,47 @@ import { styles } from "./styles";
  * fixed copy and refetches the order; the typed edits live in the screen's own state and are
  * left alone. Reload re-bases the revision, so the next save is judged against the latest.
  */
-export function useOrderStaleRevision(order: { revisionNumber?: number } | undefined, id: string) {
+export function useOrderStaleRevision<O extends { revisionNumber?: number }>(
+  order: O | undefined,
+  id: string,
+  /** Staged edit + setters; used on explicit Reload only (rebaseEditOnReload). */
+  edit: {
+    draft: Record<string, any>;
+    unlisted: any[];
+    pendingDeletes: string[];
+    setDraft: (d: any) => void;
+    setUnlisted: (u: any[]) => void;
+    setPendingDeletes: (p: string[]) => void;
+  },
+) {
   const qc = useQueryClient();
   const opened = useRef<number | undefined>(undefined);
   const [stale, setStale] = useState(false);
+  const [, bump] = useState(0);
+  // The order as the editor OPENED: the diff baseline, frozen until an explicit Reload.
+  const frozen = useRef<O | undefined>(undefined);
+  frozen.current = frozen.current ?? order;
   opened.current = captureOpenRevision(opened.current, order?.revisionNumber);
 
   const queryKey = ["admin", "orders", id];
   const reload = async () => {
     await qc.refetchQueries({ queryKey });
-    opened.current = rebaseRevision(
-      qc.getQueryData<{ revisionNumber?: number }>(queryKey)?.revisionNumber,
-    );
+    const fresh = qc.getQueryData<O>(queryKey);
+    if (fresh && frozen.current) {
+      const r = rebaseEditOnReload({ frozen: frozen.current, fresh, ...edit });
+      edit.setDraft(r.draft);
+      edit.setUnlisted(r.unlisted);
+      edit.setPendingDeletes(r.pendingDeletes);
+    }
+    if (fresh) frozen.current = fresh;
+    opened.current = rebaseRevision(fresh?.revisionNumber);
     setStale(false);
+    bump((n) => n + 1);
   };
 
   return {
+    /** The order as opened (live order until loaded). */
+    baseline: frozen.current,
     /** Spread into the PATCH body. */
     body: () => expectedRevisionBody(opened.current),
     /** True when `err` was the stale 409 (handled here; refetches in the background). */

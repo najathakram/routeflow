@@ -1093,3 +1093,57 @@ export function appliedCreditNotesPayload(
       : { creditNoteId: cnId };
   });
 }
+
+// ── Reload re-base ───────────────────────────────────────────────────────────────────────────
+// The editor diffs its staged lines against the order as it OPENED (`frozen`). A line the user never
+// touched but another writer changed would otherwise differ from the refreshed order and be sent as
+// an UPDATE of the stale value under the new valid revision, silently reverting that writer. On an
+// explicit Reload: untouched lines adopt the fresh values, touched lines keep the typed edit, lines
+// the server no longer has are dropped (a DELETE/UPDATE of a vanished id only loops).
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || !a || !b) return false;
+  const ka = Object.keys(a as object).filter((k) => (a as any)[k] !== undefined);
+  const kb = Object.keys(b as object).filter((k) => (b as any)[k] !== undefined);
+  return ka.length === kb.length && ka.every((k) => sameValue((a as any)[k], (b as any)[k]));
+}
+
+export function rebaseEditOnReload<
+  D extends { lineId?: string },
+  U extends { lineId?: string },
+>(a: {
+  frozen: any;
+  fresh: any;
+  draft: Record<string, D>;
+  unlisted: U[];
+  pendingDeletes: string[];
+}): { draft: Record<string, D>; unlisted: U[]; pendingDeletes: string[] } {
+  const was = hydrateFromOrder(a.frozen);
+  const now = hydrateFromOrder(a.fresh);
+  const wasUnlisted = new Map(was.unlisted.map((u) => [u.lineId, u]));
+  const nowUnlisted = new Map(now.unlisted.map((u) => [u.lineId, u]));
+  const draft: Record<string, D> = {};
+  for (const [key, row] of Object.entries(a.draft)) {
+    if (!row.lineId) {
+      draft[key] = row; // a new, not-yet-saved row
+    } else if (key in now.draft) {
+      draft[key] = sameValue(row, was.draft[key]) ? (now.draft[key] as unknown as D) : row;
+    }
+  }
+  for (const key of Object.keys(now.draft)) {
+    if (!(key in was.draft)) draft[key] = now.draft[key] as unknown as D; // added by another writer
+  }
+  const unlisted: U[] = [];
+  for (const u of a.unlisted) {
+    if (!u.lineId) unlisted.push(u);
+    else if (nowUnlisted.has(u.lineId)) {
+      unlisted.push(
+        sameValue(u, wasUnlisted.get(u.lineId)) ? (nowUnlisted.get(u.lineId) as unknown as U) : u,
+      );
+    }
+  }
+  for (const [id, u] of nowUnlisted) if (!wasUnlisted.has(id)) unlisted.push(u as unknown as U);
+  const live = new Set((a.fresh?.lineItems ?? []).map((li: any) => li.id));
+  return { draft, unlisted, pendingDeletes: a.pendingDeletes.filter((id) => live.has(id)) };
+}

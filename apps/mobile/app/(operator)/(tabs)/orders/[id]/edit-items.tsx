@@ -123,7 +123,6 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // AdminOrder declares neither `updatedAt` nor a line's `notes`/`status`, all
   // of which the server does return (orders.service.ts findOne has no top-level
   // select) — the cast is the existing `(order as any)` habit, scoped.
-  const baselineOrder = order as unknown as BaselineOrderLike | undefined;
   const customerId = (order as any)?.customerId as string | undefined;
   const canRecordReturn = useInlineReturnsAddon().enabled;
   // Remembered per-customer prices — pre-fill a newly added line's price so a
@@ -213,7 +212,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const [restrictedBlock, setRestrictedBlock] = useState<BlockedLine[] | null>(null);
   const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
   const updateMut = useUpdateOrderItems();
-  const stale = useOrderStaleRevision(order, id); // row 262
+  // Row 262: baseline = the order as OPENED (diff + hydration); only an explicit Reload moves it.
+  const rebase = { draft, unlisted, pendingDeletes, setDraft, setUnlisted, setPendingDeletes };
+  const stale = useOrderStaleRevision(order, id, rebase);
+  const baselineOrder = stale.baseline as unknown as BaselineOrderLike | undefined;
 
   // ── Apply-credit section (mirrors NewOrderScreen) ──────────────────────────
   // Driver-gated off below (drivers don't manage credits). `creditsTouched`
@@ -334,7 +336,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       return;
     }
     hydratedOrderRef.current = orderKey;
-    const { draft: next, unlisted: nextUnlisted } = hydrateFromOrder(order);
+    const { draft: next, unlisted: nextUnlisted } = hydrateFromOrder(baselineOrder);
     setDraft(next);
     setUnlisted(nextUnlisted);
     // Apply-credit: pre-check whatever the order already carries, and reset
@@ -905,7 +907,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     setRestoreState("stale");
     setRestored(null);
     if (!baselineOrder) return;
-    const rebuilt = hydrateFromOrder(order);
+    const rebuilt = hydrateFromOrder(baselineOrder);
     setDraft(rebuilt.draft);
     setUnlisted(rebuilt.unlisted);
     setPendingDeletes([]);

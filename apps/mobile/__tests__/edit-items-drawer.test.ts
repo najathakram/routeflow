@@ -173,7 +173,7 @@ describe("edit-items.tsx staged-edit autosave (REG-EDIT-AUTOSAVE)", () => {
     // React runs effects in declaration order, so this ordering is the whole
     // reason a restored edit survives the hydration effect's unconditional
     // re-`setDraft` on every order identity change.
-    const hydrateAt = parentSrc.indexOf("hydrateFromOrder(order)");
+    const hydrateAt = parentSrc.indexOf("hydrateFromOrder(baselineOrder)");
     const restoreAt = parentSrc.indexOf('setRestoreState("applied")');
     expect(hydrateAt).toBeGreaterThan(-1);
     expect(restoreAt).toBeGreaterThan(hydrateAt);
@@ -239,7 +239,7 @@ describe("edit-items.tsx staged-edit autosave (REG-EDIT-AUTOSAVE)", () => {
  */
 describe("edit-items.tsx hydration guard (REG-EDIT-REHYDRATE)", () => {
   const parentCode = stripComments(parentSrc);
-  const hydrateAt = parentCode.indexOf("hydrateFromOrder(order)");
+  const hydrateAt = parentCode.indexOf("hydrateFromOrder(baselineOrder)");
   const effectStart = hydrateAt === -1 ? -1 : parentCode.lastIndexOf("useEffect(", hydrateAt);
   const hydrationEffect = effectStart === -1 ? "" : parentCode.slice(effectStart, hydrateAt);
 
