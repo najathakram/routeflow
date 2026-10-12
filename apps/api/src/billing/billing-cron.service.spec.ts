@@ -82,6 +82,8 @@ function make(
     tenant: {
       findMany: jest.fn().mockResolvedValue(data.trials ?? []),
       update: jest.fn().mockResolvedValue({}),
+      // SA-775: expireTrials locks through a compare-and-swap on status TRIAL.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     tenantSubscription: {
       findMany: jest.fn(),
@@ -196,7 +198,8 @@ describe("BillingCronService", () => {
   it("expireTrials flips expired trials to READ_ONLY (not SUSPENDED) + emits trial.expired", async () => {
     const { svc, prisma, events, tenantStatus } = make({ trials: [{ id: "t1" }] });
     await svc.expireTrials();
-    expect(prisma.tenant.update.mock.calls[0][0].data).toMatchObject({
+    expect(prisma.tenant.updateMany.mock.calls[0][0].where).toEqual({ id: "t1", status: "TRIAL" });
+    expect(prisma.tenant.updateMany.mock.calls[0][0].data).toMatchObject({
       status: "READ_ONLY",
       readOnlyReason: "trial_expired",
     });
@@ -224,7 +227,7 @@ describe("BillingCronService", () => {
     });
     billingNotification.notifyTrialEnding.mockRejectedValueOnce(new Error("email down"));
     await svc.expireTrials();
-    expect(prisma.tenant.update).toHaveBeenCalledTimes(2); // both tenants still transitioned
+    expect(prisma.tenant.updateMany).toHaveBeenCalledTimes(2); // both tenants still transitioned
     expect(billingNotification.notifyTrialEnding).toHaveBeenCalledTimes(2); // t2 still attempted
   });
 

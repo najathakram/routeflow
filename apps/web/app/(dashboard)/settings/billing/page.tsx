@@ -1,5 +1,6 @@
 "use client";
 
+import { endTrialToast } from "./end-trial-toast";
 import * as React from "react";
 import { CreditCard, Check, AlertTriangle, Loader2, Zap } from "lucide-react";
 import { API_ERROR_CODES, type AddonBillingMode, type EnableAddonResult } from "@routeflow/types";
@@ -574,7 +575,7 @@ export default function BillingSettingsPage() {
         onClose={() => setEndTrialOpen(false)}
         onConfirm={() => {
           cancel.mutate(undefined, {
-            onSuccess: () => toast({ title: "Trial ended" }),
+            onSuccess: (data) => toast(endTrialToast(data)),
             onError: () =>
               toast({
                 title: "Trial not ended",

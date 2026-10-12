@@ -60,6 +60,12 @@ import { checkoutAnchorParams, planCheckoutAnchor } from "./checkout-anchor";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { DunningService } from "./dunning.service";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
+import { autoLockAllowed, recordAutoLockSkip } from "./auto-lock-gate";
+import {
+  PAYMENT_GRACE_DAYS,
+  overdueGraceDeadline,
+  overdueSubscriptionWhere,
+} from "./auto-lock-candidates";
 import type { TransitionOpts } from "./dunning-core";
 import { assertTenantNotPaymentOverdue } from "./payment-overdue";
 import { transitionToActiveTx, type PauseExit } from "./transition-to-active";
@@ -93,8 +99,6 @@ import {
   stripeSubscriptionPeriod,
 } from "./stripe-period";
 
-/** Grace period (in days) after a payment failure before suspending the tenant. */
-const PAYMENT_GRACE_DAYS = 3;
 /** #2476: the payment-failed email's portal call runs inside the webhook's claim lease - cap it so a
  *  slow Stripe can never hold the claim for minutes; on timeout the email falls back to plain text. */
 const PAYMENT_FAILED_PORTAL_REQUEST = { timeoutMs: 10_000, maxNetworkRetries: 0 };
@@ -2621,12 +2625,24 @@ ${updateLine}
   private async cancelFromStripe(
     sub: {
       tenantId: string;
+      stripeSubId?: string | null;
       planKey: string | null;
       basePriceSnapshot: Prisma.Decimal | null;
       discount: Prisma.Decimal | null;
     },
     reason: string,
   ): Promise<void> {
+    // SA-775 (row 381): the rollout pause. While the switch is paused a PRODUCTION tenant is NOT cancelled by
+    // this webhook: no CANCELLED / SUSPENDED, no MRR row, no cancellation notice. What Stripe told us is still
+    // recorded (cancelAtPeriodEnd, the disarmed downgrade, the coupon reset); see holdStripeCancel.
+    const lockTarget = await this.prisma.tenant.findUnique({
+      where: { id: sub.tenantId },
+      select: { id: true, class: true, status: true },
+    });
+    if (lockTarget && !(await autoLockAllowed(this.autoLocks, lockTarget, "stripe_cancelled"))) {
+      await this.holdStripeCancel(sub, lockTarget.status, reason);
+      return;
+    }
     const churned = await this.transitionAndEmit(
       sub.tenantId,
       { status: "ACTIVE" },
@@ -2693,6 +2709,55 @@ ${updateLine}
     }
   }
 
+  /**
+   * SA-775: a Stripe-side cancellation of a PRODUCTION tenant while automatic locks are paused. ACTIVE / SUSPENDED
+   * tenants would have been moved to CANCELLED: that is skipped (ONE durable skip record per Stripe subscription,
+   * so a webhook redelivery adds nothing) and the Stripe-side facts are recorded exactly as before (the flag, the
+   * superseded downgrade, the coupon columns). Any other status was never going to be cancelled by this path, so it
+   * takes the ordinary "not cancelled" branch. After an unpause the overdue cron or the scheduled-cancellation cron
+   * finds the tenant again (cancelAtPeriodEnd stays armed); the webhook is not replayed.
+   */
+  private async holdStripeCancel(
+    sub: { tenantId: string; stripeSubId?: string | null },
+    status: string,
+    reason: string,
+  ): Promise<void> {
+    if (status !== "ACTIVE" && status !== "SUSPENDED") {
+      await this.dunning?.markCancelledWhilePaused(sub.tenantId);
+      await resetCouponState(
+        { prisma: this.prisma, events: this.events },
+        sub.tenantId,
+        `stripe_${reason}`,
+      );
+      this.logger.log(
+        `Stripe ${reason} for tenant ${sub.tenantId}: status is not ACTIVE/SUSPENDED — left as is`,
+      );
+      return;
+    }
+    await recordAutoLockSkip(
+      this.prisma,
+      {
+        tenantId: sub.tenantId,
+        kind: "stripe_cancelled",
+        key: sub.stripeSubId ?? sub.tenantId,
+        wouldHaveSet: { status: "CANCELLED", from: status },
+      },
+      this.logger,
+    );
+    await this.prisma.tenantSubscription.update({
+      where: { tenantId: sub.tenantId },
+      data: { cancelAtPeriodEnd: true, ...disarmedDowngrade() },
+    });
+    await resetCouponState(
+      { prisma: this.prisma, events: this.events },
+      sub.tenantId,
+      `stripe_${reason}`,
+    );
+    this.logger.log(
+      `Stripe ${reason} for tenant ${sub.tenantId}: automatic locks are paused — recorded, not cancelled`,
+    );
+  }
+
   private async onSubscriptionUpdated(subscription: any): Promise<void> {
     const sub = await this.matchStripeSubscription(
       stripeRefId(subscription?.id),
@@ -2746,7 +2811,7 @@ ${updateLine}
     if (!this.stripe.isConfigured) return; // No billing = no suspension logic
 
     const now = new Date();
-    const graceDeadline = new Date(now.getTime() - PAYMENT_GRACE_DAYS * 24 * 60 * 60 * 1000);
+    const graceDeadline = overdueGraceDeadline(now);
 
     // Trial expiry is owned by BillingCronService.expireTrials() → READ_ONLY (not
     // SUSPENDED), so exports + sign-in keep working. This cron only handles overdue
@@ -2754,12 +2819,8 @@ ${updateLine}
 
     // Overdue subscriptions (periodEnd + grace past, still ACTIVE, no recent payment)
     const overdueSubs = await this.prisma.tenantSubscription.findMany({
-      where: {
-        periodEnd: { lt: graceDeadline },
-        stripeSubId: { not: null },
-        tenant: { status: "ACTIVE", deletedAt: null },
-      },
-      include: { tenant: { select: { id: true, slug: true } } },
+      where: overdueSubscriptionWhere(graceDeadline),
+      include: { tenant: { select: { id: true, slug: true, class: true } } },
     });
 
     for (const sub of overdueSubs) {
@@ -2770,6 +2831,22 @@ ${updateLine}
         // states and never suspend, in any BILLING_PAUSE_MODE: dunning owns non-payment (the 7-day grace, then
         // READ_ONLY + pay).
         if (stripeSub.status === "canceled") {
+          // SA-775 (row 381): the rollout pause. A PRODUCTION tenant is NOT suspended while the switch is paused
+          // (no status write, no notice); ONE durable skip record per Stripe subscription, and the pass after an
+          // unpause finds it again.
+          if (!(await autoLockAllowed(this.autoLocks, sub.tenant, "overdue_suspended"))) {
+            await recordAutoLockSkip(
+              this.prisma,
+              {
+                tenantId: sub.tenantId,
+                kind: "overdue_suspended",
+                key: sub.stripeSubId as string,
+                wouldHaveSet: { status: "SUSPENDED" },
+              },
+              this.logger,
+            );
+            continue;
+          }
           // Atomic ACTIVE→SUSPENDED: emits the −MRR delta exactly once even if a concurrent
           // subscription.deleted webhook already churned this tenant (count 0 → no double). The
           // suspension is reversible — onPaymentSucceeded re-adds a matching +delta on reinstatement.

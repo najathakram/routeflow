@@ -84,6 +84,8 @@ function build(init: { status?: string; sub?: Record<string, any> } = {}) {
         return { count: 1 };
       }),
       findUniqueOrThrow: jest.fn(async () => ({ ...w.tenant })),
+      // SA-775: cancelFromStripe reads the tenant's class + status for the automatic-lock gate.
+      findUnique: jest.fn(async () => ({ id: "t1", ...w.tenant })),
     },
     tenantSubscription: {
       findFirst: jest.fn(async () => view()),
