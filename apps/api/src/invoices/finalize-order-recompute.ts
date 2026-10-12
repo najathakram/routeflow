@@ -301,6 +301,8 @@ export async function finalizeOrderRecompute(params: {
   subtotal: number;
   categoryTaxSum: number;
   invoices: any[];
+  /** Out-param (row 372 MF2): set when an orphan line was written, so the caller bumps the revision. */
+  touched?: { lines: boolean };
 }): Promise<OrderRecomputeTotals> {
   const { db, orderId, order, deliveredBasis, unbilled, categoryTaxSum, invoices } = params;
 
@@ -328,6 +330,7 @@ export async function finalizeOrderRecompute(params: {
       where: { id: orphan.id },
       data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null, invoicedQty: 0 },
     });
+    if (params.touched && !alreadyCancelled) params.touched.lines = true; // stale numbers on a cancelled line are not a sale change
   }
 
   // Preserve the order's effective tax rate (avoids depending on global config drift); mirror

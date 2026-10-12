@@ -71,6 +71,7 @@ import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
 import { stampMsrpSnapshots } from "./msrp-snapshots";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
+import { appendInvoiceSyncRevisionInTx } from "../orders/order-revisions";
 import {
   checkOrderCoverage,
   finalizeOrderRecompute,
@@ -2369,6 +2370,7 @@ export class InvoicesService {
 
     let subtotal = 0;
     let categoryTaxSum = 0;
+    const touched = { lines: false }; // row 372 MF2: any order line written below
     for (const [key, agg] of byTarget) {
       const existing = agg.line;
       const lineSubtotal = roundMoney(agg.subtotal);
@@ -2381,7 +2383,14 @@ export class InvoicesService {
       const shape = orderLineShape(existing, agg);
       if (existing) {
         // An order line that would be rewritten to exactly what it holds is not written at all.
-        if (!orderLineUnchanged(existing, shape, agg))
+        if (!orderLineUnchanged(existing, shape, agg)) {
+          // invoicedQty / levy-only normalisation is bookkeeping, not a change to the sale (row 372 MF2)
+          const sameSale = {
+            ...existing,
+            invoicedQty: shape.qty,
+            categoryTaxAmount: lineCategoryTax,
+          };
+          if (!orderLineUnchanged(sameSale, shape, agg)) touched.lines = true;
           await db.orderItem.update({
             where: { id: existing.id },
             data: {
@@ -2399,8 +2408,10 @@ export class InvoicesService {
               status: "PENDING",
             },
           });
+        }
         existingById.delete(existing.id);
       } else {
+        touched.lines = true;
         await db.orderItem.create({
           data: {
             orderId,
@@ -2431,7 +2442,7 @@ export class InvoicesService {
     await syncOrderLineCompositions(db, orderId, tenantId, this.featureConfig);
     // B667: cancelling an orphan and rewriting the order's totals — coverage was already
     // confirmed above, before this loop ran.
-    return finalizeOrderRecompute({
+    const totals = await finalizeOrderRecompute({
       db,
       orderId,
       order,
@@ -2440,7 +2451,11 @@ export class InvoicesService {
       subtotal,
       categoryTaxSum,
       invoices,
+      touched,
     });
+    // Row 372 MF2: an invoice edit that rewrote the order's lines moves its revision (an open editor is stale).
+    if (touched.lines) await appendInvoiceSyncRevisionInTx(db, tenantId, orderId);
+    return totals;
   }
 
   /**

@@ -468,5 +468,56 @@ describe("InvoicesService — B667 round 5", () => {
       (c: any) => c[0]?.data?.status === "CANCELLED",
     );
     expect(cancelled).toHaveLength(0);
+    // row 372 MF2: nothing was written, so the order's revision does not move
+    expect(prisma.orderRevision.create).not.toHaveBeenCalled();
+  });
+
+  it("row 372 MF2: a recompute that writes an order line appends ONE SYSTEM_INVOICE_SYNC revision in the same tx", async () => {
+    const l1 = { id: "l1", productId: "p1", status: "PENDING", qty: 4, invoicedQty: 0 };
+    prisma.order.findUnique.mockResolvedValue({
+      id: "order1",
+      status: "PENDING",
+      subtotal: 40,
+      tax: 0,
+      total: 40,
+      shippingFee: 0,
+      lineItems: [l1],
+    });
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv1",
+        shippingFee: 0,
+        items: [
+          {
+            id: "ii-l1",
+            orderItemId: "l1",
+            productId: "p1",
+            qty: 5, // the invoice was edited up: the order line follows
+            subtotal: 50,
+            categoryTaxAmount: 0,
+            promoFreeUnits: 0,
+            unitPrice: 10,
+          },
+        ],
+      },
+    ]);
+    prisma.deliveryMutation.findMany.mockResolvedValue([]);
+    prisma.orderItem.update.mockResolvedValue({});
+    prisma.order.update.mockResolvedValue({});
+    prisma.order.findUniqueOrThrow.mockResolvedValue({
+      subtotal: 50,
+      tax: 0,
+      total: 50,
+      shippingFee: 0,
+    });
+
+    await service.recomputeOrderFromInvoices("order1", prisma);
+
+    expect(prisma.orderItem.update.mock.calls.some((c: any) => c[0].data.qty === 5)).toBe(true);
+    expect(prisma.orderRevision.create).toHaveBeenCalledTimes(1);
+    expect(prisma.orderRevision.create.mock.calls[0][0].data).toMatchObject({
+      orderId: "order1",
+      source: "SYSTEM_INVOICE_SYNC",
+    });
   });
 });

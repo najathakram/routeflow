@@ -30,7 +30,11 @@ import { InjectQueue } from "@nestjs/bull";
 import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
-import { appendOrderRevisionInTx, attachRevisionNumber } from "./order-revisions";
+import {
+  appendMergeRevisionInTx,
+  appendOrderRevisionInTx,
+  attachRevisionNumber,
+} from "./order-revisions";
 import {
   isSpecialTier,
   categoryTaxSnapshotOf,
@@ -912,6 +916,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
               },
             });
+            await appendMergeRevisionInTx(tx, this.prisma.getTenantId(), winner.id); // row 372 MF2
           });
 
           this.logger.log(
@@ -1151,6 +1156,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 ...routeUpdate,
               },
             });
+            await appendMergeRevisionInTx(tx, this.prisma.getTenantId(), winner.id); // row 372 MF2
             // If the winner carries a pending mirror draft, re-sync it to the merged lines.
             await this.invoicesService.reconcileOrderDraftInvoice(winner.id, {
               basis: "order",
