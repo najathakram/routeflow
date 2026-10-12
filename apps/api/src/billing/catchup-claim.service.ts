@@ -618,8 +618,7 @@ export class CatchupClaimService {
   /**
    * Void the tenant's OPEN RfInvoices from the session's S on and clear the claim, in ONE transaction under the
    * Tenant lock. CAS on the claim being still held for this subscription: a replay finds nothing and does nothing.
-   * A session with no readable `catchup_from` voids nothing and says so (NEEDS RULING) - the claim still clears,
-   * because the customer has paid.
+   * A session with no readable `catchup_from` HOLDS the claim (NEEDS RULING, nothing voided, the claim kept).
    */
   async settle(
     tenantId: string,
@@ -642,6 +641,31 @@ export class CatchupClaimService {
     const { verdict, meta } = await this.verifyClaimSettlement(seen, f, settling);
     if (verdict !== "ok") return false;
 
+    // MF-A: the S / A the session was BUILT and PAID for - never a recompute of paid coverage at settle time.
+    // S1 (fail closed): a session with no readable `catchup_from` cannot say which invoices the card supersedes, so
+    // the claim is HELD - nothing voided, NEEDS RULING once, `catchupState` kept so the RfInvoice issuer stays gated
+    // and `externalPayment` is not touched. A human rules; the hourly sweep retries without re-alerting.
+    const span = {
+      from: parseInstant(meta[CATCHUP_META.from]),
+      to: parseInstant(meta[CATCHUP_META.to]),
+    };
+    if (!span.from) {
+      const first = await this.noticeOnce(
+        this.prisma,
+        tenantId,
+        "billing_catchup_needs_ruling",
+        seen.catchupSessionId ?? "session",
+        "NEEDS RULING: the card subscription is paid but its Checkout session carries no catch-up start (catchup_from). The claim is HELD and none of this tenant's RouteFlow invoices were voided; check Stripe and the session.",
+        { reason: "session_without_catchup_from", sessionId: seen.catchupSessionId },
+      ).catch(() => false);
+      if (first) {
+        this.logger.error(
+          `billing.catchup.session_without_catchup_from tenant=${tenantId} session=${seen.catchupSessionId}: claim HELD`,
+        );
+      }
+      return false;
+    }
+
     return this.inTenantTx(tenantId, async (tx) => {
       const row = await this.readClaim(tx, tenantId);
       if (
@@ -652,12 +676,12 @@ export class CatchupClaimService {
       ) {
         return false;
       }
-      // MF-A: the S / A the session was BUILT and PAID for - never a recompute of paid coverage at settle time
-      const span = {
-        from: parseInstant(meta[CATCHUP_META.from]),
-        to: parseInstant(meta[CATCHUP_META.to]),
-      };
-      const voided = await this.voidSupersededTx(tx, tenantId, "billing_catchup_settled", span);
+      const voided = await this.voidSupersededTx(
+        tx,
+        tenantId,
+        "billing_catchup_settled",
+        span.from!,
+      );
       await tx.tenantSubscription.updateMany({
         where: { tenantId, stripeSubId: subId, catchupState: row.catchupState },
         // the successful conversion: manual invoicing is OFF for good (so dunning, B3, applies from here). Completion
@@ -695,25 +719,15 @@ export class CatchupClaimService {
    * The ONE rule for which RfInvoices a card subscription supersedes: every OPEN invoice whose (snapped) period END is
    * after S - `catchup_from` of the SESSION that was paid (SA-733r10 MF-A: never a recompute of paid coverage, which
    * would refuse a tenant whose PAID windows start after the floor) - with NO upper bound. Inside the caller's
-   * Tenant-locked transaction; the `status = OPEN` CAS makes it idempotent. PAID invoices are never touched. A session
-   * with no readable `catchup_from` voids NOTHING and raises NEEDS RULING. Returns the count.
+   * Tenant-locked transaction; the `status = OPEN` CAS makes it idempotent. PAID invoices are never touched. Returns the
+   * count. (settle() never gets here without a readable `catchup_from`: it HOLDS the claim first.)
    */
   private async voidSupersededTx(
     tx: Prisma.TransactionClient,
     tenantId: string,
     reason: string,
-    span: { from: Date | null; to: Date | null },
+    from: Date,
   ): Promise<number> {
-    if (!span.from) {
-      await this.notice(
-        tx,
-        tenantId,
-        "billing_catchup_needs_ruling",
-        "The card subscription is paid but its Checkout session carries no catch-up start (catchup_from); none of this tenant's RouteFlow invoices were voided. NEEDS RULING.",
-        { reason: "session_without_catchup_from" },
-      );
-      return 0;
-    }
     const invoices = (await tx.rfInvoice.findMany({
       where: { tenantId, status: "OPEN" },
       select: {
@@ -725,7 +739,7 @@ export class CatchupClaimService {
         number: true,
       },
     })) as (CatchupInvoice & { periodKey: string | null; number: string })[];
-    const targets = new Set(supersededOpenInvoiceIds(invoices, snapToBoundary(span.from)).void);
+    const targets = new Set(supersededOpenInvoiceIds(invoices, snapToBoundary(from)).void);
     let voided = 0;
     for (const inv of invoices) {
       if (!targets.has(inv.id)) continue;

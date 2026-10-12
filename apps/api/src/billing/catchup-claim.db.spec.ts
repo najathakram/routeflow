@@ -522,4 +522,39 @@ describeDb("SA-733r3 N2 catch-up claim (real Postgres)", () => {
       await prisma.auditLog.count({ where: { tenantId: id, action: "RF_INVOICE_VOIDED" } }),
     ).toBe(1);
   });
+
+  it("S1 (real SQL): a settle whose session has NO catchup_from HOLDS the claim - the OPEN invoice stays OPEN and the claim stays (the issuer stays gated)", async () => {
+    const id = await tenant("nofrom", {
+      stripeSubId: "sub_nofrom",
+      externalPayment: false,
+      catchupState: "AWAITING_FIRST_PAYMENT",
+      catchupSessionId: "cs_nofrom",
+      catchupInvoiceId: "in_nofrom",
+    });
+    const oct = await rfInvoice(id, "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
+    const { svc } = svcWith(
+      fakeStripeCatchup({
+        sessions: {
+          cs_nofrom: {
+            id: "cs_nofrom",
+            subscription: "sub_nofrom",
+            status: "complete",
+            metadata: { tenantId: id, catchup: "period" },
+          },
+        },
+      }),
+    );
+    await svc.onInvoicePaid({
+      id: "in_nofrom",
+      amount_paid: 31000,
+      parent: { subscription_details: { subscription: "sub_nofrom" } },
+    });
+    expect((await prisma.rfInvoice.findUniqueOrThrow({ where: { id: oct.id } })).status).toBe(
+      "OPEN",
+    );
+    expect(await sub(id)).toMatchObject({
+      catchupState: "AWAITING_FIRST_PAYMENT",
+      catchupSessionId: "cs_nofrom",
+    });
+  });
 });

@@ -403,8 +403,8 @@ describe("invoice.paid settles the claim (and only that)", () => {
     expect(h.db.audits.some((a) => a.meta?.kind === "billing_catchup_needs_ruling")).toBe(false);
   });
 
-  it("a session with no readable catchup_from voids NOTHING, says NEEDS RULING, and still clears the claim (the customer paid)", async () => {
-    const h = make(awaiting(), [octOpen, novOpen], {
+  it("S1 (fail closed): a session with no readable catchup_from HOLDS the claim - nothing voided, NEEDS RULING once, the claim stays so the RfInvoice issuer stays gated, externalPayment is not touched", async () => {
+    const h = make({ ...awaiting(), externalPayment: true }, [octOpen, novOpen], {
       sessions: {
         [SESSION]: {
           id: SESSION,
@@ -417,8 +417,18 @@ describe("invoice.paid settles the claim (and only that)", () => {
     await h.svc.onInvoicePaid(paidInvoice());
     expect(h.inv("inv_oct").status).toBe("OPEN");
     expect(h.inv("inv_nov").status).toBe("OPEN");
-    expect(h.sub().catchupState).toBeNull();
-    expect(h.db.audits.some((a) => a.meta?.kind === "billing_catchup_needs_ruling")).toBe(true);
+    expect(h.sub()).toMatchObject({
+      catchupState: "AWAITING_FIRST_PAYMENT",
+      catchupSessionId: SESSION,
+      externalPayment: true,
+    });
+    const notices = () =>
+      h.db.audits.filter((a) => a.meta?.kind === "billing_catchup_needs_ruling");
+    expect(notices()).toHaveLength(1);
+    // a redelivery / the hourly sweep raises no second notice and still holds
+    await h.svc.onInvoicePaid(paidInvoice());
+    expect(notices()).toHaveLength(1);
+    expect(h.sub().catchupState).toBe("AWAITING_FIRST_PAYMENT");
   });
 
   it("takes the Tenant lock before it writes", async () => {
