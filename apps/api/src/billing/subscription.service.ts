@@ -15,6 +15,7 @@ import { FeatureOverrideService } from "./feature-override.service";
 import {
   EMPTY_BILLING_VIEW_EXTRAS,
   SubscriptionBillingExtras,
+  pickStateFacts,
 } from "./subscription-billing-extras";
 import {
   BILLING_EXPORT_INVOICE_FIELDS,
@@ -144,6 +145,8 @@ export class SubscriptionService {
       pastDueSince: sub?.pastDueSince ?? null,
       pastDueInvoiceId: sub?.pastDueInvoiceId ?? null,
       billingContactEmail: extras.billingContactEmail,
+      // SA-777: spread, so a field Stripe could not answer is OMITTED from the JSON (never null/0).
+      ...pickStateFacts(extras),
       openInvoiceAmount: extras.openInvoiceAmount,
       paymentMethodSummary: extras.paymentMethodSummary,
       nextCharge: extras.nextCharge,

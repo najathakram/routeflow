@@ -24,6 +24,7 @@ import {
   buyerResendVerification,
 } from "@/lib/buyer-auth";
 import type { BuyerSeller } from "@/lib/buyer-auth";
+import { sellerUnavailableCopy } from "@/components/SellerUnavailableLine";
 
 // ─── Status badge variant helper ─────────────────────────────────────────────
 
@@ -327,6 +328,45 @@ function ConnectSellerModal({
   );
 }
 
+// ─── Invite-not-taken notice ──────────────────────────────────────────────────
+
+/**
+ * The Google sign-in carried an invite whose seller is not taking it right now: the buyer is signed in and lands
+ * here normally, with ONE fixed neutral line (the existing seller-unavailable copy; never a reason).
+ */
+function InviteNoticeBanner() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const [visible, setVisible] = React.useState(false);
+
+  React.useEffect(() => {
+    if (params.get("invite") === "seller_unavailable") setVisible(true);
+  }, [params]);
+
+  if (!visible) return null;
+
+  return (
+    <div
+      role="status"
+      data-testid="invite-seller-unavailable-notice"
+      className="mb-5 flex items-start gap-3 rounded-xl border border-surface-border bg-surface-raised px-4 py-3"
+    >
+      <p className="flex-1 text-sm text-navy/80">{sellerUnavailableCopy(null)}</p>
+      <button
+        type="button"
+        onClick={() => {
+          setVisible(false);
+          router.replace("/buyer/portal", { scroll: false });
+        }}
+        className="flex-shrink-0 text-navy/50 hover:text-navy transition-colors"
+        aria-label="Dismiss"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
 // ─── Linked success banner ────────────────────────────────────────────────────
 
 function LinkedBanner({ sellerName }: { sellerName?: string }) {
@@ -473,6 +513,7 @@ function BuyerPortalInner() {
       {/* Linked success banner */}
       <React.Suspense fallback={null}>
         <LinkedBanner sellerName={newestActiveSeller?.tenant.name} />
+        <InviteNoticeBanner />
       </React.Suspense>
 
       {/* Page header */}

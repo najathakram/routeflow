@@ -14,8 +14,8 @@ describe("refund copy: READ_ONLY", () => {
     expect(TERMINAL_REFUND_ERRORS.has("readOnly")).toBe(true);
   });
 
-  it("the readOnly sentence is B4's line", () => {
-    expect(REFUND_COPY.readOnly).toBe(readOnlyLine(null));
+  it("the readOnly sentence is the shared read-only line (the owner's sentence)", () => {
+    expect(REFUND_COPY.readOnly).toBe(readOnlyLine(null, false));
   });
 
   it("a plain 403 is still 'forbidden'", () => {
@@ -23,6 +23,6 @@ describe("refund copy: READ_ONLY", () => {
   });
 
   it("the capture refusal text (extractRefusalMessage) is the same line, never the server text", () => {
-    expect(extractRefusalMessage(readOnly403)).toBe(readOnlyLine(null));
+    expect(extractRefusalMessage(readOnly403)).toBe(readOnlyLine(null, false));
   });
 });

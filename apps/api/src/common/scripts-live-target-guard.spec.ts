@@ -104,6 +104,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-billing-pause-blast-radius.mjs": "read-only",
   "apps/api/scripts/report-operator-account-blast-radius.mjs": "read-only",
   "apps/api/scripts/report-b1043-stale-tax-state.mjs": "read-only",
+  "apps/api/scripts/report-b297-trio-sizing.mjs": "read-only",
   "apps/api/scripts/report-b2187-subscription-period-census.mjs": "read-only",
   "apps/api/scripts/report-b2188-duplicate-addon-rows.mjs": "read-only",
   "apps/api/scripts/report-b2197-issuedate-time-component.mjs": "read-only",

@@ -44,34 +44,40 @@ export function ReadOnlyBanner({
     isAdmin,
   });
 
+  // UX QA: the three lines are STACKED (sentence / reason / contact or the action), the contact printed once, and the
+  // admin's action is a >= 44 px control, full width at 390.
   return (
     <div
       className={cn(
-        "flex items-center gap-2 bg-amber-50 text-amber-800 ring-1 ring-amber-200",
+        "flex items-start gap-2 bg-amber-50 text-amber-800 ring-1 ring-amber-200",
         compact ? "px-4 py-2 text-sm" : "rounded-lg px-4 py-3 text-sm",
       )}
     >
-      <AlertTriangle className="h-4 w-4 shrink-0" />
-      <span>
-        <strong>{copy.sentence}</strong>
-        {copy.reasonLine ? ` ${copy.reasonLine}` : ""}
-        {copy.contactLine ? ` ${copy.contactLine}` : ""}
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="min-w-0 flex-1 space-y-1">
+        {copy.lines.map((line, i, all) => (
+          <p
+            key={i}
+            data-testid="read-only-line-part"
+            className={i === 0 ? "font-bold" : undefined}
+          >
+            {line}
+            {i < all.length - 1 || isAdmin ? " " : ""}
+          </p>
+        ))}
         {isAdmin ? (
-          <>
-            {" "}
-            <a
-              href="/choose-plan"
-              onClick={(e) => {
-                if (guardCounterLeave(() => window.location.assign("/choose-plan")))
-                  e.preventDefault(); // POS-7: not mid-sale
-              }}
-              className="font-medium underline underline-offset-2"
-            >
-              Choose a plan
-            </a>
-          </>
+          <a
+            href="/choose-plan"
+            onClick={(e) => {
+              if (guardCounterLeave(() => window.location.assign("/choose-plan")))
+                e.preventDefault(); // POS-7: not mid-sale
+            }}
+            className="mt-1 inline-flex min-h-[44px] w-full items-center justify-center rounded-ctl border border-amber-300 bg-paper px-3 font-medium text-amber-900 underline-offset-2 sm:w-auto"
+          >
+            Choose a plan
+          </a>
         ) : null}
-      </span>
+      </div>
     </div>
   );
 }
