@@ -32,6 +32,8 @@ describeDb("CQ-04 system walk-in: readiness sweep and state resolution — real 
   let service: SellingRestrictionsService;
   let tenantId: string;
   let productId: string;
+  let ruleId: string;
+  let categoryId: string;
   const ids: Record<string, string> = {};
 
   const as = <T>(fn: () => Promise<T>) => ctx.run(tenantId, fn);
@@ -104,16 +106,19 @@ describeDb("CQ-04 system walk-in: readiness sweep and state resolution — real 
     await prisma.productCategoryLabel.create({
       data: { tenantId, productId, categoryId: category.id, mode: "INCLUDE" },
     });
-    await prisma.sellingRestriction.create({
-      data: {
-        tenantId,
-        categoryId: category.id,
-        jurisdiction: "STATE",
-        states: ["TX"],
-        reason: RULE_REASON,
-        effectiveFrom: new Date("2026-01-01T00:00:00Z"),
-      },
-    });
+    categoryId = category.id;
+    ruleId = (
+      await prisma.sellingRestriction.create({
+        data: {
+          tenantId,
+          categoryId: category.id,
+          jurisdiction: "STATE",
+          states: ["TX"],
+          reason: RULE_REASON,
+          effectiveFrom: new Date("2026-01-01T00:00:00Z"),
+        },
+      })
+    ).id;
     await mkCustomer("walkin", { businessName: "Counter walk-in", isWalkIn: true });
     await mkCustomer("real-noaddr", { businessName: "Acme Real", isWalkIn: null });
     await mkCustomer("lookalike-false", { businessName: "Walk-in", isWalkIn: false });
@@ -221,5 +226,82 @@ describeDb("CQ-04 system walk-in: readiness sweep and state resolution — real 
   it("(b) a customer NAMED 'Walk-in' that is not the system customer gets no tenant state", async () => {
     await setBusinessState("FL"); // would be ALLOW if the tenant state applied
     expect((await check(ids["lookalike-false"])).outcome).toBe("INDETERMINATE");
+  });
+
+  describe("readiness requires a business state ONLY when an active STATE rule exists (no state set)", () => {
+    const PAST = new Date("2026-02-01T00:00:00Z");
+    const readiness = () => as(() => service.getEnableReadiness(tenantId));
+    const resetRule = () =>
+      prisma.sellingRestriction.update({
+        where: { id: ruleId },
+        data: { liftedAt: null, effectiveTo: null },
+      });
+
+    beforeEach(async () => {
+      await setBusinessState(null);
+      await resetRule();
+    });
+    afterAll(async () => {
+      await resetRule();
+    });
+
+    it("an active STATE rule + no business state: NOT READY, businessStateMissing", async () => {
+      const r = await readiness();
+      expect(r.businessStateMissing).toBe(true);
+      expect(r.ready).toBe(false);
+    });
+
+    it("the only STATE rule is LIFTED: READY, nothing needs a state", async () => {
+      await prisma.sellingRestriction.update({ where: { id: ruleId }, data: { liftedAt: PAST } });
+      const r = await readiness();
+      expect(r.businessStateMissing).toBe(false);
+      expect(r.customerCount).toBe(4); // the sweep is unchanged
+    });
+
+    it("the only STATE rule has EXPIRED: not required", async () => {
+      await prisma.sellingRestriction.update({
+        where: { id: ruleId },
+        data: { effectiveTo: PAST },
+      });
+      expect((await readiness()).businessStateMissing).toBe(false);
+    });
+
+    it("only a FEDERAL rule (and a lifted STATE one): not required", async () => {
+      await prisma.sellingRestriction.update({ where: { id: ruleId }, data: { liftedAt: PAST } });
+      const federal = await prisma.sellingRestriction.create({
+        data: {
+          tenantId,
+          categoryId,
+          jurisdiction: "FEDERAL",
+          states: [],
+          reason: "CQ04 federal",
+          effectiveFrom: new Date("2026-01-01T00:00:00Z"),
+        },
+      });
+      try {
+        expect((await readiness()).businessStateMissing).toBe(false);
+      } finally {
+        await prisma.sellingRestriction.delete({ where: { id: federal.id } });
+      }
+    });
+
+    it("no rules at all: not required", async () => {
+      const saved = await prisma.sellingRestriction.findUniqueOrThrow({ where: { id: ruleId } });
+      await prisma.sellingRestriction.delete({ where: { id: ruleId } });
+      try {
+        expect((await readiness()).businessStateMissing).toBe(false);
+      } finally {
+        const { id: _drop, ...data } = saved;
+        void _drop;
+        ruleId = (await prisma.sellingRestriction.create({ data: data as never })).id;
+      }
+    });
+
+    it("an active STATE rule + a business state: required and present, the walk-in sale decides", async () => {
+      await setBusinessState("TX");
+      const r = await readiness();
+      expect(r.businessStateMissing).toBe(false);
+      expect((await check(ids["walkin"])).outcome).toBe("BLOCK");
+    });
   });
 });

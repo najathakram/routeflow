@@ -3,6 +3,7 @@ import * as path from "path";
 import { ConflictException, InternalServerErrorException, Logger } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { excludeWalkIn } from "../customers/walk-in-protected";
+import * as core from "./selling-restrictions.core";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -959,11 +960,17 @@ describe("SellingRestrictionsService.evaluate", () => {
 
     describe("the tenant's own business state (counter sales judge the walk-in by it)", () => {
       const resolvable = [customer("ok", [addr()])];
+      const stateRule = (over: Record<string, unknown> = {}) => dbRule({ states: ["TX"], ...over });
+      const NOW_PAST = new Date("2026-01-01T00:00:00Z");
 
-      it("a tenant with no business state is NOT READY, the walk-in never the cause", async () => {
+      beforeEach(() => {
         enable(true);
-        prisma.tenantConfig.findUnique.mockResolvedValue(null);
         serveCustomers(resolvable);
+      });
+
+      it("an active STATE rule + no business state is NOT READY, the walk-in never the cause", async () => {
+        prisma.sellingRestriction.findMany.mockResolvedValue([stateRule()]);
+        prisma.tenantConfig.findUnique.mockResolvedValue(null);
         const r = await service.getEnableReadiness(T);
         expect(r).toMatchObject({
           ready: false,
@@ -979,21 +986,95 @@ describe("SellingRestrictionsService.evaluate", () => {
         });
       });
 
+      it("asks the database only for the tenant's ACTIVE STATE rules", async () => {
+        prisma.sellingRestriction.findMany.mockResolvedValue([]);
+        await service.getEnableReadiness(T);
+        const where = prisma.sellingRestriction.findMany.mock.calls[0][0].where;
+        expect(where).toMatchObject({ tenantId: T, jurisdiction: "STATE" });
+        expect(JSON.stringify(where.AND)).toContain("liftedAt"); // activeRuleWhere(at), the SQL twin
+      });
+
+      it("no rules at all + no business state is READY (nothing needs a state)", async () => {
+        prisma.sellingRestriction.findMany.mockResolvedValue([]);
+        prisma.tenantConfig.findUnique.mockResolvedValue(null);
+        const r = await service.getEnableReadiness(T);
+        expect(r).toMatchObject({ ready: true, businessStateMissing: false });
+        expect(prisma.tenantConfig.findUnique).not.toHaveBeenCalled(); // not even read
+      });
+
+      it("only FEDERAL rules + no business state is READY", async () => {
+        prisma.sellingRestriction.findMany.mockResolvedValue([
+          stateRule({ jurisdiction: "FEDERAL", states: [] }),
+        ]);
+        prisma.tenantConfig.findUnique.mockResolvedValue(null);
+        expect(await service.getEnableReadiness(T)).toMatchObject({
+          ready: true,
+          businessStateMissing: false,
+        });
+      });
+
+      it("an INACTIVE STATE rule (lifted, expired or buyer-portal-only) + no state is READY", async () => {
+        prisma.tenantConfig.findUnique.mockResolvedValue(null);
+        for (const inactive of [
+          stateRule({ liftedAt: NOW_PAST }),
+          stateRule({ effectiveTo: NOW_PAST }),
+          stateRule({ surface: "BUYER_PORTAL" }), // does not bind the counter (staff channel)
+          stateRule({ states: [] }), // malformed: blocks everywhere, needs no state
+        ]) {
+          prisma.sellingRestriction.findMany.mockResolvedValue([inactive]);
+          expect(await service.getEnableReadiness(T)).toMatchObject({
+            ready: true,
+            businessStateMissing: false,
+          });
+        }
+      });
+
+      it("an active STATE rule + a business state is READY", async () => {
+        prisma.sellingRestriction.findMany.mockResolvedValue([stateRule()]);
+        prisma.tenantConfig.findUnique.mockResolvedValue({ state: "TX" });
+        expect(await service.getEnableReadiness(T)).toMatchObject({
+          ready: true,
+          businessStateMissing: false,
+        });
+      });
+
       it("a business state the engine cannot read counts as missing", async () => {
-        enable(true);
+        prisma.sellingRestriction.findMany.mockResolvedValue([stateRule()]);
         prisma.tenantConfig.findUnique.mockResolvedValue({ state: "  " });
-        serveCustomers(resolvable);
         expect((await service.getEnableReadiness(T)).businessStateMissing).toBe(true);
       });
 
       it("a business state in the legacy settings.state counts as present", async () => {
-        enable(true);
+        prisma.sellingRestriction.findMany.mockResolvedValue([stateRule()]);
         prisma.tenantConfig.findUnique.mockResolvedValue(null);
         prisma.systemConfig.findFirst.mockResolvedValue({ value: "fl" });
-        serveCustomers(resolvable);
         const r = await service.getEnableReadiness(T);
         expect(r.businessStateMissing).toBe(false);
         expect(r.ready).toBe(true);
+      });
+
+      it("readiness and evaluate() ask the SAME stateRuleInPlay (they cannot drift)", async () => {
+        const spy = jest.spyOn(core, "stateRuleInPlay");
+        try {
+          // readiness
+          prisma.sellingRestriction.findMany.mockResolvedValue([stateRule()]);
+          prisma.tenantConfig.findUnique.mockResolvedValue({ state: "TX" });
+          await service.getEnableReadiness(T);
+          expect(spy).toHaveBeenCalledTimes(1);
+          expect(spy.mock.calls[0][1]).toBe("STAFF");
+          // evaluate(): a walk-in sale with a STATE rule in play
+          spy.mockClear();
+          withProduct();
+          prisma.customer.findFirst.mockResolvedValue({ isWalkIn: true, addresses: [] });
+          await service.evaluate(T, "walk-in-id", [{ productId: "p1" }], {
+            at: NOW,
+            channel: "STAFF",
+          });
+          expect(spy).toHaveBeenCalledTimes(1);
+          expect(spy.mock.results[0].value).toBe(true);
+        } finally {
+          spy.mockRestore();
+        }
       });
     });
 

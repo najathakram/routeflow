@@ -16,7 +16,6 @@ import { tenantBusinessState } from "./tenant-business-state";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import {
   activeRuleWhere,
-  anyRuleNeedsState,
   buyerRestrictedSummary,
   checkableProductIds,
   evaluateRestrictions,
@@ -25,6 +24,7 @@ import {
   resolveGoverningState,
   restrictedSummary,
   ruleStates,
+  stateRuleInPlay,
   UNRESOLVED_STATE,
   type ProductFacts,
   type RestrictionRuleFacts,
@@ -77,11 +77,27 @@ export interface EnableReadiness {
   /** Customers `resolveGoverningState` (the engine's own) leaves UNRESOLVED under the tenant's precedence. */
   indeterminateCustomerCount: number;
   /**
-   * The tenant has NO usable business-address state (Settings > Business). A counter sale to the system walk-in is judged
-   * by it, so without one every STATE rule on a walk-in sale is INDETERMINATE: the tenant is not ready.
+   * True only when a business state is REQUIRED and absent: the tenant has at least one active STATE rule (one that
+   * binds the staff channel and names a readable state) and no usable business-address state (Settings > Business).
+   * A counter sale to the system walk-in is judged by that state, so without one every such rule is INDETERMINATE and
+   * the tenant is not ready. With no STATE rule in play a missing business address is not a blocker: false.
    */
   businessStateMissing: boolean;
 }
+
+/** The `SellingRestriction` columns the decision reads (`RestrictionRuleFacts`). */
+const RULE_FACTS_SELECT = {
+  id: true,
+  categoryId: true,
+  productId: true,
+  jurisdiction: true,
+  states: true,
+  surface: true,
+  effectiveFrom: true,
+  effectiveTo: true,
+  liftedAt: true,
+  reason: true,
+} as const;
 
 /** The address columns the governing-state resolver reads. */
 export const ADDRESS_SELECT = {
@@ -226,7 +242,17 @@ export class SellingRestrictionsService {
     assertAmbientTenant(this.prisma, tenantId, "SellingRestrictionsService");
     const { addressPrecedence } = await this.getPolicy(tenantId);
     const db = this.prisma.forTenant();
-    const businessStateMissing = (await tenantBusinessState(this.prisma, tenantId)) === null;
+    // A business state matters only when some active STATE rule could need it (the same `stateRuleInPlay` evaluate()
+    // asks): a tenant with no such rule (none, FEDERAL only, or only lifted / expired / buyer-portal-only ones) is
+    // not made "not ready" by a missing business address.
+    const at = new Date();
+    const stateRules: RestrictionRuleFacts[] = await db.sellingRestriction.findMany({
+      where: { tenantId, jurisdiction: "STATE", AND: [activeRuleWhere(at)] },
+      select: RULE_FACTS_SELECT,
+    });
+    const businessStateMissing =
+      stateRuleInPlay(stateRules, "STAFF", at) &&
+      (await tenantBusinessState(this.prisma, tenantId)) === null;
 
     const tally = {
       customerCount: 0,
@@ -345,18 +371,7 @@ export class SellingRestrictionsService {
       // deterministic (a database collation's `id` order need not equal JS string order) — do NOT
       // drop that sort because this ordering exists.
       orderBy: [{ effectiveFrom: "desc" }, { id: "asc" }],
-      select: {
-        id: true,
-        categoryId: true,
-        productId: true,
-        jurisdiction: true,
-        states: true,
-        surface: true,
-        effectiveFrom: true,
-        effectiveTo: true,
-        liftedAt: true,
-        reason: true,
-      },
+      select: RULE_FACTS_SELECT,
     });
 
     // Load addresses only when some matching rule could actually need a state.
@@ -377,7 +392,7 @@ export class SellingRestrictionsService {
       }
     }
     let governingState = UNRESOLVED_STATE;
-    if (anyRuleNeedsState(matched) && customerId) {
+    if (stateRuleInPlay(matched, channel, at) && customerId) {
       // Ownership check + addresses in ONE query through the customer: a nested select is not
       // rewritten by the tenant extension, so a legacy address row with a NULL tenantId is still
       // seen (dropping it could let a different, stamped address govern), and a customer that

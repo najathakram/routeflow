@@ -20,8 +20,9 @@ export interface RestrictionsEnableReadiness {
   addressesNeedingReview: number;
   indeterminateCustomerCount: number;
   /**
-   * The tenant has no usable business-address state (Settings > Business). A counter sale to the walk-in is judged by
-   * it, so without one the tenant is NOT ready (`RESTRICTIONS_BUSINESS_STATE_MISSING_LINE` says what to do).
+   * True only when a business state is REQUIRED and absent: the tenant has an active STATE rule and no usable
+   * business-address state (Settings > Business). A counter sale to the walk-in is judged by it, so then the tenant is
+   * NOT ready (`RESTRICTIONS_BUSINESS_STATE_MISSING_LINE` says what to do). False when no STATE rule is in play.
    */
   businessStateMissing: boolean;
 }
