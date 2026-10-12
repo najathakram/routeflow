@@ -24,13 +24,17 @@ export function isPendingMirrorInvoice(inv: {
 
 /**
  * The wording of the pending-mirror draft: a delivery business reviews and sends the invoice "after delivery"; a store-only
- * (POS-forced) business has no delivery at all, so the same draft is ready "after hand-over". Pure, so the page and its test
- * cannot drift.
+ * (POS-forced) business has no delivery at all, so the same draft is ready "after hand-over". Until the capability is known
+ * (`null`) neither moment is claimed. Pure, so the page and its test cannot drift.
  */
-export function pendingMirrorCopy(storeOnly: boolean): { badge: string; note: string } {
-  const moment = storeOnly ? "hand-over" : "delivery";
+export function pendingMirrorCopy(storeOnly: boolean | null): { badge: string; note: string } {
+  // `null` = the business's fulfilment capability is not known yet (loading, or a partial answer): say neither moment, so a
+  // store-only business never flashes "delivery" before its capability arrives.
+  const moment =
+    storeOnly === null ? "it is handed over or delivered" : storeOnly ? "hand-over" : "delivery";
+  const when = storeOnly === null ? `once ${moment}` : `after ${moment}`;
   return {
-    badge: `Mirrors the order \u2014 ready to send after ${moment}`,
-    note: `you'll review and send this invoice after ${moment}.`,
+    badge: `Mirrors the order \u2014 ready to send ${when}`,
+    note: `you'll review and send this invoice ${when}.`,
   };
 }

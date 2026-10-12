@@ -30,6 +30,13 @@ describe("pendingMirrorCopy: no delivery on a store-only order", () => {
     expect(c.badge).toBe("Mirrors the order \u2014 ready to send after delivery");
     expect(c.note).toBe("you'll review and send this invoice after delivery.");
   });
+  it("the fulfilment capability not known yet (loading, or a partial answer) never claims delivery", () => {
+    const c = pendingMirrorCopy(null);
+    expect(c.badge).toBe(
+      "Mirrors the order \u2014 ready to send once it is handed over or delivered",
+    );
+    expect(c.note).toBe("you'll review and send this invoice once it is handed over or delivered.");
+  });
   it("a store-only (POS-forced) business says 'after hand-over', never 'delivery'", () => {
     const c = pendingMirrorCopy(true);
     expect(c.badge).toBe("Mirrors the order \u2014 ready to send after hand-over");

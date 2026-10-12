@@ -1426,7 +1426,9 @@ export default function InvoiceDetailPage() {
   const stampZone = useTenantTimeZone(seesHandOverStamp(user?.role)); // row 342: the hand-over time
   // A store-only business is POS-forced: its order is handed over, never delivered (the draft's wording follows).
   const { capability: fulfilmentCapability } = useCounterSaleGate();
-  const mirrorCopy = pendingMirrorCopy(isStoreOnly(fulfilmentCapability));
+  const mirrorCopy = pendingMirrorCopy(
+    fulfilmentCapability == null ? null : isStoreOnly(fulfilmentCapability),
+  );
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
