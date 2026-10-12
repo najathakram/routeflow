@@ -220,6 +220,10 @@ export function parseScanField(
 
 export const COUNTER_SALES_DISABLED_COPY = "Counter sales are not turned on for this business.";
 
+/** CQ-30: the capability lookup failed (offline, a server error): say so, never "not turned on". Shown with a Retry button. */
+export const COUNTER_GATE_CHECK_FAILED_COPY =
+  "Couldn't check whether counter sales are on. Check your connection and try again.";
+
 /** Shown under the unknown-outcome banner when "Check sale status" itself failed (anything but a 404 answer). */
 export const COUNTER_LOOKUP_FAILED_COPY = "Couldn't check the sale. Try again.";
 

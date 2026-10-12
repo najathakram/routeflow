@@ -70,6 +70,7 @@ import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
 import { CounterReceiptBody } from "./CounterReceiptBody";
 import { CounterCustomerCredit } from "./CounterCustomerCredit";
+import { CounterGateOffline } from "./CounterGateOffline";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
@@ -844,6 +845,9 @@ export function CounterSaleScreen() {
   // The features answer is not in yet: an empty, non-interactive placeholder, with no copy (neither the sale UI nor a false
   // "not turned on").
   if (gate.loading) return <div data-testid="counter-sale-loading" aria-busy="true" />;
+
+  // CQ-30: a FAILED lookup is not "off": say the check failed and offer a retry (still no sale UI).
+  if (gate.failed) return <CounterGateOffline onRetry={gate.retry} />;
 
   // Missing means dark: loading, error, unknown, a response without the capability, or counter "off" all render NO sale UI
   // (a deep link or a stale tab). Only "optional" / "always" open the screen.

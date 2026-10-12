@@ -19,7 +19,7 @@ import { useTenantFeatures } from "../tenant-features";
  */
 export function useCounterSaleGate(options?: { enabled?: boolean }) {
   const enabled = options?.enabled ?? true;
-  const { data, isLoading } = useTenantFeatures({ enabled });
+  const { data, isLoading, isError, refetch } = useTenantFeatures({ enabled });
   // The response type says `capabilities` is always there; a stale or partial answer may not have it, and that means DARK.
   const cap = (data as { capabilities?: { fulfilment?: FulfilmentCapability } } | undefined)
     ?.capabilities?.fulfilment;
@@ -33,7 +33,15 @@ export function useCounterSaleGate(options?: { enabled?: boolean }) {
         offerShipInstead: false,
         offerInvoiceOrder: false,
       };
-  return { ...gate, capability: enabled ? cap : null, loading: enabled && isLoading === true };
+  return {
+    ...gate,
+    capability: enabled ? cap : null,
+    loading: enabled && isLoading === true,
+    // CQ-30: the lookup itself FAILED (offline, a server error) and there is no earlier answer. That is not "counter sales
+    // are off": the screen says it could not check and offers a retry. The gate stays dark (no sale UI) either way.
+    failed: enabled && isError === true && data === undefined,
+    retry: () => void refetch?.(),
+  };
 }
 
 export function useCreateCounterSale() {
