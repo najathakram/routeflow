@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import type { SubscriptionView } from "@routeflow/types";
-import { Button, type ButtonProps } from "@routeflow/ui/web";
+import { Button, ModalNoticeContext, type ButtonProps } from "@routeflow/ui/web";
 import { readOnlyLine } from "./subscription-banner-state";
 
 /**
@@ -99,7 +99,27 @@ export function ReadOnlyGateProvider({
     () => ({ readOnly, line: readOnly ? readOnlyLine(view, isAdmin) : null, hintId }),
     [readOnly, view, isAdmin, hintId],
   );
-  return <GateContext.Provider value={value}>{children}</GateContext.Provider>;
+  // F3/F4 class fix: after ANY 403 READ_ONLY refusal the shared line is shown INLINE in every open (or next-opened)
+  // dialog through the ui Modal's notice slot, so a dialog never sits open and silent. While the workspace is
+  // read-only from the read itself, the write controls are disabled up front and no dialog needs the line.
+  const notice = React.useMemo(
+    () =>
+      refused && value.line ? (
+        <p
+          role="alert"
+          data-testid="read-only-dialog-line"
+          className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200"
+        >
+          {value.line}
+        </p>
+      ) : null,
+    [refused, value.line],
+  );
+  return (
+    <GateContext.Provider value={value}>
+      <ModalNoticeContext.Provider value={notice}>{children}</ModalNoticeContext.Provider>
+    </GateContext.Provider>
+  );
 }
 
 export function useReadOnlyGate(): Gate {

@@ -1,6 +1,7 @@
 import * as React from "react";
 import type { SubscriptionView } from "@routeflow/types";
 import { act } from "@testing-library/react";
+import { Modal } from "@routeflow/ui/web";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import {
   ReadOnlyGateProvider,
@@ -175,5 +176,48 @@ describe("read-only gate - a fresh read clears the refusal (S5 nit)", () => {
     act(() => markReadOnlyRefused());
     rerender(ui(Date.now() + 5));
     expect(screen.getByRole("button", { name: "Record Payment" })).toBeDisabled();
+  });
+});
+
+// F3/F4 (b), the class fix: a 403 READ_ONLY on a write the page still thought was enabled puts the shared line
+// INLINE in every open dialog - never a silent dialog with only a toast behind its overlay.
+describe("a READ_ONLY refusal shows the shared line inline in any dialog", () => {
+  afterEach(() => act(() => resetReadOnlyRefusedForTests()));
+
+  const Dialog = () => (
+    <Modal open onClose={() => undefined} title="Add User">
+      <p>form</p>
+    </Modal>
+  );
+
+  it("no refusal: the dialog carries no read-only line", () => {
+    renderWithProviders(
+      <ReadOnlyGateProvider view={{ status: "ACTIVE" } as SubscriptionView}>
+        <Dialog />
+      </ReadOnlyGateProvider>,
+    );
+    expect(screen.queryByTestId("read-only-dialog-line")).toBeNull();
+  });
+
+  it("after a 403 READ_ONLY (markReadOnlyRefused) the open dialog shows the line, role=alert", () => {
+    renderWithProviders(
+      <ReadOnlyGateProvider view={{ status: "ACTIVE" } as SubscriptionView}>
+        <Dialog />
+      </ReadOnlyGateProvider>,
+    );
+    act(() => markReadOnlyRefused());
+    const line = screen.getByTestId("read-only-dialog-line");
+    expect(line).toHaveAttribute("role", "alert");
+    expect(line).toHaveTextContent("This workspace is currently in read-only mode.");
+  });
+
+  it("a dialog opened AFTER the refusal shows it too (the gate is the single source)", () => {
+    act(() => markReadOnlyRefused());
+    renderWithProviders(
+      <ReadOnlyGateProvider view={{ status: "ACTIVE" } as SubscriptionView}>
+        <Dialog />
+      </ReadOnlyGateProvider>,
+    );
+    expect(screen.getByTestId("read-only-dialog-line")).toBeInTheDocument();
   });
 });

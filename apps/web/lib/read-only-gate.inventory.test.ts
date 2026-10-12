@@ -151,4 +151,14 @@ describe("read-only gate inventory (B4)", () => {
     expect(seen.length).toBeGreaterThanOrEqual(3); // the scan is not vacuous
     expect(seen.filter((x) => !x.endsWith(":WriteButton"))).toEqual([]);
   });
+
+  it("F3/F4 class fix: every app dialog is the ui Modal (so the read-only notice slot reaches all of them)", () => {
+    // a dialog built straight on Radix would stay open and silent after a 403 READ_ONLY; only the public marketing
+    // header (no workspace, no writes) is exempt
+    const offenders = [...walk(path.join(WEB, "app")), ...walk(path.join(WEB, "components"))]
+      .filter((f) => /@radix-ui\/react-(alert-)?dialog/.test(fs.readFileSync(f, "utf8")))
+      .map(rel)
+      .filter((f) => !f.startsWith("app/(marketing)/"));
+    expect(offenders).toEqual([]);
+  });
 });
