@@ -48,11 +48,24 @@ describe("stockFilterParams — the Inactive chip asks the server for isActive=f
 describe("ProductStatusBadge", () => {
   it.each([
     ["INACTIVE", "Inactive"],
-    ["OUT_OF_STOCK", "Out of Stock"],
     ["LOW", "Low Stock"],
     ["IN_STOCK", "In Stock"],
   ] as const)("%s renders %s", (status, label) => {
-    render(<ProductStatusBadge status={status} />);
+    render(<ProductStatusBadge status={status} currentStock={3} />);
     expect(screen.getByText(label)).toBeInTheDocument();
+  });
+
+  // Row 330b (owner ruling): an empty product shows the real count in amber, never "Out of Stock" in red.
+  it("OUT_OF_STOCK renders the real count in the warning tone, not the danger one", () => {
+    render(<ProductStatusBadge status="OUT_OF_STOCK" currentStock={0} />);
+    const badge = screen.getByText("0 in stock").closest("span")!;
+    expect(badge.className).toContain("bg-warning-bg");
+    expect(badge.className).not.toContain("danger");
+    expect(screen.queryByText(/out of stock/i)).toBeNull();
+  });
+
+  it("shows a negative count as it is", () => {
+    render(<ProductStatusBadge status="OUT_OF_STOCK" currentStock={-3} />);
+    expect(screen.getByText("-3 in stock")).toBeInTheDocument();
   });
 });

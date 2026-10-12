@@ -60,6 +60,7 @@ import {
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
 import { unitsLabel } from "@/lib/stock-label";
+import { stockCountLabel } from "../_components/product-status";
 import { PiecesPerBoxValue } from "./PiecesPerBoxValue";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -1055,7 +1056,7 @@ export default function ProductDetailPage() {
                 label={product.isActive ? "Active" : "Inactive"}
               />
               {stockStatus === "OUT_OF_STOCK" ? (
-                <Badge variant="danger" label="Out of Stock" />
+                <Badge variant="warning" label={stockCountLabel(currentStock)} />
               ) : stockStatus === "LOW" ? (
                 <Badge variant="warning" label="Low Stock" />
               ) : null}
@@ -1144,7 +1145,7 @@ export default function ProductDetailPage() {
                           isDragging && "ring-2 ring-brand-500",
                           !hasImages && "cursor-pointer",
                           stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
-                          stockStatus === "OUT_OF_STOCK" && "border-danger/30 bg-danger-bg",
+                          stockStatus === "OUT_OF_STOCK" && "border-warning/30 bg-warning-bg",
                           stockStatus === "IN_STOCK" && "border-surface-border bg-surface-raised",
                         )}
                         onClick={!hasImages ? () => fileInputRef.current?.click() : undefined}
@@ -1231,7 +1232,7 @@ export default function ProductDetailPage() {
                               className={cn(
                                 "h-14 w-14",
                                 stockStatus === "LOW" && "text-warning/30",
-                                stockStatus === "OUT_OF_STOCK" && "text-danger/30",
+                                stockStatus === "OUT_OF_STOCK" && "text-warning/30",
                                 stockStatus === "IN_STOCK" && "text-navy/15",
                               )}
                             />

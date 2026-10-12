@@ -1,4 +1,5 @@
 import { Badge } from "@routeflow/ui/web";
+import { formatQty } from "@/lib/format";
 
 export type ProductStatus = "IN_STOCK" | "LOW" | "OUT_OF_STOCK" | "INACTIVE";
 export type ProductStockFilter = "" | "IN_STOCK" | "LOW" | "OUT_OF_STOCK" | "INACTIVE";
@@ -35,9 +36,24 @@ export function stockFilterParams(filter: ProductStockFilter): {
   return {};
 }
 
-export function ProductStatusBadge({ status }: { status: ProductStatus }) {
+/**
+ * Row 330b (owner ruling): an empty product shows the real count in the warning tone ("0 in stock"), never a red
+ * "Out of Stock". The product stays sellable; the count is the whole message.
+ */
+export function stockCountLabel(currentStock: number | null | undefined): string {
+  return `${formatQty(currentStock)} in stock`;
+}
+
+export function ProductStatusBadge({
+  status,
+  currentStock,
+}: {
+  status: ProductStatus;
+  currentStock?: number | null;
+}) {
   if (status === "INACTIVE") return <Badge variant="neutral" label="Inactive" />;
-  if (status === "OUT_OF_STOCK") return <Badge variant="danger" label="Out of Stock" />;
+  if (status === "OUT_OF_STOCK")
+    return <Badge variant="warning" label={stockCountLabel(currentStock)} />;
   if (status === "LOW") return <Badge variant="warning" label="Low Stock" />;
   return <Badge variant="success" label="In Stock" />;
 }
