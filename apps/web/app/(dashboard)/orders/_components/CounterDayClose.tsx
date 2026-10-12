@@ -127,7 +127,7 @@ function DayCloseForm({
       title={editing ? "Edit count" : "Close day"}
       description={
         editing
-          ? "Fix the count. Sales times stay the same. A corrected Z report is emailed."
+          ? "Sales times stay the same. A corrected Z report is emailed."
           : "Count the drawer. The totals are checked again when you close."
       }
       scroll

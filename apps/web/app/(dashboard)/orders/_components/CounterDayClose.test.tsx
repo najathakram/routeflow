@@ -565,11 +565,9 @@ describe("CounterDayClose: the closed state", () => {
     await screen.findByTestId("day-close-form");
     expect(screen.queryByRole("dialog", { name: "Reopen this day?" })).toBeNull();
     expect(post).not.toHaveBeenCalled();
-    // row 345 wording for what an edit does (the polish keeps the "Fix the count." lead-in)
+    // row 345 wording for what an edit does (the owner-ruled sentence R4.2 shipped)
     expect(
-      screen.getByText(
-        "Fix the count. Sales times stay the same. A corrected Z report is emailed.",
-      ),
+      screen.getByText("Sales times stay the same. A corrected Z report is emailed."),
     ).toBeInTheDocument();
   });
 
@@ -696,9 +694,7 @@ describe("CounterDayClose: Edit count (reopen, then close again)", () => {
     closedWithQuietNextWindow();
     await openEdit();
     const dialog = screen.getByRole("dialog", { name: "Edit count" });
-    expect(dialog).toHaveTextContent(
-      "Fix the count. Sales times stay the same. A corrected Z report is emailed.",
-    );
+    expect(dialog).toHaveTextContent("Sales times stay the same. A corrected Z report is emailed.");
     expect(dialog).not.toHaveTextContent("The window stays the same");
   });
 
