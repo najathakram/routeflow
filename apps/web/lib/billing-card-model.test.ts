@@ -117,6 +117,37 @@ describe("billingCardModel (SA-777)", () => {
     expect(cancelled.portal).toBe(true);
   });
 
+  it("Pay says what its link collects: one invoice's own amount, not the total of several", () => {
+    const m = billingCardModel(
+      view({
+        billingState: "overdue",
+        outstandingTotal: 298,
+        payNowAmount: 149,
+        payNowUrl: "https://pay.example/in_1",
+        openInvoiceDueLabel: "Oct 1",
+      }),
+      "admin",
+      NOW,
+    )!;
+    expect(m.amountLine).toBe("$298.00 overdue since Oct 1");
+    expect(m.pay?.label).toBe("Pay $149.00");
+  });
+
+  it("a zero total is never 'overdue': no amount line, no '$0.00' Pay", () => {
+    const m = billingCardModel(
+      view({
+        status: "READ_ONLY",
+        readOnlyReason: "payment_overdue",
+        outstandingTotal: 0,
+        billingState: "current",
+      }),
+      "admin",
+      NOW,
+    )!;
+    expect(m.amountLine).toBeNull();
+    expect(m.pay).toEqual({ label: "Pay now" });
+  });
+
   it("precedence: read-only beats processing beats overdue", () => {
     const base = { billingState: "overdue" as const, paymentProcessing: true };
     expect(billingCardModel(view(base), "admin", NOW)!.state).toBe("processing");

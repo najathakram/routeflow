@@ -153,30 +153,35 @@ export function readOnlyLine(adminName: string | null | undefined): string {
 
 /** True when this view's read-only / grace state is the billing strip's, not the trial banner's. */
 export function ownsBillingBanner(view: SubscriptionView | null | undefined): boolean {
-  return (
-    !!view &&
-    (view.readOnlyReason === "payment_overdue" ||
-      !!view.pastDueInvoiceId ||
-      view.billingState === "overdue" ||
-      view.billingState === "processing")
-  );
+  return !!view && (view.readOnlyReason === "payment_overdue" || !!view.pastDueInvoiceId);
 }
 
 /** React-query `refetchInterval` for the subscription read: poll while a billing state is showing. */
 export function subscriptionPollInterval(
   view: SubscriptionView | null | undefined,
 ): number | false {
-  return ownsBillingBanner(view) ? POLL_MS : false;
+  // SA-777: also while the server says a payment is overdue or settling (the strip / card clear on server state).
+  return ownsBillingBanner(view) ||
+    view?.billingState === "overdue" ||
+    view?.billingState === "processing"
+    ? POLL_MS
+    : false;
 }
 
-/** What is owed in dollars: SA-777's `outstandingTotal` (all open invoices), else the clocked invoice's amount. */
-export const owedAmount = (view: SubscriptionView): number | null =>
-  view.outstandingTotal ?? view.openInvoiceAmount ?? null;
+/** What is owed in dollars: SA-777's `outstandingTotal` (all open invoices), else the clocked invoice's amount.
+ *  A zero or negative figure is "nothing owed", never printed as money owed. */
+export const owedAmount = (view: SubscriptionView): number | null => {
+  const total = view.outstandingTotal;
+  if (total != null && total > 0) return total;
+  const clocked = view.openInvoiceAmount;
+  return clocked != null && clocked > 0 && total == null ? clocked : null;
+};
 
 const payAction = (view: SubscriptionView): BannerAction => {
-  const amount = owedAmount(view);
+  // The button says what its link collects: that one invoice's amount (never the total of several)
+  const amount = view.payNowAmount ?? owedAmount(view);
   return {
-    label: amount != null ? `Pay ${billingMoney(amount)}` : "Pay now",
+    label: amount != null && amount > 0 ? `Pay ${billingMoney(amount)}` : "Pay now",
     intent: "pay",
     ...(view.payNowUrl ? { url: view.payNowUrl } : {}),
   };
@@ -234,11 +239,18 @@ export function subscriptionBannerState(
   }
 
   // ── An invoice is owed, the workspace still works: grace, or (only when the pause is real) the last day ─
-  if (view.pastDueInvoiceId) {
+  // SA-777: the dunning marker, or the server saying a payment is overdue on a live workspace (no marker stamped yet).
+  const owedNow =
+    !!view.pastDueInvoiceId || (view.billingState === "overdue" && view.status !== "READ_ONLY");
+  if (owedNow) {
     const cardPay = admin ? payAction(view) : null;
-    // SA-777: no strip while a payment settles or while the invoice is merely due (the Billing card shows both).
+    // SA-777: the server's facts say nothing is owed (a voided / written-off invoice, a payment that just landed):
+    // the marker alone is not a strip.
+    if (view.billingState === "current") return NONE;
+    // No strip while a payment settles; none for a merely "due" invoice unless the pause is real (a real pause
+    // must keep its escalation: the marker can be clocked before the first attempt).
     if (view.paymentProcessing === true || view.billingState === "processing") return NONE;
-    if (view.billingState === "due") return NONE;
+    if (view.billingState === "due" && view.pauseEnforced !== true) return NONE;
     const elapsedHours = sinceOk ? Math.max(0, (now.getTime() - sinceOk.getTime()) / HOUR_MS) : 0;
     // B2: the last-day escalation (amber, "read-only tomorrow") exists ONLY when the server really pauses
     // (BILLING_PAUSE_MODE=enforced). In dark / off nothing will happen on day 7, so nothing is threatened.
@@ -267,7 +279,7 @@ export function subscriptionBannerState(
           ? overdueSentence(owedAmount(view))
           : `Your subscription payment is overdue. Please let ${contact(view, false)} know.`,
         action: admin ? { ...payAction(view), label: "Pay now" } : null,
-        dismiss: { scope: "day", key: `grace:${view.pastDueInvoiceId}:${dayKey(now)}` },
+        dismiss: { scope: "day", key: `grace:${view.pastDueInvoiceId ?? "open"}:${dayKey(now)}` },
         live: "status",
         inShell: true,
         cardLine: null,
@@ -291,7 +303,7 @@ export function subscriptionBannerState(
         ? adminCopy
         : `There's a billing issue. Everything still works. ${contact(view, true)} can sort it out in Billing.`,
       action: admin ? UPDATE_PAYMENT : null,
-      dismiss: { scope: "day", key: `grace:${view.pastDueInvoiceId}:${dayKey(now)}` },
+      dismiss: { scope: "day", key: `grace:${view.pastDueInvoiceId ?? "open"}:${dayKey(now)}` },
       live: "status",
       inShell: true,
       cardLine: null,

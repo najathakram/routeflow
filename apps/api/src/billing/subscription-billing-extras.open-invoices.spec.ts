@@ -29,7 +29,12 @@ const row = (over: Record<string, unknown> = {}) => ({
 });
 
 function make(
-  over: { rows?: any[]; listError?: boolean; processing?: Record<string, boolean> } = {},
+  over: {
+    rows?: any[];
+    listError?: boolean;
+    hasMore?: boolean;
+    processing?: Record<string, boolean>;
+  } = {},
 ) {
   const prisma = {
     getTenantId: () => null,
@@ -42,7 +47,7 @@ function make(
     isConfigured: true,
     listOpenCustomerInvoices: over.listError
       ? jest.fn().mockRejectedValue(new Error("stripe down"))
-      : jest.fn().mockResolvedValue(over.rows ?? [row()]),
+      : jest.fn().mockResolvedValue({ rows: over.rows ?? [row()], hasMore: over.hasMore ?? false }),
     getInvoiceFacts: jest.fn().mockImplementation(async (id: string) => ({
       status: "open",
       amountDue: 0,
@@ -126,8 +131,71 @@ describe("SubscriptionBillingExtras.read: open-invoice facts (SA-777)", () => {
     ])
       expect(out).not.toHaveProperty(k);
     // recovered: the next read asks Stripe again (the failure was not remembered for the TTL)
-    stripe.listOpenCustomerInvoices.mockResolvedValue([row()]);
+    stripe.listOpenCustomerInvoices.mockResolvedValue({ rows: [row()], hasMore: false });
     expect((await extras.read("t1", SUB)).billingState).toBe("due");
+  });
+
+  it("the 10-invoice cap cut the list (has_more): the total would under-report, so every field is OMITTED", async () => {
+    const { extras } = make({ hasMore: true });
+    const out = await extras.read("t1", SUB);
+    expect(out).not.toHaveProperty("outstandingTotal");
+    expect(out).not.toHaveProperty("billingState");
+    expect(out).not.toHaveProperty("payNowUrl");
+  });
+
+  it("an invoice in another currency is never printed as dollars: the fields are OMITTED", async () => {
+    const { extras } = make({ rows: [row({ currency: "jpy" })] });
+    expect(await extras.read("t1", SUB)).not.toHaveProperty("outstandingTotal");
+    const usd = await make({ rows: [row({ currency: "usd" })] }).extras.read("t1", SUB);
+    expect(usd.outstandingTotal).toBe(149);
+  });
+
+  it("a changed dunning marker bypasses the 60 s cache (a payment or a new failure reads fresh facts)", async () => {
+    const { extras, stripe } = make();
+    await extras.read("t1", { ...SUB, pastDueInvoiceId: null });
+    await extras.read("t1", { ...SUB, pastDueInvoiceId: "in_1" });
+    expect(stripe.listOpenCustomerInvoices).toHaveBeenCalledTimes(2);
+  });
+
+  it("one invoice settling and one unpaid: state overdue/due, Pay targets the unpaid one and its own amount", async () => {
+    const { extras } = make({
+      rows: [
+        row({
+          id: "settling",
+          created: 100,
+          amount_remaining: 14900,
+          hosted_invoice_url: "https://pay.example/settling",
+        }),
+        row({
+          id: "unpaid",
+          created: 200,
+          amount_remaining: 5000,
+          attempt_count: 1,
+          hosted_invoice_url: "https://pay.example/unpaid",
+        }),
+      ],
+      processing: { settling: true },
+    });
+    const out = await extras.read("t1", SUB);
+    expect(out).toMatchObject({
+      billingState: "overdue",
+      paymentProcessing: false,
+      outstandingTotal: 199,
+      payNowUrl: "https://pay.example/unpaid",
+      payNowAmount: 50,
+    });
+  });
+
+  it("payNowAmount is the oldest invoice's own amount, not the total (the button must collect what it says)", async () => {
+    const { extras } = make({
+      rows: [
+        row({ id: "old", created: 100, amount_remaining: 14900 }),
+        row({ id: "new", created: 200, amount_remaining: 14900 }),
+      ],
+    });
+    const out = await extras.read("t1", SUB);
+    expect(out.outstandingTotal).toBe(298);
+    expect(out.payNowAmount).toBe(149);
   });
 
   it("no Stripe customer on the tenant row: the fields are omitted and Stripe is not called", async () => {
@@ -166,6 +234,7 @@ describe("trimBillingViewForRole (SA-777)", () => {
     billingState: "overdue",
     outstandingTotal: 149,
     payNowUrl: "https://pay.example/in_1",
+    payNowAmount: 149,
     openInvoiceDueLabel: "Oct 1",
     billingContactName: "Dana",
     billingContactEmail: "dana@example.test",
@@ -182,6 +251,7 @@ describe("trimBillingViewForRole (SA-777)", () => {
     });
     expect(out).not.toHaveProperty("outstandingTotal");
     expect(out).not.toHaveProperty("payNowUrl");
+    expect(out).not.toHaveProperty("payNowAmount");
     expect(out.openInvoiceAmount).toBeNull();
   });
 

@@ -2,6 +2,7 @@ import {
   deriveBillingState,
   outstandingCents,
   owedInvoices,
+  payableInvoices,
   type OpenInvoiceFact,
 } from "./billing-state";
 
@@ -41,18 +42,27 @@ describe("deriveBillingState (SA-777): processing > overdue > due > current", ()
     expect(deriveBillingState([inv({ dueDateSec: nowSec - 1 })], NOW)).toBe("overdue");
   });
 
-  it("a payment still processing beats overdue and due", () => {
+  it("every owed invoice settling: processing", () => {
     expect(deriveBillingState([inv({ paymentProcessing: true, attemptCount: 2 })], NOW)).toBe(
       "processing",
     );
-    expect(deriveBillingState([inv({ paymentProcessing: true })], NOW)).toBe("processing");
+    expect(
+      deriveBillingState(
+        [inv({ paymentProcessing: true }), inv({ paymentProcessing: true, attemptCount: 1 })],
+        NOW,
+      ),
+    ).toBe("processing");
   });
 
-  it("the worst invoice wins across several", () => {
-    expect(deriveBillingState([inv(), inv({ attemptCount: 1 })], NOW)).toBe("overdue");
+  it("one invoice settling while another is still unpaid: the unpaid one's state (Pay is not stranded)", () => {
     expect(
-      deriveBillingState([inv({ attemptCount: 1 }), inv({ paymentProcessing: true })], NOW),
-    ).toBe("processing");
+      deriveBillingState([inv({ paymentProcessing: true }), inv({ attemptCount: 1 })], NOW),
+    ).toBe("overdue");
+    expect(deriveBillingState([inv({ paymentProcessing: true }), inv()], NOW)).toBe("due");
+  });
+
+  it("the worst PAYABLE invoice wins across several", () => {
+    expect(deriveBillingState([inv(), inv({ attemptCount: 1 })], NOW)).toBe("overdue");
   });
 
   it("a processing flag on an invoice that owes nothing does not count", () => {
@@ -77,5 +87,17 @@ describe("outstandingCents / owedInvoices", () => {
     expect(
       outstandingCents([inv({ amountRemainingCents: 10 }), inv({ amountRemainingCents: 20 })]),
     ).toBe(30);
+  });
+});
+
+describe("payableInvoices", () => {
+  it("excludes invoices already settling and ones that owe nothing, oldest first", () => {
+    const list = [
+      inv({ createdSec: 300 }),
+      inv({ createdSec: 100, paymentProcessing: true }),
+      inv({ createdSec: 200, amountRemainingCents: 0 }),
+      inv({ createdSec: 150 }),
+    ];
+    expect(payableInvoices(list).map((i) => i.createdSec)).toEqual([150, 300]);
   });
 });

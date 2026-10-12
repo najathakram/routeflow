@@ -98,6 +98,8 @@ export interface SubscriptionView<TDate = string> {
   openInvoiceDueLabel?: string;
   /** The OLDEST owed invoice's hosted page (admins only; omitted while a payment is processing). */
   payNowUrl?: string;
+  /** What `payNowUrl` collects (that one invoice's amount remaining, dollars): the Pay button's own figure. */
+  payNowAmount?: number;
   /** The same oldest-active-admin pick as `billingContactName`: who an operator is told to ask. */
   billingContactEmail?: string | null;
 }

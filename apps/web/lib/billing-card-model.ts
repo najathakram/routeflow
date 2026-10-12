@@ -138,7 +138,11 @@ export function billingCardModel(
   const pay =
     admin && payable
       ? {
-          label: amount != null ? `Pay ${billingMoney(amount)}` : "Pay now",
+          // the button collects ONE invoice (`payNowUrl`'s): its own amount, never the total of several
+          label:
+            (view.payNowAmount ?? amount) != null
+              ? `Pay ${billingMoney((view.payNowAmount ?? amount)!)}`
+              : "Pay now",
           ...(view.payNowUrl ? { url: view.payNowUrl } : {}),
         }
       : null;

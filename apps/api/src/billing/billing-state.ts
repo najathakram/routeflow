@@ -1,7 +1,7 @@
 /**
  * SA-777: the ONE derivation of the Billing card's / strip's state, from the tenant's OPEN Stripe invoices. Pure (no
  * I/O, no clock of its own): the server decides, the browser only renders. Precedence, highest first:
- *   processing  a payment on an open invoice is still settling (a bank debit's PaymentIntent is `processing`)
+ *   processing  every owed invoice's payment is still settling (a bank debit's PaymentIntent is `processing`)
  *   overdue     Stripe has already tried (attempt_count > 0) OR an invoice is past its own due_date
  *   due         something is owed and nothing above applies
  *   current     nothing is owed
@@ -28,17 +28,28 @@ export function owedInvoices(invoices: readonly OpenInvoiceFact[]): OpenInvoiceF
   return invoices.filter(owes).sort((a, b) => a.createdSec - b.createdSec);
 }
 
+/** The owed invoices a payment can still be made on (not already settling), oldest first. */
+export function payableInvoices(invoices: readonly OpenInvoiceFact[]): OpenInvoiceFact[] {
+  return owedInvoices(invoices).filter((i) => !i.paymentProcessing);
+}
+
 /** Σ amount_remaining in INTEGER cents (the caller converts once, server-side, with `fromCents`). */
 export function outstandingCents(invoices: readonly OpenInvoiceFact[]): number {
   return owedInvoices(invoices).reduce((s, i) => s + i.amountRemainingCents, 0);
 }
 
+/**
+ * `processing` means a payment is settling and there is NOTHING ELSE to pay: when one owed invoice is processing
+ * and another is still unpaid, the state is that other invoice's (overdue / due) - hiding Pay for an unpaid
+ * invoice because a sibling is settling would strand it (SA-777 review).
+ */
 export function deriveBillingState(invoices: readonly OpenInvoiceFact[], now: Date): BillingState {
   const owed = owedInvoices(invoices);
   if (owed.length === 0) return "current";
-  if (owed.some((i) => i.paymentProcessing)) return "processing";
+  const payable = payableInvoices(invoices);
+  if (payable.length === 0) return "processing";
   const nowSec = now.getTime() / 1000;
-  if (owed.some((i) => i.attemptCount > 0 || (i.dueDateSec != null && i.dueDateSec < nowSec)))
+  if (payable.some((i) => i.attemptCount > 0 || (i.dueDateSec != null && i.dueDateSec < nowSec)))
     return "overdue";
   return "due";
 }

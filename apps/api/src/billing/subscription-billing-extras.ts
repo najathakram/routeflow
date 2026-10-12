@@ -4,6 +4,7 @@ import {
   deriveBillingState,
   outstandingCents,
   owedInvoices,
+  payableInvoices,
   type BillingState,
   type OpenInvoiceFact,
 } from "./billing-state";
@@ -61,6 +62,8 @@ export interface BillingViewExtras {
   /** "Oct 15", formatted in the TENANT's zone: when the oldest owed invoice fell due / went overdue. */
   openInvoiceDueLabel?: string;
   payNowUrl?: string;
+  /** What `payNowUrl` collects (that one invoice's amount remaining, dollars): the Pay button's own figure. */
+  payNowAmount?: number;
 }
 
 export interface BillingExtrasSubscription {
@@ -88,7 +91,7 @@ export function trimBillingViewForRole<T extends Partial<BillingViewExtras>>(
 ): T {
   if (role === "TENANT_ADMIN" || role === "SUPER_ADMIN") return view;
   // SA-777: an operator keeps the state and the date label (no money) and loses the amount and the pay link.
-  const { outstandingTotal: _amount, payNowUrl: _pay, ...rest } = view;
+  const { outstandingTotal: _amount, payNowUrl: _pay, payNowAmount: _payAmount, ...rest } = view;
   return { ...rest, paymentMethodSummary: null, nextCharge: null, openInvoiceAmount: null } as T;
 }
 
@@ -100,6 +103,7 @@ export function pickStateFacts(e: Partial<BillingViewExtras>): Partial<BillingVi
   if (e.paymentProcessing !== undefined) out.paymentProcessing = e.paymentProcessing;
   if (e.openInvoiceDueLabel !== undefined) out.openInvoiceDueLabel = e.openInvoiceDueLabel;
   if (e.payNowUrl !== undefined) out.payNowUrl = e.payNowUrl;
+  if (e.payNowAmount !== undefined) out.payNowAmount = e.payNowAmount;
   return out;
 }
 
@@ -149,7 +153,7 @@ export class SubscriptionBillingExtras {
       this.openAmount(sub?.pastDueInvoiceId ?? null),
       this.cardAndNextCharge(tenantId, sub),
       dunningZone(this.prisma, tenantId),
-      this.openInvoices(tenantId, sub?.stripeCustomerId ?? null),
+      this.openInvoices(tenantId, sub?.stripeCustomerId ?? null, sub?.pastDueInvoiceId ?? null),
     ]);
     const since = sub?.pastDueInvoiceId ? (sub.pastDueSince ?? null) : null;
     return {
@@ -207,19 +211,26 @@ export class SubscriptionBillingExtras {
   private async openInvoices(
     tenantId: string,
     customerId: string | null,
+    marker: string | null,
   ): Promise<OpenInvoiceFact[] | null> {
     if (!customerId || !this.stripe.isConfigured) return null;
-    const key = `open:${tenantId}`;
-    const hit = this.cache.get(key) as Cached<OpenInvoiceFact[]> | undefined;
+    // The dunning marker is part of the key: a payment (marker cleared) or a new failure (marker stamped) reads fresh
+    // facts on every replica instead of pairing the new marker with up-to-60-s-old "nothing open".
+    const key = `open:${tenantId}:${marker ?? "-"}`;
+    const hit = this.cache.get(key) as Cached<OpenInvoiceFact[] | null> | undefined;
     if (hit && hit.expiresAt > Date.now()) return hit.value;
     try {
       const facts = await withTimeout(
         (async () => {
-          const rows = await this.stripe.listOpenCustomerInvoices(
+          const { rows, hasMore } = await this.stripe.listOpenCustomerInvoices(
             customerId,
             OPEN_INVOICE_LIST_CAP,
             INTERACTIVE_STRIPE_REQUEST,
           );
+          // The cap cut the list (the OLDEST are dropped) or an invoice is not USD: the total would be wrong, so
+          // say nothing (omit) rather than under-report or mis-print another currency as dollars.
+          if (hasMore || rows.some((r) => r.currency && String(r.currency).toLowerCase() !== "usd"))
+            return null;
           return Promise.all(
             rows.map(async (r): Promise<OpenInvoiceFact> => {
               // a bank debit's PaymentIntent can still be `processing`: only the per-invoice facts expand it
@@ -257,14 +268,26 @@ export class SubscriptionBillingExtras {
     zone: string,
   ): Pick<
     BillingViewExtras,
-    "outstandingTotal" | "billingState" | "paymentProcessing" | "openInvoiceDueLabel" | "payNowUrl"
+    | "outstandingTotal"
+    | "billingState"
+    | "paymentProcessing"
+    | "openInvoiceDueLabel"
+    | "payNowUrl"
+    | "payNowAmount"
   > {
     if (!open) return {};
     const owed = owedInvoices(open);
     const billingState = deriveBillingState(open, new Date());
+    // Pay goes to the oldest invoice that can still be paid (never one that is already settling)
+    const target = payableInvoices(open)[0];
     const oldest = owed[0];
+    // "overdue since" is the dunning clock's date when it has one; "due by" is the invoice's own due date
     const dueAt =
-      since ?? (oldest ? new Date((oldest.dueDateSec ?? oldest.createdSec) * 1000) : null);
+      billingState === "overdue" && since
+        ? since
+        : oldest
+          ? new Date((oldest.dueDateSec ?? oldest.createdSec) * 1000)
+          : null;
     return {
       outstandingTotal: fromCents(outstandingCents(open)),
       billingState,
@@ -272,9 +295,8 @@ export class SubscriptionBillingExtras {
       ...(oldest && dueAt && dueAt.getTime() > 0
         ? { openInvoiceDueLabel: dayLabel(dueAt, zone) }
         : {}),
-      ...(oldest?.hostedInvoiceUrl && billingState !== "processing"
-        ? { payNowUrl: oldest.hostedInvoiceUrl }
-        : {}),
+      ...(target?.hostedInvoiceUrl ? { payNowUrl: target.hostedInvoiceUrl } : {}),
+      ...(target ? { payNowAmount: fromCents(target.amountRemainingCents) } : {}),
     };
   }
 
