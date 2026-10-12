@@ -1,12 +1,14 @@
 // POS-4b: fixed copy + error classification for the refund-vs-credit choice. Never render
 // server text for these errors (apps/web/lib/raw-message-allowlist.json must not grow).
 import { API_ERROR_CODES, type InlineRefundTender } from "@routeflow/types";
+import { isReadOnlyRefusal, readOnlyRefusalCopy } from "@/lib/read-only-refusal";
 
 export type RefundErrorKind =
   | "changed"
   | "resolved"
   | "resolvedAfterRetry"
   | "forbidden"
+  | "readOnly"
   | "needsPaid"
   | "refundedCash"
   | "notRefundable"
@@ -20,6 +22,7 @@ export const TERMINAL_REFUND_ERRORS: ReadonlySet<RefundErrorKind> = new Set([
   "resolved",
   "resolvedAfterRetry",
   "forbidden",
+  "readOnly",
   "needsPaid",
   "refundedCash",
   "notRefundable",
@@ -37,6 +40,8 @@ export const REFUND_COPY = {
   resolvedAfterRetry:
     "This refund is already recorded. Check the return before handing anything over.",
   forbidden: "You don't have permission to refund this return.",
+  /** A READ_ONLY workspace refused the refund: the permission is fine, the workspace is read-only (B4's line). */
+  readOnly: readOnlyRefusalCopy(),
   needsPaid:
     "Return saved. This sale isn't fully paid, so it can't be refunded. Issue store credit from the order instead.",
   refundedCash: "This return was already refunded. Nothing more was refunded.",
@@ -61,7 +66,7 @@ export const REFUND_COPY = {
 export function refundErrorKind(err: unknown): RefundErrorKind {
   const res = (err as { response?: { status?: number; data?: { code?: string } } } | undefined)
     ?.response;
-  if (res?.status === 403) return "forbidden";
+  if (res?.status === 403) return isReadOnlyRefusal(err) ? "readOnly" : "forbidden";
   if (res?.status === 409 && res.data?.code === API_ERROR_CODES.REFUND_AMOUNT_CHANGED)
     return "changed";
   if (res?.status === 409 && res.data?.code === API_ERROR_CODES.RETURN_ALREADY_RESOLVED)
