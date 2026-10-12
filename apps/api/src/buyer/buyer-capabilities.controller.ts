@@ -1,5 +1,5 @@
 import { READ_ONLY_STATUS } from "../billing/dunning-config";
-import { sellerReadOnlyBuyerGate } from "./guards/buyer-seller-context.guard";
+import { sellerReadOnlyBuyerGate } from "./seller-status-gate";
 import { Controller, Get, UseGuards, UseInterceptors } from "@nestjs/common";
 import { ApiBearerAuth, ApiHeader, ApiOperation, ApiTags } from "@nestjs/swagger";
 import type { BuyerSellerCapability } from "@routeflow/types";
