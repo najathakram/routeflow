@@ -136,7 +136,7 @@ export const TENANT_JOBS: Readonly<Record<string, TenantJobSpec>> = {
     class: "RECORD_KEEPING",
     filter: "NONE",
     reason:
-      "an owed mailbox-state alert to the tenant's own admins; a skip would have to clear or keep the owed row (a lost vs forever-re-claimed alert) - needs an outbox ruling, so unfiltered for now",
+      "RECORD_KEEPING per SA-776 GAP-4 -> SUSPENDED/CANCELLED skip deferred: a skip must clear or keep the owed row (a lost vs a forever-re-claimed alert); needs an outbox ruling; follow-up row",
   },
 
   // ── HOUSEKEEPING: the system's own rows ─────────────────────────────────────────────────────────────────────

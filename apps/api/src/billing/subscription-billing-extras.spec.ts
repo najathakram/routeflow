@@ -20,6 +20,8 @@ const SUB: any = {
 function make(
   over: {
     admin?: { email: string } | null;
+    /** The full oldest-first list of active admins (overrides `admin`). */
+    admins?: Array<{ email: string }>;
     facts?: any;
     factsError?: boolean;
     card?: any;
@@ -35,9 +37,16 @@ function make(
       findUnique: jest.fn().mockResolvedValue({ timezone: over.zone ?? null }),
     },
     user: {
-      findFirst: jest
+      findMany: jest
         .fn()
-        .mockResolvedValue(over.admin === undefined ? { email: "dana@acme.test" } : over.admin),
+        .mockResolvedValue(
+          over.admins ??
+            (over.admin === undefined
+              ? [{ email: "dana@acme.test" }]
+              : over.admin
+                ? [over.admin]
+                : []),
+        ),
     },
   } as any;
   const stripe = {
@@ -75,7 +84,7 @@ describe("SubscriptionBillingExtras.read (B4 view fields)", () => {
     expect(out.billingContactEmail).toBe("dana@acme.test");
     expect(out).not.toHaveProperty("billingContactName");
     // only the e-mail is selected: neither the username nor a linked driver's name can leak as a contact
-    const call = (prisma.user.findFirst as jest.Mock).mock.calls[0][0];
+    const call = (prisma.user.findMany as jest.Mock).mock.calls[0][0];
     expect(call.select).toEqual({ email: true });
     expect(call).toEqual(
       expect.objectContaining({
@@ -93,6 +102,18 @@ describe("SubscriptionBillingExtras.read (B4 view fields)", () => {
   it("billingContactEmail is null when the tenant has no active admin", async () => {
     const { extras } = make({ admin: null });
     expect((await extras.read("t1", SUB)).billingContactEmail).toBeNull();
+  });
+
+  it("the OLDEST admin with a real e-mail is the contact: a sentinel or blank address is passed over", async () => {
+    const { extras } = make({
+      admins: [
+        { email: "no-email+0b1f2c3d@placeholder.local" },
+        { email: "   " },
+        { email: "second@acme.test" },
+        { email: "third@acme.test" },
+      ],
+    });
+    expect((await extras.read("t1", SUB)).billingContactEmail).toBe("second@acme.test");
   });
 
   it("an internal sentinel or blank e-mail is never sent", async () => {

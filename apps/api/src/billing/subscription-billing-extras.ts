@@ -9,8 +9,8 @@ import { StripeService } from "./stripe.service";
 
 /**
  * SA-733r6 (B4): the facts the subscription view adds so the web banner and the Billing card render from ONE read.
- *  - `billingContactEmail` (SA-776): the OLDEST ACTIVE TENANT_ADMIN's e-mail - a fixed, stated rule (a per-branch
- *    contact can replace the rule behind this one field later). There is NO contact name: the User model has no
+ *  - `billingContactEmail` (SA-776): the e-mail of the OLDEST ACTIVE TENANT_ADMIN that has a real one - a fixed,
+ *    stated rule (a per-branch contact can replace the rule behind this one field later). There is NO contact name: the User model has no
  *    display-name column and a username is never shown (the field this replaced was the username). An internal
  *    sentinel address (`no-email+...@placeholder.local`) is never sent;
  *  - `openInvoiceAmount`: the `pastDueInvoiceId` invoice's amount remaining, in dollars (Stripe cents via `fromCents`);
@@ -151,13 +151,18 @@ export class SubscriptionBillingExtras {
 
   private async contactEmail(tenantId: string): Promise<string | null> {
     try {
-      const admin = await this.prisma.user.findFirst({
+      // Oldest active admin first; one whose address is blank or an internal sentinel is passed over for the next.
+      const admins = await this.prisma.user.findMany({
         where: { tenantId, role: "TENANT_ADMIN", status: "ACTIVE", deletedAt: null },
         orderBy: { createdAt: "asc" },
         select: { email: true },
+        take: 25,
       });
-      const email = admin?.email?.trim() || null;
-      return email && !isInternalEmail(email) ? email : null;
+      for (const a of admins) {
+        const email = a.email?.trim();
+        if (email && !isInternalEmail(email)) return email;
+      }
+      return null;
     } catch (err) {
       this.logger.warn(`billing contact lookup failed for ${tenantId}: ${(err as Error).message}`);
       return null;

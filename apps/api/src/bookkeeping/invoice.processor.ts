@@ -25,6 +25,9 @@ export class InvoiceProcessor {
     // SA-776: the PDF of an EXISTING transaction is record-keeping - it keeps running while the workspace is
     // READ_ONLY, and is skipped (completed, never thrown, so Bull does not retry it) for a SUSPENDED or
     // CANCELLED tenant. A missing tenant row falls through to the service's own tenant guard (REG-B188).
+    // Nothing enqueues generate-invoice today (OrdersService injects the queue but never adds to it). A future
+    // producer must DELAY or REGENERATE for a suspended tenant rather than rely on this skip, or the PDF is lost
+    // after the tenant is reactivated.
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { status: true },
