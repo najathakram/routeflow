@@ -6,9 +6,10 @@ import type { SubscriptionView } from "@routeflow/types";
  * the action, the dismiss rule. No per-screen copy; no client timer decides state - the server's read does, and
  * this only renders it (the day index is computed from `pastDueSince` against the `now` the caller passes).
  *
- * Rules that bind (the brief's Don't list): never red; no "overdue" / "failed" / "suspended" or blame wording; no
- * countdown; no pay control for anyone but a workspace admin; no "Choose a plan" / "Subscribe" while an invoice
- * is owed; no billing state for buyers; amounts always print as money ($149.00), never a dash.
+ * Rules that bind (the brief's Don't list): never red; "overdue" only in the owner's signed sentences; no "failed" /
+ * "suspended" or blame wording; no countdown; no pay control for anyone but a workspace admin; no "Choose a plan" /
+ * "Subscribe" while an invoice is owed; no billing state for buyers; amounts always print as money ($149.00), never a
+ * dash. SA-777: nothing here threatens a lock, a date or a countdown while `pauseEnforced !== true`.
  */
 
 export type BannerRole = "admin" | "staff";
@@ -24,6 +25,8 @@ export interface BannerAction {
   label: string;
   /** "update-payment" opens the Stripe billing portal; "pay" opens the owed invoice's hosted page. */
   intent: "update-payment" | "pay" | "open-billing";
+  /** SA-777: the oldest owed invoice's hosted page (`payNowUrl`); a Pay action opens it directly when present. */
+  url?: string;
 }
 
 export interface BannerDismiss {
@@ -33,8 +36,8 @@ export interface BannerDismiss {
 }
 
 export interface BannerState {
-  kind: "none" | "autopay" | "card-expiring" | "grace" | "final-day" | "read-only";
-  /** Grace is neutral (blue); the last day and read-only are amber. Never red. */
+  kind: "none" | "autopay" | "card-expiring" | "grace" | "overdue" | "final-day" | "read-only";
+  /** Grace is neutral (blue); overdue, the last day and read-only are amber. Never red. */
   tone: "none" | "neutral" | "amber";
   /** The full strip text ("" when there is no strip). */
   copy: string;
@@ -150,7 +153,13 @@ export function readOnlyLine(adminName: string | null | undefined): string {
 
 /** True when this view's read-only / grace state is the billing strip's, not the trial banner's. */
 export function ownsBillingBanner(view: SubscriptionView | null | undefined): boolean {
-  return !!view && (view.readOnlyReason === "payment_overdue" || !!view.pastDueInvoiceId);
+  return (
+    !!view &&
+    (view.readOnlyReason === "payment_overdue" ||
+      !!view.pastDueInvoiceId ||
+      view.billingState === "overdue" ||
+      view.billingState === "processing")
+  );
 }
 
 /** React-query `refetchInterval` for the subscription read: poll while a billing state is showing. */
@@ -160,10 +169,21 @@ export function subscriptionPollInterval(
   return ownsBillingBanner(view) ? POLL_MS : false;
 }
 
-const payAction = (view: SubscriptionView): BannerAction => ({
-  label: view.openInvoiceAmount != null ? `Pay ${billingMoney(view.openInvoiceAmount)}` : "Pay now",
-  intent: "pay",
-});
+/** What is owed in dollars: SA-777's `outstandingTotal` (all open invoices), else the clocked invoice's amount. */
+export const owedAmount = (view: SubscriptionView): number | null =>
+  view.outstandingTotal ?? view.openInvoiceAmount ?? null;
+
+const payAction = (view: SubscriptionView): BannerAction => {
+  const amount = owedAmount(view);
+  return {
+    label: amount != null ? `Pay ${billingMoney(amount)}` : "Pay now",
+    intent: "pay",
+    ...(view.payNowUrl ? { url: view.payNowUrl } : {}),
+  };
+};
+/** The owner's signed overdue sentence (SA-777); the amount is left out, never faked, when it is unknown. */
+const overdueSentence = (amount: number | null) =>
+  `Your subscription payment${amount != null ? ` of ${billingMoney(amount)}` : ""} is overdue. Please complete your payment to keep your account up to date.`;
 const UPDATE_PAYMENT: BannerAction = { label: "Update payment", intent: "update-payment" };
 
 export function subscriptionBannerState(
@@ -216,6 +236,9 @@ export function subscriptionBannerState(
   // ── An invoice is owed, the workspace still works: grace, or (only when the pause is real) the last day ─
   if (view.pastDueInvoiceId) {
     const cardPay = admin ? payAction(view) : null;
+    // SA-777: no strip while a payment settles or while the invoice is merely due (the Billing card shows both).
+    if (view.paymentProcessing === true || view.billingState === "processing") return NONE;
+    if (view.billingState === "due") return NONE;
     const elapsedHours = sinceOk ? Math.max(0, (now.getTime() - sinceOk.getTime()) / HOUR_MS) : 0;
     // B2: the last-day escalation (amber, "read-only tomorrow") exists ONLY when the server really pauses
     // (BILLING_PAUSE_MODE=enforced). In dark / off nothing will happen on day 7, so nothing is threatened.
@@ -229,6 +252,23 @@ export function subscriptionBannerState(
         action: admin ? UPDATE_PAYMENT : null,
         dismiss: null,
         live: "alert",
+        inShell: true,
+        cardLine: null,
+        cardPay,
+      };
+    }
+    // SA-777: while the pause is NOT enforced (today) nothing is threatened: the owner's overdue sentence, the
+    // amount, and Pay now - no deadline, no "read-only", no countdown.
+    if (view.pauseEnforced !== true) {
+      return {
+        kind: "overdue",
+        tone: "amber",
+        copy: admin
+          ? overdueSentence(owedAmount(view))
+          : `Your subscription payment is overdue. Please let ${contact(view, false)} know.`,
+        action: admin ? { ...payAction(view), label: "Pay now" } : null,
+        dismiss: { scope: "day", key: `grace:${view.pastDueInvoiceId}:${dayKey(now)}` },
+        live: "status",
         inShell: true,
         cardLine: null,
         cardPay,
