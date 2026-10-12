@@ -20,7 +20,8 @@ import {
   isCatchupSession,
   type InvoiceFacts,
 } from "./catchup-claim";
-import { paidThroughOf, supersededOpenInvoiceIds, type CatchupInvoice } from "./catchup-plan";
+import { supersededOpenInvoiceIds, type CatchupInvoice } from "./catchup-plan";
+import { snapToBoundary } from "./rf-invoice/calendar-windows";
 import {
   STRIPE_CHECKOUT_DUPLICATE_ACTION,
   STRIPE_CHECKOUT_ENTITY,
@@ -35,6 +36,11 @@ import {
 import { StripeService } from "./stripe.service";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** A metadata instant (ISO string) -> Date, null when absent or unparseable. */
+function parseInstant(v: unknown): Date | null {
+  return typeof v === "string" && !Number.isNaN(Date.parse(v)) ? new Date(v) : null;
+}
 
 /** The audit-notice kind that records the manual period at claim time, for the release to restore (a). */
 const MANUAL_PERIOD_KIND = "billing_catchup_manual_period";
@@ -180,8 +186,8 @@ export class CatchupClaimService {
     row: ClaimRow,
     facts: InvoiceFacts | null,
     invoiceId: string | null,
-  ): Promise<"ok" | "foreign" | "hold"> {
-    if (!row.catchupSessionId || !row.stripeSubId) return "foreign";
+  ): Promise<{ verdict: "ok" | "foreign" | "hold"; meta: Record<string, string> }> {
+    if (!row.catchupSessionId || !row.stripeSubId) return { verdict: "foreign", meta: {} };
     const session = await this.stripe.getCheckoutSession(row.catchupSessionId);
     if (stripeRefId(session?.subscription) !== row.stripeSubId) {
       // An unrelated subscription's invoice on a tenant whose claim is held is unusual (ordinary checkouts are
@@ -196,9 +202,9 @@ export class CatchupClaimService {
           { invoiceId, storedSubscriptionId: row.stripeSubId },
         ).catch(() => undefined);
       }
-      return "foreign";
+      return { verdict: "foreign", meta: {} };
     }
-    const meta = session?.metadata ?? {};
+    const meta: Record<string, string> = session?.metadata ?? {};
     const shape = meta[CATCHUP_META.shape];
     const expected = Number(meta[CATCHUP_META.stubCents] ?? 0);
     if (
@@ -219,10 +225,10 @@ export class CatchupClaimService {
         this.logger.error(
           `billing.catchup.amount_mismatch tenant=${row.tenantId} invoice=${invoiceId} expected=${expected} got=${got}: claim HELD`,
         );
-        return "hold";
+        return { verdict: "hold", meta };
       }
     }
-    return "ok";
+    return { verdict: "ok", meta };
   }
 
   // ─── opening a claim (called by the catch-up checkout) ────────────────────
@@ -348,6 +354,22 @@ export class CatchupClaimService {
     });
     if (!advanced) return;
 
+    // SA-733r9 rule 5 (MF5): a session with NO money to wait for (S === A, or a forgiven sub-minimum line) settles AT
+    // COMPLETION, once the trialing subscription exists with a default payment method - it must not wait for a first
+    // invoice that only arrives at A.
+    const sessionMeta: Record<string, string> = session.metadata ?? {};
+    if (
+      sessionMeta[CATCHUP_META.stubCents] === "0" &&
+      (sessionMeta[CATCHUP_META.shape] === "trial_one_time" ||
+        sessionMeta[CATCHUP_META.shape] === "trial")
+    ) {
+      const sub = await this.stripe.getSubscription(subId);
+      if (stripeRefId(sub?.default_payment_method)) {
+        await this.settle(tenantId, subId);
+        return;
+      }
+    }
+
     // Stripe work, OUTSIDE the lock.
     let invoiceId = advanced.catchupInvoiceId;
     if (!invoiceId) invoiceId = await this.ensureSettlingInvoice(tenantId, session, subId);
@@ -423,9 +445,9 @@ export class CatchupClaimService {
    * completion can only arrive before the session expires and is retried for at most that window afterwards, so the
    * value is the same on every delivery AND still in the future on the last one. (A session with no expiry - only a
    * hand-built one - keeps the old call-time floor.) The real bound: the stub finalizes at the LATER of its planned
-   * time and (expiry + 73 h), i.e. up to 97 h after the session was created. The `trial` shape is therefore only
-   * chosen when the trial ends at least 98 h out (catchup-plan CATCHUP_TRIAL_STUB_MIN_LEAD_MS), so the stub always
-   * finalizes BEFORE the renewal at T - a failed stub can never be released after the renewal was paid.
+   * time and (expiry + 73 h), i.e. up to 97 h after the session was created. (Since SA-733r9 the
+   * planner never builds a `trial` session WITH a stub - every S < A is trial_one_time, charged at completion - so
+   * this draft-stub path is unreachable for new sessions and kept only for completeness of the release logic.)
    */
   private stubFinalizeAt(session: any, meta: Record<string, string>): number {
     const planned = Number(meta[CATCHUP_META.finalizeAt]) || 0;
@@ -594,10 +616,10 @@ export class CatchupClaimService {
   // ─── the PAID path ────────────────────────────────────────────────────────
 
   /**
-   * Void the tenant's OPEN RfInvoices from paid-through on and clear the claim, in ONE transaction under the
+   * Void the tenant's OPEN RfInvoices from the session's S on and clear the claim, in ONE transaction under the
    * Tenant lock. CAS on the claim being still held for this subscription: a replay finds nothing and does nothing.
-   * A tenant whose RfInvoices cannot be placed (a PAID invoice after a gap) voids nothing and says so (NEEDS
-   * RULING) - the claim still clears, because the customer has paid.
+   * A session with no readable `catchup_from` voids nothing and says so (NEEDS RULING) - the claim still clears,
+   * because the customer has paid.
    */
   async settle(
     tenantId: string,
@@ -617,7 +639,7 @@ export class CatchupClaimService {
     }
     const settling = invoiceId ?? seen.catchupInvoiceId;
     const f = facts ?? (settling ? await this.stripe.getInvoiceFacts(settling) : null);
-    const verdict = await this.verifyClaimSettlement(seen, f, settling);
+    const { verdict, meta } = await this.verifyClaimSettlement(seen, f, settling);
     if (verdict !== "ok") return false;
 
     return this.inTenantTx(tenantId, async (tx) => {
@@ -630,7 +652,12 @@ export class CatchupClaimService {
       ) {
         return false;
       }
-      const voided = await this.voidSupersededTx(tx, tenantId, "billing_catchup_settled");
+      // MF-A: the S / A the session was BUILT and PAID for - never a recompute of paid coverage at settle time
+      const span = {
+        from: parseInstant(meta[CATCHUP_META.from]),
+        to: parseInstant(meta[CATCHUP_META.to]),
+      };
+      const voided = await this.voidSupersededTx(tx, tenantId, "billing_catchup_settled", span);
       await tx.tenantSubscription.updateMany({
         where: { tenantId, stripeSubId: subId, catchupState: row.catchupState },
         // the successful conversion: manual invoicing is OFF for good (so dunning, B3, applies from here). Completion
@@ -642,25 +669,53 @@ export class CatchupClaimService {
         tenantId,
         "billing_catchup_settled",
         `The October catch-up is paid; ${voided} RouteFlow invoice(s) voided and the claim cleared.`,
-        { voided },
+        {
+          voided,
+          sessionId: seen.catchupSessionId,
+          from: span.from?.toISOString() ?? null,
+          to: span.to?.toISOString() ?? null,
+        },
       );
+      // SA-733r9 rule 7: a line under Stripe's $0.50 minimum was forgiven - ONE audit row per session id. The claim
+      // CAS above means a replay never reaches this point.
+      const forgiven = Number(meta[CATCHUP_META.forgivenCents] ?? 0);
+      if (Number.isInteger(forgiven) && forgiven > 0) {
+        await writeAdminNotice(tx, {
+          tenantId,
+          action: AdminAuditAction.CATCHUP_MINIMUM_FORGIVEN,
+          message: `The catch-up line of ${forgiven} cents is under the card minimum and was forgiven.`,
+          meta: { tenantId, cents: forgiven, sessionId: seen.catchupSessionId },
+        });
+      }
       return true;
     });
   }
 
   /**
-   * The ONE rule for which RfInvoices a card subscription supersedes (settle AND the ordinary-checkout
-   * conversion): every OPEN invoice whose (snapped) period END is after paid-through - the subscription bills from
-   * paid-through on, so each is a second charge. Inside the caller's Tenant-locked transaction; the `status = OPEN`
-   * CAS makes it idempotent. A PAID invoice after a gap voids NOTHING and raises NEEDS RULING. Returns the count.
+   * The ONE rule for which RfInvoices a card subscription supersedes: every OPEN invoice whose (snapped) period END is
+   * after S - `catchup_from` of the SESSION that was paid (SA-733r10 MF-A: never a recompute of paid coverage, which
+   * would refuse a tenant whose PAID windows start after the floor) - with NO upper bound. Inside the caller's
+   * Tenant-locked transaction; the `status = OPEN` CAS makes it idempotent. PAID invoices are never touched. A session
+   * with no readable `catchup_from` voids NOTHING and raises NEEDS RULING. Returns the count.
    */
   private async voidSupersededTx(
     tx: Prisma.TransactionClient,
     tenantId: string,
     reason: string,
+    span: { from: Date | null; to: Date | null },
   ): Promise<number> {
+    if (!span.from) {
+      await this.notice(
+        tx,
+        tenantId,
+        "billing_catchup_needs_ruling",
+        "The card subscription is paid but its Checkout session carries no catch-up start (catchup_from); none of this tenant's RouteFlow invoices were voided. NEEDS RULING.",
+        { reason: "session_without_catchup_from" },
+      );
+      return 0;
+    }
     const invoices = (await tx.rfInvoice.findMany({
-      where: { tenantId, status: { in: ["OPEN", "PAID"] } },
+      where: { tenantId, status: "OPEN" },
       select: {
         id: true,
         status: true,
@@ -670,18 +725,7 @@ export class CatchupClaimService {
         number: true,
       },
     })) as (CatchupInvoice & { periodKey: string | null; number: string })[];
-    const pt = paidThroughOf(invoices);
-    if (!pt.ok) {
-      await this.notice(
-        tx,
-        tenantId,
-        "billing_catchup_needs_ruling",
-        `The card subscription is paid but this tenant's RouteFlow invoices could not be placed (${pt.reason}); none were voided. NEEDS RULING.`,
-        { reason: pt.reason },
-      );
-      return 0;
-    }
-    const targets = new Set(supersededOpenInvoiceIds(invoices, pt.paidThrough).void);
+    const targets = new Set(supersededOpenInvoiceIds(invoices, snapToBoundary(span.from)).void);
     let voided = 0;
     for (const inv of invoices) {
       if (!targets.has(inv.id)) continue;
