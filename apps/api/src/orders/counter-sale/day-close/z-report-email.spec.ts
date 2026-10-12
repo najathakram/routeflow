@@ -76,8 +76,14 @@ const ZERO_TOTALS = {
   handOver: { count: 0, cash: 0 },
 };
 const MINUS = "−";
-const HEADINGS = ["Money in", "Credit & account", "Refunds & net", "Drawer"];
+const HEADINGS = ["Drawer", "Money in", "Credit & account", "Refunds & net"];
 const LABELS = [
+  "Opening float",
+  "Cash from sales",
+  "Expected cash",
+  "Counted",
+  "Variance",
+  "Unpaid pickups",
   "Cash",
   "Card",
   "Check",
@@ -92,11 +98,6 @@ const LABELS = [
   "Check refunds",
   "Other refunds",
   "Net collected",
-  "Opening float",
-  "Cash from sales",
-  "Cash in drawer",
-  "Counted",
-  "Over/short",
 ];
 
 /** every needle appears, in this order, in the body */
@@ -113,14 +114,14 @@ describe("buildZReportEmail", () => {
   const mail = buildZReportEmail({ businessName: "Acme Wholesale", snapshot: snap() });
 
   it("words the subject with the screen's date, not the ISO day", () => {
-    expect(mail.subject).toBe("Z report · Wed, Oct 7 · Acme Wholesale");
+    expect(mail.subject).toBe("Z report for Wed, Oct 7 · Acme Wholesale");
     expect(mail.subject).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     // the same calendar-date label the Z screen's title uses, whatever the zone or the close time
     const sun = buildZReportEmail({
       businessName: "Acme Wholesale",
       snapshot: snap({ day: "2026-10-11", zone: "Pacific/Auckland" }),
     });
-    expect(sun.subject).toBe("Z report · Sun, Oct 11 · Acme Wholesale");
+    expect(sun.subject).toBe("Z report for Sun, Oct 11 · Acme Wholesale");
     expect(sun.text.split("\n")[0]).toBe("Z report · Sun, Oct 11");
   });
 
@@ -139,10 +140,10 @@ describe("buildZReportEmail", () => {
     const order = [
       "Z report",
       "Closed ",
-      "Counted $210.00 · Short $2.50",
+      "Short $2.50",
+      "Counted $210.00",
       ...HEADINGS,
-      "Not taken at the till: $64.00",
-      "Some refunds have no method. Cash in drawer may be high.",
+      "Some refunds have no method. Expected cash may be high.",
     ];
     inOrder(mail.text, order);
     inOrder(
@@ -159,8 +160,11 @@ describe("buildZReportEmail", () => {
       text.slice(text.indexOf(from), to ? text.indexOf(to) : undefined);
     expect(slice("Money in", "Credit & account")).toContain("Pickup hand-overs");
     expect(slice("Credit & account", "Refunds & net")).toContain("On account: $30.50");
-    expect(slice("Refunds & net", "Drawer")).toContain("Net collected: $417.50");
-    expect(slice("Drawer", "Not taken")).toContain("Over/short: " + MINUS + "$2.50");
+    expect(slice("Refunds & net", "Some refunds")).toContain("Net collected: $417.50");
+    // the drawer sits right under the headline and carries the unpaid pickups as its own row (no orphan line)
+    expect(slice("Drawer", "Money in")).toContain("Variance: " + MINUS + "$2.50");
+    expect(slice("Drawer", "Money in")).toContain("Unpaid pickups: $64.00");
+    expect(mail.text).not.toContain("Not taken at the till");
   });
 
   it("prints the figures", () => {
@@ -177,7 +181,7 @@ describe("buildZReportEmail", () => {
       "Other refunds: $15.00",
       "Opening float: $100.00",
       "Cash from sales: $112.50",
-      "Cash in drawer: $212.50",
+      "Expected cash: $212.50",
       "Counted: $210.00",
     ]) {
       expect(mail.text).toContain(needle);
@@ -198,40 +202,42 @@ describe("buildZReportEmail", () => {
     for (const label of LABELS) {
       const line = z.text.split("\n").find((l) => l.startsWith(`  ${label}:`));
       expect(line).toBeDefined();
-      expect(line).toMatch(/\$0\.00$|0 · \$0\.00$/);
+      expect(line).toMatch(/\$0\.00$|\$0\.00 · 0 hand-overs$/);
       expect(z.html).toContain(label);
     }
-    expect(z.text).toContain("Counted $0.00 · Even $0.00");
-    expect(z.text).toContain("Not taken at the till: $0.00");
+    expect(z.text).toContain("Balanced\nCounted $0.00");
+    expect(z.text).toContain("Unpaid pickups: $0.00");
     expect(z.text).not.toContain("Some refunds have no method");
     expect(z.text).not.toMatch(/: -$|: —|: –/m);
   });
 
-  it("bolds Net collected and Cash in drawer in the html, and the headline", () => {
+  it("bolds Net collected and Expected cash in the html, and the headline", () => {
     expect(mail.html).toContain("<strong>Net collected</strong>");
     expect(mail.html).toContain("<strong>$417.50</strong>");
-    expect(mail.html).toContain("<strong>Cash in drawer</strong>");
+    expect(mail.html).toContain("<strong>Expected cash</strong>");
     expect(mail.html).toContain("<strong>$212.50</strong>");
-    expect(mail.html).toContain("<strong>Counted $210.00 · Short $2.50</strong>");
+    expect(mail.html).toContain("<strong>Short $2.50</strong>");
+    expect(mail.html).toContain("Counted $210.00");
     expect(mail.html).not.toContain("<strong>Cash</strong>");
   });
 
-  it("the headline reads Short, Over or Even, and over/short is signed", () => {
+  it("the headline reads Short, Over or Balanced, and the variance row is signed", () => {
     const t = (variance: number) =>
       buildZReportEmail({ businessName: "A", snapshot: snap({ countedCash: 100, variance }) });
-    expect(t(-4).text).toContain("Counted $100.00 · Short $4.00");
-    expect(t(-4).text).toContain("Over/short: " + MINUS + "$4.00");
-    expect(t(1).text).toContain("Counted $100.00 · Over $1.00");
-    expect(t(1).text).toContain("Over/short: +$1.00");
-    expect(t(0).text).toContain("Counted $100.00 · Even $0.00");
-    expect(t(0).text).toContain("Over/short: $0.00");
-    expect(t(1).html).toContain("<strong>Counted $100.00 · Over $1.00</strong>");
+    expect(t(-4).text).toContain("Short $4.00\nCounted $100.00");
+    expect(t(-4).text).toContain("Variance: " + MINUS + "$4.00");
+    expect(t(1).text).toContain("Over $1.00\nCounted $100.00");
+    expect(t(1).text).toContain("Variance: +$1.00");
+    expect(t(0).text).toContain("Balanced\nCounted $100.00");
+    expect(t(0).text).toContain("Variance: $0.00");
+    for (const word of ["Even", "Under", "Over/short"]) expect(t(0).text).not.toContain(word);
+    expect(t(1).html).toContain("<strong>Over $1.00</strong>");
   });
 
-  it("prints the pickup hand-over row as 'N · $X' in both bodies", () => {
-    expect(mail.text).toContain("  Pickup hand-overs (in till cash): 3 · $45.25");
+  it("prints the pickup hand-over row as '$X · N hand-overs' in both bodies", () => {
+    expect(mail.text).toContain("  Pickup hand-overs (in till cash): $45.25 · 3 hand-overs");
     expect(mail.html).toContain("Pickup hand-overs (in till cash)");
-    expect(mail.html).toContain("3 · $45.25");
+    expect(mail.html).toContain("$45.25 · 3 hand-overs");
   });
 
   it("a stored close WITHOUT handOver prints 'Not recorded' (never a dash, never $0.00)", () => {
@@ -245,19 +251,19 @@ describe("buildZReportEmail", () => {
     expect(legacy.text).not.toMatch(/Pickup hand-overs[^\n]*: (-|\$0\.00)/);
   });
 
-  it("a recorded zero prints 0 · $0.00, which is different from not recorded", () => {
+  it("a recorded zero prints $0.00 · 0 hand-overs, which is different from not recorded", () => {
     const m = buildZReportEmail({
       businessName: "Acme",
       snapshot: snap({ totals: { ...snap().totals, handOver: { count: 0, cash: 0 } } }),
     });
-    expect(m.text).toContain("Pickup hand-overs (in till cash): 0 · $0.00");
+    expect(m.text).toContain("Pickup hand-overs (in till cash): $0.00 · 0 hand-overs");
   });
 
-  it("the not-taken line always prints; the tender warning only when a refund has no method", () => {
-    expect(mail.text).toContain("Not taken at the till: $64.00");
-    expect(mail.html).toContain("Not taken at the till: $64.00");
+  it("the unpaid pickups row always prints; the tender warning only when a refund has no method", () => {
+    expect(mail.text).toContain("Unpaid pickups: $64.00");
+    expect(mail.html).toContain("Unpaid pickups");
     expect(mail.html).toContain(
-      "<strong>Some refunds have no method. Cash in drawer may be high.</strong>",
+      "<strong>Some refunds have no method. Expected cash may be high.</strong>",
     );
     const clean = buildZReportEmail({
       businessName: "Acme",
@@ -270,7 +276,7 @@ describe("buildZReportEmail", () => {
     });
     expect(clean.text).not.toContain("Some refunds have no method");
     expect(clean.html).not.toContain("Some refunds have no method");
-    expect(clean.text).toContain("Not taken at the till: $64.00");
+    expect(clean.text).toContain("Unpaid pickups: $64.00");
   });
 
   it("a window across midnight carries the weekday on both ends", () => {
@@ -317,7 +323,7 @@ describe("buildZReportEmail", () => {
 
   it("has no customer, no line and no row, and none of the old sections", () => {
     expect(mail.html + mail.text).not.toMatch(/customer|walk-in|sku|line item/i);
-    for (const gone of ["Sales total", "Variance", "Warning:", "Notes", "Window "]) {
+    for (const gone of ["Sales total", "Warning:", "Notes", "Window "]) {
       expect(mail.text).not.toContain(gone);
     }
   });

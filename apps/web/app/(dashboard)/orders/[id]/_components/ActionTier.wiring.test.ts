@@ -73,7 +73,10 @@ function collect(): Found[] {
       const buttons: string[] = [];
       let deleteCalls = 0;
       const inner = (c: ts.Node) => {
-        if (ts.isJsxElement(c) && c.openingElement.tagName.getText() === "Button") {
+        if (
+          ts.isJsxElement(c) &&
+          ["Button", "WriteButton"].includes(c.openingElement.tagName.getText())
+        ) {
           buttons.push(...labelsOf(c));
         }
         // <CancelOrderButton> IS the "Cancel Order" button (or, when the server blocks the cancel, its note)

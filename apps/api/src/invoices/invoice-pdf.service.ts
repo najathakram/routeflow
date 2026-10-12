@@ -68,6 +68,8 @@ export class InvoicePdfService {
         items: {
           include: {
             product: { select: { id: true, name: true, barcode: true, sku: true, unitSku: true } },
+            // CQ-03: the category row names the levy charge ("CRV deposit")
+            trackedCategory: { select: { id: true, name: true, taxType: true } },
             // #2717 M3: the frozen sub-lines of a composed (FIXED) line; empty on a plain line.
             components: { orderBy: { position: "asc" } },
           },

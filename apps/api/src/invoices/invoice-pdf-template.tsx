@@ -1,7 +1,7 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
-import { roundMoney } from "@routeflow/pricing";
+import { invoiceTaxSplit, roundMoney } from "@routeflow/pricing";
 import { promoNote, qtyCellText, showOriginalPrice, type PdfSubLine } from "./invoice-pdf-item";
 import { CREDIT_NOTE_METHOD, resolveConfirmedAmounts } from "./payment-predicates";
 
@@ -110,6 +110,11 @@ export interface InvoicePdfData {
     /** BUY_N_GET_M free units on this line — null/0 renders no note. */
     promoFreeUnits?: number | null;
     product?: { name: string } | null;
+    /** CQ-03: the levy this line billed and its category: the totals show it as its own named charge, not inside Tax. */
+    categoryTaxAmount?: DecimalLike | null;
+    trackedCategoryId?: string | null;
+    categoryTaxType?: string | null;
+    trackedCategory?: { id?: string | null; name?: string | null; taxType?: string | null } | null;
     barcodeDataUri?: string;
     barcodeText?: string;
     /** #2717 M3: frozen sub-lines of a composed (mixed-pack) line, "(included)": display only, never summed. */
@@ -408,7 +413,9 @@ function StatusBadge({
 
 export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
   const subtotal = toNum(invoice.subtotal);
-  const taxAmount = toNum(invoice.taxAmount);
+  // CQ-03: the header tax holds the regular tax plus the levy; the document names the levy apart (CRV deposit, excise).
+  const taxSplit = invoiceTaxSplit(invoice.taxAmount, invoice.items);
+  const taxAmount = taxSplit.tax;
   const discount = toNum(invoice.discount);
   const shippingFee = toNum(invoice.shippingFee);
   const total = toNum(invoice.total);
@@ -717,6 +724,12 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                   <Text style={styles.totalValue}>{fmt(taxAmount)}</Text>
                 </View>
               ) : null}
+              {taxSplit.charges.map((c) => (
+                <View key={c.key} style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>{c.label}</Text>
+                  <Text style={styles.totalValue}>{fmt(c.amount)}</Text>
+                </View>
+              ))}
               {discount > 0 ? (
                 <View style={styles.totalRow}>
                   <Text style={[styles.totalLabel, { color: SUCCESS }]}>Discount</Text>

@@ -37,6 +37,7 @@ const READY = {
   addressesMissingStateCode: 0,
   addressesNeedingReview: 0,
   indeterminateCustomerCount: 0,
+  businessStateMissing: false,
 };
 const api = (status: number, data: object) => ({ response: { status, data } });
 const render = () => renderWithProviders(<RestrictionsSettingsPage />);
@@ -78,6 +79,23 @@ describe("Selling restrictions settings page", () => {
       expect(screen.getByText(/5 address\(es\) have no usable state/)).toBeInTheDocument();
       expect(screen.queryByText(/need a state review/)).toBeNull();
     });
+  });
+
+  it("a missing business state is the one actionable line, and says where to add it (CQ-04)", async () => {
+    render();
+    fireEvent.click(screen.getByRole("switch"));
+    mutate.mock.calls[0][1].onError(
+      api(409, {
+        code: "SELLING_RESTRICTIONS_NOT_READY",
+        readiness: { ...READY, ready: false, businessStateMissing: true },
+      }),
+    );
+    expect(
+      await screen.findByText(
+        "Add your business address in Settings \u203a Business so counter sales can check state rules.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/have no address/)).toBeNull();
   });
 
   it("'enable + change the address policy' is shown as a clear two-step instruction, not a raw 400", async () => {

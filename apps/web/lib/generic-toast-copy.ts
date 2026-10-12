@@ -1,4 +1,6 @@
 import { API_ERROR_CODES, CREDITS_PENDING_COPY, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
+import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
+import { regulatedAuthCopy } from "@routeflow/types/regulated-auth-copy";
 import {
   CREDIT_NOTE_ERROR_COPY,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
@@ -12,6 +14,7 @@ import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
 import { ORDER_OVERPAY_GENERIC_COPY } from "./order-overpay";
 import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
+import { sellingRestrictedCopy } from "./selling-restricted-copy";
 
 /**
  * B980 (owner rule: no raw strings in the UI): the app-wide mutation error toast shows FIXED copy,
@@ -161,7 +164,8 @@ const KNOWN_REFUSAL_SENTENCES: Record<string, string> = {
 };
 
 const PLAN_COPY = "This isn't included in your current plan.";
-const READ_ONLY_COPY = "Your workspace is read-only, so this action is unavailable.";
+// SA-776: the owner's sentence, verbatim (shared with mobile); the reason line needs the subscription read.
+const READ_ONLY_COPY = READ_ONLY_SENTENCE;
 const GENERIC_COPY = "Something went wrong. Please try again.";
 
 function statusCopy(status: number, refusal?: string): string {
@@ -294,6 +298,11 @@ export function codedToastCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);
+  // CQ-06 review: a selling-restriction refusal with no dialog of its own says what is wrong and the next step.
+  if (code === API_ERROR_CODES.SELLING_RESTRICTED) return sellingRestrictedCopy(data.blockedLines);
+  // CQ-06: the license refusal says what is wrong (expired / none on file) and where to fix it (shared with mobile).
+  if (code === API_ERROR_CODES.REGULATED_AUTH_REQUIRED)
+    return regulatedAuthCopy(data.blockedCategories);
   if (Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code))
     return CREDIT_NOTE_ERROR_COPY[code as keyof typeof CREDIT_NOTE_ERROR_COPY];
   if (Object.prototype.hasOwnProperty.call(CODE_COPY, code)) return CODE_COPY[code];

@@ -73,6 +73,31 @@ describe("RefundSlipAction", () => {
     expect(screen.getByRole("button", { name: "Print slip" })).toBeDisabled();
   });
 
+  it("says why it is disabled while the return is still loading (row 330c)", () => {
+    mockReturn = undefined;
+    renderWithProviders(<RefundSlipAction returnId="r1" />);
+    const btn = screen.getByRole("button", { name: "Print slip" });
+    expect(btn).toBeDisabled();
+    const reason = screen.getByTestId("print-slip-reason");
+    expect(reason).toHaveTextContent("Loading the refund");
+    expect(btn).toHaveAccessibleDescription(/Loading the refund/);
+  });
+
+  it("says why it is disabled while the slip is going to the printer, and the reason clears after (row 330c)", async () => {
+    renderWithProviders(<RefundSlipAction returnId="r1" />);
+    const btn = await screen.findByRole("button", { name: "Print slip" });
+    expect(screen.queryByTestId("print-slip-reason")).toBeNull();
+    fireEvent.click(btn);
+    await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
+    expect(btn).toBeDisabled();
+    expect(screen.getByTestId("print-slip-reason")).toHaveTextContent(
+      "Sending the slip to the printer",
+    );
+    window.dispatchEvent(new Event("afterprint"));
+    await waitFor(() => expect(screen.queryByTestId("print-slip-reason")).toBeNull());
+    expect(btn).toBeEnabled();
+  });
+
   it("clicking prints the slip from a body portal and clears the print scope afterwards", async () => {
     renderWithProviders(<RefundSlipAction returnId="r1" />);
     const btn = await screen.findByRole("button", { name: "Print slip" });

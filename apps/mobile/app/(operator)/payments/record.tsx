@@ -29,6 +29,7 @@ import { productImageFile } from "../../../lib/product-image";
 import { showToast } from "../../../lib/toast";
 import { fmtCalendarDate } from "../../../lib/format-date";
 import { hasUnsavedPayment } from "../../../lib/discard-guard";
+import { isOpenInvoiceStatus } from "../../../lib/invoices-logic";
 
 /**
  * Standalone payment with multi-invoice allocation — one check at the door
@@ -47,10 +48,9 @@ const BANK_DATE_HELP =
   "When the funds actually landed — e.g. a post-dated check's clearing date. Leave blank if unknown.";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Statuses a payment can land on. Filtered CLIENT-side: ListInvoicesDto
- *  validates `status` as a single enum value, so a comma-list 400s (verified
- *  live) — web's payments modal filters client-side the same way. */
-const OPEN_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+// A payment can land on the open statuses (isOpenInvoiceStatus). Filtered CLIENT-side: ListInvoicesDto
+// validates `status` as a single enum value, so a comma-list 400s (verified live) — web's payments
+// modal filters client-side the same way.
 
 export default function RecordStandalonePaymentScreen() {
   const router = useRouter();
@@ -157,7 +157,7 @@ function PaymentForm({
     () =>
       oldestInvoicesFirst(
         (invoicesData?.data ?? []).filter(
-          (inv) => OPEN_STATUSES.includes(inv.status) && Number(inv.balanceDue ?? 0) > 0.001,
+          (inv) => isOpenInvoiceStatus(inv.status) && Number(inv.balanceDue ?? 0) > 0.001,
         ),
       ),
     [invoicesData],

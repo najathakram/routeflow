@@ -16,6 +16,7 @@ jest.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: jest.fn() }));
 
 import { InvoiceService } from "./invoice.service";
 import { InvoiceProcessor, type GenerateInvoiceJobData } from "./invoice.processor";
+import { PrismaService } from "../prisma/prisma.service";
 
 // REG-B188 / R7 — the JOB-PAYLOAD half of the tenant guard.
 //
@@ -40,11 +41,18 @@ function makeJob(data: { transactionId: string; tenantId: string }): Job<Generat
 describe("InvoiceProcessor.handleGenerateInvoice — tenant hand-off (REG-B188 / T-B188)", () => {
   let processor: InvoiceProcessor;
   let generateInvoicePdf: jest.Mock;
+  let tenantStatus: jest.Mock;
 
   beforeEach(async () => {
     generateInvoicePdf = jest.fn().mockResolvedValue("https://signed.example/invoice.pdf");
+    // SA-776: the processor reads the tenant's status first; ACTIVE unless a test says otherwise.
+    tenantStatus = jest.fn().mockResolvedValue({ status: "ACTIVE" });
     const module: TestingModule = await Test.createTestingModule({
-      providers: [InvoiceProcessor, { provide: InvoiceService, useValue: { generateInvoicePdf } }],
+      providers: [
+        InvoiceProcessor,
+        { provide: InvoiceService, useValue: { generateInvoicePdf } },
+        { provide: PrismaService, useValue: { tenant: { findUnique: tenantStatus } } },
+      ],
     }).compile();
     processor = module.get(InvoiceProcessor);
   });
@@ -82,4 +90,27 @@ describe("InvoiceProcessor.handleGenerateInvoice — tenant hand-off (REG-B188 /
       processor.handleGenerateInvoice(makeJob({ transactionId: "txn-1", tenantId: "tenant-2" })),
     ).rejects.toThrow(boom);
   });
+
+  // SA-776: the PDF of an EXISTING transaction is record-keeping - allowed while READ_ONLY ("view records"),
+  // skipped (not retried) for a SUSPENDED / CANCELLED tenant.
+  it.each(["SUSPENDED", "CANCELLED"])(
+    "SA-776: a %s tenant's job is skipped: no PDF, no throw (so Bull does not retry)",
+    async (status) => {
+      tenantStatus.mockResolvedValue({ status });
+      await expect(
+        processor.handleGenerateInvoice(makeJob({ transactionId: "txn-1", tenantId: "t-1" })),
+      ).resolves.toBeUndefined();
+      expect(generateInvoicePdf).not.toHaveBeenCalled();
+      expect(tenantStatus).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "t-1" } }));
+    },
+  );
+
+  it.each(["ACTIVE", "TRIAL", "READ_ONLY"])(
+    "SA-776: a %s tenant still gets its PDF",
+    async (status) => {
+      tenantStatus.mockResolvedValue({ status });
+      await processor.handleGenerateInvoice(makeJob({ transactionId: "txn-1", tenantId: "t-1" }));
+      expect(generateInvoicePdf).toHaveBeenCalledWith("txn-1", "t-1");
+    },
+  );
 });

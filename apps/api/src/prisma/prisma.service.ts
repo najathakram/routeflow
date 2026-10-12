@@ -3,6 +3,7 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { utcPoolConfig } from "../common/pg-session";
 
 /**
  * The exact error Prisma's own `*OrThrow` operations raise when no row matches
@@ -131,7 +132,8 @@ export function isTxClient(db: unknown): boolean {
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   constructor(@Optional() private readonly tenantCtx?: TenantContextService) {
-    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    // Row 361: the session time zone is pinned to UTC on every connection (common/pg-session.ts).
+    const pool = new Pool(utcPoolConfig({ connectionString: process.env.DATABASE_URL }));
     const adapter = new PrismaPg(pool);
     super({ adapter });
   }

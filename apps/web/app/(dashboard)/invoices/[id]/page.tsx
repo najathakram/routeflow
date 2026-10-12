@@ -73,6 +73,7 @@ import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import { remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
@@ -97,10 +98,15 @@ import { ShipmentCard } from "@/components/ShipmentCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
+import { HandOverStamp } from "@/components/HandOverStamp";
+import { seesHandOverStamp } from "@/lib/handover-stamp";
+import { isPaidAtSale, termsAndConditionsToShow } from "@/lib/invoice-sale-terms";
+import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
+import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
@@ -898,6 +904,7 @@ function VoidConfirmModal({
   invoiceNumber: string;
   isPending: boolean;
 }) {
+  // F3/F4: a void is a write: a WriteButton, disabled up front (with the shared line) while read-only.
   return (
     <Modal
       open={isOpen}
@@ -909,9 +916,9 @@ function VoidConfirmModal({
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={onConfirm} loading={isPending}>
+          <WriteButton variant="danger" onClick={onConfirm} loading={isPending}>
             Void Invoice
-          </Button>
+          </WriteButton>
         </>
       }
     >
@@ -1420,9 +1427,12 @@ export default function InvoiceDetailPage() {
   const setCheckStatus = useSetCheckStatus();
   const unapplyCreditNote = useUnapplyCreditNote();
   const { user } = useAuth();
+  const stampZone = useTenantTimeZone(seesHandOverStamp(user?.role)); // row 342: the hand-over time
   // A store-only business is POS-forced: its order is handed over, never delivered (the draft's wording follows).
   const { capability: fulfilmentCapability } = useCounterSaleGate();
-  const mirrorCopy = pendingMirrorCopy(isStoreOnly(fulfilmentCapability));
+  const mirrorCopy = pendingMirrorCopy(
+    fulfilmentCapability == null ? null : isStoreOnly(fulfilmentCapability),
+  );
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
@@ -1468,6 +1478,8 @@ export default function InvoiceDetailPage() {
     () => new Map((invTrackedCategories ?? []).map((c) => [c.id, c])),
     [invTrackedCategories],
   );
+  // CQ-03 / row 398: the levy is its own named charge under Tax (one hook, one pricing helper, every staff screen).
+  const taxSplit = useInvoiceTaxSplit(invoice, !!invoice);
   const sectionedRows = React.useMemo(() => {
     const its = invoice?.items ?? [];
     const inline: typeof its = [];
@@ -1538,6 +1550,12 @@ export default function InvoiceDetailPage() {
     payments,
   );
   const status = invoice.status;
+  // CQ-26: a counter sale paid at the till has no terms or due date to show (display only; stored values untouched).
+  const showTerms = !isPaidAtSale(invoice);
+  // ...and the "Terms & Conditions" row that falls back to the same payment terms text ("Net 30")
+  const termsAndConditions = termsAndConditionsToShow(
+    invoice as Parameters<typeof termsAndConditionsToShow>[0],
+  );
 
   // Draft/Final invoice-PDF stage. Default: DRAFT while it's still the
   // pre-delivery proforma; FINAL once the order is delivered or the invoice is
@@ -1559,10 +1577,8 @@ export default function InvoiceDetailPage() {
   // order, not the invoice.
   const isPendingMirror = isPendingMirrorInvoice({ ...invoice, status });
 
-  const canRecordPayment =
-    status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
-  const canWriteOff =
-    status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
+  const canRecordPayment = isOpenInvoiceStatus(status);
+  const canWriteOff = isOpenInvoiceStatus(status);
   const canVoid = status !== "PAID" && status !== "VOID" && status !== "WRITTEN_OFF";
 
   // ── Action handlers ─────────────────────────────────────────────────────────
@@ -2017,14 +2033,21 @@ export default function InvoiceDetailPage() {
             <TenantInvoiceRevisionMarks
               revisedAt={invoice.revisedAt}
               overpaidBy={invoice.overpaidBy}
+              orderId={invoice.orderId}
             />
           </div>
           <p className="mt-1 text-sm text-navy/70">
             {invoice.customer?.businessName ?? "—"}
             {(invoice as any).orderNumber ? ` · from ${(invoice as any).orderNumber}` : ""} · issued{" "}
             {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
-            {invoice.dueDate ? ` · due ${fmtCalendarDate(invoice.dueDate)}` : ""}
+            {invoice.dueDate && showTerms ? ` · due ${fmtCalendarDate(invoice.dueDate)}` : ""}
           </p>
+          {/* Row 342: where and by whom the linked order was handed over (staff reads only) */}
+          {invoice.order ? (
+            <div className="mt-0.5">
+              <HandOverStamp order={invoice.order} role={user?.role} timeZone={stampZone} />
+            </div>
+          ) : null}
         </div>
 
         {/* Zoho-style action toolbar */}
@@ -2257,7 +2280,7 @@ export default function InvoiceDetailPage() {
                 label: "Void Invoice",
                 onClick: () => setIsVoidOpen(true),
                 danger: true,
-                disabled: !canVoid,
+                disabled: !canVoid || readOnlyGate.readOnly,
               },
             ]}
           />
@@ -2353,7 +2376,7 @@ export default function InvoiceDetailPage() {
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
                   {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
                 </p>
-                {invoice.dueDate && (
+                {invoice.dueDate && showTerms && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Due Date:</span>{" "}
                     <span className={cn(status === "OVERDUE" && "font-medium text-danger")}>
@@ -2363,7 +2386,7 @@ export default function InvoiceDetailPage() {
                 )}
                 {/* Structured "Net 30"-style label — distinct from the long-form
                     Terms & Conditions text below, which keeps its own line. */}
-                {invoice.paymentTermsLabel && (
+                {invoice.paymentTermsLabel && showTerms && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Terms:</span>{" "}
                     {invoice.paymentTermsLabel}
@@ -2376,10 +2399,10 @@ export default function InvoiceDetailPage() {
                     </span>
                   </p>
                 )}
-                {(invoice as any).terms && (
+                {termsAndConditions && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Terms &amp; Conditions:</span>{" "}
-                    {(invoice as any).terms}
+                    {termsAndConditions}
                   </p>
                 )}
                 {(invoice as any).orderNumber && (
@@ -2475,7 +2498,8 @@ export default function InvoiceDetailPage() {
               <InvoiceTotalsSummary
                 subtotal={Number(invoice.subtotal)}
                 discount={discount}
-                taxAmount={Number(invoice.taxAmount ?? 0)}
+                taxAmount={taxSplit.tax}
+                chargeLines={taxSplit.charges}
                 shippingFee={shippingFee}
                 amountPaid={amountPaid}
                 creditApplied={creditApplied}

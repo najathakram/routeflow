@@ -96,7 +96,7 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
     expect(email.send).toHaveBeenCalledTimes(1);
     const arg = email.send.mock.calls[0][0];
     expect(arg.to).toBe("Buyer@Example.com");
-    expect(arg.subject).toBe("Your receipt from Acme Test Store (Order ORD-1001)");
+    expect(arg.subject).toBe("Your receipt from Acme Test Store for order ORD-1001");
     expect(arg.html).toContain("$28.62");
     expect(arg.text).toContain("$28.62");
     expect(arg.delivery).toEqual({
@@ -239,7 +239,14 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
       expect(select.tax).toBe(true);
       expect(select.counterCashTendered).toBe(true);
       // the STORED line rate only: a rate is never inferred from the invoice header
-      expect(select.invoices.select.items.select).toEqual({ taxRate: true });
+      // CQ-03: the rate AND the billed levy with its category name
+      expect(select.invoices.select.items.select).toEqual({
+        taxRate: true,
+        categoryTaxAmount: true,
+        trackedCategoryId: true,
+        categoryTaxType: true,
+        trackedCategory: { select: { id: true, name: true, taxType: true } },
+      });
       expect(select.invoices.select).not.toHaveProperty("subtotal");
       expect(select.invoices.select).not.toHaveProperty("taxAmount");
     });
@@ -286,7 +293,7 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
     it("shows the struck list price and a Discounts row for a lowered line (the invoices' rule), unless the tenant hides original prices (invoice.hideOriginalPrice)", async () => {
       const shown = setup({});
       await shown.send();
-      expect(shown.email.send.mock.calls[0][0].text).toContain("Discounts");
+      expect(shown.email.send.mock.calls[0][0].text).toContain("Discount");
       const hidden = setup({ settings: { "invoice.hideOriginalPrice": "true" } });
       await hidden.send();
       const { html, text } = hidden.email.send.mock.calls[0][0];

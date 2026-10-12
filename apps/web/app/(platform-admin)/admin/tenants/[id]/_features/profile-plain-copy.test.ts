@@ -20,6 +20,7 @@ describe("SA-1: profile plain copy", () => {
       shipping_wholesaler: "Shipping only",
       in_store_retailer: "POS only: counter sales",
       in_store_shipping_retailer: "POS + shipping",
+      delivery_pos: "Delivery + POS",
     });
   });
 

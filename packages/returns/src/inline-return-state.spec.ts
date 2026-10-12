@@ -899,3 +899,21 @@ describe("B961: already returned or credited", () => {
     expect(JSON.stringify(buildQuoteRequest("c", lines))).not.toMatch(/alreadyReturnedReason/);
   });
 });
+
+describe("extractRefusalMessage: READ_ONLY", () => {
+  const readOnly403 = {
+    response: { status: 403, data: { code: "READ_ONLY", message: "RAW GUARD TEXT" } },
+  };
+
+  it("a 403 READ_ONLY is the read-only line, never the server's guard text (web + mobile share this)", () => {
+    expect(extractRefusalMessage(readOnly403)).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
+    );
+  });
+
+  it("a code-less 403 is still the returns-not-enabled copy", () => {
+    expect(extractRefusalMessage({ response: { status: 403, data: {} } })).toBe(
+      RETURNS_NOT_ENABLED_MESSAGE,
+    );
+  });
+});

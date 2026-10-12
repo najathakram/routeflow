@@ -162,6 +162,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { focusRefusedContactField } from "@/lib/refused-text-field";
+import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, WriteLink } from "@/lib/read-only-gate";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -1900,9 +1901,8 @@ function DocumentsTab({ customerId }: { customerId: string }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-/** "Outstanding" spans four statuses, but ListInvoicesDto validates `status` as a
- *  single enum value (a comma-list 400s) — so it's filtered client-side. */
-const OUTSTANDING_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+// "Outstanding" spans the four open statuses (isOpenInvoiceStatus), but ListInvoicesDto validates
+// `status` as a single enum value (a comma-list 400s) — so it is filtered client-side.
 
 function CustomerDetailPageInner({ id }: { id: string }) {
   const { setTitle } = usePageTitle();
@@ -1970,7 +1970,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   const customerInvoices = React.useMemo(() => {
     const rows = invoicesData?.data ?? [];
     return invoiceFilter === "outstanding"
-      ? rows.filter((inv) => OUTSTANDING_STATUSES.includes(inv.status))
+      ? rows.filter((inv) => isOpenInvoiceStatus(inv.status))
       : rows;
   }, [invoicesData, invoiceFilter]);
 

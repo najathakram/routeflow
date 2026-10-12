@@ -23,9 +23,9 @@ const VERB = (m: number) => RequestMethod[m];
 /** Intentionally NOT seller-scoped: they act on the buyer's own account or on a link that does not exist yet. */
 const REVIEWED_UNGUARDED: Record<string, string> = {
   "BuyerController POST invites/:token/accept":
-    "account-level: links the buyer to a seller by invite token; there is no seller context yet",
+    "account-level: links the buyer to a seller by invite token; no seller context yet - the service asks the shared seller-status rule",
   "BuyerController POST sellers/request":
-    "account-level: asks to connect with a seller the buyer is not yet linked to",
+    "account-level: asks to connect with a seller the buyer is not yet linked to - the service asks the shared seller-status rule",
   "BuyerController DELETE sellers/:sellerSlug":
     "account-level: a buyer leaving a seller, which must stay possible whatever the seller's state",
 };

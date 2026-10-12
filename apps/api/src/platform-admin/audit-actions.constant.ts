@@ -56,6 +56,8 @@ export const AdminAuditAction = {
   ADDON_CHECKOUT_ITEM_UNUSABLE: "ADDON_CHECKOUT_ITEM_UNUSABLE",
   /** A PAID checkout was refused because no Stripe customer / subscription row exists to verify it against. */
   STRIPE_PAID_CHECKOUT_NOT_APPLIED: "STRIPE_PAID_CHECKOUT_NOT_APPLIED",
+  /** A checkout's bank debit (ACH) FAILED after the tenant was linked to its subscription: it was never activated by it. */
+  STRIPE_ASYNC_PAYMENT_FAILED: "STRIPE_ASYNC_PAYMENT_FAILED",
   /** A checkout listed add-on SKUs that no recognised Stripe item carries: not billed, no second item created. */
   ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "ADDON_CHECKOUT_ITEMS_UNRECOGNISED",
   ADDON_MANUAL_INVOICE_DUE: "ADDON_MANUAL_INVOICE_DUE",
@@ -124,6 +126,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   STRIPE_DUPLICATE_CHECKOUT: "Duplicate checkout (refund needed)",
   ADDON_CHECKOUT_ITEM_UNUSABLE: "Checkout add-on not billed (no usable quantity)",
   STRIPE_PAID_CHECKOUT_NOT_APPLIED: "Paid checkout not applied (reconcile in Stripe)",
+  STRIPE_ASYNC_PAYMENT_FAILED: "Bank debit failed (checkout not paid)",
   ADDON_CHECKOUT_ITEMS_UNRECOGNISED: "Checkout add-on items not recognised (check Stripe)",
   ADDON_MANUAL_INVOICE_DUE: "Add-on to invoice manually",
   ADDON_MANUAL_INVOICE_STOP: "Add-on to stop invoicing manually",

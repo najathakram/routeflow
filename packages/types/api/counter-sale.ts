@@ -94,6 +94,11 @@ export interface CounterSaleResponse {
    */
   tax?: number;
   /**
+   * The regulated levies the invoices billed, one named charge per category ("CRV deposit"), taken from the stored invoice
+   * lines (an exempt customer's are zero). The receipt prints them as their own rows; omitted by an older server.
+   */
+  charges?: Array<{ key: string; label: string; amount: number }>;
+  /**
    * The sale's stored tax rate in percent (`@routeflow/pricing` `storedTaxRatePercent`), a CANDIDATE: the receipt names it
    * only through `explainedTaxRatePercent`. null = mixed / none; omitted with `tax`.
    */
@@ -229,6 +234,12 @@ export interface TodaysSaleRow {
    * names it only through `explainedTaxRatePercent`.
    */
   taxRatePercent: number | null;
+  /**
+   * The regulated levies the sale's live invoices billed, one named charge per category ("CRV deposit"), from the stored
+   * invoice lines (an exempt customer's are zero). The reprint prints them as their own rows, never inside Tax.
+   * Omitted by an older server: then none print.
+   */
+  charges?: Array<{ key: string; label: string; amount: number }>;
   returned: {
     amount: number;
     state: TodaysSaleReturnState;
@@ -293,9 +304,36 @@ export interface TodaysSalesMeta {
   windowEnd: string;
 }
 
+/**
+ * One POS-mode pickup hand-over of the day (a named customer's order handed over at the till): the order, who it was for, the
+ * tender that came in, and the register + cashier stamped on it. Staff only. Consistent with the Z report: the same rows
+ * (a non-counter PICKUP order's own `pickupTenderGroupId` tender) that the day close counts under "Pickup hand-overs".
+ */
+export interface TodaysHandOverRow {
+  orderId: string;
+  orderNumber: string;
+  /** the named customer (a walk-in is a counter sale, never a hand-over) */
+  customerName: string;
+  /** when the tender was recorded (the latest tender of this order in the window), ISO */
+  paidAt: string;
+  /** this order's hand-over tender in the window, rounded to cents */
+  amount: number;
+  /** the tender split by method */
+  methods: Array<{ method: TodaysSaleMethod; amount: number }>;
+  /** the register the order is stamped on; "main" when none is stamped */
+  registerKey: string;
+  /** the cashier who handed it over (display name); null when none is stamped */
+  handedOverBy: string | null;
+}
+
 export interface TodaysSalesResponse {
   data: TodaysSaleRow[];
   meta: TodaysSalesMeta;
   /** the whole day, on page 1 only (null on later pages) */
   summary: TodaysSalesSummary | null;
+  /**
+   * The day's POS pickup hand-overs, newest first, on page 1 only ([] on later pages; absent from an older API: read as []).
+   * Bounded (the day's few hand-overs); `summary.handOvers` is the count and money of the same rows.
+   */
+  handOverRows?: TodaysHandOverRow[];
 }

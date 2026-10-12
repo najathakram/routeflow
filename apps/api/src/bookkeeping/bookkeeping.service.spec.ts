@@ -799,27 +799,71 @@ describe("BookkeepingService", () => {
       expect({ closing: o.closingBalance, ind: o.indicator }).toEqual({ closing: -30, ind: "Cr" });
     });
 
-    it("getReceivableSummary: an overpaid PAID invoice shows balance 0 (the surplus stays visible through the payment rows), not a negative", async () => {
-      const paidOver = { ...row("po", 100, [pay(130)], PAST, "PAID") };
-      prisma.invoice.findMany.mockResolvedValue([paidOver, owing()]);
-      prisma.creditNote.findMany.mockResolvedValue([]);
-      prisma.invoicePayment.findMany.mockResolvedValue([
-        {
-          id: "p1",
-          paymentNumber: "PAY-1",
-          createdAt: PAST,
-          status: "PAID",
-          amount: 130,
-          invoice: { invoiceNumber: "PO", customer: cust },
-        },
-      ]);
-      const res: any = await service.getReceivableSummary();
-      const inv = res.data.filter((r: any) => r.type === "INVOICE");
-      expect(inv.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
-        ["PO", 0],
-        ["OWES", 50],
-      ]);
-      expect(res.data.find((r: any) => r.type === "PAYMENT").total).toBe(130); // the surplus is visible here
+    // OWNER RULING 2026-10-11 (supersedes the row-310 pin that read 0 here): the Receivable Summary
+    // report alone shows an overpayment as a NEGATIVE invoice-row balance. Every other surface stays
+    // clamped (overdue-readers-inventory.spec.ts pins that `signedBalance` is used by this reader only).
+    describe("getReceivableSummary — signed invoice-row balance (owner ruling 2026-10-11)", () => {
+      const summaryRows = async (invoices: any[]) => {
+        prisma.invoice.findMany.mockResolvedValue(invoices);
+        prisma.creditNote.findMany.mockResolvedValue([]);
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+        const res: any = await service.getReceivableSummary();
+        return res.data.filter((r: any) => r.type === "INVOICE");
+      };
+
+      it("an overpaid PAID invoice shows -10.00; the surplus is also visible on the PAYMENT row", async () => {
+        const paidOver = row("po", 100, [pay(110)], PAST, "PAID");
+        prisma.invoice.findMany.mockResolvedValue([paidOver, owing()]);
+        prisma.creditNote.findMany.mockResolvedValue([]);
+        prisma.invoicePayment.findMany.mockResolvedValue([
+          {
+            id: "p1",
+            paymentNumber: "PAY-1",
+            createdAt: PAST,
+            status: "PAID",
+            amount: 110,
+            invoice: { invoiceNumber: "PO", customer: cust },
+          },
+        ]);
+        const res: any = await service.getReceivableSummary();
+        const inv = res.data.filter((r: any) => r.type === "INVOICE");
+        expect(inv.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
+          ["PO", -10],
+          ["OWES", 50],
+        ]);
+        expect(res.data.find((r: any) => r.type === "PAYMENT").total).toBe(110);
+      });
+
+      it("exactly paid reads 0 and a partial payment reads a positive balance", async () => {
+        const rows = await summaryRows([
+          row("exact", 100, [pay(100)], PAST, "PAID"),
+          row("part", 100, [pay(40)], PAST, "PARTIAL"),
+        ]);
+        expect(rows.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
+          ["EXACT", 0],
+          ["PART", 60],
+        ]);
+      });
+
+      it("an overpaid + owing pair: each row keeps its own sign (no netting inside a row)", async () => {
+        const rows = await summaryRows([overpaid(), owing()]);
+        expect(rows.map((r: any) => [r.transactionNumber, r.balance])).toEqual([
+          ["OVER", -30],
+          ["OWES", 50],
+        ]);
+      });
+
+      it("float dust (11 x $0.10 against $1.10) reads 0, never -2e-16 / 2e-16", async () => {
+        const rows = await summaryRows([dusty()]);
+        expect(Object.is(rows[0].balance, 0)).toBe(true);
+      });
+
+      it("only confirmed payments count: a VOID payment does not make the row negative", async () => {
+        const rows = await summaryRows([
+          row("v", 100, [{ amount: 100, status: "VOID", method: "CASH" }], PAST, "SENT"),
+        ]);
+        expect(rows[0].balance).toBe(100);
+      });
     });
 
     it("getInvoiceDetailsReport: an overpaid row shows balance 0 (paid > total stays visible), not a negative", async () => {

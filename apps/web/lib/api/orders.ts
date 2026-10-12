@@ -17,6 +17,7 @@ import type {
   OrderCancelBlockedReason,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
+import type { HandOverSoldBy } from "@/lib/handover-stamp";
 
 export type { ChangeRequest } from "@/lib/change-requests";
 
@@ -32,6 +33,8 @@ export type {
 export interface Order {
   id: string;
   orderNumber: string;
+  /** Row 372: the latest edit revision (GET /orders/:id); the edit save sends it back as `expectedRevisionNumber`. */
+  revisionNumber?: number;
   customerId: string;
   customer?: {
     id: string;
@@ -48,6 +51,14 @@ export interface Order {
   fulfillPath: "ROUTE" | "SHIP" | "PICKUP";
   /** Walk-in counter sale (PICKUP + counterSale). Never a POS-mode order: see `isPosOrder` (pos-orders.ts). */
   counterSale?: boolean | null;
+  /** Row 342, STAFF reads only (absent on a buyer read / older API): the register the order was handed over at. */
+  registerKey?: string | null;
+  /** Row 342, staff reads only: the cashier's display name the API built once; null = none stamped. */
+  handedOverBy?: string | null;
+  /** Row 342: the moment the hand-over moved the order to DELIVERED (the stamp line's time). */
+  deliveredAt?: string | null;
+  /** Row 342, staff reads only: the cashier relation (the API selects the username). */
+  soldBy?: HandOverSoldBy | null;
   urgent: boolean;
   subtotal: number;
   tax: number;
@@ -516,6 +527,8 @@ export function useUpdateOrderItems(options?: LocalErrorToastOption) {
        *  `orderId` are DERIVED server-side from the order being edited, never sent here (see
        *  UpdateOrderItemsDto.inlineReturn). */
       inlineReturn?: InlineReturnLinesRequest;
+      /** Row 372: the `revisionNumber` the editor loaded; behind the server's latest it is 409 ORDER_REVISION_STALE. */
+      expectedRevisionNumber?: number;
     }
   >({
     meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
@@ -527,6 +540,7 @@ export function useUpdateOrderItems(options?: LocalErrorToastOption) {
       shippingFee,
       appliedCreditNotes,
       inlineReturn,
+      expectedRevisionNumber,
     }) =>
       apiClient
         .patch<Order>(`/orders/${id}/items`, {
@@ -536,6 +550,7 @@ export function useUpdateOrderItems(options?: LocalErrorToastOption) {
           shippingFee,
           appliedCreditNotes,
           inlineReturn,
+          expectedRevisionNumber,
         })
         .then((r) => r.data),
     onSuccess: (data, variables) => {

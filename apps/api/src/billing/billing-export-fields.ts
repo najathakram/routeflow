@@ -189,6 +189,7 @@ export const BILLING_EXPORT_SUBSCRIPTION_ADDON_FIELDS = [
   "sku",
   "name",
   "quantity",
+  "comp",
   "monthly",
 ] as const;
 

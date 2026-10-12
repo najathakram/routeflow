@@ -62,6 +62,7 @@ describe("one failed save = exactly one toast", () => {
         addressesMissingStateCode: 0,
         addressesNeedingReview: 0,
         indeterminateCustomerCount: 1,
+        businessStateMissing: false,
       },
     });
     await flip();

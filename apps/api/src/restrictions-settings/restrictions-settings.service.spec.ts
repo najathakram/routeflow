@@ -34,6 +34,7 @@ const READY = {
   addressesMissingStateCode: 0,
   addressesNeedingReview: 0,
   indeterminateCustomerCount: 0,
+  businessStateMissing: false,
 };
 
 function setup(initial: Record<string, string> = {}, ready = true) {

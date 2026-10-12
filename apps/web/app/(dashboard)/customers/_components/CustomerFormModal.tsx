@@ -173,7 +173,8 @@ function buildDefaultValues(
     // the stored sentinel — the update payload sends "" which the API clears to null.)
     email: [initialData.email, initialData.user?.email].find((e) => e && !isInternalEmail(e)) ?? "",
     currency: initialData.currency ?? "USD",
-    creditLimit: initialData.creditLimit ? String(initialData.creditLimit) : "",
+    // `!= null`, not truthiness: a real $0 limit (B1032) must show as 0, not as an empty "no limit" field.
+    creditLimit: initialData.creditLimit != null ? String(initialData.creditLimit) : "",
     taxId: initialData.taxId ?? "",
     isTaxExempt: initialData.isTaxExempt ?? false,
     notes: initialData.notes ?? "",
@@ -365,8 +366,11 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           email: data.email ?? "",
           businessName: resolvedBusinessName,
           contactName: resolvedContactName,
-          phone: data.phone || undefined,
-          mobile: data.mobile || undefined,
+          // B1033: an emptied optional field is an explicit null (the API stores null); `|| undefined`
+          // made it a silent no-op and the old value stayed. Only a value the form actually loaded can be
+          // cleared — an already-empty field is left out, so an edit can never wipe a column it never saw.
+          phone: clearableField(data.phone, initialData.phone),
+          mobile: clearableField(data.mobile, initialData.mobile),
           customerType: data.customerType,
           displayName: resolvedDisplayName,
           // #3206 follow-up: an emptied name field the form loaded is an explicit null (cleared); one
@@ -374,9 +378,13 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           salutation: clearableField(data.salutation, initialData.salutation),
           firstName: clearableField(data.firstName, initialData.firstName),
           lastName: clearableField(data.lastName, initialData.lastName),
-          taxId: data.taxId || undefined,
+          taxId: clearableField(data.taxId, initialData.taxId),
           isTaxExempt: data.isTaxExempt || false,
-          creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
+          creditLimit: data.creditLimit
+            ? parseFloat(data.creditLimit)
+            : initialData.creditLimit != null
+              ? null
+              : undefined,
           currency: data.currency || "USD",
           fulfillPath: payloadFulfillPath(data.fulfillPath, staffFulfilment.pickForm),
           notes: data.notes,

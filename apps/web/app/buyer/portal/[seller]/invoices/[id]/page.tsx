@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { Badge, useToast } from "@routeflow/ui/web";
 import { resolveConfirmedAmounts } from "@routeflow/pricing";
+import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerInvoice } from "@/lib/api/buyer";
 import { buyerApiClient } from "@/lib/buyer-api-client";
@@ -92,12 +93,9 @@ function formatDate(d: string | null) {
   });
 }
 
-/**
- * Statuses the payments API will actually allocate against — mirrors
- * `OPEN_STATUSES` in `apps/api/src/payment-requests/payment-requests.service.ts`.
- * The buyer invoice list also returns PAID/VOID/WRITTEN_OFF, which owe nothing.
- */
-const PAYABLE_STATUSES: string[] = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+// Payable = the open statuses (isOpenInvoiceStatus), the ones the payments API will allocate against
+// (`OPEN_STATUSES` in apps/api/src/payment-requests/payment-requests.service.ts). The buyer invoice list
+// also returns PAID/VOID/WRITTEN_OFF, which owe nothing.
 
 export default function BuyerInvoiceDetailPage() {
   const params = useParams();
@@ -223,7 +221,7 @@ export default function BuyerInvoiceDetailPage() {
           <Badge variant={invoiceStatusVariant(invoice.status)}>
             {invoice.status.replace(/_/g, " ")}
           </Badge>
-          {PAYABLE_STATUSES.includes(invoice.status) && balanceDue > 0.001 && (
+          {isOpenInvoiceStatus(invoice.status) && balanceDue > 0.001 && (
             <button
               type="button"
               onClick={() =>
@@ -280,7 +278,19 @@ export default function BuyerInvoiceDetailPage() {
             value: fmt(Number(invoice.subtotal)),
             icon: FileText,
           },
-          { key: "tax", label: "Tax", value: fmt(Number(invoice.taxAmount)), icon: FileText },
+          {
+            key: "tax",
+            label: "Tax",
+            value: fmt(Number(invoice.regularTaxAmount ?? invoice.taxAmount)),
+            icon: FileText,
+          },
+          // Row 398: the deposit / excise is its own named charge (an older server sends none: nothing here)
+          ...(invoice.chargeLines ?? []).map((c) => ({
+            key: `charge-${c.key}`,
+            label: c.label,
+            value: fmt(Number(c.amount)),
+            icon: FileText,
+          })),
           { key: "total", label: "Total", value: fmt(Number(invoice.total)), icon: DollarSign },
           {
             key: "balance",
