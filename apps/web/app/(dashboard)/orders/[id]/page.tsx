@@ -162,6 +162,7 @@ import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import type { UnitOption } from "@/lib/unit-options";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { markSentErrorText, orderErrorText, sendEmailErrorText } from "@/lib/order-error-text";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
 
@@ -1987,7 +1988,6 @@ export default function OrderDetailPage() {
   const [isEditing, setIsEditing] = React.useState(false);
   const overpay = useOrderOverpayGuard(order, isEditing);
   const stale = useOrderStaleRevision(order, isEditing, (fresh, base) => {
-    // row 372 MF3: Reload re-bases lines, fee and credits (order-edit-rebase.ts); a clash is handed to the user
     const n = rebaseOnReload(
       {
         editItems,
@@ -2005,10 +2005,11 @@ export default function OrderDetailPage() {
       base,
     );
     if (n > 0) toast({ title: "Someone else changed this order - re-check it", variant: "error" });
-  }); // row 372
+  });
   const updateItems = useUpdateOrderItems({
     localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
   });
+  const savingItems = updateItems.isPending;
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
   const [pendingDeletes, setPendingDeletes] = React.useState<string[]>([]);
   const [draftAutoEntered, setDraftAutoEntered] = React.useState(false);
@@ -2597,18 +2598,19 @@ export default function OrderDetailPage() {
         </div>
 
         {/* Action bar */}
+        <ReadOnlyHint className="text-xs text-slate-600" />
         <div className="flex flex-wrap items-center gap-2">
           {/* Edit Items button */}
           {canEdit && access.editItems && !isEditing && (
             <ActionTier tier="secondary">
-              <Button
+              <WriteButton
                 size="sm"
                 variant="secondary"
                 leftIcon={<Pencil className="h-4 w-4" />}
                 onClick={enterEditMode}
               >
                 {isPos ? "Edit order" : "Edit Items"}
-              </Button>
+              </WriteButton>
             </ActionTier>
           )}
 
@@ -2656,7 +2658,7 @@ export default function OrderDetailPage() {
           {localStatus === "DRAFT" && !isEditing && access.staff && (
             <>
               <ActionTier tier="primary">
-                <Button
+                <WriteButton
                   size="sm"
                   leftIcon={<CheckCircle2 className="h-4 w-4" />}
                   onClick={() => {
@@ -2673,7 +2675,7 @@ export default function OrderDetailPage() {
                   loading={updateStatus.isPending}
                 >
                   Publish Order
-                </Button>
+                </WriteButton>
               </ActionTier>
               <DeleteOrderTier
                 orderId={order.id}
@@ -3033,16 +3035,16 @@ export default function OrderDetailPage() {
                 <div className="flex gap-2 flex-wrap">
                   {localStatus === "DRAFT" ? (
                     <>
-                      <Button
+                      <WriteButton
                         size="sm"
                         className="bg-amber-500 text-white hover:bg-amber-600"
                         onClick={handleSaveItems}
                         loading={updateItems.isPending}
                       >
                         Save Draft
-                      </Button>
+                      </WriteButton>
                       {access.staff && (
-                        <Button
+                        <WriteButton
                           size="sm"
                           leftIcon={<CheckCircle2 className="h-4 w-4" />}
                           onClick={() => {
@@ -3122,7 +3124,7 @@ export default function OrderDetailPage() {
                           loading={updateItems.isPending || updateStatus.isPending}
                         >
                           Publish Order
-                        </Button>
+                        </WriteButton>
                       )}
                       <Button
                         size="sm"
@@ -3135,9 +3137,9 @@ export default function OrderDetailPage() {
                     </>
                   ) : (
                     <>
-                      <Button size="sm" onClick={handleSaveItems} loading={updateItems.isPending}>
+                      <WriteButton size="sm" onClick={handleSaveItems} loading={savingItems}>
                         Save Changes
-                      </Button>
+                      </WriteButton>
                       <Button
                         size="sm"
                         variant="ghost"

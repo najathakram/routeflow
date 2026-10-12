@@ -51,6 +51,7 @@ import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visi
 import { NewFamilyButton } from "@/components/family/NewFamilyButton";
 import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
 import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
 import {
   STOCK_FILTER_CHIPS,
@@ -1227,12 +1228,16 @@ export default function ProductsPage() {
               }}
             />
             <NewFamilyButton />
-            <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowCreate(true)}>
+            <WriteButton
+              leftIcon={<Plus className="h-4 w-4" />}
+              onClick={() => setShowCreate(true)}
+            >
               New Product
-            </Button>
+            </WriteButton>
           </div>
         }
       />
+      <ReadOnlyHint className="px-1 text-xs text-slate-600" />
 
       {/* Quick Edit mode banner */}
       {quickEditMode && (
@@ -1522,9 +1527,9 @@ export default function ProductsPage() {
               title="No products yet"
               description="Add your first product to build your catalog and start taking orders."
               action={
-                <Button size="sm" onClick={() => setShowCreate(true)}>
+                <WriteButton size="sm" onClick={() => setShowCreate(true)}>
                   New product
-                </Button>
+                </WriteButton>
               }
             />
           )}

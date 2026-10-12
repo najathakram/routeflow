@@ -5,6 +5,9 @@ import { PrismaService } from "../prisma/prisma.service";
 
 const token = `h.${Buffer.from(JSON.stringify({ tenantId: "t1" })).toString("base64url")}.s`;
 
+const roleToken = (role: string) =>
+  `h.${Buffer.from(JSON.stringify({ tenantId: "t1", role })).toString("base64url")}.s`;
+
 const buyerToken = `h.${Buffer.from(JSON.stringify({ tenantId: "t1", role: "CUSTOMER" })).toString("base64url")}.s`;
 
 function ctx(method: string, path: string, bearer: string = token): ExecutionContext {
@@ -51,6 +54,22 @@ describe("TenantStatusGuard — READ_ONLY enforcement", () => {
     expect(none.getResponse()).toEqual(
       expect.objectContaining({ code: "READ_ONLY", reason: null }),
     );
+  });
+
+  it("F6: 'Subscribe to restore full access' is for an admin; an operator or a driver is told to ask their admin", async () => {
+    const msg = async (role: string) => {
+      const err = await guardFor("READ_ONLY", "trial_expired")
+        .canActivate(ctx("POST", "/api/v1/orders", roleToken(role)))
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      return (err.getResponse() as { message: string }).message;
+    };
+    expect(await msg("TENANT_ADMIN")).toContain("Subscribe to restore full access");
+    for (const role of ["OPERATOR", "DRIVER"]) {
+      const m = await msg(role);
+      expect(m).not.toMatch(/subscribe/i);
+      expect(m).toContain("admin");
+    }
   });
 
   it("the reason survives the cache and a DB blip (the stale status keeps its reason)", async () => {

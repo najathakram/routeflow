@@ -73,7 +73,7 @@ export function handleMutationError(
     const view = readOnlyState?.view();
     const isAdmin = readOnlyState?.isAdmin?.() ?? true;
     readOnlyState?.refresh();
-    markReadOnlyRefused();
+    markReadOnlyRefused(typeof data?.reason === "string" ? data.reason : null);
     // SA-776: the owner's sentence + the mapped reason (+ the contact line for a non-admin), composed from the
     // subscription view in ONE helper - never from the 403's text. The reason in the 403 body is the fallback when
     // no subscription read is cached yet.
@@ -90,8 +90,15 @@ export function handleMutationError(
       title: copy.sentence,
       description: [copy.reasonLine, copy.contactLine].filter(Boolean).join(" ") || undefined,
       variant: "warning",
+      // billing-ux section 4: choosing a plan is the way out of an expired trial only; every other reason (cancelled,
+      // set by an administrator) gets the Billing page. The reason is the cached view's, else the 403 body's.
       ...(isAdmin
-        ? { action: { label: "Choose a plan", onClick: () => router.push("/choose-plan") } }
+        ? (view?.readOnlyReason ?? data?.reason) === "trial_expired"
+          ? { action: { label: "Choose a plan", onClick: () => router.push("/choose-plan") } }
+          : typeof window !== "undefined" &&
+              window.location.pathname.startsWith("/settings/billing")
+            ? {} // already on the Billing page: an action to it would do nothing
+            : { action: { label: "Billing", onClick: () => router.push("/settings/billing") } }
         : {}),
     });
     return;

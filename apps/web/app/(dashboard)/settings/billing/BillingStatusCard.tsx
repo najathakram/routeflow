@@ -116,7 +116,7 @@ export function BillingStatusCard({
               )}
             </div>
           )}
-          {model.contact && (
+          {model.contact && model.state !== "read-only" && (
             <p className="mt-3 text-[13px] leading-[18px] text-slate-600">
               Only an admin can pay.
               {model.contact.email ? (

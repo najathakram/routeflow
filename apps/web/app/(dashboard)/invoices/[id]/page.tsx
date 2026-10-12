@@ -903,6 +903,7 @@ function VoidConfirmModal({
   invoiceNumber: string;
   isPending: boolean;
 }) {
+  // F3/F4: a void is a write: a WriteButton, disabled up front (with the shared line) while read-only.
   return (
     <Modal
       open={isOpen}
@@ -914,9 +915,9 @@ function VoidConfirmModal({
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={onConfirm} loading={isPending}>
+          <WriteButton variant="danger" onClick={onConfirm} loading={isPending}>
             Void Invoice
-          </Button>
+          </WriteButton>
         </>
       }
     >
@@ -2288,7 +2289,7 @@ export default function InvoiceDetailPage() {
                 label: "Void Invoice",
                 onClick: () => setIsVoidOpen(true),
                 danger: true,
-                disabled: !canVoid,
+                disabled: !canVoid || readOnlyGate.readOnly,
               },
             ]}
           />

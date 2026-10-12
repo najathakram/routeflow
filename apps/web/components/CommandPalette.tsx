@@ -294,6 +294,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           icon: Plus,
           action: () => router.push(createHref("/customers")),
           keywords: "create add customer",
+          readOnlyGated: true,
         },
         {
           id: "act-new-product",
@@ -302,6 +303,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
           icon: Plus,
           action: () => router.push(createHref("/products")),
           keywords: "create add product",
+          readOnlyGated: true,
         },
       ].filter((c) => {
         if (ROUTES_COMMAND_IDS.includes(c.id)) return routesAccess;

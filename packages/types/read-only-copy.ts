@@ -28,6 +28,11 @@ export interface ReadOnlyCopyInput {
   billingContactEmail?: string | null;
   /** A TENANT_ADMIN sees the action instead of the contact line. */
   isAdmin?: boolean;
+  /**
+   * A viewer with no admin e-mail to name (a driver: the contact is staff-only data) gets the generic line
+   * "To restore access, contact your workspace admin." instead of no contact line at all.
+   */
+  contactFallback?: boolean;
   /** The caller's money formatter (web passes `formatMoney`); defaults to en-US USD, "$1,490.00". */
   formatMoney?: (dollars: number) => string;
 }
@@ -71,6 +76,9 @@ export function readOnlyReasonLine(
   }
 }
 
+/** The contact line when there is no e-mail to name (opt-in: a driver). */
+export const READ_ONLY_CONTACT_FALLBACK = "To restore access, contact your workspace admin.";
+
 /** "To restore access, contact your admin (dana@acme.test)." or null when there is no e-mail on file. */
 export function readOnlyContactLine(email: string | null | undefined): string | null {
   const e = email?.trim() || null;
@@ -79,7 +87,10 @@ export function readOnlyContactLine(email: string | null | undefined): string | 
 
 export function readOnlyCopy(input: ReadOnlyCopyInput = {}): ReadOnlyCopy {
   const reasonLine = readOnlyReasonLine(input.reason, input.overdueAmount, input.formatMoney);
-  const contactLine = input.isAdmin ? null : readOnlyContactLine(input.billingContactEmail);
+  const contactLine = input.isAdmin
+    ? null
+    : (readOnlyContactLine(input.billingContactEmail) ??
+      (input.contactFallback ? READ_ONLY_CONTACT_FALLBACK : null));
   const lines = [READ_ONLY_SENTENCE, reasonLine, contactLine].filter((l): l is string => !!l);
   return {
     sentence: READ_ONLY_SENTENCE,

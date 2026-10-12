@@ -13,7 +13,7 @@ import * as path from "path";
  */
 const WEB = path.resolve(__dirname, "..");
 const LABEL =
-  /Record Payment|Create (Order|Invoice|Estimate)|New (Order|Invoice|Estimate|sale)|Mark (cleared|bounced)|Apply Advance|Write Off/i;
+  /Record Payment|Create (Order|Invoice|Estimate)|New (Order|Invoice|Estimate|sale|Product|Customer)|Add User|Add customer(?! rate)|Void Invoice|Mark (cleared|bounced)|Apply Advance|Write Off/i;
 /** Elements that are controls (headings, paragraphs and spans that merely mention a label are not). */
 const CONTROL_TAGS = new Set(["Button", "button", "Link", "a", "WriteButton", "WriteLink"]);
 const GATED_TAGS = new Set(["WriteButton", "WriteLink"]);
@@ -139,5 +139,26 @@ describe("read-only gate inventory (B4)", () => {
       }
       expect(ex.why.length).toBeGreaterThan(20);
     }
+  });
+
+  it("F3/F4: the order-items save controls (Save Draft / Save Changes / Publish Order) are WriteButtons", () => {
+    const src = fs.readFileSync(path.join(WEB, "app/(dashboard)/orders/[id]/page.tsx"), "utf8");
+    const re = />\s*(Save Draft|Save Changes|Publish Order)\s*<\/(\w+)>/g;
+    const seen: string[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(src)))
+      if (m[2] === "Button" || m[2] === "WriteButton") seen.push(`${m[1]}:${m[2]}`);
+    expect(seen.length).toBeGreaterThanOrEqual(3); // the scan is not vacuous
+    expect(seen.filter((x) => !x.endsWith(":WriteButton"))).toEqual([]);
+  });
+
+  it("F3/F4 class fix: every app dialog is the ui Modal (so the read-only notice slot reaches all of them)", () => {
+    // a dialog built straight on Radix would stay open and silent after a 403 READ_ONLY; only the public marketing
+    // header (no workspace, no writes) is exempt
+    const offenders = [...walk(path.join(WEB, "app")), ...walk(path.join(WEB, "components"))]
+      .filter((f) => /@radix-ui\/react-(alert-)?dialog/.test(fs.readFileSync(f, "utf8")))
+      .map(rel)
+      .filter((f) => !f.startsWith("app/(marketing)/"));
+    expect(offenders).toEqual([]);
   });
 });
