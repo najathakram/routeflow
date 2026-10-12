@@ -452,7 +452,13 @@ export default function BillingSettingsPage() {
       />
       <TrialBanner sub={s} />
       {!ownsBillingBanner(s) && (
-        <ReadOnlyBanner status={s.status} readOnlyReason={s.readOnlyReason} />
+        <ReadOnlyBanner
+          status={s.status}
+          readOnlyReason={s.readOnlyReason}
+          overdueAmount={s.openInvoiceAmount}
+          billingContactEmail={s.billingContactEmail}
+          isAdmin={isAdmin}
+        />
       )}
 
       {s.cancelAtPeriodEnd && s.status !== "READ_ONLY" && (

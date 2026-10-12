@@ -118,8 +118,10 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
 
     renderWithProviders(<BillingSettingsPage />);
 
-    expect(await screen.findByText(/workspace is read-only/i)).toBeInTheDocument();
-    expect(screen.getByText(/trial ended/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/workspace is currently in read-only mode/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/free trial has ended/i)).toBeInTheDocument();
     const choosePlanLink = screen.getByRole("link", { name: /choose a plan/i });
     expect(choosePlanLink).toHaveAttribute("href", "/choose-plan");
     expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
@@ -160,7 +162,9 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
 
     renderWithProviders(<BillingSettingsPage />);
 
-    expect(await screen.findByText(/workspace is read-only/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/workspace is currently in read-only mode/i),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /keep my plan/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/cancellation scheduled/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
@@ -200,7 +204,7 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
 
     expect(await screen.findByRole("button", { name: /change plan/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /end trial/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/workspace is read-only/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/workspace is currently in read-only mode/i)).not.toBeInTheDocument();
   });
 });
 
@@ -1049,7 +1053,7 @@ describe("BillingSettingsPage - owed invoice / autopay (B4)", () => {
       pastDueSince: new Date(T0).toISOString(),
       pastDueInvoiceId: "in_1",
       openInvoiceAmount: 149,
-      billingContactName: "Dana",
+      billingContactEmail: "dana@acme.test",
       ...over,
     });
 
@@ -1073,22 +1077,20 @@ describe("BillingSettingsPage - owed invoice / autopay (B4)", () => {
     renderWithProviders(<BillingSettingsPage />);
     expect(
       await screen.findByText(
-        "Your workspace is read-only until the " +
-          new Date(T0).toLocaleDateString("en-US", { month: "long" }) +
-          " payment of $149.00 goes through. Your data is safe.",
+        "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment of $149.00 is overdue.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Pay $149.00" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /choose a plan/i })).toBeNull();
   });
 
-  it("operator: the sentence names the admin and there is no pay control in the DOM", async () => {
+  it("operator: the sentence, the reason and the contact (your admin + e-mail); no pay control in the DOM", async () => {
     mockAuthUser = { role: "OPERATOR" };
     mockSubscriptionView = owed({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
     renderWithProviders(<BillingSettingsPage />);
     expect(
       await screen.findByText(
-        "Your workspace is read-only. You can still view, print and export. Dana can restore it.",
+        "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment of $149.00 is overdue. To restore access, contact your admin (dana@acme.test).",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^pay/i })).toBeNull();

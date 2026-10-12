@@ -75,5 +75,14 @@ export function BillingShellBanner({
     return state.inShell ? <SubscriptionStrip view={view} role={role} state={state} /> : null;
   }
   if (ownsBillingBanner(view)) return null; // never "Choose a plan" while an invoice is owed
-  return <ReadOnlyBanner status={view.status} readOnlyReason={view.readOnlyReason} compact />;
+  return (
+    <ReadOnlyBanner
+      status={view.status}
+      readOnlyReason={view.readOnlyReason}
+      overdueAmount={view.openInvoiceAmount}
+      billingContactEmail={view.billingContactEmail}
+      isAdmin={userRole === "TENANT_ADMIN"}
+      compact
+    />
+  );
 }

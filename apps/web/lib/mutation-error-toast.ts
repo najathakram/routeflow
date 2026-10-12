@@ -3,7 +3,9 @@ import { API_ERROR_CODES } from "@routeflow/types";
 import { genericToastCopy } from "./generic-toast-copy";
 import { safeTextBodyCopy } from "./safe-text-error-copy";
 import { markReadOnlyRefused } from "./read-only-gate";
-import { ownsBillingBanner, readOnlyLine } from "./subscription-banner-state";
+import type { SubscriptionView } from "@routeflow/types";
+import { readOnlyCopyForView } from "./read-only-copy";
+import { ownsBillingBanner } from "./subscription-banner-state";
 
 /**
  * The app-wide MutationCache error handler (extracted from `app/providers.tsx`, #1965 so it is
@@ -22,6 +24,8 @@ export function handleMutationError(
   readOnlyState?: {
     view: () => import("@routeflow/types").SubscriptionView | undefined;
     refresh: () => void;
+    /** SA-776: a TENANT_ADMIN is shown the action, anyone else the contact line. Unknown = admin (the old shape). */
+    isAdmin?: () => boolean;
   },
 ): void {
   const data = (error as any)?.response?.data;
@@ -67,17 +71,28 @@ export function handleMutationError(
     // switches to its disabled-with-the-line state, and say the fixed line (never "Choose a plan" while a
     // payment is owed; the server answers a plan change with 409 PAYMENT_OVERDUE).
     const view = readOnlyState?.view();
+    const isAdmin = readOnlyState?.isAdmin?.() ?? true;
     readOnlyState?.refresh();
     markReadOnlyRefused();
+    // SA-776: the owner's sentence + the mapped reason (+ the contact line for a non-admin), composed from the
+    // subscription view in ONE helper - never from the 403's text. The reason in the 403 body is the fallback when
+    // no subscription read is cached yet.
+    const copy = readOnlyCopyForView(
+      view ?? ({ readOnlyReason: data?.reason ?? null } as SubscriptionView),
+      isAdmin,
+    );
     if (ownsBillingBanner(view)) {
-      toast({ title: readOnlyLine(view?.billingContactName), variant: "warning" });
+      // never "Choose a plan" while a payment is owed (the server answers a plan change with 409 PAYMENT_OVERDUE)
+      toast({ title: copy.text, variant: "warning" });
       return;
     }
     toast({
-      title: "Your workspace is read-only",
-      description: "Choose a plan to make changes.",
+      title: copy.sentence,
+      description: [copy.reasonLine, copy.contactLine].filter(Boolean).join(" ") || undefined,
       variant: "warning",
-      action: { label: "Choose a plan", onClick: () => router.push("/choose-plan") },
+      ...(isAdmin
+        ? { action: { label: "Choose a plan", onClick: () => router.push("/choose-plan") } }
+        : {}),
     });
     return;
   }

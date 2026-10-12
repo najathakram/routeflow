@@ -1395,7 +1395,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           tabIndex={-1}
           className="flex-1 focus:outline-none overflow-x-hidden overflow-y-auto bg-surface-raised pb-24"
         >
-          <ReadOnlyGateProvider view={subscriptionStatus} readAt={subscriptionReadAt}>
+          <ReadOnlyGateProvider
+            view={subscriptionStatus}
+            readAt={subscriptionReadAt}
+            isAdmin={user?.role === "TENANT_ADMIN"}
+          >
             {children}
           </ReadOnlyGateProvider>
         </main>
@@ -1404,7 +1408,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         <DraftDock />
       </div>
 
-      <ReadOnlyGateProvider view={subscriptionStatus} readAt={subscriptionReadAt}>
+      <ReadOnlyGateProvider
+        view={subscriptionStatus}
+        readAt={subscriptionReadAt}
+        isAdmin={user?.role === "TENANT_ADMIN"}
+      >
         <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       </ReadOnlyGateProvider>
       <PwaInstallPrompt logoSrc={BRAND_MARK_SRC} accentClass="bg-brand-600 hover:bg-brand-700" />
