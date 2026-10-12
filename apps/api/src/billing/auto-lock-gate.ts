@@ -29,6 +29,9 @@ export const AUTO_LOCK_SKIP_MILESTONE_PREFIX = "AUTO_LOCK_PAUSED:";
 export const AUTO_LOCK_SKIP_AUDIT_ACTION = "tenant.auto-lock-skipped";
 export const AUTO_LOCK_SKIP_REASON = "paused by rollout switch";
 
+/** The only tenant classes that keep locking while the switch is paused (QA can still exercise the locks). */
+const UNPROTECTED_CLASSES: ReadonlySet<string> = new Set(["TEST", "DEMO", "INTERNAL"]);
+
 /** What a writer needs from the switch (the service implements it; a spec can pass a stub). */
 export interface AutoLockSwitch {
   isPaused(): Promise<boolean>;
@@ -42,8 +45,8 @@ export function autoLockKindOfMilestone(milestone: string): AutoLockKind | null 
 }
 
 /**
- * May this AUTOMATIC lock be written? `false` exactly when the switch is paused AND the tenant is PRODUCTION
- * (TEST / DEMO / INTERNAL tenants keep locking so QA can still exercise the locks). `switch` is undefined only
+ * May this AUTOMATIC lock be written? `false` while the switch is paused unless the class is explicitly TEST, DEMO or INTERNAL
+ * (so PRODUCTION, a missing class and any unknown value are held; QA keeps locking). `switch` is undefined only
  * for a service built bare in a unit spec; `billing.module-wiring.spec.ts` pins that production injects it.
  * The switch read is cached (<= 30 s) and fails CLOSED (paused) on a read error, so the gate is safe to call
  * from inside a transaction. `kind` is the seam for a per-tenant or per-kind hold (SA-775 G8).
@@ -55,8 +58,10 @@ export async function autoLockAllowed(
 ): Promise<boolean> {
   void kind;
   if (!autoLocks) return true;
-  if (tenant.class !== "PRODUCTION") return true;
-  return !(await autoLocks.isPaused());
+  // Fail closed (SA-775 S2): while paused ONLY an explicitly non-production class may lock. PRODUCTION, a missing or
+  // null class and any unknown value are PROTECTED, so a row the code cannot classify is never the one that locks.
+  if (!(await autoLocks.isPaused())) return true;
+  return tenant.class != null && UNPROTECTED_CLASSES.has(tenant.class);
 }
 
 export interface AutoLockSkip {

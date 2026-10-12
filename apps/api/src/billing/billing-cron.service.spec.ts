@@ -196,9 +196,16 @@ const deltaOf = (events: any, type: string) => {
 
 describe("BillingCronService", () => {
   it("expireTrials flips expired trials to READ_ONLY (not SUSPENDED) + emits trial.expired", async () => {
-    const { svc, prisma, events, tenantStatus } = make({ trials: [{ id: "t1" }] });
+    const { svc, prisma, events, tenantStatus } = make({
+      trials: [{ id: "t1", class: "PRODUCTION" }],
+    });
     await svc.expireTrials();
-    expect(prisma.tenant.updateMany.mock.calls[0][0].where).toEqual({ id: "t1", status: "TRIAL" });
+    // SA-775 S3: the class the gate judged is part of the CAS (a reclassification since the scan cannot lock)
+    expect(prisma.tenant.updateMany.mock.calls[0][0].where).toEqual({
+      id: "t1",
+      status: "TRIAL",
+      class: "PRODUCTION",
+    });
     expect(prisma.tenant.updateMany.mock.calls[0][0].data).toMatchObject({
       status: "READ_ONLY",
       readOnlyReason: "trial_expired",

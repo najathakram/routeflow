@@ -2800,9 +2800,10 @@ ${updateLine}
       await this.holdStripeCancel(sub, lockTarget.status, reason);
       return;
     }
+    // The class the gate judged is part of both CASes (SA-775 S3): a reclassification since the read cannot lock.
     const churned = await this.transitionAndEmit(
       sub.tenantId,
-      { status: "ACTIVE" },
+      { status: "ACTIVE", class: lockTarget?.class },
       "CANCELLED",
       -1,
       BILLING_EVENTS.SUBSCRIPTION_CANCELED,
@@ -2812,7 +2813,7 @@ ${updateLine}
       churned ||
       (
         await this.prisma.tenant.updateMany({
-          where: { id: sub.tenantId, status: "SUSPENDED" },
+          where: { id: sub.tenantId, status: "SUSPENDED", class: lockTarget?.class },
           data: { status: "CANCELLED" },
         })
       ).count === 1;
@@ -3009,7 +3010,7 @@ ${updateLine}
           // suspension is reversible — onPaymentSucceeded re-adds a matching +delta on reinstatement.
           const suspended = await this.transitionAndEmit(
             sub.tenantId,
-            { status: "ACTIVE" },
+            { status: "ACTIVE", class: sub.tenant.class }, // the judged class is part of the CAS (SA-775 S3)
             "SUSPENDED",
             -1,
             BILLING_EVENTS.SUBSCRIPTION_SUSPENDED,

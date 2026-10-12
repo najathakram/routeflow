@@ -126,9 +126,10 @@ export class BillingCronService {
         continue;
       }
       // Compare-and-swap (SA-774r5 MF9): only a tenant that is STILL on TRIAL is locked and announced, so a
-      // concurrent activation or a repeated pass writes nothing and emits nothing.
+      // concurrent activation or a repeated pass writes nothing and emits nothing. The class the gate judged is part of
+      // the CAS (SA-775 S3): a TEST->PRODUCTION reclassification between the scan and this write cannot lock.
       const { count } = await this.prisma.tenant.updateMany({
-        where: { id: t.id, status: "TRIAL" },
+        where: { id: t.id, status: "TRIAL", class: t.class },
         data: { status: "READ_ONLY", readOnlyReason: "trial_expired" },
       });
       if (count !== 1) continue;

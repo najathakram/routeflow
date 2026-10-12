@@ -9,12 +9,12 @@ import {
 
 const sw = (paused: boolean) => ({ isPaused: jest.fn().mockResolvedValue(paused) });
 
-describe("autoLockAllowed: the class x paused matrix", () => {
+describe("autoLockAllowed: the class x paused matrix (fails CLOSED on an unknown class)", () => {
   const classes = ["PRODUCTION", "DEMO", "TEST", "INTERNAL"] as const;
   it.each(AUTO_LOCK_KINDS.flatMap((k) => classes.map((c) => [k, c] as const)))(
     "%s / %s",
     async (kind: AutoLockKind, cls) => {
-      // paused: only PRODUCTION is held
+      // paused: only an explicit non-production class locks
       expect(await autoLockAllowed(sw(true), { id: "t", class: cls }, kind)).toBe(
         cls !== "PRODUCTION",
       );
@@ -23,19 +23,19 @@ describe("autoLockAllowed: the class x paused matrix", () => {
     },
   );
 
-  it("does not even read the switch for a non-PRODUCTION tenant", async () => {
-    const s = sw(true);
-    await autoLockAllowed(s, { id: "t", class: "TEST" }, "trial_expired");
-    expect(s.isPaused).not.toHaveBeenCalled();
-  });
+  it.each([[undefined], [null], ["WEIRD"], [""], ["production"], ["test"]])(
+    "paused + class %j is PROTECTED (held), unpaused it locks as today",
+    async (cls) => {
+      expect(await autoLockAllowed(sw(true), { id: "t", class: cls }, "trial_expired")).toBe(false);
+      expect(await autoLockAllowed(sw(false), { id: "t", class: cls }, "trial_expired")).toBe(true);
+    },
+  );
 
-  it("an unwired switch (a bare unit spec) and a missing class both allow", async () => {
+  it("an unwired switch (a bare unit spec) allows", async () => {
     expect(
       await autoLockAllowed(undefined, { id: "t", class: "PRODUCTION" }, "trial_expired"),
     ).toBe(true);
-    expect(await autoLockAllowed(sw(true), { id: "t", class: undefined }, "trial_expired")).toBe(
-      true,
-    );
+    expect(await autoLockAllowed(null, { id: "t", class: undefined }, "trial_expired")).toBe(true);
   });
 });
 
