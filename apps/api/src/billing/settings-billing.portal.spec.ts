@@ -108,13 +108,13 @@ describe("SettingsBillingController.createPortal (B4: admin-only portal)", () =>
   });
 });
 
-// S3: the Stripe-backed extras are an admin's business. An operator keeps the contact's name (who to ask) and the
+// S3: the Stripe-backed extras are an admin's business. An operator keeps the contact's e-mail (who to ask) and the
 // owed marker (the strip exists) but never the card, the next charge or the amount.
 describe("SettingsBillingController.getSubscription - role-trimmed view (B4 S3)", () => {
   const view = {
     status: "READ_ONLY",
     pastDueInvoiceId: "in_1",
-    billingContactName: "Dana",
+    billingContactEmail: "dana@acme.test",
     openInvoiceAmount: 149,
     paymentMethodSummary: { brand: "visa", last4: "4242", expMonth: 10, expYear: 2026 },
     nextCharge: { amount: 149, date: "2026-12-01T00:00:00.000Z", dateLabel: "Dec 1" },
@@ -128,7 +128,8 @@ describe("SettingsBillingController.getSubscription - role-trimmed view (B4 S3)"
       expect(out.paymentMethodSummary).toBeNull();
       expect(out.nextCharge).toBeNull();
       expect(out.openInvoiceAmount).toBeNull();
-      expect(out.billingContactName).toBe("Dana");
+      // SA-776: the contact's e-mail is what a non-admin is told to write to - the role trim keeps it
+      expect(out.billingContactEmail).toBe("dana@acme.test");
       expect(out.pastDueInvoiceId).toBe("in_1");
     },
   );

@@ -38,7 +38,7 @@ const view = (daysAgo: number, over: Partial<SubscriptionView> = {}): Subscripti
   trialEndsAt: null,
   addons: [],
   paymentRequired: false,
-  billingContactName: "Dana",
+  billingContactEmail: "dana@acme.test",
   pauseEnforced: true,
   pastDueSince: new Date(Date.now() - daysAgo * DAY - 3_600_000).toISOString(),
   pastDueInvoiceId: "in_1",
@@ -104,13 +104,13 @@ describe("BillingShellBanner - the shell strip", () => {
     expect(within(strip).queryByRole("button", { name: "Dismiss" })).toBeNull();
   });
 
-  it("operator: the same strip names the admin and has NO action button in the DOM", async () => {
+  it("operator: the same strip carries the sentence, the reason and the contact, with NO action button in the DOM", async () => {
     renderWithProviders(<BillingShellBanner scope="acme" view={paused()} userRole="OPERATOR" />);
     const strip = await screen.findByTestId("subscription-strip");
     expect(strip).toHaveTextContent(
-      "Your workspace is read-only. You can still view, print and export. Dana can restore it.",
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment of $149.00 is overdue. To restore access, contact your admin (dana@acme.test).",
     );
-    expect(within(strip).queryByRole("button", { name: /pay|update/i })).toBeNull();
+    expect(within(strip).queryByRole("button", { name: /^(pay|update)/i })).toBeNull();
   });
 
   it("a tap on the text opens a sheet with the full sentence", async () => {
@@ -119,7 +119,7 @@ describe("BillingShellBanner - the shell strip", () => {
     await userEvent.click(within(strip).getByTitle(/billing issue/i));
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent(
-      "There's a billing issue. Everything still works. Dana can sort it out in Billing.",
+      "There's a billing issue. Everything still works. Your admin can sort it out in Billing.",
     );
   });
 
@@ -131,11 +131,10 @@ describe("BillingShellBanner - the shell strip", () => {
     expect(screen.queryByTestId("subscription-strip")).toBeNull();
   });
 
-  it("never says overdue / failed / suspended or offers a plan purchase", async () => {
+  it("never says overdue / failed / suspended or offers a plan purchase (read-only names the reason: SA-776)", async () => {
     for (const [v, role] of [
       [view(2), "TENANT_ADMIN"],
       [view(6), "OPERATOR"],
-      [paused(), "TENANT_ADMIN"],
     ] as const) {
       const { container, unmount } = renderWithProviders(
         <BillingShellBanner scope="acme" view={v} userRole={role} />,
@@ -173,7 +172,8 @@ describe("BillingShellBanner - the shell strip", () => {
         userRole="TENANT_ADMIN"
       />,
     );
-    expect(await screen.findByText(/Your trial ended/)).toBeInTheDocument();
+    expect(await screen.findByText(/Your free trial has ended\./)).toBeInTheDocument();
+    expect(screen.getByText(/currently in read-only mode/)).toBeInTheDocument();
     expect(screen.queryByTestId("subscription-strip")).toBeNull();
   });
 

@@ -9,7 +9,8 @@ import { readOnlyLine } from "./subscription-banner-state";
 /**
  * SA-733r6 (B4): while the workspace is read-only, the controls that WRITE (new order, new invoice, new estimate,
  * counter sale / Charge, record payment) stay VISIBLE but disabled, and say why in one fixed sentence right next to
- * them: "Not available while read-only. <Admin name> can restore it." Nothing is hidden (no feature loss). View,
+ * them: the owner's read-only sentence + the mapped reason + (non-admin) the contact line (SA-776, composed in
+ * `read-only-copy.ts`). Nothing is hidden (no feature loss). View,
  * search, print / PDF, export and the end-of-day close stay enabled - the server allow-list is the authority; this
  * only renders it.
  *
@@ -70,9 +71,12 @@ const GateContext = React.createContext<Gate>({ readOnly: false, line: null, hin
 export function ReadOnlyGateProvider({
   view,
   readAt,
+  isAdmin = false,
   children,
 }: {
   view: SubscriptionView | null | undefined;
+  /** A TENANT_ADMIN sees the action (Pay / Choose a plan), not the contact line, in the read-only copy. */
+  isAdmin?: boolean;
   /** When `view` was last read (react-query `dataUpdatedAt`); a read newer than a 403 refusal can end the refusal. */
   readAt?: number;
   children: React.ReactNode;
@@ -90,11 +94,10 @@ export function ReadOnlyGateProvider({
       clearReadOnlyRefusal();
     }
   }, [refused, view, readAt]);
-  const name = view?.billingContactName;
   const hintId = React.useId();
   const value = React.useMemo<Gate>(
-    () => ({ readOnly, line: readOnly ? readOnlyLine(name) : null, hintId }),
-    [readOnly, name, hintId],
+    () => ({ readOnly, line: readOnly ? readOnlyLine(view, isAdmin) : null, hintId }),
+    [readOnly, view, isAdmin, hintId],
   );
   return <GateContext.Provider value={value}>{children}</GateContext.Provider>;
 }

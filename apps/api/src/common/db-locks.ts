@@ -95,6 +95,7 @@
 import { ConflictException, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { Pool, type PoolClient } from "pg";
+import { utcPoolConfig } from "./pg-session";
 import { API_ERROR_CODES } from "./api-error-codes";
 
 export type LockMode = "wait" | "try";
@@ -226,17 +227,19 @@ function lockPool(family: string): Pool {
     // critical section: without it `pool.connect()` queues with NO timer once `max` is reached
     // (pg-pool `connect()`), so an overflowing caller would hang unbounded instead of surfacing
     // as LockUnavailableError → 503.
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      max: POOL_MAX[family] ?? DEFAULT_POOL_MAX,
-      connectionTimeoutMillis: 5_000,
-      // A lock connection is idle at the SOCKET for the whole critical section — a cron leader's
-      // tick does its work on the Prisma pool — so an intermediate idle-reap would end the
-      // session and release the advisory lock mid-tick, letting another replica win an election
-      // for a job still running. See the header's "WHY KEEPALIVE".
-      keepAlive: true,
-      keepAliveInitialDelayMillis: 30_000,
-    });
+    pool = new Pool(
+      utcPoolConfig({
+        connectionString: process.env.DATABASE_URL,
+        max: POOL_MAX[family] ?? DEFAULT_POOL_MAX,
+        connectionTimeoutMillis: 5_000,
+        // A lock connection is idle at the SOCKET for the whole critical section — a cron leader's
+        // tick does its work on the Prisma pool — so an intermediate idle-reap would end the
+        // session and release the advisory lock mid-tick, letting another replica win an election
+        // for a job still running. See the header's "WHY KEEPALIVE".
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 30_000,
+      }),
+    );
     // pg-pool re-emits an idle client's socket error on the pool; with no listener an
     // EventEmitter "error" throws as an uncaught exception and takes the API process down.
     // The client is already removed from the pool by the time this runs — log and nothing else.

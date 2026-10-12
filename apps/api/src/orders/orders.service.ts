@@ -147,6 +147,7 @@ import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { openTenantGroups } from "./sweep-tenant-gate";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { orderFor, ordersFor } from "../common/staff-only-fields";
 import { currentTaxRate } from "../common/tax-rate";
@@ -219,6 +220,7 @@ import type { OrderCancelBlockedField } from "@routeflow/types";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
 import { shippedPushCopy } from "./shipped-push-copy";
 import { attachInvoiceStages } from "./order-invoice-stage";
+import { HANDOVER_SOLD_BY_SELECT, seesHandOverStamp, stampHandedOverBy } from "./handover-stamp";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
 import {
   heldAtBookedFloor,
@@ -518,6 +520,8 @@ export class OrdersService implements OnApplicationBootstrap {
           // sort LAST (NULLS LAST), with createdAt as the final tiebreak.
           orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         },
+        // row 342: who handed it over (staff only; `registerKey` is a scalar already on the row)
+        ...(seesHandOverStamp(user) ? { soldBy: HANDOVER_SOLD_BY_SELECT } : {}),
         transaction: true,
         invoices: { select: ORDER_INVOICES_SELECT }, // + each line's stored taxRate (row 329a)
         // Credit-note INTENTS selected for this order (join table) — the reason/
@@ -596,6 +600,7 @@ export class OrdersService implements OnApplicationBootstrap {
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
     await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
 
+    stampHandedOverBy(order, user); // row 342: staff only; the display name is built once, here
     return orderFor(user, order); // customer-facing fields only for the customer
   }
 
@@ -1249,10 +1254,9 @@ export class OrdersService implements OnApplicationBootstrap {
     }
     const skipped = nullTenantRows.length;
 
-    // Null-tenant groups are fully accounted for by the pass above (count + warn) —
-    // exclude them here so the same customer is never double-logged, and so `customers`
-    // below reflects only the groups actually eligible to merge.
-    const mergeCandidateGroups = groups.filter((g) => g.tenantId);
+    // Null-tenant groups are counted + warned above (never double-logged); SA-776: a tenant that is not
+    // TRIAL / ACTIVE gets no automated merge (sweep-tenant-gate.ts), so `customers` counts only eligible groups.
+    const mergeCandidateGroups = await openTenantGroups(this.prisma, groups);
 
     let merged = 0;
     let packMismatches = 0;

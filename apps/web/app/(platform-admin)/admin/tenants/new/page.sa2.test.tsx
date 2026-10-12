@@ -323,6 +323,10 @@ describe("SA-2 review sheet", () => {
       "in_store_shipping_retailer",
       ["Counter sales on", "Orders are in-store pickup or carrier shipping", "Delivery routes off"],
     ],
+    [
+      "delivery_pos",
+      ["Counter sales on", "Orders go out on the business's own trucks", "Delivery routes on"],
+    ],
   ])("(5) the Setup lines for %s are derived from the profile list", async (key, lines) => {
     await renderPage();
     fillForm();
@@ -413,7 +417,7 @@ describe("SA-2 chain and partial failure", () => {
       plan: { overrides: [], comps: [{ featureKey: "driver_payments" }], modes: [], billing: [] },
     });
     await renderPage();
-    fireEvent.click(screen.getByRole("radio", { name: /Delivery/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /Delivery distributor/ }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /At-door payment collection/ }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /Receipt scanning/ }));
     fillForm();

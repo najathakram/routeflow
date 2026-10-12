@@ -35,7 +35,6 @@ function view(over: Partial<SubscriptionView> = {}): SubscriptionView {
     addons: [],
     paymentRequired: false,
     readOnlyReason: null,
-    billingContactName: "Dana",
     billingContactEmail: "dana@example.test",
     paymentMethodSummary: { brand: "visa", last4: "4242", expMonth: 12, expYear: 2099 },
     nextCharge: { amount: 149, date: "2099-12-01T12:00:00.000Z", dateLabel: "Dec 1" },

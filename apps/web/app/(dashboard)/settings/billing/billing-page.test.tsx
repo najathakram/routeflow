@@ -118,8 +118,10 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
 
     renderWithProviders(<BillingSettingsPage />);
 
-    expect(await screen.findByText(/workspace is read-only/i)).toBeInTheDocument();
-    expect(screen.getByText(/trial ended/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/workspace is currently in read-only mode/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/free trial has ended/i)).toBeInTheDocument();
     const choosePlanLink = screen.getByRole("link", { name: /choose a plan/i });
     expect(choosePlanLink).toHaveAttribute("href", "/choose-plan");
     expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
@@ -160,7 +162,9 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
 
     renderWithProviders(<BillingSettingsPage />);
 
-    expect(await screen.findByText(/workspace is read-only/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/workspace is currently in read-only mode/i),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /keep my plan/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/cancellation scheduled/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
@@ -200,7 +204,7 @@ describe("BillingSettingsPage — READ_ONLY / TRIAL visibility (RO-1)", () => {
 
     expect(await screen.findByRole("button", { name: /change plan/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /end trial/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/workspace is read-only/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/workspace is currently in read-only mode/i)).not.toBeInTheDocument();
   });
 });
 
@@ -1049,7 +1053,7 @@ describe("BillingSettingsPage - owed invoice / autopay (B4)", () => {
       pastDueSince: new Date(T0).toISOString(),
       pastDueInvoiceId: "in_1",
       openInvoiceAmount: 149,
-      billingContactName: "Dana",
+      billingContactEmail: "dana@acme.test",
       ...over,
     });
 
@@ -1073,22 +1077,20 @@ describe("BillingSettingsPage - owed invoice / autopay (B4)", () => {
     renderWithProviders(<BillingSettingsPage />);
     expect(
       await screen.findByText(
-        "Your workspace is read-only until the " +
-          new Date(T0).toLocaleDateString("en-US", { month: "long" }) +
-          " payment of $149.00 goes through. Your data is safe.",
+        "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment of $149.00 is overdue.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Pay $149.00" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /choose a plan/i })).toBeNull();
   });
 
-  it("operator: the sentence names the admin and there is no pay control in the DOM", async () => {
+  it("operator: the sentence, the reason and the contact (your admin + e-mail); no pay control in the DOM", async () => {
     mockAuthUser = { role: "OPERATOR" };
     mockSubscriptionView = owed({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
     renderWithProviders(<BillingSettingsPage />);
     expect(
       await screen.findByText(
-        "Your workspace is read-only. You can still view, print and export. Dana can restore it.",
+        "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable. Your subscription payment of $149.00 is overdue. To restore access, contact your admin (dana@acme.test).",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^pay/i })).toBeNull();
@@ -1105,5 +1107,74 @@ describe("BillingSettingsPage - owed invoice / autopay (B4)", () => {
       await screen.findByText("Autopay is on. Next charge: $149.00 on Dec 1."),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^pay/i })).toBeNull();
+  });
+});
+
+// ─── Row 350 / SA-693: a comp add-on reads "Included", never a price ───────────────────────────
+
+describe("BillingSettingsPage — comp add-ons (row 350)", () => {
+  const rowOf = (name: string) => {
+    const row = screen.getByText(name).closest(".py-3");
+    if (!row) throw new Error(`no add-on row for ${name}`);
+    return within(row as HTMLElement);
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthUser = { role: "TENANT_ADMIN" };
+    mockPlansAddons = [ADDON, { ...ADDON, sku: "OCR_PACK", name: "OCR Pack", sortOrder: 2 }];
+  });
+
+  it("a comp catalog add-on shows Included and no price; a paid one beside it is unchanged", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [
+        { sku: "ROUTE_PLUS", name: "Route Plus", quantity: 1, comp: true, monthly: null },
+        { sku: "OCR_PACK", name: "OCR Pack", quantity: 1, comp: false, monthly: 49 },
+      ],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Route Plus");
+
+    const comp = rowOf("Route Plus");
+    expect(comp.getByText("Included")).toBeInTheDocument();
+    expect(comp.getByText("Active")).toBeInTheDocument();
+    expect(comp.queryByText(/\$/)).toBeNull();
+
+    const paid = rowOf("OCR Pack");
+    expect(paid.getByText("$49/mo")).toBeInTheDocument();
+    expect(paid.queryByText("Included")).toBeNull();
+  });
+
+  it("an active add-on with no comp flag (an older server) still shows its price", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [{ sku: "ROUTE_PLUS", name: "Route Plus", quantity: 1, monthly: 49 }],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Route Plus");
+
+    const row = rowOf("Route Plus");
+    expect(row.getByText("$49/mo")).toBeInTheDocument();
+    expect(row.queryByText("Included")).toBeNull();
+  });
+
+  it("a comp add-on outside the catalog reads Included · Managed by RouteFlow with no price", async () => {
+    mockPlansAddons = [ADDON];
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [
+        { sku: "SALES_AGENTS", name: "Sales agents", quantity: 1, comp: true, monthly: null },
+        { sku: "MSRP", name: "MSRP", quantity: 1, comp: false, monthly: 29 },
+      ],
+    });
+    renderWithProviders(<BillingSettingsPage />);
+    await screen.findByText("Sales agents");
+
+    const comp = rowOf("Sales agents");
+    expect(comp.getByText(/^Included · Managed by RouteFlow$/)).toBeInTheDocument();
+    expect(comp.queryByText(/\$/)).toBeNull();
+
+    expect(rowOf("MSRP").getByText("$29/mo · Managed by RouteFlow")).toBeInTheDocument();
   });
 });

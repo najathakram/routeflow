@@ -1,4 +1,5 @@
 import { API_ERROR_CODES, CREDITS_PENDING_COPY, SHIPPED_ORDER_MESSAGE } from "@routeflow/types";
+import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
 import {
   CREDIT_NOTE_ERROR_COPY,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
@@ -159,7 +160,8 @@ const KNOWN_REFUSAL_SENTENCES: Record<string, string> = {
 };
 
 const PLAN_COPY = "This isn't included in your current plan.";
-const READ_ONLY_COPY = "Your workspace is read-only, so this action is unavailable.";
+// SA-776: the owner's sentence, verbatim (shared with mobile); the reason line needs the subscription read.
+const READ_ONLY_COPY = READ_ONLY_SENTENCE;
 const GENERIC_COPY = "Something went wrong. Please try again.";
 
 function statusCopy(status: number, refusal?: string): string {

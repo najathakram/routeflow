@@ -402,7 +402,7 @@ export function CustomerRecordPaymentModal({
             loading={record.isPending}
             disabled={totals.overAllocated}
           >
-            Save as Draft
+            Save as draft
           </Button>
           <Button
             onClick={() => void handleSave("PAID")}

@@ -39,9 +39,7 @@ function make(
   const prisma = {
     getTenantId: () => null,
     tenantConfig: { findUnique: jest.fn().mockResolvedValue({ timezone: "America/Chicago" }) },
-    user: {
-      findFirst: jest.fn().mockResolvedValue({ username: "Dana", email: "dana@example.test" }),
-    },
+    user: { findMany: jest.fn().mockResolvedValue([{ email: "dana@example.test" }]) },
   } as any;
   const stripe = {
     isConfigured: true,
@@ -212,10 +210,9 @@ describe("SubscriptionBillingExtras.read: open-invoice facts (SA-777)", () => {
     expect(stripe.listOpenCustomerInvoices).toHaveBeenCalledTimes(1);
   });
 
-  it("billingContactEmail is the same oldest-active-admin pick as the name", async () => {
+  it("billingContactEmail is the oldest-active-admin pick (an internal address is skipped)", async () => {
     const out = await make().extras.read("t1", SUB);
     expect(out).toMatchObject({
-      billingContactName: "Dana",
       billingContactEmail: "dana@example.test",
     });
   });
@@ -236,7 +233,6 @@ describe("trimBillingViewForRole (SA-777)", () => {
     payNowUrl: "https://pay.example/in_1",
     payNowAmount: 149,
     openInvoiceDueLabel: "Oct 1",
-    billingContactName: "Dana",
     billingContactEmail: "dana@example.test",
     openInvoiceAmount: 149,
   };
@@ -246,7 +242,6 @@ describe("trimBillingViewForRole (SA-777)", () => {
     expect(out).toMatchObject({
       billingState: "overdue",
       openInvoiceDueLabel: "Oct 1",
-      billingContactName: "Dana",
       billingContactEmail: "dana@example.test",
     });
     expect(out).not.toHaveProperty("outstandingTotal");
@@ -263,7 +258,7 @@ describe("trimBillingViewForRole (SA-777)", () => {
 describe("pickStateFacts (SA-777): the view carries only what Stripe answered", () => {
   it("an omitted field stays out of the JSON (never null, never 0)", () => {
     const out = pickStateFacts({ billingContactEmail: "a@example.test" });
-    expect(Object.keys(out).sort()).toEqual(["billingContactEmail"]);
+    expect(Object.keys(out)).toEqual([]);
     expect(JSON.parse(JSON.stringify(out))).not.toHaveProperty("outstandingTotal");
   });
 

@@ -18,6 +18,8 @@ import {
   counterSaleGate,
   isStoreOnly,
   PAYMENT_PROBLEM_COPY,
+  isTenderShortCopy,
+  paymentProblemCopy,
   paymentMethodOptions,
   COUNTER_SALE_DAY_CLOSED_TILL_COPY,
   PICKUP_DAY_CLOSED_COPY,
@@ -177,6 +179,12 @@ describe("payment method chips", () => {
     expect(walk.map((m) => m.method)).toEqual(["CASH", "CARD", "CHECK", "ON_ACCOUNT"]);
     expect(walk.find((m) => m.method === "ON_ACCOUNT")?.disabled).toBe(true);
     expect(paymentMethodOptions(false).every((m) => !m.disabled)).toBe(true);
+  });
+  it("a short cash tender says what to enter, with the total in the shared money format", () => {
+    expect(paymentProblemCopy("TENDER_SHORT", 18.94)).toBe("Enter at least $18.94.");
+    expect(isTenderShortCopy(paymentProblemCopy("TENDER_SHORT", 3))).toBe(true);
+    expect(isTenderShortCopy("Enter the check number.")).toBe(false);
+    expect(paymentProblemCopy("CHECK_NUMBER_REQUIRED", 18.94)).toBe("Enter the check number.");
   });
   it("validatePayment: cash must cover the total, a check needs a number, walk-in cannot go on account", () => {
     expect(validatePayment({ method: "CASH", total: 10, tendered: 5, isWalkIn: true })).toBe(
@@ -484,9 +492,14 @@ describe("pickupCompleteErrorCopy", () => {
     );
   });
   it("409 COUNTER_SALE_DAY_CLOSED: the order IS handed over, the payment is not (fixed copy, never the server text)", () => {
-    expect(PICKUP_DAY_CLOSED_COPY).toBe(
-      "Handed over. Payment not taken: the till for that day is closed.",
-    );
+    expect(PICKUP_DAY_CLOSED_COPY).toBe("Handed over. Payment is still due.");
+    // with the balance known, it says how much
+    expect(
+      pickupCompleteErrorCopy(
+        { response: { status: 409, data: { code: "COUNTER_SALE_DAY_CLOSED" } } },
+        18.94,
+      ),
+    ).toBe("Handed over. $18.94 still due.");
     expect(
       pickupCompleteErrorCopy({
         response: {
