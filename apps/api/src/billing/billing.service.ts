@@ -16,7 +16,14 @@ import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
-import { billingPauseMode, dunningEmailsFor } from "./dunning-config";
+import {
+  PAYMENT_FAILED_EMAIL_DEDUPE_STATUSES,
+  PAYMENT_FAILED_EMAIL_ENTITY_TYPE,
+  PAYMENT_FAILED_EMAIL_KIND,
+  PAYMENT_FAILED_EMAIL_REDUPE_DAYS,
+  billingPauseMode,
+  dunningEmailsFor,
+} from "./dunning-config";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { fromCents, roundMoney } from "@routeflow/pricing";
 import {
@@ -2547,7 +2554,7 @@ export class BillingService {
     const mode = billingPauseMode();
     if (dunningEmailsFor(mode) === "legacy_failed_payment") {
       try {
-        await this.sendPaymentFailedEmail(sub);
+        await this.sendPaymentFailedEmail(sub, stripeRefId(invoice?.id) ?? undefined);
       } catch (e) {
         this.logger.warn(
           `payment-failed email for tenant ${sub.tenantId} not sent: ${(e as Error)?.message}`,
@@ -2556,11 +2563,56 @@ export class BillingService {
     }
   }
 
-  /** The admin warning for a failed payment (#2440): portal link best-effort, plain-text fallback. */
-  private async sendPaymentFailedEmail(sub: {
-    tenantId: string;
-    tenant: { slug: string; name: string | null };
-  }): Promise<void> {
+  /**
+   * Row 346: has the admin already been told about THIS Stripe invoice inside the re-dedupe window? Keyed on the
+   * existing `EmailDelivery` marker (tenant + kind + entityType + entityId = the invoice id), no schema change.
+   * Only a row that actually went out counts (a FAILED / WOULD_SEND row must not silence the next retry). Best-effort:
+   * a lookup error FAILS OPEN (the email is sent) with a warn - a duplicate nudge beats a missed one.
+   */
+  private async paymentFailedEmailAlreadySent(
+    tenantId: string,
+    invoiceId: string,
+  ): Promise<boolean> {
+    try {
+      const since = new Date(Date.now() - PAYMENT_FAILED_EMAIL_REDUPE_DAYS * 24 * 60 * 60 * 1000);
+      const prior = await this.prisma.emailDelivery.findFirst({
+        where: {
+          tenantId,
+          kind: PAYMENT_FAILED_EMAIL_KIND,
+          entityType: PAYMENT_FAILED_EMAIL_ENTITY_TYPE,
+          entityId: invoiceId,
+          status: { in: [...PAYMENT_FAILED_EMAIL_DEDUPE_STATUSES] },
+          createdAt: { gte: since },
+        },
+        select: { id: true },
+      });
+      return prior != null;
+    } catch (e) {
+      this.logger.warn(
+        `payment-failed email dedupe lookup failed for tenant ${tenantId} (sending anyway): ${(e as Error)?.message}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * The admin warning for a failed payment (#2440): portal link best-effort, plain-text fallback. Row 346: sent at
+   * most once per invoice per PAYMENT_FAILED_EMAIL_REDUPE_DAYS (Stripe re-fires payment_failed on every retry); the
+   * delivery row it records is the dedupe marker. An event with no invoice id cannot be keyed, so it sends.
+   */
+  private async sendPaymentFailedEmail(
+    sub: {
+      tenantId: string;
+      tenant: { slug: string; name: string | null };
+    },
+    invoiceId?: string,
+  ): Promise<void> {
+    if (invoiceId && (await this.paymentFailedEmailAlreadySent(sub.tenantId, invoiceId))) {
+      this.logger.log(
+        `payment-failed email for tenant ${sub.tenantId} skipped: invoice ${invoiceId} was already mailed within ${PAYMENT_FAILED_EMAIL_REDUPE_DAYS} days`,
+      );
+      return;
+    }
     const adminUser = await this.prisma.user.findFirst({
       where: { tenantId: sub.tenantId, role: "TENANT_ADMIN", deletedAt: null },
       select: { email: true, username: true },
@@ -2580,6 +2632,12 @@ export class BillingService {
 <p>Please update your payment method to avoid service interruption.</p>
 ${updateLine}
 <p>RouteFlow Platform</p>`,
+      delivery: {
+        tenantId: sub.tenantId,
+        kind: PAYMENT_FAILED_EMAIL_KIND,
+        entityType: PAYMENT_FAILED_EMAIL_ENTITY_TYPE,
+        ...(invoiceId ? { entityId: invoiceId } : {}),
+      },
     });
   }
 

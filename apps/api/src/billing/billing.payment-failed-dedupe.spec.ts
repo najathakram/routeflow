@@ -16,7 +16,7 @@ const SUB = {
   failedPaymentCount: 0,
   tenant: { id: "t1", slug: "acme", name: "Acme" },
 };
-const failed = (id: string | undefined = "in_1") => ({
+const failed = (id: string | null = "in_1") => ({
   id,
   customer: "cus_1",
   parent: { subscription_details: { subscription: "sub_1" } },
@@ -226,7 +226,7 @@ describe("row 346: the #2440 failed-payment e-mail is deduped per invoice", () =
 
   it("an invoice event with no id cannot be deduped: it sends (no marker to key on)", async () => {
     const { svc, email, prisma } = make();
-    await (svc as any).onPaymentFailed(failed(undefined));
+    await (svc as any).onPaymentFailed(failed(null));
     expect(email.send).toHaveBeenCalledTimes(1);
     expect(prisma.emailDelivery.findFirst).not.toHaveBeenCalled();
   });
