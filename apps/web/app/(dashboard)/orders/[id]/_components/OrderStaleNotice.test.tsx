@@ -161,6 +161,25 @@ describe("useOrderStaleRevision (row 372)", () => {
     expect(screen.getByTestId("fee")).toHaveTextContent("10");
   });
 
+  it("feeChanged is judged against the fee loaded at edit-open, even after a refetch moves the live fee", () => {
+    const qc = new QueryClient();
+    let probe = (_c: number, _l: number | string | null | undefined) => false;
+    function F({ order }: { order: any }) {
+      const s = useOrderStaleRevision(order, true);
+      probe = s.feeChanged;
+      return null;
+    }
+    const tree = (order: any) => (
+      <QueryClientProvider client={qc}>
+        <F order={order} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree({ id: "o1", revisionNumber: 4, shippingFee: "10.00" }));
+    rerender(tree({ id: "o1", revisionNumber: 5, shippingFee: "15.00" })); // another writer's fee lands
+    expect(probe(10, "15.00")).toBe(false); // the user left 10 alone: NOT a change
+    expect(probe(12, "15.00")).toBe(true);
+  });
+
   it("outside edit mode nothing is captured and nothing is sent", () => {
     setup({ id: "o1", revisionNumber: 4 }, false);
     expect(screen.getByTestId("expected")).toHaveTextContent("undefined");

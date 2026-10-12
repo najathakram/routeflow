@@ -124,3 +124,54 @@ export function rebasePendingDeletes<L extends Line>(ids: string[], fresh: L[]):
   const live = new Set(fresh.filter(isLive).map((l) => l.id));
   return ids.filter((id) => live.has(id));
 }
+
+type Credit = { creditNoteId: string; amount?: number };
+export interface ReloadSnapshot<L> {
+  lines?: L[];
+  fee?: number;
+  credits?: Credit[];
+}
+
+/**
+ * Row 372 MF3: everything Reload re-bases, in one place (the page only wires its setters). Lines per `rebaseEditItems`;
+ * queued deletes of vanished lines dropped; the shipping fee and the applied credit notes follow the SAME rule as a
+ * line field: untouched -> the server's value; changed by the user alone -> theirs; changed by BOTH to different
+ * values -> the server's, and counted. Credits matter most: `appliedCreditNotes` is the FULL desired set, so a stale
+ * selection would silently pull back a credit another operator just applied. Returns how many things the user must
+ * re-check (the page's toast).
+ */
+export function rebaseOnReload<E extends Edit, L extends Line>(
+  s: {
+    editItems: E[];
+    editShippingFee: number;
+    editCredits: Credit[];
+    creditsTouched: boolean;
+    deps: RebaseDeps<E, L>;
+    setEditItems: (f: (prev: E[]) => E[]) => void;
+    setPendingDeletes: (f: (ids: string[]) => string[]) => void;
+    setEditShippingFee: (f: (fee: number) => number) => void;
+    setEditCredits: (c: Credit[]) => void;
+    setCreditsTouched: (t: boolean) => void;
+  },
+  fresh: ReloadSnapshot<L>,
+  base: ReloadSnapshot<L>,
+): number {
+  const [bl, fl] = [base.lines ?? [], fresh.lines ?? []];
+  const lines = rebaseEditItems(s.editItems, bl, fl, s.deps);
+  s.setEditItems((prev) => rebaseEditItems(prev, bl, fl, s.deps).items);
+  s.setPendingDeletes((ids) => rebasePendingDeletes(ids, fl));
+
+  const [bf, ff] = [base.fee ?? 0, fresh.fee ?? 0];
+  const moved = (a: number, b: number) => Math.abs(a - b) > 0.0001;
+  const feeClash = moved(s.editShippingFee, bf) && moved(ff, bf) && moved(s.editShippingFee, ff);
+  s.setEditShippingFee((f) => (!moved(f, bf) || (moved(ff, bf) && moved(f, ff)) ? ff : f));
+
+  let credits = 0;
+  if (base.credits && fresh.credits && !same(base.credits, fresh.credits)) {
+    // another operator changed the applied credits: the server's set stands (the user's selection was stale)
+    s.setEditCredits(fresh.credits);
+    s.setCreditsTouched(false);
+    if (s.creditsTouched && !same(s.editCredits, fresh.credits)) credits = 1;
+  }
+  return lines.dropped + lines.conflicts + (feeClash ? 1 : 0) + credits;
+}

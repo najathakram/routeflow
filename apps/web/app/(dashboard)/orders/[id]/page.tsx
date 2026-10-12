@@ -75,7 +75,7 @@ import {
 import { OrderReturnsPanel } from "./_components/OrderReturnsPanel";
 import { useOrderOverpayGuard } from "./_components/OrderOverpayNotice";
 import { useOrderStaleRevision } from "./_components/OrderStaleNotice";
-import { rebaseEditItems, rebasePendingDeletes } from "./_components/order-edit-rebase";
+import { rebaseOnReload } from "./_components/order-edit-rebase";
 import { describeCancelImpact } from "@/lib/cancel-impact";
 import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -814,9 +814,6 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
   }
   return updates;
 }
-
-/** Row 372 MF3: how Reload re-bases an edit (order-edit-rebase.ts) — the page's own seed of an edit row. */
-const REBASE_DEPS = { seed: buildEditItemFromLine };
 
 /**
  * BUY_N_GET_M free units for the edit preview, rescaled when the operator edits
@@ -1984,17 +1981,24 @@ export default function OrderDetailPage() {
   const [isEditing, setIsEditing] = React.useState(false);
   const overpay = useOrderOverpayGuard(order, isEditing);
   const stale = useOrderStaleRevision(order, isEditing, (fresh, base) => {
-    // row 372 MF3: Reload re-bases the edit (order-edit-rebase.ts): untouched fields refresh, the user's stay
-    const [bl, fl] = [base.lines ?? [], fresh.lines ?? []];
-    const n = rebaseEditItems(editItems, bl, fl, REBASE_DEPS);
-    setEditItems((prev) => rebaseEditItems(prev, bl, fl, REBASE_DEPS).items);
-    setPendingDeletes((ids) => rebasePendingDeletes(ids, fl));
-    setEditShippingFee((f) => (Math.abs(f - (base.fee ?? 0)) <= 0.0001 ? (fresh.fee ?? 0) : f));
-    if (n.dropped + n.conflicts > 0)
-      toast({
-        title: "A line was changed by someone else - check it before saving",
-        variant: "error",
-      });
+    // row 372 MF3: Reload re-bases lines, fee and credits (order-edit-rebase.ts); a clash is handed to the user
+    const n = rebaseOnReload(
+      {
+        editItems,
+        editShippingFee,
+        editCredits,
+        creditsTouched,
+        deps: { seed: buildEditItemFromLine },
+        setEditItems,
+        setPendingDeletes,
+        setEditShippingFee,
+        setEditCredits,
+        setCreditsTouched,
+      },
+      fresh,
+      base,
+    );
+    if (n > 0) toast({ title: "Someone else changed this order - re-check it", variant: "error" });
   }); // row 372
   const updateItems = useUpdateOrderItems({
     localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
@@ -2245,8 +2249,7 @@ export default function OrderDetailPage() {
 
     // Only send shippingFee when it actually changed — avoids no-op churn (and
     // matches the API's "no dto.shippingFee ⇒ keep the stored fee" rule).
-    const feeChanged =
-      Math.abs(editShippingFee - (stale.baseFee() ?? Number(order!.shippingFee ?? 0))) > 0.0001;
+    const feeChanged = stale.feeChanged(editShippingFee, order!.shippingFee);
 
     // #2406: fold in whatever the operator has typed into the edit-mode Returns section.
     const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
@@ -3070,11 +3073,10 @@ export default function OrderDetailPage() {
                             // Carry a shipping-fee edit into the publish save the same
                             // way handleSaveItems does — otherwise publishing straight
                             // from edit mode silently drops the fee the operator typed.
-                            const feeChanged =
-                              Math.abs(
-                                editShippingFee -
-                                  (stale.baseFee() ?? Number(order!.shippingFee ?? 0)),
-                              ) > 0.0001;
+                            const feeChanged = stale.feeChanged(
+                              editShippingFee,
+                              order!.shippingFee,
+                            );
                             // #2406: the Returns section rides this save too, never silently dropped.
                             const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
                             if (inlineReturn === null) return;

@@ -4,7 +4,7 @@
  * Uses the page's own buildItemUpdates / buildEditItemFromLine, so the pin is on the real diff, not a copy.
  */
 import { buildEditItemFromLine, buildItemUpdates, type EditItemState } from "../page";
-import { rebaseEditItems, rebasePendingDeletes } from "./order-edit-rebase";
+import { rebaseEditItems, rebaseOnReload, rebasePendingDeletes } from "./order-edit-rebase";
 import type { OrderItem } from "@/lib/api/orders";
 
 const line = (id: string, qty: number, extra: Partial<OrderItem> = {}): OrderItem =>
@@ -249,5 +249,107 @@ describe("order edit rebase (row 372 MF3)", () => {
     const fresh = [line("a", 5, { status: "CANCELLED" }), line("b", 3)];
     expect(rebasePendingDeletes(["a", "b"], fresh)).toEqual(["b"]);
     expect(rebasePendingDeletes(["z"], fresh)).toEqual([]);
+  });
+});
+
+describe("rebaseOnReload: fee and credits follow the same rule as a line field (row 372)", () => {
+  function run(
+    state: { fee: number; credits: any[]; touched: boolean; pending?: string[] },
+    base: { fee: number; credits: any[] },
+    fresh: { fee: number; credits: any[] },
+  ) {
+    const out = {
+      fee: state.fee,
+      credits: state.credits,
+      touched: state.touched,
+      pending: state.pending ?? [],
+    };
+    const n = rebaseOnReload(
+      {
+        editItems: [] as EditItemState[],
+        editShippingFee: state.fee,
+        editCredits: state.credits,
+        creditsTouched: state.touched,
+        deps,
+        setEditItems: () => undefined,
+        setPendingDeletes: (f) => {
+          out.pending = f(out.pending);
+        },
+        setEditShippingFee: (f) => {
+          out.fee = f(out.fee);
+        },
+        setEditCredits: (c) => {
+          out.credits = c;
+        },
+        setCreditsTouched: (t) => {
+          out.touched = t;
+        },
+      },
+      { lines: [], fee: fresh.fee, credits: fresh.credits },
+      { lines: [], fee: base.fee, credits: base.credits },
+    );
+    return { n, ...out };
+  }
+
+  it("the user did not touch the fee: another writer's fee is taken and nothing is counted", () => {
+    const r = run(
+      { fee: 10, credits: [], touched: false },
+      { fee: 10, credits: [] },
+      { fee: 15, credits: [] },
+    );
+    expect(r.fee).toBe(15);
+    expect(r.n).toBe(0);
+  });
+
+  it("the user changed the fee and nobody else did: theirs stands", () => {
+    const r = run(
+      { fee: 12, credits: [], touched: false },
+      { fee: 10, credits: [] },
+      { fee: 10, credits: [] },
+    );
+    expect(r.fee).toBe(12);
+  });
+
+  it("both changed the fee to different values: the server's stands and the page is told", () => {
+    const r = run(
+      { fee: 12, credits: [], touched: false },
+      { fee: 10, credits: [] },
+      { fee: 15, credits: [] },
+    );
+    expect(r.fee).toBe(15);
+    expect(r.n).toBe(1);
+  });
+
+  it("another operator applied a credit while the user's stale selection was touched: the server's set stands", () => {
+    const mine = [{ creditNoteId: "A", amount: 5 }];
+    const theirs = [{ creditNoteId: "B", amount: 7 }];
+    const r = run(
+      { fee: 0, credits: mine, touched: true },
+      { fee: 0, credits: [] },
+      { fee: 0, credits: theirs },
+    );
+    expect(r.credits).toEqual(theirs); // B is NOT pulled back by sending [A]
+    expect(r.touched).toBe(false);
+    expect(r.n).toBe(1);
+  });
+
+  it("credits unchanged by anyone: the user's touched selection is left alone", () => {
+    const mine = [{ creditNoteId: "A", amount: 5 }];
+    const r = run(
+      { fee: 0, credits: mine, touched: true },
+      { fee: 0, credits: [] },
+      { fee: 0, credits: [] },
+    );
+    expect(r.credits).toEqual(mine);
+    expect(r.touched).toBe(true);
+  });
+
+  it("a queued delete of a line that vanished is dropped", () => {
+    const r = run(
+      { fee: 0, credits: [], touched: false, pending: ["gone"] },
+      { fee: 0, credits: [] },
+      { fee: 0, credits: [] },
+    );
+    expect(r.pending).toEqual([]); // fresh has no lines, so "gone" does not exist any more
   });
 });

@@ -15,20 +15,27 @@ const isStale = (err: unknown): boolean => {
 };
 
 /** What an editor is based on: the revision, the lines and the shipping fee it saw. */
-interface Snapshot<L> {
+export interface Snapshot<L> {
   rev?: number;
   lines?: L[];
   fee?: number;
+  /** The credit notes applied to the order (the editor's `appliedCreditNotes` are judged against these). */
+  credits?: Array<{ creditNoteId: string; amount?: number }>;
 }
-const snapshotOf = <L,>(
-  o:
-    | { revisionNumber?: number; shippingFee?: number | string | null; lineItems?: L[] }
-    | null
-    | undefined,
-): Snapshot<L> => ({
+type OrderLike<L> = {
+  revisionNumber?: number;
+  shippingFee?: number | string | null;
+  lineItems?: L[];
+  orderCreditNotes?: Array<{ creditNoteId: string; amount?: number | string | null }>;
+};
+const snapshotOf = <L,>(o: OrderLike<L> | null | undefined): Snapshot<L> => ({
   rev: o?.revisionNumber,
   lines: o?.lineItems,
   fee: o ? Number(o.shippingFee ?? 0) : undefined,
+  credits: o?.orderCreditNotes?.map((c) => ({
+    creditNoteId: c.creditNoteId,
+    amount: c.amount != null ? Number(c.amount) : undefined,
+  })),
 });
 
 /**
@@ -39,14 +46,7 @@ const snapshotOf = <L,>(
  * lines keep the edit) and the next save is judged against it. Extracted so orders/[id]/page.tsx (pinned by size-ratchet.spec.ts) adds a hook call and a render.
  */
 export function useOrderStaleRevision<L extends { id: string } = { id: string }>(
-  order:
-    | {
-        id: string;
-        revisionNumber?: number;
-        shippingFee?: number | string | null;
-        lineItems?: L[];
-      }
-    | undefined,
+  order: (OrderLike<L> & { id: string }) | undefined,
   editing: boolean,
   /** After Reload: the FRESH snapshot and the one the editor was last based on (MF3: rebase the edit onto it). */
   onRebase?: (fresh: Snapshot<L>, base: Snapshot<L>) => void,
@@ -77,6 +77,9 @@ export function useOrderStaleRevision<L extends { id: string } = { id: string }>
   const baseLines = (): L[] | undefined => base?.lines;
   /** The shipping fee the editor loaded: `feeChanged` is judged against it, never the live refetch. */
   const baseFee = (): number | undefined => base?.fee;
+  /** Did the user change the shipping fee? Judged against the fee they loaded, never a live refetch. */
+  const feeChanged = (current: number, live: number | string | null | undefined): boolean =>
+    Math.abs(current - (base?.fee ?? Number(live ?? 0))) > 0.0001;
 
   const capture = (err: unknown): boolean => {
     if (!editing || !isStale(err)) return false;
@@ -89,7 +92,7 @@ export function useOrderStaleRevision<L extends { id: string } = { id: string }>
   const reload = async () => {
     if (!order) return;
     await qc.invalidateQueries({ queryKey: ["orders", order.id] });
-    const fresh = snapshotOf(qc.getQueryData<NonNullable<typeof order>>(["orders", order.id]));
+    const fresh = snapshotOf(qc.getQueryData<OrderLike<L>>(["orders", order.id]));
     if (fresh.lines) onRebase?.(fresh, base ?? snapshotOf(undefined));
     rebased.current = fresh;
     setStale(false);
@@ -110,5 +113,5 @@ export function useOrderStaleRevision<L extends { id: string } = { id: string }>
     </div>
   ) : null;
 
-  return { expected, baseLines, baseFee, capture, ownsToast, node };
+  return { expected, baseLines, baseFee, feeChanged, capture, ownsToast, node };
 }
