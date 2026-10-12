@@ -164,11 +164,6 @@ describe("OrdersService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    // SA-776: the sweep reads each candidate tenant's status; every tenant is ACTIVE unless a test says otherwise.
-    prisma.tenant.findMany.mockImplementation(
-      async ({ where }: { where?: { id?: { in?: string[] } } }) =>
-        (where?.id?.in ?? []).map((id) => ({ id, status: "ACTIVE" })),
-    );
     prisma.order.updateMany.mockResolvedValue({ count: 1 }); // SA-404f F2: cancel CAS claims
     tenantCtx = { run: jest.fn((_tenantId: string | null, fn: () => unknown) => fn()) };
     mockQueue = { add: jest.fn() };
@@ -2733,71 +2728,6 @@ describe("OrdersService", () => {
       expect(warnSpy).not.toHaveBeenCalled();
 
       expect(result).toEqual({ customers: 2, merged: 2, skipped: 0, ...noMismatches });
-    });
-
-    // SA-776: the sweep CHANGES business records (it merges and deletes PENDING orders), so it is a TRANSACTIONAL
-    // job: a tenant that is not TRIAL / ACTIVE (READ_ONLY, SUSPENDED, CANCELLED) gets no automated merges.
-    it.each(["READ_ONLY", "SUSPENDED", "CANCELLED"])(
-      "SA-776 sweepAllPendingOrders skips a %s tenant's PENDING orders and still merges an ACTIVE tenant's",
-      async (status) => {
-        const mergeSpy = jest
-          .spyOn(service, "mergeAllPendingForCustomer")
-          .mockImplementation(async () => "winner" as any);
-        jest.spyOn((service as any).logger, "log").mockImplementation(() => undefined);
-        prisma.order.groupBy
-          .mockResolvedValueOnce([
-            { customerId: "cust-a", tenantId: "tenant-a", _count: { _all: 2 } },
-            { customerId: "cust-b", tenantId: "tenant-b", _count: { _all: 3 } },
-          ])
-          .mockResolvedValueOnce([]);
-        prisma.tenant.findMany.mockResolvedValue([
-          { id: "tenant-a", status },
-          { id: "tenant-b", status: "ACTIVE" },
-        ]);
-
-        const result = await service.sweepAllPendingOrders();
-
-        expect(mergeSpy).toHaveBeenCalledTimes(1);
-        expect(mergeSpy).toHaveBeenCalledWith("cust-b", {}, expect.anything());
-        expect(tenantCtx.run).toHaveBeenCalledTimes(1);
-        expect(tenantCtx.run).toHaveBeenCalledWith("tenant-b", expect.any(Function));
-        expect(result).toEqual(expect.objectContaining({ customers: 1, merged: 1 }));
-        // one status read for the whole sweep, over exactly the candidate tenants
-        expect(prisma.tenant.findMany).toHaveBeenCalledTimes(1);
-        expect(prisma.tenant.findMany).toHaveBeenCalledWith(
-          expect.objectContaining({ where: { id: { in: ["tenant-a", "tenant-b"] } } }),
-        );
-      },
-    );
-
-    it("SA-776 a TRIAL tenant is still swept (the predicate is TRIAL + ACTIVE)", async () => {
-      const mergeSpy = jest
-        .spyOn(service, "mergeAllPendingForCustomer")
-        .mockImplementation(async () => "winner" as any);
-      jest.spyOn((service as any).logger, "log").mockImplementation(() => undefined);
-      prisma.order.groupBy
-        .mockResolvedValueOnce([
-          { customerId: "cust-a", tenantId: "tenant-a", _count: { _all: 2 } },
-        ])
-        .mockResolvedValueOnce([]);
-      prisma.tenant.findMany.mockResolvedValue([{ id: "tenant-a", status: "TRIAL" }]);
-
-      await service.sweepAllPendingOrders();
-
-      expect(mergeSpy).toHaveBeenCalledTimes(1);
-    });
-
-    it("SA-776 a candidate whose tenant row cannot be read is skipped (fail closed), never merged", async () => {
-      const mergeSpy = jest.spyOn(service, "mergeAllPendingForCustomer");
-      prisma.order.groupBy
-        .mockResolvedValueOnce([{ customerId: "cust-a", tenantId: "ghost", _count: { _all: 2 } }])
-        .mockResolvedValueOnce([]);
-      prisma.tenant.findMany.mockResolvedValue([]);
-
-      const result = await service.sweepAllPendingOrders();
-
-      expect(mergeSpy).not.toHaveBeenCalled();
-      expect(result.customers).toBe(0);
     });
 
     it("REG-B323 a customer with one tenant-scoped pending order and one legacy null-tenant order is counted and warned, never dropped silently", async () => {

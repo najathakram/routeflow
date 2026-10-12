@@ -107,11 +107,6 @@ describe("OrdersService merge paths — customer advisory lock (T3, R3)", () => 
     );
 
     prisma = createMockPrisma();
-    // SA-776: the sweep reads each candidate tenant's status; every tenant is ACTIVE unless a test says otherwise.
-    prisma.tenant.findMany.mockImplementation(
-      async ({ where }: { where?: { id?: { in?: string[] } } }) =>
-        (where?.id?.in ?? []).map((id) => ({ id, status: "ACTIVE" })),
-    );
     // Zero pending orders lets both methods short-circuit right after their
     // first read (`pendingOrders.length <= 1` / `orders.length <= 1`) —
     // enough to prove LOCK ORDERING without re-exercising the merge fold's

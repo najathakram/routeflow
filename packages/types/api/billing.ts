@@ -6,6 +6,8 @@
 // set-equal by `apps/api/src/common/enum-parity.spec.ts`'s WP1 T2 case. Keep both lists in sync
 // by hand.
 
+import type { ApiErrorCode } from "./error-codes";
+
 /** The 21 feature-flag / addon keys enforced server-side (pricing-plans.md §Feature-flag keys). */
 export const FLAG_KEYS = [
   "flag.dispatch_live",
@@ -96,7 +98,8 @@ export interface SubscriptionView<TDate = string> {
  * subscription view through `@routeflow/types/read-only-copy` and never render `message`.
  */
 export interface ReadOnlyErrorBody {
-  code: "READ_ONLY";
+  /** Always `API_ERROR_CODES.READ_ONLY` (compare through the constant, never a literal). */
+  code: ApiErrorCode;
   reason: string | null;
   message: string;
 }
