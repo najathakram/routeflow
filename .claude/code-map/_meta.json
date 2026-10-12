@@ -1,6 +1,6 @@
 {
-  "mappedSha": "7f9dfb180e5fff74625e637c754d82bd27f11f7c",
-  "generatedAt": "2026-10-12T15:45:00.000Z",
+  "mappedSha": "96fc7351fb78f50296579936e88c3369627265cf",
+  "generatedAt": "2026-10-12T17:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 19,
-    "web": 15,
+    "api": 20,
+    "web": 16,
     "mobile": 11,
     "packages": 0
   },
-  "fileCount": 1131,
-  "notes": "- **2026-10-12 — Release 5.2 bookkeeping (`5e231561c..7f9dfb180`, 26 train merges, 165 non-merge commits; docs-only, Option B follow-up).** New `api/`, `web/` and `mobile/landing-2026-10-12-r52.md` (TOC row in each area file; 93, 84 and 21 non-test source files read at the tip, 217 test files counted only; no migration). Order edit revision guard with the stale 409 reload and per-field rebase (row 372) and one edit-line pairing (row 373); category trio recomputed from the line snapshot and folds that add quantity only at an equal trio (rows 338, 340, 343); the levy named apart from tax (row 398); read-only allow-list and tenant job registries, the 403 reason and one copy helper, one billing card (SA-776); one seller-status rule for buyer writes; counter QA polish (CQ-04..CQ-34); paid-at-sale invoices show no terms or due date on the page, PDF, e-mail, mobile and buyer list (row 401, shared `isPaidAtSale` in `@routeflow/pricing`). Lessons L-303..L-305 (see `.claude/lessons`). `mappedSha` = the R5.2 tip `7f9dfb180`; members after it land in the next note."
+  "fileCount": 1141,
+  "notes": "- **2026-10-12 — R5.2 tail bookkeeping (`7f9dfb180..96fc7351f`, row 381 and four small hotfix members; docs-only, Option B follow-up).** New `api/` and `web/landing-2026-10-12-r52-tail.md` (TOC row in each area file; 28 non-test source files, 26 test files counted only; no migration). Row 381: the automatic-lock pause switch (`platform.autoLocksPaused`, fail-closed class gate before each writer's first write, class inside the compare-and-swap, held-case claim and audit rows), the platform-admin switch API with preview, the super-admin card, and the writer-census pin; platform/tenant auth callbacks turn the wrong state type away first; the Connect callback refuses a workspace not accepting changes with status-specific copy; the invoice PDF pointer is written only when it changes. Lesson L-306. `mappedSha` = master `96fc7351f`."
 }
