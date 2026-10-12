@@ -68,12 +68,17 @@ export function useStockCountSessions(params?: ListStockCountSessionsParams) {
   });
 }
 
-export function useStockCountSession(id: string | null | undefined) {
+/** `pollMs`: re-read the session on this interval (the "Saving count… N of M" read while a commit runs). */
+export function useStockCountSession(
+  id: string | null | undefined,
+  opts?: { pollMs?: number | false },
+) {
   return useQuery<StockCountSessionDetail>({
     queryKey: ["stock-counts", id],
     queryFn: () => apiClient.get(`/inventory/stock-counts/${id}`).then((r) => r.data),
     enabled: !!id,
     staleTime: 0,
+    refetchInterval: opts?.pollMs || false,
   });
 }
 

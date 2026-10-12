@@ -6,10 +6,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Camera, History, RefreshCw, Trash2, Undo2 } from "lucide-react";
 import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import {
+  STOCK_COUNT_ENTER_AS_YOU_GO_COPY,
   STOCK_COUNT_FINISH_WITH_SKIPS_LABEL,
   STOCK_COUNT_RECOUNT_COPY,
   stockCountCommitFailure,
-  stockCountSavingCopy,
+  stockCountCommitPollMs,
+  stockCountProductInOpenCount,
+  stockCountSavingLine,
   type StockCountCommitFailure,
 } from "@routeflow/types";
 
@@ -83,7 +86,7 @@ export function StockCountTab() {
 
   // While a commit runs, re-read the session every 2 s: its `commit` is the "Saving count… N of M".
   const { data: sessionDetail } = useStockCountSession(sessionId, {
-    pollMs: commitSession.isPending ? 2000 : false,
+    pollMs: stockCountCommitPollMs(commitSession.isPending),
   });
   const { data: openSessionsData } = useStockCountSessions({ status: "OPEN", limit: 5 });
   const openSessions = (openSessionsData?.data ?? []).filter((s) => s.id !== sessionId);
@@ -172,7 +175,31 @@ export function StockCountTab() {
       }),
     );
 
-    const anyFailed = results.some((r) => !r.ok);
+    // SA-767 r-note 5 SA-3: a line the server refuses because another open count already has the product
+    // is a permanent refusal, not a sync failure - retrying it every few seconds would never succeed.
+    // Say which count has it (with a link), drop the pending write and take the row off this count.
+    const refusals = results.flatMap((r) => {
+      if (r.ok) return [];
+      const open = stockCountProductInOpenCount(r.err);
+      return open ? [{ productId: r.productId, open }] : [];
+    });
+    const refusedIds = new Set(refusals.map((r) => r.productId));
+    const anyFailed = results.some((r) => !r.ok && !refusedIds.has(r.productId));
+    for (const { open } of refusals) {
+      toast({
+        title: open.copy,
+        variant: "error",
+        action: open.sessionId
+          ? {
+              label: "Open that count",
+              onClick: () => router.push(`/inventory/stock-counts/${open.sessionId}`),
+            }
+          : undefined,
+      });
+    }
+    if (refusedIds.size > 0) {
+      setRows((prev) => prev.filter((r) => !refusedIds.has(r.productId)));
+    }
 
     setRows((prev) =>
       prev.map((r) => {
@@ -197,7 +224,10 @@ export function StockCountTab() {
       // Reference equality: only clear the entry we just sent — if a newer
       // write replaced it while this request was in flight, leave the newer
       // one queued so it flushes next (see `queueIncrement`/`queueAbsolute`).
-      if (res.ok && pendingRef.current.get(res.productId) === res.entry) {
+      if (
+        (res.ok || refusedIds.has(res.productId)) &&
+        pendingRef.current.get(res.productId) === res.entry
+      ) {
         pendingRef.current.delete(res.productId);
       }
     }
@@ -945,6 +975,8 @@ export function StockCountTab() {
           </Button>
         </div>
 
+        <p className="text-[11px] text-navy/70">{STOCK_COUNT_ENTER_AS_YOU_GO_COPY}</p>
+
         {sessionId ? (
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-navy/70">
             <span>
@@ -1068,11 +1100,10 @@ export function StockCountTab() {
         isSubmitting={commitSession.isPending}
         commitStatus={{
           // "Saving count… N of M": while the commit runs, or while the session says one is unfinished.
-          savingCopy: sessionDetail?.commit
-            ? stockCountSavingCopy(sessionDetail.commit)
-            : commitSession.isPending
-              ? "Saving count…"
-              : null,
+          savingCopy: stockCountSavingLine({
+            pending: commitSession.isPending,
+            commit: sessionDetail?.commit,
+          }),
           // The permanent sentence points at the button, so it shows only when the button is offered.
           notice:
             commitFailure && (!commitFailure.permanent || sessionDetail?.commit)

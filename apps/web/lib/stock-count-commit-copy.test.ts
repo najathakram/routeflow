@@ -1,6 +1,7 @@
 import {
   STOCK_COUNT_FINISH_WITH_SKIPS_LABEL,
   STOCK_COUNT_RECOUNT_COPY,
+  STOCK_COUNT_ENTER_AS_YOU_GO_COPY,
   stockCountCommitFailure,
   stockCountProductInOpenCount,
   stockCountSavingCopy,
@@ -114,5 +115,11 @@ describe("one open count per product copy", () => {
       copy: "Some products are also in another open count. Remove them from one count, then commit again.",
       permanent: false,
     });
+  });
+
+  it("the count screen help line", () => {
+    expect(STOCK_COUNT_ENTER_AS_YOU_GO_COPY).toBe(
+      "Enter counts as you go, right after you count each product.",
+    );
   });
 });

@@ -32,6 +32,13 @@ export const STOCK_COUNT_PERMANENT_COPY =
 export const STOCK_COUNT_OVERLAP_COMMIT_COPY =
   "Some products are also in another open count. Remove them from one count, then commit again.";
 
+/**
+ * SA-767 r-note 5 (residual, accepted): a sale made between counting a product and entering the number
+ * is absorbed into the baseline - the stamp time is when the count is RECORDED. The count screen says so.
+ */
+export const STOCK_COUNT_ENTER_AS_YOU_GO_COPY =
+  "Enter counts as you go, right after you count each product.";
+
 /** "Already being counted in <count>" - an add refused by 409 PRODUCT_IN_OPEN_COUNT. */
 export function productInOpenCountCopy(sessionName?: string | null): string {
   const name = typeof sessionName === "string" ? sessionName.trim() : "";
@@ -46,6 +53,24 @@ export interface StockCountCommitProgress {
 /** "Saving count… N of M" - while a commit runs, or while the session detail says one is unfinished. */
 export function stockCountSavingCopy(p: StockCountCommitProgress): string {
   return `Saving count… ${p.committedLines} of ${p.totalLines}`;
+}
+
+/**
+ * The "Saving count…" line for the review screen, ONE selection for web and mobile: the numbers while
+ * the session detail says a commit is unfinished (`commit`), a bare "Saving count…" while the commit
+ * request is in flight but the detail has not reported yet, nothing otherwise.
+ */
+export function stockCountSavingLine(state: {
+  pending: boolean;
+  commit?: StockCountCommitProgress | null;
+}): string | null {
+  if (state.commit) return stockCountSavingCopy(state.commit);
+  return state.pending ? "Saving count…" : null;
+}
+
+/** How often the session detail is re-read while a commit request is in flight (ms); false = never. */
+export function stockCountCommitPollMs(pending: boolean): number | false {
+  return pending ? 2000 : false;
 }
 
 export interface StockCountSkippedProductView {
