@@ -23,6 +23,9 @@ const ERROR_MESSAGES: Record<string, string> = {
     "This Google account is already linked to a different user. Sign in with that account or use a different Google account.",
   google_account_mismatch:
     "This Google account doesn't match the one already linked to this email. Sign in with your linked Google account or your password.",
+  // The invite on this sign-in belongs to a seller that is not taking online orders right now (fixed copy, no reason).
+  seller_unavailable:
+    "This seller isn't taking online orders right now. Please check back soon or contact them.",
   oauth_cancelled: "Sign-in was cancelled. Please try again.",
   unknown_error: "An unexpected error occurred. Please try again.",
 };
@@ -253,6 +256,7 @@ function GoogleCallbackInner() {
           </a>
         ) : errorCode === "unauthorized" ||
           errorCode === "tenant_suspended" ||
+          errorCode === "seller_unavailable" ||
           errorCode === "google_account_mismatch" ? (
           <a
             href="/login"

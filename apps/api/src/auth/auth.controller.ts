@@ -740,6 +740,8 @@ export class AuthController {
       "google_id_taken",
       // #2495: an email match already bound to a DIFFERENT Google sub.
       "google_account_mismatch",
+      // The invite on the sign-in belongs to a seller whose workspace is not taking it (fixed neutral copy client-side).
+      "seller_unavailable",
     ]);
     return allowed.has(raw) ? raw : "unknown_error";
   }

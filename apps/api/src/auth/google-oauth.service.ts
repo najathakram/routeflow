@@ -19,6 +19,7 @@ import { EmailService } from "../email/email.service";
 import type { AppConfig } from "../config/configuration";
 import type { JwtPayload } from "./jwt-payload.interface";
 import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.interface";
+import { sellerAcceptsBuyerWrite } from "../buyer/seller-status-gate";
 import { EntitlementsService } from "../billing/entitlements.service";
 import type { DeviceInfo } from "./auth.service";
 import { escapeHtml } from "../common/html-escape";
@@ -107,6 +108,9 @@ export type GoogleAuthResult =
 // ─── Service ─────────────────────────────────────────────────────────────────
 
 const NONCE_TTL_SECS = 600; // 10 minutes
+
+/** What the callback's invite step did: linked, silently skipped (dead / removed / expired), or refused by the seller's status. */
+type InviteOutcome = "accepted" | "ignored" | "seller_unavailable";
 
 // B349: the OAuth `state` is signed so a caller cannot rewrite `linkUserId` (or any
 // other field) to attach their Google identity to someone else's account. The key is
@@ -838,9 +842,15 @@ export class GoogleOAuthService {
 
     // Process an invite token embedded in the OAuth state
     if (profile.inviteToken) {
-      await this.acceptInviteToken(profile.inviteToken, buyer.id).catch((e: Error) =>
-        this.logger.warn(`Invite token processing failed: ${e.message}`),
+      const outcome = await this.acceptInviteToken(profile.inviteToken, buyer.id).catch(
+        (e: Error): InviteOutcome => {
+          this.logger.warn(`Invite token processing failed: ${e.message}`);
+          return "ignored";
+        },
       );
+      // The seller's workspace is not taking the acceptance: nothing was written and the invite is still on the
+      // row. The callback answers it with its usual redirect-with-a-code (the controllers allow-list this code).
+      if (outcome === "seller_unavailable") throw new ForbiddenException("seller_unavailable");
     }
 
     // REG-B141: the count of USABLE sellers the Google callback hands the client (web reads it
@@ -872,7 +882,7 @@ export class GoogleOAuthService {
 
   // ─── Invite token helper ───────────────────────────────────────────────────
 
-  private async acceptInviteToken(token: string, buyerAccountId: string): Promise<void> {
+  private async acceptInviteToken(token: string, buyerAccountId: string): Promise<InviteOutcome> {
     // PENDING_SELLER_APPROVAL is redeemable too: a buyer-initiated request against an
     // INVITED row flips the status while PRESERVING the token, and the true invitee's
     // emailed link must keep working. Mirrors BuyerService.acceptInvite's gate, including
@@ -886,9 +896,23 @@ export class GoogleOAuthService {
         status: { in: ["INVITED", "PENDING_SELLER_APPROVAL"] },
         customer: { deletedAt: null },
       },
+      include: { tenant: { select: { id: true, status: true } } },
     });
-    if (!link) return;
-    if (link.inviteExpiresAt && link.inviteExpiresAt < new Date()) return;
+    if (!link) return "ignored";
+    if (link.inviteExpiresAt && link.inviteExpiresAt < new Date()) return "ignored";
+
+    // The acceptance follows the seller's workspace status through the ONE buyer-write rule (SA-776;
+    // buyer/seller-status-gate.ts), before any write. A refusal leaves the row and its invite token untouched, so the
+    // invite can be accepted once the seller is back.
+    const verdict = link.tenant
+      ? sellerAcceptsBuyerWrite({
+          sellerStatus: link.tenant.status,
+          sellerId: link.tenant.id,
+          logger: this.logger,
+          context: "GET /api/v1/auth/google/callback (invite)",
+        })
+      : ({ allowed: false, reason: "SELLER_BLOCKED" } as const);
+    if (!verdict.allowed) return "seller_unavailable";
 
     await this.prisma.customerLink.update({
       where: { id: link.id },
@@ -901,6 +925,7 @@ export class GoogleOAuthService {
       },
     });
     this.logger.log(`CustomerLink accepted via Google invite: buyer=${buyerAccountId}`);
+    return "accepted";
   }
 
   // ─── Token issuance helpers ────────────────────────────────────────────────
