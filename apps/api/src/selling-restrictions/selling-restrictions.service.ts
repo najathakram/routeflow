@@ -10,6 +10,7 @@ import type {
 } from "@routeflow/types";
 import { assertAmbientTenant } from "../common/ambient-tenant";
 import { normalizeUsState } from "../common/us-states";
+import { excludeWalkIn } from "../customers/walk-in-protected";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import {
@@ -240,7 +241,10 @@ export class SellingRestrictionsService {
       // Same shape as `evaluate`'s address read: the nested select is not rewritten by the tenant
       // extension, so a legacy address row with a NULL tenantId still counts as the customer's.
       const page = await db.customer.findMany({
-        where: { tenantId, deletedAt: null },
+        // The tenant's system walk-in customer has no address by design (counter sales to an
+        // anonymous buyer), so it is excluded in SQL by the shared `isWalkIn` predicate — never by
+        // name, and never counted as "missing an address".
+        where: excludeWalkIn({ tenantId, deletedAt: null }),
         orderBy: { id: "asc" },
         take: ENABLE_READINESS_PAGE_SIZE,
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),

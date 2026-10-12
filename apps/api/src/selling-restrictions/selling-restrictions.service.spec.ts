@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { ConflictException, InternalServerErrorException, Logger } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
+import { excludeWalkIn } from "../customers/walk-in-protected";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -837,7 +838,7 @@ describe("SellingRestrictionsService.evaluate", () => {
       const calls = prisma.customer.findMany.mock.calls.map((c: any[]) => c[0]);
       expect(calls).toHaveLength(3);
       for (const c of calls) {
-        expect(c.where).toEqual({ tenantId: T, deletedAt: null });
+        expect(c.where).toEqual(excludeWalkIn({ tenantId: T, deletedAt: null }));
         expect(c.orderBy).toEqual({ id: "asc" });
         expect(c.take).toBe(ENABLE_READINESS_PAGE_SIZE);
       }
@@ -849,6 +850,78 @@ describe("SellingRestrictionsService.evaluate", () => {
       expect(calls[2]).toMatchObject({
         cursor: { id: cid(ENABLE_READINESS_PAGE_SIZE * 2 - 1) },
         skip: 1,
+      });
+    });
+
+    describe("system walk-in customer (CQ-04): excluded by predicate, never by name", () => {
+      type Row = {
+        id: string;
+        businessName: string;
+        isWalkIn?: boolean | null;
+        addresses: unknown[];
+      };
+      /** Evaluates the query's own `where` (null-or-false `isWalkIn` filter), so the SQL predicate is proven. */
+      const matches = (row: Row, cond: any): boolean => {
+        if (!cond || typeof cond !== "object") return true;
+        if (Array.isArray(cond.AND) && !cond.AND.every((c: any) => matches(row, c))) return false;
+        if (Array.isArray(cond.OR) && !cond.OR.some((c: any) => matches(row, c))) return false;
+        if ("isWalkIn" in cond && (row.isWalkIn ?? null) !== cond.isWalkIn) return false;
+        return true;
+      };
+      const serveWhere = (rows: Row[]) =>
+        prisma.customer.findMany.mockImplementation(async (args: any) =>
+          rows.filter((r) => matches(r, args.where)).slice(0, args.take),
+        );
+      const walkIn: Row = { id: "walk-in", businessName: "Walk-in", isWalkIn: true, addresses: [] };
+
+      it("a tenant whose only address-less customer is the system walk-in is READY", async () => {
+        enable(true);
+        serveWhere([
+          walkIn,
+          { id: "a", businessName: "Acme", isWalkIn: null, addresses: [addr()] },
+          { id: "b", businessName: "Beta", isWalkIn: false, addresses: [addr()] },
+        ]);
+        expect(await service.getEnableReadiness(T)).toEqual({
+          ready: true,
+          truncated: false,
+          customerCount: 2,
+          customersWithoutAddress: 0,
+          customersAmbiguousNoDefault: 0,
+          addressesMissingStateCode: 0,
+          addressesNeedingReview: 0,
+          indeterminateCustomerCount: 0,
+        });
+      });
+
+      it("a real customer without an address is still counted", async () => {
+        enable(true);
+        serveWhere([
+          walkIn,
+          { id: "real", businessName: "Real Co", isWalkIn: null, addresses: [] },
+        ]);
+        const r = await service.getEnableReadiness(T);
+        expect(r).toMatchObject({
+          ready: false,
+          customerCount: 1,
+          customersWithoutAddress: 1,
+          indeterminateCustomerCount: 1,
+        });
+      });
+
+      it("a customer NAMED 'Walk-in' that is not a system customer is still counted", async () => {
+        enable(true);
+        serveWhere([
+          walkIn,
+          { id: "lookalike", businessName: "Walk-in", isWalkIn: null, addresses: [] },
+          { id: "lookalike-false", businessName: "Walk-in", isWalkIn: false, addresses: [] },
+        ]);
+        const r = await service.getEnableReadiness(T);
+        expect(r).toMatchObject({
+          ready: false,
+          customerCount: 2,
+          customersWithoutAddress: 2,
+          indeterminateCustomerCount: 2,
+        });
       });
     });
 
