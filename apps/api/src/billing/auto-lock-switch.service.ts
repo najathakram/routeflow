@@ -142,7 +142,12 @@ export class AutoLockSwitchService implements AutoLockSwitch {
     reason: string,
     actor: string | null,
   ): Promise<AutoLockSwitchState> {
-    const at = new Date();
+    // An unpause of an ALREADY-unpaused switch is not a new unpause: keep the original instant, or every final
+    // notice would be re-issued and every pending lock would slide 24 h (row 412).
+    this.invalidate();
+    const previous = paused ? null : await this.getState();
+    const at =
+      previous && !previous.paused && previous.unpausedAt ? previous.unpausedAt : new Date();
     const value = JSON.stringify({ paused, reason, by: actor, at: at.toISOString() });
     await this.prisma.$executeRaw`
       INSERT INTO "PlatformConfig" ("id", "key", "value", "updatedAt")

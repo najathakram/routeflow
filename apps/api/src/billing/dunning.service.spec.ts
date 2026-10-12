@@ -469,7 +469,8 @@ describe("DunningService", () => {
           logged,
           autoLocks: {
             isPaused: async () => sw.paused,
-            unpausedSince: async () => (sw.paused ? null : sw.unpausedAt),
+            // the contract: null only while paused; an unpaused switch with no instant set = unpaused long ago
+            unpausedSince: async () => (sw.paused ? null : (sw.unpausedAt ?? new Date(0))),
           },
           localPausedAt: at(177),
           txTenant: { status: "ACTIVE", readOnlyReason: null, class: cls },

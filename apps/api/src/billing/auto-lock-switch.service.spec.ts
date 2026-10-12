@@ -248,7 +248,7 @@ describe("AutoLockSwitchService", () => {
     expect(executeRaw).toHaveBeenCalledTimes(1);
     const written = JSON.parse(String((executeRaw.mock.calls as any[][])[0][2]));
     expect(written).toMatchObject({ paused: false, reason: "r", by: "u1" });
-    expect(queryRaw).toHaveBeenCalledTimes(2); // primed + the post-write refresh
+    expect(queryRaw).toHaveBeenCalledTimes(3); // primed + the previous-state read (unpause only) + the post-write refresh
     expect(state.paused).toBe(false);
   });
 });

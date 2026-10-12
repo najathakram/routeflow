@@ -354,7 +354,7 @@ export class DunningService {
       return "noop";
     }
 
-    const paused = await pauseTenantTx(deps, row, invoiceId, since, now);
+    const paused = await pauseTenantTx(deps, row, invoiceId, since, now, finalSentAt);
     if (!paused) return "noop"; // CAS loser: another sweep paused it, or invoice.paid resumed it first
     this.tenantStatusGuard.invalidate(row.tenantId);
     this.logger.warn(`billing.dunning.paused tenant=${row.tenantId} invoice=${invoiceId}`);
