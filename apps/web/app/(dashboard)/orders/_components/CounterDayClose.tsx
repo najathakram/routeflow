@@ -17,6 +17,7 @@ import {
 import type { DayCloseSnapshot, DayCloseState } from "@routeflow/types";
 import { Button, Input, Modal, Textarea, cn } from "@routeflow/ui/web";
 import {
+  Z_REPORT_EMAILED_COPY,
   Z_REPORT_RESEND_FAILED_COPY,
   DAY_OFFLINE_COPY,
   DAY_REOPEN_FAILED_COPY,
@@ -50,7 +51,7 @@ function parseFloatInput(raw: string): number | null {
   return validOpeningFloat(n) ? n : null;
 }
 
-/** Short / Even / Over, in words AND colour (never colour alone); the wording is the Z view's own (`verdictText`). */
+/** Balanced / Short / Over, in words AND colour (never colour alone); the wording is the Z view's own (`verdictText`). */
 function varianceView(variance: number): { text: string; tone: string } {
   if (variance === 0) return { text: verdictText("even", 0), tone: "text-green-700" };
   if (variance > 0) return { text: verdictText("over", variance), tone: "text-amber-700" };
@@ -125,7 +126,7 @@ function DayCloseForm({
       title={editing ? "Edit count" : "Close day"}
       description={
         editing
-          ? "Fix the count. The window stays the same and a corrected report is sent."
+          ? "Sales times stay the same. A corrected Z report is emailed."
           : "Count the drawer. The totals are checked again when you close."
       }
       scroll
@@ -251,6 +252,23 @@ function DayCloseFormBody({
           This day was reopened. Count the drawer again to close it.
         </p>
       ) : null}
+      {/* the Variance is the hero: sticky under the title so a phone keeps it in view while the counts scroll; neutral until
+          the first count entry (a drawer with nothing counted yet is not "short") */}
+      <div
+        className="sticky top-0 z-10 -mx-1 border-b bg-white px-1 pb-2"
+        data-testid="day-close-variance-hero"
+      >
+        <p className="text-xs text-navy/70">Variance</p>
+        <p
+          className={cn(
+            "text-2xl font-semibold tabular-nums",
+            counted > 0 ? view?.tone : "text-navy",
+          )}
+          data-testid="close-variance"
+        >
+          {view ? view.text : "—"}
+        </p>
+      </div>
       <dl
         className="space-y-1 rounded border bg-navy/5 p-3 text-sm"
         aria-label="Drawer figures"
@@ -258,18 +276,12 @@ function DayCloseFormBody({
       >
         <Figure label="Counted" value={money(counted)} testId="close-counted" />
         <Figure
-          label="Expected"
+          label="Expected cash"
           value={expected === null ? "—" : money(expected)}
           testId="close-expected"
         />
-        <Figure
-          label="Variance"
-          value={view ? view.text : "—"}
-          testId="close-variance"
-          className={cn("font-semibold", view?.tone)}
-        />
         <p className="pt-1 text-xs text-navy/70" data-testid="close-not-at-till">
-          Not taken at the till: {money(shownTotals.notAtTill)}
+          Unpaid pickups: {money(shownTotals.notAtTill)}
         </p>
         {refunds.tenderKnown === false ? (
           <p className="text-xs text-navy/70" data-testid="close-tender-note">
@@ -366,7 +378,7 @@ function DayCloseFormBody({
                   void onViewZ().finally(() => setViewing(false));
                 }}
               >
-                View Z
+                View Z report
               </Button>
             ) : null}
           </div>
@@ -419,7 +431,7 @@ function ClosedCard({
       </p>
       <dl className="space-y-1">
         <Figure label="Opening float" value={money(close.openingFloat)} testId="closed-float" />
-        <Figure label="Expected" value={money(close.expectedCash)} testId="closed-expected" />
+        <Figure label="Expected cash" value={money(close.expectedCash)} testId="closed-expected" />
         <Figure label="Counted" value={money(close.countedCash)} testId="closed-counted" />
         <Figure
           label="Variance"
@@ -448,11 +460,11 @@ function ClosedCard({
           </Button>
         </div>
       ) : close.reportSent === true ? (
-        <p className="text-xs text-navy/70">Report sent to the admins</p>
+        <p className="text-xs text-navy/70">{Z_REPORT_EMAILED_COPY}</p>
       ) : null}
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="secondary" className="min-h-11" onClick={onViewZ}>
-          View Z
+          View Z report
         </Button>
         {canEdit ? (
           <Button type="button" variant="secondary" className="min-h-11" onClick={onEdit}>

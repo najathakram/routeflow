@@ -11,7 +11,7 @@ jest.mock("@/lib/api-client", () => ({
 
 /**
  * SA-750r3 §4: the Z view prints the groups of `dayCloseZSections` in the plan's order. Every figure below is the fixture's own;
- * the component derives nothing (Cash in drawer is the stored expectedCash, Net collected the stored netCollected).
+ * the component derives nothing (Expected cash is the stored expectedCash, Net collected the stored netCollected).
  */
 const TOTALS: DayCloseTotals = {
   salesCount: 9,
@@ -71,23 +71,25 @@ describe("ZReportView", () => {
     expect(screen.getByTestId("z-closed-line")).toHaveTextContent("Closed 9:42 PM by Sam");
     expect(screen.getByTestId("z-window-line")).toHaveTextContent("8:05 AM – 9:42 PM");
     const headline = screen.getByTestId("z-headline");
-    expect(headline).toHaveTextContent("Counted $282.50 · Short $2.50");
-    expect(headline.className).toMatch(/font-bold/);
+    // owner ruling 10-12: the variance verdict is the hero, "Counted" sits beneath it
+    expect(headline).toHaveTextContent("Short $2.50");
+    expect(headline.className).toMatch(/text-2xl font-semibold/);
+    expect(screen.getByTestId("z-counted")).toHaveTextContent("Counted $282.50");
 
     const body = screen.getByTestId("z-report");
     const headings = within(body)
       .getAllByRole("heading", { level: 3 })
       .map((h) => h.textContent);
-    expect(headings).toEqual(["Money in", "Credit & account", "Refunds & net", "Drawer"]);
-    // meta, headline, groups, then Not taken at the till, then the note: in the plan's order
+    expect(headings).toEqual(["Drawer", "Money in", "Credit & account", "Refunds & net"]);
+    // meta, headline, counted, the Drawer right under it, the other groups, then the note: in the plan's order
     const order = [
       "z-closed-line",
       "z-headline",
+      "z-counted",
+      "z-group-Drawer",
       "z-group-Money in",
       "z-group-Credit & account",
       "z-group-Refunds & net",
-      "z-group-Drawer",
-      "z-not-at-till",
       "z-note",
     ].map((id) => screen.getByTestId(id));
     for (let i = 1; i < order.length; i++) {
@@ -105,9 +107,9 @@ describe("ZReportView", () => {
     expect(row("Total")).toHaveTextContent("$300.00");
     expect(row("Pickup hand-overs (in till cash)")).toHaveTextContent("$60.00");
     expect(row("Pickup hand-overs (in till cash)")).toHaveTextContent("2 hand-overs");
-    // one vocabulary with the email: the count first, a space on both sides of every middle dot
+    // one vocabulary with the email: the amount first, a space on both sides of every middle dot
     expect(row("Pickup hand-overs (in till cash)").querySelector("dd")?.textContent).toBe(
-      "2 hand-overs · $60.00",
+      "$60.00 · 2 hand-overs",
     );
     expect(row("On account")).toHaveTextContent("$12.50");
     expect(row("Cash refunds")).toHaveTextContent("$15.00");
@@ -115,9 +117,14 @@ describe("ZReportView", () => {
     expect(row("Opening float")).toHaveTextContent("$100.00");
     // 285 - 100 + 15
     expect(row("Cash from sales")).toHaveTextContent("$200.00");
-    expect(row("Cash in drawer")).toHaveTextContent("$285.00");
+    expect(row("Expected cash")).toHaveTextContent("$285.00");
     expect(row("Counted")).toHaveTextContent("$282.50");
-    expect(row("Over/short")).toHaveTextContent("-$2.50");
+    expect(row("Variance")).toHaveTextContent("-$2.50");
+    // the unpaid pickups are a Drawer row, never an orphan line under the report
+    expect(row("Unpaid pickups")).toHaveTextContent("$40.00");
+    expect(within(screen.getByTestId("z-group-Drawer")).getByTestId("z-row-Unpaid pickups")).toBe(
+      row("Unpaid pickups"),
+    );
   });
 
   it("prints zero rows as $0.00, never a dash or a blank", () => {
@@ -135,14 +142,14 @@ describe("ZReportView", () => {
     expect(screen.getByTestId("z-report").textContent).not.toMatch(/[—–]\s*\$|NaN|undefined/);
   });
 
-  it("bolds exactly Net collected and Cash in drawer", () => {
+  it("bolds exactly Expected cash and Net collected", () => {
     renderWithProviders(<ZReportBody snapshot={snap()} />);
     const bold = screen
       .getByTestId("z-report")
       .querySelectorAll('[data-testid^="z-row-"].font-bold');
     expect([...bold].map((b) => b.getAttribute("data-testid"))).toEqual([
+      "z-row-Expected cash",
       "z-row-Net collected",
-      "z-row-Cash in drawer",
     ]);
   });
 
@@ -151,22 +158,28 @@ describe("ZReportView", () => {
     void _drop;
     renderWithProviders(<ZReportBody snapshot={snap({ totals: older })} />);
     expect(row("Pickup hand-overs (in till cash)")).toHaveTextContent("Not recorded");
-    expect(row("Pickup hand-overs (in till cash)")).not.toHaveTextContent("hand-overs ·");
+    expect(row("Pickup hand-overs (in till cash)").querySelector("dd")?.textContent).toBe(
+      "Not recorded",
+    );
   });
 
   it.each([
-    [-2.5, "Counted $282.50 · Short $2.50", "-$2.50"],
-    [0, "Counted $285.00 · Even $0.00", "$0.00"],
-    [1, "Counted $286.00 · Over $1.00", "+$1.00"],
-  ])("variance %s reads %s", (variance, headline, over) => {
+    [-2.5, "Short $2.50", "Counted $282.50", "-$2.50"],
+    [0, "Balanced", "Counted $285.00", "$0.00"],
+    [1, "Over $1.00", "Counted $286.00", "+$1.00"],
+  ])("variance %s reads %s", (variance, headline, counted, over) => {
     renderWithProviders(<ZReportBody snapshot={snap({ variance, countedCash: 285 + variance })} />);
-    expect(screen.getByTestId("z-headline")).toHaveTextContent(headline);
-    expect(row("Over/short")).toHaveTextContent(over);
+    expect(screen.getByTestId("z-headline").textContent).toBe(headline);
+    expect(screen.getByTestId("z-counted")).toHaveTextContent(counted);
+    expect(row("Variance")).toHaveTextContent(over);
+    for (const gone of ["Even", "Under", "Over/short"])
+      expect(screen.getByTestId("z-report").textContent).not.toContain(gone);
   });
 
-  it("shows Not taken at the till and warns only when a refund has no method", () => {
+  it("shows Unpaid pickups in the Drawer and warns only when a refund has no method", () => {
     const { unmount } = renderWithProviders(<ZReportBody snapshot={snap()} />);
-    expect(screen.getByTestId("z-not-at-till")).toHaveTextContent("Not taken at the till: $40.00");
+    expect(screen.queryByTestId("z-not-at-till")).toBeNull();
+    expect(row("Unpaid pickups")).toHaveTextContent("$40.00");
     expect(screen.queryByTestId("z-tender-warning")).toBeNull();
     unmount();
     renderWithProviders(
@@ -177,7 +190,7 @@ describe("ZReportView", () => {
       />,
     );
     expect(screen.getByTestId("z-tender-warning")).toHaveTextContent(
-      "Some refunds have no method. Cash in drawer may be high.",
+      "Some refunds have no method. Expected cash may be high.",
     );
   });
 
@@ -212,7 +225,8 @@ describe("ZReportView", () => {
     const dialog = screen.getByRole("dialog");
     expect(dialog.className).toMatch(/h-\[100dvh\]/);
     expect(dialog.className).toMatch(/w-screen/);
-    expect(within(dialog).getByRole("button", { name: "Close" }).className).toMatch(/min-h-11/);
+    for (const b of within(dialog).getAllByRole("button", { name: "Close" }))
+      expect(b.className).toMatch(/min-h-11/);
     expect(within(dialog).queryAllByRole("listitem")).toHaveLength(0);
   });
 
@@ -223,21 +237,23 @@ describe("ZReportView", () => {
   });
 });
 
-describe("ZReportView: actions (Print, Resend, Back to sales)", () => {
+describe("ZReportView: actions (Print, Email, Close)", () => {
   const actions = () => screen.getByTestId("z-actions");
 
-  it("puts Print first and primary, then Resend, then Back to sales, above the report", () => {
+  it("puts Print first and primary, then Email, then Close, in a footer pinned below the report", () => {
     renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
     const buttons = within(actions()).getAllByRole("button");
-    expect(buttons.map((b) => b.textContent)).toEqual(["Print", "Resend", "Back to sales"]);
-    // Print is the primary action: the filled variant, Resend and Back to sales the quiet one
+    expect(buttons.map((b) => b.textContent)).toEqual(["Print", "Email", "Close"]);
+    // Print is the primary action: the filled variant, Email and Close the quiet one
     expect(buttons[0].className).toMatch(/bg-accent-strong/);
     expect(buttons[1].className).not.toMatch(/bg-accent-strong/);
     expect(buttons[2].className).not.toMatch(/bg-accent-strong/);
+    // pinned footer: the Modal's own footer region, outside the scrolling body, after the report
     expect(
-      actions().compareDocumentPosition(screen.getByTestId("z-report")) &
+      screen.getByTestId("z-report").compareDocumentPosition(actions()) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(actions().closest("[class*='shrink-0']")).not.toBeNull();
   });
 
   it("every action is a 44px target, and the modal's own X stays", () => {
@@ -245,12 +261,18 @@ describe("ZReportView: actions (Print, Resend, Back to sales)", () => {
     for (const b of within(actions()).getAllByRole("button"))
       expect(b.className).toMatch(/min-h-11/);
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByRole("button", { name: "Close" })).toBeInTheDocument();
+    expect(within(dialog).getAllByRole("button", { name: "Close" })).toHaveLength(2); // the X and the footer
+  });
+  it("focus opens on the title, not on the X", () => {
+    renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { name: "Z report · Fri, Oct 9" }),
+    );
   });
 
   it("the action row is hidden when printing, and the report prints alone", () => {
     renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
-    expect(actions().className).toMatch(/print:hidden/);
+    expect(actions().parentElement?.className).toMatch(/print:hidden/);
     const dialog = screen.getByRole("dialog");
     expect(dialog.className).toMatch(/z-report-print-root/);
     expect(dialog.className).toMatch(/print:static/);
@@ -276,40 +298,40 @@ describe("ZReportView: actions (Print, Resend, Back to sales)", () => {
     expect(document.body.classList.contains("z-report-open")).toBe(false);
   });
 
-  it("Back to sales closes the Z view", () => {
+  it("Close closes the Z view", () => {
     const onClose = jest.fn();
     renderWithProviders(<ZReportView snapshot={snap()} open onClose={onClose} />);
-    fireEvent.click(within(actions()).getByRole("button", { name: "Back to sales" }));
+    fireEvent.click(within(actions()).getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("Resend posts the report route for this close, even when the report was already sent", async () => {
+  it("Email posts the report route for this close, even when the report was already sent", async () => {
     post.mockResolvedValue({ data: { reportSent: true } });
     renderWithProviders(
       <ZReportView snapshot={snap({ reportSent: true })} open onClose={() => {}} />,
     );
-    fireEvent.click(within(actions()).getByRole("button", { name: "Resend" }));
+    fireEvent.click(within(actions()).getByRole("button", { name: "Email" }));
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith("/orders/counter-sale/day-close/dc1/report"),
     );
     expect(await screen.findByTestId("z-resend-status")).toHaveTextContent(
-      "Report sent to the admins",
+      "Z report emailed to admins",
     );
   });
 
-  it("a Resend the server could not deliver shows the fixed failure copy", async () => {
+  it("an Email the server could not deliver shows the fixed failure copy", async () => {
     post.mockResolvedValue({ data: { reportSent: false } });
     renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
-    fireEvent.click(within(actions()).getByRole("button", { name: "Resend" }));
+    fireEvent.click(within(actions()).getByRole("button", { name: "Email" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not send the report. Try again.",
     );
   });
 
-  it("a failed Resend shows fixed copy, never the server text", async () => {
+  it("a failed Email shows fixed copy, never the server text", async () => {
     post.mockRejectedValue({ response: { status: 500, data: { message: "smtp password wrong" } } });
     renderWithProviders(<ZReportView snapshot={snap()} open onClose={() => {}} />);
-    fireEvent.click(within(actions()).getByRole("button", { name: "Resend" }));
+    fireEvent.click(within(actions()).getByRole("button", { name: "Email" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not send the report. Try again.",
     );

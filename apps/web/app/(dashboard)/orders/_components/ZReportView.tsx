@@ -3,11 +3,20 @@
 // SA-750r3 §4: the on-screen Z report. The groups and rows come ONLY from `dayCloseZSections` (the one definition the Z email
 // also prints from); this file formats money and writes the date / closer / window lines, and re-derives nothing.
 import * as React from "react";
-import { dayCloseDateLabel, dayCloseZSections } from "@routeflow/pricing";
+import {
+  dayCloseDateLabel,
+  dayCloseHandOvers,
+  dayCloseVerdictText,
+  dayCloseZSections,
+} from "@routeflow/pricing";
 import type { ZRow } from "@routeflow/pricing";
 import type { DayCloseSnapshot } from "@routeflow/types";
 import { Button, Modal, cn } from "@routeflow/ui/web";
-import { Z_REPORT_RESEND_FAILED_COPY, useResendZReport } from "@/lib/api/counter-day-close";
+import {
+  Z_REPORT_EMAILED_COPY,
+  Z_REPORT_RESEND_FAILED_COPY,
+  useResendZReport,
+} from "@/lib/api/counter-day-close";
 import { formatReceiptMoney as money } from "@/lib/counter-receipt";
 
 const NOT_RECORDED = "Not recorded";
@@ -36,14 +45,13 @@ export function zWindowLine(startIso: string, endIso: string, zone: string): str
 }
 
 type Verdict = ReturnType<typeof dayCloseZSections>["headline"]["verdict"];
-const VERDICT_WORD: Record<Verdict, string> = { short: "Short", over: "Over", even: "Even" };
 
-/** "Short $2.50", "Over $1.00" or "Even $0.00": the ONE variance wording, on the count form, the closed card and the Z view. */
+/** "Balanced", "Short $2.50" or "Over $1.00": the ONE variance wording (owner ruling 10-12), on the count form, the closed card and the Z report. */
 export function verdictText(verdict: Verdict, amount: number): string {
-  return `${VERDICT_WORD[verdict]} ${money(amount)}`;
+  return dayCloseVerdictText(verdict, money(amount));
 }
 
-/** "Counted $412.50 · Short $2.50", "Even $0.00" or "Over $1.00": the one headline, on the card and in the Z view. */
+/** "Balanced" / "Short $2.50" / "Over $1.00" as the headline, with "Counted $412.50" beneath it. */
 export function zHeadlineText(h: ReturnType<typeof dayCloseZSections>["headline"]): {
   counted: string;
   verdict: string;
@@ -56,8 +64,6 @@ function rowValue(row: ZRow): string {
   if (row.signed && row.amount > 0) return `+${money(row.amount)}`;
   return money(row.amount);
 }
-
-const plural = (n: number) => (n === 1 ? "1 hand-over" : `${n} hand-overs`);
 
 /** The body class that, under `@media print`, hides every other portal so the page prints only the Z report (app/shell.css). */
 const PRINT_BODY_CLASS = "z-report-open";
@@ -81,9 +87,14 @@ export function ZReportBody({ snapshot }: { snapshot: DayCloseSnapshot }) {
         </p>
       </div>
 
-      <p className="text-base font-bold" data-testid="z-headline">
-        {head.counted} · {head.verdict}
-      </p>
+      <div className="space-y-0.5">
+        <p className="text-2xl font-semibold" data-testid="z-headline">
+          {head.verdict}
+        </p>
+        <p className="text-navy/70 print:text-black" data-testid="z-counted">
+          {head.counted}
+        </p>
+      </div>
 
       {z.groups.map((g) => (
         <section key={g.heading} aria-label={g.heading} data-testid={`z-group-${g.heading}`}>
@@ -99,14 +110,13 @@ export function ZReportBody({ snapshot }: { snapshot: DayCloseSnapshot }) {
               >
                 <dt>{r.label}</dt>
                 <dd className="text-right tabular-nums">
-                  {r.count !== undefined && r.amount !== null ? (
-                    <>
-                      <span className="text-xs font-normal text-navy/70 print:text-black">
-                        {plural(r.count)} ·
-                      </span>{" "}
-                    </>
-                  ) : null}
                   {rowValue(r)}
+                  {r.count !== undefined && r.amount !== null ? (
+                    <span className="text-xs font-normal text-navy/70 print:text-black">
+                      {" "}
+                      · {dayCloseHandOvers(r.count)}
+                    </span>
+                  ) : null}
                 </dd>
               </div>
             ))}
@@ -114,14 +124,11 @@ export function ZReportBody({ snapshot }: { snapshot: DayCloseSnapshot }) {
         </section>
       ))}
 
-      <div className="space-y-1">
-        <p data-testid="z-not-at-till">Not taken at the till: {money(z.notTakenAtTill)}</p>
-        {z.refundsTenderKnown ? null : (
-          <p className="text-amber-700" data-testid="z-tender-warning">
-            Some refunds have no method. Cash in drawer may be high.
-          </p>
-        )}
-      </div>
+      {z.refundsTenderKnown ? null : (
+        <p className="text-amber-700" data-testid="z-tender-warning">
+          Some refunds have no method. Expected cash may be high.
+        </p>
+      )}
 
       {note ? (
         <p className="whitespace-pre-wrap" data-testid="z-note">
@@ -129,75 +136,6 @@ export function ZReportBody({ snapshot }: { snapshot: DayCloseSnapshot }) {
           {note}
         </p>
       ) : null}
-    </div>
-  );
-}
-
-/**
- * Print, Resend, Back to sales: the Z view's own actions (SA-750r3 §3), pinned at the top of the sheet so a phone never scrolls
- * to reach them. Resend is always offered (it re-sends the stored report); its outcome is a fixed line, never the server's text.
- */
-function ZReportContent({
-  snapshot,
-  onClose,
-}: {
-  snapshot: DayCloseSnapshot;
-  onClose: () => void;
-}) {
-  const resend = useResendZReport();
-  const [outcome, setOutcome] = React.useState<"sent" | "failed" | null>(null);
-  // While the report is on screen the page prints ONLY it: app/shell.css hides every other portal under `@media print`.
-  React.useEffect(() => {
-    document.body.classList.add(PRINT_BODY_CLASS);
-    return () => document.body.classList.remove(PRINT_BODY_CLASS);
-  }, []);
-  const onResend = () => {
-    setOutcome(null);
-    resend.mutate(snapshot.id, {
-      onSuccess: (data) => {
-        const sent = (data as { reportSent?: unknown } | null | undefined)?.reportSent;
-        setOutcome(sent === true ? "sent" : sent === false ? "failed" : null);
-      },
-      onError: () => setOutcome("failed"),
-    });
-  };
-  return (
-    <div className="space-y-4">
-      <div
-        className="sticky top-0 z-10 -mx-1 flex flex-wrap gap-2 bg-white px-1 pb-2 print:hidden"
-        data-testid="z-actions"
-      >
-        <Button type="button" className="min-h-11" onClick={() => window.print()}>
-          Print
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          className="min-h-11"
-          loading={resend.isPending}
-          onClick={onResend}
-        >
-          Resend
-        </Button>
-        <Button type="button" variant="secondary" className="min-h-11" onClick={onClose}>
-          Back to sales
-        </Button>
-      </div>
-      {outcome === "sent" ? (
-        <p
-          role="status"
-          className="text-sm text-navy/70 print:hidden"
-          data-testid="z-resend-status"
-        >
-          Report sent to the admins
-        </p>
-      ) : null}
-      {outcome === "failed" ? (
-        <p role="alert" className="text-sm text-red-700 print:hidden">
-          {Z_REPORT_RESEND_FAILED_COPY}
-        </p>
-      ) : null}
-      <ZReportBody snapshot={snapshot} />
     </div>
   );
 }
@@ -215,12 +153,72 @@ export function ZReportView({
   open: boolean;
   onClose: () => void;
 }) {
+  const resend = useResendZReport();
+  const [outcome, setOutcome] = React.useState<"sent" | "failed" | null>(null);
+  // While the report is on screen the page prints ONLY it: app/shell.css hides every other portal under `@media print`.
+  React.useEffect(() => {
+    if (!open) return;
+    document.body.classList.add(PRINT_BODY_CLASS);
+    return () => document.body.classList.remove(PRINT_BODY_CLASS);
+  }, [open]);
+  React.useEffect(() => {
+    if (open) setOutcome(null);
+  }, [open, snapshot.id]);
+  const onResend = () => {
+    setOutcome(null);
+    resend.mutate(snapshot.id, {
+      onSuccess: (data) => {
+        const sent = (data as { reportSent?: unknown } | null | undefined)?.reportSent;
+        setOutcome(sent === true ? "sent" : sent === false ? "failed" : null);
+      },
+      onError: () => setOutcome("failed"),
+    });
+  };
+  // Print, Email, Close: the Z view's own actions (SA-750r3 §3), PINNED at the foot of the sheet so a phone keeps them in reach.
+  // Email re-sends the stored report (always offered); its outcome is a fixed line, never the server's text.
+  const footer = (
+    <div className="flex w-full flex-col gap-2 print:hidden">
+      {outcome === "sent" ? (
+        <p role="status" className="text-sm text-navy/70" data-testid="z-resend-status">
+          {Z_REPORT_EMAILED_COPY}
+        </p>
+      ) : null}
+      {outcome === "failed" ? (
+        <p role="alert" className="text-sm text-red-700">
+          {Z_REPORT_RESEND_FAILED_COPY}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap justify-end gap-2" data-testid="z-actions">
+        <Button type="button" className="min-h-11" onClick={() => window.print()}>
+          Print
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          className="min-h-11"
+          loading={resend.isPending}
+          onClick={onResend}
+        >
+          Email
+        </Button>
+        <Button type="button" variant="secondary" className="min-h-11" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+    </div>
+  );
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={`Z report · ${dayCloseDateLabel(snapshot.day)}`}
       scroll
+      footer={footer}
+      // focus lands on the title (the sheet's own heading), not on a focus-ringed ×
+      onOpenAutoFocus={(e) => {
+        e.preventDefault();
+        (e.target as HTMLElement).querySelector<HTMLElement>("h2")?.focus();
+      }}
       closeClassName="min-h-11 min-w-11 flex items-center justify-center"
       className={cn(
         PRINT_ROOT_CLASS,
@@ -230,7 +228,7 @@ export function ZReportView({
         "print:static print:left-auto print:top-auto print:h-auto print:max-h-none print:w-full print:max-w-none print:translate-x-0 print:translate-y-0 print:overflow-visible print:rounded-none print:p-0 print:shadow-none print:[&_[aria-label=Close]]:hidden",
       )}
     >
-      {open ? <ZReportContent snapshot={snapshot} onClose={onClose} /> : null}
+      {open ? <ZReportBody snapshot={snapshot} /> : null}
     </Modal>
   );
 }
