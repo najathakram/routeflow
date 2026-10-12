@@ -846,7 +846,7 @@ export function CounterSaleScreen() {
   if (gate.loading) return <div data-testid="counter-sale-loading" aria-busy="true" />;
 
   // CQ-30: a FAILED lookup is not "off": say the check failed and offer a retry (still no sale UI).
-  if (gate.failed) return <CounterGateOffline onRetry={gate.retry} />;
+  if (gate.failed) return <CounterGateOffline onRetry={gate.retry} retrying={gate.retrying} />;
 
   // Missing means dark: loading, error, unknown, a response without the capability, or counter "off" all render NO sale UI
   // (a deep link or a stale tab). Only "optional" / "always" open the screen.

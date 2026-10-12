@@ -19,7 +19,9 @@ import { useTenantFeatures } from "../tenant-features";
  */
 export function useCounterSaleGate(options?: { enabled?: boolean }) {
   const enabled = options?.enabled ?? true;
-  const { data, isLoading, isError, refetch } = useTenantFeatures({ enabled });
+  const { data, isLoading, isError, fetchStatus, isFetching, refetch } = useTenantFeatures({
+    enabled,
+  });
   // The response type says `capabilities` is always there; a stale or partial answer may not have it, and that means DARK.
   const cap = (data as { capabilities?: { fulfilment?: FulfilmentCapability } } | undefined)
     ?.capabilities?.fulfilment;
@@ -37,10 +39,13 @@ export function useCounterSaleGate(options?: { enabled?: boolean }) {
     ...gate,
     capability: enabled ? cap : null,
     loading: enabled && isLoading === true,
-    // CQ-30: the lookup itself FAILED (offline, a server error) and there is no earlier answer. That is not "counter sales
-    // are off": the screen says it could not check and offers a retry. The gate stays dark (no sale UI) either way.
-    failed: enabled && isError === true && data === undefined,
-    retry: () => void refetch?.(),
+    // CQ-30: the lookup itself FAILED (a server error) or could not even start (React Query PAUSES a query while the browser is
+    // offline: not loading, not an error) and there is no earlier answer. That is not "counter sales are off": the screen says
+    // it could not check and offers a retry. The gate stays dark (no sale UI) either way.
+    failed: enabled && data === undefined && (isError === true || fetchStatus === "paused"),
+    /** a retry is in flight (the screen shows "Retrying..." and disables the button meanwhile) */
+    retrying: enabled && isFetching === true,
+    retry: () => refetch?.(),
   };
 }
 
