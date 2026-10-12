@@ -88,3 +88,28 @@ describe("priceReorderReview", () => {
     expect(r.subtotal).toBe(5);
   });
 });
+
+import { reorderSkippedNote } from "./buyer-reorder-review";
+
+describe("reorderSkippedNote (state portal limits)", () => {
+  it("is null when nothing was skipped", () => {
+    expect(reorderSkippedNote({ id: "o1" })).toBeNull();
+    expect(reorderSkippedNote({ id: "o1", skipped: [] })).toBeNull();
+    expect(reorderSkippedNote(undefined)).toBeNull();
+  });
+  it("counts what was left out of a placed order", () => {
+    expect(reorderSkippedNote({ id: "o1", skipped: [{}, {}] })).toEqual({
+      text: "2 items aren't available to you and were left out.",
+      none: false,
+    });
+    expect(reorderSkippedNote({ id: "o1", skipped: [{}] })?.text).toBe(
+      "1 item isn't available to you and was left out.",
+    );
+  });
+  it("says none are available when no order came back", () => {
+    expect(reorderSkippedNote({ skipped: [{}, {}] })).toEqual({
+      text: "None of these items are available to you right now.",
+      none: true,
+    });
+  });
+});

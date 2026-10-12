@@ -13,6 +13,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { Badge, Button } from "@routeflow/ui/web";
+import { reorderSkippedNote } from "@/lib/buyer-reorder-review";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerTemplates, useBuyerReorder, type BuyerOrderTemplate } from "@/lib/api/buyer";
 import { ReorderReviewSheet, REORDER_FAILED_COPY } from "../_components/ReorderReviewSheet";
@@ -148,6 +149,7 @@ export default function BuyerTemplatesPage() {
 
   const { data: result, isLoading, isError } = useBuyerTemplates();
   const reorder = useBuyerReorder({ localErrorToast: true }); // the sheet shows its own sentence
+  const [skippedNote, setSkippedNote] = React.useState<string | null>(null);
 
   const [reorderingId, setReorderingId] = React.useState<string | null>(null);
   // The standing order awaiting review: a tap on Reorder Now only OPENS the review sheet; the
@@ -173,7 +175,14 @@ export default function BuyerTemplatesPage() {
     setPlaceError(null);
     setSuccessId(null);
     try {
-      await reorder.mutateAsync(templateId);
+      const res = await reorder.mutateAsync(templateId);
+      const note = reorderSkippedNote(res);
+      if (note?.none) {
+        // nothing was ordered: keep the review open and say why (calm copy, not a failure)
+        setPlaceError(note.text);
+        return;
+      }
+      setSkippedNote(note?.text ?? null);
       setSuccessId(templateId);
       setTimeout(() => setSuccessId(null), 4000);
       // Close the review only on success; a failure keeps it open so nothing is lost.
@@ -223,6 +232,11 @@ export default function BuyerTemplatesPage() {
             orders
           </button>
           .
+          {skippedNote && (
+            <span data-testid="reorder-skipped-note" className="ml-1 text-navy">
+              {skippedNote}
+            </span>
+          )}
         </div>
       )}
 

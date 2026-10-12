@@ -83,3 +83,28 @@ export function priceReorderReview(
   const subtotal = roundMoney(lines.reduce((sum, l) => sum + (l.lineSubtotal ?? 0), 0));
   return { lines, subtotal, unresolvedCount: lines.filter((l) => l.unresolved).length };
 }
+
+/**
+ * State portal limits (spec §4): a reorder that left lines out (the server drops lines this buyer may not be offered and
+ * returns them as `skipped`). `none` = every line was left out, so no order exists. Null when nothing was skipped.
+ */
+export function reorderSkippedNote(res: unknown): { text: string; none: boolean } | null {
+  const r = (res ?? {}) as {
+    skipped?: unknown;
+    id?: unknown;
+    orderId?: unknown;
+    order?: { id?: unknown } | null;
+  };
+  const n = Array.isArray(r.skipped)
+    ? r.skipped.length
+    : typeof r.skipped === "number"
+      ? r.skipped
+      : 0;
+  if (n <= 0) return null;
+  const created = Boolean(r.id ?? r.orderId ?? r.order?.id);
+  if (!created) return { text: "None of these items are available to you right now.", none: true };
+  return {
+    text: `${n} ${n === 1 ? "item isn't" : "items aren't"} available to you and ${n === 1 ? "was" : "were"} left out.`,
+    none: false,
+  };
+}
