@@ -81,6 +81,13 @@ import {
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
 
+/**
+ * Interactive-tx options of a count add / amend (SA-767 r-note 5 SA-3). The product-lock helper bounds its
+ * wait with `lock_timeout` 5 s (STOCK_LOCK_TIMEOUT); Prisma's default tx timeout is also 5 s, so a stuck
+ * holder would surface as an unmapped P2028 500. 15 s lets the 5 s lock timeout fire first (55P03 -> 503).
+ */
+const COUNT_ADD_TX_OPTIONS = { timeout: 15_000 } as const;
+
 /** B562 PR-3 (SA-136 §4): the reference prefix of a replay's own COST_BASIS correction. */
 export const REPLAY_CORRECTION_PREFIX = "RECOMPUTE:";
 /**
@@ -2540,7 +2547,7 @@ export class InventoryService {
         }
       }
       return created;
-    });
+    }, COUNT_ADD_TX_OPTIONS); // N sorted product locks + N creates: the same budget as a single add
 
     return { ...session, otherOpenSessions: openSessions };
   }
@@ -2765,7 +2772,9 @@ export class InventoryService {
         },
         select: this.stockCountLineSelect(),
       });
-    });
+      // 15 s, not Prisma's 5 s default: the product-lock helper bounds its wait with a 5 s lock_timeout, and a
+      // tx budget equal to it would expire first as an unmapped P2028 500 instead of 55P03 -> the 503.
+    }, COUNT_ADD_TX_OPTIONS);
   }
 
   /**

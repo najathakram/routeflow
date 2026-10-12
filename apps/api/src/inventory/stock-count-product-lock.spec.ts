@@ -68,6 +68,13 @@ describe("one open count per product (SA-767 r-note 5, SA-3)", () => {
       );
     });
 
+    it("the add tx has a 15 s budget: the 5 s lock_timeout of the product lock fires before Prisma's 5 s default expires (P2028)", async () => {
+      await save();
+
+      expect(w.prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+      expect(w.prisma.tenantTransaction.mock.calls[0][1]).toMatchObject({ timeout: 15000 });
+    });
+
     it("looks only at OTHER sessions that are OPEN / REVIEW", async () => {
       await save();
 
@@ -146,6 +153,12 @@ describe("one open count per product (SA-767 r-note 5, SA-3)", () => {
         ],
       });
       w.prisma.stockCountSession.create.mockResolvedValue({ id: "new-sess" });
+    });
+
+    it("the amend tx (N sorted locks + N creates) has the same 15 s budget", async () => {
+      await amend();
+
+      expect(w.prisma.tenantTransaction.mock.calls[0][1]).toMatchObject({ timeout: 15000 });
     });
 
     it("locks every seeded product in SORTED order, then checks the overlap once", async () => {
