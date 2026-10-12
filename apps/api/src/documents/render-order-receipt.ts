@@ -1,7 +1,7 @@
 import { taxRowLabel } from "@routeflow/pricing";
 import type { ReceiptModel } from "@routeflow/types";
 import { escapeHtml } from "../common/html-escape";
-import { renderBrandedEmail, tenantHeaderHtml } from "../email/email.service";
+import { endSentence, renderBrandedEmail, tenantHeaderHtml } from "../email/email.service";
 import {
   buildReceiptModel,
   formatReceiptMoney as money,
@@ -159,7 +159,7 @@ export function renderOrderReceipt(
     heading: "Receipt",
     bodyHtml: bodyHtmlOf(model),
     bodyText: bodyTextOf(model),
-    footerNote: name ? `Sent by ${name}.` : "Sent by RouteFlow.",
+    footerNote: name ? endSentence(`Sent by ${name}`) : "Sent by RouteFlow.",
   });
   return { model, subject, html, text };
 }

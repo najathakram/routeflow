@@ -1,4 +1,5 @@
 import * as React from "react";
+import { act } from "@testing-library/react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { CounterSaleScreen } from "./CounterSaleScreen";
@@ -149,6 +150,9 @@ describe("a regulated line waits for the categories before it can be paid (fail-
     });
     renderWithProviders(<CounterSaleScreen />);
     await scan("SODA");
+    // let the scan's commit effects (the cart's stale-error clear) run before the click, as they would in the browser
+    await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
+    await act(async () => undefined);
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(

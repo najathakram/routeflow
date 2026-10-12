@@ -147,7 +147,7 @@ async function editPrice(
   if (o.mode) fireEvent.click(screen.getByRole("radio", { name: o.mode }));
   fireEvent.change(screen.getByRole("textbox", { name: o.label }), { target: { value: o.value } });
   if (o.reason !== undefined) {
-    fireEvent.change(screen.getByRole("textbox", { name: "Reason (optional)" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /^Reason \((optional|required)\)$/ }), {
       target: { value: o.reason },
     });
   }
@@ -460,7 +460,7 @@ describe("POS-5 price edit: a special-price customer needs a reason", () => {
       "Add a reason. Acme Cafe has a special price on this item.",
     );
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    fireEvent.change(screen.getByRole("textbox", { name: "Reason (optional)" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /^Reason \((optional|required)\)$/ }), {
       target: { value: "Damaged box" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));

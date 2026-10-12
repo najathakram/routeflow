@@ -267,7 +267,7 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
       <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
         <h3 className="text-base font-semibold text-navy">AR Aging</h3>
         <Link
-          href="/finance/reports/ar-aging"
+          href="/finance/reports?report=ar-aging"
           className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
         >
           Full report <ArrowRight className="h-3 w-3" />

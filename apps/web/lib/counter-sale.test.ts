@@ -2,6 +2,7 @@ import type { FulfilmentCapability } from "@routeflow/types";
 import * as keys from "./counter-live-cart-keys";
 import {
   AUTO_PRINT_KEY,
+  isNotSentOffline,
   cartTotals,
   amountDue,
   changeDue,
@@ -722,5 +723,14 @@ describe("live cart storage (SA-748 section 1)", () => {
     expect(window.localStorage.getItem("rf.counterSale.liveCart:other:u2")).toBeNull();
     expect(window.localStorage.getItem("rf.counterSale.autoPrint")).toBe("1");
     window.localStorage.clear();
+  });
+});
+
+describe("isNotSentOffline (CQ-29)", () => {
+  it("is true only for a no-answer failure from a browser that was already offline", () => {
+    expect(isNotSentOffline(new Error("Network Error"), true)).toBe(true);
+    expect(isNotSentOffline(new Error("Network Error"), false)).toBe(false);
+    expect(isNotSentOffline({ response: { status: 503 } }, true)).toBe(false);
+    expect(isNotSentOffline(null, true)).toBe(false);
   });
 });

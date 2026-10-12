@@ -43,6 +43,7 @@ import {
 import { displayProductName } from "@/lib/product-display";
 import {
   COUNTER_LOOKUP_FAILED_COPY,
+  COUNTER_OFFLINE_COPY,
   COUNTER_DISCARD_COPY,
   COUNTER_OUTCOME_UNKNOWN_COPY,
   COUNTER_SALES_DISABLED_COPY,
@@ -58,6 +59,8 @@ import {
   isCounterSaleIncomplete,
   isCounterSaleNotFound,
   isDefinitiveCounterSaleRefusal,
+  isFinalSaleMessage,
+  isNotSentOffline,
   newIdempotencyKey,
   paymentMethodOptions,
   preselectFulfilment,
@@ -71,10 +74,16 @@ import {
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
 import { CounterReceiptBody } from "./CounterReceiptBody";
+import { CounterCustomerCredit } from "./CounterCustomerCredit";
+import { CounterGateOffline } from "./CounterGateOffline";
+import { CounterCustomerMatches } from "./CounterCustomerMatches";
+import { CounterLastSale, useLastSaleNote } from "./CounterLastSale";
+import { useCounterLineUndo } from "./useCounterLineUndo";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
 import { isTextEntryActive } from "@/lib/refocus-scanner";
+import { scrollPageToTop } from "@/lib/scroll-top";
 import { useCounterLiveCart } from "./useCounterLiveCart";
 import { liveCartKey } from "@/lib/counter-live-cart-keys";
 import { addScannedProduct, stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
@@ -95,7 +104,6 @@ import {
   setLineNote,
   takeLine,
   toSaleItem,
-  type RemovedLine,
 } from "./counter-sale-line-edit";
 import { useCounterSaleScan } from "./useCounterSaleScan";
 import { useCounterScanFocus } from "./useCounterScanFocus";
@@ -116,9 +124,6 @@ interface PickedCustomer {
   /** owes no sales tax and no levy: the estimate, the order and the invoice all say so */
   isTaxExempt?: boolean | null;
 }
-
-/** How long the "Line removed. Undo" bar stays. */
-const UNDO_MS = 5000;
 
 export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
 
@@ -150,6 +155,9 @@ export function CounterSaleScreen() {
   const [outcomeUnknown, setOutcomeUnknown] = React.useState(false);
   const [heldCorrupt, setHeldCorrupt] = React.useState(false); // a stored attempt was unreadable: locked, only "recent sales" or discard
   const [lookupFailed, setLookupFailed] = React.useState(false); // "Check sale status" itself failed (not a 404 answer)
+  // CQ-29: the key of a sale that got no answer for want of a connection. The form is usable again, and the next Complete reuses
+  // it: the server answers an identical retry with the same sale, and a changed cart with a key mismatch (never a second sale).
+  const offlineKeyRef = React.useRef<string | null>(null);
   const submittingRef = React.useRef(false);
   const customerFindRef = React.useRef<HTMLInputElement>(null);
   // B1210: "Ship this order instead" is an intent that completes on its own once the cart can be handed over (a customer is
@@ -169,6 +177,7 @@ export function CounterSaleScreen() {
   const [customer, setCustomer] = React.useState<PickedCustomer | null>(null); // null = Walk-in customer
   const [customerSearch, setCustomerSearch] = React.useState("");
   const [lines, setLines] = React.useState<SaleLine[]>([]);
+  const [lastSale, setLastSale] = useLastSaleNote(lines.length); // CQ-17: the order "Complete & next" just finished
   const [scanText, setScanText] = React.useState("");
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
   const [tendered, setTendered] = React.useState("");
@@ -212,6 +221,12 @@ export function CounterSaleScreen() {
     customerFindRef,
     awaitingCustomerRef,
   });
+  // CQ-18: a refusal shown in the checkout bar belongs to the cart that was refused. Any edit to the cart's lines (a scan, a
+  // quantity, a removal, a re-price) makes it stale, so it goes. A FINAL message (the sale was voided / changed / saved
+  // unpaid) is about a sale that exists and stays. The tender has its own rule just below.
+  React.useEffect(() => {
+    setError((e) => (isFinalSaleMessage(e) ? e : ""));
+  }, [lines]);
   // Fixing the tender clears the "Enter at least $X" message and ONLY that one (never a server or final-sale error).
   const clearUnderpaidError = () => setError((e) => (isTenderShortCopy(e) ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
@@ -346,7 +361,12 @@ export function CounterSaleScreen() {
   const receiptHeadingRef = React.useRef<HTMLHeadingElement>(null);
   React.useEffect(() => {
     if (!receipt) refocus();
-    else receiptHeadingRef.current?.focus(); // POS-1: keyboard focus lands on the receipt heading
+    else {
+      // POS-1: keyboard focus lands on the receipt heading. CQ-33: without scrolling to it, and the page back at its top, so
+      // a clerk who had scrolled the sale down to the Complete buttons reads the receipt from its first line.
+      receiptHeadingRef.current?.focus({ preventScroll: true });
+      scrollPageToTop();
+    }
   }, [receipt, refocus]);
 
   const isWalkIn = customer === null;
@@ -370,7 +390,9 @@ export function CounterSaleScreen() {
   const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
 
-  const { data: customersData } = useCustomers({ search: customerSearch.trim() || undefined });
+  const { data: customersData, isFetching: customersFetching } = useCustomers({
+    search: customerSearch.trim() || undefined,
+  });
   const matches = customerSearch.trim() ? (customersData?.data ?? []).slice(0, 6) : [];
 
   // The fulfilment pre-selection for "Ship this order instead": the customer's own path first, then the staff default.
@@ -510,58 +532,16 @@ export function CounterSaleScreen() {
     refocus();
   };
 
-  // POS-3: a removed line is held for 5 s in ONE slot (a newer removal makes the older one final). Undo puts it back at
-  // its index, or merges it into the same product if that was re-scanned meanwhile. Pay uses `lines`, which never has it.
-  const [undo, setUndo] = React.useState<RemovedLine | null>(null);
-  const undoRef = React.useRef<RemovedLine | null>(null);
-  undoRef.current = undo;
-  const undoTimerRef = React.useRef<number | null>(null);
-  // The countdown resumes only when BOTH the pointer and the keyboard focus have left the bar.
-  const undoHoverRef = React.useRef(false);
-  const undoFocusRef = React.useRef(false);
-  const dropUndo = React.useCallback(() => {
-    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
-    undoTimerRef.current = null;
-    undoLeftRef.current = UNDO_MS;
-    const hadFocus = undoFocusRef.current;
-    undoFocusRef.current = false; // the focused Undo button is gone with the line; the pointer may still be over the bar
-    setUndo(null);
-    if (hadFocus) refocus(); // the focused Undo chip vanished: the cursor goes back to the scan field, not <body>
-  }, [refocus]);
-  // The 5 s window PAUSES while the bar is hovered or focused and resumes with what was left.
-  const undoLeftRef = React.useRef(UNDO_MS);
-  const undoStartedRef = React.useRef(0);
-  const armUndo = (ms: number) => {
-    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
-    undoLeftRef.current = ms;
-    if (undoHoverRef.current || undoFocusRef.current) return; // held: the leave/blur handler starts the countdown
-    undoStartedRef.current = Date.now();
-    undoTimerRef.current = window.setTimeout(dropUndo, ms);
-  };
-  const pauseUndo = () => {
-    if (undoTimerRef.current === null) return;
-    window.clearTimeout(undoTimerRef.current);
-    undoTimerRef.current = null;
-    undoLeftRef.current = Math.max(0, undoLeftRef.current - (Date.now() - undoStartedRef.current));
-  };
-  const resumeUndo = () => {
-    if (!undoRef.current || undoTimerRef.current !== null) return;
-    armUndo(undoLeftRef.current);
-  };
-  React.useEffect(
-    () => () => {
-      if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
-    },
-    [],
-  );
+  // POS-3: a removed line is held (LINE_UNDO_MS, CQ-27) in ONE slot (a newer removal makes the older one final). Undo puts it
+  // back at its index, or merges it into the same product if that was re-scanned meanwhile. Pay uses `lines`, which never has it.
+  const { undo, hold: holdRemoved, drop: dropUndo, bar: undoBar } = useCounterLineUndo(refocus);
 
   const removeLine = (tempId: string) => {
     if (lineLocked || saleInFlight()) return;
     const taken = takeLine(lines, tempId);
     if (!taken) return;
     setLines(taken.lines);
-    setUndo(taken.removed);
-    armUndo(UNDO_MS);
+    holdRemoved(taken.removed);
     refocus();
   };
 
@@ -601,6 +581,7 @@ export function CounterSaleScreen() {
 
   function resetSale() {
     dropUndo();
+    setLastSale(null);
     setCustomer(null);
     setCustomerSearch("");
     setLines([]);
@@ -613,6 +594,7 @@ export function CounterSaleScreen() {
     setReceipt(null);
     setEnteredTender(null);
     attemptRef.current = null;
+    offlineKeyRef.current = null;
     clearHeldAttempt(heldKey);
     liveCart.endSend();
     setOutcomeUnknown(false);
@@ -646,11 +628,14 @@ export function CounterSaleScreen() {
     unknown: boolean;
   }): Promise<CounterSaleResponse | null> => {
     setLookupFailed(false);
+    // CQ-29: read BEFORE the request leaves: a browser already offline cannot have delivered it.
+    const offlineAtSend = typeof navigator !== "undefined" && navigator.onLine === false;
     setSending(true); // from here to the answer the cart is frozen (a validation refusal never reaches this point)
     liveCart.beginSend(); // the stored cart goes NOW, before the POST can leave: a refresh mid-send must not bring it back
     try {
       const res = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
       attemptRef.current = null;
+      offlineKeyRef.current = null;
       clearHeldAttempt(heldKey);
       setOutcomeUnknown(false);
       return res;
@@ -662,6 +647,14 @@ export function CounterSaleScreen() {
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
         setError(finalCopy);
+        liveCart.endSend();
+      } else if (!attempt.unknown && isNotSentOffline(err, offlineAtSend)) {
+        // CQ-29: offline, so nothing was sent. Say so, unfreeze the form, and keep the key for the retry.
+        offlineKeyRef.current = attempt.key;
+        attemptRef.current = null;
+        clearHeldAttempt(heldKey);
+        setOutcomeUnknown(false);
+        setError(COUNTER_OFFLINE_COPY);
         liveCart.endSend();
       } else if (!attempt.unknown && isDefinitiveCounterSaleRefusal(err)) {
         attemptRef.current = null;
@@ -735,7 +728,12 @@ export function CounterSaleScreen() {
       },
     };
     dropUndo(); // the sale is going out: a removed line can no longer come back
-    attemptRef.current = { key: newIdempotencyKey(), dto, next, unknown: false };
+    attemptRef.current = {
+      key: offlineKeyRef.current ?? newIdempotencyKey(),
+      dto,
+      next,
+      unknown: false,
+    };
     estimateRef.current = {
       total: totals.total,
       change: method === "CASH" ? changeDue(totals.total, tenderAmount) : 0,
@@ -756,10 +754,12 @@ export function CounterSaleScreen() {
     const startFresh = next && !unpaid && !figuresDiffer;
     if (autoPrint) {
       // D6: the RECEIPT is rendered first, then printed once (the effect below), and only then does "next" reset.
-      printAfterRenderRef.current = { reset: startFresh };
+      printAfterRenderRef.current = { reset: startFresh, orderNumber: res.orderNumber };
       setReceipt(res);
-    } else if (startFresh) resetSale();
-    else setReceipt(res);
+    } else if (startFresh) {
+      resetSale();
+      setLastSale(res.orderNumber); // CQ-17: after the reset, so the fresh sale names the one just finished
+    } else setReceipt(res);
   };
 
   const completeSale = async (next: boolean, retry = false) => {
@@ -843,13 +843,16 @@ export function CounterSaleScreen() {
   };
 
   // Auto-print: runs after the receipt has committed to the DOM, so the page printed IS the receipt.
-  const printAfterRenderRef = React.useRef<{ reset: boolean } | null>(null);
+  const printAfterRenderRef = React.useRef<{ reset: boolean; orderNumber?: string } | null>(null);
   React.useEffect(() => {
     if (!receipt || !printAfterRenderRef.current) return;
-    const { reset } = printAfterRenderRef.current;
+    const { reset, orderNumber } = printAfterRenderRef.current;
     printAfterRenderRef.current = null;
     window.print(); // once per completed sale
-    if (reset) resetSale();
+    if (reset) {
+      resetSale();
+      if (orderNumber) setLastSale(orderNumber);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [receipt]);
 
@@ -861,6 +864,9 @@ export function CounterSaleScreen() {
   // The features answer is not in yet: an empty, non-interactive placeholder, with no copy (neither the sale UI nor a false
   // "not turned on").
   if (gate.loading) return <div data-testid="counter-sale-loading" aria-busy="true" />;
+
+  // CQ-30: a FAILED lookup is not "off": say the check failed and offer a retry (still no sale UI).
+  if (gate.failed) return <CounterGateOffline onRetry={gate.retry} retrying={gate.retrying} />;
 
   // Missing means dark: loading, error, unknown, a response without the capability, or counter "off" all render NO sale UI
   // (a deep link or a stale tab). Only "optional" / "always" open the screen.
@@ -939,6 +945,8 @@ export function CounterSaleScreen() {
         ) : null}
       </div>
 
+      {lastSale ? <CounterLastSale orderNumber={lastSale} /> : null}
+
       <div
         className="flex flex-col gap-4 [&>*]:min-w-0 md:grid md:grid-cols-[minmax(0,1fr)_320px] md:items-start xl:grid-cols-[minmax(0,1fr)_380px]"
         data-testid="counter-sale-columns"
@@ -976,6 +984,9 @@ export function CounterSaleScreen() {
                 setCustomerSearch(e.target.value);
               }}
             />
+            {customer && !customer.isWalkIn ? (
+              <CounterCustomerCredit customerId={customer.id} />
+            ) : null}
             {reprice.noteText ? (
               <p
                 role="status"
@@ -1009,27 +1020,18 @@ export function CounterSaleScreen() {
                 {COUNTER_SHIP_WALK_IN_CAPTION}
               </p>
             ) : null}
-            {matches.length > 0 ? (
-              <ul className="rounded border text-sm">
-                {matches.map((c: any) => (
-                  <li key={c.id}>
-                    <button
-                      type="button"
-                      className="min-h-[44px] w-full px-3 py-2 text-left hover:bg-gray-50"
-                      disabled={lineLocked}
-                      onClick={() => {
-                        if (lineLocked || saleInFlight()) return;
-                        setCustomer(c);
-                        setCustomerSearch("");
-                        refocus();
-                      }}
-                    >
-                      {c.businessName}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
+            <CounterCustomerMatches
+              search={customerSearch}
+              matches={matches as PickedCustomer[]}
+              answered={customersData !== undefined && !customersFetching}
+              disabled={lineLocked}
+              onPick={(c) => {
+                if (lineLocked || saleInFlight()) return;
+                setCustomer(c);
+                setCustomerSearch("");
+                refocus();
+              }}
+            />
           </section>
 
           {/* SA-747: quick keys; a tap is the scan add path, and a frozen cart ignores it */}
@@ -1189,23 +1191,7 @@ export function CounterSaleScreen() {
               undo &&
                 "flex items-center justify-between gap-2 rounded border border-navy/20 bg-navy/5 p-2 text-sm",
             )}
-            onMouseEnter={() => {
-              undoHoverRef.current = true;
-              pauseUndo();
-            }}
-            onMouseLeave={() => {
-              undoHoverRef.current = false;
-              if (!undoFocusRef.current) resumeUndo();
-            }}
-            onFocus={() => {
-              undoFocusRef.current = true;
-              pauseUndo();
-            }}
-            onBlur={(e) => {
-              if (e.currentTarget.contains(e.relatedTarget as Node | null)) return; // focus moved within the bar
-              undoFocusRef.current = false;
-              if (!undoHoverRef.current) resumeUndo();
-            }}
+            {...undoBar}
           >
             {undo ? (
               <>
@@ -1314,7 +1300,7 @@ export function CounterSaleScreen() {
           <label className="flex min-h-[44px] items-center gap-2 text-sm">
             <input
               type="checkbox"
-              className="h-5 w-5"
+              className="h-5 w-5 max-lg:h-11 max-lg:w-11"
               checked={autoPrint}
               onChange={(e) => toggleAutoPrint(e.target.checked)}
             />

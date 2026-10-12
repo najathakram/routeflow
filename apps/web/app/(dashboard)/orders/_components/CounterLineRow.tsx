@@ -4,6 +4,7 @@ import { formatReceiptMoney as money, unitWords } from "@routeflow/pricing";
 import { priceUnitWord } from "@/lib/product-unit-label";
 import { cartTotals } from "@/lib/counter-sale";
 import { NOTE_MAX, isBoxedLine, lineQtyLabel, type TypedQty } from "./counter-sale-line-edit";
+import { qtyRefusalMessage, type QtyFieldKind } from "./counter-qty-refusal";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceEdit";
 import { cartStrikesList, editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
@@ -60,10 +61,11 @@ export function LineStepper({
 
 /**
  * A TYPED quantity field (the steppers stay). The draft is local: Enter / blur commit it, Escape reverts, and a value the
- * screen refuses (not whole, or nothing left) snaps back to the line's quantity.
+ * screen refuses (not whole, or nothing left) snaps back to the line's quantity AND says why (CQ-12), until the next edit.
  */
 function QtyField({
   label,
+  kind,
   value,
   locked,
   onCommit,
@@ -71,6 +73,7 @@ function QtyField({
   tabOut = false,
 }: {
   label: string;
+  kind: QtyFieldKind;
   value: number;
   locked: boolean;
   onCommit: (text: string) => boolean;
@@ -79,36 +82,56 @@ function QtyField({
   tabOut?: boolean;
 }) {
   const [draft, setDraft] = React.useState<string | null>(null);
+  const [refusal, setRefusal] = React.useState<string | null>(null);
+  const messageId = React.useId();
   const commit = () => {
     if (draft === null) return;
     const text = draft;
     setDraft(null); // accepted or refused, the field re-reads the line
-    onCommit(text);
+    setRefusal(onCommit(text) ? null : qtyRefusalMessage(text, kind));
   };
   return (
-    <input
-      type="number"
-      inputMode="numeric"
-      min={0}
-      step={1}
-      aria-label={label}
-      className="min-h-[44px] w-16 rounded border px-2 text-center text-sm disabled:opacity-40"
-      disabled={locked}
-      value={draft ?? String(value)}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        // Tab is redirected only to finish an uncommitted typed edit; a plain Tab moves on normally
-        if (e.key === "Enter" || (tabOut && e.key === "Tab" && !e.shiftKey && draft !== null)) {
-          e.preventDefault();
-          commit();
-          onEnter?.();
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          setDraft(null);
-        }
-      }}
-    />
+    <>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={0}
+        step={1}
+        aria-label={label}
+        aria-invalid={refusal ? true : undefined}
+        aria-describedby={refusal ? messageId : undefined}
+        className="min-h-[44px] w-16 rounded border px-2 text-center text-sm disabled:opacity-40"
+        disabled={locked}
+        value={draft ?? String(value)}
+        onChange={(e) => {
+          setRefusal(null);
+          setDraft(e.target.value);
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          // Tab is redirected only to finish an uncommitted typed edit; a plain Tab moves on normally
+          if (e.key === "Enter" || (tabOut && e.key === "Tab" && !e.shiftKey && draft !== null)) {
+            e.preventDefault();
+            commit();
+            onEnter?.();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            setRefusal(null);
+            setDraft(null);
+          }
+        }}
+      />
+      {refusal ? (
+        <span
+          id={messageId}
+          role="alert"
+          className="basis-full text-xs text-red-700"
+          data-testid="counter-qty-refusal"
+        >
+          {refusal}
+        </span>
+      ) : null}
+    </>
   );
 }
 
@@ -125,8 +148,9 @@ function LineQtyEditor({
   onEnter?: () => void;
 }) {
   return isBoxedLine(line) ? (
-    <span className="flex items-center gap-1">
+    <span className="flex flex-wrap items-center gap-1">
       <QtyField
+        kind="boxes"
         label={`Boxes of ${line.name}`}
         value={line.boxes ?? 0}
         locked={locked}
@@ -134,6 +158,7 @@ function LineQtyEditor({
         onEnter={onEnter}
       />
       <QtyField
+        kind="pieces"
         label={`Pieces of ${line.name}`}
         value={line.pieces ?? 0}
         locked={locked}
@@ -144,6 +169,7 @@ function LineQtyEditor({
     </span>
   ) : (
     <QtyField
+      kind="qty"
       label={`Set quantity of ${line.name}`}
       value={line.qty}
       locked={locked}
