@@ -72,6 +72,42 @@ describe("order edit rebase (row 372 MF3)", () => {
     expect(sent).not.toHaveProperty("unitPrice");
   });
 
+  it("M1: another writer switched the line's UNIT: the user's qty is never mixed with the new unit", () => {
+    const boxed = [line("a", 24, { unitsPerBox: 12, boxes: 2, pieces: 0 })];
+    const edits = seedAll(boxed);
+    edits[0] = { ...edits[0], qty: 36 }; // the user meant 36 pieces = 3 boxes
+    const fresh = [
+      line("a", 2, { unitLabel: "Case", unitsPerBox: 12, boxes: 2, pieces: 0, unitPrice: 18 }),
+    ];
+    const r = rebaseEditItems(edits, boxed, fresh, deps);
+    expect(r.conflicts).toBe(1);
+    const a = r.items[0];
+    expect(a.unitLabel).toBe("Case");
+    expect(a.qty).toBe(2); // the server's count of cases, NOT the user's 36
+    // nothing is sent for it: the user must re-enter the change against the new unit
+    expect(buildItemUpdates(r.items, fresh)).toEqual([]);
+  });
+
+  it("M1: another writer changed the pack size: the fresh row wins whole and is counted", () => {
+    const boxed = [line("a", 24, { unitsPerBox: 12, boxes: 2, pieces: 0 })];
+    const edits = seedAll(boxed);
+    edits[0] = { ...edits[0], qty: 36 };
+    const fresh = [line("a", 24, { unitsPerBox: 6, boxes: 4, pieces: 0 })];
+    const r = rebaseEditItems(edits, boxed, fresh, deps);
+    expect(r.conflicts).toBe(1);
+    expect(r.items[0].unitsPerBox).toBe(6);
+    expect(r.items[0].qty).toBe(deps.seed(fresh[0]).qty);
+  });
+
+  it("M1: the user substituted the product themselves and the other writer changed qty: the user's row stands whole", () => {
+    const edits = seedAll(base);
+    edits[0] = { ...edits[0], substituteProductId: "p-sub", qty: 7 };
+    const fresh = [line("a", 9), line("b", 3)];
+    const r = rebaseEditItems(edits, base, fresh, deps);
+    expect(r.conflicts).toBe(0);
+    expect(r.items[0]).toMatchObject({ id: "a", substituteProductId: "p-sub", qty: 7 });
+  });
+
   it("a line CANCELLED at edit-open that another writer revived appears after Reload", () => {
     const wasCancelled = [line("a", 5, { status: "CANCELLED" }), line("b", 3)];
     const edits = seedAll([wasCancelled[1]]);

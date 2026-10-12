@@ -153,6 +153,9 @@ export function assertHeldCancelledLines(
  */
 export async function readEditedOrder(prisma: Pick<PrismaService, "forTenant">, orderId: string) {
   const db = prisma.forTenant();
+  // The revision is read FIRST: a back-sync that commits between the two reads then leaves the response with an
+  // OLDER revision than its lines (a safe 409 on the next save), never a newer one paired with stale lines.
+  const revisionNumber = await latestEditRevisionNumber(db, orderId);
   const order = await db.order.findUnique({
     where: { id: orderId },
     include: {
@@ -165,5 +168,5 @@ export async function readEditedOrder(prisma: Pick<PrismaService, "forTenant">, 
       transaction: true,
     },
   });
-  return order ? { ...order, revisionNumber: await latestEditRevisionNumber(db, orderId) } : order;
+  return order ? { ...order, revisionNumber } : order;
 }

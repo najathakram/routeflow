@@ -35,8 +35,8 @@ describe("order edit sends expectedRevisionNumber (row 372)", () => {
     for (const c of calls) expect(c).toContain("stale.baseLines()");
   });
   it("Reload re-bases the edit through the shared rebase helpers (MF3)", () => {
-    expect(page).toContain("rebaseEditItems(editItems, base.lines");
-    expect(page).toContain("rebasePendingDeletes(ids, fresh.lines");
+    expect(page).toContain("rebaseEditItems(editItems, bl, fl, REBASE_DEPS)");
+    expect(page).toContain("rebasePendingDeletes(ids, fl)");
   });
   it("feeChanged is judged against the fee the editor loaded at BOTH save sites, never the live refetch (MF3)", () => {
     const sites = page.match(/const feeChanged =[^;]*;/g) ?? [];

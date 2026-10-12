@@ -1984,16 +1984,17 @@ export default function OrderDetailPage() {
   const [isEditing, setIsEditing] = React.useState(false);
   const overpay = useOrderOverpayGuard(order, isEditing);
   const stale = useOrderStaleRevision(order, isEditing, (fresh, base) => {
-    // row 372 MF3: Reload re-bases the edit per field — what the user did not change refreshes, their own
-    // changes (lines AND the shipping fee) stay; lines another writer removed are dropped
-    const r = rebaseEditItems(editItems, base.lines ?? [], fresh.lines ?? [], REBASE_DEPS);
-    setEditItems(
-      (prev) => rebaseEditItems(prev, base.lines ?? [], fresh.lines ?? [], REBASE_DEPS).items,
-    );
-    setPendingDeletes((ids) => rebasePendingDeletes(ids, fresh.lines ?? []));
-    if (Math.abs(editShippingFee - (base.fee ?? 0)) <= 0.0001) setEditShippingFee(fresh.fee ?? 0);
-    if (r.dropped > 0)
-      toast({ title: `${r.dropped} line(s) were removed by someone else`, variant: "error" });
+    // row 372 MF3: Reload re-bases the edit (order-edit-rebase.ts): untouched fields refresh, the user's stay
+    const [bl, fl] = [base.lines ?? [], fresh.lines ?? []];
+    const n = rebaseEditItems(editItems, bl, fl, REBASE_DEPS);
+    setEditItems((prev) => rebaseEditItems(prev, bl, fl, REBASE_DEPS).items);
+    setPendingDeletes((ids) => rebasePendingDeletes(ids, fl));
+    setEditShippingFee((f) => (Math.abs(f - (base.fee ?? 0)) <= 0.0001 ? (fresh.fee ?? 0) : f));
+    if (n.dropped + n.conflicts > 0)
+      toast({
+        title: "A line was changed by someone else - check it before saving",
+        variant: "error",
+      });
   }); // row 372
   const updateItems = useUpdateOrderItems({
     localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
