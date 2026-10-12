@@ -191,7 +191,7 @@ export default function RunSettlementScreen() {
       >
         <Text style={styles.caption}>
           {totalsReady
-            ? `Collected during this run — ${run.collectedPayments?.count ?? summary.count} payment${
+            ? `Collected during this run — ${run.collectedPayments?.count ?? summary.count} cash/check payment${
                 (run.collectedPayments?.count ?? summary.count) === 1 ? "" : "s"
               }.`
             : "Totals are loading or you are offline: showing this device's tally only. Close run is unavailable until they load."}

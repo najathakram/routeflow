@@ -22,4 +22,8 @@ describe("settlement screen row source (B1008)", () => {
     expect(src).toMatch(/disabled=\{[^}]*!totalsReady[^}]*\}/);
     expect(src).toMatch(/if \(!totalsReady\) return/);
   });
+
+  it("captions the payments total as cash/check payments", () => {
+    expect(src).toMatch(/cash\/check payment\$\{/);
+  });
 });
