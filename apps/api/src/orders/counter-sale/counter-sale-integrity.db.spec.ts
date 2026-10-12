@@ -492,7 +492,7 @@ describeDb("Counter Sale integrity, the real chain on Postgres (row 383)", () =>
       const k = key();
       const before = await stockOf(A.cola);
       const spy = jest
-        .spyOn(orders as unknown as { create: (...a: unknown[]) => unknown }, "create")
+        .spyOn(orders as unknown as { create: (...a: unknown[]) => Promise<unknown> }, "create")
         .mockRejectedValueOnce(new ForbiddenException("restricted"));
       await expect(ring(A, k)).rejects.toBeInstanceOf(ForbiddenException);
       spy.mockRestore();
