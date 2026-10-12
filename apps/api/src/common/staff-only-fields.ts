@@ -16,6 +16,7 @@
  * non-object value passes through unchanged. Money fields derived from rows this helper trims
  * (balanceDue, paidAmount ...) must be computed BEFORE it runs.
  */
+import { invoiceTaxSplit, type BilledChargeItem } from "@routeflow/pricing";
 import { redactUpsellForCustomer } from "./upsell-redaction";
 import { derivedBackordered, type BackorderVisibility } from "../orders/backorder-visibility";
 
@@ -245,6 +246,14 @@ export function pickCustomerInvoiceFields<T>(
     out.customer = shape(invoice.customer, (c) => pick(c, ["id", "businessName"]));
   }
   if ("items" in invoice) out.items = shape(invoice.items, customerInvoiceItem);
+  // Row 398: the header `taxAmount` holds the regular tax PLUS the levy (deposit, excise). The buyer sees them apart, as
+  // on the PDF: the regular tax and one named charge per category, derived from the RAW lines here (the projected line
+  // carries neither the category row nor the snapshot type). The stored header is left as it is.
+  if ("items" in invoice && Array.isArray(invoice.items) && "taxAmount" in invoice) {
+    const split = invoiceTaxSplit(invoice.taxAmount, invoice.items as BilledChargeItem[]);
+    out.regularTaxAmount = split.tax;
+    out.chargeLines = split.charges;
+  }
   if ("payments" in invoice) {
     const payments =
       opts.confirmedPaymentsOnly && Array.isArray(invoice.payments)

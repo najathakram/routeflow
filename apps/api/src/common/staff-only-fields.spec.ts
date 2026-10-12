@@ -162,6 +162,40 @@ describe("pickCustomerInvoiceFields", () => {
     expect(out.payments[0].creditNote).toEqual({ id: "cn-1", creditNoteNumber: "CN-1", amount: 5 });
   });
 
+  it("names the levy apart from the tax: regularTaxAmount and one charge per category, from the raw lines (row 398)", () => {
+    const out = pickCustomerInvoiceFields({
+      id: "inv-1",
+      taxAmount: 5.4,
+      items: [
+        {
+          id: "li-1",
+          categoryTaxAmount: "2.80",
+          trackedCategoryId: "cat-1",
+          trackedCategory: { id: "cat-1", name: "CRV", invoiceTreatment: "LINE_TAX" },
+          categoryTaxType: "DEPOSIT_PER_CONTAINER",
+          staffOnlyCost: 9,
+        },
+        { id: "li-2", categoryTaxAmount: 0 },
+      ],
+    }) as Row;
+    expect(out.taxAmount).toBe(5.4); // the stored header, unchanged
+    expect(out.regularTaxAmount).toBe(2.6);
+    expect(out.chargeLines).toEqual([{ key: "cat-1", label: "CRV deposit", amount: 2.8 }]);
+    // the raw category row and the snapshot columns are still not on the buyer's line
+    expect(out.items[0]).not.toHaveProperty("trackedCategory");
+    expect(out.items[0]).not.toHaveProperty("categoryTaxType");
+    expect(out.items[0]).not.toHaveProperty("staffOnlyCost");
+  });
+
+  it("an invoice with no levy has the whole header as regular tax and no charges; a list row (no items) adds neither", () => {
+    const flat = pickCustomerInvoiceFields({ taxAmount: 3.3, items: [{ id: "a" }] }) as Row;
+    expect(flat.regularTaxAmount).toBe(3.3);
+    expect(flat.chargeLines).toEqual([]);
+    const list = pickCustomerInvoiceFields({ taxAmount: 3.3 }) as Row;
+    expect(list).not.toHaveProperty("regularTaxAmount");
+    expect(list).not.toHaveProperty("chargeLines");
+  });
+
   it("confirmedPaymentsOnly keeps only PAID payment rows", () => {
     const out = pickCustomerInvoiceFields(leakyInvoice(), { confirmedPaymentsOnly: true }) as Row;
     expect(out.payments.map((p: Row) => p.id)).toEqual(["p-paid"]);
