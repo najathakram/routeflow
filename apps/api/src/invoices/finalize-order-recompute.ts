@@ -1,7 +1,7 @@
 import { ServiceUnavailableException } from "@nestjs/common";
 import { holdsValues } from "./order-backsync-lines";
 import { Prisma } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, sumInvoiceTotals } from "@routeflow/pricing";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { QTY_EPSILON } from "../orders/merge-idempotency";
@@ -337,17 +337,18 @@ export async function finalizeOrderRecompute(params: {
   // B294 round 2: same semantics as the inline `prevSubtotal > 0 ? tax/prevSubtotal : 0` this
   // replaced — the shared helper's zero-subtotal guard lands on the same 0.
   const effectiveTaxRate = effectiveTaxRateFromTotals(order.tax, prevSubtotal, false);
-  const tax = roundMoney(subtotal * effectiveTaxRate);
-  // RF-4: fold the billed category tax (Σ per line) back into the order total, so the order
-  // stays in step with what the invoices actually charged.
-  const categoryTax = roundMoney(categoryTaxSum);
   // Shipping back-sync: the order's fee is DEFINED as Σ(non-void invoice fees) — an invoice-side
   // fee edit lands here and updates the order, which is what lets the order-driven reconciles
   // treat the order as source of truth.
   const shippingFeeSum = roundMoney(
     invoices.reduce((s: number, inv: any) => s + Number(inv.shippingFee ?? 0), 0),
   );
-  const total = roundMoney(subtotal + tax + categoryTax + shippingFeeSum);
+  // RF-4: fold the billed category tax (Σ per line) back into the order total, so the order
+  // stays in step with what the invoices actually charged. The ONE formula (`sumInvoiceTotals`).
+  const { regularTax: tax, total } = sumInvoiceTotals(
+    [{ subtotal, taxRate: effectiveTaxRate, categoryTaxAmount: categoryTaxSum }],
+    { shipping: shippingFeeSum },
+  );
   // SA-235: the Order row is written only when a column it would write differs (an identical save moves no updatedAt).
   const orderWrites: Array<[string, unknown]> = [
     ["subtotal", subtotal],
