@@ -34,11 +34,12 @@ export function SettingsShell({ children }: { children: React.ReactNode }) {
       )}
       {rail && (
         <RailBoundary resetKey={pathname}>
-          <aside className="sticky top-4 max-h-[calc(100vh-6rem)] w-[300px] flex-none overflow-y-auto">
+          {/* a plain column: the rail's own <nav aria-label="Settings"> is the one landmark (no aside + nav pair) */}
+          <div className="sticky top-4 max-h-[calc(100vh-6rem)] w-[300px] flex-none overflow-y-auto">
             <React.Suspense fallback={null}>
               <SettingsRail isAdmin={user?.role === "TENANT_ADMIN"} />
             </React.Suspense>
-          </aside>
+          </div>
         </RailBoundary>
       )}
       <div

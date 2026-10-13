@@ -846,3 +846,100 @@ describe("nothing lost: every link, anchor and tab key still resolves (brief sec
     expect(screen.queryByTestId("settings-row-route-defaults")).not.toBeInTheDocument();
   });
 });
+
+describe("SA PR1b M1: the rail search never outlives a navigation", () => {
+  const railSearch = () => screen.getByLabelText("Search settings");
+
+  it("a query typed in the rail is cleared when the route changes (a result click or any nav)", () => {
+    const view = renderWithProviders(<SettingsRail isAdmin />);
+    fireEvent.change(railSearch(), { target: { value: "low stock" } });
+    expect(railSearch()).toHaveValue("low stock");
+    mockPath = "/settings";
+    mockQuery = "tab=notifications";
+    view.rerender(<SettingsRail isAdmin />);
+    expect(railSearch()).toHaveValue("");
+  });
+
+  it("going back to /settings (a fresh visit) starts the rail empty", () => {
+    mockPath = "/settings/billing";
+    const view = renderWithProviders(<SettingsRail isAdmin />);
+    fireEvent.change(railSearch(), { target: { value: "plan" } });
+    mockPath = "/settings";
+    view.rerender(<SettingsRail isAdmin />);
+    expect(railSearch()).toHaveValue("");
+  });
+
+  it("re-rendering on the same location keeps the query (typing is not a navigation)", () => {
+    const view = renderWithProviders(<SettingsRail isAdmin />);
+    fireEvent.change(railSearch(), { target: { value: "tax" } });
+    view.rerender(<SettingsRail isAdmin />);
+    expect(railSearch()).toHaveValue("tax");
+  });
+});
+
+describe("SA PR1b SHOULDs: skip link and the hash poll", () => {
+  it("the skip link moves focus to the settings content (no hash jump)", () => {
+    const content = document.createElement("div");
+    content.id = "settings-content";
+    content.tabIndex = -1;
+    content.scrollIntoView = jest.fn();
+    document.body.appendChild(content);
+    try {
+      renderWithProviders(<SettingsRail isAdmin />);
+      const skip = screen.getByRole("link", { name: "Skip to settings content" });
+      const notPrevented = fireEvent.click(skip);
+      expect(notPrevented).toBe(false); // preventDefault: the URL hash is left alone
+      expect(document.activeElement).toBe(content);
+      expect(content.scrollIntoView).toHaveBeenCalled();
+    } finally {
+      content.remove();
+    }
+  });
+
+  it("the hash poll stops as soon as the person scrolls (it never yanks the page back)", () => {
+    jest.useFakeTimers();
+    try {
+      window.location.hash = "#late-card";
+      function Probe() {
+        useHashScroll("k");
+        return null;
+      }
+      renderWithProviders(<Probe />);
+      jest.advanceTimersByTime(300);
+      window.dispatchEvent(new Event("wheel"));
+      const el = document.createElement("div");
+      el.id = "late-card";
+      el.scrollIntoView = jest.fn();
+      document.body.appendChild(el);
+      jest.advanceTimersByTime(2000);
+      expect(el.scrollIntoView).not.toHaveBeenCalled();
+      el.remove();
+    } finally {
+      jest.useRealTimers();
+      window.location.hash = "";
+    }
+  });
+
+  it("the hash poll waits longer than 3 s for a slow tab body", () => {
+    jest.useFakeTimers();
+    try {
+      window.location.hash = "#slow-card";
+      function Probe() {
+        useHashScroll("k2");
+        return null;
+      }
+      renderWithProviders(<Probe />);
+      jest.advanceTimersByTime(4500);
+      const el = document.createElement("div");
+      el.id = "slow-card";
+      el.scrollIntoView = jest.fn();
+      document.body.appendChild(el);
+      jest.advanceTimersByTime(500);
+      expect(el.scrollIntoView).toHaveBeenCalled();
+      el.remove();
+    } finally {
+      jest.useRealTimers();
+      window.location.hash = "";
+    }
+  });
+});

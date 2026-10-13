@@ -25,22 +25,32 @@ export function hashId(hash: string): string {
 
 /**
  * Bring the `#id` target into view once it exists. A tab body is client-rendered after its data loads, so the
- * browser's own hash scroll finds nothing; poll briefly (up to ~3 s) and stop when found. Re-runs when `key`
- * (the route + query) or the hash changes. Targets carry `scroll-margin-top`, so the page title stays visible.
+ * browser's own hash scroll finds nothing; poll (up to ~8 s, a slow tab body included) and stop when found. The
+ * moment the person scrolls, wheels, swipes or presses a key, polling stops: a late card never yanks the page back.
+ * Re-runs when `key` (the route + query) or the hash changes. Targets carry `scroll-margin-top`.
  */
+const POLL_MS = 100;
+const POLL_TRIES = 80;
+const USER_SCROLL_EVENTS = ["wheel", "touchmove", "keydown"] as const;
+
 export function useHashScroll(key: string): void {
   const hash = useLocationHash();
   React.useEffect(() => {
     const id = hashId(hash);
     if (!id) return;
     let tries = 0;
+    const stop = () => {
+      clearInterval(timer);
+      for (const ev of USER_SCROLL_EVENTS) window.removeEventListener(ev, stop);
+    };
     const timer = setInterval(() => {
       const el = document.getElementById(id);
       if (el) {
         el.scrollIntoView({ block: "start" });
-        clearInterval(timer);
-      } else if (++tries >= 30) clearInterval(timer);
-    }, 100);
-    return () => clearInterval(timer);
+        stop();
+      } else if (++tries >= POLL_TRIES) stop();
+    }, POLL_MS);
+    for (const ev of USER_SCROLL_EVENTS) window.addEventListener(ev, stop, { passive: true });
+    return stop;
   }, [key, hash]);
 }
