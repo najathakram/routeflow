@@ -58,7 +58,7 @@ async function build(opts: {
         }
         events.push("product.findMany:movers");
         const ids = where.id.in as string[];
-        const rows = where.NOT
+        const rows = where.OR
           ? ids.filter((i) => !members.includes(i))
           : ids.filter((i) => members.includes(i));
         return rows.map((id) => ({ id, category: null, trackedSubcategory: null }));

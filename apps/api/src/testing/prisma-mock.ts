@@ -74,6 +74,15 @@ export function createMockPrisma(): MockPrisma {
       }),
     );
 
+  // SA-776: a tenants-by-id lookup (the cron / sweep status read) answers ACTIVE for each id unless a spec overrides.
+  const tenantProxy = () => {
+    const proxy = modelProxy();
+    proxy.findMany.mockImplementation(async (args?: { where?: { id?: { in?: string[] } } }) =>
+      (args?.where?.id?.in ?? []).map((id) => ({ id, status: "ACTIVE" })),
+    );
+    return proxy;
+  };
+
   // Prisma's update() returns the written row. B562 PR-2's order stock paths read the counter the
   // update returned (the SALE movement's stockAfter), so the product mock returns one by default.
   const productProxy = () => {
@@ -155,7 +164,7 @@ export function createMockPrisma(): MockPrisma {
     customerTag: modelProxy(),
     customerTagAssignment: modelProxy(),
     customerComment: modelProxy(),
-    tenant: modelProxy(),
+    tenant: tenantProxy(),
     return: modelProxy(),
     returnItem: modelProxy(),
     stockMovement: modelProxy(),
@@ -225,6 +234,9 @@ export function createMockPrisma(): MockPrisma {
     auditLog: modelProxy(),
     crmConnection: modelProxy(),
     crmHandoff: modelProxy(),
+    // SA-750r3: the day-close window reads (`counterWindowClosed`)
+    counterDayClose: modelProxy(),
+    counterParkedCart: modelProxy(),
   });
 
   const txModels = () => ({
@@ -286,6 +298,32 @@ export function createMockPrisma(): MockPrisma {
   });
 
   const models = allModels();
+
+  // Row 372: an order edit's LOCKED line read (`tx.orderItem.findMany({ where: { orderId }, select: { ...,
+  // invoicedQty } })`) sees the order's own lines, like Postgres would. Without this a spec that mocks only
+  // `order.findUnique`, or stubs `orderItem.findMany` with the recompute-shaped rows (`{ subtotal, status }`, no id),
+  // reads an EMPTY / id-less locked set and the vanished-line guard (409) fires on every line id. A spec that stubs
+  // lines WITH ids keeps exactly what it stubbed.
+  let lastOrder: any = null;
+  const orderFindUnique = models.order.findUnique;
+  const stubOrder = orderFindUnique.mockResolvedValue.bind(orderFindUnique);
+  orderFindUnique.mockResolvedValue = (v: any) => {
+    lastOrder = v;
+    return stubOrder(v);
+  };
+  const isHeldRead = (a: any) => !!a?.select && a.select.invoicedQty === true;
+  const heldOr = (rows: any, a: any) =>
+    isHeldRead(a) && Array.isArray(rows) && rows.some((r) => r?.id == null)
+      ? (lastOrder?.lineItems ?? rows)
+      : rows;
+  const itemFindMany = models.orderItem.findMany;
+  itemFindMany.mockImplementation(async (a: any) =>
+    isHeldRead(a) ? (lastOrder?.lineItems ?? []) : [],
+  );
+  const stubRows = itemFindMany.mockResolvedValue.bind(itemFindMany);
+  itemFindMany.mockResolvedValue = (rows: any) =>
+    itemFindMany.mockImplementation(async (a: any) => heldOr(rows, a));
+  void stubRows;
 
   return {
     ...models,

@@ -688,6 +688,12 @@ describe("InvoicesService — update() line preservation", () => {
         subtotal: 50,
         unitsPerBox: 12,
         categoryTaxAmount: 6,
+        // a regulated line, as a real one is: its category and the trio it was priced at (B297 row 338: a
+        // row with NO category but a stored levy keeps that levy instead of re-pricing at the product's)
+        trackedCategoryId: "cat-1",
+        categoryTaxType: "EXCISE_PER_UNIT",
+        categoryTaxRate: 0.1,
+        categoryPriceIncludesTax: false,
       });
       arrange([row], { category: true });
       await service.update("inv-box", {
@@ -708,6 +714,39 @@ describe("InvoicesService — update() line preservation", () => {
       expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
         where: { id: "item-legacy" },
         data: expect.objectContaining({ qty: 6, categoryTaxAmount: 7.2 }),
+      });
+    });
+
+    it("levy (NULL trio): a legacy regulated row with no stamped trio still prices at its OWN pack 12 and stamps the live category's trio", async () => {
+      const row = legacy({
+        qty: 5,
+        boxes: null,
+        pieces: null,
+        unitPrice: 10,
+        subtotal: 50,
+        unitsPerBox: 12,
+        categoryTaxAmount: 6,
+        trackedCategoryId: "cat-1", // regulated, but sold before the trio was stamped
+        categoryTaxType: null,
+        categoryTaxRate: null,
+        categoryPriceIncludesTax: null,
+      });
+      arrange([row], { category: true });
+      await service.update("inv-box", {
+        items: [
+          { id: "item-legacy", productId: "prod-box", description: "Chips", qty: 6, unitPrice: 10 },
+        ],
+      } as any);
+      // 6 units x own pack 12 = 72 pieces x the category's live $0.10 = $7.20, and the trio is stamped
+      expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
+        where: { id: "item-legacy" },
+        data: expect.objectContaining({
+          qty: 6,
+          categoryTaxAmount: 7.2,
+          categoryTaxType: "EXCISE_PER_UNIT",
+          categoryTaxRate: 0.1,
+          categoryPriceIncludesTax: false,
+        }),
       });
     });
 

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { PageHeader, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { resolveConfirmedAmounts } from "@routeflow/pricing";
+import { OPEN_INVOICE_STATUS_LIST } from "@/lib/open-invoice-status";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
@@ -36,6 +37,7 @@ import { invoiceListStatusParams } from "@/lib/invoice-list-filter";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
 import { fmt, fmtCalendarDate, calendarDaysUntil } from "@/lib/formatting";
 import { useAuth } from "@/lib/auth-context";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 /** Add calendar days to a YYYY-MM-DD date, in UTC end to end — mirrors
  *  invoices/new/page.tsx's addDaysIso (local-getter math loses a day across a
@@ -99,7 +101,7 @@ export function resolveInvoiceListBalance(
  * due-window query doesn't surface invoices that are already settled or not
  * yet issued — reusing the existing mechanism rather than inventing a new one.
  */
-const UNPAID_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+const UNPAID_STATUSES: string[] = [...OPEN_INVOICE_STATUS_LIST];
 
 type DueChipKey = "today" | "tomorrow" | "7d";
 
@@ -600,13 +602,14 @@ export default function InvoicesPage() {
               >
                 Recurring
               </Button>
-              <Button
+              <WriteButton
                 size="sm"
                 leftIcon={<Plus className="h-4 w-4" />}
                 onClick={() => router.push("/invoices/new")}
               >
                 New Invoice
-              </Button>
+              </WriteButton>
+              <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
             </div>
           ) : undefined
         }
@@ -791,9 +794,9 @@ export default function InvoicesPage() {
                         title="No invoices yet"
                         description="Create an invoice to bill a customer and start tracking receivables."
                         action={
-                          <Button size="sm" onClick={() => router.push("/invoices/new")}>
+                          <WriteButton size="sm" onClick={() => router.push("/invoices/new")}>
                             New Invoice
-                          </Button>
+                          </WriteButton>
                         }
                       />
                     )}

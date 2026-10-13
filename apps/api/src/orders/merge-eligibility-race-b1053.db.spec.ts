@@ -39,6 +39,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { EncryptionService } from "../common/encryption.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "./orders.service";
+import { latestEditRevisionNumber } from "./order-revisions";
 import { isMergeContention } from "./merge-contention";
 import { mergeEligibleWhere } from "./merge-lock-recheck";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -654,4 +655,25 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
     // in-tx guard (409 ORDER_CHANGED_DURING_EDIT). Either way a coded HTTP error, not a TypeError.
     expect([404, 409]).toContain(err?.getStatus?.());
   }, 120_000);
+  // Row 372 MF2: a merge changes the WINNER's lines, so an editor holding the earlier revision must go stale.
+  it.each([
+    ["auto (mergeAllPendingForCustomer)", () => mergeAuto()],
+    ["force (forceConsolidateCustomer)", () => mergeForce()],
+  ])(
+    "MF2: %s merge moves the winner's edit revision",
+    async (_label, merge) => {
+      const { loser, winner } = await pair();
+      const before = await latestEditRevisionNumber(raw as any, winner);
+      await merge();
+      expect(await exists(loser)).toBe(false); // the harness really merged
+      expect(await qtyOf(winner)).toBe(WQ + LQ);
+      expect(await latestEditRevisionNumber(raw as any, winner)).toBe(before + 1);
+      const rev = await raw.orderRevision.findFirstOrThrow({
+        where: { orderId: winner },
+        orderBy: { revisionNumber: "desc" },
+      });
+      expect(rev.source).toBe("SYSTEM_MERGE");
+    },
+    120_000,
+  );
 });

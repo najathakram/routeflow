@@ -61,7 +61,9 @@ describe("customerFormErrorCopy (B979)", () => {
     const text = customerFormErrorCopy(
       axiosErr(403, { code: "READ_ONLY", message: "raw guard text" }),
     );
-    expect(text).toBe("Your workspace is read-only, so this action is unavailable.");
+    expect(text).toBe(
+      "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
+    );
     expect(text).not.toBe(customerFormErrorCopy(axiosErr(403, {})));
   });
 

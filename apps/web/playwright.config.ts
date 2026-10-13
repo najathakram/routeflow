@@ -200,6 +200,16 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+    // ── Rows 342 + 345: hand-over stamp, close form, Z report, counter copy (mocked reads, 1440 / 390) ──
+    {
+      name: "day-close-ux",
+      testMatch: /74-day-close-ux\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
     // ── Dashboard CLS (PKG-8) ──────────────────────────────────────────────────
     // /dashboard layout shift with every read delayed 2 s; read-only.
     {

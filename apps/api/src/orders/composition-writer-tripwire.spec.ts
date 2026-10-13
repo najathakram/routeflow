@@ -69,6 +69,11 @@ const REGISTRY: Record<string, Entry> = {
     kind: "exempt",
     reason: "tax amount, plus the rate trio stamped once on a NULL-trio line",
   },
+  "orders/settle-split-free-units.ts::settleSplitFreeUnits": {
+    kind: "exempt",
+    reason:
+      "B297 row 355: writes only promoFreeUnits + the subtotal it implies; called from updateOrderItems / the at-stop change before their syncCompositions",
+  },
   "orders/order-line-removal.ts::writeLineRemoval": {
     kind: "exempt",
     reason: "struck-off lines (qty 0); called only from updateOrderItems, which syncs at its end",

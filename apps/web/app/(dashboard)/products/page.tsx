@@ -51,6 +51,7 @@ import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visi
 import { NewFamilyButton } from "@/components/family/NewFamilyButton";
 import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
 import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
 import {
   STOCK_FILTER_CHIPS,
@@ -158,7 +159,7 @@ function ProductCard({
       className={cn(
         "relative flex flex-col overflow-hidden rounded-lg border bg-white text-left shadow-card transition-shadow hover:shadow-dropdown cursor-pointer",
         status === "LOW" && "border-warning/40",
-        status === "OUT_OF_STOCK" && "border-danger/40",
+        status === "OUT_OF_STOCK" && "border-warning/40",
         (status === "IN_STOCK" || status === "INACTIVE") && "border-surface-border",
         selected && "ring-2 ring-brand-500 border-brand-500",
       )}
@@ -187,7 +188,7 @@ function ProductCard({
         className={cn(
           "relative flex h-28 w-full items-center justify-center overflow-hidden",
           status === "LOW" && "bg-warning-bg",
-          status === "OUT_OF_STOCK" && "bg-danger-bg",
+          status === "OUT_OF_STOCK" && "bg-warning-bg",
           (status === "IN_STOCK" || status === "INACTIVE") && "bg-surface-raised",
         )}
         onClick={selectionMode ? undefined : onClick}
@@ -206,7 +207,7 @@ function ProductCard({
             className={cn(
               "h-10 w-10",
               status === "LOW" && "text-warning/40",
-              status === "OUT_OF_STOCK" && "text-danger/40",
+              status === "OUT_OF_STOCK" && "text-warning/40",
               (status === "IN_STOCK" || status === "INACTIVE") && "text-navy/20",
             )}
           />
@@ -243,7 +244,7 @@ function ProductCard({
           <p className="text-[10px] text-navy/70 truncate">{product.parent.name}</p>
         )}
         <div className="flex items-center gap-1.5">
-          <ProductStatusBadge status={status} />
+          <ProductStatusBadge status={status} currentStock={product.currentStock} />
           <MerchBadges product={product} />
           {product.trackedCategoryId && (
             <span
@@ -432,7 +433,7 @@ function makeTableColumns(
                 status === "LOW"
                   ? "border-warning/40 bg-warning-bg"
                   : status === "OUT_OF_STOCK"
-                    ? "border-danger/40 bg-danger-bg"
+                    ? "border-warning/40 bg-warning-bg"
                     : "border-surface-border bg-surface-raised",
               )}
             >
@@ -690,7 +691,7 @@ function makeTableColumns(
         const status = getProductStatus(row.original);
         return (
           <div className="flex items-center gap-2">
-            <ProductStatusBadge status={status} />
+            <ProductStatusBadge status={status} currentStock={row.original.currentStock} />
             {/* `currentStock` is a PIECE count system-wide, so it must never be printed
                 next to `unit` (the box/case noun) — `unitsLabel` keeps that noun only
                 for unboxed products and shows a box+piece split otherwise. */}
@@ -1227,12 +1228,16 @@ export default function ProductsPage() {
               }}
             />
             <NewFamilyButton />
-            <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowCreate(true)}>
+            <WriteButton
+              leftIcon={<Plus className="h-4 w-4" />}
+              onClick={() => setShowCreate(true)}
+            >
               New Product
-            </Button>
+            </WriteButton>
           </div>
         }
       />
+      <ReadOnlyHint className="px-1 text-xs text-slate-600" />
 
       {/* Quick Edit mode banner */}
       {quickEditMode && (
@@ -1522,9 +1527,9 @@ export default function ProductsPage() {
               title="No products yet"
               description="Add your first product to build your catalog and start taking orders."
               action={
-                <Button size="sm" onClick={() => setShowCreate(true)}>
+                <WriteButton size="sm" onClick={() => setShowCreate(true)}>
                   New product
-                </Button>
+                </WriteButton>
               }
             />
           )}

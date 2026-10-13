@@ -3,7 +3,7 @@ import type { ToastData } from "@routeflow/ui/web";
 export interface OrderCreatedToastInput {
   /** The operator's answer to the merge prompt ("merge" folds the lines into an open order). */
   mergeChoice?: string | null;
-  /** True for "Save as Draft". */
+  /** True for "Save as draft". */
   asDraft?: boolean | null;
   /** The API response — only `id` / `orderNumber` are read; the merge case returns the merged order. */
   created?: { id?: string | null; orderNumber?: string | null } | null;

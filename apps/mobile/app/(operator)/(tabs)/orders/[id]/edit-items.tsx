@@ -78,6 +78,7 @@ import type { BlockedLine } from "@routeflow/types";
 import { CreditLimitGuardModal } from "../../../../../components/CreditLimitGuardModal";
 import {
   parseRegulatedAuthError,
+  regulatedAuthErrorCopy,
   type BlockedCategory,
 } from "../../../../../lib/api/authorizations";
 import {
@@ -879,7 +880,9 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           const customerName = (order as any)?.customer?.businessName;
           if (handleOrderOverpay(e, { id, customerId, customerName, canRecordReturn }, router))
             return;
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+          showToast(
+            regulatedAuthErrorCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+          );
         },
       },
     );

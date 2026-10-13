@@ -3,14 +3,18 @@
  * ratchet: a new surface must not read `.response.data.message`).
  */
 export const POS_COPY = {
+  /** The builder's title and subtitle when POS mode is forced by the capability (a store-only business). */
+  builderTitle: "Invoice a customer",
+  builderSubtitle: "Sold in store. Confirming creates the invoice. Hand goods over at pickup.",
   switchLabel: "POS mode",
-  switchHint: "A named customer, invoiced now. For walk-in, pay-now sales use Counter.",
+  switchHint: "A named customer, invoiced now. For walk-in sales paid now, use Counter sale.",
   switchFailed: "Couldn't save your POS mode setting. Try again.",
-  confirmAndInvoice: "Confirm & invoice",
+  confirmAndInvoice: "Confirm and invoice",
   confirmOnly: "Confirm only",
   confirmedInvoiced: "Order confirmed and invoiced",
   confirmedOnly: "Order confirmed",
   confirmMissing: "Order created, but it couldn't be confirmed. Open it to confirm.",
+  mergedConfirmMissing: "Order merged, but it couldn't be confirmed. Open it to confirm.",
   invoiceMissing:
     "Order confirmed, but the invoice wasn't created. Open it and choose Create invoice.",
   mergeTitle: "This customer already has an open counter order",

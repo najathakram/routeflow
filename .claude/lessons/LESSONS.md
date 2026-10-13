@@ -12,12 +12,26 @@
 
 ## process
 
+### L-304 · 2026-10-12 · process · a suspected display gap is judged against the payload the surface receives, not the JSX that reads the field
+
+- **Symptom:** a review reported that the staff order page's invoice card still printed a due date on a paid till sale; the follow-up spent a lane checking it. The card's `inv.dueDate` was never populated: the order read's invoice stubs are a narrow `select` with no `dueDate`.
+- **Root cause:** a reviewer inferred the defect from the component's JSX; the serializer that feeds it was not read. The real gap sat on the list read, which was found only by tracing `findAll`.
+- **Lesson:** **Before fixing or reporting a display gap, name the select, serializer or allowlist that feeds the field and confirm the field is in it; JSX that reads an absent field is dead code, not a defect. Then trace every OTHER read of the same document.**
+- **Guard:** none automatic; the review checklist for invoice/order display changes (named select first). Cf. [[L-167]].
+
+### L-294 · 2026-10-11 · process · a review lists every writer of a row shape before it calls that shape anomalous
+
+- **Symptom:** a review flagged a stored row shape as an anomaly, when another legitimate writer produces exactly that shape.
+- **Root cause:** the reviewer counted only the writers it had read; a row shape is only anomalous relative to ALL the code paths that can write it (create, update, import, backfill, replay), and the finding never listed them.
+- **Lesson:** **Before calling a stored shape anomalous, search for every writer of that row (create, update, import, backfill, cron, replay) and list them in the finding. A shape one of them legitimately produces is not an anomaly; if none does, name the one that must have.**
+- **Guard:** none automatic; the review checklist. Cf. [[L-223]] (a sweep covers every emit site, not the named ones).
+
 ### L-290 · 2026-10-10 · process · a train member that is red on its own branch does not enter the train: read each member's own latest CI before merging it
 
 - **Symptom:** a member whose own branch had a red database spec was merged into Train 3 and had to be ejected after the train was assembled, costing a revert on the tip.
 - **Root cause:** the train gate read the local checks and the assembled tip, never each member's own latest CI run on its head sha, so a red member only showed up once it was already in; the abandoned approach was "assemble first, find the reds on the tip".
 - **Lesson:** **Before a member is merged into a train, read that member's own latest CI result for its exact head sha. Red, missing or stale means it does not enter, whatever the local checks said; the tip's CI is the second check, not the first.**
-- **Guard:** none automatic; the train checklist (per member: head sha, its latest run, green). Cf. [[L-288]].
+- **Guard:** none automatic; train assembly reads each member's own latest CI (all jobs, not just Verify) and runs its changed specs before merging it. Cf. [[L-288]].
 
 ### L-289 · 2026-10-09 · process · a lead decides within its own authority when the owner is away; it never parks a train on an absent owner's reply
 
@@ -211,6 +225,13 @@
 
 ## tooling
 
+### L-303 · 2026-10-12 · tooling · a rule the API, web and mobile must all run belongs in @routeflow/pricing, never @routeflow/types
+
+- **Symptom:** a shared display rule (the paid-at-sale predicate) was first written into `packages/types`; the api-runtime-imports guard went red because the compiled API cannot value-import that package.
+- **Root cause:** `@routeflow/types` is source-only (TS the API never builds), and web and mobile import it freely, so a rule written there looks shared until the API's runtime import audit runs. The same trap archived as L-261 earlier.
+- **Lesson:** **Before placing shared runtime logic, ask who executes it. If the API does, it goes in `@routeflow/pricing` (the one compiled workspace package the API may value-import, with scanning); types keeps only constants and types.** Web/mobile re-export a thin wrapper to keep their import paths.
+- **Guard:** `api-runtime-imports` spec ("never value-imports @routeflow/types from a compiled source file") and the exact-package list spec; the pricing package's own spec pins the rule (row 401).
+
 ### L-291 · 2026-10-10 · tooling · never feed python a heredoc on Windows (`python3 -`): it hangs; write the script to a file or use node
 
 - **Symptom:** a lane's shell hung indefinitely on a `python3 - <<EOF` edit on a Windows machine.
@@ -235,21 +256,6 @@
 - **Guard:** none yet — propose a landing-tool helper that pushes an empty commit instead of
   calling `gh run rerun` whenever the PR predates a relevant base-branch fix.
 - **Fold-in 2026-09-27 (CI base must equal master):** a close/reopen or empty commit is not proof either. GitHub recomputes `refs/pull/N/merge` asynchronously, so a run started seconds after can still check out the OLD base (seen three times in one night). Before trusting a green run, read its checkout line (`HEAD is now at <merge> into <base>`) and require `<base>` to equal the current master; if not, wait until `git ls-remote origin refs/pull/N/merge` shows a merge commit whose first parent is master, then trigger again.
-
-### L-191 · 2026-09-17 · tooling · MailboxCard.tsx JSX apostrophes only caught by a full web lint
-
-- **Symptom:** `MailboxCard.tsx` shipped with five raw `'` characters in JSX text nodes
-  (`react/no-unescaped-entities`). `tsc`, Jest, and a targeted `eslint` pass on just the changed
-  file were all clean; the errors only surfaced under `npm run lint -w apps/web` (`next lint`)
-  against the whole workspace.
-- **Root cause:** `next lint` fails the ENTIRE web workspace on a single error, and amid
-  pre-existing warnings elsewhere in the repo, a real new error in the diff reads as just more
-  backlog.
-- **Lesson:** **A JSX text change needs web lint run locally before push, not inferred from
-  `tsc`/Jest passing — scan the full lint output for NEW errors in the touched file(s) rather
-  than assuming a clean `tsc` means the JSX is clean too.**
-- **Guard:** none yet — propose a scoped `npm run lint -w apps/web -- --file <changed-file>`
-  invocation, or a pre-push step that diffs lint output against a baseline.
 
 ### L-193 · 2026-09-17 · tooling · bugs.mjs index carries catalogue-only fields forward BY ID POSITION
 
@@ -350,13 +356,6 @@
   `dist` is older than `src` for any workspace package; the third recurrence's specific gap (which
   consumers lack a `moduleNameMapper` for which package) would need the same kind of check.
 
-### L-254 · 2026-10-02 · tooling · a fresh worktree runs the fleet hook shim, never `npx husky`, and hooks fail fast when the worktree has no install
-
-- **Symptom:** a worktree made with `npm ci --ignore-scripts` has no `.husky/_`, so before the shared shim a push silently skipped pre-push verify; with the shim, a worktree with no `node_modules` fails pre-commit (`prettier` ENOENT through lint-staged) and pre-push (`semver is not resolvable`). `npx husky` resets the shared `core.hooksPath`.
-- **Root cause:** hooks resolve per checkout, while the fleet shares one shim (`.git/husky-shim/_`) that runs each worktree's own `.husky` scripts; the tools the hooks call come from that worktree's own `node_modules`.
-- **Lesson:** **In a fresh worktree never run `npx husky`, `HUSKY=0` or `--no-verify`; read the first lines of a hook failure that appears within seconds (it names the missing tool). For code, install first (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`). For a docs-only commit, link a full install's `node_modules` (any worktree with a working install; the main checkout's can be broken) for the commit and remove the link after; for a docs-only push use the audited `SKIP_VERIFY=1 SKIP_VERIFY_REASON="..."`.**
-- **Guard:** `scripts/check-git-hooks.mjs` (first step of `npm run verify`); the audit line `SKIP_VERIFY_REASON` writes to `.git/skip-verify.log`.
-
 ### L-265 · 2026-10-06 · tooling · a `next dev` proof leaves `apps/web/.next/types`, which breaks the web type-check in pre-push; wipe `apps/web/.next` before committing or pushing
 
 - **Symptom:** three builders (#3233, #3238, #3223, 2026-10-06) ran the app under `next dev` to prove a change, then their pre-push `check-types -w apps/web` failed on errors from generated files, none in the diff.
@@ -372,14 +371,6 @@
 - **Guard:** none automated; a pre-build free-space check in the local runbook is the proposal.
 - **Recurrence (2026-10-08):** a deps-only `db:up` left for a one-off DB diagnostic kept the fixed-name postgres and redis containers, which blocked the next `local:up` and cost an 8.5 minute failed build. Run `db:down` in the same step that ran `db:up`.
 
-### L-274 · 2026-10-07 · tooling · a plain `npm ci` runs the root `prepare` (husky) and rewrites the SHARED hooksPath
-
-- **Symptom:** after `npm ci` in a worktree, `core.hooksPath` (shared by every worktree) turned relative and later pushes ran without the fleet shim's checks.
-- **Root cause:** the root `"prepare": "husky"` script runs on a plain `npm ci`, doing exactly what `npx husky` does: it rewrites the one repo-wide `core.hooksPath`.
-- **Lesson:** **In a worktree install with `npm ci --ignore-scripts`, never a plain `npm ci`. After any install, reset the absolute shim path, print `git config core.hooksPath`, and run `check-git-hooks` before committing or pushing.**
-- **Guard:** none automatic beyond `scripts/check-git-hooks.mjs`; the install order in [[L-254]].
-- **Recurrence (2026-10-08):** a second recurrence on the shared Mac mini of a plain `npm ci` rewriting `core.hooksPath`. `npm ci --ignore-scripts` plus a manual `prisma generate` avoids it.
-
 ### L-275 · 2026-10-07 · tooling · local stack image tags are shared across worktrees
 
 - **Symptom:** a proof run used an api image another worktree had built, and its result was reported as the branch's own.
@@ -389,12 +380,13 @@
 
 ## testing
 
-### L-292 · 2026-10-10 · testing · a fixture that leaks an environment variable (RF_VERIFY_MODE) makes the pre-push hook and CI disagree
+### L-296 · 2026-10-11 · testing · a pin that hard-codes a ruling's literal text or list goes stale, and fails only on the merge with a moved master
 
-- **Symptom:** the same checks gave different results in the local pre-push hook and in CI.
-- **Root cause:** a fixture left `RF_VERIFY_MODE` set in the process environment, so what a spec saw depended on which runner (and which earlier spec in the worker) had set it; the abandoned approach was re-running until the two agreed.
-- **Lesson:** **A test or fixture that sets a process environment variable restores it afterwards (save in a before hook, restore in an after hook, even on failure), and a spec whose behavior depends on such a variable sets it explicitly instead of inheriting it. When the hook and CI disagree, diff the environment first.**
-- **Guard:** none automatic; review check on fixtures that write `process.env`.
+- **Symptom:** a spec asserting "only these 2 routes", "the report re-send is blocked" or "exactly these N files write tenant status" was green on its own branch and red after the merge with a master that held a later ruling or a new legitimate writer.
+- **Root cause:** the pin copied the wording of the ruling it was written under instead of encoding the invariant, so every later ruling or writer made it lie. A branch's own green cannot see master's changes.
+- **Lesson:** **Pin the invariant structurally: one named constant, assertions derived from it, and an allow-list that carries a reason per entry plus a stale-entry guard (an entry that no longer matches fails). When a ruling changes, change the constant and its pin in the same diff, and replay the merged tip before landing. Cf. [[L-264]].**
+- **Guard:** `SNAPSHOT_READERS` in `coupon-state.spec.ts` and `PACKAGE_ALLOWLIST` in `api-error-codes-parity.spec.ts` (reason per entry, stale-entry check, total pinned); the replay of the merged tip.
+- **Recurrence (2026-10-12, R5.2 train):** the read-only copy rewrite (SA-776) on one train member staled the returns, counter-sale, park and save-error specs and a 390 px counter selector that sibling members had written against the old per-name line; each member was green on its own branch and the collisions only appeared when the MERGED tree's web and api suites ran (a train-only collision). Run the merged tree's full unit suites before the train PR, never each member's own green (cf. [[L-271]], [[L-297]]).
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
 
@@ -411,20 +403,6 @@
   text.**
 - **Guard:** the fix (rewriting both to DOM-behavior assertions) is being built into #910.
 
-### L-202 · 2026-09-18 · testing · 390px sweep script matched zero targets, reported clean
-
-- **Symptom:** the 390px mobile-overflow sweep located screens via `a[href^='/x/']`, but this
-  codebase navigates list tables by row-level `onClick` + `router.push`, never anchors — true
-  across every screen checked. The locator matched nothing, every run recorded "skipped: no
-  data," and looked clean while testing nothing. Fleet decisions were made on those results.
-- **Root cause:** the harness treated "found zero candidate targets" and "checked every
-  candidate and found nothing wrong" as the same outcome — a green run gives no signal for which
-  one happened.
-- **Lesson:** **Any verification step that yields zero candidate targets must raise an error,
-  never a skip or a pass.**
-- **Guard:** none yet — propose the sweep script assert a non-zero target count before
-  evaluating, failing loudly when a locator matches nothing.
-
 ### L-165 · 2026-09-16 · testing · #779 (B225/B244/B411)
 
 - **Symptom:** two unrelated integration tests intermittently failed under load — one asserted
@@ -437,29 +415,6 @@
   other parallel worker touching the same path.
 - **Guard:** code review should flag any `Date.now()`-delta or directory-listing-count assertion
   in a spec touching a spawned process or shared tmp path — no automated lint yet.
-
-### L-050 · 2026-09-02 · testing · #598
-
-- **Symptom:** two new e2e specs went red post-deploy AND dragged an unrelated, previously-green
-  test down with them.
-- **Root cause:** neither new project declared `dependencies`, so the runner placed both in the
-  first phase, while the victim ran in phase 2 on a stored session for the same shared operator;
-  the mutating spec revoked that session mid-flow, 401ing the sibling's token refresh.
-- **Lesson:** **A spec that mutates shared auth state needs its own user, not a scheduling
-  tweak.** Ask which fixtures a new suite MUTATES, and who else in its phase reads them.
-- **Guard:** none yet — the two project entries are commented out with the diagnosis inline, so
-  re-enabling is a seed change plus uncommenting. A skip is not a discharge ([[L-041]]).
-
-### L-025 · 2026-09-01 · testing
-
-- **Symptom:** native Google Sign-In had been dead the whole time — the callback destructured a
-  `default` export `expo-secure-store` does not have, so token storage threw on every device.
-- **Root cause:** the throw sits inside a `!isWeb` branch. Every automated surface runs the web
-  build, which takes the `localStorage` branch, so nothing ever executed the failing line.
-- **Lesson:** **A `Platform`/`isWeb` branch is untested code unless something runs that
-  platform. When you touch one side of such a branch, either exercise the other side or state
-  plainly that it is unverified.**
-- **Guard:** none — judgment. Grep `isWeb`/`Platform.OS` in any file a fix touches.
 
 ### L-247 · 2026-09-29 · testing · swapping a constructor dependency has construction sites tsc does not check (#2241)
 
@@ -489,13 +444,6 @@
 - **Lesson:** **In the tree under test run `npx prisma generate` from `apps/api` after the install, and prove any changed `select`/`include`/`where` with an executed query against a database migrated from THAT tree's `prisma/migrations` (`npm run local:migrate`, then the DB lane). A link to another tree's `node_modules` is fine for docs-only work and never for code that touches the schema.**
 - **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. [[L-176]].
 
-### L-270 · 2026-10-07 · testing · a probe asserts the branch it entered before reading the effect it measures
-
-- **Symptom:** a replace-all stock probe looked like a double-decrement of stock.
-- **Root cause:** the probe sent no `replaceAll: true`, so the edit took MERGE mode, a different branch from the one under test; the effect was read without ever checking which path ran.
-- **Lesson:** **A probe asserts the mode or path it actually entered (the edit mode, the line count after) before it reads the effect it measures; otherwise a fixture that took a different branch reads as a bug.**
-- **Guard:** probes print and assert the branch marker (mode, resulting line count) before any effect assertion; a probe with no such line is not evidence.
-
 ### L-276 · 2026-10-07 · testing · a scoped jest run leaves a partial campaign report, and a jest path argument is a regex
 
 - **Symptom:** a push carried a campaign report listing only a handful of specs, and turbo's cached test replay did not rewrite it; a scoped run of `app/(dashboard)/...` matched nothing and looked green.
@@ -505,6 +453,41 @@
 - **Recurrence (2026-10-08):** a master merge, or a merge of another branch, makes the api and mobile `.campaign/runs` reports STALE even when no test file changed on your branch, because turbo serves cached test results and never regenerates them. Regenerate with the full suite (`cd apps/api && npx jest --maxWorkers=2`, the same in mobile) before the push.
 
 ## domain
+
+### L-306 · 2026-10-12 · domain · a switch that must stop a family of automatic writers is enforced by a writer census and a fail-closed read, never by the callers you remember
+
+- **Symptom:** the automatic-lock pause (row 381) landed as a switch plus a gate, and a follow-up had to be added to hold EVERY automatic tenant lock while it is on; a later one made an unknown tenant class fail closed and pinned the class inside the write.
+- **Root cause:** each cron, webhook and cancel path decided on its own whether to lock, so the switch was a convention in each caller; the judged class was read before, not inside, the compare-and-swap, so a reclassification between scan and write could still lock.
+- **Lesson:** **Put the gate in ONE function that fails closed (switch on, key missing, read error, or an unclassified/unknown class all mean "held"), call it before each writer's first write, carry the judged class inside the write's own compare-and-swap, and pin the census: a spec classes every writer of the guarded column and fails the build for an unclassed writer or one gated after its first write.** Cf. [[L-223]], [[L-301]].
+- **Guard:** `auto-lock-writers.pin.spec.ts` (writer census), the `auto-locks-paused` and `auto-lock-admin` DB specs, and the billing module-wiring spec.
+
+### L-305 · 2026-10-12 · domain · wrapping write controls in a gate covers only the controls someone wrapped; sweep the rest by search and pin the list
+
+- **Symptom:** after the read-only gate shipped (WriteButton/WriteLink, a refusal notice in the shared Modal slot), UX re-runs still found raw write controls, hand-rolled dialogs and a driver shell with no notice; each was a separate P2.
+- **Root cause:** the gate is opt-in per control and the notice rides a component slot, so anything not built on those components is outside it; the API side had a registry plus a route-walk pin (SA-776), the web side had neither.
+- **Lesson:** **When a gate or notice is delivered by wrapper components, enumerate the surfaces by search (raw buttons that post to write routes, `role="dialog"` markup outside the shared Modal) and pin the list in a spec; state plainly which surfaces are knowingly outside it.**
+- **Guard:** none automatic yet; propose a static scan on the web like the API's route-walk pin. Known gaps recorded: hand-rolled dialogs; the driver banner shows only after a refused write (no driver-readable status). Cf. [[L-225]].
+
+### L-300 · 2026-10-12 · domain · an edit screen freezes its diff baseline at edit-open and re-bases only on an explicit reload
+
+- **Symptom:** an edit screen sent every line on save after a background refetch, re-writing untouched lines and reverting another writer's change made in between.
+- **Root cause:** the diff of "what changed" was computed against the live query data, so a refetch silently moved the baseline under the user's edits.
+- **Lesson:** **Snapshot the server state when editing starts and diff only against that snapshot; send just the fields the user touched. A refetch while editing never re-bases the draft: offer an explicit reload, and let the server reject a stale revision.**
+- **Guard:** none automatic; review checks that a save payload is built from the frozen baseline. Cf. [[L-167]].
+
+### L-302 · 2026-10-12 · domain · a negative Prisma filter on a nullable column never matches NULL: write the NULL arm and prove it with a NULL row
+
+- **Symptom:** "everything except category X" (the tracked-category bulk assign, and the product list's `product-list-where.ts` where-builder) silently dropped every product with no category; a second instance of the class after the first fix.
+- **Root cause:** `{ col: { not: X } }`, `{ notIn: [...] }` and `NOT: {...}` compile to `col <> X` / `NOT IN`, which SQL's three-valued logic evaluates to UNKNOWN for a NULL column, so NULL rows are excluded. The author's mental model of "all but X" includes the rows that have no value at all.
+- **Lesson:** **A negative filter (`not`, `notIn`, `NOT`) on a nullable column never matches NULL. Spell the NULL arm (`OR: [{ col: null }, { col: { not: X } }]`) and prove the filter with a fixture row whose column is NULL, in a real-database spec when the where-builder is shared.** Cf. [[L-238]].
+- **Guard:** each fix carries a spec with a NULL-column row (the product list where-builder, the bulk assign). No repo-wide scan yet: propose an AST scan that flags `not` / `notIn` / `NOT` on a nullable Prisma column without an adjacent `null` arm.
+
+### L-301 · 2026-10-12 · domain · a revision or guard value is written in the same transaction and lock as the check that reads it
+
+- **Symptom:** two concurrent writers both passed a revision check and both committed, because the new revision value was appended after the first transaction committed.
+- **Root cause:** check and write were separate steps, not one atomic compare-and-set under the row lock.
+- **Lesson:** **Read the guard value after taking the lock, compare, and write the new value in that same transaction. A guard stamped after commit is a log, not a guard.**
+- **Guard:** none automatic; DB specs that race two callers against one row. Cf. [[L-239]].
 
 ### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
 
@@ -581,13 +564,6 @@
   named query params on any new route.
 
 ## deploy
-
-### L-286 · 2026-10-08 · deploy · add a foreign key to a populated table inline on the new column, and state lock durations honestly
-
-- **Symptom:** recorded by the 2026-10-08 operating review from the sitting-3 migrations; the incident detail is in the lead's notes.
-- **Root cause:** Postgres skips the validation scan for a new column with no default only when the foreign key is declared inline. Inside one transaction an `ALTER TABLE` holds ACCESS EXCLUSIVE until COMMIT, so an index built later in the same file blocks reads as well as writes.
-- **Lesson:** **Declare the FK inline: `ADD COLUMN "x" TEXT CONSTRAINT "T_x_fkey" REFERENCES ...`, not a separate `ADD CONSTRAINT` (probe on 1M rows: 0.7 ms inline vs 33 ms separate; the constraint name is unchanged, so Prisma shows no drift). Write the real lock duration in the migration header.**
-- **Guard:** the sitting-3 migration headers; replay plus `apps/api/scripts/schema-drift.mjs`.
 
 ### L-282 · 2026-10-08 · deploy · a feature PR never adds or changes tenants or rows in the shared e2e seed that runs against production
 

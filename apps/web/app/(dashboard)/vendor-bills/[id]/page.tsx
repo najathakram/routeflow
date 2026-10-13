@@ -56,6 +56,7 @@ import {
   paymentMethodLabel,
   type SelectablePaymentMethod,
 } from "@/lib/payment-methods";
+import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
 /**
  * Extra fields the API additively includes on a bill's `findOne` mapped-
@@ -1145,13 +1146,14 @@ export default function VendorBillDetailPage() {
               >
                 Revert to Draft
               </Button>
-              <Button
+              <WriteButton
                 size="sm"
                 leftIcon={<CreditCard className="h-4 w-4" />}
                 onClick={() => setIsPaymentOpen(true)}
               >
                 Record Payment
-              </Button>
+              </WriteButton>
+              <ReadOnlyHint />
             </>
           )}
 
@@ -1509,7 +1511,7 @@ export default function VendorBillDetailPage() {
             )}
             {(status === "RECEIVED" || status === "PARTIAL") && !isEditing && (
               <div className="mt-4">
-                <Button
+                <WriteButton
                   variant="secondary"
                   size="sm"
                   className="w-full"
@@ -1517,7 +1519,7 @@ export default function VendorBillDetailPage() {
                   onClick={() => setIsPaymentOpen(true)}
                 >
                   Record Payment
-                </Button>
+                </WriteButton>
               </div>
             )}
           </Card>

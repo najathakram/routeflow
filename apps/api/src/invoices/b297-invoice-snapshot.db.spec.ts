@@ -405,6 +405,24 @@ describeDb("B297 PR3 — invoice recompute reads the line's rate snapshot, real 
     expect(warnedAbout(s.itemId)).toBe(true);
   });
 
+  it("row 338: a no-category row with a stored levy stays category-less and keeps it even when its product is regulated now", async () => {
+    const s = await seed("patch-l1-regulated", { status: "DRAFT", noCategory: true });
+    // the product IS in the regulated category now, unlike the sibling case above (a noCategory seed
+    // creates the product category-less)
+    await prisma.product.update({
+      where: { id: s.productId },
+      data: { trackedCategoryId: s.categoryId },
+    });
+    await patch(s, 6);
+    const [l] = await prisma.$queryRaw<
+      Array<{ category: string | null; amount: string; type: string | null }>
+    >`SELECT "trackedCategoryId" AS category, "categoryTaxAmount"::text AS amount,
+             "categoryTaxType"::text AS type
+        FROM "InvoiceItem" WHERE id = ${s.itemId}`;
+    expect(l).toEqual({ category: null, amount: "4.20", type: null }); // master: re-priced 0.42, moved to the category
+    expect(warnedAbout(s.itemId)).toBe(true);
+  });
+
   it("the sizing report counts the planted NULL-trio lines, keeps an exempt customer's line out of (b), and prints no identifier", async () => {
     const stale = await seed("size-stale", { nullTrio: true }); // stored 0.60, live 0.07 x 12 = 0.84: would re-price
     const exempt = await seed("size-exempt", { nullTrio: true, exempt: true });

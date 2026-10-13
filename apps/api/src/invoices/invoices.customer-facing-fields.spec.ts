@@ -44,6 +44,8 @@ function serviceReading(row: ReturnType<typeof invoiceRow>) {
     prisma: {
       // SA-770: findAll resolves the tenant for the overdue balance filter (a no-op without isOverdue)
       getTenantId: () => "tenant-1",
+      // row 308: every read resolves the tenant zone once for its isOverdue flag (none configured here)
+      tenantConfig: { findUnique: jest.fn().mockResolvedValue({ timezone: null }) },
       forTenant: () => ({
         invoice: {
           findUnique: jest.fn().mockResolvedValue(row),
@@ -123,6 +125,77 @@ describe("InvoicesService.findOne — customer-facing fields only", () => {
     const { service } = serviceReading(invoiceRow("DRAFT"));
     await expect(service.findOne("inv-1", principal("CUSTOMER"))).rejects.toBeInstanceOf(
       NotFoundException,
+    );
+  });
+});
+
+describe("InvoicesService.findOne — paidAtSale (row 401)", () => {
+  // The server answers "is this a counter sale paid at the till" once (the isPaidAtSale rule), so the
+  // buyer copy and mobile never need the order or the payment timestamps to show no terms.
+  const AT = new Date("2026-10-07T15:15:00.000Z");
+  const row = (over: Record<string, unknown> = {}) => {
+    const base = invoiceRow("PAID");
+    return {
+      ...base,
+      createdAt: AT,
+      order: { counterSale: true },
+      payments: [{ ...base.payments[0], createdAt: new Date(AT.getTime() + 2000) }],
+      ...over,
+    } as unknown as ReturnType<typeof invoiceRow>;
+  };
+
+  it.each(["OPERATOR", "CUSTOMER"])(
+    "%s: a counter sale paid in the same request is flagged",
+    async (role) => {
+      const { service } = serviceReading(row());
+      const out = (await service.findOne("inv-1", principal(role))) as unknown as Out;
+      expect(out.paidAtSale).toBe(true);
+    },
+  );
+
+  it("any other invoice is not flagged (on account, ordinary order, paid later)", async () => {
+    for (const over of [{ status: "SENT" }, { order: { counterSale: false } }, { order: null }]) {
+      const { service } = serviceReading(row(over));
+      const out = (await service.findOne("inv-1", principal("CUSTOMER"))) as unknown as Out;
+      expect(out.paidAtSale).toBe(false);
+    }
+  });
+});
+
+describe("InvoicesService.findAll — paidAtSale on list rows (row 401 follow-up)", () => {
+  const AT = new Date("2026-10-07T15:15:00.000Z");
+  const till = () => {
+    const base = invoiceRow("PAID");
+    return {
+      ...base,
+      createdAt: AT,
+      order: { status: "DELIVERED", counterSale: true },
+      payments: [{ ...base.payments[0], createdAt: new Date(AT.getTime() + 2000) }],
+    } as unknown as ReturnType<typeof invoiceRow>;
+  };
+
+  it.each(["OPERATOR", "CUSTOMER"])(
+    "%s: a till sale's list row is flagged, any other is not",
+    async (role) => {
+      const flagged = serviceReading(till());
+      const out = (await flagged.service.findAll({} as never, principal(role))) as unknown as {
+        data: Array<Record<string, unknown>>;
+      };
+      expect(out.data[0].paidAtSale).toBe(true);
+
+      const onAccount = serviceReading({ ...till(), status: "SENT" } as never);
+      const other = (await onAccount.service.findAll({} as never, principal(role))) as unknown as {
+        data: Array<Record<string, unknown>>;
+      };
+      expect(other.data[0].paidAtSale).toBe(false);
+    },
+  );
+
+  it("the list read selects the order's counterSale", async () => {
+    const { service, findMany } = serviceReading(till());
+    await service.findAll({} as never, principal("OPERATOR"));
+    expect(findMany.mock.calls[0][0].include.order.select).toEqual(
+      expect.objectContaining({ counterSale: true }),
     );
   });
 });

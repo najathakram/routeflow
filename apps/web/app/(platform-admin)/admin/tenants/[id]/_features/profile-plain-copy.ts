@@ -49,7 +49,22 @@ const PLAIN_PROFILES: Record<string, PlainProfile> = {
       "No routes, delivery or driver payments",
     ],
   },
+  delivery_pos: {
+    name: "Delivery + POS",
+    line: "Delivers on its own trucks and also sells over the counter.",
+    bullets: [
+      "Routes, ad hoc delivery and at-door payments in the menu",
+      "Orders go out on the business's own trucks",
+      "Counter in the menu, optional beside delivery",
+    ],
+  },
 };
+
+/**
+ * SA-769: what the profile preview says next to each module the profile will turn on as a comp (a free add-on row,
+ * never billed, no end date). One string, so the modal and its tests cannot drift apart.
+ */
+export const INCLUDED_FREE_COPY = "Included free with this profile";
 
 export interface ProfilePlainCopy {
   /** The choice's name. */

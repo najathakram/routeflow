@@ -180,6 +180,12 @@ describeDb("SA-748 — parked counter sales on real Postgres", () => {
     expect(list.data.map((r) => r.id)).toEqual([id]);
     expect(list.data[0]).toMatchObject({ lineCount: 2, customerName: "Acme Foods" });
     expect(list.data[0]).not.toHaveProperty("payload");
+    // row 330e: the real jsonb round-trips to the pricing inputs of each stored line (the list SQL's new column)
+    expect(list.data[0].priceLines).toHaveLength(2);
+    expect(list.data[0].priceLines![0]).toEqual({
+      unitPrice: expect.any(Number),
+      qty: expect.any(Number),
+    });
     expect(list.total).toBe(1);
   });
 

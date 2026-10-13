@@ -72,7 +72,7 @@ export const CANDIDATES_SQL = `
   SELECT r.id AS "returnId", r."tenantId", t.slug, r.status::text AS status, r."refundMethod",
          r."refundTender"::text AS "refundTender", a."tenantId" AS "auditTenantId", a.meta,
          t.status::text AS "tenantStatus", t.class::text AS "tenantClass", t."deletedAt" AS "tenantDeletedAt",
-         s."planKey", s."stripeSubId"
+         s."planKey", s."stripeSubId", s."couponFull"
     FROM "Return" r
     JOIN "Tenant" t ON t.id = r."tenantId"
     LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
@@ -135,7 +135,7 @@ async function main() {
         // and the typed phrase at a real terminal. Anything else about a single tenant is unchanged.
         const sub = await prisma.tenantSubscription.findFirst({
           where: { tenantId },
-          select: { planKey: true, stripeSubId: true },
+          select: { planKey: true, stripeSubId: true, couponFull: true },
         });
         try {
           assertWritableTenant(tenant, sub, protectedSlugs);
@@ -207,7 +207,12 @@ Nothing was written.`);
           class: r.tenantClass,
           deletedAt: r.tenantDeletedAt,
         });
-        subsById.set(r.tenantId, { planKey: r.planKey, stripeSubId: r.stripeSubId });
+        // SA-736r M2: couponFull is required whenever there is a plan (the LEFT JOIN yields null with no subscription row).
+        subsById.set(r.tenantId, {
+          planKey: r.planKey,
+          stripeSubId: r.stripeSubId,
+          couponFull: r.planKey == null ? false : r.couponFull,
+        });
       }
       const { writable } = filterWritableTenants(
         [...tenantsById.values()],

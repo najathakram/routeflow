@@ -462,7 +462,11 @@ function readMobileStub(): Record<string, unknown> {
 }
 
 const MOBILE_STUB = readMobileStub();
-const MOBILE_STUB_VALUE_KEYS = Object.keys(MOBILE_STUB).filter((k) => k.endsWith("_VALUES"));
+// Stub arrays that are SUBSETS of a Prisma enum, not enums themselves (pinned elsewhere).
+const MOBILE_STUB_SUBSET_KEYS = new Set(["OPEN_INVOICE_STATUS_VALUES"]);
+const MOBILE_STUB_VALUE_KEYS = Object.keys(MOBILE_STUB).filter(
+  (k) => k.endsWith("_VALUES") && !MOBILE_STUB_SUBSET_KEYS.has(k),
+);
 
 /** `VENDOR_BILL_STATUS_VALUES` → `VendorBillStatus`. */
 function stubKeyToPrismaEnumName(key: string): string {

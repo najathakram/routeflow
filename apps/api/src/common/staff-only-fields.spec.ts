@@ -162,6 +162,86 @@ describe("pickCustomerInvoiceFields", () => {
     expect(out.payments[0].creditNote).toEqual({ id: "cn-1", creditNoteNumber: "CN-1", amount: 5 });
   });
 
+  it("names the levy apart from the tax: regularTaxAmount and one charge per category, from the raw lines (row 398)", () => {
+    const out = pickCustomerInvoiceFields({
+      id: "inv-1",
+      taxAmount: 5.4,
+      items: [
+        {
+          id: "li-1",
+          categoryTaxAmount: "2.80",
+          trackedCategoryId: "cat-1",
+          trackedCategory: { id: "cat-1", name: "CRV", invoiceTreatment: "LINE_TAX" },
+          categoryTaxType: "DEPOSIT_PER_CONTAINER",
+          staffOnlyCost: 9,
+        },
+        { id: "li-2", categoryTaxAmount: 0 },
+      ],
+    }) as Row;
+    expect(out.taxAmount).toBe(5.4); // the stored header, unchanged
+    expect(out.regularTaxAmount).toBe(2.6);
+    // the key is opaque (the buyer never receives a category id: trackedCategoryId is off the projected line on purpose)
+    expect(out.chargeLines).toEqual([{ key: "0", label: "CRV deposit", amount: 2.8 }]);
+    // the raw category row and the snapshot columns are still not on the buyer's line
+    expect(out.items[0]).not.toHaveProperty("trackedCategory");
+    expect(out.items[0]).not.toHaveProperty("categoryTaxType");
+    expect(out.items[0]).not.toHaveProperty("staffOnlyCost");
+  });
+
+  it("names an older line by its category's type: no frozen categoryTaxType (before the B297 migration) still reads 'CRV deposit'", () => {
+    const out = pickCustomerInvoiceFields({
+      taxAmount: 5.4,
+      items: [
+        {
+          id: "li-1",
+          categoryTaxAmount: "2.80",
+          categoryTaxType: null,
+          trackedCategoryId: "cat-1",
+          // what InvoicesService.findOne selects for the category row (id, name, taxType, invoiceTreatment)
+          trackedCategory: {
+            id: "cat-1",
+            name: "CRV",
+            taxType: "DEPOSIT_PER_CONTAINER",
+            invoiceTreatment: "LINE_TAX",
+          },
+        },
+      ],
+    }) as Row;
+    expect(out.chargeLines).toEqual([{ key: "0", label: "CRV deposit", amount: 2.8 }]);
+  });
+
+  it("is idempotent for a levied invoice: a second pass over the projection keeps the named charges", () => {
+    const raw = {
+      taxAmount: 7.4,
+      items: [
+        {
+          id: "a",
+          categoryTaxAmount: 2.8,
+          trackedCategoryId: "c1",
+          trackedCategory: { id: "c1", name: "CRV", taxType: "DEPOSIT_PER_CONTAINER" },
+        },
+        {
+          id: "b",
+          categoryTaxAmount: 2,
+          trackedCategoryId: "c2",
+          trackedCategory: { id: "c2", name: "Tobacco", taxType: "EXCISE_PER_UNIT" },
+        },
+      ],
+    };
+    const once = pickCustomerInvoiceFields(raw) as Row;
+    expect(once.chargeLines.map((c: Row) => c.label)).toEqual(["CRV deposit", "Tobacco excise"]);
+    expect(pickCustomerInvoiceFields(once)).toEqual(once);
+  });
+
+  it("an invoice with no levy has the whole header as regular tax and no charges; a list row (no items) adds neither", () => {
+    const flat = pickCustomerInvoiceFields({ taxAmount: 3.3, items: [{ id: "a" }] }) as Row;
+    expect(flat.regularTaxAmount).toBe(3.3);
+    expect(flat.chargeLines).toEqual([]);
+    const list = pickCustomerInvoiceFields({ taxAmount: 3.3 }) as Row;
+    expect(list).not.toHaveProperty("regularTaxAmount");
+    expect(list).not.toHaveProperty("chargeLines");
+  });
+
   it("confirmedPaymentsOnly keeps only PAID payment rows", () => {
     const out = pickCustomerInvoiceFields(leakyInvoice(), { confirmedPaymentsOnly: true }) as Row;
     expect(out.payments.map((p: Row) => p.id)).toEqual(["p-paid"]);

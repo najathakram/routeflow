@@ -1,5 +1,5 @@
 import { BUSINESS_PROFILE_KEYS } from "@routeflow/types";
-import { profileBullets, profilePlainCopy } from "./profile-plain-copy";
+import { INCLUDED_FREE_COPY, profileBullets, profilePlainCopy } from "./profile-plain-copy";
 
 describe("SA-1: profile plain copy", () => {
   it("has plain copy for every profile key the contract lists", () => {
@@ -20,6 +20,7 @@ describe("SA-1: profile plain copy", () => {
       shipping_wholesaler: "Shipping only",
       in_store_retailer: "POS only: counter sales",
       in_store_shipping_retailer: "POS + shipping",
+      delivery_pos: "Delivery + POS",
     });
   });
 
@@ -39,5 +40,11 @@ describe("SA-1: profile plain copy", () => {
       "No routes, delivery or driver payments",
     ]);
     expect(profileBullets("future")).toEqual([]);
+  });
+});
+
+describe("SA-769: the comp line of the profile preview", () => {
+  it("the copy a module the profile will comp carries is fixed here, not typed in the modal", () => {
+    expect(INCLUDED_FREE_COPY).toBe("Included free with this profile");
   });
 });

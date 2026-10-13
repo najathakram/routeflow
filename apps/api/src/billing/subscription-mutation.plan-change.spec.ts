@@ -31,6 +31,9 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+jest.mock("./needs-reconcile", () =>
+  require("../testing/needs-reconcile-mock").needsReconcileMock(),
+);
 import {
   BadGatewayException,
   BadRequestException,
@@ -154,6 +157,8 @@ function make(o: Opts = {}) {
   };
   const tx: any = {
     tenantSubscription: {
+      // SA-736r: couponFull is read under the lock (never coupon-unbilled in these fixtures).
+      findUnique: jest.fn(async () => ({ couponFull: false })),
       // The optimistic guard: lands only while the stored plan is still the one the attempt read.
       updateMany: jest.fn(async ({ where, data }: any) => {
         if (where.planKey !== db.sub.planKey) return { count: 0 };

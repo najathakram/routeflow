@@ -1,3 +1,4 @@
+import { RECORD_KEEPING_EXCLUDED_STATUSES } from "../tenant/tenant-automation";
 import { Injectable, Logger } from "@nestjs/common";
 import { CronExpression } from "@nestjs/schedule";
 import { LeaderCron } from "../common/cron-lock";
@@ -80,7 +81,7 @@ export class LowStockDigestService {
   @LeaderCron(CronExpression.EVERY_HOUR, "inventory.sendLowStockDigest")
   async sendLowStockDigest(now: Date = new Date()): Promise<void> {
     const tenants = await this.prisma.tenant.findMany({
-      where: { deletedAt: null, status: { notIn: ["SUSPENDED", "CANCELLED"] } },
+      where: { deletedAt: null, status: { notIn: [...RECORD_KEEPING_EXCLUDED_STATUSES] } },
       select: {
         id: true,
         config: {

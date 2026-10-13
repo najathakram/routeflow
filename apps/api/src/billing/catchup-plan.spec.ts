@@ -1,0 +1,720 @@
+import * as fs from "fs";
+import * as path from "path";
+import {
+  CATCHUP_GO_LIVE,
+  manualCoverage,
+  type ActivationRecord,
+  addonCardRefusal,
+  CATCHUP_TRIAL_STUB_MIN_LEAD_MS,
+  catchupShape,
+  firstBoundaryNotBefore,
+  paidThroughOf,
+  planCatchup,
+  stubLines,
+  type CatchupInvoice,
+} from "./catchup-plan";
+
+const d = (iso: string) => new Date(iso);
+const inv = (
+  id: string,
+  status: string,
+  start: string | null,
+  end: string | null,
+): CatchupInvoice => ({
+  id,
+  status,
+  periodStart: start ? d(start) : null,
+  periodEnd: end ? d(end) : null,
+});
+const OCT = (status: string, id = "oct") =>
+  inv(id, status, "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
+const NOW = d("2026-10-09T10:00:00Z");
+const plan = (over: Partial<Parameters<typeof planCatchup>[0]> = {}) => {
+  const p = planCatchup({ now: NOW, monthly: 310, addons: [], invoices: [], ...over });
+  if (!p.ok) throw new Error(`plan refused: ${p.reason}`);
+  return p;
+};
+
+describe("one helper (L-167): snap, boundary and contiguity come from rf-invoice/calendar-windows", () => {
+  it("catchup-plan.ts defines no snap / contiguity / boundary helper of its own", () => {
+    const src = fs.readFileSync(path.join(__dirname, "catchup-plan.ts"), "utf8");
+    expect(src).toContain('from "./rf-invoice/calendar-windows"');
+    expect(src).not.toMatch(/function (snapToBoundary|isContiguous|nearestBoundary)/);
+    expect(src).not.toMatch(/export (const|function) boundary/);
+  });
+
+  it("firstBoundaryNotBefore is exact (no snapping): 'at least 72 h from now'", () => {
+    expect(firstBoundaryNotBefore(d("2026-11-01T12:00:00Z")).toISOString()).toBe(
+      "2026-11-01T12:00:00.000Z",
+    );
+    expect(firstBoundaryNotBefore(d("2026-11-01T12:00:01Z")).toISOString()).toBe(
+      "2026-12-01T12:00:00.000Z",
+    );
+    expect(firstBoundaryNotBefore(d("2026-12-20T00:00:00Z")).toISOString()).toBe(
+      "2027-01-01T12:00:00.000Z",
+    );
+  });
+});
+
+describe("paid-through (r M5 + r4a)", () => {
+  it("nothing paid: the go-live boundary (Oct 1 12:00Z)", () => {
+    const r = paidThroughOf([OCT("OPEN")]);
+    expect(r).toMatchObject({ ok: true, fromInvoices: false });
+    expect(r.ok && r.paidThrough.getTime()).toBe(CATCHUP_GO_LIVE.getTime());
+  });
+
+  it("a legacy 00:00Z PAID October is paid-through Nov 1 12:00Z, not Nov 1 00:00Z (no 12 h re-billed)", () => {
+    const r = paidThroughOf([inv("a", "PAID", "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z")]);
+    expect(r.ok && r.paidThrough.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+  });
+
+  it("a contiguous run of PAID invoices is walked to its end (VOID/OPEN ignored)", () => {
+    const r = paidThroughOf([
+      inv("o", "PAID", "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z"),
+      inv("n", "PAID", "2026-11-01T12:00:00Z", "2026-12-01T12:00:00Z"),
+      inv("x", "VOID", "2026-12-01T12:00:00Z", "2027-01-01T12:00:00Z"),
+      inv("y", "OPEN", "2026-12-01T12:00:00Z", "2027-01-01T12:00:00Z"),
+    ]);
+    expect(r).toMatchObject({ ok: true, paidInvoiceIds: ["o", "n"] });
+    expect(r.ok && r.paidThrough.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+  });
+
+  it("a PAID invoice AFTER a gap refuses (NEEDS RULING)", () => {
+    expect(
+      paidThroughOf([
+        OCT("PAID"),
+        inv("dec", "PAID", "2026-12-01T12:00:00Z", "2027-01-01T12:00:00Z"),
+      ]),
+    ).toEqual({ ok: false, reason: "paid_after_gap" });
+  });
+
+  it("a PAID invoice with no period cannot be placed: refuses", () => {
+    expect(paidThroughOf([inv("p", "PAID", null, null)])).toEqual({
+      ok: false,
+      reason: "paid_invoice_without_period",
+    });
+  });
+
+  it("history before go-live never lowers paid-through below Oct 1", () => {
+    const r = paidThroughOf([inv("s", "PAID", "2026-08-01T12:00:00Z", "2026-09-01T12:00:00Z")]);
+    expect(r.ok && r.paidThrough.toISOString()).toBe("2026-10-01T12:00:00.000Z");
+  });
+});
+
+describe("the stub (r M5): price x unpaid days / days in month, add-ons included", () => {
+  it("nothing paid, checkout Oct 9: ALL of October in full = the monthly price, labelled", () => {
+    const p = plan({ monthly: 310 });
+    expect(p.paidThrough.toISOString()).toBe("2026-10-01T12:00:00.000Z");
+    expect(p.anchorAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    expect(p.stub.label).toBe("Subscription — October 2026");
+    expect(p.stub.lines).toEqual([{ kind: "PLAN", code: "PLAN", cents: 31000 }]);
+    expect(p.stub.totalCents).toBe(31000);
+  });
+
+  it("an override price is whatever the caller resolved - amounts are whole cents via toCents (19.99 -> 1999)", () => {
+    expect(plan({ monthly: 19.99 }).stub.totalCents).toBe(1999);
+    expect(plan({ monthly: 0.1 + 0.2 }).stub.totalCents).toBe(30);
+  });
+
+  it("paid through Oct 15 with an add-on: base AND add-on for 17/31 days", () => {
+    const p = plan({
+      monthly: 310,
+      addons: [{ sku: "FORECASTING", unitPrice: 31, quantity: 1 }],
+      invoices: [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-10-15T12:00:00Z")],
+    });
+    expect(p.paidThrough.toISOString()).toBe("2026-10-15T12:00:00.000Z");
+    expect(p.stub.lines).toEqual([
+      { kind: "PLAN", code: "PLAN", cents: 17000 }, // 310 x 17/31
+      { kind: "ADDON", code: "FORECASTING", cents: 1700 }, // 31 x 17/31
+    ]);
+    expect(p.stub.label).toBe("Subscription — October 2026 (from Oct 15)");
+  });
+
+  it("add-on quantity multiplies the unit price; a zero-priced or zero-quantity row adds no line", () => {
+    const lines = stubLines(
+      100,
+      [
+        { sku: "A", unitPrice: 10, quantity: 3 },
+        { sku: "B", unitPrice: 0, quantity: 5 },
+        { sku: "C", unitPrice: 10, quantity: 0 },
+      ],
+      d("2026-10-01T12:00:00Z"),
+      d("2026-11-01T12:00:00Z"),
+    );
+    expect(lines).toEqual([
+      { kind: "PLAN", code: "PLAN", cents: 10000 },
+      { kind: "ADDON", code: "A", cents: 3000 },
+    ]);
+  });
+
+  it("a session opened after Nov 1 covers the past days too: Oct 1 -> Dec 1 is TWO full months", () => {
+    const p = plan({ now: d("2026-11-05T10:00:00Z"), monthly: 100 });
+    expect(p.anchorAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+    expect(p.stub.totalCents).toBe(20000);
+    expect(p.stub.label).toBe("Subscription — October 2026 to November 2026");
+  });
+
+  it("different month lengths: Nov is 30 days (paid through Nov 14 12:00 -> 17/30 of December's hand-over)", () => {
+    const p = plan({
+      monthly: 300,
+      invoices: [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-11-14T12:00:00Z")],
+    });
+    // paid through Nov 14: T = Dec 1 12:00Z (>= 72 h out): the stub is [Nov 14, Dec 1) = 17 days of 30
+    expect(p.stub.from.toISOString()).toBe("2026-11-14T12:00:00.000Z");
+    expect(p.stub.to.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+    expect(p.stub.totalCents).toBe(17000);
+  });
+
+  it("an under-$0.50 stub is flagged and skipped", () => {
+    const p = plan({
+      monthly: 5,
+      now: d("2026-10-30T20:00:00Z"),
+      invoices: [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-10-31T11:00:00Z")],
+    });
+    // paid-through Oct 31 11:00 (25 h before the boundary: no snap): stub = 25 h = 1.0417 d of 31 of $5 = $0.17
+    expect(p.stub.totalCents).toBe(17);
+    expect(p.stub.belowStripeMinimum).toBe(true);
+    expect(p.shape).toBe("anchor_no_line");
+  });
+});
+
+describe("the Checkout shape (r3 N3 + Stripe's documented Checkout limits)", () => {
+  it("paid through Nov 14, checkout Oct 9: trial_end = Dec 1 12:00Z, stub [Nov 14, Dec 1) - the trial branch", () => {
+    const p = plan({
+      invoices: [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-11-14T12:00:00Z")],
+    });
+    expect(p.shape).toBe("trial");
+    expect(p.trialEndAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+  });
+
+  it("paid through Nov 1 (October paid), checkout Oct 9: trial_end = Nov 1, NO stub", () => {
+    const p = plan({ invoices: [OCT("PAID")] });
+    expect(p.shape).toBe("trial");
+    expect(p.trialEndAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    expect(p.stub.totalCents).toBe(0);
+  });
+
+  it("paid through Nov 1, checkout Oct 30: T is under 72 h away -> no trial, anchor Nov 1, stub $0, NO one-time line", () => {
+    const p = plan({ now: d("2026-10-30T09:00:00Z"), invoices: [OCT("PAID")] });
+    expect(p.shape).toBe("anchor_no_line");
+    expect(p.anchorAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    expect(p.stub.totalCents).toBe(0);
+  });
+
+  it("nothing paid (the usual October case): trial_one_time (SA-733r5) - A = Nov 1 12:00Z, October 31/31 as the one-time line", () => {
+    const p = plan();
+    expect(p.shape).toBe("trial_one_time");
+    expect(p.trialEndAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    expect(p.stub.from.toISOString()).toBe("2026-10-01T12:00:00.000Z");
+    expect(p.stub.to.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    expect(p.stub.totalCents).toBe(31000);
+  });
+
+  it("the prepaid trial WITH a stub needs 98 h (Decision 5): exactly 98 h out is a trial, 1 minute less is not", () => {
+    // paid through Nov 29 12:00 => T = Dec 1 12:00Z, a two-day stub; 98 h before T is Nov 27 10:00Z
+    const inv98 = [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-11-29T12:00:00Z")];
+    expect(plan({ now: d("2026-11-27T10:00:00Z"), invoices: inv98 }).shape).toBe("trial");
+    expect(plan({ now: d("2026-11-27T10:01:00Z"), invoices: inv98 }).shape).not.toBe("trial");
+  });
+});
+
+describe("which RfInvoices fall under the lock-and-void rule", () => {
+  it("nothing paid: the OPEN October invoice and an OPEN November issued ahead are both voided at settlement", () => {
+    const p = plan({
+      invoices: [
+        OCT("OPEN", "oct"),
+        inv("nov", "OPEN", "2026-11-01T12:00:00Z", "2026-12-01T12:00:00Z"),
+      ],
+    });
+    expect(p.voidInvoiceIds.sort()).toEqual(["nov", "oct"]);
+  });
+
+  it("October paid: only the invoices from paid-through on (November) - never the PAID one, never a VOID", () => {
+    const p = plan({
+      invoices: [
+        OCT("PAID", "oct"),
+        inv("nov", "OPEN", "2026-11-01T12:00:00Z", "2026-12-01T12:00:00Z"),
+        inv("v", "VOID", "2026-11-01T12:00:00Z", "2026-12-01T12:00:00Z"),
+      ],
+    });
+    expect(p.voidInvoiceIds).toEqual(["nov"]);
+  });
+
+  it("the 24 h snap tolerance applies to the start (a legacy 00:00Z November start is still November)", () => {
+    const p = plan({
+      invoices: [
+        OCT("PAID", "oct"),
+        inv("nov", "OPEN", "2026-11-01T00:00:00Z", "2026-12-01T00:00:00Z"),
+      ],
+    });
+    expect(p.voidInvoiceIds).toEqual(["nov"]);
+  });
+
+  it("an OPEN invoice with no period is never voided blind: reported", () => {
+    const p = plan({ invoices: [inv("x", "OPEN", null, null)] });
+    expect(p.voidInvoiceIds).toEqual([]);
+    expect(p.unplaceableOpenIds).toEqual(["x"]);
+  });
+});
+
+describe("refusals", () => {
+  it("no resolvable monthly price", () => {
+    expect(planCatchup({ now: NOW, monthly: null, addons: [], invoices: [] })).toEqual({
+      ok: false,
+      reason: "no_monthly_price",
+    });
+  });
+
+  it("a PAID invoice after a gap", () => {
+    const r = planCatchup({
+      now: NOW,
+      monthly: 100,
+      addons: [],
+      invoices: [OCT("PAID"), inv("dec", "PAID", "2026-12-01T12:00:00Z", "2027-01-01T12:00:00Z")],
+    });
+    expect(r).toEqual({ ok: false, reason: "paid_after_gap" });
+  });
+});
+
+describe("SA-733r5 selector rows", () => {
+  it("catchupShape: paid-through <= now => trial_one_time; T >= now + 72 h => trial; else anchor_no_line", () => {
+    const now = d("2026-10-09T10:00:00Z");
+    expect(catchupShape({ paidThrough: d("2026-10-01T12:00:00Z"), now })).toBe("trial_one_time");
+    expect(catchupShape({ paidThrough: d("2026-10-09T10:00:00Z"), now })).toBe("trial_one_time"); // = now
+    expect(catchupShape({ paidThrough: d("2026-11-14T12:00:00Z"), now })).toBe("trial");
+    expect(
+      catchupShape({ paidThrough: d("2026-11-01T12:00:00Z"), now: d("2026-10-30T09:00:00Z") }),
+    ).toBe("anchor_no_line");
+  });
+
+  describe("Decision 5: the prepaid trial shape needs room for its stub to finalize BEFORE the renewal", () => {
+    // paid through Oct 30 12:00 -> T = Nov 1 12:00, so the stub is two days: [Oct 30 12:00, Nov 1 12:00)
+    const pt = d("2026-10-30T12:00:00Z");
+
+    it("the lead is the session life + Stripe's 3-day webhook retry window + 2 h = 98 h", () => {
+      expect(CATCHUP_TRIAL_STUB_MIN_LEAD_MS).toBe((24 + 72 + 2) * 3600_000);
+    });
+
+    it("WITH a stub: trial only when T >= now + 98 h; closer than that the stub is billed up front", () => {
+      expect(catchupShape({ paidThrough: pt, now: d("2026-10-28T04:00:00Z") })).toBe("trial"); // 104 h
+      expect(catchupShape({ paidThrough: pt, now: d("2026-10-28T10:00:00Z") })).toBe("trial"); // exactly 98 h
+      expect(catchupShape({ paidThrough: pt, now: d("2026-10-28T10:01:00Z") })).toBe(
+        "anchor_no_line",
+      ); // 97 h 59 min
+      expect(catchupShape({ paidThrough: pt, now: d("2026-10-29T04:00:00Z") })).toBe(
+        "anchor_no_line",
+      ); // 80 h: the OLD 72 h rule said trial
+    });
+
+    it("the plan then bills that stub UP FRONT as the one-time line, never as a post-completion draft", () => {
+      const p = plan({
+        now: d("2026-10-29T04:00:00Z"),
+        monthly: 310,
+        invoices: [inv("oct", "PAID", "2026-10-01T12:00:00Z", "2026-10-30T12:00:00Z")],
+      });
+      expect(p.shape).toBe("trial_one_time");
+      expect(p.stub.totalCents).toBeGreaterThan(0);
+    });
+
+    it("with NO stub (paid through exactly on the 1st) the 72 h rule stands: nothing is left to finalize late", () => {
+      const onFirst = d("2026-11-01T12:00:00Z");
+      expect(catchupShape({ paidThrough: onFirst, now: d("2026-10-28T11:00:00Z") })).toBe("trial"); // 97 h
+      expect(catchupShape({ paidThrough: onFirst, now: d("2026-10-30T09:00:00Z") })).toBe(
+        "anchor_no_line",
+      ); // 51 h
+    });
+  });
+
+  it("session Oct 30 unpaid since Oct 1: A = Dec 1 12:00Z, ONE line Oct 1 -> Nov 30 (two months)", () => {
+    const p = plan({ now: d("2026-10-30T12:00:00Z"), monthly: 100 });
+    expect(p.shape).toBe("trial_one_time");
+    expect(p.trialEndAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+    expect(p.stub.totalCents).toBe(20000);
+    expect(p.stub.label).toBe("Subscription — October 2026 to November 2026");
+  });
+
+  it("R5-2: the last 72 h before a 1st move A to the FOLLOWING 1st (that month is paid 1-3 days early), and say so", () => {
+    const p = plan({ now: d("2026-10-29T12:01:00Z"), monthly: 100 });
+    expect(p.trialEndAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+    expect(p.notes.join(" ")).toMatch(/R5-2.*following month/);
+    // exactly 72 h before the 1st is still the NEXT 1st
+    const q = plan({ now: d("2026-10-29T12:00:00Z"), monthly: 100 });
+    expect(q.trialEndAt.toISOString()).toBe("2026-11-01T12:00:00.000Z");
+    expect(q.notes.join(" ")).not.toMatch(/R5-2/);
+  });
+
+  it("A is always >= now + 72 h and a 1st at 12:00Z, whatever the instant (the Stripe 48 h trial floor with margin)", () => {
+    for (let h = 0; h < 24 * 62; h += 7) {
+      const now = new Date(Date.UTC(2026, 9, 2, 0, 0, 0) + h * 3600_000 + 17 * 60_000);
+      const p = planCatchup({ now, monthly: 100, addons: [], invoices: [] });
+      if (!p.ok || p.shape !== "trial_one_time") throw new Error("expected trial_one_time");
+      expect(p.trialEndAt.getTime() - now.getTime()).toBeGreaterThanOrEqual(72 * 3600_000);
+      expect(p.trialEndAt.getUTCDate()).toBe(1);
+      expect(p.trialEndAt.getUTCHours()).toBe(12);
+    }
+  });
+
+  it("the one-time line includes add-ons (base + add-on for 31/31)", () => {
+    const p = plan({ addons: [{ sku: "FORECASTING", unitPrice: 31, quantity: 2 }] });
+    expect(p.stub.lines).toEqual([
+      { kind: "PLAN", code: "PLAN", cents: 31000 },
+      { kind: "ADDON", code: "FORECASTING", cents: 6200 },
+    ]);
+  });
+
+  it("paid through mid-month, a 1st under 72 h away (stub >= $0.50): the one-time line bills it rather than leave it free", () => {
+    const p = plan({
+      now: d("2026-10-30T20:00:00Z"),
+      monthly: 310,
+      invoices: [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-10-30T23:00:00Z")],
+    });
+    expect(p.shape).toBe("trial_one_time");
+    expect(p.stub.from.toISOString()).toBe("2026-10-30T23:00:00.000Z");
+    expect(p.trialEndAt.toISOString()).toBe("2026-12-01T12:00:00.000Z");
+  });
+
+  it("an OPEN invoice is superseded by its PERIOD END (after paid-through), not only by its start", () => {
+    const p = plan({
+      invoices: [
+        inv("overlap", "OPEN", "2026-10-15T12:00:00Z", "2026-11-01T12:00:00Z"),
+        inv("before", "OPEN", "2026-09-01T12:00:00Z", "2026-10-01T12:00:00Z"),
+      ],
+    });
+    expect(p.voidInvoiceIds).toEqual(["overlap"]);
+  });
+
+  it("the catch-up pays CATCHUP_GO_LIVE-onwards only: history before go-live never lowers paid-through", () => {
+    const r = paidThroughOf([inv("s", "PAID", "2026-08-01T12:00:00Z", "2026-09-01T12:00:00Z")]);
+    expect(r.ok && r.paidThrough.getTime()).toBe(CATCHUP_GO_LIVE.getTime());
+    expect(stubLines(100, [], CATCHUP_GO_LIVE, CATCHUP_GO_LIVE)).toEqual([]);
+  });
+});
+
+describe("Opus item 9: the go-live floor is max(go-live, the tenant's billing start)", () => {
+  it("a tenant activated Oct 20 is charged from Oct 20 08:30Z, not from Oct 1", () => {
+    const p = planCatchup({
+      now: d("2026-10-22T10:00:00Z"),
+      monthly: 310,
+      addons: [],
+      invoices: [],
+      billingStart: d("2026-10-20T08:30:00Z"),
+    });
+    if (!p.ok) throw new Error(p.reason);
+    expect(p.paidThrough.toISOString()).toBe("2026-10-20T08:30:00.000Z");
+    expect(p.stub.from.toISOString()).toBe("2026-10-20T08:30:00.000Z");
+    expect(p.stub.totalCents).toBeLessThan(31000);
+    expect(p.stub.totalCents).toBeGreaterThan(0);
+  });
+
+  it("a billing start BEFORE go-live (or none) leaves the floor at Oct 1 12:00Z", () => {
+    for (const billingStart of [d("2026-08-01T00:00:00Z"), null, undefined]) {
+      const p = planCatchup({ now: NOW, monthly: 310, addons: [], invoices: [], billingStart });
+      if (!p.ok) throw new Error(p.reason);
+      expect(p.paidThrough.getTime()).toBe(CATCHUP_GO_LIVE.getTime());
+    }
+  });
+
+  it("paidThroughOf honours the floor for PAID history too (a PAID invoice before the floor never lowers it)", () => {
+    const floor = d("2026-10-20T08:30:00Z");
+    const r = paidThroughOf(
+      [inv("a", "PAID", "2026-10-01T12:00:00Z", "2026-10-15T12:00:00Z")],
+      floor,
+    );
+    expect(r.ok && r.paidThrough.getTime()).toBe(floor.getTime());
+  });
+});
+
+describe("MF1: the manual invoice's add-ons vs the card checkout's lines", () => {
+  const line = (sku: string, unitPrice: number, quantity = 1) => ({ sku, unitPrice, quantity });
+  const row = (code: string, unitPrice: number | null, quantity = 1) => ({
+    code,
+    unitPrice,
+    quantity,
+  });
+
+  it("a priced billable row with NO checkout line (a platform-admin-only SKU) is refused - it would be voided and never billed", () => {
+    expect(addonCardRefusal([row("OCR_PACK_250", 25)], [])).toBe(
+      "billable_addon_not_card_billable",
+    );
+    expect(addonCardRefusal([row("SEAT_EXTRA", 10, 3)], [line("FORECASTING", 31)])).toBe(
+      "billable_addon_not_card_billable",
+    );
+  });
+
+  it("a self-serve row whose snapshot differs from the catalog line (or whose duplicate rows change the quantity) is refused", () => {
+    expect(addonCardRefusal([row("FORECASTING", 29)], [line("FORECASTING", 31)])).toBe(
+      "addon_snapshot_not_catalog",
+    );
+    expect(
+      addonCardRefusal([row("FORECASTING", 31), row("FORECASTING", 31)], [line("FORECASTING", 31)]),
+    ).toBe("addon_snapshot_not_catalog");
+    expect(
+      addonCardRefusal(
+        [row("FORECASTING", 31), row("FORECASTING", 30)],
+        [line("FORECASTING", 31, 2)],
+      ),
+    ).toBe("addon_snapshot_not_catalog");
+  });
+
+  it("matching rows, unpriced rows and zero quantities never refuse", () => {
+    expect(addonCardRefusal([row("FORECASTING", 31, 2)], [line("FORECASTING", 31, 2)])).toBeNull();
+    expect(addonCardRefusal([row("OCR_PACK_250", null), row("SEAT_EXTRA", 0)], [])).toBeNull();
+    expect(addonCardRefusal([row("SEAT_EXTRA", 10, 0)], [])).toBeNull();
+    expect(addonCardRefusal([], [])).toBeNull();
+  });
+
+  it("the reverse direction: a checkout line with NO priced billable row would charge something the invoice never billed - refused", () => {
+    expect(addonCardRefusal([], [line("FORECASTING", 31)])).toBe(
+      "checkout_addon_without_priced_row",
+    );
+    // an unpriced row (snapshot null / 0) bills nothing on the invoice either: the card line is still new money
+    expect(addonCardRefusal([row("FORECASTING", 0)], [line("FORECASTING", 31)])).toBe(
+      "checkout_addon_without_priced_row",
+    );
+    expect(addonCardRefusal([row("FORECASTING", null)], [line("FORECASTING", 31)])).toBe(
+      "checkout_addon_without_priced_row",
+    );
+    expect(addonCardRefusal([row("FORECASTING", 31)], [line("FORECASTING", 31)])).toBeNull();
+  });
+
+  it("planCatchup carries the refusal as a plan reason (and skips the check when no rows are passed)", () => {
+    const base = { now: NOW, monthly: 310, addons: [], invoices: [] };
+    expect(planCatchup({ ...base, billableRows: [row("OCR_PACK_250", 25)] })).toEqual({
+      ok: false,
+      reason: "billable_addon_not_card_billable",
+    });
+    expect(planCatchup(base).ok).toBe(true);
+  });
+});
+
+describe("MF2 (SA-733r5 r-note 10-11): paid coverage is measured UNSNAPPED, from every paid source", () => {
+  const MARKER = "TENANT_MANUAL_ACTIVATION_MARKER";
+  const TRAIL = "TENANT_SUBSCRIPTION_ACTIVATED";
+  /** One manual activation = its in-tx marker (with the recorded period) + the post-commit trail row seconds later. */
+  const activation = (start: string, end: string): ActivationRecord[] => [
+    { action: MARKER, at: d(start), periodStart: d(start), periodEnd: d(end) },
+    { action: TRAIL, at: new Date(d(start).getTime() + 3000), periodEnd: d(end) },
+  ];
+  const OPEN_OCT = inv("oct", "OPEN", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
+  const run = (activations: ActivationRecord[], invoices: CatchupInvoice[] = [OPEN_OCT]) => {
+    const first = activations.length
+      ? new Date(Math.min(...activations.map((x) => x.at.getTime())))
+      : null;
+    return planCatchup({
+      now: NOW,
+      monthly: 310,
+      addons: [],
+      invoices,
+      billingStart: first,
+      manual: { activations },
+    });
+  };
+  const AHEAD = { ok: false, reason: "manual_period_ahead" };
+
+  it("the normal unpaid-October tenant (Sept paid by invoice through Oct 1, October only an OPEN requirement) stays eligible", () => {
+    const sepPaid = inv("sep", "PAID", "2026-09-01T12:00:00Z", "2026-10-01T12:00:00Z");
+    const r = run(activation("2026-08-02T10:00:00Z", "2026-09-01T10:00:00Z"), [sepPaid, OPEN_OCT]);
+    expect(r.ok).toBe(true);
+  });
+
+  it("activated Sep 10 for 30 days ([Sep 10, Oct 10)): refused - Oct 1-10 is already paid (the snapped end would have read Oct 1)", () => {
+    expect(run(activation("2026-09-10T09:00:00Z", "2026-10-10T09:00:00Z"))).toEqual(AHEAD);
+  });
+
+  it("activated Sep 26 ([Sep 26, Oct 26)): refused before AND after the next window [Oct 26, Nov 1) is issued", () => {
+    const sep26 = activation("2026-09-26T09:00:00Z", "2026-10-26T09:00:00Z");
+    expect(run(sep26, [])).toEqual(AHEAD);
+    const next = (status: string) =>
+      inv("next", status, "2026-10-26T09:00:00Z", "2026-11-01T12:00:00Z");
+    expect(run(sep26, [next("OPEN")])).toEqual(AHEAD);
+    // once the next window is PAID (rolled) the PAID run has a hole before it: still refused (the generic gap
+    // refusal fires first - the planner reads PAID windows before the manual rule)
+    expect(run(sep26, [next("PAID")]).ok).toBe(false);
+  });
+
+  it("'by ANY amount': coverage ending exactly at the first charged service start is fine, one minute past it is not", () => {
+    expect(run(activation("2026-09-01T12:00:00Z", "2026-10-01T12:00:00Z")).ok).toBe(true);
+    expect(run(activation("2026-09-01T12:01:00Z", "2026-10-01T12:01:00Z"))).toEqual(AHEAD);
+  });
+
+  it("EVERY activation counts, not just the latest: a renewal on Oct 5 refuses, and so does an early one whose end is still ahead", () => {
+    const aug = activation("2026-08-02T10:00:00Z", "2026-09-01T10:00:00Z");
+    expect(run([...aug, ...activation("2026-10-05T09:00:00Z", "2026-11-04T09:00:00Z")])).toEqual(
+      AHEAD,
+    );
+    // the long one is NOT the latest: it must still be seen
+    expect(
+      run([
+        ...activation("2026-09-05T09:00:00Z", "2026-12-04T09:00:00Z"),
+        ...activation("2026-09-20T09:00:00Z", "2026-09-25T09:00:00Z"),
+      ]),
+    ).toEqual(AHEAD);
+  });
+
+  it("a PAID RfInvoice window reaching into the anchor month (to Oct 5) is already-paid days: refused - there is NO 'covered by a PAID window' exemption", () => {
+    const paid = inv("p", "PAID", "2026-09-05T12:00:00Z", "2026-10-05T12:00:00Z");
+    expect(run([], [paid, OPEN_OCT])).toEqual(AHEAD);
+  });
+
+  describe("ruling 8(e), SA correction 10-11: paid coverage that lands EXACTLY on an anchor 1st is the trial shape", () => {
+    const trialTo = (r: ReturnType<typeof run>, iso: string) => {
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.shape).toBe("trial");
+      expect(r.trialEndAt.toISOString()).toBe(iso);
+      expect(r.stub.totalCents).toBe(0); // nothing is charged for days that are already paid
+      expect(r.stub.lines).toEqual([]);
+    };
+
+    it("a PAID October window ending Nov 1 12:00Z: eligible, trial to Nov 1, no stub, no one-time line (the original 8(e) shape)", () => {
+      const paidOct = inv("po", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
+      trialTo(run([], [paidOct]), "2026-11-01T12:00:00.000Z");
+    });
+
+    it("... and the same window in the legacy 00:00Z spelling", () => {
+      const legacy = inv("pl", "PAID", "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z");
+      trialTo(run([], [legacy]), "2026-11-01T12:00:00.000Z");
+    });
+
+    it("two months paid (to Dec 1): eligible, trial to Dec 1", () => {
+      const paid2 = inv("p2", "PAID", "2026-10-01T12:00:00Z", "2026-12-01T12:00:00Z");
+      trialTo(run([], [paid2]), "2026-12-01T12:00:00.000Z");
+    });
+
+    it("paid by an ACTIVATION alone to an anchor 1st (a 365-day one from Sep 1 12:00Z): eligible, trial to that 1st - October is NOT charged again", () => {
+      trialTo(
+        run(activation("2026-09-01T12:00:00Z", "2027-09-01T12:00:00Z"), [OPEN_OCT]),
+        "2027-09-01T12:00:00.000Z",
+      );
+    });
+
+    it("a PAID window to Oct 5 (strictly inside a month) is refused", () => {
+      const paid = inv("p", "PAID", "2026-09-05T12:00:00Z", "2026-10-05T12:00:00Z");
+      expect(run([], [paid, OPEN_OCT])).toEqual(AHEAD);
+    });
+
+    it("timezone-safe: ONLY the 1st at 12:00Z or 00:00Z UTC counts; any other time on the 1st, or the next day, is a partial", () => {
+      const ends = [
+        "2026-11-01T06:00:00Z", // 06:00Z
+        "2026-11-01T12:00:01Z", // a second past
+        "2026-11-01T11:59:59Z", // a second short
+        "2026-11-02T12:00:00Z", // the 2nd
+        "2026-11-01T00:00:01Z",
+        "2026-10-31T23:59:59Z",
+      ];
+      for (const end of ends) {
+        const paid = inv("x", "PAID", "2026-10-01T12:00:00Z", end);
+        expect(run([], [paid])).toEqual(AHEAD);
+      }
+      // a local-time spelling of the 1st (Nov 1 00:00 at UTC-05:00 = 05:00Z) is not an anchor
+      expect(run([], [inv("tz", "PAID", "2026-10-01T05:00:00Z", "2026-11-01T05:00:00Z")])).toEqual(
+        AHEAD,
+      );
+    });
+
+    it("an anchor 1st plus a later partial anywhere in the paid coverage is still refused (the LATEST end decides)", () => {
+      const paidOct = inv("po", "PAID", "2026-10-01T12:00:00Z", "2026-11-01T12:00:00Z");
+      expect(run(activation("2026-10-05T09:00:00Z", "2026-11-04T09:00:00Z"), [paidOct])).toEqual(
+        AHEAD,
+      );
+    });
+
+    it("through the planner a stub-bearing prepaid shape never comes out: a trial / anchor_no_line is always stub-free, a partial is refused", () => {
+      const days = [
+        "2026-10-09T10:00:00Z",
+        "2026-10-28T04:00:00Z",
+        "2026-10-29T04:00:00Z",
+        "2026-10-30T09:00:00Z",
+      ];
+      const paidEnds = [
+        "2026-10-05T12:00:00Z",
+        "2026-10-30T12:00:00Z",
+        "2026-11-01T12:00:00Z",
+        "2026-11-14T12:00:00Z",
+        "2026-12-01T12:00:00Z",
+      ];
+      for (const end of paidEnds) {
+        for (const day of days) {
+          const r = planCatchup({
+            now: d(day),
+            monthly: 310,
+            addons: [],
+            invoices: [inv("p", "PAID", "2026-10-01T12:00:00Z", end)],
+            manual: { activations: [] },
+          });
+          if (!r.ok) continue; // refused
+          if (r.shape === "trial" || r.shape === "anchor_no_line") {
+            expect(r.stub.totalCents).toBe(0);
+            expect(r.stub.lines).toEqual([]);
+          }
+        }
+      }
+    });
+  });
+
+  it("a PAID window ending exactly at the start (Sept) is the normal paid-up state and stays eligible", () => {
+    const sep = inv("sep", "PAID", "2026-09-01T12:00:00Z", "2026-10-01T12:00:00Z");
+    expect(run([], [sep, OPEN_OCT]).ok).toBe(true);
+  });
+
+  it("a rollCycles period is a REQUIREMENT, not coverage: a tenant with no marker and only OPEN windows is eligible", () => {
+    expect(run([], [OPEN_OCT]).ok).toBe(true);
+  });
+
+  it("without the manual input (the pure planner) none of this applies: a prepaid plan still plans", () => {
+    const paid = inv("p", "PAID", "2026-10-01T12:00:00Z", "2026-11-14T12:00:00Z");
+    const p = planCatchup({ now: NOW, monthly: 310, addons: [], invoices: [paid] });
+    expect(p.ok && p.shape).toBe("trial");
+  });
+
+  describe("legacy markers (no recorded period) fail closed, PER activation cluster", () => {
+    const LEGACY = { ok: false, reason: "manual_marker_without_period" };
+
+    it("a trail row alone (a pre-marker activation) or a marker without a period: refused", () => {
+      expect(run([{ action: TRAIL, at: d("2026-08-02T10:00:00Z") }])).toEqual(LEGACY);
+      expect(run([{ action: MARKER, at: d("2026-08-02T10:00:00Z") }])).toEqual(LEGACY);
+    });
+
+    it("one activation = marker + trail: EITHER row carrying the period is enough", () => {
+      const at = d("2026-08-02T10:00:00Z");
+      const later = new Date(at.getTime() + 3000);
+      const end = d("2026-09-01T10:00:00Z");
+      expect(
+        run([
+          { action: MARKER, at },
+          { action: TRAIL, at: later, periodEnd: end },
+        ]).ok,
+      ).toBe(true);
+      expect(
+        run([
+          { action: MARKER, at, periodEnd: end },
+          { action: TRAIL, at: later },
+        ]).ok,
+      ).toBe(true);
+    });
+
+    it("the rule is per cluster: a good activation does not excuse a later legacy one", () => {
+      expect(
+        run([
+          ...activation("2026-08-02T10:00:00Z", "2026-09-01T10:00:00Z"),
+          { action: TRAIL, at: d("2026-09-15T10:00:00Z") },
+        ]),
+      ).toEqual(LEGACY);
+    });
+  });
+
+  describe("manualCoverage", () => {
+    it("no activations: nothing paid by activation", () => {
+      expect(manualCoverage([])).toEqual({ ok: true, latestEnd: null });
+    });
+
+    it("the latest unsnapped end across ALL clusters", () => {
+      const r = manualCoverage([
+        ...activation("2026-08-02T10:00:00Z", "2026-09-01T10:00:00Z"),
+        ...activation("2026-09-05T09:00:00Z", "2026-10-05T09:00:00Z"),
+        ...activation("2026-09-20T09:00:00Z", "2026-09-25T09:00:00Z"),
+      ]);
+      expect(r.ok && r.latestEnd!.toISOString()).toBe("2026-10-05T09:00:00.000Z");
+    });
+  });
+});
